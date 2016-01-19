@@ -49,7 +49,7 @@ macro_rules! read_or_break {
                 $count += n;
             },
             Ok(n) => {
-                $count += n;
+                // tear occurred here
                 break;
             },
             Err(e) => {
