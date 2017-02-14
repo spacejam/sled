@@ -53,7 +53,7 @@ pub struct Log {
 }
 
 impl Log {
-    fn open() -> Log {
+    pub fn open() -> Log {
         let cur_id = fs::metadata("rsdb.log").map(|m| m.len()).unwrap_or(0);
 
         let mut options = fs::OpenOptions::new();
@@ -61,8 +61,8 @@ impl Log {
 
         if cfg!(unix) {
             // TODO get O_DIRECT working
-            options.custom_flags(// libc::O_DIRECT |
-                                 libc::O_DSYNC);
+            // options.custom_flags(// libc::O_DIRECT |
+            //                     libc::O_DSYNC);
         }
 
         let file = options.open("rsdb.log").unwrap();
@@ -74,16 +74,14 @@ impl Log {
         }
     }
 
-    fn append(&mut self, data: LogData) -> io::Result<LogID> {
+    pub fn append(&mut self, data_bytes: &[u8]) -> io::Result<LogID> {
         let id = self.cur_id;
-        let data_bytes = to_binary(&data);
         self.cur_id += data_bytes.len() as u64;
         let len_bytes = usize_to_array(data_bytes.len());
         self.file.seek(SeekFrom::Start(id));
         self.file.write_all(&len_bytes)?;
         self.file.write_all(&*data_bytes)?;
         self.stable = id;
-        from_binary::<LogData>(data_bytes).unwrap();
         Ok(id)
     }
 }
@@ -110,7 +108,8 @@ pub fn array_to_usize(ip: [u8; 4]) -> usize {
 fn rtt_log() {
     let mut writer = Log::open();
     let deltablock = LogData::Deltas(vec![]);
-    let lid = writer.append(deltablock.clone()).unwrap();
+    let data_bytes = to_binary(&deltablock);
+    let lid = writer.append(&*data_bytes).unwrap();
 
     let rt = read(lid).unwrap();
     let t1 = thread::spawn(move || {

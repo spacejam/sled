@@ -1,8 +1,4 @@
-#![feature(test)]
-extern crate test;
 extern crate rsdb;
-
-use test::Bencher;
 
 use rsdb::RSDB;
 
@@ -13,11 +9,11 @@ fn it_works() {
     assert!(db.get(b"k1").unwrap().unwrap() == b"v1")
 }
 
-#[bench]
-fn bench_set(b: &mut Bencher) {
-    let mut db = RSDB::new("/tmp/rsdb").unwrap();
-    b.iter(|| db.set(b"k1", b"v1").unwrap());
-}
+// #[bench]
+// fn bench_set(b: &mut Bencher) {
+// let mut db = RSDB::new("/tmp/rsdb").unwrap();
+// b.iter(|| db.set(b"k1", b"v1").unwrap());
+// }
 
 #[test]
 fn logging_works() {
