@@ -2,7 +2,16 @@
 name = "rsdb"
 version = "0.1.0"
 authors = ["Tyler Neely <t@jujit.su>"]
-description = "dead simple persistent kv store"
+description = "transactional KV store backed by a log-structured persistent B+ tree"
 license = "Apache-2.0"
 homepage = "https://github.com/spacejam/rsdb"
-keywords = ["database", "embeddable", "kv", "persistent"]
+keywords = ["database", "embeddable", "kv", "persistent", "log-structured", "transactional"]
+
+[[test]]
+name = "test"
+path = "test/test.rs"
+
+[dependencies]
+rustc-serialize = "0.3"
+bincode = "0.6"
+libc = "0.2"
