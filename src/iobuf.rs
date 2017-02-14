@@ -259,25 +259,33 @@ fn basic_functionality() {
     let iobs1 = Arc::new(IOBufs::default());
     let iobs2 = iobs1.clone();
     let iobs3 = iobs1.clone();
+    let iobs4 = iobs1.clone();
     let t1 = thread::spawn(move || {
         for i in 0..50_000 {
-            let buf = vec![1; 512];
+            let buf = vec![1; i % 8192];
             iobs1.write(buf);
         }
     });
     let t2 = thread::spawn(move || {
         for i in 0..50_000 {
-            let buf = vec![2; 512];
+            let buf = vec![2; i % 8192];
             iobs2.write(buf);
         }
     });
     let t3 = thread::spawn(move || {
         for i in 0..50_000 {
-            let buf = vec![3; 512];
+            let buf = vec![3; i % 8192];
             iobs3.write(buf);
+        }
+    });
+    let t4 = thread::spawn(move || {
+        for i in 0..50_000 {
+            let buf = vec![4; i % 8192];
+            iobs4.write(buf);
         }
     });
     t1.join();
     t2.join();
     t3.join();
+    t4.join();
 }
