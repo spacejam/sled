@@ -41,11 +41,12 @@ impl Clone for IOBufs {
 }
 
 unsafe impl Send for IOBufs {}
-unsafe impl Sync for IOBufs {}
 
+unsafe impl Sync for IOBufs {}
 
 struct Reservation {
     offset: u32,
+    len: u32, // this may be different from header, due to concurrent access
     buf: Arc<UnsafeCell<Vec<u8>>>,
     last_hv: u32,
     header: Arc<AtomicUsize>,
@@ -100,43 +101,33 @@ impl IOBufs {
             let mut hv = header.load(Ordering::SeqCst) as u32;
 
             // skip if already sealed
-            if hv >> 31 == 1 {
+            if ops::is_sealed(hv) {
                 // already sealed, start over and hope cur
                 // has already been bumped by sealer.
                 continue;
             }
 
             // try to claim space, seal otherwise
-            let offset = hv << 8 >> 8;
+            let offset = ops::offset(hv);
             assert!(len >> 24 == 0);
             if offset + len > MAX_BUF_SZ as u32 {
                 // attempt seal once, then start over
-                let sealed = hv | (1 << 31);
+                let sealed = ops::mk_sealed(hv);
                 if header.compare_and_swap(hv as usize, sealed as usize, Ordering::SeqCst) ==
                    hv as usize {
-                    // TODO cleanup
                     // we succeeded in setting seal, so we get to bump cur
                     self.current_buf.fetch_add(1, Ordering::SeqCst);
-                    let n_writers = hv << 1 >> 25;
+                    let n_writers = ops::n_writers(hv);
                     if n_writers == 0 {
                         // nobody else is going to flush this, so we need to
-                        let res = Reservation {
-                            offset: offset,
-                            buf: self.bufs[idx].clone(),
-                            last_hv: sealed,
-                            header: header,
-                            current_buf: self.current_buf.clone(),
-                            written_bufs: self.written_bufs.clone(),
-                        };
+                        let res = self.reservation(offset, len, idx, sealed, header);
                         res.write(vec![]);
                     }
-                } else {
                 }
                 continue;
             } else {
                 // attempt to claim
-                let writer_inc = 1 << 24;
-                let claimed = hv + len + writer_inc;
+                let claimed = ops::incr_writers(ops::bump_offset(hv, len));
                 if header.compare_and_swap(hv as usize, claimed as usize, Ordering::SeqCst) !=
                    hv as usize {
                     // CAS failed, start over
@@ -145,18 +136,29 @@ impl IOBufs {
                 hv = claimed;
             }
 
-            let n_writers = hv << 1 >> 25;
+            let n_writers = ops::n_writers(hv);
             assert!(n_writers != 0);
 
-            return Reservation {
-                offset: offset,
-                buf: self.bufs[idx].clone(),
-                last_hv: hv,
-                header: header,
-                current_buf: self.current_buf.clone(),
-                written_bufs: self.written_bufs.clone(),
-            };
+            return self.reservation(offset, len, idx, hv, header);
         }
+    }
+
+    fn reservation(&self,
+                   offset: u32,
+                   len: u32,
+                   idx: usize,
+                   last_hv: u32,
+                   header: Arc<AtomicUsize>)
+                   -> Reservation {
+        return Reservation {
+            offset: offset,
+            len: len,
+            buf: self.bufs[idx].clone(),
+            last_hv: last_hv,
+            header: header,
+            current_buf: self.current_buf.clone(),
+            written_bufs: self.written_bufs.clone(),
+        };
     }
 
     pub fn write(&self, buf: Vec<u8>) {
@@ -179,28 +181,24 @@ impl Reservation {
             (out_buf)[range].copy_from_slice(&*buf);
         }
 
-        // decr writer count, retrying
         let mut hv = self.last_hv;
-        loop {
-            let n_writers = hv << 1 >> 25;
-            let sealed = hv >> 31 == 1;
-            if sealed && n_writers == 0 {
-                // if sealed is set, and you are last decr,
-                // don't decr, that's writer's resp
-                self.slam_down_pipe();
-                return;
-            }
+        let n_writers = ops::n_writers(hv);
+        let sealed = ops::is_sealed(hv);
+        if sealed && n_writers == 0 {
+            return self.slam_down_pipe();
+        }
 
-            let hv2 = hv - (1 << 24);
+        // decr writer count, retrying
+        loop {
+            let n_writers = ops::n_writers(hv);
+            let hv2 = ops::decr_writers(hv);
             if self.header.compare_and_swap(hv as usize, hv2 as usize, Ordering::SeqCst) ==
                hv as usize {
                 // we succeeded, free to exit
                 // TODO cleanup
-                let n_writers = hv2 << 1 >> 25;
-                let sealed = hv2 >> 31 == 1;
+                let n_writers = ops::n_writers(hv2);
+                let sealed = ops::is_sealed(hv2);
                 if sealed && n_writers == 0 {
-                    // if sealed is set, and you are last decr,
-                    // don't decr, that's writer's resp
                     self.slam_down_pipe();
                 }
                 return;
@@ -220,6 +218,39 @@ impl Reservation {
 
         // bump self.written by 1
         self.written_bufs.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+mod ops {
+    pub fn is_sealed(v: u32) -> bool {
+        v >> 31 == 1
+    }
+
+    pub fn mk_sealed(v: u32) -> u32 {
+        v | 1 << 31
+    }
+
+    pub fn n_writers(v: u32) -> u32 {
+        v << 1 >> 25
+    }
+
+    pub fn incr_writers(v: u32) -> u32 {
+        assert!(n_writers(v) != 127);
+        v + (1 << 24)
+    }
+
+    pub fn decr_writers(v: u32) -> u32 {
+        assert!(n_writers(v) != 0);
+        v - (1 << 24)
+    }
+
+    pub fn offset(v: u32) -> u32 {
+        v << 8 >> 8
+    }
+
+    pub fn bump_offset(v: u32, by: u32) -> u32 {
+        assert!(by >> 24 == 0);
+        v + by
     }
 }
 
