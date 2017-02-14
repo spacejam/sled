@@ -120,7 +120,7 @@ impl IOBufs {
                     let n_writers = ops::n_writers(hv);
                     if n_writers == 0 {
                         // nobody else is going to flush this, so we need to
-                        let res = self.reservation(offset, len, idx, sealed, header);
+                        let res = self.reservation(offset, len, idx, sealed);
                         res.write(vec![]);
                     }
                 }
@@ -139,23 +139,17 @@ impl IOBufs {
             let n_writers = ops::n_writers(hv);
             assert!(n_writers != 0);
 
-            return self.reservation(offset, len, idx, hv, header);
+            return self.reservation(offset, len, idx, hv);
         }
     }
 
-    fn reservation(&self,
-                   offset: u32,
-                   len: u32,
-                   idx: usize,
-                   last_hv: u32,
-                   header: Arc<AtomicUsize>)
-                   -> Reservation {
+    fn reservation(&self, offset: u32, len: u32, idx: usize, last_hv: u32) -> Reservation {
         return Reservation {
             offset: offset,
             len: len,
             buf: self.bufs[idx].clone(),
             last_hv: last_hv,
-            header: header,
+            header: self.headers[idx].clone(),
             current_buf: self.current_buf.clone(),
             written_bufs: self.written_bufs.clone(),
         };
