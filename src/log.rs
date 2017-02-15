@@ -203,11 +203,18 @@ impl IOBufs {
                 let sealed = ops::mk_sealed(hv);
                 if header.compare_and_swap(hv as usize, sealed as usize, Ordering::SeqCst) ==
                    hv as usize {
-                    // println!("+ buf {} sealed", idx);
-                    // we succeeded in setting seal,
-                    // so we get to bump cur and log_offset
-                    // NB this is effectively a global lock until self.current_buf gets bumped
-                    // NB set next offset before bumping self.current_buf
+                    // println!("- buf {} sealed with {} writers", idx, ops::n_writers(sealed));
+                    // We succeeded in setting seal,
+                    // so we get to bump cur and log_offset.
+
+                    // NB This is effectively a global lock until self.current_buf gets bumped.
+
+                    // NB Set next offset before bumping self.current_buf.
+
+                    // Also note that written_bufs may be incremented before we reach
+                    // the increment of current_buf below, as a writing thread
+                    // sees the seal. This is why we initialize current_buf to 1 and
+                    // written_bufs to 0.
                     let new_log_offset = self.log_offsets[idx].load(Ordering::SeqCst) +
                                          offset as usize;
                     self.log_offsets[(idx + 1) % N_BUFS].store(new_log_offset, Ordering::SeqCst);
@@ -215,14 +222,11 @@ impl IOBufs {
 
                     // if writers is now 1 (from our previous incr),
                     // it's our responsibility to flush it
-                    // println!("{} writers at seal of buf {}", ops::n_writers(sealed), idx);
                     if ops::n_writers(sealed) == 0 {
                         // nobody else is going to flush this, so we need to
                         let res = self.reservation(offset, 0, idx, sealed);
                         res.write(vec![]);
                     }
-                } else {
-                    // println!("failed to seal buf {}", idx);
                 }
                 continue;
             } else {
@@ -231,7 +235,6 @@ impl IOBufs {
                 if header.compare_and_swap(hv as usize, claimed as usize, Ordering::SeqCst) !=
                    hv as usize {
                     // CAS failed, start over
-                    // println!("4 failed to claim buf {}", idx);
                     continue;
                 }
                 hv = claimed;
@@ -299,7 +302,7 @@ impl Reservation {
             if self.header.compare_and_swap(hv as usize, hv2 as usize, Ordering::SeqCst) ==
                hv as usize {
                 if ops::is_sealed(hv2) {
-                    // println!("sealed buf {}, decr is good, n_writers: {}", self.idx, ops::n_writers(hv2));
+                    // println!("- decr worked on sealed buf {}, n_writers: {}", self.idx, ops::n_writers(hv2));
                 }
                 if ops::n_writers(hv2) == 0 && ops::is_sealed(hv2) {
                     self.slam_down_pipe();
@@ -311,7 +314,6 @@ impl Reservation {
             // if this is 0, it means too many decr's have happened
             // or too few incr's have happened
             assert_ne!(ops::n_writers(hv), 0);
-            // println!("5 decr fail on buf {}", self.idx);
         }
     }
 
@@ -376,7 +378,7 @@ fn basic_functionality() {
     let stabilizer = thread::spawn(move || {
         LogWriter::new(rx).run();
     });
-    let iobs1 = Arc::new(IOBufs::new(tx));
+    let iobs1 = IOBufs::new(tx);
     let iobs2 = iobs1.clone();
     let iobs3 = iobs1.clone();
     let iobs4 = iobs1.clone();
