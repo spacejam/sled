@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Read, Write};
 
-use log::{usize_to_array, array_to_usize};
+use super::*;
 
 pub struct RSDB<'a> {
     dir_path: &'a str,
@@ -32,8 +32,8 @@ impl<'a> RSDB<'a> {
     }
 
     fn log(&mut self, key: &[u8], value: &[u8]) -> io::Result<()> {
-        self.log.write_all(&usize_to_array(key.len()))?;
-        self.log.write_all(&usize_to_array(value.len()))?;
+        self.log.write_all(&ops::usize_to_array(key.len()))?;
+        self.log.write_all(&ops::usize_to_array(value.len()))?;
         self.log.write_all(key)?;
         self.log.write_all(value)?;
         Ok(())
@@ -79,7 +79,7 @@ fn recover<'a>(dir_path: &str) -> io::Result<(fs::File, BTreeMap<Vec<u8>, Vec<u8
         let (mut k_len_buf, mut v_len_buf) = ([0u8; 4], [0u8; 4]);
         read_or_break!(file, k_len_buf, read);
         read_or_break!(file, v_len_buf, read);
-        let (klen, vlen) = (array_to_usize(k_len_buf), array_to_usize(v_len_buf));
+        let (klen, vlen) = (ops::array_to_usize(k_len_buf), ops::array_to_usize(v_len_buf));
         let (mut k_buf, mut v_buf) = (Vec::with_capacity(klen), Vec::with_capacity(vlen));
         read_or_break!(file, k_buf, read);
         read_or_break!(file, v_buf, read);

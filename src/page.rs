@@ -73,7 +73,7 @@ struct Cache {
     highest_pid: PageID,
     heads: RwLock<BTreeMap<PageID, AtomicUsize>>,
     cached: RwLock<BTreeMap<LogID, Arc<Data>>>,
-    log: Box<log::Log>,
+    log: Box<log::IOBufs>,
     // freelist managed as stack, biased to reuse low ID's
     free: Vec<PageID>,
 }
