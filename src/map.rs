@@ -13,33 +13,33 @@ pub struct CASMap<K, V> {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub struct CASCompareFail;
+pub struct CASFail;
 
 impl<K: Eq + Hash, V: PartialEq> CASMap<K, V> {
     fn new() -> CASMap<K, V> {
         CASMap { inner: Arc::new(RwLock::new(HashMap::new())) }
     }
 
-    fn cas(&self, k: K, old_v: Option<&V>, new_v: Option<V>) -> Result<(), CASCompareFail> {
+    fn cas(&self, k: K, old_v: Option<&V>, new_v: Option<V>) -> Result<(), CASFail> {
         // NB this is fake, aiming only to imitate a real CAS interface
         // TODO use real CAS
         if let Ok(mut inner) = self.inner.try_write() {
             if let Some(cur_lock) = inner.get(&k) {
                 if old_v.is_none() {
                     // mismatch between old & current
-                    return Err(CASCompareFail);
+                    return Err(CASFail);
                 }
                 let cur = cur_lock.read().unwrap();
                 let old = old_v.unwrap();
                 if *old != *cur {
                     // mismatch between old & current
-                    return Err(CASCompareFail);
+                    return Err(CASFail);
                 }
                 // old & current compare to equal, good to continue to set new
             } else {
                 if old_v.is_some() {
                     // mismatch between old & current
-                    return Err(CASCompareFail);
+                    return Err(CASFail);
                 }
                 // old & current None, good to continue to set new
             }
@@ -50,7 +50,7 @@ impl<K: Eq + Hash, V: PartialEq> CASMap<K, V> {
             }
             Ok(())
         } else {
-            return Err(CASCompareFail);
+            return Err(CASFail);
         }
 
     }
@@ -87,8 +87,8 @@ fn basic_naive_map_test() {
     t2.join().unwrap();
     let g3 = nmt.get(&3).unwrap();
     assert_eq!(*g3.read().unwrap(), 3);
-    assert_eq!(nmt.cas(1, Some(&1), None), Err(CASCompareFail));
-    assert_eq!(nmt.cas(5, Some(&1), None), Err(CASCompareFail));
+    assert_eq!(nmt.cas(1, Some(&1), None), Err(CASFail));
+    assert_eq!(nmt.cas(5, Some(&1), None), Err(CASFail));
     assert_eq!(nmt.cas(5, None, None), Ok(()));
     assert_eq!(nmt.cas(5, None, Some(1)), Ok(()));
 }

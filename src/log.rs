@@ -438,6 +438,7 @@ impl LogWriter {
             let stable = res.stabilize(&mut self.log);
             let old = self.stable.swap(stable as usize, Ordering::SeqCst);
             // FIXME 'assertion failed: old <= (stable as usize)'
+            // triggered by using the shufnice.sh script in hack with cargo test
             assert!(old <= stable as usize);
         }
     }
