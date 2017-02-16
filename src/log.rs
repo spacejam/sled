@@ -95,6 +95,7 @@ fn open_log_for_reading() -> fs::File {
     options.open("rsdb.log").unwrap()
 }
 
+#[derive(Clone)]
 pub struct IOBufs {
     bufs: Vec<Arc<UnsafeCell<Vec<u8>>>>,
     headers: Vec<Arc<AtomicUsize>>,
@@ -126,19 +127,6 @@ impl Debug for IOBufs {
                             sealed);
 
         fmt::Debug::fmt(&debug, formatter)
-    }
-}
-
-impl Clone for IOBufs {
-    fn clone(&self) -> IOBufs {
-        IOBufs {
-            bufs: self.bufs.clone(),
-            headers: self.headers.clone(),
-            log_offsets: self.log_offsets.clone(),
-            current_buf: self.current_buf.clone(),
-            written_bufs: self.written_bufs.clone(),
-            plunger: self.plunger.clone(),
-        }
     }
 }
 
