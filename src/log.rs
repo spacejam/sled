@@ -11,6 +11,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 
 use super::*;
 
+const HEADER_LEN: usize = 5;
 const MAX_BUF_SZ: usize = 1_000_000;
 const N_BUFS: usize = 8;
 
@@ -21,24 +22,8 @@ thread_local! {
 fn open_log_for_reading() -> fs::File {
     let mut options = fs::OpenOptions::new();
     options.read(true);
+    // TODO make logfile configurable
     options.open("rsdb.log").unwrap()
-}
-
-fn read(id: LogID) -> io::Result<LogData> {
-    LOCAL_READER.with(|f| {
-        let mut f = f.borrow_mut();
-        f.seek(SeekFrom::Start(id))?;
-        let mut len_buf = [0u8; 4];
-        f.read_exact(&mut len_buf)?;
-        let len = ops::array_to_usize(len_buf);
-        let mut buf = Vec::with_capacity(len);
-        unsafe {
-            buf.set_len(len);
-        }
-        f.read_exact(&mut buf)?;
-        ops::from_binary::<LogData>(buf)
-            .map_err(|_| Error::new(ErrorKind::Other, "failed to deserialize LogData"))
-    })
 }
 
 pub struct IOBufs {
@@ -125,12 +110,14 @@ struct Reservation {
     written_bufs: Arc<AtomicUsize>,
     plunger: Sender<Reservation>,
     idx: usize,
+    cur_log_offset: Arc<AtomicUsize>,
+    next_log_offset: Arc<AtomicUsize>,
 }
 
 unsafe impl Send for Reservation {}
 
 impl IOBufs {
-    fn new(plunger: Sender<Reservation>) -> IOBufs {
+    fn new(plunger: Sender<Reservation>, disk_offset: usize) -> IOBufs {
         let mut bufs = [Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])),
                         Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])),
                         Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])),
@@ -147,14 +134,14 @@ impl IOBufs {
                        Arc::new(AtomicUsize::new(0)),
                        Arc::new(AtomicUsize::new(0)),
                        Arc::new(AtomicUsize::new(0))];
-        let log_offsets = [Arc::new(AtomicUsize::new(0)),
-                           Arc::new(AtomicUsize::new(0)),
-                           Arc::new(AtomicUsize::new(0)),
-                           Arc::new(AtomicUsize::new(0)),
-                           Arc::new(AtomicUsize::new(0)),
-                           Arc::new(AtomicUsize::new(0)),
-                           Arc::new(AtomicUsize::new(0)),
-                           Arc::new(AtomicUsize::new(0))];
+        let log_offsets = [Arc::new(AtomicUsize::new(disk_offset)),
+                           Arc::new(AtomicUsize::new(disk_offset)),
+                           Arc::new(AtomicUsize::new(disk_offset)),
+                           Arc::new(AtomicUsize::new(disk_offset)),
+                           Arc::new(AtomicUsize::new(disk_offset)),
+                           Arc::new(AtomicUsize::new(disk_offset)),
+                           Arc::new(AtomicUsize::new(disk_offset)),
+                           Arc::new(AtomicUsize::new(disk_offset))];
         IOBufs {
             bufs: bufs,
             headers: headers,
@@ -170,11 +157,14 @@ impl IOBufs {
     }
 
     fn reserve(&self, len: u32) -> Reservation {
+        let len = len + HEADER_LEN as u32;
         loop {
             // load atomic progress counters
             let current_buf = self.current_buf.load(Ordering::SeqCst);
             let written = self.written_bufs.load(Ordering::SeqCst);
             let idx = current_buf % N_BUFS;
+
+            // println!("using buf {}", idx);
 
             // if written is too far behind, we need to
             // spin while it catches up to avoid overlap
@@ -224,8 +214,8 @@ impl IOBufs {
                     // it's our responsibility to flush it
                     if ops::n_writers(sealed) == 0 {
                         // nobody else is going to flush this, so we need to
-                        let res = self.reservation(offset, 0, idx, sealed);
-                        res.write(vec![]);
+                        let res = self.reservation(offset, HEADER_LEN as u32, idx, sealed);
+                        res.write(vec![], true);
                     }
                 }
                 continue;
@@ -250,7 +240,7 @@ impl IOBufs {
 
     fn reservation(&self, offset: u32, len: u32, idx: usize, last_hv: u32) -> Reservation {
         return Reservation {
-            base_disk_offset: 4 + self.log_offsets[idx].load(Ordering::SeqCst) as LogID,
+            base_disk_offset: self.log_offsets[idx].load(Ordering::SeqCst) as LogID,
             res_len: len,
             buf_offset: offset,
             buf: self.bufs[idx].clone(),
@@ -260,12 +250,14 @@ impl IOBufs {
             written_bufs: self.written_bufs.clone(),
             plunger: self.plunger.clone(),
             idx: idx,
+            cur_log_offset: self.log_offsets[idx].clone(),
+            next_log_offset: self.log_offsets[(idx + 1) % N_BUFS].clone(),
         };
     }
 
-    pub fn write(&self, buf: Vec<u8>) {
+    pub fn write(&self, buf: Vec<u8>) -> LogID {
         let res = self.reserve(buf.len() as u32);
-        res.write(buf);
+        res.write(buf, true)
     }
 
     pub fn shutdown(&self) {
@@ -274,26 +266,66 @@ impl IOBufs {
 }
 
 impl Reservation {
-    fn abort_tx(&self) {
+    pub fn abort(self) {
         // fills lease with a FailedFlush
+        self.seal();
+        self.write(vec![], false);
     }
 
-    fn commit_tx(&self) {}
+    pub fn complete(self, buf: Vec<u8>) -> LogID {
+        self.seal();
+        self.write(buf, true)
+    }
 
-    fn write(self, buf: Vec<u8>) {
-        assert_eq!(buf.len(), self.res_len as usize);
+    fn len(&self) -> usize {
+        self.res_len as usize
+    }
 
-        let range = self.buf_offset as usize..(self.buf_offset as usize + self.res_len as usize);
+    fn seal(&self) {
+        self.header.fetch_or(1 << 31, Ordering::SeqCst);
+        let new_log_offset = self.cur_log_offset.load(Ordering::SeqCst) + self.len();
+        self.next_log_offset.store(new_log_offset, Ordering::SeqCst);
+        self.current_buf.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn write(self, buf: Vec<u8>, valid: bool) -> LogID {
+        let mut out_buf = unsafe { (*self.buf.get()).as_mut_slice() };
+
+        let size_bytes = ops::usize_to_array(self.len() - HEADER_LEN).to_vec();
+        let valid_bytes = if valid {
+            vec![1u8]
+        } else {
+            vec![0u8]
+        };
+
+        let valid_range = self.buf_offset as usize..(self.buf_offset as usize + 1);
+        let size_range = (self.buf_offset as usize + 1)..(self.buf_offset as usize + HEADER_LEN);
+        let data_start = self.buf_offset as usize + HEADER_LEN;
+        let data_end = self.buf_offset as usize + self.len();
+        let data_range = data_start..data_end;
+
         unsafe {
-            let mut out_buf = (*self.buf.get()).as_mut_slice();
-            (out_buf)[range].copy_from_slice(&*buf);
+            (out_buf)[valid_range].copy_from_slice(&*valid_bytes);
+            (out_buf)[size_range].copy_from_slice(&*size_bytes);
+        }
+
+        if buf.len() > 0 && valid {
+            assert_eq!(buf.len() + HEADER_LEN, self.res_len as usize);
+            unsafe {
+                (out_buf)[data_range].copy_from_slice(&*buf);
+            }
+        } else if !valid {
+            assert_eq!(buf.len(), 0);
+            // no need to actually write zeros, the next seek will punch a hole
         }
 
         let mut hv = self.last_hv;
 
+        let ret = self.base_disk_offset + self.buf_offset as LogID;
+
         if ops::n_writers(hv) == 0 && ops::is_sealed(hv) {
             self.slam_down_pipe();
-            return;
+            return ret;
         }
 
         // decr writer count, retrying
@@ -307,7 +339,7 @@ impl Reservation {
                 if ops::n_writers(hv2) == 0 && ops::is_sealed(hv2) {
                     self.slam_down_pipe();
                 }
-                return;
+                return ret;
             }
             // we failed, reload and retry
             hv = self.header.load(Ordering::SeqCst) as u32;
@@ -315,6 +347,8 @@ impl Reservation {
             // or too few incr's have happened
             assert_ne!(ops::n_writers(hv), 0);
         }
+
+        ret
     }
 
     fn slam_down_pipe(self) {
@@ -322,14 +356,12 @@ impl Reservation {
         plunger.send(self);
     }
 
-    pub fn stabilize(&self, log: &mut fs::File) {
+    fn stabilize(&self, log: &mut fs::File) -> LogID {
         // put the buf identified by idx on disk
-        // let data = unsafe { (*self.buf.get()).as_mut_slice() };
-        // let data_bytes = &data[0..self.res_len as usize];
-        // let len_bytes = ops::usize_to_array(data_bytes.len());
-        // log.seek(SeekFrom::Start(self.base_disk_offset));
-        // log.write_all(&len_bytes).unwrap();
-        // log.write_all(&data_bytes).unwrap();
+        let data = unsafe { (*self.buf.get()).as_mut_slice() };
+        let data_bytes = &data[0..self.res_len as usize];
+        log.seek(SeekFrom::Start(self.base_disk_offset));
+        log.write_all(&data_bytes).unwrap();
 
         // TODO fix mapping with offset prediction
         // assert_eq!(lid, self.base_disk_offset as u64);
@@ -340,6 +372,12 @@ impl Reservation {
         // bump self.written by 1
         self.written_bufs.fetch_add(1, Ordering::SeqCst);
         // println!("+ buf {} stabilized, cur is {}", self.idx, self.current_buf.load(Ordering::SeqCst) % N_BUFS);
+
+        self.base_disk_offset
+    }
+
+    pub fn log_id(&self) -> LogID {
+        self.base_disk_offset
     }
 }
 
@@ -347,11 +385,14 @@ struct LogWriter {
     receiver: Receiver<Reservation>,
     log: fs::File,
     open_offset: LogID,
+    stable: Arc<AtomicUsize>,
 }
 
 impl LogWriter {
-    fn new(receiver: Receiver<Reservation>) -> LogWriter {
+    fn new(receiver: Receiver<Reservation>, stable: Arc<AtomicUsize>) -> LogWriter {
+        // TODO make log file configurable
         let cur_id = fs::metadata("rsdb.log").map(|m| m.len()).unwrap_or(0);
+        stable.store(cur_id as usize, Ordering::SeqCst);
 
         let mut options = fs::OpenOptions::new();
         options.write(true).create(true);
@@ -360,13 +401,81 @@ impl LogWriter {
         LogWriter {
             receiver: receiver,
             log: file,
-            open_offset: cur_id,
+            open_offset: cur_id + 1, // we add 1 here to add space on startup from stable
+            stable: stable,
         }
     }
 
     fn run(mut self) {
         for res in self.receiver.iter() {
-            res.stabilize(&mut self.log);
+            let stable = res.stabilize(&mut self.log);
+            self.stable.store(stable as usize, Ordering::SeqCst);
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Log {
+    iobufs: IOBufs,
+    stable: Arc<AtomicUsize>,
+}
+
+unsafe impl Send for Log {}
+
+unsafe impl Sync for Log {}
+
+impl Log {
+    pub fn start_system() -> Log {
+        let stable = Arc::new(AtomicUsize::new(0));
+        let (tx, rx) = channel();
+        let lw = LogWriter::new(rx, stable.clone());
+        let offset = lw.open_offset;
+        let stabilizer = thread::spawn(move || {
+            lw.run();
+        });
+        Log {
+            iobufs: IOBufs::new(tx, offset as usize),
+            stable: stable,
+        }
+    }
+
+    pub fn reserve(&self, sz: usize) -> Reservation {
+        assert_eq!(sz >> 32, 0);
+        self.iobufs.reserve(sz as u32)
+    }
+
+    pub fn write(&self, buf: Vec<u8>) -> LogID {
+        self.iobufs.write(buf)
+    }
+
+    pub fn read(&self, id: LogID) -> io::Result<LogData> {
+        LOCAL_READER.with(|f| {
+            let mut f = f.borrow_mut();
+            f.seek(SeekFrom::Start(id))?;
+            let mut valid = [0u8; 1];
+            f.read_exact(&mut valid)?;
+            if valid[0] == 0 {
+                return Err(Error::new(ErrorKind::Other, "tried to read failed flush"));
+            }
+            let mut len_buf = [0u8; 4];
+            f.read_exact(&mut len_buf)?;
+            let len = ops::array_to_usize(len_buf);
+            let mut buf = Vec::with_capacity(len);
+            unsafe {
+                buf.set_len(len);
+            }
+            f.read_exact(&mut buf)?;
+            ops::from_binary::<LogData>(buf)
+                .map_err(|_| Error::new(ErrorKind::Other, "failed to deserialize LogData"))
+        })
+    }
+
+    pub fn make_stable(&self, id: LogID) {
+        loop {
+            let cur = self.stable.load(Ordering::SeqCst) as LogID;
+            if cur >= id {
+                return;
+            }
         }
     }
 }
@@ -374,20 +483,16 @@ impl LogWriter {
 #[test]
 fn basic_functionality() {
     // TODO linearize res bufs, verify they are correct
-    let (tx, rx) = channel();
-    let stabilizer = thread::spawn(move || {
-        LogWriter::new(rx).run();
-    });
-    let iobs1 = IOBufs::new(tx);
-    let iobs2 = iobs1.clone();
-    let iobs3 = iobs1.clone();
-    let iobs4 = iobs1.clone();
-    let iobs5 = iobs1.clone();
-    let iobs6 = iobs1.clone();
+    let log = Log::start_system();
+    let iobs2 = log.clone();
+    let iobs3 = log.clone();
+    let iobs4 = log.clone();
+    let iobs5 = log.clone();
+    let iobs6 = log.clone();
     let t1 = thread::spawn(move || {
         for i in 0..5_000 {
             let buf = vec![1; i % 8192];
-            iobs1.write(buf);
+            log.write(buf);
         }
     });
     let t2 = thread::spawn(move || {
@@ -428,12 +533,37 @@ fn basic_functionality() {
     t6.join();
 }
 
-#[test]
-fn log_rt() {
+fn test_delta(log: &Log) {
     let deltablock = LogData::Deltas(vec![]);
     let data_bytes = ops::to_binary(&deltablock);
-    let t1 = thread::spawn(move || {
-    });
-    t1.join();
+    let res = log.reserve(data_bytes.len());
+    let id = res.log_id();
+    res.complete(data_bytes);
+    log.make_stable(id);
+    let read = log.read(id).unwrap();
+    assert_eq!(read, deltablock);
+}
 
+fn test_abort(log: &Log) {
+    let res = log.reserve(5);
+    let id = res.log_id();
+    res.abort();
+    log.make_stable(id);
+    match log.read(id) {
+        Err(_) => (), // good
+        Ok(_) => {
+            panic!("sucessfully read an aborted request! BAD! SAD!");
+        }
+    }
+}
+
+#[test]
+fn log_rt() {
+    let log = Log::start_system();
+    test_delta(&log);
+    test_abort(&log);
+    test_delta(&log);
+    test_abort(&log);
+    test_delta(&log);
+    test_abort(&log);
 }

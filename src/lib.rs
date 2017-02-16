@@ -139,6 +139,15 @@ mod ops {
         encode(s, SizeLimit::Infinite).unwrap()
     }
 
+    pub fn to_framed_binary<T: Encodable>(s: &T) -> Vec<u8> {
+        let mut bytes = to_binary(s);
+        let mut size = usize_to_array(bytes.len()).to_vec();
+        let mut ret = Vec::with_capacity(bytes.len() + 4);
+        ret.append(&mut size);
+        ret.append(&mut bytes);
+        ret
+    }
+
     pub fn from_binary<T: Decodable>(encoded: Vec<u8>) -> DecodingResult<T> {
         decode(&encoded[..])
     }
