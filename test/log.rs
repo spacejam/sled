@@ -47,12 +47,12 @@ fn basic_functionality() {
             iobs6.write(buf);
         }
     });
-    t1.join();
-    t2.join();
-    t3.join();
-    t4.join();
-    t5.join();
-    t6.join();
+    t1.join().unwrap();
+    t2.join().unwrap();
+    t3.join().unwrap();
+    t4.join().unwrap();
+    t5.join().unwrap();
+    t6.join().unwrap();
 }
 
 fn test_delta(log: &Log) {

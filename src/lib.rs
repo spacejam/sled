@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 extern crate libc;
 extern crate rustc_serialize;
 extern crate bincode;
@@ -17,7 +19,7 @@ pub use rsdb::RSDB;
 pub use log::Log;
 
 use crc16::crc16_arr;
-use map::CASMap;
+// use map::CASMap;
 
 type PageID = u64;
 type LogID = u64; // LogID == position to simplify file mapping

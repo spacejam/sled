@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
 
 use super::*;
 

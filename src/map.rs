@@ -1,3 +1,4 @@
+#![allow(unused)]
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::io;
@@ -75,7 +76,7 @@ fn basic_naive_map_test() {
         nmt2.cas(1, Some(&1), Some(2));
         nmt2.cas(2, None, Some(2));
     });
-    t1.join();
+    t1.join().unwrap();
     let t2 = thread::spawn(move || {
         let g1 = nmt3.get(&1).unwrap();
         let g2 = nmt3.get(&2).unwrap();
@@ -83,7 +84,7 @@ fn basic_naive_map_test() {
         assert_eq!(*g2.read().unwrap(), 2);
         nmt3.cas(3, None, Some(3));
     });
-    t2.join();
+    t2.join().unwrap();
     let g3 = nmt.get(&3).unwrap();
     assert_eq!(*g3.read().unwrap(), 3);
     assert_eq!(nmt.cas(1, Some(&1), None), Err(CASCompareFail));

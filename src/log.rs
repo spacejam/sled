@@ -1,8 +1,6 @@
 use std::fmt::{self, Debug};
 use std::fs;
 use std::io::{self, Read, Write, Seek, SeekFrom, Error, ErrorKind};
-use std::os::unix::fs::OpenOptionsExt;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::cell::{UnsafeCell, RefCell};
@@ -35,7 +33,7 @@ impl Log {
         let (tx, rx) = channel();
         let lw = LogWriter::new(rx, stable.clone());
         let offset = lw.open_offset;
-        let stabilizer = thread::spawn(move || {
+        thread::spawn(move || {
             lw.run();
         });
         Log {
@@ -189,14 +187,14 @@ unsafe impl Send for Reservation {}
 
 impl IOBufs {
     fn new(plunger: Sender<Reservation>, disk_offset: usize) -> IOBufs {
-        let mut bufs = [Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])),
-                        Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])),
-                        Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])),
-                        Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])),
-                        Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])),
-                        Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])),
-                        Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])),
-                        Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ]))];
+        let bufs = [Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])),
+                    Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])),
+                    Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])),
+                    Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])),
+                    Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])),
+                    Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])),
+                    Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])),
+                    Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ]))];
         let headers = [Arc::new(AtomicUsize::new(0)),
                        Arc::new(AtomicUsize::new(0)),
                        Arc::new(AtomicUsize::new(0)),
@@ -379,18 +377,14 @@ impl Reservation {
         let data_start = start + HEADER_LEN;
         let data_end = start + self.len(); // NB self.len() includes HEADER_LEN
 
-        unsafe {
-            (out_buf)[valid_start..valid_end].copy_from_slice(&*valid_bytes);
-            // FIXME "index 1000003 out of range for slice of length 1000000"
-            (out_buf)[size_start..size_end].copy_from_slice(&*size_bytes);
-            (out_buf)[crc16_start..crc16_end].copy_from_slice(&crc16_bytes);
-        }
+        (out_buf)[valid_start..valid_end].copy_from_slice(&*valid_bytes);
+        // FIXME "index 1000003 out of range for slice of length 1000000"
+        (out_buf)[size_start..size_end].copy_from_slice(&*size_bytes);
+        (out_buf)[crc16_start..crc16_end].copy_from_slice(&crc16_bytes);
 
         if buf.len() > 0 && valid {
             assert_eq!(buf.len() + HEADER_LEN, self.res_len as usize);
-            unsafe {
-                (out_buf)[data_start..data_end].copy_from_slice(&*buf);
-            }
+            (out_buf)[data_start..data_end].copy_from_slice(&*buf);
         } else if !valid {
             assert_eq!(buf.len(), 0);
             // no need to actually write zeros, the next seek will punch a hole
@@ -424,20 +418,18 @@ impl Reservation {
             // or too few incr's have happened
             assert_ne!(ops::n_writers(hv), 0);
         }
-
-        ret
     }
 
     fn slam_down_pipe(self) {
         let plunger = self.plunger.clone();
-        plunger.send(self);
+        plunger.send(self).unwrap();
     }
 
     fn stabilize(&self, log: &mut fs::File) -> LogID {
         // put the buf identified by idx on disk
         let data = unsafe { (*self.buf.get()).as_mut_slice() };
         let data_bytes = &data[0..self.res_len as usize];
-        log.seek(SeekFrom::Start(self.base_disk_offset));
+        log.seek(SeekFrom::Start(self.base_disk_offset)).unwrap();
         log.write_all(&data_bytes).unwrap();
 
         // TODO fix mapping with offset prediction
