@@ -96,9 +96,9 @@ fn open_log_for_reading() -> fs::File {
 }
 
 pub struct IOBufs {
-    bufs: [Arc<UnsafeCell<Vec<u8>>>; N_BUFS],
-    headers: [Arc<AtomicUsize>; N_BUFS],
-    log_offsets: [Arc<AtomicUsize>; N_BUFS],
+    bufs: Vec<Arc<UnsafeCell<Vec<u8>>>>,
+    headers: Vec<Arc<AtomicUsize>>,
+    log_offsets: Vec<Arc<AtomicUsize>>,
     current_buf: Arc<AtomicUsize>,
     written_bufs: Arc<AtomicUsize>,
     plunger: Sender<Reservation>,
@@ -132,30 +132,9 @@ impl Debug for IOBufs {
 impl Clone for IOBufs {
     fn clone(&self) -> IOBufs {
         IOBufs {
-            bufs: [self.bufs[0].clone(),
-                   self.bufs[1].clone(),
-                   self.bufs[2].clone(),
-                   self.bufs[3].clone(),
-                   self.bufs[4].clone(),
-                   self.bufs[5].clone(),
-                   self.bufs[6].clone(),
-                   self.bufs[7].clone()],
-            headers: [self.headers[0].clone(),
-                      self.headers[1].clone(),
-                      self.headers[2].clone(),
-                      self.headers[3].clone(),
-                      self.headers[4].clone(),
-                      self.headers[5].clone(),
-                      self.headers[6].clone(),
-                      self.headers[7].clone()],
-            log_offsets: [self.log_offsets[0].clone(),
-                          self.log_offsets[1].clone(),
-                          self.log_offsets[2].clone(),
-                          self.log_offsets[3].clone(),
-                          self.log_offsets[4].clone(),
-                          self.log_offsets[5].clone(),
-                          self.log_offsets[6].clone(),
-                          self.log_offsets[7].clone()],
+            bufs: self.bufs.clone(),
+            headers: self.headers.clone(),
+            log_offsets: self.log_offsets.clone(),
             current_buf: self.current_buf.clone(),
             written_bufs: self.written_bufs.clone(),
             plunger: self.plunger.clone(),
@@ -185,32 +164,23 @@ pub struct Reservation {
 
 unsafe impl Send for Reservation {}
 
+macro_rules! rep_no_copy {
+    ($e:expr; $n:expr) => {
+        {
+            let mut v = Vec::with_capacity($n);
+            for _ in 0..$n {
+                v.push($e);
+            }
+            v
+        }
+    };
+}
+
 impl IOBufs {
     fn new(plunger: Sender<Reservation>, disk_offset: usize) -> IOBufs {
-        let bufs = [Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])),
-                    Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])),
-                    Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])),
-                    Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])),
-                    Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])),
-                    Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])),
-                    Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])),
-                    Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ]))];
-        let headers = [Arc::new(AtomicUsize::new(0)),
-                       Arc::new(AtomicUsize::new(0)),
-                       Arc::new(AtomicUsize::new(0)),
-                       Arc::new(AtomicUsize::new(0)),
-                       Arc::new(AtomicUsize::new(0)),
-                       Arc::new(AtomicUsize::new(0)),
-                       Arc::new(AtomicUsize::new(0)),
-                       Arc::new(AtomicUsize::new(0))];
-        let log_offsets = [Arc::new(AtomicUsize::new(disk_offset)),
-                           Arc::new(AtomicUsize::new(disk_offset)),
-                           Arc::new(AtomicUsize::new(disk_offset)),
-                           Arc::new(AtomicUsize::new(disk_offset)),
-                           Arc::new(AtomicUsize::new(disk_offset)),
-                           Arc::new(AtomicUsize::new(disk_offset)),
-                           Arc::new(AtomicUsize::new(disk_offset)),
-                           Arc::new(AtomicUsize::new(disk_offset))];
+        let bufs = rep_no_copy![Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])); N_BUFS];
+        let headers = rep_no_copy![Arc::new(AtomicUsize::new(0)); N_BUFS];
+        let log_offsets = rep_no_copy![Arc::new(AtomicUsize::new(disk_offset)); N_BUFS];
         IOBufs {
             bufs: bufs,
             headers: headers,
