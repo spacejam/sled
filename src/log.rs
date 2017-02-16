@@ -96,7 +96,7 @@ fn open_log_for_reading() -> fs::File {
 }
 
 #[derive(Clone)]
-pub struct IOBufs {
+struct IOBufs {
     bufs: Vec<Arc<UnsafeCell<Vec<u8>>>>,
     headers: Vec<Arc<AtomicUsize>>,
     log_offsets: Vec<Arc<AtomicUsize>>,

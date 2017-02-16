@@ -23,6 +23,19 @@ api
 api
 
 ```rust
+impl PageCache {
+    fn delta(pid: PageID, delta: Delta) -> LogID;
+    fn replace(pid: PageID, new_page: Page) -> LogID;
+    fn read(pid: PageID) -> Data;
+    fn flush(page_id: PageID, annotation: Vec<u8>) -> LogID;
+    fn make_stable(log_coords: LogID);
+    fn hi_stable() -> LogID;
+    fn allocate() -> PageID;
+    fn free(pid: PageID);
+    fn tx_begin(id: TxID);
+    fn tx_commit(id: TxID);
+    fn tx_abort(id: TxID);
+}
 ```
 
 ## [Logged storage](src/log.rs)
@@ -30,4 +43,16 @@ api
 api
 
 ```rust
+impl Log {
+    pub fn start_system() -> Log;
+    pub fn reserve(&self, sz: usize) -> Reservation;
+    pub fn write(&self, buf: Vec<u8>) -> LogID;
+    pub fn read(&self, id: LogID) -> io::Result<LogData>;
+    pub fn make_stable(&self, id: LogID);
+}
+impl Reservation {
+    pub fn abort(self);
+    pub fn complete(self, buf: Vec<u8>) -> LogID;
+    pub fn log_id(&self) -> LogID;
+}
 ```

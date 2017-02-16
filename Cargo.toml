@@ -5,7 +5,7 @@ authors = ["Tyler Neely <t@jujit.su>"]
 description = "transactional KV store backed by a log-structured persistent B+ tree"
 license = "Apache-2.0"
 homepage = "https://github.com/spacejam/rsdb"
-keywords = ["database", "embeddable", "kv", "persistent", "log-structured", "transactional"]
+keywords = ["database", "embedded", "high-performance", "persistent", "transaction"]
 
 [[test]]
 name = "test"
@@ -15,3 +15,7 @@ path = "test/test.rs"
 rustc-serialize = "0.3"
 bincode = "0.6"
 libc = "0.2"
+
+[dev-dependencies]
+quickcheck = "0.2"
+rand = "0.3"

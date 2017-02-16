@@ -1,10 +1,7 @@
 #![allow(dead_code)]
-
 extern crate libc;
 extern crate rustc_serialize;
 extern crate bincode;
-
-use std::collections::HashMap;
 
 mod log;
 mod map;
@@ -17,8 +14,10 @@ pub mod ops;
 
 pub use rsdb::RSDB;
 pub use log::Log;
+pub use page::PageCache;
 
 use crc16::crc16_arr;
+use map::CASMap;
 
 type PageID = u64;
 type LogID = u64; // LogID == position to simplify file mapping
