@@ -1,13 +1,6 @@
 extern crate rsdb;
 
-use rsdb::RSDB;
-
-#[test]
-fn it_works() {
-    let mut db = RSDB::new("/tmp/rsdb").unwrap();
-    db.set(b"k1", b"v1").unwrap();
-    assert!(db.get(b"k1").unwrap().unwrap() == b"v1")
-}
+mod log;
 
 // #[bench]
 // fn bench_set(b: &mut Bencher) {

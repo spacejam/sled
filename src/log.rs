@@ -11,12 +11,83 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 
 use super::*;
 
-const HEADER_LEN: usize = 5;
+const HEADER_LEN: usize = 7;
 const MAX_BUF_SZ: usize = 1_000_000;
 const N_BUFS: usize = 8;
 
 thread_local! {
     static LOCAL_READER: RefCell<fs::File> = RefCell::new(open_log_for_reading());
+}
+
+#[derive(Clone)]
+pub struct Log {
+    iobufs: IOBufs,
+    stable: Arc<AtomicUsize>,
+}
+
+unsafe impl Send for Log {}
+
+unsafe impl Sync for Log {}
+
+impl Log {
+    pub fn start_system() -> Log {
+        let stable = Arc::new(AtomicUsize::new(0));
+        let (tx, rx) = channel();
+        let lw = LogWriter::new(rx, stable.clone());
+        let offset = lw.open_offset;
+        let stabilizer = thread::spawn(move || {
+            lw.run();
+        });
+        Log {
+            iobufs: IOBufs::new(tx, offset as usize),
+            stable: stable,
+        }
+    }
+
+    pub fn reserve(&self, sz: usize) -> Reservation {
+        assert_eq!(sz >> 32, 0);
+        self.iobufs.reserve(sz as u32)
+    }
+
+    pub fn write(&self, buf: Vec<u8>) -> LogID {
+        self.iobufs.write(buf)
+    }
+
+    pub fn read(&self, id: LogID) -> io::Result<LogData> {
+        LOCAL_READER.with(|f| {
+            let mut f = f.borrow_mut();
+            f.seek(SeekFrom::Start(id))?;
+            let mut valid = [0u8; 1];
+            f.read_exact(&mut valid)?;
+            if valid[0] == 0 {
+                return Err(Error::new(ErrorKind::Other, "tried to read failed flush"));
+            }
+            let mut len_buf = [0u8; 4];
+            f.read_exact(&mut len_buf)?;
+            let len = ops::array_to_usize(len_buf);
+            let mut crc16_buf = [0u8; 2];
+            f.read_exact(&mut crc16_buf)?;
+            let mut buf = Vec::with_capacity(len);
+            unsafe {
+                buf.set_len(len);
+            }
+            f.read_exact(&mut buf)?;
+            if crc16_arr(&buf) != crc16_buf {
+                return Err(Error::new(ErrorKind::Other, "read data failed crc16 checksum"));
+            }
+            ops::from_binary::<LogData>(buf)
+                .map_err(|_| Error::new(ErrorKind::Other, "failed to deserialize LogData"))
+        })
+    }
+
+    pub fn make_stable(&self, id: LogID) {
+        loop {
+            let cur = self.stable.load(Ordering::SeqCst) as LogID;
+            if cur >= id {
+                return;
+            }
+        }
+    }
 }
 
 fn open_log_for_reading() -> fs::File {
@@ -99,7 +170,7 @@ unsafe impl Send for IOBufs {}
 unsafe impl Sync for IOBufs {}
 
 #[derive(Clone)]
-struct Reservation {
+pub struct Reservation {
     base_disk_offset: LogID,
     res_len: u32, // this may be different from header, due to concurrent access
     buf_offset: u32,
@@ -292,27 +363,33 @@ impl Reservation {
         let mut out_buf = unsafe { (*self.buf.get()).as_mut_slice() };
 
         let size_bytes = ops::usize_to_array(self.len() - HEADER_LEN).to_vec();
-        let valid_bytes = if valid {
-            vec![1u8]
+        let (valid_bytes, crc16_bytes) = if valid {
+            (vec![1u8], crc16_arr(&buf))
         } else {
-            vec![0u8]
+            (vec![0u8], [0u8; 2])
         };
 
-        let valid_range = self.buf_offset as usize..(self.buf_offset as usize + 1);
-        let size_range = (self.buf_offset as usize + 1)..(self.buf_offset as usize + HEADER_LEN);
-        let data_start = self.buf_offset as usize + HEADER_LEN;
-        let data_end = self.buf_offset as usize + self.len();
-        let data_range = data_start..data_end;
+        let start = self.buf_offset as usize;
+        let valid_start = start;
+        let valid_end = start + valid_bytes.len();
+        let size_start = valid_end;
+        let size_end = valid_end + size_bytes.len();
+        let crc16_start = size_end;
+        let crc16_end = size_end + crc16_bytes.len();
+        let data_start = start + HEADER_LEN;
+        let data_end = start + self.len(); // NB self.len() includes HEADER_LEN
 
         unsafe {
-            (out_buf)[valid_range].copy_from_slice(&*valid_bytes);
-            (out_buf)[size_range].copy_from_slice(&*size_bytes);
+            (out_buf)[valid_start..valid_end].copy_from_slice(&*valid_bytes);
+            // FIXME "index 1000003 out of range for slice of length 1000000"
+            (out_buf)[size_start..size_end].copy_from_slice(&*size_bytes);
+            (out_buf)[crc16_start..crc16_end].copy_from_slice(&crc16_bytes);
         }
 
         if buf.len() > 0 && valid {
             assert_eq!(buf.len() + HEADER_LEN, self.res_len as usize);
             unsafe {
-                (out_buf)[data_range].copy_from_slice(&*buf);
+                (out_buf)[data_start..data_end].copy_from_slice(&*buf);
             }
         } else if !valid {
             assert_eq!(buf.len(), 0);
@@ -409,161 +486,8 @@ impl LogWriter {
     fn run(mut self) {
         for res in self.receiver.iter() {
             let stable = res.stabilize(&mut self.log);
-            self.stable.store(stable as usize, Ordering::SeqCst);
+            let old = self.stable.swap(stable as usize, Ordering::SeqCst);
+            assert!(old <= stable as usize);
         }
     }
-}
-
-#[derive(Clone)]
-pub struct Log {
-    iobufs: IOBufs,
-    stable: Arc<AtomicUsize>,
-}
-
-unsafe impl Send for Log {}
-
-unsafe impl Sync for Log {}
-
-impl Log {
-    pub fn start_system() -> Log {
-        let stable = Arc::new(AtomicUsize::new(0));
-        let (tx, rx) = channel();
-        let lw = LogWriter::new(rx, stable.clone());
-        let offset = lw.open_offset;
-        let stabilizer = thread::spawn(move || {
-            lw.run();
-        });
-        Log {
-            iobufs: IOBufs::new(tx, offset as usize),
-            stable: stable,
-        }
-    }
-
-    pub fn reserve(&self, sz: usize) -> Reservation {
-        assert_eq!(sz >> 32, 0);
-        self.iobufs.reserve(sz as u32)
-    }
-
-    pub fn write(&self, buf: Vec<u8>) -> LogID {
-        self.iobufs.write(buf)
-    }
-
-    pub fn read(&self, id: LogID) -> io::Result<LogData> {
-        LOCAL_READER.with(|f| {
-            let mut f = f.borrow_mut();
-            f.seek(SeekFrom::Start(id))?;
-            let mut valid = [0u8; 1];
-            f.read_exact(&mut valid)?;
-            if valid[0] == 0 {
-                return Err(Error::new(ErrorKind::Other, "tried to read failed flush"));
-            }
-            let mut len_buf = [0u8; 4];
-            f.read_exact(&mut len_buf)?;
-            let len = ops::array_to_usize(len_buf);
-            let mut buf = Vec::with_capacity(len);
-            unsafe {
-                buf.set_len(len);
-            }
-            f.read_exact(&mut buf)?;
-            ops::from_binary::<LogData>(buf)
-                .map_err(|_| Error::new(ErrorKind::Other, "failed to deserialize LogData"))
-        })
-    }
-
-    pub fn make_stable(&self, id: LogID) {
-        loop {
-            let cur = self.stable.load(Ordering::SeqCst) as LogID;
-            if cur >= id {
-                return;
-            }
-        }
-    }
-}
-
-#[test]
-fn basic_functionality() {
-    // TODO linearize res bufs, verify they are correct
-    let log = Log::start_system();
-    let iobs2 = log.clone();
-    let iobs3 = log.clone();
-    let iobs4 = log.clone();
-    let iobs5 = log.clone();
-    let iobs6 = log.clone();
-    let t1 = thread::spawn(move || {
-        for i in 0..5_000 {
-            let buf = vec![1; i % 8192];
-            log.write(buf);
-        }
-    });
-    let t2 = thread::spawn(move || {
-        for i in 0..5_000 {
-            let buf = vec![2; i % 8192];
-            iobs2.write(buf);
-        }
-    });
-    let t3 = thread::spawn(move || {
-        for i in 0..5_000 {
-            let buf = vec![3; i % 8192];
-            iobs3.write(buf);
-        }
-    });
-    let t4 = thread::spawn(move || {
-        for i in 0..5_000 {
-            let buf = vec![4; i % 8192];
-            iobs4.write(buf);
-        }
-    });
-    let t5 = thread::spawn(move || {
-        for i in 0..5_000 {
-            let buf = vec![5; i % 8192];
-            iobs5.write(buf);
-        }
-    });
-    let t6 = thread::spawn(move || {
-        for i in 0..5_000 {
-            let buf = vec![6; i % 8192];
-            iobs6.write(buf);
-        }
-    });
-    t1.join();
-    t2.join();
-    t3.join();
-    t4.join();
-    t5.join();
-    t6.join();
-}
-
-fn test_delta(log: &Log) {
-    let deltablock = LogData::Deltas(vec![]);
-    let data_bytes = ops::to_binary(&deltablock);
-    let res = log.reserve(data_bytes.len());
-    let id = res.log_id();
-    res.complete(data_bytes);
-    log.make_stable(id);
-    let read = log.read(id).unwrap();
-    assert_eq!(read, deltablock);
-}
-
-fn test_abort(log: &Log) {
-    let res = log.reserve(5);
-    let id = res.log_id();
-    res.abort();
-    log.make_stable(id);
-    match log.read(id) {
-        Err(_) => (), // good
-        Ok(_) => {
-            panic!("sucessfully read an aborted request! BAD! SAD!");
-        }
-    }
-}
-
-#[test]
-fn log_rt() {
-    let log = Log::start_system();
-    test_delta(&log);
-    test_abort(&log);
-    test_delta(&log);
-    test_abort(&log);
-    test_delta(&log);
-    test_abort(&log);
 }
