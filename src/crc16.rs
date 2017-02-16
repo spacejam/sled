@@ -41,7 +41,7 @@
 // Output for "123456789"     : 31C3
 //
 
-static crc16tab: [u16; 256] =
+const CRC16TAB: [u16; 256] =
     [0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50a5, 0x60c6, 0x70e7, 0x8108, 0x9129, 0xa14a,
      0xb16b, 0xc18c, 0xd1ad, 0xe1ce, 0xf1ef, 0x1231, 0x0210, 0x3273, 0x2252, 0x52b5, 0x4294,
      0x72f7, 0x62d6, 0x9339, 0x8318, 0xb37b, 0xa35a, 0xd3bd, 0xc39c, 0xf3ff, 0xe3de, 0x2462,
@@ -67,16 +67,18 @@ static crc16tab: [u16; 256] =
      0xcf5d, 0xdf7c, 0xaf9b, 0xbfba, 0x8fd9, 0x9ff8, 0x6e17, 0x7e36, 0x4e55, 0x5e74, 0x2e93,
      0x3eb2, 0x0ed1, 0x1ef0];
 
+#[inline(always)]
 pub fn crc16(buf: &[u8]) -> u16 {
     let mut crc = 0u16;
     for &b in &*buf {
-        let idx = (((crc >> 8) ^ b as u16) & 0x00FF);
-        let lookup = crc16tab[idx as usize];
+        let idx = ((crc >> 8) ^ b as u16) & 0x00FF;
+        let lookup = CRC16TAB[idx as usize];
         crc = (crc << 8) ^ lookup;
     }
     crc
 }
 
+#[inline(always)]
 pub fn crc16_arr(buf: &[u8]) -> [u8; 2] {
     let crc16 = crc16(buf);
     [(crc16 >> 8) as u8, crc16 as u8]
