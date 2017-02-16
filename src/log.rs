@@ -479,6 +479,7 @@ impl LogWriter {
         for res in self.receiver.iter() {
             let stable = res.stabilize(&mut self.log);
             let old = self.stable.swap(stable as usize, Ordering::SeqCst);
+            // FIXME 'assertion failed: old <= (stable as usize)'
             assert!(old <= stable as usize);
         }
     }

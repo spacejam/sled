@@ -12,37 +12,37 @@ fn basic_functionality() {
     let iobs5 = log.clone();
     let iobs6 = log.clone();
     let t1 = thread::spawn(move || {
-        for i in 0..5_000 {
+        for i in 0..500_000 {
             let buf = vec![1; i % 8192];
             log.write(buf);
         }
     });
     let t2 = thread::spawn(move || {
-        for i in 0..5_000 {
+        for i in 0..500_000 {
             let buf = vec![2; i % 8192];
             iobs2.write(buf);
         }
     });
     let t3 = thread::spawn(move || {
-        for i in 0..5_000 {
+        for i in 0..500_000 {
             let buf = vec![3; i % 8192];
             iobs3.write(buf);
         }
     });
     let t4 = thread::spawn(move || {
-        for i in 0..5_000 {
+        for i in 0..500_000 {
             let buf = vec![4; i % 8192];
             iobs4.write(buf);
         }
     });
     let t5 = thread::spawn(move || {
-        for i in 0..5_000 {
+        for i in 0..500_000 {
             let buf = vec![5; i % 8192];
             iobs5.write(buf);
         }
     });
     let t6 = thread::spawn(move || {
-        for i in 0..5_000 {
+        for i in 0..500_000 {
             let buf = vec![6; i % 8192];
             iobs6.write(buf);
         }
