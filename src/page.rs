@@ -1,3 +1,4 @@
+#![allow(unused)]
 use std::sync::{Arc, RwLock};
 use std::sync::atomic::AtomicUsize;
 

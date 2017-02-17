@@ -9,6 +9,18 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 
 use super::*;
 
+macro_rules! rep_no_copy {
+    ($e:expr; $n:expr) => {
+        {
+            let mut v = Vec::with_capacity($n);
+            for _ in 0..$n {
+                v.push($e);
+            }
+            v
+        }
+    };
+}
+
 const HEADER_LEN: usize = 7;
 const MAX_BUF_SZ: usize = 1_000_000;
 const N_BUFS: usize = 8;
@@ -151,18 +163,6 @@ pub struct Reservation {
 }
 
 unsafe impl Send for Reservation {}
-
-macro_rules! rep_no_copy {
-    ($e:expr; $n:expr) => {
-        {
-            let mut v = Vec::with_capacity($n);
-            for _ in 0..$n {
-                v.push($e);
-            }
-            v
-        }
-    };
-}
 
 impl IOBufs {
     fn new(plunger: Sender<Reservation>, disk_offset: usize) -> IOBufs {
@@ -418,7 +418,9 @@ struct LogWriter {
 impl LogWriter {
     fn new(receiver: Receiver<Reservation>, stable: Arc<AtomicUsize>) -> LogWriter {
         // TODO make log file configurable
-        let cur_id = fs::metadata("rsdb.log").map(|m| m.len()).unwrap_or(0);
+        // NB we make the default ID 1 so that we can use 0 as a null LogID in
+        // AtomicUsize's elsewhere throughout the codebase
+        let cur_id = fs::metadata("rsdb.log").map(|m| m.len()).unwrap_or(1);
         stable.store(cur_id as usize, Ordering::SeqCst);
 
         let mut options = fs::OpenOptions::new();

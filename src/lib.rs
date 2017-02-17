@@ -3,21 +3,22 @@ extern crate libc;
 extern crate rustc_serialize;
 extern crate bincode;
 
-mod log;
-mod map;
-mod page;
-mod rsdb;
-mod tree;
-mod tx;
-mod crc16;
-pub mod ops;
-
-pub use rsdb::RSDB;
 pub use log::Log;
 pub use page::PageCache;
+pub use stack::Stack;
 
 use crc16::crc16_arr;
 use map::CASMap;
+
+mod log;
+mod crc16;
+mod stack;
+mod map;
+mod page;
+mod rsdb;
+mod radix;
+
+pub mod ops;
 
 type PageID = u64;
 type LogID = u64; // LogID == position to simplify file mapping
