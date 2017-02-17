@@ -1,52 +1,54 @@
-// lock-free linked-list
-use std::cell::{UnsafeCell, RefCell};
+// lock-free stack
 use std::fmt::{self, Debug};
 use std::ptr;
 use std::mem;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicPtr, Ordering};
 
 use std::thread;
 
 use super::*;
 
-pub struct Node {
-    id: LogID,
-    header: AtomicUsize, /* header is used to track seal and users, to
-                          * prevent accidental deallocation */
-    next: *mut Node,
+struct Node<T> {
+    inner: T,
+    next: *mut Node<T>,
 }
 
-pub struct List {
-    head: Arc<AtomicPtr<Node>>,
+#[derive(Clone)]
+pub struct Stack<T> {
+    head: Arc<AtomicPtr<Node<T>>>,
 }
 
-unsafe impl Send for List {}
 
-impl Default for List {
-    fn default() -> List {
-        List { head: Arc::new(AtomicPtr::new(ptr::null_mut())) }
+impl<T> Default for Stack<T> {
+    fn default() -> Stack<T> {
+        Stack { head: Arc::new(AtomicPtr::new(ptr::null_mut())) }
     }
 }
 
-impl Debug for List {
+impl<T: Debug> Debug for Stack<T> {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        let mut ptr = self.head.load(Ordering::SeqCst);
-        let mut ids = vec![];
+        let mut ptr = self.head();
+        formatter.write_str("Stack [");
+        let mut written = false;
         while !ptr.is_null() {
+            if written {
+                formatter.write_str(", ");
+            }
             let node = unsafe { Box::from_raw(ptr) };
-            ids.push(node.id);
+            node.inner.fmt(formatter);
             ptr = node.next;
             mem::forget(node);
+            written = true;
         }
-        let debug = format!("List {:?}", ids);
-        fmt::Debug::fmt(&debug, formatter)
+        formatter.write_str("]");
+        Ok(())
     }
 }
 
-impl Drop for List {
+impl<T> Drop for Stack<T> {
     fn drop(&mut self) {
-        let mut ptr = self.head.load(Ordering::SeqCst);
+        let mut ptr = self.head();
         while !ptr.is_null() {
             let node = unsafe { Box::from_raw(ptr) };
             ptr = node.next;
@@ -55,45 +57,68 @@ impl Drop for List {
     }
 }
 
-impl List {
-    fn append(&self, id: LogID) -> Result<(), ()> {
-        let cur = self.head.load(Ordering::SeqCst);
+impl<T> Stack<T> {
+    pub fn try_push(&self, inner: T) -> Result<(), ()> {
+        let cur = self.head();
         let mut node = Box::into_raw(Box::new(Node {
-            id: id,
-            header: AtomicUsize::new(0),
+            inner: inner,
             next: cur,
         }));
-        let old = self.head.compare_and_swap(cur, node, Ordering::SeqCst);
-        if cur == old {
+        if cur == self.head.compare_and_swap(cur, node, Ordering::SeqCst) {
             Ok(())
         } else {
             Err(())
         }
     }
 
-    fn remove(&self, id: LogID) -> Result<(), ()> {
-        // find node
-        // get next
-        // back up, CAS
-        Ok(())
+    pub fn try_pop(&self) -> Result<Option<T>, ()> {
+        let head_ptr = self.head();
+        if head_ptr.is_null() {
+            return Ok(None);
+        }
+        let node = unsafe { Box::from_raw(head_ptr) };
+        let next_ptr = node.next;
+
+        if head_ptr == self.head.compare_and_swap(head_ptr, next_ptr, Ordering::SeqCst) {
+            Ok(Some(node.inner))
+        } else {
+            mem::forget(node);
+            Err(())
+        }
     }
 
-    fn head(&self) -> *mut Node {
+    fn head(&self) -> *mut Node<T> {
         self.head.load(Ordering::SeqCst)
     }
 }
 
 #[test]
 fn basic_functionality() {
-    let ll = List::default();
-    ll.append(1).unwrap();
-    ll.append(2).unwrap();
-    ll.append(3).unwrap();
-    ll.append(4).unwrap();
-    ll.append(5).unwrap();
-    let h = ll.head();
-    unsafe {
-        assert_eq!((*h).id, 5);
-    }
-    println!("ll is {:?}", ll);
+    let ll = Arc::new(Stack::default());
+    assert_eq!(ll.try_pop(), Ok(None));
+    ll.try_push(1).unwrap();
+    let ll2 = ll.clone();
+    let t = thread::spawn(move || {
+        ll2.try_push(2).unwrap();
+        ll2.try_push(3).unwrap();
+        ll2.try_push(4).unwrap();
+    });
+    t.join();
+    ll.try_push(5).unwrap();
+    println!("ll is {:?} before pops", ll);
+    assert_eq!(ll.try_pop(), Ok(Some(5)));
+    assert_eq!(ll.try_pop(), Ok(Some(4)));
+    let ll3 = ll.clone();
+    let t = thread::spawn(move || {
+        assert_eq!(ll3.try_pop(), Ok(Some(3)));
+        assert_eq!(ll3.try_pop(), Ok(Some(2)));
+    });
+    t.join();
+    assert_eq!(ll.try_pop(), Ok(Some(1)));
+    let ll4 = ll.clone();
+    let t = thread::spawn(move || {
+        assert_eq!(ll4.try_pop(), Ok(None));
+    });
+    t.join();
+    println!("ll is {:?} after pops", ll);
 }
