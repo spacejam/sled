@@ -70,3 +70,16 @@ pub fn array_to_usize(ip: [u8; 4]) -> usize {
     ((ip[0] as usize) << 24) as usize + ((ip[1] as usize) << 16) as usize +
     ((ip[2] as usize) << 8) as usize + (ip[3] as usize)
 }
+
+#[inline(always)]
+pub fn split_six(i: u64) -> (u64, u64) {
+    let rem = i >> 6;
+    let first_6 = i << 58 >> 58;
+    (first_6, rem)
+}
+
+#[test]
+fn test_drop_six() {
+    let i = 0 + 0b111111;
+    assert_eq!(split_six(i), (0b111111, 0));
+}
