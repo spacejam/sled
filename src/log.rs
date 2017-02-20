@@ -9,26 +9,38 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 
 use super::*;
 
-macro_rules! rep_no_copy {
-    ($e:expr; $n:expr) => {
-        {
-            let mut v = Vec::with_capacity($n);
-            for _ in 0..$n {
-                v.push($e);
-            }
-            v
-        }
-    };
-}
-
 const HEADER_LEN: usize = 7;
 const MAX_BUF_SZ: usize = 1_000_000;
-const N_BUFS: usize = 8;
 
 thread_local! {
     static LOCAL_READER: RefCell<fs::File> = RefCell::new(open_log_for_reading());
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, RustcDecodable, RustcEncodable)]
+#[repr(C)]
+pub enum LogDelta {
+    Page,
+    Merge {
+        left: PageID,
+        right: PageID,
+    },
+    Split {
+        left: PageID,
+        right: PageID,
+    },
+    FailedFlush, // on-disk only
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, RustcDecodable, RustcEncodable)]
+#[repr(C)]
+pub struct LogPage;
+
+#[derive(Debug, Clone, Eq, PartialEq, RustcDecodable, RustcEncodable)]
+#[repr(C)]
+pub enum LogData {
+    Full(LogPage),
+    Deltas(Vec<LogDelta>),
+}
 #[derive(Clone)]
 pub struct Log {
     iobufs: IOBufs,
@@ -92,11 +104,21 @@ impl Log {
 
     pub fn make_stable(&self, id: LogID) {
         loop {
+            // FIXME this is buggy, because log segments are not
+            // necessarily flushed to disk in-order
+            // solutions:
+            //  1. force serial writing, eat perf hit
+            //  2. enable non-contiguous id tracking, eat complexity hit
+            //  TODO investigate mitigations to downsides of each...
             let cur = self.stable.load(Ordering::SeqCst) as LogID;
             if cur >= id {
                 return;
             }
         }
+    }
+
+    pub fn shutdown(self) {
+        self.iobufs.shutdown();
     }
 }
 
@@ -114,15 +136,15 @@ struct IOBufs {
     log_offsets: Vec<Arc<AtomicUsize>>,
     current_buf: Arc<AtomicUsize>,
     written_bufs: Arc<AtomicUsize>,
-    plunger: Sender<Reservation>,
+    plunger: Sender<ResOrShutdown>,
 }
 
 impl Debug for IOBufs {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         let current_buf = self.current_buf.load(Ordering::SeqCst);
         let written = self.written_bufs.load(Ordering::SeqCst);
-        let slow_writers = current_buf - written >= N_BUFS;
-        let idx = current_buf % N_BUFS;
+        let slow_writers = current_buf - written >= N_TX_THREADS;
+        let idx = current_buf % N_TX_THREADS;
         // load current header value
         let header = self.headers[idx].clone();
         let hv = header.load(Ordering::SeqCst) as u32;
@@ -156,7 +178,7 @@ pub struct Reservation {
     header: Arc<AtomicUsize>,
     current_buf: Arc<AtomicUsize>,
     written_bufs: Arc<AtomicUsize>,
-    plunger: Sender<Reservation>,
+    plunger: Sender<ResOrShutdown>,
     idx: usize,
     cur_log_offset: Arc<AtomicUsize>,
     next_log_offset: Arc<AtomicUsize>,
@@ -165,10 +187,10 @@ pub struct Reservation {
 unsafe impl Send for Reservation {}
 
 impl IOBufs {
-    fn new(plunger: Sender<Reservation>, disk_offset: usize) -> IOBufs {
-        let bufs = rep_no_copy![Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])); N_BUFS];
-        let headers = rep_no_copy![Arc::new(AtomicUsize::new(0)); N_BUFS];
-        let log_offsets = rep_no_copy![Arc::new(AtomicUsize::new(disk_offset)); N_BUFS];
+    fn new(plunger: Sender<ResOrShutdown>, disk_offset: usize) -> IOBufs {
+        let bufs = rep_no_copy![Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])); N_TX_THREADS];
+        let headers = rep_no_copy![Arc::new(AtomicUsize::new(0)); N_TX_THREADS];
+        let log_offsets = rep_no_copy![Arc::new(AtomicUsize::new(disk_offset)); N_TX_THREADS];
         IOBufs {
             bufs: bufs,
             headers: headers,
@@ -189,13 +211,13 @@ impl IOBufs {
             // load atomic progress counters
             let current_buf = self.current_buf.load(Ordering::SeqCst);
             let written = self.written_bufs.load(Ordering::SeqCst);
-            let idx = current_buf % N_BUFS;
+            let idx = current_buf % N_TX_THREADS;
 
             // println!("using buf {}", idx);
 
             // if written is too far behind, we need to
             // spin while it catches up to avoid overlap
-            if current_buf - written >= N_BUFS {
+            if current_buf - written >= N_TX_THREADS {
                 // println!("writers are behind: {:?}", self);
                 continue;
             }
@@ -234,7 +256,8 @@ impl IOBufs {
                     // written_bufs to 0.
                     let new_log_offset = self.log_offsets[idx].load(Ordering::SeqCst) +
                                          offset as usize;
-                    self.log_offsets[(idx + 1) % N_BUFS].store(new_log_offset, Ordering::SeqCst);
+                    self.log_offsets[(idx + 1) % N_TX_THREADS]
+                        .store(new_log_offset, Ordering::SeqCst);
                     self.current_buf.fetch_add(1, Ordering::SeqCst);
 
                     // if writers is now 1 (from our previous incr),
@@ -278,7 +301,7 @@ impl IOBufs {
             plunger: self.plunger.clone(),
             idx: idx,
             cur_log_offset: self.log_offsets[idx].clone(),
-            next_log_offset: self.log_offsets[(idx + 1) % N_BUFS].clone(),
+            next_log_offset: self.log_offsets[(idx + 1) % N_TX_THREADS].clone(),
         };
     }
 
@@ -287,8 +310,8 @@ impl IOBufs {
         res.write(buf, true)
     }
 
-    pub fn shutdown(&self) {
-        unimplemented!()
+    pub fn shutdown(self) {
+        self.plunger.send(ResOrShutdown::Shutdown);
     }
 }
 
@@ -380,7 +403,7 @@ impl Reservation {
 
     fn slam_down_pipe(self) {
         let plunger = self.plunger.clone();
-        plunger.send(self).unwrap();
+        plunger.send(ResOrShutdown::Res(self)).unwrap();
     }
 
     fn stabilize(&self, log: &mut fs::File) -> LogID {
@@ -398,7 +421,7 @@ impl Reservation {
 
         // bump self.written by 1
         self.written_bufs.fetch_add(1, Ordering::SeqCst);
-        // println!("+ buf {} stabilized, cur is {}", self.idx, self.current_buf.load(Ordering::SeqCst) % N_BUFS);
+        // println!("+ buf {} stabilized, cur is {}", self.idx, self.current_buf.load(Ordering::SeqCst) % N_TX_THREADS);
 
         self.base_disk_offset
     }
@@ -409,14 +432,14 @@ impl Reservation {
 }
 
 struct LogWriter {
-    receiver: Receiver<Reservation>,
+    receiver: Receiver<ResOrShutdown>,
     log: fs::File,
     open_offset: LogID,
     stable: Arc<AtomicUsize>,
 }
 
 impl LogWriter {
-    fn new(receiver: Receiver<Reservation>, stable: Arc<AtomicUsize>) -> LogWriter {
+    fn new(receiver: Receiver<ResOrShutdown>, stable: Arc<AtomicUsize>) -> LogWriter {
         // TODO make log file configurable
         // NB we make the default ID 1 so that we can use 0 as a null LogID in
         // AtomicUsize's elsewhere throughout the codebase
@@ -436,12 +459,120 @@ impl LogWriter {
     }
 
     fn run(mut self) {
-        for res in self.receiver.iter() {
-            let stable = res.stabilize(&mut self.log);
-            let old = self.stable.swap(stable as usize, Ordering::SeqCst);
-            // FIXME 'assertion failed: old <= (stable as usize)'
-            // triggered by using the shufnice.sh script in hack with cargo test
-            assert!(old <= stable as usize);
+        for res_or_shutdown in self.receiver.iter() {
+            match res_or_shutdown {
+                ResOrShutdown::Res(res) => {
+                    let stable = res.stabilize(&mut self.log);
+                    let old = self.stable.swap(stable as usize, Ordering::SeqCst);
+                    // FIXME 'assertion failed: old <= (stable as usize)'
+                    // triggered by using the shufnice.sh script in hack with cargo test
+                    assert!(old <= stable as usize);
+                }
+                ResOrShutdown::Shutdown => return,
+            }
         }
     }
+}
+
+enum ResOrShutdown {
+    Res(Reservation),
+    Shutdown,
+}
+
+#[test]
+fn non_contiguous_flush() {
+    let log = Log::start_system();
+    let res1 = log.reserve(MAX_BUF_SZ);
+    let res2 = log.reserve(MAX_BUF_SZ);
+    res1.abort();
+    res2.abort();
+    log.shutdown();
+}
+
+#[test]
+fn basic_functionality() {
+    // TODO linearize res bufs, verify they are correct
+    let log = Log::start_system();
+    let iobs2 = log.clone();
+    let iobs3 = log.clone();
+    let iobs4 = log.clone();
+    let iobs5 = log.clone();
+    let iobs6 = log.clone();
+    let t1 = thread::spawn(move || {
+        for i in 0..5_000 {
+            let buf = vec![1; i % 8192];
+            log.write(buf);
+        }
+    });
+    let t2 = thread::spawn(move || {
+        for i in 0..5_000 {
+            let buf = vec![2; i % 8192];
+            iobs2.write(buf);
+        }
+    });
+    let t3 = thread::spawn(move || {
+        for i in 0..5_000 {
+            let buf = vec![3; i % 8192];
+            iobs3.write(buf);
+        }
+    });
+    let t4 = thread::spawn(move || {
+        for i in 0..5_000 {
+            let buf = vec![4; i % 8192];
+            iobs4.write(buf);
+        }
+    });
+    let t5 = thread::spawn(move || {
+        for i in 0..5_000 {
+            let buf = vec![5; i % 8192];
+            iobs5.write(buf);
+        }
+    });
+    let t6 = thread::spawn(move || {
+        for i in 0..5_000 {
+            let buf = vec![6; i % 8192];
+            iobs6.write(buf);
+        }
+    });
+    t1.join().unwrap();
+    t2.join().unwrap();
+    t3.join().unwrap();
+    t4.join().unwrap();
+    t5.join().unwrap();
+    t6.join().unwrap();
+}
+
+fn test_delta(log: &Log) {
+    let deltablock = LogData::Deltas(vec![]);
+    let data_bytes = ops::to_binary(&deltablock);
+    let res = log.reserve(data_bytes.len());
+    let id = res.log_id();
+    res.complete(data_bytes);
+    log.make_stable(id);
+    let read = log.read(id).unwrap();
+    assert_eq!(read, deltablock);
+}
+
+fn test_abort(log: &Log) {
+    let res = log.reserve(5);
+    let id = res.log_id();
+    res.abort();
+    log.make_stable(id);
+    match log.read(id) {
+        Err(_) => (), // good
+        Ok(_) => {
+            panic!("sucessfully read an aborted request! BAD! SAD!");
+        }
+    }
+}
+
+#[test]
+fn log_rt() {
+    let log = Log::start_system();
+    test_delta(&log);
+    test_abort(&log);
+    test_delta(&log);
+    test_abort(&log);
+    test_delta(&log);
+    test_abort(&log);
 }

@@ -2,6 +2,7 @@
 use std::fmt::{self, Debug};
 use std::ptr;
 use std::mem;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
@@ -18,7 +19,6 @@ struct Node<T> {
 pub struct Stack<T> {
     head: Arc<AtomicPtr<Node<T>>>,
 }
-
 
 impl<T> Default for Stack<T> {
     fn default() -> Stack<T> {
@@ -43,6 +43,13 @@ impl<T: Debug> Debug for Stack<T> {
         }
         formatter.write_str("]");
         Ok(())
+    }
+}
+
+impl<T> Deref for Node<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.inner
     }
 }
 
@@ -87,6 +94,14 @@ impl<T> Stack<T> {
         }
     }
 
+    pub fn to_vec(mut self) -> Vec<T> {
+        let mut res = vec![];
+        while let Ok(Some(v)) = self.try_pop() {
+            res.push(v);
+        }
+        res
+    }
+
     fn head(&self) -> *mut Node<T> {
         self.head.load(Ordering::SeqCst)
     }
@@ -105,7 +120,6 @@ fn basic_functionality() {
     });
     t.join();
     ll.try_push(5).unwrap();
-    println!("ll is {:?} before pops", ll);
     assert_eq!(ll.try_pop(), Ok(Some(5)));
     assert_eq!(ll.try_pop(), Ok(Some(4)));
     let ll3 = ll.clone();
@@ -120,5 +134,4 @@ fn basic_functionality() {
         assert_eq!(ll4.try_pop(), Ok(None));
     });
     t.join();
-    println!("ll is {:?} after pops", ll);
 }

@@ -1,7 +1,5 @@
 extern crate rsdb;
 
-mod log;
-
 // #[bench]
 // fn bench_set(b: &mut Bencher) {
 // let mut db = RSDB::new("/tmp/rsdb").unwrap();
