@@ -6,6 +6,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::cell::{UnsafeCell, RefCell};
 use std::thread;
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::os::unix::io::AsRawFd;
+
+use libc::{fallocate, FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE};
 
 use super::*;
 
@@ -14,6 +17,7 @@ const MAX_BUF_SZ: usize = 1_000_000;
 
 thread_local! {
     static LOCAL_READER: RefCell<fs::File> = RefCell::new(open_log_for_reading());
+    static LOCAL_PUNCHER: RefCell<fs::File> = RefCell::new(open_log_for_punching());
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, RustcDecodable, RustcEncodable)]
@@ -68,6 +72,7 @@ impl Log {
 
     pub fn reserve(&self, sz: usize) -> Reservation {
         assert_eq!(sz >> 32, 0);
+        assert!(sz <= MAX_BUF_SZ - HEADER_LEN);
         self.iobufs.reserve(sz as u32)
     }
 
@@ -120,11 +125,38 @@ impl Log {
     pub fn shutdown(self) {
         self.iobufs.shutdown();
     }
+
+    pub fn punch_hole(&self, id: LogID) {
+        LOCAL_PUNCHER.with(|f| {
+            let mut f = f.borrow_mut();
+            f.seek(SeekFrom::Start(id + 1)).unwrap();
+            let mut len_buf = [0u8; 4];
+            f.read_exact(&mut len_buf).unwrap();
+
+            let len = ops::array_to_usize(len_buf);
+            let mode = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE;
+            let fd = f.as_raw_fd();
+
+            unsafe {
+                fallocate(fd, mode, id as i64 + HEADER_LEN as i64, len as i64);
+            }
+        });
+    }
 }
 
 fn open_log_for_reading() -> fs::File {
     let mut options = fs::OpenOptions::new();
+    options.create(true);
     options.read(true);
+    // TODO make logfile configurable
+    options.open("rsdb.log").unwrap()
+}
+
+fn open_log_for_punching() -> fs::File {
+    let mut options = fs::OpenOptions::new();
+    options.create(true);
+    options.read(true);
+    options.write(true);
     // TODO make logfile configurable
     options.open("rsdb.log").unwrap()
 }
@@ -443,12 +475,12 @@ impl LogWriter {
         // TODO make log file configurable
         // NB we make the default ID 1 so that we can use 0 as a null LogID in
         // AtomicUsize's elsewhere throughout the codebase
-        let cur_id = fs::metadata("rsdb.log").map(|m| m.len()).unwrap_or(1);
-        stable.store(cur_id as usize, Ordering::SeqCst);
 
         let mut options = fs::OpenOptions::new();
         options.write(true).create(true);
         let file = options.open("rsdb.log").unwrap();
+        let cur_id = file.metadata().map(|m| m.len()).unwrap_or(1);
+        stable.store(cur_id as usize, Ordering::SeqCst);
 
         LogWriter {
             receiver: receiver,
