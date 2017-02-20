@@ -482,10 +482,10 @@ enum ResOrShutdown {
 #[test]
 fn non_contiguous_flush() {
     let log = Log::start_system();
-    let res1 = log.reserve(MAX_BUF_SZ);
-    let res2 = log.reserve(MAX_BUF_SZ);
-    res1.abort();
+    let res1 = log.reserve(MAX_BUF_SZ - HEADER_LEN);
+    let res2 = log.reserve(MAX_BUF_SZ - HEADER_LEN);
     res2.abort();
+    res1.abort();
     log.shutdown();
 }
 
