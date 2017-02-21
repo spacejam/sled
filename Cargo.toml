@@ -15,6 +15,7 @@ path = "test/test.rs"
 rustc-serialize = "0.3"
 bincode = "0.6"
 libc = "0.2"
+time = "0.1"
 
 [dev-dependencies]
 quickcheck = "0.2"

@@ -121,20 +121,20 @@ impl<T> Default for Radix<T> {
 }
 
 impl<T> Radix<T> {
-    fn insert(&self, pid: PageID, inner: *mut T) -> Result<(), ()> {
+    pub fn insert(&self, pid: PageID, inner: *mut T) -> Result<(), ()> {
         self.head.cas(pid, ptr::null_mut(), inner)
     }
 
-    fn cas(&self, pid: PageID, old: *mut T, new: *mut T) -> Result<(), ()> {
+    pub fn cas(&self, pid: PageID, old: *mut T, new: *mut T) -> Result<(), ()> {
         self.head.cas(pid, old, new)
     }
 
-    fn get(&self, pid: PageID) -> Option<*mut T> {
+    pub fn get(&self, pid: PageID) -> Option<*mut T> {
         self.head.get(pid)
 
     }
 
-    fn del(&self, pid: PageID) -> Result<(), ()> {
+    pub fn del(&self, pid: PageID) -> Result<(), ()> {
         if let Some(cur) = self.get(pid) {
             self.cas(pid, cur, ptr::null_mut())
         } else {

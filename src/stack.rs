@@ -10,7 +10,7 @@ use std::thread;
 
 use super::*;
 
-struct Node<T> {
+pub struct Node<T> {
     inner: T,
     next: *mut Node<T>,
 }
@@ -102,7 +102,7 @@ impl<T> Stack<T> {
         res
     }
 
-    fn head(&self) -> *mut Node<T> {
+    pub fn head(&self) -> *mut Node<T> {
         self.head.load(Ordering::SeqCst)
     }
 }
