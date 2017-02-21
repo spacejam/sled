@@ -14,10 +14,10 @@ use super::*;
 
 const HEADER_LEN: usize = 7;
 const MAX_BUF_SZ: usize = 1_000_000;
+const N_BUFS: usize = 11;
 
 thread_local! {
-    static LOCAL_READER: RefCell<fs::File> = RefCell::new(open_log_for_reading());
-    static LOCAL_PUNCHER: RefCell<fs::File> = RefCell::new(open_log_for_punching());
+    static TL_READ_PUNCHER: RefCell<fs::File> = RefCell::new(open_log_for_punching());
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, RustcDecodable, RustcEncodable)]
@@ -81,7 +81,7 @@ impl Log {
     }
 
     pub fn read(&self, id: LogID) -> io::Result<LogData> {
-        LOCAL_READER.with(|f| {
+        TL_READ_PUNCHER.with(|f| {
             let mut f = f.borrow_mut();
             f.seek(SeekFrom::Start(id))?;
             let mut valid = [0u8; 1];
@@ -107,6 +107,10 @@ impl Log {
         })
     }
 
+    pub fn stable_offset(&self) -> LogID {
+        self.stable.load(Ordering::SeqCst) as LogID
+    }
+
     pub fn make_stable(&self, id: LogID) {
         loop {
             // FIXME this is buggy, because log segments are not
@@ -127,7 +131,7 @@ impl Log {
     }
 
     pub fn punch_hole(&self, id: LogID) {
-        LOCAL_PUNCHER.with(|f| {
+        TL_READ_PUNCHER.with(|f| {
             let mut f = f.borrow_mut();
             f.seek(SeekFrom::Start(id + 1)).unwrap();
             let mut len_buf = [0u8; 4];
@@ -142,14 +146,6 @@ impl Log {
             }
         });
     }
-}
-
-fn open_log_for_reading() -> fs::File {
-    let mut options = fs::OpenOptions::new();
-    options.create(true);
-    options.read(true);
-    // TODO make logfile configurable
-    options.open("rsdb.log").unwrap()
 }
 
 fn open_log_for_punching() -> fs::File {
@@ -175,8 +171,8 @@ impl Debug for IOBufs {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         let current_buf = self.current_buf.load(Ordering::SeqCst);
         let written = self.written_bufs.load(Ordering::SeqCst);
-        let slow_writers = current_buf - written >= N_TX_THREADS;
-        let idx = current_buf % N_TX_THREADS;
+        let slow_writers = current_buf - written >= N_BUFS;
+        let idx = current_buf % N_BUFS;
         // load current header value
         let header = self.headers[idx].clone();
         let hv = header.load(Ordering::SeqCst) as u32;
@@ -220,9 +216,9 @@ unsafe impl Send for Reservation {}
 
 impl IOBufs {
     fn new(plunger: Sender<ResOrShutdown>, disk_offset: usize) -> IOBufs {
-        let bufs = rep_no_copy![Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])); N_TX_THREADS];
-        let headers = rep_no_copy![Arc::new(AtomicUsize::new(0)); N_TX_THREADS];
-        let log_offsets = rep_no_copy![Arc::new(AtomicUsize::new(disk_offset)); N_TX_THREADS];
+        let bufs = rep_no_copy![Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])); N_BUFS];
+        let headers = rep_no_copy![Arc::new(AtomicUsize::new(0)); N_BUFS];
+        let log_offsets = rep_no_copy![Arc::new(AtomicUsize::new(disk_offset)); N_BUFS];
         IOBufs {
             bufs: bufs,
             headers: headers,
@@ -243,13 +239,13 @@ impl IOBufs {
             // load atomic progress counters
             let current_buf = self.current_buf.load(Ordering::SeqCst);
             let written = self.written_bufs.load(Ordering::SeqCst);
-            let idx = current_buf % N_TX_THREADS;
+            let idx = current_buf % N_BUFS;
 
             // println!("using buf {}", idx);
 
             // if written is too far behind, we need to
             // spin while it catches up to avoid overlap
-            if current_buf - written >= N_TX_THREADS {
+            if current_buf - written >= N_BUFS {
                 // println!("writers are behind: {:?}", self);
                 continue;
             }
@@ -288,8 +284,7 @@ impl IOBufs {
                     // written_bufs to 0.
                     let new_log_offset = self.log_offsets[idx].load(Ordering::SeqCst) +
                                          offset as usize;
-                    self.log_offsets[(idx + 1) % N_TX_THREADS]
-                        .store(new_log_offset, Ordering::SeqCst);
+                    self.log_offsets[(idx + 1) % N_BUFS].store(new_log_offset, Ordering::SeqCst);
                     self.current_buf.fetch_add(1, Ordering::SeqCst);
 
                     // if writers is now 1 (from our previous incr),
@@ -333,7 +328,7 @@ impl IOBufs {
             plunger: self.plunger.clone(),
             idx: idx,
             cur_log_offset: self.log_offsets[idx].clone(),
-            next_log_offset: self.log_offsets[(idx + 1) % N_TX_THREADS].clone(),
+            next_log_offset: self.log_offsets[(idx + 1) % N_BUFS].clone(),
         };
     }
 
@@ -453,7 +448,7 @@ impl Reservation {
 
         // bump self.written by 1
         self.written_bufs.fetch_add(1, Ordering::SeqCst);
-        // println!("+ buf {} stabilized, cur is {}", self.idx, self.current_buf.load(Ordering::SeqCst) % N_TX_THREADS);
+        // println!("+ buf {} stabilized, cur is {}", self.idx, self.current_buf.load(Ordering::SeqCst) % N_BUFS);
 
         self.base_disk_offset
     }
@@ -530,6 +525,7 @@ fn basic_functionality() {
     let iobs4 = log.clone();
     let iobs5 = log.clone();
     let iobs6 = log.clone();
+    let log7 = log.clone();
     let t1 = thread::spawn(move || {
         for i in 0..5_000 {
             let buf = vec![1; i % 8192];
@@ -572,6 +568,7 @@ fn basic_functionality() {
     t4.join().unwrap();
     t5.join().unwrap();
     t6.join().unwrap();
+    log7.shutdown();
 }
 
 fn test_delta(log: &Log) {
@@ -599,7 +596,7 @@ fn test_abort(log: &Log) {
 }
 
 #[test]
-fn log_rt() {
+fn test_log_aborts() {
     let log = Log::start_system();
     test_delta(&log);
     test_abort(&log);
@@ -607,4 +604,26 @@ fn log_rt() {
     test_abort(&log);
     test_delta(&log);
     test_abort(&log);
+    log.shutdown();
+}
+
+#[test]
+fn test_hole_punching() {
+    let log = Log::start_system();
+
+    let deltablock = LogData::Deltas(vec![]);
+    let data_bytes = ops::to_binary(&deltablock);
+    let res = log.reserve(data_bytes.len());
+    let id = res.log_id();
+    res.complete(data_bytes);
+    log.make_stable(id);
+    let read = log.read(id).unwrap();
+
+    log.punch_hole(id);
+
+    assert!(log.read(id).is_err());
+
+    // TODO figure out if physical size of log is actually smaller now
+
+    log.shutdown();
 }

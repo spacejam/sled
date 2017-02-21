@@ -1,34 +1,50 @@
 #![allow(unused)]
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 use super::*;
 
 #[derive(Clone)]
-pub struct PT {
-    current_epoch: Arc<AtomicUsize>,
+pub struct PageCache {
+    // end_stable_log is the highest LSN that may be flushed
+    pub esl: Arc<AtomicUsize>,
+    // highest_pid marks the max PageID we've allocated
     highest_pid: Arc<AtomicUsize>,
     // table maps from PageID to a stack of entries
-    table: Radix<Stack<PTEntry>>,
-    // tx table maps from TxID to Tx chain
-    tx_table: Radix<Stack<Tx>>,
+    table: Radix<Stack<PageCacheEntry>>,
     // gc maps from Epoch to head of consolidated chain
-    gc: Radix<Stack<PTEntry>>,
+    gc: Radix<Stack<PageCacheEntry>>,
+    // free stores the per-epoch set of pages to free when epoch is clear
     free: Stack<PageID>,
+    // current_epoch is used for GC of removed pages
+    current_epoch: Arc<AtomicUsize>,
+    // log is our lock-free log store
     log: Log,
 }
 
 #[derive(Clone)]
-struct PTEntry {
+struct PageCacheEntry {
     log_id: LogID,
     page_id: PageID,
     data: *mut Data,
 }
 
-#[derive(Clone)]
-struct Tx;
+impl PageCache {
+    pub fn open() -> PageCache {
+        let log = Log::start_system();
+        let esl = Arc::new(AtomicUsize::new(log.stable_offset() as usize));
+        let highest_pid = Arc::new(AtomicUsize::new(log.stable_offset() as usize));
+        PageCache {
+            esl: esl,
+            highest_pid: highest_pid,
+            table: Radix::default(),
+            gc: Radix::default(),
+            free: Stack::default(),
+            current_epoch: Arc::new(AtomicUsize::new(0)),
+            log: log,
+        }
+    }
 
-impl PT {
     // data ops
 
     // NB don't let this grow beyond 4-8 (6 maybe ideal)
@@ -36,7 +52,8 @@ impl PT {
         unimplemented!()
     }
 
-    fn attempt_consolidation(pid: PageID, new_page: Page) -> Result<LogID, ()> {
+    // NB must only consolidate deltas with LSN <= ESL
+    fn attempt_consolidation(pid: PageID, new_page: Page) -> Result<(), ()> {
         unimplemented!()
     }
 
@@ -51,6 +68,7 @@ impl PT {
     /// adds flush delta with caller annotation
     /// page table stores log addr
     /// may not yet be stable on disk
+    // NB don't include any insert/updates with higher LSN than ESL
     fn flush(page_id: PageID, annotation: Vec<u8>) -> LogID {
         unimplemented!()
     }
@@ -116,9 +134,6 @@ struct PageLink {
     child: Option<PageID>,
 }
 
-type Key = Vec<u8>;
-type Value = Vec<u8>;
-
 pub struct Page;
 
 pub enum Record {
@@ -169,6 +184,7 @@ pub enum Delta {
     Load, // should this be a swap operation on the data pointer?
     Flush {
         annotation: Annotation,
+        highest_lsn: TxID,
     }, // in-mem
     PartialSwap(LogID), /* indicates part of page has been swapped out,
                          * shows where to find it */

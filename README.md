@@ -45,7 +45,7 @@ impl PageCache {
 }
 ```
 
-## [Logged storage](src/log.rs)
+## [Logged Storage](src/log.rs)
 
 api
 
@@ -56,6 +56,8 @@ impl Log {
     pub fn write(&self, buf: Vec<u8>) -> LogID;
     pub fn read(&self, id: LogID) -> io::Result<LogData>;
     pub fn make_stable(&self, id: LogID);
+    pub fn shutdown(self);
+    pub fn punch_hole(&self, id: LogID);
 }
 impl Reservation {
     pub fn abort(self);
