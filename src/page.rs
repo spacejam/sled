@@ -8,6 +8,59 @@ use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 use super::*;
 
+// NB ping-pong correctness depends on this being 2
+const N_EPOCHS: usize = 2;
+
+pub struct Epoch {
+    header: Arc<AtomicUsize>,
+    gc_pids: Arc<Vec<Stack<PageID>>>,
+    gc_pages: Arc<Vec<Stack<*mut stack::Node<Node>>>>,
+    current_epoch: Arc<AtomicUsize>,
+    cleaned_epochs: Arc<AtomicUsize>,
+    free: Arc<Stack<PageID>>,
+}
+
+impl Drop for Epoch {
+    fn drop(&mut self) {
+        loop {
+            let cur = self.header.load(Ordering::SeqCst);
+            let decr = ops::decr_writers(cur as u32);
+            if cur == self.header.compare_and_swap(cur, decr as usize, Ordering::SeqCst) {
+                if ops::n_writers(decr) == 0 && ops::is_sealed(decr) {
+                    // our responsibility to put PageID's into free stack, free pages
+                    let idx = self.cleaned_epochs.load(Ordering::SeqCst);
+                    let pids = self.gc_pids[idx % N_EPOCHS].pop_all();
+                    let page_ptrs = self.gc_pages[idx % N_EPOCHS].pop_all();
+                    for pid in pids.into_iter() {
+                        while self.free.try_push(pid).is_err() {}
+                    }
+                    for ptr in page_ptrs.into_iter() {
+                        let mut cursor = ptr;
+                        while !cursor.is_null() {
+                            let node: Box<stack::Node<Node>> = unsafe { Box::from_raw(cursor) };
+                            cursor = node.next();
+                        }
+                    }
+                    self.header.store(0, Ordering::SeqCst);
+                    self.cleaned_epochs.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        }
+    }
+}
+
+impl Epoch {
+    pub fn free_page_id(&self, pid: PageID) {
+        let idx = self.current_epoch.load(Ordering::SeqCst);
+        while self.gc_pids[idx % N_EPOCHS].try_push(pid).is_err() {}
+    }
+
+    pub fn free_ptr(&self, ptr: *mut stack::Node<Node>) {
+        let idx = self.current_epoch.load(Ordering::SeqCst);
+        while self.gc_pages[idx % N_EPOCHS].try_push(ptr).is_err() {}
+    }
+}
+
 #[derive(Clone)]
 pub struct Pager {
     // end_stable_log is the highest LSN that may be flushed
@@ -16,29 +69,76 @@ pub struct Pager {
     highest_pid: Arc<AtomicUsize>,
     // table maps from PageID to a stack of entries
     table: Radix<Stack<Node>>,
-    // gc maps from Epoch to head of consolidated chain
-    gc: Radix<Stack<Node>>,
+    // gc related stuff
+    gc_pids: Arc<Vec<Stack<PageID>>>,
+    gc_pages: Arc<Vec<Stack<*mut stack::Node<Node>>>>,
+    gc_headers: Vec<Arc<AtomicUsize>>,
     // free stores the per-epoch set of pages to free when epoch is clear
-    free: Stack<PageID>,
+    free: Arc<Stack<PageID>>,
     // current_epoch is used for GC of removed pages
     current_epoch: Arc<AtomicUsize>,
+    cleaned_epochs: Arc<AtomicUsize>,
     // log is our lock-free log store
     log: Log,
 }
 
+impl Default for Pager {
+    fn default() -> Pager {
+        Pager {
+            esl: Arc::new(AtomicUsize::new(0)),
+            highest_pid: Arc::new(AtomicUsize::new(0)),
+            table: Radix::default(),
+            gc_pids: Arc::new(rep_no_copy!(Stack::default(); N_EPOCHS)),
+            gc_pages: Arc::new(rep_no_copy!(Stack::default(); N_EPOCHS)),
+            gc_headers: rep_no_copy!(Arc::new(AtomicUsize::new(0)); N_EPOCHS),
+            free: Arc::new(Stack::default()),
+            current_epoch: Arc::new(AtomicUsize::new(0)),
+            cleaned_epochs: Arc::new(AtomicUsize::new(0)),
+            log: Log::start_system(),
+        }
+    }
+}
+
 impl Pager {
     pub fn open() -> Pager {
-        recover().unwrap_or_else(|_| {
-            Pager {
-                esl: Arc::new(AtomicUsize::new(0)),
-                highest_pid: Arc::new(AtomicUsize::new(0)),
-                table: Radix::default(),
-                gc: Radix::default(),
-                free: Stack::default(),
-                current_epoch: Arc::new(AtomicUsize::new(0)),
-                log: Log::start_system(),
+        recover().unwrap_or_else(|_| Pager::default())
+    }
+
+    pub fn enroll_in_epoch(&self) -> Epoch {
+        loop {
+            let idx = self.current_epoch.load(Ordering::SeqCst);
+            let clean_idx = self.cleaned_epochs.load(Ordering::SeqCst);
+            if idx - clean_idx >= N_EPOCHS {
+                // need to spin for gc to complete
+                assert_eq!(idx - clean_idx, N_EPOCHS);
+                continue;
             }
-        })
+            let atomic_header = self.gc_headers[idx % N_EPOCHS].clone();
+            let header = atomic_header.load(Ordering::SeqCst);
+            if ops::is_sealed(header as u32) {
+                // need to spin for current_epoch to be bumped
+                continue;
+            }
+            let header2 = ops::incr_writers(header as u32);
+            let header3 = ops::bump_offset(header2, 1);
+            let header4 = if ops::offset(header3) > 512 {
+                ops::mk_sealed(header3)
+            } else {
+                header3
+            };
+            if header ==
+               atomic_header.compare_and_swap(header, header4 as usize, Ordering::SeqCst) {
+                self.current_epoch.fetch_add(1, Ordering::SeqCst);
+                return Epoch {
+                    header: atomic_header,
+                    gc_pids: self.gc_pids.clone(),
+                    gc_pages: self.gc_pages.clone(),
+                    current_epoch: self.current_epoch.clone(),
+                    cleaned_epochs: self.cleaned_epochs.clone(),
+                    free: self.free.clone(),
+                };
+            }
+        }
     }
 
     // data ops
@@ -153,7 +253,6 @@ fn recover() -> io::Result<Pager> {
         OpenOptions::new()
             .write(true)
             .read(true)
-            .create(true)
             .open(path)
     }
 
@@ -198,21 +297,5 @@ fn recover() -> io::Result<Pager> {
     // clear potential tears
     file.set_len(read as u64)?;
 
-    // TODO properly make these from checkpoint
-    let esl = Arc::new(AtomicUsize::new(0));
-    let highest_pid = Arc::new(AtomicUsize::new(0));
-    let table = Radix::default();
-    let gc = Radix::default();
-    let free = Stack::default();
-    let current_epoch = Arc::new(AtomicUsize::new(0));
-
-    Ok(Pager {
-        esl: esl, // Arc<AtomicUsize>,
-        highest_pid: highest_pid, // Arc<AtomicUsize>,
-        table: table, // Radix<Stack<PagerEntry>>,
-        gc: gc, // Radix<Stack<PagerEntry>>,
-        free: free, // Stack<PageID>,
-        current_epoch: current_epoch, // Arc<AtomicUsize>,
-        log: Log::start_system(),
-    })
+    Ok(Pager::default())
 }

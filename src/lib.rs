@@ -91,20 +91,7 @@ use std::mem;
 pub struct Page(Vec<(Key, Value)>);
 
 #[derive(Clone)]
-pub enum Record {
-    Page(Page),
-    Delta(Delta),
-}
-
-#[derive(Clone)]
 pub struct Annotation;
-
-#[derive(Clone)]
-pub enum Data {
-    // (separator, pointer)
-    Index(Vec<(Key, *mut Node)>),
-    Leaf(Vec<(Key, Record)>),
-}
 
 #[derive(Clone)]
 pub struct Node {
@@ -115,13 +102,21 @@ pub struct Node {
 }
 
 #[derive(Clone)]
+pub enum Data {
+    // (separator, pointer)
+    Index(Vec<(Key, *mut Node)>),
+    Leaf(Vec<(Key, Value)>),
+    Delta(Delta),
+}
+
+#[derive(Clone)]
 pub enum Delta {
     Update(Key, Value),
     Insert(Key, Value),
     Delete(Key),
     DeleteNode,
     MergePage {
-        right: *mut Delta,
+        right: *mut stack::Node<Node>,
         right_hi_k: Key,
     },
     MergeIndex {
@@ -129,7 +124,7 @@ pub enum Delta {
         hi_k: Key,
     },
     SplitPage {
-        key: Key,
+        split_key: Key,
         right: PageID,
     },
     SplitIndex {

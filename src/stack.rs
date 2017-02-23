@@ -35,10 +35,10 @@ impl<T: Debug> Debug for Stack<T> {
             if written {
                 formatter.write_str(", ");
             }
-            let node = unsafe { Box::from_raw(ptr) };
-            node.inner.fmt(formatter);
-            ptr = node.next;
-            mem::forget(node);
+            unsafe {
+                (*ptr).inner.fmt(formatter);
+                ptr = (*ptr).next;
+            }
             written = true;
         }
         formatter.write_str("]");
@@ -53,13 +53,18 @@ impl<T> Deref for Node<T> {
     }
 }
 
+impl<T> Node<T> {
+    pub fn next(&self) -> *mut Node<T> {
+        self.next
+    }
+}
+
 impl<T> Drop for Stack<T> {
     fn drop(&mut self) {
         let mut ptr = self.head();
         while !ptr.is_null() {
             let node = unsafe { Box::from_raw(ptr) };
             ptr = node.next;
-            drop(node);
         }
     }
 }
@@ -94,10 +99,13 @@ impl<T> Stack<T> {
         }
     }
 
-    pub fn to_vec(mut self) -> Vec<T> {
+    pub fn pop_all(&self) -> Vec<T> {
         let mut res = vec![];
-        while let Ok(Some(v)) = self.try_pop() {
-            res.push(v);
+        let mut node_ptr = self.head.swap(ptr::null_mut(), Ordering::SeqCst);
+        while !node_ptr.is_null() {
+            let node = unsafe { Box::from_raw(node_ptr) };
+            node_ptr = node.next;
+            res.push(node.inner);
         }
         res
     }

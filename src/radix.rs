@@ -79,9 +79,7 @@ impl<T> Node<T> {
             }
         }
 
-        let next = unsafe { Box::from_raw(next_ptr) };
-        let ret = next.cas(remainder, old, new);
-        mem::forget(next);
+        let ret = unsafe { (*next_ptr).cas(remainder, old, new) };
         ret
     }
 
@@ -101,9 +99,7 @@ impl<T> Node<T> {
         if next_ptr.is_null() {
             return None;
         }
-        let next = unsafe { Box::from_raw(next_ptr) };
-        let ret = next.get(remainder);
-        mem::forget(next);
+        let ret = unsafe { (*next_ptr).get(remainder) };
         ret
     }
 }

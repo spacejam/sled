@@ -8,5 +8,36 @@ pub struct DB {
     tx_table: Arc<Radix<Stack<Tx>>>,
     tree: Arc<Tree>,
     // end_stable_log is the highest LSN that may be flushed
+    lsn: Arc<AtomicUsize>,
     esl: Arc<AtomicUsize>,
+}
+
+impl DB {
+    pub fn open() -> DB {
+        let tree = Tree::open();
+        let esl = tree.esl.clone();
+        DB {
+            tx_table: Arc::new(Radix::default()),
+            tree: Arc::new(tree),
+            lsn: Arc::new(AtomicUsize::new(esl.load(Ordering::SeqCst))),
+            esl: esl,
+        }
+    }
+
+    pub fn insert(&self, k: Key, v: Value) {
+        self.esl.fetch_add(1, Ordering::SeqCst);
+        self.tree.insert(k, v);
+    }
+
+    pub fn read(&self, k: Key) -> Option<Value> {
+        self.tree.read(k)
+    }
+    pub fn update(&self, k: Key, v: Value) {
+        self.esl.fetch_add(1, Ordering::SeqCst);
+        self.tree.update(k, v);
+    }
+    pub fn delete(&self, k: Key) {
+        self.esl.fetch_add(1, Ordering::SeqCst);
+        self.tree.delete(k);
+    }
 }
