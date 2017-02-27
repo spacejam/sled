@@ -40,15 +40,22 @@ impl Tree {
 
     pub fn insert(&self, k: Key, v: Value) {
         let epoch = self.pager.enroll_in_epoch();
+        // traverse pages until we find a stack for our leaf
+        // if we learn that our leaf is too big, we should initiate a split first
+        let data = Data::Delta(Delta::Insert(k, v));
+        // let node = Node { data: data, lo_k: ?, hi_k: ?, next: ?};
+
     }
 
     pub fn read(&self, k: Key) -> Option<Value> {
+        println!("before enroll");
         let epoch = self.pager.enroll_in_epoch();
         let mut path = vec![];
         let mut page_cursor = ROOT;
         let mut needs_consolidation = false;
         let mut ret = None;
 
+        println!("after enroll");
         // traverse nodes, looking for our key
         while let Some(stack_ptr) = self.pager.read(page_cursor) {
             // page level
@@ -121,6 +128,7 @@ fn read_chain(key: &Key, stack_ptr: *mut Stack<Node>) -> ReadResult {
             }
             Data::Index(ref key_ptr_pairs) => {
                 let mut cur_ptr = ptr::null_mut();
+                // TODO verify this logic while sane
                 for &(ref sep_k, ref ptr) in key_ptr_pairs {
                     if sep_k < key {
                         break;
@@ -183,8 +191,11 @@ fn read_chain(key: &Key, stack_ptr: *mut Stack<Node>) -> ReadResult {
 fn basic() {
     let t = Tree::open();
     assert_eq!(t.read(b"k1".to_vec()), None);
+    println!("1");
     t.insert(b"k1".to_vec(), b"v1".to_vec());
+    println!("2");
     assert_eq!(t.read(b"k1".to_vec()), Some(b"v1".to_vec()));
+    println!("3");
     t.update(b"k1".to_vec(), b"v2".to_vec());
     assert_eq!(t.read(b"k1".to_vec()), Some(b"v2".to_vec()));
     t.delete(b"k1".to_vec());

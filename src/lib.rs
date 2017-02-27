@@ -84,7 +84,6 @@ struct Tx;
 //      Vec<Key, Value>
 //  Delta
 
-use std::ops::Deref;
 use std::mem;
 
 #[derive(Clone)]

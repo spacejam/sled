@@ -5,6 +5,7 @@ use std::io::{self, Read};
 use std::mem;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use std::thread;
 
 use super::*;
 
@@ -22,6 +23,7 @@ pub struct Epoch {
 
 impl Drop for Epoch {
     fn drop(&mut self) {
+        // TODO revisit when sane
         loop {
             let cur = self.header.load(Ordering::SeqCst);
             let decr = ops::decr_writers(cur as u32);
@@ -44,7 +46,9 @@ impl Drop for Epoch {
                     self.header.store(0, Ordering::SeqCst);
                     self.cleaned_epochs.fetch_add(1, Ordering::SeqCst);
                 }
+                return;
             }
+            println!("epoch drop spin");
         }
     }
 }
@@ -111,12 +115,15 @@ impl Pager {
             if idx - clean_idx >= N_EPOCHS {
                 // need to spin for gc to complete
                 assert_eq!(idx - clean_idx, N_EPOCHS);
+                println!("epoch enroll spin 1");
+                thread::sleep_ms(500);
                 continue;
             }
             let atomic_header = self.gc_headers[idx % N_EPOCHS].clone();
             let header = atomic_header.load(Ordering::SeqCst);
             if ops::is_sealed(header as u32) {
                 // need to spin for current_epoch to be bumped
+                println!("epoch enroll spin 2");
                 continue;
             }
             let header2 = ops::incr_writers(header as u32);
@@ -128,7 +135,10 @@ impl Pager {
             };
             if header ==
                atomic_header.compare_and_swap(header, header4 as usize, Ordering::SeqCst) {
-                self.current_epoch.fetch_add(1, Ordering::SeqCst);
+                if ops::is_sealed(header4) {
+                    // we were the sealer, so we can move this along
+                    self.current_epoch.fetch_add(1, Ordering::SeqCst);
+                }
                 return Epoch {
                     header: atomic_header,
                     gc_pids: self.gc_pids.clone(),
@@ -138,6 +148,7 @@ impl Pager {
                     free: self.free.clone(),
                 };
             }
+            println!("epoch enroll spin 3");
         }
     }
 
