@@ -617,7 +617,7 @@ fn basic_functionality() {
     let t1 = thread::Builder::new()
         .name("c1".to_string())
         .spawn(move || {
-            for i in 0..50_000 {
+            for i in 0..5_000 {
                 let buf = vec![1; i % 8192];
                 log.write(buf);
             }
@@ -626,7 +626,7 @@ fn basic_functionality() {
     let t2 = thread::Builder::new()
         .name("c2".to_string())
         .spawn(move || {
-            for i in 0..50_000 {
+            for i in 0..5_000 {
                 let buf = vec![2; i % 8192];
                 iobs2.write(buf);
             }
@@ -635,7 +635,7 @@ fn basic_functionality() {
     let t3 = thread::Builder::new()
         .name("c3".to_string())
         .spawn(move || {
-            for i in 0..50_000 {
+            for i in 0..5_000 {
                 let buf = vec![3; i % 8192];
                 iobs3.write(buf);
             }
@@ -644,7 +644,7 @@ fn basic_functionality() {
     let t4 = thread::Builder::new()
         .name("c4".to_string())
         .spawn(move || {
-            for i in 0..50_000 {
+            for i in 0..5_000 {
                 let buf = vec![4; i % 8192];
                 iobs4.write(buf);
             }
@@ -653,7 +653,7 @@ fn basic_functionality() {
     let t5 = thread::Builder::new()
         .name("c5".to_string())
         .spawn(move || {
-            for i in 0..50_000 {
+            for i in 0..5_000 {
                 let buf = vec![5; i % 8192];
                 iobs5.write(buf);
             }
@@ -709,7 +709,6 @@ fn test_abort(log: &Log) {
 }
 
 #[test]
-#[ignore]
 fn test_log_aborts() {
     let log = Log::start_system("test_aborts.log".to_owned());
     test_delta(&log);
@@ -722,7 +721,6 @@ fn test_log_aborts() {
 }
 
 #[test]
-#[ignore]
 fn test_hole_punching() {
     let log = Log::start_system("test_hole_punching.log".to_owned());
 
