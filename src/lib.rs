@@ -1,4 +1,5 @@
 extern crate libc;
+extern crate crossbeam;
 extern crate rustc_serialize;
 extern crate bincode;
 extern crate time;

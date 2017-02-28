@@ -16,6 +16,7 @@ rustc-serialize = "0.3"
 bincode = "0.6"
 libc = "0.2"
 time = "0.1"
+crossbeam = "0.2"
 
 [dev-dependencies]
 quickcheck = "0.2"
