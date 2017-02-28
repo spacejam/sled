@@ -592,155 +592,6 @@ enum ResOrShutdown {
     Shutdown,
 }
 
-#[test]
-fn non_contiguous_flush() {
-    let log = Log::start_system("test_non_contiguous_flush.log".to_owned());
-    let res1 = log.reserve(MAX_BUF_SZ - HEADER_LEN);
-    let res2 = log.reserve(MAX_BUF_SZ - HEADER_LEN);
-    let id = res2.log_id();
-    res2.abort();
-    res1.abort();
-    log.make_stable(id);
-    log.shutdown();
-}
-
-#[test]
-fn basic_functionality() {
-    // TODO linearize res bufs, verify they are correct
-    let log = Log::start_system("test_basic_functionality.log".to_owned());
-    let iobs2 = log.clone();
-    let iobs3 = log.clone();
-    let iobs4 = log.clone();
-    let iobs5 = log.clone();
-    let iobs6 = log.clone();
-    let log7 = log.clone();
-    let t1 = thread::Builder::new()
-        .name("c1".to_string())
-        .spawn(move || {
-            for i in 0..5_000 {
-                let buf = vec![1; i % 8192];
-                log.write(buf);
-            }
-        })
-        .unwrap();
-    let t2 = thread::Builder::new()
-        .name("c2".to_string())
-        .spawn(move || {
-            for i in 0..5_000 {
-                let buf = vec![2; i % 8192];
-                iobs2.write(buf);
-            }
-        })
-        .unwrap();
-    let t3 = thread::Builder::new()
-        .name("c3".to_string())
-        .spawn(move || {
-            for i in 0..5_000 {
-                let buf = vec![3; i % 8192];
-                iobs3.write(buf);
-            }
-        })
-        .unwrap();
-    let t4 = thread::Builder::new()
-        .name("c4".to_string())
-        .spawn(move || {
-            for i in 0..5_000 {
-                let buf = vec![4; i % 8192];
-                iobs4.write(buf);
-            }
-        })
-        .unwrap();
-    let t5 = thread::Builder::new()
-        .name("c5".to_string())
-        .spawn(move || {
-            for i in 0..5_000 {
-                let buf = vec![5; i % 8192];
-                iobs5.write(buf);
-            }
-        })
-        .unwrap();
-
-    let t6 = thread::Builder::new()
-        .name("c6".to_string())
-        .spawn(move || {
-            for i in 0..5_000 {
-                let buf = vec![6; i % 8192];
-                let res = iobs6.reserve(buf.len());
-                let id = res.log_id();
-                res.complete(buf);
-                iobs6.make_stable(id);
-            }
-        })
-        .unwrap();
-
-
-    t1.join();
-    t2.join();
-    t3.join();
-    t4.join();
-    t5.join();
-    t6.join();
-    log7.shutdown();
-}
-
-fn test_delta(log: &Log) {
-    let deltablock = LogData::Deltas(vec![]);
-    let data_bytes = ops::to_binary(&deltablock);
-    let res = log.reserve(data_bytes.len());
-    let id = res.log_id();
-    res.complete(data_bytes);
-    log.make_stable(id);
-    let read_buf = log.read(id).unwrap().unwrap();
-    let read = ops::from_binary::<LogData>(read_buf).unwrap();
-    assert_eq!(read, deltablock);
-}
-
-fn test_abort(log: &Log) {
-    let res = log.reserve(5);
-    let id = res.log_id();
-    res.abort();
-    log.make_stable(id);
-    match log.read(id) {
-        Ok(None) => (), // good
-        _ => {
-            panic!("sucessfully read an aborted request! BAD! SAD!");
-        }
-    }
-}
-
-#[test]
-fn test_log_aborts() {
-    let log = Log::start_system("test_aborts.log".to_owned());
-    test_delta(&log);
-    test_abort(&log);
-    test_delta(&log);
-    test_abort(&log);
-    test_delta(&log);
-    test_abort(&log);
-    log.shutdown();
-}
-
-#[test]
-fn test_hole_punching() {
-    let log = Log::start_system("test_hole_punching.log".to_owned());
-
-    let deltablock = LogData::Deltas(vec![]);
-    let data_bytes = ops::to_binary(&deltablock);
-    let res = log.reserve(data_bytes.len());
-    let id = res.log_id();
-    res.complete(data_bytes);
-    log.make_stable(id);
-    log.read(id).unwrap();
-
-    log.punch_hole(id);
-
-    assert_eq!(log.read(id).unwrap(), None);
-
-    // TODO figure out if physical size of log is actually smaller now
-
-    log.shutdown();
-}
-
 fn seal_header_and_bump_offsets(header: &AtomicUsize,
                                 next_header: &AtomicUsize,
                                 hv: u32,
@@ -826,5 +677,174 @@ fn process_reservation(path: String,
             }
             ResOrShutdown::Shutdown => return,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn more_reservations_than_buffers() {
+        let log = Log::start_system("test_more_reservations_than_buffers.log".to_owned());
+        let mut reservations = vec![];
+        for i in 0..N_BUFS + 1 {
+            reservations.push(log.reserve(MAX_BUF_SZ - HEADER_LEN))
+        }
+        for res in reservations.into_iter().rev() {
+            // abort in reverse order
+            res.abort();
+        }
+        log.shutdown();
+    }
+
+    #[test]
+    fn non_contiguous_flush() {
+        let log = Log::start_system("test_non_contiguous_flush.log".to_owned());
+        let res1 = log.reserve(MAX_BUF_SZ - HEADER_LEN);
+        let res2 = log.reserve(MAX_BUF_SZ - HEADER_LEN);
+        let id = res2.log_id();
+        res2.abort();
+        res1.abort();
+        log.make_stable(id);
+        log.shutdown();
+    }
+
+    #[test]
+    fn basic_functionality() {
+        // TODO linearize res bufs, verify they are correct
+        let log = Log::start_system("test_basic_functionality.log".to_owned());
+        let iobs2 = log.clone();
+        let iobs3 = log.clone();
+        let iobs4 = log.clone();
+        let iobs5 = log.clone();
+        let iobs6 = log.clone();
+        let log7 = log.clone();
+        let t1 = thread::Builder::new()
+            .name("c1".to_string())
+            .spawn(move || {
+                for i in 0..5_000 {
+                    let buf = vec![1; i % 8192];
+                    log.write(buf);
+                }
+            })
+            .unwrap();
+        let t2 = thread::Builder::new()
+            .name("c2".to_string())
+            .spawn(move || {
+                for i in 0..5_000 {
+                    let buf = vec![2; i % 8192];
+                    iobs2.write(buf);
+                }
+            })
+            .unwrap();
+        let t3 = thread::Builder::new()
+            .name("c3".to_string())
+            .spawn(move || {
+                for i in 0..5_000 {
+                    let buf = vec![3; i % 8192];
+                    iobs3.write(buf);
+                }
+            })
+            .unwrap();
+        let t4 = thread::Builder::new()
+            .name("c4".to_string())
+            .spawn(move || {
+                for i in 0..5_000 {
+                    let buf = vec![4; i % 8192];
+                    iobs4.write(buf);
+                }
+            })
+            .unwrap();
+        let t5 = thread::Builder::new()
+            .name("c5".to_string())
+            .spawn(move || {
+                for i in 0..5_000 {
+                    let buf = vec![5; i % 8192];
+                    iobs5.write(buf);
+                }
+            })
+            .unwrap();
+
+        let t6 = thread::Builder::new()
+            .name("c6".to_string())
+            .spawn(move || {
+                for i in 0..5_000 {
+                    let buf = vec![6; i % 8192];
+                    let res = iobs6.reserve(buf.len());
+                    let id = res.log_id();
+                    res.complete(buf);
+                    iobs6.make_stable(id);
+                }
+            })
+            .unwrap();
+
+
+        t1.join();
+        t2.join();
+        t3.join();
+        t4.join();
+        t5.join();
+        t6.join();
+        log7.shutdown();
+    }
+
+    fn test_delta(log: &Log) {
+        let deltablock = LogData::Deltas(vec![]);
+        let data_bytes = ops::to_binary(&deltablock);
+        let res = log.reserve(data_bytes.len());
+        let id = res.log_id();
+        res.complete(data_bytes);
+        log.make_stable(id);
+        let read_buf = log.read(id).unwrap().unwrap();
+        let read = ops::from_binary::<LogData>(read_buf).unwrap();
+        assert_eq!(read, deltablock);
+    }
+
+    fn test_abort(log: &Log) {
+        let res = log.reserve(5);
+        let id = res.log_id();
+        res.abort();
+        log.make_stable(id);
+        match log.read(id) {
+            Ok(None) => (), // good
+            _ => {
+                panic!("sucessfully read an aborted request! BAD! SAD!");
+            }
+        }
+    }
+
+    #[test]
+    fn test_log_aborts() {
+        let log = Log::start_system("test_aborts.log".to_owned());
+        test_delta(&log);
+        test_abort(&log);
+        test_delta(&log);
+        test_abort(&log);
+        test_delta(&log);
+        test_abort(&log);
+        log.shutdown();
+    }
+
+    #[test]
+    fn test_hole_punching() {
+        let log = Log::start_system("test_hole_punching.log".to_owned());
+
+        let deltablock = LogData::Deltas(vec![]);
+        let data_bytes = ops::to_binary(&deltablock);
+        let res = log.reserve(data_bytes.len());
+        let id = res.log_id();
+        res.complete(data_bytes);
+        log.make_stable(id);
+        log.read(id).unwrap();
+
+        log.punch_hole(id);
+
+        assert_eq!(log.read(id).unwrap(), None);
+
+        // TODO figure out if physical size of log is actually smaller now
+
+        log.shutdown();
     }
 }
