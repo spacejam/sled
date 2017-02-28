@@ -188,6 +188,7 @@ fn read_chain(key: &Key, stack_ptr: *mut Stack<Node>) -> ReadResult {
 }
 
 #[test]
+#[ignore]
 fn basic() {
     let t = Tree::open();
     assert_eq!(t.read(b"k1".to_vec()), None);

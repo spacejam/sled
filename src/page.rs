@@ -98,7 +98,7 @@ impl Default for Pager {
             free: Arc::new(Stack::default()),
             current_epoch: Arc::new(AtomicUsize::new(0)),
             cleaned_epochs: Arc::new(AtomicUsize::new(0)),
-            log: Log::start_system(),
+            log: Log::start_system("pager.log".to_owned()),
         }
     }
 }

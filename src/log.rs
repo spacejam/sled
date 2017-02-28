@@ -2,7 +2,7 @@ use std::fmt::{self, Debug};
 use std::fs;
 use std::io::{self, Read, Write, Seek, SeekFrom, Error, ErrorKind};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::cell::{UnsafeCell, RefCell};
 use std::thread;
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -14,11 +14,7 @@ use super::*;
 
 const HEADER_LEN: usize = 7;
 const MAX_BUF_SZ: usize = 1_000_000;
-const N_BUFS: usize = 11;
-
-thread_local! {
-    static TL_READ_PUNCHER: RefCell<fs::File> = RefCell::new(open_log_for_punching());
-}
+const N_BUFS: usize = 33;
 
 #[derive(Debug, Clone, Eq, PartialEq, RustcDecodable, RustcEncodable)]
 #[repr(C)]
@@ -45,28 +41,41 @@ pub enum LogData {
     Full(LogPage),
     Deltas(Vec<LogDelta>),
 }
-#[derive(Clone)]
+
 pub struct Log {
-    iobufs: IOBufs,
+    iobufs: Arc<IOBufs>,
     stable: Arc<AtomicUsize>,
+    path: String,
+    file: RefCell<fs::File>,
 }
 
 unsafe impl Send for Log {}
 
-unsafe impl Sync for Log {}
+impl Clone for Log {
+    fn clone(&self) -> Log {
+        Log {
+            iobufs: self.iobufs.clone(),
+            stable: self.stable.clone(),
+            path: self.path.clone(),
+            file: RefCell::new(open_log_for_punching(self.path.clone())),
+        }
+    }
+}
 
 impl Log {
-    pub fn start_system() -> Log {
+    pub fn start_system(path: String) -> Log {
         let stable = Arc::new(AtomicUsize::new(0));
         let (tx, rx) = channel();
-        let lw = LogWriter::new(rx, stable.clone());
+        let lw = LogWriter::new(path.clone(), rx, stable.clone());
         let offset = lw.open_offset;
         thread::spawn(move || {
             lw.run();
         });
         Log {
-            iobufs: IOBufs::new(tx, offset as usize),
+            iobufs: Arc::new(IOBufs::new(tx, offset as usize)),
             stable: stable,
+            path: path.clone(),
+            file: RefCell::new(open_log_for_punching(path)),
         }
     }
 
@@ -81,29 +90,31 @@ impl Log {
     }
 
     pub fn read(&self, id: LogID) -> io::Result<Option<Vec<u8>>> {
-        TL_READ_PUNCHER.with(|f| {
-            let mut f = f.borrow_mut();
-            f.seek(SeekFrom::Start(id))?;
-            let mut valid = [0u8; 1];
-            f.read_exact(&mut valid)?;
-            if valid[0] == 0 {
-                return Ok(None);
-            }
-            let mut len_buf = [0u8; 4];
-            f.read_exact(&mut len_buf)?;
-            let len = ops::array_to_usize(len_buf);
-            let mut crc16_buf = [0u8; 2];
-            f.read_exact(&mut crc16_buf)?;
-            let mut buf = Vec::with_capacity(len);
-            unsafe {
-                buf.set_len(len);
-            }
-            f.read_exact(&mut buf)?;
-            if crc16_arr(&buf) != crc16_buf {
-                return Err(Error::new(ErrorKind::Other, "read data failed crc16 checksum"));
-            }
-            Ok(Some(buf))
-        })
+        let mut f = self.file.borrow_mut();
+        f.seek(SeekFrom::Start(id))?;
+        let mut valid = [0u8; 1];
+        f.read_exact(&mut valid)?;
+        if valid[0] == 0 {
+            return Ok(None);
+        }
+        let mut len_buf = [0u8; 4];
+        f.read_exact(&mut len_buf)?;
+        let len = ops::array_to_usize(len_buf);
+        let mut crc16_buf = [0u8; 2];
+        f.read_exact(&mut crc16_buf)?;
+        let mut buf = Vec::with_capacity(len);
+        unsafe {
+            buf.set_len(len);
+        }
+        f.read_exact(&mut buf)?;
+        let checksum = crc16_arr(&buf);
+        if checksum != crc16_buf {
+            let msg = format!("read data failed crc16 checksum, {:?} should be {:?}",
+                              checksum,
+                              crc16_buf);
+            return Err(Error::new(ErrorKind::Other, msg));
+        }
+        Ok(Some(buf))
     }
 
     pub fn stable_offset(&self) -> LogID {
@@ -111,7 +122,14 @@ impl Log {
     }
 
     pub fn make_stable(&self, id: LogID) {
+        let mut spins = 0;
         loop {
+            spins += 1;
+            if spins > 2000000 {
+                println!("{:?} have spun >2000000x in make_stable",
+                         thread::current().name());
+                spins = 0;
+            }
             let cur = self.stable.load(Ordering::SeqCst) as LogID;
             // println!("cur {} id {}", cur, id);
             if cur > id {
@@ -121,34 +139,39 @@ impl Log {
     }
 
     pub fn shutdown(self) {
-        self.iobufs.shutdown();
+        self.iobufs.clone().shutdown();
     }
 
     pub fn punch_hole(&self, id: LogID) {
-        TL_READ_PUNCHER.with(|f| {
-            let mut f = f.borrow_mut();
-            f.seek(SeekFrom::Start(id + 1)).unwrap();
-            let mut len_buf = [0u8; 4];
-            f.read_exact(&mut len_buf).unwrap();
+        // we zero out the valid byte, and use fallocate to punch a hole
+        // in the actual data, but keep the len for recovery.
+        let mut f = self.file.borrow_mut();
+        // zero out valid bit
+        f.seek(SeekFrom::Start(id)).unwrap();
+        let zeros = vec![0];
+        f.write_all(&*zeros);
+        f.seek(SeekFrom::Start(id + 1)).unwrap();
+        let mut len_buf = [0u8; 4];
+        f.read_exact(&mut len_buf).unwrap();
 
-            let len = ops::array_to_usize(len_buf);
-            let mode = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE;
-            let fd = f.as_raw_fd();
+        let len = ops::array_to_usize(len_buf);
+        let mode = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE;
+        let fd = f.as_raw_fd();
 
-            unsafe {
-                fallocate(fd, mode, id as i64 + HEADER_LEN as i64, len as i64);
-            }
-        });
+        unsafe {
+            // 5 is valid (1) + len (4), 2 is crc16
+            fallocate(fd, mode, id as i64 + 5, len as i64 + 2);
+        }
     }
 }
 
-fn open_log_for_punching() -> fs::File {
+fn open_log_for_punching(path: String) -> fs::File {
     let mut options = fs::OpenOptions::new();
     options.create(true);
     options.read(true);
     options.write(true);
     // TODO make logfile configurable
-    options.open("rsdb.log").unwrap()
+    options.open(path).unwrap()
 }
 
 #[derive(Clone)]
@@ -158,7 +181,8 @@ struct IOBufs {
     log_offsets: Vec<Arc<AtomicUsize>>,
     current_buf: Arc<AtomicUsize>,
     written_bufs: Arc<AtomicUsize>,
-    plunger: Sender<ResOrShutdown>,
+    plunger: Arc<Sender<ResOrShutdown>>,
+    shutdown: Arc<AtomicBool>,
 }
 
 impl Debug for IOBufs {
@@ -188,8 +212,6 @@ impl Debug for IOBufs {
 
 unsafe impl Send for IOBufs {}
 
-unsafe impl Sync for IOBufs {}
-
 #[derive(Clone)]
 pub struct Reservation {
     base_disk_offset: LogID,
@@ -201,7 +223,7 @@ pub struct Reservation {
     next_header: Arc<AtomicUsize>,
     current_buf: Arc<AtomicUsize>,
     written_bufs: Arc<AtomicUsize>,
-    plunger: Sender<ResOrShutdown>,
+    plunger: Arc<Sender<ResOrShutdown>>,
     idx: usize,
     cur_log_offset: Arc<AtomicUsize>,
     next_log_offset: Arc<AtomicUsize>,
@@ -222,13 +244,20 @@ impl IOBufs {
             log_offsets: log_offsets,
             current_buf: Arc::new(AtomicUsize::new(current_buf)),
             written_bufs: Arc::new(AtomicUsize::new(0)),
-            plunger: plunger,
+            plunger: Arc::new(plunger),
+            shutdown: Arc::new(AtomicBool::new(false)),
         }
     }
 
     fn reserve(&self, len: u32) -> Reservation {
         let len = len + HEADER_LEN as u32;
+        let mut spins = 0;
         loop {
+            spins += 1;
+            if spins > 1000 {
+                println!("{:?} have spun >1000x in reserve", thread::current().name());
+                spins = 0;
+            }
             // load atomic progress counters
             let written = self.written_bufs.load(Ordering::SeqCst);
             let current_buf = self.current_buf.load(Ordering::SeqCst);
@@ -238,7 +267,7 @@ impl IOBufs {
 
             // if written is too far behind, we need to
             // spin while it catches up to avoid overlap
-            if current_buf - written >= N_BUFS {
+            if current_buf - written >= 10 {
                 // println!("writers are behind: {:?}", self);
                 continue;
             }
@@ -326,8 +355,8 @@ impl IOBufs {
         res._write(buf, true)
     }
 
-    pub fn shutdown(self) {
-        self.plunger.send(ResOrShutdown::Shutdown);
+    pub fn shutdown(&self) {
+        self.plunger.send(ResOrShutdown::Shutdown).unwrap();
     }
 }
 
@@ -383,9 +412,7 @@ impl Reservation {
         let data_end = start + self.len(); // NB self.len() includes HEADER_LEN
 
         (out_buf)[valid_start..valid_end].copy_from_slice(&*valid_bytes);
-        // FIXME "index 1000003 out of range for slice of length 1000000"
         (out_buf)[size_start..size_end].copy_from_slice(&*size_bytes);
-        // FIXME 'index 1000001 out of range for slice of length 1000000'
         (out_buf)[crc16_start..crc16_end].copy_from_slice(&crc16_bytes);
 
         if buf.len() > 0 && valid {
@@ -402,7 +429,6 @@ impl Reservation {
     fn decr_writers_maybe_slam(self) -> LogID {
         let mut hv = self.last_hv;
 
-        // FIXME this assert fails
         assert_ne!(self.base_disk_offset as usize,
                    std::usize::MAX,
                    "created reservation for uninitialized slot");
@@ -417,7 +443,13 @@ impl Reservation {
         }
 
         // decr writer count, retrying
+        let mut spins = 0;
         loop {
+            spins += 1;
+            if spins > 1000 {
+                println!("{:?} have spun >1000x in decr", thread::current().name());
+                spins = 0;
+            }
             let new_hv = ops::decr_writers(hv) as usize;
             let old_hv = self.header.compare_and_swap(hv as usize, new_hv, Ordering::SeqCst);
             if old_hv == hv as usize {
@@ -465,7 +497,7 @@ impl Reservation {
         // println!("deinitialized idx {}", self.idx);
 
         // bump self.written by 1
-        let new_writer_offset = self.written_bufs.fetch_add(1, Ordering::SeqCst);
+        self.written_bufs.fetch_add(1, Ordering::SeqCst);
         // println!("writer offset now {}", (new_writer_offset + 1) % N_BUFS);
 
         self.base_disk_offset
@@ -484,14 +516,14 @@ struct LogWriter {
 }
 
 impl LogWriter {
-    fn new(receiver: Receiver<ResOrShutdown>, stable: Arc<AtomicUsize>) -> LogWriter {
+    fn new(path: String, receiver: Receiver<ResOrShutdown>, stable: Arc<AtomicUsize>) -> LogWriter {
         // TODO make log file configurable
         // NB we make the default ID 1 so that we can use 0 as a null LogID in
         // AtomicUsize's elsewhere throughout the codebase
 
         let mut options = fs::OpenOptions::new();
         options.write(true).create(true);
-        let file = options.open("rsdb.log").unwrap();
+        let file = options.open(path).unwrap();
         let cur_id = file.metadata().map(|m| m.len()).unwrap_or(0);
         stable.store(cur_id as usize, Ordering::SeqCst);
 
@@ -515,7 +547,7 @@ impl LogWriter {
                                     res.base_disk_offset + ops::offset(header as u32) as u64);
                     // println!("disk_offset: {} len: {} buf_offset: {}", res.base_disk_offset, res.len(), res.buf_offset);
 
-                    let stable = res.stabilize(&mut self.log);
+                    res.stabilize(&mut self.log);
 
                     written_intervals.push(interval);
                     written_intervals.sort();
@@ -550,7 +582,7 @@ enum ResOrShutdown {
 
 #[test]
 fn non_contiguous_flush() {
-    let log = Log::start_system();
+    let log = Log::start_system("test_non_contiguous_flush.log".to_owned());
     let res1 = log.reserve(MAX_BUF_SZ - HEADER_LEN);
     let res2 = log.reserve(MAX_BUF_SZ - HEADER_LEN);
     let id = res2.log_id();
@@ -563,61 +595,82 @@ fn non_contiguous_flush() {
 #[test]
 fn basic_functionality() {
     // TODO linearize res bufs, verify they are correct
-    let log = Log::start_system();
+    let log = Log::start_system("test_basic_functionality.log".to_owned());
     let iobs2 = log.clone();
     let iobs3 = log.clone();
     let iobs4 = log.clone();
     let iobs5 = log.clone();
     let iobs6 = log.clone();
     let log7 = log.clone();
-    let t1 = thread::spawn(move || {
-        for i in 0..5_000 {
-            let buf = vec![1; i % 8192];
-            log.write(buf);
-        }
-    });
-    let t2 = thread::spawn(move || {
-        for i in 0..5_000 {
-            let buf = vec![2; i % 8192];
-            iobs2.write(buf);
-        }
-    });
-    let t3 = thread::spawn(move || {
-        for i in 0..5_000 {
-            let buf = vec![3; i % 8192];
-            iobs3.write(buf);
-        }
-    });
-    let t4 = thread::spawn(move || {
-        for i in 0..5_000 {
-            let buf = vec![4; i % 8192];
-            iobs4.write(buf);
-        }
-    });
-    let t5 = thread::spawn(move || {
-        for i in 0..5_000 {
-            let buf = vec![5; i % 8192];
-            iobs5.write(buf);
-        }
-    });
+    let t1 = thread::Builder::new()
+        .name("c1".to_string())
+        .spawn(move || {
+            for i in 0..50_000 {
+                let buf = vec![1; i % 8192];
+                log.write(buf);
+            }
+        })
+        .unwrap();
+    let t2 = thread::Builder::new()
+        .name("c2".to_string())
+        .spawn(move || {
+            for i in 0..50_000 {
+                let buf = vec![2; i % 8192];
+                iobs2.write(buf);
+            }
+        })
+        .unwrap();
+    let t3 = thread::Builder::new()
+        .name("c3".to_string())
+        .spawn(move || {
+            for i in 0..50_000 {
+                let buf = vec![3; i % 8192];
+                iobs3.write(buf);
+            }
+        })
+        .unwrap();
+    let t4 = thread::Builder::new()
+        .name("c4".to_string())
+        .spawn(move || {
+            for i in 0..50_000 {
+                let buf = vec![4; i % 8192];
+                iobs4.write(buf);
+            }
+        })
+        .unwrap();
+    let t5 = thread::Builder::new()
+        .name("c5".to_string())
+        .spawn(move || {
+            for i in 0..50_000 {
+                let buf = vec![5; i % 8192];
+                iobs5.write(buf);
+            }
+        })
+        .unwrap();
 
-    let t6 = thread::spawn(move || {
-        for i in 0..5_000 {
-            let buf = vec![6; i % 8192];
-            let res = iobs6.reserve(buf.len());
-            let id = res.log_id();
-            res.complete(buf);
-            iobs6.make_stable(id);
-        }
-    });
+    let t6 = thread::Builder::new()
+        .name("c6".to_string())
+        .spawn(move || {
+            for i in 0..5_000 {
+                let buf = vec![6; i % 8192];
+                let res = iobs6.reserve(buf.len());
+                let id = res.log_id();
+                res.complete(buf);
+                print!("+");
+                iobs6.make_stable(id);
+                print!("-");
+            }
+            println!("BYEEEEEEE <3 {:?}", thread::current().name())
+        })
+        .unwrap();
 
 
-    t1.join().unwrap();
-    t2.join().unwrap();
-    t3.join().unwrap();
-    t4.join().unwrap();
-    t5.join().unwrap();
-    t6.join().unwrap();
+    t1.join();
+    t2.join();
+    t3.join();
+    t4.join();
+    t5.join();
+    t6.join();
     log7.shutdown();
 }
 
@@ -628,7 +681,6 @@ fn test_delta(log: &Log) {
     let id = res.log_id();
     res.complete(data_bytes);
     log.make_stable(id);
-    // println!("id {} is now stable", id);
     let read_buf = log.read(id).unwrap().unwrap();
     let read = ops::from_binary::<LogData>(read_buf).unwrap();
     assert_eq!(read, deltablock);
@@ -649,7 +701,7 @@ fn test_abort(log: &Log) {
 
 #[test]
 fn test_log_aborts() {
-    let log = Log::start_system();
+    let log = Log::start_system("test_aborts.log".to_owned());
     test_delta(&log);
     test_abort(&log);
     test_delta(&log);
@@ -659,9 +711,9 @@ fn test_log_aborts() {
     log.shutdown();
 }
 
-// TODO this is a flaky test... maybe nuke it
+#[test]
 fn test_hole_punching() {
-    let log = Log::start_system();
+    let log = Log::start_system("test_hole_punching.log".to_owned());
 
     let deltablock = LogData::Deltas(vec![]);
     let data_bytes = ops::to_binary(&deltablock);
@@ -669,7 +721,7 @@ fn test_hole_punching() {
     let id = res.log_id();
     res.complete(data_bytes);
     log.make_stable(id);
-    let read = log.read(id).unwrap();
+    log.read(id).unwrap();
 
     log.punch_hole(id);
 
@@ -713,11 +765,25 @@ fn seal_header_and_bump_offsets(header: &AtomicUsize,
 
         // !! setup new slot
         next_header.store(0, Ordering::SeqCst);
-        let old = next_log_offset.swap(next_offset, Ordering::SeqCst);
-        assert_eq!(old, std::usize::MAX);
+
+        let mut spins = 0;
+        loop {
+            spins += 1;
+            if spins > 1000 {
+                println!("{:?} have spun >1000x in seal", thread::current().name());
+                spins = 0;
+            }
+            // FIXME panicked at 'assertion failed: `(left == right)` (left: `2089005254`, right:
+            // `18446744073709551615`)
+            let old =
+                next_log_offset.compare_and_swap(std::usize::MAX, next_offset, Ordering::SeqCst);
+            if old == std::usize::MAX {
+                break;
+            }
+        }
 
         // !! open new slot
-        let next_buf = current_buf.fetch_add(1, Ordering::SeqCst);
+        current_buf.fetch_add(1, Ordering::SeqCst);
         // println!("setting next buf to {}", (next_buf + 1) % N_BUFS);
 
         Ok(sealed)
