@@ -85,19 +85,13 @@ impl Log {
             let mut f = f.borrow_mut();
             f.seek(SeekFrom::Start(id))?;
             let mut valid = [0u8; 1];
-            println!("about to try to read lid {}", id);
-            println!("valid: {:?}", valid);
-            println!("pre");
             f.read_exact(&mut valid)?;
-            println!("1");
             if valid[0] == 0 {
                 return Ok(None);
             }
             let mut len_buf = [0u8; 4];
             f.read_exact(&mut len_buf)?;
-            println!("2");
             let len = ops::array_to_usize(len_buf);
-            println!("len: {:?}", len);
             let mut crc16_buf = [0u8; 2];
             f.read_exact(&mut crc16_buf)?;
             let mut buf = Vec::with_capacity(len);
@@ -204,6 +198,7 @@ pub struct Reservation {
     buf: Arc<UnsafeCell<Vec<u8>>>,
     last_hv: u32, // optimization to avoid more atomic loads
     header: Arc<AtomicUsize>,
+    next_header: Arc<AtomicUsize>,
     current_buf: Arc<AtomicUsize>,
     written_bufs: Arc<AtomicUsize>,
     plunger: Sender<ResOrShutdown>,
@@ -265,6 +260,7 @@ impl IOBufs {
             if buf_offset + len > MAX_BUF_SZ as u32 {
                 // attempt seal once, flush if no active writers, then start over
                 match seal_header_and_bump_offsets(&header,
+                                                   &*self.headers[(idx + 1) % N_BUFS],
                                                    hv,
                                                    &*self.log_offsets[idx],
                                                    &*self.log_offsets[(idx + 1) % N_BUFS],
@@ -272,10 +268,7 @@ impl IOBufs {
                     Ok(h) if ops::n_writers(h) == 0 => {
                         // nobody else is going to flush this, so we need to
 
-                        // THINK how can idx already be uninitialized here?
-                        println!("");
-                        println!("2222");
-                        println!("");
+                        // println!("creating zero-writer res to clear buf");
                         assert_ne!(self.log_offsets[idx].load(Ordering::SeqCst),
                                    std::usize::MAX);
                         let res = self.reservation(buf_offset, 0, idx, h);
@@ -284,22 +277,26 @@ impl IOBufs {
                     _ => {}
                 }
                 continue;
-            } else {
-                // attempt to claim
-                let claimed = ops::incr_writers(ops::bump_offset(hv, len));
-                if header.compare_and_swap(hv as usize, claimed as usize, Ordering::SeqCst) !=
-                   hv as usize {
-                    // CAS failed, start over
-                    continue;
-                }
-                hv = claimed;
             }
+
+            // attempt to claim
+            let claimed = ops::incr_writers(ops::bump_offset(hv, len));
+            assert!(!ops::is_sealed(claimed));
+
+            let cas_hv = header.compare_and_swap(hv as usize, claimed as usize, Ordering::SeqCst);
+            if cas_hv != hv as usize {
+                // CAS failed, start over
+                continue;
+            }
+            if ops::n_writers(hv) == 0 {
+                // println!("using idx {}, went from {} to {} writers, offset {} to {}", idx, ops::n_writers(hv), ops::n_writers(claimed), ops::offset(hv), ops::offset(claimed));
+            }
+            hv = claimed;
 
             // if we're giving out a reservation,
             // the writer count should be positive
             assert!(ops::n_writers(hv) != 0);
 
-            // THINK how can idx already be uninitialized here?
             assert_ne!(self.log_offsets[idx].load(Ordering::SeqCst),
                        std::usize::MAX);
             return self.reservation(buf_offset, len, idx, hv);
@@ -314,6 +311,7 @@ impl IOBufs {
             buf: self.bufs[idx].clone(),
             last_hv: last_hv,
             header: self.headers[idx].clone(),
+            next_header: self.headers[(idx + 1) % N_BUFS].clone(),
             current_buf: self.current_buf.clone(),
             written_bufs: self.written_bufs.clone(),
             plunger: self.plunger.clone(),
@@ -354,6 +352,7 @@ impl Reservation {
         let mut hv = self.last_hv;
         while !ops::is_sealed(hv) &&
               seal_header_and_bump_offsets(&*self.header,
+                                           &*self.next_header,
                                            hv,
                                            &*self.cur_log_offset,
                                            &*self.next_log_offset,
@@ -409,26 +408,34 @@ impl Reservation {
                    "created reservation for uninitialized slot");
         let ret = self.base_disk_offset + self.buf_offset as LogID;
 
+        // FIXME this feels broken, but maybe isn't because we
+        // can never be sealed and increase writers?
         if ops::n_writers(hv) == 0 && ops::is_sealed(hv) {
+            // println!("slamming no-writer buf down pipe, idx {}", self.idx);
             self.slam_down_pipe();
             return ret;
         }
 
         // decr writer count, retrying
         loop {
-            let hv2 = ops::decr_writers(hv);
-            if self.header.compare_and_swap(hv as usize, hv2 as usize, Ordering::SeqCst) ==
-               hv as usize {
-                if ops::is_sealed(hv2) {
-                    // println!("- decr worked on sealed buf {}, n_writers: {}", self.idx, ops::n_writers(hv2));
+            let new_hv = ops::decr_writers(hv) as usize;
+            let old_hv = self.header.compare_and_swap(hv as usize, new_hv, Ordering::SeqCst);
+            if old_hv == hv as usize {
+                if ops::n_writers(new_hv as u32) == 0 {
+                    // println!("decr succeeded from {} to {} on index {}", ops::n_writers(hv), ops::n_writers(new_hv as u32), self.idx);
                 }
-                if ops::n_writers(hv2) == 0 && ops::is_sealed(hv2) {
+
+                if ops::n_writers(new_hv as u32) == 0 && ops::is_sealed(new_hv as u32) {
+                    // println!("slamming our buf down pipe, idx {}", self.idx);
                     self.slam_down_pipe();
                 }
+
                 return ret;
             }
-            // we failed, reload and retry
-            hv = self.header.load(Ordering::SeqCst) as u32;
+
+            // we failed to decr, reload and retry
+            hv = old_hv as u32;
+
             // if this is 0, it means too many decr's have happened
             // or too few incr's have happened
             assert_ne!(ops::n_writers(hv), 0);
@@ -451,16 +458,15 @@ impl Reservation {
                    self.base_disk_offset as u64,
                    "disk offset should be 1:1 with log id");
 
-        // reset the header, no need to zero the buf
-        self.header.store(0, Ordering::SeqCst);
-
         // TODO this really shouldn't be necessary, but
         // asserts are still failing this "taint"
         self.cur_log_offset.store(std::usize::MAX, Ordering::SeqCst);
 
+        // println!("deinitialized idx {}", self.idx);
+
         // bump self.written by 1
-        self.written_bufs.fetch_add(1, Ordering::SeqCst);
-        // println!("+ buf {} stabilized, cur is {}", self.idx, self.current_buf.load(Ordering::SeqCst) % N_BUFS);
+        let new_writer_offset = self.written_bufs.fetch_add(1, Ordering::SeqCst);
+        // println!("writer offset now {}", (new_writer_offset + 1) % N_BUFS);
 
         self.base_disk_offset
     }
@@ -501,16 +507,13 @@ impl LogWriter {
         let mut written_intervals = vec![];
 
         for res_or_shutdown in self.receiver.iter() {
-            println!("start writing");
             match res_or_shutdown {
                 ResOrShutdown::Res(res) => {
+                    // println!("logwriter starting write of idx {}", res.idx);
                     let header = res.header.load(Ordering::SeqCst);
                     let interval = (res.base_disk_offset,
                                     res.base_disk_offset + ops::offset(header as u32) as u64);
-                    println!("disk_offset: {} len: {} buf_offset: {}",
-                             res.base_disk_offset,
-                             res.len(),
-                             res.buf_offset);
+                    // println!("disk_offset: {} len: {} buf_offset: {}", res.base_disk_offset, res.len(), res.buf_offset);
 
                     let stable = res.stabilize(&mut self.log);
 
@@ -519,28 +522,24 @@ impl LogWriter {
 
                     while let Some(&(low, high)) = written_intervals.get(0) {
                         let cur_stable = self.stable.load(Ordering::SeqCst) as u64;
-                        println!("cs: {}, low: {}, high: {}, n_pending: {}",
-                                 cur_stable,
-                                 low,
-                                 high,
-                                 written_intervals.len());
-                        println!("{:?}", written_intervals);
+                        // println!("cs: {}, low: {}, high: {}, n_pending: {}", cur_stable, low, high, written_intervals.len());
+                        // println!("{:?}", written_intervals);
 
                         if cur_stable == low {
-                            println!("bumping");
+                            // println!("bumping");
                             let old = self.stable.swap(high as usize, Ordering::SeqCst);
                             assert_eq!(old, cur_stable as usize);
                             written_intervals.remove(0);
                         } else {
-                            println!("break!");
+                            // println!("break!");
                             break;
                         }
                     }
+                    // println!("finished writing idx of {}", res.idx);
                 }
                 ResOrShutdown::Shutdown => return,
             }
         }
-        println!("finished writing");
     }
 }
 
@@ -549,7 +548,7 @@ enum ResOrShutdown {
     Shutdown,
 }
 
-// #[test]
+#[test]
 fn non_contiguous_flush() {
     let log = Log::start_system();
     let res1 = log.reserve(MAX_BUF_SZ - HEADER_LEN);
@@ -602,15 +601,15 @@ fn basic_functionality() {
         }
     });
 
-    // let t6 = thread::spawn(move || {
-    // for i in 0..5_000 {
-    // let buf = vec![6; i % 8192];
-    // let res = iobs6.reserve(buf.len());
-    // let id = res.log_id();
-    // res.complete(buf);
-    // iobs6.make_stable(id);
-    // }
-    // });
+    let t6 = thread::spawn(move || {
+        for i in 0..5_000 {
+            let buf = vec![6; i % 8192];
+            let res = iobs6.reserve(buf.len());
+            let id = res.log_id();
+            res.complete(buf);
+            iobs6.make_stable(id);
+        }
+    });
 
 
     t1.join().unwrap();
@@ -618,7 +617,7 @@ fn basic_functionality() {
     t3.join().unwrap();
     t4.join().unwrap();
     t5.join().unwrap();
-    // t6.join().unwrap();
+    t6.join().unwrap();
     log7.shutdown();
 }
 
@@ -629,7 +628,7 @@ fn test_delta(log: &Log) {
     let id = res.log_id();
     res.complete(data_bytes);
     log.make_stable(id);
-    println!("id {} is now stable", id);
+    // println!("id {} is now stable", id);
     let read_buf = log.read(id).unwrap().unwrap();
     let read = ops::from_binary::<LogData>(read_buf).unwrap();
     assert_eq!(read, deltablock);
@@ -648,7 +647,7 @@ fn test_abort(log: &Log) {
     }
 }
 
-// #[test]
+#[test]
 fn test_log_aborts() {
     let log = Log::start_system();
     test_delta(&log);
@@ -682,6 +681,7 @@ fn test_hole_punching() {
 }
 
 fn seal_header_and_bump_offsets(header: &AtomicUsize,
+                                next_header: &AtomicUsize,
                                 hv: u32,
                                 cur_log_offset: &AtomicUsize,
                                 next_log_offset: &AtomicUsize,
@@ -693,7 +693,7 @@ fn seal_header_and_bump_offsets(header: &AtomicUsize,
     }
     let sealed = ops::mk_sealed(hv);
     if header.compare_and_swap(hv as usize, sealed as usize, Ordering::SeqCst) == hv as usize {
-        // println!("- buf {} sealed with {} writers", idx, ops::n_writers(sealed));
+        // println!("sealed buf with {} writers", ops::n_writers(sealed));
         // We succeeded in setting seal,
         // so we get to bump cur and log_offset.
 
@@ -709,20 +709,16 @@ fn seal_header_and_bump_offsets(header: &AtomicUsize,
         let our_log_offset = cur_log_offset.load(Ordering::SeqCst);
         assert_ne!(our_log_offset, std::usize::MAX);
 
-        println!("");
-        println!("our offset: {} buf_offset: {}",
-                 our_log_offset,
-                 ops::offset(sealed));
-
         let next_offset = our_log_offset + ops::offset(sealed) as usize;
-        println!("setting next log offset to {}", next_offset);
 
         // !! setup new slot
+        next_header.store(0, Ordering::SeqCst);
         let old = next_log_offset.swap(next_offset, Ordering::SeqCst);
         assert_eq!(old, std::usize::MAX);
 
         // !! open new slot
-        current_buf.fetch_add(1, Ordering::SeqCst);
+        let next_buf = current_buf.fetch_add(1, Ordering::SeqCst);
+        // println!("setting next buf to {}", (next_buf + 1) % N_BUFS);
 
         Ok(sealed)
     } else {
