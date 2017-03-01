@@ -15,7 +15,7 @@ const FANOUT: u64 = 1 << FANFACTOR;
 const FAN_MASK: u64 = FANOUT - 1;
 
 #[inline(always)]
-pub fn split_fanout(i: u64) -> (u64, u64) {
+fn split_fanout(i: u64) -> (u64, u64) {
     let rem = i >> FANFACTOR;
     let first_6 = i & FAN_MASK;
     (first_6, rem)
@@ -48,59 +48,6 @@ impl<T> Drop for Node<T> {
     }
 }
 
-impl<T> Node<T> {
-    fn cas(&self, pid: PageID, old: *mut T, new: *mut T) -> Result<(), ()> {
-        if pid == 0 {
-            // we've reached the CAS node
-            if old == self.inner.compare_and_swap(old, new, Ordering::SeqCst) {
-                return Ok(());
-            } else {
-                return Err(());
-            }
-        }
-        let (first_six, remainder) = split_fanout(pid);
-        let child_index = first_six as usize;
-        let ref slot = self.children[child_index];
-        let mut next_ptr = slot.load(Ordering::SeqCst);
-        if next_ptr.is_null() {
-            let child = Node::default();
-            let child_ptr = Box::into_raw(Box::new(child));
-            let ret = slot.compare_and_swap(next_ptr, child_ptr, Ordering::SeqCst);
-            if ret == next_ptr {
-                // CAS worked
-                next_ptr = child_ptr;
-            } else {
-                // another thread beat us, drop child and use what they set
-                unsafe { Box::from_raw(child_ptr) };
-                next_ptr = ret;
-            }
-        }
-
-        let ret = unsafe { (*next_ptr).cas(remainder, old, new) };
-        ret
-    }
-
-    fn get(&self, pid: PageID) -> Option<*mut T> {
-        if pid == 0 {
-            // we've reached our Node
-            let v = self.inner.load(Ordering::SeqCst);
-            if v.is_null() {
-                return None;
-            } else {
-                return Some(v);
-            }
-        }
-        // we need to continue
-        let (first_six, remainder) = split_fanout(pid);
-        let next_ptr = self.children[first_six as usize].load(Ordering::SeqCst);
-        if next_ptr.is_null() {
-            return None;
-        }
-        let ret = unsafe { (*next_ptr).get(remainder) };
-        ret
-    }
-}
-
 #[derive(Clone)]
 pub struct Radix<T> {
     head: Arc<Node<T>>,
@@ -114,26 +61,82 @@ impl<T> Default for Radix<T> {
 }
 
 impl<T> Radix<T> {
-    pub fn insert(&self, pid: PageID, inner: *mut T) -> Result<(), ()> {
-        self.head.cas(pid, ptr::null_mut(), inner)
+    pub fn insert(&self, pid: PageID, inner: *mut T) -> Result<*mut T, *mut T> {
+        self.cas(pid, ptr::null_mut(), inner)
     }
 
-    pub fn cas(&self, pid: PageID, old: *mut T, new: *mut T) -> Result<(), ()> {
-        self.head.cas(pid, old, new)
+    pub fn swap(&self, pid: PageID, new: *mut T) -> *mut T {
+        let tip = traverse(&*self.head as *const Node<T>, pid, true);
+        if tip.is_null() {
+            return ptr::null_mut();
+        }
+
+        unsafe { (*tip).inner.swap(new, Ordering::SeqCst) }
+    }
+
+    pub fn cas(&self, pid: PageID, old: *mut T, new: *mut T) -> Result<*mut T, *mut T> {
+        let tip = traverse(&*self.head as *const Node<T>, pid, true);
+        if tip.is_null() {
+            return Err(ptr::null_mut());
+        }
+
+        let res = unsafe { (*tip).inner.compare_and_swap(old, new, Ordering::SeqCst) };
+        if old == res {
+            return Ok(res);
+        } else {
+            return Err(res);
+        }
     }
 
     pub fn get(&self, pid: PageID) -> Option<*mut T> {
-        self.head.get(pid)
-
-    }
-
-    pub fn del(&self, pid: PageID) -> Result<(), ()> {
-        if let Some(cur) = self.get(pid) {
-            self.cas(pid, cur, ptr::null_mut())
+        let tip = traverse(&*self.head as *const Node<T>, pid, false);
+        if tip.is_null() {
+            return None;
+        }
+        let v = unsafe { (*tip).inner.load(Ordering::SeqCst) };
+        if v.is_null() {
+            None
         } else {
-            Err(())
+            Some(v)
         }
     }
+
+    pub fn del(&self, pid: PageID) -> *mut T {
+        self.swap(pid, ptr::null_mut())
+    }
+}
+
+#[inline(always)]
+fn traverse<T>(ptr: *const Node<T>, pid: PageID, create_intermediate: bool) -> *const Node<T> {
+    if pid == 0 {
+        return ptr;
+    }
+
+    let (first_six, remainder) = split_fanout(pid);
+    let child_index = first_six as usize;
+    let children = unsafe { (*ptr).children.clone() };
+    let mut next_ptr = children[child_index].load(Ordering::SeqCst);
+
+    if next_ptr.is_null() {
+        if !create_intermediate {
+            return ptr::null_mut();
+        }
+
+        let child = Node::default();
+        let child_ptr = Box::into_raw(Box::new(child));
+        let ret = children[child_index].compare_and_swap(next_ptr, child_ptr, Ordering::SeqCst);
+        if ret == next_ptr {
+            // CAS worked
+            next_ptr = child_ptr;
+        } else {
+            // another thread beat us, drop unused created
+            // child and use what is already set
+            unsafe { Box::from_raw(child_ptr) };
+            next_ptr = ret;
+        }
+    }
+
+    traverse(next_ptr, remainder, create_intermediate)
 }
 
 #[test]
@@ -155,7 +158,7 @@ fn basic_functionality() {
     assert_eq!(rt.get(0), Some(five));
     rt.cas(0, five, six).unwrap();
     assert_eq!(rt.get(0), Some(six));
-    rt.del(0).unwrap();
+    assert_ne!(rt.del(0), ptr::null_mut());
     assert_eq!(rt.get(0), None);
 
     rt.insert(321, two).unwrap();
