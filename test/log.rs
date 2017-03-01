@@ -58,7 +58,9 @@ fn prop_read_stable(ops: OpVec) -> bool {
     let log = Log::start_system("test_rsdb_quickcheck.log".to_owned());
     for op in ops.ops.iter() {
         match op {
-            &Write(ref buf) => {}
+            &Write(ref buf) => {
+                log.write(&*buf);
+            }
             &WriteReservation(ref buf) => {}
             &AbortReservation(ref buf) => {}
             &Stabilize => {}

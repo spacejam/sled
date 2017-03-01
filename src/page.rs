@@ -84,28 +84,26 @@ pub struct Pager {
     cleaned_epochs: Arc<AtomicUsize>,
     // log is our lock-free log store
     log: Log,
-}
-
-impl Default for Pager {
-    fn default() -> Pager {
-        Pager {
-            esl: Arc::new(AtomicUsize::new(0)),
-            highest_pid: Arc::new(AtomicUsize::new(0)),
-            table: Radix::default(),
-            gc_pids: Arc::new(rep_no_copy!(Stack::default(); N_EPOCHS)),
-            gc_pages: Arc::new(rep_no_copy!(Stack::default(); N_EPOCHS)),
-            gc_headers: rep_no_copy!(Arc::new(AtomicUsize::new(0)); N_EPOCHS),
-            free: Arc::new(Stack::default()),
-            current_epoch: Arc::new(AtomicUsize::new(0)),
-            cleaned_epochs: Arc::new(AtomicUsize::new(0)),
-            log: Log::start_system("pager.log".to_owned()),
-        }
-    }
+    path: String,
 }
 
 impl Pager {
-    pub fn open() -> Pager {
-        recover().unwrap_or_else(|_| Pager::default())
+    pub fn open(path: String) -> Pager {
+        recover(path.clone()).unwrap_or_else(|_| {
+            Pager {
+                esl: Arc::new(AtomicUsize::new(0)),
+                highest_pid: Arc::new(AtomicUsize::new(0)),
+                table: Radix::default(),
+                gc_pids: Arc::new(rep_no_copy!(Stack::default(); N_EPOCHS)),
+                gc_pages: Arc::new(rep_no_copy!(Stack::default(); N_EPOCHS)),
+                gc_headers: rep_no_copy!(Arc::new(AtomicUsize::new(0)); N_EPOCHS),
+                free: Arc::new(Stack::default()),
+                current_epoch: Arc::new(AtomicUsize::new(0)),
+                cleaned_epochs: Arc::new(AtomicUsize::new(0)),
+                log: Log::start_system(path.clone()),
+                path: path,
+            }
+        })
     }
 
     pub fn enroll_in_epoch(&self) -> Epoch {
@@ -116,7 +114,6 @@ impl Pager {
                 // need to spin for gc to complete
                 assert_eq!(idx - clean_idx, N_EPOCHS);
                 println!("epoch enroll spin 1");
-                thread::sleep_ms(500);
                 continue;
             }
             let atomic_header = self.gc_headers[idx % N_EPOCHS].clone();
@@ -155,12 +152,12 @@ impl Pager {
     // data ops
 
     // NB don't let this grow beyond 4-8 (6 maybe ideal)
-    pub fn delta(pid: PageID, lsn: TxID, delta: Delta) -> Result<LogID, ()> {
+    pub fn delta(&self, pid: PageID, lsn: TxID, delta: Delta) -> Result<LogID, ()> {
         unimplemented!()
     }
 
     // NB must only consolidate deltas with LSN <= ESL
-    pub fn attempt_consolidation(pid: PageID, new_page: Page) -> Result<(), ()> {
+    pub fn attempt_consolidation(&self, pid: PageID, new_page: Page) -> Result<(), ()> {
         unimplemented!()
     }
 
@@ -180,22 +177,22 @@ impl Pager {
     /// page table stores log addr
     /// may not yet be stable on disk
     // NB don't include any insert/updates with higher LSN than ESL
-    pub fn flush(page_id: PageID, annotation: Vec<u8>) -> LogID {
+    pub fn flush(&self, page_id: PageID, annotation: Vec<Annotation>) -> LogID {
         unimplemented!()
     }
 
     /// ensures all log data up until the provided address is stable
-    pub fn make_stable(log_coords: LogID) {
+    pub fn make_stable(&self, id: LogID) {
         unimplemented!()
     }
 
     /// returns current stable point in the log
-    pub fn hi_stable() -> LogID {
+    pub fn hi_stable(&self) -> LogID {
         unimplemented!()
     }
 
     /// create new page, persist the table
-    pub fn allocate() -> PageID {
+    pub fn allocate(&self) -> PageID {
         // try to pop free list
 
         // else bump max ID and create new base page
@@ -203,14 +200,14 @@ impl Pager {
     }
 
     /// adds page to current epoch's pending freelist, persists table
-    pub fn free(pid: PageID) -> Result<(), ()> {
+    pub fn free(&self, pid: PageID) -> Result<(), ()> {
         unimplemented!()
     }
 
     // tx ops
 
     /// add a tx id (lsn) to tx table, maintained by CL
-    pub fn tx_begin(id: TxID) {
+    pub fn tx_begin(&self, id: TxID) {
         unimplemented!()
     }
 
@@ -218,13 +215,13 @@ impl Pager {
     /// tx is committed
     /// CAS page table
     /// tx flushed to LSS
-    pub fn tx_commit(id: TxID) {
+    pub fn tx_commit(&self, id: TxID) {
         unimplemented!()
     }
 
     /// tx removed from tx table
     /// changed pages in cache are reset
-    pub fn tx_abort(id: TxID) {
+    pub fn tx_abort(&self, id: TxID) {
         unimplemented!()
     }
 }
@@ -249,8 +246,6 @@ impl Default for Checkpoint {
     }
 }
 
-
-
 // PartialView incrementally seeks to answer update / read questions by
 // being aware of splits / merges while traversing a tree.
 // Remember traversal path, which facilitates left scans, split retries, etc...
@@ -259,8 +254,8 @@ impl Default for Checkpoint {
 struct PartialView;
 
 // load checkpoint, then read from log
-fn recover() -> io::Result<Pager> {
-    fn file(path: &str) -> io::Result<fs::File> {
+fn recover(path: String) -> io::Result<Pager> {
+    fn file(path: String) -> io::Result<fs::File> {
         OpenOptions::new()
             .write(true)
             .read(true)
@@ -268,8 +263,8 @@ fn recover() -> io::Result<Pager> {
     }
 
     let checkpoint: Checkpoint = {
-        let path = "rsdb.pagetable_checkpoint";
-        let mut f = file(path)?;
+        let checkpoint_path = format!("{}.pagetable_checkpoint", path);
+        let mut f = file(checkpoint_path.clone())?;
 
         let mut data = vec![];
         f.read_to_end(&mut data).unwrap();
@@ -277,7 +272,7 @@ fn recover() -> io::Result<Pager> {
             Arc::new(AtomicUsize::new(0));
             // file does not contain valid checkpoint
             let corrupt_path = format!("rsdb.corrupt_checkpoint.{}", time::get_time().sec);
-            fs::rename(path, corrupt_path);
+            fs::rename(checkpoint_path, corrupt_path);
             Checkpoint::default()
         })
     };
@@ -285,9 +280,8 @@ fn recover() -> io::Result<Pager> {
     // TODO mv failed to load log to .corrupt_log.`date +%s`
     // continue from snapshot's LogID
 
-    let path = "rsdb.log";
     let corrupt_path = format!("rsdb.corrupt_log.{}", time::get_time().sec);
-    let mut file = file(path)?;
+    let mut file = file(path.clone())?;
     let mut read = 0;
     loop {
         // until we hit end/tear:
@@ -295,18 +289,73 @@ fn recover() -> io::Result<Pager> {
         //   size >= remaining ? read remaining : back up file ptr sizeof(size) and trim with warning
         //   add msg to map
 
-        let (mut k_len_buf, mut v_len_buf) = ([0u8; 4], [0u8; 4]);
-        read_or_break!(file, k_len_buf, read);
-        read_or_break!(file, v_len_buf, read);
-        let (klen, vlen) = (ops::array_to_usize(k_len_buf), ops::array_to_usize(v_len_buf));
-        let (mut k_buf, mut v_buf) = (Vec::with_capacity(klen), Vec::with_capacity(vlen));
-        read_or_break!(file, k_buf, read);
-        read_or_break!(file, v_buf, read);
+        let (mut valid_buf, mut len_buf, mut crc16_buf) = ([0u8; 1], [0u8; 4], [0u8; 2]);
+        read_or_break!(file, valid_buf, read);
+        read_or_break!(file, len_buf, read);
+        read_or_break!(file, crc16_buf, read);
+        let len = ops::array_to_usize(len_buf);
+        let mut buf = Vec::with_capacity(len);
+        read_or_break!(file, buf, read);
         break;
     }
 
     // clear potential tears
     file.set_len(read as u64)?;
 
-    Ok(Pager::default())
+    Ok(Pager {
+        esl: Arc::new(AtomicUsize::new(0)),
+        highest_pid: Arc::new(AtomicUsize::new(0)),
+        table: Radix::default(),
+        gc_pids: Arc::new(rep_no_copy!(Stack::default(); N_EPOCHS)),
+        gc_pages: Arc::new(rep_no_copy!(Stack::default(); N_EPOCHS)),
+        gc_headers: rep_no_copy!(Arc::new(AtomicUsize::new(0)); N_EPOCHS),
+        free: Arc::new(Stack::default()),
+        current_epoch: Arc::new(AtomicUsize::new(0)),
+        cleaned_epochs: Arc::new(AtomicUsize::new(0)),
+        log: Log::start_system(path.clone()),
+        path: path,
+    })
+}
+
+#[test]
+#[ignore]
+fn test_allocate() {
+    let pager = Pager::open("test_pager_allocate.log".to_string());
+    let pid = pager.allocate();
+}
+
+#[test]
+#[ignore]
+fn test_replace() {
+    let pager = Pager::open("test_pager_replace.log".to_string());
+}
+
+#[test]
+#[ignore]
+fn test_delta() {
+    let pager = Pager::open("test_pager_delta.log".to_string());
+}
+
+#[test]
+#[ignore]
+fn test_read() {
+    let pager = Pager::open("test_pager_read.log".to_string());
+}
+
+#[test]
+#[ignore]
+fn test_flush() {
+    let pager = Pager::open("test_pager_flush.log".to_string());
+}
+
+#[test]
+#[ignore]
+fn test_free() {
+    let pager = Pager::open("test_pager_free.log".to_string());
+}
+
+#[test]
+#[ignore]
+fn test_tx() {
+    let pager = Pager::open("test_pager_tx.log".to_string());
 }

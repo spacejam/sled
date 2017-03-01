@@ -1,3 +1,4 @@
+#![allow(unused)]
 use std::ptr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -30,7 +31,7 @@ pub struct Tree {
 
 impl Tree {
     pub fn open() -> Tree {
-        let pt = Pager::open();
+        let pt = Pager::open("tree.log".to_owned());
         let esl = pt.esl.clone();
         Tree {
             pager: Arc::new(pt),

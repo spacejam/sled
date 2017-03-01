@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::cell::{UnsafeCell, RefCell};
 use std::thread;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{channel, Sender};
 use std::os::unix::io::AsRawFd;
 
 use crossbeam::sync::MsQueue;
@@ -66,6 +66,7 @@ impl Clone for Log {
 }
 
 impl Log {
+    /// create new lock-free log
     pub fn start_system(path: String) -> Log {
         let stable = Arc::new(AtomicUsize::new(0));
         let q = Arc::new(MsQueue::new());
@@ -76,7 +77,8 @@ impl Log {
             .name("LogWriter".to_string())
             .spawn(move || {
                 lw.run();
-            });
+            })
+            .unwrap();
 
         Log {
             iobufs: Arc::new(IOBufs::new(q, offset as usize)),
@@ -86,16 +88,19 @@ impl Log {
         }
     }
 
+    /// claim a spot on disk, which can later be filled or aborted
     pub fn reserve(&self, sz: usize) -> Reservation {
         assert_eq!(sz >> 32, 0);
         assert!(sz <= MAX_BUF_SZ - HEADER_LEN);
         self.iobufs.reserve(sz as u32)
     }
 
-    pub fn write(&self, buf: Vec<u8>) -> LogID {
+    /// write a buffer to disk
+    pub fn write(&self, buf: &[u8]) -> LogID {
         self.iobufs.write(buf)
     }
 
+    /// read a buffer from the disk
     pub fn read(&self, id: LogID) -> io::Result<Option<Vec<u8>>> {
         let mut f = self.file.borrow_mut();
         f.seek(SeekFrom::Start(id))?;
@@ -124,10 +129,12 @@ impl Log {
         Ok(Some(buf))
     }
 
+    /// returns the current stable offset written to disk
     pub fn stable_offset(&self) -> LogID {
         self.stable.load(Ordering::SeqCst) as LogID
     }
 
+    /// blocks until the specified id has been made stable on disk
     pub fn make_stable(&self, id: LogID) {
         let mut spins = 0;
         loop {
@@ -145,10 +152,12 @@ impl Log {
         }
     }
 
+    /// shut down the writer threads
     pub fn shutdown(self) {
         self.iobufs.clone().shutdown();
     }
 
+    /// deallocates the data part of a log id
     pub fn punch_hole(&self, id: LogID) {
         // we zero out the valid byte, and use fallocate to punch a hole
         // in the actual data, but keep the len for recovery.
@@ -156,7 +165,7 @@ impl Log {
         // zero out valid bit
         f.seek(SeekFrom::Start(id)).unwrap();
         let zeros = vec![0];
-        f.write_all(&*zeros);
+        f.write_all(&*zeros).unwrap();
         f.seek(SeekFrom::Start(id + 1)).unwrap();
         let mut len_buf = [0u8; 4];
         f.read_exact(&mut len_buf).unwrap();
@@ -359,28 +368,35 @@ impl IOBufs {
         };
     }
 
-    pub fn write(&self, buf: Vec<u8>) -> LogID {
+    fn write(&self, buf: &[u8]) -> LogID {
         let res = self.reserve(buf.len() as u32);
         res._write(buf, true)
     }
 
-    pub fn shutdown(&self) {
-        for i in 0..N_WRITER_THREADS {
+    fn shutdown(&self) {
+        for _ in 0..N_WRITER_THREADS {
             self.plunger.push(ResOrShutdown::Shutdown);
         }
     }
 }
 
 impl Reservation {
+    /// cancel the reservation, placing a failed flush on disk
     pub fn abort(self) {
         // fills lease with a FailedFlush
         self._seal();
-        self._write(vec![], false);
+        self._write(&[], false);
     }
 
-    pub fn complete(self, buf: Vec<u8>) -> LogID {
+    /// complete the reservation, placing the buffer on disk at the log_id
+    pub fn complete(self, buf: &[u8]) -> LogID {
         self._seal();
         self._write(buf, true)
+    }
+
+    /// get the log_id for accessing this buffer in the future
+    pub fn log_id(&self) -> LogID {
+        self.base_disk_offset
     }
 
     fn len(&self) -> usize {
@@ -402,7 +418,7 @@ impl Reservation {
         }
     }
 
-    fn _write(self, buf: Vec<u8>, valid: bool) -> LogID {
+    fn _write(self, buf: &[u8], valid: bool) -> LogID {
         let mut out_buf = unsafe { (*self.buf.get()).as_mut_slice() };
 
         let size_bytes = ops::usize_to_array(self.len() - HEADER_LEN).to_vec();
@@ -428,7 +444,7 @@ impl Reservation {
 
         if buf.len() > 0 && valid {
             assert_eq!(buf.len() + HEADER_LEN, self.res_len as usize);
-            (out_buf)[data_start..data_end].copy_from_slice(&*buf);
+            (out_buf)[data_start..data_end].copy_from_slice(buf);
         } else if !valid {
             assert_eq!(buf.len(), 0);
             // no need to actually write zeros, the next seek will punch a hole
@@ -513,10 +529,6 @@ impl Reservation {
 
         self.base_disk_offset
     }
-
-    pub fn log_id(&self) -> LogID {
-        self.base_disk_offset
-    }
 }
 
 struct LogWriter {
@@ -546,7 +558,7 @@ impl LogWriter {
         }
     }
 
-    fn run(mut self) {
+    fn run(self) {
         let mut written_intervals = vec![];
 
         let (interval_tx, interval_rx) = channel();
@@ -592,6 +604,7 @@ enum ResOrShutdown {
     Shutdown,
 }
 
+#[inline(always)]
 fn seal_header_and_bump_offsets(header: &AtomicUsize,
                                 next_header: &AtomicUsize,
                                 hv: u32,
@@ -654,6 +667,7 @@ fn seal_header_and_bump_offsets(header: &AtomicUsize,
     }
 }
 
+#[inline(always)]
 fn process_reservation(path: String,
                        res_rx: Arc<MsQueue<ResOrShutdown>>,
                        interval_tx: Sender<(LogID, LogID)>) {
@@ -672,7 +686,7 @@ fn process_reservation(path: String,
 
                 res.stabilize(&mut log);
 
-                interval_tx.send(interval);
+                interval_tx.send(interval).unwrap();
                 // println!("finished writing idx of {}", res.idx);
             }
             ResOrShutdown::Shutdown => return,
@@ -726,7 +740,7 @@ mod tests {
             .spawn(move || {
                 for i in 0..5_000 {
                     let buf = vec![1; i % 8192];
-                    log.write(buf);
+                    log.write(&*buf);
                 }
             })
             .unwrap();
@@ -735,7 +749,7 @@ mod tests {
             .spawn(move || {
                 for i in 0..5_000 {
                     let buf = vec![2; i % 8192];
-                    iobs2.write(buf);
+                    iobs2.write(&*buf);
                 }
             })
             .unwrap();
@@ -744,7 +758,7 @@ mod tests {
             .spawn(move || {
                 for i in 0..5_000 {
                     let buf = vec![3; i % 8192];
-                    iobs3.write(buf);
+                    iobs3.write(&*buf);
                 }
             })
             .unwrap();
@@ -753,7 +767,7 @@ mod tests {
             .spawn(move || {
                 for i in 0..5_000 {
                     let buf = vec![4; i % 8192];
-                    iobs4.write(buf);
+                    iobs4.write(&*buf);
                 }
             })
             .unwrap();
@@ -762,7 +776,7 @@ mod tests {
             .spawn(move || {
                 for i in 0..5_000 {
                     let buf = vec![5; i % 8192];
-                    iobs5.write(buf);
+                    iobs5.write(&*buf);
                 }
             })
             .unwrap();
@@ -774,7 +788,7 @@ mod tests {
                     let buf = vec![6; i % 8192];
                     let res = iobs6.reserve(buf.len());
                     let id = res.log_id();
-                    res.complete(buf);
+                    res.complete(&*buf);
                     iobs6.make_stable(id);
                 }
             })
@@ -790,16 +804,14 @@ mod tests {
         log7.shutdown();
     }
 
-    fn test_delta(log: &Log) {
-        let deltablock = LogData::Deltas(vec![]);
-        let data_bytes = ops::to_binary(&deltablock);
+    fn test_write(log: &Log) {
+        let data_bytes = b"yoyoyoyo";
         let res = log.reserve(data_bytes.len());
         let id = res.log_id();
         res.complete(data_bytes);
         log.make_stable(id);
         let read_buf = log.read(id).unwrap().unwrap();
-        let read = ops::from_binary::<LogData>(read_buf).unwrap();
-        assert_eq!(read, deltablock);
+        assert_eq!(read_buf, data_bytes);
     }
 
     fn test_abort(log: &Log) {
@@ -818,11 +830,11 @@ mod tests {
     #[test]
     fn test_log_aborts() {
         let log = Log::start_system("test_aborts.log".to_owned());
-        test_delta(&log);
+        test_write(&log);
         test_abort(&log);
-        test_delta(&log);
+        test_write(&log);
         test_abort(&log);
-        test_delta(&log);
+        test_write(&log);
         test_abort(&log);
         log.shutdown();
     }
@@ -831,8 +843,7 @@ mod tests {
     fn test_hole_punching() {
         let log = Log::start_system("test_hole_punching.log".to_owned());
 
-        let deltablock = LogData::Deltas(vec![]);
-        let data_bytes = ops::to_binary(&deltablock);
+        let data_bytes = b"yoyoyoyo";
         let res = log.reserve(data_bytes.len());
         let id = res.log_id();
         res.complete(data_bytes);

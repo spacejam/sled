@@ -32,17 +32,18 @@ api
 
 ```rust
 impl PageCache {
-    fn delta(pid: PageID, delta: Delta) -> LogID;
-    fn replace(pid: PageID, new_page: Page) -> LogID;
-    fn read(pid: PageID) -> Data;
-    fn flush(page_id: PageID, annotation: Vec<u8>) -> LogID;
-    fn make_stable(log_coords: LogID);
-    fn hi_stable() -> LogID;
-    fn allocate() -> PageID;
-    fn free(pid: PageID);
-    fn tx_begin(id: TxID);
-    fn tx_commit(id: TxID);
-    fn tx_abort(id: TxID);
+    pub fn enroll_in_epoch(&self) -> Epoch;
+    pub fn delta(self, pid: PageID, delta: Delta) -> LogID;
+    pub fn replace(self, pid: PageID, new_page: Page) -> LogID;
+    pub fn read(self, pid: PageID) -> Data;
+    pub fn flush(self, page_id: PageID, annotation: Vec<u8>) -> LogID;
+    pub fn make_stable(self, log_coords: LogID);
+    pub fn hi_stable(self, ) -> LogID;
+    pub fn allocate(self, ) -> PageID;
+    pub fn free(self, pid: PageID);
+    pub fn tx_begin(self, id: TxID);
+    pub fn tx_commit(self, id: TxID);
+    pub fn tx_abort(self, id: TxID);
 }
 ```
 
