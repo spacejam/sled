@@ -5,10 +5,7 @@ use std::mem;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicPtr, Ordering};
-
 use std::thread;
-
-use super::*;
 
 pub struct Node<T> {
     inner: T,
@@ -29,19 +26,19 @@ impl<T> Default for Stack<T> {
 impl<T: Debug> Debug for Stack<T> {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         let mut ptr = self.head();
-        formatter.write_str("Stack [");
+        formatter.write_str("Stack [").unwrap();
         let mut written = false;
         while !ptr.is_null() {
             if written {
-                formatter.write_str(", ");
+                formatter.write_str(", ").unwrap();
             }
             unsafe {
-                (*ptr).inner.fmt(formatter);
+                (*ptr).inner.fmt(formatter).unwrap();
                 ptr = (*ptr).next;
             }
             written = true;
         }
-        formatter.write_str("]");
+        formatter.write_str("]").unwrap();
         Ok(())
     }
 }
@@ -72,7 +69,7 @@ impl<T> Drop for Stack<T> {
 impl<T> Stack<T> {
     pub fn try_push(&self, inner: T) -> Result<(), ()> {
         let cur = self.head();
-        let mut node = Box::into_raw(Box::new(Node {
+        let node = Box::into_raw(Box::new(Node {
             inner: inner,
             next: cur,
         }));

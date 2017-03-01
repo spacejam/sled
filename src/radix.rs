@@ -4,12 +4,9 @@
 // goal: high pointer density with a dense address space
 // it never deallocates space, eventually this will be addressed
 
-use std::fmt::{self, Debug};
 use std::ptr;
-use std::mem;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicPtr, Ordering};
-use std::thread;
 
 use super::*;
 
@@ -43,9 +40,9 @@ impl<T> Default for Node<T> {
 impl<T> Drop for Node<T> {
     fn drop(&mut self) {
         for c in self.children.iter() {
-            let mut ptr = c.load(Ordering::SeqCst);
+            let ptr = c.load(Ordering::SeqCst);
             if !ptr.is_null() {
-                let node = unsafe { Box::from_raw(ptr) };
+                unsafe { Box::from_raw(ptr) };
             }
         }
     }
@@ -74,7 +71,7 @@ impl<T> Node<T> {
                 next_ptr = child_ptr;
             } else {
                 // another thread beat us, drop child and use what they set
-                let child = unsafe { Box::from_raw(child_ptr) };
+                unsafe { Box::from_raw(child_ptr) };
                 next_ptr = ret;
             }
         }
