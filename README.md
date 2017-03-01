@@ -2,13 +2,6 @@
 
 transactional KV store backed by a lock-free b-link tree backed by a log-structured page store
 
-uses fallocate to reduce write amplification. requires a filesystem that supports `FALLOC_FL_PUNCH_HOLE`:
-
-* XFS (since Linux 2.6.38)
-* ext4 (since Linux 3.0)
-* Btrfs (since Linux 3.7)
-* tmpfs (since Linux 3.5)
-
 # Architecture
 
 ## [Transactions](src/tx.rs)
