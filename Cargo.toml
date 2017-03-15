@@ -17,7 +17,7 @@ bincode = "0.6"
 libc = "0.2"
 time = "0.1"
 crossbeam = "0.2"
+rand = "0.3"
 
 [dev-dependencies]
 quickcheck = "0.2"
-rand = "0.3"

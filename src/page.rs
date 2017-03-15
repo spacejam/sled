@@ -92,7 +92,7 @@ impl Pager {
         recover(path.clone()).unwrap_or_else(|_| {
             Pager {
                 esl: Arc::new(AtomicUsize::new(0)),
-                highest_pid: Arc::new(AtomicUsize::new(0)),
+                highest_pid: Arc::new(AtomicUsize::new(1)),
                 table: Radix::default(),
                 gc_pids: Arc::new(rep_no_copy!(Stack::default(); N_EPOCHS)),
                 gc_pages: Arc::new(rep_no_copy!(Stack::default(); N_EPOCHS)),
@@ -191,17 +191,25 @@ impl Pager {
         unimplemented!()
     }
 
-    /// create new page, persist the table
+    /// create new page, initialize its stack in the table
     pub fn allocate(&self) -> PageID {
-        // try to pop free list
-
-        // else bump max ID and create new base page
-        unimplemented!()
+        let pid = if let Ok(Some(pid)) = self.free.try_pop() {
+            pid
+        } else {
+            self.highest_pid.fetch_add(1, Ordering::SeqCst) as PageID
+        };
+        let stack = Stack::default();
+        let stack_ptr = Box::into_raw(Box::new(stack));
+        let old_ptr = self.table.swap(pid, stack_ptr);
+        if !old_ptr.is_null() {
+            unsafe { Box::from_raw(old_ptr) };
+        }
+        pid
     }
 
     /// adds page to current epoch's pending freelist, persists table
-    pub fn free(&self, pid: PageID) -> Result<(), ()> {
-        unimplemented!()
+    pub fn free(&self, pid: PageID) {
+        while self.free.try_push(pid).is_err() {}
     }
 
     // tx ops
@@ -304,7 +312,7 @@ fn recover(path: String) -> io::Result<Pager> {
 
     Ok(Pager {
         esl: Arc::new(AtomicUsize::new(0)),
-        highest_pid: Arc::new(AtomicUsize::new(0)),
+        highest_pid: Arc::new(AtomicUsize::new(1)),
         table: Radix::default(),
         gc_pids: Arc::new(rep_no_copy!(Stack::default(); N_EPOCHS)),
         gc_pages: Arc::new(rep_no_copy!(Stack::default(); N_EPOCHS)),
@@ -318,7 +326,6 @@ fn recover(path: String) -> io::Result<Pager> {
 }
 
 #[test]
-#[ignore]
 fn test_allocate() {
     let pager = Pager::open("test_pager_allocate.log".to_string());
     let pid = pager.allocate();
@@ -328,6 +335,7 @@ fn test_allocate() {
 #[ignore]
 fn test_replace() {
     let pager = Pager::open("test_pager_replace.log".to_string());
+
 }
 
 #[test]

@@ -1,3 +1,4 @@
+#![allow(unused)]
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::{self, Rng};
 
