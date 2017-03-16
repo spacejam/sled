@@ -9,7 +9,7 @@ pub use db::DB;
 // atomic lock-free tree
 pub use tree::Tree;
 // lock-free pagecache
-pub use page::Pager;
+pub use page::{Pager, MemPager, PersistentPager};
 // lock-free log-structured storage
 pub use log::Log;
 // lock-free stack
@@ -68,40 +68,34 @@ type Key = Vec<u8>;
 type Value = Vec<u8>;
 struct Tx;
 
-
-// basic hierarchy
-// Node
-//   Data enum
-//     Index
-//       Vec<Key, *mut Node>
-//     Leaf
-//       Vec<Key, Record>
-//
-// Record enum
-//  Page
-//      Vec<Key, Value>
-//  Delta
-
 use std::mem;
-
-#[derive(Clone)]
-pub struct Page(Vec<(Key, Value)>);
 
 #[derive(Clone)]
 pub struct Annotation;
 
 #[derive(Clone)]
-pub struct Node {
+pub struct Page {
     data: Data,
     lo_k: Key,
     hi_k: Key,
     next: PageID,
 }
 
+impl Default for Page {
+    fn default() -> Page {
+        Page {
+            data: Data::Leaf(vec![]),
+            lo_k: vec![],
+            hi_k: vec![],
+            next: 0,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub enum Data {
     // (separator, pointer)
-    Index(Vec<(Key, *mut Node)>),
+    Index(Vec<(Key, PageID)>),
     Leaf(Vec<(Key, Value)>),
     Delta(Delta),
 }
@@ -113,7 +107,7 @@ pub enum Delta {
     Delete(Key),
     DeleteNode,
     MergePage {
-        right: *mut stack::Node<Node>,
+        right: *mut stack::Node<Page>,
         right_hi_k: Key,
     },
     MergeIndex {

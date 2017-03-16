@@ -1,21 +1,110 @@
 #![allow(unused)]
+use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::path::Path;
 use std::io::{self, Read};
 use std::mem;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock, Mutex};
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use std::thread;
 
 use super::*;
 
-// NB ping-pong correctness depends on this being 2
+// NB ping-pong epoch tracker correctness depends on this being 2
 const N_EPOCHS: usize = 2;
+
+pub trait Pager {
+    /// What a page is that is stored by the pager.
+    type Page;
+
+    /// What a mutation on a page consists of. May be
+    /// either an entire new page, or a delta update,
+    /// depending on the Pager implementation.
+    type Mutation;
+
+    /// If the PageID maps to a page in the pagecache, apply the provided
+    /// function to it and return the result.
+    fn with_page<B, F>(&self, k: PageID, f: F) -> Option<B> where F: FnMut(&Self::Page) -> B;
+
+    /// If the PageID maps to a page in the pagecache, operate on it
+    /// and optionally return a desired Mutation.
+    fn mutate_page<F>(&self, k: PageID, f: F) where F: FnMut(&Self::Page) -> Option<Self::Mutation>;
+
+    /// Create a new page. May use a recycled PageID, depending
+    /// on the implementation.
+    fn allocate_page(&self, Self::Page) -> PageID;
+
+    /// Mark a page as reusable. The implementation may wait
+    /// until an epoch is cleared before making it reusable.
+    fn free_page(&self, PageID);
+}
+
+pub struct MemPager<T> {
+    pages: Arc<RwLock<HashMap<PageID, T>>>,
+    max_pid: Arc<AtomicUsize>,
+    free: Arc<Mutex<Vec<PageID>>>,
+    pub esl: Arc<AtomicUsize>,
+}
+
+impl<T: Default> Default for MemPager<T> {
+    fn default() -> MemPager<T> {
+        let mut pages = HashMap::new();
+        pages.insert(0, T::default());
+
+        MemPager {
+            pages: Arc::new(RwLock::new(pages)),
+            max_pid: Arc::new(AtomicUsize::new(0)),
+            free: Arc::new(Mutex::new(vec![])),
+            esl: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+}
+
+impl<T> Pager for MemPager<T> {
+    type Page = T;
+    type Mutation = T;
+
+    fn with_page<B, F>(&self, pid: PageID, mut f: F) -> Option<B>
+        where F: FnMut(&Self::Page) -> B
+    {
+        let pages = self.pages.read().unwrap();
+        pages.get(&pid).map(|p| f(p))
+    }
+
+    /// If the PageID maps to a page in the pagecache, operate on it
+    /// and optionally return a desired Mutation.
+    fn mutate_page<F>(&self, pid: PageID, mut f: F)
+        where F: FnMut(&Self::Page) -> Option<Self::Mutation>
+    {
+        let mut pages = self.pages.write().unwrap();
+        if let Some(new) = pages.get(&pid).and_then(|p| f(p)) {
+            pages.insert(pid, new);
+        }
+    }
+
+    /// Create a new page. May use a recycled PageID, depending
+    /// on the implementation.
+    fn allocate_page(&self, page: Self::Page) -> PageID {
+        let mut free = self.free.lock().unwrap();
+        let mut pages = self.pages.write().unwrap();
+        let pid = free.pop()
+            .unwrap_or_else(|| self.max_pid.fetch_add(1, Ordering::SeqCst) as u64);
+        pages.insert(pid.clone(), page);
+        pid
+    }
+
+    /// Mark a page as reusable. The implementation may wait
+    /// until an epoch is cleared before making it reusable.
+    fn free_page(&self, pid: PageID) {
+        let mut free = self.free.lock().unwrap();
+        free.push(pid);
+    }
+}
 
 pub struct Epoch {
     header: Arc<AtomicUsize>,
     gc_pids: Arc<Vec<Stack<PageID>>>,
-    gc_pages: Arc<Vec<Stack<*mut stack::Node<Node>>>>,
+    gc_pages: Arc<Vec<Stack<*mut stack::Node<Page>>>>,
     current_epoch: Arc<AtomicUsize>,
     cleaned_epochs: Arc<AtomicUsize>,
     free: Arc<Stack<PageID>>,
@@ -39,7 +128,7 @@ impl Drop for Epoch {
                     for ptr in page_ptrs.into_iter() {
                         let mut cursor = ptr;
                         while !cursor.is_null() {
-                            let node: Box<stack::Node<Node>> = unsafe { Box::from_raw(cursor) };
+                            let node: Box<stack::Node<Page>> = unsafe { Box::from_raw(cursor) };
                             cursor = node.next();
                         }
                     }
@@ -59,23 +148,23 @@ impl Epoch {
         while self.gc_pids[idx % N_EPOCHS].try_push(pid).is_err() {}
     }
 
-    pub fn free_ptr(&self, ptr: *mut stack::Node<Node>) {
+    pub fn free_ptr(&self, ptr: *mut stack::Node<Page>) {
         let idx = self.current_epoch.load(Ordering::SeqCst);
         while self.gc_pages[idx % N_EPOCHS].try_push(ptr).is_err() {}
     }
 }
 
 #[derive(Clone)]
-pub struct Pager {
+pub struct PersistentPager {
     // end_stable_log is the highest LSN that may be flushed
     pub esl: Arc<AtomicUsize>,
     // highest_pid marks the max PageID we've allocated
     highest_pid: Arc<AtomicUsize>,
     // table maps from PageID to a stack of entries
-    table: Radix<Stack<Node>>,
+    table: Radix<Stack<Page>>,
     // gc related stuff
     gc_pids: Arc<Vec<Stack<PageID>>>,
-    gc_pages: Arc<Vec<Stack<*mut stack::Node<Node>>>>,
+    gc_pages: Arc<Vec<Stack<*mut stack::Node<Page>>>>,
     gc_headers: Vec<Arc<AtomicUsize>>,
     // free stores the per-epoch set of pages to free when epoch is clear
     free: Arc<Stack<PageID>>,
@@ -87,10 +176,10 @@ pub struct Pager {
     path: String,
 }
 
-impl Pager {
-    pub fn open(path: String) -> Pager {
+impl PersistentPager {
+    pub fn open(path: String) -> PersistentPager {
         recover(path.clone()).unwrap_or_else(|_| {
-            Pager {
+            PersistentPager {
                 esl: Arc::new(AtomicUsize::new(0)),
                 highest_pid: Arc::new(AtomicUsize::new(1)),
                 table: Radix::default(),
@@ -162,7 +251,7 @@ impl Pager {
     }
 
     /// return page. page table may only have disk ref, and will need to load it in
-    pub fn read(&self, pid: PageID) -> Option<*mut Stack<Node>> {
+    pub fn read(&self, pid: PageID) -> Option<*mut Stack<Page>> {
         if let Some(stack_ptr) = self.table.get(pid) {
             Some(stack_ptr)
         } else {
@@ -262,7 +351,7 @@ impl Default for Checkpoint {
 struct PartialView;
 
 // load checkpoint, then read from log
-fn recover(path: String) -> io::Result<Pager> {
+fn recover(path: String) -> io::Result<PersistentPager> {
     fn file(path: String) -> io::Result<fs::File> {
         OpenOptions::new()
             .write(true)
@@ -310,7 +399,7 @@ fn recover(path: String) -> io::Result<Pager> {
     // clear potential tears
     file.set_len(read as u64)?;
 
-    Ok(Pager {
+    Ok(PersistentPager {
         esl: Arc::new(AtomicUsize::new(0)),
         highest_pid: Arc::new(AtomicUsize::new(1)),
         table: Radix::default(),
@@ -327,43 +416,43 @@ fn recover(path: String) -> io::Result<Pager> {
 
 #[test]
 fn test_allocate() {
-    let pager = Pager::open("test_pager_allocate.log".to_string());
+    let pager = PersistentPager::open("test_pager_allocate.log".to_string());
     let pid = pager.allocate();
 }
 
 #[test]
 #[ignore]
 fn test_replace() {
-    let pager = Pager::open("test_pager_replace.log".to_string());
+    let pager = PersistentPager::open("test_pager_replace.log".to_string());
 
 }
 
 #[test]
 #[ignore]
 fn test_delta() {
-    let pager = Pager::open("test_pager_delta.log".to_string());
+    let pager = PersistentPager::open("test_pager_delta.log".to_string());
 }
 
 #[test]
 #[ignore]
 fn test_read() {
-    let pager = Pager::open("test_pager_read.log".to_string());
+    let pager = PersistentPager::open("test_pager_read.log".to_string());
 }
 
 #[test]
 #[ignore]
 fn test_flush() {
-    let pager = Pager::open("test_pager_flush.log".to_string());
+    let pager = PersistentPager::open("test_pager_flush.log".to_string());
 }
 
 #[test]
 #[ignore]
 fn test_free() {
-    let pager = Pager::open("test_pager_free.log".to_string());
+    let pager = PersistentPager::open("test_pager_free.log".to_string());
 }
 
 #[test]
 #[ignore]
 fn test_tx() {
-    let pager = Pager::open("test_pager_tx.log".to_string());
+    let pager = PersistentPager::open("test_pager_tx.log".to_string());
 }

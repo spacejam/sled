@@ -32,10 +32,7 @@ impl DB {
     pub fn read(&self, k: Key) -> Option<Value> {
         self.tree.read(k)
     }
-    pub fn update(&self, k: Key, v: Value) {
-        self.esl.fetch_add(1, Ordering::SeqCst);
-        self.tree.update(k, v);
-    }
+
     pub fn delete(&self, k: Key) {
         self.esl.fetch_add(1, Ordering::SeqCst);
         self.tree.delete(k);
