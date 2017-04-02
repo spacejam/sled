@@ -38,7 +38,7 @@ fn main() {
     }
 
     for t in threads.into_iter() {
-        t.join();
+        t.join().unwrap();
     }
 
     log.shutdown();

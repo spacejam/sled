@@ -27,7 +27,8 @@ pub trait Pager {
     fn with_page<B, F>(&self, k: PageID, f: F) -> Option<B> where F: FnMut(&Self::Page) -> B;
 
     /// If the PageID maps to a page in the pagecache, operate on it
-    /// and optionally return a desired Mutation.
+    /// and optionally return a desired Mutation. Will re-run the
+    /// provided closure until the mutation works.
     fn mutate_page<F>(&self, k: PageID, f: F) where F: FnMut(&Self::Page) -> Option<Self::Mutation>;
 
     /// Create a new page. May use a recycled PageID, depending
@@ -72,7 +73,8 @@ impl<T> Pager for MemPager<T> {
     }
 
     /// If the PageID maps to a page in the pagecache, operate on it
-    /// and optionally return a desired Mutation.
+    /// and optionally return a desired Mutation. Will re-run the
+    /// provided closure until the mutation works.
     fn mutate_page<F>(&self, pid: PageID, mut f: F)
         where F: FnMut(&Self::Page) -> Option<Self::Mutation>
     {

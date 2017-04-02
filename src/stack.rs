@@ -5,7 +5,6 @@ use std::mem;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicPtr, Ordering};
-use std::thread;
 
 pub struct Node<T> {
     inner: T,
@@ -114,6 +113,8 @@ impl<T> Stack<T> {
 
 #[test]
 fn basic_functionality() {
+    use std::thread;
+
     let ll = Arc::new(Stack::default());
     assert_eq!(ll.try_pop(), Ok(None));
     ll.try_push(1).unwrap();

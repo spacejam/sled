@@ -68,8 +68,6 @@ type Key = Vec<u8>;
 type Value = Vec<u8>;
 struct Tx;
 
-use std::mem;
-
 #[derive(Clone)]
 pub struct Annotation;
 
