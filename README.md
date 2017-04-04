@@ -9,8 +9,9 @@ progress
 - [ ] lock-free b-link tree
 - [ ] transaction manager
 - [ ] lock-free quad/pr/r tree
+- [ ] lock-free fractal tree
 
-# Architecture
+# Interfaces
 
 ## [Transactions](src/tx.rs)
 
@@ -89,3 +90,49 @@ impl Reservation {
     pub fn log_id(&self) -> LogID;
 }
 ```
+
+# Architecture
+
+## Log
+
+goals:
+
+1. (for: transactions) allow users to reserve space and
+   a file offset for prospective writes
+1. (for: transactions) reservations may be canceled
+1. (for: durability) allow users to retrieve a message by
+   providing an offset ID
+1. (for: durability) checksum all messages written
+1. (for: performance) support concurrent writes into
+   buffers which will be asynchronously flushed when full
+
+non-goals:
+
+1. transactionality, this is handled by the transaction layer,
+   and to a small extent the paging system (just for page merges & splits)
+1. knowing about valid offsets, this is maintained by the page table
+
+## paging
+
+goals:
+
+1. (for: transactions) provide the current stable log offset
+1. (for: transactions) allow blocking on the stabilization of a log offset
+1. (for: transactions) maintain a transaction table supporting deltas,
+   allocations, and freed pages. we support transactions for facilitating
+   page splits and merges.
+1. (for: durability) scatter-gather page fragments when not in memory
+1. (for: performance) allow pages to be compacted
+1. (for: performance) maintain an LRU cache for accessed page fragments
+1. (for: performance) use epoch-based GC for safely de/reallocating
+   deleted pages, page ID's, and pages that fall out of LRU while being
+   concurrently accessed by lock-free algorithms
+
+non-goals:
+
+1. our transactions are for facilitating splits and merges, and no full-page
+   updates may be included
+1. transactions at this layer do not enforce WAL protocols. higher layers must
+   enforce durability needs by using offset observation and blocking
+1. we have no knowledge of the structure of the pages
+

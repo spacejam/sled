@@ -76,7 +76,7 @@ impl Tree {
                 Data::Index(ref key_ptr_pairs) => {
                     for &(ref sep_k, ref ptr) in key_ptr_pairs {
                         if sep_k > &key {
-                            page_cursor >= *ptr;
+                            page_cursor = *ptr;
                         } else {
                             break;
                         }

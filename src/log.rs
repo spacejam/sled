@@ -104,21 +104,32 @@ impl Log {
     pub fn read(&self, id: LogID) -> io::Result<Option<Vec<u8>>> {
         let mut f = self.file.borrow_mut();
         f.seek(SeekFrom::Start(id))?;
+
         let mut valid = [0u8; 1];
         f.read_exact(&mut valid)?;
         if valid[0] == 0 {
             return Ok(None);
         }
+
         let mut len_buf = [0u8; 4];
         f.read_exact(&mut len_buf)?;
         let len = ops::array_to_usize(len_buf);
+        if len > MAX_BUF_SZ {
+            let msg = format!("read invalid message length, {} should be <= {}",
+                              len,
+                              MAX_BUF_SZ);
+            return Err(Error::new(ErrorKind::Other, msg));
+        }
+
         let mut crc16_buf = [0u8; 2];
         f.read_exact(&mut crc16_buf)?;
+
         let mut buf = Vec::with_capacity(len);
         unsafe {
             buf.set_len(len);
         }
         f.read_exact(&mut buf)?;
+
         let checksum = crc16_arr(&buf);
         if checksum != crc16_buf {
             let msg = format!("read data failed crc16 checksum, {:?} should be {:?}",
@@ -126,6 +137,7 @@ impl Log {
                               crc16_buf);
             return Err(Error::new(ErrorKind::Other, msg));
         }
+
         Ok(Some(buf))
     }
 
