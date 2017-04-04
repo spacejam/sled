@@ -6,6 +6,7 @@
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::mem;
 
 type NodeID = u64;
 
@@ -226,17 +227,16 @@ impl Tree {
                 }
                 Data::Leaf(ref mut items) => {
                     // println!("comparing leaf!");
-                    let search = items.binary_search_by(|&(ref k, ref v)| k.cmp(&key));
-                    if let Ok(idx) = search {
-                        items.push((key.clone(), value.clone()));
-                        items.swap_remove(idx);
-                    } else {
-                        items.push((key.clone(), value.clone()));
-                        items.sort_by(|a, b| a.0.cmp(&b.0));
-                        if items.len() > FANOUT {
-                            // println!("marking leaf node as in need of split");
-                            needs_split = true;
+                    let mut idx = 0;
+                    for i in 0..items.len() {
+                        if items[i].0 < key {
+                            idx = i + 1;
                         }
+                    }
+                    items.insert(idx, (key.clone(), value.clone()));
+                    if items.len() > FANOUT {
+                        // println!("marking leaf node as in need of split");
+                        needs_split = true;
                     }
 
                     break; // we've finished inserting
@@ -384,14 +384,27 @@ mod tests {
 
     #[test]
     fn it_works() {
+        #[inline(always)]
+        fn kv(i: usize) -> (Vec<u8>, Vec<u8>) {
+            let k: [u8; 8] = unsafe { mem::transmute(i) };
+            (k.to_vec(), k.to_vec())
+        }
         let mut tree = Tree::new();
         for i in 0..100000 {
-            let k = format!("k{}", i);
-            let k = k.as_bytes();
-            let v = format!("v{}", i);
-            let v = v.as_bytes();
+            let (k, v) = kv(i);
             tree.set(k.to_vec(), v.to_vec());
-            assert_eq!(tree.get(k), Some(v.to_vec()));
+        }
+        for i in 0..100000 {
+            let (k, v) = kv(i);
+            assert_eq!(tree.get(&*k), Some(v));
+        }
+        for i in 0..100000 {
+            let (k, v) = kv(i);
+            tree.del(&*k);
+        }
+        for i in 0..100000 {
+            let (k, v) = kv(i);
+            assert_eq!(tree.get(&*k), None);
         }
     }
 }
