@@ -4,14 +4,32 @@
 // * during all traversals, merges or splits may be encountered
 // * if a partial SMO is encountered, complete it
 
+macro_rules! rep_no_copy {
+    ($e:expr; $n:expr) => {
+        {
+            let mut v = Vec::with_capacity($n);
+            for _ in 0..$n {
+                v.push($e);
+            }
+            v
+        }
+    };
+}
+
 use std::cmp::Ordering;
-use std::collections::HashMap;
 use std::mem;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::SeqCst;
 
-type NodeID = u64;
+mod radix;
+mod stack;
 
-const ROOT: NodeID = 0;
-const FANOUT: usize = 128;
+use radix::Radix;
+use stack::Stack;
+
+type PageID = usize;
+
+const FANOUT: usize = 64;
 
 #[derive(Clone, Debug, Ord, Eq, PartialEq)]
 enum Bound {
@@ -70,21 +88,22 @@ impl PartialOrd for Bound {
 }
 
 struct Tree {
-    pages: HashMap<NodeID, Node>,
-    max_id: NodeID,
+    pages: Radix<Node>,
+    max_id: AtomicUsize,
+    root: AtomicUsize,
 }
 
 #[derive(Clone, Debug)]
 struct Node {
-    id: NodeID,
+    id: PageID,
     data: Data,
-    next: Option<NodeID>,
+    next: Option<PageID>,
     lo: Bound,
     hi: Bound,
 }
 
 impl Node {
-    fn split_if_necessary(&self, parent: &mut Tree) -> Option<(Node, Node)> {
+    fn split_if_necessary(&self, parent: &Tree) -> Option<(Node, Node)> {
         match self.data {
             Data::Index(ref ptrs) => {
                 if ptrs.len() > FANOUT {
@@ -140,7 +159,7 @@ impl Node {
 
 #[derive(Clone, Debug)]
 enum Data {
-    Index(Vec<(Vec<u8>, NodeID)>),
+    Index(Vec<(Vec<u8>, PageID)>),
     Leaf(Vec<(Vec<u8>, Vec<u8>)>),
 }
 
@@ -149,82 +168,57 @@ enum Data {
 
 impl Tree {
     pub fn new() -> Tree {
+        let root_id = 0;
+        let leaf_id = 1;
+
         let leaf = Node {
-            id: ROOT + 1,
+            id: leaf_id,
             data: Data::Leaf(vec![]),
             next: None,
             lo: Bound::Inc(vec![]),
             hi: Bound::Inf,
         };
         let root = Node {
-            id: ROOT,
+            id: root_id,
             data: Data::Index(vec![(vec![], leaf.id)]),
             next: None,
             lo: Bound::Inc(vec![]),
             hi: Bound::Inf,
         };
-        let mut pages = HashMap::new();
-        pages.insert(root.id, root);
-        pages.insert(leaf.id, leaf);
+        let mut pages = Radix::default();
+        pages.insert(root_id, Box::into_raw(Box::new(root))).unwrap();
+        pages.insert(leaf_id, Box::into_raw(Box::new(leaf))).unwrap();
         Tree {
             pages: pages,
-            max_id: ROOT + 1,
+            max_id: AtomicUsize::new(leaf_id + 1),
+            root: AtomicUsize::new(root_id),
         }
     }
 
     pub fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        let mut cursor = ROOT;
-        while let Some(node) = self.pages.get(&cursor) {
-            let old_cursor = cursor.clone();
-            match node.data {
-                Data::Index(ref ptrs) => {
-                    for &(ref sep_k, ref ptr) in ptrs {
-                        if &**sep_k <= key {
-                            cursor = *ptr;
-                        } else {
-                            break;
-                        }
-                    }
-                }
+        let mut path = self.path_for_k(&*key);
+        let node_ptr = self.pages.get(*path.last().unwrap()).unwrap();
+        unsafe {
+            match (*node_ptr).data {
                 Data::Leaf(ref items) => {
                     let search = items.binary_search_by(|&(ref k, ref v)| (**k).cmp(key));
                     if let Ok(idx) = search {
                         return Some(items[idx].1.clone());
-                    } else {
-                        return None;
                     }
                 }
-            }
-            if cursor == old_cursor {
-                panic!("get failed to traverse");
+                _ => panic!("last node in path is not leaf"),
             }
         }
         None
     }
 
-    pub fn set(&mut self, key: Vec<u8>, value: Vec<u8>) {
+    pub fn set(&self, key: Vec<u8>, value: Vec<u8>) {
         // 1. traverse indexes & insert at leaf
-        let mut cursor = ROOT;
-        let mut path = vec![ROOT];
+        let mut path = self.path_for_k(&*key);
         let mut needs_split = false;
-        // println!("traversing, using key {:?}", key);
-        while let Some(node) = self.pages.get_mut(&cursor) {
-            let old_cursor = cursor.clone();
-            match node.data {
-                Data::Index(ref ptrs) => {
-                    // println!("level: {} pointers: {:?}", path.len(), ptrs);
-                    for &(ref sep_k, ref ptr) in ptrs {
-                        if &**sep_k <= &*key {
-                            cursor = *ptr;
-                        } else {
-                            if cursor == old_cursor {
-                                panic!("set failed to traverse");
-                            }
-                            break; // we've found our next cursor
-                        }
-                    }
-                    path.push(cursor.clone());
-                }
+        let node_ptr = self.pages.get(*path.last().unwrap()).unwrap();
+        unsafe {
+            match (*node_ptr).data {
                 Data::Leaf(ref mut items) => {
                     // println!("comparing leaf!");
                     let mut idx = 0;
@@ -238,15 +232,11 @@ impl Tree {
                         // println!("marking leaf node as in need of split");
                         needs_split = true;
                     }
-
-                    break; // we've finished inserting
                 }
+                _ => panic!("last node in path is not leaf"),
             }
         }
 
-        print!("{} ", path.len());
-
-        // 2. recursively split if necessary
         if !needs_split {
             return;
         }
@@ -269,71 +259,66 @@ impl Tree {
         //      case, we need to go up the path to the grandparent then down again
         //      or higher until it works)
         while let Some(cursor) = path.pop() {
-            let node = self.pages.get(&cursor).unwrap().clone();
+            let node_ptr = self.pages.get(cursor).unwrap();
 
-            if let Some((mut lhs, rhs)) = node.split_if_necessary(self) {
-                // println!("processing split at {}", cursor);
-                if let Some(parent_id) = path.last() {
-                    // println!("pushing new node onto parent {}", parent_id);
-                    let ref mut parent = self.pages.get_mut(parent_id).unwrap();
-                    if let Data::Index(ref mut ptrs) = parent.data {
-                        let search =
-                            ptrs.binary_search_by(|&(ref k, ref v)| {
+            unsafe {
+                let ref mut node = *node_ptr;
+
+                if let Some((mut lhs, rhs)) = node.split_if_necessary(self) {
+                    // println!("processing split at {}, {:?}", cursor, path);
+                    if let Some(parent_id) = path.last() {
+                        // println!("pushing new node onto parent {}", parent_id);
+                        let parent_ptr = self.pages.get(*parent_id).unwrap();
+                        let ref mut parent = *parent_ptr;
+                        if let Data::Index(ref mut ptrs) = parent.data {
+                            let search = ptrs.binary_search_by(|&(ref k, ref v)| {
                                 Bound::Inc(k.clone()).cmp(&lhs.lo)
                             });
-                        if let Ok(idx) = search {
-                            ptrs.remove(idx);
+                            if let Ok(idx) = search {
+                                ptrs.remove(idx);
+                            }
+                            ptrs.push((lhs.lo.inner().unwrap(), lhs.id));
+                            ptrs.push((rhs.lo.inner().unwrap(), rhs.id));
+                            ptrs.sort_by(|a, b| a.0.cmp(&b.0));
                         }
-                        ptrs.push((lhs.lo.inner().unwrap(), lhs.id));
-                        ptrs.push((rhs.lo.inner().unwrap(), rhs.id));
-                        ptrs.sort_by(|a, b| a.0.cmp(&b.0));
+                    } else {
+                        // need to hoist a new root
+                        // println!("$#@$#%!$%#@$%#@% hoisting new root");
+                        // assert_eq!(lhs.id, root_id);
+                        let root_id = self.new_id();
+                        let root = Node {
+                            id: root_id.clone(),
+                            data: Data::Index(vec![(vec![], lhs.id),
+                                                   (rhs.lo.inner().unwrap(), rhs.id)]),
+                            next: None,
+                            lo: Bound::Inc(vec![]),
+                            hi: Bound::Inf,
+                        };
+                        self.pages.insert(root_id, Box::into_raw(Box::new(root))).unwrap();
+                        let cas = self.root
+                            .compare_and_swap(lhs.id, root_id, SeqCst);
                     }
+                    // TODO observe half-split logic here
+                    // println!("inserting lhs");
+                    self.pages
+                        .cas(lhs.id, node_ptr, Box::into_raw(Box::new(lhs)))
+                        .unwrap();
+                    // println!("inserting rhs");
+                    self.pages.insert(rhs.id, Box::into_raw(Box::new(rhs))).unwrap();
                 } else {
-                    // need to hoist a new root
-                    // println!("$#@$#%!$%#@$%#@% hoisting new root");
-                    assert_eq!(lhs.id, ROOT);
-                    lhs.id = self.new_id();
-                    let root = Node {
-                        id: ROOT,
-                        data: Data::Index(vec![(vec![], lhs.id),
-                                               (rhs.lo.inner().unwrap(), rhs.id)]),
-                        next: None,
-                        lo: Bound::Inc(vec![]),
-                        hi: Bound::Inf,
-                    };
-                    self.pages.insert(ROOT, root);
+                    // println!("none necessary");
                 }
-                self.pages.insert(lhs.id, lhs);
-                self.pages.insert(rhs.id, rhs);
-            } else {
-                // println!("none necessary");
             }
         }
     }
 
-    pub fn del(&mut self, key: &[u8]) -> Option<Vec<u8>> {
-        let mut cursor = ROOT;
-        let mut path = vec![ROOT];
+    pub fn del(&self, key: &[u8]) -> Option<Vec<u8>> {
+        let mut path = self.path_for_k(&*key);
         let mut needs_merge = false;
         let mut ret = None;
-        // println!("traversing, using key {:?}", key);
-        while let Some(node) = self.pages.get_mut(&cursor) {
-            let old_cursor = cursor.clone();
-            match node.data {
-                Data::Index(ref ptrs) => {
-                    // println!("level: {} pointers: {:?}", path.len(), ptrs);
-                    for &(ref sep_k, ref ptr) in ptrs {
-                        if &**sep_k <= &*key {
-                            cursor = *ptr;
-                        } else {
-                            if cursor == old_cursor {
-                                panic!("set failed to traverse");
-                            }
-                            break; // we've found our next cursor
-                        }
-                    }
-                    path.push(cursor.clone());
-                }
+        let node_ptr = self.pages.get(*path.last().unwrap()).unwrap();
+        unsafe {
+            match (*node_ptr).data {
                 Data::Leaf(ref mut items) => {
                     // println!("comparing leaf!");
                     let search = items.binary_search_by(|&(ref k, ref v)| (**k).cmp(key));
@@ -343,27 +328,60 @@ impl Tree {
                             needs_merge = true;
                         }
                     }
-
-                    break; // we've finished removing
                 }
+                _ => panic!("last node in path is not leaf"),
             }
         }
 
-        print!("{} ", path.len());
+        // print!("{} ", path.len());
 
         // 2. recursively merge if necessary
         if !needs_merge {
             return ret;
         }
 
-        println!("needs merge!");
+        // println!("needs merge!");
         // TODO merge
         ret
     }
 
-    fn new_id(&mut self) -> NodeID {
-        self.max_id += 1;
-        self.max_id
+    fn new_id(&self) -> PageID {
+        self.max_id.fetch_add(1, SeqCst)
+    }
+
+    fn path_for_k(&self, key: &[u8]) -> Vec<PageID> {
+        let mut cursor = self.root.load(SeqCst);
+        let mut path = vec![cursor];
+        // println!("traversing, using key {:?}", key);
+        while let Some(node_ptr) = self.pages.get(cursor) {
+            let old_cursor = cursor.clone();
+            unsafe {
+                match (*node_ptr).data {
+                    Data::Index(ref ptrs) => {
+                        // println!("level: {} pointers: {:?}", path.len(), ptrs);
+                        for &(ref sep_k, ref ptr) in ptrs {
+                            if &**sep_k <= &*key {
+                                cursor = *ptr;
+                            } else {
+                                if cursor == old_cursor {
+                                    panic!("set failed to traverse");
+                                }
+                                break; // we've found our next cursor
+                            }
+                        }
+                        path.push(cursor.clone());
+                    }
+                    Data::Leaf(_) => {
+                        // println!("found leaf!");
+                        break;
+                    }
+                }
+            }
+        }
+
+        // print!("{} ", path.len());
+
+        path
     }
 }
 
@@ -371,6 +389,8 @@ impl Tree {
 fn test_bounds() {
     use Bound::*;
     assert!(Inf == Inf);
+    assert!(Non(vec![]) == Non(vec![]));
+    assert!(Inc(vec![]) == Inc(vec![]));
     assert!(Inc(b"hi".to_vec()) == Inc(b"hi".to_vec()));
     assert!(Non(b"hi".to_vec()) == Non(b"hi".to_vec()));
     assert!(Inc(b"hi".to_vec()) > Non(b"hi".to_vec()));
