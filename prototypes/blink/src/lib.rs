@@ -18,6 +18,7 @@ macro_rules! rep_no_copy {
 
 use std::cmp::Ordering;
 use std::mem;
+use std::ptr;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 
@@ -30,6 +31,11 @@ use stack::Stack;
 type PageID = usize;
 
 const FANOUT: usize = 64;
+
+#[inline(always)]
+fn raw<T>(t: T) -> *const T {
+    Box::into_raw(Box::new(t)) as *const T
+}
 
 #[derive(Clone, Debug, Ord, Eq, PartialEq)]
 enum Bound {
@@ -103,57 +109,53 @@ struct Node {
 }
 
 impl Node {
-    fn split_if_necessary(&self, parent: &Tree) -> Option<(Node, Node)> {
+    fn should_split(&self) -> bool {
         match self.data {
             Data::Index(ref ptrs) => {
                 if ptrs.len() > FANOUT {
-                    let id = parent.new_id();
-                    let (lhs, rhs) = ptrs.split_at(ptrs.len() / 2);
-                    let split = rhs.first().unwrap().0.clone();
-                    let left = Node {
-                        id: self.id,
-                        data: Data::Index(lhs.to_vec()),
-                        next: Some(id),
-                        lo: self.lo.clone(),
-                        hi: Bound::Non(split.clone()),
-                    };
-                    let right = Node {
-                        id: id,
-                        data: Data::Index(rhs.to_vec()),
-                        next: self.next.clone(),
-                        lo: Bound::Inc(split.clone()),
-                        hi: self.hi.clone(),
-                    };
-                    Some((left, right))
+                    true
                 } else {
-                    None
+                    false
                 }
             }
             Data::Leaf(ref items) => {
                 if items.len() > FANOUT {
-                    let id = parent.new_id();
-                    let (lhs, rhs) = items.split_at(items.len() / 2);
-                    let split = rhs.first().unwrap().0.clone();
-                    let left = Node {
-                        id: self.id,
-                        data: Data::Leaf(lhs.to_vec()),
-                        next: Some(id),
-                        lo: self.lo.clone(),
-                        hi: Bound::Non(split.clone()),
-                    };
-                    let right = Node {
-                        id: id,
-                        data: Data::Leaf(rhs.to_vec()),
-                        next: self.next.clone(),
-                        lo: Bound::Inc(split.clone()),
-                        hi: self.hi.clone(),
-                    };
-                    Some((left, right))
+                    true
                 } else {
-                    None
+                    false
                 }
             }
         }
+    }
+
+    fn split(&self, id: PageID) -> (Node, Node) {
+        let (split, lhs, rhs) = match self.data {
+            Data::Index(ref ptrs) => {
+                let (lhs, rhs) = ptrs.split_at(ptrs.len() / 2);
+                let split = rhs.first().unwrap().0.clone();
+                (split, Data::Index(lhs.to_vec()), Data::Index(rhs.to_vec()))
+            }
+            Data::Leaf(ref items) => {
+                let (lhs, rhs) = items.split_at(items.len() / 2);
+                let split = rhs.first().unwrap().0.clone();
+                (split, Data::Leaf(lhs.to_vec()), Data::Leaf(rhs.to_vec()))
+            }
+        };
+        let left = Node {
+            id: self.id,
+            data: lhs,
+            next: Some(id),
+            lo: self.lo.clone(),
+            hi: Bound::Non(split.clone()),
+        };
+        let right = Node {
+            id: id,
+            data: rhs,
+            next: self.next.clone(),
+            lo: Bound::Inc(split.clone()),
+            hi: self.hi.clone(),
+        };
+        (left, right)
     }
 }
 
@@ -186,18 +188,17 @@ impl Tree {
             hi: Bound::Inf,
         };
         let mut pages = Radix::default();
-        pages.insert(root_id, Box::into_raw(Box::new(root))).unwrap();
-        pages.insert(leaf_id, Box::into_raw(Box::new(leaf))).unwrap();
+        pages.insert(root_id, raw(root)).unwrap();
+        pages.insert(leaf_id, raw(leaf)).unwrap();
         Tree {
             pages: pages,
-            max_id: AtomicUsize::new(leaf_id + 1),
+            max_id: AtomicUsize::new(2),
             root: AtomicUsize::new(root_id),
         }
     }
 
     pub fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        let mut path = self.path_for_k(&*key);
-        let node_ptr = self.pages.get(*path.last().unwrap()).unwrap();
+        let (node_ptr, mut path) = self.path_for_k(&*key);
         unsafe {
             match (*node_ptr).data {
                 Data::Leaf(ref items) => {
@@ -214,33 +215,39 @@ impl Tree {
 
     pub fn set(&self, key: Vec<u8>, value: Vec<u8>) {
         // 1. traverse indexes & insert at leaf
-        let mut path = self.path_for_k(&*key);
-        let mut needs_split = false;
-        let node_ptr = self.pages.get(*path.last().unwrap()).unwrap();
-        unsafe {
-            match (*node_ptr).data {
-                Data::Leaf(ref mut items) => {
-                    // println!("comparing leaf!");
-                    let mut idx = 0;
-                    for i in 0..items.len() {
-                        if items[i].0 < key {
-                            idx = i + 1;
+        loop {
+            let (node_ptr, mut path) = self.path_for_k(&*key);
+            let pid = *path.last().unwrap();
+            unsafe {
+                let ref node = *node_ptr;
+                let mut node2 = node.clone();
+                match node2.data {
+                    Data::Leaf(ref mut items) => {
+                        // println!("comparing leaf!");
+                        let mut idx = 0;
+                        for i in 0..items.len() {
+                            if items[i].0 < key {
+                                idx = i + 1;
+                            }
                         }
+                        items.insert(idx, (key.clone(), value.clone()));
                     }
-                    items.insert(idx, (key.clone(), value.clone()));
-                    if items.len() > FANOUT {
-                        // println!("marking leaf node as in need of split");
-                        needs_split = true;
-                    }
+                    _ => panic!("last node in path is not leaf"),
                 }
-                _ => panic!("last node in path is not leaf"),
+                let node2_ptr = raw(node2);
+                if Ok(node_ptr) == self.pages.cas(pid, node_ptr, node2_ptr) {
+                    // success
+                    self.recursive_split(&mut path);
+                    break;
+                } else {
+                    // failure, retry
+                    continue;
+                }
             }
         }
+    }
 
-        if !needs_split {
-            return;
-        }
-
+    fn recursive_split(&self, path: &mut Vec<PageID>) {
         // println!("needs split!");
         // to split, we pop the path, see if it's in need of split, recurse up
         // two-phase: (in prep for lock-free, not necessary for single threaded)
@@ -262,14 +269,20 @@ impl Tree {
             let node_ptr = self.pages.get(cursor).unwrap();
 
             unsafe {
-                let ref mut node = *node_ptr;
+                let ref node = *node_ptr;
 
-                if let Some((mut lhs, rhs)) = node.split_if_necessary(self) {
-                    // println!("processing split at {}, {:?}", cursor, path);
+                if node.should_split() {
+                    let new_id = self.new_id();
+                    let (lhs, rhs) = node.split(new_id);
+                    self.pages
+                        .cas(lhs.id, node_ptr, raw(lhs.clone()))
+                        .unwrap();
+                    self.pages.insert(rhs.id, raw(rhs.clone())).unwrap();
+
+                    // fix-up parent or hoist new root
                     if let Some(parent_id) = path.last() {
-                        // println!("pushing new node onto parent {}", parent_id);
                         let parent_ptr = self.pages.get(*parent_id).unwrap();
-                        let ref mut parent = *parent_ptr;
+                        let mut parent = (*parent_ptr).clone();
                         if let Data::Index(ref mut ptrs) = parent.data {
                             let search = ptrs.binary_search_by(|&(ref k, ref v)| {
                                 Bound::Inc(k.clone()).cmp(&lhs.lo)
@@ -281,10 +294,15 @@ impl Tree {
                             ptrs.push((rhs.lo.inner().unwrap(), rhs.id));
                             ptrs.sort_by(|a, b| a.0.cmp(&b.0));
                         }
+                        let parent_ptr2 = raw(parent);
+                        if Ok(node_ptr) == self.pages.cas(*parent_id, parent_ptr, parent_ptr2) {
+                            // success
+                        } else {
+                            // failure
+                        }
                     } else {
                         // need to hoist a new root
                         // println!("$#@$#%!$%#@$%#@% hoisting new root");
-                        // assert_eq!(lhs.id, root_id);
                         let root_id = self.new_id();
                         let root = Node {
                             id: root_id.clone(),
@@ -294,54 +312,50 @@ impl Tree {
                             lo: Bound::Inc(vec![]),
                             hi: Bound::Inf,
                         };
-                        self.pages.insert(root_id, Box::into_raw(Box::new(root))).unwrap();
+                        self.pages.insert(root_id, raw(root)).unwrap();
                         let cas = self.root
                             .compare_and_swap(lhs.id, root_id, SeqCst);
                     }
-                    // TODO observe half-split logic here
-                    // println!("inserting lhs");
-                    self.pages
-                        .cas(lhs.id, node_ptr, Box::into_raw(Box::new(lhs)))
-                        .unwrap();
-                    // println!("inserting rhs");
-                    self.pages.insert(rhs.id, Box::into_raw(Box::new(rhs))).unwrap();
                 } else {
-                    // println!("none necessary");
+                    return;
                 }
             }
         }
     }
 
     pub fn del(&self, key: &[u8]) -> Option<Vec<u8>> {
-        let mut path = self.path_for_k(&*key);
-        let mut needs_merge = false;
         let mut ret = None;
-        let node_ptr = self.pages.get(*path.last().unwrap()).unwrap();
-        unsafe {
-            match (*node_ptr).data {
-                Data::Leaf(ref mut items) => {
-                    // println!("comparing leaf!");
-                    let search = items.binary_search_by(|&(ref k, ref v)| (**k).cmp(key));
-                    if let Ok(idx) = search {
-                        ret = Some(items.remove(idx).1);
-                        if items.len() < FANOUT / 2 {
-                            needs_merge = true;
+        loop {
+            let (node_ptr, path) = self.path_for_k(&*key);
+            let pid = *path.last().unwrap();
+            unsafe {
+                let ref node = *node_ptr;
+                let mut node2 = node.clone();
+                match node2.data {
+                    Data::Leaf(ref mut items) => {
+                        // println!("comparing leaf!");
+                        let search = items.binary_search_by(|&(ref k, ref v)| (**k).cmp(key));
+                        if let Ok(idx) = search {
+                            ret = Some(items.remove(idx).1);
                         }
                     }
+                    _ => panic!("last node in path is not leaf"),
                 }
-                _ => panic!("last node in path is not leaf"),
+                let node2_ptr = raw(node2);
+                if Ok(node_ptr) == self.pages.cas(pid, node_ptr, node2_ptr) {
+                    // success
+                    break;
+                } else {
+                    // failure, retry
+                    continue;
+                }
             }
         }
 
         // print!("{} ", path.len());
 
-        // 2. recursively merge if necessary
-        if !needs_merge {
-            return ret;
-        }
-
-        // println!("needs merge!");
         // TODO merge
+
         ret
     }
 
@@ -349,9 +363,10 @@ impl Tree {
         self.max_id.fetch_add(1, SeqCst)
     }
 
-    fn path_for_k(&self, key: &[u8]) -> Vec<PageID> {
+    fn path_for_k(&self, key: &[u8]) -> (*const Node, Vec<PageID>) {
         let mut cursor = self.root.load(SeqCst);
         let mut path = vec![cursor];
+        let mut ptr = ptr::null();
         // println!("traversing, using key {:?}", key);
         while let Some(node_ptr) = self.pages.get(cursor) {
             let old_cursor = cursor.clone();
@@ -372,7 +387,7 @@ impl Tree {
                         path.push(cursor.clone());
                     }
                     Data::Leaf(_) => {
-                        // println!("found leaf!");
+                        ptr = node_ptr;
                         break;
                     }
                 }
@@ -381,7 +396,7 @@ impl Tree {
 
         // print!("{} ", path.len());
 
-        path
+        (ptr, path)
     }
 }
 

@@ -61,26 +61,28 @@ impl<T> Default for Radix<T> {
 }
 
 impl<T> Radix<T> {
-    pub fn insert(&self, pid: PageID, inner: *mut T) -> Result<*mut T, *mut T> {
+    pub fn insert(&self, pid: PageID, inner: *const T) -> Result<*const T, *const T> {
         self.cas(pid, ptr::null_mut(), inner)
     }
 
-    pub fn swap(&self, pid: PageID, new: *mut T) -> *mut T {
-        let tip = traverse(&*self.head as *const Node<T>, pid, true);
+    pub fn swap(&self, pid: PageID, new: *const T) -> *const T {
+        let tip = traverse(&*self.head, pid, true);
         if tip.is_null() {
             return ptr::null_mut();
         }
 
-        unsafe { (*tip).inner.swap(new, Ordering::SeqCst) }
+        unsafe { (*tip).inner.swap(new as *mut _, Ordering::SeqCst) }
     }
 
-    pub fn cas(&self, pid: PageID, old: *mut T, new: *mut T) -> Result<*mut T, *mut T> {
-        let tip = traverse(&*self.head as *const Node<T>, pid, true);
+    pub fn cas(&self, pid: PageID, old: *const T, new: *const T) -> Result<*const T, *const T> {
+        let tip = traverse(&*self.head, pid, true);
         if tip.is_null() {
             return Err(ptr::null_mut());
         }
 
-        let res = unsafe { (*tip).inner.compare_and_swap(old, new, Ordering::SeqCst) };
+        let res = unsafe {
+            (*tip).inner.compare_and_swap(old as *mut _, new as *mut _, Ordering::SeqCst)
+        };
         if old == res {
             return Ok(res);
         } else {
@@ -88,8 +90,8 @@ impl<T> Radix<T> {
         }
     }
 
-    pub fn get(&self, pid: PageID) -> Option<*mut T> {
-        let tip = traverse(&*self.head as *const Node<T>, pid, false);
+    pub fn get(&self, pid: PageID) -> Option<*const T> {
+        let tip = traverse(&*self.head, pid, false);
         if tip.is_null() {
             return None;
         }
@@ -101,7 +103,7 @@ impl<T> Radix<T> {
         }
     }
 
-    pub fn del(&self, pid: PageID) -> *mut T {
+    pub fn del(&self, pid: PageID) -> *const T {
         self.swap(pid, ptr::null_mut())
     }
 }
@@ -114,7 +116,7 @@ fn traverse<T>(ptr: *const Node<T>, pid: PageID, create_intermediate: bool) -> *
 
     let (first_six, remainder) = split_fanout(pid);
     let child_index = first_six;
-    let children = unsafe { (*ptr).children.clone() };
+    let children = unsafe { &(*ptr).children };
     let mut next_ptr = children[child_index].load(Ordering::SeqCst);
 
     if next_ptr.is_null() {
@@ -148,12 +150,12 @@ fn test_split_fanout() {
 #[test]
 fn basic_functionality() {
     let rt = Radix::default();
-    let one = Box::into_raw(Box::new(1));
-    let two = Box::into_raw(Box::new(2));
-    let three = Box::into_raw(Box::new(3));
-    let four = Box::into_raw(Box::new(4));
-    let five = Box::into_raw(Box::new(5));
-    let six = Box::into_raw(Box::new(6));
+    let one = raw(1);
+    let two = raw(2);
+    let three = raw(3);
+    let four = raw(4);
+    let five = raw(5);
+    let six = raw(6);
     rt.insert(0, five).unwrap();
     assert_eq!(rt.get(0), Some(five));
     rt.cas(0, five, six).unwrap();
