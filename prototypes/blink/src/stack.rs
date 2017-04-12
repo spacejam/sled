@@ -66,16 +66,21 @@ impl<T> Drop for Stack<T> {
 }
 
 impl<T> Stack<T> {
-    pub fn try_push(&self, inner: T) -> Result<(), ()> {
-        let cur = self.head();
-        let node = Box::into_raw(Box::new(Node {
+    pub fn push(&self, inner: T) {
+        let mut head = self.head();
+        let mut node = Box::into_raw(Box::new(Node {
             inner: inner,
-            next: cur,
+            next: head,
         }));
-        if cur == self.head.compare_and_swap(cur, node, Ordering::SeqCst) {
-            Ok(())
-        } else {
-            Err(())
+        loop {
+            let ret = self.head.compare_and_swap(head, node, Ordering::SeqCst);
+            if head == ret {
+                return;
+            }
+            head = ret;
+            unsafe {
+                (*node).next = head;
+            }
         }
     }
 
@@ -106,6 +111,19 @@ impl<T> Stack<T> {
         res
     }
 
+    pub fn compare_and_push(&self, old: *mut Node<T>, new: T) -> Result<(), *mut Node<T>> {
+        let node = Box::into_raw(Box::new(Node {
+            inner: new,
+            next: old,
+        }));
+        let res = self.head.compare_and_swap(old, node, Ordering::SeqCst);
+        if old == res {
+            Ok(())
+        } else {
+            Err(res)
+        }
+    }
+
     pub fn head(&self) -> *mut Node<T> {
         self.head.load(Ordering::SeqCst)
     }
@@ -117,15 +135,15 @@ fn basic_functionality() {
 
     let ll = Arc::new(Stack::default());
     assert_eq!(ll.try_pop(), Ok(None));
-    ll.try_push(1).unwrap();
+    ll.push(1);
     let ll2 = ll.clone();
     let t = thread::spawn(move || {
-        ll2.try_push(2).unwrap();
-        ll2.try_push(3).unwrap();
-        ll2.try_push(4).unwrap();
+        ll2.push(2);
+        ll2.push(3);
+        ll2.push(4);
     });
-    t.join();
-    ll.try_push(5).unwrap();
+    t.join().unwrap();
+    ll.push(5);
     assert_eq!(ll.try_pop(), Ok(Some(5)));
     assert_eq!(ll.try_pop(), Ok(Some(4)));
     let ll3 = ll.clone();
@@ -133,11 +151,11 @@ fn basic_functionality() {
         assert_eq!(ll3.try_pop(), Ok(Some(3)));
         assert_eq!(ll3.try_pop(), Ok(Some(2)));
     });
-    t.join();
+    t.join().unwrap();
     assert_eq!(ll.try_pop(), Ok(Some(1)));
     let ll4 = ll.clone();
     let t = thread::spawn(move || {
         assert_eq!(ll4.try_pop(), Ok(None));
     });
-    t.join();
+    t.join().unwrap();
 }

@@ -150,10 +150,8 @@ fn test_split_fanout() {
 #[test]
 fn basic_functionality() {
     let rt = Radix::default();
-    let one = raw(1);
     let two = raw(2);
     let three = raw(3);
-    let four = raw(4);
     let five = raw(5);
     let six = raw(6);
     rt.insert(0, five).unwrap();
