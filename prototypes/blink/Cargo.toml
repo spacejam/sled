@@ -3,4 +3,8 @@ name = "blink"
 version = "0.1.0"
 authors = ["Tyler Neely <t@jujit.su>"]
 
+[[test]]
+name = "test"
+path = "test/test.rs"
+
 [dependencies]

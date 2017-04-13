@@ -1,6 +1,7 @@
 // lock-free stack
 use std::fmt::{self, Debug};
 use std::ptr;
+use std::marker::PhantomData;
 use std::mem;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -8,7 +9,7 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 
 pub struct Node<T> {
     inner: T,
-    next: *mut Node<T>,
+    next: *const Node<T>,
 }
 
 #[derive(Clone)]
@@ -50,7 +51,7 @@ impl<T> Deref for Node<T> {
 }
 
 impl<T> Node<T> {
-    pub fn next(&self) -> *mut Node<T> {
+    pub fn next(&self) -> *const Node<T> {
         self.next
     }
 }
@@ -59,7 +60,7 @@ impl<T> Drop for Stack<T> {
     fn drop(&mut self) {
         let mut ptr = self.head();
         while !ptr.is_null() {
-            let node = unsafe { Box::from_raw(ptr) };
+            let node: Box<Node<T>> = unsafe { Box::from_raw(ptr as *mut _) };
             ptr = node.next;
         }
     }
@@ -67,7 +68,7 @@ impl<T> Drop for Stack<T> {
 
 impl<T> Stack<T> {
     pub fn push(&self, inner: T) {
-        let mut head = self.head();
+        let mut head = self.head() as *mut _;
         let mut node = Box::into_raw(Box::new(Node {
             inner: inner,
             next: head,
@@ -84,39 +85,42 @@ impl<T> Stack<T> {
         }
     }
 
-    pub fn try_pop(&self) -> Result<Option<T>, ()> {
-        let head_ptr = self.head();
-        if head_ptr.is_null() {
-            return Ok(None);
-        }
-        let node = unsafe { Box::from_raw(head_ptr) };
-        let next_ptr = node.next;
+    pub fn pop(&self) -> Option<T> {
+        loop {
+            let head_ptr = self.head() as *mut _;
+            if head_ptr.is_null() {
+                return None;
+            }
+            let node: Box<Node<T>> = unsafe { Box::from_raw(head_ptr) };
+            let next_ptr = node.next;
 
-        if head_ptr == self.head.compare_and_swap(head_ptr, next_ptr, Ordering::SeqCst) {
-            Ok(Some(node.inner))
-        } else {
-            mem::forget(node);
-            Err(())
+            if head_ptr ==
+               self.head.compare_and_swap(head_ptr, next_ptr as *mut _, Ordering::SeqCst) {
+                return Some(node.inner);
+            } else {
+                mem::forget(node);
+            }
         }
     }
 
     pub fn pop_all(&self) -> Vec<T> {
-        let mut res = vec![];
         let mut node_ptr = self.head.swap(ptr::null_mut(), Ordering::SeqCst);
+        let mut res = vec![];
         while !node_ptr.is_null() {
             let node = unsafe { Box::from_raw(node_ptr) };
-            node_ptr = node.next;
+            node_ptr = node.next as *mut _;
             res.push(node.inner);
         }
         res
     }
 
-    pub fn compare_and_push(&self, old: *mut Node<T>, new: T) -> Result<(), *mut Node<T>> {
+    /// compare and push
+    pub fn cap(&self, old: *const Node<T>, new: T) -> Result<(), *const Node<T>> {
         let node = Box::into_raw(Box::new(Node {
             inner: new,
             next: old,
         }));
-        let res = self.head.compare_and_swap(old, node, Ordering::SeqCst);
+        let res = self.head.compare_and_swap(old as *mut _, node as *mut _, Ordering::SeqCst);
         if old == res {
             Ok(())
         } else {
@@ -124,8 +128,49 @@ impl<T> Stack<T> {
         }
     }
 
-    pub fn head(&self) -> *mut Node<T> {
-        self.head.load(Ordering::SeqCst)
+    pub fn iter_at_head(&self) -> (*const Node<T>, StackIter<T>) {
+        let head = self.head();
+        (head,
+         StackIter {
+            inner: head,
+            marker: PhantomData,
+        })
+    }
+
+    pub fn head(&self) -> *const Node<T> {
+        self.head.load(Ordering::Acquire)
+    }
+}
+
+pub struct StackIter<'a, T: 'a> {
+    inner: *const Node<T>,
+    marker: PhantomData<&'a Node<T>>,
+}
+
+impl<'a, T> Iterator for StackIter<'a, T> {
+    type Item = &'a T;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.inner.is_null() {
+            None
+        } else {
+            unsafe {
+                let ref ret = (*self.inner).inner;
+                self.inner = (*self.inner).next;
+                Some(ret)
+            }
+        }
+    }
+}
+
+impl<'a, T> IntoIterator for &'a Stack<T> {
+    type Item = &'a T;
+    type IntoIter = StackIter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        StackIter {
+            inner: self.head(),
+            marker: PhantomData,
+        }
     }
 }
 
@@ -134,7 +179,7 @@ fn basic_functionality() {
     use std::thread;
 
     let ll = Arc::new(Stack::default());
-    assert_eq!(ll.try_pop(), Ok(None));
+    assert_eq!(ll.pop(), None);
     ll.push(1);
     let ll2 = ll.clone();
     let t = thread::spawn(move || {
@@ -144,18 +189,18 @@ fn basic_functionality() {
     });
     t.join().unwrap();
     ll.push(5);
-    assert_eq!(ll.try_pop(), Ok(Some(5)));
-    assert_eq!(ll.try_pop(), Ok(Some(4)));
+    assert_eq!(ll.pop(), Some(5));
+    assert_eq!(ll.pop(), Some(4));
     let ll3 = ll.clone();
     let t = thread::spawn(move || {
-        assert_eq!(ll3.try_pop(), Ok(Some(3)));
-        assert_eq!(ll3.try_pop(), Ok(Some(2)));
+        assert_eq!(ll3.pop(), Some(3));
+        assert_eq!(ll3.pop(), Some(2));
     });
     t.join().unwrap();
-    assert_eq!(ll.try_pop(), Ok(Some(1)));
+    assert_eq!(ll.pop(), Some(1));
     let ll4 = ll.clone();
     let t = thread::spawn(move || {
-        assert_eq!(ll4.try_pop(), Ok(None));
+        assert_eq!(ll4.pop(), None);
     });
     t.join().unwrap();
 }

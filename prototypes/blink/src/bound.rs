@@ -55,3 +55,16 @@ impl PartialOrd for Bound {
         }
     }
 }
+
+#[test]
+fn test_bounds() {
+    use Bound::*;
+    assert!(Inf == Inf);
+    assert!(Non(vec![]) == Non(vec![]));
+    assert!(Inc(vec![]) == Inc(vec![]));
+    assert!(Inc(b"hi".to_vec()) == Inc(b"hi".to_vec()));
+    assert!(Non(b"hi".to_vec()) == Non(b"hi".to_vec()));
+    assert!(Inc(b"hi".to_vec()) > Non(b"hi".to_vec()));
+    assert!(Inc(vec![]) < Inf);
+    assert!(Non(vec![]) < Inf);
+}

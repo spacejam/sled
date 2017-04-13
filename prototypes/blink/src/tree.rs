@@ -3,94 +3,169 @@ use std::ptr;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 
-use {raw, Bound, PageID, Radix};
+use super::*;
 
-const FANOUT: usize = 64;
+const FANOUT: usize = 3;
 
 pub struct Tree {
-    pages: Radix<Node>,
-    max_id: AtomicUsize,
+    pages: Pages,
     root: AtomicUsize,
 }
 
 impl Tree {
     pub fn new() -> Tree {
-        let root_id = 0;
-        let leaf_id = 1;
+        let pages = Pages::default();
+        let (root_ptr, root_id) = pages.allocate();
+        let (leaf_ptr, leaf_id) = pages.allocate();
 
-        let leaf = Node {
+        let leaf = Frag::Base(Node {
             id: leaf_id,
             data: Data::Leaf(vec![]),
             next: None,
             lo: Bound::Inc(vec![]),
             hi: Bound::Inf,
-        };
-        let root = Node {
+        });
+        let root = Frag::Base(Node {
             id: root_id,
-            data: Data::Index(vec![(vec![], leaf.id)]),
+            data: Data::Index(vec![(vec![], leaf_id)]),
             next: None,
             lo: Bound::Inc(vec![]),
             hi: Bound::Inf,
-        };
-        let pages = Radix::default();
-        pages.insert(root_id, raw(root)).unwrap();
-        pages.insert(leaf_id, raw(leaf)).unwrap();
+        });
+        pages.cap(root_id, root_ptr, raw(root)).unwrap();
+        pages.cap(leaf_id, leaf_ptr, raw(leaf)).unwrap();
         Tree {
             pages: pages,
-            max_id: AtomicUsize::new(2),
             root: AtomicUsize::new(root_id),
         }
     }
 
-    pub fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        let (node_ptr, _) = self.path_for_k(&*key);
-        unsafe {
-            match (*node_ptr).data {
-                Data::Leaf(ref items) => {
-                    let search = items.binary_search_by(|&(ref k, ref _v)| (**k).cmp(key));
-                    if let Ok(idx) = search {
-                        return Some(items[idx].1.clone());
-                    }
-                }
-                _ => panic!("last node in path is not leaf"),
-            }
-        }
-        None
+    pub fn get(&self, key: &[u8]) -> Option<Value> {
+        let (_, ret) = self.get_internal(key);
+        ret
     }
 
-    pub fn set(&self, key: Vec<u8>, value: Vec<u8>) {
-        // 1. traverse indexes & insert at leaf
-        loop {
-            let (node_ptr, mut path) = self.path_for_k(&*key);
-            let pid = *path.last().unwrap();
-            unsafe {
-                let ref node = *node_ptr;
-                let mut node2 = node.clone();
-                match node2.data {
-                    Data::Leaf(ref mut items) => {
-                        // println!("comparing leaf!");
-                        let mut idx = 0;
-                        for i in 0..items.len() {
-                            if items[i].0 < key {
-                                idx = i + 1;
+    pub fn cas(&self, key: Key, old: Option<Value>, new: Value) -> Result((), Option<Value>> {
+        let (path, cur) = self.get_internal(&*key);
+        if old != cur {
+            return Err(cur);
+        }
+        let frag = Frag::Set(key, new);
+        let frag_ptr = raw(frag);
+
+        let stack = path.last().unwrap();
+        let pid = stack.pid;
+        let head = stack.head;
+        if Ok(()) == self.pages.cap(pid, head, frag_ptr) {
+        }
+    }
+
+    fn get_internal(&self, key: &[u8]) -> (Vec<SeekMeta>, Option<Value>) {
+        let (path, partial_seek) = self.path_for_k(&*key);
+        use self::PartialSeek::*;
+        match partial_seek {
+            ShortCircuit(None) => {
+                // we've encountered a deletion, so just return
+                (path, None)
+            }
+            ShortCircuit(old) => {
+                // try to cap it out with a del frag
+                (path, old)
+            }
+            Base(node_ptr) => {
+                // set old to it if it exists, return if not
+                unsafe {
+                    match (*node_ptr).data {
+                        Data::Leaf(ref mut items) => {
+                            // println!("comparing leaf!");
+                            let search = items.binary_search_by(|&(ref k, ref _v)| (**k).cmp(key));
+                            if let Ok(idx) = search {
+                                // cap a del frag below
+                                (path, Some(items[idx].1.clone()))
+                            } else {
+                                // key does not exist
+                                (path, None)
                             }
                         }
-                        items.insert(idx, (key.clone(), value.clone()));
+                        _ => panic!("last node in path is not leaf"),
                     }
-                    _ => panic!("last node in path is not leaf"),
-                }
-                let node2_ptr = raw(node2);
-                if Ok(node_ptr) == self.pages.cas(pid, node_ptr, node2_ptr) {
-                    // success
-                    self.recursive_split(&mut path);
-                    break;
-                } else {
-                    // failure, retry
-                    continue;
                 }
             }
         }
     }
+
+    pub fn set(&self, key: Key, value: Value) {
+        let frag = Frag::Set(key, value);
+        let frag_ptr = raw(frag);
+        loop {
+            let (path, partial_seek) = self.path_for_k(&*key);
+            let stack = path.last().unwrap();
+            let pid = stack.pid;
+            let head = stack.head;
+            if Ok(()) == self.pages.cap(pid, head, frag_ptr) {
+                // success
+                break;
+            } else {
+                // failure, retry
+                continue;
+            }
+        }
+    }
+
+    pub fn del(&self, key: &[u8]) -> Option<Value> {
+        // try to get, if none, do nothing
+        let mut ret = None;
+        loop {
+            let (path, partial_seek) = self.path_for_k(&*key);
+            use self::PartialSeek::*;
+            match partial_seek {
+                ShortCircuit(None) => {
+                    // we've encountered a deletion, so just return
+                    return None;
+                }
+                ShortCircuit(old) => {
+                    // try to cap it out with a del frag
+                    ret = old;
+                }
+                Base(node_ptr) => {
+                    // set old to it if it exists, return if not
+                    unsafe {
+                        match (*node_ptr).data {
+                            Data::Leaf(ref mut items) => {
+                                // println!("comparing leaf!");
+                                let search =
+                                    items.binary_search_by(|&(ref k, ref _v)| (**k).cmp(key));
+                                if let Ok(idx) = search {
+                                    // cap a del frag below
+                                    ret = Some(items[idx].1.clone());
+                                } else {
+                                    // key does not exist
+                                    return None;
+                                }
+                            }
+                            _ => panic!("last node in path is not leaf"),
+                        }
+                    }
+                }
+            }
+
+            let frag = Frag::Del(key.to_vec());
+            let frag_ptr = raw(frag);
+            let stack = path.last().unwrap();
+            let pid = stack.pid;
+            let head = stack.head;
+            if Ok(()) == self.pages.cap(pid, head, frag_ptr) {
+                // success
+                break;
+            } else {
+                // failure, retry
+                continue;
+            }
+        }
+
+        ret
+    }
+
 
     fn recursive_split(&self, path: &mut Vec<PageID>) {
         // println!("needs split!");
@@ -169,92 +244,96 @@ impl Tree {
         }
     }
 
-    pub fn del(&self, key: &[u8]) -> Option<Vec<u8>> {
-        let mut ret = None;
-        loop {
-            let (node_ptr, path) = self.path_for_k(&*key);
-            let pid = *path.last().unwrap();
-            unsafe {
-                let ref node = *node_ptr;
-                let mut node2 = node.clone();
-                match node2.data {
-                    Data::Leaf(ref mut items) => {
-                        // println!("comparing leaf!");
-                        let search = items.binary_search_by(|&(ref k, ref _v)| (**k).cmp(key));
-                        if let Ok(idx) = search {
-                            ret = Some(items.remove(idx).1);
-                        }
-                    }
-                    _ => panic!("last node in path is not leaf"),
-                }
-                let node2_ptr = raw(node2);
-                if Ok(node_ptr) == self.pages.cas(pid, node_ptr, node2_ptr) {
-                    // success
-                    break;
-                } else {
-                    // failure, retry
-                    continue;
-                }
-            }
-        }
-
-        // print!("{} ", path.len());
-
-        // TODO merge
-
-        ret
-    }
-
-    fn new_id(&self) -> PageID {
-        self.max_id.fetch_add(1, SeqCst)
-    }
-
-    fn path_for_k(&self, key: &[u8]) -> (*const Node, Vec<PageID>) {
+    /// returns the traversal path,
+    fn path_for_k(&self, key: &[u8]) -> (Vec<SeekMeta>, PartialSeek) {
+        use SeekRes::*;
         let mut cursor = self.root.load(SeqCst);
-        let mut path = vec![cursor];
-        let mut ptr = ptr::null();
-        // println!("traversing, using key {:?}", key);
-        while let Some(node_ptr) = self.pages.get(cursor) {
-            let old_cursor = cursor.clone();
-            unsafe {
-                match (*node_ptr).data {
-                    Data::Index(ref ptrs) => {
-                        // println!("level: {} pointers: {:?}", path.len(), ptrs);
-                        for &(ref sep_k, ref ptr) in ptrs {
-                            if &**sep_k <= &*key {
-                                cursor = *ptr;
-                            } else {
-                                if cursor == old_cursor {
-                                    panic!("set failed to traverse");
+        let mut path = vec![];
+        loop {
+            let (res, meta) = self.pages.seek(cursor, key.to_vec());
+            path.push(meta);
+            match res {
+                ShortCircuitSome(ref value) => {
+                    return (path, PartialSeek::ShortCircuit(Some(*value)));
+                }
+                Node(ref node_ptr) => {
+                    let old_cursor = cursor.clone();
+                    unsafe {
+                        match (*node_ptr).data {
+                            Data::Index(ref ptrs) => {
+                                for &(ref sep_k, ref ptr) in ptrs {
+                                    if &**sep_k <= &*key {
+                                        cursor = *ptr;
+                                    } else {
+                                        break; // we've found our next cursor
+                                    }
                                 }
-                                break; // we've found our next cursor
+                                if cursor == old_cursor {
+                                    panic!("stuck in pid loop");
+                                }
+                            }
+                            Data::Leaf(_) => {
+                                return (path, PartialSeek::Base(node_ptr));
                             }
                         }
-                        path.push(cursor.clone());
                     }
-                    Data::Leaf(_) => {
-                        ptr = node_ptr;
-                        break;
-                    }
+
+                }
+                ShortCircuitNone => {
+                    return (path, PartialSeek::ShortCircuit(None));
+                }
+                Split(ref to) => {
+                    cursor = *to;
+                }
+                Merge => {
+                    unimplemented!();
                 }
             }
         }
-
-        // print!("{} ", path.len());
-
-        (ptr, path)
     }
+}
+
+enum PartialSeek {
+    ShortCircuit(Option<Value>),
+    Base(*const Node),
 }
 
 #[derive(Clone, Debug)]
 enum Data {
-    Index(Vec<(Vec<u8>, PageID)>),
-    Leaf(Vec<(Vec<u8>, Vec<u8>)>),
+    Index(Vec<(Key, PageID)>),
+    Leaf(Vec<(Key, Value)>),
+}
+
+impl Data {
+    fn len(&self) -> usize {
+        match *self {
+            Data::Index(ref ptrs) => ptrs.len(),
+            Data::Leaf(ref items) => items.len(),
+        }
+    }
+
+    fn split(&self) -> (Key, Data, Data) {
+        fn split_inner<T>(xs: &Vec<(Key, T)>) -> (Key, &[(Key, T)], &[(Key, T)]) {
+            let (lhs, rhs) = xs.split_at(xs.len() / 2);
+            let split = rhs.first().unwrap().0.clone();
+            (split, lhs, rhs)
+        }
+        match *self {
+            Data::Index(ref ptrs) => {
+                let (split, lhs, rhs) = split_inner(ptrs);
+                (split, Data::Index(lhs.to_vec()), Data::Index(rhs.to_vec()))
+            }
+            Data::Leaf(ref items) => {
+                let (split, lhs, rhs) = split_inner(items);
+                (split, Data::Leaf(lhs.to_vec()), Data::Leaf(rhs.to_vec()))
+            }
+        }
+    }
 }
 
 
 #[derive(Clone, Debug)]
-struct Node {
+pub struct Node {
     id: PageID,
     data: Data,
     next: Option<PageID>,
@@ -264,37 +343,15 @@ struct Node {
 
 impl Node {
     fn should_split(&self) -> bool {
-        match self.data {
-            Data::Index(ref ptrs) => {
-                if ptrs.len() > FANOUT {
-                    true
-                } else {
-                    false
-                }
-            }
-            Data::Leaf(ref items) => {
-                if items.len() > FANOUT {
-                    true
-                } else {
-                    false
-                }
-            }
+        if self.data.len() > FANOUT {
+            true
+        } else {
+            false
         }
     }
 
     fn split(&self, id: PageID) -> (Node, Node) {
-        let (split, lhs, rhs) = match self.data {
-            Data::Index(ref ptrs) => {
-                let (lhs, rhs) = ptrs.split_at(ptrs.len() / 2);
-                let split = rhs.first().unwrap().0.clone();
-                (split, Data::Index(lhs.to_vec()), Data::Index(rhs.to_vec()))
-            }
-            Data::Leaf(ref items) => {
-                let (lhs, rhs) = items.split_at(items.len() / 2);
-                let split = rhs.first().unwrap().0.clone();
-                (split, Data::Leaf(lhs.to_vec()), Data::Leaf(rhs.to_vec()))
-            }
-        };
+        let (split, lhs, rhs) = self.data.split();
         let left = Node {
             id: self.id,
             data: lhs,
