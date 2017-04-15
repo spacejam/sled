@@ -128,6 +128,20 @@ impl<T> Stack<T> {
         }
     }
 
+    /// attempt consolidation
+    pub fn cac(&self, old: *const Node<T>, new: T) -> Result<(), *const Node<T>> {
+        let node = Box::into_raw(Box::new(Node {
+            inner: new,
+            next: ptr::null(),
+        }));
+        let res = self.head.compare_and_swap(old as *mut _, node as *mut _, Ordering::SeqCst);
+        if old == res {
+            Ok(())
+        } else {
+            Err(res)
+        }
+    }
+
     pub fn iter_at_head(&self) -> (*const Node<T>, StackIter<T>) {
         let head = self.head();
         (head,
@@ -139,6 +153,16 @@ impl<T> Stack<T> {
 
     pub fn head(&self) -> *const Node<T> {
         self.head.load(Ordering::Acquire)
+    }
+
+    pub fn len(&self) -> usize {
+        let mut len = 0;
+        let mut head = self.head();
+        while !head.is_null() {
+            len += 1;
+            head = unsafe { (*head).next };
+        }
+        len
     }
 }
 

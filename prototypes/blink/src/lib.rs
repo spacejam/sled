@@ -21,7 +21,7 @@ mod page;
 use bound::Bound;
 use radix::Radix;
 use stack::Stack;
-use page::{Frag, Pages, SeekMeta, SeekRes};
+use page::{Frag, Pages, FragView, SeekRes};
 
 pub use tree::Tree;
 

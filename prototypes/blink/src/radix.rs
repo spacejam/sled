@@ -68,6 +68,7 @@ impl<T> Radix<T> {
     pub fn swap(&self, pid: PageID, new: *const T) -> *const T {
         let tip = traverse(&*self.head, pid, true);
         if tip.is_null() {
+            // TODO is this desired?
             return ptr::null_mut();
         }
 
