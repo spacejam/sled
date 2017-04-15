@@ -155,9 +155,6 @@ impl Pages {
     pub fn allocate(&self) -> PageID {
         // TODO free list/epoch gc
         let id = self.free.pop().unwrap_or_else(|| self.max_id.fetch_add(1, SeqCst));
-        let stack = Stack::default();
-        let stack_ptr = raw(stack);
-        self.inner.insert(id, stack_ptr).unwrap();
         id
     }
 
@@ -169,7 +166,9 @@ impl Pages {
     }
 
     pub fn insert(&self, pid: PageID, frag: *const Frag) -> Result<(), ()> {
-        unimplemented!()
+        let stack = Stack::default();
+        stack.push(frag);
+        self.inner.insert(pid, raw(stack)).map(|_| ()).map_err(|_| ())
     }
 }
 
