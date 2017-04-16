@@ -25,6 +25,14 @@ fn it_works() {
         tree.del(&*k);
     }
     for i in 0..1000 {
+        let (k, v) = kv(i);
+        tree.set(k.to_vec(), v.to_vec());
+    }
+    for i in 0..1000 {
+        let (k, _v) = kv(i);
+        tree.del(&*k);
+    }
+    for i in 0..1000 {
         let (k, _v) = kv(i);
         assert_eq!(tree.get(&*k), None);
     }

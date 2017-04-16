@@ -6,6 +6,7 @@ use std::sync::atomic::Ordering::SeqCst;
 use super::*;
 
 const FANOUT: usize = 3;
+const MAX_FRAG_LEN: usize = 6;
 
 pub struct Tree {
     pages: Pages,
@@ -103,7 +104,8 @@ impl Tree {
             let head = last.head;
             if Ok(()) == self.pages.cap(pid, head, frag_ptr) {
                 // success
-                if last.stack_len() > FANOUT {
+                if last.should_split() {
+                    println!("need to split");
                     self.recursive_split(&path);
                 }
                 break;
@@ -169,9 +171,20 @@ impl Tree {
         ret
     }
 
-    fn consolidate(&self, pid: PageID) -> Node {
-        // TODO
-        unimplemented!()
+    fn consolidate(&self, view: FragView) -> Result<(), ()> {
+        let base = view.consolidate();
+        println!("page is now {:?}", base.data);
+        let ptr = raw(Frag::Base(base));
+        let stack = Stack::default();
+        stack.push(ptr);
+        let cap = self.pages.inner.cas(view.pid, view.stack, raw(stack));
+        if cap.is_ok() {
+            // TODO GC old stack
+            Ok(())
+        } else {
+            println!("failed to consolidate");
+            Err(())
+        }
     }
 
     fn recursive_split(&self, path: &Vec<FragView>) {
@@ -219,6 +232,7 @@ impl Tree {
 
                 // parent split or root hoist
                 if let Some(parent_frag_view) = path.last() {
+                    println!("parent splitting");
                     // install parent split
                     let raw_parent_split = raw(Frag::ParentSplit(parent_split));
                     let cap = unsafe {
@@ -231,12 +245,13 @@ impl Tree {
                     }
                 } else {
                     // no parent, we just split the root, so install new one
-                    // println!("$#@$#%!$%#@$%#@% hoisting new root");
+                    println!("$#@$#%!$%#@$%#@% hoisting new root");
                     let root_id = self.pages.allocate();
                     let root = Frag::Base(Node {
                         id: root_id.clone(),
                         data: Data::Index(vec![(vec![], parent_split.from),
-                                               (parent_split.at, parent_split.to)]),
+                                               (parent_split.at.inner().unwrap(),
+                                                parent_split.to)]),
                         next: None,
                         lo: Bound::Inc(vec![]),
                         hi: Bound::Inf,
@@ -279,8 +294,9 @@ impl Tree {
                             }
                             Data::Leaf(_) => {
                                 let last = path.last().cloned().unwrap();
-                                if last.stack_len() > FANOUT {
-                                    self.recursive_split(&path);
+                                if last.stack_len() > MAX_FRAG_LEN {
+                                    println!("need to consolidate {}", last.pid);
+                                    self.consolidate(last);
                                 }
                                 return (path, PartialSeek::Base(node_ptr));
                             }
@@ -308,7 +324,7 @@ enum PartialSeek {
 }
 
 #[derive(Clone, Debug)]
-enum Data {
+pub enum Data {
     Index(Vec<(Key, PageID)>),
     Leaf(Vec<(Key, Value)>),
 }
@@ -343,15 +359,76 @@ impl Data {
 
 #[derive(Clone, Debug)]
 pub struct Node {
-    id: PageID,
-    data: Data,
-    next: Option<PageID>,
-    lo: Bound,
-    hi: Bound,
+    pub id: PageID,
+    pub data: Data,
+    pub next: Option<PageID>,
+    pub lo: Bound,
+    pub hi: Bound,
 }
 
 impl Node {
-    fn should_split(&self) -> bool {
+    pub fn set_leaf(&mut self, key: Key, val: Value) -> Result<(), ()> {
+        if let Data::Leaf(ref mut records) = self.data {
+            let search = records.binary_search_by(|&(ref k, ref _v)| (**k).cmp(&*key));
+            if let Ok(idx) = search {
+                records.push((key, val));
+                records.swap_remove(idx);
+            } else {
+                records.push((key, val));
+                records.sort();
+            }
+
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn parent_split(&mut self,
+                        at: Bound,
+                        to: PageID,
+                        from: PageID,
+                        hi: Bound)
+                        -> Result<(), ()> {
+        if let Data::Index(ref mut ptrs) = self.data {
+            let mut idx_opt = None;
+            for (i, &(ref k, ref pid)) in ptrs.clone().iter().enumerate() {
+                if *pid == from {
+                    idx_opt = Some((k.clone(), i.clone()));
+                    break;
+                }
+            }
+            if idx_opt.is_none() {
+                panic!("split point not found in parent");
+            }
+            let (orig_k, idx) = idx_opt.unwrap();
+
+            ptrs.remove(idx);
+            ptrs.push((orig_k.clone(), from));
+            ptrs.push((at.inner().unwrap(), to));
+            ptrs.sort_by(|a, b| a.0.cmp(&b.0));
+
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn del_leaf(&mut self, key: &Key) -> Result<(), ()> {
+        if let Data::Leaf(ref mut records) = self.data {
+            let search = records.binary_search_by(|&(ref k, ref _v)| (**k).cmp(key));
+            if let Ok(idx) = search {
+                records.remove(idx);
+            } else {
+                print!(".");
+            }
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn should_split(&self) -> bool {
         if self.data.len() > FANOUT {
             true
         } else {
@@ -359,7 +436,7 @@ impl Node {
         }
     }
 
-    fn split(&self, id: PageID) -> (Node, Node) {
+    pub fn split(&self, id: PageID) -> (Node, Node) {
         let (split, lhs, rhs) = self.data.split();
         let left = Node {
             id: self.id,

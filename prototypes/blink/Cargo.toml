@@ -8,3 +8,4 @@ name = "test"
 path = "test/test.rs"
 
 [dependencies]
+rand = "0.3"

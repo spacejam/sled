@@ -84,10 +84,11 @@ impl<T> Radix<T> {
         let res = unsafe {
             (*tip).inner.compare_and_swap(old as *mut _, new as *mut _, Ordering::SeqCst)
         };
+
         if old == res {
-            return Ok(res);
+            test_fuzz(res, res)
         } else {
-            return Err(res);
+            Err(res)
         }
     }
 

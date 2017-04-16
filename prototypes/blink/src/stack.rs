@@ -7,6 +7,8 @@ use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
+use super::test_fuzz;
+
 pub struct Node<T> {
     inner: T,
     next: *const Node<T>,
@@ -122,7 +124,7 @@ impl<T> Stack<T> {
         }));
         let res = self.head.compare_and_swap(old as *mut _, node as *mut _, Ordering::SeqCst);
         if old == res {
-            Ok(())
+            test_fuzz((), res)
         } else {
             Err(res)
         }
@@ -136,7 +138,7 @@ impl<T> Stack<T> {
         }));
         let res = self.head.compare_and_swap(old as *mut _, node as *mut _, Ordering::SeqCst);
         if old == res {
-            Ok(())
+            test_fuzz((), res)
         } else {
             Err(res)
         }

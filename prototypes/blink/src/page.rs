@@ -1,5 +1,6 @@
 /// Traversing pages, splits, merges
 
+use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 
@@ -31,48 +32,84 @@ impl FragView {
     }
 
     pub fn consolidate(&self) -> tree::Node {
-        // if let Data::Index(ref mut ptrs) = parent.data {
-        // let search =
-        // ptrs.binary_search_by(|&(ref k, ref _v)| Bound::Inc(k.clone()).cmp(&lhs.lo));
-        // if let Ok(idx) = search {
-        // ptrs.remove(idx);
-        // }
-        // ptrs.push((lhs.lo.inner().unwrap(), lhs.id));
-        // ptrs.push((rhs.lo.inner().unwrap(), rhs.id));
-        // ptrs.sort_by(|a, b| a.0.cmp(&b.0));
-        // }
-        //
-        unimplemented!()
+        use self::Frag::*;
+        use self::ParentSplit as PS;
+
+        let mut frags: Vec<Frag> =
+            unsafe { self.stack_iter().map(|ptr| (**ptr).clone()).collect() };
+
+        let mut base = frags.pop().unwrap().base().unwrap();
+        println!("before, page is now {:?}", base.data);
+
+        frags.reverse();
+
+        for frag in frags {
+            match frag {
+                Set(ref k, ref v) => {
+                    println!("trying to add to leaf");
+                    base.set_leaf(k.clone(), v.clone()).unwrap();
+                }
+                ParentSplit(PS { at, to, from, hi }) => {
+                    println!("trying to add index leaf");
+                    base.parent_split(at, to, from, hi).unwrap();
+                }
+                Del(ref k) => {
+                    println!("trying do remove from leaf");
+                    base.del_leaf(k);
+                }
+                Base(_) => panic!("encountered base page in middle of chain"),
+                ChildSplit { at, to } => {}
+            }
+        }
+
+        println!("after, page is now {:?}", base.data);
+        base
     }
 
     pub fn should_split(&self) -> bool {
-        unimplemented!()
+        let base = self.consolidate();
+        base.should_split()
     }
 
     /// returns child_split -> lhs, rhs, parent_frag
     pub fn split(&self,
                  new_id: PageID)
                  -> (*const Stack<*const Frag>, *const Stack<*const Frag>, ParentSplit) {
-        // let parent_split = Frag::ParentSplit {
-        // at: 1,
-        // to: 1,
-        // from: 1,
-        // hi: 1,
-        // };
-        //
-        unimplemented!()
+        let base = self.consolidate();
+        let (lhs, rhs) = base.split(new_id.clone());
+        let parent_split = ParentSplit {
+            at: rhs.lo.clone(),
+            to: new_id.clone(),
+            from: lhs.id,
+            hi: rhs.hi.clone(),
+        };
+        let child_split = Frag::ChildSplit {
+            at: rhs.lo.inner().unwrap(),
+            to: new_id,
+        };
+        let l = raw(Frag::Base(lhs));
+        let r = raw(Frag::Base(rhs));
+        let rs = Stack::default();
+        rs.push(r);
+        let ls = Stack::default();
+        ls.push(l);
+        ls.push(raw(child_split));
+
+        (raw(ls), raw(rs), parent_split)
     }
 }
 
 pub type Seek = (SeekRes, FragView);
 
+#[derive(Clone, Debug)]
 pub struct ParentSplit {
-    pub at: Vec<u8>,
+    pub at: Bound,
     pub to: PageID,
     pub from: PageID,
-    pub hi: Vec<u8>, // lets us stop traversing frags
+    pub hi: Bound, // lets us stop traversing frags
 }
 
+#[derive(Clone, Debug)]
 pub enum Frag {
     Set(Key, Value),
     Del(Key),
@@ -82,6 +119,15 @@ pub enum Frag {
         to: PageID, // TODO should this be physical?
     },
     ParentSplit(ParentSplit),
+}
+
+impl Frag {
+    fn base(&self) -> Option<tree::Node> {
+        match *self {
+            Frag::Base(ref base) => Some(base.clone()),
+            _ => None,
+        }
+    }
 }
 
 pub struct Pages {
@@ -127,10 +173,9 @@ impl Pages {
 
                     // if we encounter a relevant split, pass it to the caller
                     ChildSplit { ref at, ref to } if at <= &key => Some(SeekRes::Split(*to)),
-                    ParentSplit(PS { ref at, ref to, ref from, ref hi }) if at <= &key &&
-                                                                            hi > &key => {
-                        Some(SeekRes::Split(*to))
-                    }
+                    ParentSplit(PS { ref at, ref to, ref from, ref hi })
+                        if at <= &Bound::Inc(key.clone()) &&
+                           hi > &Bound::Inc(key.clone()) => Some(SeekRes::Split(*to)),
                     _ => None,
                 } {
                     ret = Some(result);

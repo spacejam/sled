@@ -1,5 +1,7 @@
 /// An in-memory b-link tree.
 
+extern crate rand;
+
 macro_rules! rep_no_copy {
     ($e:expr; $n:expr) => {
         {
@@ -10,6 +12,22 @@ macro_rules! rep_no_copy {
             v
         }
     };
+}
+
+#[cfg(test)]
+fn test_fuzz<A, B>(a: A, b: B) -> Result<A, B> {
+    use rand::Rng;
+
+    if rand::thread_rng().gen::<bool>() {
+        Ok(a)
+    } else {
+        Err(b)
+    }
+}
+
+#[cfg(not(test))]
+fn test_fuzz<A, B>(a: A, b: B) -> Result<A, B> {
+    Ok(a)
 }
 
 mod tree;
