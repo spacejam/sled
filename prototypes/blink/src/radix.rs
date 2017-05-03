@@ -85,8 +85,8 @@ impl<T> Radix<T> {
             (*tip).inner.compare_and_swap(old as *mut _, new as *mut _, Ordering::SeqCst)
         };
 
-        if old == res {
-            test_fuzz(res, res)
+        if old == res && !test_fail() {
+            Ok(res)
         } else {
             Err(res)
         }
@@ -129,7 +129,7 @@ fn traverse<T>(ptr: *const Node<T>, pid: PageID, create_intermediate: bool) -> *
         let child = Node::default();
         let child_ptr = Box::into_raw(Box::new(child));
         let ret = children[child_index].compare_and_swap(next_ptr, child_ptr, Ordering::SeqCst);
-        if ret == next_ptr {
+        if ret == next_ptr && !test_fail() {
             // CAS worked
             next_ptr = child_ptr;
         } else {

@@ -1,3 +1,4 @@
+use std::fmt::{self, Debug};
 use std::mem;
 use std::ptr;
 use std::sync::atomic::AtomicUsize;
@@ -5,8 +6,14 @@ use std::sync::atomic::Ordering::SeqCst;
 
 use super::*;
 
-const FANOUT: usize = 3;
-const MAX_FRAG_LEN: usize = 6;
+const FANOUT: usize = 2;
+const MAX_FRAG_LEN: usize = 2;
+
+// TODO
+// * need to push consolidation CAS to stack,
+//   because we can't linearize CAS ops b/w radix & stack
+// * need to preserve splits during consolidation
+// * llvm sanitizer may be best way to debug some of this
 
 pub struct Tree {
     pages: Pages,
@@ -19,13 +26,13 @@ impl Tree {
         let root_id = pages.allocate();
         let leaf_id = pages.allocate();
 
-        let leaf = Frag::Base(Node {
+        let leaf = raw(Frag::Base(Node {
             id: leaf_id,
             data: Data::Leaf(vec![]),
             next: None,
             lo: Bound::Inc(vec![]),
             hi: Bound::Inf,
-        });
+        }));
         let root = Frag::Base(Node {
             id: root_id,
             data: Data::Index(vec![(vec![], leaf_id)]),
@@ -34,7 +41,7 @@ impl Tree {
             hi: Bound::Inf,
         });
         pages.insert(root_id, raw(root)).unwrap();
-        pages.insert(leaf_id, raw(leaf)).unwrap();
+        pages.insert(leaf_id, leaf).unwrap();
         Tree {
             pages: pages,
             root: AtomicUsize::new(root_id),
@@ -42,7 +49,9 @@ impl Tree {
     }
 
     pub fn get(&self, key: &[u8]) -> Option<Value> {
+        // println!("starting get");
         let (_, ret) = self.get_internal(key);
+        // println!("done get");
         ret
     }
 
@@ -77,7 +86,7 @@ impl Tree {
                 unsafe {
                     match (*node_ptr).data {
                         Data::Leaf(ref items) => {
-                            // println!("comparing leaf!");
+                            // println!("comparing leaf! items: {:?}", items.len());
                             let search = items.binary_search_by(|&(ref k, ref _v)| (**k).cmp(key));
                             if let Ok(idx) = search {
                                 // cap a del frag below
@@ -95,6 +104,7 @@ impl Tree {
     }
 
     pub fn set(&self, key: Key, value: Value) {
+        // println!("starting set");
         let frag = Frag::Set(key.clone(), value);
         let frag_ptr = raw(frag);
         loop {
@@ -105,7 +115,7 @@ impl Tree {
             if Ok(()) == self.pages.cap(pid, head, frag_ptr) {
                 // success
                 if last.should_split() {
-                    println!("need to split");
+                    // println!("need to split {:?}", pid);
                     self.recursive_split(&path);
                 }
                 break;
@@ -114,10 +124,12 @@ impl Tree {
                 continue;
             }
         }
+        // println!("done set");
     }
 
     // TODO tunable: pessimistic delete, vs just appending without knowing if it's there
     pub fn del(&self, key: &[u8]) -> Option<Value> {
+        // println!("starting del");
         // try to get, if none, do nothing
         let mut ret = None;
         loop {
@@ -168,12 +180,14 @@ impl Tree {
             }
         }
 
+        // println!("done del");
+
         ret
     }
 
     fn consolidate(&self, view: FragView) -> Result<(), ()> {
         let base = view.consolidate();
-        println!("page is now {:?}", base.data);
+        // println!("page is now {:?}", base.data);
         let ptr = raw(Frag::Base(base));
         let stack = Stack::default();
         stack.push(ptr);
@@ -207,14 +221,34 @@ impl Tree {
         //      case, we need to go up the path to the grandparent then down again
         //      or higher until it works)
         //  3. any traversing nodes that witness #1 but not #2 try to complete it
+
+        // root is special case, where we need to hoist a new root
         let mut frags = path.clone();
-        frags.reverse();
+        let root_frag = frags.remove(0);
+
+        // print!("frags: ");
+        // for frag in &frags {
+        // print!("{:?} ", frag.pid);
+        // }
+        // println!("");
+
+        // frags.reverse();
         while let Some(frag_view) = frags.pop() {
             if frag_view.should_split() {
+                // print!("frags remaining: ");
+                // for frag in &frags {
+                // print!("{:?} ", frag.pid);
+                // }
+                // println!("");
+                // println!("before split of {}:\n{:?}", frag_view.pid, self);
+
                 let new_pid = self.pages.allocate();
+
+                // println!("allocated new id {}", new_pid);
 
                 // returns new entire stacks for sides, frag for parent
                 let (lhs, rhs, parent_split) = frag_view.split(new_pid);
+                let raw_parent_split = raw(Frag::ParentSplit(parent_split));
 
                 // install new rhs
                 self.pages.inner.insert(new_pid, rhs).unwrap();
@@ -225,51 +259,95 @@ impl Tree {
                 if cap.is_err() {
                     // child split failed, don't retry
                     // TODO nuke GC
+                    println!("child split failed");
                     continue;
                 }
 
+                // println!("after child split of {}:\n{:?}", frag_view.pid, self);
+
                 // TODO add frag_view.stack to GC
 
-                // parent split or root hoist
-                if let Some(parent_frag_view) = path.last() {
-                    println!("parent splitting");
-                    // install parent split
-                    let raw_parent_split = raw(Frag::ParentSplit(parent_split));
-                    let cap = unsafe {
-                        (*parent_frag_view.stack).cap(parent_frag_view.head, raw_parent_split)
-                    };
+                // parent split
+                let parent_frag_view = frags.last().unwrap_or(&root_frag);
+                // println!("parent splitting node {:?}", parent_frag_view.pid);
+                // install parent split
+                let cap = unsafe {
+                    (*parent_frag_view.stack).cap(parent_frag_view.head, raw_parent_split)
+                };
 
-                    if cap.is_err() {
-                        // TODO think how we should respond, maybe parent was merged/split
-                        continue;
-                    }
+                if cap.is_err() {
+                    println!("failed to cap parent split");
+                    // TODO think how we should respond, maybe parent was merged/split
+                    continue;
+                }
+            } else if frag_view.stack_len() > MAX_FRAG_LEN {
+                let consolidated = raw(Frag::Base(frag_view.consolidate()));
+                let stack = Stack::default();
+                stack.push(consolidated);
+                let cap = self.pages.inner.cas(frag_view.pid, frag_view.stack, raw(stack));
+
+                if cap.is_err() {
+                    println!("failed to consolidate");
                 } else {
-                    // no parent, we just split the root, so install new one
-                    println!("$#@$#%!$%#@$%#@% hoisting new root");
-                    let root_id = self.pages.allocate();
-                    let root = Frag::Base(Node {
-                        id: root_id.clone(),
-                        data: Data::Index(vec![(vec![], parent_split.from),
-                                               (parent_split.at.inner().unwrap(),
-                                                parent_split.to)]),
-                        next: None,
-                        lo: Bound::Inc(vec![]),
-                        hi: Bound::Inf,
-                    });
-                    self.pages.insert(root_id, raw(root)).unwrap();
-                    let cas = self.root
-                        .compare_and_swap(parent_split.from, root_id, SeqCst);
+                    println!("consolidation success");
                 }
             }
         }
+
+        if root_frag.should_split() {
+            println!("$#@$#%!$%#@$%#@% hoisting new root");
+
+            // split the root into 2 pieces
+
+            let new_pid = self.pages.allocate();
+            let (lhs, rhs, parent_split) = root_frag.split(new_pid);
+            self.pages.inner.insert(new_pid, rhs).unwrap();
+
+            // child split
+            let cap = self.pages.inner.cas(root_frag.pid, root_frag.stack, lhs);
+
+            // println!("root child cap {:?} {:?} {:?}", root_frag.pid, root_frag.stack, lhs);
+            if let Err(actual) = cap {
+                // child split failed, don't retry
+                // TODO nuke GC
+                println!("root child split failed, should have been {:?}", actual);
+                return;
+            }
+
+            // hoist new root, pointing to lhs & rhs
+            let root_id = self.pages.allocate();
+            let root = Frag::Base(Node {
+                id: root_id.clone(),
+                data: Data::Index(vec![(vec![], parent_split.from),
+                                       (parent_split.at.inner().unwrap(), parent_split.to)]),
+                next: None,
+                lo: Bound::Inc(vec![]),
+                hi: Bound::Inf,
+            });
+            self.pages.insert(root_id, raw(root)).unwrap();
+            // println!("split is {:?}", parent_split);
+            // println!("trying to cas root at {:?} with real value {:?}", path.first().unwrap().pid, self.root.load(SeqCst));
+            // println!("root_id is {}", root_id);
+            let cas = self.root
+                .compare_and_swap(path.first().unwrap().pid, root_id, SeqCst);
+            if cas == path.first().unwrap().pid {
+                // println!("cas successful");
+                // TODO GC it
+            } else {
+                println!("cas failed to install new root");
+            }
+        }
+        // println!("after:\n{:?}\n", self);
     }
 
     /// returns the traversal path,
     fn path_for_k(&self, key: &[u8]) -> (Vec<FragView>, PartialSeek) {
         use SeekRes::*;
         let mut cursor = self.root.load(SeqCst);
+        let root = cursor;
         let mut path = vec![];
         loop {
+            // println!("down at node {} from root {}, depth {}", cursor, root, path.len());
             let (res, meta) = self.pages.seek(cursor, key.to_vec());
             path.push(meta);
             match res {
@@ -279,7 +357,7 @@ impl Tree {
                 Node(ref node_ptr) => {
                     let old_cursor = cursor.clone();
                     unsafe {
-                        match (*node_ptr).data {
+                        match (**node_ptr).data {
                             Data::Index(ref ptrs) => {
                                 for &(ref sep_k, ref ptr) in ptrs {
                                     if &**sep_k <= &*key {
@@ -293,21 +371,17 @@ impl Tree {
                                 }
                             }
                             Data::Leaf(_) => {
-                                let last = path.last().cloned().unwrap();
-                                if last.stack_len() > MAX_FRAG_LEN {
-                                    println!("need to consolidate {}", last.pid);
-                                    self.consolidate(last);
-                                }
-                                return (path, PartialSeek::Base(node_ptr));
+                                return (path, PartialSeek::Base(*node_ptr));
                             }
                         }
                     }
-
                 }
                 ShortCircuitNone => {
                     return (path, PartialSeek::ShortCircuit(None));
                 }
                 Split(ref to) => {
+                    // we pop here to simplify recursive split logic
+                    path.pop();
                     cursor = *to;
                 }
                 Merge => {
@@ -315,6 +389,67 @@ impl Tree {
                 }
             }
         }
+    }
+}
+
+impl Debug for Tree {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        let simple_view = |pid: PageID| -> FragView {
+            FragView {
+                pid: pid.clone(),
+                stack: self.pages.inner.get(pid).unwrap(),
+                head: ptr::null(),
+                depth: 0,
+            }
+        };
+
+        let mut pid = self.root.load(SeqCst);
+        let mut left_most = pid.clone();
+        let mut level = 0;
+
+        f.write_str(&*format!("Tree: \n\tnext id: {}\n", self.pages.max_id()));
+
+        f.write_str("\tlevel 0:\n");
+
+        let mut count = 0;
+        loop {
+            let view = simple_view(pid);
+            let node = view.consolidate();
+
+            count += 1;
+            // f.write_str("\t\t");
+            // node.fmt(f);
+            // f.write_str("\n");
+
+            if let Some(next_pid) = node.next {
+                pid = next_pid;
+            } else {
+                // we've traversed our level, time to bump down
+                let left_view = simple_view(left_most);
+                let left_node = left_view.consolidate();
+
+                match left_node.data {
+                    Data::Index(ptrs) => {
+                        if let Some(&(ref sep, ref next_pid)) = ptrs.first() {
+                            pid = next_pid.clone();
+                            left_most = next_pid.clone();
+                            level += 1;
+                            f.write_str(&*format!("\t\t{:?} pages", count));
+                            f.write_str(&*format!("\n\tlevel {}:\n", level));
+                        } else {
+                            panic!("trying to debug print empty index node");
+                        }
+                    }
+                    Data::Leaf(items) => {
+                        // we've reached the end of our tree, all leafs are on
+                        // the lowest level.
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -339,7 +474,7 @@ impl Data {
 
     fn split(&self) -> (Key, Data, Data) {
         fn split_inner<T>(xs: &Vec<(Key, T)>) -> (Key, &[(Key, T)], &[(Key, T)]) {
-            let (lhs, rhs) = xs.split_at(xs.len() / 2);
+            let (lhs, rhs) = xs.split_at(xs.len() / 2 + 1);
             let split = rhs.first().unwrap().0.clone();
             (split, lhs, rhs)
         }
@@ -390,15 +525,22 @@ impl Node {
                         from: PageID,
                         hi: Bound)
                         -> Result<(), ()> {
+        // println!("parent: {:?}", self);
         if let Data::Index(ref mut ptrs) = self.data {
             let mut idx_opt = None;
             for (i, &(ref k, ref pid)) in ptrs.clone().iter().enumerate() {
                 if *pid == from {
                     idx_opt = Some((k.clone(), i.clone()));
                     break;
+                    // } else if Bound::Inc(k.clone()) <= at {
+                    // idx_opt = Some((k.clone(), i.clone()));
+                    // } else {
+                    // break;
+                    //
                 }
             }
             if idx_opt.is_none() {
+                println!("parent split at {:?} from {:?} to {:?})", at, from, to);
                 panic!("split point not found in parent");
             }
             let (orig_k, idx) = idx_opt.unwrap();
@@ -438,6 +580,8 @@ impl Node {
 
     pub fn split(&self, id: PageID) -> (Node, Node) {
         let (split, lhs, rhs) = self.data.split();
+        // println!("self before split: {:?}", self);
+        // println!("split: {:?}", split);
         let left = Node {
             id: self.id,
             data: lhs,
@@ -452,6 +596,7 @@ impl Node {
             lo: Bound::Inc(split.clone()),
             hi: self.hi.clone(),
         };
+        // println!("index split\n\tlhs: {:?}\n\trhs: {:?}", left, right);
         (left, right)
     }
 }

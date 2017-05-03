@@ -8,7 +8,7 @@ use super::*;
 
 pub enum SeekRes {
     ShortCircuitSome(Value),
-    Node(tree::Node),
+    Node(*const tree::Node),
     ShortCircuitNone,
     Split(PageID),
     Merge, // TODO
@@ -39,22 +39,22 @@ impl FragView {
             unsafe { self.stack_iter().map(|ptr| (**ptr).clone()).collect() };
 
         let mut base = frags.pop().unwrap().base().unwrap();
-        println!("before, page is now {:?}", base.data);
+        // println!("before, page is now {:?}", base.data);
 
         frags.reverse();
 
         for frag in frags {
             match frag {
                 Set(ref k, ref v) => {
-                    println!("trying to add to leaf");
+                    // print!(" +leaf");
                     base.set_leaf(k.clone(), v.clone()).unwrap();
                 }
                 ParentSplit(PS { at, to, from, hi }) => {
-                    println!("trying to add index leaf");
+                    // println!("-index");
                     base.parent_split(at, to, from, hi).unwrap();
                 }
                 Del(ref k) => {
-                    println!("trying do remove from leaf");
+                    // print!(" -leaf");
                     base.del_leaf(k);
                 }
                 Base(_) => panic!("encountered base page in middle of chain"),
@@ -62,20 +62,25 @@ impl FragView {
             }
         }
 
-        println!("after, page is now {:?}", base.data);
+        // println!("after, page is now {:?}", base.data);
         base
     }
 
     pub fn should_split(&self) -> bool {
+        // print!("should_split() cons(");
         let base = self.consolidate();
-        base.should_split()
+        let ret = base.should_split();
+        // println!(") -> {}", ret);
+        ret
     }
 
     /// returns child_split -> lhs, rhs, parent_frag
     pub fn split(&self,
                  new_id: PageID)
                  -> (*const Stack<*const Frag>, *const Stack<*const Frag>, ParentSplit) {
+        // print!("split(new_id: {}) (", new_id);
         let base = self.consolidate();
+        // println!(")");
         let (lhs, rhs) = base.split(new_id.clone());
         let parent_split = ParentSplit {
             at: rhs.lo.clone(),
@@ -164,7 +169,7 @@ impl Pages {
                 depth += 1;
                 if let Some(result) = match **frag_ptr {
                     // if we've traversed to a base node, we can return it
-                    Base(ref node) => Some(SeekRes::Node(node.clone())),
+                    Base(ref node) => Some(SeekRes::Node(&*node)),
 
                     // if we encounter a set or del for our key,
                     // we can short-circuit the request
@@ -175,7 +180,7 @@ impl Pages {
                     ChildSplit { ref at, ref to } if at <= &key => Some(SeekRes::Split(*to)),
                     ParentSplit(PS { ref at, ref to, ref from, ref hi })
                         if at <= &Bound::Inc(key.clone()) &&
-                           hi > &Bound::Inc(key.clone()) => Some(SeekRes::Split(*to)),
+                           hi > &Bound::Non(key.clone()) => Some(SeekRes::Split(*to)),
                     _ => None,
                 } {
                     ret = Some(result);
@@ -214,6 +219,10 @@ impl Pages {
         let stack = Stack::default();
         stack.push(frag);
         self.inner.insert(pid, raw(stack)).map(|_| ()).map_err(|_| ())
+    }
+
+    pub fn max_id(&self) -> PageID {
+        self.max_id.load(SeqCst)
     }
 }
 

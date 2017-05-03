@@ -15,19 +15,17 @@ macro_rules! rep_no_copy {
 }
 
 #[cfg(test)]
-fn test_fuzz<A, B>(a: A, b: B) -> Result<A, B> {
+fn test_fail() -> bool {
     use rand::Rng;
-
-    if rand::thread_rng().gen::<bool>() {
-        Ok(a)
-    } else {
-        Err(b)
-    }
+    rand::thread_rng().gen::<bool>();
+    // TODO when the time is right, return the gen'd bool
+    false
 }
 
 #[cfg(not(test))]
-fn test_fuzz<A, B>(a: A, b: B) -> Result<A, B> {
-    Ok(a)
+#[inline(always)]
+fn test_fail() -> bool {
+    false
 }
 
 mod tree;
