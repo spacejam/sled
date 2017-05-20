@@ -27,8 +27,28 @@ impl FragView {
         unsafe { (*self.stack).len() }
     }
 
-    pub fn stack_iter(&self) -> stack::StackIter<*const Frag> {
+    fn stack_iter(&self) -> stack::StackIter<*const Frag> {
         unsafe { (*self.stack).into_iter() }
+    }
+
+    pub fn cap(&mut self, new: *const page::Frag) -> Result<Raw, Raw> {
+        unsafe {
+            let ret = (*self.stack).cap(self.head, new);
+            if let Ok(new) = ret {
+                self.head = new;
+            }
+            ret
+        }
+    }
+
+    pub fn cas(&mut self, new: Raw) -> Result<Raw, Raw> {
+        unsafe {
+            let ret = (*self.stack).cas(self.head, new);
+            if let Ok(new) = ret {
+                self.head = new;
+            }
+            ret
+        }
     }
 
     pub fn consolidate(&self) -> tree::Node {
@@ -75,32 +95,28 @@ impl FragView {
     }
 
     /// returns child_split -> lhs, rhs, parent_frag
-    pub fn split(&self,
-                 new_id: PageID)
-                 -> (*const Stack<*const Frag>, *const Stack<*const Frag>, ParentSplit) {
+    pub fn split(&self, new_id: PageID) -> (Raw, Frag, ParentSplit) {
         // print!("split(new_id: {}) (", new_id);
         let base = self.consolidate();
         // println!(")");
         let (lhs, rhs) = base.split(new_id.clone());
+
         let parent_split = ParentSplit {
             at: rhs.lo.clone(),
             to: new_id.clone(),
             from: lhs.id,
             hi: rhs.hi.clone(),
         };
+
         let child_split = Frag::ChildSplit {
             at: rhs.lo.inner().unwrap(),
             to: new_id,
         };
-        let l = raw(Frag::Base(lhs));
-        let r = raw(Frag::Base(rhs));
-        let rs = Stack::default();
-        rs.push(r);
-        let ls = Stack::default();
-        ls.push(l);
-        ls.push(raw(child_split));
 
-        (raw(ls), raw(rs), parent_split)
+        let r = Frag::Base(rhs);
+        let l = node_from_frag_vec(vec![child_split, Frag::Base(lhs)]);
+
+        (l, r, parent_split)
     }
 }
 
@@ -187,6 +203,7 @@ impl Pages {
                     break;
                 }
             }
+
             let meta = FragView {
                 pid: pid,
                 head: head,
@@ -197,7 +214,7 @@ impl Pages {
         }
     }
 
-    pub fn cap(&self, pid: PageID, old: Raw, new: *const Frag) -> Result<(), Raw> {
+    pub fn cap(&self, pid: PageID, old: Raw, new: *const Frag) -> Result<Raw, Raw> {
         let stack_ptr = self.inner.get(pid).unwrap();
         unsafe { (*stack_ptr).cap(old, new) }
     }
@@ -215,9 +232,8 @@ impl Pages {
         unsafe { (*stack_ptr).pop_all() };
     }
 
-    pub fn insert(&self, pid: PageID, frag: *const Frag) -> Result<(), ()> {
-        let stack = Stack::default();
-        stack.push(frag);
+    pub fn insert(&self, pid: PageID, head: page::Frag) -> Result<(), ()> {
+        let mut stack = Stack::from_vec(vec![raw(head)]);
         self.inner.insert(pid, raw(stack)).map(|_| ()).map_err(|_| ())
     }
 

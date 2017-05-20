@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
 use super::test_fail;
+use {page, stack, Raw, raw};
 
 pub struct Node<T> {
     inner: T,
@@ -28,7 +29,9 @@ impl<T> Default for Stack<T> {
 impl<T: Debug> Debug for Stack<T> {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         let mut ptr = self.head();
-        formatter.write_str("Stack [").unwrap();
+        formatter.write_str("Stack(").unwrap();
+        ptr.fmt(formatter).unwrap();
+        formatter.write_str(") [").unwrap();
         let mut written = false;
         while !ptr.is_null() {
             if written {
@@ -69,6 +72,16 @@ impl<T> Drop for Stack<T> {
 }
 
 impl<T> Stack<T> {
+    pub fn from_vec(from: Vec<T>) -> Stack<T> {
+        let stack = Stack::default();
+
+        for item in from.into_iter().rev() {
+            stack.push(item);
+        }
+
+        stack
+    }
+
     pub fn push(&self, inner: T) {
         let mut head = self.head() as *mut _;
         let mut node = Box::into_raw(Box::new(Node {
@@ -117,32 +130,27 @@ impl<T> Stack<T> {
     }
 
     /// compare and push
-    pub fn cap(&self, old: *const Node<T>, new: T) -> Result<(), *const Node<T>> {
+    pub fn cap(&self, old: *const Node<T>, new: T) -> Result<*const Node<T>, *const Node<T>> {
         let node = Box::into_raw(Box::new(Node {
             inner: new,
             next: old,
         }));
         let res = self.head.compare_and_swap(old as *mut _, node as *mut _, Ordering::SeqCst);
-        if old == res {
-            if test_fail() {
-                Err(res)
-            } else {
-                Ok(())
-            }
+        if old == res && !test_fail() {
+            Ok(node)
         } else {
             Err(res)
         }
     }
 
     /// attempt consolidation
-    pub fn cac(&self, old: *const Node<T>, new: T) -> Result<(), *const Node<T>> {
-        let node = Box::into_raw(Box::new(Node {
-            inner: new,
-            next: ptr::null(),
-        }));
-        let res = self.head.compare_and_swap(old as *mut _, node as *mut _, Ordering::SeqCst);
+    pub fn cas(&self,
+               old: *const Node<T>,
+               new: *const Node<T>)
+               -> Result<*const Node<T>, *const Node<T>> {
+        let res = self.head.compare_and_swap(old as *mut _, new as *mut _, Ordering::SeqCst);
         if old == res && !test_fail() {
-            Ok(())
+            Ok(new)
         } else {
             Err(res)
         }
@@ -202,6 +210,22 @@ impl<'a, T> IntoIterator for &'a Stack<T> {
             marker: PhantomData,
         }
     }
+}
+
+pub fn node_from_frag_vec(from: Vec<page::Frag>) -> Raw {
+    use std::ptr;
+    let mut last = ptr::null();
+
+    for item in from.into_iter().rev() {
+        let raw_item = raw(item);
+        let node = raw(Node {
+            inner: raw_item,
+            next: last,
+        });
+        last = node;
+    }
+
+    last
 }
 
 #[test]

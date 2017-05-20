@@ -36,7 +36,7 @@ mod page;
 
 use bound::Bound;
 use radix::Radix;
-use stack::Stack;
+use stack::{Stack, node_from_frag_vec};
 use page::{Frag, Pages, FragView, SeekRes};
 
 pub use tree::Tree;
