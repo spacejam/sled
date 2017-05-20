@@ -1,6 +1,7 @@
 use std::fmt::{self, Debug};
 use std::mem;
 use std::ptr;
+use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 
@@ -15,9 +16,10 @@ const MAX_FRAG_LEN: usize = 7;
 // * need to preserve splits during consolidation
 // * llvm sanitizer may be best way to debug some of this
 
+#[derive(Clone)]
 pub struct Tree {
-    pages: Pages,
-    root: AtomicUsize,
+    pages: Arc<Pages>,
+    root: Arc<AtomicUsize>,
 }
 
 impl Tree {
@@ -43,8 +45,8 @@ impl Tree {
         pages.insert(root_id, root).unwrap();
         pages.insert(leaf_id, leaf).unwrap();
         Tree {
-            pages: pages,
-            root: AtomicUsize::new(root_id),
+            pages: Arc::new(pages),
+            root: Arc::new(AtomicUsize::new(root_id)),
         }
     }
 
@@ -254,11 +256,12 @@ impl Tree {
                 if cap.is_err() {
                     // child split failed, don't retry
                     // TODO nuke GC
-                    println!("child split failed");
+                    println!("child split of {} failed", frag_view.pid);
+                    self.pages.free(new_pid);
                     continue;
                 }
 
-                // println!("after child split of {}:\n{:?}", frag_view.pid, self);
+                println!("after child split of {}:\n{:?}", frag_view.pid, self);
 
                 // TODO add frag_view.stack to GC
 
@@ -278,9 +281,9 @@ impl Tree {
                 let cap = frag_view.cas(consolidated);
 
                 if cap.is_err() {
-                    println!("failed to consolidate");
+                    println!("failed to consolidate {}", frag_view.pid);
                 } else {
-                    // println!("consolidation success");
+                    println!("consolidation success of {}", frag_view.pid);
                 }
             }
         }
@@ -301,31 +304,34 @@ impl Tree {
             if let Err(actual) = cap {
                 // child split failed, don't retry
                 // TODO nuke GC
+                self.pages.free(new_pid);
                 println!("root child split failed, should have been {:?}", actual);
                 return;
             }
 
             // hoist new root, pointing to lhs & rhs
-            let root_id = self.pages.allocate();
+            let new_root_pid = self.pages.allocate();
             let root = Frag::Base(Node {
-                id: root_id.clone(),
+                id: new_root_pid.clone(),
                 data: Data::Index(vec![(vec![], parent_split.from),
                                        (parent_split.at.inner().unwrap(), parent_split.to)]),
                 next: None,
                 lo: Bound::Inc(vec![]),
                 hi: Bound::Inf,
             });
-            self.pages.insert(root_id, root).unwrap();
+            self.pages.insert(new_root_pid, root).unwrap();
             // println!("split is {:?}", parent_split);
             // println!("trying to cas root at {:?} with real value {:?}", path.first().unwrap().pid, self.root.load(SeqCst));
             // println!("root_id is {}", root_id);
             let cas = self.root
-                .compare_and_swap(path.first().unwrap().pid, root_id, SeqCst);
+                .compare_and_swap(path.first().unwrap().pid, new_root_pid, SeqCst);
             if cas == path.first().unwrap().pid {
-                // println!("cas successful");
+                println!("root hoist successful");
                 // TODO GC it
             } else {
+                self.pages.free(new_root_pid);
                 println!("cas failed to install new root");
+                println!("{:?}", self);
             }
         }
         // println!("after:\n{:?}\n", self);
@@ -398,8 +404,8 @@ impl Debug for Tree {
         let mut left_most = pid.clone();
         let mut level = 0;
 
-        f.write_str(&*format!("Tree: \n\tnext id: {}\n", self.pages.max_id()));
-
+        f.write_str("Tree: \n\t");
+        self.pages.fmt(f);
         f.write_str("\tlevel 0:\n");
 
         let mut count = 0;
@@ -426,6 +432,7 @@ impl Debug for Tree {
                             left_most = next_pid.clone();
                             level += 1;
                             f.write_str(&*format!("\t\t{:?} pages", count));
+                            f.write_str(&*format!("\n\t\t{:?}", ptrs));
                             f.write_str(&*format!("\n\tlevel {}:\n", level));
                         } else {
                             panic!("trying to debug print empty index node");
@@ -531,8 +538,12 @@ impl Node {
                 }
             }
             if idx_opt.is_none() {
-                println!("parent split at {:?} from {:?} to {:?})", at, from, to);
-                panic!("split point not found in parent");
+                println!("parent split not found at {:?} from {:?} to {:?})",
+                         at,
+                         from,
+                         to);
+                return Err(());
+                // FIXME panic!("split point not found in parent");
             }
             let (orig_k, idx) = idx_opt.unwrap();
 

@@ -148,6 +148,7 @@ impl<T> Stack<T> {
                old: *const Node<T>,
                new: *const Node<T>)
                -> Result<*const Node<T>, *const Node<T>> {
+        // TODO add separated part to epoch
         let res = self.head.compare_and_swap(old as *mut _, new as *mut _, Ordering::SeqCst);
         if old == res && !test_fail() {
             Ok(new)

@@ -1,6 +1,7 @@
 /// Traversing pages, splits, merges
 
 use std::collections::HashMap;
+use std::fmt::{self, Debug};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 
@@ -42,6 +43,7 @@ impl FragView {
     }
 
     pub fn cas(&mut self, new: Raw) -> Result<Raw, Raw> {
+        // TODO add separated part to epoch
         unsafe {
             let ret = (*self.stack).cas(self.head, new);
             if let Ok(new) = ret {
@@ -167,6 +169,15 @@ impl Default for Pages {
     }
 }
 
+impl Debug for Pages {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        f.write_str(&*format!("Pages {{ max: {:?} free: {:?} }}\n",
+                              self.max_id(),
+                              self.free));
+        Ok(())
+    }
+}
+
 impl Pages {
     pub fn seek(&self, pid: PageID, key: Key) -> Seek {
         use self::Frag::*;
@@ -227,8 +238,9 @@ impl Pages {
 
     pub fn free(&self, pid: PageID) {
         // TODO epoch
+        // let stack_ptr = self.inner.get(pid).unwrap();
+        let stack_ptr = self.inner.del(pid);
         self.free.push(pid);
-        let stack_ptr = self.inner.get(pid).unwrap();
         unsafe { (*stack_ptr).pop_all() };
     }
 
