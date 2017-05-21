@@ -27,23 +27,29 @@ fn it_works() {
     }
     let t = Tree::new();
     let tree = t.clone();
-    let t1 = thread::spawn(move || {
-        for i in 0..N / 2 {
-            let (k, v) = kv((i));
-            assert_eq!(tree.get(&*k), None);
-            tree.set(k.to_vec(), v.to_vec());
-            assert_eq!(tree.get(&*k), Some(v));
-        }
-    });
+    let t1 = thread::Builder::new()
+        .name("t1".into())
+        .spawn(move || {
+            for i in 0..N / 2 {
+                let (k, v) = kv((i));
+                assert_eq!(tree.get(&*k), None);
+                tree.set(k.to_vec(), v.to_vec());
+                assert_eq!(tree.get(&*k), Some(v));
+            }
+        })
+        .unwrap();
     let tree = t.clone();
-    let t2 = thread::spawn(move || {
-        for i in N / 2..N {
-            let (k, v) = kv((i));
-            assert_eq!(tree.get(&*k), None);
-            tree.set(k.to_vec(), v.to_vec());
-            assert_eq!(tree.get(&*k), Some(v));
-        }
-    });
+    let t2 = thread::Builder::new()
+        .name("t2".into())
+        .spawn(move || {
+            for i in N / 2..N {
+                let (k, v) = kv((i));
+                assert_eq!(tree.get(&*k), None);
+                tree.set(k.to_vec(), v.to_vec());
+                assert_eq!(tree.get(&*k), Some(v));
+            }
+        })
+        .unwrap();
     t1.join();
     t2.join();
     let tree = t.clone();
@@ -93,3 +99,5 @@ fn it_works() {
         assert_eq!(tree.get(&*k), None);
     }
 }
+
+// TODO quickcheck splits, reads, writes interleaved

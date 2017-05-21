@@ -4,6 +4,7 @@ use std::ptr;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
+use std::thread;
 
 use super::*;
 
@@ -69,7 +70,7 @@ impl Tree {
         stack.cap(frag_ptr).map(|_| ()).map_err(|_| cur)
     }
 
-    fn get_internal(&self, key: &[u8]) -> (Vec<FragView>, Option<Value>) {
+    fn get_internal(&self, key: &[u8]) -> (Vec<StackView>, Option<Value>) {
         let (path, partial_seek) = self.path_for_k(&*key);
         use self::PartialSeek::*;
         match partial_seek {
@@ -104,7 +105,7 @@ impl Tree {
     }
 
     pub fn set(&self, key: Key, value: Value) {
-        // println!("starting set");
+        // println!("starting set of {:?} -> {:?}", key, value);
         let frag = Frag::Set(key.clone(), value);
         let frag_ptr = raw(frag);
         loop {
@@ -183,7 +184,7 @@ impl Tree {
         ret
     }
 
-    fn consolidate(&self, mut view: FragView) -> Result<(), ()> {
+    fn consolidate(&self, mut view: StackView) -> Result<(), ()> {
         let base = view.consolidate();
         // println!("page is now {:?}", base.data);
         let node = node_from_frag_vec(vec![Frag::Base(base)]);
@@ -198,7 +199,7 @@ impl Tree {
         }
     }
 
-    fn recursive_split(&self, path: &Vec<FragView>) {
+    fn recursive_split(&self, path: &Vec<StackView>) {
         // println!("needs split!");
         // to split, we pop the path, see if it's in need of split, recurse up
         // two-phase: (in prep for lock-free, not necessary for single threaded)
@@ -230,66 +231,82 @@ impl Tree {
         // println!("");
 
         // frags.reverse();
-        while let Some(mut frag_view) = frags.pop() {
-            if frag_view.should_split() {
+        let this_thread = thread::current();
+        let name = this_thread.name().unwrap();
+        while let Some(mut stack_view) = frags.pop() {
+            let pid = stack_view.pid;
+            if stack_view.should_split() {
                 // print!("frags remaining: ");
                 // for frag in &frags {
                 // print!("{:?} ", frag.pid);
                 // }
                 // println!("");
-                // println!("before split of {}:\n{:?}", frag_view.pid, self);
+                // println!("before split of {}:\n{:?}", stack_view.pid, self);
 
                 let new_pid = self.pages.allocate();
+
+                println!("{}: splitting {} to {} at {:?}",
+                         name,
+                         pid,
+                         new_pid,
+                         stack_view.head);
 
                 // println!("allocated new id {}", new_pid);
 
                 // returns new entire stacks for sides, frag for parent
-                let (lhs, rhs, parent_split) = frag_view.split(new_pid);
+                let (lhs, rhs, parent_split) = stack_view.split(new_pid);
                 let raw_parent_split = raw(Frag::ParentSplit(parent_split));
 
                 // install new rhs
                 self.pages.insert(new_pid, rhs).unwrap();
 
                 // child split
-                let cap = frag_view.cas(lhs);
+                let cap = stack_view.cas(lhs);
 
                 if cap.is_err() {
                     // child split failed, don't retry
                     // TODO nuke GC
-                    println!("child split of {} failed", frag_view.pid);
+                    println!("{}: child split of {} -", name, pid);
                     self.pages.free(new_pid);
                     continue;
                 }
 
-                println!("after child split of {}:\n{:?}", frag_view.pid, self);
+                println!("{}: child split for {} +", name, pid);
 
-                // TODO add frag_view.stack to GC
+                // TODO add stack_view.stack to GC
 
                 // parent split
-                let mut parent_frag_view = frags.last_mut().unwrap_or(&mut root_frag);
-                // println!("parent splitting node {:?}", parent_frag_view.pid);
+                let mut parent_stack_view = frags.last_mut().unwrap_or(&mut root_frag);
+                println!("{} installing parent split for split of {} to parent {}",
+                         name,
+                         pid,
+                         parent_stack_view.pid);
+                // println!("parent splitting node {:?}", parent_stack_view.pid);
                 // install parent split
-                let cap = parent_frag_view.cap(raw_parent_split);
+                let cap = parent_stack_view.cap(raw_parent_split);
 
+                println!("{:?}", self);
                 if cap.is_err() {
-                    println!("failed to cap parent split");
+                    println!("{}: parent split of {} -", name, pid);
                     // TODO think how we should respond, maybe parent was merged/split
                     continue;
                 }
-            } else if frag_view.stack_len() > MAX_FRAG_LEN {
-                let consolidated = node_from_frag_vec(vec![Frag::Base(frag_view.consolidate())]);
-                let cap = frag_view.cas(consolidated);
+
+                println!("{}: parent split of {} +", name, pid);
+            } else if stack_view.stack_len() > MAX_FRAG_LEN {
+                let consolidated = node_from_frag_vec(vec![Frag::Base(stack_view.consolidate())]);
+                let cap = stack_view.cas(consolidated);
 
                 if cap.is_err() {
-                    println!("failed to consolidate {}", frag_view.pid);
+                    println!("{}: consolidation of {} -", name, pid);
                 } else {
-                    println!("consolidation success of {}", frag_view.pid);
+                    println!("{}: consolidation of {} +", name, pid);
                 }
             }
         }
 
         if root_frag.should_split() {
-            println!("$#@$#%!$%#@$%#@% hoisting new root");
+            println!("{}: hoisting root {}", name, root_frag.pid);
 
             // split the root into 2 pieces
 
@@ -305,7 +322,10 @@ impl Tree {
                 // child split failed, don't retry
                 // TODO nuke GC
                 self.pages.free(new_pid);
-                println!("root child split failed, should have been {:?}", actual);
+                println!("{} root child split at {} failed, should have been {:?}",
+                         name,
+                         root_frag.pid,
+                         actual);
                 return;
             }
 
@@ -326,11 +346,12 @@ impl Tree {
             let cas = self.root
                 .compare_and_swap(path.first().unwrap().pid, new_root_pid, SeqCst);
             if cas == path.first().unwrap().pid {
-                println!("root hoist successful");
+                println!("{}: root hoist of {} successful", name, root_frag.pid);
                 // TODO GC it
             } else {
                 self.pages.free(new_root_pid);
-                println!("cas failed to install new root");
+                // FIXME loops here
+                panic!("cas failed to install new root for root {}", root_frag.pid);
                 println!("{:?}", self);
             }
         }
@@ -338,15 +359,15 @@ impl Tree {
     }
 
     /// returns the traversal path,
-    fn path_for_k(&self, key: &[u8]) -> (Vec<FragView>, PartialSeek) {
+    fn path_for_k(&self, key: &[u8]) -> (Vec<StackView>, PartialSeek) {
         use SeekRes::*;
         let mut cursor = self.root.load(SeqCst);
         let root = cursor;
         let mut path = vec![];
         loop {
             // println!("down at node {} from root {}, depth {}", cursor, root, path.len());
-            let (res, meta) = self.pages.seek(cursor, key.to_vec());
-            path.push(meta);
+            let (res, stack_view) = self.pages.seek(cursor, key.to_vec());
+            path.push(stack_view);
             match res {
                 ShortCircuitSome(ref value) => {
                     return (path, PartialSeek::ShortCircuit(Some(value.clone())));
@@ -391,12 +412,14 @@ impl Tree {
 
 impl Debug for Tree {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        let simple_view = |pid: PageID| -> FragView {
-            FragView {
+        let simple_view = |pid: PageID| -> StackView {
+            let stack = self.pages.inner.get(pid).unwrap();
+            StackView {
                 pid: pid.clone(),
-                stack: self.pages.inner.get(pid).unwrap(),
-                head: ptr::null(),
+                stack: stack,
+                head: unsafe { (*stack).head() },
                 depth: 0,
+                fix_parent_split: false,
             }
         };
 
@@ -414,9 +437,9 @@ impl Debug for Tree {
             let node = view.consolidate();
 
             count += 1;
-            // f.write_str("\t\t");
-            // node.fmt(f);
-            // f.write_str("\n");
+            f.write_str("\t\t");
+            node.fmt(f);
+            f.write_str("\n");
 
             if let Some(next_pid) = node.next {
                 pid = next_pid;
@@ -431,9 +454,9 @@ impl Debug for Tree {
                             pid = next_pid.clone();
                             left_most = next_pid.clone();
                             level += 1;
-                            f.write_str(&*format!("\t\t{:?} pages", count));
-                            f.write_str(&*format!("\n\t\t{:?}", ptrs));
-                            f.write_str(&*format!("\n\tlevel {}:\n", level));
+                            // f.write_str(&*format!("\t\t{:?} pages", count));
+                            // f.write_str(&*format!("\n\t\t{:?}", ptrs));
+                            // f.write_str(&*format!("\n\tlevel {}:\n", level));
                         } else {
                             panic!("trying to debug print empty index node");
                         }
@@ -543,7 +566,8 @@ impl Node {
                          from,
                          to);
                 return Err(());
-                // FIXME panic!("split point not found in parent");
+                // FIXME
+                panic!("split point not found in parent");
             }
             let (orig_k, idx) = idx_opt.unwrap();
 

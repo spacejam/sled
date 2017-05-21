@@ -159,6 +159,9 @@ impl<T> Stack<T> {
 
     pub fn iter_at_head(&self) -> (*const Node<T>, StackIter<T>) {
         let head = self.head();
+        if head.is_null() {
+            panic!("iter_at_head returning null head");
+        }
         (head,
          StackIter {
             inner: head,
@@ -184,6 +187,15 @@ impl<T> Stack<T> {
 pub struct StackIter<'a, T: 'a> {
     inner: *const Node<T>,
     marker: PhantomData<&'a Node<T>>,
+}
+
+impl<'a, T: 'a> StackIter<'a, T> {
+    pub fn from_ptr(ptr: *const Node<T>) -> StackIter<'a, T> {
+        StackIter {
+            inner: ptr,
+            marker: PhantomData,
+        }
+    }
 }
 
 impl<'a, T> Iterator for StackIter<'a, T> {

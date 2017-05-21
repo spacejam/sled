@@ -7,29 +7,61 @@ use std::sync::atomic::Ordering::SeqCst;
 
 use super::*;
 
+pub struct Pages {
+    pub inner: Radix<Stack<*const Frag>>,
+    max_id: AtomicUsize,
+    free: Stack<PageID>,
+}
+
+pub type Seek = (SeekRes, StackView);
+
+#[derive(Clone, Debug)]
+pub struct ParentSplit {
+    pub at: Bound,
+    pub to: PageID,
+    pub from: PageID,
+    pub hi: Bound, // lets us stop traversing frags
+}
+
+#[derive(Clone, Debug)]
+pub enum Frag {
+    Set(Key, Value),
+    Del(Key),
+    Base(tree::Node),
+    ChildSplit {
+        at: Vec<u8>,
+        to: PageID, // TODO should this be physical?
+    },
+    ParentSplit(ParentSplit),
+    Merge, // TODO
+}
+
+
 pub enum SeekRes {
     ShortCircuitSome(Value),
-    Node(*const tree::Node),
     ShortCircuitNone,
+    Node(*const tree::Node),
     Split(PageID),
     Merge, // TODO
 }
 
 #[derive(Debug, Clone)]
-pub struct FragView {
+pub struct StackView {
     pub pid: PageID,
     pub head: Raw,
     pub stack: *const Stack<*const Frag>,
     pub depth: usize,
+    pub fix_parent_split: bool,
 }
 
-impl FragView {
+impl StackView {
     pub fn stack_len(&self) -> usize {
         unsafe { (*self.stack).len() }
     }
 
+    // TODO use relative iterator from head
     fn stack_iter(&self) -> stack::StackIter<*const Frag> {
-        unsafe { (*self.stack).into_iter() }
+        stack::StackIter::from_ptr(self.head).into()
     }
 
     pub fn cap(&mut self, new: *const page::Frag) -> Result<Raw, Raw> {
@@ -57,15 +89,23 @@ impl FragView {
         use self::Frag::*;
         use self::ParentSplit as PS;
 
+        println!("consolidating pid {} from head {:?}:", self.pid, self.head);
+        println!("\t{:?}", self);
+        unsafe { println!("\t{:?}", *(self.stack)) };
+
         let mut frags: Vec<Frag> =
             unsafe { self.stack_iter().map(|ptr| (**ptr).clone()).collect() };
 
+        if frags.is_empty() {
+            println!("frags: {:?}", frags);
+        }
         let mut base = frags.pop().unwrap().base().unwrap();
         // println!("before, page is now {:?}", base.data);
 
         frags.reverse();
 
         for frag in frags {
+            println!("\t{:?}", frag);
             match frag {
                 Set(ref k, ref v) => {
                     // print!(" +leaf");
@@ -80,7 +120,11 @@ impl FragView {
                     base.del_leaf(k);
                 }
                 Base(_) => panic!("encountered base page in middle of chain"),
-                ChildSplit { at, to } => {}
+                ChildSplit { at, to } => {
+                    // FIXME we need to preserve the child split until we know
+                    // that the parent split has worked
+                }
+                ChildMerge => {}
             }
         }
 
@@ -122,28 +166,6 @@ impl FragView {
     }
 }
 
-pub type Seek = (SeekRes, FragView);
-
-#[derive(Clone, Debug)]
-pub struct ParentSplit {
-    pub at: Bound,
-    pub to: PageID,
-    pub from: PageID,
-    pub hi: Bound, // lets us stop traversing frags
-}
-
-#[derive(Clone, Debug)]
-pub enum Frag {
-    Set(Key, Value),
-    Del(Key),
-    Base(tree::Node),
-    ChildSplit {
-        at: Vec<u8>,
-        to: PageID, // TODO should this be physical?
-    },
-    ParentSplit(ParentSplit),
-}
-
 impl Frag {
     fn base(&self) -> Option<tree::Node> {
         match *self {
@@ -151,12 +173,6 @@ impl Frag {
             _ => None,
         }
     }
-}
-
-pub struct Pages {
-    pub inner: Radix<Stack<*const Frag>>,
-    max_id: AtomicUsize,
-    free: Stack<PageID>,
 }
 
 impl Default for Pages {
@@ -185,6 +201,13 @@ impl Pages {
 
         let stack_ptr = self.inner.get(pid).unwrap();
 
+        // we signal to the caller that the previous
+        // page should have a parent split installed
+        // if we encounter a relevant child split, or
+        // we encounter a base with too low of a hi
+        // separator (consolidated child split)
+        let mut fix_parent_split = false;
+
         // welcome to the danger zone
         unsafe {
             let (head, iter) = (*stack_ptr).iter_at_head();
@@ -196,7 +219,18 @@ impl Pages {
                 depth += 1;
                 if let Some(result) = match **frag_ptr {
                     // if we've traversed to a base node, we can return it
-                    Base(ref node) => Some(SeekRes::Node(&*node)),
+                    Base(ref node) => {
+                        if let Some(bound) = node.hi.inner() {
+                            if bound <= key {
+                                println!("!!! hit base that can't satisfy us");
+                                Some(SeekRes::Split(node.next.unwrap()))
+                            } else {
+                                Some(SeekRes::Node(&*node))
+                            }
+                        } else {
+                            Some(SeekRes::Node(&*node))
+                        }
+                    }
 
                     // if we encounter a set or del for our key,
                     // we can short-circuit the request
@@ -215,13 +249,14 @@ impl Pages {
                 }
             }
 
-            let meta = FragView {
+            let stack_view = StackView {
                 pid: pid,
                 head: head,
                 stack: stack_ptr,
                 depth: depth,
+                fix_parent_split: fix_parent_split,
             };
-            (ret.unwrap(), meta)
+            (ret.unwrap(), stack_view)
         }
     }
 
@@ -239,6 +274,9 @@ impl Pages {
     pub fn free(&self, pid: PageID) {
         // TODO epoch
         // let stack_ptr = self.inner.get(pid).unwrap();
+        if pid == 0 {
+            panic!("freeing zero");
+        }
         let stack_ptr = self.inner.del(pid);
         self.free.push(pid);
         unsafe { (*stack_ptr).pop_all() };
