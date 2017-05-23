@@ -6,8 +6,9 @@ use std::sync::Arc;
 
 use blink::*;
 
-const N: usize = 70000;
-const SPACE: usize = 70000;
+const N: usize = 70;
+const SPACE: usize = 7000;
+const N_THREADS: usize = 7;
 
 #[test]
 fn it_works() {
@@ -15,47 +16,47 @@ fn it_works() {
     #[inline(always)]
     fn kv(i: usize) -> (Vec<u8>, Vec<u8>) {
         let i = i % SPACE;
-        let k = [(i >> 56) as u8,
-                 (i >> 48) as u8,
-                 (i >> 40) as u8,
-                 (i >> 32) as u8,
-                 (i >> 24) as u8,
-                 (i >> 16) as u8,
+        let k = [// (i >> 56) as u8,
+                 // (i >> 48) as u8,
+                 // (i >> 40) as u8,
+                 // (i >> 32) as u8,
+                 // (i >> 24) as u8,
+                 // (i >> 16) as u8,
                  (i >> 8) as u8,
                  i as u8];
         (k.to_vec(), k.to_vec())
     }
     let t = Tree::new();
-    let tree = t.clone();
-    let t1 = thread::Builder::new()
-        .name("t1".into())
-        .spawn(move || {
-            for i in 0..N / 2 {
-                let (k, v) = kv((i));
-                assert_eq!(tree.get(&*k), None);
-                tree.set(k.to_vec(), v.to_vec());
-                assert_eq!(tree.get(&*k), Some(v));
-            }
-        })
-        .unwrap();
-    let tree = t.clone();
-    let t2 = thread::Builder::new()
-        .name("t2".into())
-        .spawn(move || {
-            for i in N / 2..N {
-                let (k, v) = kv((i));
-                assert_eq!(tree.get(&*k), None);
-                tree.set(k.to_vec(), v.to_vec());
-                assert_eq!(tree.get(&*k), Some(v));
-            }
-        })
-        .unwrap();
-    t1.join();
-    t2.join();
+    let mut threads = vec![];
+    for tn in 0..N_THREADS {
+        let sz = N / N_THREADS;
+        let tree = t.clone();
+        let thread = thread::Builder::new()
+            .name(format!("t({})", tn))
+            .spawn(move || {
+                for i in (tn * sz)..((tn + 1) * sz) {
+                    let (k, v) = kv((i));
+                    if SPACE >= N {
+                        assert_eq!(tree.get(&*k), None);
+                    }
+                    tree.set(k.to_vec(), v.to_vec());
+                    assert_eq!(tree.get(&*k), Some(v));
+                }
+            })
+            .unwrap();
+        threads.push(thread);
+    }
+    while let Some(thread) = threads.pop() {
+        thread.join();
+    }
     let tree = t.clone();
     for i in 0..N {
         let (k, v) = kv((i));
-        assert_eq!(tree.get(&*k), Some(v));
+        if tree.get(&*k) != Some(v) {
+            println!("{}", tree.key_debug_str(&*k));
+            println!("{:?}", tree);
+            panic!("expected key {:?} not found", k);
+        }
     }
     for i in 0..N / 2 {
         let (k, _v) = kv((i));

@@ -49,7 +49,7 @@ impl PartialOrd for Bound {
             Inf => {
                 match *other {
                     Inf => Some(Ordering::Equal),
-                    _ => Some(Ordering::Less),
+                    _ => Some(Ordering::Greater),
                 }
             }
         }
@@ -67,4 +67,5 @@ fn test_bounds() {
     assert!(Inc(b"hi".to_vec()) > Non(b"hi".to_vec()));
     assert!(Inc(vec![]) < Inf);
     assert!(Non(vec![]) < Inf);
+    assert!(Inf > Inc(vec![0, 0, 0, 0, 0, 0, 136, 184]));
 }
