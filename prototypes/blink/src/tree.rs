@@ -507,27 +507,7 @@ impl Node {
     pub fn parent_split(&mut self, ps: ParentSplit) {
         // println!("splitting parent: {:?}\nwith {:?}", self, ps);
         if let Data::Index(ref mut ptrs) = self.data {
-            let mut idx_opt = None;
-            for (i, &(ref k, ref pid)) in ptrs.clone().iter().enumerate() {
-                if *pid == ps.from {
-                    idx_opt = Some((k.clone(), i.clone()));
-                    break;
-                }
-            }
-
-            if let Some((orig_k, idx)) = idx_opt.take() {
-                ptrs.remove(idx);
-                ptrs.push((orig_k.clone(), ps.from));
-                ptrs.push((ps.at.inner().unwrap(), ps.to));
-            } else {
-                println!("parent split not found at {:?} from {:?} to {:?})",
-                         ps.at,
-                         ps.from,
-                         ps.to);
-                // we didn't find the key being split, but we can insert
-                // (at, to) and be safe as long as fix-ups don't scramble anything
-                ptrs.push((ps.at.inner().unwrap(), ps.to));
-            }
+            ptrs.push((ps.at.inner().unwrap(), ps.to));
             ptrs.sort_by(|a, b| a.0.cmp(&b.0));
         } else {
             panic!("tried to attach a ParentSplit to a Leaf chain");
