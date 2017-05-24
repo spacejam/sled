@@ -11,6 +11,7 @@ impl Bound {
     pub fn inner(&self) -> Option<Vec<u8>> {
         match self {
             &Bound::Inc(ref v) => Some(v.clone()),
+            &Bound::Non(ref v) => Some(v.clone()),
             _ => None,
         }
     }

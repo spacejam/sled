@@ -90,15 +90,16 @@ impl Frags {
     /// returns child_split -> lhs, rhs, parent_split
     pub fn split(&self, new_id: PageID) -> (Raw, Frag, ParentSplit) {
         // print!("split(new_id: {}) (", new_id);
-        let ref base = self.node;
-        // println!(")");
-        let (lhs, rhs) = base.split(new_id.clone());
+        let (lhs, rhs) = self.node.split(new_id.clone());
 
         let parent_split = ParentSplit {
             at: rhs.lo.clone(),
             to: new_id.clone(),
             from: lhs.id,
         };
+
+        assert_eq!(lhs.hi.inner(), rhs.lo.inner());
+        assert_eq!(lhs.hi.inner(), parent_split.at.inner());
 
         let r = Frag::Base(rhs);
         let l = node_from_frag_vec(vec![Frag::Base(lhs)]);

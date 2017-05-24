@@ -168,39 +168,22 @@ impl Tree {
         //      case, we need to go up the path to the grandparent then down again
         //      or higher until it works)
         //  3. any traversing nodes that witness #1 but not #2 try to complete it
-
-        // root is special case, where we need to hoist a new root
+        //
+        //  root is special case, where we need to hoist a new root
         let mut all_frags = path.clone();
         let mut root_frag = all_frags.remove(0);
 
-        // print!("frags: ");
-        // for frags in &all_frags {
-        // print!("{:?} ", frags.pid);
-        // }
-        // println!("");
-
-        // frags.reverse();
         let this_thread = thread::current();
         let name = this_thread.name().unwrap();
         while let Some(mut frags) = all_frags.pop() {
             let pid = frags.node.id;
             if frags.should_split() {
-                // print!("frags remaining: ");
-                // for frag in &all_frags {
-                // print!("{:?} ", frag.pid);
-                // }
-                // println!("");
-                // println!("before split of {}:\n{:?}", frags.pid, self);
-
                 let new_pid = self.pages.allocate();
-
-                // println!("allocated new id {}", new_pid);
 
                 // returns new entire stacks for sides, frag for parent
                 let (lhs, rhs, parent_split) = frags.split(new_pid);
-                // println!("{}: splitting {} to {} at {:?}", name, pid, new_pid, parent_split.at);
 
-                let raw_parent_split = raw(Frag::ParentSplit(parent_split));
+                let raw_parent_split = raw(Frag::ParentSplit(parent_split.clone()));
 
                 // install new rhs
                 self.pages.insert(new_pid, rhs).unwrap();
@@ -211,30 +194,32 @@ impl Tree {
                 if cap.is_err() {
                     // child split failed, don't retry
                     // TODO nuke GC
-                    println!("{}: child split of {} -", name, pid);
+                    println!("{}: {}|{} @ {:?} -", name, pid, new_pid, parent_split.at);
+
                     self.pages.free(new_pid);
                     continue;
                 }
-
-                // println!("{}: child split for {} +", name, pid);
+                // println!("{}: {}|{} @ {:?} +", name, pid, new_pid, parent_split.at);
 
                 // TODO add frags.stack to GC
 
                 // parent split
                 let mut parent_frags = all_frags.last_mut().unwrap_or(&mut root_frag);
-                // println!("{} installing parent split for {}|{} to parent {}", name, pid, new_pid, parent_frags.node.id);
                 // println!("parent splitting node {:?}", parent_frags.pid);
                 // install parent split
                 let cap = parent_frags.cap(raw_parent_split);
 
                 if cap.is_err() {
-                    println!("{}: parent split of {} -", name, pid);
+                    println!("{}: {} <- {}|{} -",
+                             name,
+                             parent_frags.node.id,
+                             pid,
+                             new_pid);
                     // TODO think how we should respond, maybe parent was merged/split
                     continue;
                 }
 
-                // println!("{}: parent split of {} +", name, pid);
-
+                // println!("{}: {} <- {}|{} +", name, parent_frags.node.id, pid, new_pid);
                 // println!("{:?}", self);
             }
         }
@@ -246,6 +231,7 @@ impl Tree {
 
             let new_pid = self.pages.allocate();
             let (lhs, rhs, parent_split) = root_frag.split(new_pid);
+            // println!("splitting root:\n\told: {:?}\n\tlhs: {:?}\n\trhs: {:?}", root_frag.node, lhs, rhs);
             self.pages.insert(new_pid, rhs).unwrap();
 
             // child split
@@ -317,10 +303,7 @@ impl Tree {
         loop {
             let frags = self.pages.get(cursor);
 
-            if frags.node.lo > key_bound {
-                // restarting traversal
-                panic!("overshot key somehow");
-            }
+            assert!(frags.node.lo <= key_bound, "overshot key somehow");
 
             // half-complete split detect & completion
             if frags.node.hi <= key_bound {
@@ -469,11 +452,11 @@ impl Data {
 
             let mut lhs = lhs.to_vec();
             let lhs_len = lhs.len();
-            lhs.reserve_exact(FANOUT * 2 - lhs_len);
+            // lhs.reserve_exact(FANOUT * 2 - lhs_len);
 
             let mut rhs = rhs.to_vec();
             let rhs_len = rhs.len();
-            rhs.reserve_exact(FANOUT * 2 - rhs_len);
+            // rhs.reserve_exact(FANOUT * 2 - rhs_len);
 
             // println!("split {:?} to {:?} and {:?}", xs, lhs, rhs);
 
@@ -522,32 +505,29 @@ impl Node {
     }
 
     pub fn parent_split(&mut self, ps: ParentSplit) {
-        // println!("parent: {:?}", self);
+        // println!("splitting parent: {:?}\nwith {:?}", self, ps);
         if let Data::Index(ref mut ptrs) = self.data {
             let mut idx_opt = None;
             for (i, &(ref k, ref pid)) in ptrs.clone().iter().enumerate() {
                 if *pid == ps.from {
                     idx_opt = Some((k.clone(), i.clone()));
                     break;
-                } else if Bound::Inc(k.clone()) < ps.at {
-                    idx_opt = Some((k.clone(), i.clone()));
-                } else {
-                    // we've shot out over lower keys
-                    break;
                 }
             }
-            if idx_opt.is_none() {
+
+            if let Some((orig_k, idx)) = idx_opt.take() {
+                ptrs.remove(idx);
+                ptrs.push((orig_k.clone(), ps.from));
+                ptrs.push((ps.at.inner().unwrap(), ps.to));
+            } else {
                 println!("parent split not found at {:?} from {:?} to {:?})",
                          ps.at,
                          ps.from,
                          ps.to);
-                panic!("split point not found in parent");
+                // we didn't find the key being split, but we can insert
+                // (at, to) and be safe as long as fix-ups don't scramble anything
+                ptrs.push((ps.at.inner().unwrap(), ps.to));
             }
-            let (orig_k, idx) = idx_opt.unwrap();
-
-            ptrs.remove(idx);
-            ptrs.push((orig_k.clone(), ps.from));
-            ptrs.push((ps.at.inner().unwrap(), ps.to));
             ptrs.sort_by(|a, b| a.0.cmp(&b.0));
         } else {
             panic!("tried to attach a ParentSplit to a Leaf chain");
@@ -577,8 +557,6 @@ impl Node {
 
     pub fn split(&self, id: PageID) -> (Node, Node) {
         let (split, lhs, rhs) = self.data.split();
-        // println!("self before split: {:?}", self);
-        // println!("split: {:?}", split);
         let left = Node {
             id: self.id,
             data: lhs,
