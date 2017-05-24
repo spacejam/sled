@@ -21,7 +21,7 @@ macro_rules! par {
                 .name(format!("t({})", tn))
                 .spawn(move || {
                     for i in (tn * sz)..((tn + 1) * sz) {
-                        let k = kv((i));
+                        let k = kv(i);
                         $f(&tree, k);
                     }
                 })

@@ -10,12 +10,6 @@ use super::*;
 
 const FANOUT: usize = 2;
 
-// TODO
-// * need to push consolidation CAS to stack,
-//   because we can't linearize CAS ops b/w radix & stack
-// * need to preserve splits during consolidation
-// * llvm sanitizer may be best way to debug some of this
-
 #[derive(Clone)]
 pub struct Tree {
     pages: Arc<Pages>,
@@ -215,7 +209,6 @@ impl Tree {
                              parent_frags.node.id,
                              pid,
                              new_pid);
-                    // TODO think how we should respond, maybe parent was merged/split
                     continue;
                 }
 
@@ -268,11 +261,10 @@ impl Tree {
             let cas = self.root
                 .compare_and_swap(path.first().unwrap().node.id, new_root_pid, SeqCst);
             if cas == path.first().unwrap().node.id {
-                // println!("{}: root hoist of {} successful", name, root_frag.node.id);
+                println!("{}: root hoist of {} +", name, root_frag.node.id);
                 // TODO GC it
             } else {
                 self.pages.free(new_root_pid);
-                // FIXME loops here
                 println!("root hoist of {} -", root_frag.node.id);
             }
         }
@@ -321,16 +313,38 @@ impl Tree {
                 if let Some(left) = left.take() {
                     // we have found the proper page for
                     // our split.
-                    if let Some(parent) = parent.take() {
-                        let ps = ParentSplit {
+                    if let Some(mut parent) = parent.take() {
+                        let ps = Frag::ParentSplit(ParentSplit {
                             at: frags.node.lo.clone(),
                             to: frags.node.id.clone(),
-                            from: parent.node.id,
-                        };
-                        // TODO install at parent frag
-
+                            from: left.id,
+                        });
+                        let res = parent.cap(raw(ps));
+                        println!("coopreative parent split: {:?}", res);
                     } else {
-                        // TODO hoist root
+                        // hoist root
+                        let root_frag = path.first().unwrap_or(&frags);
+                        let root = root_frag.node.clone();
+                        let new_root_pid = self.pages.allocate();
+                        let mut new_root_vec = Vec::with_capacity(FANOUT * 2);
+                        new_root_vec.push((vec![], root.id));
+                        let new_root = Frag::Base(Node {
+                            id: new_root_pid.clone(),
+                            data: Data::Index(new_root_vec),
+                            next: None,
+                            lo: Bound::Inc(vec![]),
+                            hi: Bound::Inf,
+                        });
+                        self.pages.insert(new_root_pid, new_root).unwrap();
+                        let cas = self.root
+                            .compare_and_swap(root.id, new_root_pid, SeqCst);
+                        if cas == root.id {
+                            println!("root hoist of {} successful", root.id);
+                            // TODO GC it
+                        } else {
+                            self.pages.free(new_root_pid);
+                            println!("root hoist of {} -", root.id);
+                        }
                     }
                 }
             }

@@ -84,7 +84,6 @@ impl Frags {
         let node = node_from_frag_vec(vec![Frag::Base(self.node.clone())]);
 
         let res = self.cas(node);
-        // println!("maybe_consolidate of pid {}: {:?}", self.node.id, res);
     }
 
     /// returns child_split -> lhs, rhs, parent_split
@@ -227,16 +226,3 @@ impl Pages {
         self.max_id.load(SeqCst)
     }
 }
-
-// consolidation:
-//  CAS head of stack with consolidated page
-//  add head of stack to GC epoch if successful
-
-// split:
-//  new page, consolidated from right side
-//  split -> consolidated left page
-//  insert dangling right side into radix
-//  CAS split -> left page into radix
-//      if failed, insta-free right side & pid, don't retry
-//  CAS update onto the parent index
-//
