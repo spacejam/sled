@@ -56,15 +56,21 @@ impl Tree {
     }
 
     pub fn cas(&self, key: Key, old: Option<Value>, new: Value) -> Result<(), Option<Value>> {
-        let (mut path, cur) = self.get_internal(&*key);
-        if old != cur {
-            return Err(cur);
-        }
-        let frag = Frag::Set(key, new);
+        // we need to retry caps until old != cur, since just because
+        // cap fails it doesn't mean our value was changed.
+        let frag = Frag::Set(key.clone(), new);
         let frag_ptr = raw(frag);
+        loop {
+            let (mut path, cur) = self.get_internal(&*key);
+            if old != cur {
+                return Err(cur);
+            }
 
-        let stack = path.last_mut().unwrap();
-        stack.cap(frag_ptr).map(|_| ()).map_err(|_| cur)
+            let stack = path.last_mut().unwrap();
+            if let Ok(_) = stack.cap(frag_ptr).map(|_| ()).map_err(|_| cur) {
+                return Ok(());
+            }
+        }
     }
 
     fn get_internal(&self, key: &[u8]) -> (Vec<Frags>, Option<Value>) {
@@ -245,7 +251,7 @@ impl Tree {
             // hoist new root, pointing to lhs & rhs
             let new_root_pid = self.pages.allocate();
             let mut new_root_vec = Vec::with_capacity(FANOUT * 2);
-            new_root_vec.push((vec![], parent_split.from));
+            new_root_vec.push((vec![], root_frag.node.id));
             new_root_vec.push((parent_split.at.inner().unwrap(), parent_split.to));
             let root = Frag::Base(Node {
                 id: new_root_pid.clone(),
@@ -280,21 +286,21 @@ impl Tree {
         ret
     }
 
-    /// returns the traversal path,
+    /// returns the traversal path, completing any observed
+    /// partially complete splits or merges along the way.
     fn path_for_key(&self, key: &[u8]) -> Vec<Frags> {
         let key_bound = Bound::Inc(key.into());
         let mut cursor = self.root.load(SeqCst);
-        let root = cursor;
         let mut path = vec![];
 
-        // parent and left are used for tracking need
+        // unsplit_parent is used for tracking need
         // to complete partial splits.
-        let mut parent: Option<Frags> = None;
-        let mut left = None;
+        let mut unsplit_parent: Option<Frags> = None;
 
         loop {
             let frags = self.pages.get(cursor);
 
+            // TODO this may need to change when handling (half) merges
             assert!(frags.node.lo <= key_bound, "overshot key somehow");
 
             // half-complete split detect & completion
@@ -303,50 +309,20 @@ impl Tree {
                 // we have encountered a child split, without
                 // having hit the parent split above.
                 cursor = frags.node.next.unwrap();
-                if left.is_none() {
-                    left = Some(frags.node.clone());
-                    assert!(parent.is_none());
-                    parent = path.last().cloned();
+                if unsplit_parent.is_none() {
+                    unsplit_parent = path.last().cloned();
                 }
                 continue;
-            } else {
-                if let Some(left) = left.take() {
-                    // we have found the proper page for
-                    // our split.
-                    if let Some(mut parent) = parent.take() {
-                        let ps = Frag::ParentSplit(ParentSplit {
-                            at: frags.node.lo.clone(),
-                            to: frags.node.id.clone(),
-                            from: left.id,
-                        });
-                        let res = parent.cap(raw(ps));
-                        println!("coopreative parent split: {:?}", res);
-                    } else {
-                        // hoist root
-                        let root_frag = path.first().unwrap_or(&frags);
-                        let root = root_frag.node.clone();
-                        let new_root_pid = self.pages.allocate();
-                        let mut new_root_vec = Vec::with_capacity(FANOUT * 2);
-                        new_root_vec.push((vec![], root.id));
-                        let new_root = Frag::Base(Node {
-                            id: new_root_pid.clone(),
-                            data: Data::Index(new_root_vec),
-                            next: None,
-                            lo: Bound::Inc(vec![]),
-                            hi: Bound::Inf,
-                        });
-                        self.pages.insert(new_root_pid, new_root).unwrap();
-                        let cas = self.root
-                            .compare_and_swap(root.id, new_root_pid, SeqCst);
-                        if cas == root.id {
-                            println!("root hoist of {} successful", root.id);
-                            // TODO GC it
-                        } else {
-                            self.pages.free(new_root_pid);
-                            println!("root hoist of {} -", root.id);
-                        }
-                    }
-                }
+            } else if let Some(mut parent) = unsplit_parent.take() {
+                // we have found the proper page for
+                // our split.
+
+                let ps = Frag::ParentSplit(ParentSplit {
+                    at: frags.node.lo.clone(),
+                    to: frags.node.id.clone(),
+                });
+                let res = parent.cap(raw(ps));
+                println!("coopreative parent split: {:?}", res);
             }
 
             path.push(frags.clone());
@@ -444,6 +420,23 @@ impl Data {
         match *self {
             Data::Index(ref ptrs) => ptrs.len(),
             Data::Leaf(ref items) => items.len(),
+        }
+    }
+
+    fn merge(&mut self, mut other: Data) {
+        match *self {
+            Data::Index(ref mut lptrs) => {
+                match other {
+                    Data::Index(ref mut rptrs) => lptrs.append(rptrs),
+                    Data::Leaf(_) => panic!("can't merge an index with a leaf"),
+                }
+            }
+            Data::Leaf(ref mut litems) => {
+                match other {
+                    Data::Index(_) => panic!("can't merge an index with a leaf"),
+                    Data::Leaf(ref mut ritems) => litems.append(ritems),
+                }
+            }
         }
     }
 
@@ -567,5 +560,14 @@ impl Node {
         };
         // println!("split of {:?}\n\tlhs: {:?}\n\trhs: {:?}", self, left, right);
         (left, right)
+    }
+
+    pub fn left_merge(&mut self, lm: LeftMerge) {
+        let iter = StackIter::from_ptr(lm.head);
+        let (rhs, _) = Pages::consolidate_from_iter(iter);
+
+        self.next = rhs.next;
+        self.hi = rhs.hi;
+        self.data.merge(rhs.data);
     }
 }

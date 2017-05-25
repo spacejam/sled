@@ -19,7 +19,19 @@ pub struct Pages {
 pub struct ParentSplit {
     pub at: Bound,
     pub to: PageID,
-    pub from: PageID,
+}
+
+#[derive(Clone, Debug)]
+pub struct LeftMerge {
+    pub head: Raw,
+    pub rhs: PageID,
+    pub hi: Bound,
+}
+
+#[derive(Clone, Debug)]
+pub struct ParentMerge {
+    lhs: PageID,
+    rhs: PageID,
 }
 
 #[derive(Clone, Debug)]
@@ -28,7 +40,9 @@ pub enum Frag {
     Del(Key),
     Base(tree::Node),
     ParentSplit(ParentSplit),
-    Merge, // TODO
+    Merged,
+    LeftMerge(LeftMerge),
+    ParentMerge(ParentMerge),
 }
 
 #[derive(Debug, Clone)]
@@ -57,7 +71,9 @@ impl Frags {
                     Frag::Base(_) => {
                         panic!("capped new Base in middle of frags stack");
                     }
-                    Frag::Merge => unimplemented!(),
+                    Frag::Merged => unimplemented!(),
+                    Frag::LeftMerge(ref lm) => unimplemented!(),
+                    Frag::ParentMerge(ref pm) => unimplemented!(),
                 }
             }
             ret
@@ -94,7 +110,6 @@ impl Frags {
         let parent_split = ParentSplit {
             at: rhs.lo.clone(),
             to: new_id.clone(),
-            from: lhs.id,
         };
 
         assert_eq!(lhs.hi.inner(), rhs.lo.inner());
@@ -136,14 +151,9 @@ impl Debug for Pages {
 }
 
 impl Pages {
-    pub fn get(&self, pid: PageID) -> Frags {
+    pub fn consolidate_from_iter(stack_iter: StackIter<*const Frag>) -> (tree::Node, usize) {
         use self::Frag::*;
 
-        let stack_ptr = self.inner.get(pid).unwrap();
-
-        let mut depth = 0;
-
-        let (head, stack_iter) = unsafe { (*stack_ptr).iter_at_head() };
         let mut frags: Vec<Frag> = unsafe { stack_iter.map(|ptr| (**ptr).clone()).collect() };
 
         if frags.is_empty() {
@@ -181,6 +191,16 @@ impl Pages {
             }
         }
 
+        (base, frags_len)
+    }
+
+    pub fn get(&self, pid: PageID) -> Frags {
+        let stack_ptr = self.inner.get(pid).unwrap();
+
+        let (head, stack_iter) = unsafe { (*stack_ptr).iter_at_head() };
+
+        let (base, frags_len) = Pages::consolidate_from_iter(stack_iter);
+
         let mut res = Frags {
             head: head,
             stack: stack_ptr,
@@ -192,7 +212,6 @@ impl Pages {
         }
 
         res
-
     }
 
     pub fn cap(&self, pid: PageID, old: Raw, new: *const Frag) -> Result<Raw, Raw> {
