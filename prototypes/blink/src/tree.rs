@@ -416,6 +416,13 @@ pub enum Data {
 }
 
 impl Data {
+    fn index_of(&self, pid: PageID) -> usize {
+        match *self {
+            Data::Index(ref ptrs) => ptrs.binary_search_by(|&(ref _k, ref p)| p.cmp(&pid)).unwrap(),
+            Data::Leaf(_) => panic!("can't parent merge a leaf"),
+        }
+    }
+
     fn len(&self) -> usize {
         match *self {
             Data::Index(ref ptrs) => ptrs.len(),
@@ -564,10 +571,22 @@ impl Node {
 
     pub fn left_merge(&mut self, lm: LeftMerge) {
         let iter = StackIter::from_ptr(lm.head);
-        let (rhs, _) = Pages::consolidate_from_iter(iter);
+
+        let (rhs, _) = iter.consolidated();
+
+        assert_eq!(self.hi.inner(),
+                   rhs.lo.inner(),
+                   "tried to merge non-contiguous nodes");
 
         self.next = rhs.next;
         self.hi = rhs.hi;
         self.data.merge(rhs.data);
+    }
+
+    pub fn parent_merge(&mut self, pm: ParentMerge) {
+        let lhs_idx = self.data.index_of(pm.lhs);
+        let rhs_idx = self.data.index_of(pm.rhs);
+        assert!(rhs_idx - lhs_idx == 1,
+                "merge lhs and rhs are not adjacent in parent index");
     }
 }

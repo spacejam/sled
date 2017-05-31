@@ -30,8 +30,8 @@ pub struct LeftMerge {
 
 #[derive(Clone, Debug)]
 pub struct ParentMerge {
-    lhs: PageID,
-    rhs: PageID,
+    pub lhs: PageID,
+    pub rhs: PageID,
 }
 
 #[derive(Clone, Debug)]
@@ -151,55 +151,14 @@ impl Debug for Pages {
 }
 
 impl Pages {
-    pub fn consolidate_from_iter(stack_iter: StackIter<*const Frag>) -> (tree::Node, usize) {
-        use self::Frag::*;
-
-        let mut frags: Vec<Frag> = unsafe { stack_iter.map(|ptr| (**ptr).clone()).collect() };
-
-        if frags.is_empty() {
-            println!("frags: {:?}", frags);
-        }
-        let mut base = frags.pop().unwrap().base().unwrap();
-        // println!("before, page is now {:?}", base.data);
-
-        frags.reverse();
-
-        let frags_len = frags.len();
-
-        for frag in frags {
-            // println!("\t{:?}", frag);
-            match frag {
-                Set(ref k, ref v) => {
-                    if Bound::Inc(k.clone()) < base.hi {
-                        base.set_leaf(k.clone(), v.clone()).unwrap();
-                    } else {
-                        panic!("tried to consolidate set at key <= hi")
-                    }
-                }
-                ParentSplit(parent_split) => {
-                    base.parent_split(parent_split);
-                }
-                Del(ref k) => {
-                    if Bound::Inc(k.clone()) < base.hi {
-                        base.del_leaf(k);
-                    } else {
-                        panic!("tried to consolidate del at key <= hi")
-                    }
-                }
-                Base(_) => panic!("encountered base page in middle of chain"),
-                Merge => {}
-            }
-        }
-
-        (base, frags_len)
-    }
-
     pub fn get(&self, pid: PageID) -> Frags {
         let stack_ptr = self.inner.get(pid).unwrap();
 
-        let (head, stack_iter) = unsafe { (*stack_ptr).iter_at_head() };
+        let head = unsafe { (*stack_ptr).head() };
 
-        let (base, frags_len) = Pages::consolidate_from_iter(stack_iter);
+        let stack_iter = StackIter::from_ptr(head);
+
+        let (base, frags_len) = stack_iter.consolidated();
 
         let mut res = Frags {
             head: head,
@@ -243,5 +202,50 @@ impl Pages {
 
     pub fn max_id(&self) -> PageID {
         self.max_id.load(SeqCst)
+    }
+}
+
+impl<'a> StackIter<'a, *const Frag> {
+    pub fn consolidated(self) -> (tree::Node, usize) {
+        use self::Frag::*;
+
+        let mut frags: Vec<Frag> = unsafe { self.map(|ptr| (**ptr).clone()).collect() };
+
+        if frags.is_empty() {
+            println!("frags: {:?}", frags);
+        }
+        let mut base = frags.pop().unwrap().base().unwrap();
+        // println!("before, page is now {:?}", base.data);
+
+        frags.reverse();
+
+        let frags_len = frags.len();
+
+        for frag in frags {
+            // println!("\t{:?}", frag);
+            match frag {
+                Set(ref k, ref v) => {
+                    if Bound::Inc(k.clone()) < base.hi {
+                        base.set_leaf(k.clone(), v.clone()).unwrap();
+                    } else {
+                        panic!("tried to consolidate set at key <= hi")
+                    }
+                }
+                ParentSplit(parent_split) => {
+                    base.parent_split(parent_split);
+                }
+                Del(ref k) => {
+                    if Bound::Inc(k.clone()) < base.hi {
+                        base.del_leaf(k);
+                    } else {
+                        panic!("tried to consolidate del at key <= hi")
+                    }
+                }
+                Base(_) => panic!("encountered base page in middle of chain"),
+                Merge => {}
+            }
+        }
+
+        (base, frags_len)
     }
 }
