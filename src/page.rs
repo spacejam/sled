@@ -1,460 +1,265 @@
-#![allow(unused)]
+/// Traversing pages, splits, merges
+
 use std::collections::HashMap;
-use std::fs::{self, File, OpenOptions};
-use std::path::Path;
-use std::io::{self, Read};
-use std::mem;
-use std::sync::{Arc, RwLock, Mutex};
-use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
-use std::thread;
+use std::fmt::{self, Debug};
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::SeqCst;
 
 use super::*;
 
-// NB ping-pong epoch tracker correctness depends on this being 2
-const N_EPOCHS: usize = 2;
+const MAX_FRAG_LEN: usize = 7;
 
-pub trait Pager {
-    /// What a page is that is stored by the pager.
-    type Page;
-
-    /// What a mutation on a page consists of. May be
-    /// either an entire new page, or a delta update,
-    /// depending on the Pager implementation.
-    type Mutation;
-
-    /// If the PageID maps to a page in the pagecache, apply the provided
-    /// function to it and return the result.
-    fn with_page<B, F>(&self, k: PageID, f: F) -> Option<B> where F: FnMut(&Self::Page) -> B;
-
-    /// If the PageID maps to a page in the pagecache, operate on it
-    /// and optionally return a desired Mutation. Will re-run the
-    /// provided closure until the mutation works.
-    fn mutate_page<F>(&self, k: PageID, f: F) where F: FnMut(&Self::Page) -> Option<Self::Mutation>;
-
-    /// Create a new page. May use a recycled PageID, depending
-    /// on the implementation.
-    fn allocate_page(&self, Self::Page) -> PageID;
-
-    /// Mark a page as reusable. The implementation may wait
-    /// until an epoch is cleared before making it reusable.
-    fn free_page(&self, PageID);
+pub struct Pages {
+    pub inner: Radix<Stack<*const Frag>>,
+    max_id: AtomicUsize,
+    free: Stack<PageID>,
 }
 
-pub struct MemPager<T> {
-    pages: Arc<RwLock<HashMap<PageID, T>>>,
-    max_pid: Arc<AtomicUsize>,
-    free: Arc<Mutex<Vec<PageID>>>,
-    pub esl: Arc<AtomicUsize>,
+#[derive(Clone, Debug)]
+pub struct ParentSplit {
+    pub at: Bound,
+    pub to: PageID,
 }
 
-impl<T: Default> Default for MemPager<T> {
-    fn default() -> MemPager<T> {
-        let mut pages = HashMap::new();
-        pages.insert(0, T::default());
-
-        MemPager {
-            pages: Arc::new(RwLock::new(pages)),
-            max_pid: Arc::new(AtomicUsize::new(0)),
-            free: Arc::new(Mutex::new(vec![])),
-            esl: Arc::new(AtomicUsize::new(0)),
-        }
-    }
+#[derive(Clone, Debug)]
+pub struct LeftMerge {
+    pub head: Raw,
+    pub rhs: PageID,
+    pub hi: Bound,
 }
 
-impl<T> Pager for MemPager<T> {
-    type Page = T;
-    type Mutation = T;
-
-    fn with_page<B, F>(&self, pid: PageID, mut f: F) -> Option<B>
-        where F: FnMut(&Self::Page) -> B
-    {
-        let pages = self.pages.read().unwrap();
-        pages.get(&pid).map(|p| f(p))
-    }
-
-    /// If the PageID maps to a page in the pagecache, operate on it
-    /// and optionally return a desired Mutation. Will re-run the
-    /// provided closure until the mutation works.
-    fn mutate_page<F>(&self, pid: PageID, mut f: F)
-        where F: FnMut(&Self::Page) -> Option<Self::Mutation>
-    {
-        let mut pages = self.pages.write().unwrap();
-        if let Some(new) = pages.get(&pid).and_then(|p| f(p)) {
-            pages.insert(pid, new);
-        }
-    }
-
-    /// Create a new page. May use a recycled PageID, depending
-    /// on the implementation.
-    fn allocate_page(&self, page: Self::Page) -> PageID {
-        let mut free = self.free.lock().unwrap();
-        let mut pages = self.pages.write().unwrap();
-        let pid = free.pop()
-            .unwrap_or_else(|| self.max_pid.fetch_add(1, Ordering::SeqCst) as u64);
-        pages.insert(pid.clone(), page);
-        pid
-    }
-
-    /// Mark a page as reusable. The implementation may wait
-    /// until an epoch is cleared before making it reusable.
-    fn free_page(&self, pid: PageID) {
-        let mut free = self.free.lock().unwrap();
-        free.push(pid);
-    }
+#[derive(Clone, Debug)]
+pub struct ParentMerge {
+    pub lhs: PageID,
+    pub rhs: PageID,
 }
 
-pub struct Epoch {
-    header: Arc<AtomicUsize>,
-    gc_pids: Arc<Vec<Stack<PageID>>>,
-    gc_pages: Arc<Vec<Stack<*mut stack::Node<Page>>>>,
-    current_epoch: Arc<AtomicUsize>,
-    cleaned_epochs: Arc<AtomicUsize>,
-    free: Arc<Stack<PageID>>,
+#[derive(Clone, Debug)]
+pub enum Frag {
+    Set(Key, Value),
+    Del(Key),
+    Base(tree::Node),
+    ParentSplit(ParentSplit),
+    Merged,
+    LeftMerge(LeftMerge),
+    ParentMerge(ParentMerge),
 }
 
-impl Drop for Epoch {
-    fn drop(&mut self) {
-        // TODO revisit when sane
-        loop {
-            let cur = self.header.load(Ordering::SeqCst);
-            let decr = ops::decr_writers(cur as u32);
-            if cur == self.header.compare_and_swap(cur, decr as usize, Ordering::SeqCst) {
-                if ops::n_writers(decr) == 0 && ops::is_sealed(decr) {
-                    // our responsibility to put PageID's into free stack, free pages
-                    let idx = self.cleaned_epochs.load(Ordering::SeqCst);
-                    let pids = self.gc_pids[idx % N_EPOCHS].pop_all();
-                    let page_ptrs = self.gc_pages[idx % N_EPOCHS].pop_all();
-                    for pid in pids.into_iter() {
-                        while self.free.try_push(pid).is_err() {}
+// TODO
+
+// TxBegin(TxID), // in-mem
+// TxCommit(TxID), // in-mem
+// TxAbort(TxID), // in-mem
+// Load, // should this be a swap operation on the data pointer?
+// Flush {
+//    annotation: Annotation,
+//    highest_lsn: TxID,
+// }, // in-mem
+// PartialSwap(LogID), /* indicates part of page has been swapped out,
+//                     * shows where to find it */
+
+
+#[derive(Debug, Clone)]
+pub struct Frags {
+    head: Raw,
+    stack: *const Stack<*const Frag>,
+    pub node: tree::Node,
+}
+
+impl Frags {
+    pub fn cap(&mut self, frag: *const page::Frag) -> Result<Raw, Raw> {
+        unsafe {
+            let ret = (*self.stack).cap(self.head, frag);
+            if let Ok(new) = ret {
+                self.head = new;
+                match *frag {
+                    Frag::Set(ref k, ref v) => {
+                        self.node.set_leaf(k.clone(), v.clone());
                     }
-                    for ptr in page_ptrs.into_iter() {
-                        let mut cursor = ptr;
-                        while !cursor.is_null() {
-                            let node: Box<stack::Node<Page>> = unsafe { Box::from_raw(cursor) };
-                            cursor = node.next();
-                        }
+                    Frag::Del(ref k) => {
+                        self.node.del_leaf(k);
                     }
-                    self.header.store(0, Ordering::SeqCst);
-                    self.cleaned_epochs.fetch_add(1, Ordering::SeqCst);
+                    Frag::ParentSplit(ref ps) => {
+                        self.node.parent_split(ps.clone());
+                    }
+                    Frag::Base(_) => {
+                        panic!("capped new Base in middle of frags stack");
+                    }
+                    Frag::Merged => unimplemented!(),
+                    Frag::LeftMerge(ref lm) => unimplemented!(),
+                    Frag::ParentMerge(ref pm) => unimplemented!(),
                 }
-                return;
             }
-            println!("epoch drop spin");
-        }
-    }
-}
-
-impl Epoch {
-    pub fn free_page_id(&self, pid: PageID) {
-        let idx = self.current_epoch.load(Ordering::SeqCst);
-        while self.gc_pids[idx % N_EPOCHS].try_push(pid).is_err() {}
-    }
-
-    pub fn free_ptr(&self, ptr: *mut stack::Node<Page>) {
-        let idx = self.current_epoch.load(Ordering::SeqCst);
-        while self.gc_pages[idx % N_EPOCHS].try_push(ptr).is_err() {}
-    }
-}
-
-#[derive(Clone)]
-pub struct PersistentPager {
-    // end_stable_log is the highest LSN that may be flushed
-    pub esl: Arc<AtomicUsize>,
-    // highest_pid marks the max PageID we've allocated
-    highest_pid: Arc<AtomicUsize>,
-    // table maps from PageID to a stack of entries
-    table: Radix<Stack<Page>>,
-    // gc related stuff
-    gc_pids: Arc<Vec<Stack<PageID>>>,
-    gc_pages: Arc<Vec<Stack<*mut stack::Node<Page>>>>,
-    gc_headers: Vec<Arc<AtomicUsize>>,
-    // free stores the per-epoch set of pages to free when epoch is clear
-    free: Arc<Stack<PageID>>,
-    // current_epoch is used for GC of removed pages
-    current_epoch: Arc<AtomicUsize>,
-    cleaned_epochs: Arc<AtomicUsize>,
-    // log is our lock-free log store
-    log: Log,
-    path: String,
-}
-
-impl PersistentPager {
-    pub fn open(path: String) -> PersistentPager {
-        recover(path.clone()).unwrap_or_else(|_| {
-            PersistentPager {
-                esl: Arc::new(AtomicUsize::new(0)),
-                highest_pid: Arc::new(AtomicUsize::new(1)),
-                table: Radix::default(),
-                gc_pids: Arc::new(rep_no_copy!(Stack::default(); N_EPOCHS)),
-                gc_pages: Arc::new(rep_no_copy!(Stack::default(); N_EPOCHS)),
-                gc_headers: rep_no_copy!(Arc::new(AtomicUsize::new(0)); N_EPOCHS),
-                free: Arc::new(Stack::default()),
-                current_epoch: Arc::new(AtomicUsize::new(0)),
-                cleaned_epochs: Arc::new(AtomicUsize::new(0)),
-                log: Log::start_system(path.clone()),
-                path: path,
-            }
-        })
-    }
-
-    pub fn enroll_in_epoch(&self) -> Epoch {
-        loop {
-            let idx = self.current_epoch.load(Ordering::SeqCst);
-            let clean_idx = self.cleaned_epochs.load(Ordering::SeqCst);
-            if idx - clean_idx >= N_EPOCHS {
-                // need to spin for gc to complete
-                assert_eq!(idx - clean_idx, N_EPOCHS);
-                println!("epoch enroll spin 1");
-                continue;
-            }
-            let atomic_header = self.gc_headers[idx % N_EPOCHS].clone();
-            let header = atomic_header.load(Ordering::SeqCst);
-            if ops::is_sealed(header as u32) {
-                // need to spin for current_epoch to be bumped
-                println!("epoch enroll spin 2");
-                continue;
-            }
-            let header2 = ops::incr_writers(header as u32);
-            let header3 = ops::bump_offset(header2, 1);
-            let header4 = if ops::offset(header3) > 512 {
-                ops::mk_sealed(header3)
-            } else {
-                header3
-            };
-            if header ==
-               atomic_header.compare_and_swap(header, header4 as usize, Ordering::SeqCst) {
-                if ops::is_sealed(header4) {
-                    // we were the sealer, so we can move this along
-                    self.current_epoch.fetch_add(1, Ordering::SeqCst);
-                }
-                return Epoch {
-                    header: atomic_header,
-                    gc_pids: self.gc_pids.clone(),
-                    gc_pages: self.gc_pages.clone(),
-                    current_epoch: self.current_epoch.clone(),
-                    cleaned_epochs: self.cleaned_epochs.clone(),
-                    free: self.free.clone(),
-                };
-            }
-            println!("epoch enroll spin 3");
+            ret
         }
     }
 
-    // data ops
-
-    // NB don't let this grow beyond 4-8 (6 maybe ideal)
-    pub fn delta(&self, pid: PageID, lsn: TxID, delta: Delta) -> Result<LogID, ()> {
-        unimplemented!()
-    }
-
-    // NB must only consolidate deltas with LSN <= ESL
-    pub fn attempt_consolidation(&self, pid: PageID, new_page: Page) -> Result<(), ()> {
-        unimplemented!()
-    }
-
-    /// return page. page table may only have disk ref, and will need to load it in
-    pub fn read(&self, pid: PageID) -> Option<*mut Stack<Page>> {
-        if let Some(stack_ptr) = self.table.get(pid) {
-            Some(stack_ptr)
-        } else {
-            None
+    pub fn cas(&mut self, new: Raw) -> Result<Raw, Raw> {
+        // TODO add separated part to epoch
+        unsafe {
+            let ret = (*self.stack).cas(self.head, new);
+            if let Ok(new) = ret {
+                self.head = new;
+            }
+            ret
         }
     }
 
-    // mgmt ops
-
-    /// copies page into log I/O buf
-    /// adds flush delta with caller annotation
-    /// page table stores log addr
-    /// may not yet be stable on disk
-    // NB don't include any insert/updates with higher LSN than ESL
-    pub fn flush(&self, page_id: PageID, annotation: Vec<Annotation>) -> LogID {
-        unimplemented!()
+    pub fn should_split(&self) -> bool {
+        self.node.should_split()
     }
 
-    /// ensures all log data up until the provided address is stable
-    pub fn make_stable(&self, id: LogID) {
-        unimplemented!()
+    pub fn maybe_consolidate(&mut self) {
+        // try to consolidate if necessary
+        let node = node_from_frag_vec(vec![Frag::Base(self.node.clone())]);
+
+        let res = self.cas(node);
     }
 
-    /// returns current stable point in the log
-    pub fn hi_stable(&self) -> LogID {
-        unimplemented!()
-    }
+    /// returns child_split -> lhs, rhs, parent_split
+    pub fn split(&self, new_id: PageID) -> (Raw, Frag, ParentSplit) {
+        // print!("split(new_id: {}) (", new_id);
+        let (lhs, rhs) = self.node.split(new_id.clone());
 
-    /// create new page, initialize its stack in the table
-    pub fn allocate(&self) -> PageID {
-        let pid = if let Ok(Some(pid)) = self.free.try_pop() {
-            pid
-        } else {
-            self.highest_pid.fetch_add(1, Ordering::SeqCst) as PageID
+        let parent_split = ParentSplit {
+            at: rhs.lo.clone(),
+            to: new_id.clone(),
         };
-        let stack = Stack::default();
-        let stack_ptr = Box::into_raw(Box::new(stack));
-        let old_ptr = self.table.swap(pid, stack_ptr);
-        if !old_ptr.is_null() {
-            unsafe { Box::from_raw(old_ptr) };
+
+        assert_eq!(lhs.hi.inner(), rhs.lo.inner());
+        assert_eq!(lhs.hi.inner(), parent_split.at.inner());
+
+        let r = Frag::Base(rhs);
+        let l = node_from_frag_vec(vec![Frag::Base(lhs)]);
+
+        (l, r, parent_split)
+    }
+}
+
+impl Frag {
+    fn base(&self) -> Option<tree::Node> {
+        match *self {
+            Frag::Base(ref base) => Some(base.clone()),
+            _ => None,
         }
-        pid
+    }
+}
+
+impl Default for Pages {
+    fn default() -> Pages {
+        Pages {
+            inner: Radix::default(),
+            max_id: AtomicUsize::new(0),
+            free: Stack::default(),
+        }
+    }
+}
+
+impl Debug for Pages {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        f.write_str(&*format!("Pages {{ max: {:?} free: {:?} }}\n",
+                              self.max_id(),
+                              self.free));
+        Ok(())
+    }
+}
+
+impl Pages {
+    pub fn get(&self, pid: PageID) -> Frags {
+        let stack_ptr = self.inner.get(pid).unwrap();
+
+        let head = unsafe { (*stack_ptr).head() };
+
+        let stack_iter = StackIter::from_ptr(head);
+
+        let (base, frags_len) = stack_iter.consolidated();
+
+        let mut res = Frags {
+            head: head,
+            stack: stack_ptr,
+            node: base,
+        };
+
+        if frags_len > MAX_FRAG_LEN {
+            res.maybe_consolidate();
+        }
+
+        res
     }
 
-    /// adds page to current epoch's pending freelist, persists table
+    pub fn cap(&self, pid: PageID, old: Raw, new: *const Frag) -> Result<Raw, Raw> {
+        let stack_ptr = self.inner.get(pid).unwrap();
+        unsafe { (*stack_ptr).cap(old, new) }
+    }
+
+    pub fn allocate(&self) -> PageID {
+        // TODO free list/epoch gc
+        let id = self.free.pop().unwrap_or_else(|| self.max_id.fetch_add(1, SeqCst));
+        id
+    }
+
     pub fn free(&self, pid: PageID) {
-        while self.free.try_push(pid).is_err() {}
-    }
-
-    // tx ops
-
-    /// add a tx id (lsn) to tx table, maintained by CL
-    pub fn tx_begin(&self, id: TxID) {
-        unimplemented!()
-    }
-
-    /// tx removed from tx table
-    /// tx is committed
-    /// CAS page table
-    /// tx flushed to LSS
-    pub fn tx_commit(&self, id: TxID) {
-        unimplemented!()
-    }
-
-    /// tx removed from tx table
-    /// changed pages in cache are reset
-    pub fn tx_abort(&self, id: TxID) {
-        unimplemented!()
-    }
-}
-
-#[derive(Debug, Clone, RustcDecodable, RustcEncodable)]
-#[repr(C)]
-struct Checkpoint {
-    log_ids: Vec<(PageID, LogID)>,
-    free: Vec<PageID>,
-    gc_pos: LogID,
-    log_replay_idx: LogID,
-}
-
-impl Default for Checkpoint {
-    fn default() -> Checkpoint {
-        Checkpoint {
-            log_ids: vec![],
-            free: vec![],
-            gc_pos: 0,
-            log_replay_idx: 0,
+        // TODO epoch
+        // let stack_ptr = self.inner.get(pid).unwrap();
+        if pid == 0 {
+            panic!("freeing zero");
         }
+        let stack_ptr = self.inner.del(pid);
+        self.free.push(pid);
+        // unsafe { (*stack_ptr).pop_all() };
+    }
+
+    pub fn insert(&self, pid: PageID, head: page::Frag) -> Result<(), ()> {
+        let mut stack = Stack::from_vec(vec![raw(head)]);
+        self.inner.insert(pid, raw(stack)).map(|_| ()).map_err(|_| ())
+    }
+
+    pub fn max_id(&self) -> PageID {
+        self.max_id.load(SeqCst)
     }
 }
 
-// PartialView incrementally seeks to answer update / read questions by
-// being aware of splits / merges while traversing a tree.
-// Remember traversal path, which facilitates left scans, split retries, etc...
-// Whenever an incomplete SMO is encountered by update / SMO, this thread must try to
-// complete it.
-struct PartialView;
+impl<'a> StackIter<'a, *const Frag> {
+    pub fn consolidated(self) -> (tree::Node, usize) {
+        use self::Frag::*;
 
-// load checkpoint, then read from log
-fn recover(path: String) -> io::Result<PersistentPager> {
-    fn file(path: String) -> io::Result<fs::File> {
-        OpenOptions::new()
-            .write(true)
-            .read(true)
-            .open(path)
+        let mut frags: Vec<Frag> = unsafe { self.map(|ptr| (**ptr).clone()).collect() };
+
+        if frags.is_empty() {
+            println!("frags: {:?}", frags);
+        }
+        let mut base = frags.pop().unwrap().base().unwrap();
+        // println!("before, page is now {:?}", base.data);
+
+        frags.reverse();
+
+        let frags_len = frags.len();
+
+        for frag in frags {
+            // println!("\t{:?}", frag);
+            match frag {
+                Set(ref k, ref v) => {
+                    if Bound::Inc(k.clone()) < base.hi {
+                        base.set_leaf(k.clone(), v.clone()).unwrap();
+                    } else {
+                        panic!("tried to consolidate set at key <= hi")
+                    }
+                }
+                ParentSplit(parent_split) => {
+                    base.parent_split(parent_split);
+                }
+                Del(ref k) => {
+                    if Bound::Inc(k.clone()) < base.hi {
+                        base.del_leaf(k);
+                    } else {
+                        panic!("tried to consolidate del at key <= hi")
+                    }
+                }
+                Base(_) => panic!("encountered base page in middle of chain"),
+                Merge => {}
+            }
+        }
+
+        (base, frags_len)
     }
-
-    let checkpoint: Checkpoint = {
-        let checkpoint_path = format!("{}.pagetable_checkpoint", path);
-        let mut f = file(checkpoint_path.clone())?;
-
-        let mut data = vec![];
-        f.read_to_end(&mut data).unwrap();
-        ops::from_binary::<Checkpoint>(data).unwrap_or_else(|_| {
-            Arc::new(AtomicUsize::new(0));
-            // file does not contain valid checkpoint
-            let corrupt_path = format!("rsdb.corrupt_checkpoint.{}", time::get_time().sec);
-            fs::rename(checkpoint_path, corrupt_path);
-            Checkpoint::default()
-        })
-    };
-
-    // TODO mv failed to load log to .corrupt_log.`date +%s`
-    // continue from snapshot's LogID
-
-    let corrupt_path = format!("rsdb.corrupt_log.{}", time::get_time().sec);
-    let mut file = file(path.clone())?;
-    let mut read = 0;
-    loop {
-        // until we hit end/tear:
-        //   sizeof(size) >= remaining ? read size : keep file ptr here and trim with warning
-        //   size >= remaining ? read remaining : back up file ptr sizeof(size) and trim with warning
-        //   add msg to map
-
-        let (mut valid_buf, mut len_buf, mut crc16_buf) = ([0u8; 1], [0u8; 4], [0u8; 2]);
-        read_or_break!(file, valid_buf, read);
-        read_or_break!(file, len_buf, read);
-        read_or_break!(file, crc16_buf, read);
-        let len = ops::array_to_usize(len_buf);
-        let mut buf = Vec::with_capacity(len);
-        read_or_break!(file, buf, read);
-        break;
-    }
-
-    // clear potential tears
-    file.set_len(read as u64)?;
-
-    Ok(PersistentPager {
-        esl: Arc::new(AtomicUsize::new(0)),
-        highest_pid: Arc::new(AtomicUsize::new(1)),
-        table: Radix::default(),
-        gc_pids: Arc::new(rep_no_copy!(Stack::default(); N_EPOCHS)),
-        gc_pages: Arc::new(rep_no_copy!(Stack::default(); N_EPOCHS)),
-        gc_headers: rep_no_copy!(Arc::new(AtomicUsize::new(0)); N_EPOCHS),
-        free: Arc::new(Stack::default()),
-        current_epoch: Arc::new(AtomicUsize::new(0)),
-        cleaned_epochs: Arc::new(AtomicUsize::new(0)),
-        log: Log::start_system(path.clone()),
-        path: path,
-    })
-}
-
-#[test]
-fn test_allocate() {
-    let pager = PersistentPager::open("test_pager_allocate.log".to_string());
-    let pid = pager.allocate();
-}
-
-#[test]
-#[ignore]
-fn test_replace() {
-    let pager = PersistentPager::open("test_pager_replace.log".to_string());
-
-}
-
-#[test]
-#[ignore]
-fn test_delta() {
-    let pager = PersistentPager::open("test_pager_delta.log".to_string());
-}
-
-#[test]
-#[ignore]
-fn test_read() {
-    let pager = PersistentPager::open("test_pager_read.log".to_string());
-}
-
-#[test]
-#[ignore]
-fn test_flush() {
-    let pager = PersistentPager::open("test_pager_flush.log".to_string());
-}
-
-#[test]
-#[ignore]
-fn test_free() {
-    let pager = PersistentPager::open("test_pager_free.log".to_string());
-}
-
-#[test]
-#[ignore]
-fn test_tx() {
-    let pager = PersistentPager::open("test_pager_tx.log".to_string());
 }

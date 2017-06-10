@@ -3,6 +3,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::*;
 
+struct Tx;
+
 pub struct DB {
     // tx table maps from TxID to Tx chain
     tx_table: Arc<Radix<Stack<Tx>>>,
@@ -14,7 +16,7 @@ pub struct DB {
 
 impl DB {
     pub fn open() -> DB {
-        let tree = Tree::open();
+        let tree = Tree::new();
         let esl = tree.esl.clone();
         DB {
             tx_table: Arc::new(Radix::default()),
@@ -26,15 +28,15 @@ impl DB {
 
     pub fn insert(&self, k: Key, v: Value) {
         self.esl.fetch_add(1, Ordering::SeqCst);
-        self.tree.insert(k, v);
+        self.tree.set(k, v);
     }
 
     pub fn read(&self, k: Key) -> Option<Value> {
-        self.tree.read(k)
+        self.tree.get(&*k)
     }
 
-    pub fn delete(&self, k: Key) {
+    pub fn del(&self, k: Key) {
         self.esl.fetch_add(1, Ordering::SeqCst);
-        self.tree.delete(k);
+        self.tree.del(&*k);
     }
 }

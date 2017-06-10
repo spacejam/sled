@@ -1,10 +1,8 @@
-extern crate blink;
-
 use std::mem;
 use std::thread;
 use std::sync::Arc;
 
-use blink::*;
+use rsdb::*;
 
 const SPACE: usize = N;
 const N_THREADS: usize = 5;

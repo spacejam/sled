@@ -10,12 +10,12 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 
 use super::*;
 
-const FANFACTOR: u64 = 6;
-const FANOUT: u64 = 1 << FANFACTOR;
-const FAN_MASK: u64 = FANOUT - 1;
+const FANFACTOR: usize = 6;
+const FANOUT: usize = 1 << FANFACTOR;
+const FAN_MASK: usize = FANOUT - 1;
 
 #[inline(always)]
-fn split_fanout(i: u64) -> (u64, u64) {
+fn split_fanout(i: usize) -> (usize, usize) {
     let rem = i >> FANFACTOR;
     let first_6 = i & FAN_MASK;
     (first_6, rem)
@@ -29,7 +29,7 @@ struct Node<T> {
 
 impl<T> Default for Node<T> {
     fn default() -> Node<T> {
-        let children = rep_no_copy!(AtomicPtr::new(ptr::null_mut()); FANOUT as usize);
+        let children = rep_no_copy!(AtomicPtr::new(ptr::null_mut()); FANOUT);
         Node {
             inner: Arc::new(AtomicPtr::new(ptr::null_mut())),
             children: Arc::new(children),
@@ -61,35 +61,40 @@ impl<T> Default for Radix<T> {
 }
 
 impl<T> Radix<T> {
-    pub fn insert(&self, pid: PageID, inner: *mut T) -> Result<*mut T, *mut T> {
+    pub fn insert(&self, pid: PageID, inner: *const T) -> Result<*const T, *const T> {
         self.cas(pid, ptr::null_mut(), inner)
     }
 
-    pub fn swap(&self, pid: PageID, new: *mut T) -> *mut T {
-        let tip = traverse(&*self.head as *const Node<T>, pid, true);
+    pub fn swap(&self, pid: PageID, new: *const T) -> *const T {
+        let tip = traverse(&*self.head, pid, true);
         if tip.is_null() {
+            // TODO is this desired?
             return ptr::null_mut();
         }
 
-        unsafe { (*tip).inner.swap(new, Ordering::SeqCst) }
+        unsafe { (*tip).inner.swap(new as *mut _, Ordering::SeqCst) }
     }
 
-    pub fn cas(&self, pid: PageID, old: *mut T, new: *mut T) -> Result<*mut T, *mut T> {
-        let tip = traverse(&*self.head as *const Node<T>, pid, true);
+    pub fn cas(&self, pid: PageID, old: *const T, new: *const T) -> Result<*const T, *const T> {
+        // TODO add separated part to epoch
+        let tip = traverse(&*self.head, pid, true);
         if tip.is_null() {
             return Err(ptr::null_mut());
         }
 
-        let res = unsafe { (*tip).inner.compare_and_swap(old, new, Ordering::SeqCst) };
-        if old == res {
-            return Ok(res);
+        let res = unsafe {
+            (*tip).inner.compare_and_swap(old as *mut _, new as *mut _, Ordering::SeqCst)
+        };
+
+        if old == res && !test_fail() {
+            Ok(res)
         } else {
-            return Err(res);
+            Err(res)
         }
     }
 
-    pub fn get(&self, pid: PageID) -> Option<*mut T> {
-        let tip = traverse(&*self.head as *const Node<T>, pid, false);
+    pub fn get(&self, pid: PageID) -> Option<*const T> {
+        let tip = traverse(&*self.head, pid, false);
         if tip.is_null() {
             return None;
         }
@@ -101,7 +106,7 @@ impl<T> Radix<T> {
         }
     }
 
-    pub fn del(&self, pid: PageID) -> *mut T {
+    pub fn del(&self, pid: PageID) -> *const T {
         self.swap(pid, ptr::null_mut())
     }
 }
@@ -113,8 +118,8 @@ fn traverse<T>(ptr: *const Node<T>, pid: PageID, create_intermediate: bool) -> *
     }
 
     let (first_six, remainder) = split_fanout(pid);
-    let child_index = first_six as usize;
-    let children = unsafe { (*ptr).children.clone() };
+    let child_index = first_six;
+    let children = unsafe { &(*ptr).children };
     let mut next_ptr = children[child_index].load(Ordering::SeqCst);
 
     if next_ptr.is_null() {
@@ -125,7 +130,7 @@ fn traverse<T>(ptr: *const Node<T>, pid: PageID, create_intermediate: bool) -> *
         let child = Node::default();
         let child_ptr = Box::into_raw(Box::new(child));
         let ret = children[child_index].compare_and_swap(next_ptr, child_ptr, Ordering::SeqCst);
-        if ret == next_ptr {
+        if ret == next_ptr && !test_fail() {
             // CAS worked
             next_ptr = child_ptr;
         } else {
@@ -148,12 +153,10 @@ fn test_split_fanout() {
 #[test]
 fn basic_functionality() {
     let rt = Radix::default();
-    let one = Box::into_raw(Box::new(1));
-    let two = Box::into_raw(Box::new(2));
-    let three = Box::into_raw(Box::new(3));
-    let four = Box::into_raw(Box::new(4));
-    let five = Box::into_raw(Box::new(5));
-    let six = Box::into_raw(Box::new(6));
+    let two = raw(2);
+    let three = raw(3);
+    let five = raw(5);
+    let six = raw(6);
     rt.insert(0, five).unwrap();
     assert_eq!(rt.get(0), Some(five));
     rt.cas(0, five, six).unwrap();
