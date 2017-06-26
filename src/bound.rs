@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-#[derive(Clone, Debug, Ord, Eq, PartialEq)]
+#[derive(Clone, Debug, Ord, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub enum Bound {
     Inc(Vec<u8>),
     Non(Vec<u8>),

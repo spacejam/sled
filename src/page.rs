@@ -44,7 +44,6 @@ pub enum Frag {
     LeftMerge(LeftMerge),
     ParentMerge(ParentMerge),
 }
-
 // TODO
 
 // TxBegin(TxID), // in-mem
@@ -58,6 +57,11 @@ pub enum Frag {
 // PartialSwap(LogID), /* indicates part of page has been swapped out,
 //                     * shows where to find it */
 
+#[derive(Clone, Debug, RustcEncodable, RustcDecodable)]
+enum PersistentFrag {
+    Set(Key, Value),
+    Del(Key),
+}
 
 #[derive(Debug, Clone)]
 pub struct Frags {

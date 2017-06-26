@@ -14,7 +14,6 @@ const FANOUT: usize = 2;
 pub struct Tree {
     pages: Arc<Pages>,
     root: Arc<AtomicUsize>,
-    pub esl: Arc<AtomicUsize>,
 }
 
 impl Tree {
@@ -46,7 +45,6 @@ impl Tree {
         Tree {
             pages: Arc::new(pages),
             root: Arc::new(AtomicUsize::new(root_id)),
-            esl: Arc::new(AtomicUsize::new(0)),
         }
     }
 

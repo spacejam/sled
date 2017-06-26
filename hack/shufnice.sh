@@ -6,5 +6,4 @@ while true; do
   NICE=$((`shuf -i 0-39 -n 1` - 20))
   echo "renicing $TID to $NICE"
   renice -n $NICE -p $TID
-  sleep 0.1
 done

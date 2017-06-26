@@ -17,12 +17,11 @@ pub struct DB {
 impl DB {
     pub fn open() -> DB {
         let tree = Tree::new();
-        let esl = tree.esl.clone();
         DB {
             tx_table: Arc::new(Radix::default()),
             tree: Arc::new(tree),
-            lsn: Arc::new(AtomicUsize::new(esl.load(Ordering::SeqCst))),
-            esl: esl,
+            lsn: Arc::new(AtomicUsize::new(0)),
+            esl: Arc::new(AtomicUsize::new(0)),
         }
     }
 
