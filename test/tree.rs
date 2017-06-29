@@ -1,6 +1,4 @@
-use std::mem;
 use std::thread;
-use std::sync::Arc;
 
 use rsdb::*;
 
@@ -27,7 +25,7 @@ macro_rules! par {
             threads.push(thread);
         }
         while let Some(thread) = threads.pop() {
-            thread.join();
+            thread.join().unwrap();
         }
     };
 }

@@ -71,7 +71,6 @@ mod bound;
 mod log;
 mod crc16;
 mod stack;
-mod map;
 mod page;
 mod radix;
 
@@ -82,7 +81,6 @@ use stack::{node_from_frag_vec, StackIter};
 use page::{Frag, Frags, ParentSplit, LeftMerge, ParentMerge};
 
 type LogID = u64; // LogID == file position to simplify file mapping
-type TxID = u64;
 type PageID = usize;
 
 type Key = Vec<u8>;

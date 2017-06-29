@@ -1,6 +1,5 @@
 /// Traversing pages, splits, merges
 
-use std::collections::HashMap;
 use std::fmt::{self, Debug};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
@@ -90,8 +89,8 @@ impl Frags {
                         panic!("capped new Base in middle of frags stack");
                     }
                     Frag::Merged => unimplemented!(),
-                    Frag::LeftMerge(ref lm) => unimplemented!(),
-                    Frag::ParentMerge(ref pm) => unimplemented!(),
+                    Frag::LeftMerge(ref _lm) => unimplemented!(),
+                    Frag::ParentMerge(ref _pm) => unimplemented!(),
                 }
             }
             ret
@@ -117,7 +116,7 @@ impl Frags {
         // try to consolidate if necessary
         let node = node_from_frag_vec(vec![Frag::Base(self.node.clone())]);
 
-        let res = self.cas(node);
+        let _ = self.cas(node);
     }
 
     /// returns child_split -> lhs, rhs, parent_split
@@ -163,8 +162,7 @@ impl Debug for Pages {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         f.write_str(&*format!("Pages {{ max: {:?} free: {:?} }}\n",
                               self.max_id(),
-                              self.free));
-        Ok(())
+                              self.free))
     }
 }
 
@@ -208,13 +206,13 @@ impl Pages {
         if pid == 0 {
             panic!("freeing zero");
         }
-        let stack_ptr = self.inner.del(pid);
+        let _stack_ptr = self.inner.del(pid);
         self.free.push(pid);
         // unsafe { (*stack_ptr).pop_all() };
     }
 
     pub fn insert(&self, pid: PageID, head: page::Frag) -> Result<(), ()> {
-        let mut stack = Stack::from_vec(vec![raw(head)]);
+        let stack = Stack::from_vec(vec![raw(head)]);
         self.inner.insert(pid, raw(stack)).map(|_| ()).map_err(|_| ())
     }
 
@@ -244,7 +242,7 @@ impl<'a> StackIter<'a, *const Frag> {
             match frag {
                 Set(ref k, ref v) => {
                     if Bound::Inc(k.clone()) < base.hi {
-                        base.set_leaf(k.clone(), v.clone()).unwrap();
+                        base.set_leaf(k.clone(), v.clone());
                     } else {
                         panic!("tried to consolidate set at key <= hi")
                     }
@@ -260,7 +258,9 @@ impl<'a> StackIter<'a, *const Frag> {
                     }
                 }
                 Base(_) => panic!("encountered base page in middle of chain"),
-                Merge => {}
+                Merged => unimplemented!(),
+                LeftMerge(_) => unimplemented!(),
+                ParentMerge(_) => unimplemented!(),
             }
         }
 

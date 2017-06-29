@@ -2,6 +2,7 @@ extern crate rsdb;
 extern crate rand;
 
 use std::thread;
+use std::time::Duration;
 
 use rand::Rng;
 
@@ -23,7 +24,7 @@ fn main() {
                         let res = log.reserve(buf.len());
                         let id = res.log_id();
                         if rng.next_f32() > 0.95 {
-                            thread::sleep_ms(100);
+                            thread::sleep(Duration::from_millis(100));
                         }
                         res.complete(&*buf);
                         log.make_stable(id);

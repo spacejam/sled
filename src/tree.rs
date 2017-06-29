@@ -1,6 +1,4 @@
 use std::fmt::{self, Debug};
-use std::mem;
-use std::ptr;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
@@ -99,7 +97,7 @@ impl Tree {
             let mut path = self.path_for_key(&*key);
             let mut last = path.pop().unwrap();
             // println!("last before: {:?}", last);
-            if let Ok(new) = last.cap(frag_ptr) {
+            if let Ok(_) = last.cap(frag_ptr) {
                 // println!("last after: {:?}", last);
                 let should_split = last.should_split();
                 path.push(last);
@@ -118,7 +116,7 @@ impl Tree {
     }
 
     pub fn del(&self, key: &[u8]) -> Option<Value> {
-        let mut ret = None;
+        let mut ret: Option<Value>;
         loop {
             let mut path = self.path_for_key(&*key);
             let mut leaf_frags = path.pop().unwrap();
@@ -357,19 +355,17 @@ impl Debug for Tree {
         let mut left_most = pid.clone();
         let mut level = 0;
 
-        f.write_str("Tree: \n\t");
-        self.pages.fmt(f);
-        f.write_str("\tlevel 0:\n");
+        f.write_str("Tree: \n\t").unwrap();
+        self.pages.fmt(f).unwrap();
+        f.write_str("\tlevel 0:\n").unwrap();
 
-        let mut count = 0;
         loop {
             let view = self.pages.get(pid);
             let node = view.node;
 
-            count += 1;
-            f.write_str("\t\t");
-            node.fmt(f);
-            f.write_str("\n");
+            f.write_str("\t\t").unwrap();
+            node.fmt(f).unwrap();
+            f.write_str("\n").unwrap();
 
             if let Some(next_pid) = node.next {
                 pid = next_pid;
@@ -380,18 +376,16 @@ impl Debug for Tree {
 
                 match left_node.data {
                     Data::Index(ptrs) => {
-                        if let Some(&(ref sep, ref next_pid)) = ptrs.first() {
+                        if let Some(&(ref _sep, ref next_pid)) = ptrs.first() {
                             pid = next_pid.clone();
                             left_most = next_pid.clone();
                             level += 1;
-                            // f.write_str(&*format!("\t\t{:?} pages", count));
-                            // f.write_str(&*format!("\n\t\t{:?}", ptrs));
-                            f.write_str(&*format!("\n\tlevel {}:\n", level));
+                            f.write_str(&*format!("\n\tlevel {}:\n", level)).unwrap();
                         } else {
                             panic!("trying to debug print empty index node");
                         }
                     }
-                    Data::Leaf(items) => {
+                    Data::Leaf(_items) => {
                         // we've reached the end of our tree, all leafs are on
                         // the lowest level.
                         break;
@@ -402,11 +396,6 @@ impl Debug for Tree {
 
         Ok(())
     }
-}
-
-enum PartialSeek {
-    ShortCircuit(Option<Value>),
-    Base(*const Node),
 }
 
 #[derive(Clone, Debug)]
@@ -447,16 +436,6 @@ impl Data {
         }
     }
 
-    fn drop_gte(&mut self, key: Key) {
-        fn drop<T>(xs: &mut Vec<(Key, T)>, key: Key) {
-            xs.retain(|&(ref k, _)| k < &key);
-        }
-        match *self {
-            Data::Index(ref mut ptrs) => drop(ptrs, key),
-            Data::Leaf(ref mut items) => drop(items, key),
-        }
-    }
-
     fn split(&self) -> (Key, Data, Data) {
         fn split_inner<T>(xs: &Vec<(Key, T)>) -> (Key, Vec<(Key, T)>, Vec<(Key, T)>)
             where T: Clone + Debug
@@ -464,17 +443,9 @@ impl Data {
             let (lhs, rhs) = xs.split_at(xs.len() / 2 + 1);
             let split = rhs.first().unwrap().0.clone();
 
-            let mut lhs = lhs.to_vec();
-            let lhs_len = lhs.len();
-            // lhs.reserve_exact(FANOUT * 2 - lhs_len);
-
-            let mut rhs = rhs.to_vec();
-            let rhs_len = rhs.len();
-            // rhs.reserve_exact(FANOUT * 2 - rhs_len);
-
             // println!("split {:?} to {:?} and {:?}", xs, lhs, rhs);
 
-            (split, lhs, rhs)
+            (split, lhs.to_vec(), rhs.to_vec())
         }
         match *self {
             Data::Index(ref ptrs) => {
@@ -501,7 +472,7 @@ pub struct Node {
 }
 
 impl Node {
-    pub fn set_leaf(&mut self, key: Key, val: Value) -> Result<(), ()> {
+    pub fn set_leaf(&mut self, key: Key, val: Value) {
         if let Data::Leaf(ref mut records) = self.data {
             let search = records.binary_search_by(|&(ref k, ref _v)| (**k).cmp(&*key));
             if let Ok(idx) = search {
@@ -511,10 +482,8 @@ impl Node {
                 records.push((key, val));
                 records.sort();
             }
-
-            Ok(())
         } else {
-            Err(())
+            panic!("tried to Set a value to an index");
         }
     }
 

@@ -715,7 +715,7 @@ mod tests {
     fn more_reservations_than_buffers() {
         let log = Log::start_system("test_more_reservations_than_buffers.log".to_owned());
         let mut reservations = vec![];
-        for i in 0..N_BUFS + 1 {
+        for _ in 0..N_BUFS + 1 {
             reservations.push(log.reserve(MAX_BUF_SZ - HEADER_LEN))
         }
         for res in reservations.into_iter().rev() {
@@ -807,12 +807,12 @@ mod tests {
             .unwrap();
 
 
-        t1.join();
-        t2.join();
-        t3.join();
-        t4.join();
-        t5.join();
-        t6.join();
+        t1.join().unwrap();
+        t2.join().unwrap();
+        t3.join().unwrap();
+        t4.join().unwrap();
+        t5.join().unwrap();
+        t6.join().unwrap();
         log7.shutdown();
     }
 
