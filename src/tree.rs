@@ -8,6 +8,7 @@ use super::*;
 
 const FANOUT: usize = 2;
 
+// TODO(pmuens) add Log to Tree
 #[derive(Clone)]
 pub struct Tree {
     pages: Arc<Pages>,
@@ -93,10 +94,12 @@ impl Tree {
         // println!("starting set of {:?} -> {:?}", key, value);
         let frag = Frag::Set(key.clone(), value);
         let frag_ptr = raw(frag);
+        // TODO(pmuens) serialize the kv to a pb/KV
         loop {
             let mut path = self.path_for_key(&*key);
             let mut last = path.pop().unwrap();
             // println!("last before: {:?}", last);
+            // TODO(pmuens) reserve log slot big enough for the KV bytes
             if let Ok(_) = last.cap(frag_ptr) {
                 // println!("last after: {:?}", last);
                 let should_split = last.should_split();
@@ -106,9 +109,11 @@ impl Tree {
                     // println!("need to split {:?}", pid);
                     self.recursive_split(&path);
                 }
+                // TODO(pmuens) complete the log reservation
                 break;
             } else {
                 // failure, retry
+                // TODO(pmuens) abort the log reservation
                 continue;
             }
         }
