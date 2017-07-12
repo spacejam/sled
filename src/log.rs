@@ -19,32 +19,6 @@ const MAX_BUF_SZ: usize = 1_000_000;
 const N_BUFS: usize = 77;
 const N_WRITER_THREADS: usize = 3;
 
-#[derive(Debug, Clone, Eq, PartialEq, RustcDecodable, RustcEncodable)]
-#[repr(C)]
-pub enum LogDelta {
-    Page,
-    Merge {
-        left: PageID,
-        right: PageID,
-    },
-    Split {
-        left: PageID,
-        right: PageID,
-    },
-    FailedFlush, // on-disk only
-}
-
-#[derive(Debug, Clone, Eq, PartialEq, RustcDecodable, RustcEncodable)]
-#[repr(C)]
-pub struct LogPage;
-
-#[derive(Debug, Clone, Eq, PartialEq, RustcDecodable, RustcEncodable)]
-#[repr(C)]
-pub enum LogData {
-    Full(LogPage),
-    Deltas(Vec<LogDelta>),
-}
-
 pub struct Log {
     iobufs: Arc<IOBufs>,
     stable: Arc<AtomicUsize>,

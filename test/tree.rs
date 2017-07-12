@@ -4,7 +4,7 @@ use rsdb::*;
 
 const SPACE: usize = N;
 const N_THREADS: usize = 5;
-const N_PER_THREAD: usize = 10000;
+const N_PER_THREAD: usize = 1000;
 const N: usize = N_THREADS * N_PER_THREAD; // NB N should be multiple of N_THREADS
 
 macro_rules! par {

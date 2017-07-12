@@ -4,7 +4,6 @@ use rand::{self, Rng};
 
 use rsdb::Log;
 
-
 #[derive(Debug, Clone)]
 enum Op {
     Write(Vec<u8>),
