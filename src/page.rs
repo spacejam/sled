@@ -50,8 +50,11 @@ pub struct Frags {
 impl Frags {
     pub fn cap(&mut self, frag: *const page::Frag) -> Result<Raw, Raw> {
         unsafe {
+            // 1. serialize frag
+            // 2. reserve log spot for the serialized bytes
             let ret = (*self.page).cap(self.head, frag);
             if let Ok(new) = ret {
+                // 3a. complete the reservation
                 self.head = new;
                 match *frag {
                     Frag::Set(ref k, ref v) => {
@@ -67,6 +70,8 @@ impl Frags {
                         panic!("capped new Base in middle of frags stack");
                     }
                 }
+            } else {
+                // 3b. abort the reservation
             }
             ret
         }
