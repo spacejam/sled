@@ -9,6 +9,7 @@ use std::sync::mpsc::{channel, Sender};
 use std::os::unix::io::AsRawFd;
 
 use crossbeam::sync::MsQueue;
+#[cfg(target_os="linux")]
 use libc::{fallocate, FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE};
 
 use super::*;
@@ -157,11 +158,13 @@ impl Log {
         f.read_exact(&mut len_buf).unwrap();
 
         let len = ops::array_to_usize(len_buf);
+        #[cfg(target_os="linux")]
         let mode = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE;
         let fd = f.as_raw_fd();
 
         unsafe {
             // 5 is valid (1) + len (4), 2 is crc16
+            #[cfg(target_os="linux")]
             fallocate(fd, mode, id as i64 + 5, len as i64 + 2);
         }
     }
