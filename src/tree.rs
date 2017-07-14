@@ -452,6 +452,7 @@ impl Data {
 
             (split, lhs.to_vec(), rhs.to_vec())
         }
+
         match *self {
             Data::Index(ref ptrs) => {
                 let (split, lhs, rhs) = split_inner(ptrs);
@@ -459,7 +460,6 @@ impl Data {
             }
             Data::Leaf(ref items) => {
                 let (split, lhs, rhs) = split_inner(items);
-
                 (split, Data::Leaf(lhs), Data::Leaf(rhs))
             }
         }

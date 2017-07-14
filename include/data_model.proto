@@ -7,12 +7,17 @@ enum Type {
   DEL = 2;
 }
 
-message KV {
+message Del {
+  required bytes key = 1;
+}
+
+message Set {
   required bytes key = 1;
   required bytes value = 2;
 }
 
 message Flush {
   required Type type = 1;
-  optional KV kv = 2;
+  optional Set set = 2;
+  optional Del del = 3;
 }
