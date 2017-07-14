@@ -80,7 +80,7 @@ pub mod ops;
 
 use bound::Bound;
 use stack::{node_from_frag_vec, StackIter};
-use page::{Frag, Frags, ParentSplit, LeftMerge, ParentMerge};
+use page::{Frag, Frags, ParentSplit};
 
 type LogID = u64; // LogID == file position to simplify file mapping
 type PageID = usize;
@@ -89,6 +89,7 @@ type Key = Vec<u8>;
 type Value = Vec<u8>;
 
 type Raw = *const stack::Node<*const page::Frag>;
+type Page = Stack<*const page::Frag>;
 
 #[inline(always)]
 fn raw<T>(t: T) -> *const T {

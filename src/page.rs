@@ -9,39 +9,23 @@ use super::*;
 const MAX_FRAG_LEN: usize = 7;
 
 pub struct Pages {
-    pub inner: Radix<Stack<*const Frag>>,
+    pub inner: Radix<Page>,
     max_id: AtomicUsize,
     free: Stack<PageID>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, RustcDecodable, RustcEncodable)]
 pub struct ParentSplit {
     pub at: Bound,
     pub to: PageID,
 }
 
-#[derive(Clone, Debug)]
-pub struct LeftMerge {
-    pub head: Raw,
-    pub rhs: PageID,
-    pub hi: Bound,
-}
-
-#[derive(Clone, Debug)]
-pub struct ParentMerge {
-    pub lhs: PageID,
-    pub rhs: PageID,
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, RustcDecodable, RustcEncodable)]
 pub enum Frag {
     Set(Key, Value),
     Del(Key),
     Base(tree::Node),
     ParentSplit(ParentSplit),
-    Merged,
-    LeftMerge(LeftMerge),
-    ParentMerge(ParentMerge),
 }
 // TODO
 
@@ -59,14 +43,14 @@ pub enum Frag {
 #[derive(Debug, Clone)]
 pub struct Frags {
     head: Raw,
-    stack: *const Stack<*const Frag>,
+    page: *const Page,
     pub node: tree::Node,
 }
 
 impl Frags {
     pub fn cap(&mut self, frag: *const page::Frag) -> Result<Raw, Raw> {
         unsafe {
-            let ret = (*self.stack).cap(self.head, frag);
+            let ret = (*self.page).cap(self.head, frag);
             if let Ok(new) = ret {
                 self.head = new;
                 match *frag {
@@ -82,9 +66,6 @@ impl Frags {
                     Frag::Base(_) => {
                         panic!("capped new Base in middle of frags stack");
                     }
-                    Frag::Merged => unimplemented!(),
-                    Frag::LeftMerge(ref _lm) => unimplemented!(),
-                    Frag::ParentMerge(ref _pm) => unimplemented!(),
                 }
             }
             ret
@@ -94,7 +75,7 @@ impl Frags {
     pub fn cas(&mut self, new: Raw) -> Result<Raw, Raw> {
         // TODO add separated part to epoch
         unsafe {
-            let ret = (*self.stack).cas(self.head, new);
+            let ret = (*self.page).cas(self.head, new);
             if let Ok(new) = ret {
                 self.head = new;
             }
@@ -172,7 +153,7 @@ impl Pages {
 
         let mut res = Frags {
             head: head,
-            stack: stack_ptr,
+            page: stack_ptr,
             node: base,
         };
 
@@ -252,9 +233,6 @@ impl<'a> StackIter<'a, *const Frag> {
                     }
                 }
                 Base(_) => panic!("encountered base page in middle of chain"),
-                Merged => unimplemented!(),
-                LeftMerge(_) => unimplemented!(),
-                ParentMerge(_) => unimplemented!(),
             }
         }
 

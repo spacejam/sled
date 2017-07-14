@@ -403,7 +403,7 @@ impl Debug for Tree {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, RustcDecodable, RustcEncodable)]
 pub enum Data {
     Index(Vec<(Key, PageID)>),
     Leaf(Vec<(Key, Value)>),
@@ -467,7 +467,7 @@ impl Data {
 }
 
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, RustcDecodable, RustcEncodable)]
 pub struct Node {
     pub id: PageID,
     pub data: Data,
@@ -541,26 +541,5 @@ impl Node {
         };
         // println!("split of {:?}\n\tlhs: {:?}\n\trhs: {:?}", self, left, right);
         (left, right)
-    }
-
-    pub fn left_merge(&mut self, lm: LeftMerge) {
-        let iter = StackIter::from_ptr(lm.head);
-
-        let (rhs, _) = iter.consolidated();
-
-        assert_eq!(self.hi.inner(),
-                   rhs.lo.inner(),
-                   "tried to merge non-contiguous nodes");
-
-        self.next = rhs.next;
-        self.hi = rhs.hi;
-        self.data.merge(rhs.data);
-    }
-
-    pub fn parent_merge(&mut self, pm: ParentMerge) {
-        let lhs_idx = self.data.index_of(pm.lhs);
-        let rhs_idx = self.data.index_of(pm.rhs);
-        assert!(rhs_idx - lhs_idx == 1,
-                "merge lhs and rhs are not adjacent in parent index");
     }
 }
