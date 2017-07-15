@@ -28,6 +28,7 @@ pub struct Log {
 }
 
 unsafe impl Send for Log {}
+unsafe impl Sync for Log {}
 
 impl Clone for Log {
     fn clone(&self) -> Log {

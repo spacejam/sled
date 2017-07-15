@@ -3,6 +3,7 @@
 use std::fmt::{self, Debug};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
+use std::sync::Arc;
 
 use super::*;
 
@@ -12,6 +13,7 @@ pub struct Pages {
     pub inner: Radix<Page>,
     max_id: AtomicUsize,
     free: Stack<PageID>,
+    log: Option<Arc<Log>>,
 }
 
 #[derive(Clone, Debug, PartialEq, RustcDecodable, RustcEncodable)]
@@ -40,21 +42,22 @@ pub enum Frag {
 // PartialSwap(LogID), /* indicates part of page has been swapped out,
 //                     * shows where to find it */
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Frags {
     head: Raw,
     page: *const Page,
     pub node: tree::Node,
+    log: Option<Arc<Log>>,
 }
 
 impl Frags {
     pub fn cap(&mut self, frag: *const page::Frag) -> Result<Raw, Raw> {
         unsafe {
-            // 1. serialize frag
-            // 2. reserve log spot for the serialized bytes
+            let bytes = ops::to_binary(&*frag);
+            let res = self.clone().log.map(|l| l.reserve(bytes.len()));
             let ret = (*self.page).cap(self.head, frag);
             if let Ok(new) = ret {
-                // 3a. complete the reservation
+                res.map(|r| r.complete(&bytes));
                 self.head = new;
                 match *frag {
                     Frag::Set(ref k, ref v) => {
@@ -71,7 +74,7 @@ impl Frags {
                     }
                 }
             } else {
-                // 3b. abort the reservation
+                res.map(|r| r.abort());
             }
             ret
         }
@@ -134,6 +137,7 @@ impl Default for Pages {
             inner: Radix::default(),
             max_id: AtomicUsize::new(0),
             free: Stack::default(),
+            log: None,
         }
     }
 }
@@ -160,6 +164,7 @@ impl Pages {
             head: head,
             page: stack_ptr,
             node: base,
+            log: self.log.clone(),
         };
 
         if frags_len > MAX_FRAG_LEN {
