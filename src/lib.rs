@@ -6,7 +6,6 @@ extern crate rustc_serialize;
 extern crate bincode;
 extern crate time;
 extern crate rand;
-extern crate protobuf;
 
 // transactional kv with multi-key ops
 pub use db::DB;
@@ -74,13 +73,12 @@ mod crc16;
 mod stack;
 mod page;
 mod radix;
-mod pb;
 
 pub mod ops;
 
 use bound::Bound;
 use stack::{node_from_frag_vec, StackIter};
-use page::{Frag, Frags, ParentSplit};
+use page::{Frag, PageView, ChildSplit, ParentSplit};
 
 type LogID = u64; // LogID == file position to simplify file mapping
 type PageID = usize;

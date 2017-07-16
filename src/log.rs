@@ -1,9 +1,9 @@
 use std::fmt::{self, Debug};
 use std::fs;
 use std::io::{self, Read, Write, Seek, SeekFrom, Error, ErrorKind};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::cell::{UnsafeCell, RefCell};
+use std::cell::UnsafeCell;
 use std::thread;
 use std::sync::mpsc::{channel, Sender};
 use std::os::unix::io::AsRawFd;
@@ -20,26 +20,19 @@ const MAX_BUF_SZ: usize = 1_000_000;
 const N_BUFS: usize = 77;
 const N_WRITER_THREADS: usize = 3;
 
+/// `Log` is responsible for putting data on disk, and retrieving
+/// it later on.
+#[derive(Clone)]
 pub struct Log {
     iobufs: Arc<IOBufs>,
     stable: Arc<AtomicUsize>,
     path: String,
-    file: RefCell<fs::File>,
+    // TODO thread-local file to eliminate sharing and serialization with mutex
+    file: Arc<Mutex<fs::File>>,
 }
 
 unsafe impl Send for Log {}
 unsafe impl Sync for Log {}
-
-impl Clone for Log {
-    fn clone(&self) -> Log {
-        Log {
-            iobufs: self.iobufs.clone(),
-            stable: self.stable.clone(),
-            path: self.path.clone(),
-            file: RefCell::new(open_log_for_punching(self.path.clone())),
-        }
-    }
-}
 
 impl Log {
     /// create new lock-free log
@@ -60,7 +53,7 @@ impl Log {
             iobufs: Arc::new(IOBufs::new(q, offset as usize)),
             stable: stable,
             path: path.clone(),
-            file: RefCell::new(open_log_for_punching(path)),
+            file: Arc::new(Mutex::new(open_log_for_punching(path))),
         }
     }
 
@@ -78,7 +71,7 @@ impl Log {
 
     /// read a buffer from the disk
     pub fn read(&self, id: LogID) -> io::Result<Option<Vec<u8>>> {
-        let mut f = self.file.borrow_mut();
+        let mut f = self.file.lock().unwrap();
         f.seek(SeekFrom::Start(id))?;
 
         let mut valid = [0u8; 1];
@@ -133,7 +126,6 @@ impl Log {
                 spins = 0;
             }
             let cur = self.stable.load(Ordering::SeqCst) as LogID;
-            // println!("cur {} id {}", cur, id);
             if cur > id {
                 return;
             }
@@ -149,7 +141,7 @@ impl Log {
     pub fn punch_hole(&self, id: LogID) {
         // we zero out the valid byte, and use fallocate to punch a hole
         // in the actual data, but keep the len for recovery.
-        let mut f = self.file.borrow_mut();
+        let mut f = self.file.lock().unwrap();
         // zero out valid bit
         f.seek(SeekFrom::Start(id)).unwrap();
         let zeros = vec![0];
@@ -218,25 +210,6 @@ impl Debug for IOBufs {
 
 unsafe impl Send for IOBufs {}
 
-#[derive(Clone)]
-pub struct Reservation {
-    base_disk_offset: LogID,
-    res_len: u32, // this may be different from header, due to concurrent access
-    buf_offset: u32,
-    buf: Arc<UnsafeCell<Vec<u8>>>,
-    last_hv: u32, // optimization to avoid more atomic loads
-    header: Arc<AtomicUsize>,
-    next_header: Arc<AtomicUsize>,
-    current_buf: Arc<AtomicUsize>,
-    written_bufs: Arc<AtomicUsize>,
-    plunger: Arc<MsQueue<ResOrShutdown>>,
-    idx: usize,
-    cur_log_offset: Arc<AtomicUsize>,
-    next_log_offset: Arc<AtomicUsize>,
-}
-
-unsafe impl Send for Reservation {}
-
 impl IOBufs {
     fn new(plunger: Arc<MsQueue<ResOrShutdown>>, disk_offset: usize) -> IOBufs {
         let current_buf = 1;
@@ -271,8 +244,6 @@ impl IOBufs {
                 spins = 0;
             }
 
-            // println!("using buf {}", idx);
-
             // if written is too far behind, we need to
             // spin while it catches up to avoid overlap
             if current_buf - written + 1 >= N_BUFS {
@@ -305,9 +276,10 @@ impl IOBufs {
                     Ok(h) if ops::n_writers(h) == 0 => {
                         // nobody else is going to flush this, so we need to
 
-                        // println!("creating zero-writer res to clear buf");
                         assert_ne!(self.log_offsets[idx].load(Ordering::SeqCst),
                                    std::usize::MAX);
+
+                        // create zero-writer res to clear buf
                         let res = self.reservation(buf_offset, 0, idx, h);
                         res.decr_writers_maybe_slam();
                     }
@@ -324,9 +296,6 @@ impl IOBufs {
             if cas_hv != hv as usize {
                 // CAS failed, start over
                 continue;
-            }
-            if ops::n_writers(hv) == 0 {
-                // println!("using idx {}, went from {} to {} writers, offset {} to {}", idx, ops::n_writers(hv), ops::n_writers(claimed), ops::offset(hv), ops::offset(claimed));
             }
             hv = claimed;
 
@@ -369,6 +338,25 @@ impl IOBufs {
         }
     }
 }
+
+#[derive(Clone)]
+pub struct Reservation {
+    base_disk_offset: LogID,
+    res_len: u32, // this may be different from header, due to concurrent access
+    buf_offset: u32,
+    buf: Arc<UnsafeCell<Vec<u8>>>,
+    last_hv: u32, // optimization to avoid more atomic loads
+    header: Arc<AtomicUsize>,
+    next_header: Arc<AtomicUsize>,
+    current_buf: Arc<AtomicUsize>,
+    written_bufs: Arc<AtomicUsize>,
+    plunger: Arc<MsQueue<ResOrShutdown>>,
+    idx: usize,
+    cur_log_offset: Arc<AtomicUsize>,
+    next_log_offset: Arc<AtomicUsize>,
+}
+
+unsafe impl Send for Reservation {}
 
 impl Reservation {
     /// cancel the reservation, placing a failed flush on disk
@@ -454,8 +442,7 @@ impl Reservation {
         // FIXME this feels broken, but maybe isn't because we
         // can never be sealed and increase writers?
         if ops::n_writers(hv) == 0 && ops::is_sealed(hv) {
-            // println!("slamming no-writer buf down pipe, idx {}", self.idx);
-            self.slam_down_pipe();
+            self.persist();
             return ret;
         }
 
@@ -470,13 +457,11 @@ impl Reservation {
             let new_hv = ops::decr_writers(hv) as usize;
             let old_hv = self.header.compare_and_swap(hv as usize, new_hv, Ordering::SeqCst);
             if old_hv == hv as usize {
-                if ops::n_writers(new_hv as u32) == 0 {
-                    // println!("decr succeeded from {} to {} on index {}", ops::n_writers(hv), ops::n_writers(new_hv as u32), self.idx);
-                }
-
+                // succeeded in decrementing writers, if we set it to 0 and it's
+                // sealed then we should persist it.
                 if ops::n_writers(new_hv as u32) == 0 && ops::is_sealed(new_hv as u32) {
-                    // println!("slamming our buf down pipe, idx {}", self.idx);
-                    self.slam_down_pipe();
+                    // println!("persisting buf {}", self.idx);
+                    self.persist();
                 }
 
                 return ret;
@@ -491,7 +476,7 @@ impl Reservation {
         }
     }
 
-    fn slam_down_pipe(self) {
+    fn persist(self) {
         let plunger = self.plunger.clone();
         plunger.push(ResOrShutdown::Res(self));
     }
@@ -507,7 +492,7 @@ impl Reservation {
                    self.base_disk_offset as u64,
                    "disk offset should be 1:1 with log id");
 
-        // TODO this really shouldn't be necessary, but
+        // TODO this MAY not be necessary, but
         // asserts are still failing this "taint"
         self.cur_log_offset.store(std::usize::MAX, Ordering::SeqCst);
 
