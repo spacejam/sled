@@ -6,7 +6,6 @@ extern crate rustc_serialize;
 extern crate bincode;
 extern crate time;
 extern crate rand;
-extern crate protobuf;
 
 // transactional kv with multi-key ops
 pub use db::DB;
@@ -74,7 +73,6 @@ mod crc16;
 mod stack;
 mod page;
 mod radix;
-mod pb;
 
 pub mod ops;
 
