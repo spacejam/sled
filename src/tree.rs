@@ -8,7 +8,6 @@ use super::*;
 
 const FANOUT: usize = 2;
 
-// TODO(pmuens) add Log to Tree
 #[derive(Clone)]
 pub struct Tree {
     pages: Arc<Pages>,
@@ -72,7 +71,7 @@ impl Tree {
         }
     }
 
-    fn get_internal(&self, key: &[u8]) -> (Vec<Frags>, Option<Value>) {
+    fn get_internal(&self, key: &[u8]) -> (Vec<PageView>, Option<Value>) {
         let path = self.path_for_key(&*key);
         match path.last().unwrap().node.data.clone() {
             Data::Leaf(ref items) => {
@@ -94,12 +93,10 @@ impl Tree {
         // println!("starting set of {:?} -> {:?}", key, value);
         let frag = Frag::Set(key.clone(), value);
         let frag_ptr = raw(frag);
-        // TODO(pmuens) serialize the kv to a pb/KV
         loop {
             let mut path = self.path_for_key(&*key);
             let mut last = path.pop().unwrap();
             // println!("last before: {:?}", last);
-            // TODO(pmuens) reserve log slot big enough for the KV bytes
             if let Ok(_) = last.cap(frag_ptr) {
                 // println!("last after: {:?}", last);
                 let should_split = last.should_split();
@@ -109,11 +106,9 @@ impl Tree {
                     // println!("need to split {:?}", pid);
                     self.recursive_split(&path);
                 }
-                // TODO(pmuens) complete the log reservation
                 break;
             } else {
                 // failure, retry
-                // TODO(pmuens) abort the log reservation
                 continue;
             }
         }
@@ -151,8 +146,7 @@ impl Tree {
         ret
     }
 
-    fn recursive_split(&self, path: &Vec<Frags>) {
-        // println!("needs split!");
+    fn recursive_split(&self, path: &Vec<PageView>) {
         // to split, we pop the path, see if it's in need of split, recurse up
         // two-phase: (in prep for lock-free, not necessary for single threaded)
         //  1. half-split: install split on child, P
@@ -202,13 +196,12 @@ impl Tree {
                     self.pages.free(new_pid);
                     continue;
                 }
-                // println!("{}: {}|{} @ {:?} +", name, pid, new_pid, parent_split.at);
 
                 // TODO add frags.stack to GC
 
                 // parent split
                 let mut parent_frags = all_frags.last_mut().unwrap_or(&mut root_frag);
-                // println!("parent splitting node {:?}", parent_frags.pid);
+
                 // install parent split
                 let cap = parent_frags.cap(raw_parent_split);
 
@@ -220,9 +213,6 @@ impl Tree {
                              new_pid);
                     continue;
                 }
-
-                // println!("{}: {} <- {}|{} +", name, parent_frags.node.id, pid, new_pid);
-                // println!("{:?}", self);
             }
         }
 
@@ -291,14 +281,14 @@ impl Tree {
 
     /// returns the traversal path, completing any observed
     /// partially complete splits or merges along the way.
-    fn path_for_key(&self, key: &[u8]) -> Vec<Frags> {
+    fn path_for_key(&self, key: &[u8]) -> Vec<PageView> {
         let key_bound = Bound::Inc(key.into());
         let mut cursor = self.root.load(SeqCst);
         let mut path = vec![];
 
         // unsplit_parent is used for tracking need
         // to complete partial splits.
-        let mut unsplit_parent: Option<Frags> = None;
+        let mut unsplit_parent: Option<PageView> = None;
 
         loop {
             let frags = self.pages.get(cursor);
@@ -325,7 +315,7 @@ impl Tree {
                     to: frags.node.id.clone(),
                 });
                 let res = parent.cap(raw(ps));
-                println!("coopreative parent split: {:?}", res);
+                println!("trying to fix incomplete parent split: {:?}", res);
             }
 
             path.push(frags.clone());
@@ -410,34 +400,10 @@ pub enum Data {
 }
 
 impl Data {
-    fn index_of(&self, pid: PageID) -> usize {
-        match *self {
-            Data::Index(ref ptrs) => ptrs.binary_search_by(|&(ref _k, ref p)| p.cmp(&pid)).unwrap(),
-            Data::Leaf(_) => panic!("can't parent merge a leaf"),
-        }
-    }
-
     fn len(&self) -> usize {
         match *self {
             Data::Index(ref ptrs) => ptrs.len(),
             Data::Leaf(ref items) => items.len(),
-        }
-    }
-
-    fn merge(&mut self, mut other: Data) {
-        match *self {
-            Data::Index(ref mut lptrs) => {
-                match other {
-                    Data::Index(ref mut rptrs) => lptrs.append(rptrs),
-                    Data::Leaf(_) => panic!("can't merge an index with a leaf"),
-                }
-            }
-            Data::Leaf(ref mut litems) => {
-                match other {
-                    Data::Index(_) => panic!("can't merge an index with a leaf"),
-                    Data::Leaf(ref mut ritems) => litems.append(ritems),
-                }
-            }
         }
     }
 
@@ -490,6 +456,14 @@ impl Node {
         } else {
             panic!("tried to Set a value to an index");
         }
+    }
+
+    pub fn child_split(&mut self, cs: ChildSplit) {
+        // We consolidate a page before writing the delta
+        // for child splits, so we don't actually need to
+        // modify anything here. The actual logic for this
+        // happens in the split method below.
+        assert_eq!(cs.at.inner(), self.hi.inner());
     }
 
     pub fn parent_split(&mut self, ps: ParentSplit) {

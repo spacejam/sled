@@ -80,7 +80,7 @@ pub mod ops;
 
 use bound::Bound;
 use stack::{node_from_frag_vec, StackIter};
-use page::{Frag, Frags, ParentSplit};
+use page::{Frag, PageView, ChildSplit, ParentSplit};
 
 type LogID = u64; // LogID == file position to simplify file mapping
 type PageID = usize;

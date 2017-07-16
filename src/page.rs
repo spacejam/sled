@@ -23,14 +23,24 @@ pub struct ParentSplit {
 }
 
 #[derive(Clone, Debug, PartialEq, RustcDecodable, RustcEncodable)]
+pub struct ChildSplit {
+    pub at: Bound,
+    pub to: PageID,
+}
+
+#[derive(Clone, Debug, PartialEq, RustcDecodable, RustcEncodable)]
 pub enum Frag {
     Set(Key, Value),
     Del(Key),
     Base(tree::Node),
+    ChildSplit(ChildSplit),
     ParentSplit(ParentSplit),
 }
-// TODO
 
+// TODO
+// Merged
+// LeftMerge(head: Raw, rhs: PageID, hi: Bound)
+// ParentMerge(lhs: PageID, rhs: PageID)
 // TxBegin(TxID), // in-mem
 // TxCommit(TxID), // in-mem
 // TxAbort(TxID), // in-mem
@@ -43,14 +53,14 @@ pub enum Frag {
 //                     * shows where to find it */
 
 #[derive(Clone)]
-pub struct Frags {
+pub struct PageView {
     head: Raw,
     page: *const Page,
     pub node: tree::Node,
     log: Option<Arc<Log>>,
 }
 
-impl Frags {
+impl PageView {
     pub fn cap(&mut self, frag: *const page::Frag) -> Result<Raw, Raw> {
         unsafe {
             let bytes = ops::to_binary(&*frag);
@@ -65,6 +75,9 @@ impl Frags {
                     }
                     Frag::Del(ref k) => {
                         self.node.del_leaf(k);
+                    }
+                    Frag::ChildSplit(ref cs) => {
+                        self.node.child_split(cs.clone());
                     }
                     Frag::ParentSplit(ref ps) => {
                         self.node.parent_split(ps.clone());
@@ -115,8 +128,13 @@ impl Frags {
         assert_eq!(lhs.hi.inner(), rhs.lo.inner());
         assert_eq!(lhs.hi.inner(), parent_split.at.inner());
 
+        let child_split = Frag::ChildSplit(ChildSplit {
+            at: rhs.lo.clone(),
+            to: new_id,
+        });
+
         let r = Frag::Base(rhs);
-        let l = node_from_frag_vec(vec![Frag::Base(lhs)]);
+        let l = node_from_frag_vec(vec![child_split, Frag::Base(lhs)]);
 
         (l, r, parent_split)
     }
@@ -151,7 +169,7 @@ impl Debug for Pages {
 }
 
 impl Pages {
-    pub fn get(&self, pid: PageID) -> Frags {
+    pub fn get(&self, pid: PageID) -> PageView {
         let stack_ptr = self.inner.get(pid).unwrap();
 
         let head = unsafe { (*stack_ptr).head() };
@@ -160,7 +178,7 @@ impl Pages {
 
         let (base, frags_len) = stack_iter.consolidated();
 
-        let mut res = Frags {
+        let mut res = PageView {
             head: head,
             page: stack_ptr,
             node: base,
@@ -212,18 +230,13 @@ impl<'a> StackIter<'a, *const Frag> {
 
         let mut frags: Vec<Frag> = unsafe { self.map(|ptr| (**ptr).clone()).collect() };
 
-        if frags.is_empty() {
-            println!("frags: {:?}", frags);
-        }
         let mut base = frags.pop().unwrap().base().unwrap();
-        // println!("before, page is now {:?}", base.data);
-
-        frags.reverse();
 
         let frags_len = frags.len();
 
-        for frag in frags {
-            // println!("\t{:?}", frag);
+        // we reverse our frags to start with the base node, and
+        // apply frags in chronological order.
+        for frag in frags.into_iter().rev() {
             match frag {
                 Set(ref k, ref v) => {
                     if Bound::Inc(k.clone()) < base.hi {
@@ -231,6 +244,9 @@ impl<'a> StackIter<'a, *const Frag> {
                     } else {
                         panic!("tried to consolidate set at key <= hi")
                     }
+                }
+                ChildSplit(child_split) => {
+                    base.child_split(child_split);
                 }
                 ParentSplit(parent_split) => {
                     base.parent_split(parent_split);
