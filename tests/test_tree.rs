@@ -1,3 +1,5 @@
+extern crate rsdb;
+
 use std::thread;
 
 use rsdb::*;

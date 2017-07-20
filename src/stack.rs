@@ -71,6 +71,10 @@ impl<T> Drop for Stack<T> {
 }
 
 impl<T> Stack<T> {
+    pub fn from_raw(from: *const Node<T>) -> Stack<T> {
+        Stack { head: Arc::new(AtomicPtr::new(from as *mut Node<T>)) }
+    }
+
     pub fn from_vec(from: Vec<T>) -> Stack<T> {
         let stack = Stack::default();
 
@@ -147,7 +151,6 @@ impl<T> Stack<T> {
                old: *const Node<T>,
                new: *const Node<T>)
                -> Result<*const Node<T>, *const Node<T>> {
-        // TODO add separated part to epoch
         let res = self.head.compare_and_swap(old as *mut _, new as *mut _, Ordering::SeqCst);
         if old == res && !test_fail() {
             Ok(new)
@@ -224,7 +227,7 @@ impl<'a, T> IntoIterator for &'a Stack<T> {
     }
 }
 
-pub fn node_from_frag_vec(from: Vec<page::Frag>) -> Raw {
+pub fn node_from_frag_vec<T>(from: Vec<T>) -> *const Node<*const T> {
     use std::ptr;
     let mut last = ptr::null();
 

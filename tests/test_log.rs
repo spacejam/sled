@@ -1,6 +1,11 @@
 #![allow(unused)]
+
+extern crate quickcheck;
+extern crate rand;
+extern crate rsdb;
+
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
-use rand::{self, Rng};
+use rand::Rng;
 
 use rsdb::Log;
 

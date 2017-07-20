@@ -2,7 +2,9 @@
 
 extern crate libc;
 extern crate crossbeam;
-extern crate rustc_serialize;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
 extern crate bincode;
 extern crate time;
 extern crate rand;
@@ -12,7 +14,7 @@ pub use db::DB;
 // atomic lock-free tree
 pub use tree::Tree;
 // lock-free pagecache
-pub use page::Pages;
+pub use page::PageCache;
 // lock-free log-structured storage
 pub use log::Log;
 // lock-free stack
@@ -73,12 +75,14 @@ mod crc16;
 mod stack;
 mod page;
 mod radix;
+// mod gc;
 
 pub mod ops;
 
 use bound::Bound;
 use stack::{node_from_frag_vec, StackIter};
-use page::{Frag, PageView, ChildSplit, ParentSplit};
+use tree::{Frag, ChildSplit, ParentSplit};
+use page::PageMaterializer;
 
 type LogID = u64; // LogID == file position to simplify file mapping
 type PageID = usize;
@@ -86,8 +90,13 @@ type PageID = usize;
 type Key = Vec<u8>;
 type Value = Vec<u8>;
 
-type Raw = *const stack::Node<*const page::Frag>;
-type Page = Stack<*const page::Frag>;
+type Raw = *const stack::Node<*const tree::Frag>;
+type Page = Stack<*const tree::Frag>;
+
+enum PagePtr {
+    LogID(LogID),
+    Page(Page),
+}
 
 #[inline(always)]
 fn raw<T>(t: T) -> *const T {
