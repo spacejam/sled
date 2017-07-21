@@ -19,17 +19,17 @@ A lock-free tree.
 
 ```rust
 impl Tree {
-    pub fn new(store: Option<PageCache>) -> Tree;
+  pub fn new(store: Option<PageCache>) -> Tree;
 
-    pub fn get(&self, key: &[u8]) -> Option<Value>;
+  pub fn get(&self, key: &[u8]) -> Option<Value>;
 
-    pub fn cas(&self, key: Key, old: Option<Value>, new: Value) -> Result<(), Option<Value>>;
+  pub fn cas(&self, key: Key, old: Option<Value>, new: Value) -> Result<(), Option<Value>>;
 
-    pub fn set(&self, key: Key, value: Value);
+  pub fn set(&self, key: Key, value: Value);
 
-    pub fn del(&self, key: &[u8]) -> Option<Value>;
+  pub fn del(&self, key: &[u8]) -> Option<Value>;
 
-		pub fn scan(&self, from: Bound, to: Bound) -> Iterator<(Key, Value)>;
+  pub fn scan(&self, from: Bound, to: Bound) -> Iterator<(Key, Value)>;
 }
 ```
 
@@ -39,30 +39,30 @@ A lock-free pagecache.
 
 ```rust
 impl PageCache {
-	pub fn new(viewer: PageMaterializer, log: Log) -> PageCache;
+  pub fn new(viewer: PageMaterializer, log: Log) -> PageCache;
 
-	pub fn allocate(&self) -> PageID;
+  pub fn allocate(&self) -> PageID;
 
-	pub fn free(&self, PageID);
+  pub fn free(&self, PageID);
 
-	pub fn get(&self, PageID) -> (PageMaterializer::MaterializedPage, CASKey);
+  pub fn get(&self, PageID) -> (PageMaterializer::MaterializedPage, CASKey);
 
   pub fn append(&self, PageID, CASKey, PageMaterializer::PartialPage);
 
-	pub fn flush(&self, PageID) -> LogID;
+  pub fn flush(&self, PageID) -> LogID;
 
-	/// returns the current stable offset written to disk
-	fn stable_offset(&self) -> LogID;
+  /// returns the current stable offset written to disk
+  fn stable_offset(&self) -> LogID;
 
-	/// blocks until the specified id has been made stable on disk
-	pub fn make_stable(&self, LogID);
+  /// blocks until the specified id has been made stable on disk
+  pub fn make_stable(&self, LogID);
 }
 
 trait PageMaterializer {
-	type MaterializedPage;
-	type PartialPage;
+  type MaterializedPage;
+  type PartialPage;
 
-	fn materialize(&self, Vec<Self::PartialPage>) -> Self::MaterializedPage;
+  fn materialize(&self, Vec<Self::PartialPage>) -> Self::MaterializedPage;
 }
 ```
 
@@ -72,37 +72,37 @@ A lock-free log-structured store.
 
 ```rust
 trait Log {
-    /// claim a spot on disk, which can later be filled or aborted
-    fn reserve(&self, buf: Vec<u8>) -> Reservation;
+  /// claim a spot on disk, which can later be filled or aborted
+  fn reserve(&self, buf: Vec<u8>) -> Reservation;
 
-    /// write a buffer to disk
-    fn write(&self, buf: Vec<u8>) -> LogID;
+  /// write a buffer to disk
+  fn write(&self, buf: Vec<u8>) -> LogID;
 
-    /// read a buffer from the disk
-    fn read(&self, id: LogID) -> io::Result<Option<Vec<u8>>>;
+  /// read a buffer from the disk
+  fn read(&self, id: LogID) -> io::Result<Option<Vec<u8>>>;
 
-    /// returns the current stable offset written to disk
-    fn stable_offset(&self) -> LogID;
+  /// returns the current stable offset written to disk
+  fn stable_offset(&self) -> LogID;
 
-    /// blocks until the specified id has been made stable on disk
-    fn make_stable(&self, id: LogID);
+  /// blocks until the specified id has been made stable on disk
+  fn make_stable(&self, id: LogID);
 
-    /// shut down the writer threads
-    fn shutdown(self);
+  /// shut down the writer threads
+  fn shutdown(self);
 
-    /// deallocates the data part of a log id
-    fn punch_hole(&self, id: LogID);
+  /// deallocates the data part of a log id
+  fn punch_hole(&self, id: LogID);
 }
 
 impl Reservation {
-    /// cancel the reservation, placing a failed flush on disk
-    pub fn abort(self);
+  /// cancel the reservation, placing a failed flush on disk
+  pub fn abort(self);
 
-    /// complete the reservation, placing the buffer on disk at the log_id
-    pub fn complete(self) -> LogID;
+  /// complete the reservation, placing the buffer on disk at the log_id
+  pub fn complete(self) -> LogID;
 
-    /// get the log_id for accessing this buffer in the future
-    pub fn log_id(&self) -> LogID;
+  /// get the log_id for accessing this buffer in the future
+  pub fn log_id(&self) -> LogID;
 }
 ```
 
