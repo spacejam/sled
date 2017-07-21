@@ -192,9 +192,9 @@ impl Debug for IOBufs {
         // load current header value
         let header = self.headers[idx].clone();
         let hv = header.load(Ordering::SeqCst) as u32;
-        let n_writers = ops::n_writers(hv);
-        let offset = ops::offset(hv);
-        let sealed = ops::is_sealed(hv);
+        let n_writers = bit_ops::n_writers(hv);
+        let offset = bit_ops::offset(hv);
+        let sealed = bit_ops::is_sealed(hv);
 
         let debug = format!("IOBufs {{ idx: {}, slow_writers: {},  n_writers: {}, offset: {}, \
                              sealed: {} }}",
@@ -256,7 +256,7 @@ impl IOBufs {
             let mut hv = header.load(Ordering::SeqCst) as u32;
 
             // skip if already sealed
-            if ops::is_sealed(hv) {
+            if bit_ops::is_sealed(hv) {
                 // already sealed, start over and hope cur
                 // has already been bumped by sealer.
                 // println!("cur is late to be bumped: {:?}", self);
@@ -264,7 +264,7 @@ impl IOBufs {
             }
 
             // try to claim space, seal otherwise
-            let buf_offset = ops::offset(hv);
+            let buf_offset = bit_ops::offset(hv);
             if buf_offset + len > MAX_BUF_SZ as u32 {
                 // attempt seal once, flush if no active writers, then start over
                 match seal_header_and_bump_offsets(&header,
@@ -273,7 +273,7 @@ impl IOBufs {
                                                    &*self.log_offsets[idx],
                                                    &*self.log_offsets[(idx + 1) % N_BUFS],
                                                    &*self.current_buf) {
-                    Ok(h) if ops::n_writers(h) == 0 => {
+                    Ok(h) if bit_ops::n_writers(h) == 0 => {
                         // nobody else is going to flush this, so we need to
 
                         assert_ne!(self.log_offsets[idx].load(Ordering::SeqCst),
@@ -289,8 +289,8 @@ impl IOBufs {
             }
 
             // attempt to claim
-            let claimed = ops::incr_writers(ops::bump_offset(hv, len));
-            assert!(!ops::is_sealed(claimed));
+            let claimed = bit_ops::incr_writers(bit_ops::bump_offset(hv, len));
+            assert!(!bit_ops::is_sealed(claimed));
 
             let cas_hv = header.compare_and_swap(hv as usize, claimed as usize, Ordering::SeqCst);
             if cas_hv != hv as usize {
@@ -301,7 +301,7 @@ impl IOBufs {
 
             // if we're giving out a reservation,
             // the writer count should be positive
-            assert!(ops::n_writers(hv) != 0);
+            assert!(bit_ops::n_writers(hv) != 0);
 
             assert_ne!(self.log_offsets[idx].load(Ordering::SeqCst),
                        std::usize::MAX);
@@ -384,7 +384,7 @@ impl Reservation {
     // NB this should only be called from here
     fn _seal(&self) {
         let mut hv = self.last_hv;
-        while !ops::is_sealed(hv) &&
+        while !bit_ops::is_sealed(hv) &&
               seal_header_and_bump_offsets(&*self.header,
                                            &*self.next_header,
                                            hv,
@@ -441,7 +441,7 @@ impl Reservation {
 
         // FIXME this feels broken, but maybe isn't because we
         // can never be sealed and increase writers?
-        if ops::n_writers(hv) == 0 && ops::is_sealed(hv) {
+        if bit_ops::n_writers(hv) == 0 && bit_ops::is_sealed(hv) {
             self.persist();
             return ret;
         }
@@ -454,12 +454,12 @@ impl Reservation {
                 println!("{:?} have spun >1000x in decr", thread::current().name());
                 spins = 0;
             }
-            let new_hv = ops::decr_writers(hv) as usize;
+            let new_hv = bit_ops::decr_writers(hv) as usize;
             let old_hv = self.header.compare_and_swap(hv as usize, new_hv, Ordering::SeqCst);
             if old_hv == hv as usize {
                 // succeeded in decrementing writers, if we set it to 0 and it's
                 // sealed then we should persist it.
-                if ops::n_writers(new_hv as u32) == 0 && ops::is_sealed(new_hv as u32) {
+                if bit_ops::n_writers(new_hv as u32) == 0 && bit_ops::is_sealed(new_hv as u32) {
                     // println!("persisting buf {}", self.idx);
                     self.persist();
                 }
@@ -472,7 +472,7 @@ impl Reservation {
 
             // if this is 0, it means too many decr's have happened
             // or too few incr's have happened
-            assert_ne!(ops::n_writers(hv), 0);
+            assert_ne!(bit_ops::n_writers(hv), 0);
         }
     }
 
@@ -587,11 +587,11 @@ fn seal_header_and_bump_offsets(header: &AtomicUsize,
                                 next_log_offset: &AtomicUsize,
                                 current_buf: &AtomicUsize)
                                 -> Result<u32, ()> {
-    if ops::is_sealed(hv) {
+    if bit_ops::is_sealed(hv) {
         // don't want to double seal, since we should change critical offsets only once
         return Err(());
     }
-    let sealed = ops::mk_sealed(hv);
+    let sealed = bit_ops::mk_sealed(hv);
     if header.compare_and_swap(hv as usize, sealed as usize, Ordering::SeqCst) == hv as usize {
         // println!("sealed buf with {} writers", ops::n_writers(sealed));
         // We succeeded in setting seal,
@@ -609,7 +609,7 @@ fn seal_header_and_bump_offsets(header: &AtomicUsize,
         let our_log_offset = cur_log_offset.load(Ordering::SeqCst);
         assert_ne!(our_log_offset, std::usize::MAX);
 
-        let next_offset = our_log_offset + ops::offset(sealed) as usize;
+        let next_offset = our_log_offset + bit_ops::offset(sealed) as usize;
 
         // !! setup new slot
         next_header.store(0, Ordering::SeqCst);
@@ -620,7 +620,7 @@ fn seal_header_and_bump_offsets(header: &AtomicUsize,
             if spins > 100_000 {
                 println!("{:?} have spun >100,000x in seal of buf {}",
                          thread::current().name(),
-                         ops::n_writers(sealed));
+                         bit_ops::n_writers(sealed));
                 spins = 0;
             }
             // FIXME panicked at 'assertion failed: `(left == right)` (left: `2089005254`, right:
@@ -656,7 +656,7 @@ fn process_reservation(path: String,
                 // println!("logwriter starting write of idx {}", res.idx);
                 let header = res.header.load(Ordering::SeqCst);
                 let interval = (res.base_disk_offset,
-                                res.base_disk_offset + ops::offset(header as u32) as u64);
+                                res.base_disk_offset + bit_ops::offset(header as u32) as u64);
                 // println!("disk_offset: {} len: {} buf_offset: {}", res.base_disk_offset, res.len(), res.buf_offset);
 
                 res.stabilize(&mut log);
@@ -666,6 +666,46 @@ fn process_reservation(path: String,
             }
             ResOrShutdown::Shutdown => return,
         }
+    }
+}
+
+mod bit_ops {
+    #[inline(always)]
+    pub fn is_sealed(v: u32) -> bool {
+        v >> 31 == 1
+    }
+
+    #[inline(always)]
+    pub fn mk_sealed(v: u32) -> u32 {
+        v | 1 << 31
+    }
+
+    #[inline(always)]
+    pub fn n_writers(v: u32) -> u32 {
+        v << 1 >> 25
+    }
+
+    #[inline(always)]
+    pub fn incr_writers(v: u32) -> u32 {
+        assert!(n_writers(v) != 127);
+        v + (1 << 24)
+    }
+
+    #[inline(always)]
+    pub fn decr_writers(v: u32) -> u32 {
+        assert!(n_writers(v) != 0);
+        v - (1 << 24)
+    }
+
+    #[inline(always)]
+    pub fn offset(v: u32) -> u32 {
+        v << 8 >> 8
+    }
+
+    #[inline(always)]
+    pub fn bump_offset(v: u32, by: u32) -> u32 {
+        assert!(by >> 24 == 0);
+        v + by
     }
 }
 

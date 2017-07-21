@@ -76,7 +76,6 @@ impl<T> Radix<T> {
     }
 
     pub fn cas(&self, pid: PageID, old: *const T, new: *const T) -> Result<*const T, *const T> {
-        // TODO add separated part to epoch
         let tip = traverse(&*self.head, pid, true);
         if tip.is_null() {
             return Err(ptr::null_mut());
