@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::ptr;
 
 use bincode::{serialize, Infinite};
+use serde::{Serialize, Deserialize};
 
 use super::*;
 
@@ -12,7 +13,7 @@ const MAX_FRAG_LEN: usize = 7;
 
 pub trait PageMaterializer {
     type MaterializedPage;
-    type PartialPage;
+    type PartialPage: Serialize + Deserialize<'static>;
 
     fn materialize(&self, Vec<Self::PartialPage>) -> Self::MaterializedPage;
     fn consolidate(&self, Vec<Self::PartialPage>) -> Vec<Self::PartialPage>;
@@ -115,9 +116,21 @@ impl<PM> PageCache<PM>
                   new: PM::PartialPage)
                   -> Result<*const stack::Node<*const PM::PartialPage>,
                             *const stack::Node<*const PM::PartialPage>> {
+        let bytes = serialize(&new, Infinite).unwrap();
+        let log = self.log.clone();
+        let reservation = log.map(|l| l.reserve(bytes.len()));
+
         let stack_ptr = self.inner.get(pid).unwrap();
-        unsafe { (*stack_ptr).cap(old, raw(new)) }
+        let res = unsafe { (*stack_ptr).cap(old, raw(new)) };
+
+        if let Err(ptr) = res {
+            reservation.map(|r| r.abort());
+        } else {
+            reservation.map(|r| r.complete(&*bytes));
+        }
+
         // TODO GC
+        res
     }
 }
 

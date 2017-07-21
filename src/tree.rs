@@ -95,15 +95,16 @@ impl Tree {
         let frag = Frag::Set(key.clone(), value);
         loop {
             let mut path = self.path_for_key(&*key);
-            let (last_node, last_cas_key) = path.pop().unwrap();
+            let (mut last_node, last_cas_key) = path.pop().unwrap();
             // println!("last before: {:?}", last);
-            if let Ok(_) = self.pages.append(last_node.id, last_cas_key, frag.clone()) {
+            if let Ok(new_cas_key) = self.pages.append(last_node.id, last_cas_key, frag.clone()) {
+                last_node.apply(frag);
                 // println!("last after: {:?}", last);
                 let should_split = last_node.should_split();
-                path.push((last_node, last_cas_key));
+                path.push((last_node.clone(), new_cas_key));
                 // success
                 if should_split {
-                    // println!("need to split {:?}", pid);
+                    // println!("need to split {:?}", last_node.id);
                     self.recursive_split(&path);
                 }
                 break;
@@ -166,10 +167,14 @@ impl Tree {
         //  3. any traversing nodes that witness #1 but not #2 try to complete it
         //
         //  root is special case, where we need to hoist a new root
+
         let mut all_page_views = path.clone();
         let mut root_and_key = all_page_views.remove(0);
 
+        // println!("before:\n{:?}\n", self);
+
         while let Some((node, cas_key)) = all_page_views.pop() {
+            // println!("splitting node {:?}", node);
             let pid = node.id;
             if node.should_split() {
                 // try to child split
@@ -177,14 +182,18 @@ impl Tree {
                     // now try to parent split
                     // TODO(GC) double check for leaks here
 
-                    let (parent_node, parent_cas_key) = all_page_views.last_mut()
-                        .unwrap_or(&mut root_and_key)
-                        .clone();
+                    let &mut (ref mut parent_node, ref mut parent_cas_key) =
+                        all_page_views.last_mut()
+                            .unwrap_or(&mut root_and_key);
 
-                    let res = self.parent_split(parent_node, parent_cas_key, parent_split);
+                    let res = self.parent_split(parent_node.clone(),
+                                                parent_cas_key.clone(),
+                                                parent_split.clone());
                     if res.is_err() {
                         continue;
                     }
+                    parent_node.apply(Frag::ParentSplit(parent_split));
+                    *parent_cas_key = res.unwrap();
                 } else {
                     continue;
                 }
@@ -200,8 +209,8 @@ impl Tree {
                                 parent_split.to,
                                 parent_split.at.inner().unwrap());
             }
-            // println!("after:\n{:?}\n", self);
         }
+        // println!("after:\n{:?}\n", self);
     }
 
     fn child_split(&self, node: &Node, node_cas_key: Raw) -> Result<ParentSplit, ()> {
@@ -225,9 +234,6 @@ impl Tree {
 
         // try to install a child split on the left side
         if let Err(_) = self.pages.append(node.id, node_cas_key, child_split) {
-            panic!("tried to cas {:?} with {:?}",
-                   self.pages.get(node.id),
-                   node_cas_key);
             // if we failed, don't follow through with the parent split
             let this_thread = thread::current();
             let name = this_thread.name().unwrap();
@@ -247,7 +253,7 @@ impl Tree {
                     parent_node: Node,
                     parent_cas_key: Raw,
                     parent_split: ParentSplit)
-                    -> Result<(), ()> {
+                    -> Result<*const stack::Node<*const Frag>, *const stack::Node<*const Frag>> {
 
         // try to install a parent split on the index above
 
@@ -266,10 +272,9 @@ impl Tree {
                      parent_node.id,
                      parent_split.at,
                      parent_split.to);
-            return Err(());
         }
 
-        Ok(())
+        res
     }
 
     fn root_hoist(&self, from: PageID, to: PageID, at: Key) {
@@ -340,13 +345,16 @@ impl Tree {
             } else if let Some((parent_node, parent_cas_key)) = unsplit_parent.take() {
                 // we have found the proper page for
                 // our split.
+                // println!("before: {:?}", self);
 
                 let ps = Frag::ParentSplit(ParentSplit {
                     at: node.lo.clone(),
                     to: node.id.clone(),
                 });
+
                 let res = self.pages.append(parent_node.id, parent_cas_key, ps);
                 println!("trying to fix incomplete parent split: {:?}", res);
+                // println!("after: {:?}", self);
             }
 
             path.push((node.clone(), cas_key));
@@ -443,8 +451,6 @@ impl Data {
             let (lhs, rhs) = xs.split_at(xs.len() / 2 + 1);
             let split = rhs.first().unwrap().0.clone();
 
-            // println!("split {:?} to {:?} and {:?}", xs, lhs, rhs);
-
             (split, rhs.to_vec())
         }
 
@@ -480,6 +486,35 @@ pub struct Node {
 }
 
 impl Node {
+    fn apply(&mut self, frag: Frag) {
+        use self::Frag::*;
+
+        match frag {
+            Set(ref k, ref v) => {
+                if Bound::Inc(k.clone()) < self.hi {
+                    self.set_leaf(k.clone(), v.clone());
+                } else {
+                    panic!("tried to consolidate set at key <= hi")
+                }
+            }
+            ChildSplit(child_split) => {
+                self.child_split(&child_split);
+            }
+            ParentSplit(parent_split) => {
+                self.parent_split(&parent_split);
+            }
+            Del(ref k) => {
+                if Bound::Inc(k.clone()) < self.hi {
+                    self.del_leaf(k);
+                } else {
+                    panic!("tried to consolidate del at key <= hi")
+                }
+            }
+            Base(_) => panic!("encountered base page in middle of chain"),
+            _ => unimplemented!(),
+        }
+    }
+
     pub fn set_leaf(&mut self, key: Key, val: Value) {
         if let Data::Leaf(ref mut records) = self.data {
             let search = records.binary_search_by(|&(ref k, ref _v)| (**k).cmp(&*key));
@@ -538,7 +573,7 @@ impl Node {
             id: id,
             data: right_data,
             next: self.next.clone(),
-            lo: Bound::Inc(split.clone()),
+            lo: Bound::Inc(split),
             hi: self.hi.clone(),
         }
     }
@@ -600,36 +635,11 @@ impl PageMaterializer for BLinkMaterializer {
     }
 
     fn consolidate(&self, mut frags: Vec<Frag>) -> Vec<Frag> {
-        use self::Frag::*;
-
         let base_frag = frags.remove(0);
         let mut base = base_frag.base().unwrap();
 
         for frag in frags.into_iter() {
-            match frag {
-                Set(ref k, ref v) => {
-                    if Bound::Inc(k.clone()) < base.hi {
-                        base.set_leaf(k.clone(), v.clone());
-                    } else {
-                        panic!("tried to consolidate set at key <= hi")
-                    }
-                }
-                ChildSplit(child_split) => {
-                    base.child_split(&child_split);
-                }
-                ParentSplit(parent_split) => {
-                    base.parent_split(&parent_split);
-                }
-                Del(ref k) => {
-                    if Bound::Inc(k.clone()) < base.hi {
-                        base.del_leaf(k);
-                    } else {
-                        panic!("tried to consolidate del at key <= hi")
-                    }
-                }
-                Base(_) => panic!("encountered base page in middle of chain"),
-                _ => unimplemented!(),
-            }
+            base.apply(frag);
         }
 
         vec![Frag::Base(base)]
