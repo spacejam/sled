@@ -35,7 +35,7 @@ unsafe impl Send for Log {}
 unsafe impl Sync for Log {}
 
 impl Log {
-    /// create new lock-free log
+    /// Create new lock-free log.
     pub fn start_system(path: String) -> Log {
         let stable = Arc::new(AtomicUsize::new(0));
         let q = Arc::new(MsQueue::new());
@@ -57,19 +57,19 @@ impl Log {
         }
     }
 
-    /// claim a spot on disk, which can later be filled or aborted
+    /// Claim a spot on disk, which can later be filled or aborted.
     pub fn reserve(&self, sz: usize) -> Reservation {
         assert_eq!(sz >> 32, 0);
         assert!(sz <= MAX_BUF_SZ - HEADER_LEN);
         self.iobufs.reserve(sz as u32)
     }
 
-    /// write a buffer to disk
+    /// Write a buffer to disk.
     pub fn write(&self, buf: &[u8]) -> LogID {
         self.iobufs.write(buf)
     }
 
-    /// read a buffer from the disk
+    /// Read a buffer from the disk.
     pub fn read(&self, id: LogID) -> io::Result<Option<Vec<u8>>> {
         let mut f = self.file.lock().unwrap();
         f.seek(SeekFrom::Start(id))?;
@@ -110,12 +110,12 @@ impl Log {
         Ok(Some(buf))
     }
 
-    /// returns the current stable offset written to disk
+    /// Returns the current stable offset written to disk.
     pub fn stable_offset(&self) -> LogID {
         self.stable.load(Ordering::SeqCst) as LogID
     }
 
-    /// blocks until the specified id has been made stable on disk
+    /// Blocks until the specified id has been made stable on disk.
     pub fn make_stable(&self, id: LogID) {
         let mut spins = 0;
         loop {
@@ -132,12 +132,12 @@ impl Log {
         }
     }
 
-    /// shut down the writer threads
+    /// Shut down the writer threads.
     pub fn shutdown(self) {
         self.iobufs.clone().shutdown();
     }
 
-    /// deallocates the data part of a log id
+    /// Deallocates the data part of a log id.
     pub fn punch_hole(&self, id: LogID) {
         // we zero out the valid byte, and use fallocate to punch a hole
         // in the actual data, but keep the len for recovery.
@@ -163,6 +163,7 @@ impl Log {
     }
 }
 
+/// Open the log so that hole punching can be applied later on.
 fn open_log_for_punching(path: String) -> fs::File {
     let mut options = fs::OpenOptions::new();
     options.create(true);
@@ -172,6 +173,7 @@ fn open_log_for_punching(path: String) -> fs::File {
     options.open(path).unwrap()
 }
 
+/// Stores information related to IO Buffers.
 #[derive(Clone)]
 struct IOBufs {
     bufs: Vec<Arc<UnsafeCell<Vec<u8>>>>,
@@ -184,6 +186,7 @@ struct IOBufs {
 }
 
 impl Debug for IOBufs {
+    /// Implementation for prettier formatting when using debug functionality.
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         let current_buf = self.current_buf.load(Ordering::SeqCst);
         let written = self.written_bufs.load(Ordering::SeqCst);
@@ -211,6 +214,7 @@ impl Debug for IOBufs {
 unsafe impl Send for IOBufs {}
 
 impl IOBufs {
+    /// Create and initialize new IO Buffer.
     fn new(plunger: Arc<MsQueue<ResOrShutdown>>, disk_offset: usize) -> IOBufs {
         let current_buf = 1;
         let bufs = rep_no_copy![Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])); N_BUFS];
@@ -228,6 +232,7 @@ impl IOBufs {
         }
     }
 
+    /// Reserve a spot in which data can be stored later on.
     fn reserve(&self, len: u32) -> Reservation {
         let len = len + HEADER_LEN as u32;
         let mut spins = 0;
@@ -309,6 +314,7 @@ impl IOBufs {
         }
     }
 
+    /// Get a new `Reservation`.
     fn reservation(&self, buf_offset: u32, len: u32, idx: usize, last_hv: u32) -> Reservation {
         return Reservation {
             base_disk_offset: self.log_offsets[idx].load(Ordering::SeqCst) as LogID,
@@ -327,11 +333,13 @@ impl IOBufs {
         };
     }
 
+    /// Write a buffer to a previously reserved spot.
     fn write(&self, buf: &[u8]) -> LogID {
         let res = self.reserve(buf.len() as u32);
         res._write(buf, true)
     }
 
+    /// Shutdown all writer threads.
     fn shutdown(&self) {
         for _ in 0..N_WRITER_THREADS {
             self.plunger.push(ResOrShutdown::Shutdown);
@@ -339,6 +347,7 @@ impl IOBufs {
     }
 }
 
+/// Holds information for a reserved spot on disk where data can be stored later on.
 #[derive(Clone)]
 pub struct Reservation {
     base_disk_offset: LogID,
@@ -359,24 +368,25 @@ pub struct Reservation {
 unsafe impl Send for Reservation {}
 
 impl Reservation {
-    /// cancel the reservation, placing a failed flush on disk
+    /// Cancel the `Reservation`, placing a failed flush on disk.
     pub fn abort(self) {
         // fills lease with a FailedFlush
         self._seal();
         self._write(&[], false);
     }
 
-    /// complete the reservation, placing the buffer on disk at the log_id
+    /// Complete the `Reservation`, placing the buffer on disk at the log_id.
     pub fn complete(self, buf: &[u8]) -> LogID {
         self._seal();
         self._write(buf, true)
     }
 
-    /// get the log_id for accessing this buffer in the future
+    /// Get the log_id for accessing this buffer in the future.
     pub fn log_id(&self) -> LogID {
         self.base_disk_offset
     }
 
+    /// Get the length of a `Reservation`.
     fn len(&self) -> usize {
         self.res_len as usize
     }
@@ -476,11 +486,13 @@ impl Reservation {
         }
     }
 
+    /// Persist the data.
     fn persist(self) {
         let plunger = self.plunger.clone();
         plunger.push(ResOrShutdown::Res(self));
     }
 
+    /// Stabilize the log.
     fn stabilize(&self, log: &mut fs::File) -> LogID {
         // put the buf identified by idx on disk
         let data = unsafe { (*self.buf.get()).as_mut_slice() };
@@ -506,6 +518,7 @@ impl Reservation {
     }
 }
 
+/// Writes log to disk.
 struct LogWriter {
     receiver: Arc<MsQueue<ResOrShutdown>>,
     open_offset: LogID,
@@ -514,6 +527,7 @@ struct LogWriter {
 }
 
 impl LogWriter {
+    /// Creates a new `LogWriter`.
     fn new(path: String,
            receiver: Arc<MsQueue<ResOrShutdown>>,
            stable: Arc<AtomicUsize>)
@@ -533,6 +547,7 @@ impl LogWriter {
         }
     }
 
+    /// Execute the `LogWriter`.
     fn run(self) {
         let mut written_intervals = vec![];
 
@@ -642,6 +657,7 @@ fn seal_header_and_bump_offsets(header: &AtomicUsize,
     }
 }
 
+/// Reserve a process for the `Log` writing mechanism.
 #[inline(always)]
 fn process_reservation(path: String,
                        res_rx: Arc<MsQueue<ResOrShutdown>>,

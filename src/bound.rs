@@ -1,5 +1,7 @@
 use std::cmp::Ordering;
 
+/// Provides different values and utility functions for bounds. `Bound`s are e.g. used in trees to
+/// set low and high values for leaves.
 #[derive(Clone, Debug, Ord, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Bound {
     Inc(Vec<u8>),
@@ -8,6 +10,7 @@ pub enum Bound {
 }
 
 impl Bound {
+    /// Returns the inner bounds.
     pub fn inner(&self) -> Option<Vec<u8>> {
         match self {
             &Bound::Inc(ref v) => Some(v.clone()),
@@ -18,6 +21,7 @@ impl Bound {
 }
 
 impl PartialOrd for Bound {
+    /// Calculates and returns the order of bounds.
     fn partial_cmp(&self, other: &Bound) -> Option<Ordering> {
         use Bound::*;
         match *self {

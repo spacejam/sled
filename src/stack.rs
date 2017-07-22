@@ -9,23 +9,27 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 
 use {test_fail, page, Raw, raw};
 
+/// `Node` which stores `T`.
 pub struct Node<T> {
     inner: T,
     next: *const Node<T>,
 }
 
+/// Lock-free `Stack` implementation.
 #[derive(Clone)]
 pub struct Stack<T> {
     head: Arc<AtomicPtr<Node<T>>>,
 }
 
 impl<T> Default for Stack<T> {
+    /// Creates and returns a new `Stack` with an empty head pointer.
     fn default() -> Stack<T> {
         Stack { head: Arc::new(AtomicPtr::new(ptr::null_mut())) }
     }
 }
 
 impl<T: Debug> Debug for Stack<T> {
+    /// Formatting implementaiton for debugging purpose.
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         let mut ptr = self.head();
         formatter.write_str("Stack(").unwrap();
@@ -49,18 +53,21 @@ impl<T: Debug> Debug for Stack<T> {
 
 impl<T> Deref for Node<T> {
     type Target = T;
+    /// Dereferences to the inner `T` of the `Node`.
     fn deref(&self) -> &T {
         &self.inner
     }
 }
 
 impl<T> Node<T> {
+    /// Get value for next `Node` the current `Node` references to.
     pub fn next(&self) -> *const Node<T> {
         self.next
     }
 }
 
 impl<T> Drop for Stack<T> {
+    /// Cleanup logic when `Stack` is removed.
     fn drop(&mut self) {
         let mut ptr = self.head();
         while !ptr.is_null() {
@@ -71,10 +78,12 @@ impl<T> Drop for Stack<T> {
 }
 
 impl<T> Stack<T> {
+    /// Creates a new, raw `Stack`.
     pub fn from_raw(from: *const Node<T>) -> Stack<T> {
         Stack { head: Arc::new(AtomicPtr::new(from as *mut Node<T>)) }
     }
 
+    /// Creates a new `Stack` based on a given Vector.
     pub fn from_vec(from: Vec<T>) -> Stack<T> {
         let stack = Stack::default();
 
@@ -85,6 +94,7 @@ impl<T> Stack<T> {
         stack
     }
 
+    /// Pushes a new `T` on the `Stack`.
     pub fn push(&self, inner: T) {
         let mut head = self.head() as *mut _;
         let mut node = Box::into_raw(Box::new(Node {
@@ -103,6 +113,7 @@ impl<T> Stack<T> {
         }
     }
 
+    /// Pops and returns a value `T` from the `Stack`.
     pub fn pop(&self) -> Option<T> {
         loop {
             let head_ptr = self.head() as *mut _;
@@ -121,6 +132,7 @@ impl<T> Stack<T> {
         }
     }
 
+    /// Pops and returns all values `T` from the `Stack`.
     pub fn pop_all(&self) -> Vec<T> {
         let mut node_ptr = self.head.swap(ptr::null_mut(), Ordering::SeqCst);
         let mut res = vec![];
@@ -132,7 +144,7 @@ impl<T> Stack<T> {
         res
     }
 
-    /// compare and push
+    /// Compare and push operation for `Node` values which should be pushed onto the `Stack`.
     pub fn cap(&self, old: *const Node<T>, new: T) -> Result<*const Node<T>, *const Node<T>> {
         let node = Box::into_raw(Box::new(Node {
             inner: new,
@@ -146,7 +158,7 @@ impl<T> Stack<T> {
         }
     }
 
-    /// attempt consolidation
+    /// Compare and swap operation for `Node` values.
     pub fn cas(&self,
                old: *const Node<T>,
                new: *const Node<T>)
@@ -159,6 +171,7 @@ impl<T> Stack<T> {
         }
     }
 
+    /// Iterates over the `Stack`
     pub fn iter_at_head(&self) -> (*const Node<T>, StackIter<T>) {
         let head = self.head();
         if head.is_null() {
@@ -171,10 +184,12 @@ impl<T> Stack<T> {
         })
     }
 
+    /// Get the `Stack` head `Node`
     pub fn head(&self) -> *const Node<T> {
         self.head.load(Ordering::Acquire)
     }
 
+    /// Length of the `Stack`
     pub fn len(&self) -> usize {
         let mut len = 0;
         let mut head = self.head();
@@ -186,12 +201,14 @@ impl<T> Stack<T> {
     }
 }
 
+/// Stack iterator. Used to iterate over a `Stack`.
 pub struct StackIter<'a, T: 'a> {
     inner: *const Node<T>,
     marker: PhantomData<&'a Node<T>>,
 }
 
 impl<'a, T: 'a> StackIter<'a, T> {
+    /// Constructs a Stack iterator based on a `Node` pointer.
     pub fn from_ptr(ptr: *const Node<T>) -> StackIter<'a, T> {
         StackIter {
             inner: ptr,
@@ -202,6 +219,7 @@ impl<'a, T: 'a> StackIter<'a, T> {
 
 impl<'a, T> Iterator for StackIter<'a, T> {
     type Item = &'a T;
+    /// Move to the next `Stack` item.
     fn next(&mut self) -> Option<Self::Item> {
         if self.inner.is_null() {
             None
@@ -219,6 +237,7 @@ impl<'a, T> IntoIterator for &'a Stack<T> {
     type Item = &'a T;
     type IntoIter = StackIter<'a, T>;
 
+    /// Returns a `Stack` iterator.
     fn into_iter(self) -> Self::IntoIter {
         StackIter {
             inner: self.head(),
@@ -227,6 +246,7 @@ impl<'a, T> IntoIterator for &'a Stack<T> {
     }
 }
 
+/// Creates a `Node` based on a `Frag` vector of type `T`.
 pub fn node_from_frag_vec<T>(from: Vec<T>) -> *const Node<*const T> {
     use std::ptr;
     let mut last = ptr::null();
