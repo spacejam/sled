@@ -511,7 +511,6 @@ impl Node {
                 }
             }
             Base(_) => panic!("encountered base page in middle of chain"),
-            _ => unimplemented!(),
         }
     }
 
