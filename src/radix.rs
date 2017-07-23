@@ -14,6 +14,7 @@ const FANFACTOR: usize = 6;
 const FANOUT: usize = 1 << FANFACTOR;
 const FAN_MASK: usize = FANOUT - 1;
 
+/// Calculates split bounds according to given fanout constants.
 #[inline(always)]
 fn split_fanout(i: usize) -> (usize, usize) {
     let rem = i >> FANFACTOR;
@@ -21,6 +22,7 @@ fn split_fanout(i: usize) -> (usize, usize) {
     (first_6, rem)
 }
 
+/// Node which stores an inner T and children.
 #[derive(Clone)]
 struct Node<T> {
     inner: Arc<AtomicPtr<T>>,
@@ -28,6 +30,7 @@ struct Node<T> {
 }
 
 impl<T> Default for Node<T> {
+    /// Creates a new node with a basic inner T pointer and children.
     fn default() -> Node<T> {
         let children = rep_no_copy!(AtomicPtr::new(ptr::null_mut()); FANOUT);
         Node {
@@ -38,6 +41,7 @@ impl<T> Default for Node<T> {
 }
 
 impl<T> Drop for Node<T> {
+    /// Cleanup logic (deallocating children) when Node is removed.
     fn drop(&mut self) {
         for c in self.children.iter() {
             let ptr = c.load(Ordering::SeqCst);
@@ -49,11 +53,13 @@ impl<T> Drop for Node<T> {
 }
 
 #[derive(Clone)]
+/// Lock-free radix tree implementation. Maps PageIDs to T's.
 pub struct Radix<T> {
     head: Arc<Node<T>>,
 }
 
 impl<T> Default for Radix<T> {
+    /// Creates a new radix tree with a default Node as head.
     fn default() -> Radix<T> {
         let head = Node::default();
         Radix { head: Arc::new(head) }
@@ -61,10 +67,12 @@ impl<T> Default for Radix<T> {
 }
 
 impl<T> Radix<T> {
+    /// Insert a new PageID with an inner T in an atomic CAS operation.
     pub fn insert(&self, pid: PageID, inner: *const T) -> Result<*const T, *const T> {
         self.cas(pid, ptr::null_mut(), inner)
     }
 
+    /// Swaps new value for T in PageID.
     pub fn swap(&self, pid: PageID, new: *const T) -> *const T {
         let tip = traverse(&*self.head, pid, true);
         if tip.is_null() {
@@ -75,6 +83,7 @@ impl<T> Radix<T> {
         unsafe { (*tip).inner.swap(new as *mut _, Ordering::SeqCst) }
     }
 
+    /// CAS implementation which is used to e.g. store a value for a given PageID.
     pub fn cas(&self, pid: PageID, old: *const T, new: *const T) -> Result<*const T, *const T> {
         let tip = traverse(&*self.head, pid, true);
         if tip.is_null() {
@@ -92,6 +101,7 @@ impl<T> Radix<T> {
         }
     }
 
+    /// Returns the inner T for a given PageID.
     pub fn get(&self, pid: PageID) -> Option<*const T> {
         let tip = traverse(&*self.head, pid, false);
         if tip.is_null() {
@@ -105,11 +115,13 @@ impl<T> Radix<T> {
         }
     }
 
+    /// Deletes the whole page.
     pub fn del(&self, pid: PageID) -> *const T {
         self.swap(pid, ptr::null_mut())
     }
 }
 
+/// Traverses the whole radix tree to return the requested Node.
 #[inline(always)]
 fn traverse<T>(ptr: *const Node<T>, pid: PageID, create_intermediate: bool) -> *const Node<T> {
     if pid == 0 {

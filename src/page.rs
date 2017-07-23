@@ -11,6 +11,7 @@ use super::*;
 
 const MAX_FRAG_LEN: usize = 7;
 
+/// Interface for trees to interact with `PageCache`.
 pub trait PageMaterializer {
     type MaterializedPage;
     type PartialPage: Serialize + Deserialize<'static>;
@@ -19,6 +20,7 @@ pub trait PageMaterializer {
     fn consolidate(&self, Vec<Self::PartialPage>) -> Vec<Self::PartialPage>;
 }
 
+/// Lock-free page cache to manage `Page`s.
 pub struct PageCache<PM>
     where PM: PageMaterializer
 {
@@ -30,6 +32,7 @@ pub struct PageCache<PM>
 }
 
 impl<PM: PageMaterializer> Debug for PageCache<PM> {
+    /// Pretty formatting for debugging purpose.
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         f.write_str(&*format!("PageCache {{ max: {:?} free: {:?} }}\n",
                               self.max_id.load(SeqCst),
@@ -41,6 +44,7 @@ impl<PM> PageCache<PM>
     where PM: PageMaterializer,
           PM::PartialPage: Clone
 {
+    /// Creates a new `PageCache` instance
     pub fn new(pm: PM, log: Option<Arc<Log>>) -> PageCache<PM> {
         PageCache {
             t: pm,
@@ -51,6 +55,7 @@ impl<PM> PageCache<PM>
         }
     }
 
+    /// Allocates space for a new `PartialPage`.
     pub fn allocate(&self) -> (PageID, *const stack::Node<*const PM::PartialPage>) {
         let pid = self.free.pop().unwrap_or_else(|| self.max_id.fetch_add(1, SeqCst));
         let stack = raw(Stack::default());
@@ -58,6 +63,7 @@ impl<PM> PageCache<PM>
         (pid, ptr::null())
     }
 
+    /// Frees a `Page`'s space.
     pub fn free(&self, pid: PageID) {
         // TODO epoch-based gc for reusing pid & freeing stack
         if pid == 0 {
@@ -73,6 +79,7 @@ impl<PM> PageCache<PM>
         }
     }
 
+    /// Returns a `Page` from the cache.
     pub fn get(&self,
                pid: PageID)
                -> Option<(PM::MaterializedPage, *const stack::Node<*const PM::PartialPage>)> {
@@ -110,6 +117,7 @@ impl<PM> PageCache<PM>
         Some((materialized, head))
     }
 
+    /// Appends a new `PartialPage` to a given `PageID`.
     pub fn append(&self,
                   pid: PageID,
                   old: *const stack::Node<*const PM::PartialPage>,

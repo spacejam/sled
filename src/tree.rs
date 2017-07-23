@@ -8,6 +8,7 @@ use super::*;
 
 const FANOUT: usize = 2;
 
+/// Tree implementation which consists of `Page`s.
 #[derive(Clone)]
 pub struct Tree {
     pages: Arc<PageCache<BLinkMaterializer>>,
@@ -15,6 +16,7 @@ pub struct Tree {
 }
 
 impl Tree {
+    /// Create and setup a new `Tree`.
     pub fn new() -> Tree {
         let pages = PageCache::new(BLinkMaterializer, None);
 
@@ -49,6 +51,7 @@ impl Tree {
         }
     }
 
+    /// Get a value based on a key.
     pub fn get(&self, key: &[u8]) -> Option<Value> {
         // println!("starting get");
         let (_, ret) = self.get_internal(key);
@@ -56,6 +59,7 @@ impl Tree {
         ret
     }
 
+    /// Compare and swap operation to store new values in `Tree`.
     pub fn cas(&self, key: Key, old: Option<Value>, new: Value) -> Result<(), Option<Value>> {
         // we need to retry caps until old != cur, since just because
         // cap fails it doesn't mean our value was changed.
@@ -71,6 +75,7 @@ impl Tree {
         }
     }
 
+    /// Internally used method to get a value from the `Tree` based on a key.
     fn get_internal(&self, key: &[u8]) -> (Vec<(Node, Raw)>, Option<Value>) {
         let path = self.path_for_key(&*key);
         let (last_node, _last_cas_key) = path.last().cloned().unwrap();
@@ -90,6 +95,7 @@ impl Tree {
         }
     }
 
+    /// Set a value based on a key.
     pub fn set(&self, key: Key, value: Value) {
         // println!("starting set of {:?} -> {:?}", key, value);
         let frag = Frag::Set(key.clone(), value);
@@ -116,6 +122,7 @@ impl Tree {
         // println!("done set of {:?}", key);
     }
 
+    /// Delete a value from the `Tree` based on a given key.
     pub fn del(&self, key: &[u8]) -> Option<Value> {
         let mut ret: Option<Value>;
         loop {
@@ -146,6 +153,7 @@ impl Tree {
         ret
     }
 
+    /// Split the whole `Tree` recursively.
     fn recursive_split(&self, path: &Vec<(Node, Raw)>) {
         // to split, we pop the path, see if it's in need of split, recurse up
         // two-phase: (in prep for lock-free, not necessary for single threaded)
@@ -213,6 +221,7 @@ impl Tree {
         // println!("after:\n{:?}\n", self);
     }
 
+    /// Split child `Node`s.
     fn child_split(&self, node: &Node, node_cas_key: Raw) -> Result<ParentSplit, ()> {
         let (new_pid, new_cas_key) = self.pages.allocate();
 
@@ -249,6 +258,7 @@ impl Tree {
         Ok(parent_split)
     }
 
+    /// Split parent `Node`s.
     fn parent_split(&self,
                     parent_node: Node,
                     parent_cas_key: Raw,
@@ -277,6 +287,7 @@ impl Tree {
         res
     }
 
+    /// Hoist a `Node` to be the new root `Node`.
     fn root_hoist(&self, from: PageID, to: PageID, at: Key) {
         // hoist new root, pointing to lhs & rhs
         let (new_root_pid, new_root_cas_key) = self.pages.allocate();
@@ -306,6 +317,7 @@ impl Tree {
         }
     }
 
+    /// Used for easier debugging for given keys.
     pub fn key_debug_str(&self, key: &[u8]) -> String {
         let path = self.path_for_key(key);
         let mut ret = String::new();
@@ -315,7 +327,7 @@ impl Tree {
         ret
     }
 
-    /// returns the traversal path, completing any observed
+    /// Returns the traversal path, completing any observed
     /// partially complete splits or merges along the way.
     fn path_for_key(&self, key: &[u8]) -> Vec<(Node, Raw)> {
         let key_bound = Bound::Inc(key.into());
@@ -384,6 +396,7 @@ impl Tree {
 }
 
 impl Debug for Tree {
+    /// Functionality to get prettier output when using the debug printing.
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         let mut pid = self.root.load(SeqCst);
         let mut left_most = pid.clone();
@@ -437,6 +450,7 @@ pub enum Data {
 }
 
 impl Data {
+    /// Length of the data stored in `Tree`.
     fn len(&self) -> usize {
         match *self {
             Data::Index(ref ptrs) => ptrs.len(),
@@ -444,6 +458,7 @@ impl Data {
         }
     }
 
+    /// Split `Index` or `Leaf` data.
     fn split(&self) -> (Key, Data) {
         fn split_inner<T>(xs: &Vec<(Key, T)>) -> (Key, Vec<(Key, T)>)
             where T: Clone + Debug
@@ -466,6 +481,7 @@ impl Data {
         }
     }
 
+    /// Drop `Data` which exceeds provided bound.
     fn drop_gte(&mut self, at: &Bound) {
         let bound = at.inner().unwrap();
         match *self {
@@ -475,7 +491,7 @@ impl Data {
     }
 }
 
-
+/// `Tree` `Node` which stores the actual `Data` and metadata about itself and nearby `Node`s.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Node {
     pub id: PageID,
@@ -486,6 +502,7 @@ pub struct Node {
 }
 
 impl Node {
+    /// Apply a `Frag` update to a `Node`.
     fn apply(&mut self, frag: Frag) {
         use self::Frag::*;
 
@@ -514,6 +531,7 @@ impl Node {
         }
     }
 
+    /// Set a new leaf for a given `Node`.
     pub fn set_leaf(&mut self, key: Key, val: Value) {
         if let Data::Leaf(ref mut records) = self.data {
             let search = records.binary_search_by(|&(ref k, ref _v)| (**k).cmp(&*key));
@@ -529,12 +547,14 @@ impl Node {
         }
     }
 
+    /// Perform a child split for the `Node`.
     pub fn child_split(&mut self, cs: &ChildSplit) {
         self.data.drop_gte(&cs.at);
         self.hi = Bound::Non(cs.at.inner().unwrap());
         self.next = Some(cs.to);
     }
 
+    /// Perform a parent split for the `Node`.
     pub fn parent_split(&mut self, ps: &ParentSplit) {
         // println!("splitting parent: {:?}\nwith {:?}", self, ps);
         if let Data::Index(ref mut ptrs) = self.data {
@@ -545,6 +565,7 @@ impl Node {
         }
     }
 
+    /// Delete a leaf.
     pub fn del_leaf(&mut self, key: &Key) {
         if let Data::Leaf(ref mut records) = self.data {
             let search = records.binary_search_by(|&(ref k, ref _v)| (**k).cmp(key));
@@ -558,6 +579,7 @@ impl Node {
         }
     }
 
+    /// Check if a split is necessary based on a given fanout constant.
     pub fn should_split(&self) -> bool {
         if self.data.len() > FANOUT {
             true
@@ -566,6 +588,7 @@ impl Node {
         }
     }
 
+    /// Perform split operation on `Node`.
     pub fn split(&self, id: PageID) -> Node {
         let (split, right_data) = self.data.split();
         Node {
@@ -578,18 +601,21 @@ impl Node {
     }
 }
 
+/// Necessary information about a `ParentSplit`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ParentSplit {
     pub at: Bound,
     pub to: PageID,
 }
 
+/// Necessary information about a `ChildSplit`
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChildSplit {
     pub at: Bound,
     pub to: PageID,
 }
 
+/// Information about a potential update for a `Node`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Frag {
     Set(Key, Value),
@@ -610,6 +636,7 @@ pub enum Frag {
 // TxAbort(TxID), // in-mem
 
 impl Frag {
+    /// Get the `Frag`s base.
     fn base(&self) -> Option<tree::Node> {
         match *self {
             Frag::Base(ref base) => Some(base.clone()),
@@ -618,6 +645,7 @@ impl Frag {
     }
 }
 
+/// B-Link tree implementation for interacting with the `PageCache`.
 pub struct BLinkMaterializer;
 
 impl PageMaterializer for BLinkMaterializer {
