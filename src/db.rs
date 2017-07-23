@@ -31,3 +31,22 @@ impl DB {
         self.tree.del(&*k);
     }
 }
+
+#[test]
+fn basic_functionality() {
+    let db = DB::open();
+    let esl = &db.esl;
+    assert_eq!(esl.load(Ordering::SeqCst), 0);
+
+    db.insert(vec![1], vec![42]);
+    assert_eq!(esl.load(Ordering::SeqCst), 1);
+
+    let result = db.read(vec![1]);
+    assert_eq!(result, Some(vec![42]));
+
+    db.del(vec![1]);
+    assert_eq!(esl.load(Ordering::SeqCst), 2);
+
+    let result = db.read(vec![1]);
+    assert_eq!(result, None);
+}
