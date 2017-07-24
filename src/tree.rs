@@ -8,6 +8,8 @@ use super::*;
 
 const FANOUT: usize = 2;
 
+type Raw = *const stack::Node<*const tree::Frag>;
+
 #[derive(Clone)]
 pub struct Tree {
     pages: Arc<PageCache<BLinkMaterializer>>,
@@ -175,7 +177,6 @@ impl Tree {
 
         while let Some((node, cas_key)) = all_page_views.pop() {
             // println!("splitting node {:?}", node);
-            let pid = node.id;
             if node.should_split() {
                 // try to child split
                 if let Ok(parent_split) = self.child_split(&node, cas_key) {
@@ -394,7 +395,7 @@ impl Debug for Tree {
         f.write_str("\tlevel 0:\n").unwrap();
 
         loop {
-            let (node, cas_key) = self.pages.get(pid).unwrap();
+            let (node, _cas_key) = self.pages.get(pid).unwrap();
 
             f.write_str("\t\t").unwrap();
             node.fmt(f).unwrap();
@@ -404,7 +405,7 @@ impl Debug for Tree {
                 pid = next_pid;
             } else {
                 // we've traversed our level, time to bump down
-                let (left_node, left_cas_key) = self.pages.get(left_most).unwrap();
+                let (left_node, _left_cas_key) = self.pages.get(left_most).unwrap();
 
                 match left_node.data {
                     Data::Index(ptrs) => {
@@ -448,7 +449,7 @@ impl Data {
         fn split_inner<T>(xs: &Vec<(Key, T)>) -> (Key, Vec<(Key, T)>)
             where T: Clone + Debug
         {
-            let (lhs, rhs) = xs.split_at(xs.len() / 2 + 1);
+            let (_lhs, rhs) = xs.split_at(xs.len() / 2 + 1);
             let split = rhs.first().unwrap().0.clone();
 
             (split, rhs.to_vec())

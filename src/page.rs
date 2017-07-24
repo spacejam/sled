@@ -118,15 +118,15 @@ impl<PM> PageCache<PM>
                             *const stack::Node<*const PM::PartialPage>> {
         let bytes = serialize(&new, Infinite).unwrap();
         let log = self.log.clone();
-        let reservation = log.map(|l| l.reserve(bytes.len()));
+        let reservation = log.map(|l| l.reserve(bytes));
 
         let stack_ptr = self.inner.get(pid).unwrap();
         let res = unsafe { (*stack_ptr).cap(old, raw(new)) };
 
-        if let Err(ptr) = res {
+        if let Err(_ptr) = res {
             reservation.map(|r| r.abort());
         } else {
-            reservation.map(|r| r.complete(&*bytes));
+            reservation.map(|r| r.complete());
         }
 
         // TODO GC
