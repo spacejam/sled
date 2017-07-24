@@ -15,7 +15,7 @@ pub use tree::Tree;
 // lock-free pagecache
 pub use page::PageCache;
 // lock-free log-structured storage
-pub use log::{Log, N_BUFS, HEADER_LEN, MAX_BUF_SZ};
+pub use log::{Log, N_BUFS, HEADER_LEN, MAX_BUF_SZ, MemLog, LockFreeLog};
 // lock-free stack
 pub use stack::Stack;
 // lock-free radix tree

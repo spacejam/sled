@@ -1,7 +1,7 @@
 use std::fmt::{self, Debug};
 use std::fs;
 use std::io::{self, Read, Write, Seek, SeekFrom, Error, ErrorKind};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 use std::cell::UnsafeCell;
@@ -17,53 +17,55 @@ pub const HEADER_LEN: usize = 7;
 pub const MAX_BUF_SZ: usize = 2 << 22; // 8mb
 pub const N_BUFS: usize = 2;
 
-/// `Log` is responsible for putting data on disk, and retrieving
-/// it later on.
-#[derive(Clone)]
-pub struct Log {
-    iobufs: Arc<IOBufs>,
-    stable: Arc<AtomicUsize>,
-    path: String,
-    // TODO thread-local file to eliminate sharing and serialization with mutex
-    file: Arc<Mutex<fs::File>>,
+pub trait Log: Send + Sync {
+    fn reserve(&self, Vec<u8>) -> Reservation;
+    fn write(&self, Vec<u8>) -> LogID;
+    fn read(&self, id: LogID) -> io::Result<Option<Vec<u8>>>;
+    fn stable_offset(&self) -> LogID;
+    fn make_stable(&self, id: LogID);
+    fn punch_hole(&self, id: LogID);
 }
 
-unsafe impl Send for Log {}
-unsafe impl Sync for Log {}
+/// `LockFreeLog` is responsible for putting data on disk, and retrieving
+/// it later on.
+pub struct LockFreeLog {
+    iobufs: IOBufs,
+}
 
-impl Log {
+unsafe impl Send for LockFreeLog {}
+unsafe impl Sync for LockFreeLog {}
+
+impl LockFreeLog {
     /// create new lock-free log
-    pub fn start_system(path: String) -> Log {
-        let stable = Arc::new(AtomicUsize::new(0));
-
+    pub fn start_system(path: String) -> LockFreeLog {
         let cur_id = fs::metadata(path.clone()).map(|m| m.len()).unwrap_or(0);
-        stable.store(cur_id as usize, SeqCst);
 
-        let iobufs = Arc::new(IOBufs::new(path.clone(), cur_id as usize, stable.clone()));
+        let mut options = fs::OpenOptions::new();
+        options.create(true);
+        options.read(true);
+        options.write(true);
+        let file = options.open(path).unwrap();
 
-        let file = Arc::new(Mutex::new(open_log_for_punching(path.clone())));
+        let iobufs = IOBufs::new(file, cur_id as usize);
 
-        Log {
-            iobufs: iobufs,
-            stable: stable,
-            path: path,
-            file: file,
-        }
+        LockFreeLog { iobufs: iobufs }
     }
+}
 
+impl Log for LockFreeLog {
     /// claim a spot on disk, which can later be filled or aborted
-    pub fn reserve(&self, buf: Vec<u8>) -> Reservation {
+    fn reserve(&self, buf: Vec<u8>) -> Reservation {
         self.iobufs.reserve(buf)
     }
 
     /// write a buffer to disk
-    pub fn write(&self, buf: Vec<u8>) -> LogID {
+    fn write(&self, buf: Vec<u8>) -> LogID {
         self.iobufs.write(buf)
     }
 
     /// read a buffer from the disk
-    pub fn read(&self, id: LogID) -> io::Result<Option<Vec<u8>>> {
-        let mut f = self.file.lock().unwrap();
+    fn read(&self, id: LogID) -> io::Result<Option<Vec<u8>>> {
+        let mut f = self.iobufs.file.lock().unwrap();
         f.seek(SeekFrom::Start(id))?;
 
         let mut valid = [0u8; 1];
@@ -103,12 +105,12 @@ impl Log {
     }
 
     /// returns the current stable offset written to disk
-    pub fn stable_offset(&self) -> LogID {
-        self.stable.load(SeqCst) as LogID
+    fn stable_offset(&self) -> LogID {
+        self.iobufs.stable.load(SeqCst) as LogID
     }
 
     /// blocks until the specified id has been made stable on disk
-    pub fn make_stable(&self, id: LogID) {
+    fn make_stable(&self, id: LogID) {
         let mut spins = 0;
         loop {
             spins += 1;
@@ -117,7 +119,7 @@ impl Log {
                          thread::current().name());
                 spins = 0;
             }
-            let cur = self.stable.load(SeqCst) as LogID;
+            let cur = self.iobufs.stable.load(SeqCst) as LogID;
             if cur > id {
                 return;
             }
@@ -127,10 +129,10 @@ impl Log {
     }
 
     /// deallocates the data part of a log id
-    pub fn punch_hole(&self, id: LogID) {
+    fn punch_hole(&self, id: LogID) {
         // we zero out the valid byte, and use fallocate to punch a hole
         // in the actual data, but keep the len for recovery.
-        let mut f = self.file.lock().unwrap();
+        let mut f = self.iobufs.file.lock().unwrap();
         // zero out valid bit
         f.seek(SeekFrom::Start(id)).unwrap();
         let zeros = vec![0];
@@ -152,24 +154,15 @@ impl Log {
     }
 }
 
-fn open_log_for_punching(path: String) -> fs::File {
-    let mut options = fs::OpenOptions::new();
-    options.create(true);
-    options.read(true);
-    options.write(true);
-    options.open(path).unwrap()
-}
-
-#[derive(Clone)]
 struct IOBufs {
-    path: String,
-    bufs: Vec<Arc<UnsafeCell<Vec<u8>>>>,
-    headers: Vec<Arc<AtomicUsize>>,
-    log_offsets: Vec<Arc<AtomicUsize>>,
-    current_buf: Arc<AtomicUsize>,
-    written_bufs: Arc<AtomicUsize>,
-    intervals: Arc<Mutex<Vec<(LogID, LogID)>>>,
-    stable: Arc<AtomicUsize>,
+    file: Mutex<fs::File>,
+    bufs: Vec<UnsafeCell<Vec<u8>>>,
+    headers: Vec<AtomicUsize>,
+    log_offsets: Vec<AtomicUsize>,
+    current_buf: AtomicUsize,
+    written_bufs: AtomicUsize,
+    intervals: Mutex<Vec<(LogID, LogID)>>,
+    stable: AtomicUsize,
 }
 
 impl Debug for IOBufs {
@@ -179,7 +172,7 @@ impl Debug for IOBufs {
         let slow_writers = current_buf - written >= N_BUFS;
         let idx = current_buf % N_BUFS;
         // load current header value
-        let header = self.headers[idx % N_BUFS].clone();
+        let ref header = self.headers[idx % N_BUFS];
         let hv = header.load(SeqCst) as u32;
         let n_writers = bit_ops::n_writers(hv);
         let offset = bit_ops::offset(hv);
@@ -201,20 +194,21 @@ unsafe impl Send for IOBufs {}
 unsafe impl Sync for IOBufs {}
 
 impl IOBufs {
-    fn new(path: String, disk_offset: usize, stable: Arc<AtomicUsize>) -> IOBufs {
+    fn new(file: fs::File, disk_offset: usize) -> IOBufs {
+        let stable = AtomicUsize::new(disk_offset);
         let current_buf = 0;
-        let bufs = rep_no_copy![Arc::new(UnsafeCell::new(vec![0; MAX_BUF_SZ])); N_BUFS];
-        let headers = rep_no_copy![Arc::new(AtomicUsize::new(0)); N_BUFS];
-        let log_offsets = rep_no_copy![Arc::new(AtomicUsize::new(std::usize::MAX)); N_BUFS];
+        let bufs = rep_no_copy![UnsafeCell::new(vec![0; MAX_BUF_SZ]); N_BUFS];
+        let headers = rep_no_copy![AtomicUsize::new(0); N_BUFS];
+        let log_offsets = rep_no_copy![AtomicUsize::new(std::usize::MAX); N_BUFS];
         log_offsets[current_buf].store(disk_offset, SeqCst);
         IOBufs {
-            path: path,
+            file: Mutex::new(file),
             bufs: bufs,
             headers: headers,
             log_offsets: log_offsets,
-            current_buf: Arc::new(AtomicUsize::new(current_buf)),
-            written_bufs: Arc::new(AtomicUsize::new(0)),
-            intervals: Arc::new(Mutex::new(vec![])),
+            current_buf: AtomicUsize::new(current_buf),
+            written_bufs: AtomicUsize::new(0),
+            intervals: Mutex::new(vec![]),
             stable: stable,
         }
     }
@@ -246,7 +240,7 @@ impl IOBufs {
             }
 
             // load current header value
-            let header = self.headers[idx % N_BUFS].clone();
+            let ref header = self.headers[idx % N_BUFS];
             let mut hv = header.load(SeqCst) as u32;
 
             // skip if already sealed
@@ -383,23 +377,18 @@ impl IOBufs {
         res.complete()
     }
 
-    fn flush(&self, res: Reservation) {
-        let mut out_buf = unsafe { (*self.bufs[res.idx % N_BUFS].get()).as_mut_slice() };
+    fn flush(&self, idx: usize, buf_offset: usize, data: &[u8]) {
+        let mut out_buf = unsafe { (*self.bufs[idx % N_BUFS].get()).as_mut_slice() };
 
-        let start = res.buf_offset as usize;
-        let data_end = start + res.res_buf.len();
+        let data_end = buf_offset + data.len();
 
-        (out_buf)[start..data_end].copy_from_slice(&*res.res_buf);
+        (out_buf)[buf_offset..data_end].copy_from_slice(data);
 
-        self.decr_writers_maybe_slam(res)
+        self.decr_writers_maybe_slam(idx)
     }
 
-    fn decr_writers_maybe_slam(&self, res: Reservation) {
-        let mut hv = self.headers[res.idx % N_BUFS].load(SeqCst) as u32;
-
-        assert_ne!(res.base_disk_offset as usize,
-                   std::usize::MAX,
-                   "created reservation for uninitialized slot");
+    fn decr_writers_maybe_slam(&self, idx: usize) {
+        let mut hv = self.headers[idx % N_BUFS].load(SeqCst) as u32;
 
         // decr writer count, retrying
         let mut spins = 0;
@@ -410,14 +399,13 @@ impl IOBufs {
                 spins = 0;
             }
             let new_hv = bit_ops::decr_writers(hv) as usize;
-            let old_hv = self.headers[res.idx % N_BUFS]
-                .compare_and_swap(hv as usize, new_hv, SeqCst);
+            let old_hv = self.headers[idx % N_BUFS].compare_and_swap(hv as usize, new_hv, SeqCst);
             if old_hv == hv as usize {
                 // succeeded in decrementing writers, if we set it to 0 and it's
                 // sealed then we should persist it.
                 if bit_ops::n_writers(new_hv as u32) == 0 && bit_ops::is_sealed(new_hv as u32) {
                     // the actual buffer offset for writing is communicated in new_hv
-                    self.write_to_log(res.idx);
+                    self.write_to_log(idx);
                 }
 
                 return;
@@ -434,16 +422,17 @@ impl IOBufs {
 
     // sends the reservation to a writer thread
     fn write_to_log(&self, idx: usize) {
-        #[inline(always)]
-        let mut options = fs::OpenOptions::new();
-        options.write(true).create(true);
-        let mut log = options.open(self.path.clone()).unwrap();
+        let mut log = self.file.lock().unwrap();
 
         // println!("logwriter starting write of idx {}", idx);
 
         let header = self.headers[idx % N_BUFS].load(SeqCst) as u32;
         let log_offset = self.log_offsets[idx % N_BUFS].load(SeqCst) as u64;
         let interval = (log_offset, log_offset + bit_ops::offset(header) as u64);
+
+        assert_ne!(log_offset as usize,
+                   std::usize::MAX,
+                   "created reservation for uninitialized slot");
 
         let data = unsafe { (*self.bufs[idx % N_BUFS].get()).as_mut_slice() };
 
@@ -492,18 +481,18 @@ impl IOBufs {
 }
 
 #[derive(Clone)]
-pub struct Reservation {
+pub struct Reservation<'a> {
+    iobufs: &'a IOBufs,
     idx: usize,
-    iobufs: IOBufs,
     res_buf: Vec<u8>,
     buf_offset: u32,
     flushed: bool,
     base_disk_offset: LogID,
 }
 
-unsafe impl Send for Reservation {}
+unsafe impl<'a> Send for Reservation<'a> {}
 
-impl Drop for Reservation {
+impl<'a> Drop for Reservation<'a> {
     fn drop(&mut self) {
         // We auto-abort if the user never uses a reservation.
         if !self.res_buf.is_empty() && !self.flushed {
@@ -512,7 +501,7 @@ impl Drop for Reservation {
     }
 }
 
-impl Reservation {
+impl<'a> Reservation<'a> {
     /// cancel the reservation, placing a failed flush on disk
     pub fn abort(self) {
         self.flush(false);
@@ -539,7 +528,7 @@ impl Reservation {
             zero_failed_buf(&mut self.res_buf);
         }
 
-        self.iobufs.flush(self.clone());
+        self.iobufs.flush(self.idx, self.buf_offset as usize, &*self.res_buf);
 
         self.log_id()
     }
@@ -619,5 +608,42 @@ mod bit_ops {
     pub fn bump_offset(v: u32, by: u32) -> u32 {
         assert!(by >> 24 == 0);
         v + by
+    }
+}
+
+pub struct MemLog {
+    inner: LockFreeLog,
+}
+
+impl MemLog {
+    pub fn new() -> MemLog {
+        let log = LockFreeLog::start_system("/dev/shm/__rsdb_memory.log".to_owned());
+        MemLog { inner: log }
+    }
+}
+
+impl Log for MemLog {
+    fn reserve(&self, buf: Vec<u8>) -> Reservation {
+        self.inner.reserve(buf)
+    }
+
+    fn write(&self, buf: Vec<u8>) -> LogID {
+        self.inner.write(buf)
+    }
+
+    fn read(&self, id: LogID) -> io::Result<Option<Vec<u8>>> {
+        self.inner.read(id)
+    }
+
+    fn stable_offset(&self) -> LogID {
+        self.inner.stable_offset()
+    }
+
+    fn make_stable(&self, id: LogID) {
+        self.inner.make_stable(id);
+    }
+
+    fn punch_hole(&self, id: LogID) {
+        self.inner.punch_hole(id);
     }
 }

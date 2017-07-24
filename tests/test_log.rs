@@ -5,11 +5,12 @@ extern crate rand;
 extern crate rsdb;
 
 use std::thread;
+use std::sync::Arc;
 
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::Rng;
 
-use rsdb::Log;
+use rsdb::{LockFreeLog, Log};
 
 #[derive(Debug, Clone)]
 enum Op {
@@ -62,7 +63,7 @@ impl Arbitrary for OpVec {
 
 fn prop_read_stable(ops: OpVec) -> bool {
     use self::Op::*;
-    let log = Log::start_system("test_rsdb_quickcheck.log".to_owned());
+    let log = LockFreeLog::start_system("test_rsdb_quickcheck.log".to_owned());
     for op in ops.ops.into_iter() {
         match op {
             Write(buf) => {
@@ -92,7 +93,7 @@ fn qc_merge_converges() {
 
 #[test]
 fn more_reservations_than_buffers() {
-    let log = Log::start_system("test_more_reservations_than_buffers.log".to_owned());
+    let log = LockFreeLog::start_system("test_more_reservations_than_buffers.log".to_owned());
     let mut reservations = vec![];
     for _ in 0..rsdb::N_BUFS + 1 {
         reservations.push(log.reserve(vec![0; rsdb::MAX_BUF_SZ - rsdb::HEADER_LEN]))
@@ -105,7 +106,7 @@ fn more_reservations_than_buffers() {
 
 #[test]
 fn non_contiguous_flush() {
-    let log = Log::start_system("test_non_contiguous_flush.log".to_owned());
+    let log = LockFreeLog::start_system("test_non_contiguous_flush.log".to_owned());
     let res1 = log.reserve(vec![0; rsdb::MAX_BUF_SZ - rsdb::HEADER_LEN]);
     let res2 = log.reserve(vec![0; rsdb::MAX_BUF_SZ - rsdb::HEADER_LEN]);
     let id = res2.log_id();
@@ -117,7 +118,7 @@ fn non_contiguous_flush() {
 #[test]
 fn basic_functionality() {
     // TODO linearize res bufs, verify they are correct
-    let log = Log::start_system("test_basic_functionality.log".to_owned());
+    let log = Arc::new(LockFreeLog::start_system("test_basic_functionality.log".to_owned()));
     let iobs2 = log.clone();
     let iobs3 = log.clone();
     let iobs4 = log.clone();
@@ -192,7 +193,7 @@ fn basic_functionality() {
     t6.join().unwrap();
 }
 
-fn test_write(log: &Log) {
+fn test_write(log: &LockFreeLog) {
     let data_bytes = b"yoyoyoyo";
     let res = log.reserve(data_bytes.to_vec());
     let id = res.log_id();
@@ -202,7 +203,7 @@ fn test_write(log: &Log) {
     assert_eq!(read_buf, data_bytes);
 }
 
-fn test_abort(log: &Log) {
+fn test_abort(log: &LockFreeLog) {
     let res = log.reserve(vec![0; 5]);
     let id = res.log_id();
     res.abort();
@@ -217,7 +218,7 @@ fn test_abort(log: &Log) {
 
 #[test]
 fn test_log_aborts() {
-    let log = Log::start_system("test_aborts.log".to_owned());
+    let log = LockFreeLog::start_system("test_aborts.log".to_owned());
     test_write(&log);
     test_abort(&log);
     test_write(&log);
@@ -228,7 +229,7 @@ fn test_log_aborts() {
 
 #[test]
 fn test_hole_punching() {
-    let log = Log::start_system("test_hole_punching.log".to_owned());
+    let log = LockFreeLog::start_system("test_hole_punching.log".to_owned());
 
     let data_bytes = b"yoyoyoyo";
     let res = log.reserve(data_bytes.to_vec());

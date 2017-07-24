@@ -1,5 +1,4 @@
 use std::fmt::{self, Debug};
-use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 use std::thread;
@@ -10,11 +9,13 @@ const FANOUT: usize = 2;
 
 type Raw = *const stack::Node<*const tree::Frag>;
 
-#[derive(Clone)]
 pub struct Tree {
-    pages: Arc<PageCache<BLinkMaterializer>>,
-    root: Arc<AtomicUsize>,
+    pages: PageCache<BLinkMaterializer>,
+    root: AtomicUsize,
 }
+
+unsafe impl Send for Tree {}
+unsafe impl Sync for Tree {}
 
 impl Tree {
     pub fn new() -> Tree {
@@ -46,8 +47,8 @@ impl Tree {
         pages.append(leaf_id, leaf_cas_key, leaf).unwrap();
 
         Tree {
-            pages: Arc::new(pages),
-            root: Arc::new(AtomicUsize::new(root_id)),
+            pages: pages,
+            root: AtomicUsize::new(root_id),
         }
     }
 
