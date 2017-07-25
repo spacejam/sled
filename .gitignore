@@ -4,7 +4,7 @@ perf*
 *out
 *perf
 *svg
-*log
+test*log
 *txt
 experiments
 target
