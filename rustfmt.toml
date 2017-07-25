@@ -1,0 +1,3 @@
+reorder_imports = true
+max_width = 100
+ideal_width = 80

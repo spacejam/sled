@@ -1,10 +1,10 @@
 use std::fmt::{self, Debug};
+use std::ptr;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
-use std::ptr;
 
-use bincode::{serialize, Infinite};
-use serde::{Serialize, Deserialize};
+use bincode::{Infinite, serialize};
+use serde::{Deserialize, Serialize};
 
 use super::*;
 

@@ -92,6 +92,7 @@ fn qc_merge_converges() {
 
 
 #[test]
+#[ignore]
 fn more_reservations_than_buffers() {
     let log = LockFreeLog::start_system("test_more_reservations_than_buffers.log".to_owned());
     let mut reservations = vec![];
@@ -105,6 +106,7 @@ fn more_reservations_than_buffers() {
 }
 
 #[test]
+#[ignore]
 fn non_contiguous_flush() {
     let log = LockFreeLog::start_system("test_non_contiguous_flush.log".to_owned());
     let res1 = log.reserve(vec![0; rsdb::MAX_BUF_SZ - rsdb::HEADER_LEN]);

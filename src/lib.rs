@@ -15,7 +15,7 @@ pub use tree::Tree;
 // lock-free pagecache
 pub use page::PageCache;
 // lock-free log-structured storage
-pub use log::{Log, N_BUFS, HEADER_LEN, MAX_BUF_SZ, MemLog, LockFreeLog};
+pub use log::{HEADER_LEN, LockFreeLog, Log, MAX_BUF_SZ, MemLog, N_BUFS};
 // lock-free stack
 pub use stack::Stack;
 // lock-free radix tree
@@ -62,7 +62,7 @@ mod radix;
 pub mod ops;
 
 use bound::Bound;
-use stack::{node_from_frag_vec, StackIter};
+use stack::{StackIter, node_from_frag_vec};
 use tree::Frag;
 use page::PageMaterializer;
 
