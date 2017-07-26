@@ -10,7 +10,7 @@ use std::sync::Arc;
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::Rng;
 
-use rsdb::{LockFreeLog, Log};
+use rsdb::{LockFreeLog, Log, MemLog};
 
 #[derive(Debug, Clone)]
 enum Op {
@@ -238,11 +238,30 @@ fn test_hole_punching() {
     let id = res.log_id();
     res.complete();
     log.make_stable(id);
-    log.read(id).unwrap();
+    log.read(id).unwrap().unwrap();
 
     log.punch_hole(id);
 
     assert_eq!(log.read(id).unwrap(), None);
 
     // TODO figure out if physical size of log is actually smaller now
+}
+
+#[test]
+fn test_log_iterator() {
+    println!("making stable.");
+    let log = MemLog::new();
+    let first_offset = log.write(b"1".to_vec());
+    log.write(b"22".to_vec());
+    log.write(b"333".to_vec());
+    log.write(b"4444".to_vec());
+    let last_offset = log.write(b"55555".to_vec());
+    log.make_stable(last_offset);
+    let mut iter = log.iter_from(first_offset);
+    assert_eq!(iter.next(), Some((0, b"1".to_vec())));
+    assert_eq!(iter.next(), Some((8, b"22".to_vec())));
+    assert_eq!(iter.next(), Some((17, b"333".to_vec())));
+    assert_eq!(iter.next(), Some((27, b"4444".to_vec())));
+    assert_eq!(iter.next(), Some((38, b"55555".to_vec())));
+    assert_eq!(iter.next(), None);
 }

@@ -92,6 +92,9 @@ trait Log {
 
   /// deallocates the data part of a log id
   fn punch_hole(&self, id: LogID);
+
+  /// traverse the entries in a log, starting from a particular offset
+  fn iter_from(&self, id: LogID) -> LogIter;
 }
 
 impl Reservation {
