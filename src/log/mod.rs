@@ -12,12 +12,10 @@ use libc::{FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE, fallocate};
 
 use super::*;
 
-mod memlog;
 mod lss;
 mod iobuf;
 mod reservation;
 
-pub use self::memlog::*;
 pub use self::lss::*;
 pub use self::iobuf::*;
 pub use self::reservation::*;

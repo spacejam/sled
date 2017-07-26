@@ -1,5 +1,4 @@
 use std::fmt::{self, Debug};
-use std::path::Path;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 use std::thread;
@@ -11,7 +10,7 @@ const FANOUT: usize = 2;
 type Raw = *const stack::Node<*const tree::Frag>;
 
 pub struct Tree {
-    pages: PageCache<BLinkMaterializer>,
+    pages: PageCache<LockFreeLog, BLinkMaterializer>,
     root: AtomicUsize,
 }
 
@@ -19,7 +18,7 @@ unsafe impl Send for Tree {}
 unsafe impl Sync for Tree {}
 
 impl Tree {
-    pub fn new<P: AsRef<Path>>(path: Option<P>) -> Tree {
+    pub fn new(path: Option<String>) -> Tree {
         let pages = PageCache::new(BLinkMaterializer, path);
 
         let (root_id, root_cas_key) = pages.allocate();

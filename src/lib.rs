@@ -13,9 +13,9 @@ pub use db::DB;
 // atomic lock-free tree
 pub use tree::Tree;
 // lock-free pagecache
-pub use page::PageCache;
+pub use page::{PageCache, PageMaterializer};
 // lock-free log-structured storage
-pub use log::{HEADER_LEN, LockFreeLog, Log, MAX_BUF_SZ, MemLog, N_BUFS};
+pub use log::{HEADER_LEN, LockFreeLog, Log, MAX_BUF_SZ, N_BUFS};
 // lock-free stack
 pub use stack::Stack;
 // lock-free radix tree
@@ -64,7 +64,6 @@ pub mod ops;
 use bound::Bound;
 use stack::{StackIter, node_from_frag_vec};
 use tree::Frag;
-use page::PageMaterializer;
 
 type LogID = u64; // LogID == file position to simplify file mapping
 type PageID = usize;

@@ -1,8 +1,9 @@
-use std::path::Path;
 use std::io::{Read, Seek, Write};
 use std::os::unix::io::AsRawFd;
 
 use super::*;
+
+const MEMLOG_PATH: &'static str = "__rsdb_memory.log";
 
 /// `LockFreeLog` is responsible for putting data on disk, and retrieving
 /// it later on.
@@ -15,16 +16,26 @@ unsafe impl Sync for LockFreeLog {}
 
 impl LockFreeLog {
     /// create new lock-free log
-    pub fn start_system<P: AsRef<Path>>(path: P) -> LockFreeLog {
-        let cur_id = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-
+    pub fn start_system(path: Option<String>) -> LockFreeLog {
         let mut options = fs::OpenOptions::new();
         options.create(true);
         options.read(true);
         options.write(true);
-        let file = options.open(path).unwrap();
 
-        let iobufs = IOBufs::new(file, cur_id);
+        let iobufs = if let Some(p) = path {
+            let file = options.open(p).unwrap();
+            let cur_id = file.metadata().unwrap().len();
+            IOBufs::new(file, cur_id)
+        } else {
+            // "poor man's shared memory"
+            // We retain an open descriptor to the file,
+            // but it is no longer attached to this path,
+            // so it continues to exist as a set of
+            // anonymously mapped pages in memory only.
+            let file = options.open(MEMLOG_PATH).unwrap();
+            fs::remove_file(MEMLOG_PATH).unwrap();
+            IOBufs::new(file, 0)
+        };
 
         LockFreeLog { iobufs: iobufs }
     }

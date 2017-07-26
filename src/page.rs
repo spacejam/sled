@@ -1,11 +1,11 @@
 use std::fmt::{self, Debug};
-use std::path::Path;
 use std::ptr;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 
-use bincode::{Infinite, serialize};
-use serde::{Deserialize, Serialize};
+use bincode::{Deserializer, Infinite, deserialize, serialize};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 
 use super::*;
 
@@ -13,26 +13,27 @@ const MAX_FRAG_LEN: usize = 7;
 
 pub trait PageMaterializer: Send + Sync {
     type MaterializedPage;
-    type PartialPage: Serialize + Deserialize<'static>;
+    type PartialPage: Serialize + DeserializeOwned;
 
     fn materialize(&self, Vec<Self::PartialPage>) -> Self::MaterializedPage;
     fn consolidate(&self, Vec<Self::PartialPage>) -> Vec<Self::PartialPage>;
 }
 
-pub struct PageCache<PM>
-    where PM: PageMaterializer + Sized
+pub struct PageCache<L: Log, PM>
+    where PM: PageMaterializer + Sized,
+          L: Log + Sized
 {
     t: PM,
     inner: Radix<stack::Stack<*const PM::PartialPage>>,
     max_id: AtomicUsize,
     free: Stack<PageID>,
-    log: Box<Log>,
+    log: Box<L>,
 }
 
-unsafe impl<PM: PageMaterializer> Send for PageCache<PM> {}
-unsafe impl<PM: PageMaterializer> Sync for PageCache<PM> {}
+unsafe impl<L: Log, PM: PageMaterializer> Send for PageCache<L, PM> {}
+unsafe impl<L: Log, PM: PageMaterializer> Sync for PageCache<L, PM> {}
 
-impl<PM: PageMaterializer> Debug for PageCache<PM> {
+impl<L: Log, PM: PageMaterializer> Debug for PageCache<L, PM> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         f.write_str(&*format!("PageCache {{ max: {:?} free: {:?} }}\n",
                               self.max_id.load(SeqCst),
@@ -40,24 +41,35 @@ impl<PM: PageMaterializer> Debug for PageCache<PM> {
     }
 }
 
-impl<PM> PageCache<PM>
+impl<'f, PM> PageCache<LockFreeLog, PM>
     where PM: PageMaterializer,
           PM::PartialPage: Clone
 {
-    pub fn new<P: AsRef<Path>>(pm: PM, path: Option<P>) -> PageCache<PM> {
-        let log = path.map(|p| {
-                // Need to be very explicit so the compiler knows what
-                // type to expect in the subsequent unwrap_or_else.
-                let l: Box<Log> = Box::new(LockFreeLog::start_system(p));
-                l
-            })
-            .unwrap_or_else(|| Box::new(MemLog::new()));
-        PageCache {
+    pub fn new(pm: PM, path: Option<String>) -> PageCache<LockFreeLog, PM> {
+        let pc = PageCache {
             t: pm,
             inner: Radix::default(),
             max_id: AtomicUsize::new(0),
             free: Stack::default(),
-            log: log,
+            log: Box::new(LockFreeLog::start_system(path)),
+        };
+
+        // Recover from beginning of log. In the future when we
+        // have PageCache snapshotting, we will want to first
+        // load the latest snapshot, then use a later LogID
+        // to recover from in the log.
+        pc.recover_from_log(0);
+
+        pc
+    }
+
+    fn recover_from_log(&self, from: LogID) {
+        let mut last_good_id = 0;
+        for (log_id, bytes) in self.log.iter_from(from) {
+            if let Ok(frag) = deserialize::<PM::PartialPage>(&*bytes) {
+                last_good_id = log_id;
+                println!("got a thing!");
+            }
         }
     }
 
@@ -128,6 +140,7 @@ impl<PM> PageCache<PM>
                             *const stack::Node<*const PM::PartialPage>> {
         let bytes = serialize(&new, Infinite).unwrap();
         let log_reservation = self.log.reserve(bytes);
+        let log_offset = log_reservation.log_id();
 
         let stack_ptr = self.inner.get(pid).unwrap();
         let result = unsafe { (*stack_ptr).cap(old, raw(new)) };
@@ -137,6 +150,7 @@ impl<PM> PageCache<PM>
         } else {
             log_reservation.complete();
         }
+        self.log.make_stable(log_offset);
 
         // TODO GC
         result
