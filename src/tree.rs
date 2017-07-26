@@ -1,5 +1,5 @@
 use std::fmt::{self, Debug};
-use std::sync::Arc;
+use std::path::Path;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 use std::thread;
@@ -8,15 +8,19 @@ use super::*;
 
 const FANOUT: usize = 2;
 
-#[derive(Clone)]
+type Raw = *const stack::Node<*const tree::Frag>;
+
 pub struct Tree {
-    pages: Arc<PageCache<BLinkMaterializer>>,
-    root: Arc<AtomicUsize>,
+    pages: PageCache<BLinkMaterializer>,
+    root: AtomicUsize,
 }
 
+unsafe impl Send for Tree {}
+unsafe impl Sync for Tree {}
+
 impl Tree {
-    pub fn new() -> Tree {
-        let pages = PageCache::new(BLinkMaterializer, None);
+    pub fn new<P: AsRef<Path>>(path: Option<P>) -> Tree {
+        let pages = PageCache::new(BLinkMaterializer, path);
 
         let (root_id, root_cas_key) = pages.allocate();
         let (leaf_id, leaf_cas_key) = pages.allocate();
@@ -44,8 +48,8 @@ impl Tree {
         pages.append(leaf_id, leaf_cas_key, leaf).unwrap();
 
         Tree {
-            pages: Arc::new(pages),
-            root: Arc::new(AtomicUsize::new(root_id)),
+            pages: pages,
+            root: AtomicUsize::new(root_id),
         }
     }
 
@@ -175,7 +179,6 @@ impl Tree {
 
         while let Some((node, cas_key)) = all_page_views.pop() {
             // println!("splitting node {:?}", node);
-            let pid = node.id;
             if node.should_split() {
                 // try to child split
                 if let Ok(parent_split) = self.child_split(&node, cas_key) {
@@ -394,7 +397,7 @@ impl Debug for Tree {
         f.write_str("\tlevel 0:\n").unwrap();
 
         loop {
-            let (node, cas_key) = self.pages.get(pid).unwrap();
+            let (node, _cas_key) = self.pages.get(pid).unwrap();
 
             f.write_str("\t\t").unwrap();
             node.fmt(f).unwrap();
@@ -404,7 +407,7 @@ impl Debug for Tree {
                 pid = next_pid;
             } else {
                 // we've traversed our level, time to bump down
-                let (left_node, left_cas_key) = self.pages.get(left_most).unwrap();
+                let (left_node, _left_cas_key) = self.pages.get(left_most).unwrap();
 
                 match left_node.data {
                     Data::Index(ptrs) => {
@@ -448,7 +451,7 @@ impl Data {
         fn split_inner<T>(xs: &Vec<(Key, T)>) -> (Key, Vec<(Key, T)>)
             where T: Clone + Debug
         {
-            let (lhs, rhs) = xs.split_at(xs.len() / 2 + 1);
+            let (_lhs, rhs) = xs.split_at(xs.len() / 2 + 1);
             let split = rhs.first().unwrap().0.clone();
 
             (split, rhs.to_vec())

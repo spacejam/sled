@@ -1,17 +1,17 @@
 use std::fmt::{self, Debug};
+use std::path::Path;
+use std::ptr;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
-use std::sync::Arc;
-use std::ptr;
 
-use bincode::{serialize, Infinite};
-use serde::{Serialize, Deserialize};
+use bincode::{Infinite, serialize};
+use serde::{Deserialize, Serialize};
 
 use super::*;
 
 const MAX_FRAG_LEN: usize = 7;
 
-pub trait PageMaterializer {
+pub trait PageMaterializer: Send + Sync {
     type MaterializedPage;
     type PartialPage: Serialize + Deserialize<'static>;
 
@@ -20,14 +20,17 @@ pub trait PageMaterializer {
 }
 
 pub struct PageCache<PM>
-    where PM: PageMaterializer
+    where PM: PageMaterializer + Sized
 {
     t: PM,
     inner: Radix<stack::Stack<*const PM::PartialPage>>,
     max_id: AtomicUsize,
     free: Stack<PageID>,
-    log: Option<Arc<Log>>,
+    log: Box<Log>,
 }
+
+unsafe impl<PM: PageMaterializer> Send for PageCache<PM> {}
+unsafe impl<PM: PageMaterializer> Sync for PageCache<PM> {}
 
 impl<PM: PageMaterializer> Debug for PageCache<PM> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
@@ -41,7 +44,14 @@ impl<PM> PageCache<PM>
     where PM: PageMaterializer,
           PM::PartialPage: Clone
 {
-    pub fn new(pm: PM, log: Option<Arc<Log>>) -> PageCache<PM> {
+    pub fn new<P: AsRef<Path>>(pm: PM, path: Option<P>) -> PageCache<PM> {
+        let log = path.map(|p| {
+                // Need to be very explicit so the compiler knows what
+                // type to expect in the subsequent unwrap_or_else.
+                let l: Box<Log> = Box::new(LockFreeLog::start_system(p));
+                l
+            })
+            .unwrap_or_else(|| Box::new(MemLog::new()));
         PageCache {
             t: pm,
             inner: Radix::default(),
@@ -117,20 +127,19 @@ impl<PM> PageCache<PM>
                   -> Result<*const stack::Node<*const PM::PartialPage>,
                             *const stack::Node<*const PM::PartialPage>> {
         let bytes = serialize(&new, Infinite).unwrap();
-        let log = self.log.clone();
-        let reservation = log.map(|l| l.reserve(bytes.len()));
+        let log_reservation = self.log.reserve(bytes);
 
         let stack_ptr = self.inner.get(pid).unwrap();
-        let res = unsafe { (*stack_ptr).cap(old, raw(new)) };
+        let result = unsafe { (*stack_ptr).cap(old, raw(new)) };
 
-        if let Err(ptr) = res {
-            reservation.map(|r| r.abort());
+        if let Err(_ptr) = result {
+            log_reservation.abort();
         } else {
-            reservation.map(|r| r.complete(&*bytes));
+            log_reservation.complete();
         }
 
         // TODO GC
-        res
+        result
     }
 }
 

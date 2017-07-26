@@ -1,7 +1,6 @@
 /// A lock-free log-structured b-link tree.
 
 extern crate libc;
-extern crate crossbeam;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
@@ -16,7 +15,7 @@ pub use tree::Tree;
 // lock-free pagecache
 pub use page::PageCache;
 // lock-free log-structured storage
-pub use log::Log;
+pub use log::{HEADER_LEN, LockFreeLog, Log, MAX_BUF_SZ, MemLog, N_BUFS};
 // lock-free stack
 pub use stack::Stack;
 // lock-free radix tree
@@ -34,23 +33,6 @@ macro_rules! rep_no_copy {
             v
         }
     };
-}
-
-macro_rules! read_or_break {
-    ($file:expr, $buf:expr, $count:expr) => (
-        match $file.read(&mut $buf) {
-            Ok(n) if n == $buf.len() => {
-                $count += n;
-            },
-            Ok(_) => {
-                // tear occurred here
-                break;
-            },
-            Err(_) => {
-                break
-            }
-        }
-    )
 }
 
 #[cfg(test)]
@@ -80,8 +62,8 @@ mod radix;
 pub mod ops;
 
 use bound::Bound;
-use stack::{node_from_frag_vec, StackIter};
-use tree::{Frag, ChildSplit, ParentSplit};
+use stack::{StackIter, node_from_frag_vec};
+use tree::Frag;
 use page::PageMaterializer;
 
 type LogID = u64; // LogID == file position to simplify file mapping
@@ -89,14 +71,6 @@ type PageID = usize;
 
 type Key = Vec<u8>;
 type Value = Vec<u8>;
-
-type Raw = *const stack::Node<*const tree::Frag>;
-type Page = Stack<*const tree::Frag>;
-
-enum PagePtr {
-    LogID(LogID),
-    Page(Page),
-}
 
 #[inline(always)]
 fn raw<T>(t: T) -> *const T {

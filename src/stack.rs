@@ -7,7 +7,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
-use {test_fail, page, Raw, raw};
+use {raw, test_fail};
 
 pub struct Node<T> {
     inner: T,

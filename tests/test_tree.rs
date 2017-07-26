@@ -1,6 +1,7 @@
 extern crate rsdb;
 
 use std::thread;
+use std::sync::Arc;
 
 use rsdb::*;
 
@@ -20,7 +21,7 @@ macro_rules! par {
                 .spawn(move || {
                     for i in (tn * sz)..((tn + 1) * sz) {
                         let k = kv(i);
-                        $f(&tree, k);
+                        $f(&*tree, k);
                     }
                 })
                 .unwrap();
@@ -49,7 +50,7 @@ fn kv(i: usize) -> Vec<u8> {
 #[test]
 fn it_works() {
     println!("========== initial sets ==========");
-    let t = Tree::new();
+    let t = Arc::new(Tree::new::<String>(None));
     par!{t, |tree: &Tree, k: Vec<u8>| {
         assert_eq!(tree.get(&*k), None);
         tree.set(k.clone(), k.clone());
