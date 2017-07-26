@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::io::{Read, Seek, Write};
 use std::os::unix::io::AsRawFd;
 
@@ -6,7 +7,7 @@ use super::*;
 /// `LockFreeLog` is responsible for putting data on disk, and retrieving
 /// it later on.
 pub struct LockFreeLog {
-    iobufs: IOBufs,
+    pub(super) iobufs: IOBufs,
 }
 
 unsafe impl Send for LockFreeLog {}
@@ -14,8 +15,8 @@ unsafe impl Sync for LockFreeLog {}
 
 impl LockFreeLog {
     /// create new lock-free log
-    pub fn start_system(path: String) -> LockFreeLog {
-        let cur_id = fs::metadata(path.clone()).map(|m| m.len()).unwrap_or(0);
+    pub fn start_system<P: AsRef<Path>>(path: P) -> LockFreeLog {
+        let cur_id = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
 
         let mut options = fs::OpenOptions::new();
         options.create(true);

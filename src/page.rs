@@ -1,4 +1,5 @@
 use std::fmt::{self, Debug};
+use std::path::Path;
 use std::ptr;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
@@ -43,13 +44,20 @@ impl<PM> PageCache<PM>
     where PM: PageMaterializer,
           PM::PartialPage: Clone
 {
-    pub fn new(pm: PM, log: Option<Box<Log>>) -> PageCache<PM> {
+    pub fn new<P: AsRef<Path>>(pm: PM, path: Option<P>) -> PageCache<PM> {
+        let log = path.map(|p| {
+                // Need to be very explicit so the compiler knows what
+                // type to expect in the subsequent unwrap_or_else.
+                let l: Box<Log> = Box::new(LockFreeLog::start_system(p));
+                l
+            })
+            .unwrap_or_else(|| Box::new(MemLog::new()));
         PageCache {
             t: pm,
             inner: Radix::default(),
             max_id: AtomicUsize::new(0),
             free: Stack::default(),
-            log: log.unwrap_or_else(|| Box::new(MemLog::new())),
+            log: log,
         }
     }
 
