@@ -41,7 +41,7 @@ impl<L: Log, PM: PageMaterializer> Debug for PageCache<L, PM> {
     }
 }
 
-impl<'f, PM> PageCache<LockFreeLog, PM>
+impl<PM> PageCache<LockFreeLog, PM>
     where PM: PageMaterializer,
           PM::PartialPage: Clone
 {
