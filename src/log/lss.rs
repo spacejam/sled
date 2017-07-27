@@ -1,9 +1,9 @@
 use std::io::{Read, Seek, Write};
 use std::os::unix::io::AsRawFd;
 
-use super::*;
+use rand::{Rng, thread_rng};
 
-const MEMLOG_PATH: &'static str = "__rsdb_memory.log";
+use super::*;
 
 /// `LockFreeLog` is responsible for putting data on disk, and retrieving
 /// it later on.
@@ -27,13 +27,16 @@ impl LockFreeLog {
             let cur_id = file.metadata().unwrap().len();
             IOBufs::new(file, cur_id)
         } else {
+            let nonce: String = thread_rng().gen_ascii_chars().take(10).collect();
+            let path = format!("__rsdb_memory_{}.log", nonce);
+
             // "poor man's shared memory"
             // We retain an open descriptor to the file,
             // but it is no longer attached to this path,
             // so it continues to exist as a set of
             // anonymously mapped pages in memory only.
-            let file = options.open(MEMLOG_PATH).unwrap();
-            fs::remove_file(MEMLOG_PATH).unwrap();
+            let file = options.open(&path).unwrap();
+            fs::remove_file(path).unwrap();
             IOBufs::new(file, 0)
         };
 
