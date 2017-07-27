@@ -396,6 +396,14 @@ impl IOBufs {
     }
 }
 
+impl Drop for IOBufs {
+    fn drop(&mut self) {
+        for _ in 0..N_BUFS {
+            self.flush();
+        }
+    }
+}
+
 #[inline(always)]
 fn encapsulate(buf: &mut [u8]) -> Vec<u8> {
     let size_bytes = ops::usize_to_array(buf.len()).to_vec();

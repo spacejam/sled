@@ -1,6 +1,7 @@
-use std::path::Path;
 use std::io::{Read, Seek, Write};
 use std::os::unix::io::AsRawFd;
+
+use rand::{Rng, thread_rng};
 
 use super::*;
 
@@ -15,16 +16,29 @@ unsafe impl Sync for LockFreeLog {}
 
 impl LockFreeLog {
     /// create new lock-free log
-    pub fn start_system<P: AsRef<Path>>(path: P) -> LockFreeLog {
-        let cur_id = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-
+    pub fn start_system(path: Option<String>) -> LockFreeLog {
         let mut options = fs::OpenOptions::new();
         options.create(true);
         options.read(true);
         options.write(true);
-        let file = options.open(path).unwrap();
 
-        let iobufs = IOBufs::new(file, cur_id);
+        let iobufs = if let Some(p) = path {
+            let file = options.open(p).unwrap();
+            let cur_id = file.metadata().unwrap().len();
+            IOBufs::new(file, cur_id)
+        } else {
+            let nonce: String = thread_rng().gen_ascii_chars().take(10).collect();
+            let path = format!("__rsdb_memory_{}.log", nonce);
+
+            // "poor man's shared memory"
+            // We retain an open descriptor to the file,
+            // but it is no longer attached to this path,
+            // so it continues to exist as a set of
+            // anonymously mapped pages in memory only.
+            let file = options.open(&path).unwrap();
+            fs::remove_file(path).unwrap();
+            IOBufs::new(file, 0)
+        };
 
         LockFreeLog { iobufs: iobufs }
     }

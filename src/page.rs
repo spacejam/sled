@@ -1,38 +1,39 @@
 use std::fmt::{self, Debug};
-use std::path::Path;
 use std::ptr;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 
-use bincode::{Infinite, serialize};
-use serde::{Deserialize, Serialize};
+use bincode::{Infinite, deserialize, serialize};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 
 use super::*;
 
-const MAX_FRAG_LEN: usize = 7;
+const MAX_FRAG_LEN: usize = 2;
 
 pub trait PageMaterializer: Send + Sync {
     type MaterializedPage;
-    type PartialPage: Serialize + Deserialize<'static>;
+    type PartialPage: Serialize + DeserializeOwned;
 
     fn materialize(&self, Vec<Self::PartialPage>) -> Self::MaterializedPage;
     fn consolidate(&self, Vec<Self::PartialPage>) -> Vec<Self::PartialPage>;
 }
 
-pub struct PageCache<PM>
-    where PM: PageMaterializer + Sized
+pub struct PageCache<L: Log, PM>
+    where PM: PageMaterializer + Sized,
+          L: Log + Sized
 {
     t: PM,
     inner: Radix<stack::Stack<*const PM::PartialPage>>,
     max_id: AtomicUsize,
     free: Stack<PageID>,
-    log: Box<Log>,
+    log: Box<L>,
 }
 
-unsafe impl<PM: PageMaterializer> Send for PageCache<PM> {}
-unsafe impl<PM: PageMaterializer> Sync for PageCache<PM> {}
+unsafe impl<L: Log, PM: PageMaterializer> Send for PageCache<L, PM> {}
+unsafe impl<L: Log, PM: PageMaterializer> Sync for PageCache<L, PM> {}
 
-impl<PM: PageMaterializer> Debug for PageCache<PM> {
+impl<L: Log, PM: PageMaterializer> Debug for PageCache<L, PM> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         f.write_str(&*format!("PageCache {{ max: {:?} free: {:?} }}\n",
                               self.max_id.load(SeqCst),
@@ -40,41 +41,111 @@ impl<PM: PageMaterializer> Debug for PageCache<PM> {
     }
 }
 
-impl<PM> PageCache<PM>
+impl<PM> PageCache<LockFreeLog, PM>
     where PM: PageMaterializer,
           PM::PartialPage: Clone
 {
-    pub fn new<P: AsRef<Path>>(pm: PM, path: Option<P>) -> PageCache<PM> {
-        let log = path.map(|p| {
-                // Need to be very explicit so the compiler knows what
-                // type to expect in the subsequent unwrap_or_else.
-                let l: Box<Log> = Box::new(LockFreeLog::start_system(p));
-                l
-            })
-            .unwrap_or_else(|| Box::new(MemLog::new()));
-        PageCache {
+    pub fn new(pm: PM, path: Option<String>) -> PageCache<LockFreeLog, PM> {
+        let pc = PageCache {
             t: pm,
             inner: Radix::default(),
             max_id: AtomicUsize::new(0),
             free: Stack::default(),
-            log: log,
+            log: Box::new(LockFreeLog::start_system(path)),
+        };
+
+        // Recover from beginning of log. In the future when we
+        // have PageCache snapshotting, we will want to first
+        // load the latest snapshot, then use a later LogID
+        // to recover from in the log.
+        pc.recover_from_log(0);
+
+        pc
+    }
+
+    /// Read updates from the log, apply them to our pagecache.
+    fn recover_from_log(&self, from: LogID) {
+        let mut last_good_id = 0;
+        let mut free_pids = vec![];
+        for (log_id, bytes) in self.log.iter_from(from) {
+            if let Ok(append) = deserialize::<LoggedUpdate<PM::PartialPage>>(&*bytes) {
+                last_good_id = log_id + bytes.len() as LogID + HEADER_LEN as LogID;
+                match append.update {
+                    Update::Append(appends) => {
+                        let stack = self.inner.get(append.pid).unwrap();
+                        for append in appends {
+                            unsafe {
+                                (*stack).push(raw(append));
+                            }
+                        }
+                    }
+                    Update::Compact(appends) => {
+                        // TODO GC previous stack
+                        let _prev = self.inner.del(append.pid);
+                        let stack = raw(Stack::default());
+                        self.inner.insert(append.pid, stack).unwrap();
+
+                        for append in appends {
+                            unsafe {
+                                (*stack).push(raw(append));
+                            }
+                        }
+                    }
+                    Update::Del => {
+                        self.inner.del(append.pid);
+                        free_pids.push(append.pid);
+                    }
+                    Update::Alloc => {
+                        let stack = raw(Stack::default());
+                        self.inner.insert(append.pid, stack).unwrap();
+                        free_pids.retain(|&pid| pid != append.pid);
+                        if self.max_id.load(SeqCst) < append.pid {
+                            self.max_id.store(append.pid, SeqCst);
+                        }
+                    }
+                }
+            }
         }
+        free_pids.sort();
+        free_pids.reverse();
+        for free_pid in free_pids {
+            self.free.push(free_pid);
+        }
+
+        self.max_id.store(last_good_id as usize, SeqCst);
     }
 
     pub fn allocate(&self) -> (PageID, *const stack::Node<*const PM::PartialPage>) {
         let pid = self.free.pop().unwrap_or_else(|| self.max_id.fetch_add(1, SeqCst));
         let stack = raw(Stack::default());
         self.inner.insert(pid, stack).unwrap();
+
+        // write info to log
+        let append: LoggedUpdate<PM::PartialPage> = LoggedUpdate {
+            pid: pid,
+            update: Update::Alloc,
+        };
+        let bytes = serialize(&append, Infinite).unwrap();
+        self.log.write(bytes);
+
         (pid, ptr::null())
     }
 
     pub fn free(&self, pid: PageID) {
         // TODO epoch-based gc for reusing pid & freeing stack
-        if pid == 0 {
-            panic!("freeing zero, which should always be left-most on a level");
-        }
         let stack_ptr = self.inner.del(pid);
+
+        // write info to log
+        let append: LoggedUpdate<PM::PartialPage> = LoggedUpdate {
+            pid: pid,
+            update: Update::Del,
+        };
+        let bytes = serialize(&append, Infinite).unwrap();
+        self.log.write(bytes);
+
+        // add pid to free stack to reduce fragmentation over time
         self.free.push(pid);
+
         unsafe {
             let ptrs = (*stack_ptr).pop_all();
             for ptr in ptrs {
@@ -105,13 +176,25 @@ impl<PM> PageCache<PM>
         if partial_pages.len() > MAX_FRAG_LEN {
             let consolidated = self.t.consolidate(partial_pages.clone());
 
-            let node = node_from_frag_vec(consolidated);
+            let node = node_from_frag_vec(consolidated.clone());
+
+            // log consolidation to disk
+            let append = LoggedUpdate {
+                pid: pid,
+                update: Update::Compact(consolidated),
+            };
+            let bytes = serialize(&append, Infinite).unwrap();
+            let log_reservation = self.log.reserve(bytes);
 
             let ret = unsafe { (*stack_ptr).cas(head, node) };
 
             if let Ok(new) = ret {
                 // consolidation succeeded!
+                log_reservation.complete();
                 head = new;
+                // TODO GC old stack (head)
+            } else {
+                log_reservation.abort();
             }
         }
 
@@ -126,8 +209,13 @@ impl<PM> PageCache<PM>
                   new: PM::PartialPage)
                   -> Result<*const stack::Node<*const PM::PartialPage>,
                             *const stack::Node<*const PM::PartialPage>> {
-        let bytes = serialize(&new, Infinite).unwrap();
+        let append = LoggedUpdate {
+            pid: pid,
+            update: Update::Append(vec![new.clone()]),
+        };
+        let bytes = serialize(&append, Infinite).unwrap();
         let log_reservation = self.log.reserve(bytes);
+        let log_offset = log_reservation.log_id();
 
         let stack_ptr = self.inner.get(pid).unwrap();
         let result = unsafe { (*stack_ptr).cap(old, raw(new)) };
@@ -137,17 +225,25 @@ impl<PM> PageCache<PM>
         } else {
             log_reservation.complete();
         }
+        self.log.make_stable(log_offset);
 
         // TODO GC
         result
     }
 }
 
-/// `FragSet` is for writing blocks of `Frag`'s to disk
+/// `LoggedUpdate` is for writing blocks of `Update`'s to disk
 /// sequentially, to reduce IO during page reads.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct FragSet {
+struct LoggedUpdate<T> {
     pid: PageID,
-    frags: Vec<Frag>,
-    next: Option<LogID>,
+    update: Update<T>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+enum Update<T> {
+    Append(Vec<T>),
+    Compact(Vec<T>),
+    Del,
+    Alloc,
 }

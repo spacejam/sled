@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -10,7 +9,7 @@ pub struct DB {
 }
 
 impl DB {
-    pub fn new<P: AsRef<Path>>(path: Option<P>) -> DB {
+    pub fn new(path: Option<String>) -> DB {
         let tree = Tree::new(path);
         DB {
             tree: Arc::new(tree),

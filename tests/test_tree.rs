@@ -50,7 +50,7 @@ fn kv(i: usize) -> Vec<u8> {
 #[test]
 fn it_works() {
     println!("========== initial sets ==========");
-    let t = Arc::new(Tree::new::<String>(None));
+    let t = Arc::new(Tree::new(None));
     par!{t, |tree: &Tree, k: Vec<u8>| {
         assert_eq!(tree.get(&*k), None);
         tree.set(k.clone(), k.clone());

@@ -63,7 +63,7 @@ impl Arbitrary for OpVec {
 
 fn prop_read_stable(ops: OpVec) -> bool {
     use self::Op::*;
-    let log = LockFreeLog::start_system("test_rsdb_quickcheck.log".to_owned());
+    let log = LockFreeLog::start_system(None);
     for op in ops.ops.into_iter() {
         match op {
             Write(buf) => {
@@ -94,7 +94,7 @@ fn qc_merge_converges() {
 #[test]
 #[ignore]
 fn more_reservations_than_buffers() {
-    let log = LockFreeLog::start_system("test_more_reservations_than_buffers.log".to_owned());
+    let log = LockFreeLog::start_system(None);
     let mut reservations = vec![];
     for _ in 0..rsdb::N_BUFS + 1 {
         reservations.push(log.reserve(vec![0; rsdb::MAX_BUF_SZ - rsdb::HEADER_LEN]))
@@ -108,7 +108,7 @@ fn more_reservations_than_buffers() {
 #[test]
 #[ignore]
 fn non_contiguous_flush() {
-    let log = LockFreeLog::start_system("test_non_contiguous_flush.log".to_owned());
+    let log = LockFreeLog::start_system(None);
     let res1 = log.reserve(vec![0; rsdb::MAX_BUF_SZ - rsdb::HEADER_LEN]);
     let res2 = log.reserve(vec![0; rsdb::MAX_BUF_SZ - rsdb::HEADER_LEN]);
     let id = res2.log_id();
@@ -120,7 +120,7 @@ fn non_contiguous_flush() {
 #[test]
 fn basic_functionality() {
     // TODO linearize res bufs, verify they are correct
-    let log = Arc::new(LockFreeLog::start_system("test_basic_functionality.log".to_owned()));
+    let log = Arc::new(LockFreeLog::start_system(None));
     let iobs2 = log.clone();
     let iobs3 = log.clone();
     let iobs4 = log.clone();
@@ -220,7 +220,7 @@ fn test_abort(log: &LockFreeLog) {
 
 #[test]
 fn test_log_aborts() {
-    let log = LockFreeLog::start_system("test_aborts.log".to_owned());
+    let log = LockFreeLog::start_system(None);
     test_write(&log);
     test_abort(&log);
     test_write(&log);
@@ -231,18 +231,37 @@ fn test_log_aborts() {
 
 #[test]
 fn test_hole_punching() {
-    let log = LockFreeLog::start_system("test_hole_punching.log".to_owned());
+    let log = LockFreeLog::start_system(None);
 
     let data_bytes = b"yoyoyoyo";
     let res = log.reserve(data_bytes.to_vec());
     let id = res.log_id();
     res.complete();
     log.make_stable(id);
-    log.read(id).unwrap();
+    log.read(id).unwrap().unwrap();
 
     log.punch_hole(id);
 
     assert_eq!(log.read(id).unwrap(), None);
 
     // TODO figure out if physical size of log is actually smaller now
+}
+
+#[test]
+fn test_log_iterator() {
+    println!("making stable.");
+    let log = LockFreeLog::start_system(None);
+    let first_offset = log.write(b"1".to_vec());
+    log.write(b"22".to_vec());
+    log.write(b"333".to_vec());
+    log.write(b"4444".to_vec());
+    let last_offset = log.write(b"55555".to_vec());
+    log.make_stable(last_offset);
+    let mut iter = log.iter_from(first_offset);
+    assert_eq!(iter.next(), Some((0, b"1".to_vec())));
+    assert_eq!(iter.next(), Some((8, b"22".to_vec())));
+    assert_eq!(iter.next(), Some((17, b"333".to_vec())));
+    assert_eq!(iter.next(), Some((27, b"4444".to_vec())));
+    assert_eq!(iter.next(), Some((38, b"55555".to_vec())));
+    assert_eq!(iter.next(), None);
 }
