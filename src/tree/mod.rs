@@ -1,3 +1,5 @@
+/// A flash-sympathetic persistent lock-free B+ tree.
+
 use std::fmt::{self, Debug};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
@@ -25,8 +27,8 @@ unsafe impl Send for Tree {}
 unsafe impl Sync for Tree {}
 
 impl Tree {
-    pub fn new(path: Option<String>) -> Tree {
-        let mut pages = PageCache::new(BLinkMaterializer { last_known_root: 0 }, path);
+    pub fn new(config: Config) -> Tree {
+        let mut pages = PageCache::new(BLinkMaterializer { last_known_root: 0 }, config);
 
         let root_opt = pages.recover(0);
 
@@ -65,6 +67,10 @@ impl Tree {
             pages: pages,
             root: AtomicUsize::new(root_id),
         }
+    }
+
+    pub fn config(&self) -> Config {
+        self.pages.config()
     }
 
     pub fn get(&self, key: &[u8]) -> Option<Value> {

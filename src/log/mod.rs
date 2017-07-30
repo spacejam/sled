@@ -26,6 +26,7 @@ pub trait Log: Send + Sync {
     fn stable_offset(&self) -> LogID;
     fn make_stable(&self, id: LogID);
     fn punch_hole(&self, id: LogID);
+    fn config(&self) -> Config;
     fn iter_from(&self, id: LogID) -> LogIter<Self>
         where Self: Sized
     {

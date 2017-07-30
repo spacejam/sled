@@ -1,5 +1,7 @@
 use std::io::{Seek, Write};
 
+use rand::{Rng, thread_rng};
+
 use super::*;
 
 pub const HEADER_LEN: usize = 7;
@@ -64,6 +66,8 @@ pub struct IOBufs {
     intervals: Mutex<Vec<(LogID, LogID)>>,
     stable: AtomicUsize,
     pub file: Mutex<fs::File>,
+
+    config: Config,
 }
 
 impl Debug for IOBufs {
@@ -94,7 +98,30 @@ impl Debug for IOBufs {
 /// `IOBufs` is a set of lock-free buffers for coordinating
 /// writes to underlying storage.
 impl IOBufs {
-    pub fn new(file: fs::File, disk_offset: LogID) -> IOBufs {
+    pub fn new(config: Config) -> IOBufs {
+        let mut options = fs::OpenOptions::new();
+        options.create(true);
+        options.read(true);
+        options.write(true);
+
+        let (file, disk_offset) = if let Some(p) = config.get_path() {
+            let file = options.open(p).unwrap();
+            let disk_offset = file.metadata().unwrap().len();
+            (file, disk_offset)
+        } else {
+            let nonce: String = thread_rng().gen_ascii_chars().take(10).collect();
+            let path = format!("__rsdb_memory_{}.log", nonce);
+
+            // "poor man's shared memory"
+            // We retain an open descriptor to the file,
+            // but it is no longer attached to this path,
+            // so it continues to exist as a set of
+            // anonymously mapped pages in memory only.
+            let file = options.open(&path).unwrap();
+            fs::remove_file(path).unwrap();
+            (file, 0)
+        };
+
         let bufs = rep_no_copy![IOBuf::new(); N_BUFS];
 
         let current_buf = 0;
@@ -107,7 +134,12 @@ impl IOBufs {
             written_bufs: AtomicUsize::new(0),
             intervals: Mutex::new(vec![]),
             stable: AtomicUsize::new(disk_offset as usize),
+            config: config,
         }
+    }
+
+    pub fn config(&self) -> Config {
+        self.config.clone()
     }
 
     fn idx(&self) -> usize {

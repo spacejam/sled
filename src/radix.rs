@@ -1,8 +1,4 @@
-// lock-free radix tree
-// this is purpose-built for mapping PageID's to T's
-// it supports optimistic mutation, without automatic retry
-// goal: high pointer density with a dense address space
-// it never deallocates space, eventually this will be addressed
+/// A simple lock-free radix tree, assumes a dense keyspace.
 
 use std::ptr;
 use std::sync::Arc;

@@ -1,5 +1,3 @@
-/// A lock-free log-structured b-link tree.
-
 extern crate libc;
 extern crate serde;
 #[macro_use]
@@ -8,18 +6,18 @@ extern crate bincode;
 extern crate time;
 extern crate rand;
 
-// transactional kv with multi-key ops
-pub use db::DB;
 // atomic lock-free tree
-pub use tree::{FANOUT, Tree};
+pub use tree::Tree;
 // lock-free pagecache
 pub use page::{Materializer, PageCache};
 // lock-free log-structured storage
-pub use log::{HEADER_LEN, LockFreeLog, Log, MAX_BUF_SZ, N_BUFS};
+pub use log::{HEADER_LEN, LockFreeLog, Log};
 // lock-free stack
-pub use stack::Stack;
+use stack::Stack;
 // lock-free radix tree
 pub use radix::Radix;
+// general-purpose configuration
+pub use config::Config;
 
 use crc16::crc16_arr;
 
@@ -49,7 +47,6 @@ fn test_fail() -> bool {
     false
 }
 
-mod db;
 mod tree;
 mod bound;
 mod log;
@@ -57,9 +54,9 @@ mod crc16;
 mod stack;
 mod page;
 mod radix;
-// mod gc;
+mod config;
 
-pub mod ops;
+mod ops;
 
 use bound::Bound;
 use stack::{StackIter, node_from_frag_vec};
