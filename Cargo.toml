@@ -2,7 +2,7 @@
 name = "rsdb"
 version = "0.2.0"
 authors = ["Tyler Neely <t@jujit.su>"]
-description = "a lock-free B+ tree backed by a lock-free log-structured store"
+description = "a flash-sympathetic persistent lock-free B+ tree"
 license = "Apache-2.0"
 homepage = "https://github.com/spacejam/rsdb"
 keywords = ["database", "embedded", "concurrent", "persistent", "lock-free"]
