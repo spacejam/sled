@@ -21,7 +21,6 @@ type Raw = *const stack::Node<*const tree::Frag>;
 pub struct Tree {
     pages: PageCache<LockFreeLog, BLinkMaterializer>,
     root: AtomicUsize,
-    config: Config,
 }
 
 unsafe impl Send for Tree {}
@@ -29,7 +28,7 @@ unsafe impl Sync for Tree {}
 
 impl Tree {
     pub fn new(config: Config) -> Tree {
-        let mut pages = PageCache::new(BLinkMaterializer { last_known_root: 0 }, config.clone());
+        let mut pages = PageCache::new(BLinkMaterializer { last_known_root: 0 }, config);
 
         let root_opt = pages.recover(0);
 
@@ -67,12 +66,11 @@ impl Tree {
         Tree {
             pages: pages,
             root: AtomicUsize::new(root_id),
-            config: config,
         }
     }
 
-    pub fn get_config(&self) -> Config {
-        self.config.clone()
+    pub fn config(&self) -> Config {
+        self.pages.config()
     }
 
     pub fn get(&self, key: &[u8]) -> Option<Value> {

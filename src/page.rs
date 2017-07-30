@@ -59,7 +59,7 @@ impl<M> PageCache<LockFreeLog, M>
     where M: Materializer,
           M::PartialPage: Clone
 {
-    pub fn new(pm: PM, config: Config) -> PageCache<LockFreeLog, PM> {
+    pub fn new(pm: M, config: Config) -> PageCache<LockFreeLog, M> {
         PageCache {
             t: pm,
             inner: Radix::default(),
@@ -67,6 +67,10 @@ impl<M> PageCache<LockFreeLog, M>
             free: Stack::default(),
             log: Box::new(LockFreeLog::start_system(config)),
         }
+    }
+
+    pub fn config(&self) -> Config {
+        self.log.config()
     }
 
     /// Read updates from the log, apply them to our pagecache.

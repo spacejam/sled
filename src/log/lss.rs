@@ -19,16 +19,17 @@ impl LockFreeLog {
 
         LockFreeLog { iobufs: iobufs }
     }
-
-    pub fn config(&self) -> Config {
-        self.iobufs.config()
-    }
 }
 
 impl Log for LockFreeLog {
     /// claim a spot on disk, which can later be filled or aborted
     fn reserve(&self, buf: Vec<u8>) -> Reservation {
         self.iobufs.reserve(buf)
+    }
+
+    /// return the config in use for this log
+    fn config(&self) -> Config {
+        self.iobufs.config()
     }
 
     /// write a buffer to disk
