@@ -1,5 +1,4 @@
 use std::fmt::{self, Debug};
-use std::marker::PhantomData;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 
@@ -164,7 +163,6 @@ impl Tree {
             id: last_node.id,
             inner: &self.pages,
             last_key: Bound::Non(key.to_vec()),
-            marker: PhantomData,
         }
     }
 
@@ -175,7 +173,6 @@ impl Tree {
             id: last_node.id,
             inner: &self.pages,
             last_key: Bound::Non(vec![]),
-            marker: PhantomData,
         }
     }
 
@@ -523,7 +520,6 @@ pub struct TreeIter<'a> {
     id: PageID,
     inner: &'a PageCache<LockFreeLog, BLinkMaterializer>,
     last_key: Bound,
-    marker: PhantomData<&'a [u8]>,
 }
 
 impl<'a> Iterator for TreeIter<'a> {
