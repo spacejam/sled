@@ -11,9 +11,9 @@ extern crate rand;
 // transactional kv with multi-key ops
 pub use db::DB;
 // atomic lock-free tree
-pub use tree::Tree;
+pub use tree::{FANOUT, Tree};
 // lock-free pagecache
-pub use page::{PageCache, PageMaterializer};
+pub use page::{Materializer, PageCache};
 // lock-free log-structured storage
 pub use log::{HEADER_LEN, LockFreeLog, Log, MAX_BUF_SZ, N_BUFS};
 // lock-free stack

@@ -1,5 +1,6 @@
 extern crate rsdb;
 
+use std::fs;
 use std::thread;
 use std::sync::Arc;
 
@@ -48,7 +49,7 @@ fn kv(i: usize) -> Vec<u8> {
 }
 
 #[test]
-fn it_works() {
+fn parallel_ops() {
     println!("========== initial sets ==========");
     let t = Arc::new(Tree::new(None));
     par!{t, |tree: &Tree, k: Vec<u8>| {
@@ -87,6 +88,27 @@ fn it_works() {
     par!{t, |tree: &Tree, k: Vec<u8>| {
         assert_eq!(tree.get(&*k), None);
     }};
+}
+
+#[test]
+fn recovery() {
+    println!("========== recovery ==========");
+    let path = "test_tree.log";
+    let t = Tree::new(Some(path.to_owned()));
+    for i in 0..N {
+        let k = kv(i);
+        t.set(k.clone(), k);
+    }
+    drop(t);
+
+    let t = Tree::new(Some(path.to_owned()));
+    for i in 0..FANOUT << 1 {
+        let k = kv(i);
+        assert_eq!(t.get(&*k), Some(k));
+    }
+    drop(t);
+
+    fs::remove_file(path).unwrap();
 }
 
 // TODO quickcheck splits, reads, writes interleaved
