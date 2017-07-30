@@ -13,7 +13,7 @@ pub use db::DB;
 // atomic lock-free tree
 pub use tree::Tree;
 // lock-free pagecache
-pub use page::{PageCache, PageMaterializer};
+pub use page::{PageCache, Materializer};
 // lock-free log-structured storage
 pub use log::{HEADER_LEN, LockFreeLog, Log, MAX_BUF_SZ, N_BUFS};
 // lock-free stack

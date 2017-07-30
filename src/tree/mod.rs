@@ -442,7 +442,7 @@ impl Debug for Tree {
 
 pub struct BLinkMaterializer;
 
-impl PageMaterializer for BLinkMaterializer {
+impl Materializer for BLinkMaterializer {
     type MaterializedPage = Node;
     type PartialPage = Frag;
 
