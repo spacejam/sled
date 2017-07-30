@@ -91,6 +91,42 @@ fn parallel_ops() {
 }
 
 #[test]
+fn iterator() {
+    println!("========== iterator ==========");
+    let t = Tree::new(None);
+    for i in 0..N {
+        let k = kv(i);
+        t.set(k.clone(), k);
+    }
+
+    for (i, (k, v)) in t.iter().enumerate() {
+        let should_be = kv(i);
+        assert_eq!(should_be, k);
+        assert_eq!(should_be, v);
+    }
+
+    for (i, (k, v)) in t.scan(b"").enumerate() {
+        let should_be = kv(i);
+        assert_eq!(should_be, k);
+        assert_eq!(should_be, v);
+    }
+
+    let half_way = N / 2;
+    let half_key = kv(half_way);
+    let mut tree_scan = t.scan(&*half_key);
+    assert_eq!(tree_scan.next(), Some((half_key.clone(), half_key)));
+
+    let first_key = kv(0);
+    let mut tree_scan = t.scan(&*first_key);
+    assert_eq!(tree_scan.next(), Some((first_key.clone(), first_key)));
+
+    let last_key = kv(N - 1);
+    let mut tree_scan = t.scan(&*last_key);
+    assert_eq!(tree_scan.next(), Some((last_key.clone(), last_key)));
+    assert_eq!(tree_scan.next(), None);
+}
+
+#[test]
 fn recovery() {
     println!("========== recovery ==========");
     let path = "test_tree.log";
