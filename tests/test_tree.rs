@@ -51,7 +51,7 @@ fn kv(i: usize) -> Vec<u8> {
 #[test]
 fn parallel_ops() {
     println!("========== initial sets ==========");
-    let t = Arc::new(Tree::new(None));
+    let t = Arc::new(Config::default().tree());
     par!{t, |tree: &Tree, k: Vec<u8>| {
         assert_eq!(tree.get(&*k), None);
         tree.set(k.clone(), k.clone());
@@ -93,7 +93,7 @@ fn parallel_ops() {
 #[test]
 fn iterator() {
     println!("========== iterator ==========");
-    let t = Tree::new(None);
+    let t = Config::default().tree();
     for i in 0..N {
         let k = kv(i);
         t.set(k.clone(), k);
@@ -130,15 +130,16 @@ fn iterator() {
 fn recovery() {
     println!("========== recovery ==========");
     let path = "test_tree.log";
-    let t = Tree::new(Some(path.to_owned()));
+    let conf = Config::default().path(Some(path.to_owned()));
+    let t = conf.tree();
     for i in 0..N {
         let k = kv(i);
         t.set(k.clone(), k);
     }
     drop(t);
 
-    let t = Tree::new(Some(path.to_owned()));
-    for i in 0..FANOUT << 1 {
+    let t = conf.tree();
+    for i in 0..conf.get_blink_fanout() << 1 {
         let k = kv(i);
         assert_eq!(t.get(&*k), Some(k));
     }

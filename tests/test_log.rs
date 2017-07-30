@@ -1,3 +1,4 @@
+#![cfg(test)]
 #![allow(unused)]
 
 extern crate quickcheck;
@@ -10,7 +11,7 @@ use std::sync::Arc;
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::Rng;
 
-use rsdb::{LockFreeLog, Log};
+use rsdb::{Config, HEADER_LEN, LockFreeLog, Log};
 
 #[derive(Debug, Clone)]
 enum Op {
@@ -63,7 +64,7 @@ impl Arbitrary for OpVec {
 
 fn prop_read_stable(ops: OpVec) -> bool {
     use self::Op::*;
-    let log = LockFreeLog::start_system(None);
+    let log = Config::default().log();
     for op in ops.ops.into_iter() {
         match op {
             Write(buf) => {
@@ -94,10 +95,10 @@ fn qc_merge_converges() {
 #[test]
 #[ignore]
 fn more_reservations_than_buffers() {
-    let log = LockFreeLog::start_system(None);
+    let log = Config::default().log();
     let mut reservations = vec![];
-    for _ in 0..rsdb::N_BUFS + 1 {
-        reservations.push(log.reserve(vec![0; rsdb::MAX_BUF_SZ - rsdb::HEADER_LEN]))
+    for _ in 0..log.config().get_io_bufs() + 1 {
+        reservations.push(log.reserve(vec![0; log.config().get_io_buf_size() - HEADER_LEN]))
     }
     for res in reservations.into_iter().rev() {
         // abort in reverse order
@@ -108,9 +109,10 @@ fn more_reservations_than_buffers() {
 #[test]
 #[ignore]
 fn non_contiguous_flush() {
-    let log = LockFreeLog::start_system(None);
-    let res1 = log.reserve(vec![0; rsdb::MAX_BUF_SZ - rsdb::HEADER_LEN]);
-    let res2 = log.reserve(vec![0; rsdb::MAX_BUF_SZ - rsdb::HEADER_LEN]);
+    let conf = Config::default();
+    let log = conf.log();
+    let res1 = log.reserve(vec![0; conf.get_io_buf_size() - HEADER_LEN]);
+    let res2 = log.reserve(vec![0; conf.get_io_buf_size() - HEADER_LEN]);
     let id = res2.log_id();
     res2.abort();
     res1.abort();
@@ -120,7 +122,7 @@ fn non_contiguous_flush() {
 #[test]
 fn basic_functionality() {
     // TODO linearize res bufs, verify they are correct
-    let log = Arc::new(LockFreeLog::start_system(None));
+    let log = Arc::new(Config::default().log());
     let iobs2 = log.clone();
     let iobs3 = log.clone();
     let iobs4 = log.clone();
@@ -220,7 +222,7 @@ fn test_abort(log: &LockFreeLog) {
 
 #[test]
 fn test_log_aborts() {
-    let log = LockFreeLog::start_system(None);
+    let log = Config::default().log();
     test_write(&log);
     test_abort(&log);
     test_write(&log);
@@ -231,7 +233,7 @@ fn test_log_aborts() {
 
 #[test]
 fn test_hole_punching() {
-    let log = LockFreeLog::start_system(None);
+    let log = Config::default().log();
 
     let data_bytes = b"yoyoyoyo";
     let res = log.reserve(data_bytes.to_vec());
@@ -250,7 +252,7 @@ fn test_hole_punching() {
 #[test]
 fn test_log_iterator() {
     println!("making stable.");
-    let log = LockFreeLog::start_system(None);
+    let log = Config::default().log();
     let first_offset = log.write(b"1".to_vec());
     log.write(b"22".to_vec());
     log.write(b"333".to_vec());

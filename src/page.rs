@@ -1,3 +1,7 @@
+/// A lock-free pagecache which supports fragmented pages, for dramatically
+/// improving write throughput. Reads need to scatter-gather, so this is
+/// built with the assumption that it will be run on something like an
+/// SSD that can efficiently handle random reads.
 use std::fmt::{self, Debug};
 use std::ptr;
 use std::sync::atomic::AtomicUsize;
@@ -55,13 +59,13 @@ impl<PM> PageCache<LockFreeLog, PM>
     where PM: Materializer,
           PM::PartialPage: Clone
 {
-    pub fn new(pm: PM, path: Option<String>) -> PageCache<LockFreeLog, PM> {
+    pub fn new(pm: PM, config: Config) -> PageCache<LockFreeLog, PM> {
         PageCache {
             t: pm,
             inner: Radix::default(),
             max_id: AtomicUsize::new(0),
             free: Stack::default(),
-            log: Box::new(LockFreeLog::start_system(path)),
+            log: Box::new(LockFreeLog::start_system(config)),
         }
     }
 
