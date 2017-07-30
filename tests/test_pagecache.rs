@@ -6,7 +6,7 @@ use rsdb::*;
 
 pub struct TestMaterializer;
 
-impl PageMaterializer for TestMaterializer {
+impl Materializer for TestMaterializer {
     type MaterializedPage = String;
     type PartialPage = String;
 

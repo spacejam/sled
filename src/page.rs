@@ -11,7 +11,7 @@ use super::*;
 
 const MAX_FRAG_LEN: usize = 2;
 
-pub trait PageMaterializer: Send + Sync {
+pub trait Materializer: Send + Sync {
     type MaterializedPage;
     type PartialPage: Serialize + DeserializeOwned;
 
@@ -19,21 +19,21 @@ pub trait PageMaterializer: Send + Sync {
     fn consolidate(&self, Vec<Self::PartialPage>) -> Vec<Self::PartialPage>;
 }
 
-pub struct PageCache<L: Log, PM>
-    where PM: PageMaterializer + Sized,
+pub struct PageCache<L: Log, M>
+    where M: Materializer + Sized,
           L: Log + Sized
 {
-    t: PM,
-    inner: Radix<stack::Stack<*const PM::PartialPage>>,
+    t: M,
+    inner: Radix<stack::Stack<*const M::PartialPage>>,
     max_id: AtomicUsize,
     free: Stack<PageID>,
     log: Box<L>,
 }
 
-unsafe impl<L: Log, PM: PageMaterializer> Send for PageCache<L, PM> {}
-unsafe impl<L: Log, PM: PageMaterializer> Sync for PageCache<L, PM> {}
+unsafe impl<L: Log, M: Materializer> Send for PageCache<L, M> {}
+unsafe impl<L: Log, M: Materializer> Sync for PageCache<L, M> {}
 
-impl<L: Log, PM: PageMaterializer> Debug for PageCache<L, PM> {
+impl<L: Log, M: Materializer> Debug for PageCache<L, M> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         f.write_str(&*format!("PageCache {{ max: {:?} free: {:?} }}\n",
                               self.max_id.load(SeqCst),
@@ -41,13 +41,13 @@ impl<L: Log, PM: PageMaterializer> Debug for PageCache<L, PM> {
     }
 }
 
-impl<PM> PageCache<LockFreeLog, PM>
-    where PM: PageMaterializer,
-          PM::PartialPage: Clone
+impl<M> PageCache<LockFreeLog, M>
+    where M: Materializer,
+          M::PartialPage: Clone
 {
-    pub fn new(pm: PM, path: Option<String>) -> PageCache<LockFreeLog, PM> {
+    pub fn new(m: M, path: Option<String>) -> PageCache<LockFreeLog, M> {
         let pc = PageCache {
-            t: pm,
+            t: m,
             inner: Radix::default(),
             max_id: AtomicUsize::new(0),
             free: Stack::default(),
@@ -68,7 +68,7 @@ impl<PM> PageCache<LockFreeLog, PM>
         let mut last_good_id = 0;
         let mut free_pids = vec![];
         for (log_id, bytes) in self.log.iter_from(from) {
-            if let Ok(append) = deserialize::<LoggedUpdate<PM::PartialPage>>(&*bytes) {
+            if let Ok(append) = deserialize::<LoggedUpdate<M::PartialPage>>(&*bytes) {
                 last_good_id = log_id + bytes.len() as LogID + HEADER_LEN as LogID;
                 match append.update {
                     Update::Append(appends) => {
@@ -115,13 +115,13 @@ impl<PM> PageCache<LockFreeLog, PM>
         self.max_id.store(last_good_id as usize, SeqCst);
     }
 
-    pub fn allocate(&self) -> (PageID, *const stack::Node<*const PM::PartialPage>) {
+    pub fn allocate(&self) -> (PageID, *const stack::Node<*const M::PartialPage>) {
         let pid = self.free.pop().unwrap_or_else(|| self.max_id.fetch_add(1, SeqCst));
         let stack = raw(Stack::default());
         self.inner.insert(pid, stack).unwrap();
 
         // write info to log
-        let append: LoggedUpdate<PM::PartialPage> = LoggedUpdate {
+        let append: LoggedUpdate<M::PartialPage> = LoggedUpdate {
             pid: pid,
             update: Update::Alloc,
         };
@@ -136,7 +136,7 @@ impl<PM> PageCache<LockFreeLog, PM>
         let stack_ptr = self.inner.del(pid);
 
         // write info to log
-        let append: LoggedUpdate<PM::PartialPage> = LoggedUpdate {
+        let append: LoggedUpdate<M::PartialPage> = LoggedUpdate {
             pid: pid,
             update: Update::Del,
         };
@@ -156,7 +156,7 @@ impl<PM> PageCache<LockFreeLog, PM>
 
     pub fn get(&self,
                pid: PageID)
-               -> Option<(PM::MaterializedPage, *const stack::Node<*const PM::PartialPage>)> {
+               -> Option<(M::MaterializedPage, *const stack::Node<*const M::PartialPage>)> {
         let stack_ptr = self.inner.get(pid);
         if stack_ptr.is_none() {
             return None;
@@ -168,7 +168,7 @@ impl<PM> PageCache<LockFreeLog, PM>
 
         let stack_iter = StackIter::from_ptr(head);
 
-        let mut partial_pages: Vec<PM::PartialPage> =
+        let mut partial_pages: Vec<M::PartialPage> =
             unsafe { stack_iter.map(|ptr| (**ptr).clone()).collect() };
         partial_pages.reverse();
         let partial_pages = partial_pages;
@@ -205,10 +205,10 @@ impl<PM> PageCache<LockFreeLog, PM>
 
     pub fn append(&self,
                   pid: PageID,
-                  old: *const stack::Node<*const PM::PartialPage>,
-                  new: PM::PartialPage)
-                  -> Result<*const stack::Node<*const PM::PartialPage>,
-                            *const stack::Node<*const PM::PartialPage>> {
+                  old: *const stack::Node<*const M::PartialPage>,
+                  new: M::PartialPage)
+                  -> Result<*const stack::Node<*const M::PartialPage>,
+                            *const stack::Node<*const M::PartialPage>> {
         let append = LoggedUpdate {
             pid: pid,
             update: Update::Append(vec![new.clone()]),

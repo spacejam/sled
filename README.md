@@ -39,15 +39,15 @@ A lock-free pagecache.
 
 ```rust
 impl PageCache {
-  pub fn new(viewer: PageMaterializer, log: Log) -> PageCache;
+  pub fn new(viewer: Materializer, log: Log) -> PageCache;
 
   pub fn allocate(&self) -> PageID;
 
   pub fn free(&self, PageID);
 
-  pub fn get(&self, PageID) -> (PageMaterializer::MaterializedPage, CASKey);
+  pub fn get(&self, PageID) -> (Materializer::MaterializedPage, CASKey);
 
-  pub fn append(&self, PageID, CASKey, PageMaterializer::PartialPage);
+  pub fn append(&self, PageID, CASKey, Materializer::PartialPage);
 
   pub fn flush(&self, PageID) -> LogID;
 
@@ -58,7 +58,7 @@ impl PageCache {
   pub fn make_stable(&self, LogID);
 }
 
-trait PageMaterializer {
+trait Materializer {
   type MaterializedPage;
   type PartialPage;
 
@@ -153,4 +153,3 @@ non-goals:
 1. transactions at this layer do not enforce WAL protocols. higher layers must
    enforce durability needs by using offset observation and blocking
 1. we have no knowledge of the structure of the pages
-
