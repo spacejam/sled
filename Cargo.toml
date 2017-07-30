@@ -1,11 +1,11 @@
 [package]
 name = "rsdb"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Tyler Neely <t@jujit.su>"]
-description = "transactional KV store backed by a log-structured persistent B+ tree"
+description = "a flash-sympathetic persistent lock-free B+ tree"
 license = "Apache-2.0"
 homepage = "https://github.com/spacejam/rsdb"
-keywords = ["database", "embedded", "high-performance", "persistent", "transaction"]
+keywords = ["database", "embedded", "concurrent", "persistent", "lock-free"]
 
 [dependencies]
 bincode = "0.8"

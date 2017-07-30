@@ -108,8 +108,7 @@ impl Log for LockFreeLog {
             self.iobufs.flush();
             spins += 1;
             if spins > 2000000 {
-                println!("{:?} have spun >2000000x in make_stable",
-                         thread::current().name());
+                // println!("{:?} have spun >2000000x in make_stable", thread::current().name());
                 spins = 0;
             }
             let cur = self.iobufs.stable();

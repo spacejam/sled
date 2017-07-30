@@ -5,7 +5,6 @@ use std::io::{self, Error, ErrorKind, SeekFrom};
 use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
-use std::thread;
 
 #[cfg(target_os="linux")]
 use libc::{FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE, fallocate};

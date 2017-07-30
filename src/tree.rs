@@ -1,11 +1,10 @@
 use std::fmt::{self, Debug};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
-use std::thread;
 
 use super::*;
 
-const FANOUT: usize = 2;
+pub const FANOUT: usize = 2;
 
 type Raw = *const stack::Node<*const tree::Frag>;
 
@@ -19,32 +18,40 @@ unsafe impl Sync for Tree {}
 
 impl Tree {
     pub fn new(path: Option<String>) -> Tree {
-        let pages = PageCache::new(BLinkMaterializer, path);
+        let mut pages = PageCache::new(BLinkMaterializer { last_known_root: 0 }, path);
 
-        let (root_id, root_cas_key) = pages.allocate();
-        let (leaf_id, leaf_cas_key) = pages.allocate();
+        let root_opt = pages.recover(0);
 
-        let leaf = Frag::Base(Node {
-            id: leaf_id,
-            data: Data::Leaf(vec![]),
-            next: None,
-            lo: Bound::Inc(vec![]),
-            hi: Bound::Inf,
-        });
+        let root_id = if let Some(root_id) = root_opt {
+            root_id
+        } else {
+            let (root_id, root_cas_key) = pages.allocate();
+            let (leaf_id, leaf_cas_key) = pages.allocate();
 
-        let mut root_index_vec = vec![];
-        root_index_vec.push((vec![], leaf_id));
+            let leaf = Frag::Base(Node {
+                id: leaf_id,
+                data: Data::Leaf(vec![]),
+                next: None,
+                lo: Bound::Inc(vec![]),
+                hi: Bound::Inf,
+            });
 
-        let root = Frag::Base(Node {
-            id: root_id,
-            data: Data::Index(root_index_vec),
-            next: None,
-            lo: Bound::Inc(vec![]),
-            hi: Bound::Inf,
-        });
+            let mut root_index_vec = vec![];
+            root_index_vec.push((vec![], leaf_id));
 
-        pages.append(root_id, root_cas_key, root).unwrap();
-        pages.append(leaf_id, leaf_cas_key, leaf).unwrap();
+            let root = Frag::Base(Node {
+                id: root_id,
+                data: Data::Index(root_index_vec),
+                next: None,
+                lo: Bound::Inc(vec![]),
+                hi: Bound::Inf,
+            });
+
+            pages.append(root_id, root_cas_key, root).unwrap();
+            pages.append(leaf_id, leaf_cas_key, leaf).unwrap();
+
+            root_id
+        };
 
         Tree {
             pages: pages,
@@ -237,13 +244,9 @@ impl Tree {
         // try to install a child split on the left side
         if let Err(_) = self.pages.append(node.id, node_cas_key, child_split) {
             // if we failed, don't follow through with the parent split
-            let this_thread = thread::current();
-            let name = this_thread.name().unwrap();
-            println!("{}: {}|{} @ {:?} -",
-                     name,
-                     node.id,
-                     new_pid,
-                     parent_split.at);
+            // let this_thread = thread::current();
+            // let name = this_thread.name().unwrap();
+            // println!("{}: {}|{} @ {:?} -", name, node.id, new_pid, parent_split.at);
             self.pages.free(new_pid);
             return Err(());
         }
@@ -267,13 +270,9 @@ impl Tree {
                                     Frag::ParentSplit(parent_split.clone()));
 
         if res.is_err() {
-            let this_thread = thread::current();
-            let name = this_thread.name().unwrap();
-            println!("{}: {} <- {:?}|{} -",
-                     name,
-                     parent_node.id,
-                     parent_split.at,
-                     parent_split.to);
+            // let this_thread = thread::current();
+            // let name = this_thread.name().unwrap();
+            // println!("{}: {} <- {:?}|{} -", name, parent_node.id, parent_split.at, parent_split.to);
         }
 
         res
@@ -299,12 +298,12 @@ impl Tree {
         let cas = self.root
             .compare_and_swap(from, new_root_pid, SeqCst);
         if cas == from {
-            let this_thread = thread::current();
-            let name = this_thread.name().unwrap();
-            println!("{}: root hoist of {} +", name, from);
+            // let this_thread = thread::current();
+            // let name = this_thread.name().unwrap();
+            // println!("{}: root hoist of {} +", name, from);
         } else {
             self.pages.free(new_root_pid);
-            println!("root hoist of {} -", from);
+            // println!("root hoist of {} -", from);
         }
     }
 
@@ -354,8 +353,8 @@ impl Tree {
                     to: node.id.clone(),
                 });
 
-                let res = self.pages.append(parent_node.id, parent_cas_key, ps);
-                println!("trying to fix incomplete parent split: {:?}", res);
+                let _res = self.pages.append(parent_node.id, parent_cas_key, ps);
+                // println!("trying to fix incomplete parent split: {:?}", res);
                 // println!("after: {:?}", self);
             }
 
@@ -372,9 +371,7 @@ impl Tree {
                         }
                     }
                     if cursor == old_cursor {
-                        println!("seps: {:?}", ptrs);
-                        println!("looking for sep <= {:?}", &*key);
-                        panic!("stuck in pid loop, didn't find proper key");
+                        panic!("stuck in page traversal loop");
                     }
                 }
                 Data::Leaf(_) => {
@@ -473,6 +470,21 @@ impl Data {
         match *self {
             Data::Index(ref mut ptrs) => ptrs.retain(|&(ref k, _)| k < &bound),
             Data::Leaf(ref mut items) => items.retain(|&(ref k, _)| k < &bound),
+        }
+    }
+
+    // used for detecting root hoists during recovery
+    fn is_parent_of(&self, pid: PageID) -> bool {
+        match *self {
+            Data::Index(ref ptrs) => {
+                for &(_, ref child) in ptrs {
+                    if *child == pid {
+                        return true;
+                    }
+                }
+                false
+            }
+            Data::Leaf(_) => false,
         }
     }
 }
@@ -620,11 +632,14 @@ impl Frag {
     }
 }
 
-pub struct BLinkMaterializer;
+pub struct BLinkMaterializer {
+    last_known_root: PageID,
+}
 
-impl PageMaterializer for BLinkMaterializer {
+impl Materializer for BLinkMaterializer {
     type MaterializedPage = Node;
     type PartialPage = Frag;
+    type Recovery = PageID;
 
     fn materialize(&self, frags: Vec<Frag>) -> Node {
         let consolidated = self.consolidate(frags);
@@ -644,5 +659,14 @@ impl PageMaterializer for BLinkMaterializer {
         }
 
         vec![Frag::Base(base)]
+    }
+
+    fn recover(&mut self, node: Node) -> Option<PageID> {
+        // if last_known_root is a child of this node, this node is the new root
+        if node.data.is_parent_of(self.last_known_root) {
+            Some(node.id)
+        } else {
+            None
+        }
     }
 }

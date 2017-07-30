@@ -142,9 +142,7 @@ impl IOBufs {
 
             spins += 1;
             if spins > 1_000_000 {
-                println!("{:?} stalling in reserve, idx {}",
-                         thread::current().name(),
-                         idx);
+                // println!("{:?} stalling in reserve, idx {}", thread::current().name(), idx);
                 spins = 0;
             }
 
@@ -210,8 +208,7 @@ impl IOBufs {
 
                 spins += 1;
                 if spins == 1_000_000 {
-                    println!("stalling while waiting on log_offset \
-                             to be reset by last writer.");
+                    // println!("stalling while waiting on log_offset to be reset by last writer.");
                     spins = 0;
                 }
             }
@@ -245,7 +242,7 @@ impl IOBufs {
         loop {
             spins += 1;
             if spins > 10 {
-                println!("{:?} have spun >10x in decr", thread::current().name());
+                // println!("{:?} have spun >10x in decr", thread::current().name());
                 spins = 0;
             }
 
@@ -351,9 +348,7 @@ impl IOBufs {
         loop {
             spins += 1;
             if spins > 1_000_000 {
-                println!("{:?} have spun >1,000,000x in seal of buf {}",
-                         thread::current().name(),
-                         idx);
+                // println!("{:?} have spun >1,000,000x in seal of buf {}", thread::current().name(), idx);
                 spins = 0;
             }
             if self.bufs[(idx + 1) % N_BUFS].cas_log_offset(max, next_offset).is_ok() {

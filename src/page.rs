@@ -11,16 +11,26 @@ use super::*;
 
 const MAX_FRAG_LEN: usize = 2;
 
-pub trait PageMaterializer: Send + Sync {
+pub trait Materializer: Send + Sync {
     type MaterializedPage;
     type PartialPage: Serialize + DeserializeOwned;
+    type Recovery;
 
+    /// Used to generate the result of `get` requests on the `PageCache`
     fn materialize(&self, Vec<Self::PartialPage>) -> Self::MaterializedPage;
+
+    /// Used to compress long chains of partial pages into a condensed form
+    /// during compaction.
     fn consolidate(&self, Vec<Self::PartialPage>) -> Vec<Self::PartialPage>;
+
+    /// Used to feed custom recovery information back to a higher-level abstraction
+    /// during startup. For example, a B-Link tree must know what the current
+    /// root node is before it can start serving requests.
+    fn recover(&mut self, Self::MaterializedPage) -> Option<Self::Recovery>;
 }
 
 pub struct PageCache<L: Log, PM>
-    where PM: PageMaterializer + Sized,
+    where PM: Materializer + Sized,
           L: Log + Sized
 {
     t: PM,
@@ -30,10 +40,10 @@ pub struct PageCache<L: Log, PM>
     log: Box<L>,
 }
 
-unsafe impl<L: Log, PM: PageMaterializer> Send for PageCache<L, PM> {}
-unsafe impl<L: Log, PM: PageMaterializer> Sync for PageCache<L, PM> {}
+unsafe impl<L: Log, PM: Materializer> Send for PageCache<L, PM> {}
+unsafe impl<L: Log, PM: Materializer> Sync for PageCache<L, PM> {}
 
-impl<L: Log, PM: PageMaterializer> Debug for PageCache<L, PM> {
+impl<L: Log, PM: Materializer> Debug for PageCache<L, PM> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         f.write_str(&*format!("PageCache {{ max: {:?} free: {:?} }}\n",
                               self.max_id.load(SeqCst),
@@ -42,45 +52,55 @@ impl<L: Log, PM: PageMaterializer> Debug for PageCache<L, PM> {
 }
 
 impl<PM> PageCache<LockFreeLog, PM>
-    where PM: PageMaterializer,
+    where PM: Materializer,
           PM::PartialPage: Clone
 {
     pub fn new(pm: PM, path: Option<String>) -> PageCache<LockFreeLog, PM> {
-        let pc = PageCache {
+        PageCache {
             t: pm,
             inner: Radix::default(),
             max_id: AtomicUsize::new(0),
             free: Stack::default(),
             log: Box::new(LockFreeLog::start_system(path)),
-        };
-
-        // Recover from beginning of log. In the future when we
-        // have PageCache snapshotting, we will want to first
-        // load the latest snapshot, then use a later LogID
-        // to recover from in the log.
-        pc.recover_from_log(0);
-
-        pc
+        }
     }
 
     /// Read updates from the log, apply them to our pagecache.
-    fn recover_from_log(&self, from: LogID) {
+    pub fn recover(&mut self, from: LogID) -> Option<PM::Recovery> {
         let mut last_good_id = 0;
         let mut free_pids = vec![];
+        let mut recovery = None;
+
         for (log_id, bytes) in self.log.iter_from(from) {
             if let Ok(append) = deserialize::<LoggedUpdate<PM::PartialPage>>(&*bytes) {
                 last_good_id = log_id + bytes.len() as LogID + HEADER_LEN as LogID;
                 match append.update {
                     Update::Append(appends) => {
                         let stack = self.inner.get(append.pid).unwrap();
-                        for append in appends {
-                            unsafe {
+
+                        unsafe {
+                            for append in appends {
                                 (*stack).push(raw(append));
+                            }
+
+                            let (_, stack_iter) = (*stack).iter_at_head();
+
+                            let mut partial_pages: Vec<PM::PartialPage> =
+                                stack_iter.map(|ptr| (**ptr).clone()).collect();
+
+                            partial_pages.reverse();
+
+                            let new_page = self.t.materialize(partial_pages);
+
+                            let r = self.t.recover(new_page);
+                            if r.is_some() {
+                                recovery = r;
                             }
                         }
                     }
                     Update::Compact(appends) => {
                         // TODO GC previous stack
+                        // TODO feed compacted page to recover?
                         let _prev = self.inner.del(append.pid);
                         let stack = raw(Stack::default());
                         self.inner.insert(append.pid, stack).unwrap();
@@ -113,6 +133,8 @@ impl<PM> PageCache<LockFreeLog, PM>
         }
 
         self.max_id.store(last_good_id as usize, SeqCst);
+
+        recovery
     }
 
     pub fn allocate(&self) -> (PageID, *const stack::Node<*const PM::PartialPage>) {
