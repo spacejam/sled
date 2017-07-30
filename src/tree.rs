@@ -156,6 +156,26 @@ impl Tree {
         ret
     }
 
+    pub fn scan(&self, key: &[u8]) -> TreeIter {
+        let (path, _) = self.get_internal(key);
+        let (last_node, _last_cas_key) = path.last().cloned().unwrap();
+        TreeIter {
+            id: last_node.id,
+            inner: &self.pages,
+            last_key: Bound::Non(key.to_vec()),
+        }
+    }
+
+    pub fn iter(&self) -> TreeIter {
+        let (path, _) = self.get_internal(b"");
+        let (last_node, _last_cas_key) = path.last().cloned().unwrap();
+        TreeIter {
+            id: last_node.id,
+            inner: &self.pages,
+            last_key: Bound::Non(vec![]),
+        }
+    }
+
     fn recursive_split(&self, path: &Vec<(Node, Raw)>) {
         // to split, we pop the path, see if it's in need of split, recurse up
         // two-phase: (in prep for lock-free, not necessary for single threaded)
@@ -487,8 +507,49 @@ impl Data {
             Data::Leaf(_) => false,
         }
     }
+
+    fn leaf(&self) -> Option<Vec<(Key, Value)>> {
+        match self {
+            &Data::Index(_) => None,
+            &Data::Leaf(ref items) => Some(items.clone()),
+        }
+    }
 }
 
+pub struct TreeIter<'a> {
+    id: PageID,
+    inner: &'a PageCache<LockFreeLog, BLinkMaterializer>,
+    last_key: Bound,
+}
+
+impl<'a> Iterator for TreeIter<'a> {
+    type Item = (Vec<u8>, Vec<u8>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let (page, _cas_key) = self.inner.get(self.id).unwrap();
+            for (ref k, ref v) in page.data.leaf().unwrap() {
+                if Bound::Inc(k.clone()) > self.last_key {
+                    self.last_key = Bound::Inc(k.to_vec());
+                    return Some((k.clone(), v.clone()));
+                }
+            }
+            if page.next.is_none() {
+                return None;
+            }
+            self.id = page.next.unwrap();
+        }
+    }
+}
+
+impl<'a> IntoIterator for &'a Tree {
+    type Item = (Vec<u8>, Vec<u8>);
+    type IntoIter = TreeIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Node {
