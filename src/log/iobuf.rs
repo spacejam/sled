@@ -5,8 +5,6 @@ use rand::{Rng, thread_rng};
 use super::*;
 
 pub const HEADER_LEN: usize = 7;
-pub const MAX_BUF_SZ: usize = 2 << 22; // 8mb
-pub const N_BUFS: usize = 16;
 
 struct IOBuf {
     buf: UnsafeCell<Vec<u8>>,
@@ -15,9 +13,9 @@ struct IOBuf {
 }
 
 impl IOBuf {
-    fn new() -> IOBuf {
+    fn new(buf_size: usize) -> IOBuf {
         IOBuf {
-            buf: UnsafeCell::new(vec![0; MAX_BUF_SZ]),
+            buf: UnsafeCell::new(vec![0; buf_size]),
             header: AtomicUsize::new(0),
             log_offset: AtomicUsize::new(std::usize::MAX),
         }
@@ -74,8 +72,8 @@ impl Debug for IOBufs {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         let current_buf = self.current_buf.load(SeqCst);
         let written = self.written_bufs.load(SeqCst);
-        let slow_writers = current_buf - written >= N_BUFS;
-        let idx = current_buf % N_BUFS;
+        let slow_writers = current_buf - written >= self.config.get_io_bufs();
+        let idx = current_buf % self.config.get_io_bufs();
         // load current header value
         let ref iobuf = self.bufs[idx];
         let hv = iobuf.get_header();
@@ -122,7 +120,7 @@ impl IOBufs {
             (file, 0)
         };
 
-        let bufs = rep_no_copy![IOBuf::new(); N_BUFS];
+        let bufs = rep_no_copy![IOBuf::new(config.get_io_buf_size()); config.get_io_bufs()];
 
         let current_buf = 0;
         bufs[current_buf].set_log_offset(disk_offset);
@@ -144,7 +142,7 @@ impl IOBufs {
 
     fn idx(&self) -> usize {
         let current_buf = self.current_buf.load(SeqCst);
-        current_buf % N_BUFS
+        current_buf % self.config.get_io_bufs()
     }
 
     /// Returns the last stable offset in storage.
@@ -164,13 +162,13 @@ impl IOBufs {
     pub(super) fn reserve(&self, mut raw_buf: Vec<u8>) -> Reservation {
         let buf = encapsulate(&mut *raw_buf);
         assert_eq!(buf.len() >> 32, 0);
-        assert!(buf.len() <= MAX_BUF_SZ);
+        assert!(buf.len() <= self.config.get_io_buf_size());
 
         let mut spins = 0;
         loop {
             let written = self.written_bufs.load(SeqCst);
             let current_buf = self.current_buf.load(SeqCst);
-            let idx = current_buf % N_BUFS;
+            let idx = current_buf % self.config.get_io_bufs();
 
             spins += 1;
             if spins > 1_000_000 {
@@ -185,7 +183,7 @@ impl IOBufs {
                 continue;
             }
 
-            if current_buf - written > N_BUFS {
+            if current_buf - written > self.config.get_io_bufs() {
                 // if written is too far behind, we need to
                 // spin while it catches up to avoid overlap
                 continue;
@@ -205,7 +203,7 @@ impl IOBufs {
 
             // try to claim space
             let buf_offset = offset(header);
-            if buf_offset as LogID + buf.len() as LogID > MAX_BUF_SZ as LogID {
+            if buf_offset as LogID + buf.len() as LogID > self.config.get_io_buf_size() as LogID {
                 // This buffer is too full to accept our write!
                 // Try to seal the buffer, and maybe write it if
                 // there are zero writers.
@@ -383,7 +381,9 @@ impl IOBufs {
                 // println!("{:?} have spun >1,000,000x in seal of buf {}", thread::current().name(), idx);
                 spins = 0;
             }
-            if self.bufs[(idx + 1) % N_BUFS].cas_log_offset(max, next_offset).is_ok() {
+            if self.bufs[(idx + 1) % self.config.get_io_bufs()]
+                .cas_log_offset(max, next_offset)
+                .is_ok() {
                 // success, now we can stop stalling and do other work
                 break;
             }
@@ -425,7 +425,7 @@ impl IOBufs {
 
 impl Drop for IOBufs {
     fn drop(&mut self) {
-        for _ in 0..N_BUFS {
+        for _ in 0..self.config.get_io_bufs() {
             self.flush();
         }
     }
