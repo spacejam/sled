@@ -22,7 +22,6 @@ impl LockFreeLog {
 }
 
 impl Log for LockFreeLog {
-    /// claim a spot on disk, which can later be filled or aborted
     fn reserve(&self, buf: Vec<u8>) -> Reservation {
         self.iobufs.reserve(buf)
     }
@@ -32,7 +31,6 @@ impl Log for LockFreeLog {
         self.iobufs.config()
     }
 
-    /// write a buffer to disk
     fn write(&self, buf: Vec<u8>) -> LogID {
         self.iobufs.reserve(buf).complete()
     }

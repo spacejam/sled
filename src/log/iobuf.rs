@@ -4,6 +4,7 @@ use rand::{Rng, thread_rng};
 
 use super::*;
 
+/// The length of the message header prepended to all data written to the log.
 pub const HEADER_LEN: usize = 7;
 
 struct IOBuf {
@@ -158,9 +159,13 @@ impl IOBufs {
     /// # Panics
     ///
     /// Panics if the desired reservation is greater than 8388601 bytes..
+    /// (config io buf size - 7)
     pub(super) fn reserve(&self, mut raw_buf: Vec<u8>) -> Reservation {
-        let buf = encapsulate(&mut *raw_buf);
-        assert_eq!(buf.len() >> 32, 0);
+        assert_eq!(raw_buf.len() + HEADER_LEN >> 32, 0);
+
+        let buf = encapsulate(&mut raw_buf);
+        drop(raw_buf);
+
         assert!(buf.len() <= self.config.get_io_buf_size());
 
         let mut printed = false;
@@ -447,17 +452,17 @@ impl Drop for IOBufs {
 }
 
 #[inline(always)]
-fn encapsulate(buf: &mut [u8]) -> Vec<u8> {
-    let size_bytes = ops::usize_to_array(buf.len()).to_vec();
-    let valid_bytes = vec![1u8];
-    let crc16_bytes = crc16_arr(buf).to_vec();
+fn encapsulate(buf: &mut Vec<u8>) -> Vec<u8> {
+    let mut size_bytes = ops::usize_to_array(buf.len()).to_vec();
+    let mut valid_bytes = vec![1u8];
+    let mut crc16_bytes = crc16_arr(buf).to_vec();
 
     let mut out = Vec::with_capacity(HEADER_LEN + buf.len());
-    out.extend_from_slice(&*valid_bytes);
-    out.extend_from_slice(&*size_bytes);
-    out.extend_from_slice(&*crc16_bytes);
-    out.extend_from_slice(buf);
-    assert_eq!(out.len(), HEADER_LEN + buf.len());
+    out.append(&mut valid_bytes);
+    out.append(&mut size_bytes);
+    out.append(&mut crc16_bytes);
+    assert_eq!(out.len(), HEADER_LEN);
+    out.append(buf);
     out
 }
 

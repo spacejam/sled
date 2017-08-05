@@ -44,6 +44,7 @@ impl<T> Drop for Node<T> {
     }
 }
 
+/// A simple lock-free radix tree.
 #[derive(Clone)]
 pub struct Radix<T> {
     head: Arc<Node<T>>,
@@ -57,10 +58,12 @@ impl<T> Default for Radix<T> {
 }
 
 impl<T> Radix<T> {
+    /// Try to create a new item in the tree.
     pub fn insert(&self, pid: PageID, inner: *const T) -> Result<*const T, *const T> {
         self.cas(pid, ptr::null_mut(), inner)
     }
 
+    /// Atomically swap the previous value in a tree with a new one.
     pub fn swap(&self, pid: PageID, new: *const T) -> *const T {
         let tip = traverse(&*self.head, pid, true);
         if tip.is_null() {
@@ -71,6 +74,7 @@ impl<T> Radix<T> {
         unsafe { (*tip).inner.swap(new as *mut _, Ordering::SeqCst) }
     }
 
+    /// Compare and swap an old value to a new one.
     pub fn cas(&self, pid: PageID, old: *const T, new: *const T) -> Result<*const T, *const T> {
         let tip = traverse(&*self.head, pid, true);
         if tip.is_null() {
@@ -88,6 +92,7 @@ impl<T> Radix<T> {
         }
     }
 
+    /// Try to get a value from the tree.
     pub fn get(&self, pid: PageID) -> Option<*const T> {
         let tip = traverse(&*self.head, pid, false);
         if tip.is_null() {
@@ -101,6 +106,7 @@ impl<T> Radix<T> {
         }
     }
 
+    /// Delete a value from the tree, returning the old value.
     pub fn del(&self, pid: PageID) -> *const T {
         self.swap(pid, ptr::null_mut())
     }

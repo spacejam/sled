@@ -72,7 +72,7 @@ fn parallel_ops() {
         let k1 = k.clone();
         let mut k2 = k.clone();
         k2.reverse();
-        tree.cas(k1.clone(), Some(k1), k2).unwrap();
+        tree.cas(k1.clone(), Some(k1), Some(k2)).unwrap();
     }};
     par!{t, |tree: &Tree, k: Vec<u8>| {
         let k1 = k.clone();
@@ -141,7 +141,15 @@ fn recovery() {
     let t = conf.tree();
     for i in 0..conf.get_blink_fanout() << 1 {
         let k = kv(i);
-        assert_eq!(t.get(&*k), Some(k));
+        assert_eq!(t.get(&*k), Some(k.clone()));
+        t.del(&*k);
+    }
+    drop(t);
+
+    let t = conf.tree();
+    for i in 0..conf.get_blink_fanout() << 1 {
+        let k = kv(i);
+        assert_eq!(t.get(&*k), None);
     }
     drop(t);
 
