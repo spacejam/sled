@@ -1,3 +1,7 @@
+//! `rsdb` is a flash-sympathetic persistent lock-free B+ tree.
+#![cfg_attr(test, deny(warnings))]
+#![deny(missing_docs)]
+
 extern crate libc;
 extern crate serde;
 #[macro_use]
@@ -9,17 +13,17 @@ extern crate env_logger;
 #[macro_use]
 extern crate log as logger;
 
-// atomic lock-free tree
+/// atomic lock-free tree
 pub use tree::Tree;
-// lock-free pagecache
+/// lock-free pagecache
 pub use page::{Materializer, PageCache};
-// lock-free log-structured storage
+/// lock-free log-structured storage
 pub use log::{HEADER_LEN, LockFreeLog, Log};
-// lock-free stack
+/// lock-free stack
 use stack::Stack;
-// lock-free radix tree
+/// lock-free radix tree
 pub use radix::Radix;
-// general-purpose configuration
+/// general-purpose configuration
 pub use config::Config;
 
 use crc16::crc16_arr;

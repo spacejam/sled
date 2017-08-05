@@ -18,6 +18,7 @@ pub const FANOUT: usize = 2;
 
 type Raw = *const stack::Node<*const tree::Frag>;
 
+/// A flash-sympathetic persistent lock-free B+ tree
 pub struct Tree {
     pages: PageCache<LockFreeLog, BLinkMaterializer>,
     root: AtomicUsize,
@@ -27,6 +28,7 @@ unsafe impl Send for Tree {}
 unsafe impl Sync for Tree {}
 
 impl Tree {
+    /// Load existing or create a new `Tree`.
     pub fn new(config: Config) -> Tree {
         let mut pages = PageCache::new(BLinkMaterializer { last_known_root: 0 }, config);
 
@@ -69,10 +71,12 @@ impl Tree {
         }
     }
 
+    /// Returns a copy of the current `Config` in use by the system.
     pub fn config(&self) -> Config {
         self.pages.config()
     }
 
+    /// Retrieve a value from the `Tree` if it exists.
     pub fn get(&self, key: &[u8]) -> Option<Value> {
         // println!("starting get");
         let (_, ret) = self.get_internal(key);
@@ -80,10 +84,38 @@ impl Tree {
         ret
     }
 
-    pub fn cas(&self, key: Key, old: Option<Value>, new: Value) -> Result<(), Option<Value>> {
+    /// Compare and swap. Capable of unique creation, conditional modification,
+    /// or deletion. If old is None, this will only set the value if it doesn't
+    /// exist yet. If new is None, will delete the value if old is correct.
+    /// If both old and new are Some, will modify the value if old is correct.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsdb::Config;
+    /// let t = Config::default().tree();
+    ///
+    /// // unique creation
+    /// assert_eq!(t.cas(vec![1], None, Some(vec![1])), Ok(()));
+    /// assert_eq!(t.cas(vec![1], None, Some(vec![1])), Err(Some(vec![1])));
+    ///
+    /// // conditional modification
+    /// assert_eq!(t.cas(vec![1], Some(vec![1]), Some(vec![2])), Ok(()));
+    /// assert_eq!(t.cas(vec![1], Some(vec![1]), Some(vec![2])), Err(Some(vec![2])));
+    ///
+    /// // conditional deletion
+    /// assert_eq!(t.cas(vec![1], Some(vec![2]), None), Ok(()));
+    /// assert_eq!(t.get(&*vec![1]), None);
+    /// ```
+    pub fn cas(&self,
+               key: Key,
+               old: Option<Value>,
+               new: Option<Value>)
+               -> Result<(), Option<Value>> {
         // we need to retry caps until old != cur, since just because
         // cap fails it doesn't mean our value was changed.
-        let frag = Frag::Set(key.clone(), new);
+        let frag = new.map(|n| Frag::Set(key.clone(), n))
+            .unwrap_or_else(|| Frag::Del(key.clone()));
         loop {
             let (mut path, cur) = self.get_internal(&*key);
             if old != cur {
@@ -91,29 +123,13 @@ impl Tree {
             }
 
             let &mut (ref node, ref cas_key) = path.last_mut().unwrap();
-            return self.pages.append(node.id, *cas_key, frag.clone()).map(|_| ()).map_err(|_| cur);
-        }
-    }
-
-    fn get_internal(&self, key: &[u8]) -> (Vec<(Node, Raw)>, Option<Value>) {
-        let path = self.path_for_key(&*key);
-        let (last_node, _last_cas_key) = path.last().cloned().unwrap();
-        match last_node.data.clone() {
-            Data::Leaf(ref items) => {
-                // println!("comparing leaf! items: {:?}", items.len());
-                let search = items.binary_search_by(|&(ref k, ref _v)| (**k).cmp(key));
-                if let Ok(idx) = search {
-                    // cap a del frag below
-                    (path, Some(items[idx].1.clone()))
-                } else {
-                    // key does not exist
-                    (path, None)
-                }
+            if self.pages.append(node.id, *cas_key, frag.clone()).is_ok() {
+                return Ok(());
             }
-            _ => panic!("last node in path is not leaf"),
         }
     }
 
+    /// Set a key to a new value.
     pub fn set(&self, key: Key, value: Value) {
         // println!("starting set of {:?} -> {:?}", key, value);
         let frag = Frag::Set(key.clone(), value);
@@ -140,6 +156,17 @@ impl Tree {
         // println!("done set of {:?}", key);
     }
 
+    /// Delete a value, returning the last result if it existed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsdb::Config;
+    /// let t = Config::default().tree();
+    /// t.set(vec![1], vec![1]);
+    /// assert_eq!(t.del(&*vec![1]), Some(vec![1]));
+    /// assert_eq!(t.del(&*vec![1]), None);
+    /// ```
     pub fn del(&self, key: &[u8]) -> Option<Value> {
         let mut ret: Option<Value>;
         loop {
@@ -170,6 +197,21 @@ impl Tree {
         ret
     }
 
+    /// Iterate over tuples of keys and values, starting at the provided key.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsdb::Config;
+    /// let t = Config::default().tree();
+    /// t.set(vec![1], vec![10]);
+    /// t.set(vec![2], vec![20]);
+    /// t.set(vec![3], vec![30]);
+    /// let mut iter = t.scan(&*vec![2]);
+    /// assert_eq!(iter.next(), Some((vec![2], vec![20])));
+    /// assert_eq!(iter.next(), Some((vec![3], vec![30])));
+    /// assert_eq!(iter.next(), None);
+    /// ```
     pub fn scan(&self, key: &[u8]) -> TreeIter {
         let (path, _) = self.get_internal(key);
         let (last_node, _last_cas_key) = path.last().cloned().unwrap();
@@ -180,6 +222,22 @@ impl Tree {
         }
     }
 
+    /// Iterate over the tuples of keys and values in this tree.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsdb::Config;
+    /// let t = Config::default().tree();
+    /// t.set(vec![1], vec![10]);
+    /// t.set(vec![2], vec![20]);
+    /// t.set(vec![3], vec![30]);
+    /// let mut iter = t.iter();
+    /// assert_eq!(iter.next(), Some((vec![1], vec![10])));
+    /// assert_eq!(iter.next(), Some((vec![2], vec![20])));
+    /// assert_eq!(iter.next(), Some((vec![3], vec![30])));
+    /// assert_eq!(iter.next(), None);
+    /// ```
     pub fn iter(&self) -> TreeIter {
         let (path, _) = self.get_internal(b"");
         let (last_node, _last_cas_key) = path.last().cloned().unwrap();
@@ -341,6 +399,26 @@ impl Tree {
         }
     }
 
+    fn get_internal(&self, key: &[u8]) -> (Vec<(Node, Raw)>, Option<Value>) {
+        let path = self.path_for_key(&*key);
+        let (last_node, _last_cas_key) = path.last().cloned().unwrap();
+        match last_node.data.clone() {
+            Data::Leaf(ref items) => {
+                // println!("comparing leaf! items: {:?}", items.len());
+                let search = items.binary_search_by(|&(ref k, ref _v)| (**k).cmp(key));
+                if let Ok(idx) = search {
+                    // cap a del frag below
+                    (path, Some(items[idx].1.clone()))
+                } else {
+                    // key does not exist
+                    (path, None)
+                }
+            }
+            _ => panic!("last node in path is not leaf"),
+        }
+    }
+
+    #[doc(hidden)]
     pub fn key_debug_str(&self, key: &[u8]) -> String {
         let path = self.path_for_key(key);
         let mut ret = String::new();

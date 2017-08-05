@@ -1,6 +1,6 @@
 [package]
 name = "rsdb"
-version = "0.2.2"
+version = "0.3.0"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "a flash-sympathetic persistent lock-free B+ tree"
 license = "Apache-2.0"
@@ -17,6 +17,7 @@ time = "0.1"
 rand = "0.3"
 env_logger = "0.4"
 log = "0.3"
+num_cpus = "1.6"
 
 [dev-dependencies]
 quickcheck = "0.2"

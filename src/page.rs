@@ -1,4 +1,4 @@
-/// A lock-free pagecache which supports fragmented pages, for dramatically
+/// A lock-free pagecache which supports fragmented pages for dramatically
 /// improving write throughput. Reads need to scatter-gather, so this is
 /// built with the assumption that it will be run on something like an
 /// SSD that can efficiently handle random reads.
@@ -15,9 +15,20 @@ use super::*;
 
 const MAX_FRAG_LEN: usize = 2;
 
+/// A tenant of a `PageCache` needs to provide a `Materializer` which
+/// handles the processing of pages.
 pub trait Materializer: Send + Sync {
+    /// The "complete" page, returned to clients who want to retrieve the
+    /// logical page state.
     type MaterializedPage;
+
+    /// The "partial" page, written to log storage sequentially, and
+    /// read in parallel from multiple locations on disk when serving
+    /// a request to read the page.
     type PartialPage: Serialize + DeserializeOwned;
+
+    /// The state returned by a call to `PageCache::recover`, as
+    /// described by `Materializer::recover`
     type Recovery;
 
     /// Used to generate the result of `get` requests on the `PageCache`
@@ -33,6 +44,7 @@ pub trait Materializer: Send + Sync {
     fn recover(&mut self, Self::MaterializedPage) -> Option<Self::Recovery>;
 }
 
+/// A lock-free pagecache.
 pub struct PageCache<L: Log, M>
     where M: Materializer + Sized,
           L: Log + Sized
@@ -59,6 +71,7 @@ impl<M> PageCache<LockFreeLog, M>
     where M: Materializer,
           M::PartialPage: Clone
 {
+    /// Instantiate a new `PageCache`.
     pub fn new(pm: M, config: Config) -> PageCache<LockFreeLog, M> {
         PageCache {
             t: pm,
@@ -69,6 +82,7 @@ impl<M> PageCache<LockFreeLog, M>
         }
     }
 
+    /// Return the configuration used by the underlying system.
     pub fn config(&self) -> Config {
         self.log.config()
     }
@@ -145,6 +159,8 @@ impl<M> PageCache<LockFreeLog, M>
         recovery
     }
 
+    /// Create a new page, trying to reuse old freed pages if possible
+    /// to maximize underlying `Radix` pointer density.
     pub fn allocate(&self) -> (PageID, *const stack::Node<*const M::PartialPage>) {
         let pid = self.free.pop().unwrap_or_else(|| self.max_id.fetch_add(1, SeqCst));
         let stack = raw(Stack::default());
@@ -161,6 +177,7 @@ impl<M> PageCache<LockFreeLog, M>
         (pid, ptr::null())
     }
 
+    /// Free a particular page.
     pub fn free(&self, pid: PageID) {
         // TODO epoch-based gc for reusing pid & freeing stack
         let stack_ptr = self.inner.del(pid);
@@ -184,6 +201,7 @@ impl<M> PageCache<LockFreeLog, M>
         }
     }
 
+    /// Try to retrieve a page by its logical ID.
     pub fn get(&self,
                pid: PageID)
                -> Option<(M::MaterializedPage, *const stack::Node<*const M::PartialPage>)> {
@@ -233,6 +251,7 @@ impl<M> PageCache<LockFreeLog, M>
         Some((materialized, head))
     }
 
+    /// Try to atomically append a `Materializer::PartialPage` to the page.
     pub fn append(&self,
                   pid: PageID,
                   old: *const stack::Node<*const M::PartialPage>,
