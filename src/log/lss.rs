@@ -51,10 +51,9 @@ impl Log for LockFreeLog {
         let mut len_buf = [0u8; 4];
         f.read_exact(&mut len_buf)?;
         let len = ops::array_to_usize(len_buf);
-        if len > MAX_BUF_SZ {
-            let msg = format!("read invalid message length, {} should be <= {}",
-                              len,
-                              MAX_BUF_SZ);
+        let max = self.config().get_io_buf_size() - HEADER_LEN;
+        if len > max {
+            let msg = format!("read invalid message length, {} should be <= {}", len, max);
             return Err(Error::new(ErrorKind::Other, msg));
         }
 
@@ -90,7 +89,7 @@ impl Log for LockFreeLog {
             self.iobufs.flush();
             spins += 1;
             if spins > 2000000 {
-                // println!("{:?} have spun >2000000x in make_stable", thread::current().name());
+                debug!("have spun >2000000x in make_stable");
                 spins = 0;
             }
             let cur = self.iobufs.stable();

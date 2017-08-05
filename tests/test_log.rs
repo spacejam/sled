@@ -120,7 +120,7 @@ fn non_contiguous_flush() {
 }
 
 #[test]
-fn basic_functionality() {
+fn concurrent_logging() {
     // TODO linearize res bufs, verify they are correct
     let log = Arc::new(Config::default().log());
     let iobs2 = log.clone();

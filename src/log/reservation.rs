@@ -9,8 +9,6 @@ pub struct Reservation<'a> {
     pub base_disk_offset: LogID,
 }
 
-unsafe impl<'a> Send for Reservation<'a> {}
-
 impl<'a> Drop for Reservation<'a> {
     fn drop(&mut self) {
         // We auto-abort if the user never uses a reservation.

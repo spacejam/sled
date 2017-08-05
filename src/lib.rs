@@ -5,6 +5,9 @@ extern crate serde_derive;
 extern crate bincode;
 extern crate time;
 extern crate rand;
+extern crate env_logger;
+#[macro_use]
+extern crate log as logger;
 
 // atomic lock-free tree
 pub use tree::Tree;
@@ -71,4 +74,14 @@ type Value = Vec<u8>;
 #[inline(always)]
 fn raw<T>(t: T) -> *const T {
     Box::into_raw(Box::new(t)) as *const T
+}
+
+// get thread identifier
+#[inline(always)]
+fn tn() -> String {
+    use std::thread;
+    thread::current()
+        .name()
+        .unwrap_or("unknown")
+        .to_owned()
 }
