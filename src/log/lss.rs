@@ -35,15 +35,12 @@ impl Log for LockFreeLog {
     }
 
     /// read a buffer from the disk
-    fn read(&self, id: LogID) -> io::Result<Option<Vec<u8>>> {
+    fn read(&self, id: LogID) -> io::Result<Result<Vec<u8>, usize>> {
         let mut f = self.iobufs.file.lock().unwrap();
         f.seek(SeekFrom::Start(id))?;
 
         let mut valid = [0u8; 1];
         f.read_exact(&mut valid)?;
-        if valid[0] == 0 {
-            return Ok(None);
-        }
 
         let mut len_buf = [0u8; 4];
         f.read_exact(&mut len_buf)?;
@@ -52,6 +49,10 @@ impl Log for LockFreeLog {
         if len > max {
             let msg = format!("read invalid message length, {} should be <= {}", len, max);
             return Err(Error::new(ErrorKind::Other, msg));
+        }
+
+        if valid[0] == 0 {
+            return Ok(Err(len));
         }
 
         let mut crc16_buf = [0u8; 2];
@@ -71,7 +72,7 @@ impl Log for LockFreeLog {
             return Err(Error::new(ErrorKind::Other, msg));
         }
 
-        Ok(Some(buf))
+        Ok(Ok(buf))
     }
 
     /// returns the current stable offset written to disk

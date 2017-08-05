@@ -1,5 +1,5 @@
 //! `rsdb` is a flash-sympathetic persistent lock-free B+ tree.
-#![cfg_attr(test, deny(warnings))]
+//! #![cfg_attr(test, deny(warnings))]
 #![deny(missing_docs)]
 
 extern crate libc;

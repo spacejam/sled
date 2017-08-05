@@ -213,7 +213,7 @@ fn test_abort(log: &LockFreeLog) {
     res.abort();
     log.make_stable(id);
     match log.read(id) {
-        Ok(None) => (), // good
+        Ok(Err(_)) => (), // good
         _ => {
             panic!("sucessfully read an aborted request! BAD! SAD!");
         }
@@ -244,9 +244,7 @@ fn test_hole_punching() {
 
     log.punch_hole(id);
 
-    assert_eq!(log.read(id).unwrap(), None);
-
-    // TODO figure out if physical size of log is actually smaller now
+    assert_eq!(log.read(id).unwrap(), Err(data_bytes.len()));
 }
 
 #[test]
@@ -256,6 +254,11 @@ fn test_log_iterator() {
     let first_offset = log.write(b"1".to_vec());
     log.write(b"22".to_vec());
     log.write(b"333".to_vec());
+
+    // stick an abort in the middle, which should not be returned
+    let res = log.reserve(b"never_gonna_hit_disk".to_vec());
+    res.abort();
+
     log.write(b"4444".to_vec());
     let last_offset = log.write(b"55555".to_vec());
     log.make_stable(last_offset);
@@ -263,7 +266,7 @@ fn test_log_iterator() {
     assert_eq!(iter.next(), Some((0, b"1".to_vec())));
     assert_eq!(iter.next(), Some((8, b"22".to_vec())));
     assert_eq!(iter.next(), Some((17, b"333".to_vec())));
-    assert_eq!(iter.next(), Some((27, b"4444".to_vec())));
-    assert_eq!(iter.next(), Some((38, b"55555".to_vec())));
+    assert_eq!(iter.next(), Some((54, b"4444".to_vec())));
+    assert_eq!(iter.next(), Some((65, b"55555".to_vec())));
     assert_eq!(iter.next(), None);
 }

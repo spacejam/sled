@@ -1,8 +1,6 @@
 use super::*;
 
 // TODO
-// Flush(LogID),
-// PartialFlush(LogID, LogID), // location, next location
 // Merged
 // LeftMerge(head: Raw, rhs: PageID, hi: Bound)
 // ParentMerge(lhs: PageID, rhs: PageID)

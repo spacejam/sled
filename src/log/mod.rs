@@ -29,7 +29,7 @@ pub trait Log: Send + Sync {
     fn write(&self, Vec<u8>) -> LogID;
 
     /// Read a buffer from underlying storage.
-    fn read(&self, id: LogID) -> io::Result<Option<Vec<u8>>>;
+    fn read(&self, id: LogID) -> io::Result<Result<Vec<u8>, usize>>;
 
     /// Return the current stable offset.
     fn stable_offset(&self) -> LogID;
@@ -66,14 +66,20 @@ pub struct LogIter<'a, T: 'a + Log> {
 impl<'a, T: Log> Iterator for LogIter<'a, T> {
     type Item = (LogID, Vec<u8>);
     fn next(&mut self) -> Option<Self::Item> {
-        let offset = self.next_offset;
-        let log_read = self.log.read(self.next_offset);
-        if let Ok(buf_opt) = log_read {
-            if let Some(buf) = buf_opt {
-                self.next_offset = offset + buf.len() as LogID + HEADER_LEN as LogID;
-                return Some((offset, buf));
+        loop {
+            let offset = self.next_offset;
+            let log_read = self.log.read(self.next_offset);
+            if let Ok(buf_opt) = log_read {
+                match buf_opt {
+                    Ok(buf) => {
+                        self.next_offset += buf.len() as LogID + HEADER_LEN as LogID;
+                        return Some((offset, buf));
+                    }
+                    Err(len) => self.next_offset += len as LogID + HEADER_LEN as LogID,
+                }
+            } else {
+                return None;
             }
         }
-        return None;
     }
 }

@@ -6,6 +6,7 @@ pub struct Config {
     io_bufs: usize,
     io_buf_size: usize,
     blink_fanout: usize,
+    page_consolidation_threshold: usize,
     path: Option<String>,
 }
 
@@ -15,6 +16,7 @@ impl Default for Config {
             io_bufs: 3,
             io_buf_size: 2 << 22, // 8mb
             blink_fanout: 128,
+            page_consolidation_threshold: 10,
             path: None,
         }
     }
@@ -34,6 +36,11 @@ impl Config {
     /// get blink_fanout
     pub fn get_blink_fanout(&self) -> usize {
         self.blink_fanout
+    }
+
+    /// get page_consolidation_threshold
+    pub fn get_page_consolidation_threshold(&self) -> usize {
+        self.page_consolidation_threshold
     }
 
     /// get path
@@ -56,33 +63,45 @@ impl Config {
         self.blink_fanout = blink_fanout;
     }
 
+    /// set page_consolidation_threshold
+    pub fn set_page_consolidation_threshold(&mut self, threshold: usize) {
+        self.page_consolidation_threshold = threshold;
+    }
+
     /// set path
     pub fn set_path(&mut self, path: Option<String>) {
         self.path = path;
     }
 
-    /// get number of io buffers
+    /// builder, set number of io buffers
     pub fn io_bufs(&self, io_bufs: usize) -> Config {
         let mut ret = self.clone();
         ret.io_bufs = io_bufs;
         ret
     }
 
-    /// get the max io buffer size
+    /// builder, set the max io buffer size
     pub fn io_buf_size(&self, io_buf_size: usize) -> Config {
         let mut ret = self.clone();
         ret.io_buf_size = io_buf_size;
         ret
     }
 
-    /// get the b-link tree node fanout
+    /// builder, set the b-link tree node fanout
     pub fn blink_fanout(&self, blink_fanout: usize) -> Config {
         let mut ret = self.clone();
         ret.blink_fanout = blink_fanout;
         ret
     }
 
-    /// get the filesystem path
+    /// builder, set the pagecache consolidation threshold
+    pub fn page_consolidation_threshold(&self, threshold: usize) -> Config {
+        let mut ret = self.clone();
+        ret.page_consolidation_threshold = threshold;
+        ret
+    }
+
+    /// builder, set the filesystem path
     pub fn path(&self, path: Option<String>) -> Config {
         let mut ret = self.clone();
         ret.path = path;

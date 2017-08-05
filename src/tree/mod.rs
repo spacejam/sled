@@ -59,8 +59,8 @@ impl Tree {
                 hi: Bound::Inf,
             });
 
-            pages.append(root_id, root_cas_key, root).unwrap();
-            pages.append(leaf_id, leaf_cas_key, leaf).unwrap();
+            pages.append(root_id.clone(), root_cas_key, root, Some(root_id)).unwrap();
+            pages.append(leaf_id, leaf_cas_key, leaf, None).unwrap();
 
             root_id
         };
@@ -123,7 +123,7 @@ impl Tree {
             }
 
             let &mut (ref node, ref cas_key) = path.last_mut().unwrap();
-            if self.pages.append(node.id, *cas_key, frag.clone()).is_ok() {
+            if self.pages.append(node.id, *cas_key, frag.clone(), None).is_ok() {
                 return Ok(());
             }
         }
@@ -137,7 +137,8 @@ impl Tree {
             let mut path = self.path_for_key(&*key);
             let (mut last_node, last_cas_key) = path.pop().unwrap();
             // println!("last before: {:?}", last);
-            if let Ok(new_cas_key) = self.pages.append(last_node.id, last_cas_key, frag.clone()) {
+            if let Ok(new_cas_key) = self.pages
+                .append(last_node.id, last_cas_key, frag.clone(), None) {
                 last_node.apply(frag);
                 // println!("last after: {:?}", last);
                 let should_split = last_node.should_split();
@@ -185,7 +186,7 @@ impl Tree {
             }
 
             let frag = Frag::Del(key.to_vec());
-            if self.pages.append(leaf_node.id, leaf_cas_key, frag).is_ok() {
+            if self.pages.append(leaf_node.id, leaf_cas_key, frag, None).is_ok() {
                 // success
                 break;
             } else {
@@ -331,10 +332,10 @@ impl Tree {
         };
 
         // install the new right side
-        self.pages.append(new_pid, new_cas_key, Frag::Base(rhs)).unwrap();
+        self.pages.append(new_pid, new_cas_key, Frag::Base(rhs), None).unwrap();
 
         // try to install a child split on the left side
-        if let Err(_) = self.pages.append(node.id, node_cas_key, child_split) {
+        if let Err(_) = self.pages.append(node.id, node_cas_key, child_split, None) {
             // if we failed, don't follow through with the parent split
             // let this_thread = thread::current();
             // let name = this_thread.name().unwrap();
@@ -359,7 +360,8 @@ impl Tree {
         // install parent split
         let res = self.pages.append(parent_node.id,
                                     parent_cas_key,
-                                    Frag::ParentSplit(parent_split.clone()));
+                                    Frag::ParentSplit(parent_split.clone()),
+                                    None);
 
         if res.is_err() {
             // let this_thread = thread::current();
@@ -383,7 +385,7 @@ impl Tree {
             lo: Bound::Inc(vec![]),
             hi: Bound::Inf,
         });
-        self.pages.append(new_root_pid, new_root_cas_key, new_root).unwrap();
+        self.pages.append(new_root_pid, new_root_cas_key, new_root, Some(new_root_pid)).unwrap();
         // println!("split is {:?}", parent_split);
         // println!("trying to cas root at {:?} with real value {:?}", path.first().unwrap().pid, self.root.load(SeqCst));
         // println!("root_id is {}", root_id);
@@ -465,7 +467,7 @@ impl Tree {
                     to: node.id.clone(),
                 });
 
-                let _res = self.pages.append(parent_node.id, parent_cas_key, ps);
+                let _res = self.pages.append(parent_node.id, parent_cas_key, ps, None);
                 // println!("trying to fix incomplete parent split: {:?}", res);
                 // println!("after: {:?}", self);
             }
@@ -576,6 +578,7 @@ impl<'a> IntoIterator for &'a Tree {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct BLinkMaterializer {
     last_known_root: PageID,
 }
@@ -584,6 +587,7 @@ impl Materializer for BLinkMaterializer {
     type MaterializedPage = Node;
     type PartialPage = Frag;
     type Recovery = PageID;
+    type Annotation = PageID;
 
     fn materialize(&self, frags: Vec<Frag>) -> Node {
         let consolidated = self.consolidate(frags);
@@ -605,12 +609,7 @@ impl Materializer for BLinkMaterializer {
         vec![Frag::Base(base)]
     }
 
-    fn recover(&mut self, node: Node) -> Option<PageID> {
-        // if last_known_root is a child of this node, this node is the new root
-        if node.data.is_parent_of(self.last_known_root) {
-            Some(node.id)
-        } else {
-            None
-        }
+    fn recover(&mut self, hoist: PageID) -> Option<PageID> {
+        Some(hoist)
     }
 }
