@@ -1,5 +1,4 @@
 use std::io::{Read, Seek, Write};
-use std::os::unix::io::AsRawFd;
 
 use super::*;
 
@@ -112,6 +111,7 @@ impl Log for LockFreeLog {
 
         #[cfg(target_os="linux")]
         {
+            use std::os::unix::io::AsRawFd;
             let len = ops::array_to_usize(len_buf);
             let mode = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE;
             let fd = f.as_raw_fd();
