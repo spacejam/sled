@@ -6,6 +6,7 @@ description = "a flash-sympathetic persistent lock-free B+ tree"
 license = "Apache-2.0"
 homepage = "https://github.com/spacejam/rsdb"
 keywords = ["database", "embedded", "concurrent", "persistent", "lock-free"]
+documentation = "https://docs.rs/rsdb/"
 
 [dependencies]
 bincode = "0.8"
@@ -14,6 +15,8 @@ serde_derive = "1.0"
 libc = "0.2"
 time = "0.1"
 rand = "0.3"
+env_logger = "0.4"
+log = "0.3"
 
 [dev-dependencies]
 quickcheck = "0.2"
