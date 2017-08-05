@@ -342,7 +342,6 @@ impl IOBufs {
         let res_len = offset(sealed) as usize;
         let max = std::usize::MAX as LogID;
 
-        // FIXME triggered by flush()
         assert_ne!(log_offset,
                    max,
                    "({:?}) sealing something that should never have been claimed (idx {})\n{:?}",
