@@ -191,7 +191,7 @@ impl IOBufs {
                 continue;
             }
 
-            if current_buf - written_bufs >= self.config.get_io_bufs() - 1 {
+            if current_buf - written_bufs >= self.config.get_io_bufs() {
                 // if written is too far behind, we need to
                 // spin while it catches up to avoid overlap
                 trace_once!("({:?}) old io buffer not written yet, spinning", tn());
