@@ -84,7 +84,7 @@ impl Tree {
         ret
     }
 
-    /// Compare-And-Swap. Capable of unique creation, modification,
+    /// Compare and swap. Capable of unique creation, conditional modification,
     /// or deletion. If old is None, this will only set the value if it doesn't
     /// exist yet. If new is None, will delete the value if old is correct.
     /// If both old and new are Some, will modify the value if old is correct.
@@ -94,10 +94,16 @@ impl Tree {
     /// ```
     /// use rsdb::Config;
     /// let t = Config::default().tree();
+    ///
+    /// // unique creation
     /// assert_eq!(t.cas(vec![1], None, Some(vec![1])), Ok(()));
     /// assert_eq!(t.cas(vec![1], None, Some(vec![1])), Err(Some(vec![1])));
+    ///
+    /// // conditional modification
     /// assert_eq!(t.cas(vec![1], Some(vec![1]), Some(vec![2])), Ok(()));
     /// assert_eq!(t.cas(vec![1], Some(vec![1]), Some(vec![2])), Err(Some(vec![2])));
+    ///
+    /// // conditional deletion
     /// assert_eq!(t.cas(vec![1], Some(vec![2]), None), Ok(()));
     /// assert_eq!(t.get(&*vec![1]), None);
     /// ```
