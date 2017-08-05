@@ -164,6 +164,13 @@ impl IOBufs {
         assert!(buf.len() <= self.config.get_io_buf_size());
 
         let mut printed = false;
+        macro_rules! trace_once {
+            ($($msg:expr),*) => {
+                if !printed {
+                    trace!($($msg),*);
+                    printed = true;
+                }};
+        }
         let mut spins = 0;
         loop {
             let written_bufs = self.written_bufs.load(SeqCst);
@@ -180,20 +187,14 @@ impl IOBufs {
                 // This can happen because a reservation can finish up
                 // before the sealing thread gets around to bumping
                 // current_buf.
-                if !printed {
-                    trace!("({:?}) written ahead of sealed, spinning", tn());
-                    printed = true;
-                }
+                trace_once!("({:?}) written ahead of sealed, spinning", tn());
                 continue;
             }
 
             if current_buf - written_bufs >= self.config.get_io_bufs() - 1 {
                 // if written is too far behind, we need to
                 // spin while it catches up to avoid overlap
-                if !printed {
-                    trace!("({:?}) old io buffer not written yet, spinning", tn());
-                    printed = true;
-                }
+                trace_once!("({:?}) old io buffer not written yet, spinning", tn());
                 continue;
             }
 
@@ -205,10 +206,7 @@ impl IOBufs {
             if is_sealed(header) {
                 // already sealed, start over and hope cur
                 // has already been bumped by sealer.
-                if !printed {
-                    trace!("({:?}) io buffer already sealed, spinning", tn());
-                    printed = true;
-                }
+                trace_once!("({:?}) io buffer already sealed, spinning", tn());
                 continue;
             }
 
@@ -219,10 +217,7 @@ impl IOBufs {
                 // Try to seal the buffer, and maybe write it if
                 // there are zero writers.
                 self.maybe_seal_and_write_iobuf(idx, header);
-                if !printed {
-                    trace!("({:?}) io buffer too full, spinning", tn());
-                    printed = true;
-                }
+                trace_once!("({:?}) io buffer too full, spinning", tn());
                 continue;
             }
 
@@ -233,11 +228,8 @@ impl IOBufs {
 
             if iobuf.cas_header(header, claimed).is_err() {
                 // CAS failed, start over
-                if !printed {
-                    trace!("({:?}) CAS failed while claiming buffer slot, spinning",
-                           tn());
-                    printed = true;
-                }
+                trace_once!("({:?}) CAS failed while claiming buffer slot, spinning",
+                            tn());
                 continue;
             }
 
