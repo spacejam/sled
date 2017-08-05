@@ -110,15 +110,15 @@ impl Log for LockFreeLog {
         let mut len_buf = [0u8; 4];
         f.read_exact(&mut len_buf).unwrap();
 
-        let len = ops::array_to_usize(len_buf);
         #[cfg(target_os="linux")]
-        let mode = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE;
-        let fd = f.as_raw_fd();
-
-        unsafe {
-            // 5 is valid (1) + len (4), 2 is crc16
-            #[cfg(target_os="linux")]
-            fallocate(fd, mode, id as i64 + 5, len as i64 + 2);
+        {
+            let len = ops::array_to_usize(len_buf);
+            let mode = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE;
+            let fd = f.as_raw_fd();
+            unsafe {
+                // 5 is valid (1) + len (4), 2 is crc16
+                fallocate(fd, mode, id as i64 + 5, len as i64 + 2);
+            }
         }
     }
 }
