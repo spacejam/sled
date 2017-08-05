@@ -89,7 +89,7 @@ impl Log for LockFreeLog {
             self.iobufs.flush();
             spins += 1;
             if spins > 2000000 {
-                println!("have spun >2000000x in make_stable");
+                debug!("have spun >2000000x in make_stable");
                 spins = 0;
             }
             let cur = self.iobufs.stable();
