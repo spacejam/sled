@@ -70,7 +70,7 @@ impl IOBuf {
 
 pub struct IOBufs {
     bufs: Vec<IOBuf>,
-    sealed_bufs: AtomicUsize,
+    current_buf: AtomicUsize,
     written_bufs: AtomicUsize,
 
     intervals: Mutex<Vec<(LogID, LogID)>>,
@@ -82,11 +82,11 @@ pub struct IOBufs {
 
 impl Debug for IOBufs {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        let sealed_bufs = self.sealed_bufs.load(SeqCst);
+        let current_buf = self.current_buf.load(SeqCst);
         let written_bufs = self.written_bufs.load(SeqCst);
 
         formatter.write_fmt(format_args!("IOBufs {{ sealed: {}, written: {}, bufs: {:?} }}",
-                                         sealed_bufs,
+                                         current_buf,
                                          written_bufs,
                                          self.bufs))
     }
@@ -121,13 +121,13 @@ impl IOBufs {
 
         let bufs = rep_no_copy![IOBuf::new(config.get_io_buf_size()); config.get_io_bufs()];
 
-        let sealed_bufs = 0;
-        bufs[sealed_bufs].set_log_offset(disk_offset);
+        let current_buf = 0;
+        bufs[current_buf].set_log_offset(disk_offset);
 
         IOBufs {
             file: Mutex::new(file),
             bufs: bufs,
-            sealed_bufs: AtomicUsize::new(sealed_bufs),
+            current_buf: AtomicUsize::new(current_buf),
             written_bufs: AtomicUsize::new(0),
             intervals: Mutex::new(vec![]),
             stable: AtomicUsize::new(disk_offset as usize),
@@ -140,8 +140,8 @@ impl IOBufs {
     }
 
     fn idx(&self) -> usize {
-        let sealed_bufs = self.sealed_bufs.load(SeqCst);
-        sealed_bufs % self.config.get_io_bufs()
+        let current_buf = self.current_buf.load(SeqCst);
+        current_buf % self.config.get_io_bufs()
     }
 
     /// Returns the last stable offset in storage.
@@ -167,31 +167,31 @@ impl IOBufs {
         let mut spins = 0;
         loop {
             let written_bufs = self.written_bufs.load(SeqCst);
-            let sealed_bufs = self.sealed_bufs.load(SeqCst);
-            let idx = sealed_bufs % self.config.get_io_bufs();
+            let current_buf = self.current_buf.load(SeqCst);
+            let idx = current_buf % self.config.get_io_bufs();
 
             spins += 1;
             if spins > 1_000_000 {
-                // debug!("{:?} stalling in reserve, idx {}", tn(), idx);
+                debug!("{:?} stalling in reserve, idx {}", tn(), idx);
                 spins = 0;
             }
 
-            if written_bufs > sealed_bufs {
+            if written_bufs > current_buf {
                 // This can happen because a reservation can finish up
                 // before the sealing thread gets around to bumping
-                // sealed_bufs.
+                // current_buf.
                 if !printed {
-                    // trace!("({:?}) written ahead of sealed, spinning", tn());
+                    trace!("({:?}) written ahead of sealed, spinning", tn());
                     printed = true;
                 }
                 continue;
             }
 
-            if sealed_bufs - written_bufs >= self.config.get_io_bufs() - 1 {
+            if current_buf - written_bufs >= self.config.get_io_bufs() - 1 {
                 // if written is too far behind, we need to
                 // spin while it catches up to avoid overlap
                 if !printed {
-                    // trace!("({:?}) old io buffer not written yet, spinning", tn());
+                    trace!("({:?}) old io buffer not written yet, spinning", tn());
                     printed = true;
                 }
                 continue;
@@ -206,7 +206,7 @@ impl IOBufs {
                 // already sealed, start over and hope cur
                 // has already been bumped by sealer.
                 if !printed {
-                    // trace!("({:?}) io buffer already sealed, spinning", tn());
+                    trace!("({:?}) io buffer already sealed, spinning", tn());
                     printed = true;
                 }
                 continue;
@@ -220,7 +220,7 @@ impl IOBufs {
                 // there are zero writers.
                 self.maybe_seal_and_write_iobuf(idx, header);
                 if !printed {
-                    // trace!("({:?}) io buffer too full, spinning", tn());
+                    trace!("({:?}) io buffer too full, spinning", tn());
                     printed = true;
                 }
                 continue;
@@ -234,7 +234,8 @@ impl IOBufs {
             if iobuf.cas_header(header, claimed).is_err() {
                 // CAS failed, start over
                 if !printed {
-                    // trace!("({:?}) CAS failed while claiming buffer slot, spinning", tn());
+                    trace!("({:?}) CAS failed while claiming buffer slot, spinning",
+                           tn());
                     printed = true;
                 }
                 continue;
@@ -281,7 +282,7 @@ impl IOBufs {
         loop {
             spins += 1;
             if spins > 10 {
-                // debug!("{:?} have spun >10x in decr", tn());
+                debug!("{:?} have spun >10x in decr", tn());
                 spins = 0;
             }
 
@@ -343,7 +344,7 @@ impl IOBufs {
             // cas failed, don't try to continue
             return;
         }
-        // trace!("({:?}) {} sealed", tn(), idx);
+        trace!("({:?}) {} sealed", tn(), idx);
 
         // open new slot
         let res_len = offset(sealed) as usize;
@@ -364,18 +365,20 @@ impl IOBufs {
         while next_iobuf.cas_log_offset(max, next_offset).is_err() {
             spins += 1;
             if spins > 1_000_000 {
-                // debug!("have spun >1,000,000x in seal of buf {}", idx);
+                debug!("have spun >1,000,000x in seal of buf {}", idx);
                 spins = 0;
             }
         }
-        // trace!("({:?}) {} log set", tn(), next_idx);
+        trace!("({:?}) {} log set", tn(), next_idx);
 
         // NB allows new threads to start writing into this buffer
         next_iobuf.set_header(0);
-        // trace!("({:?}) {} zeroed header", tn(), next_idx);
+        trace!("({:?}) {} zeroed header", tn(), next_idx);
 
-        let sealed_bufs = self.sealed_bufs.fetch_add(1, SeqCst) + 1;
-        // trace!("({:?}) {} sealed_bufs", tn(), sealed_bufs % self.config.get_io_bufs());
+        let current_buf = self.current_buf.fetch_add(1, SeqCst) + 1;
+        trace!("({:?}) {} current_buf",
+               tn(),
+               current_buf % self.config.get_io_bufs());
 
         // if writers is 0, it's our responsibility to write the buffer.
         if n_writers(sealed) == 0 {
@@ -408,11 +411,13 @@ impl IOBufs {
         // signal that this IO buffer is uninitialized
         let max = std::usize::MAX as LogID;
         iobuf.set_log_offset(max);
-        // trace!("({:?}) {} log <- MAX", tn(), idx);
+        trace!("({:?}) {} log <- MAX", tn(), idx);
 
         // communicate to other threads that we have written an IO buffer.
         let written_bufs = self.written_bufs.fetch_add(1, SeqCst);
-        // trace!("({:?}) {} written", tn(), written_bufs % self.config.get_io_bufs());
+        trace!("({:?}) {} written",
+               tn(),
+               written_bufs % self.config.get_io_bufs());
 
         self.mark_interval(interval);
     }
