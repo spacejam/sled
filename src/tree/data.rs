@@ -44,21 +44,6 @@ impl Data {
         }
     }
 
-    // used for detecting root hoists during recovery
-    pub fn is_parent_of(&self, pid: PageID) -> bool {
-        match *self {
-            Data::Index(ref ptrs) => {
-                for &(_, ref child) in ptrs {
-                    if *child == pid {
-                        return true;
-                    }
-                }
-                false
-            }
-            Data::Leaf(_) => false,
-        }
-    }
-
     pub fn leaf(&self) -> Option<Vec<(Key, Value)>> {
         match self {
             &Data::Index(_) => None,

@@ -18,6 +18,7 @@ rand = "0.3"
 env_logger = "0.4"
 log = "0.3"
 num_cpus = "1.6"
+rayon = "0.8"
 
 [dev-dependencies]
 quickcheck = "0.2"

@@ -12,11 +12,12 @@ extern crate rand;
 extern crate env_logger;
 #[macro_use]
 extern crate log as logger;
+extern crate rayon;
 
 /// atomic lock-free tree
 pub use tree::Tree;
 /// lock-free pagecache
-pub use page::{Materializer, PageCache};
+pub use page::{CacheEntry, Materializer, PageCache};
 /// lock-free log-structured storage
 pub use log::{HEADER_LEN, LockFreeLog, Log};
 /// lock-free stack
@@ -67,7 +68,6 @@ mod ops;
 
 use bound::Bound;
 use stack::{StackIter, node_from_frag_vec};
-use tree::Frag;
 
 type LogID = u64; // LogID == file position to simplify file mapping
 type PageID = usize;

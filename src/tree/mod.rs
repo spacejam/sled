@@ -16,7 +16,7 @@ pub use self::node::*;
 
 pub const FANOUT: usize = 2;
 
-type Raw = *const stack::Node<*const tree::Frag>;
+type Raw = *const stack::Node<CacheEntry<BLinkMaterializer>>;
 
 /// A flash-sympathetic persistent lock-free B+ tree
 pub struct Tree {
@@ -139,7 +139,7 @@ impl Tree {
             // println!("last before: {:?}", last);
             if let Ok(new_cas_key) = self.pages
                 .append(last_node.id, last_cas_key, frag.clone(), None) {
-                last_node.apply(frag);
+                last_node.apply(&frag);
                 // println!("last after: {:?}", last);
                 let should_split = last_node.should_split();
                 path.push((last_node.clone(), new_cas_key));
@@ -294,7 +294,7 @@ impl Tree {
                     if res.is_err() {
                         continue;
                     }
-                    parent_node.apply(Frag::ParentSplit(parent_split));
+                    parent_node.apply(&Frag::ParentSplit(parent_split));
                     *parent_cas_key = res.unwrap();
                 } else {
                     continue;
@@ -351,7 +351,7 @@ impl Tree {
                     parent_node: Node,
                     parent_cas_key: Raw,
                     parent_split: ParentSplit)
-                    -> Result<*const stack::Node<*const Frag>, *const stack::Node<*const Frag>> {
+                    -> Result<Raw, Raw> {
 
         // try to install a parent split on the index above
 
@@ -578,7 +578,7 @@ impl<'a> IntoIterator for &'a Tree {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BLinkMaterializer {
     last_known_root: PageID,
 }
@@ -589,7 +589,7 @@ impl Materializer for BLinkMaterializer {
     type Recovery = PageID;
     type Annotation = PageID;
 
-    fn materialize(&self, frags: Vec<Frag>) -> Node {
+    fn materialize(&self, frags: &Vec<Frag>) -> Node {
         let consolidated = self.consolidate(frags);
         let ref base = consolidated[0];
         match base {
@@ -598,18 +598,19 @@ impl Materializer for BLinkMaterializer {
         }
     }
 
-    fn consolidate(&self, mut frags: Vec<Frag>) -> Vec<Frag> {
-        let base_frag = frags.remove(0);
+    fn consolidate(&self, frags: &Vec<Frag>) -> Vec<Frag> {
+        let mut fc = frags.clone();
+        let base_frag = fc.remove(0);
         let mut base = base_frag.base().unwrap();
 
-        for frag in frags.into_iter() {
-            base.apply(frag);
+        for frag in fc {
+            base.apply(&frag);
         }
 
         vec![Frag::Base(base)]
     }
 
-    fn recover(&mut self, hoist: PageID) -> Option<PageID> {
-        Some(hoist)
+    fn recover(&mut self, hoist: &PageID) -> Option<PageID> {
+        Some(*hoist)
     }
 }
