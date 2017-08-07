@@ -26,7 +26,7 @@ impl Log for LockFreeLog {
     }
 
     /// return the config in use for this log
-    fn config(&self) -> Config {
+    fn config(&self) -> &Config {
         self.iobufs.config()
     }
 
@@ -36,7 +36,7 @@ impl Log for LockFreeLog {
 
     /// read a buffer from the disk
     fn read(&self, id: LogID) -> io::Result<Result<Vec<u8>, usize>> {
-        let mut f = self.iobufs.file.lock().unwrap();
+        let mut f = self.config().open_file();
         f.seek(SeekFrom::Start(id))?;
 
         let mut valid = [0u8; 1];

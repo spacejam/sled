@@ -1,7 +1,5 @@
 use std::io::{Seek, Write};
 
-use rand::{Rng, thread_rng};
-
 use super::*;
 
 /// The length of the message header prepended to all data written to the log.
@@ -97,28 +95,8 @@ impl Debug for IOBufs {
 /// writes to underlying storage.
 impl IOBufs {
     pub fn new(config: Config) -> IOBufs {
-        let mut options = fs::OpenOptions::new();
-        options.create(true);
-        options.read(true);
-        options.write(true);
-
-        let (file, disk_offset) = if let Some(p) = config.get_path() {
-            let file = options.open(p).unwrap();
-            let disk_offset = file.metadata().unwrap().len();
-            (file, disk_offset)
-        } else {
-            let nonce: String = thread_rng().gen_ascii_chars().take(10).collect();
-            let path = format!("__rsdb_memory_{}.log", nonce);
-
-            // "poor man's shared memory"
-            // We retain an open descriptor to the file,
-            // but it is no longer attached to this path,
-            // so it continues to exist as a set of
-            // anonymously mapped pages in memory only.
-            let file = options.open(&path).unwrap();
-            fs::remove_file(path).unwrap();
-            (file, 0)
-        };
+        let file = config.open_file();
+        let disk_offset = file.metadata().unwrap().len();
 
         let bufs = rep_no_copy![IOBuf::new(config.get_io_buf_size()); config.get_io_bufs()];
 
@@ -136,8 +114,8 @@ impl IOBufs {
         }
     }
 
-    pub fn config(&self) -> Config {
-        self.config.clone()
+    pub fn config(&self) -> &Config {
+        &self.config
     }
 
     fn idx(&self) -> usize {

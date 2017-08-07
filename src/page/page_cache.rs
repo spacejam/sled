@@ -43,7 +43,7 @@ impl<M> PageCache<LockFreeLog, M>
     }
 
     /// Return the configuration used by the underlying system.
-    pub fn config(&self) -> Config {
+    pub fn config(&self) -> &Config {
         self.log.config()
     }
 

@@ -43,7 +43,7 @@ pub trait Log: Send + Sync {
     fn punch_hole(&self, id: LogID);
 
     /// Return the configuration in use by the system.
-    fn config(&self) -> Config;
+    fn config(&self) -> &Config;
 
     /// Return an iterator over the log, starting with
     /// a specified offset.

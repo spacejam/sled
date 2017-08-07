@@ -74,7 +74,7 @@ impl Tree {
     }
 
     /// Returns a copy of the current `Config` in use by the system.
-    pub fn config(&self) -> Config {
+    pub fn config(&self) -> &Config {
         self.pages.config()
     }
 

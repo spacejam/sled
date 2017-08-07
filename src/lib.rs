@@ -3,16 +3,16 @@
 #![deny(missing_docs)]
 
 extern crate libc;
+extern crate rayon;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 extern crate bincode;
-extern crate time;
 extern crate rand;
-extern crate env_logger;
 #[macro_use]
 extern crate log as logger;
-extern crate rayon;
+extern crate env_logger;
+extern crate tempfile;
 
 /// atomic lock-free tree
 pub use tree::Tree;
