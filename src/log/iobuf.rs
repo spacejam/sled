@@ -1,5 +1,7 @@
 use std::io::{Seek, Write};
 
+use zstd::block::compress;
+
 use super::*;
 
 /// The length of the message header prepended to all data written to the log.
@@ -68,14 +70,19 @@ impl IOBuf {
 }
 
 pub struct IOBufs {
+    config: Config,
     bufs: Vec<IOBuf>,
     current_buf: AtomicUsize,
     written_bufs: AtomicUsize,
-
+    // Pending intervals that have been written to stable storage, but may be
+    // higher than the current value of `stable` due to interesting thread
+    // interleavings.
     intervals: Mutex<Vec<(LogID, LogID)>>,
+    // The highest CONTIGUOUS offset that has been written to stable storage.
+    // This may be lower than the length of the underlying file, and there
+    // may be buffers that have been written out-of-order to stable storage
+    // due to interesting thread interleavings.
     stable: AtomicUsize,
-
-    config: Config,
 }
 
 impl Debug for IOBufs {
@@ -142,8 +149,7 @@ impl IOBufs {
     pub(super) fn reserve(&self, mut raw_buf: Vec<u8>) -> Reservation {
         assert_eq!(raw_buf.len() + HEADER_LEN >> 32, 0);
 
-        let buf = encapsulate(&mut raw_buf);
-        drop(raw_buf);
+        let buf = encapsulate(raw_buf, self.config.get_use_compression());
 
         assert!(buf.len() <= self.config.get_io_buf_size());
 
@@ -431,17 +437,23 @@ impl Drop for IOBufs {
 }
 
 #[inline(always)]
-fn encapsulate(buf: &mut Vec<u8>) -> Vec<u8> {
+fn encapsulate(raw_buf: Vec<u8>, use_compression: bool) -> Vec<u8> {
+    let mut buf = if use_compression {
+        compress(&*raw_buf, 5).unwrap()
+    } else {
+        raw_buf
+    };
+
     let mut size_bytes = ops::usize_to_array(buf.len()).to_vec();
     let mut valid_bytes = vec![1u8];
-    let mut crc16_bytes = crc16_arr(buf).to_vec();
+    let mut crc16_bytes = crc16_arr(&buf).to_vec();
 
     let mut out = Vec::with_capacity(HEADER_LEN + buf.len());
     out.append(&mut valid_bytes);
     out.append(&mut size_bytes);
     out.append(&mut crc16_bytes);
     assert_eq!(out.len(), HEADER_LEN);
-    out.append(buf);
+    out.append(&mut buf);
     out
 }
 

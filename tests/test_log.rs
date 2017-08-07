@@ -5,6 +5,7 @@ extern crate quickcheck;
 extern crate rand;
 extern crate rsdb;
 
+use std::fs;
 use std::thread;
 use std::sync::Arc;
 
@@ -122,7 +123,10 @@ fn non_contiguous_flush() {
 #[test]
 fn concurrent_logging() {
     // TODO linearize res bufs, verify they are correct
-    let log = Arc::new(Config::default().log());
+    let path = "test_log.log";
+    let log = Arc::new(Config::default()
+        .path(Some(path.to_owned()))
+        .log());
     let iobs2 = log.clone();
     let iobs3 = log.clone();
     let iobs4 = log.clone();
@@ -195,6 +199,8 @@ fn concurrent_logging() {
     t4.join().unwrap();
     t5.join().unwrap();
     t6.join().unwrap();
+
+    fs::remove_file(path).unwrap();
 }
 
 fn test_write(log: &LockFreeLog) {
@@ -244,7 +250,7 @@ fn test_hole_punching() {
 
     log.punch_hole(id);
 
-    assert_eq!(log.read(id).unwrap(), Err(data_bytes.len()));
+    assert!(log.read(id).unwrap().is_err());
 }
 
 #[test]
@@ -263,10 +269,10 @@ fn test_log_iterator() {
     let last_offset = log.write(b"55555".to_vec());
     log.make_stable(last_offset);
     let mut iter = log.iter_from(first_offset);
-    assert_eq!(iter.next(), Some((0, b"1".to_vec())));
-    assert_eq!(iter.next(), Some((8, b"22".to_vec())));
-    assert_eq!(iter.next(), Some((17, b"333".to_vec())));
-    assert_eq!(iter.next(), Some((54, b"4444".to_vec())));
-    assert_eq!(iter.next(), Some((65, b"55555".to_vec())));
+    assert_eq!(iter.next().unwrap().1, b"1".to_vec());
+    assert_eq!(iter.next().unwrap().1, b"22".to_vec());
+    assert_eq!(iter.next().unwrap().1, b"333".to_vec());
+    assert_eq!(iter.next().unwrap().1, b"4444".to_vec());
+    assert_eq!(iter.next().unwrap().1, b"55555".to_vec());
     assert_eq!(iter.next(), None);
 }

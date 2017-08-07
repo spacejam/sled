@@ -1,11 +1,8 @@
 # RSDB
 
-flash-sympathetic lock-free persistent trees
+flash-sympathetic lock-free persistent tree
 
 [documentation](https://docs.rs/rsdb)
-
-if you're curious, start trying out the default `Tree`, which is a lock-free b-link tree
-(similar to a b+ tree but better for lock-free implementations).
 
 progress
 
@@ -13,14 +10,15 @@ progress
 - [x] lock-free page store supporting cache-friendly partial updates
 - [x] lock-free b-link tree
 - [x] recovery
+- [x] zstd compression
 - [ ] epoch-based gc (LEAKS MEMORY FOR NOW LOLOLOLOLOL)
+- [ ] LRU cache
+- [ ] pagetable snapshotting for faster recovery
 - [ ] multi-key transactions and MVCC using a higher-level `DB` interface
-- [ ] lock-free quad/pr/r tree
-- [ ] lock-free fractal tree
 
 # Goals
 
-1. don't use so much electricity. our data structures should play to our hardware's current strengths.
+1. don't use so much electricity. our data structures should play to modern hardware's strengths.
 1. don't surprise users with performance traps.
 1. bring reliability techniques from academia into real-world practice.
 
