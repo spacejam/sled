@@ -14,6 +14,8 @@ use serde::Serialize;
 use super::*;
 
 mod page_cache;
+mod hash;
+mod lru;
 
 pub use self::page_cache::PageCache;
 

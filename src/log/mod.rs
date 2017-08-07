@@ -60,25 +60,3 @@ pub struct LogIter<'a, T: 'a + Log> {
     next_offset: LogID,
     log: &'a T,
 }
-
-
-impl<'a, T: Log> Iterator for LogIter<'a, T> {
-    type Item = (LogID, Vec<u8>);
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let offset = self.next_offset;
-            let log_read = self.log.read(self.next_offset);
-            if let Ok(buf_opt) = log_read {
-                match buf_opt {
-                    Ok(buf) => {
-                        self.next_offset += buf.len() as LogID + HEADER_LEN as LogID;
-                        return Some((offset, buf));
-                    }
-                    Err(len) => self.next_offset += len as LogID + HEADER_LEN as LogID,
-                }
-            } else {
-                return None;
-            }
-        }
-    }
-}

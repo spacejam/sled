@@ -20,6 +20,7 @@ log = "0.3"
 num_cpus = "1.6"
 rayon = "0.8"
 tempfile = "2.1"
+zstd = "0.4"
 
 [dev-dependencies]
 quickcheck = "0.2"
