@@ -18,7 +18,7 @@ progress
 
 # Goals
 
-1. don't use so much electricity. our data structures should play to our hardware's current strengths.
+1. don't use so much electricity. our data structures should play to modern hardware's strengths.
 1. don't surprise users with performance traps.
 1. bring reliability techniques from academia into real-world practice.
 
