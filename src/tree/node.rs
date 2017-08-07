@@ -10,10 +10,10 @@ pub struct Node {
 }
 
 impl Node {
-    pub fn apply(&mut self, frag: Frag) {
+    pub fn apply(&mut self, frag: &Frag) {
         use self::Frag::*;
 
-        match frag {
+        match *frag {
             Set(ref k, ref v) => {
                 if Bound::Inc(k.clone()) < self.hi {
                     self.set_leaf(k.clone(), v.clone());
@@ -21,11 +21,11 @@ impl Node {
                     panic!("tried to consolidate set at key <= hi")
                 }
             }
-            ChildSplit(child_split) => {
-                self.child_split(&child_split);
+            ChildSplit(ref child_split) => {
+                self.child_split(child_split);
             }
-            ParentSplit(parent_split) => {
-                self.parent_split(&parent_split);
+            ParentSplit(ref parent_split) => {
+                self.parent_split(parent_split);
             }
             Del(ref k) => {
                 if Bound::Inc(k.clone()) < self.hi {
@@ -34,7 +34,7 @@ impl Node {
                     panic!("tried to consolidate del at key <= hi")
                 }
             }
-            Base(_) => panic!("encountered base page in middle of chain"),
+            Base(_, _) => panic!("encountered base page in middle of chain"),
         }
     }
 

@@ -227,14 +227,13 @@ impl<'a, T> IntoIterator for &'a Stack<T> {
     }
 }
 
-pub fn node_from_frag_vec<T>(from: Vec<T>) -> *const Node<*const T> {
+pub fn node_from_frag_vec<T>(from: Vec<T>) -> *const Node<T> {
     use std::ptr;
     let mut last = ptr::null();
 
     for item in from.into_iter().rev() {
-        let raw_item = raw(item);
         let node = raw(Node {
-            inner: raw_item,
+            inner: item,
             next: last,
         });
         last = node;

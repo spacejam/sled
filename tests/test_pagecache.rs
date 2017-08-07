@@ -1,9 +1,13 @@
 extern crate rsdb;
 
+#[macro_use]
+extern crate serde_derive;
+
 use std::fs;
 
 use rsdb::*;
 
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TestMaterializer;
 
 impl Materializer for TestMaterializer {
@@ -11,11 +15,11 @@ impl Materializer for TestMaterializer {
     type PartialPage = String;
     type Recovery = ();
 
-    fn materialize(&self, frags: Vec<String>) -> String {
+    fn materialize(&self, frags: &Vec<String>) -> String {
         self.consolidate(frags).pop().unwrap()
     }
 
-    fn consolidate(&self, frags: Vec<String>) -> Vec<String> {
+    fn consolidate(&self, frags: &Vec<String>) -> Vec<String> {
         let mut consolidated = String::new();
         for frag in frags.into_iter() {
             consolidated.push_str(&*frag);
@@ -24,7 +28,7 @@ impl Materializer for TestMaterializer {
         vec![consolidated]
     }
 
-    fn recover(&mut self, _: String) -> Option<()> {
+    fn recover(&mut self, _: &String) -> Option<()> {
         None
     }
 }
