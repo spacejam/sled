@@ -49,14 +49,9 @@ pub fn hash(data: &[u8], raw_seed: u32) -> u32 {
 
 #[inline(always)]
 fn slice_to_u32(w: &[u8]) -> u32 {
-    // TODO if not little endian, reverse the array
+    // TODO if other endianness, reverse the array
     assert_eq!(w.len(), 4);
-    let little_endian = false;
-    if little_endian {
-        ((w[0] as u32) << 24) | ((w[1] as u32) << 16) | ((w[2] as u32) << 8) | (w[3] as u32)
-    } else {
-        ((w[3] as u32) << 24) | ((w[2] as u32) << 16) | ((w[1] as u32) << 8) | (w[0] as u32)
-    }
+    ((w[3] as u32) << 24) | ((w[2] as u32) << 16) | ((w[1] as u32) << 8) | (w[0] as u32)
 }
 
 #[test]
