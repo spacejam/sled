@@ -221,7 +221,7 @@ impl Config {
                 options.read(true);
                 options.write(true);
 
-                if !self.use_os_cache && cfg!(unix) {
+                if !self.use_os_cache && cfg!(linux) {
                     use std::os::unix::fs::OpenOptionsExt;
                     options.custom_flags(libc::O_DIRECT);
                     panic!("O_DIRECT support not sussed out yet.");

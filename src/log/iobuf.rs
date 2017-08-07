@@ -4,7 +4,7 @@ use zstd::block::compress;
 
 use super::*;
 
-/// The length of the message header prepended to all data written to the log.
+#[doc(hidden)]
 pub const HEADER_LEN: usize = 7;
 
 struct IOBuf {
@@ -146,7 +146,7 @@ impl IOBufs {
     ///
     /// Panics if the desired reservation is greater than 8388601 bytes..
     /// (config io buf size - 7)
-    pub(super) fn reserve(&self, mut raw_buf: Vec<u8>) -> Reservation {
+    pub(super) fn reserve(&self, raw_buf: Vec<u8>) -> Reservation {
         assert_eq!(raw_buf.len() + HEADER_LEN >> 32, 0);
 
         let buf = encapsulate(raw_buf, self.config.get_use_compression());

@@ -12,6 +12,7 @@
 
 use std::num::Wrapping;
 
+/// Cheap hash for determining LRU shard slots.
 pub fn hash(data: &[u8], raw_seed: u32) -> u32 {
     // Similar to murmur hash
     const M: Wrapping<u32> = Wrapping(0xc6a4a793);
