@@ -1,6 +1,5 @@
 use std::cell::UnsafeCell;
 use std::fmt::{self, Debug};
-use std::fs;
 use std::io::{self, Error, ErrorKind, SeekFrom};
 use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;

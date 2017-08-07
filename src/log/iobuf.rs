@@ -74,7 +74,6 @@ pub struct IOBufs {
 
     intervals: Mutex<Vec<(LogID, LogID)>>,
     stable: AtomicUsize,
-    pub file: Mutex<fs::File>,
 
     config: Config,
 }
@@ -95,8 +94,11 @@ impl Debug for IOBufs {
 /// writes to underlying storage.
 impl IOBufs {
     pub fn new(config: Config) -> IOBufs {
-        let file = config.open_file();
-        let disk_offset = file.metadata().unwrap().len();
+        let disk_offset = {
+            let cached_f = config.cached_file();
+            let file = cached_f.borrow();
+            file.metadata().unwrap().len()
+        };
 
         let bufs = rep_no_copy![IOBuf::new(config.get_io_buf_size()); config.get_io_bufs()];
 
@@ -104,7 +106,6 @@ impl IOBufs {
         bufs[current_buf].set_log_offset(disk_offset);
 
         IOBufs {
-            file: Mutex::new(file),
             bufs: bufs,
             current_buf: AtomicUsize::new(current_buf),
             written_bufs: AtomicUsize::new(0),
@@ -363,8 +364,6 @@ impl IOBufs {
     // Write an IO buffer's data to stable storage and set up the
     // next IO buffer for writing.
     fn write_to_log(&self, idx: usize) {
-        let mut log = self.file.lock().unwrap();
-
         let ref iobuf = self.bufs[idx];
         let header = iobuf.get_header();
         let log_offset = iobuf.get_log_offset();
@@ -379,8 +378,10 @@ impl IOBufs {
         let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
         let dirty_bytes = &data[0..res_len];
 
-        log.seek(SeekFrom::Start(log_offset)).unwrap();
-        log.write_all(&dirty_bytes).unwrap();
+        let cached_f = self.config.cached_file();
+        let mut f = cached_f.borrow_mut();
+        f.seek(SeekFrom::Start(log_offset)).unwrap();
+        f.write_all(&dirty_bytes).unwrap();
 
         // signal that this IO buffer is uninitialized
         let max = std::usize::MAX as LogID;

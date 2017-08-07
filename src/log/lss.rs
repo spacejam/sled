@@ -36,7 +36,8 @@ impl Log for LockFreeLog {
 
     /// read a buffer from the disk
     fn read(&self, id: LogID) -> io::Result<Result<Vec<u8>, usize>> {
-        let mut f = self.config().open_file();
+        let cached_f = self.config().cached_file();
+        let mut f = cached_f.borrow_mut();
         f.seek(SeekFrom::Start(id))?;
 
         let mut valid = [0u8; 1];
@@ -101,7 +102,8 @@ impl Log for LockFreeLog {
     fn punch_hole(&self, id: LogID) {
         // we zero out the valid byte, and use fallocate to punch a hole
         // in the actual data, but keep the len for recovery.
-        let mut f = self.iobufs.file.lock().unwrap();
+        let cached_f = self.config().cached_file();
+        let mut f = cached_f.borrow_mut();
         // zero out valid bit
         f.seek(SeekFrom::Start(id)).unwrap();
         let zeros = vec![0];

@@ -63,11 +63,13 @@ mod stack;
 mod page;
 mod radix;
 mod config;
+mod thread_cache;
 
 mod ops;
 
 use bound::Bound;
 use stack::{StackIter, node_from_frag_vec};
+use thread_cache::ThreadCache;
 
 type LogID = u64; // LogID == file position to simplify file mapping
 type PageID = usize;

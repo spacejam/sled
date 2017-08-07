@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::fs;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use tempfile::NamedTempFile;
@@ -13,6 +15,7 @@ pub struct Config {
     blink_fanout: usize,
     page_consolidation_threshold: usize,
     path: Option<String>,
+    tc: Arc<ThreadCache<fs::File>>,
     tmp: Arc<Mutex<NamedTempFile>>,
 }
 
@@ -24,6 +27,7 @@ impl Default for Config {
             blink_fanout: 128,
             page_consolidation_threshold: 10,
             path: None,
+            tc: Arc::new(ThreadCache::default()),
             tmp: Arc::new(Mutex::new(NamedTempFile::new().unwrap())),
         }
     }
@@ -126,16 +130,18 @@ impl Config {
     }
 
     /// Open a new file handle to the configured underlying storage.
-    pub fn open_file(&self) -> fs::File {
-        let mut options = fs::OpenOptions::new();
-        options.create(true);
-        options.read(true);
-        options.write(true);
+    pub fn cached_file(&self) -> Rc<RefCell<fs::File>> {
+        self.tc.get_or_else(|| {
+            if let Some(p) = self.get_path() {
+                let mut options = fs::OpenOptions::new();
+                options.create(true);
+                options.read(true);
+                options.write(true);
 
-        if let Some(p) = self.get_path() {
-            options.open(p).unwrap()
-        } else {
-            self.tmp.lock().unwrap().reopen().unwrap()
-        }
+                options.open(p).unwrap()
+            } else {
+                self.tmp.lock().unwrap().reopen().unwrap()
+            }
+        })
     }
 }
