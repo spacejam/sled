@@ -33,10 +33,6 @@ pub trait Materializer: Send + Sync + Clone {
     /// described by `Materializer::recover`
     type Recovery;
 
-    /// Appends may include optional annotations which are used to feed
-    /// recovery state.
-    type Annotation: Serialize + DeserializeOwned;
-
     /// Used to generate the result of `get` requests on the `PageCache`
     fn materialize(&self, &Vec<Self::PartialPage>) -> Self::MaterializedPage;
 
@@ -47,7 +43,7 @@ pub trait Materializer: Send + Sync + Clone {
     /// Used to feed custom recovery information back to a higher-level abstraction
     /// during startup. For example, a B-Link tree must know what the current
     /// root node is before it can start serving requests.
-    fn recover(&mut self, &Self::Annotation) -> Option<Self::Recovery>;
+    fn recover(&mut self, &Self::PartialPage) -> Option<Self::Recovery>;
 }
 
 /// Points to either a memory location or a disk location to page-in data from.
@@ -74,7 +70,6 @@ struct LoggedUpdate<M>
 {
     pid: PageID,
     update: Update<M>,
-    annotation: Option<M::Annotation>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

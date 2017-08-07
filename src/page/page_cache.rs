@@ -56,19 +56,19 @@ impl<M> PageCache<LockFreeLog, M>
 
         for (log_id, bytes) in self.log.iter_from(from) {
             if let Ok(append) = deserialize::<LoggedUpdate<M>>(&*bytes) {
-                // if there's an annotation, see if it influences our recovery state
-                if let Some(ref annotation) = append.annotation {
-                    let r = self.t.recover(annotation);
-                    if r.is_some() {
-                        recovery = r;
-                    }
-                }
-
                 // keep track of the highest valid LogID
                 last_good_id = log_id + (bytes.len() + HEADER_LEN) as LogID;
 
+
                 match append.update {
-                    Update::Append(_appends) => {
+                    Update::Append(ref appends) => {
+                        for ref append in appends {
+                            let r = self.t.recover(&append);
+                            if r.is_some() {
+                                recovery = r;
+                            }
+                        }
+
                         let stack = self.inner.get(append.pid).unwrap();
 
                         let flush = CacheEntry::PartialFlush(log_id);
@@ -77,7 +77,14 @@ impl<M> PageCache<LockFreeLog, M>
                             (*stack).push(flush);
                         }
                     }
-                    Update::Compact(_appends) => {
+                    Update::Compact(ref appends) => {
+                        for ref append in appends {
+                            let r = self.t.recover(&append);
+                            if r.is_some() {
+                                recovery = r;
+                            }
+                        }
+
                         // TODO GC previous stack
                         // TODO feed compacted page to recover?
                         self.inner.del(append.pid);
@@ -126,7 +133,6 @@ impl<M> PageCache<LockFreeLog, M>
         let append: LoggedUpdate<M> = LoggedUpdate {
             pid: pid,
             update: Update::Alloc,
-            annotation: None,
         };
         let bytes = serialize(&append, Infinite).unwrap();
         self.log.write(bytes);
@@ -144,7 +150,6 @@ impl<M> PageCache<LockFreeLog, M>
         let append: LoggedUpdate<M> = LoggedUpdate {
             pid: pid,
             update: Update::Del,
-            annotation: None,
         };
         let bytes = serialize(&append, Infinite).unwrap();
         self.log.write(bytes);
@@ -215,7 +220,7 @@ impl<M> PageCache<LockFreeLog, M>
         let mut head = head;
         if partial_pages.len() > self.config().get_page_consolidation_threshold() {
             let consolidated = self.t.consolidate(&partial_pages);
-            if let Ok(new_head) = self.replace(pid, head, consolidated, None) {
+            if let Ok(new_head) = self.replace(pid, head, consolidated) {
                 head = new_head;
             }
         }
@@ -229,13 +234,11 @@ impl<M> PageCache<LockFreeLog, M>
         (&self,
          pid: PageID,
          old: *const stack::Node<CacheEntry<M>>,
-         new: Vec<M::PartialPage>,
-         annotation: Option<M::Annotation>)
+         new: Vec<M::PartialPage>)
          -> Result<*const stack::Node<CacheEntry<M>>, *const stack::Node<CacheEntry<M>>> {
         let replace: LoggedUpdate<M> = LoggedUpdate {
             pid: pid,
             update: Update::Compact(new.clone()),
-            annotation: annotation,
         };
         let bytes = serialize(&replace, Infinite).unwrap();
         let log_reservation = self.log.reserve(bytes);
@@ -262,13 +265,11 @@ impl<M> PageCache<LockFreeLog, M>
         (&self,
          pid: PageID,
          old: *const stack::Node<CacheEntry<M>>,
-         new: M::PartialPage,
-         annotation: Option<M::Annotation>)
+         new: M::PartialPage)
          -> Result<*const stack::Node<CacheEntry<M>>, *const stack::Node<CacheEntry<M>>> {
         let append: LoggedUpdate<M> = LoggedUpdate {
             pid: pid,
             update: Update::Append(vec![new.clone()]),
-            annotation: annotation,
         };
         let bytes = serialize(&append, Infinite).unwrap();
         let log_reservation = self.log.reserve(bytes);

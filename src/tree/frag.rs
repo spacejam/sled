@@ -12,15 +12,17 @@ use super::*;
 pub enum Frag {
     Set(Key, Value),
     Del(Key),
-    Base(tree::Node),
+    /// The bool in Base means this node has been a root at some point.
+    /// This is useful during recovery to figure out the current root.
+    Base(tree::Node, bool),
     ChildSplit(ChildSplit),
     ParentSplit(ParentSplit),
 }
 
 impl Frag {
-    pub fn base(&self) -> Option<tree::Node> {
+    pub fn base(&self) -> Option<(tree::Node, bool)> {
         match *self {
-            Frag::Base(ref base) => Some(base.clone()),
+            Frag::Base(ref base, ref root) => Some((base.clone(), *root)),
             _ => None,
         }
     }

@@ -34,7 +34,7 @@ impl Node {
                     panic!("tried to consolidate del at key <= hi")
                 }
             }
-            Base(_) => panic!("encountered base page in middle of chain"),
+            Base(_, _) => panic!("encountered base page in middle of chain"),
         }
     }
 
