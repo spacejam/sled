@@ -184,11 +184,7 @@ impl<M> PageCache<LockFreeLog, M>
 
     fn pull(&self, lid: LogID) -> Result<Vec<M::PartialPage>, ()> {
         let bytes = self.log.read(lid).map_err(|_| ())?.map_err(|_| ())?;
-        let sz = bytes.len();
         let logged_update = deserialize::<LoggedUpdate<M>>(&*bytes).map_err(|_| ())?;
-
-        let to_evict = self.lru.paged_in(logged_update.pid, lid, sz);
-        self.page_out(to_evict);
 
         match logged_update.update {
             Update::Append(pps) => Ok(pps),
@@ -196,8 +192,52 @@ impl<M> PageCache<LockFreeLog, M>
         }
     }
 
-    fn page_out(&self, _to_evict: Vec<(PageID, LogID)>) {
-        // TODO flip each item to a (Partial)Flush
+    fn page_out(&self, to_evict: Vec<PageID>) {
+        for pid in to_evict.into_iter() {
+            let stack_ptr = self.inner.get(pid);
+            if stack_ptr.is_none() {
+                continue;
+            }
+
+            let stack_ptr = stack_ptr.unwrap();
+            let (head, stack_iter) = unsafe { (*stack_ptr).iter_at_head() };
+            let mut cache_entries: Vec<CacheEntry<M>> = stack_iter.map(|ptr| (*ptr).clone())
+                .collect();
+
+            // ensure the last entry is a Flush
+            let last = cache_entries.pop().map(|last_ce| {
+                match last_ce {
+                    CacheEntry::Resident(_, ref lid) => CacheEntry::Flush(*lid),
+                    CacheEntry::PartialFlush(_) => panic!("got PartialFlush at end of stack..."),
+                    CacheEntry::Flush(lid) => CacheEntry::Flush(lid),
+                }
+            });
+
+            if last.is_none() {
+                return;
+            }
+
+            let mut new_stack = vec![];
+            for entry in cache_entries.into_iter() {
+                match entry {
+                    CacheEntry::Resident(_, ref lid) => {
+                        new_stack.push(CacheEntry::PartialFlush(*lid));
+                    }
+                    CacheEntry::Flush(_) => panic!("got Flush in middle of stack..."),
+                    CacheEntry::PartialFlush(lid) => {
+                        new_stack.push(CacheEntry::PartialFlush(lid));
+                    }
+                }
+            }
+            new_stack.push(last.unwrap());
+            let node = node_from_frag_vec(new_stack);
+            let res = unsafe { (*stack_ptr).cas(head, node) };
+            if res.is_ok() {
+                self.lru.page_out_succeeded(pid);
+            } else {
+                // if this failed, it's because something wrote to the page in the mean time
+            }
+        }
     }
 
     fn page_in(&self,
@@ -211,14 +251,9 @@ impl<M> PageCache<LockFreeLog, M>
         cache_entries.par_iter_mut()
             .for_each(|ref mut ce| {
                 let (pp, lid) = match *ce {
-                    &mut CacheEntry::Resident(ref pp, ref lid) => {
-                        if let &Some(l) = lid {
-                            self.lru.accessed(l);
-                        }
-                        (pp.clone(), lid.clone())
-                    }
-                    &mut CacheEntry::Flush(lid) => (self.pull(lid).unwrap(), Some(lid)),
-                    &mut CacheEntry::PartialFlush(lid) => (self.pull(lid).unwrap(), Some(lid)),
+                    &mut CacheEntry::Resident(ref pp, ref lid) => (pp.clone(), lid.clone()),
+                    &mut CacheEntry::Flush(lid) => (self.pull(lid).unwrap(), lid),
+                    &mut CacheEntry::PartialFlush(lid) => (self.pull(lid).unwrap(), lid),
                 };
                 **ce = CacheEntry::Resident(pp, lid);
             });
@@ -234,6 +269,9 @@ impl<M> PageCache<LockFreeLog, M>
 
         partial_pages.reverse();
         let partial_pages = partial_pages;
+
+        let to_evict = self.lru.accessed(pid, std::mem::size_of_val(&partial_pages));
+        self.page_out(to_evict);
 
         let mut head = head;
         if partial_pages.len() > self.config().get_page_consolidation_threshold() {
@@ -262,7 +300,7 @@ impl<M> PageCache<LockFreeLog, M>
         let log_reservation = self.log.reserve(bytes);
         let log_offset = log_reservation.log_id();
 
-        let cache_entry = CacheEntry::Resident(new, Some(log_offset));
+        let cache_entry = CacheEntry::Resident(new, log_offset);
         let node = node_from_frag_vec(vec![cache_entry]);
 
         let stack_ptr = self.inner.get(pid).unwrap();
@@ -293,7 +331,7 @@ impl<M> PageCache<LockFreeLog, M>
         let log_reservation = self.log.reserve(bytes);
         let log_offset = log_reservation.log_id();
 
-        let cache_entry = CacheEntry::Resident(vec![new], Some(log_offset));
+        let cache_entry = CacheEntry::Resident(vec![new], log_offset);
 
         let stack_ptr = self.inner.get(pid).unwrap();
         let result = unsafe { (*stack_ptr).cap(old, cache_entry) };
