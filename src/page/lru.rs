@@ -111,7 +111,12 @@ impl Shard {
 
     fn bump(&mut self, lid: LogID) {
         let mtime = time::get_time().sec;
-        let mut entry = self.entries.remove(&lid).unwrap();
+        let entry_opt = self.entries.remove(&lid);
+        if entry_opt.is_none() {
+            // TODO we can't unwrap, but we should reduce this incidence
+            return;
+        }
+        let mut entry = entry_opt.unwrap();
         entry.accesses.fetch_add(1, Ordering::SeqCst);
 
         let old_mtime = entry.mtime;
