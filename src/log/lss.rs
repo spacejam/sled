@@ -1,5 +1,8 @@
 use std::io::{Read, Seek, Write};
 
+#[cfg(target_os="linux")]
+use libc::{FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE, fallocate};
+
 use zstd::block::decompress;
 
 use super::*;

@@ -14,6 +14,7 @@ extern crate log as logger;
 extern crate env_logger;
 extern crate tempfile;
 extern crate zstd;
+extern crate time;
 
 /// atomic lock-free tree
 pub use tree::Tree;

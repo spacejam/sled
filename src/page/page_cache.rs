@@ -12,6 +12,7 @@ pub struct PageCache<L: Log, M>
     max_id: AtomicUsize,
     free: Stack<PageID>,
     log: Box<L>,
+    lru: lru::Lru,
 }
 
 unsafe impl<L: Log, M: Materializer> Send for PageCache<L, M> {}
@@ -33,12 +34,15 @@ impl<M> PageCache<LockFreeLog, M>
 {
     /// Instantiate a new `PageCache`.
     pub fn new(pm: M, config: Config) -> PageCache<LockFreeLog, M> {
+        let cache_capacity = config.get_cache_capacity();
+        let cache_shard_bits = config.get_cache_bits();
         PageCache {
             t: pm,
             inner: Radix::default(),
             max_id: AtomicUsize::new(0),
             free: Stack::default(),
             log: Box::new(LockFreeLog::start_system(config)),
+            lru: lru::Lru::new(cache_capacity, cache_shard_bits),
         }
     }
 
@@ -180,11 +184,20 @@ impl<M> PageCache<LockFreeLog, M>
 
     fn pull(&self, lid: LogID) -> Result<Vec<M::PartialPage>, ()> {
         let bytes = self.log.read(lid).map_err(|_| ())?.map_err(|_| ())?;
+        let sz = bytes.len();
         let logged_update = deserialize::<LoggedUpdate<M>>(&*bytes).map_err(|_| ())?;
+
+        let to_evict = self.lru.paged_in(logged_update.pid, lid, sz);
+        self.page_out(to_evict);
+
         match logged_update.update {
             Update::Append(pps) => Ok(pps),
             _ => panic!("non-apped found in pull"),
         }
+    }
+
+    fn page_out(&self, _to_evict: Vec<(PageID, LogID)>) {
+        // TODO flip each item to a (Partial)Flush
     }
 
     fn page_in(&self,
@@ -198,7 +211,12 @@ impl<M> PageCache<LockFreeLog, M>
         cache_entries.par_iter_mut()
             .for_each(|ref mut ce| {
                 let (pp, lid) = match *ce {
-                    &mut CacheEntry::Resident(ref pp, ref lid) => (pp.clone(), lid.clone()),
+                    &mut CacheEntry::Resident(ref pp, ref lid) => {
+                        if let &Some(l) = lid {
+                            self.lru.accessed(l);
+                        }
+                        (pp.clone(), lid.clone())
+                    }
                     &mut CacheEntry::Flush(lid) => (self.pull(lid).unwrap(), Some(lid)),
                     &mut CacheEntry::PartialFlush(lid) => (self.pull(lid).unwrap(), Some(lid)),
                 };
