@@ -196,7 +196,7 @@ impl<M> PageCache<LockFreeLog, M>
         }
     }
 
-    fn page_out(&self, to_evict: Vec<(PageID, LogID)>) {
+    fn page_out(&self, _to_evict: Vec<(PageID, LogID)>) {
         // TODO flip each item to a (Partial)Flush
     }
 
