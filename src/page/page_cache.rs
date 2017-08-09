@@ -59,21 +59,20 @@ impl<M> PageCache<LockFreeLog, M>
         let mut recovery = None;
 
         for (log_id, bytes) in self.log.iter_from(from) {
-            if let Ok(append) = deserialize::<LoggedUpdate<M>>(&*bytes) {
+            if let Ok(prepend) = deserialize::<LoggedUpdate<M>>(&*bytes) {
                 // keep track of the highest valid LogID
                 last_good_id = log_id + (bytes.len() + HEADER_LEN) as LogID;
 
-
-                match append.update {
-                    Update::Append(ref appends) => {
-                        for ref append in appends {
-                            let r = self.t.recover(&append);
+                match prepend.update {
+                    Update::Append(ref prepends) => {
+                        for ref prepend in prepends {
+                            let r = self.t.recover(&prepend);
                             if r.is_some() {
                                 recovery = r;
                             }
                         }
 
-                        let stack = self.inner.get(append.pid).unwrap();
+                        let stack = self.inner.get(prepend.pid).unwrap();
 
                         let flush = CacheEntry::PartialFlush(log_id);
 
@@ -81,9 +80,9 @@ impl<M> PageCache<LockFreeLog, M>
                             (*stack).push(flush);
                         }
                     }
-                    Update::Compact(ref appends) => {
-                        for ref append in appends {
-                            let r = self.t.recover(&append);
+                    Update::Compact(ref prepends) => {
+                        for ref prepend in prepends {
+                            let r = self.t.recover(&prepend);
                             if r.is_some() {
                                 recovery = r;
                             }
@@ -91,25 +90,25 @@ impl<M> PageCache<LockFreeLog, M>
 
                         // TODO GC previous stack
                         // TODO feed compacted page to recover?
-                        self.inner.del(append.pid);
+                        self.inner.del(prepend.pid);
 
                         let stack = raw(Stack::default());
-                        self.inner.insert(append.pid, stack).unwrap();
+                        self.inner.insert(prepend.pid, stack).unwrap();
 
                         let flush = CacheEntry::Flush(log_id);
 
                         unsafe { (*stack).push(flush) }
                     }
                     Update::Del => {
-                        self.inner.del(append.pid);
-                        free_pids.push(append.pid);
+                        self.inner.del(prepend.pid);
+                        free_pids.push(prepend.pid);
                     }
                     Update::Alloc => {
                         let stack = raw(Stack::default());
-                        self.inner.insert(append.pid, stack).unwrap();
-                        free_pids.retain(|&pid| pid != append.pid);
-                        if self.max_id.load(SeqCst) < append.pid {
-                            self.max_id.store(append.pid, SeqCst);
+                        self.inner.insert(prepend.pid, stack).unwrap();
+                        free_pids.retain(|&pid| pid != prepend.pid);
+                        if self.max_id.load(SeqCst) < prepend.pid {
+                            self.max_id.store(prepend.pid, SeqCst);
                         }
                     }
                 }
@@ -134,11 +133,11 @@ impl<M> PageCache<LockFreeLog, M>
         self.inner.insert(pid, stack).unwrap();
 
         // write info to log
-        let append: LoggedUpdate<M> = LoggedUpdate {
+        let prepend: LoggedUpdate<M> = LoggedUpdate {
             pid: pid,
             update: Update::Alloc,
         };
-        let bytes = serialize(&append, Infinite).unwrap();
+        let bytes = serialize(&prepend, Infinite).unwrap();
         self.log.write(bytes);
 
         (pid, ptr::null())
@@ -151,11 +150,11 @@ impl<M> PageCache<LockFreeLog, M>
         let stack_ptr = self.inner.del(pid);
 
         // write info to log
-        let append: LoggedUpdate<M> = LoggedUpdate {
+        let prepend: LoggedUpdate<M> = LoggedUpdate {
             pid: pid,
             update: Update::Del,
         };
-        let bytes = serialize(&append, Infinite).unwrap();
+        let bytes = serialize(&prepend, Infinite).unwrap();
         self.log.write(bytes);
 
         // add pid to free stack to reduce fragmentation over time
@@ -179,7 +178,7 @@ impl<M> PageCache<LockFreeLog, M>
 
         let head = unsafe { (*stack_ptr).head() };
 
-        Some(self.page_in(pid, head))
+        Some(self.page_in(pid, head, stack_ptr))
     }
 
     fn pull(&self, lid: LogID) -> Result<Vec<M::PartialPage>, ()> {
@@ -242,26 +241,39 @@ impl<M> PageCache<LockFreeLog, M>
 
     fn page_in(&self,
                pid: PageID,
-               head: *const stack::Node<CacheEntry<M>>)
+               mut head: *const stack::Node<CacheEntry<M>>,
+               stack_ptr: *const stack::Stack<CacheEntry<M>>)
                -> (M::MaterializedPage, *const stack::Node<CacheEntry<M>>) {
         let stack_iter = StackIter::from_ptr(head);
         let mut cache_entries: Vec<CacheEntry<M>> = stack_iter.map(|ptr| (*ptr).clone()).collect();
 
-        // "fill-in" any flushes
-        cache_entries.par_iter_mut()
-            .for_each(|ref mut ce| {
-                let (pp, lid) = match *ce {
-                    &mut CacheEntry::Resident(ref pp, ref lid) => (pp.clone(), lid.clone()),
-                    &mut CacheEntry::Flush(lid) => (self.pull(lid).unwrap(), lid),
-                    &mut CacheEntry::PartialFlush(lid) => (self.pull(lid).unwrap(), lid),
-                };
-                **ce = CacheEntry::Resident(pp, lid);
-            });
+        // read items off of disk in parallel if anything isn't already resident
+        let contains_non_resident = cache_entries.iter().any(|ce| match *ce {
+            CacheEntry::Resident(_, _) => false,
+            _ => true,
+        });
+        if contains_non_resident {
+            cache_entries.par_iter_mut()
+                .for_each(|ref mut ce| {
+                    let (pp, lid) = match *ce {
+                        &mut CacheEntry::Resident(ref pp, ref lid) => (pp.clone(), lid.clone()),
+                        &mut CacheEntry::Flush(lid) => (self.pull(lid).unwrap(), lid),
+                        &mut CacheEntry::PartialFlush(lid) => (self.pull(lid).unwrap(), lid),
+                    };
+                    **ce = CacheEntry::Resident(pp, lid);
+                });
 
-        let mut partial_pages: Vec<M::PartialPage> = cache_entries.iter()
+            let node = node_from_frag_vec(cache_entries.clone());
+            let res = unsafe { (*stack_ptr).cas(head, node) };
+            if let Ok(new_head) = res {
+                head = new_head;
+            }
+        }
+
+        let mut partial_pages: Vec<M::PartialPage> = cache_entries.into_iter()
             .flat_map(|ce| {
-                match *ce {
-                    CacheEntry::Resident(ref pp, _lid) => pp.clone(),
+                match ce {
+                    CacheEntry::Resident(pp, _lid) => pp,
                     _ => panic!("non-resident entry found, after trying to page-in all entries"),
                 }
             })
@@ -273,7 +285,6 @@ impl<M> PageCache<LockFreeLog, M>
         let to_evict = self.lru.accessed(pid, std::mem::size_of_val(&partial_pages));
         self.page_out(to_evict);
 
-        let mut head = head;
         if partial_pages.len() > self.config().get_page_consolidation_threshold() {
             let consolidated = self.t.consolidate(&partial_pages);
             if let Ok(new_head) = self.replace(pid, head, consolidated) {
@@ -316,18 +327,18 @@ impl<M> PageCache<LockFreeLog, M>
     }
 
 
-    /// Try to atomically append a `Materializer::PartialPage` to the page.
-    pub fn append
+    /// Try to atomically prepend a `Materializer::PartialPage` to the page.
+    pub fn prepend
         (&self,
          pid: PageID,
          old: *const stack::Node<CacheEntry<M>>,
          new: M::PartialPage)
          -> Result<*const stack::Node<CacheEntry<M>>, *const stack::Node<CacheEntry<M>>> {
-        let append: LoggedUpdate<M> = LoggedUpdate {
+        let prepend: LoggedUpdate<M> = LoggedUpdate {
             pid: pid,
             update: Update::Append(vec![new.clone()]),
         };
-        let bytes = serialize(&append, Infinite).unwrap();
+        let bytes = serialize(&prepend, Infinite).unwrap();
         let log_reservation = self.log.reserve(bytes);
         let log_offset = log_reservation.log_id();
 

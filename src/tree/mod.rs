@@ -61,8 +61,8 @@ impl Tree {
                                   },
                                   true);
 
-            pages.append(root_id.clone(), root_cas_key, root).unwrap();
-            pages.append(leaf_id, leaf_cas_key, leaf).unwrap();
+            pages.prepend(root_id.clone(), root_cas_key, root).unwrap();
+            pages.prepend(leaf_id, leaf_cas_key, leaf).unwrap();
 
             root_id
         };
@@ -125,7 +125,7 @@ impl Tree {
             }
 
             let &mut (ref node, ref cas_key) = path.last_mut().unwrap();
-            if self.pages.append(node.id, *cas_key, frag.clone()).is_ok() {
+            if self.pages.prepend(node.id, *cas_key, frag.clone()).is_ok() {
                 return Ok(());
             }
         }
@@ -140,7 +140,7 @@ impl Tree {
             let (mut last_node, last_cas_key) = path.pop().unwrap();
             // println!("last before: {:?}", last);
             if let Ok(new_cas_key) = self.pages
-                .append(last_node.id, last_cas_key, frag.clone()) {
+                .prepend(last_node.id, last_cas_key, frag.clone()) {
                 last_node.apply(&frag);
                 // println!("last after: {:?}", last);
                 let should_split = last_node.should_split();
@@ -188,7 +188,7 @@ impl Tree {
             }
 
             let frag = Frag::Del(key.to_vec());
-            if self.pages.append(leaf_node.id, leaf_cas_key, frag).is_ok() {
+            if self.pages.prepend(leaf_node.id, leaf_cas_key, frag).is_ok() {
                 // success
                 break;
             } else {
@@ -259,10 +259,10 @@ impl Tree {
         //      b. locate split point
         //      c. create new consolidated pages for both sides
         //      d. add new node to pagetable
-        //      e. append split delta to original page P with physical pointer to Q
+        //      e. prepend split delta to original page P with physical pointer to Q
         //      f. if failed, free the new page
         //  2. parent update: install new index term on parent
-        //      a. append "index term delta record" to parent, containing:
+        //      a. prepend "index term delta record" to parent, containing:
         //          i. new bounds for P & Q
         //          ii. logical pointer to Q
         //
@@ -334,10 +334,10 @@ impl Tree {
         };
 
         // install the new right side
-        self.pages.append(new_pid, new_cas_key, Frag::Base(rhs, false)).unwrap();
+        self.pages.prepend(new_pid, new_cas_key, Frag::Base(rhs, false)).unwrap();
 
         // try to install a child split on the left side
-        if let Err(_) = self.pages.append(node.id, node_cas_key, child_split) {
+        if let Err(_) = self.pages.prepend(node.id, node_cas_key, child_split) {
             // if we failed, don't follow through with the parent split
             // let this_thread = thread::current();
             // let name = this_thread.name().unwrap();
@@ -360,9 +360,9 @@ impl Tree {
         // TODO(GC) double check for leaks here
 
         // install parent split
-        let res = self.pages.append(parent_node.id,
-                                    parent_cas_key,
-                                    Frag::ParentSplit(parent_split.clone()));
+        let res = self.pages.prepend(parent_node.id,
+                                     parent_cas_key,
+                                     Frag::ParentSplit(parent_split.clone()));
 
         if res.is_err() {
             // let this_thread = thread::current();
@@ -387,7 +387,7 @@ impl Tree {
                                       hi: Bound::Inf,
                                   },
                                   true);
-        self.pages.append(new_root_pid, new_root_cas_key, new_root).unwrap();
+        self.pages.prepend(new_root_pid, new_root_cas_key, new_root).unwrap();
         // println!("split is {:?}", parent_split);
         // println!("trying to cas root at {:?} with real value {:?}", path.first().unwrap().pid, self.root.load(SeqCst));
         // println!("root_id is {}", root_id);
@@ -469,7 +469,7 @@ impl Tree {
                     to: node.id.clone(),
                 });
 
-                let _res = self.pages.append(parent_node.id, parent_cas_key, ps);
+                let _res = self.pages.prepend(parent_node.id, parent_cas_key, ps);
                 // println!("trying to fix incomplete parent split: {:?}", res);
                 // println!("after: {:?}", self);
             }

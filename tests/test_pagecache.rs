@@ -39,9 +39,9 @@ fn basic_recovery() {
     let conf = Config::default().path(Some(path.to_owned()));
     let pc = PageCache::new(TestMaterializer, conf.clone());
     let (id, key) = pc.allocate();
-    let key = pc.append(id, key, "a".to_owned()).unwrap();
-    let key = pc.append(id, key, "b".to_owned()).unwrap();
-    let _key = pc.append(id, key, "c".to_owned()).unwrap();
+    let key = pc.prepend(id, key, "a".to_owned()).unwrap();
+    let key = pc.prepend(id, key, "b".to_owned()).unwrap();
+    let _key = pc.prepend(id, key, "c".to_owned()).unwrap();
     let (consolidated, _) = pc.get(id).unwrap();
     assert_eq!(consolidated, "abc".to_owned());
     drop(pc);
@@ -50,7 +50,8 @@ fn basic_recovery() {
     pc2.recover(0);
     let (consolidated2, key) = pc2.get(id).unwrap();
     assert_eq!(consolidated, consolidated2);
-    pc2.append(id, key, "d".to_owned()).unwrap();
+
+    pc2.prepend(id, key, "d".to_owned()).unwrap();
     drop(pc2);
 
     let mut pc3 = PageCache::new(TestMaterializer, conf.clone());
