@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use super::*;
 
@@ -46,28 +47,34 @@ impl Lru {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct Entry {
     pid: PageID,
-    mtime: i64,
+    mtime: Duration,
     sz: usize,
     accesses: u64,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct Shard {
-    accesses: BTreeMap<i64, PageID>,
+    accesses: BTreeMap<Duration, PageID>,
     entries: HashMap<PageID, Entry>,
     shadow: HashMap<PageID, Entry>,
     capacity: usize,
     sz: usize,
+    ctime: Instant,
 }
 
 impl Shard {
     fn new(capacity: usize) -> Shard {
-        let mut s = Shard::default();
-        s.capacity = capacity;
-        s
+        Shard {
+            accesses: BTreeMap::new(),
+            entries: HashMap::new(),
+            shadow: HashMap::new(),
+            capacity: capacity,
+            sz: 0,
+            ctime: Instant::now(),
+        }
     }
 
     fn pop(&mut self, pid: PageID) -> Option<Entry> {
@@ -84,26 +91,27 @@ impl Shard {
         None
     }
 
-    fn insert(&mut self, mut entry: Entry) {
-        while self.accesses.contains_key(&entry.mtime) {
-            entry.mtime += 1;
-        }
+    fn insert(&mut self, entry: Entry) {
         self.accesses.insert(entry.mtime, entry.pid);
         self.entries.insert(entry.pid, entry);
     }
 
     fn accessed(&mut self, pid: PageID, sz: usize) -> Vec<PageID> {
-        let mut entry = self.pop(pid).unwrap_or_else(|| Entry::default());
+        let mut entry = self.pop(pid).unwrap_or_else(|| {
+            Entry {
+                pid: pid,
+                sz: 0,
+                accesses: 0,
+                mtime: self.ctime.elapsed(),
+            }
+        });
 
         self.sz -= entry.sz;
 
-        // TODO use much finer granularity
-        let now = time::get_time().sec;
-
-        entry.pid = pid;
         entry.accesses += 1;
         entry.sz = sz;
-        entry.mtime = now;
+        // guaranteed to be higher than any other time measured before
+        entry.mtime = self.ctime.elapsed();
 
         self.sz += entry.sz;
 
