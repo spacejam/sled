@@ -9,6 +9,9 @@ pub struct ThreadCache<T> {
     inner: Arc<RwLock<HashMap<ThreadId, Rc<RefCell<T>>>>>,
 }
 
+unsafe impl<T> Send for ThreadCache<T> {}
+unsafe impl<T> Sync for ThreadCache<T> {}
+
 impl<T> Default for ThreadCache<T> {
     fn default() -> ThreadCache<T> {
         ThreadCache { inner: Arc::new(RwLock::new(HashMap::new())) }

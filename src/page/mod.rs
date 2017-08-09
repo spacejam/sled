@@ -53,8 +53,8 @@ pub trait Materializer: Send + Sync + Clone {
 pub enum CacheEntry<M>
     where M: Materializer
 {
-    /// A cache item that is in memory, and maybe also in secondary storage.
-    Resident(Vec<M::PartialPage>, Option<LogID>),
+    /// A cache item that is in memory, and also in secondary storage.
+    Resident(Vec<M::PartialPage>, LogID),
     /// A cache item that is present in secondary storage.
     PartialFlush(LogID),
     /// A cache item that is present in secondary storage, and is the base segment

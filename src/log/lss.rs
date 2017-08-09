@@ -1,4 +1,6 @@
 use std::io::{Read, Seek, Write};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 #[cfg(target_os="linux")]
 use libc::{FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE, fallocate};
@@ -10,18 +12,42 @@ use super::*;
 /// `LockFreeLog` is responsible for putting data on disk, and retrieving
 /// it later on.
 pub struct LockFreeLog {
-    pub(super) iobufs: IOBufs,
+    pub(super) iobufs: Arc<IOBufs>,
+    flusher_shutdown: Arc<AtomicBool>,
+    flusher_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 unsafe impl Send for LockFreeLog {}
 unsafe impl Sync for LockFreeLog {}
 
+impl Drop for LockFreeLog {
+    fn drop(&mut self) {
+        self.flusher_shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Some(join_handle) = self.flusher_handle.take() {
+            join_handle.join().unwrap();
+        }
+    }
+}
+
 impl LockFreeLog {
     /// create new lock-free log
     pub fn start_system(config: Config) -> LockFreeLog {
-        let iobufs = IOBufs::new(config.clone());
+        let iobufs = Arc::new(IOBufs::new(config.clone()));
 
-        LockFreeLog { iobufs: iobufs }
+        let flusher_shutdown = Arc::new(AtomicBool::new(false));
+        let flusher_handle = config.get_flush_every_ms().map(|flush_every_ms| {
+            periodic_flusher::flusher("log flusher".to_owned(),
+                                      iobufs.clone(),
+                                      flusher_shutdown.clone(),
+                                      flush_every_ms)
+                .unwrap()
+        });
+
+        LockFreeLog {
+            iobufs: iobufs,
+            flusher_shutdown: flusher_shutdown,
+            flusher_handle: flusher_handle,
+        }
     }
 
     fn read_with_raw_sz(&self, id: LogID) -> (io::Result<Result<Vec<u8>, usize>>, usize) {
