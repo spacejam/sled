@@ -19,6 +19,7 @@ pub struct Config {
     cache_capacity: usize,
     use_os_cache: bool,
     use_compression: bool,
+    flush_every_ms: Option<u64>,
     tc: Arc<ThreadCache<fs::File>>,
     tmp: Arc<Mutex<NamedTempFile>>,
 }
@@ -35,6 +36,7 @@ impl Default for Config {
             cache_capacity: 1024 * 1024 * 1024,
             use_os_cache: true,
             use_compression: true,
+            flush_every_ms: Some(1000),
             tc: Arc::new(ThreadCache::default()),
             tmp: Arc::new(Mutex::new(NamedTempFile::new().unwrap())),
         }
@@ -62,6 +64,11 @@ impl Config {
         self.page_consolidation_threshold
     }
 
+    /// Get path
+    pub fn get_path(&self) -> Option<String> {
+        self.path.clone()
+    }
+
     /// Get the number of bits used for addressing cache shards.
     pub fn get_cache_bits(&self) -> usize {
         self.cache_bits
@@ -84,9 +91,9 @@ impl Config {
         self.use_compression
     }
 
-    /// Get path
-    pub fn get_path(&self) -> Option<String> {
-        self.path.clone()
+    /// Get the number of milliseconds between flushes.
+    pub fn get_flush_every_ms(&self) -> Option<u64> {
+        self.flush_every_ms
     }
 
     /// Set io_bufs
@@ -107,6 +114,11 @@ impl Config {
     /// Set page_consolidation_threshold
     pub fn set_page_consolidation_threshold(&mut self, threshold: usize) {
         self.page_consolidation_threshold = threshold;
+    }
+
+    /// Set path
+    pub fn set_path(&mut self, path: Option<String>) {
+        self.path = path;
     }
 
     /// Set the number of bits used for addressing cache shards.
@@ -131,9 +143,9 @@ impl Config {
         self.use_compression = use_compression;
     }
 
-    /// Set path
-    pub fn set_path(&mut self, path: Option<String>) {
-        self.path = path;
+    /// Set the number of milliseconds between flushes.
+    pub fn set_flush_every_ms(&mut self, flush_every_ms: Option<u64>) {
+        self.flush_every_ms = flush_every_ms;
     }
 
     /// Builder, set number of io buffers
@@ -161,6 +173,13 @@ impl Config {
     pub fn page_consolidation_threshold(&self, threshold: usize) -> Config {
         let mut ret = self.clone();
         ret.page_consolidation_threshold = threshold;
+        ret
+    }
+
+    /// Builder, set the filesystem path
+    pub fn path(&self, path: Option<String>) -> Config {
+        let mut ret = self.clone();
+        ret.path = path;
         ret
     }
 
@@ -194,10 +213,10 @@ impl Config {
         ret
     }
 
-    /// Builder, set the filesystem path
-    pub fn path(&self, path: Option<String>) -> Config {
+    /// Builder, set the number of milliseconds between flushes.
+    pub fn flush_every_ms(&self, flush_every_ms: Option<u64>) -> Config {
         let mut ret = self.clone();
-        ret.path = path;
+        ret.flush_every_ms = flush_every_ms;
         ret
     }
 

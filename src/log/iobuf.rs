@@ -13,6 +13,8 @@ struct IOBuf {
     log_offset: AtomicUsize,
 }
 
+unsafe impl Sync for IOBuf {}
+
 impl Debug for IOBuf {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         let header = self.get_header();
