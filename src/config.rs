@@ -36,7 +36,7 @@ impl Default for Config {
             cache_capacity: 1024 * 1024 * 1024,
             use_os_cache: true,
             use_compression: true,
-            flush_every_ms: Some(1000),
+            flush_every_ms: Some(100),
             tc: Arc::new(ThreadCache::default()),
             tmp: Arc::new(Mutex::new(NamedTempFile::new().unwrap())),
         }
