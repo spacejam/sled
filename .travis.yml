@@ -12,7 +12,11 @@ matrix:
       env: CLIPPY=true
 
 script:
-  - [ -n $CLIPPY ] && cargo test --features="clippy" || cargo test
+  - bash -c 'if [ -n $CLIPPY ]; then
+                 cargo test --features="clippy"
+             else
+                 cargo test
+             fi'
 
 os:
   - linux
