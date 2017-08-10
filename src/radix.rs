@@ -147,8 +147,8 @@ fn traverse<T>(ptr: *const Node<T>, pid: PageID, create_intermediate: bool) -> *
 
 #[test]
 fn test_split_fanout() {
-    let i = 0 + 0b111111;
-    assert_eq!(split_fanout(i), (0b111111, 0));
+    assert_eq!(split_fanout(0b11_1111), (0b11_1111, 0));
+    assert_eq!(split_fanout(0b111_1111), (0b11_1111, 0b1));
 }
 
 #[test]

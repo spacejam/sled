@@ -1,7 +1,7 @@
 use super::*;
 
 pub struct Reservation<'a> {
-    pub iobufs: &'a IOBufs,
+    pub iobufs: &'a IoBufs,
     pub idx: usize,
     pub data: Vec<u8>,
     pub destination: &'a mut [u8],

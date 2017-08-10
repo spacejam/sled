@@ -61,7 +61,7 @@ impl Tree {
                                   },
                                   true);
 
-            pages.prepend(root_id.clone(), root_cas_key, root).unwrap();
+            pages.prepend(root_id, root_cas_key, root).unwrap();
             pages.prepend(leaf_id, leaf_cas_key, leaf).unwrap();
 
             root_id
@@ -193,7 +193,6 @@ impl Tree {
                 break;
             } else {
                 // failure, retry
-                continue;
             }
         }
 
@@ -251,7 +250,7 @@ impl Tree {
         }
     }
 
-    fn recursive_split(&self, path: &Vec<(Node, Raw)>) {
+    fn recursive_split(&self, path: &[(Node, Raw)]) {
         // to split, we pop the path, see if it's in need of split, recurse up
         // two-phase: (in prep for lock-free, not necessary for single threaded)
         //  1. half-split: install split on child, P
@@ -273,7 +272,7 @@ impl Tree {
         //
         //  root is special case, where we need to hoist a new root
 
-        let mut all_page_views = path.clone();
+        let mut all_page_views = path.to_vec();
         let mut root_and_key = all_page_views.remove(0);
 
         // println!("before:\n{:?}\n", self);
@@ -291,7 +290,7 @@ impl Tree {
                             .unwrap_or(&mut root_and_key);
 
                     let res = self.parent_split(parent_node.clone(),
-                                                parent_cas_key.clone(),
+                                                *parent_cas_key,
                                                 parent_split.clone());
                     if res.is_err() {
                         continue;
@@ -330,14 +329,14 @@ impl Tree {
 
         let parent_split = ParentSplit {
             at: rhs.lo.clone(),
-            to: new_pid.clone(),
+            to: new_pid,
         };
 
         // install the new right side
         self.pages.prepend(new_pid, new_cas_key, Frag::Base(rhs, false)).unwrap();
 
         // try to install a child split on the left side
-        if let Err(_) = self.pages.prepend(node.id, node_cas_key, child_split) {
+        if self.pages.prepend(node.id, node_cas_key, child_split).is_err() {
             // if we failed, don't follow through with the parent split
             // let this_thread = thread::current();
             // let name = this_thread.name().unwrap();
@@ -380,7 +379,7 @@ impl Tree {
         new_root_vec.push((vec![], from));
         new_root_vec.push((at, to));
         let new_root = Frag::Base(Node {
-                                      id: new_root_pid.clone(),
+                                      id: new_root_pid,
                                       data: Data::Index(new_root_vec),
                                       next: None,
                                       lo: Bound::Inc(vec![]),
@@ -426,7 +425,7 @@ impl Tree {
     pub fn key_debug_str(&self, key: &[u8]) -> String {
         let path = self.path_for_key(key);
         let mut ret = String::new();
-        for (node, _) in path.into_iter() {
+        for &(ref node, _) in &path {
             ret.push_str(&*format!("\n{:?}", node));
         }
         ret
@@ -466,7 +465,7 @@ impl Tree {
 
                 let ps = Frag::ParentSplit(ParentSplit {
                     at: node.lo.clone(),
-                    to: node.id.clone(),
+                    to: node.id,
                 });
 
                 let _res = self.pages.prepend(parent_node.id, parent_cas_key, ps);
@@ -480,7 +479,7 @@ impl Tree {
                 Data::Index(ref ptrs) => {
                     let old_cursor = cursor;
                     for &(ref sep_k, ref ptr) in ptrs {
-                        if &**sep_k <= &*key {
+                        if &**sep_k <= key {
                             cursor = *ptr;
                         } else {
                             break; // we've found our next cursor
@@ -501,7 +500,7 @@ impl Tree {
 impl Debug for Tree {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         let mut pid = self.root.load(SeqCst);
-        let mut left_most = pid.clone();
+        let mut left_most = pid;
         let mut level = 0;
 
         f.write_str("Tree: \n\t").unwrap();
@@ -524,8 +523,8 @@ impl Debug for Tree {
                 match left_node.data {
                     Data::Index(ptrs) => {
                         if let Some(&(ref _sep, ref next_pid)) = ptrs.first() {
-                            pid = next_pid.clone();
-                            left_most = next_pid.clone();
+                            pid = *next_pid;
+                            left_most = *next_pid;
                             level += 1;
                             f.write_str(&*format!("\n\tlevel {}:\n", level)).unwrap();
                         } else {
@@ -590,17 +589,17 @@ impl Materializer for BLinkMaterializer {
     type PartialPage = Frag;
     type Recovery = PageID;
 
-    fn materialize(&self, frags: &Vec<Frag>) -> Node {
+    fn materialize(&self, frags: &[Frag]) -> Node {
         let consolidated = self.consolidate(frags);
-        let ref base = consolidated[0];
-        match base {
-            &Frag::Base(ref b, _root) => b.clone(),
+        let base = &consolidated[0];
+        match *base {
+            Frag::Base(ref b, _root) => b.clone(),
             _ => panic!("non-Base consolidated frags"),
         }
     }
 
-    fn consolidate(&self, frags: &Vec<Frag>) -> Vec<Frag> {
-        let mut fc = frags.clone();
+    fn consolidate(&self, frags: &[Frag]) -> Vec<Frag> {
+        let mut fc = frags.to_vec();
         let base_frag = fc.remove(0);
         let (mut base_node, root) = base_frag.base().unwrap();
 

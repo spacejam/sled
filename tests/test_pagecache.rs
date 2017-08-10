@@ -15,11 +15,11 @@ impl Materializer for TestMaterializer {
     type PartialPage = String;
     type Recovery = ();
 
-    fn materialize(&self, frags: &Vec<String>) -> String {
+    fn materialize(&self, frags: &[String]) -> String {
         self.consolidate(frags).pop().unwrap()
     }
 
-    fn consolidate(&self, frags: &Vec<String>) -> Vec<String> {
+    fn consolidate(&self, frags: &[String]) -> Vec<String> {
         let mut consolidated = String::new();
         for frag in frags.into_iter() {
             consolidated.push_str(&*frag);

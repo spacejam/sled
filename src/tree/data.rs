@@ -15,7 +15,7 @@ impl Data {
     }
 
     pub fn split(&self) -> (Key, Data) {
-        fn split_inner<T>(xs: &Vec<(Key, T)>) -> (Key, Vec<(Key, T)>)
+        fn split_inner<T>(xs: &[(Key, T)]) -> (Key, Vec<(Key, T)>)
             where T: Clone + Debug
         {
             let (_lhs, rhs) = xs.split_at(xs.len() / 2 + 1);
@@ -45,9 +45,9 @@ impl Data {
     }
 
     pub fn leaf(&self) -> Option<Vec<(Key, Value)>> {
-        match self {
-            &Data::Index(_) => None,
-            &Data::Leaf(ref items) => Some(items.clone()),
+        match *self {
+            Data::Index(_) => None,
+            Data::Leaf(ref items) => Some(items.clone()),
         }
     }
 }

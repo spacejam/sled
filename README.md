@@ -29,24 +29,4 @@ partial page fragments across the log, rather than rewriting entire pages at a t
 as B+ trees for spinning disks historically have. On page reads, we scatter-gather
 reads across the log to materialize the page from its fragments.
 
-If you want to build a new structure on the `PageCache`, implement the `Materializer` trait:
-
-```
-pub trait Materializer: Send + Sync {
-    type MaterializedPage;
-    type PartialPage: Serialize + DeserializeOwned;
-    type Recovery;
-
-    /// Used to generate the result of `get` requests on the `PageCache`
-    fn materialize(&self, Vec<Self::PartialPage>) -> Self::MaterializedPage;
-
-    /// Used to compress long chains of partial pages into a condensed form
-    /// during compaction.
-    fn consolidate(&self, Vec<Self::PartialPage>) -> Vec<Self::PartialPage>;
-
-    /// Used to feed custom recovery information back to a higher-level abstraction
-    /// during startup. For example, a B-Link tree must know what the current
-    /// root node is before it can start serving requests.
-    fn recover(&mut self, Self::MaterializedPage) -> Option<Self::Recovery>;
-}
-```
+If you want to build a new tree/other structure on the `PageCache`, implement the `Materializer` trait.

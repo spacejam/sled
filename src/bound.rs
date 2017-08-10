@@ -9,9 +9,8 @@ pub enum Bound {
 
 impl Bound {
     pub fn inner(&self) -> Option<Vec<u8>> {
-        match self {
-            &Bound::Inc(ref v) => Some(v.clone()),
-            &Bound::Non(ref v) => Some(v.clone()),
+        match *self {
+            Bound::Inc(ref v) | Bound::Non(ref v) => Some(v.clone()),
             _ => None,
         }
     }
@@ -44,7 +43,7 @@ impl PartialOrd for Bound {
                             Some(Ordering::Greater)
                         }
                     }
-                    Non(ref rhs) => Some(lhs.cmp(&rhs)),
+                    Non(ref rhs) => Some(lhs.cmp(rhs)),
                 }
             }
             Inf => {
@@ -60,11 +59,11 @@ impl PartialOrd for Bound {
 #[test]
 fn test_bounds() {
     use Bound::*;
-    assert!(Inf == Inf);
-    assert!(Non(vec![]) == Non(vec![]));
-    assert!(Inc(vec![]) == Inc(vec![]));
-    assert!(Inc(b"hi".to_vec()) == Inc(b"hi".to_vec()));
-    assert!(Non(b"hi".to_vec()) == Non(b"hi".to_vec()));
+    assert_eq!(Inf , Inf);
+    assert_eq!(Non(vec![]), Non(vec![]));
+    assert_eq!(Inc(vec![]), Inc(vec![]));
+    assert_eq!(Inc(b"hi".to_vec()), Inc(b"hi".to_vec()));
+    assert_eq!(Non(b"hi".to_vec()), Non(b"hi".to_vec()));
     assert!(Inc(b"hi".to_vec()) > Non(b"hi".to_vec()));
     assert!(Inc(vec![]) < Inf);
     assert!(Non(vec![]) < Inf);

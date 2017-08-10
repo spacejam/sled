@@ -1,12 +1,24 @@
 language: rust
 
+cache: cargo
+
 rust:
   - stable
   - beta
-  - nightly
+
 matrix:
   allow_failures:
     - rust: nightly
+  include:
+    - rust: nightly
+      env: CLIPPY=true
+
+script:
+  - bash -c 'if [ -n "$CLIPPY" ]; then
+                 cargo test --features="clippy";
+             else
+                 cargo test;
+             fi'
 
 os:
   - linux

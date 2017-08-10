@@ -1,6 +1,6 @@
 [package]
 name = "rsdb"
-version = "0.4.2"
+version = "0.4.3"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "a flash-sympathetic persistent lock-free B+ tree"
 license = "Apache-2.0"
@@ -21,6 +21,7 @@ num_cpus = "1.6"
 rayon = "0.8"
 tempfile = "2.1"
 zstd = "0.4"
+clippy = {version = "0.0.150", optional = true}
 
 [dev-dependencies]
 quickcheck = "0.2"

@@ -7,18 +7,18 @@ use super::*;
 #[doc(hidden)]
 pub const HEADER_LEN: usize = 7;
 
-struct IOBuf {
+struct IoBuf {
     buf: UnsafeCell<Vec<u8>>,
     header: AtomicUsize,
     log_offset: AtomicUsize,
 }
 
-unsafe impl Sync for IOBuf {}
+unsafe impl Sync for IoBuf {}
 
-impl Debug for IOBuf {
+impl Debug for IoBuf {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         let header = self.get_header();
-        formatter.write_fmt(format_args!("\n\tIOBuf {{ log_offset: {}, n_writers: {}, offset: \
+        formatter.write_fmt(format_args!("\n\tIoBuf {{ log_offset: {}, n_writers: {}, offset: \
                                           {}, sealed: {} }}",
                                          self.get_log_offset(),
                                          n_writers(header),
@@ -27,9 +27,9 @@ impl Debug for IOBuf {
     }
 }
 
-impl IOBuf {
-    fn new(buf_size: usize) -> IOBuf {
-        IOBuf {
+impl IoBuf {
+    fn new(buf_size: usize) -> IoBuf {
+        IoBuf {
             buf: UnsafeCell::new(vec![0; buf_size]),
             header: AtomicUsize::new(0),
             log_offset: AtomicUsize::new(std::usize::MAX),
@@ -71,9 +71,9 @@ impl IOBuf {
     }
 }
 
-pub struct IOBufs {
+pub struct IoBufs {
     config: Config,
-    bufs: Vec<IOBuf>,
+    bufs: Vec<IoBuf>,
     current_buf: AtomicUsize,
     written_bufs: AtomicUsize,
     // Pending intervals that have been written to stable storage, but may be
@@ -87,34 +87,34 @@ pub struct IOBufs {
     stable: AtomicUsize,
 }
 
-impl Debug for IOBufs {
+impl Debug for IoBufs {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         let current_buf = self.current_buf.load(SeqCst);
         let written_bufs = self.written_bufs.load(SeqCst);
 
-        formatter.write_fmt(format_args!("IOBufs {{ sealed: {}, written: {}, bufs: {:?} }}",
+        formatter.write_fmt(format_args!("IoBufs {{ sealed: {}, written: {}, bufs: {:?} }}",
                                          current_buf,
                                          written_bufs,
                                          self.bufs))
     }
 }
 
-/// `IOBufs` is a set of lock-free buffers for coordinating
+/// `IoBufs` is a set of lock-free buffers for coordinating
 /// writes to underlying storage.
-impl IOBufs {
-    pub fn new(config: Config) -> IOBufs {
+impl IoBufs {
+    pub fn new(config: Config) -> IoBufs {
         let disk_offset = {
             let cached_f = config.cached_file();
             let file = cached_f.borrow();
             file.metadata().unwrap().len()
         };
 
-        let bufs = rep_no_copy![IOBuf::new(config.get_io_buf_size()); config.get_io_bufs()];
+        let bufs = rep_no_copy![IoBuf::new(config.get_io_buf_size()); config.get_io_bufs()];
 
         let current_buf = 0;
         bufs[current_buf].set_log_offset(disk_offset);
 
-        IOBufs {
+        IoBufs {
             bufs: bufs,
             current_buf: AtomicUsize::new(current_buf),
             written_bufs: AtomicUsize::new(0),
@@ -149,7 +149,7 @@ impl IOBufs {
     /// Panics if the desired reservation is greater than 8388601 bytes..
     /// (config io buf size - 7)
     pub(super) fn reserve(&self, raw_buf: Vec<u8>) -> Reservation {
-        assert_eq!(raw_buf.len() + HEADER_LEN >> 32, 0);
+        assert_eq!((raw_buf.len() + HEADER_LEN) >> 32, 0);
 
         let buf = encapsulate(raw_buf, self.config.get_use_compression());
 
@@ -191,7 +191,7 @@ impl IOBufs {
             }
 
             // load current header value
-            let ref iobuf = self.bufs[idx];
+            let iobuf = &self.bufs[idx];
             let header = iobuf.get_header();
 
             // skip if already sealed
@@ -227,7 +227,7 @@ impl IOBufs {
 
             // if we're giving out a reservation,
             // the writer count should be positive
-            assert!(n_writers(claimed) != 0);
+            assert_ne!(n_writers(claimed), 0);
 
             let log_offset = iobuf.get_log_offset();
             assert_ne!(log_offset as usize,
@@ -258,7 +258,7 @@ impl IOBufs {
     /// Handles departure from shared state, and possibly writing
     /// the buffer to stable storage if necessary.
     pub(super) fn exit_reservation(&self, idx: usize) {
-        let ref iobuf = self.bufs[idx];
+        let iobuf = &self.bufs[idx];
         let mut header = iobuf.get_header();
 
         // Decrement writer count, retrying until successful.
@@ -311,7 +311,7 @@ impl IOBufs {
     // writing it to disk if there are no other writers
     // operating on it.
     fn maybe_seal_and_write_iobuf(&self, idx: usize, header: u32) {
-        let ref iobuf = self.bufs[idx];
+        let iobuf = &self.bufs[idx];
 
         if is_sealed(header) {
             // this buffer is already sealed. nothing to do here.
@@ -342,7 +342,7 @@ impl IOBufs {
                    self);
         let next_offset = log_offset + res_len as LogID;
         let next_idx = (idx + 1) % self.config.get_io_bufs();
-        let ref next_iobuf = self.bufs[next_idx];
+        let next_iobuf = &self.bufs[next_idx];
 
         let mut spins = 0;
         while next_iobuf.cas_log_offset(max, next_offset).is_err() {
@@ -372,7 +372,7 @@ impl IOBufs {
     // Write an IO buffer's data to stable storage and set up the
     // next IO buffer for writing.
     fn write_to_log(&self, idx: usize) {
-        let ref iobuf = self.bufs[idx];
+        let iobuf = &self.bufs[idx];
         let header = iobuf.get_header();
         let log_offset = iobuf.get_log_offset();
         let interval = (log_offset, log_offset + offset(header) as LogID);
@@ -389,7 +389,7 @@ impl IOBufs {
         let cached_f = self.config.cached_file();
         let mut f = cached_f.borrow_mut();
         f.seek(SeekFrom::Start(log_offset)).unwrap();
-        f.write_all(&dirty_bytes).unwrap();
+        f.write_all(dirty_bytes).unwrap();
 
         // signal that this IO buffer is uninitialized
         let max = std::usize::MAX as LogID;
@@ -430,7 +430,7 @@ impl IOBufs {
     }
 }
 
-impl Drop for IOBufs {
+impl Drop for IoBufs {
     fn drop(&mut self) {
         for _ in 0..self.config.get_io_bufs() {
             self.flush();
@@ -476,13 +476,13 @@ fn n_writers(v: u32) -> u32 {
 
 #[inline(always)]
 fn incr_writers(v: u32) -> u32 {
-    assert!(n_writers(v) != 127);
+    assert_ne!(n_writers(v), 127);
     v + (1 << 24)
 }
 
 #[inline(always)]
 fn decr_writers(v: u32) -> u32 {
-    assert!(n_writers(v) != 0);
+    assert_ne!(n_writers(v), 0);
     v - (1 << 24)
 }
 
@@ -493,6 +493,6 @@ fn offset(v: u32) -> u32 {
 
 #[inline(always)]
 fn bump_offset(v: u32, by: u32) -> u32 {
-    assert!(by >> 24 == 0);
+    assert_eq!(by >> 24, 0);
     v + by
 }

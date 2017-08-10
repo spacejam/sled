@@ -27,7 +27,7 @@ impl Lru {
     /// to call `page_out_succeeded` if the page-out succeeded.
     pub fn accessed(&self, pid: PageID, sz: usize) -> Vec<PageID> {
         let idx = self.idx(pid);
-        let ref shard_mu = self.shards[idx];
+        let shard_mu = &self.shards[idx];
         let mut shard = shard_mu.lock().unwrap();
         shard.accessed(pid, sz)
     }
@@ -35,7 +35,7 @@ impl Lru {
     /// Signal that a page-out was successful.
     pub fn page_out_succeeded(&self, pid: PageID) {
         let idx = self.idx(pid);
-        let ref shard_mu = self.shards[idx];
+        let shard_mu = &self.shards[idx];
         let mut shard = shard_mu.lock().unwrap();
         shard.page_out_succeeded(pid);
     }
