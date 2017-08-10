@@ -14,7 +14,7 @@ matrix:
       env: CLIPPY=true
 
 script:
-  - bash -c 'if [ -n $CLIPPY ]; then
+  - bash -c 'if [ -n "$CLIPPY" ]; then
                  cargo test --features="clippy";
              else
                  cargo test;
