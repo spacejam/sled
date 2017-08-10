@@ -3,7 +3,6 @@ language: rust
 rust:
   - stable
   - beta
-  - nightly
 matrix:
   allow_failures:
     - rust: nightly
@@ -13,9 +12,9 @@ matrix:
 
 script:
   - bash -c 'if [ -n $CLIPPY ]; then
-                 cargo test --features="clippy"
+                 cargo test --features="clippy";
              else
-                 cargo test
+                 cargo test;
              fi'
 
 os:
