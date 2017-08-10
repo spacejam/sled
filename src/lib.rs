@@ -1,5 +1,22 @@
-//! `rsdb` is a flash-sympathetic persistent lock-free B+ tree.
-//! #![cfg_attr(test, deny(warnings))]
+//! `rsdb` is a flash-sympathetic persistent lock-free B+ tree, pagecache, and log.
+//!
+//! ```
+//! extern crate rsdb;
+//!
+//! let t = rsdb::Config::default().tree();
+//!
+//! t.set(b"yo!".to_vec(), b"v1".to_vec());
+//! t.get(b"yo!");
+//! t.cas(b"yo!".to_vec(), Some(b"v1".to_vec()), Some(b"v2".to_vec()));
+//!
+//! let mut iter = t.scan(b"a non-present key before yo!");
+//! assert_eq!(iter.next(), Some((b"yo!".to_vec(), b"v2".to_vec())));
+//! assert_eq!(iter.next(), None);
+//!
+//! t.del(b"yo!");
+//! ```
+
+#![cfg_attr(test, deny(warnings))]
 #![deny(missing_docs)]
 
 extern crate libc;
