@@ -8,7 +8,7 @@ use rsdb::*;
 
 const SPACE: usize = N;
 const N_THREADS: usize = 5;
-const N_PER_THREAD: usize = 1000;
+const N_PER_THREAD: usize = 300;
 const N: usize = N_THREADS * N_PER_THREAD; // NB N should be multiple of N_THREADS
 
 macro_rules! par {
@@ -51,7 +51,7 @@ fn kv(i: usize) -> Vec<u8> {
 #[test]
 fn parallel_ops() {
     println!("========== initial sets ==========");
-    let t = Arc::new(Config::default().tree());
+    let t = Arc::new(Config::default().blink_fanout(2).tree());
     par!{t, |tree: &Tree, k: Vec<u8>| {
         assert_eq!(tree.get(&*k), None);
         tree.set(k.clone(), k.clone());
@@ -93,8 +93,8 @@ fn parallel_ops() {
 #[test]
 fn iterator() {
     println!("========== iterator ==========");
-    let t = Config::default().tree();
-    for i in 0..N {
+    let t = Config::default().blink_fanout(2).flush_every_ms(None).tree();
+    for i in 0..N_PER_THREAD {
         let k = kv(i);
         t.set(k.clone(), k);
     }
@@ -111,7 +111,7 @@ fn iterator() {
         assert_eq!(should_be, v);
     }
 
-    let half_way = N / 2;
+    let half_way = N_PER_THREAD / 2;
     let half_key = kv(half_way);
     let mut tree_scan = t.scan(&*half_key);
     assert_eq!(tree_scan.next(), Some((half_key.clone(), half_key)));
@@ -120,7 +120,7 @@ fn iterator() {
     let mut tree_scan = t.scan(&*first_key);
     assert_eq!(tree_scan.next(), Some((first_key.clone(), first_key)));
 
-    let last_key = kv(N - 1);
+    let last_key = kv(N_PER_THREAD - 1);
     let mut tree_scan = t.scan(&*last_key);
     assert_eq!(tree_scan.next(), Some((last_key.clone(), last_key)));
     assert_eq!(tree_scan.next(), None);
@@ -130,9 +130,12 @@ fn iterator() {
 fn recovery() {
     println!("========== recovery ==========");
     let path = "test_tree.log";
-    let conf = Config::default().path(Some(path.to_owned()));
+    let conf = Config::default()
+        .blink_fanout(2)
+        .flush_every_ms(None)
+        .path(Some(path.to_owned()));
     let t = conf.tree();
-    for i in 0..N {
+    for i in 0..N_PER_THREAD {
         let k = kv(i);
         t.set(k.clone(), k);
     }
