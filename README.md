@@ -11,8 +11,8 @@ progress
 - [x] lock-free b-link tree
 - [x] recovery
 - [x] zstd compression
+- [x] LRU cache
 - [ ] epoch-based gc (LEAKS MEMORY FOR NOW LOLOLOLOLOL)
-- [ ] LRU cache
 - [ ] pagetable snapshotting for faster recovery
 - [ ] multi-key transactions and MVCC using a higher-level `DB` interface
 
