@@ -7,6 +7,12 @@ rust:
 matrix:
   allow_failures:
     - rust: nightly
+  include:
+    - rust: nightly
+      env: CLIPPY=true
+
+script:
+  - [ -n $CLIPPY ] && cargo test --features="clippy" || cargo test
 
 os:
   - linux
