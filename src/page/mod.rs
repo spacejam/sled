@@ -36,11 +36,11 @@ pub trait Materializer: Send + Sync + Clone {
     type Recovery;
 
     /// Used to generate the result of `get` requests on the `PageCache`
-    fn materialize(&self, &Vec<Self::PartialPage>) -> Self::MaterializedPage;
+    fn materialize(&self, &[Self::PartialPage]) -> Self::MaterializedPage;
 
     /// Used to compress long chains of partial pages into a condensed form
     /// during compaction.
-    fn consolidate(&self, &Vec<Self::PartialPage>) -> Vec<Self::PartialPage>;
+    fn consolidate(&self, &[Self::PartialPage]) -> Vec<Self::PartialPage>;
 
     /// Used to feed custom recovery information back to a higher-level abstraction
     /// during startup. For example, a B-Link tree must know what the current

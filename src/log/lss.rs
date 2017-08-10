@@ -12,7 +12,7 @@ use super::*;
 /// `LockFreeLog` is responsible for putting data on disk, and retrieving
 /// it later on.
 pub struct LockFreeLog {
-    pub(super) iobufs: Arc<IOBufs>,
+    pub(super) iobufs: Arc<IoBufs>,
     flusher_shutdown: Arc<AtomicBool>,
     flusher_handle: Option<std::thread::JoinHandle<()>>,
 }
@@ -32,7 +32,7 @@ impl Drop for LockFreeLog {
 impl LockFreeLog {
     /// create new lock-free log
     pub fn start_system(config: Config) -> LockFreeLog {
-        let iobufs = Arc::new(IOBufs::new(config.clone()));
+        let iobufs = Arc::new(IoBufs::new(config.clone()));
 
         let flusher_shutdown = Arc::new(AtomicBool::new(false));
         let flusher_handle = config.get_flush_every_ms().map(|flush_every_ms| {
@@ -137,7 +137,7 @@ impl Log for LockFreeLog {
         loop {
             self.iobufs.flush();
             spins += 1;
-            if spins > 2000000 {
+            if spins > 2_000_000 {
                 debug!("have spun >2000000x in make_stable");
                 spins = 0;
             }

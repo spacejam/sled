@@ -207,7 +207,7 @@ impl<'a, T> Iterator for StackIter<'a, T> {
             None
         } else {
             unsafe {
-                let ref ret = (*self.inner).inner;
+                let ret = &(*self.inner).inner;
                 self.inner = (*self.inner).next;
                 Some(ret)
             }

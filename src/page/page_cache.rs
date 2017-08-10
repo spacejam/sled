@@ -65,8 +65,8 @@ impl<M> PageCache<LockFreeLog, M>
 
                 match prepend.update {
                     Update::Append(ref prepends) => {
-                        for ref prepend in prepends {
-                            let r = self.t.recover(&prepend);
+                        for prepend in prepends {
+                            let r = self.t.recover(prepend);
                             if r.is_some() {
                                 recovery = r;
                             }
@@ -81,8 +81,8 @@ impl<M> PageCache<LockFreeLog, M>
                         }
                     }
                     Update::Compact(ref prepends) => {
-                        for ref prepend in prepends {
-                            let r = self.t.recover(&prepend);
+                        for prepend in prepends {
+                            let r = self.t.recover(prepend);
                             if r.is_some() {
                                 recovery = r;
                             }
@@ -192,7 +192,7 @@ impl<M> PageCache<LockFreeLog, M>
     }
 
     fn page_out(&self, to_evict: Vec<PageID>) {
-        for pid in to_evict.into_iter() {
+        for pid in to_evict {
             let stack_ptr = self.inner.get(pid);
             if stack_ptr.is_none() {
                 continue;
@@ -217,7 +217,7 @@ impl<M> PageCache<LockFreeLog, M>
             }
 
             let mut new_stack = vec![];
-            for entry in cache_entries.into_iter() {
+            for entry in cache_entries {
                 match entry {
                     CacheEntry::Resident(_, ref lid) => {
                         new_stack.push(CacheEntry::PartialFlush(*lid));
@@ -248,19 +248,18 @@ impl<M> PageCache<LockFreeLog, M>
         let mut cache_entries: Vec<CacheEntry<M>> = stack_iter.map(|ptr| (*ptr).clone()).collect();
 
         // read items off of disk in parallel if anything isn't already resident
-        let contains_non_resident = cache_entries.iter().any(|ce| match *ce {
+        let contains_non_resident = cache_entries.iter().any(|cache_entry| match *cache_entry {
             CacheEntry::Resident(_, _) => false,
             _ => true,
         });
         if contains_non_resident {
             cache_entries.par_iter_mut()
-                .for_each(|ref mut ce| {
-                    let (pp, lid) = match *ce {
-                        &mut CacheEntry::Resident(ref pp, ref lid) => (pp.clone(), lid.clone()),
-                        &mut CacheEntry::Flush(lid) => (self.pull(lid).unwrap(), lid),
-                        &mut CacheEntry::PartialFlush(lid) => (self.pull(lid).unwrap(), lid),
+                .for_each(|ref mut cache_entry| {
+                    let (pp, lid) = match **cache_entry {
+                        CacheEntry::Resident(ref pp, ref lid) => (pp.clone(), *lid),
+                        CacheEntry::Flush(lid) | CacheEntry::PartialFlush(lid) => (self.pull(lid).unwrap(), lid),
                     };
-                    **ce = CacheEntry::Resident(pp, lid);
+                    **cache_entry = CacheEntry::Resident(pp, lid);
                 });
 
             let node = node_from_frag_vec(cache_entries.clone());
@@ -271,8 +270,8 @@ impl<M> PageCache<LockFreeLog, M>
         }
 
         let mut partial_pages: Vec<M::PartialPage> = cache_entries.into_iter()
-            .flat_map(|ce| {
-                match ce {
+            .flat_map(|cache_entry| {
+                match cache_entry {
                     CacheEntry::Resident(pp, _lid) => pp,
                     _ => panic!("non-resident entry found, after trying to page-in all entries"),
                 }

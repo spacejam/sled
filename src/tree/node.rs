@@ -69,7 +69,7 @@ impl Node {
         }
     }
 
-    pub fn del_leaf(&mut self, key: &Key) {
+    pub fn del_leaf(&mut self, key: KeyRef) {
         if let Data::Leaf(ref mut records) = self.data {
             let search = records.binary_search_by(|&(ref k, ref _v)| (**k).cmp(key));
             if let Ok(idx) = search {
@@ -83,11 +83,7 @@ impl Node {
     }
 
     pub fn should_split(&self) -> bool {
-        if self.data.len() > FANOUT {
-            true
-        } else {
-            false
-        }
+        self.data.len() > FANOUT
     }
 
     pub fn split(&self, id: PageID) -> Node {
@@ -95,7 +91,7 @@ impl Node {
         Node {
             id: id,
             data: right_data,
-            next: self.next.clone(),
+            next: self.next,
             lo: Bound::Inc(split),
             hi: self.hi.clone(),
         }

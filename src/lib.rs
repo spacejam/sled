@@ -16,8 +16,11 @@
 //! t.del(b"yo!");
 //! ```
 
-#![cfg_attr(test, deny(warnings))]
 #![deny(missing_docs)]
+#![cfg_attr(test, deny(warnings))]
+#![cfg_attr(test, feature(plugin))]
+#![cfg_attr(test, plugin(clippy))]
+#![cfg_attr(test, allow(inline_always))]
 
 extern crate libc;
 extern crate rayon;
@@ -95,6 +98,7 @@ type LogID = u64; // LogID == file position to simplify file mapping
 type PageID = usize;
 
 type Key = Vec<u8>;
+type KeyRef<'a> = &'a [u8];
 type Value = Vec<u8>;
 
 #[inline(always)]

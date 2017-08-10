@@ -24,3 +24,4 @@ zstd = "0.4"
 
 [dev-dependencies]
 quickcheck = "0.2"
+clippy = "0.0.150"

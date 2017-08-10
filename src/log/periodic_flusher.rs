@@ -7,7 +7,7 @@ use std::time::Duration;
 use super::*;
 
 pub fn flusher(name: String,
-               iob: Arc<IOBufs>,
+               iob: Arc<IoBufs>,
                shutdown: Arc<AtomicBool>,
                flush_every_ms: u64)
                -> std::io::Result<thread::JoinHandle<()>> {
