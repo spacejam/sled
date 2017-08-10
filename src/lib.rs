@@ -19,7 +19,7 @@ extern crate time;
 /// atomic lock-free tree
 pub use tree::Tree;
 /// lock-free pagecache
-pub use page::{CacheEntry, Materializer, PageCache};
+pub use page::{Materializer, PageCache};
 /// lock-free log-structured storage
 pub use log::{HEADER_LEN, LockFreeLog, Log};
 /// lock-free stack
@@ -70,6 +70,7 @@ mod thread_cache;
 mod ops;
 
 use bound::Bound;
+use page::CacheEntry;
 use stack::{StackIter, node_from_frag_vec};
 use thread_cache::ThreadCache;
 
