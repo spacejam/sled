@@ -19,7 +19,9 @@ pub struct Config {
     cache_capacity: usize,
     use_os_cache: bool,
     use_compression: bool,
-    flush_every_ms: Option<u64>,
+    flush_every_ms: Option<usize>,
+    snapshot_after_ops: usize,
+    snapshot_path_prefix: Option<String>,
     tc: Arc<ThreadCache<fs::File>>,
     tmp: Arc<Mutex<NamedTempFile>>,
 }
@@ -37,188 +39,55 @@ impl Default for Config {
             use_os_cache: true,
             use_compression: true,
             flush_every_ms: Some(100),
+            snapshot_after_ops: 1_000_000,
+            snapshot_path_prefix: None,
             tc: Arc::new(ThreadCache::default()),
             tmp: Arc::new(Mutex::new(NamedTempFile::new().unwrap())),
         }
     }
 }
 
+macro_rules! builder {
+    ($(($name:ident, $get:ident, $set:ident, $t:ty, $desc:expr)),*) => {
+        $(
+            #[doc="Get "]
+            #[doc=$desc]
+            pub fn $get(&self) -> $t {
+                self.$name.clone()
+            }
+
+            #[doc="Set "]
+            #[doc=$desc]
+            pub fn $set(&mut self, to: $t) {
+                self.$name = to;
+            }
+
+            #[doc="Builder, set "]
+            #[doc=$desc]
+            pub fn $name(&self, to: $t) -> Config {
+                let mut ret = self.clone();
+                ret.$name = to;
+                ret
+            }
+        )*
+    }
+}
+
 impl Config {
-    /// Get io_bufs
-    pub fn get_io_bufs(&self) -> usize {
-        self.io_bufs
-    }
-
-    /// Get io_buf_size
-    pub fn get_io_buf_size(&self) -> usize {
-        self.io_buf_size
-    }
-
-    /// Get blink_fanout
-    pub fn get_blink_fanout(&self) -> usize {
-        self.blink_fanout
-    }
-
-    /// Get page_consolidation_threshold
-    pub fn get_page_consolidation_threshold(&self) -> usize {
-        self.page_consolidation_threshold
-    }
-
-    /// Get path
-    pub fn get_path(&self) -> Option<String> {
-        self.path.clone()
-    }
-
-    /// Get the number of bits used for addressing cache shards.
-    pub fn get_cache_bits(&self) -> usize {
-        self.cache_bits
-    }
-
-    /// Get the cache capacity in bytes.
-    pub fn get_cache_capacity(&self) -> usize {
-        self.cache_capacity
-    }
-
-    /// Get whether the system uses the OS pagecache for
-    /// compressed pages.
-    pub fn get_use_os_cache(&self) -> bool {
-        self.use_os_cache
-    }
-
-    /// Get whether the system compresses data written to
-    /// secondary storage with the zstd algorithm.
-    pub fn get_use_compression(&self) -> bool {
-        self.use_compression
-    }
-
-    /// Get the number of milliseconds between flushes.
-    pub fn get_flush_every_ms(&self) -> Option<u64> {
-        self.flush_every_ms
-    }
-
-    /// Set io_bufs
-    pub fn set_io_bufs(&mut self, io_bufs: usize) {
-        self.io_bufs = io_bufs;
-    }
-
-    /// Set io_buf_size
-    pub fn set_io_buf_size(&mut self, io_buf_size: usize) {
-        self.io_buf_size = io_buf_size;
-    }
-
-    /// Set blink_fanout
-    pub fn set_blink_fanout(&mut self, blink_fanout: usize) {
-        self.blink_fanout = blink_fanout;
-    }
-
-    /// Set page_consolidation_threshold
-    pub fn set_page_consolidation_threshold(&mut self, threshold: usize) {
-        self.page_consolidation_threshold = threshold;
-    }
-
-    /// Set path
-    pub fn set_path(&mut self, path: Option<String>) {
-        self.path = path;
-    }
-
-    /// Set the number of bits used for addressing cache shards.
-    pub fn set_cache_bits(&mut self, cache_bits: usize) {
-        self.cache_bits = cache_bits;
-    }
-
-    /// Set the cache capacity in bytes.
-    pub fn set_cache_capacity(&mut self, cache_capacity: usize) {
-        self.cache_capacity = cache_capacity;
-    }
-
-    /// Set whether the system uses the OS pagecache for
-    /// compressed pages.
-    pub fn set_use_os_cache(&mut self, use_os_cache: bool) {
-        self.use_os_cache = use_os_cache;
-    }
-
-    /// Set whether the system compresses data written to
-    /// secondary storage with the zstd algorithm.
-    pub fn set_use_compression(&mut self, use_compression: bool) {
-        self.use_compression = use_compression;
-    }
-
-    /// Set the number of milliseconds between flushes.
-    pub fn set_flush_every_ms(&mut self, flush_every_ms: Option<u64>) {
-        self.flush_every_ms = flush_every_ms;
-    }
-
-    /// Builder, set number of io buffers
-    pub fn io_bufs(&self, io_bufs: usize) -> Config {
-        let mut ret = self.clone();
-        ret.io_bufs = io_bufs;
-        ret
-    }
-
-    /// Builder, set the max io buffer size
-    pub fn io_buf_size(&self, io_buf_size: usize) -> Config {
-        let mut ret = self.clone();
-        ret.io_buf_size = io_buf_size;
-        ret
-    }
-
-    /// Builder, set the b-link tree node fanout
-    pub fn blink_fanout(&self, blink_fanout: usize) -> Config {
-        let mut ret = self.clone();
-        ret.blink_fanout = blink_fanout;
-        ret
-    }
-
-    /// Builder, set the pagecache consolidation threshold
-    pub fn page_consolidation_threshold(&self, threshold: usize) -> Config {
-        let mut ret = self.clone();
-        ret.page_consolidation_threshold = threshold;
-        ret
-    }
-
-    /// Builder, set the filesystem path
-    pub fn path(&self, path: Option<String>) -> Config {
-        let mut ret = self.clone();
-        ret.path = path;
-        ret
-    }
-
-    /// Builder, set the number of bits used for addressing cache shards.
-    pub fn cache_bits(&self, cache_bits: usize) -> Config {
-        let mut ret = self.clone();
-        ret.cache_bits = cache_bits;
-        ret
-    }
-
-    /// Builder, set the cache capacity in bytes.
-    pub fn cache_capacity(&self, cache_capacity: usize) -> Config {
-        let mut ret = self.clone();
-        ret.cache_capacity = cache_capacity;
-        ret
-    }
-
-    /// Builder, set whether the system uses the OS pagecache for
-    /// compressed pages.
-    pub fn use_os_cache(&self, use_os_cache: bool) -> Config {
-        let mut ret = self.clone();
-        ret.use_os_cache = use_os_cache;
-        ret
-    }
-
-    /// Builder, set whether the system compresses data written to
-    /// secondary storage with the zstd algorithm.
-    pub fn use_compression(&self, use_compression: bool) -> Config {
-        let mut ret = self.clone();
-        ret.use_compression = use_compression;
-        ret
-    }
-
-    /// Builder, set the number of milliseconds between flushes.
-    pub fn flush_every_ms(&self, flush_every_ms: Option<u64>) -> Config {
-        let mut ret = self.clone();
-        ret.flush_every_ms = flush_every_ms;
-        ret
-    }
+    builder!(
+        (io_bufs, get_io_bufs, set_io_bufs, usize, "number of io buffers"),
+        (io_buf_size, get_io_buf_size, set_io_buf_size, usize, "size of each io flush buffer"),
+        (blink_fanout, get_blink_fanout, set_blink_fanout, usize, "b-link node fanout"),
+        (page_consolidation_threshold, get_page_consolidation_threshold, set_page_consolidation_threshold, usize, "page consolidation threshold"),
+        (path, get_path, set_path, Option<String>, "path for the main storage file"),
+        (cache_bits, get_cache_bits, set_cache_bits, usize, "log base 2 of the number of cache shards"),
+        (cache_capacity, get_cache_capacity, set_cache_capacity, usize, "maximum size for the system page cache"),
+        (use_os_cache, get_use_os_cache, set_use_os_cache, bool, "whether to use the OS page cache"),
+        (use_compression, get_use_compression, set_use_compression, bool, "whether to use zstd compression"),
+        (flush_every_ms, get_flush_every_ms, set_flush_every_ms, Option<usize>, "number of ms between IO buffer flushes"),
+        (snapshot_after_ops, get_snapshot_after_ops, set_snapshot_after_ops, usize, "number of operations between page table snapshots"),
+        (snapshot_path_prefix, get_snapshot_path_prefix, set_snapshot_path_prefix, Option<String>, "snapshot file prefix")
+    );
 
     /// create a new `Tree` based on this configuration
     pub fn tree(&self) -> Tree {
