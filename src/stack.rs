@@ -21,7 +21,9 @@ pub struct Stack<T> {
 
 impl<T> Default for Stack<T> {
     fn default() -> Stack<T> {
-        Stack { head: Arc::new(AtomicPtr::new(ptr::null_mut())) }
+        Stack {
+            head: Arc::new(AtomicPtr::new(ptr::null_mut())),
+        }
     }
 }
 
@@ -72,7 +74,9 @@ impl<T> Drop for Stack<T> {
 
 impl<T> Stack<T> {
     pub fn from_raw(from: *const Node<T>) -> Stack<T> {
-        Stack { head: Arc::new(AtomicPtr::new(from as *mut Node<T>)) }
+        Stack {
+            head: Arc::new(AtomicPtr::new(from as *mut Node<T>)),
+        }
     }
 
     pub fn from_vec(from: Vec<T>) -> Stack<T> {
@@ -113,7 +117,12 @@ impl<T> Stack<T> {
             let next_ptr = node.next;
 
             if head_ptr ==
-               self.head.compare_and_swap(head_ptr, next_ptr as *mut _, Ordering::SeqCst) {
+                self.head.compare_and_swap(
+                    head_ptr,
+                    next_ptr as *mut _,
+                    Ordering::SeqCst,
+                )
+            {
                 return Some(node.inner);
             } else {
                 mem::forget(node);
@@ -138,7 +147,11 @@ impl<T> Stack<T> {
             inner: new,
             next: old,
         }));
-        let res = self.head.compare_and_swap(old as *mut _, node as *mut _, Ordering::SeqCst);
+        let res = self.head.compare_and_swap(
+            old as *mut _,
+            node as *mut _,
+            Ordering::SeqCst,
+        );
         if old == res && !test_fail() {
             Ok(node)
         } else {
@@ -147,11 +160,16 @@ impl<T> Stack<T> {
     }
 
     /// attempt consolidation
-    pub fn cas(&self,
-               old: *const Node<T>,
-               new: *const Node<T>)
-               -> Result<*const Node<T>, *const Node<T>> {
-        let res = self.head.compare_and_swap(old as *mut _, new as *mut _, Ordering::SeqCst);
+    pub fn cas(
+        &self,
+        old: *const Node<T>,
+        new: *const Node<T>,
+    ) -> Result<*const Node<T>, *const Node<T>> {
+        let res = self.head.compare_and_swap(
+            old as *mut _,
+            new as *mut _,
+            Ordering::SeqCst,
+        );
         if old == res && !test_fail() {
             Ok(new)
         } else {
@@ -164,11 +182,13 @@ impl<T> Stack<T> {
         if head.is_null() {
             panic!("iter_at_head returning null head");
         }
-        (head,
-         StackIter {
-            inner: head,
-            marker: PhantomData,
-        })
+        (
+            head,
+            StackIter {
+                inner: head,
+                marker: PhantomData,
+            },
+        )
     }
 
     pub fn head(&self) -> *const Node<T> {
