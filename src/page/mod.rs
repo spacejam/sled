@@ -2,6 +2,7 @@
 /// improving write throughput. Reads need to scatter-gather, so this is
 /// built with the assumption that it will be run on something like an
 /// SSD that can efficiently handle random reads.
+use std::collections::BTreeMap;
 use std::fmt::{self, Debug};
 use std::ptr;
 use std::sync::atomic::AtomicUsize;
@@ -82,4 +83,11 @@ enum Update<M>
     Compact(Vec<M::PartialPage>),
     Del,
     Alloc,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct Snapshot {
+    log_tip: LogID,
+    max_id: PageID,
+    pt: BTreeMap<PageID, Vec<LogID>>,
 }

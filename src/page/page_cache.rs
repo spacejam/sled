@@ -13,6 +13,8 @@ pub struct PageCache<L: Log, M>
     free: Stack<PageID>,
     log: Box<L>,
     lru: lru::Lru,
+    updates: AtomicUsize,
+    last_snapshot: Option<Snapshot>,
 }
 
 unsafe impl<L: Log, M: Materializer> Send for PageCache<L, M> {}
@@ -43,6 +45,8 @@ impl<M> PageCache<LockFreeLog, M>
             free: Stack::default(),
             log: Box::new(LockFreeLog::start_system(config)),
             lru: lru::Lru::new(cache_capacity, cache_shard_bits),
+            updates: AtomicUsize::new(0),
+            last_snapshot: None,
         }
     }
 
@@ -351,7 +355,16 @@ impl<M> PageCache<LockFreeLog, M>
             log_reservation.abort();
         } else {
             log_reservation.complete();
+            self.maybe_snapshot();
         }
         result
+    }
+
+    fn maybe_snapshot(&self) {
+        let count = self.updates.fetch_add(1, SeqCst) + 1;
+        let should_snapshot = count % self.config().get_snapshot_after_ops() == 0;
+        if should_snapshot {
+            let last_lid = self.last_snapshot.map(|ls| ls.log_tip.clone()).unwrap_or_else(|| 0);
+        }
     }
 }
