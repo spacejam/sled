@@ -22,9 +22,11 @@ unsafe impl<L: Log, M: Materializer> Sync for PageCache<L, M> {}
 
 impl<L: Log, M: Materializer> Debug for PageCache<L, M> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        f.write_str(&*format!("PageCache {{ max: {:?} free: {:?} }}\n",
-                              self.max_id.load(SeqCst),
-                              self.free))
+        f.write_str(&*format!(
+            "PageCache {{ max: {:?} free: {:?} }}\n",
+            self.max_id.load(SeqCst),
+            self.free
+        ))
     }
 }
 
@@ -132,7 +134,9 @@ impl<M> PageCache<LockFreeLog, M>
     /// Create a new page, trying to reuse old freed pages if possible
     /// to maximize underlying `Radix` pointer density.
     pub fn allocate(&self) -> (PageID, *const stack::Node<CacheEntry<M>>) {
-        let pid = self.free.pop().unwrap_or_else(|| self.max_id.fetch_add(1, SeqCst));
+        let pid = self.free.pop().unwrap_or_else(
+            || self.max_id.fetch_add(1, SeqCst),
+        );
         let stack = raw(Stack::default());
         self.inner.insert(pid, stack).unwrap();
 
@@ -170,9 +174,10 @@ impl<M> PageCache<LockFreeLog, M>
     }
 
     /// Try to retrieve a page by its logical ID.
-    pub fn get(&self,
-               pid: PageID)
-               -> Option<(M::MaterializedPage, *const stack::Node<CacheEntry<M>>)> {
+    pub fn get(
+        &self,
+        pid: PageID,
+    ) -> Option<(M::MaterializedPage, *const stack::Node<CacheEntry<M>>)> {
         let stack_ptr = self.inner.get(pid);
         if stack_ptr.is_none() {
             return None;
@@ -204,16 +209,14 @@ impl<M> PageCache<LockFreeLog, M>
 
             let stack_ptr = stack_ptr.unwrap();
             let (head, stack_iter) = unsafe { (*stack_ptr).iter_at_head() };
-            let mut cache_entries: Vec<CacheEntry<M>> = stack_iter.map(|ptr| (*ptr).clone())
-                .collect();
+            let mut cache_entries: Vec<CacheEntry<M>> =
+                stack_iter.map(|ptr| (*ptr).clone()).collect();
 
             // ensure the last entry is a Flush
-            let last = cache_entries.pop().map(|last_ce| {
-                match last_ce {
-                    CacheEntry::Resident(_, ref lid) => CacheEntry::Flush(*lid),
-                    CacheEntry::PartialFlush(_) => panic!("got PartialFlush at end of stack..."),
-                    CacheEntry::Flush(lid) => CacheEntry::Flush(lid),
-                }
+            let last = cache_entries.pop().map(|last_ce| match last_ce {
+                CacheEntry::Resident(_, ref lid) => CacheEntry::Flush(*lid),
+                CacheEntry::PartialFlush(_) => panic!("got PartialFlush at end of stack..."),
+                CacheEntry::Flush(lid) => CacheEntry::Flush(lid),
             });
 
             if last.is_none() {
@@ -243,11 +246,12 @@ impl<M> PageCache<LockFreeLog, M>
         }
     }
 
-    fn page_in(&self,
-               pid: PageID,
-               mut head: *const stack::Node<CacheEntry<M>>,
-               stack_ptr: *const stack::Stack<CacheEntry<M>>)
-               -> (M::MaterializedPage, *const stack::Node<CacheEntry<M>>) {
+    fn page_in(
+        &self,
+        pid: PageID,
+        mut head: *const stack::Node<CacheEntry<M>>,
+        stack_ptr: *const stack::Stack<CacheEntry<M>>,
+    ) -> (M::MaterializedPage, *const stack::Node<CacheEntry<M>>) {
         let stack_iter = StackIter::from_ptr(head);
         let mut cache_entries: Vec<CacheEntry<M>> = stack_iter.map(|ptr| (*ptr).clone()).collect();
 
@@ -257,14 +261,16 @@ impl<M> PageCache<LockFreeLog, M>
             _ => true,
         });
         if contains_non_resident {
-            cache_entries.par_iter_mut()
-                .for_each(|ref mut cache_entry| {
+            cache_entries.par_iter_mut().for_each(
+                |ref mut cache_entry| {
                     let (pp, lid) = match **cache_entry {
                         CacheEntry::Resident(ref pp, ref lid) => (pp.clone(), *lid),
-                        CacheEntry::Flush(lid) | CacheEntry::PartialFlush(lid) => (self.pull(lid).unwrap(), lid),
+                        CacheEntry::Flush(lid) |
+                        CacheEntry::PartialFlush(lid) => (self.pull(lid).unwrap(), lid),
                     };
                     **cache_entry = CacheEntry::Resident(pp, lid);
-                });
+                },
+            );
 
             let node = node_from_frag_vec(cache_entries.clone());
             let res = unsafe { (*stack_ptr).cas(head, node) };
@@ -273,19 +279,21 @@ impl<M> PageCache<LockFreeLog, M>
             }
         }
 
-        let mut partial_pages: Vec<M::PartialPage> = cache_entries.into_iter()
-            .flat_map(|cache_entry| {
-                match cache_entry {
-                    CacheEntry::Resident(pp, _lid) => pp,
-                    _ => panic!("non-resident entry found, after trying to page-in all entries"),
-                }
+        let mut partial_pages: Vec<M::PartialPage> = cache_entries
+            .into_iter()
+            .flat_map(|cache_entry| match cache_entry {
+                CacheEntry::Resident(pp, _lid) => pp,
+                _ => panic!("non-resident entry found, after trying to page-in all entries"),
             })
             .collect();
 
         partial_pages.reverse();
         let partial_pages = partial_pages;
 
-        let to_evict = self.lru.accessed(pid, std::mem::size_of_val(&partial_pages));
+        let to_evict = self.lru.accessed(
+            pid,
+            std::mem::size_of_val(&partial_pages),
+        );
         self.page_out(to_evict);
 
         if partial_pages.len() > self.config().get_page_consolidation_threshold() {
@@ -300,12 +308,12 @@ impl<M> PageCache<LockFreeLog, M>
     }
 
     /// Replace an existing page with a different set of `PartialPage`s.
-    pub fn replace
-        (&self,
-         pid: PageID,
-         old: *const stack::Node<CacheEntry<M>>,
-         new: Vec<M::PartialPage>)
-         -> Result<*const stack::Node<CacheEntry<M>>, *const stack::Node<CacheEntry<M>>> {
+    pub fn replace(
+        &self,
+        pid: PageID,
+        old: *const stack::Node<CacheEntry<M>>,
+        new: Vec<M::PartialPage>,
+    ) -> Result<*const stack::Node<CacheEntry<M>>, *const stack::Node<CacheEntry<M>>> {
         let replace: LoggedUpdate<M> = LoggedUpdate {
             pid: pid,
             update: Update::Compact(new.clone()),
@@ -331,12 +339,12 @@ impl<M> PageCache<LockFreeLog, M>
 
 
     /// Try to atomically prepend a `Materializer::PartialPage` to the page.
-    pub fn prepend
-        (&self,
-         pid: PageID,
-         old: *const stack::Node<CacheEntry<M>>,
-         new: M::PartialPage)
-         -> Result<*const stack::Node<CacheEntry<M>>, *const stack::Node<CacheEntry<M>>> {
+    pub fn prepend(
+        &self,
+        pid: PageID,
+        old: *const stack::Node<CacheEntry<M>>,
+        new: M::PartialPage,
+    ) -> Result<*const stack::Node<CacheEntry<M>>, *const stack::Node<CacheEntry<M>>> {
         let prepend: LoggedUpdate<M> = LoggedUpdate {
             pid: pid,
             update: Update::Append(vec![new.clone()]),

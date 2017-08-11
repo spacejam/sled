@@ -102,26 +102,24 @@ impl Config {
     /// Retrieve a thread-local file handle to the configured underlying storage,
     /// or create a new one if this is the first time the thread is accessing it.
     pub fn cached_file(&self) -> Rc<RefCell<fs::File>> {
-        self.tc.get_or_else(|| {
-            if let Some(p) = self.get_path() {
-                let mut options = fs::OpenOptions::new();
-                options.create(true);
-                options.read(true);
-                options.write(true);
+        self.tc.get_or_else(|| if let Some(p) = self.get_path() {
+            let mut options = fs::OpenOptions::new();
+            options.create(true);
+            options.read(true);
+            options.write(true);
 
-                #[cfg(target_os="linux")]
-                {
-                    if !self.use_os_cache {
-                        use std::os::unix::fs::OpenOptionsExt;
-                        options.custom_flags(libc::O_DIRECT);
-                        panic!("O_DIRECT support not sussed out yet.");
-                    }
+            #[cfg(target_os = "linux")]
+            {
+                if !self.use_os_cache {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    options.custom_flags(libc::O_DIRECT);
+                    panic!("O_DIRECT support not sussed out yet.");
                 }
-
-                options.open(p).unwrap()
-            } else {
-                self.tmp.lock().unwrap().reopen().unwrap()
             }
+
+            options.open(p).unwrap()
+        } else {
+            self.tmp.lock().unwrap().reopen().unwrap()
         })
     }
 }

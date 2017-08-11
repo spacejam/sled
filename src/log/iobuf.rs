@@ -18,12 +18,14 @@ unsafe impl Sync for IoBuf {}
 impl Debug for IoBuf {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         let header = self.get_header();
-        formatter.write_fmt(format_args!("\n\tIoBuf {{ log_offset: {}, n_writers: {}, offset: \
+        formatter.write_fmt(format_args!(
+            "\n\tIoBuf {{ log_offset: {}, n_writers: {}, offset: \
                                           {}, sealed: {} }}",
-                                         self.get_log_offset(),
-                                         n_writers(header),
-                                         offset(header),
-                                         is_sealed(header)))
+            self.get_log_offset(),
+            n_writers(header),
+            offset(header),
+            is_sealed(header)
+        ))
     }
 }
 
@@ -53,21 +55,21 @@ impl IoBuf {
     }
 
     fn cas_header(&self, old: u32, new: u32) -> Result<u32, u32> {
-        let res = self.header.compare_and_swap(old as usize, new as usize, SeqCst) as u32;
-        if res == old {
-            Ok(new)
-        } else {
-            Err(res)
-        }
+        let res = self.header.compare_and_swap(
+            old as usize,
+            new as usize,
+            SeqCst,
+        ) as u32;
+        if res == old { Ok(new) } else { Err(res) }
     }
 
     fn cas_log_offset(&self, old: LogID, new: LogID) -> Result<LogID, LogID> {
-        let res = self.log_offset.compare_and_swap(old as usize, new as usize, SeqCst) as LogID;
-        if res == old {
-            Ok(new)
-        } else {
-            Err(res)
-        }
+        let res = self.log_offset.compare_and_swap(
+            old as usize,
+            new as usize,
+            SeqCst,
+        ) as LogID;
+        if res == old { Ok(new) } else { Err(res) }
     }
 }
 
@@ -92,10 +94,12 @@ impl Debug for IoBufs {
         let current_buf = self.current_buf.load(SeqCst);
         let written_bufs = self.written_bufs.load(SeqCst);
 
-        formatter.write_fmt(format_args!("IoBufs {{ sealed: {}, written: {}, bufs: {:?} }}",
-                                         current_buf,
-                                         written_bufs,
-                                         self.bufs))
+        formatter.write_fmt(format_args!(
+            "IoBufs {{ sealed: {}, written: {}, bufs: {:?} }}",
+            current_buf,
+            written_bufs,
+            self.bufs
+        ))
     }
 }
 
@@ -220,8 +224,10 @@ impl IoBufs {
 
             if iobuf.cas_header(header, claimed).is_err() {
                 // CAS failed, start over
-                trace_once!("({:?}) CAS failed while claiming buffer slot, spinning",
-                            tn());
+                trace_once!(
+                    "({:?}) CAS failed while claiming buffer slot, spinning",
+                    tn()
+                );
                 continue;
             }
 
@@ -230,12 +236,14 @@ impl IoBufs {
             assert_ne!(n_writers(claimed), 0);
 
             let log_offset = iobuf.get_log_offset();
-            assert_ne!(log_offset as usize,
-                       std::usize::MAX,
-                       "({:?}) fucked up on idx {}\n{:?}",
-                       tn(),
-                       idx,
-                       self);
+            assert_ne!(
+                log_offset as usize,
+                std::usize::MAX,
+                "({:?}) fucked up on idx {}\n{:?}",
+                tn(),
+                idx,
+                self
+            );
 
             let mut out_buf = unsafe { (*iobuf.buf.get()).as_mut_slice() };
 
@@ -334,12 +342,14 @@ impl IoBufs {
         let res_len = offset(sealed) as usize;
         let max = std::usize::MAX as LogID;
 
-        assert_ne!(log_offset,
-                   max,
-                   "({:?}) sealing something that should never have been claimed (idx {})\n{:?}",
-                   tn(),
-                   idx,
-                   self);
+        assert_ne!(
+            log_offset,
+            max,
+            "({:?}) sealing something that should never have been claimed (idx {})\n{:?}",
+            tn(),
+            idx,
+            self
+        );
         let next_offset = log_offset + res_len as LogID;
         let next_idx = (idx + 1) % self.config.get_io_bufs();
         let next_iobuf = &self.bufs[next_idx];
@@ -359,9 +369,11 @@ impl IoBufs {
         trace!("({:?}) {} zeroed header", tn(), next_idx);
 
         let current_buf = self.current_buf.fetch_add(1, SeqCst) + 1;
-        trace!("({:?}) {} current_buf",
-               tn(),
-               current_buf % self.config.get_io_bufs());
+        trace!(
+            "({:?}) {} current_buf",
+            tn(),
+            current_buf % self.config.get_io_bufs()
+        );
 
         // if writers is 0, it's our responsibility to write the buffer.
         if n_writers(sealed) == 0 {
@@ -377,10 +389,12 @@ impl IoBufs {
         let log_offset = iobuf.get_log_offset();
         let interval = (log_offset, log_offset + offset(header) as LogID);
 
-        assert_ne!(log_offset as usize,
-                   std::usize::MAX,
-                   "({:?}) created reservation for uninitialized slot",
-                   tn());
+        assert_ne!(
+            log_offset as usize,
+            std::usize::MAX,
+            "({:?}) created reservation for uninitialized slot",
+            tn()
+        );
 
         let res_len = offset(header) as usize;
         let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
@@ -398,9 +412,11 @@ impl IoBufs {
 
         // communicate to other threads that we have written an IO buffer.
         let written_bufs = self.written_bufs.fetch_add(1, SeqCst);
-        trace!("({:?}) {} written",
-               tn(),
-               written_bufs % self.config.get_io_bufs());
+        trace!(
+            "({:?}) {} written",
+            tn(),
+            written_bufs % self.config.get_io_bufs()
+        );
 
         self.mark_interval(interval);
     }

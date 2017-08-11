@@ -27,28 +27,28 @@
 //! extern crate rsdb;
 //!
 //! use rsdb::Materializer;
-//! 
+//!
 //! #[derive(Clone, Serialize, Deserialize)]
 //! pub struct TestMaterializer;
-//! 
+//!
 //! impl Materializer for TestMaterializer {
 //!     type MaterializedPage = String;
 //!     type PartialPage = String;
 //!     type Recovery = ();
-//! 
+//!
 //!     fn materialize(&self, frags: &[String]) -> String {
 //!         self.consolidate(frags).pop().unwrap()
 //!     }
-//! 
+//!
 //!     fn consolidate(&self, frags: &[String]) -> Vec<String> {
 //!         let mut consolidated = String::new();
 //!         for frag in frags.into_iter() {
 //!             consolidated.push_str(&*frag);
 //!         }
-//! 
+//!
 //!         vec![consolidated]
 //!     }
-//! 
+//!
 //!     fn recover(&mut self, _: &String) -> Option<()> {
 //!         None
 //!     }
@@ -86,11 +86,11 @@
 //! let first_offset = log.write(b"1".to_vec());
 //! log.write(b"22".to_vec());
 //! log.write(b"333".to_vec());
-//! 
+//!
 //! // stick an abort in the middle, which should not be returned
 //! let res = log.reserve(b"never_gonna_hit_disk".to_vec());
 //! res.abort();
-//! 
+//!
 //! log.write(b"4444".to_vec());
 //! let last_offset = log.write(b"55555".to_vec());
 //! log.make_stable(last_offset);
@@ -198,8 +198,5 @@ fn raw<T>(t: T) -> *const T {
 #[inline(always)]
 fn tn() -> String {
     use std::thread;
-    thread::current()
-        .name()
-        .unwrap_or("unknown")
-        .to_owned()
+    thread::current().name().unwrap_or("unknown").to_owned()
 }

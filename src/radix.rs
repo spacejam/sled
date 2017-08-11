@@ -53,7 +53,9 @@ pub struct Radix<T> {
 impl<T> Default for Radix<T> {
     fn default() -> Radix<T> {
         let head = Node::default();
-        Radix { head: Arc::new(head) }
+        Radix {
+            head: Arc::new(head),
+        }
     }
 }
 
@@ -82,7 +84,11 @@ impl<T> Radix<T> {
         }
 
         let res = unsafe {
-            (*tip).inner.compare_and_swap(old as *mut _, new as *mut _, Ordering::SeqCst)
+            (*tip).inner.compare_and_swap(
+                old as *mut _,
+                new as *mut _,
+                Ordering::SeqCst,
+            )
         };
 
         if old == res && !test_fail() {
@@ -99,11 +105,7 @@ impl<T> Radix<T> {
             return None;
         }
         let v = unsafe { (*tip).inner.load(Ordering::SeqCst) };
-        if v.is_null() {
-            None
-        } else {
-            Some(v)
-        }
+        if v.is_null() { None } else { Some(v) }
     }
 
     /// Delete a value from the tree, returning the old value.
