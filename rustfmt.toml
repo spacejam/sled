@@ -1,3 +1,9 @@
-reorder_imports = true
+where_style = "Legacy"
+struct_lit_multiline_style = "ForceMulti"
+struct_lit_width = 100
+struct_variant_width = 100
+array_width = 100
+reorder_imports_in_group = true
+reorder_imported_names = true
 max_width = 100
 ideal_width = 80

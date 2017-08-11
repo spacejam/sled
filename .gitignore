@@ -1,3 +1,4 @@
+*.bk
 *orig
 tags
 perf*

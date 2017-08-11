@@ -14,7 +14,9 @@ unsafe impl<T> Sync for ThreadCache<T> {}
 
 impl<T> Default for ThreadCache<T> {
     fn default() -> ThreadCache<T> {
-        ThreadCache { inner: Arc::new(RwLock::new(HashMap::new())) }
+        ThreadCache {
+            inner: Arc::new(RwLock::new(HashMap::new())),
+        }
     }
 }
 

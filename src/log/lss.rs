@@ -2,7 +2,7 @@ use std::io::{Read, Seek, Write};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-#[cfg(target_os="linux")]
+#[cfg(target_os = "linux")]
 use libc::{FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE, fallocate};
 
 use zstd::block::decompress;
@@ -22,7 +22,10 @@ unsafe impl Sync for LockFreeLog {}
 
 impl Drop for LockFreeLog {
     fn drop(&mut self) {
-        self.flusher_shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.flusher_shutdown.store(
+            true,
+            std::sync::atomic::Ordering::SeqCst,
+        );
         if let Some(join_handle) = self.flusher_handle.take() {
             join_handle.join().unwrap();
         }
@@ -36,11 +39,12 @@ impl LockFreeLog {
 
         let flusher_shutdown = Arc::new(AtomicBool::new(false));
         let flusher_handle = config.get_flush_every_ms().map(|flush_every_ms| {
-            periodic_flusher::flusher("log flusher".to_owned(),
-                                      iobufs.clone(),
-                                      flusher_shutdown.clone(),
-                                      flush_every_ms)
-                .unwrap()
+            periodic_flusher::flusher(
+                "log flusher".to_owned(),
+                iobufs.clone(),
+                flusher_shutdown.clone(),
+                flush_every_ms,
+            ).unwrap()
         });
 
         LockFreeLog {
@@ -92,9 +96,11 @@ impl LockFreeLog {
 
         let checksum = crc16_arr(&buf);
         if checksum != crc16_buf {
-            let msg = format!("read data failed crc16 checksum, {:?} should be {:?}",
-                              checksum,
-                              crc16_buf);
+            let msg = format!(
+                "read data failed crc16 checksum, {:?} should be {:?}",
+                checksum,
+                crc16_buf
+            );
             return (Err(Error::new(ErrorKind::Other, msg)), len);
         }
 
@@ -162,7 +168,7 @@ impl Log for LockFreeLog {
         let mut len_buf = [0u8; 4];
         f.read_exact(&mut len_buf).unwrap();
 
-        #[cfg(target_os="linux")]
+        #[cfg(target_os = "linux")]
         {
             use std::os::unix::io::AsRawFd;
             let len = ops::array_to_usize(len_buf);

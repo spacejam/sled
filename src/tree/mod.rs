@@ -30,7 +30,12 @@ unsafe impl Sync for Tree {}
 impl Tree {
     /// Load existing or create a new `Tree`.
     pub fn new(config: Config) -> Tree {
-        let mut pages = PageCache::new(BLinkMaterializer { roots: vec![] }, config);
+        let mut pages = PageCache::new(
+            BLinkMaterializer {
+                roots: vec![],
+            },
+            config,
+        );
 
         let root_opt = pages.recover(0);
 
@@ -40,26 +45,30 @@ impl Tree {
             let (root_id, root_cas_key) = pages.allocate();
             let (leaf_id, leaf_cas_key) = pages.allocate();
 
-            let leaf = Frag::Base(Node {
-                                      id: leaf_id,
-                                      data: Data::Leaf(vec![]),
-                                      next: None,
-                                      lo: Bound::Inc(vec![]),
-                                      hi: Bound::Inf,
-                                  },
-                                  false);
+            let leaf = Frag::Base(
+                Node {
+                    id: leaf_id,
+                    data: Data::Leaf(vec![]),
+                    next: None,
+                    lo: Bound::Inc(vec![]),
+                    hi: Bound::Inf,
+                },
+                false,
+            );
 
             let mut root_index_vec = vec![];
             root_index_vec.push((vec![], leaf_id));
 
-            let root = Frag::Base(Node {
-                                      id: root_id,
-                                      data: Data::Index(root_index_vec),
-                                      next: None,
-                                      lo: Bound::Inc(vec![]),
-                                      hi: Bound::Inf,
-                                  },
-                                  true);
+            let root = Frag::Base(
+                Node {
+                    id: root_id,
+                    data: Data::Index(root_index_vec),
+                    next: None,
+                    lo: Bound::Inc(vec![]),
+                    hi: Bound::Inf,
+                },
+                true,
+            );
 
             pages.prepend(root_id, root_cas_key, root).unwrap();
             pages.prepend(leaf_id, leaf_cas_key, leaf).unwrap();
@@ -109,15 +118,17 @@ impl Tree {
     /// assert_eq!(t.cas(vec![1], Some(vec![2]), None), Ok(()));
     /// assert_eq!(t.get(&*vec![1]), None);
     /// ```
-    pub fn cas(&self,
-               key: Key,
-               old: Option<Value>,
-               new: Option<Value>)
-               -> Result<(), Option<Value>> {
+    pub fn cas(
+        &self,
+        key: Key,
+        old: Option<Value>,
+        new: Option<Value>,
+    ) -> Result<(), Option<Value>> {
         // we need to retry caps until old != cur, since just because
         // cap fails it doesn't mean our value was changed.
-        let frag = new.map(|n| Frag::Set(key.clone(), n))
-            .unwrap_or_else(|| Frag::Del(key.clone()));
+        let frag = new.map(|n| Frag::Set(key.clone(), n)).unwrap_or_else(|| {
+            Frag::Del(key.clone())
+        });
         loop {
             let (mut path, cur) = self.get_internal(&*key);
             if old != cur {
@@ -139,8 +150,7 @@ impl Tree {
             let mut path = self.path_for_key(&*key);
             let (mut last_node, last_cas_key) = path.pop().unwrap();
             // println!("last before: {:?}", last);
-            if let Ok(new_cas_key) = self.pages
-                .prepend(last_node.id, last_cas_key, frag.clone()) {
+            if let Ok(new_cas_key) = self.pages.prepend(last_node.id, last_cas_key, frag.clone()) {
                 last_node.apply(&frag);
                 // println!("last after: {:?}", last);
                 let should_split = last_node.should_split();
@@ -286,12 +296,13 @@ impl Tree {
                     // TODO(GC) double check for leaks here
 
                     let &mut (ref mut parent_node, ref mut parent_cas_key) =
-                        all_page_views.last_mut()
-                            .unwrap_or(&mut root_and_key);
+                        all_page_views.last_mut().unwrap_or(&mut root_and_key);
 
-                    let res = self.parent_split(parent_node.clone(),
-                                                *parent_cas_key,
-                                                parent_split.clone());
+                    let res = self.parent_split(
+                        parent_node.clone(),
+                        *parent_cas_key,
+                        parent_split.clone(),
+                    );
                     if res.is_err() {
                         continue;
                     }
@@ -308,9 +319,11 @@ impl Tree {
         if root_node.should_split() {
             // println!("{}: hoisting root {}", name, root_frag.node.id);
             if let Ok(parent_split) = self.child_split(&root_node, root_cas_key) {
-                self.root_hoist(root_node.id,
-                                parent_split.to,
-                                parent_split.at.inner().unwrap());
+                self.root_hoist(
+                    root_node.id,
+                    parent_split.to,
+                    parent_split.at.inner().unwrap(),
+                );
             }
         }
         // println!("after:\n{:?}\n", self);
@@ -333,10 +346,15 @@ impl Tree {
         };
 
         // install the new right side
-        self.pages.prepend(new_pid, new_cas_key, Frag::Base(rhs, false)).unwrap();
+        self.pages
+            .prepend(new_pid, new_cas_key, Frag::Base(rhs, false))
+            .unwrap();
 
         // try to install a child split on the left side
-        if self.pages.prepend(node.id, node_cas_key, child_split).is_err() {
+        if self.pages
+            .prepend(node.id, node_cas_key, child_split)
+            .is_err()
+        {
             // if we failed, don't follow through with the parent split
             // let this_thread = thread::current();
             // let name = this_thread.name().unwrap();
@@ -348,20 +366,23 @@ impl Tree {
         Ok(parent_split)
     }
 
-    fn parent_split(&self,
-                    parent_node: Node,
-                    parent_cas_key: Raw,
-                    parent_split: ParentSplit)
-                    -> Result<Raw, Raw> {
+    fn parent_split(
+        &self,
+        parent_node: Node,
+        parent_cas_key: Raw,
+        parent_split: ParentSplit,
+    ) -> Result<Raw, Raw> {
 
         // try to install a parent split on the index above
 
         // TODO(GC) double check for leaks here
 
         // install parent split
-        let res = self.pages.prepend(parent_node.id,
-                                     parent_cas_key,
-                                     Frag::ParentSplit(parent_split.clone()));
+        let res = self.pages.prepend(
+            parent_node.id,
+            parent_cas_key,
+            Frag::ParentSplit(parent_split.clone()),
+        );
 
         if res.is_err() {
             // let this_thread = thread::current();
@@ -378,20 +399,23 @@ impl Tree {
         let mut new_root_vec = vec![];
         new_root_vec.push((vec![], from));
         new_root_vec.push((at, to));
-        let new_root = Frag::Base(Node {
-                                      id: new_root_pid,
-                                      data: Data::Index(new_root_vec),
-                                      next: None,
-                                      lo: Bound::Inc(vec![]),
-                                      hi: Bound::Inf,
-                                  },
-                                  true);
-        self.pages.prepend(new_root_pid, new_root_cas_key, new_root).unwrap();
+        let new_root = Frag::Base(
+            Node {
+                id: new_root_pid,
+                data: Data::Index(new_root_vec),
+                next: None,
+                lo: Bound::Inc(vec![]),
+                hi: Bound::Inf,
+            },
+            true,
+        );
+        self.pages
+            .prepend(new_root_pid, new_root_cas_key, new_root)
+            .unwrap();
         // println!("split is {:?}", parent_split);
         // println!("trying to cas root at {:?} with real value {:?}", path.first().unwrap().pid, self.root.load(SeqCst));
         // println!("root_id is {}", root_id);
-        let cas = self.root
-            .compare_and_swap(from, new_root_pid, SeqCst);
+        let cas = self.root.compare_and_swap(from, new_root_pid, SeqCst);
         if cas == from {
             // let this_thread = thread::current();
             // let name = this_thread.name().unwrap();
