@@ -21,6 +21,7 @@ num_cpus = "1.6"
 rayon = "0.8"
 tempfile = "2.1"
 zstd = "0.4"
+clap = "2.26"
 clippy = {version = "0.0.150", optional = true}
 
 [dev-dependencies]
