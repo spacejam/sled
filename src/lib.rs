@@ -112,6 +112,7 @@
 
 extern crate libc;
 extern crate rayon;
+extern crate crossbeam;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;

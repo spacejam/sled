@@ -1,5 +1,8 @@
 use super::*;
 
+use std::sync::Arc;
+
+use crossbeam::sync::AtomicOption;
 use rayon::prelude::*;
 
 /// A lock-free pagecache.
@@ -11,10 +14,10 @@ pub struct PageCache<L: Log, M>
     inner: Radix<Stack<CacheEntry<M>>>,
     max_id: AtomicUsize,
     free: Stack<PageID>,
-    log: Box<L>,
+    log: Arc<Box<L>>,
     lru: lru::Lru,
     updates: AtomicUsize,
-    last_snapshot: Option<Snapshot>,
+    last_snapshot: Arc<AtomicOption<Snapshot>>,
 }
 
 unsafe impl<L: Log, M: Materializer> Send for PageCache<L, M> {}
@@ -45,10 +48,10 @@ impl<M> PageCache<LockFreeLog, M>
             inner: Radix::default(),
             max_id: AtomicUsize::new(0),
             free: Stack::default(),
-            log: Box::new(LockFreeLog::start_system(config)),
+            log: Arc::new(Box::new(LockFreeLog::start_system(config))),
             lru: lru::Lru::new(cache_capacity, cache_shard_bits),
             updates: AtomicUsize::new(0),
-            last_snapshot: None,
+            last_snapshot: Arc::new(AtomicOption::new()),
         }
     }
 
@@ -58,13 +61,19 @@ impl<M> PageCache<LockFreeLog, M>
     }
 
     /// Read updates from the log, apply them to our pagecache.
-    pub fn recover(&mut self, from: LogID) -> Option<M::Recovery> {
+    pub fn recover(&mut self) -> Option<M::Recovery> {
+        let mut last_good_id = self.read_snapshot();
 
-        let mut last_good_id = 0;
         let mut free_pids = vec![];
         let mut recovery = None;
 
-        for (log_id, bytes) in self.log.iter_from(from) {
+        for (log_id, bytes) in self.log.iter_from(last_good_id) {
+            if log_id == last_good_id && log_id != 0 {
+                // we are reading from a real snapshot, which included
+                // this ID already, so skip the first entry
+                continue;
+            }
+
             if let Ok(prepend) = deserialize::<LoggedUpdate<M>>(&*bytes) {
                 // keep track of the highest valid LogID
                 last_good_id = log_id + (bytes.len() + HEADER_LEN) as LogID;
@@ -371,8 +380,32 @@ impl<M> PageCache<LockFreeLog, M>
     fn maybe_snapshot(&self) {
         let count = self.updates.fetch_add(1, SeqCst) + 1;
         let should_snapshot = count % self.config().get_snapshot_after_ops() == 0;
-        if should_snapshot {
-            let last_lid = self.last_snapshot.map(|ls| ls.log_tip.clone()).unwrap_or_else(|| 0);
+        if !should_snapshot {
+            return;
         }
+
+        let last_snapshot = self.last_snapshot.clone();
+        let log = self.log.clone();
+        std::thread::spawn(move || {
+            snapshot::snapshot::<M, LockFreeLog>(last_snapshot, log);
+        });
+    }
+
+    fn read_snapshot(&mut self) -> LogID {
+        // TODO set self.last_snapshot
+        let prefix = self.config().get_snapshot_path_prefix().unwrap_or(
+            std::env::current_dir()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_owned(),
+        );
+
+        let files = std::fs::read_dir(prefix);
+
+
+        // TODO return LogID to start reading from
+        // snapshot.log_tip is the first log id to read
+        0
     }
 }

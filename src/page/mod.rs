@@ -17,8 +17,11 @@ use super::*;
 mod page_cache;
 mod hash;
 mod lru;
+mod snapshot;
 
 pub use self::page_cache::PageCache;
+
+use self::snapshot::Snapshot;
 
 /// A tenant of a `PageCache` needs to provide a `Materializer` which
 /// handles the processing of pages.
@@ -83,11 +86,4 @@ enum Update<M>
     Compact(Vec<M::PartialPage>),
     Del,
     Alloc,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct Snapshot {
-    log_tip: LogID,
-    max_id: PageID,
-    pt: BTreeMap<PageID, Vec<LogID>>,
 }

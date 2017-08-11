@@ -37,7 +37,7 @@ impl Tree {
             config,
         );
 
-        let root_opt = pages.recover(0);
+        let root_opt = pages.recover();
 
         let root_id = if let Some(root_id) = root_opt {
             root_id
