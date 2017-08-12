@@ -182,6 +182,7 @@ use bound::Bound;
 use page::CacheEntry;
 use stack::{StackIter, node_from_frag_vec};
 use thread_cache::ThreadCache;
+use log::LogRead;
 
 type LogID = u64; // LogID == file position to simplify file mapping
 type PageID = usize;
