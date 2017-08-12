@@ -1,8 +1,8 @@
-use std::io::Write;
+use std::io::{Read, Seek, Write};
 
 use crossbeam::sync::AtomicOption;
 use rayon::prelude::*;
-use zstd::block::compress;
+use zstd::block::{compress, decompress};
 
 use super::*;
 
@@ -452,7 +452,7 @@ impl<M> PageCache<LockFreeLog, M>
         self.last_snapshot.swap(snapshot, SeqCst);
 
         let prefix = self.snapshot_prefix();
-        let path_1 = format!("{}_{}.snapshot.in_motion", prefix, current_stable);
+        let path_1 = format!("{}_{}.snapshot.in___motion", prefix, current_stable);
         let path_2 = format!("{}_{}.snapshot", prefix, current_stable);
         let mut f = std::fs::OpenOptions::new()
             .write(true)
@@ -490,9 +490,52 @@ impl<M> PageCache<LockFreeLog, M>
 
     fn read_snapshot(&mut self) -> LogID {
         let prefix = self.snapshot_prefix();
-        let _prefix_glob = format!("{}*", prefix);
+        let prefix_glob = format!("{}*", prefix);
+        let mut candidates = vec![];
+        for entry_res in glob::glob(&*prefix_glob).unwrap() {
+            if let Ok(entry_pb) = entry_res {
+                if !entry_pb.to_str().unwrap().contains(".in___motion") {
+                    candidates.push(entry_pb);
+                }
+            }
+        }
+        if candidates.is_empty() {
+            self.last_snapshot.swap(Snapshot::default(), SeqCst);
+            return 0;
+        }
 
-        let snapshot = Snapshot::default();
+        candidates.sort_by_key(|path| path.metadata().unwrap().created().unwrap());
+
+        let path = candidates.pop().unwrap();
+
+        let mut f = std::fs::OpenOptions::new().read(true).open(&path).unwrap();
+
+        let mut buf = vec![];
+        f.read_to_end(&mut buf).unwrap();
+        let len = buf.len();
+        buf.split_off(len - 8);
+
+        let mut crc_expected_bytes = [0u8; 8];
+        f.seek(std::io::SeekFrom::End(-8)).unwrap();
+        f.read_exact(&mut crc_expected_bytes).unwrap();
+
+        let crc_expected: u64 = unsafe { std::mem::transmute(crc_expected_bytes) };
+        let crc_actual = crc64::crc64(&*buf);
+
+        if crc_expected != crc_actual {
+            error!("crc for {:?} failed! falling back to parsing the entire log...", path);
+            self.last_snapshot.swap(Snapshot::default(), SeqCst);
+            return 0;
+        }
+
+        let bytes = if self.config().get_use_compression() {
+            decompress(&*buf, std::usize::MAX).unwrap()
+        } else {
+            buf
+        };
+
+        let snapshot = deserialize::<Snapshot>(&*bytes).unwrap();
+
         let ret = snapshot.log_tip;
 
         self.last_snapshot.swap(snapshot, SeqCst);
