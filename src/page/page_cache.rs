@@ -25,11 +25,9 @@ unsafe impl<L: Log, M: Materializer> Sync for PageCache<L, M> {}
 
 impl<L: Log, M: Materializer> Debug for PageCache<L, M> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        f.write_str(&*format!(
-            "PageCache {{ max: {:?} free: {:?} }}\n",
-            self.max_id.load(SeqCst),
-            self.free
-        ))
+        f.write_str(&*format!("PageCache {{ max: {:?} free: {:?} }}\n",
+                              self.max_id.load(SeqCst),
+                              self.free))
     }
 }
 
@@ -143,9 +141,9 @@ impl<M> PageCache<LockFreeLog, M>
     /// Create a new page, trying to reuse old freed pages if possible
     /// to maximize underlying `Radix` pointer density.
     pub fn allocate(&self) -> (PageID, *const stack::Node<CacheEntry<M>>) {
-        let pid = self.free.pop().unwrap_or_else(
-            || self.max_id.fetch_add(1, SeqCst),
-        );
+        let pid = self.free
+            .pop()
+            .unwrap_or_else(|| self.max_id.fetch_add(1, SeqCst));
         let stack = raw(Stack::default());
         self.inner.insert(pid, stack).unwrap();
 
@@ -200,7 +198,10 @@ impl<M> PageCache<LockFreeLog, M>
     }
 
     fn pull(&self, lid: LogID) -> Result<Vec<M::PartialPage>, ()> {
-        let bytes = self.log.read(lid).map_err(|_| ())?.map_err(|_| ())?;
+        let bytes = match self.log.read(lid).map_err(|_| ())? {
+            LogRead::Flush(data, _len) => data,
+            _ => return Err(()),
+        };
         let logged_update = deserialize::<LoggedUpdate<M>>(&*bytes).map_err(|_| ())?;
 
         match logged_update.update {
@@ -262,24 +263,26 @@ impl<M> PageCache<LockFreeLog, M>
         stack_ptr: *const stack::Stack<CacheEntry<M>>,
     ) -> (M::MaterializedPage, *const stack::Node<CacheEntry<M>>) {
         let stack_iter = StackIter::from_ptr(head);
-        let mut cache_entries: Vec<CacheEntry<M>> = stack_iter.map(|ptr| (*ptr).clone()).collect();
+        let mut cache_entries: Vec<CacheEntry<M>> =
+            stack_iter.map(|ptr| (*ptr).clone()).collect();
 
         // read items off of disk in parallel if anything isn't already resident
-        let contains_non_resident = cache_entries.iter().any(|cache_entry| match *cache_entry {
-            CacheEntry::Resident(_, _) => false,
-            _ => true,
-        });
+        let contains_non_resident =
+            cache_entries.iter().any(|cache_entry| match *cache_entry {
+                                         CacheEntry::Resident(_, _) => false,
+                                         _ => true,
+                                     });
         if contains_non_resident {
-            cache_entries.par_iter_mut().for_each(
-                |ref mut cache_entry| {
+            cache_entries
+                .par_iter_mut()
+                .for_each(|ref mut cache_entry| {
                     let (pp, lid) = match **cache_entry {
                         CacheEntry::Resident(ref pp, ref lid) => (pp.clone(), *lid),
                         CacheEntry::Flush(lid) |
                         CacheEntry::PartialFlush(lid) => (self.pull(lid).unwrap(), lid),
                     };
                     **cache_entry = CacheEntry::Resident(pp, lid);
-                },
-            );
+                });
 
             let node = node_from_frag_vec(cache_entries.clone());
             let res = unsafe { (*stack_ptr).cas(head, node) };
@@ -299,10 +302,8 @@ impl<M> PageCache<LockFreeLog, M>
         partial_pages.reverse();
         let partial_pages = partial_pages;
 
-        let to_evict = self.lru.accessed(
-            pid,
-            std::mem::size_of_val(&partial_pages),
-        );
+        let to_evict = self.lru
+            .accessed(pid, std::mem::size_of_val(&partial_pages));
         self.page_out(to_evict);
 
         if partial_pages.len() > self.config().get_page_consolidation_threshold() {
@@ -387,19 +388,19 @@ impl<M> PageCache<LockFreeLog, M>
         let last_snapshot = self.last_snapshot.clone();
         let log = self.log.clone();
         std::thread::spawn(move || {
-            snapshot::snapshot::<M, LockFreeLog>(last_snapshot, log);
-        });
+                               snapshot::snapshot::<M, LockFreeLog>(last_snapshot, log);
+                           });
     }
 
     fn read_snapshot(&mut self) -> LogID {
         // TODO set self.last_snapshot
-        let prefix = self.config().get_snapshot_path_prefix().unwrap_or(
-            std::env::current_dir()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_owned(),
-        );
+        let prefix = self.config()
+            .get_snapshot_path_prefix()
+            .unwrap_or(std::env::current_dir()
+                           .unwrap()
+                           .to_str()
+                           .unwrap()
+                           .to_owned());
 
         let files = std::fs::read_dir(prefix);
 

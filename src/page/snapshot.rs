@@ -1,8 +1,8 @@
-use super::*;
-
 use std::sync::Arc;
 
 use crossbeam::sync::AtomicOption;
+
+use super::*;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(super) struct Snapshot {
@@ -12,15 +12,19 @@ pub(super) struct Snapshot {
     free: Vec<PageID>,
 }
 
-pub(super) fn snapshot<M: Materializer, L: Log>(
+pub(super) fn snapshot<'a, M, L>(
     last_snapshot: Arc<AtomicOption<Snapshot>>,
     log: Arc<Box<L>>,
-) where log::LogIter<'_, L>: std::iter::Iterator
+)
+    where M: Materializer + DeserializeOwned,
+          L: Log,
+          L: 'a
 {
     let snapshot_opt = last_snapshot.take(SeqCst);
     if snapshot_opt.is_none() {
         // some other thread is snapshotting
-        warn!("rsdb snapshot skipped because previous attempt appears not to have completed");
+        warn!("rsdb snapshot skipped because previous attempt \
+              appears not to have completed");
         return;
     }
 
@@ -56,7 +60,7 @@ pub(super) fn snapshot<M: Materializer, L: Log>(
         }
     }
     snapshot.free.sort();
-    last_snapshot.free.reverse();
+    snapshot.free.reverse();
     snapshot.log_tip = current_stable;
     last_snapshot.swap(snapshot, SeqCst);
 }
