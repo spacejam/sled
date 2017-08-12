@@ -319,11 +319,7 @@ impl Tree {
         if root_node.should_split() {
             // println!("{}: hoisting root {}", name, root_frag.node.id);
             if let Ok(parent_split) = self.child_split(&root_node, root_cas_key) {
-                self.root_hoist(
-                    root_node.id,
-                    parent_split.to,
-                    parent_split.at.inner().unwrap(),
-                );
+                self.root_hoist(root_node.id, parent_split.to, parent_split.at.inner().unwrap());
             }
         }
         // println!("after:\n{:?}\n", self);

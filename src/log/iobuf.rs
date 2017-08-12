@@ -224,10 +224,7 @@ impl IoBufs {
 
             if iobuf.cas_header(header, claimed).is_err() {
                 // CAS failed, start over
-                trace_once!(
-                    "({:?}) CAS failed while claiming buffer slot, spinning",
-                    tn()
-                );
+                trace_once!("({:?}) CAS failed while claiming buffer slot, spinning", tn());
                 continue;
             }
 
@@ -369,11 +366,7 @@ impl IoBufs {
         trace!("({:?}) {} zeroed header", tn(), next_idx);
 
         let current_buf = self.current_buf.fetch_add(1, SeqCst) + 1;
-        trace!(
-            "({:?}) {} current_buf",
-            tn(),
-            current_buf % self.config.get_io_bufs()
-        );
+        trace!("({:?}) {} current_buf", tn(), current_buf % self.config.get_io_bufs());
 
         // if writers is 0, it's our responsibility to write the buffer.
         if n_writers(sealed) == 0 {
@@ -412,11 +405,7 @@ impl IoBufs {
 
         // communicate to other threads that we have written an IO buffer.
         let written_bufs = self.written_bufs.fetch_add(1, SeqCst);
-        trace!(
-            "({:?}) {} written",
-            tn(),
-            written_bufs % self.config.get_io_bufs()
-        );
+        trace!("({:?}) {} written", tn(), written_bufs % self.config.get_io_bufs());
 
         self.mark_interval(interval);
     }

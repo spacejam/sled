@@ -86,38 +86,14 @@ fn test_hash() {
     assert_eq!(hash(b"\x16\x82\x39\x49\x88\x2b\x36", k_seed), 3_056_033_698);
     assert_eq!(hash(b"\x59\x77\xf0\xa7\x24\xf4\x78", k_seed), 587_205_227);
     assert_eq!(hash(b"\xd3\xa5\x7c\x0e\xc0\x02\x07", k_seed), 2_030_937_252);
-    assert_eq!(
-        hash(b"\x31\x1b\x98\x75\x96\x22\xd3\x9a", k_seed),
-        469_635_402
-    );
-    assert_eq!(
-        hash(b"\x38\xd6\xf7\x28\x20\xb4\x8a\xe9", k_seed),
-        3_530_274_698
-    );
-    assert_eq!(
-        hash(b"\xbb\x18\x5d\xf4\x12\x03\xf7\x99", k_seed),
-        1_974_545_809
-    );
-    assert_eq!(
-        hash(b"\x80\xd4\x3b\x3b\xae\x22\xa2\x78", k_seed),
-        3_563_570_120
-    );
-    assert_eq!(
-        hash(b"\x1a\xb5\xd0\xfe\xab\xc3\x61\xb2\x99", k_seed),
-        2_706_087_434
-    );
-    assert_eq!(
-        hash(b"\x8e\x4a\xc3\x18\x20\x2f\x06\xe6\x3c", k_seed),
-        1_534_654_151
-    );
-    assert_eq!(
-        hash(b"\xb6\xc0\xdd\x05\x3f\xc4\x86\x4c\xef", k_seed),
-        2_355_554_696
-    );
-    assert_eq!(
-        hash(b"\x9a\x5f\x78\x0d\xaf\x50\xe1\x1f\x55", k_seed),
-        1_400_800_912
-    );
+    assert_eq!(hash(b"\x31\x1b\x98\x75\x96\x22\xd3\x9a", k_seed), 469_635_402);
+    assert_eq!(hash(b"\x38\xd6\xf7\x28\x20\xb4\x8a\xe9", k_seed), 3_530_274_698);
+    assert_eq!(hash(b"\xbb\x18\x5d\xf4\x12\x03\xf7\x99", k_seed), 1_974_545_809);
+    assert_eq!(hash(b"\x80\xd4\x3b\x3b\xae\x22\xa2\x78", k_seed), 3_563_570_120);
+    assert_eq!(hash(b"\x1a\xb5\xd0\xfe\xab\xc3\x61\xb2\x99", k_seed), 2_706_087_434);
+    assert_eq!(hash(b"\x8e\x4a\xc3\x18\x20\x2f\x06\xe6\x3c", k_seed), 1_534_654_151);
+    assert_eq!(hash(b"\xb6\xc0\xdd\x05\x3f\xc4\x86\x4c\xef", k_seed), 2_355_554_696);
+    assert_eq!(hash(b"\x9a\x5f\x78\x0d\xaf\x50\xe1\x1f\x55", k_seed), 1_400_800_912);
     assert_eq!(
         hash(b"\x22\x6f\x39\x1f\xf8\xdd\x4f\x52\x17\x94", k_seed),
         3_420_325_137
