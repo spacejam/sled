@@ -44,28 +44,28 @@ fn main() {
             .default_value("true")
             .takes_value(true))
         // proportions
-        .arg(Arg::with_name("proportion_set")
-            .long("prop-set")
+        .arg(Arg::with_name("set")
+            .long("set")
             .help("Proportion of sets")
             .default_value("10")
             .takes_value(true))
-        .arg(Arg::with_name("proportion_scan")
-            .long("prop-scan")
+        .arg(Arg::with_name("scan")
+            .long("scan")
             .help("Proportion of scan")
             .default_value("4")
             .takes_value(true))
-        .arg(Arg::with_name("proportion_get")
-            .long("prop-get")
+        .arg(Arg::with_name("get")
+            .long("get")
             .help("Proportion of gets")
             .default_value("80")
             .takes_value(true))
-        .arg(Arg::with_name("proportion_delete")
-            .long("prop-del")
+        .arg(Arg::with_name("delete")
+            .long("del")
             .help("Proportion of delete")
             .default_value("5")
             .takes_value(true))
-        .arg(Arg::with_name("proportion_cas")
-            .long("prop-cas")
+        .arg(Arg::with_name("cas")
+            .long("cas")
             .help("Proportion of cas")
             .default_value("1")
             .takes_value(true))
@@ -125,11 +125,11 @@ fn main() {
     args.insert("num_operations", matches.value_of("num_operations").unwrap());
     args.insert("freshness_bias", matches.value_of("freshness_bias").unwrap());
     args.insert("non_present_key_chance", matches.value_of("non_present_key_chance").unwrap());
-    args.insert("proportion_set", matches.value_of("proportion_set").unwrap());
-    args.insert("proportion_scan", matches.value_of("proportion_scan").unwrap());
-    args.insert("proportion_get", matches.value_of("proportion_get").unwrap());
-    args.insert("proportion_delete", matches.value_of("proportion_delete").unwrap());
-    args.insert("proportion_cas", matches.value_of("proportion_cas").unwrap());
+    args.insert("set", matches.value_of("set").unwrap());
+    args.insert("scan", matches.value_of("scan").unwrap());
+    args.insert("get", matches.value_of("get").unwrap());
+    args.insert("delete", matches.value_of("delete").unwrap());
+    args.insert("cas", matches.value_of("cas").unwrap());
     args.insert("key_size_min", matches.value_of("key_size_min").unwrap());
     args.insert("key_size_max", matches.value_of("key_size_max").unwrap());
     args.insert("key_size_median", matches.value_of("key_size_median").unwrap());
@@ -172,11 +172,11 @@ struct Config {
     num_operations: u64,
     freshness_bias: String,
     non_present_key_chance: bool,
-    proportion_set: u64,
-    proportion_scan: u64,
-    proportion_get: u64,
-    proportion_delete: u64,
-    proportion_cas: u64,
+    set: u64,
+    scan: u64,
+    get: u64,
+    delete: u64,
+    cas: u64,
     key_size_min: u64,
     key_size_max: u64,
     key_size_median: u64,
@@ -245,7 +245,7 @@ impl Config {
             return Err("non_present_key_chance is not a valid value");
         }
 
-        let proportion_set = match args.get("proportion_set") {
+        let set = match args.get("set") {
             Some(x) => {
                 let parsed = x.parse::<u64>();
                 if parsed.is_ok() {
@@ -256,11 +256,11 @@ impl Config {
             }
             None => Err(()),
         };
-        if proportion_set.is_err() {
-            return Err("proportion_set is not a valid value");
+        if set.is_err() {
+            return Err("set is not a valid value");
         }
 
-        let proportion_scan = match args.get("proportion_scan") {
+        let scan = match args.get("scan") {
             Some(x) => {
                 let parsed = x.parse::<u64>();
                 if parsed.is_ok() {
@@ -271,11 +271,11 @@ impl Config {
             }
             None => Err(()),
         };
-        if proportion_scan.is_err() {
-            return Err("proportion_scan is not a valid value");
+        if scan.is_err() {
+            return Err("scan is not a valid value");
         }
 
-        let proportion_get = match args.get("proportion_get") {
+        let get = match args.get("get") {
             Some(x) => {
                 let parsed = x.parse::<u64>();
                 if parsed.is_ok() {
@@ -286,11 +286,11 @@ impl Config {
             }
             None => Err(()),
         };
-        if proportion_get.is_err() {
-            return Err("proportion_get is not a valid value");
+        if get.is_err() {
+            return Err("get is not a valid value");
         }
 
-        let proportion_delete = match args.get("proportion_delete") {
+        let delete = match args.get("delete") {
             Some(x) => {
                 let parsed = x.parse::<u64>();
                 if parsed.is_ok() {
@@ -301,11 +301,11 @@ impl Config {
             }
             None => Err(()),
         };
-        if proportion_delete.is_err() {
-            return Err("proportion_delete is not a valid value");
+        if delete.is_err() {
+            return Err("delete is not a valid value");
         }
 
-        let proportion_cas = match args.get("proportion_cas") {
+        let cas = match args.get("cas") {
             Some(x) => {
                 let parsed = x.parse::<u64>();
                 if parsed.is_ok() {
@@ -316,8 +316,8 @@ impl Config {
             }
             None => Err(()),
         };
-        if proportion_cas.is_err() {
-            return Err("proportion_cas is not a valid value");
+        if cas.is_err() {
+            return Err("cas is not a valid value");
         }
 
         let key_size_min = match args.get("key_size_min") {
@@ -465,11 +465,11 @@ impl Config {
             num_operations: num_operations.unwrap(),
             freshness_bias: freshness_bias.unwrap(),
             non_present_key_chance: non_present_key_chance.unwrap(),
-            proportion_set: proportion_set.unwrap(),
-            proportion_scan: proportion_scan.unwrap(),
-            proportion_get: proportion_get.unwrap(),
-            proportion_delete: proportion_delete.unwrap(),
-            proportion_cas: proportion_cas.unwrap(),
+            set: set.unwrap(),
+            scan: scan.unwrap(),
+            get: get.unwrap(),
+            delete: delete.unwrap(),
+            cas: cas.unwrap(),
             key_size_min: key_size_min.unwrap(),
             key_size_max: key_size_max.unwrap(),
             key_size_median: key_size_median.unwrap(),
