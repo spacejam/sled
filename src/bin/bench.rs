@@ -1,13 +1,14 @@
 extern crate clap;
 extern crate num_cpus;
-extern crate rsdb;
 #[macro_use]
 extern crate log;
+extern crate rsdb;
 
 use std::error::Error;
 use std::io::prelude::*;
 use std::process;
 use std::collections::HashMap;
+
 use clap::{App, Arg};
 
 fn main() {
