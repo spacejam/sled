@@ -120,10 +120,10 @@ extern crate bincode;
 extern crate rand;
 #[macro_use]
 extern crate log as logger;
-extern crate env_logger;
 extern crate tempfile;
 extern crate zstd;
 extern crate time;
+extern crate glob;
 
 /// atomic lock-free tree
 pub use tree::Tree;

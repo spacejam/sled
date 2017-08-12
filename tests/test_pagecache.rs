@@ -39,7 +39,8 @@ fn basic_recovery() {
     let conf = Config::default().flush_every_ms(None).path(
         Some(path.to_owned()),
     );
-    let pc = PageCache::new(TestMaterializer, conf.clone());
+    let mut pc = PageCache::new(TestMaterializer, conf.clone());
+    pc.recover();
     let (id, key) = pc.allocate();
     let key = pc.prepend(id, key, "a".to_owned()).unwrap();
     let key = pc.prepend(id, key, "b".to_owned()).unwrap();

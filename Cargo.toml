@@ -23,6 +23,7 @@ crossbeam = "0.3"
 tempfile = "2.1"
 zstd = "0.4"
 clippy = {version = "0.0.150", optional = true}
+glob = "0.2"
 
 [dev-dependencies]
 quickcheck = "0.2"

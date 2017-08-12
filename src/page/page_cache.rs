@@ -1,7 +1,8 @@
-use std::sync::Arc;
+use std::io::Write;
 
 use crossbeam::sync::AtomicOption;
 use rayon::prelude::*;
+use zstd::block::compress;
 
 use super::*;
 
@@ -14,10 +15,10 @@ pub struct PageCache<L: Log, M>
     inner: Radix<Stack<CacheEntry<M>>>,
     max_id: AtomicUsize,
     free: Stack<PageID>,
-    log: Arc<L>,
+    log: L,
     lru: lru::Lru,
     updates: AtomicUsize,
-    last_snapshot: Arc<AtomicOption<Snapshot>>,
+    last_snapshot: AtomicOption<Snapshot>,
 }
 
 unsafe impl<L: Log, M: Materializer> Send for PageCache<L, M> {}
@@ -48,10 +49,10 @@ impl<M> PageCache<LockFreeLog, M>
             inner: Radix::default(),
             max_id: AtomicUsize::new(0),
             free: Stack::default(),
-            log: Arc::new(LockFreeLog::start_system(config)),
+            log: LockFreeLog::start_system(config),
             lru: lru::Lru::new(cache_capacity, cache_shard_bits),
             updates: AtomicUsize::new(0),
-            last_snapshot: Arc::new(AtomicOption::new()),
+            last_snapshot: AtomicOption::new(),
         }
     }
 
@@ -207,8 +208,9 @@ impl<M> PageCache<LockFreeLog, M>
         let logged_update = deserialize::<LoggedUpdate<M>>(&*bytes).map_err(|_| ())?;
 
         match logged_update.update {
+            Update::Compact(pps) |
             Update::Append(pps) => Ok(pps),
-            _ => panic!("non-apped found in pull"),
+            _ => panic!("non-append/compact found in pull"),
         }
     }
 
@@ -386,32 +388,115 @@ impl<M> PageCache<LockFreeLog, M>
         if !should_snapshot {
             return;
         }
+        self.log.flush();
+
+        let snapshot_opt = self.last_snapshot.take(SeqCst);
+        if snapshot_opt.is_none() {
+            // some other thread is snapshotting
+            warn!(
+                "snapshot skipped because previous attempt \
+                  appears not to have completed"
+            );
+            return;
+        }
+
+        let mut snapshot = snapshot_opt.unwrap();
+
+        let current_stable = self.log.stable_offset();
+
+        info!(
+            "snapshot starting from offset {} to {}",
+            snapshot.log_tip,
+            current_stable
+        );
+
+        for (log_id, bytes) in self.log.iter_from(snapshot.log_tip) {
+            if log_id >= current_stable {
+                // don't need to go farther
+                break;
+            }
+            if let Ok(prepend) = deserialize::<LoggedUpdate<M>>(&*bytes) {
+                match prepend.update {
+                    Update::Append(_) => {
+                        let mut lids = snapshot.pt.get_mut(&prepend.pid).unwrap();
+                        lids.push(log_id);
+                    }
+                    Update::Compact(_) => {
+                        snapshot.pt.insert(prepend.pid, vec![log_id]);
+                    }
+                    Update::Del => {
+                        snapshot.pt.remove(&prepend.pid);
+                        snapshot.free.push(prepend.pid);
+                    }
+                    Update::Alloc => {
+                        snapshot.free.retain(|&pid| pid != prepend.pid);
+                        if prepend.pid > snapshot.max_id {
+                            snapshot.max_id = prepend.pid;
+                        }
+                    }
+                }
+            }
+        }
+        snapshot.free.sort();
+        snapshot.free.reverse();
+        snapshot.log_tip = current_stable;
+
+        let raw_bytes = serialize(&snapshot, Infinite).unwrap();
+        let bytes = if self.config().get_use_compression() {
+            compress(&*raw_bytes, 5).unwrap()
+        } else {
+            raw_bytes
+        };
+        let crc64: [u8; 8] = unsafe { std::mem::transmute(crc64::crc64(&*bytes)) };
+
+        self.last_snapshot.swap(snapshot, SeqCst);
 
         let prefix = self.snapshot_prefix();
-        let last_snapshot = self.last_snapshot.clone();
-        let log = self.log.clone();
+        let path_1 = format!("{}_{}.snapshot.in_motion", prefix, current_stable);
+        let path_2 = format!("{}_{}.snapshot", prefix, current_stable);
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(&path_1)
+            .unwrap();
 
-        std::thread::spawn(move || { snapshot::snapshot::<M, _>(prefix, last_snapshot, log); });
+        // write the snapshot bytes, followed by a crc64 checksum at the end
+        f.write_all(&*bytes).unwrap();
+        f.write_all(&crc64).unwrap();
+        f.sync_all().unwrap();
+        drop(f);
+
+        if let Err(e) = std::fs::rename(path_1, &path_2) {
+            error!("failed to write snapshot: {}", e);
+        }
+
+        // clean up any old snapshots
+        let prefix_glob = format!("{}*", prefix);
+        for entry in glob::glob(&*prefix_glob).unwrap() {
+            if let Ok(entry) = entry {
+                if entry.to_str().unwrap() != &*path_2 {
+                    info!("removing old snapshot file {:?}", entry);
+                    std::fs::remove_file(entry).unwrap();
+                }
+            }
+        }
     }
 
     fn snapshot_prefix(&self) -> String {
         self.config().get_snapshot_path_prefix().unwrap_or(
-            std::env::current_dir()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_owned(),
+            "rsdb".to_owned(),
         )
     }
 
     fn read_snapshot(&mut self) -> LogID {
-        // TODO set self.last_snapshot
         let prefix = self.snapshot_prefix();
+        let _prefix_glob = format!("{}*", prefix);
 
-        let _snapshot = snapshot::read_snapshot_or_default(prefix);
+        let snapshot = Snapshot::default();
+        let ret = snapshot.log_tip;
 
-        // TODO return LogID to start reading from
-        // snapshot.log_tip is the first log id to read
-        0
+        self.last_snapshot.swap(snapshot, SeqCst);
+
+        ret
     }
 }

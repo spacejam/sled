@@ -70,8 +70,8 @@ impl Tree {
                 true,
             );
 
-            pages.prepend(root_id, root_cas_key, root).unwrap();
-            pages.prepend(leaf_id, leaf_cas_key, leaf).unwrap();
+            pages.replace(root_id, root_cas_key, vec![root]).unwrap();
+            pages.replace(leaf_id, leaf_cas_key, vec![leaf]).unwrap();
 
             root_id
         };
@@ -343,7 +343,7 @@ impl Tree {
 
         // install the new right side
         self.pages
-            .prepend(new_pid, new_cas_key, Frag::Base(rhs, false))
+            .replace(new_pid, new_cas_key, vec![Frag::Base(rhs, false)])
             .unwrap();
 
         // try to install a child split on the left side
@@ -406,7 +406,7 @@ impl Tree {
             true,
         );
         self.pages
-            .prepend(new_root_pid, new_root_cas_key, new_root)
+            .replace(new_root_pid, new_root_cas_key, vec![new_root])
             .unwrap();
         // println!("split is {:?}", parent_split);
         // println!("trying to cas root at {:?} with real value {:?}", path.first().unwrap().pid, self.root.load(SeqCst));

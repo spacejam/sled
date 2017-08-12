@@ -53,6 +53,11 @@ impl LockFreeLog {
             flusher_handle: flusher_handle,
         }
     }
+
+    /// Flush the next io buffer.
+    pub fn flush(&self) {
+        self.iobufs.flush();
+    }
 }
 
 impl Log for LockFreeLog {
