@@ -124,7 +124,10 @@ fn main() {
     args.insert("num_threads", matches.value_of("num_threads").unwrap());
     args.insert("num_operations", matches.value_of("num_operations").unwrap());
     args.insert("freshness_bias", matches.value_of("freshness_bias").unwrap());
-    args.insert("non_present_key_chance", matches.value_of("non_present_key_chance").unwrap());
+    args.insert(
+        "non_present_key_chance",
+        matches.value_of("non_present_key_chance").unwrap(),
+    );
     args.insert("set", matches.value_of("set").unwrap());
     args.insert("scan", matches.value_of("scan").unwrap());
     args.insert("get", matches.value_of("get").unwrap());
@@ -143,20 +146,13 @@ fn main() {
     let mut stderr = std::io::stderr();
 
     let config = Config::new(&args).unwrap_or_else(|err| {
-        writeln!(
-            &mut stderr,
-            "Problem parsing arguments: {}",
-            err
-        ).expect("Could not write to stderr");
+        writeln!(&mut stderr, "Problem parsing arguments: {}", err)
+            .expect("Could not write to stderr");
         process::exit(1);
     });
 
     if let Err(e) = run(config) {
-        writeln!(
-            &mut stderr,
-            "Application error: {}",
-            e
-        ).expect("Could not write to stderr");
+        writeln!(&mut stderr, "Application error: {}", e).expect("Could not write to stderr");
         process::exit(1);
     }
 }
@@ -456,9 +452,21 @@ impl Config {
         }
 
         // perform validations
-        check_min_max_median(key_size_min.unwrap(), key_size_max.unwrap(), key_size_median.unwrap());
-        check_min_max_median(value_size_min.unwrap(), value_size_max.unwrap(), value_size_median.unwrap());
-        check_min_max_median(scan_iter_min.unwrap(), scan_iter_max.unwrap(), scan_iter_median.unwrap());
+        check_min_max_median(
+            key_size_min.unwrap(),
+            key_size_max.unwrap(),
+            key_size_median.unwrap(),
+        );
+        check_min_max_median(
+            value_size_min.unwrap(),
+            value_size_max.unwrap(),
+            value_size_median.unwrap(),
+        );
+        check_min_max_median(
+            scan_iter_min.unwrap(),
+            scan_iter_max.unwrap(),
+            scan_iter_median.unwrap(),
+        );
 
         Ok(Config {
             num_threads: num_threads.unwrap(),
@@ -485,6 +493,11 @@ impl Config {
 
 fn check_min_max_median(min: u64, max: u64, median: u64) {
     if !(min <= median && median <= max) {
-        warn!("Please check and provide different min({}), max({}) and median({}) values", min, max, median);
+        warn!(
+            "Please check and provide different min({}), max({}) and median({}) values",
+            min,
+            max,
+            median
+        );
     }
 }
