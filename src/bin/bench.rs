@@ -485,6 +485,6 @@ impl Config {
 
 fn check_min_max_median(min: u64, max: u64, median: u64) {
     if !(min <= median && median <= max) {
-        warn!("Please check and provide different {}, {} and {} values", min, max, median);
+        warn!("Please check and provide different min({}), max({}) and median({}) values", min, max, median);
     }
 }
