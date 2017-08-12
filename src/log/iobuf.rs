@@ -451,13 +451,13 @@ fn encapsulate(raw_buf: Vec<u8>, use_compression: bool) -> Vec<u8> {
         raw_buf
     };
 
-    let mut size_bytes = ops::usize_to_array(buf.len()).to_vec();
+    let size_bytes: [u8; 4] = unsafe { std::mem::transmute(buf.len() as u32) };
     let mut valid_bytes = vec![1u8];
     let mut crc16_bytes = crc16_arr(&buf).to_vec();
 
     let mut out = Vec::with_capacity(HEADER_LEN + buf.len());
     out.append(&mut valid_bytes);
-    out.append(&mut size_bytes);
+    out.append(&mut size_bytes.to_vec());
     out.append(&mut crc16_bytes);
     assert_eq!(out.len(), HEADER_LEN);
     out.append(&mut buf);

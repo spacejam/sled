@@ -130,7 +130,7 @@ pub use tree::Tree;
 /// lock-free pagecache
 pub use page::{Materializer, PageCache};
 /// lock-free log-structured storage
-pub use log::{HEADER_LEN, LockFreeLog, Log};
+pub use log::{HEADER_LEN, LockFreeLog, Log, LogRead};
 /// lock-free stack
 use stack::Stack;
 /// lock-free radix tree
@@ -170,19 +170,17 @@ mod tree;
 mod bound;
 mod log;
 mod crc16;
+mod crc64;
 mod stack;
 mod page;
 mod radix;
 mod config;
 mod thread_cache;
 
-mod ops;
-
 use bound::Bound;
 use page::CacheEntry;
 use stack::{StackIter, node_from_frag_vec};
 use thread_cache::ThreadCache;
-use log::LogRead;
 
 type LogID = u64; // LogID == file position to simplify file mapping
 type PageID = usize;

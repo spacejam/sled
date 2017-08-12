@@ -1,10 +1,11 @@
 use std::sync::Arc;
+use std::io::Write;
 
 use crossbeam::sync::AtomicOption;
 
 use super::*;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(super) struct Snapshot {
     log_tip: LogID,
     max_id: PageID,
@@ -12,7 +13,11 @@ pub(super) struct Snapshot {
     free: Vec<PageID>,
 }
 
-pub(super) fn snapshot<'a, M, L>(last_snapshot: Arc<AtomicOption<Snapshot>>, log: Arc<Box<L>>)
+pub(super) fn snapshot<'a, M, L>(
+    prefix: String,
+    last_snapshot: Arc<AtomicOption<Snapshot>>,
+    log: Arc<L>,
+)
     where M: Materializer + DeserializeOwned,
           L: Log,
           L: 'a
@@ -38,11 +43,11 @@ pub(super) fn snapshot<'a, M, L>(last_snapshot: Arc<AtomicOption<Snapshot>>, log
         }
         if let Ok(prepend) = deserialize::<LoggedUpdate<M>>(&*bytes) {
             match prepend.update {
-                Update::Append(ref prepends) => {
+                Update::Append(_) => {
                     let mut lids = snapshot.pt.get_mut(&prepend.pid).unwrap();
                     lids.push(log_id);
                 }
-                Update::Compact(ref prepends) => {
+                Update::Compact(_) => {
                     snapshot.pt.insert(prepend.pid, vec![log_id]);
                 }
                 Update::Del => {
@@ -61,5 +66,23 @@ pub(super) fn snapshot<'a, M, L>(last_snapshot: Arc<AtomicOption<Snapshot>>, log
     snapshot.free.sort();
     snapshot.free.reverse();
     snapshot.log_tip = current_stable;
+
+    let bytes = serialize(&snapshot, Infinite).unwrap();
+    let crc64: [u8; 8] = unsafe { std::mem::transmute(crc64::crc64(&*bytes)) };
+
+    let path = format!("{}_{}.snapshot", prefix, snapshot.log_tip);
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open(path)
+        .unwrap();
+
+    f.write_all(&*bytes).unwrap();
+    f.write_all(&crc64).unwrap();
+
     last_snapshot.swap(snapshot, SeqCst);
+}
+
+pub(super) fn read_snapshot_or_default(_prefix: String) -> Snapshot {
+    Snapshot::default()
 }

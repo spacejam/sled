@@ -52,10 +52,58 @@ pub trait Log: Sized + Send + Sync {
     }
 }
 
+#[doc(hidden)]
 pub enum LogRead {
     Flush(Vec<u8>, usize),
     Aborted(usize),
     Corrupted(usize),
+}
+
+impl LogRead {
+    /// Optionally return successfully read bytes, or None if
+    /// the data was corrupt or this log entry was aborted.
+    pub fn flush(&self) -> Option<Vec<u8>> {
+        match *self {
+            LogRead::Flush(ref bytes, _) => Some(bytes.clone()),
+            _ => None,
+        }
+    }
+
+    /// Return true if we read a completed write successfully.
+    pub fn is_flush(&self) -> bool {
+        match *self {
+            LogRead::Flush(_, _) => true,
+            _ => false,
+        }
+    }
+
+    /// Return true if we read an aborted flush.
+    pub fn is_abort(&self) -> bool {
+        match *self {
+            LogRead::Aborted(_) => true,
+            _ => false,
+        }
+    }
+
+    /// Return true if we read a corrupted log entry.
+    pub fn is_corrupt(&self) -> bool {
+        match *self {
+            LogRead::Corrupted(_) => true,
+            _ => false,
+        }
+    }
+
+    /// Retrieve the read bytes from a completed, successful write.
+    ///
+    /// # Panics
+    ///
+    /// panics if `is_flush()` is false.
+    pub fn unwrap(self) -> Vec<u8> {
+        match self {
+            LogRead::Flush(bytes, _) => bytes,
+            _ => panic!("called unwrap on a non-flush LogRead"),
+        }
+    }
 }
 
 pub struct LogIter<'a, L: 'a + Log> {

@@ -12,7 +12,7 @@ use std::sync::Arc;
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::Rng;
 
-use rsdb::{Config, HEADER_LEN, LockFreeLog, Log};
+use rsdb::{Config, HEADER_LEN, LockFreeLog, Log, LogRead};
 
 #[derive(Debug, Clone)]
 enum Op {
@@ -48,7 +48,9 @@ impl Arbitrary for OpVec {
             ops.push(op);
 
         }
-        OpVec { ops: ops }
+        OpVec {
+            ops: ops,
+        }
     }
 
     fn shrink(&self) -> Box<Iterator<Item = OpVec>> {
@@ -124,9 +126,7 @@ fn non_contiguous_flush() {
 fn concurrent_logging() {
     // TODO linearize res bufs, verify they are correct
     let path = "test_log.log";
-    let log = Arc::new(Config::default()
-        .path(Some(path.to_owned()))
-        .log());
+    let log = Arc::new(Config::default().path(Some(path.to_owned())).log());
     let iobs2 = log.clone();
     let iobs3 = log.clone();
     let iobs4 = log.clone();
@@ -135,60 +135,48 @@ fn concurrent_logging() {
     let log7 = log.clone();
     let t1 = thread::Builder::new()
         .name("c1".to_string())
-        .spawn(move || {
-            for i in 0..5_000 {
-                let buf = vec![1; i % 8192];
-                log.write(buf);
-            }
+        .spawn(move || for i in 0..5_000 {
+            let buf = vec![1; i % 8192];
+            log.write(buf);
         })
         .unwrap();
     let t2 = thread::Builder::new()
         .name("c2".to_string())
-        .spawn(move || {
-            for i in 0..5_000 {
-                let buf = vec![2; i % 8192];
-                iobs2.write(buf);
-            }
+        .spawn(move || for i in 0..5_000 {
+            let buf = vec![2; i % 8192];
+            iobs2.write(buf);
         })
         .unwrap();
     let t3 = thread::Builder::new()
         .name("c3".to_string())
-        .spawn(move || {
-            for i in 0..5_000 {
-                let buf = vec![3; i % 8192];
-                iobs3.write(buf);
-            }
+        .spawn(move || for i in 0..5_000 {
+            let buf = vec![3; i % 8192];
+            iobs3.write(buf);
         })
         .unwrap();
     let t4 = thread::Builder::new()
         .name("c4".to_string())
-        .spawn(move || {
-            for i in 0..5_000 {
-                let buf = vec![4; i % 8192];
-                iobs4.write(buf);
-            }
+        .spawn(move || for i in 0..5_000 {
+            let buf = vec![4; i % 8192];
+            iobs4.write(buf);
         })
         .unwrap();
     let t5 = thread::Builder::new()
         .name("c5".to_string())
-        .spawn(move || {
-            for i in 0..5_000 {
-                let buf = vec![5; i % 8192];
-                iobs5.write(buf);
-            }
+        .spawn(move || for i in 0..5_000 {
+            let buf = vec![5; i % 8192];
+            iobs5.write(buf);
         })
         .unwrap();
 
     let t6 = thread::Builder::new()
         .name("c6".to_string())
-        .spawn(move || {
-            for i in 0..5_000 {
-                let buf = vec![6; i % 8192];
-                let res = iobs6.reserve(buf);
-                let id = res.log_id();
-                res.complete();
-                iobs6.make_stable(id);
-            }
+        .spawn(move || for i in 0..5_000 {
+            let buf = vec![6; i % 8192];
+            let res = iobs6.reserve(buf);
+            let id = res.log_id();
+            res.complete();
+            iobs6.make_stable(id);
         })
         .unwrap();
 
@@ -219,10 +207,8 @@ fn test_abort(log: &LockFreeLog) {
     res.abort();
     log.make_stable(id);
     match log.read(id) {
-        Ok(Err(_)) => (), // good
-        _ => {
-            panic!("sucessfully read an aborted request! BAD! SAD!");
-        }
+        Ok(LogRead::Flush(_, _)) => panic!("sucessfully read an aborted request! BAD! SAD!"),
+        _ => (), // good
     }
 }
 
@@ -250,7 +236,7 @@ fn test_hole_punching() {
 
     log.punch_hole(id);
 
-    assert!(log.read(id).unwrap().is_err());
+    assert!(log.read(id).unwrap().is_abort());
 }
 
 #[test]

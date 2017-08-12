@@ -81,7 +81,8 @@ impl Log for LockFreeLog {
         let mut len_buf = [0u8; 4];
         f.read_exact(&mut len_buf)?;
 
-        let len = ops::array_to_usize(len_buf);
+        let len32: u32 = unsafe { std::mem::transmute(len_buf) };
+        let len = len32 as usize;
         let max = self.config().get_io_buf_size() - HEADER_LEN;
         if len > max {
             error!("log read invalid message length, {} should be <= {}", len, max);
@@ -153,7 +154,8 @@ impl Log for LockFreeLog {
         #[cfg(target_os = "linux")]
         {
             use std::os::unix::io::AsRawFd;
-            let len = ops::array_to_usize(len_buf);
+            let len32: u32 = unsafe { std::mem::transmute(len_buf) };
+            let len = len32 as usize;
             let mode = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE;
             let fd = f.as_raw_fd();
             unsafe {

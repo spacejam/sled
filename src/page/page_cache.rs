@@ -1,9 +1,9 @@
-use super::*;
-
 use std::sync::Arc;
 
 use crossbeam::sync::AtomicOption;
 use rayon::prelude::*;
+
+use super::*;
 
 /// A lock-free pagecache.
 pub struct PageCache<L: Log, M>
@@ -14,7 +14,7 @@ pub struct PageCache<L: Log, M>
     inner: Radix<Stack<CacheEntry<M>>>,
     max_id: AtomicUsize,
     free: Stack<PageID>,
-    log: Arc<Box<L>>,
+    log: Arc<L>,
     lru: lru::Lru,
     updates: AtomicUsize,
     last_snapshot: Arc<AtomicOption<Snapshot>>,
@@ -48,7 +48,7 @@ impl<M> PageCache<LockFreeLog, M>
             inner: Radix::default(),
             max_id: AtomicUsize::new(0),
             free: Stack::default(),
-            log: Arc::new(Box::new(LockFreeLog::start_system(config))),
+            log: Arc::new(LockFreeLog::start_system(config)),
             lru: lru::Lru::new(cache_capacity, cache_shard_bits),
             updates: AtomicUsize::new(0),
             last_snapshot: Arc::new(AtomicOption::new()),
@@ -387,23 +387,28 @@ impl<M> PageCache<LockFreeLog, M>
             return;
         }
 
+        let prefix = self.snapshot_prefix();
         let last_snapshot = self.last_snapshot.clone();
         let log = self.log.clone();
-        std::thread::spawn(move || { snapshot::snapshot::<M, LockFreeLog>(last_snapshot, log); });
+
+        std::thread::spawn(move || { snapshot::snapshot::<M, _>(prefix, last_snapshot, log); });
     }
 
-    fn read_snapshot(&mut self) -> LogID {
-        // TODO set self.last_snapshot
-        let prefix = self.config().get_snapshot_path_prefix().unwrap_or(
+    fn snapshot_prefix(&self) -> String {
+        self.config().get_snapshot_path_prefix().unwrap_or(
             std::env::current_dir()
                 .unwrap()
                 .to_str()
                 .unwrap()
                 .to_owned(),
-        );
+        )
+    }
 
-        let files = std::fs::read_dir(prefix);
+    fn read_snapshot(&mut self) -> LogID {
+        // TODO set self.last_snapshot
+        let prefix = self.snapshot_prefix();
 
+        let _snapshot = snapshot::read_snapshot_or_default(prefix);
 
         // TODO return LogID to start reading from
         // snapshot.log_tip is the first log id to read
