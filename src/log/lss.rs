@@ -22,8 +22,10 @@ unsafe impl Sync for LockFreeLog {}
 
 impl Drop for LockFreeLog {
     fn drop(&mut self) {
-        self.flusher_shutdown
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.flusher_shutdown.store(
+            true,
+            std::sync::atomic::Ordering::SeqCst,
+        );
         if let Some(join_handle) = self.flusher_handle.take() {
             join_handle.join().unwrap();
         }
@@ -37,11 +39,12 @@ impl LockFreeLog {
 
         let flusher_shutdown = Arc::new(AtomicBool::new(false));
         let flusher_handle = config.get_flush_every_ms().map(|flush_every_ms| {
-            periodic_flusher::flusher("log flusher".to_owned(),
-                                      iobufs.clone(),
-                                      flusher_shutdown.clone(),
-                                      flush_every_ms)
-                .unwrap()
+            periodic_flusher::flusher(
+                "log flusher".to_owned(),
+                iobufs.clone(),
+                flusher_shutdown.clone(),
+                flush_every_ms,
+            ).unwrap()
         });
 
         LockFreeLog {

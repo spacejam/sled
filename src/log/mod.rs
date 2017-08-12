@@ -76,9 +76,7 @@ impl<'a, L> Iterator for LogIter<'a, L>
                     self.next_offset += len as LogID + HEADER_LEN as LogID;
                     return Some((offset, buf));
                 }
-                Ok(LogRead::Aborted(len)) => {
-                    self.next_offset += len as LogID + HEADER_LEN as LogID
-                }
+                Ok(LogRead::Aborted(len)) => self.next_offset += len as LogID + HEADER_LEN as LogID,
                 _ => return None,
             }
         }

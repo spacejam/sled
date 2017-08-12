@@ -12,10 +12,7 @@ pub(super) struct Snapshot {
     free: Vec<PageID>,
 }
 
-pub(super) fn snapshot<'a, M, L>(
-    last_snapshot: Arc<AtomicOption<Snapshot>>,
-    log: Arc<Box<L>>,
-)
+pub(super) fn snapshot<'a, M, L>(last_snapshot: Arc<AtomicOption<Snapshot>>, log: Arc<Box<L>>)
     where M: Materializer + DeserializeOwned,
           L: Log,
           L: 'a
@@ -23,8 +20,10 @@ pub(super) fn snapshot<'a, M, L>(
     let snapshot_opt = last_snapshot.take(SeqCst);
     if snapshot_opt.is_none() {
         // some other thread is snapshotting
-        warn!("rsdb snapshot skipped because previous attempt \
-              appears not to have completed");
+        warn!(
+            "rsdb snapshot skipped because previous attempt \
+              appears not to have completed"
+        );
         return;
     }
 
