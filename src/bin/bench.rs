@@ -17,7 +17,7 @@ fn main() {
     let matches = App::new("RSDB bench")
         .version("0.1.0")
         .about("RSDB benchmarking tool")
-        .author("Tyler Neely <t@jujit.su>")
+        .author("Tyler Neely, Philipp Muens")
         .arg(Arg::with_name("num_threads")
             .short("t")
             .long("num-threads")
