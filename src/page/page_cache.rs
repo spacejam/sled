@@ -69,15 +69,10 @@ impl<M> PageCache<LockFreeLog, M>
         let mut recovery = None;
 
         for (log_id, bytes) in self.log.iter_from(last_good_id) {
-            if log_id == last_good_id && log_id != 0 {
-                // we are reading from a real snapshot, which included
-                // this ID already, so skip the first entry
-                continue;
-            }
-
             if let Ok(prepend) = deserialize::<LoggedUpdate<M>>(&*bytes) {
                 // keep track of the highest valid LogID
                 last_good_id = log_id + (bytes.len() + HEADER_LEN) as LogID;
+                info!("recovering pid {} from lid {}", prepend.pid, log_id);
 
                 match prepend.update {
                     Update::Append(ref prepends) => {
@@ -318,6 +313,8 @@ impl<M> PageCache<LockFreeLog, M>
         }
 
         let materialized = self.t.materialize(&partial_pages);
+
+        info!("returning page {:?} for read of {}", materialized, pid);
         (materialized, head)
     }
 
@@ -384,7 +381,8 @@ impl<M> PageCache<LockFreeLog, M>
 
     fn maybe_snapshot(&self) {
         let count = self.updates.fetch_add(1, SeqCst) + 1;
-        let should_snapshot = count % self.config().get_snapshot_after_ops() == 0;
+        let should_snapshot = self.config().get_path().is_some() &&
+            count % self.config().get_snapshot_after_ops() == 0;
         if !should_snapshot {
             return;
         }
@@ -406,11 +404,11 @@ impl<M> PageCache<LockFreeLog, M>
 
         info!(
             "snapshot starting from offset {} to {}",
-            snapshot.log_tip,
+            snapshot.max_lid,
             current_stable
         );
 
-        for (log_id, bytes) in self.log.iter_from(snapshot.log_tip) {
+        for (log_id, bytes) in self.log.iter_from(snapshot.max_lid) {
             if log_id >= current_stable {
                 // don't need to go farther
                 break;
@@ -430,8 +428,8 @@ impl<M> PageCache<LockFreeLog, M>
                     }
                     Update::Alloc => {
                         snapshot.free.retain(|&pid| pid != prepend.pid);
-                        if prepend.pid > snapshot.max_id {
-                            snapshot.max_id = prepend.pid;
+                        if prepend.pid > snapshot.max_pid {
+                            snapshot.max_pid = prepend.pid;
                         }
                     }
                 }
@@ -439,7 +437,7 @@ impl<M> PageCache<LockFreeLog, M>
         }
         snapshot.free.sort();
         snapshot.free.reverse();
-        snapshot.log_tip = current_stable;
+        snapshot.max_lid = current_stable;
 
         let raw_bytes = serialize(&snapshot, Infinite).unwrap();
         let bytes = if self.config().get_use_compression() {
@@ -529,17 +527,46 @@ impl<M> PageCache<LockFreeLog, M>
         }
 
         let bytes = if self.config().get_use_compression() {
-            decompress(&*buf, std::usize::MAX).unwrap()
+            decompress(&*buf, 1_000_000).unwrap()
         } else {
             buf
         };
 
         let snapshot = deserialize::<Snapshot>(&*bytes).unwrap();
 
-        let ret = snapshot.log_tip;
+        self.load_snapshot(snapshot)
+    }
+
+    fn load_snapshot(&mut self, snapshot: Snapshot) -> LogID {
+        self.max_id.store(snapshot.max_pid, SeqCst);
+
+        let mut free = snapshot.free.clone();
+        free.sort();
+        free.reverse();
+        for pid in free {
+            self.free.push(pid);
+        }
+
+        for (pid, lids) in &snapshot.pt {
+            info!("loading pid {} in load_snapshot", pid);
+            let mut lids = lids.clone();
+            let stack = Stack::default();
+
+            let base = lids.remove(0);
+            stack.push(CacheEntry::Flush(base));
+
+            for lid in lids {
+                stack.push(CacheEntry::PartialFlush(lid));
+            }
+
+            self.inner.insert(*pid, raw(stack)).unwrap();
+        }
+
+        let ret = snapshot.max_lid;
 
         self.last_snapshot.swap(snapshot, SeqCst);
 
+        println!("returning {}", ret);
         ret
     }
 }

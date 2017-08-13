@@ -25,7 +25,7 @@ pub use self::page_cache::PageCache;
 pub trait Materializer: Send + Sync + Clone {
     /// The "complete" page, returned to clients who want to retrieve the
     /// logical page state.
-    type MaterializedPage;
+    type MaterializedPage: Debug;
 
     /// The "partial" page, written to log storage sequentially, and
     /// read in parallel from multiple locations on disk when serving
@@ -87,8 +87,8 @@ enum Update<M>
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 struct Snapshot {
-    pub log_tip: LogID,
-    pub max_id: PageID,
+    pub max_lid: LogID,
+    pub max_pid: PageID,
     pub pt: BTreeMap<PageID, Vec<LogID>>,
     pub free: Vec<PageID>,
 }
