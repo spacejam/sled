@@ -21,7 +21,7 @@ pub struct Config {
     use_compression: bool,
     flush_every_ms: Option<usize>,
     snapshot_after_ops: usize,
-    snapshot_path_prefix: Option<String>,
+    snapshot_path: Option<String>,
     tc: Arc<ThreadCache<fs::File>>,
     tmp: Arc<Mutex<NamedTempFile>>,
 }
@@ -40,7 +40,7 @@ impl Default for Config {
             use_compression: true,
             flush_every_ms: Some(100),
             snapshot_after_ops: 1_000_000,
-            snapshot_path_prefix: None,
+            snapshot_path: None,
             tc: Arc::new(ThreadCache::default()),
             tmp: Arc::new(Mutex::new(NamedTempFile::new().unwrap())),
         }
@@ -86,7 +86,7 @@ impl Config {
         (use_compression, get_use_compression, set_use_compression, bool, "whether to use zstd compression"),
         (flush_every_ms, get_flush_every_ms, set_flush_every_ms, Option<usize>, "number of ms between IO buffer flushes"),
         (snapshot_after_ops, get_snapshot_after_ops, set_snapshot_after_ops, usize, "number of operations between page table snapshots"),
-        (snapshot_path_prefix, get_snapshot_path_prefix, set_snapshot_path_prefix, Option<String>, "snapshot file prefix")
+        (snapshot_path, get_snapshot_path, set_snapshot_path, Option<String>, "snapshot file location")
     );
 
     /// create a new `Tree` based on this configuration

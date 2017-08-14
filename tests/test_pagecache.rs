@@ -1,13 +1,8 @@
 extern crate rsdb;
 
-#[macro_use]
-extern crate serde_derive;
-
-use std::fs;
-
 use rsdb::*;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub struct TestMaterializer;
 
 impl Materializer for TestMaterializer {
@@ -28,7 +23,7 @@ impl Materializer for TestMaterializer {
         vec![consolidated]
     }
 
-    fn recover(&mut self, _: &String) -> Option<()> {
+    fn recover(&self, _: &String) -> Option<()> {
         None
     }
 }
@@ -36,9 +31,11 @@ impl Materializer for TestMaterializer {
 #[test]
 fn basic_recovery() {
     let path = "test_pagecache.log";
-    let conf = Config::default().flush_every_ms(None).path(
-        Some(path.to_owned()),
-    );
+    let snapshot_path = "test_pagecache.snapshot";
+    let conf = Config::default()
+        .flush_every_ms(None)
+        .path(Some(path.to_owned()))
+        .snapshot_path(Some(snapshot_path.to_owned()));
     let mut pc = PageCache::new(TestMaterializer, conf.clone());
     pc.recover();
     let (id, key) = pc.allocate();
@@ -68,7 +65,5 @@ fn basic_recovery() {
     pc4.recover();
     let res = pc4.get(id);
     assert_eq!(res, None);
-    drop(pc4);
-
-    fs::remove_file(path).unwrap();
+    pc4.__delete_all_files();
 }

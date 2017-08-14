@@ -1,6 +1,5 @@
 extern crate rsdb;
 
-use std::fs;
 use std::thread;
 use std::sync::Arc;
 
@@ -160,9 +159,7 @@ fn recovery() {
         let k = kv(i);
         assert_eq!(t.get(&*k), None);
     }
-    drop(t);
-
-    fs::remove_file(path).unwrap();
+    t.__delete_all_files();
 }
 
 // TODO quickcheck splits, reads, writes interleaved

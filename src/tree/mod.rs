@@ -1,6 +1,7 @@
 /// A flash-sympathetic persistent lock-free B+ tree.
 
 use std::fmt::{self, Debug};
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 
@@ -16,11 +17,11 @@ pub use self::node::*;
 
 pub const FANOUT: usize = 2;
 
-type Raw = *const stack::Node<CacheEntry<BLinkMaterializer>>;
+type Raw = *const stack::Node<CacheEntry<Frag>>;
 
 /// A flash-sympathetic persistent lock-free B+ tree
 pub struct Tree {
-    pages: PageCache<LockFreeLog, BLinkMaterializer>,
+    pages: PageCache<BLinkMaterializer, LockFreeLog, Frag, PageID>,
     root: AtomicUsize,
 }
 
@@ -32,7 +33,7 @@ impl Tree {
     pub fn new(config: Config) -> Tree {
         let mut pages = PageCache::new(
             BLinkMaterializer {
-                roots: vec![],
+                roots: Arc::new(Mutex::new(vec![])),
             },
             config,
         );
@@ -442,6 +443,11 @@ impl Tree {
     }
 
     #[doc(hidden)]
+    pub fn __delete_all_files(self) {
+        self.pages.__delete_all_files();
+    }
+
+    #[doc(hidden)]
     pub fn key_debug_str(&self, key: &[u8]) -> String {
         let path = self.path_for_key(key);
         let mut ret = String::new();
@@ -566,7 +572,7 @@ impl Debug for Tree {
 
 pub struct TreeIter<'a> {
     id: PageID,
-    inner: &'a PageCache<LockFreeLog, BLinkMaterializer>,
+    inner: &'a PageCache<BLinkMaterializer, LockFreeLog, Frag, PageID>,
     last_key: Bound,
 }
 
@@ -599,9 +605,9 @@ impl<'a> IntoIterator for &'a Tree {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub struct BLinkMaterializer {
-    roots: Vec<PageID>,
+    roots: Arc<Mutex<Vec<PageID>>>,
 }
 
 impl Materializer for BLinkMaterializer {
@@ -630,14 +636,15 @@ impl Materializer for BLinkMaterializer {
         vec![Frag::Base(base_node, root)]
     }
 
-    fn recover(&mut self, frag: &Frag) -> Option<PageID> {
+    fn recover(&self, frag: &Frag) -> Option<PageID> {
         match *frag {
             Frag::Base(ref node, root) => {
                 if root {
-                    if self.roots.contains(&node.id) {
+                    let mut roots = self.roots.lock().unwrap();
+                    if roots.contains(&node.id) {
                         None
                     } else {
-                        self.roots.push(node.id);
+                        roots.push(node.id);
                         Some(node.id)
                     }
                 } else {

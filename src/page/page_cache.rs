@@ -7,47 +7,54 @@ use zstd::block::{compress, decompress};
 use super::*;
 
 /// A lock-free pagecache.
-pub struct PageCache<L: Log, M>
-    where M: Materializer + Sized,
-          L: Log + Sized
-{
-    t: M,
-    inner: Radix<Stack<CacheEntry<M>>>,
-    max_id: AtomicUsize,
+pub struct PageCache<PM, L, P, R> {
+    t: PM,
+    inner: Radix<Stack<CacheEntry<P>>>,
+    max_pid: AtomicUsize,
     free: Stack<PageID>,
     log: L,
     lru: lru::Lru,
     updates: AtomicUsize,
-    last_snapshot: AtomicOption<Snapshot>,
+    last_snapshot: AtomicOption<Snapshot<R>>,
 }
 
-unsafe impl<L: Log, M: Materializer> Send for PageCache<L, M> {}
-unsafe impl<L: Log, M: Materializer> Sync for PageCache<L, M> {}
+unsafe impl<PM, L, P, R> Send for PageCache<PM, L, P, R>
+    where PM: Send,
+          L: Send,
+          R: Send
+{
+}
 
-impl<L: Log, M: Materializer> Debug for PageCache<L, M> {
+unsafe impl<PM, L, P, R> Sync for PageCache<PM, L, P, R>
+    where PM: Sync,
+          L: Sync
+{
+}
+
+impl<PM, L, P, R> Debug for PageCache<PM, L, P, R> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         f.write_str(&*format!(
             "PageCache {{ max: {:?} free: {:?} }}\n",
-            self.max_id.load(SeqCst),
+            self.max_pid.load(SeqCst),
             self.free
         ))
     }
 }
 
-impl<M> PageCache<LockFreeLog, M>
-    where M: Materializer,
-          M::PartialPage: Clone,
-          M: DeserializeOwned,
-          M: Serialize
+impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
+    where PM: Materializer<PartialPage = P, Recovery = R>,
+          PM: Send + Sync,
+          P: PartialEq + Clone + Debug + Serialize + DeserializeOwned + Send,
+          R: PartialEq + Clone + Debug + Serialize + DeserializeOwned
 {
     /// Instantiate a new `PageCache`.
-    pub fn new(pm: M, config: Config) -> PageCache<LockFreeLog, M> {
+    pub fn new(pm: PM, config: Config) -> PageCache<PM, LockFreeLog, P, R> {
         let cache_capacity = config.get_cache_capacity();
         let cache_shard_bits = config.get_cache_bits();
         PageCache {
             t: pm,
             inner: Radix::default(),
-            max_id: AtomicUsize::new(0),
+            max_pid: AtomicUsize::new(0),
             free: Stack::default(),
             log: LockFreeLog::start_system(config),
             lru: lru::Lru::new(cache_capacity, cache_shard_bits),
@@ -62,18 +69,16 @@ impl<M> PageCache<LockFreeLog, M>
     }
 
     /// Read updates from the log, apply them to our pagecache.
-    pub fn recover(&mut self) -> Option<M::Recovery> {
-        let mut last_good_id = self.read_snapshot();
+    pub fn recover(&mut self) -> Option<R> {
+        let snapshot = self.read_snapshot();
+        let log_tip = snapshot.max_lid;
+        let mut recovery = snapshot.recovery.clone();
+        self.last_snapshot.swap(snapshot, SeqCst);
 
         let mut free_pids = vec![];
-        let mut recovery = None;
 
-        for (log_id, bytes) in self.log.iter_from(last_good_id) {
-            if let Ok(prepend) = deserialize::<LoggedUpdate<M>>(&*bytes) {
-                // keep track of the highest valid LogID
-                last_good_id = log_id + (bytes.len() + HEADER_LEN) as LogID;
-                info!("recovering pid {} from lid {}", prepend.pid, log_id);
-
+        for (log_id, bytes) in self.log.iter_from(log_tip) {
+            if let Ok(prepend) = deserialize::<LoggedUpdate<P>>(&*bytes) {
                 match prepend.update {
                     Update::Append(ref prepends) => {
                         for prepend in prepends {
@@ -118,8 +123,9 @@ impl<M> PageCache<LockFreeLog, M>
                         let stack = raw(Stack::default());
                         self.inner.insert(prepend.pid, stack).unwrap();
                         free_pids.retain(|&pid| pid != prepend.pid);
-                        if self.max_id.load(SeqCst) < prepend.pid {
-                            self.max_id.store(prepend.pid, SeqCst);
+                        if self.max_pid.load(SeqCst) <= prepend.pid {
+                            // always make sure self.max_pid is higher than what exists
+                            self.max_pid.store(prepend.pid + 1, SeqCst);
                         }
                     }
                 }
@@ -131,22 +137,21 @@ impl<M> PageCache<LockFreeLog, M>
             self.free.push(free_pid);
         }
 
-        self.max_id.store(last_good_id as usize, SeqCst);
-
         recovery
     }
 
     /// Create a new page, trying to reuse old freed pages if possible
     /// to maximize underlying `Radix` pointer density.
-    pub fn allocate(&self) -> (PageID, *const stack::Node<CacheEntry<M>>) {
+    pub fn allocate(&self) -> (PageID, *const stack::Node<CacheEntry<P>>) {
         let pid = self.free.pop().unwrap_or_else(
-            || self.max_id.fetch_add(1, SeqCst),
+            || self.max_pid.fetch_add(1, SeqCst),
         );
         let stack = raw(Stack::default());
+        info!("allocating pid {}", pid);
         self.inner.insert(pid, stack).unwrap();
 
         // write info to log
-        let prepend: LoggedUpdate<M> = LoggedUpdate {
+        let prepend: LoggedUpdate<P> = LoggedUpdate {
             pid: pid,
             update: Update::Alloc,
         };
@@ -163,7 +168,7 @@ impl<M> PageCache<LockFreeLog, M>
         let stack_ptr = self.inner.del(pid);
 
         // write info to log
-        let prepend: LoggedUpdate<M> = LoggedUpdate {
+        let prepend: LoggedUpdate<P> = LoggedUpdate {
             pid: pid,
             update: Update::Del,
         };
@@ -182,7 +187,7 @@ impl<M> PageCache<LockFreeLog, M>
     pub fn get(
         &self,
         pid: PageID,
-    ) -> Option<(M::MaterializedPage, *const stack::Node<CacheEntry<M>>)> {
+    ) -> Option<(PM::MaterializedPage, *const stack::Node<CacheEntry<P>>)> {
         let stack_ptr = self.inner.get(pid);
         if stack_ptr.is_none() {
             return None;
@@ -195,12 +200,29 @@ impl<M> PageCache<LockFreeLog, M>
         Some(self.page_in(pid, head, stack_ptr))
     }
 
-    fn pull(&self, lid: LogID) -> Result<Vec<M::PartialPage>, ()> {
+    #[doc(hidden)]
+    pub fn __delete_all_files(self) {
+        let prefix = self.snapshot_prefix();
+        let prefix_glob = format!("{}.[0-9]*", prefix);
+        for entry in glob::glob(&*prefix_glob).unwrap() {
+            if let Ok(entry) = entry {
+                info!("removing old snapshot file {:?}", entry);
+                std::fs::remove_file(entry).unwrap();
+            }
+        }
+
+        if let Some(path) = self.config().get_path() {
+            info!("removing data file {:?}", path);
+            std::fs::remove_file(&path).unwrap();
+        }
+    }
+
+    fn pull(&self, lid: LogID) -> Result<Vec<P>, ()> {
         let bytes = match self.log.read(lid).map_err(|_| ())? {
             LogRead::Flush(data, _len) => data,
             _ => return Err(()),
         };
-        let logged_update = deserialize::<LoggedUpdate<M>>(&*bytes).map_err(|_| ())?;
+        let logged_update = deserialize::<LoggedUpdate<P>>(&*bytes).map_err(|_| ())?;
 
         match logged_update.update {
             Update::Compact(pps) |
@@ -218,7 +240,7 @@ impl<M> PageCache<LockFreeLog, M>
 
             let stack_ptr = stack_ptr.unwrap();
             let (head, stack_iter) = unsafe { (*stack_ptr).iter_at_head() };
-            let mut cache_entries: Vec<CacheEntry<M>> =
+            let mut cache_entries: Vec<CacheEntry<P>> =
                 stack_iter.map(|ptr| (*ptr).clone()).collect();
 
             // ensure the last entry is a Flush
@@ -258,11 +280,11 @@ impl<M> PageCache<LockFreeLog, M>
     fn page_in(
         &self,
         pid: PageID,
-        mut head: *const stack::Node<CacheEntry<M>>,
-        stack_ptr: *const stack::Stack<CacheEntry<M>>,
-    ) -> (M::MaterializedPage, *const stack::Node<CacheEntry<M>>) {
+        mut head: *const stack::Node<CacheEntry<P>>,
+        stack_ptr: *const stack::Stack<CacheEntry<P>>,
+    ) -> (PM::MaterializedPage, *const stack::Node<CacheEntry<P>>) {
         let stack_iter = StackIter::from_ptr(head);
-        let mut cache_entries: Vec<CacheEntry<M>> = stack_iter.map(|ptr| (*ptr).clone()).collect();
+        let mut cache_entries: Vec<CacheEntry<P>> = stack_iter.map(|ptr| (*ptr).clone()).collect();
 
         // read items off of disk in parallel if anything isn't already resident
         let contains_non_resident = cache_entries.iter().any(|cache_entry| match *cache_entry {
@@ -288,7 +310,7 @@ impl<M> PageCache<LockFreeLog, M>
             }
         }
 
-        let mut partial_pages: Vec<M::PartialPage> = cache_entries
+        let mut partial_pages: Vec<P> = cache_entries
             .into_iter()
             .flat_map(|cache_entry| match cache_entry {
                 CacheEntry::Resident(pp, _lid) => pp,
@@ -314,7 +336,6 @@ impl<M> PageCache<LockFreeLog, M>
 
         let materialized = self.t.materialize(&partial_pages);
 
-        info!("returning page {:?} for read of {}", materialized, pid);
         (materialized, head)
     }
 
@@ -322,10 +343,10 @@ impl<M> PageCache<LockFreeLog, M>
     pub fn replace(
         &self,
         pid: PageID,
-        old: *const stack::Node<CacheEntry<M>>,
-        new: Vec<M::PartialPage>,
-    ) -> Result<*const stack::Node<CacheEntry<M>>, *const stack::Node<CacheEntry<M>>> {
-        let replace: LoggedUpdate<M> = LoggedUpdate {
+        old: *const stack::Node<CacheEntry<P>>,
+        new: Vec<P>,
+    ) -> Result<*const stack::Node<CacheEntry<P>>, *const stack::Node<CacheEntry<P>>> {
+        let replace: LoggedUpdate<P> = LoggedUpdate {
             pid: pid,
             update: Update::Compact(new.clone()),
         };
@@ -353,10 +374,10 @@ impl<M> PageCache<LockFreeLog, M>
     pub fn prepend(
         &self,
         pid: PageID,
-        old: *const stack::Node<CacheEntry<M>>,
-        new: M::PartialPage,
-    ) -> Result<*const stack::Node<CacheEntry<M>>, *const stack::Node<CacheEntry<M>>> {
-        let prepend: LoggedUpdate<M> = LoggedUpdate {
+        old: *const stack::Node<CacheEntry<P>>,
+        new: P,
+    ) -> Result<*const stack::Node<CacheEntry<P>>, *const stack::Node<CacheEntry<P>>> {
+        let prepend: LoggedUpdate<P> = LoggedUpdate {
             pid: pid,
             update: Update::Append(vec![new.clone()]),
         };
@@ -408,18 +429,34 @@ impl<M> PageCache<LockFreeLog, M>
             current_stable
         );
 
+        let mut recovery = None;
+
         for (log_id, bytes) in self.log.iter_from(snapshot.max_lid) {
             if log_id >= current_stable {
                 // don't need to go farther
                 break;
             }
-            if let Ok(prepend) = deserialize::<LoggedUpdate<M>>(&*bytes) {
+            if let Ok(prepend) = deserialize::<LoggedUpdate<P>>(&*bytes) {
                 match prepend.update {
-                    Update::Append(_) => {
+                    Update::Append(partial_pages) => {
+                        for partial_page in partial_pages {
+                            let r = self.t.recover(&partial_page);
+                            if r.is_some() {
+                                recovery = r;
+                            }
+                        }
+
                         let mut lids = snapshot.pt.get_mut(&prepend.pid).unwrap();
                         lids.push(log_id);
                     }
-                    Update::Compact(_) => {
+                    Update::Compact(partial_pages) => {
+                        for partial_page in partial_pages {
+                            let r = self.t.recover(&partial_page);
+                            if r.is_some() {
+                                recovery = r;
+                            }
+                        }
+
                         snapshot.pt.insert(prepend.pid, vec![log_id]);
                     }
                     Update::Del => {
@@ -438,6 +475,7 @@ impl<M> PageCache<LockFreeLog, M>
         snapshot.free.sort();
         snapshot.free.reverse();
         snapshot.max_lid = current_stable;
+        snapshot.recovery = recovery;
 
         let raw_bytes = serialize(&snapshot, Infinite).unwrap();
         let bytes = if self.config().get_use_compression() {
@@ -450,8 +488,8 @@ impl<M> PageCache<LockFreeLog, M>
         self.last_snapshot.swap(snapshot, SeqCst);
 
         let prefix = self.snapshot_prefix();
-        let path_1 = format!("{}_{}.snapshot.in___motion", prefix, current_stable);
-        let path_2 = format!("{}_{}.snapshot", prefix, current_stable);
+        let path_1 = format!("{}.{}.in___motion", prefix, current_stable);
+        let path_2 = format!("{}.{}", prefix, current_stable);
         let mut f = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -469,7 +507,7 @@ impl<M> PageCache<LockFreeLog, M>
         }
 
         // clean up any old snapshots
-        let prefix_glob = format!("{}*", prefix);
+        let prefix_glob = format!("{}.[0-9]*", prefix);
         for entry in glob::glob(&*prefix_glob).unwrap() {
             if let Ok(entry) = entry {
                 if entry.to_str().unwrap() != &*path_2 {
@@ -481,14 +519,15 @@ impl<M> PageCache<LockFreeLog, M>
     }
 
     fn snapshot_prefix(&self) -> String {
-        self.config().get_snapshot_path_prefix().unwrap_or(
+        let config = self.config();
+        config.get_snapshot_path().or(config.get_path()).unwrap_or(
             "rsdb".to_owned(),
         )
     }
 
-    fn read_snapshot(&mut self) -> LogID {
+    fn read_snapshot(&mut self) -> Snapshot<R> {
         let prefix = self.snapshot_prefix();
-        let prefix_glob = format!("{}*", prefix);
+        let prefix_glob = format!("{}*snapshot", prefix);
         let mut candidates = vec![];
         for entry_res in glob::glob(&*prefix_glob).unwrap() {
             if let Ok(entry_pb) = entry_res {
@@ -498,8 +537,7 @@ impl<M> PageCache<LockFreeLog, M>
             }
         }
         if candidates.is_empty() {
-            self.last_snapshot.swap(Snapshot::default(), SeqCst);
-            return 0;
+            return Snapshot::default();
         }
 
         candidates.sort_by_key(|path| path.metadata().unwrap().created().unwrap());
@@ -522,8 +560,7 @@ impl<M> PageCache<LockFreeLog, M>
 
         if crc_expected != crc_actual {
             error!("crc for {:?} failed! falling back to parsing the entire log...", path);
-            self.last_snapshot.swap(Snapshot::default(), SeqCst);
-            return 0;
+            return Snapshot::default();
         }
 
         let bytes = if self.config().get_use_compression() {
@@ -532,18 +569,19 @@ impl<M> PageCache<LockFreeLog, M>
             buf
         };
 
-        let snapshot = deserialize::<Snapshot>(&*bytes).unwrap();
+        let snapshot = deserialize::<Snapshot<R>>(&*bytes).unwrap();
 
         self.load_snapshot(snapshot)
     }
 
-    fn load_snapshot(&mut self, snapshot: Snapshot) -> LogID {
-        self.max_id.store(snapshot.max_pid, SeqCst);
+    fn load_snapshot(&mut self, snapshot: Snapshot<R>) -> Snapshot<R> {
+        self.max_pid.store(snapshot.max_pid, SeqCst);
 
         let mut free = snapshot.free.clone();
         free.sort();
         free.reverse();
         for pid in free {
+            info!("adding {} to free during load_snapshot", pid);
             self.free.push(pid);
         }
 
@@ -562,11 +600,6 @@ impl<M> PageCache<LockFreeLog, M>
             self.inner.insert(*pid, raw(stack)).unwrap();
         }
 
-        let ret = snapshot.max_lid;
-
-        self.last_snapshot.swap(snapshot, SeqCst);
-
-        println!("returning {}", ret);
-        ret
+        snapshot
     }
 }

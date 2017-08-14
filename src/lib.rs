@@ -9,7 +9,7 @@
 //!
 //! t.get(b"yo!");
 //!
-//! t.cas(b"yo!".to_vec(), Some(b"v1".to_vec()), Some(b"v2".to_vec()));
+//! t.cas(b"yo!".to_vec(), Some(b"v1".to_vec()), Some(b"v2".to_vec())).unwrap();
 //!
 //! let mut iter = t.scan(b"a non-present key before yo!");
 //!
@@ -22,13 +22,11 @@
 //! # Working with the `PageCache`
 //!
 //! ```
-//! #[macro_use] extern crate serde_derive;
-//!
 //! extern crate rsdb;
 //!
 //! use rsdb::Materializer;
 //!
-//! #[derive(Clone, Serialize, Deserialize)]
+//! #[derive(Clone)]
 //! pub struct TestMaterializer;
 //!
 //! impl Materializer for TestMaterializer {
@@ -49,7 +47,7 @@
 //!         vec![consolidated]
 //!     }
 //!
-//!     fn recover(&mut self, _: &String) -> Option<()> {
+//!     fn recover(&self, _: &String) -> Option<()> {
 //!         None
 //!     }
 //! }
