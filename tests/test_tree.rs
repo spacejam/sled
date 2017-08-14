@@ -1,6 +1,5 @@
 extern crate rsdb;
 
-use std::fs;
 use std::thread;
 use std::sync::Arc;
 
@@ -37,14 +36,16 @@ macro_rules! par {
 #[inline(always)]
 fn kv(i: usize) -> Vec<u8> {
     let i = i % SPACE;
-    let k = [// (i >> 56) as u8,
-             // (i >> 48) as u8,
-             // (i >> 40) as u8,
-             // (i >> 32) as u8,
-             // (i >> 24) as u8,
-             (i >> 16) as u8,
-             (i >> 8) as u8,
-             i as u8];
+    let k = [
+        // (i >> 56) as u8,
+        // (i >> 48) as u8,
+        // (i >> 40) as u8,
+        // (i >> 32) as u8,
+        // (i >> 24) as u8,
+        (i >> 16) as u8,
+        (i >> 8) as u8,
+        i as u8,
+    ];
     k.to_vec()
 }
 
@@ -93,7 +94,10 @@ fn parallel_ops() {
 #[test]
 fn iterator() {
     println!("========== iterator ==========");
-    let t = Config::default().blink_fanout(2).flush_every_ms(None).tree();
+    let t = Config::default()
+        .blink_fanout(2)
+        .flush_every_ms(None)
+        .tree();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
         t.set(k.clone(), k);
@@ -133,6 +137,7 @@ fn recovery() {
     let conf = Config::default()
         .blink_fanout(2)
         .flush_every_ms(None)
+        .snapshot_after_ops(100)
         .path(Some(path.to_owned()));
     let t = conf.tree();
     for i in 0..N_PER_THREAD {
@@ -154,9 +159,7 @@ fn recovery() {
         let k = kv(i);
         assert_eq!(t.get(&*k), None);
     }
-    drop(t);
-
-    fs::remove_file(path).unwrap();
+    t.__delete_all_files();
 }
 
 // TODO quickcheck splits, reads, writes interleaved

@@ -9,7 +9,7 @@
 //!
 //! t.get(b"yo!");
 //!
-//! t.cas(b"yo!".to_vec(), Some(b"v1".to_vec()), Some(b"v2".to_vec()));
+//! t.cas(b"yo!".to_vec(), Some(b"v1".to_vec()), Some(b"v2".to_vec())).unwrap();
 //!
 //! let mut iter = t.scan(b"a non-present key before yo!");
 //!
@@ -22,13 +22,10 @@
 //! # Working with the `PageCache`
 //!
 //! ```
-//! #[macro_use] extern crate serde_derive;
-//!
 //! extern crate rsdb;
 //!
 //! use rsdb::Materializer;
 //!
-//! #[derive(Clone, Serialize, Deserialize)]
 //! pub struct TestMaterializer;
 //!
 //! impl Materializer for TestMaterializer {
@@ -49,7 +46,7 @@
 //!         vec![consolidated]
 //!     }
 //!
-//!     fn recover(&mut self, _: &String) -> Option<()> {
+//!     fn recover(&self, _: &String) -> Option<()> {
 //!         None
 //!     }
 //! }
@@ -112,6 +109,7 @@
 
 extern crate libc;
 extern crate rayon;
+extern crate crossbeam;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
@@ -119,17 +117,17 @@ extern crate bincode;
 extern crate rand;
 #[macro_use]
 extern crate log as logger;
-extern crate env_logger;
 extern crate tempfile;
 extern crate zstd;
 extern crate time;
+extern crate glob;
 
 /// atomic lock-free tree
 pub use tree::Tree;
 /// lock-free pagecache
 pub use page::{Materializer, PageCache};
 /// lock-free log-structured storage
-pub use log::{HEADER_LEN, LockFreeLog, Log};
+pub use log::{HEADER_LEN, LockFreeLog, Log, LogRead};
 /// lock-free stack
 use stack::Stack;
 /// lock-free radix tree
@@ -169,13 +167,12 @@ mod tree;
 mod bound;
 mod log;
 mod crc16;
+mod crc64;
 mod stack;
 mod page;
 mod radix;
 mod config;
 mod thread_cache;
-
-mod ops;
 
 use bound::Bound;
 use page::CacheEntry;

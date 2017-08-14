@@ -54,61 +54,9 @@ impl LockFreeLog {
         }
     }
 
-    fn read_with_raw_sz(&self, id: LogID) -> (io::Result<Result<Vec<u8>, usize>>, usize) {
-        let cached_f = self.config().cached_file();
-        let mut f = cached_f.borrow_mut();
-        if let Err(res) = f.seek(SeekFrom::Start(id)) {
-            return (Err(res), 0);
-        }
-
-        let mut valid = [0u8; 1];
-        if let Err(res) = f.read_exact(&mut valid) {
-            return (Err(res), 0);
-        }
-
-        let mut len_buf = [0u8; 4];
-        if let Err(res) = f.read_exact(&mut len_buf) {
-            return (Err(res), 0);
-        }
-        let len = ops::array_to_usize(len_buf);
-        let max = self.config().get_io_buf_size() - HEADER_LEN;
-        if len > max {
-            let msg = format!("read invalid message length, {} should be <= {}", len, max);
-            return (Err(Error::new(ErrorKind::Other, msg)), len);
-        }
-
-        if valid[0] == 0 {
-            return (Ok(Err(len)), len);
-        }
-
-        let mut crc16_buf = [0u8; 2];
-        if let Err(res) = f.read_exact(&mut crc16_buf) {
-            return (Err(res), len);
-        }
-
-        let mut buf = Vec::with_capacity(len);
-        unsafe {
-            buf.set_len(len);
-        }
-        if let Err(res) = f.read_exact(&mut buf) {
-            return (Err(res), len);
-        }
-
-        let checksum = crc16_arr(&buf);
-        if checksum != crc16_buf {
-            let msg = format!(
-                "read data failed crc16 checksum, {:?} should be {:?}",
-                checksum,
-                crc16_buf
-            );
-            return (Err(Error::new(ErrorKind::Other, msg)), len);
-        }
-
-        if self.config().get_use_compression() {
-            (Ok(Ok(decompress(&*buf, max).unwrap())), len)
-        } else {
-            (Ok(Ok(buf)), len)
-        }
+    /// Flush the next io buffer.
+    pub fn flush(&self) {
+        self.iobufs.flush();
     }
 }
 
@@ -127,9 +75,49 @@ impl Log for LockFreeLog {
     }
 
     /// read a buffer from the disk
-    fn read(&self, id: LogID) -> io::Result<Result<Vec<u8>, usize>> {
-        let (res, _sz) = self.read_with_raw_sz(id);
-        res
+    fn read(&self, id: LogID) -> io::Result<LogRead> {
+        let cached_f = self.config().cached_file();
+        let mut f = cached_f.borrow_mut();
+        f.seek(SeekFrom::Start(id))?;
+
+        let mut valid = [0u8; 1];
+        f.read_exact(&mut valid)?;
+
+        let mut len_buf = [0u8; 4];
+        f.read_exact(&mut len_buf)?;
+
+        let len32: u32 = unsafe { std::mem::transmute(len_buf) };
+        let len = len32 as usize;
+        let max = self.config().get_io_buf_size() - HEADER_LEN;
+        if len > max {
+            error!("log read invalid message length, {} should be <= {}", len, max);
+            return Ok(LogRead::Corrupted(len));
+        }
+
+        if valid[0] == 0 {
+            return Ok(LogRead::Aborted(len));
+        }
+
+        let mut crc16_buf = [0u8; 2];
+        f.read_exact(&mut crc16_buf)?;
+
+        let mut buf = Vec::with_capacity(len);
+        unsafe {
+            buf.set_len(len);
+        }
+        f.read_exact(&mut buf)?;
+
+        let checksum = crc16_arr(&buf);
+        if checksum != crc16_buf {
+            return Ok(LogRead::Corrupted(len));
+        }
+
+        if self.config().get_use_compression() {
+            Ok(LogRead::Flush(decompress(&*buf, max).unwrap(), len))
+        } else {
+            Ok(LogRead::Flush(buf, len))
+        }
+
     }
 
     /// returns the current stable offset written to disk
@@ -171,33 +159,13 @@ impl Log for LockFreeLog {
         #[cfg(target_os = "linux")]
         {
             use std::os::unix::io::AsRawFd;
-            let len = ops::array_to_usize(len_buf);
+            let len32: u32 = unsafe { std::mem::transmute(len_buf) };
+            let len = len32 as usize;
             let mode = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE;
             let fd = f.as_raw_fd();
             unsafe {
                 // 5 is valid (1) + len (4), 2 is crc16
                 fallocate(fd, mode, id as i64 + 5, len as i64 + 2);
-            }
-        }
-    }
-}
-
-impl<'a> Iterator for LogIter<'a, LockFreeLog> {
-    type Item = (LogID, Vec<u8>);
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let offset = self.next_offset;
-            let (log_read, len) = self.log.read_with_raw_sz(self.next_offset);
-            if let Ok(buf_opt) = log_read {
-                match buf_opt {
-                    Ok(buf) => {
-                        self.next_offset += len as LogID + HEADER_LEN as LogID;
-                        return Some((offset, buf));
-                    }
-                    Err(len) => self.next_offset += len as LogID + HEADER_LEN as LogID,
-                }
-            } else {
-                return None;
             }
         }
     }

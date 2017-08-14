@@ -1,6 +1,6 @@
 # RSDB
 
-flash-sympathetic lock-free persistent tree
+a flash-sympathetic persistent lock-free B+ tree
 
 [documentation](https://docs.rs/rsdb)
 
@@ -12,8 +12,8 @@ progress
 - [x] recovery
 - [x] zstd compression
 - [x] LRU cache
+- [x] pagetable snapshotting for faster recovery
 - [ ] epoch-based gc (LEAKS MEMORY FOR NOW LOLOLOLOLOL)
-- [ ] pagetable snapshotting for faster recovery
 - [ ] multi-key transactions and MVCC using a higher-level `DB` interface
 
 # Goals

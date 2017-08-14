@@ -1,6 +1,7 @@
 /// A flash-sympathetic persistent lock-free B+ tree.
 
 use std::fmt::{self, Debug};
+use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 
@@ -16,11 +17,11 @@ pub use self::node::*;
 
 pub const FANOUT: usize = 2;
 
-type Raw = *const stack::Node<CacheEntry<BLinkMaterializer>>;
+type Raw = *const stack::Node<CacheEntry<Frag>>;
 
 /// A flash-sympathetic persistent lock-free B+ tree
 pub struct Tree {
-    pages: PageCache<LockFreeLog, BLinkMaterializer>,
+    pages: PageCache<BLinkMaterializer, LockFreeLog, Frag, PageID>,
     root: AtomicUsize,
 }
 
@@ -32,12 +33,12 @@ impl Tree {
     pub fn new(config: Config) -> Tree {
         let mut pages = PageCache::new(
             BLinkMaterializer {
-                roots: vec![],
+                roots: Mutex::new(vec![]),
             },
             config,
         );
 
-        let root_opt = pages.recover(0);
+        let root_opt = pages.recover();
 
         let root_id = if let Some(root_id) = root_opt {
             root_id
@@ -70,8 +71,8 @@ impl Tree {
                 true,
             );
 
-            pages.prepend(root_id, root_cas_key, root).unwrap();
-            pages.prepend(leaf_id, leaf_cas_key, leaf).unwrap();
+            pages.replace(root_id, root_cas_key, vec![root]).unwrap();
+            pages.replace(leaf_id, leaf_cas_key, vec![leaf]).unwrap();
 
             root_id
         };
@@ -343,7 +344,7 @@ impl Tree {
 
         // install the new right side
         self.pages
-            .prepend(new_pid, new_cas_key, Frag::Base(rhs, false))
+            .replace(new_pid, new_cas_key, vec![Frag::Base(rhs, false)])
             .unwrap();
 
         // try to install a child split on the left side
@@ -406,7 +407,7 @@ impl Tree {
             true,
         );
         self.pages
-            .prepend(new_root_pid, new_root_cas_key, new_root)
+            .replace(new_root_pid, new_root_cas_key, vec![new_root])
             .unwrap();
         // println!("split is {:?}", parent_split);
         // println!("trying to cas root at {:?} with real value {:?}", path.first().unwrap().pid, self.root.load(SeqCst));
@@ -439,6 +440,11 @@ impl Tree {
             }
             _ => panic!("last node in path is not leaf"),
         }
+    }
+
+    #[doc(hidden)]
+    pub fn __delete_all_files(self) {
+        self.pages.__delete_all_files();
     }
 
     #[doc(hidden)]
@@ -566,7 +572,7 @@ impl Debug for Tree {
 
 pub struct TreeIter<'a> {
     id: PageID,
-    inner: &'a PageCache<LockFreeLog, BLinkMaterializer>,
+    inner: &'a PageCache<BLinkMaterializer, LockFreeLog, Frag, PageID>,
     last_key: Bound,
 }
 
@@ -599,9 +605,8 @@ impl<'a> IntoIterator for &'a Tree {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
 pub struct BLinkMaterializer {
-    roots: Vec<PageID>,
+    roots: Mutex<Vec<PageID>>,
 }
 
 impl Materializer for BLinkMaterializer {
@@ -630,14 +635,15 @@ impl Materializer for BLinkMaterializer {
         vec![Frag::Base(base_node, root)]
     }
 
-    fn recover(&mut self, frag: &Frag) -> Option<PageID> {
+    fn recover(&self, frag: &Frag) -> Option<PageID> {
         match *frag {
             Frag::Base(ref node, root) => {
                 if root {
-                    if self.roots.contains(&node.id) {
+                    let mut roots = self.roots.lock().unwrap();
+                    if roots.contains(&node.id) {
                         None
                     } else {
-                        self.roots.push(node.id);
+                        roots.push(node.id);
                         Some(node.id)
                     }
                 } else {
