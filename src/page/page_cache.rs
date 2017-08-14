@@ -520,9 +520,9 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
     fn snapshot_prefix(&self) -> String {
         let config = self.config();
-        config.get_snapshot_path().or(config.get_path()).unwrap_or(
-            "rsdb".to_owned(),
-        )
+        let snapshot_path = config.get_snapshot_path();
+        let path = config.get_path();
+        snapshot_path.or(path).unwrap_or_else(|| "rsdb".to_owned())
     }
 
     fn read_snapshot(&mut self) -> Snapshot<R> {
