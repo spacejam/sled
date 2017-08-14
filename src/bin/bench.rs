@@ -164,24 +164,24 @@ fn run(config: Config) -> Result<(), Box<Error>> {
 
 /// Configuration which is passed in via CLI arguments
 struct Config {
-    num_threads: u64,
-    num_operations: u64,
+    num_threads: usize,
+    num_operations: usize,
     freshness_bias: String,
     non_present_key_chance: bool,
-    set: u64,
-    scan: u64,
-    get: u64,
-    delete: u64,
-    cas: u64,
-    key_size_min: u64,
-    key_size_max: u64,
-    key_size_median: u64,
-    value_size_min: u64,
-    value_size_max: u64,
-    value_size_median: u64,
-    scan_iter_min: u64,
-    scan_iter_max: u64,
-    scan_iter_median: u64,
+    set: usize,
+    scan: usize,
+    get: usize,
+    delete: usize,
+    cas: usize,
+    key_size_min: usize,
+    key_size_max: usize,
+    key_size_median: usize,
+    value_size_min: usize,
+    value_size_max: usize,
+    value_size_median: usize,
+    scan_iter_min: usize,
+    scan_iter_max: usize,
+    scan_iter_median: usize,
 }
 
 impl Config {
@@ -190,7 +190,7 @@ impl Config {
         // cast all values to their respective target data type
         let num_threads = match args.get("num_threads") {
             Some(x) => {
-                let parsed = x.parse::<u64>();
+                let parsed = x.parse::<usize>();
                 if parsed.is_ok() {
                     Ok(parsed.unwrap())
                 } else {
@@ -205,7 +205,7 @@ impl Config {
 
         let num_operations = match args.get("num_operations") {
             Some(x) => {
-                let parsed = x.parse::<u64>();
+                let parsed = x.parse::<usize>();
                 if parsed.is_ok() {
                     Ok(parsed.unwrap())
                 } else {
@@ -243,7 +243,7 @@ impl Config {
 
         let set = match args.get("set") {
             Some(x) => {
-                let parsed = x.parse::<u64>();
+                let parsed = x.parse::<usize>();
                 if parsed.is_ok() {
                     Ok(parsed.unwrap())
                 } else {
@@ -258,7 +258,7 @@ impl Config {
 
         let scan = match args.get("scan") {
             Some(x) => {
-                let parsed = x.parse::<u64>();
+                let parsed = x.parse::<usize>();
                 if parsed.is_ok() {
                     Ok(parsed.unwrap())
                 } else {
@@ -273,7 +273,7 @@ impl Config {
 
         let get = match args.get("get") {
             Some(x) => {
-                let parsed = x.parse::<u64>();
+                let parsed = x.parse::<usize>();
                 if parsed.is_ok() {
                     Ok(parsed.unwrap())
                 } else {
@@ -288,7 +288,7 @@ impl Config {
 
         let delete = match args.get("delete") {
             Some(x) => {
-                let parsed = x.parse::<u64>();
+                let parsed = x.parse::<usize>();
                 if parsed.is_ok() {
                     Ok(parsed.unwrap())
                 } else {
@@ -303,7 +303,7 @@ impl Config {
 
         let cas = match args.get("cas") {
             Some(x) => {
-                let parsed = x.parse::<u64>();
+                let parsed = x.parse::<usize>();
                 if parsed.is_ok() {
                     Ok(parsed.unwrap())
                 } else {
@@ -318,7 +318,7 @@ impl Config {
 
         let key_size_min = match args.get("key_size_min") {
             Some(x) => {
-                let parsed = x.parse::<u64>();
+                let parsed = x.parse::<usize>();
                 if parsed.is_ok() {
                     Ok(parsed.unwrap())
                 } else {
@@ -333,7 +333,7 @@ impl Config {
 
         let key_size_max = match args.get("key_size_max") {
             Some(x) => {
-                let parsed = x.parse::<u64>();
+                let parsed = x.parse::<usize>();
                 if parsed.is_ok() {
                     Ok(parsed.unwrap())
                 } else {
@@ -348,7 +348,7 @@ impl Config {
 
         let key_size_median = match args.get("key_size_median") {
             Some(x) => {
-                let parsed = x.parse::<u64>();
+                let parsed = x.parse::<usize>();
                 if parsed.is_ok() {
                     Ok(parsed.unwrap())
                 } else {
@@ -363,7 +363,7 @@ impl Config {
 
         let value_size_min = match args.get("value_size_min") {
             Some(x) => {
-                let parsed = x.parse::<u64>();
+                let parsed = x.parse::<usize>();
                 if parsed.is_ok() {
                     Ok(parsed.unwrap())
                 } else {
@@ -378,7 +378,7 @@ impl Config {
 
         let value_size_max = match args.get("value_size_max") {
             Some(x) => {
-                let parsed = x.parse::<u64>();
+                let parsed = x.parse::<usize>();
                 if parsed.is_ok() {
                     Ok(parsed.unwrap())
                 } else {
@@ -393,7 +393,7 @@ impl Config {
 
         let value_size_median = match args.get("value_size_median") {
             Some(x) => {
-                let parsed = x.parse::<u64>();
+                let parsed = x.parse::<usize>();
                 if parsed.is_ok() {
                     Ok(parsed.unwrap())
                 } else {
@@ -408,7 +408,7 @@ impl Config {
 
         let scan_iter_min = match args.get("scan_iter_min") {
             Some(x) => {
-                let parsed = x.parse::<u64>();
+                let parsed = x.parse::<usize>();
                 if parsed.is_ok() {
                     Ok(parsed.unwrap())
                 } else {
@@ -423,7 +423,7 @@ impl Config {
 
         let scan_iter_max = match args.get("scan_iter_max") {
             Some(x) => {
-                let parsed = x.parse::<u64>();
+                let parsed = x.parse::<usize>();
                 if parsed.is_ok() {
                     Ok(parsed.unwrap())
                 } else {
@@ -438,7 +438,7 @@ impl Config {
 
         let scan_iter_median = match args.get("scan_iter_median") {
             Some(x) => {
-                let parsed = x.parse::<u64>();
+                let parsed = x.parse::<usize>();
                 if parsed.is_ok() {
                     Ok(parsed.unwrap())
                 } else {
@@ -491,7 +491,7 @@ impl Config {
     }
 }
 
-fn check_min_max_median(min: u64, max: u64, median: u64) {
+fn check_min_max_median(min: usize, max: usize, median: usize) {
     if !(min <= median && median <= max) {
         warn!(
             "Please check and provide different min({}), max({}) and median({}) values",
