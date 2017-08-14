@@ -147,7 +147,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             || self.max_pid.fetch_add(1, SeqCst),
         );
         let stack = raw(Stack::default());
-        info!("allocating pid {}", pid);
+        trace!("allocating pid {}", pid);
         self.inner.insert(pid, stack).unwrap();
 
         // write info to log
@@ -429,7 +429,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             current_stable
         );
 
-        let mut recovery = None;
+        let mut recovery = snapshot.recovery.take();
 
         for (log_id, bytes) in self.log.iter_from(snapshot.max_lid) {
             if log_id >= current_stable {
@@ -527,13 +527,11 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
     fn read_snapshot(&mut self) -> Snapshot<R> {
         let prefix = self.snapshot_prefix();
-        let prefix_glob = format!("{}*snapshot", prefix);
+        let prefix_glob = format!("{}.[0-9]*", prefix);
         let mut candidates = vec![];
         for entry_res in glob::glob(&*prefix_glob).unwrap() {
             if let Ok(entry_pb) = entry_res {
-                if !entry_pb.to_str().unwrap().contains(".in___motion") {
-                    candidates.push(entry_pb);
-                }
+                candidates.push(entry_pb);
             }
         }
         if candidates.is_empty() {
@@ -571,10 +569,12 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
         let snapshot = deserialize::<Snapshot<R>>(&*bytes).unwrap();
 
-        self.load_snapshot(snapshot)
+        self.load_snapshot(&snapshot);
+
+        snapshot
     }
 
-    fn load_snapshot(&mut self, snapshot: Snapshot<R>) -> Snapshot<R> {
+    fn load_snapshot(&mut self, snapshot: &Snapshot<R>) {
         self.max_pid.store(snapshot.max_pid, SeqCst);
 
         let mut free = snapshot.free.clone();
@@ -599,7 +599,5 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
             self.inner.insert(*pid, raw(stack)).unwrap();
         }
-
-        snapshot
     }
 }
