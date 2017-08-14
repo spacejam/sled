@@ -17,7 +17,7 @@ pub use self::iobuf::*;
 pub use self::reservation::*;
 
 /// A trait for objects which facilitate log-structured storage.
-pub trait Log: Sized + Send + Sync {
+pub trait Log: Sized {
     /// Create a log offset reservation for a particular write,
     /// which may later be filled or canceled.
     fn reserve(&self, Vec<u8>) -> Reservation;

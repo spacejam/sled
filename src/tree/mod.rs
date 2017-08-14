@@ -1,7 +1,7 @@
 /// A flash-sympathetic persistent lock-free B+ tree.
 
 use std::fmt::{self, Debug};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 
@@ -33,7 +33,7 @@ impl Tree {
     pub fn new(config: Config) -> Tree {
         let mut pages = PageCache::new(
             BLinkMaterializer {
-                roots: Arc::new(Mutex::new(vec![])),
+                roots: Mutex::new(vec![]),
             },
             config,
         );
@@ -605,9 +605,8 @@ impl<'a> IntoIterator for &'a Tree {
     }
 }
 
-#[derive(Clone)]
 pub struct BLinkMaterializer {
-    roots: Arc<Mutex<Vec<PageID>>>,
+    roots: Mutex<Vec<PageID>>,
 }
 
 impl Materializer for BLinkMaterializer {

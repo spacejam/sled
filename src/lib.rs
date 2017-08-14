@@ -26,7 +26,6 @@
 //!
 //! use rsdb::Materializer;
 //!
-//! #[derive(Clone)]
 //! pub struct TestMaterializer;
 //!
 //! impl Materializer for TestMaterializer {
