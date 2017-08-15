@@ -60,7 +60,11 @@
 //!
 //!     let (id, key) = pc.allocate();
 //!
-//!     let key = pc.prepend(id, key, "a".to_owned()).unwrap();
+//!     // The first item in a page should be set using replace, which
+//!     // signals that this is the beginning of a new page history, and
+//!     // that any previous items associated with this page should be
+//!     // forgotten.
+//!     let key = pc.replace(id, key, vec!["a".to_owned()]).unwrap();
 //!
 //!     let key = pc.prepend(id, key, "b".to_owned()).unwrap();
 //!

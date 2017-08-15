@@ -39,7 +39,7 @@ fn basic_recovery() {
     let mut pc = PageCache::new(TestMaterializer, conf.clone());
     pc.recover();
     let (id, key) = pc.allocate();
-    let key = pc.prepend(id, key, "a".to_owned()).unwrap();
+    let key = pc.replace(id, key, vec!["a".to_owned()]).unwrap();
     let key = pc.prepend(id, key, "b".to_owned()).unwrap();
     let _key = pc.prepend(id, key, "c".to_owned()).unwrap();
     let (consolidated, _) = pc.get(id).unwrap();
