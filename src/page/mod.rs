@@ -50,7 +50,7 @@ pub trait Materializer {
 }
 
 /// Points to either a memory location or a disk location to page-in data from.
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CacheEntry<M> {
     /// A cache item that is in memory, and also in secondary storage.
     Resident(Vec<M>, LogID),

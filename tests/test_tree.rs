@@ -1,7 +1,13 @@
+extern crate quickcheck;
+extern crate rand;
 extern crate rsdb;
 
+use std::collections::BTreeMap;
 use std::thread;
 use std::sync::Arc;
+
+use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
+use rand::{Rng, thread_rng};
 
 use rsdb::*;
 
@@ -36,16 +42,7 @@ macro_rules! par {
 #[inline(always)]
 fn kv(i: usize) -> Vec<u8> {
     let i = i % SPACE;
-    let k = [
-        // (i >> 56) as u8,
-        // (i >> 48) as u8,
-        // (i >> 40) as u8,
-        // (i >> 32) as u8,
-        // (i >> 24) as u8,
-        (i >> 16) as u8,
-        (i >> 8) as u8,
-        i as u8,
-    ];
+    let k = [(i >> 16) as u8, (i >> 8) as u8, i as u8];
     k.to_vec()
 }
 
@@ -162,4 +159,193 @@ fn recovery() {
     t.__delete_all_files();
 }
 
-// TODO quickcheck splits, reads, writes interleaved
+#[derive(Debug, Clone)]
+enum Op {
+    Set(u8, u8),
+    Get(u8),
+    Del(u8),
+    Cas(u8, u8, u8),
+    Scan(u8, usize),
+    Restart,
+}
+
+impl Arbitrary for Op {
+    fn arbitrary<G: Gen>(g: &mut G) -> Op {
+        if g.gen_weighted_bool(10) {
+            return Op::Restart;
+        }
+
+        let choice = g.gen_range(0, 5);
+
+        match choice {
+            0 => Op::Set(g.gen::<u8>(), g.gen::<u8>()),
+            1 => Op::Get(g.gen::<u8>()),
+            2 => Op::Del(g.gen::<u8>()),
+            3 => Op::Cas(g.gen::<u8>(), g.gen::<u8>(), g.gen::<u8>()),
+            4 => Op::Scan(g.gen::<u8>(), g.gen_range::<usize>(0, 40)),
+            _ => panic!("impossible choice"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct OpVec {
+    ops: Vec<Op>,
+}
+
+impl Arbitrary for OpVec {
+    fn arbitrary<G: Gen>(g: &mut G) -> OpVec {
+        let mut ops = vec![];
+        for _ in 0..g.gen_range(1, 100) {
+            let op = Op::arbitrary(g);
+            ops.push(op);
+
+        }
+        OpVec {
+            ops: ops,
+        }
+    }
+
+    fn shrink(&self) -> Box<Iterator<Item = OpVec>> {
+        let mut smaller = vec![];
+        for i in 0..self.ops.len() {
+            let mut clone = self.clone();
+            clone.ops.remove(i);
+            smaller.push(clone);
+        }
+
+        Box::new(smaller.into_iter())
+    }
+}
+
+fn prop_tree_matches_btreemap(ops: OpVec, blink_fanout: u8, snapshot_after: u8) -> bool {
+    use self::Op::*;
+    let nonce: String = thread_rng().gen_ascii_chars().take(10).collect();
+    let path = format!("qc_tree_matches_btreemap_{}", nonce);
+    let config = Config::default()
+        .snapshot_after_ops(snapshot_after as usize + 1)
+        .blink_fanout(blink_fanout as usize + 1)
+        .path(Some(path));
+    let mut tree = config.tree();
+    let mut reference = BTreeMap::new();
+
+    for op in ops.ops.into_iter() {
+        match op {
+            Set(k, v) => {
+                tree.set(vec![k], vec![v]);
+                reference.insert(k, v);
+            }
+            Get(k) => {
+                let res1 = tree.get(&*vec![k]).map(|v_vec| v_vec[0]);
+                let res2 = reference.get(&k).cloned();
+                assert_eq!(res1, res2);
+            }
+            Del(k) => {
+                tree.del(&*vec![k]);
+                reference.remove(&k);
+            }
+            Cas(k, old, new) => {
+                let tree_old = tree.get(&*vec![k]);
+                if tree_old == Some(vec![old]) {
+                    tree.set(vec![k], vec![new]);
+                }
+
+                let ref_old = reference.get(&k).cloned();
+                if ref_old == Some(old) {
+                    reference.insert(k, new);
+                }
+            }
+            Scan(k, len) => {
+                let tree_iter = tree.scan(&*vec![k]).take(len).map(|(ref tk, ref tv)| {
+                    (tk[0], tv[0])
+                });
+                let ref_iter = reference
+                    .iter()
+                    .filter(|&(ref rk, _rv)| **rk >= k)
+                    .take(len)
+                    .map(|(ref rk, ref rv)| (**rk, **rv));
+                for (t, r) in tree_iter.zip(ref_iter) {
+                    assert_eq!(t, r);
+                }
+            }
+            Restart => {
+                drop(tree);
+                tree = config.tree();
+            }
+        }
+    }
+
+    tree.__delete_all_files();
+
+    true
+}
+
+#[test]
+fn qc_tree_matches_btreemap() {
+    QuickCheck::new()
+        .gen(StdGen::new(rand::thread_rng(), 1))
+        .tests(50)
+        .max_tests(100)
+        .quickcheck(prop_tree_matches_btreemap as fn(OpVec, u8, u8) -> bool);
+}
+
+// found after adding the first quickcheck test.
+// this was a bug in the snapshot recovery, where
+// it led to max_id dropping by 1 after a restart.
+#[test]
+fn test_snapshot_bug_1() {
+    use Op::*;
+    prop_tree_matches_btreemap(
+        OpVec {
+            ops: vec![Set(32, 9), Set(195, 13), Restart, Set(164, 147)],
+        },
+        0,
+        0,
+    );
+
+}
+
+// found after adding the first quickcheck test.
+// this was a bug in the way that the `Materializer`
+// was fed data, possibly out of order, if recover
+// in the pagecache had to run over log entries
+// that were later run through the same `Materializer`
+// then the second time (triggered by a snapshot)
+// would not pick up on the importance of seeing
+// the new root set.
+#[test]
+fn test_snapshot_bug_2() {
+    use Op::*;
+    prop_tree_matches_btreemap(
+        OpVec {
+            ops: vec![Restart, Set(215, 121), Restart, Set(216, 203), Scan(210, 4)],
+        },
+        0,
+        0,
+    );
+}
+
+// found after adding the first quickcheck test.
+// the tree has a root hoist, which does not
+// persist across the restart.
+#[test]
+fn test_snapshot_bug_3() {
+    use Op::*;
+    prop_tree_matches_btreemap(
+        OpVec {
+            ops: vec![
+                Set(113, 204),
+                Set(119, 205),
+                Set(166, 88),
+                Set(23, 44),
+                Restart,
+                Set(226, 192),
+                Set(189, 186),
+                Restart,
+                Scan(198, 11),
+            ],
+        },
+        0,
+        0,
+    );
+}

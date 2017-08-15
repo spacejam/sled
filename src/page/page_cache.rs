@@ -44,22 +44,29 @@ impl<PM, L, P, R> Debug for PageCache<PM, L, P, R> {
 impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
     where PM: Materializer<PartialPage = P, Recovery = R>,
           PM: Send + Sync,
-          P: PartialEq + Clone + Debug + Serialize + DeserializeOwned + Send,
-          R: PartialEq + Clone + Debug + Serialize + DeserializeOwned
+          P: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send,
+          R: Debug + PartialEq + Clone + Serialize + DeserializeOwned,
+          PM::MaterializedPage: Debug
 {
     /// Instantiate a new `PageCache`.
     pub fn new(pm: PM, config: Config) -> PageCache<PM, LockFreeLog, P, R> {
         let cache_capacity = config.get_cache_capacity();
         let cache_shard_bits = config.get_cache_bits();
+        let lru = lru::Lru::new(cache_capacity, cache_shard_bits);
+
+        let snapshot = Snapshot::default();
+        let last_snapshot = AtomicOption::new();
+        last_snapshot.swap(snapshot, SeqCst);
+
         PageCache {
             t: pm,
             inner: Radix::default(),
             max_pid: AtomicUsize::new(0),
             free: Stack::default(),
             log: LockFreeLog::start_system(config),
-            lru: lru::Lru::new(cache_capacity, cache_shard_bits),
+            lru: lru,
             updates: AtomicUsize::new(0),
-            last_snapshot: AtomicOption::new(),
+            last_snapshot: last_snapshot,
         }
     }
 
@@ -70,73 +77,23 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
     /// Read updates from the log, apply them to our pagecache.
     pub fn recover(&mut self) -> Option<R> {
+        // we call write_snapshot here to "catch-up" the snapshot before
+        // recovering from it. this allows us to reuse the snapshot
+        // generation logic as initial log parsing logic. this is also
+        // important for ensuring that we feed the provided `Materializer`
+        // a single, linearized history, rather than going back in time
+        // when generating a snapshot.
+        self.write_snapshot();
+
+        // we then read it back,
         let snapshot = self.read_snapshot();
-        let log_tip = snapshot.max_lid;
-        let mut recovery = snapshot.recovery.clone();
+        let recovery = snapshot.recovery.clone();
         self.last_snapshot.swap(snapshot, SeqCst);
 
-        let mut free_pids = vec![];
-
-        for (log_id, bytes) in self.log.iter_from(log_tip) {
-            if let Ok(prepend) = deserialize::<LoggedUpdate<P>>(&*bytes) {
-                match prepend.update {
-                    Update::Append(ref prepends) => {
-                        for prepend in prepends {
-                            let r = self.t.recover(prepend);
-                            if r.is_some() {
-                                recovery = r;
-                            }
-                        }
-
-                        let stack = self.inner.get(prepend.pid).unwrap();
-
-                        let flush = CacheEntry::PartialFlush(log_id);
-
-                        unsafe {
-                            (*stack).push(flush);
-                        }
-                    }
-                    Update::Compact(ref prepends) => {
-                        for prepend in prepends {
-                            let r = self.t.recover(prepend);
-                            if r.is_some() {
-                                recovery = r;
-                            }
-                        }
-
-                        // TODO GC previous stack
-                        // TODO feed compacted page to recover?
-                        self.inner.del(prepend.pid);
-
-                        let stack = raw(Stack::default());
-                        self.inner.insert(prepend.pid, stack).unwrap();
-
-                        let flush = CacheEntry::Flush(log_id);
-
-                        unsafe { (*stack).push(flush) }
-                    }
-                    Update::Del => {
-                        self.inner.del(prepend.pid);
-                        free_pids.push(prepend.pid);
-                    }
-                    Update::Alloc => {
-                        let stack = raw(Stack::default());
-                        self.inner.insert(prepend.pid, stack).unwrap();
-                        free_pids.retain(|&pid| pid != prepend.pid);
-                        if self.max_pid.load(SeqCst) <= prepend.pid {
-                            // always make sure self.max_pid is higher than what exists
-                            self.max_pid.store(prepend.pid + 1, SeqCst);
-                        }
-                    }
-                }
-            }
-        }
-        free_pids.sort();
-        free_pids.reverse();
-        for free_pid in free_pids {
-            self.free.push(free_pid);
-        }
-
+        debug!(
+            "recovery complete, returning recovery state to PageCache owner: {:?}",
+            recovery
+        );
         recovery
     }
 
@@ -395,18 +352,19 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             log_reservation.abort();
         } else {
             log_reservation.complete();
-            self.maybe_snapshot();
+
+            let count = self.updates.fetch_add(1, SeqCst) + 1;
+            let should_snapshot = self.config().get_path().is_some() &&
+                count % self.config().get_snapshot_after_ops() == 0;
+            if should_snapshot {
+                self.write_snapshot();
+            }
         }
+
         result
     }
 
-    fn maybe_snapshot(&self) {
-        let count = self.updates.fetch_add(1, SeqCst) + 1;
-        let should_snapshot = self.config().get_path().is_some() &&
-            count % self.config().get_snapshot_after_ops() == 0;
-        if !should_snapshot {
-            return;
-        }
+    fn write_snapshot(&self) {
         self.log.flush();
 
         let snapshot_opt = self.last_snapshot.take(SeqCst);
@@ -437,6 +395,10 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
                 break;
             }
             if let Ok(prepend) = deserialize::<LoggedUpdate<P>>(&*bytes) {
+                if prepend.pid >= snapshot.max_pid {
+                    snapshot.max_pid = prepend.pid + 1;
+                }
+
                 match prepend.update {
                     Update::Append(partial_pages) => {
                         for partial_page in partial_pages {
@@ -465,9 +427,6 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
                     }
                     Update::Alloc => {
                         snapshot.free.retain(|&pid| pid != prepend.pid);
-                        if prepend.pid > snapshot.max_pid {
-                            snapshot.max_pid = prepend.pid;
-                        }
                     }
                 }
             }
@@ -535,6 +494,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             }
         }
         if candidates.is_empty() {
+            info!("no previous snapshot found");
             return Snapshot::default();
         }
 
@@ -557,8 +517,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         let crc_actual = crc64::crc64(&*buf);
 
         if crc_expected != crc_actual {
-            error!("crc for {:?} failed! falling back to parsing the entire log...", path);
-            return Snapshot::default();
+            panic!("crc for snapshot file {:?} failed!", path);
         }
 
         let bytes = if self.config().get_use_compression() {
