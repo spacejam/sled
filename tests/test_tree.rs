@@ -7,7 +7,7 @@ use std::thread;
 use std::sync::Arc;
 
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
-use rand::Rng;
+use rand::{Rng, thread_rng};
 
 use rsdb::*;
 
@@ -171,7 +171,7 @@ enum Op {
 
 impl Arbitrary for Op {
     fn arbitrary<G: Gen>(g: &mut G) -> Op {
-        if g.gen_weighted_bool(50) {
+        if g.gen_weighted_bool(10) {
             return Op::Restart;
         }
 
@@ -218,10 +218,14 @@ impl Arbitrary for OpVec {
     }
 }
 
-fn prop_tree_matches_btreemap(ops: OpVec) -> bool {
+fn prop_tree_matches_btreemap(ops: OpVec, blink_fanout: u8, snapshot_after: u8) -> bool {
     use self::Op::*;
-    let path = Some("qc_tree_matches_btreemap".to_owned());
-    let config = Config::default().blink_fanout(2).path(path);
+    let nonce: String = thread_rng().gen_ascii_chars().take(10).collect();
+    let path = format!("qc_tree_matches_btreemap_{}", nonce);
+    let config = Config::default()
+        .snapshot_after_ops(snapshot_after as usize + 1)
+        .blink_fanout(blink_fanout as usize + 1)
+        .path(Some(path));
     let mut tree = config.tree();
     let mut reference = BTreeMap::new();
 
@@ -282,5 +286,66 @@ fn qc_tree_matches_btreemap() {
         .gen(StdGen::new(rand::thread_rng(), 1))
         .tests(50)
         .max_tests(100)
-        .quickcheck(prop_tree_matches_btreemap as fn(OpVec) -> bool);
+        .quickcheck(prop_tree_matches_btreemap as fn(OpVec, u8, u8) -> bool);
+}
+
+// found after adding the first quickcheck test.
+// this was a bug in the snapshot recovery, where
+// it led to max_id dropping by 1 after a restart.
+#[test]
+fn test_snapshot_bug_1() {
+    use Op::*;
+    prop_tree_matches_btreemap(
+        OpVec {
+            ops: vec![Set(32, 9), Set(195, 13), Restart, Set(164, 147)],
+        },
+        0,
+        0,
+    );
+
+}
+
+// found after adding the first quickcheck test.
+// this was a bug in the way that the `Materializer`
+// was fed data, possibly out of order, if recover
+// in the pagecache had to run over log entries
+// that were later run through the same `Materializer`
+// then the second time (triggered by a snapshot)
+// would not pick up on the importance of seeing
+// the new root set.
+#[test]
+fn test_snapshot_bug_2() {
+    use Op::*;
+    prop_tree_matches_btreemap(
+        OpVec {
+            ops: vec![Restart, Set(215, 121), Restart, Set(216, 203), Scan(210, 4)],
+        },
+        0,
+        0,
+    );
+}
+
+// found after adding the first quickcheck test.
+// the tree has a root hoist, which does not
+// persist across the restart.
+#[test]
+fn test_snapshot_bug_3() {
+    use Op::*;
+    prop_tree_matches_btreemap(
+        OpVec {
+            ops: vec![
+                Set(113, 204),
+                Set(119, 205),
+                Set(166, 88),
+                Set(23, 44),
+                Restart,
+                Set(226, 192),
+                Set(189, 186),
+                Restart,
+                Scan(198, 11),
+            ],
+        },
+        0,
+        0,
+    );
 }
