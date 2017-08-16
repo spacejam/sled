@@ -4,7 +4,6 @@
 /// SSD that can efficiently handle random reads.
 use std::collections::BTreeMap;
 use std::fmt::{self, Debug};
-use std::ptr;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 

@@ -1,51 +1,49 @@
 // lock-free stack
 use std::fmt::{self, Debug};
 use std::ptr;
-use std::marker::PhantomData;
-use std::mem;
 use std::ops::Deref;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::Ordering::SeqCst;
 
-use {raw, test_fail};
+use coco::epoch::{Atomic, Owned, Ptr, Scope, pin};
 
+use test_fail;
+
+#[derive(Debug)]
 pub struct Node<T> {
     inner: T,
-    next: *const Node<T>,
+    next: Atomic<Node<T>>,
 }
 
-#[derive(Clone)]
 pub struct Stack<T> {
-    head: Arc<AtomicPtr<Node<T>>>,
+    head: Atomic<Node<T>>,
 }
 
 impl<T> Default for Stack<T> {
     fn default() -> Stack<T> {
         Stack {
-            head: Arc::new(AtomicPtr::new(ptr::null_mut())),
+            head: Atomic::null(),
         }
     }
 }
 
 impl<T: Debug> Debug for Stack<T> {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        let mut ptr = self.head();
-        formatter.write_str("Stack(").unwrap();
-        ptr.fmt(formatter).unwrap();
-        formatter.write_str(") [").unwrap();
-        let mut written = false;
-        while !ptr.is_null() {
-            if written {
-                formatter.write_str(", ").unwrap();
+        pin(|scope| {
+            let head = self.head(scope);
+            let iter = StackIter::from_ptr(head, scope);
+
+            formatter.write_str("Stack [").unwrap();
+            let mut written = false;
+            for node in iter {
+                if written {
+                    formatter.write_str(", ").unwrap();
+                }
+                node.fmt(formatter).unwrap();
+                written = true;
             }
-            unsafe {
-                (*ptr).inner.fmt(formatter).unwrap();
-                ptr = (*ptr).next;
-            }
-            written = true;
-        }
-        formatter.write_str("]").unwrap();
-        Ok(())
+            formatter.write_str("]").unwrap();
+            Ok(())
+        })
     }
 }
 
@@ -57,165 +55,108 @@ impl<T> Deref for Node<T> {
 }
 
 impl<T> Node<T> {
-    pub fn next(&self) -> *const Node<T> {
-        self.next
-    }
-}
-
-impl<T> Drop for Stack<T> {
-    fn drop(&mut self) {
-        let mut ptr = self.head();
-        while !ptr.is_null() {
-            let node: Box<Node<T>> = unsafe { Box::from_raw(ptr as *mut _) };
-            ptr = node.next;
-        }
+    pub fn next<'s>(&self, scope: &'s Scope) -> Ptr<'s, Node<T>> {
+        self.next.load(SeqCst, scope)
     }
 }
 
 impl<T> Stack<T> {
-    pub fn from_raw(from: *const Node<T>) -> Stack<T> {
-        Stack {
-            head: Arc::new(AtomicPtr::new(from as *mut Node<T>)),
-        }
-    }
-
-    pub fn from_vec(from: Vec<T>) -> Stack<T> {
-        let stack = Stack::default();
-
-        for item in from.into_iter().rev() {
-            stack.push(item);
-        }
-
-        stack
-    }
-
     pub fn push(&self, inner: T) {
-        let mut head = self.head() as *mut _;
-        let mut node = Box::into_raw(Box::new(Node {
-            inner: inner,
-            next: head,
-        }));
-        loop {
-            let ret = self.head.compare_and_swap(head, node, Ordering::SeqCst);
-            if head == ret {
-                return;
+        pin(|scope| {
+            let node = Owned::new(Node {
+                inner: inner,
+                next: Atomic::null(),
+            }).into_ptr(scope);
+
+            loop {
+                let head = self.head(scope);
+                unsafe { node.deref().next.store(head, SeqCst) };
+                if self.head
+                    .compare_and_swap(head, node, SeqCst, scope)
+                    .is_ok()
+                {
+                    return;
+                }
             }
-            head = ret;
-            unsafe {
-                (*node).next = head;
-            }
-        }
+        })
     }
 
     pub fn pop(&self) -> Option<T> {
-        loop {
-            let head_ptr = self.head() as *mut _;
-            if head_ptr.is_null() {
-                return None;
+        pin(|scope| {
+            let mut head = self.head(scope);
+            loop {
+                match unsafe { head.as_ref() } {
+                    Some(h) => {
+                        let next = h.next.load(SeqCst, scope);
+                        match self.head.compare_and_swap(head, next, SeqCst, scope) {
+                            Ok(()) => unsafe {
+                                scope.defer_free(head);
+                                return Some(ptr::read(&h.inner));
+                            },
+                            Err(h) => head = h,
+                        }
+                    }
+                    None => return None,
+                }
             }
-            let node: Box<Node<T>> = unsafe { Box::from_raw(head_ptr) };
-            let next_ptr = node.next;
-
-            if head_ptr ==
-                self.head.compare_and_swap(
-                    head_ptr,
-                    next_ptr as *mut _,
-                    Ordering::SeqCst,
-                )
-            {
-                return Some(node.inner);
-            } else {
-                mem::forget(node);
-            }
-        }
-    }
-
-    pub fn pop_all(&self) -> Vec<T> {
-        let mut node_ptr = self.head.swap(ptr::null_mut(), Ordering::SeqCst);
-        let mut res = vec![];
-        while !node_ptr.is_null() {
-            let node = unsafe { Box::from_raw(node_ptr) };
-            node_ptr = node.next as *mut _;
-            res.push(node.inner);
-        }
-        res
+        })
     }
 
     /// compare and push
-    pub fn cap(&self, old: *const Node<T>, new: T) -> Result<*const Node<T>, *const Node<T>> {
-        let node = Box::into_raw(Box::new(Node {
+    pub fn cap<'s>(
+        &self,
+        old: Ptr<Node<T>>,
+        new: T,
+        scope: &'s Scope,
+    ) -> Result<Ptr<'s, Node<T>>, Ptr<'s, Node<T>>> {
+        let node = Owned::new(Node {
             inner: new,
-            next: old,
-        }));
-        let res = self.head.compare_and_swap(
-            old as *mut _,
-            node as *mut _,
-            Ordering::SeqCst,
-        );
-        if old == res && !test_fail() {
+            next: Atomic::null(),
+        });
+
+        node.next.store(old, SeqCst);
+
+        let node = node.into_ptr(scope);
+
+        let res = self.head.compare_and_swap(old, node, SeqCst, scope);
+        if self.head.compare_and_swap(old, node, SeqCst, scope).is_ok() && !test_fail() {
             Ok(node)
         } else {
-            Err(res)
+            Err(res.unwrap_err())
         }
     }
 
     /// attempt consolidation
-    pub fn cas(
+    pub fn cas<'s>(
         &self,
-        old: *const Node<T>,
-        new: *const Node<T>,
-    ) -> Result<*const Node<T>, *const Node<T>> {
-        let res = self.head.compare_and_swap(
-            old as *mut _,
-            new as *mut _,
-            Ordering::SeqCst,
-        );
-        if old == res && !test_fail() {
+        old: Ptr<'s, Node<T>>,
+        new: Ptr<'s, Node<T>>,
+        scope: &'s Scope,
+    ) -> Result<Ptr<'s, Node<T>>, Ptr<'s, Node<T>>> {
+        let res = self.head.compare_and_swap(old, new, SeqCst, scope);
+        if res.is_ok() && !test_fail() {
+            unsafe { scope.defer_drop(old) };
             Ok(new)
         } else {
-            Err(res)
+            Err(res.unwrap_err())
         }
     }
 
-    pub fn iter_at_head(&self) -> (*const Node<T>, StackIter<T>) {
-        let head = self.head();
-        if head.is_null() {
-            panic!("iter_at_head returning null head");
-        }
-        (
-            head,
-            StackIter {
-                inner: head,
-                marker: PhantomData,
-            },
-        )
-    }
-
-    pub fn head(&self) -> *const Node<T> {
-        self.head.load(Ordering::Acquire)
-    }
-
-    pub fn len(&self) -> usize {
-        let mut len = 0;
-        let mut head = self.head();
-        while !head.is_null() {
-            len += 1;
-            head = unsafe { (*head).next };
-        }
-        len
+    pub fn head<'s>(&self, scope: &'s Scope) -> Ptr<'s, Node<T>> {
+        self.head.load(SeqCst, scope)
     }
 }
 
 pub struct StackIter<'a, T: 'a> {
-    inner: *const Node<T>,
-    marker: PhantomData<&'a Node<T>>,
+    inner: Ptr<'a, Node<T>>,
+    scope: &'a Scope,
 }
 
 impl<'a, T: 'a> StackIter<'a, T> {
-    pub fn from_ptr(ptr: *const Node<T>) -> StackIter<'a, T> {
+    pub fn from_ptr<'b>(ptr: Ptr<'b, Node<T>>, scope: &'b Scope) -> StackIter<'b, T> {
         StackIter {
             inner: ptr,
-            marker: PhantomData,
+            scope: scope,
         }
     }
 }
@@ -227,44 +168,38 @@ impl<'a, T> Iterator for StackIter<'a, T> {
             None
         } else {
             unsafe {
-                let ret = &(*self.inner).inner;
-                self.inner = (*self.inner).next;
+                let ref ret = self.inner.deref().inner;
+                self.inner = self.inner.deref().next.load(SeqCst, self.scope);
                 Some(ret)
             }
         }
     }
 }
 
-impl<'a, T> IntoIterator for &'a Stack<T> {
-    type Item = &'a T;
-    type IntoIter = StackIter<'a, T>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        StackIter {
-            inner: self.head(),
-            marker: PhantomData,
-        }
-    }
-}
-
-pub fn node_from_frag_vec<T>(from: Vec<T>) -> *const Node<T> {
-    use std::ptr;
-    let mut last = ptr::null();
+pub fn node_from_frag_vec<T>(from: Vec<T>) -> Owned<Node<T>> {
+    let mut last = None;
 
     for item in from.into_iter().rev() {
-        let node = raw(Node {
+
+        let node = Owned::new(Node {
             inner: item,
-            next: last,
+            next: Atomic::null(),
         });
-        last = node;
+
+        if let Some(last) = last {
+            node.next.store_owned(last, SeqCst);
+        }
+
+        last = Some(node);
     }
 
-    last
+    last.unwrap()
 }
 
 #[test]
 fn basic_functionality() {
     use std::thread;
+    use std::sync::Arc;
 
     let ll = Arc::new(Stack::default());
     assert_eq!(ll.pop(), None);

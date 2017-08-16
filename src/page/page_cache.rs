@@ -3,6 +3,7 @@ use std::io::{Read, Seek, Write};
 use crossbeam::sync::AtomicOption;
 use rayon::prelude::*;
 use zstd::block::{compress, decompress};
+use coco::epoch::{Ptr, Scope};
 
 use super::*;
 
@@ -99,13 +100,12 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
     /// Create a new page, trying to reuse old freed pages if possible
     /// to maximize underlying `Radix` pointer density.
-    pub fn allocate(&self) -> (PageID, *const stack::Node<CacheEntry<P>>) {
+    pub fn allocate<'s>(&self) -> (PageID, Ptr<'s, stack::Node<CacheEntry<P>>>) {
         let pid = self.free.pop().unwrap_or_else(
             || self.max_pid.fetch_add(1, SeqCst),
         );
-        let stack = raw(Stack::default());
         trace!("allocating pid {}", pid);
-        self.inner.insert(pid, stack).unwrap();
+        self.inner.insert(pid, Stack::default()).unwrap();
 
         // write info to log
         let prepend: LoggedUpdate<P> = LoggedUpdate {
@@ -115,14 +115,14 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         let bytes = serialize(&prepend, Infinite).unwrap();
         self.log.write(bytes);
 
-        (pid, ptr::null())
+        (pid, Ptr::null())
     }
 
     /// Free a particular page.
     pub fn free(&self, pid: PageID) {
         // TODO epoch-based gc for reusing pid & freeing stack
         // TODO iter through flushed pages, punch hole
-        let stack_ptr = self.inner.del(pid);
+        self.inner.del(pid);
 
         // write info to log
         let prepend: LoggedUpdate<P> = LoggedUpdate {
@@ -134,27 +134,24 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
         // add pid to free stack to reduce fragmentation over time
         self.free.push(pid);
-
-        unsafe {
-            (*stack_ptr).pop_all();
-        }
     }
 
     /// Try to retrieve a page by its logical ID.
-    pub fn get(
+    pub fn get<'s>(
         &self,
         pid: PageID,
-    ) -> Option<(PM::MaterializedPage, *const stack::Node<CacheEntry<P>>)> {
-        let stack_ptr = self.inner.get(pid);
+        scope: &'s Scope,
+    ) -> Option<(PM::MaterializedPage, Ptr<'s, stack::Node<CacheEntry<P>>>)> {
+        let stack_ptr = self.inner.get(pid, scope);
         if stack_ptr.is_none() {
             return None;
         }
 
         let stack_ptr = stack_ptr.unwrap();
 
-        let head = unsafe { (*stack_ptr).head() };
+        let head = unsafe { stack_ptr.deref().head(scope) };
 
-        Some(self.page_in(pid, head, stack_ptr))
+        Some(self.page_in(pid, head, stack_ptr, scope))
     }
 
     #[doc(hidden)]
@@ -188,15 +185,17 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         }
     }
 
-    fn page_out(&self, to_evict: Vec<PageID>) {
+    fn page_out<'s>(&self, to_evict: Vec<PageID>, scope: &'s Scope) {
         for pid in to_evict {
-            let stack_ptr = self.inner.get(pid);
+            let stack_ptr = self.inner.get(pid, scope);
             if stack_ptr.is_none() {
                 continue;
             }
 
             let stack_ptr = stack_ptr.unwrap();
-            let (head, stack_iter) = unsafe { (*stack_ptr).iter_at_head() };
+
+            let head = unsafe { stack_ptr.deref().head(scope) };
+            let stack_iter = StackIter::from_ptr(head, scope);
             let mut cache_entries: Vec<CacheEntry<P>> =
                 stack_iter.map(|ptr| (*ptr).clone()).collect();
 
@@ -225,7 +224,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             }
             new_stack.push(last.unwrap());
             let node = node_from_frag_vec(new_stack);
-            let res = unsafe { (*stack_ptr).cas(head, node) };
+            let res = unsafe { stack_ptr.deref().cas(head, node.into_ptr(scope), scope) };
             if res.is_ok() {
                 self.lru.page_out_succeeded(pid);
             } else {
@@ -234,13 +233,14 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         }
     }
 
-    fn page_in(
+    fn page_in<'s>(
         &self,
         pid: PageID,
-        mut head: *const stack::Node<CacheEntry<P>>,
-        stack_ptr: *const stack::Stack<CacheEntry<P>>,
-    ) -> (PM::MaterializedPage, *const stack::Node<CacheEntry<P>>) {
-        let stack_iter = StackIter::from_ptr(head);
+        mut head: Ptr<'s, stack::Node<CacheEntry<P>>>,
+        stack_ptr: Ptr<'s, stack::Stack<CacheEntry<P>>>,
+        scope: &'s Scope,
+    ) -> (PM::MaterializedPage, Ptr<'s, stack::Node<CacheEntry<P>>>) {
+        let stack_iter = StackIter::from_ptr(head, scope);
         let mut cache_entries: Vec<CacheEntry<P>> = stack_iter.map(|ptr| (*ptr).clone()).collect();
 
         // read items off of disk in parallel if anything isn't already resident
@@ -261,7 +261,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             );
 
             let node = node_from_frag_vec(cache_entries.clone());
-            let res = unsafe { (*stack_ptr).cas(head, node) };
+            let res = unsafe { stack_ptr.deref().cas(head, node.into_ptr(scope), scope) };
             if let Ok(new_head) = res {
                 head = new_head;
             }
@@ -282,11 +282,11 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             pid,
             std::mem::size_of_val(&partial_pages),
         );
-        self.page_out(to_evict);
+        self.page_out(to_evict, scope);
 
         if partial_pages.len() > self.config().get_page_consolidation_threshold() {
             let consolidated = self.t.consolidate(&partial_pages);
-            if let Ok(new_head) = self.replace(pid, head, consolidated) {
+            if let Ok(new_head) = self.replace(pid, head, consolidated, scope) {
                 head = new_head;
             }
         }
@@ -297,12 +297,13 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
     }
 
     /// Replace an existing page with a different set of `PartialPage`s.
-    pub fn replace(
+    pub fn replace<'s>(
         &self,
         pid: PageID,
-        old: *const stack::Node<CacheEntry<P>>,
+        old: Ptr<'s, stack::Node<CacheEntry<P>>>,
         new: Vec<P>,
-    ) -> Result<*const stack::Node<CacheEntry<P>>, *const stack::Node<CacheEntry<P>>> {
+        scope: &'s Scope,
+    ) -> Result<Ptr<'s, stack::Node<CacheEntry<P>>>, Ptr<'s, stack::Node<CacheEntry<P>>>> {
         let replace: LoggedUpdate<P> = LoggedUpdate {
             pid: pid,
             update: Update::Compact(new.clone()),
@@ -312,28 +313,31 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         let log_offset = log_reservation.log_id();
 
         let cache_entry = CacheEntry::Resident(new, log_offset);
-        let node = node_from_frag_vec(vec![cache_entry]);
+        let node = node_from_frag_vec(vec![cache_entry]).into_ptr(scope);
 
-        let stack_ptr = self.inner.get(pid).unwrap();
-        let result = unsafe { (*stack_ptr).cas(old, node) };
+        let stack_ptr = self.inner.get(pid, scope).unwrap();
 
-        if let Err(_ptr) = result {
-            // TODO GC
-            log_reservation.abort();
-        } else {
+        let result = unsafe { stack_ptr.deref().cas(old, node, scope) };
+
+        if result.is_ok() {
+            unsafe { scope.defer_drop(old) };
             log_reservation.complete();
+        } else {
+            log_reservation.abort();
         }
+
         result
     }
 
 
     /// Try to atomically prepend a `Materializer::PartialPage` to the page.
-    pub fn prepend(
+    pub fn prepend<'s>(
         &self,
         pid: PageID,
-        old: *const stack::Node<CacheEntry<P>>,
+        old: Ptr<'s, stack::Node<CacheEntry<P>>>,
         new: P,
-    ) -> Result<*const stack::Node<CacheEntry<P>>, *const stack::Node<CacheEntry<P>>> {
+        scope: &'s Scope,
+    ) -> Result<Ptr<'s, stack::Node<CacheEntry<P>>>, Ptr<'s, stack::Node<CacheEntry<P>>>> {
         let prepend: LoggedUpdate<P> = LoggedUpdate {
             pid: pid,
             update: Update::Append(vec![new.clone()]),
@@ -344,11 +348,12 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
         let cache_entry = CacheEntry::Resident(vec![new], log_offset);
 
-        let stack_ptr = self.inner.get(pid).unwrap();
-        let result = unsafe { (*stack_ptr).cap(old, cache_entry) };
+        let stack_ptr = self.inner.get(pid, scope).unwrap();
+        let result = unsafe { stack_ptr.deref().cap(old, cache_entry, scope) };
 
-        if let Err(_ptr) = result {
+        if let Err(ptr) = result {
             // TODO GC
+            unsafe { scope.defer_drop(ptr) };
             log_reservation.abort();
         } else {
             log_reservation.complete();
@@ -556,7 +561,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
                 stack.push(CacheEntry::PartialFlush(lid));
             }
 
-            self.inner.insert(*pid, raw(stack)).unwrap();
+            self.inner.insert(*pid, stack).unwrap();
         }
     }
 }

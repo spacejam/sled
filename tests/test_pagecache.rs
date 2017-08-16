@@ -1,6 +1,8 @@
 extern crate rsdb;
+extern crate coco;
 
 use rsdb::*;
+use coco::epoch::pin;
 
 #[derive(Clone)]
 pub struct TestMaterializer;
@@ -36,34 +38,41 @@ fn basic_recovery() {
         .flush_every_ms(None)
         .path(Some(path.to_owned()))
         .snapshot_path(Some(snapshot_path.to_owned()));
-    let mut pc = PageCache::new(TestMaterializer, conf.clone());
-    pc.recover();
-    let (id, key) = pc.allocate();
-    let key = pc.replace(id, key, vec!["a".to_owned()]).unwrap();
-    let key = pc.prepend(id, key, "b".to_owned()).unwrap();
-    let _key = pc.prepend(id, key, "c".to_owned()).unwrap();
-    let (consolidated, _) = pc.get(id).unwrap();
-    assert_eq!(consolidated, "abc".to_owned());
-    drop(pc);
 
-    let mut pc2 = PageCache::new(TestMaterializer, conf.clone());
-    pc2.recover();
-    let (consolidated2, key) = pc2.get(id).unwrap();
-    assert_eq!(consolidated, consolidated2);
+    let (id, consolidated) = pin(|scope| {
+        let mut pc = PageCache::new(TestMaterializer, conf.clone());
+        pc.recover();
+        let (id, key) = pc.allocate();
+        let key = pc.replace(id, key, vec!["a".to_owned()], scope).unwrap();
+        let key = pc.prepend(id, key, "b".to_owned(), scope).unwrap();
+        let _key = pc.prepend(id, key, "c".to_owned(), scope).unwrap();
+        let (consolidated, _) = pc.get(id, scope).unwrap();
+        assert_eq!(consolidated, "abc".to_owned());
+        (id, consolidated)
+    });
 
-    pc2.prepend(id, key, "d".to_owned()).unwrap();
-    drop(pc2);
+    pin(|scope| {
+        let mut pc2 = PageCache::new(TestMaterializer, conf.clone());
+        pc2.recover();
+        let (consolidated2, key) = pc2.get(id, scope).unwrap();
+        assert_eq!(consolidated, consolidated2);
 
-    let mut pc3 = PageCache::new(TestMaterializer, conf.clone());
-    pc3.recover();
-    let (consolidated3, _key) = pc3.get(id).unwrap();
-    assert_eq!(consolidated3, "abcd".to_owned());
-    pc3.free(id);
-    drop(pc3);
+        pc2.prepend(id, key, "d".to_owned(), scope).unwrap();
+    });
 
-    let mut pc4 = PageCache::new(TestMaterializer, conf.clone());
-    pc4.recover();
-    let res = pc4.get(id);
-    assert_eq!(res, None);
-    pc4.__delete_all_files();
+    pin(|scope| {
+        let mut pc3 = PageCache::new(TestMaterializer, conf.clone());
+        pc3.recover();
+        let (consolidated3, _key) = pc3.get(id, scope).unwrap();
+        assert_eq!(consolidated3, "abcd".to_owned());
+        pc3.free(id);
+    });
+
+    pin(|scope| {
+        let mut pc4 = PageCache::new(TestMaterializer, conf.clone());
+        pc4.recover();
+        let res = pc4.get(id, scope);
+        assert!(res.is_none());
+        pc4.__delete_all_files();
+    });
 }

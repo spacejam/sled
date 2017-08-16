@@ -5,6 +5,8 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 
+use coco::epoch::{Ptr, Scope, pin};
+
 use super::*;
 
 mod frag;
@@ -17,7 +19,7 @@ pub use self::node::*;
 
 pub const FANOUT: usize = 2;
 
-type Raw = *const stack::Node<CacheEntry<Frag>>;
+type Raw<'s> = Ptr<'s, stack::Node<CacheEntry<Frag>>>;
 
 /// A flash-sympathetic persistent lock-free B+ tree
 pub struct Tree {
@@ -43,38 +45,43 @@ impl Tree {
         let root_id = if let Some(root_id) = root_opt {
             root_id
         } else {
-            let (root_id, root_cas_key) = pages.allocate();
-            let (leaf_id, leaf_cas_key) = pages.allocate();
+            pin(|scope| {
+                let (root_id, root_cas_key) = pages.allocate();
+                let (leaf_id, leaf_cas_key) = pages.allocate();
 
-            let leaf = Frag::Base(
-                Node {
-                    id: leaf_id,
-                    data: Data::Leaf(vec![]),
-                    next: None,
-                    lo: Bound::Inc(vec![]),
-                    hi: Bound::Inf,
-                },
-                false,
-            );
+                let leaf = Frag::Base(
+                    Node {
+                        id: leaf_id,
+                        data: Data::Leaf(vec![]),
+                        next: None,
+                        lo: Bound::Inc(vec![]),
+                        hi: Bound::Inf,
+                    },
+                    false,
+                );
 
-            let mut root_index_vec = vec![];
-            root_index_vec.push((vec![], leaf_id));
+                let mut root_index_vec = vec![];
+                root_index_vec.push((vec![], leaf_id));
 
-            let root = Frag::Base(
-                Node {
-                    id: root_id,
-                    data: Data::Index(root_index_vec),
-                    next: None,
-                    lo: Bound::Inc(vec![]),
-                    hi: Bound::Inf,
-                },
-                true,
-            );
+                let root = Frag::Base(
+                    Node {
+                        id: root_id,
+                        data: Data::Index(root_index_vec),
+                        next: None,
+                        lo: Bound::Inc(vec![]),
+                        hi: Bound::Inf,
+                    },
+                    true,
+                );
 
-            pages.replace(root_id, root_cas_key, vec![root]).unwrap();
-            pages.replace(leaf_id, leaf_cas_key, vec![leaf]).unwrap();
-
-            root_id
+                pages
+                    .replace(root_id, root_cas_key, vec![root], scope)
+                    .unwrap();
+                pages
+                    .replace(leaf_id, leaf_cas_key, vec![leaf], scope)
+                    .unwrap();
+                root_id
+            })
         };
 
         Tree {
@@ -91,9 +98,11 @@ impl Tree {
     /// Retrieve a value from the `Tree` if it exists.
     pub fn get(&self, key: &[u8]) -> Option<Value> {
         // println!("starting get");
-        let (_, ret) = self.get_internal(key);
-        // println!("done get");
-        ret
+        pin(|scope| {
+            let (_, ret) = self.get_internal(key, scope);
+            // println!("done get");
+            ret
+        })
     }
 
     /// Compare and swap. Capable of unique creation, conditional modification,
@@ -130,28 +139,37 @@ impl Tree {
         let frag = new.map(|n| Frag::Set(key.clone(), n)).unwrap_or_else(|| {
             Frag::Del(key.clone())
         });
-        loop {
-            let (mut path, cur) = self.get_internal(&*key);
+        pin(|scope| loop {
+            let (mut path, cur) = self.get_internal(&*key, scope);
             if old != cur {
                 return Err(cur);
             }
 
             let &mut (ref node, ref cas_key) = path.last_mut().unwrap();
-            if self.pages.prepend(node.id, *cas_key, frag.clone()).is_ok() {
+            if self.pages
+                .prepend(node.id, *cas_key, frag.clone(), scope)
+                .is_ok()
+            {
                 return Ok(());
             }
-        }
+        })
     }
 
     /// Set a key to a new value.
     pub fn set(&self, key: Key, value: Value) {
         // println!("starting set of {:?} -> {:?}", key, value);
         let frag = Frag::Set(key.clone(), value);
-        loop {
-            let mut path = self.path_for_key(&*key);
+        pin(|scope| loop {
+            let mut path = self.path_for_key(&*key, scope);
             let (mut last_node, last_cas_key) = path.pop().unwrap();
             // println!("last before: {:?}", last);
-            if let Ok(new_cas_key) = self.pages.prepend(last_node.id, last_cas_key, frag.clone()) {
+            if let Ok(new_cas_key) = self.pages.prepend(
+                last_node.id,
+                last_cas_key,
+                frag.clone(),
+                scope,
+            )
+            {
                 last_node.apply(&frag);
                 // println!("last after: {:?}", last);
                 let should_split = last_node.should_split();
@@ -159,14 +177,14 @@ impl Tree {
                 // success
                 if should_split {
                     // println!("need to split {:?}", last_node.id);
-                    self.recursive_split(&path);
+                    pin(|scope| self.recursive_split(&path, scope));
                 }
                 break;
             } else {
                 // failure, retry
                 continue;
             }
-        }
+        })
         // println!("done set of {:?}", key);
     }
 
@@ -182,32 +200,37 @@ impl Tree {
     /// assert_eq!(t.del(&*vec![1]), None);
     /// ```
     pub fn del(&self, key: &[u8]) -> Option<Value> {
-        let mut ret: Option<Value>;
-        loop {
-            let mut path = self.path_for_key(&*key);
-            let (leaf_node, leaf_cas_key) = path.pop().unwrap();
-            match leaf_node.data {
-                Data::Leaf(ref items) => {
-                    let search = items.binary_search_by(|&(ref k, ref _v)| (**k).cmp(key));
-                    if let Ok(idx) = search {
-                        ret = Some(items[idx].1.clone());
-                    } else {
-                        return None;
+        pin(|scope| {
+            let mut ret: Option<Value>;
+            loop {
+                let mut path = self.path_for_key(&*key, scope);
+                let (leaf_node, leaf_cas_key) = path.pop().unwrap();
+                match leaf_node.data {
+                    Data::Leaf(ref items) => {
+                        let search = items.binary_search_by(|&(ref k, ref _v)| (**k).cmp(key));
+                        if let Ok(idx) = search {
+                            ret = Some(items[idx].1.clone());
+                        } else {
+                            ret = None;
+                            break;
+                        }
                     }
+                    _ => panic!("last node in path is not leaf"),
                 }
-                _ => panic!("last node in path is not leaf"),
-            }
 
-            let frag = Frag::Del(key.to_vec());
-            if self.pages.prepend(leaf_node.id, leaf_cas_key, frag).is_ok() {
-                // success
-                break;
-            } else {
-                // failure, retry
+                let frag = Frag::Del(key.to_vec());
+                if self.pages
+                    .prepend(leaf_node.id, leaf_cas_key, frag, scope)
+                    .is_ok()
+                {
+                    // success
+                    break;
+                } else {
+                    // failure, retry
+                }
             }
-        }
-
-        ret
+            ret
+        })
     }
 
     /// Iterate over tuples of keys and values, starting at the provided key.
@@ -226,13 +249,15 @@ impl Tree {
     /// assert_eq!(iter.next(), None);
     /// ```
     pub fn scan(&self, key: &[u8]) -> TreeIter {
-        let (path, _) = self.get_internal(key);
-        let (last_node, _last_cas_key) = path.last().cloned().unwrap();
-        TreeIter {
-            id: last_node.id,
-            inner: &self.pages,
-            last_key: Bound::Non(key.to_vec()),
-        }
+        pin(|scope| {
+            let (path, _) = self.get_internal(key, scope);
+            let (last_node, _last_cas_key) = path.last().cloned().unwrap();
+            TreeIter {
+                id: last_node.id,
+                inner: &self.pages,
+                last_key: Bound::Non(key.to_vec()),
+            }
+        })
     }
 
     /// Iterate over the tuples of keys and values in this tree.
@@ -252,16 +277,18 @@ impl Tree {
     /// assert_eq!(iter.next(), None);
     /// ```
     pub fn iter(&self) -> TreeIter {
-        let (path, _) = self.get_internal(b"");
-        let (last_node, _last_cas_key) = path.last().cloned().unwrap();
-        TreeIter {
-            id: last_node.id,
-            inner: &self.pages,
-            last_key: Bound::Non(vec![]),
-        }
+        pin(|scope| {
+            let (path, _) = self.get_internal(b"", scope);
+            let (last_node, _last_cas_key) = path.last().cloned().unwrap();
+            TreeIter {
+                id: last_node.id,
+                inner: &self.pages,
+                last_key: Bound::Non(vec![]),
+            }
+        })
     }
 
-    fn recursive_split(&self, path: &[(Node, Raw)]) {
+    fn recursive_split<'s>(&self, path: &[(Node, Raw)], scope: &'s Scope) {
         // to split, we pop the path, see if it's in need of split, recurse up
         // two-phase: (in prep for lock-free, not necessary for single threaded)
         //  1. half-split: install split on child, P
@@ -292,7 +319,7 @@ impl Tree {
             // println!("splitting node {:?}", node);
             if node.should_split() {
                 // try to child split
-                if let Ok(parent_split) = self.child_split(&node, cas_key) {
+                if let Ok(parent_split) = self.child_split(&node, cas_key, scope) {
                     // now try to parent split
                     // TODO(GC) double check for leaks here
 
@@ -303,12 +330,15 @@ impl Tree {
                         parent_node.clone(),
                         *parent_cas_key,
                         parent_split.clone(),
+                        scope,
                     );
-                    if res.is_err() {
+
+                    if let Ok(res) = res {
+                        parent_node.apply(&Frag::ParentSplit(parent_split));
+                        *parent_cas_key = res;
+                    } else {
                         continue;
                     }
-                    parent_node.apply(&Frag::ParentSplit(parent_split));
-                    *parent_cas_key = res.unwrap();
                 } else {
                     continue;
                 }
@@ -319,14 +349,24 @@ impl Tree {
 
         if root_node.should_split() {
             // println!("{}: hoisting root {}", name, root_frag.node.id);
-            if let Ok(parent_split) = self.child_split(&root_node, root_cas_key) {
-                self.root_hoist(root_node.id, parent_split.to, parent_split.at.inner().unwrap());
+            if let Ok(parent_split) = self.child_split(&root_node, root_cas_key, scope) {
+                self.root_hoist(
+                    root_node.id,
+                    parent_split.to,
+                    parent_split.at.inner().unwrap(),
+                    scope,
+                );
             }
         }
         // println!("after:\n{:?}\n", self);
     }
 
-    fn child_split(&self, node: &Node, node_cas_key: Raw) -> Result<ParentSplit, ()> {
+    fn child_split<'s>(
+        &self,
+        node: &Node,
+        node_cas_key: Raw,
+        scope: &'s Scope,
+    ) -> Result<ParentSplit, ()> {
         let (new_pid, new_cas_key) = self.pages.allocate();
 
         // split the node in half
@@ -344,12 +384,12 @@ impl Tree {
 
         // install the new right side
         self.pages
-            .replace(new_pid, new_cas_key, vec![Frag::Base(rhs, false)])
-            .unwrap();
+            .replace(new_pid, new_cas_key, vec![Frag::Base(rhs, false)], scope)
+            .expect("failed to initialize child split");
 
         // try to install a child split on the left side
         if self.pages
-            .prepend(node.id, node_cas_key, child_split)
+            .prepend(node.id, node_cas_key, child_split, scope)
             .is_err()
         {
             // if we failed, don't follow through with the parent split
@@ -363,12 +403,13 @@ impl Tree {
         Ok(parent_split)
     }
 
-    fn parent_split(
+    fn parent_split<'s>(
         &self,
         parent_node: Node,
-        parent_cas_key: Raw,
+        parent_cas_key: Raw<'s>,
         parent_split: ParentSplit,
-    ) -> Result<Raw, Raw> {
+        scope: &'s Scope,
+    ) -> Result<Raw<'s>, Raw<'s>> {
 
         // try to install a parent split on the index above
 
@@ -379,6 +420,7 @@ impl Tree {
             parent_node.id,
             parent_cas_key,
             Frag::ParentSplit(parent_split.clone()),
+            scope,
         );
 
         if res.is_err() {
@@ -390,7 +432,7 @@ impl Tree {
         res
     }
 
-    fn root_hoist(&self, from: PageID, to: PageID, at: Key) {
+    fn root_hoist<'s>(&self, from: PageID, to: PageID, at: Key, scope: &'s Scope) {
         // hoist new root, pointing to lhs & rhs
         let (new_root_pid, new_root_cas_key) = self.pages.allocate();
         let mut new_root_vec = vec![];
@@ -407,7 +449,7 @@ impl Tree {
             true,
         );
         self.pages
-            .replace(new_root_pid, new_root_cas_key, vec![new_root])
+            .replace(new_root_pid, new_root_cas_key, vec![new_root], scope)
             .unwrap();
         // println!("split is {:?}", parent_split);
         // println!("trying to cas root at {:?} with real value {:?}", path.first().unwrap().pid, self.root.load(SeqCst));
@@ -423,8 +465,12 @@ impl Tree {
         }
     }
 
-    fn get_internal(&self, key: &[u8]) -> (Vec<(Node, Raw)>, Option<Value>) {
-        let path = self.path_for_key(&*key);
+    fn get_internal<'s>(
+        &self,
+        key: &[u8],
+        scope: &'s Scope,
+    ) -> (Vec<(Node, Raw<'s>)>, Option<Value>) {
+        let path = self.path_for_key(&*key, scope);
         let (last_node, _last_cas_key) = path.last().cloned().unwrap();
         match last_node.data.clone() {
             Data::Leaf(ref items) => {
@@ -449,17 +495,19 @@ impl Tree {
 
     #[doc(hidden)]
     pub fn key_debug_str(&self, key: &[u8]) -> String {
-        let path = self.path_for_key(key);
-        let mut ret = String::new();
-        for &(ref node, _) in &path {
-            ret.push_str(&*format!("\n{:?}", node));
-        }
-        ret
+        pin(|scope| {
+            let path = self.path_for_key(key, scope);
+            let mut ret = String::new();
+            for &(ref node, _) in &path {
+                ret.push_str(&*format!("\n{:?}", node));
+            }
+            ret
+        })
     }
 
     /// returns the traversal path, completing any observed
     /// partially complete splits or merges along the way.
-    fn path_for_key(&self, key: &[u8]) -> Vec<(Node, Raw)> {
+    fn path_for_key<'s>(&self, key: &[u8], scope: &'s Scope) -> Vec<(Node, Raw<'s>)> {
         let key_bound = Bound::Inc(key.into());
         let mut cursor = self.root.load(SeqCst);
         let mut path = vec![];
@@ -469,7 +517,7 @@ impl Tree {
         let mut unsplit_parent: Option<(Node, Raw)> = None;
 
         loop {
-            let (node, cas_key) = self.pages.get(cursor).unwrap();
+            let (node, cas_key) = self.pages.get(cursor, scope).unwrap();
 
             // TODO this may need to change when handling (half) merges
             assert!(node.lo <= key_bound, "overshot key somehow");
@@ -494,7 +542,12 @@ impl Tree {
                     to: node.id,
                 });
 
-                let _res = self.pages.prepend(parent_node.id, parent_cas_key, ps);
+                let _res = self.pages.prepend(
+                    parent_node.id,
+                    parent_cas_key,
+                    ps,
+                    scope,
+                );
                 // println!("trying to fix incomplete parent split: {:?}", res);
                 // println!("after: {:?}", self);
             }
@@ -533,8 +586,8 @@ impl Debug for Tree {
         self.pages.fmt(f).unwrap();
         f.write_str("\tlevel 0:\n").unwrap();
 
-        loop {
-            let (node, _cas_key) = self.pages.get(pid).unwrap();
+        pin(|scope| loop {
+            let (node, _cas_key) = self.pages.get(pid, scope).unwrap();
 
             f.write_str("\t\t").unwrap();
             node.fmt(f).unwrap();
@@ -544,7 +597,7 @@ impl Debug for Tree {
                 pid = next_pid;
             } else {
                 // we've traversed our level, time to bump down
-                let (left_node, _left_cas_key) = self.pages.get(left_most).unwrap();
+                let (left_node, _left_cas_key) = self.pages.get(left_most, scope).unwrap();
 
                 match left_node.data {
                     Data::Index(ptrs) => {
@@ -564,7 +617,7 @@ impl Debug for Tree {
                     }
                 }
             }
-        }
+        });
 
         Ok(())
     }
@@ -574,14 +627,17 @@ pub struct TreeIter<'a> {
     id: PageID,
     inner: &'a PageCache<BLinkMaterializer, LockFreeLog, Frag, PageID>,
     last_key: Bound,
+    // TODO we have to refactor this in light of pages being deleted
 }
 
 impl<'a> Iterator for TreeIter<'a> {
     type Item = (Vec<u8>, Vec<u8>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let (page, _cas_key) = self.inner.get(self.id).unwrap();
+        pin(|scope| loop {
+            let (page, _cas_key) = self.inner.get(self.id, scope).unwrap();
+            // TODO this could be None if the page was removed since the last
+            // iteration, and we need to just get the inner page again...
             for (ref k, ref v) in page.data.leaf().unwrap() {
                 if Bound::Inc(k.clone()) > self.last_key {
                     self.last_key = Bound::Inc(k.to_vec());
@@ -592,7 +648,7 @@ impl<'a> Iterator for TreeIter<'a> {
                 return None;
             }
             self.id = page.next.unwrap();
-        }
+        })
     }
 }
 
@@ -600,7 +656,7 @@ impl<'a> IntoIterator for &'a Tree {
     type Item = (Vec<u8>, Vec<u8>);
     type IntoIter = TreeIter<'a>;
 
-    fn into_iter(self) -> Self::IntoIter {
+    fn into_iter(self) -> TreeIter<'a> {
         self.iter()
     }
 }
