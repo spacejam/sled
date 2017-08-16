@@ -2,6 +2,8 @@ extern crate clap;
 extern crate num_cpus;
 #[macro_use]
 extern crate log;
+extern crate rayon;
+extern crate rand;
 extern crate rsdb;
 
 use std::error::Error;
@@ -10,6 +12,10 @@ use std::process;
 use std::collections::HashMap;
 
 use clap::{App, Arg};
+use rayon::{Configuration, ThreadPool};
+use rand::Rng;
+
+use rsdb::Tree;
 
 fn main() {
     let cpus = &(num_cpus::get().to_string());
@@ -159,7 +165,129 @@ fn main() {
 
 fn run(config: Config) -> Result<(), Box<Error>> {
     println!("running benchmarking suite...");
+
+    // the thread pool we use to perform our operations on the tree
+    let pool = rayon::ThreadPool::new(rayon::Configuration::new().num_threads(config.num_threads))
+        .unwrap();
+
+    // create a default rsdb config
+    let rsdb_config = rsdb::Config::default();
+    let tree = rsdb_config.tree();
+
+    perform_tree_operations(&tree, &config, &pool);
+
     Ok(())
+}
+
+fn perform_tree_operations(tree: &Tree, config: &Config, pool: &ThreadPool) {
+    let sum_ops = config.set + config.scan + config.get + config.delete + config.cas;
+    let ops = vec![
+        (Op::Set, config.set),
+        (Op::Scan, config.scan),
+        (Op::Get, config.get),
+        (Op::Delete, config.delete),
+        (Op::Cas, config.cas),
+    ];
+
+    for i in 0..config.num_operations {
+        let op_to_perform = get_operation_choice(&ops, sum_ops);
+
+        let op: Box<Fn() + Sync> = match op_to_perform {
+            Some(&Op::Set) => Box::new(|| perform_set_operation(&tree)),
+            Some(&Op::Scan) => Box::new(|| perform_scan_operation(&tree)),
+            Some(&Op::Get) => Box::new(|| perform_get_operation(&tree)),
+            Some(&Op::Delete) => Box::new(|| perform_delete_operation(&tree)),
+            Some(&Op::Cas) => Box::new(|| perform_cas_operation(&tree)),
+            _ => Box::new(|| {}),
+        };
+
+        pool.install(|| op());
+    }
+}
+
+fn perform_set_operation(tree: &Tree) {
+    info!("Performing set operation");
+    let kv = KV::new();
+
+    tree.set(kv.key, kv.value);
+}
+
+fn perform_scan_operation(tree: &Tree) {
+    info!("Performing scan operation");
+    let kv = KV::new();
+
+    tree.scan(&kv.key);
+}
+
+fn perform_get_operation(tree: &Tree) {
+    info!("Performing get operation");
+    let kv = KV::new();
+
+    tree.get(&kv.key);
+}
+
+fn perform_delete_operation(tree: &Tree) {
+    info!("Performing delete operation");
+    let kv = KV::new();
+
+    tree.del(&kv.key);
+}
+
+fn perform_cas_operation(tree: &Tree) {
+    info!("Performing cas operation for key");
+    let kv = KV::new();
+
+    let old_value = kv.value;
+    let new_value = KV::new().value;
+
+    tree.cas(kv.key, Some(old_value), Some(new_value));
+}
+
+fn get_operation_choice(ops: &Vec<(Op, usize)>, sum_ops: usize) -> Option<&Op> {
+    let mut choice = rand::thread_rng().gen_range::<usize>(0, sum_ops);
+
+    for &(ref op, ref weight) in ops {
+        if *weight >= choice {
+            return Some(op);
+        }
+        choice -= *weight;
+    }
+    return None;
+}
+
+/// Tree operations
+#[derive(Debug)]
+enum Op {
+    Set,
+    Scan,
+    Get,
+    Delete,
+    Cas,
+}
+
+/// Key-Value struct which contains the keys and values
+struct KV {
+    key: Vec<u8>,
+    value: Vec<u8>,
+}
+
+impl KV {
+    /// creates a new Key-Value instance
+    fn new() -> KV {
+        let key: Vec<u8> = rand::thread_rng()
+            .gen_iter::<u8>()
+            .take(64)
+            .collect::<Vec<u8>>();
+        let value: Vec<u8> = rand::thread_rng()
+            .gen_iter::<u8>()
+            .take(512)
+            .collect::<Vec<u8>>();
+
+        KV {
+            key,
+            value,
+        }
+    }
 }
 
 /// Configuration which is passed in via CLI arguments
