@@ -258,7 +258,7 @@ impl Tree {
         }
     }
 
-    fn recursive_split<'s>(&self, path: &[(Node, CasKey<Frag>)]) {
+    fn recursive_split(&self, path: &[(Node, CasKey<Frag>)]) {
         // to split, we pop the path, see if it's in need of split, recurse up
         // two-phase: (in prep for lock-free, not necessary for single threaded)
         //  1. half-split: install split on child, P
@@ -325,7 +325,7 @@ impl Tree {
         // println!("after:\n{:?}\n", self);
     }
 
-    fn child_split<'s>(&self, node: &Node, node_cas_key: CasKey<Frag>) -> Result<ParentSplit, ()> {
+    fn child_split(&self, node: &Node, node_cas_key: CasKey<Frag>) -> Result<ParentSplit, ()> {
         let (new_pid, new_cas_key) = self.pages.allocate();
 
         // split the node in half
@@ -362,7 +362,7 @@ impl Tree {
         Ok(parent_split)
     }
 
-    fn parent_split<'s>(
+    fn parent_split(
         &self,
         parent_node: Node,
         parent_cas_key: CasKey<Frag>,
@@ -389,7 +389,7 @@ impl Tree {
         res
     }
 
-    fn root_hoist<'s>(&self, from: PageID, to: PageID, at: Key) {
+    fn root_hoist(&self, from: PageID, to: PageID, at: Key) {
         // hoist new root, pointing to lhs & rhs
         let (new_root_pid, new_root_cas_key) = self.pages.allocate();
         let mut new_root_vec = vec![];
@@ -422,7 +422,7 @@ impl Tree {
         }
     }
 
-    fn get_internal<'s>(&self, key: &[u8]) -> (Vec<(Node, CasKey<Frag>)>, Option<Value>) {
+    fn get_internal(&self, key: &[u8]) -> (Vec<(Node, CasKey<Frag>)>, Option<Value>) {
         let path = self.path_for_key(&*key);
         let (last_node, _last_cas_key) = path.last().cloned().unwrap();
         match last_node.data.clone() {
@@ -458,7 +458,7 @@ impl Tree {
 
     /// returns the traversal path, completing any observed
     /// partially complete splits or merges along the way.
-    fn path_for_key<'s>(&self, key: &[u8]) -> Vec<(Node, CasKey<Frag>)> {
+    fn path_for_key(&self, key: &[u8]) -> Vec<(Node, CasKey<Frag>)> {
         let key_bound = Bound::Inc(key.into());
         let mut cursor = self.root.load(SeqCst);
         let mut path = vec![];
@@ -468,7 +468,12 @@ impl Tree {
         let mut unsplit_parent: Option<(Node, CasKey<Frag>)> = None;
 
         loop {
-            let (node, cas_key) = self.pages.get(cursor).unwrap();
+            let get_cursor = self.pages.get(cursor);
+            if get_cursor.is_none() {
+                cursor = self.root.load(SeqCst);
+                continue;
+            }
+            let (node, cas_key) = get_cursor.unwrap();
 
             // TODO this may need to change when handling (half) merges
             assert!(node.lo <= key_bound, "overshot key somehow");

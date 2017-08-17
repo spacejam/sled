@@ -124,6 +124,8 @@ impl<T> Stack<T> {
         } else if res.is_ok() {
             Ok(node)
         } else {
+            trace!("defer_drop called from stack::cap on {:?}", node.as_raw());
+            unsafe { scope.defer_drop(node) };
             Err(res.unwrap_err())
         }
     }
@@ -137,7 +139,10 @@ impl<T> Stack<T> {
     ) -> Result<Ptr<'s, Node<T>>, Ptr<'s, Node<T>>> {
         let res = self.head.compare_and_swap(old, new, SeqCst, scope);
         if res.is_ok() && !test_fail() {
-            unsafe { scope.defer_drop(old) };
+            if !old.is_null() {
+                trace!("defer_drop called from stack::cas on {:?}", old.as_raw());
+                unsafe { scope.defer_drop(old) };
+            }
             Ok(new)
         } else {
             Err(res.unwrap_err())
@@ -170,7 +175,7 @@ impl<'a, T> Iterator for StackIter<'a, T> {
             None
         } else {
             unsafe {
-                let ref ret = self.inner.deref().inner;
+                let ret = &self.inner.deref().inner;
                 self.inner = self.inner.deref().next.load(SeqCst, self.scope);
                 Some(ret)
             }

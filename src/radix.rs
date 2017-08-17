@@ -79,7 +79,13 @@ impl<T> Radix<T> {
 
         unsafe {
             match tip.deref().inner.compare_and_swap(old, new, SeqCst, scope) {
-                Ok(()) => Ok(new),
+                Ok(()) => {
+                    if !old.is_null() {
+                        trace!("defer_drop called from radix::cas on {:?}", old.as_raw());
+                        scope.defer_drop(old);
+                    }
+                    Ok(new)
+                }
                 Err(e) => Err(e),
             }
         }
@@ -99,7 +105,10 @@ impl<T> Radix<T> {
     pub fn del(&self, pid: PageID) {
         pin(|scope| {
             let old = self.swap(pid, Ptr::null(), scope);
-            unsafe { scope.defer_drop(old) };
+            if !old.is_null() {
+                trace!("defer_drop called from radix::del on {:?}", old.as_raw());
+                unsafe { scope.defer_drop(old) };
+            }
         })
     }
 }
@@ -117,7 +126,7 @@ fn traverse<'s, T>(
 
     let (first_bits, remainder) = split_fanout(pid);
     let child_index = first_bits;
-    let ref children = unsafe { &ptr.deref().children };
+    let children = unsafe { &ptr.deref().children };
     let mut next_ptr = children[child_index].load(SeqCst, scope);
 
     if next_ptr.is_null() {

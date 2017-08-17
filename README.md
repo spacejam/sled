@@ -1,20 +1,22 @@
 # RSDB
 
-a flash-sympathetic persistent lock-free B+ tree
+a flash-sympathetic persistent lock-free B+ tree, pagecache, and log 
 
 [documentation](https://docs.rs/rsdb)
 
 progress
 
-- [x] lock-free log-structured store with reservable slots
-- [x] lock-free page store supporting cache-friendly partial updates
+- [x] lock-free log with reservable slots
+- [x] lock-free pagecache with cache-friendly partial updates
 - [x] lock-free b-link tree
 - [x] recovery
 - [x] zstd compression
 - [x] LRU cache
 - [x] pagetable snapshotting for faster recovery
-- [ ] epoch-based gc (LEAKS MEMORY FOR NOW LOLOLOLOLOL)
-- [ ] multi-key transactions and MVCC using a higher-level `DB` interface
+- [x] epoch-based gc
+- [ ] higher-level interface with multi-key transaction support
+- [ ] merge operator support
+- [ ] formal verification of lock-free algorithms via symbolic execution
 
 # Goals
 
@@ -26,7 +28,15 @@ progress
 
 Lock-free trees on a lock-free pagecache on a lock-free log. The pagecache scatters
 partial page fragments across the log, rather than rewriting entire pages at a time
-as B+ trees for spinning disks historically have. On page reads, we scatter-gather
-reads across the log to materialize the page from its fragments.
+as B+ trees for spinning disks historically have. On page reads, we concurrently
+scatter-gather reads across the log to materialize the page from its fragments.
+We are friendly to cache by minimizing the 
 
-If you want to build a new tree/other structure on the `PageCache`, implement the `Materializer` trait.
+The system is largely inspired by the Deuteronomy architecture, and aims to implement
+the best features from RocksDB as well.
+
+# References
+
+* [The Bw-Tree: A B-tree for New Hardware Platforms](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/bw-tree-icde2013-final.pdf)
+* [LLAMA: A Cache/Storage Subsystem for Modern Hardware](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/llama-vldb2013.pdf)
+* [Deuteronomy: Transaction Support for Cloud Data](https://www.microsoft.com/en-us/research/publication/deuteronomy-transaction-support-for-cloud-data/)
