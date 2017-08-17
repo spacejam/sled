@@ -3,7 +3,7 @@ use std::io::{Read, Seek, Write};
 use crossbeam::sync::AtomicOption;
 use rayon::prelude::*;
 use zstd::block::{compress, decompress};
-use coco::epoch::{Ptr, Scope};
+use coco::epoch::{Ptr, Scope, pin};
 
 use super::*;
 
@@ -100,7 +100,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
     /// Create a new page, trying to reuse old freed pages if possible
     /// to maximize underlying `Radix` pointer density.
-    pub fn allocate<'s>(&self) -> (PageID, Ptr<'s, stack::Node<CacheEntry<P>>>) {
+    pub fn allocate<'s>(&self) -> (PageID, CasKey<P>) {
         let pid = self.free.pop().unwrap_or_else(
             || self.max_pid.fetch_add(1, SeqCst),
         );
@@ -115,7 +115,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         let bytes = serialize(&prepend, Infinite).unwrap();
         self.log.write(bytes);
 
-        (pid, Ptr::null())
+        (pid, Ptr::null().into())
     }
 
     /// Free a particular page.
@@ -137,21 +137,19 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
     }
 
     /// Try to retrieve a page by its logical ID.
-    pub fn get<'s>(
-        &self,
-        pid: PageID,
-        scope: &'s Scope,
-    ) -> Option<(PM::MaterializedPage, Ptr<'s, stack::Node<CacheEntry<P>>>)> {
-        let stack_ptr = self.inner.get(pid, scope);
-        if stack_ptr.is_none() {
-            return None;
-        }
+    pub fn get<'s>(&self, pid: PageID) -> Option<(PM::MaterializedPage, CasKey<P>)> {
+        pin(|scope| {
+            let stack_ptr = self.inner.get(pid, scope);
+            if stack_ptr.is_none() {
+                return None;
+            }
 
-        let stack_ptr = stack_ptr.unwrap();
+            let stack_ptr = stack_ptr.unwrap();
 
-        let head = unsafe { stack_ptr.deref().head(scope) };
+            let head = unsafe { stack_ptr.deref().head(scope) };
 
-        Some(self.page_in(pid, head, stack_ptr, scope))
+            Some(self.page_in(pid, head, stack_ptr, scope))
+        })
     }
 
     #[doc(hidden)]
@@ -239,7 +237,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         mut head: Ptr<'s, stack::Node<CacheEntry<P>>>,
         stack_ptr: Ptr<'s, stack::Stack<CacheEntry<P>>>,
         scope: &'s Scope,
-    ) -> (PM::MaterializedPage, Ptr<'s, stack::Node<CacheEntry<P>>>) {
+    ) -> (PM::MaterializedPage, CasKey<P>) {
         let stack_iter = StackIter::from_ptr(head, scope);
         let mut cache_entries: Vec<CacheEntry<P>> = stack_iter.map(|ptr| (*ptr).clone()).collect();
 
@@ -286,24 +284,23 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
         if partial_pages.len() > self.config().get_page_consolidation_threshold() {
             let consolidated = self.t.consolidate(&partial_pages);
-            if let Ok(new_head) = self.replace(pid, head, consolidated, scope) {
-                head = new_head;
+            if let Ok(new_head) = self.replace(pid, head.into(), consolidated) {
+                head = new_head.into();
             }
         }
 
         let materialized = self.t.materialize(&partial_pages);
 
-        (materialized, head)
+        (materialized, head.into())
     }
 
     /// Replace an existing page with a different set of `PartialPage`s.
     pub fn replace<'s>(
         &self,
         pid: PageID,
-        old: Ptr<'s, stack::Node<CacheEntry<P>>>,
+        old: CasKey<P>,
         new: Vec<P>,
-        scope: &'s Scope,
-    ) -> Result<Ptr<'s, stack::Node<CacheEntry<P>>>, Ptr<'s, stack::Node<CacheEntry<P>>>> {
+    ) -> Result<CasKey<P>, CasKey<P>> {
         let replace: LoggedUpdate<P> = LoggedUpdate {
             pid: pid,
             update: Update::Compact(new.clone()),
@@ -313,31 +310,28 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         let log_offset = log_reservation.log_id();
 
         let cache_entry = CacheEntry::Resident(new, log_offset);
-        let node = node_from_frag_vec(vec![cache_entry]).into_ptr(scope);
 
-        let stack_ptr = self.inner.get(pid, scope).unwrap();
+        pin(|scope| {
+            let node = node_from_frag_vec(vec![cache_entry]).into_ptr(scope);
 
-        let result = unsafe { stack_ptr.deref().cas(old, node, scope) };
+            let stack_ptr = self.inner.get(pid, scope).unwrap();
 
-        if result.is_ok() {
-            unsafe { scope.defer_drop(old) };
-            log_reservation.complete();
-        } else {
-            log_reservation.abort();
-        }
+            let result = unsafe { stack_ptr.deref().cas(old.clone().into(), node, scope) };
 
-        result
+            if result.is_ok() {
+                unsafe { scope.defer_drop(old.into()) };
+                log_reservation.complete();
+            } else {
+                log_reservation.abort();
+            }
+
+            result.map(|ok| ok.into()).map_err(|e| e.into())
+        })
     }
 
 
     /// Try to atomically prepend a `Materializer::PartialPage` to the page.
-    pub fn prepend<'s>(
-        &self,
-        pid: PageID,
-        old: Ptr<'s, stack::Node<CacheEntry<P>>>,
-        new: P,
-        scope: &'s Scope,
-    ) -> Result<Ptr<'s, stack::Node<CacheEntry<P>>>, Ptr<'s, stack::Node<CacheEntry<P>>>> {
+    pub fn prepend<'s>(&self, pid: PageID, old: CasKey<P>, new: P) -> Result<CasKey<P>, CasKey<P>> {
         let prepend: LoggedUpdate<P> = LoggedUpdate {
             pid: pid,
             update: Update::Append(vec![new.clone()]),
@@ -348,25 +342,27 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
         let cache_entry = CacheEntry::Resident(vec![new], log_offset);
 
-        let stack_ptr = self.inner.get(pid, scope).unwrap();
-        let result = unsafe { stack_ptr.deref().cap(old, cache_entry, scope) };
+        pin(|scope| {
+            let stack_ptr = self.inner.get(pid, scope).unwrap();
+            let result = unsafe { stack_ptr.deref().cap(old.into(), cache_entry, scope) };
 
-        if let Err(ptr) = result {
-            // TODO GC
-            unsafe { scope.defer_drop(ptr) };
-            log_reservation.abort();
-        } else {
-            log_reservation.complete();
+            if let Err(ptr) = result {
+                // TODO GC
+                unsafe { scope.defer_drop(ptr) };
+                log_reservation.abort();
+            } else {
+                log_reservation.complete();
 
-            let count = self.updates.fetch_add(1, SeqCst) + 1;
-            let should_snapshot = self.config().get_path().is_some() &&
-                count % self.config().get_snapshot_after_ops() == 0;
-            if should_snapshot {
-                self.write_snapshot();
+                let count = self.updates.fetch_add(1, SeqCst) + 1;
+                let should_snapshot = self.config().get_path().is_some() &&
+                    count % self.config().get_snapshot_after_ops() == 0;
+                if should_snapshot {
+                    self.write_snapshot();
+                }
             }
-        }
 
-        result
+            result.map(|ok| ok.into()).map_err(|e| e.into())
+        })
     }
 
     fn write_snapshot(&self) {

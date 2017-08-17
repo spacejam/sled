@@ -119,7 +119,9 @@ impl<T> Stack<T> {
         let node = node.into_ptr(scope);
 
         let res = self.head.compare_and_swap(old, node, SeqCst, scope);
-        if self.head.compare_and_swap(old, node, SeqCst, scope).is_ok() && !test_fail() {
+        if test_fail() {
+            unimplemented!()
+        } else if res.is_ok() {
             Ok(node)
         } else {
             Err(res.unwrap_err())

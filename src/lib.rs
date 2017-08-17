@@ -180,7 +180,7 @@ mod config;
 mod thread_cache;
 
 use bound::Bound;
-use page::CacheEntry;
+use page::CasKey;
 use stack::{StackIter, node_from_frag_vec};
 use thread_cache::ThreadCache;
 
