@@ -10,7 +10,7 @@ progress
 - [x] lock-free pagecache with cache-friendly partial updates
 - [x] lock-free b-link tree
 - [x] recovery
-- [x] zstd compression
+- [x] zstd compression (build with the zstd feature if you want)
 - [x] LRU cache
 - [x] pagetable snapshotting for faster recovery
 - [x] epoch-based gc

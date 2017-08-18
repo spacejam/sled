@@ -113,9 +113,10 @@ extern crate rand;
 #[macro_use]
 extern crate log as _log;
 extern crate tempfile;
-extern crate zstd;
 extern crate time;
 extern crate glob;
+#[cfg(feature = "zstd")]
+extern crate zstd;
 
 /// atomic lock-free tree
 pub use tree::Tree;

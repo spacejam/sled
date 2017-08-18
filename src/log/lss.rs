@@ -5,6 +5,7 @@ use std::sync::atomic::AtomicBool;
 #[cfg(target_os = "linux")]
 use libc::{FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE, fallocate};
 
+#[cfg(feature = "zstd")]
 use zstd::block::decompress;
 
 use super::*;
@@ -112,12 +113,16 @@ impl Log for LockFreeLog {
             return Ok(LogRead::Corrupted(len));
         }
 
-        if self.config().get_use_compression() {
-            Ok(LogRead::Flush(decompress(&*buf, max).unwrap(), len))
-        } else {
-            Ok(LogRead::Flush(buf, len))
+        #[cfg(feature = "zstd")]
+        {
+            if self.config().get_use_compression() {
+                Ok(LogRead::Flush(decompress(&*buf, max).unwrap(), len))
+            } else {
+                Ok(LogRead::Flush(buf, len))
+            }
         }
 
+        #[cfg(not(feature = "zstd"))] Ok(LogRead::Flush(buf, len))
     }
 
     /// returns the current stable offset written to disk

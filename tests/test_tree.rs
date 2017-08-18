@@ -196,7 +196,7 @@ struct OpVec {
 impl Arbitrary for OpVec {
     fn arbitrary<G: Gen>(g: &mut G) -> OpVec {
         let mut ops = vec![];
-        for _ in 0..g.gen_range(1, 100) {
+        for _ in 0..g.gen_range(1, 50) {
             let op = Op::arbitrary(g);
             ops.push(op);
 
@@ -221,7 +221,7 @@ impl Arbitrary for OpVec {
 fn prop_tree_matches_btreemap(ops: OpVec, blink_fanout: u8, snapshot_after: u8) -> bool {
     use self::Op::*;
     let nonce: String = thread_rng().gen_ascii_chars().take(10).collect();
-    let path = format!("qc_tree_matches_btreemap_{}", nonce);
+    let path = format!("quickcheck_tree_matches_btreemap_{}", nonce);
     let config = Config::default()
         .snapshot_after_ops(snapshot_after as usize + 1)
         .blink_fanout(blink_fanout as usize + 1)
@@ -281,7 +281,7 @@ fn prop_tree_matches_btreemap(ops: OpVec, blink_fanout: u8, snapshot_after: u8) 
 }
 
 #[test]
-fn qc_tree_matches_btreemap() {
+fn quickcheck_tree_matches_btreemap() {
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 1))
         .tests(50)

@@ -1,5 +1,6 @@
 use std::io::{Seek, Write};
 
+#[cfg(feature = "zstd")]
 use zstd::block::compress;
 
 use super::*;
@@ -444,12 +445,16 @@ impl Drop for IoBufs {
 }
 
 #[inline(always)]
-fn encapsulate(raw_buf: Vec<u8>, use_compression: bool) -> Vec<u8> {
-    let mut buf = if use_compression {
+fn encapsulate(raw_buf: Vec<u8>, _use_compression: bool) -> Vec<u8> {
+    #[cfg(feature = "zstd")]
+    let mut buf = if _use_compression {
         compress(&*raw_buf, 5).unwrap()
     } else {
         raw_buf
     };
+
+    #[cfg(not(feature = "zstd"))]
+    let mut buf = raw_buf;
 
     let size_bytes: [u8; 4] = unsafe { std::mem::transmute(buf.len() as u32) };
     let mut valid_bytes = vec![1u8];

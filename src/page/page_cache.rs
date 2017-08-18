@@ -2,8 +2,10 @@ use std::io::{Read, Seek, Write};
 
 use crossbeam::sync::AtomicOption;
 use rayon::prelude::*;
-use zstd::block::{compress, decompress};
 use coco::epoch::{Ptr, Scope, pin};
+
+#[cfg(feature = "zstd")]
+use zstd::block::{compress, decompress};
 
 use super::*;
 
@@ -152,7 +154,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
     }
 
     #[doc(hidden)]
-    pub fn __delete_all_files(self) {
+    pub fn __delete_all_files(&self) {
         let prefix = self.snapshot_prefix();
         if prefix.is_none() {
             return;
@@ -448,11 +450,18 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         snapshot.recovery = recovery;
 
         let raw_bytes = serialize(&snapshot, Infinite).unwrap();
+
+
+        #[cfg(feature = "zstd")]
         let bytes = if self.config().get_use_compression() {
             compress(&*raw_bytes, 5).unwrap()
         } else {
             raw_bytes
         };
+
+        #[cfg(not(feature = "zstd"))]
+        let bytes = raw_bytes;
+
         let crc64: [u8; 8] = unsafe { std::mem::transmute(crc64::crc64(&*bytes)) };
 
         self.last_snapshot.swap(snapshot, SeqCst);
@@ -535,11 +544,15 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             panic!("crc for snapshot file {:?} failed!", path);
         }
 
+        #[cfg(feature = "zstd")]
         let bytes = if self.config().get_use_compression() {
             decompress(&*buf, 1_000_000).unwrap()
         } else {
             buf
         };
+
+        #[cfg(not(feature = "zstd"))]
+        let bytes = buf;
 
         let snapshot = deserialize::<Snapshot<R>>(&*bytes).unwrap();
 
