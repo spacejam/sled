@@ -419,7 +419,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
                             }
                         }
 
-                        let mut lids = snapshot.pt.get_mut(&prepend.pid).unwrap();
+                        let lids = snapshot.pt.get_mut(&prepend.pid).unwrap();
                         lids.push(log_id);
                     }
                     Update::Compact(partial_pages) => {

@@ -1,0 +1,1 @@
+valgrind --leak-check=full --leak-check=full --show-reachable=yes ./target/debug/

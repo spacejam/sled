@@ -242,7 +242,7 @@ impl IoBufs {
                 self
             );
 
-            let mut out_buf = unsafe { (*iobuf.buf.get()).as_mut_slice() };
+            let out_buf = unsafe { (*iobuf.buf.get()).as_mut_slice() };
 
             let res_start = buf_offset as usize;
             let res_end = res_start + buf.len();

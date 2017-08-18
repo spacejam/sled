@@ -62,7 +62,7 @@ fn zero_failed_buf(buf: &mut [u8]) {
 
     // zero the valid byte, and the bytes after the size in the header
     buf[0] = 0;
-    for mut c in buf[5..].iter_mut() {
+    for c in buf[5..].iter_mut() {
         *c = 0;
     }
 }
