@@ -291,8 +291,6 @@ impl Tree {
                 // try to child split
                 if let Ok(parent_split) = self.child_split(&node, cas_key) {
                     // now try to parent split
-                    // TODO(GC) double check for leaks here
-
                     let &mut (ref mut parent_node, ref mut parent_cas_key) =
                         all_page_views.last_mut().unwrap_or(&mut root_and_key);
 
@@ -352,9 +350,7 @@ impl Tree {
             .is_err()
         {
             // if we failed, don't follow through with the parent split
-            // let this_thread = thread::current();
-            // let name = this_thread.name().unwrap();
-            // println!("{}: {}|{} @ {:?} -", name, node.id, new_pid, parent_split.at);
+            // println!("{}: {}|{} @ {:?} -", tn(), node.id, new_pid, parent_split.at);
             self.pages.free(new_pid);
             return Err(());
         }
@@ -368,11 +364,6 @@ impl Tree {
         parent_cas_key: CasKey<Frag>,
         parent_split: ParentSplit,
     ) -> Result<CasKey<Frag>, CasKey<Frag>> {
-
-        // try to install a parent split on the index above
-
-        // TODO(GC) double check for leaks here
-
         // install parent split
         let res = self.pages.prepend(
             parent_node.id,
@@ -381,9 +372,7 @@ impl Tree {
         );
 
         if res.is_err() {
-            // let this_thread = thread::current();
-            // let name = this_thread.name().unwrap();
-            // println!("{}: {} <- {:?}|{} -", name, parent_node.id, parent_split.at, parent_split.to);
+            // println!("{}: {} <- {:?}|{} -", tn(), parent_node.id, parent_split.at, parent_split.to);
         }
 
         res
@@ -413,9 +402,7 @@ impl Tree {
         // println!("root_id is {}", root_id);
         let cas = self.root.compare_and_swap(from, new_root_pid, SeqCst);
         if cas == from {
-            // let this_thread = thread::current();
-            // let name = this_thread.name().unwrap();
-            // println!("{}: root hoist of {} +", name, from);
+            // println!("{}: root hoist of {} +", tn(), from);
         } else {
             self.pages.free(new_root_pid);
             // println!("root hoist of {} -", from);

@@ -120,8 +120,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
     /// Free a particular page.
     pub fn free(&self, pid: PageID) {
-        // TODO epoch-based gc for reusing pid & freeing stack
-        // TODO iter through flushed pages, punch hole
+        // FIXME GC page ID's in a safe way
         self.inner.del(pid);
 
         // write info to log

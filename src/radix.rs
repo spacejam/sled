@@ -142,7 +142,6 @@ fn traverse<'s, T>(
         } else {
             // another thread beat us, drop unused created
             // child and use what is already set
-            // TODO GC
             next_ptr = ret.unwrap_err();
         }
     }
@@ -158,26 +157,22 @@ fn test_split_fanout() {
 
 #[test]
 fn basic_functionality() {
-    /*
-    let rt = Radix::default();
-    let two = Owned::new(2);
-    let three = Owned::new(3);
-    let five = Owned::new(5);
-    let six = Owned::new(6);
-    rt.insert(0, five).unwrap();
-    pin(|scope| {
-        assert_eq!(rt.get(0, scope).unwrap().deref().clone(), 5);
-        rt.cas(0, five, six, scope).unwrap();
-        assert_eq!(rt.get(0, scope), Some(six));
-        assert_ne!(rt.del(0, scope), Ptr::null());
-        assert_eq!(rt.get(0, scope), None);
+    pin(|scope| unsafe {
+        let rt = Radix::default();
+        rt.insert(0, 5).unwrap();
+        let ptr = rt.get(0, scope).unwrap();
+        assert_eq!(ptr.deref(), &5);
+        rt.cas(0, ptr, Owned::new(6).into_ptr(scope), scope)
+            .unwrap();
+        assert_eq!(rt.get(0, scope).unwrap().deref(), &6);
+        rt.del(0);
+        assert!(rt.get(0, scope).is_none());
 
-        rt.insert(321, two, scope).unwrap();
-        assert_eq!(rt.get(321, scope), Some(two));
-        assert_eq!(rt.get(322, scope), None);
-        rt.insert(322, three).unwrap();
-        assert_eq!(rt.get(322, scope), Some(three));
-        assert_eq!(rt.get(321, scope), Some(two));
+        rt.insert(321, 2).unwrap();
+        assert_eq!(rt.get(321, scope).unwrap().deref(), &2);
+        assert!(rt.get(322, scope).is_none());
+        rt.insert(322, 3).unwrap();
+        assert_eq!(rt.get(322, scope).unwrap().deref(), &3);
+        assert_eq!(rt.get(321, scope).unwrap().deref(), &2);
     })
-    */
 }
