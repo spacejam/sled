@@ -4,13 +4,13 @@
 /// SSD that can efficiently handle random reads.
 use std::collections::BTreeMap;
 use std::fmt::{self, Debug};
-use std::ptr;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 
 use bincode::{Infinite, deserialize, serialize};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use coco::epoch::Ptr;
 
 use super::*;
 
@@ -62,6 +62,27 @@ pub enum CacheEntry<M> {
 }
 
 unsafe impl<M: Send> Send for CacheEntry<M> {}
+
+#[derive(Debug, Clone)]
+pub struct CasKey<P> {
+    ptr: *const stack::Node<CacheEntry<P>>,
+    tag: usize,
+}
+
+impl<'s, P> From<Ptr<'s, stack::Node<CacheEntry<P>>>> for CasKey<P> {
+    fn from(ptr: Ptr<'s, stack::Node<CacheEntry<P>>>) -> CasKey<P> {
+        CasKey {
+            ptr: ptr.as_raw(),
+            tag: ptr.tag(),
+        }
+    }
+}
+
+impl<'s, P> Into<Ptr<'s, stack::Node<CacheEntry<P>>>> for CasKey<P> {
+    fn into(self) -> Ptr<'s, stack::Node<CacheEntry<P>>> {
+        unsafe { Ptr::from_raw(self.ptr).with_tag(self.tag) }
+    }
+}
 
 /// `LoggedUpdate` is for writing blocks of `Update`'s to disk
 /// sequentially, to reduce IO during page reads.

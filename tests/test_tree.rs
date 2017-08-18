@@ -49,13 +49,13 @@ fn kv(i: usize) -> Vec<u8> {
 #[test]
 fn parallel_ops() {
     println!("========== initial sets ==========");
-    let t = Arc::new(Config::default().blink_fanout(2).tree());
+    let conf = Config::default().blink_fanout(2);
+    let t = Arc::new(conf.tree());
     par!{t, |tree: &Tree, k: Vec<u8>| {
         assert_eq!(tree.get(&*k), None);
         tree.set(k.clone(), k.clone());
         assert_eq!(tree.get(&*k), Some(k));
     }};
-
 
     println!("========== reading sets ==========");
     par!{t, |tree: &Tree, k: Vec<u8>| {
@@ -128,7 +128,7 @@ fn iterator() {
 }
 
 #[test]
-fn recovery() {
+fn recover_tree() {
     println!("========== recovery ==========");
     let path = "test_tree.log";
     let conf = Config::default()

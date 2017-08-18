@@ -17,8 +17,6 @@ pub use self::node::*;
 
 pub const FANOUT: usize = 2;
 
-type Raw = *const stack::Node<CacheEntry<Frag>>;
-
 /// A flash-sympathetic persistent lock-free B+ tree
 pub struct Tree {
     pages: PageCache<BLinkMaterializer, LockFreeLog, Frag, PageID>,
@@ -73,7 +71,6 @@ impl Tree {
 
             pages.replace(root_id, root_cas_key, vec![root]).unwrap();
             pages.replace(leaf_id, leaf_cas_key, vec![leaf]).unwrap();
-
             root_id
         };
 
@@ -137,7 +134,10 @@ impl Tree {
             }
 
             let &mut (ref node, ref cas_key) = path.last_mut().unwrap();
-            if self.pages.prepend(node.id, *cas_key, frag.clone()).is_ok() {
+            if self.pages
+                .prepend(node.id, cas_key.clone(), frag.clone())
+                .is_ok()
+            {
                 return Ok(());
             }
         }
@@ -161,10 +161,7 @@ impl Tree {
                     // println!("need to split {:?}", last_node.id);
                     self.recursive_split(&path);
                 }
-                break;
-            } else {
-                // failure, retry
-                continue;
+                return;
             }
         }
         // println!("done set of {:?}", key);
@@ -192,7 +189,8 @@ impl Tree {
                     if let Ok(idx) = search {
                         ret = Some(items[idx].1.clone());
                     } else {
-                        return None;
+                        ret = None;
+                        break;
                     }
                 }
                 _ => panic!("last node in path is not leaf"),
@@ -206,7 +204,6 @@ impl Tree {
                 // failure, retry
             }
         }
-
         ret
     }
 
@@ -261,7 +258,7 @@ impl Tree {
         }
     }
 
-    fn recursive_split(&self, path: &[(Node, Raw)]) {
+    fn recursive_split(&self, path: &[(Node, CasKey<Frag>)]) {
         // to split, we pop the path, see if it's in need of split, recurse up
         // two-phase: (in prep for lock-free, not necessary for single threaded)
         //  1. half-split: install split on child, P
@@ -301,14 +298,16 @@ impl Tree {
 
                     let res = self.parent_split(
                         parent_node.clone(),
-                        *parent_cas_key,
+                        parent_cas_key.clone(),
                         parent_split.clone(),
                     );
-                    if res.is_err() {
+
+                    if let Ok(res) = res {
+                        parent_node.apply(&Frag::ParentSplit(parent_split));
+                        *parent_cas_key = res;
+                    } else {
                         continue;
                     }
-                    parent_node.apply(&Frag::ParentSplit(parent_split));
-                    *parent_cas_key = res.unwrap();
                 } else {
                     continue;
                 }
@@ -326,7 +325,7 @@ impl Tree {
         // println!("after:\n{:?}\n", self);
     }
 
-    fn child_split(&self, node: &Node, node_cas_key: Raw) -> Result<ParentSplit, ()> {
+    fn child_split(&self, node: &Node, node_cas_key: CasKey<Frag>) -> Result<ParentSplit, ()> {
         let (new_pid, new_cas_key) = self.pages.allocate();
 
         // split the node in half
@@ -345,7 +344,7 @@ impl Tree {
         // install the new right side
         self.pages
             .replace(new_pid, new_cas_key, vec![Frag::Base(rhs, false)])
-            .unwrap();
+            .expect("failed to initialize child split");
 
         // try to install a child split on the left side
         if self.pages
@@ -366,9 +365,9 @@ impl Tree {
     fn parent_split(
         &self,
         parent_node: Node,
-        parent_cas_key: Raw,
+        parent_cas_key: CasKey<Frag>,
         parent_split: ParentSplit,
-    ) -> Result<Raw, Raw> {
+    ) -> Result<CasKey<Frag>, CasKey<Frag>> {
 
         // try to install a parent split on the index above
 
@@ -423,7 +422,7 @@ impl Tree {
         }
     }
 
-    fn get_internal(&self, key: &[u8]) -> (Vec<(Node, Raw)>, Option<Value>) {
+    fn get_internal(&self, key: &[u8]) -> (Vec<(Node, CasKey<Frag>)>, Option<Value>) {
         let path = self.path_for_key(&*key);
         let (last_node, _last_cas_key) = path.last().cloned().unwrap();
         match last_node.data.clone() {
@@ -459,17 +458,22 @@ impl Tree {
 
     /// returns the traversal path, completing any observed
     /// partially complete splits or merges along the way.
-    fn path_for_key(&self, key: &[u8]) -> Vec<(Node, Raw)> {
+    fn path_for_key(&self, key: &[u8]) -> Vec<(Node, CasKey<Frag>)> {
         let key_bound = Bound::Inc(key.into());
         let mut cursor = self.root.load(SeqCst);
         let mut path = vec![];
 
         // unsplit_parent is used for tracking need
         // to complete partial splits.
-        let mut unsplit_parent: Option<(Node, Raw)> = None;
+        let mut unsplit_parent: Option<(Node, CasKey<Frag>)> = None;
 
         loop {
-            let (node, cas_key) = self.pages.get(cursor).unwrap();
+            let get_cursor = self.pages.get(cursor);
+            if get_cursor.is_none() {
+                cursor = self.root.load(SeqCst);
+                continue;
+            }
+            let (node, cas_key) = get_cursor.unwrap();
 
             // TODO this may need to change when handling (half) merges
             assert!(node.lo <= key_bound, "overshot key somehow");
@@ -566,6 +570,7 @@ impl Debug for Tree {
             }
         }
 
+
         Ok(())
     }
 }
@@ -574,6 +579,7 @@ pub struct TreeIter<'a> {
     id: PageID,
     inner: &'a PageCache<BLinkMaterializer, LockFreeLog, Frag, PageID>,
     last_key: Bound,
+    // TODO we have to refactor this in light of pages being deleted
 }
 
 impl<'a> Iterator for TreeIter<'a> {
@@ -582,6 +588,8 @@ impl<'a> Iterator for TreeIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             let (page, _cas_key) = self.inner.get(self.id).unwrap();
+            // TODO this could be None if the page was removed since the last
+            // iteration, and we need to just get the inner page again...
             for (ref k, ref v) in page.data.leaf().unwrap() {
                 if Bound::Inc(k.clone()) > self.last_key {
                     self.last_key = Bound::Inc(k.to_vec());
@@ -600,7 +608,7 @@ impl<'a> IntoIterator for &'a Tree {
     type Item = (Vec<u8>, Vec<u8>);
     type IntoIter = TreeIter<'a>;
 
-    fn into_iter(self) -> Self::IntoIter {
+    fn into_iter(self) -> TreeIter<'a> {
         self.iter()
     }
 }

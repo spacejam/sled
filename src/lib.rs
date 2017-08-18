@@ -114,13 +114,14 @@
 extern crate libc;
 extern crate rayon;
 extern crate crossbeam;
+extern crate coco;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 extern crate bincode;
 extern crate rand;
 #[macro_use]
-extern crate log as logger;
+extern crate log as _log;
 extern crate tempfile;
 extern crate zstd;
 extern crate time;
@@ -179,7 +180,7 @@ mod config;
 mod thread_cache;
 
 use bound::Bound;
-use page::CacheEntry;
+use page::CasKey;
 use stack::{StackIter, node_from_frag_vec};
 use thread_cache::ThreadCache;
 
@@ -189,11 +190,6 @@ type PageID = usize;
 type Key = Vec<u8>;
 type KeyRef<'a> = &'a [u8];
 type Value = Vec<u8>;
-
-#[inline(always)]
-fn raw<T>(t: T) -> *const T {
-    Box::into_raw(Box::new(t)) as *const T
-}
 
 // get thread identifier
 #[inline(always)]

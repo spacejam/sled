@@ -1,4 +1,5 @@
 extern crate rsdb;
+extern crate coco;
 
 use rsdb::*;
 
@@ -36,6 +37,7 @@ fn basic_recovery() {
         .flush_every_ms(None)
         .path(Some(path.to_owned()))
         .snapshot_path(Some(snapshot_path.to_owned()));
+
     let mut pc = PageCache::new(TestMaterializer, conf.clone());
     pc.recover();
     let (id, key) = pc.allocate();
@@ -64,6 +66,6 @@ fn basic_recovery() {
     let mut pc4 = PageCache::new(TestMaterializer, conf.clone());
     pc4.recover();
     let res = pc4.get(id);
-    assert_eq!(res, None);
+    assert!(res.is_none());
     pc4.__delete_all_files();
 }
