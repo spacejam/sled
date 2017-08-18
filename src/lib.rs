@@ -4,18 +4,12 @@
 //!
 //! ```
 //! let t = rsdb::Config::default().tree();
-//!
 //! t.set(b"yo!".to_vec(), b"v1".to_vec());
-//!
-//! t.get(b"yo!");
-//!
+//! assert_eq!(t.get(b"yo!"), Some(b"v1".to_vec()));
 //! t.cas(b"yo!".to_vec(), Some(b"v1".to_vec()), Some(b"v2".to_vec())).unwrap();
-//!
 //! let mut iter = t.scan(b"a non-present key before yo!");
-//!
 //! assert_eq!(iter.next(), Some((b"yo!".to_vec(), b"v2".to_vec())));
 //! assert_eq!(iter.next(), None);
-//!
 //! t.del(b"yo!");
 //! ```
 //!
@@ -53,11 +47,8 @@
 //!
 //! fn main() {
 //!     let path = "test_pagecache_doc.log";
-//!
 //!     let conf = rsdb::Config::default().path(Some(path.to_owned()));
-//!
 //!     let pc = rsdb::PageCache::new(TestMaterializer, conf.clone());
-//!
 //!     let (id, key) = pc.allocate();
 //!
 //!     // The first item in a page should be set using replace, which
@@ -65,15 +56,14 @@
 //!     // that any previous items associated with this page should be
 //!     // forgotten.
 //!     let key = pc.replace(id, key, vec!["a".to_owned()]).unwrap();
-//!
 //!     let key = pc.prepend(id, key, "b".to_owned()).unwrap();
-//!
 //!     let _key = pc.prepend(id, key, "c".to_owned()).unwrap();
 //!
-//!     let (consolidated, _) = pc.get(id).unwrap();
+//!     let (consolidated, _key) = pc.get(id).unwrap();
 //!
 //!     assert_eq!(consolidated, "abc".to_owned());
 //!
+//!     drop(pc);
 //!     std::fs::remove_file(path).unwrap();
 //! }
 //! ```
