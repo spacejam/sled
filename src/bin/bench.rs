@@ -10,9 +10,10 @@ use std::error::Error;
 use std::io::prelude::*;
 use std::process;
 use std::collections::HashMap;
+use std::thread;
+use std::sync::Arc;
 
 use clap::{App, Arg};
-use rayon::{Configuration, ThreadPool};
 use rand::Rng;
 
 use rsdb::Tree;
@@ -166,20 +167,16 @@ fn main() {
 fn run(config: Config) -> Result<(), Box<Error>> {
     println!("running benchmarking suite...");
 
-    // the thread pool we use to perform our operations on the tree
-    let pool = rayon::ThreadPool::new(rayon::Configuration::new().num_threads(config.num_threads))
-        .unwrap();
-
     // create a default rsdb config
     let rsdb_config = rsdb::Config::default();
     let tree = rsdb_config.tree();
 
-    perform_tree_operations(&tree, &config, &pool);
+    perform_tree_operations(tree, config);
 
     Ok(())
 }
 
-fn perform_tree_operations(tree: &Tree, config: &Config, pool: &ThreadPool) {
+fn perform_tree_operations(tree: Tree, config: Config) {
     let sum_ops = config.set + config.scan + config.get + config.delete + config.cas;
     let ops = vec![
         (Op::Set, config.set),
@@ -189,19 +186,32 @@ fn perform_tree_operations(tree: &Tree, config: &Config, pool: &ThreadPool) {
         (Op::Cas, config.cas),
     ];
 
-    for i in 0..config.num_operations {
-        let op_to_perform = get_operation_choice(&ops, sum_ops);
+    // TODO update to handle division errors
+    let ops_per_thread = config.num_operations / config.num_threads;
+    let mut threads = Vec::new();
+    let tree = Arc::new(tree);
+    let ops = Arc::new(ops);
 
-        let op: Box<Fn() + Sync> = match op_to_perform {
-            Some(&Op::Set) => Box::new(|| perform_set_operation(&tree)),
-            Some(&Op::Scan) => Box::new(|| perform_scan_operation(&tree)),
-            Some(&Op::Get) => Box::new(|| perform_get_operation(&tree)),
-            Some(&Op::Delete) => Box::new(|| perform_delete_operation(&tree)),
-            Some(&Op::Cas) => Box::new(|| perform_cas_operation(&tree)),
-            _ => Box::new(|| {}),
-        };
+    for i in 0..config.num_threads {
+        let tree = tree.clone();
+        let ops = ops.clone();
+        let t = thread::spawn(move || for _ in 0..ops_per_thread {
+            let op_to_perform = get_operation_choice(&ops, sum_ops);
 
-        pool.install(|| op());
+            match op_to_perform {
+                Some(&Op::Set) => perform_set_operation(&tree),
+                Some(&Op::Scan) => perform_scan_operation(&tree),
+                Some(&Op::Get) => perform_get_operation(&tree),
+                Some(&Op::Delete) => perform_delete_operation(&tree),
+                Some(&Op::Cas) => perform_cas_operation(&tree),
+                _ => (),
+            };
+        });
+        threads.push(t);
+    }
+
+    for t in threads.into_iter() {
+        t.join();
     }
 }
 
@@ -256,7 +266,6 @@ fn get_operation_choice(ops: &Vec<(Op, usize)>, sum_ops: usize) -> Option<&Op> {
 }
 
 /// Tree operations
-#[derive(Debug)]
 enum Op {
     Set,
     Scan,
