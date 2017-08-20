@@ -1,5 +1,5 @@
 use std::io::{Read, Seek, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crossbeam::sync::AtomicOption;
 use coco::epoch::{Ptr, Scope, pin};
@@ -491,9 +491,10 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         // clean up any old snapshots
         let candidates = self.get_snapshot_files();
         for path in candidates {
-            if path != &*path_2 {
+            if Path::new(&path).file_name().unwrap() != &*path_2 {
                 #[cfg(feature = "log")]
                 info!("removing old snapshot file {:?}", path);
+
                 std::fs::remove_file(path).expect("failed to remove old snapshot file");
             }
         }
@@ -515,11 +516,21 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         let mut prefix = prefix_opt.unwrap();
         prefix.push_str(".");
 
+        let abs_prefix: String = if Path::new(&prefix).is_absolute() {
+            prefix
+        } else {
+            let mut abs_path =
+                std::env::current_dir().expect("could not read current dir, maybe deleted?");
+            abs_path.push(prefix.clone());
+            abs_path.to_str().unwrap().to_owned()
+        };
+
+
         let filter = |dir_entry: std::io::Result<std::fs::DirEntry>| if let Ok(de) = dir_entry {
             let path_buf = de.path();
             let path = path_buf.as_path();
             let path_str = path.to_str().unwrap();
-            if path_str.starts_with(&prefix) && !path_str.ends_with(".in___motion") {
+            if path_str.starts_with(&abs_prefix) && !path_str.ends_with(".in___motion") {
                 Some(path_str.to_owned())
             } else {
                 None
@@ -528,16 +539,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             None
         };
 
-        let absolute_path: PathBuf = if Path::new(&prefix).is_absolute() {
-            Path::new(&prefix).to_path_buf()
-        } else {
-            let mut abs_path =
-                std::env::current_dir().expect("could not read current dir, maybe deleted?");
-            abs_path.push(prefix.clone());
-            abs_path.into()
-        };
-
-        let snap_dir = absolute_path.parent().expect(
+        let snap_dir = Path::new(&abs_prefix).parent().expect(
             "could not read snapshot directory",
         );
         snap_dir

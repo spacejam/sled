@@ -29,7 +29,9 @@ impl Drop for LockFreeLog {
             std::sync::atomic::Ordering::SeqCst,
         );
         if let Some(join_handle) = self.flusher_handle.take() {
+            println!("waiting for flusher to end...");
             join_handle.join().unwrap();
+            println!("flusher done");
         }
     }
 }
