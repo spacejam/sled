@@ -2,7 +2,7 @@
 
 export RUSTFLAGS="-Z sanitizer=thread"
 
-rustup run nightly-2017-07-06-x86_64-unknown-linux-gnu cargo build \
+cargo build \
   --bin=stress \
   --features="race" \
   --target x86_64-unknown-linux-gnu
