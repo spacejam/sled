@@ -164,6 +164,7 @@ impl IoBufs {
         macro_rules! trace_once {
             ($($msg:expr),*) => {
                 if !printed {
+                    #[cfg(feature = "log")]
                     trace!($($msg),*);
                     printed = true;
                 }};
@@ -176,6 +177,7 @@ impl IoBufs {
 
             spins += 1;
             if spins > 1_000_000 {
+                #[cfg(feature = "log")]
                 debug!("{:?} stalling in reserve, idx {}", tn(), idx);
                 spins = 0;
             }
@@ -272,6 +274,7 @@ impl IoBufs {
         loop {
             spins += 1;
             if spins > 10 {
+                #[cfg(feature = "log")]
                 debug!("{:?} have spun >10x in decr", tn());
                 spins = 0;
             }
@@ -334,6 +337,7 @@ impl IoBufs {
             // cas failed, don't try to continue
             return;
         }
+        #[cfg(feature = "log")]
         trace!("({:?}) {} sealed", tn(), idx);
 
         // open new slot
@@ -356,18 +360,26 @@ impl IoBufs {
         while next_iobuf.cas_log_offset(max, next_offset).is_err() {
             spins += 1;
             if spins > 1_000_000 {
+                #[cfg(feature = "log")]
                 debug!("have spun >1,000,000x in seal of buf {}", idx);
                 spins = 0;
             }
         }
+        #[cfg(feature = "log")]
         trace!("({:?}) {} log set", tn(), next_idx);
 
         // NB allows new threads to start writing into this buffer
         next_iobuf.set_header(0);
+        #[cfg(feature = "log")]
         trace!("({:?}) {} zeroed header", tn(), next_idx);
 
-        let current_buf = self.current_buf.fetch_add(1, SeqCst) + 1;
-        trace!("({:?}) {} current_buf", tn(), current_buf % self.config.get_io_bufs());
+        let _current_buf = self.current_buf.fetch_add(1, SeqCst) + 1;
+        #[cfg(feature = "log")]
+        trace!(
+            "({:?}) {} current_buf",
+            tn(),
+            _current_buf % self.config.get_io_bufs()
+        );
 
         // if writers is 0, it's our responsibility to write the buffer.
         if n_writers(sealed) == 0 {
@@ -402,11 +414,13 @@ impl IoBufs {
         // signal that this IO buffer is uninitialized
         let max = std::usize::MAX as LogID;
         iobuf.set_log_offset(max);
+        #[cfg(feature = "log")]
         trace!("({:?}) {} log <- MAX", tn(), idx);
 
         // communicate to other threads that we have written an IO buffer.
-        let written_bufs = self.written_bufs.fetch_add(1, SeqCst);
-        trace!("({:?}) {} written", tn(), written_bufs % self.config.get_io_bufs());
+        let _written_bufs = self.written_bufs.fetch_add(1, SeqCst);
+        #[cfg(feature = "log")]
+        trace!("({:?}) {} written", tn(), _written_bufs % self.config.get_io_bufs());
 
         self.mark_interval(interval);
     }

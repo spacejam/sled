@@ -124,6 +124,7 @@ impl<T> Stack<T> {
         } else if res.is_ok() {
             Ok(node)
         } else {
+            #[cfg(feature = "log")]
             trace!("defer_drop called from stack::cap on {:?}", node.as_raw());
             unsafe { scope.defer_drop(node) };
             Err(res.unwrap_err())
@@ -140,6 +141,7 @@ impl<T> Stack<T> {
         let res = self.head.compare_and_swap(old, new, SeqCst, scope);
         if res.is_ok() && !test_fail() {
             if !old.is_null() {
+                #[cfg(feature = "log")]
                 trace!("defer_drop called from stack::cas on {:?}", old.as_raw());
                 unsafe { scope.defer_drop(old) };
             }

@@ -22,25 +22,22 @@ name = "stress"
 required-features = ["stress"]
 
 [dependencies]
-rayon = "0.8"
 crossbeam = "0.3"
 coco = "0.2"
 bincode = "0.8"
 serde = "1.0"
 serde_derive = "1.0"
-libc = "0.2"
-time = "0.1"
-rand = "0.3"
-log = "0.3"
-tempfile = "2.1"
-glob = "0.2"
+log = {version = "0.3", optional = true}
+libc = {version = "0.2", optional = true}
+rayon = {version = "0.8", optional = true}
 env_logger = {version = "0.4", optional = true}
 num_cpus = {version = "1.6", optional = true}
 zstd = {version = "0.4", optional = true}
-clippy = {version = "0.0.150", optional = true}
+clippy = {version = "*", optional = true}
 clap = {version = "2.26", optional = true}
 docopt = {version = "0.8", optional = true}
 chan-signal = {version = "0.3", optional = true}
 
 [dev-dependencies]
 quickcheck = "0.2"
+rand = "0.3"

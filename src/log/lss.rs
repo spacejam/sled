@@ -2,6 +2,7 @@ use std::io::{Read, Seek, Write};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+#[cfg(feature = "libc")]
 #[cfg(target_os = "linux")]
 use libc::{FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE, fallocate};
 
@@ -91,6 +92,7 @@ impl Log for LockFreeLog {
         let len = len32 as usize;
         let max = self.config().get_io_buf_size() - HEADER_LEN;
         if len > max {
+            #[cfg(feature = "log")]
             error!("log read invalid message length, {} should be <= {}", len, max);
             return Ok(LogRead::Corrupted(len));
         }
@@ -137,6 +139,7 @@ impl Log for LockFreeLog {
             self.iobufs.flush();
             spins += 1;
             if spins > 2_000_000 {
+                #[cfg(feature = "log")]
                 debug!("have spun >2000000x in make_stable");
                 spins = 0;
             }
@@ -161,6 +164,7 @@ impl Log for LockFreeLog {
         let mut len_buf = [0u8; 4];
         f.read_exact(&mut len_buf).unwrap();
 
+        #[cfg(feature = "libc")]
         #[cfg(target_os = "linux")]
         {
             use std::os::unix::io::AsRawFd;

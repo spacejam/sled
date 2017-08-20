@@ -6,7 +6,7 @@ extern crate chan_signal;
 extern crate rand;
 
 use std::thread;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use chan_signal::Signal;
@@ -29,12 +29,15 @@ struct Args {
     flag_duration: u64,
 }
 
-fn run(tree: Arc<rsdb::Tree>, shutdown: Arc<AtomicBool>) {
+fn run(tree: Arc<rsdb::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
     let mut rng = thread_rng();
     let mut byte = || vec![rng.gen::<u8>()];
     let mut rng = thread_rng();
 
+    let mut ops = 0;
+
     while !shutdown.load(Ordering::Relaxed) {
+        ops += 1;
         let choice = rng.gen_range(0, 5);
 
         match choice {
@@ -48,15 +51,19 @@ fn run(tree: Arc<rsdb::Tree>, shutdown: Arc<AtomicBool>) {
                 tree.del(&*byte());
             }
             3 => {
-                //tree.cas(byte(), Some(byte()), Some(byte()));
+                tree.cas(byte(), Some(byte()), Some(byte()));
             }
             4 => {
-                //tree.scan(&*byte()) .take(rng.gen_range(0, 256)) .collect::<Vec<_>>();
+                tree.scan(&*byte())
+                    .take(rng.gen_range(0, 15))
+                    .collect::<Vec<_>>();
             }
-            _ => (), // panic!("impossible choice"),
+            _ => panic!("impossible choice"),
         }
 
     }
+
+    total.fetch_add(ops, Ordering::Release);
 }
 
 fn main() {
@@ -66,6 +73,7 @@ fn main() {
 
     let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
     let shutdown = Arc::new(AtomicBool::new(false));
+    let total = Arc::new(AtomicUsize::new(0));
 
     let nonce: String = thread_rng().gen_ascii_chars().take(10).collect();
     let path = format!("rsdb_stress_{}", nonce);
@@ -83,10 +91,13 @@ fn main() {
 
     let mut threads = vec![];
 
+    let now = std::time::Instant::now();
+
     for _ in 0..args.flag_threads {
         let tree = tree.clone();
         let shutdown = shutdown.clone();
-        let t = thread::spawn(move || run(tree, shutdown));
+        let total = total.clone();
+        let t = thread::spawn(move || run(tree, shutdown, total));
         threads.push(t);
     }
 
@@ -97,11 +108,15 @@ fn main() {
         thread::sleep(std::time::Duration::from_secs(args.flag_duration));
     }
 
-    shutdown.store(true, Ordering::Release);
+    shutdown.store(true, Ordering::SeqCst);
 
     for t in threads.into_iter() {
         t.join().unwrap();
     }
+
+    let ops = total.load(Ordering::SeqCst);
+    let time = now.elapsed().as_secs() as usize;
+    println!("did {} total ops in {} seconds. {} ops/s", ops, time, ops / time);
 
     tree.__delete_all_files();
 }

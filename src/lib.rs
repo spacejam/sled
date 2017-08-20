@@ -101,22 +101,21 @@
 #![cfg_attr(feature="clippy", plugin(clippy))]
 #![cfg_attr(feature="clippy", allow(inline_always))]
 
-extern crate libc;
-extern crate rayon;
-extern crate crossbeam;
-extern crate coco;
-extern crate serde;
 #[macro_use]
 extern crate serde_derive;
+extern crate serde;
+extern crate crossbeam;
+extern crate coco;
 extern crate bincode;
-extern crate rand;
+#[cfg(feature = "log")]
 #[macro_use]
 extern crate log as _log;
-extern crate tempfile;
-extern crate time;
-extern crate glob;
+#[cfg(feature = "rayon")]
+extern crate rayon;
 #[cfg(feature = "zstd")]
 extern crate zstd;
+#[cfg(test)]
+extern crate rand;
 
 /// atomic lock-free tree
 pub use tree::Tree;
