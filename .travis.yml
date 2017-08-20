@@ -11,16 +11,23 @@ matrix:
     - rust: nightly
   include:
     - rust: nightly
-      env: CLIPPY=true
+      env: TEST=clippy
     - rust: nightly-2017-07-06
-      env: RUSTFLAGS="-Z sanitizer=thread"
+      env: TEST=tsan
 
 script:
-  - bash -c 'if [ -n "$CLIPPY" ]; then
-                 cargo test --features="clippy";
-             else
-                 cargo test;
-             fi'
+  - bash -c 'case "$TEST" in
+               clippy)
+                 cargo test --features="clippy"
+                 ;;
+               tsan)
+                 export RUSTFLAGS="-Z sanitizer=thread"
+                 cargo test --target x86_64-unknown-linux-gnu
+                 ;;
+               *)
+                 cargo test
+                 ;;
+             esac'
 
 os:
   - linux
