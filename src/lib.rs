@@ -94,7 +94,6 @@
 //! assert_eq!(iter.next(), None);
 //! ```
 
-
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
 #![cfg_attr(feature="clippy", feature(plugin))]

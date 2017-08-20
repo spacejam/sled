@@ -1,1 +1,19 @@
-RUSTFLAGS="-C relocation-model=static -Z sanitizer=thread" rustup run nightly cargo test --verbose
+#!/bin/sh
+
+export RUSTFLAGS="-Z sanitizer=thread"
+
+rustup run nightly-2017-07-06-x86_64-unknown-linux-gnu cargo build \
+  --bin=stress \
+  --features="race" \
+  --target x86_64-unknown-linux-gnu
+
+target/x86_64-unknown-linux-gnu/debug/stress &
+PID=$!
+
+while [ -e /proc/$PID ]; do
+  TIDS=`ls /proc/$PID/task`
+  TID=`echo $TIDS |  tr " " "\n" | shuf -n1`
+  NICE=$((`shuf -i 0-39 -n 1` - 20))
+  renice -n $NICE -p $TID > /dev/null
+  sleep 0.01
+done

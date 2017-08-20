@@ -12,6 +12,8 @@ matrix:
   include:
     - rust: nightly
       env: CLIPPY=true
+    - rust: nightly-2017-07-06
+      env: RUSTFLAGS="-Z sanitizer=thread"
 
 script:
   - bash -c 'if [ -n "$CLIPPY" ]; then

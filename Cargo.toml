@@ -7,11 +7,12 @@ license = "Apache-2.0"
 homepage = "https://github.com/spacejam/rsdb"
 keywords = ["database", "embedded", "concurrent", "persistent", "lock-free"]
 documentation = "https://docs.rs/rsdb/"
+readme = "README.md"
 
 [features]
-default = []
-bench = ["clap", "num_cpus", "env_logger"]
-stress = ["docopt", "chan-signal"]
+default = ["rayon", "zstd"]
+bench = ["clap", "num_cpus", "env_logger", "rayon", "zstd"]
+race = ["docopt", "chan-signal", "rand", "rayon"]
 
 [[bin]]
 name = "bench"
@@ -19,7 +20,7 @@ required-features = ["bench"]
 
 [[bin]]
 name = "stress"
-required-features = ["stress"]
+required-features = ["race"]
 
 [dependencies]
 crossbeam = "0.3"
@@ -37,6 +38,7 @@ clippy = {version = "*", optional = true}
 clap = {version = "2.26", optional = true}
 docopt = {version = "0.8", optional = true}
 chan-signal = {version = "0.3", optional = true}
+rand = {version = "0.3", optional = true}
 
 [dev-dependencies]
 quickcheck = "0.2"

@@ -1,2 +1,0 @@
-cargo build --features="stress" --verbose
-valgrind --track-origins=yes --leak-check=full --show-reachable=yes ./target/debug/stress
