@@ -28,6 +28,7 @@ coco = "0.2"
 bincode = "0.8"
 serde = "1.0"
 serde_derive = "1.0"
+lazy_static = "0.2"
 log = {version = "0.3", optional = true}
 libc = {version = "0.2", optional = true}
 rayon = {version = "0.8", optional = true}

@@ -106,6 +106,8 @@ extern crate serde;
 extern crate crossbeam;
 extern crate coco;
 extern crate bincode;
+#[macro_use]
+extern crate lazy_static;
 #[cfg(feature = "log")]
 #[macro_use]
 extern crate log as _log;
@@ -185,4 +187,13 @@ type Value = Vec<u8>;
 fn tn() -> String {
     use std::thread;
     thread::current().name().unwrap_or("unknown").to_owned()
+}
+
+// not correct, since it starts counting at the first observance...
+fn uptime() -> std::time::Duration {
+    lazy_static! {
+        static ref START: std::time::Instant = std::time::Instant::now();
+    }
+
+    START.elapsed()
 }

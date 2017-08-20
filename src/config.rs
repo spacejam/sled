@@ -26,9 +26,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Config {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap();
+        let now = uptime();
         let nanos = (now.as_secs() * 1_000_000_000) + now.subsec_nanos() as u64;
         let tmp_path = format!("rsdb.tmp.{}", nanos);
         Config {
