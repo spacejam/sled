@@ -14,6 +14,6 @@ while [ -e /proc/$PID ]; do
   TIDS=`ls /proc/$PID/task`
   TID=`echo $TIDS |  tr " " "\n" | shuf -n1`
   NICE=$((`shuf -i 0-39 -n 1` - 20))
-  renice -n $NICE -p $TID > /dev/null
+  sudo renice -n $NICE -p $TID > /dev/null
   sleep 0.01
 done
