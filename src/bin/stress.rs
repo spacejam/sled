@@ -4,6 +4,8 @@ extern crate rsdb;
 extern crate docopt;
 extern crate chan_signal;
 extern crate rand;
+#[cfg(feature = "log")]
+extern crate env_logger;
 
 use std::thread;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -67,6 +69,8 @@ fn run(tree: Arc<rsdb::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>
 }
 
 fn main() {
+    #[cfg(feature = "log")] env_logger::init();
+
     let args: Args = Docopt::new(USAGE)
         .and_then(|d| d.argv(std::env::args().into_iter()).deserialize())
         .unwrap_or_else(|e| e.exit());

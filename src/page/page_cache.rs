@@ -495,7 +495,10 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
                 #[cfg(feature = "log")]
                 info!("removing old snapshot file {:?}", path);
 
-                std::fs::remove_file(path).expect("failed to remove old snapshot file");
+                if let Err(_e) = std::fs::remove_file(path) {
+                    #[cfg(feature = "log")]
+                    warn!("failed to remove old snapshot file, maybe snapshot race? {}", _e);
+                }
             }
         }
     }

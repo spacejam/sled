@@ -12,7 +12,7 @@ readme = "README.md"
 [features]
 default = ["rayon", "zstd"]
 bench = ["clap", "num_cpus", "env_logger", "rayon", "zstd"]
-race = ["docopt", "chan-signal", "rand", "rayon"]
+race = ["docopt", "chan-signal", "rand", "rayon", "env_logger"]
 
 [[bin]]
 name = "bench"

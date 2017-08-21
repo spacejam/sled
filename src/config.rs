@@ -17,11 +17,11 @@ pub struct Config {
     cache_capacity: usize,
     use_os_cache: bool,
     use_compression: bool,
-    flush_every_ms: Option<usize>,
+    flush_every_ms: Option<u64>,
     snapshot_after_ops: usize,
     snapshot_path: Option<String>,
     tc: Arc<ThreadCache<fs::File>>,
-    tmp_path: String,
+    pub(super) tmp_path: String,
 }
 
 impl Default for Config {
@@ -85,7 +85,7 @@ impl Config {
         (cache_capacity, get_cache_capacity, set_cache_capacity, usize, "maximum size for the system page cache"),
         (use_os_cache, get_use_os_cache, set_use_os_cache, bool, "whether to use the OS page cache"),
         (use_compression, get_use_compression, set_use_compression, bool, "whether to use zstd compression"),
-        (flush_every_ms, get_flush_every_ms, set_flush_every_ms, Option<usize>, "number of ms between IO buffer flushes"),
+        (flush_every_ms, get_flush_every_ms, set_flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
         (snapshot_after_ops, get_snapshot_after_ops, set_snapshot_after_ops, usize, "number of operations between page table snapshots"),
         (snapshot_path, get_snapshot_path, set_snapshot_path, Option<String>, "snapshot file location")
     );

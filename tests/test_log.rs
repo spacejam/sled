@@ -241,7 +241,6 @@ fn test_hole_punching() {
 
 #[test]
 fn test_log_iterator() {
-    println!("making stable.");
     let log = Config::default().log();
     let first_offset = log.write(b"1".to_vec());
     log.write(b"22".to_vec());
@@ -254,6 +253,7 @@ fn test_log_iterator() {
     log.write(b"4444".to_vec());
     let last_offset = log.write(b"55555".to_vec());
     log.make_stable(last_offset);
+
     let mut iter = log.iter_from(first_offset);
     assert_eq!(iter.next().unwrap().1, b"1".to_vec());
     assert_eq!(iter.next().unwrap().1, b"22".to_vec());

@@ -53,6 +53,7 @@ pub trait Log: Sized {
 }
 
 #[doc(hidden)]
+#[derive(Debug)]
 pub enum LogRead {
     Flush(Vec<u8>, usize),
     Aborted(usize),

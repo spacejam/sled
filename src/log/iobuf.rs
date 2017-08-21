@@ -88,6 +88,7 @@ pub struct IoBufs {
     // may be buffers that have been written out-of-order to stable storage
     // due to interesting thread interleavings.
     stable: AtomicUsize,
+    file_for_writing: Mutex<std::fs::File>,
 }
 
 impl Debug for IoBufs {
@@ -119,6 +120,12 @@ impl IoBufs {
         let current_buf = 0;
         bufs[current_buf].set_log_offset(disk_offset);
 
+        let path = config.get_path().unwrap_or(config.tmp_path.clone());
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true);
+        options.write(true);
+        let file = options.open(path).unwrap();
+
         IoBufs {
             bufs: bufs,
             current_buf: AtomicUsize::new(current_buf),
@@ -126,6 +133,7 @@ impl IoBufs {
             intervals: Mutex::new(vec![]),
             stable: AtomicUsize::new(disk_offset as usize),
             config: config,
+            file_for_writing: Mutex::new(file),
         }
     }
 
@@ -406,8 +414,7 @@ impl IoBufs {
         let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
         let dirty_bytes = &data[0..res_len];
 
-        let cached_f = self.config.cached_file();
-        let mut f = cached_f.borrow_mut();
+        let mut f = self.file_for_writing.lock().unwrap();
         f.seek(SeekFrom::Start(log_offset)).unwrap();
         f.write_all(dirty_bytes).unwrap();
 
@@ -455,6 +462,8 @@ impl Drop for IoBufs {
         for _ in 0..self.config.get_io_bufs() {
             self.flush();
         }
+        let f = self.file_for_writing.lock().unwrap();
+        f.sync_all().unwrap();
     }
 }
 

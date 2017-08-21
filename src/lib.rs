@@ -111,6 +111,8 @@ extern crate lazy_static;
 #[cfg(feature = "log")]
 #[macro_use]
 extern crate log as _log;
+#[cfg(feature = "libc")]
+extern crate libc;
 #[cfg(feature = "rayon")]
 extern crate rayon;
 #[cfg(feature = "zstd")]
