@@ -1,6 +1,6 @@
 export RUSTFLAGS="-Z sanitizer=$1"
 
-rustup run nightly-2017-07-06-x86_64-unknown-linux-gnu cargo run \
+cargo run \
   --bin=stress \
   --features="race" \
   --target x86_64-unknown-linux-gnu \
