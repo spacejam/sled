@@ -10,7 +10,9 @@ use std::io::prelude::*;
 use std::process;
 use std::collections::HashMap;
 use std::thread;
+use std::time::Duration;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use clap::{App, Arg};
 use rand::Rng;
@@ -184,16 +186,30 @@ fn perform_tree_operations(tree: Tree, config: Config) {
         (Op::Delete, config.delete),
         (Op::Cas, config.cas),
     ];
-
-    // TODO update to handle division errors
-    let ops_per_thread = config.num_operations / config.num_threads;
+    let ops_per_thread = config.num_operations / config.num_threads; // TODO update to handle division errors
     let mut threads = Vec::new();
+    let ops_per_second = AtomicUsize::new(0);
+
     let tree = Arc::new(tree);
     let ops = Arc::new(ops);
+    let ops_per_second = Arc::new(ops_per_second);
+
+    // thread which spits out bench-related results every 1 second
+    {
+        let ops_per_second = ops_per_second.clone();
+        thread::spawn(move || {
+            loop {
+                thread::sleep(Duration::from_secs(1));
+                let ops_per_second = ops_per_second.swap(0, Ordering::Relaxed);
+                println!("throughput: {}", ops_per_second);
+            }
+        });
+    }
 
     for i in 0..config.num_threads {
         let tree = tree.clone();
         let ops = ops.clone();
+        let ops_per_second = ops_per_second.clone();
         let t = thread::spawn(move || for _ in 0..ops_per_thread {
             let op_to_perform = get_operation_choice(&ops, sum_ops);
 
@@ -205,6 +221,8 @@ fn perform_tree_operations(tree: Tree, config: Config) {
                 Some(&Op::Cas) => perform_cas_operation(&tree),
                 _ => (),
             };
+
+            ops_per_second.fetch_add(1, Ordering::Relaxed);
         });
         threads.push(t);
     }
