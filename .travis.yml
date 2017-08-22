@@ -23,7 +23,7 @@ script:
                  cargo test --features="clippy"
                  ;;
                leak)
-                 sudo ./hack/san leak
+                 ./hack/san leak
                  ;;
                tsan)
                  ./hack/race_detector

@@ -1,6 +1,6 @@
 export RUSTFLAGS="-Z sanitizer=$1"
 
-cargo run \
+sudo cargo run \
   --bin=stress \
   --features="race" \
   --target x86_64-unknown-linux-gnu \
