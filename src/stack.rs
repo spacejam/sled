@@ -4,7 +4,7 @@ use std::ptr;
 use std::ops::Deref;
 use std::sync::atomic::Ordering::SeqCst;
 
-use coco::epoch::{Atomic, Owned, Ptr, Scope, pin};
+use coco::epoch::{Atomic, Owned, Ptr, Scope, pin, unprotected};
 
 use test_fail;
 
@@ -22,6 +22,21 @@ impl<T> Default for Stack<T> {
     fn default() -> Stack<T> {
         Stack {
             head: Atomic::null(),
+        }
+    }
+}
+
+impl<T> Drop for Stack<T> {
+    fn drop(&mut self) {
+        unsafe {
+            unprotected(|scope| {
+                let mut curr = self.head.load(SeqCst, scope).as_raw();
+                while !curr.is_null() {
+                    let next = (*curr).next.load(SeqCst, scope).as_raw();
+                    drop(Box::from_raw(curr as *mut Node<T>));
+                    curr = next;
+                }
+            })
         }
     }
 }
@@ -125,8 +140,8 @@ impl<T> Stack<T> {
             Ok(node)
         } else {
             #[cfg(feature = "log")]
-            trace!("defer_drop called from stack::cap on {:?}", node.as_raw());
-            unsafe { scope.defer_drop(node) };
+            trace!("defer_free called from stack::cap on {:?}", node.as_raw());
+            unsafe { scope.defer_free(node) };
             Err(res.unwrap_err())
         }
     }
@@ -142,8 +157,8 @@ impl<T> Stack<T> {
         if res.is_ok() && !test_fail() {
             if !old.is_null() {
                 #[cfg(feature = "log")]
-                trace!("defer_drop called from stack::cas on {:?}", old.as_raw());
-                unsafe { scope.defer_drop(old) };
+                trace!("defer_free called from stack::cas on {:?}", old.as_raw());
+                unsafe { scope.defer_free(old) };
             }
             Ok(new)
         } else {

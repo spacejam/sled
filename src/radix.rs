@@ -2,7 +2,7 @@
 
 use std::sync::atomic::Ordering::SeqCst;
 
-use coco::epoch::{Atomic, Owned, Ptr, Scope, pin};
+use coco::epoch::{Atomic, Owned, Ptr, Scope, pin, unprotected};
 
 use super::*;
 
@@ -32,6 +32,27 @@ impl<T> Default for Node<T> {
     }
 }
 
+impl<T> Drop for Node<T> {
+    fn drop(&mut self) {
+        unsafe {
+            unprotected(|scope| {
+                let inner = self.inner.load(SeqCst, scope).as_raw();
+                drop(Box::from_raw(inner as *mut Node<T>));
+
+                let children: Vec<*const Node<T>> = self.children
+                    .iter()
+                    .map(|c| c.load(SeqCst, scope).as_raw())
+                    .filter(|c| !c.is_null())
+                    .collect();
+
+                for child in children {
+                    drop(Box::from_raw(child as *mut Node<T>));
+                }
+            })
+        }
+    }
+}
+
 /// A simple lock-free radix tree.
 pub struct Radix<T> {
     head: Atomic<Node<T>>,
@@ -42,6 +63,17 @@ impl<T> Default for Radix<T> {
         let head = Owned::new(Node::default());
         Radix {
             head: Atomic::from_owned(head),
+        }
+    }
+}
+
+impl<T> Drop for Radix<T> {
+    fn drop(&mut self) {
+        unsafe {
+            unprotected(|scope| {
+                let head = self.head.load(SeqCst, scope).as_raw();
+                drop(Box::from_raw(head as *mut Node<T>));
+            })
         }
     }
 }
