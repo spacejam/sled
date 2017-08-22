@@ -35,9 +35,11 @@ impl<T> Default for Node<T> {
 impl<T> Drop for Node<T> {
     fn drop(&mut self) {
         unsafe {
-            unprotected(|scope| {
+            pin(|scope| {
                 let inner = self.inner.load(SeqCst, scope).as_raw();
-                drop(Box::from_raw(inner as *mut Node<T>));
+                if !inner.is_null() {
+                    drop(Box::from_raw(inner as *mut T));
+                }
 
                 let children: Vec<*const Node<T>> = self.children
                     .iter()
