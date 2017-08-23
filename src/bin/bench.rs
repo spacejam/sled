@@ -2,7 +2,6 @@ extern crate clap;
 extern crate num_cpus;
 #[macro_use]
 extern crate log;
-extern crate rayon;
 extern crate rand;
 extern crate rsdb;
 
