@@ -1,8 +1,9 @@
 use std::io::{Read, Seek, Write};
 use std::path::Path;
+use std::sync::Arc;
 
 use crossbeam::sync::AtomicOption;
-use coco::epoch::{Ptr, Scope, pin};
+use coco::epoch::{Owned, Ptr, Scope, pin};
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
@@ -17,11 +18,19 @@ pub struct PageCache<PM, L, P, R> {
     t: PM,
     inner: Radix<Stack<CacheEntry<P>>>,
     max_pid: AtomicUsize,
-    free: Stack<PageID>,
+    free: Arc<Stack<PageID>>,
     log: L,
     lru: lru::Lru,
     updates: AtomicUsize,
     last_snapshot: AtomicOption<Snapshot<R>>,
+}
+
+impl<PM, L, P, R> Drop for PageCache<PM, L, P, R> {
+    fn drop(&mut self) {
+        // this is necessary because AtomicOption leaks
+        // the inner object if left on its own
+        self.last_snapshot.take(SeqCst);
+    }
 }
 
 unsafe impl<PM, L, P, R> Send for PageCache<PM, L, P, R>
@@ -68,7 +77,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             t: pm,
             inner: Radix::default(),
             max_pid: AtomicUsize::new(0),
-            free: Stack::default(),
+            free: Arc::new(Stack::default()),
             log: LockFreeLog::start_system(config),
             lru: lru,
             updates: AtomicUsize::new(0),
@@ -127,7 +136,6 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
     /// Free a particular page.
     pub fn free(&self, pid: PageID) {
-        // FIXME GC page ID's in a safe way
         self.inner.del(pid);
 
         // write info to log
@@ -139,7 +147,13 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         self.log.write(bytes);
 
         // add pid to free stack to reduce fragmentation over time
-        self.free.push(pid);
+        pin(|scope| {
+            let pd = Owned::new(PidDropper(pid, self.free.clone()));
+            let ptr = pd.into_ptr(scope);
+            unsafe {
+                scope.defer_drop(ptr);
+            }
+        });
     }
 
     /// Try to retrieve a page by its logical ID.
@@ -262,13 +276,16 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
                 };
                 *cache_entry = CacheEntry::Resident(pp, lid);
             };
-            #[cfg(feature = "rayon")] cache_entries.par_iter_mut().for_each(pull);
+
+            #[cfg(feature = "rayon")]
+            {
+                cache_entries.par_iter_mut().for_each(pull);
+            }
 
             #[cfg(not(feature = "rayon"))]
             for ce in cache_entries.iter_mut() {
                 pull(ce);
             }
-
 
             let node = node_from_frag_vec(cache_entries.clone());
             let res = unsafe { stack_ptr.deref().cas(head, node.into_ptr(scope), scope) };

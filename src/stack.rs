@@ -2,7 +2,7 @@
 use std::fmt::{self, Debug};
 use std::ptr;
 use std::ops::Deref;
-use std::sync::atomic::Ordering::SeqCst;
+use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 
 use coco::epoch::{Atomic, Owned, Ptr, Scope, pin, unprotected};
 
@@ -12,6 +12,19 @@ use test_fail;
 pub struct Node<T> {
     inner: T,
     next: Atomic<Node<T>>,
+}
+
+impl<T> Drop for Node<T> {
+    fn drop(&mut self) {
+        unsafe {
+            unprotected(|scope| {
+                let next = self.next.load(Relaxed, scope).as_raw();
+                if !next.is_null() {
+                    drop(Box::from_raw(next as *mut Node<T>));
+                }
+            })
+        }
+    }
 }
 
 pub struct Stack<T> {
@@ -30,11 +43,9 @@ impl<T> Drop for Stack<T> {
     fn drop(&mut self) {
         unsafe {
             unprotected(|scope| {
-                let mut curr = self.head.load(SeqCst, scope).as_raw();
-                while !curr.is_null() {
-                    let next = (*curr).next.load(SeqCst, scope).as_raw();
+                let curr = self.head.load(Relaxed, scope).as_raw();
+                if !curr.is_null() {
                     drop(Box::from_raw(curr as *mut Node<T>));
-                    curr = next;
                 }
             })
         }
@@ -47,16 +58,17 @@ impl<T: Debug> Debug for Stack<T> {
             let head = self.head(scope);
             let iter = StackIter::from_ptr(head, scope);
 
-            formatter.write_str("Stack [").unwrap();
+            formatter.write_str("Stack [")?;
             let mut written = false;
             for node in iter {
                 if written {
-                    formatter.write_str(", ").unwrap();
+                    formatter.write_str(", ")?;
                 }
-                node.fmt(formatter).unwrap();
+                formatter.write_str(&*format!("({:?})", &node as *const _))?;
+                node.fmt(formatter)?;
                 written = true;
             }
-            formatter.write_str("]").unwrap();
+            formatter.write_str("]")?;
             Ok(())
         })
     }
@@ -134,15 +146,16 @@ impl<T> Stack<T> {
         let node = node.into_ptr(scope);
 
         let res = self.head.compare_and_swap(old, node, SeqCst, scope);
-        if test_fail() {
-            unimplemented!()
-        } else if res.is_ok() {
-            Ok(node)
-        } else {
-            #[cfg(feature = "log")]
-            trace!("defer_free called from stack::cap on {:?}", node.as_raw());
-            unsafe { scope.defer_free(node) };
+        if res.is_err() {
+            unsafe {
+                node.deref().next.store(Ptr::null(), SeqCst);
+                scope.defer_drop(node);
+            }
             Err(res.unwrap_err())
+        } else if test_fail() {
+            unimplemented!()
+        } else {
+            Ok(node)
         }
     }
 
@@ -156,12 +169,14 @@ impl<T> Stack<T> {
         let res = self.head.compare_and_swap(old, new, SeqCst, scope);
         if res.is_ok() && !test_fail() {
             if !old.is_null() {
-                #[cfg(feature = "log")]
-                trace!("defer_free called from stack::cas on {:?}", old.as_raw());
-                unsafe { scope.defer_free(old) };
+                unsafe { scope.defer_drop(old) };
             }
             Ok(new)
         } else {
+            if !new.is_null() {
+                unsafe { scope.defer_drop(new) };
+            }
+
             Err(res.unwrap_err())
         }
     }
@@ -204,7 +219,6 @@ pub fn node_from_frag_vec<T>(from: Vec<T>) -> Owned<Node<T>> {
     let mut last = None;
 
     for item in from.into_iter().rev() {
-
         let node = Owned::new(Node {
             inner: item,
             next: Atomic::null(),

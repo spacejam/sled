@@ -115,8 +115,6 @@ impl<T> Radix<T> {
             match tip.deref().inner.compare_and_swap(old, new, SeqCst, scope) {
                 Ok(()) => {
                     if !old.is_null() {
-                        #[cfg(feature = "log")]
-                        trace!("defer_drop called from radix::cas on {:?}", old.as_raw());
                         scope.defer_drop(old);
                     }
                     Ok(new)
@@ -141,8 +139,6 @@ impl<T> Radix<T> {
         pin(|scope| {
             let old = self.swap(pid, Ptr::null(), scope);
             if !old.is_null() {
-                #[cfg(feature = "log")]
-                trace!("defer_drop called from radix::del on {:?}", old.as_raw());
                 unsafe { scope.defer_drop(old) };
             }
         })

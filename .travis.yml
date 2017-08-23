@@ -17,15 +17,15 @@ matrix:
     - rust: nightly-2017-07-06
       env: TEST=tsan
     - rust: nightly-2017-07-06
-      env: TEST=leak
+      env: TEST=lsan
 
 script:
   - bash -c 'case "$TEST" in
                clippy)
                  cargo test --features="clippy"
                  ;;
-               leak)
-                 ./hack/san leak
+               lsan)
+                 ./hack/leak_detector
                  ;;
                tsan)
                  ./hack/race_detector

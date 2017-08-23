@@ -53,7 +53,7 @@ fn run(tree: Arc<rsdb::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>
                 tree.del(&*byte());
             }
             3 => {
-                tree.cas(byte(), Some(byte()), Some(byte()));
+                if let Err(_) = tree.cas(byte(), Some(byte()), Some(byte())) {};
             }
             4 => {
                 tree.scan(&*byte())
