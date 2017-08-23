@@ -1,5 +1,7 @@
 language: rust
 
+sudo: required
+
 cache: cargo
 
 rust:
@@ -11,14 +13,27 @@ matrix:
     - rust: nightly
   include:
     - rust: nightly
-      env: CLIPPY=true
+      env: TEST=clippy
+    - rust: nightly-2017-07-06
+      env: TEST=tsan
+    - rust: nightly-2017-07-06
+      env: TEST=lsan
 
 script:
-  - bash -c 'if [ -n "$CLIPPY" ]; then
-                 cargo test --features="clippy";
-             else
-                 cargo test;
-             fi'
+  - bash -c 'case "$TEST" in
+               clippy)
+                 cargo test --features="clippy"
+                 ;;
+               lsan)
+                 ./hack/leak_detector
+                 ;;
+               tsan)
+                 ./hack/race_detector
+                 ;;
+               *)
+                 cargo test
+                 ;;
+             esac'
 
 os:
   - linux

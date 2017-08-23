@@ -1,9 +1,7 @@
 use std::cell::RefCell;
 use std::fs;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
-
-use tempfile::NamedTempFile;
+use std::sync::Arc;
 
 use super::*;
 
@@ -19,15 +17,18 @@ pub struct Config {
     cache_capacity: usize,
     use_os_cache: bool,
     use_compression: bool,
-    flush_every_ms: Option<usize>,
+    flush_every_ms: Option<u64>,
     snapshot_after_ops: usize,
     snapshot_path: Option<String>,
     tc: Arc<ThreadCache<fs::File>>,
-    tmp: Arc<Mutex<NamedTempFile>>,
+    pub(super) tmp_path: String,
 }
 
 impl Default for Config {
     fn default() -> Config {
+        let now = uptime();
+        let nanos = (now.as_secs() * 1_000_000_000) + now.subsec_nanos() as u64;
+        let tmp_path = format!("rsdb.tmp.{}", nanos);
         Config {
             io_bufs: 3,
             io_buf_size: 2 << 22, // 8mb
@@ -42,7 +43,7 @@ impl Default for Config {
             snapshot_after_ops: 1_000_000,
             snapshot_path: None,
             tc: Arc::new(ThreadCache::default()),
-            tmp: Arc::new(Mutex::new(NamedTempFile::new().unwrap())),
+            tmp_path: tmp_path.to_owned(),
         }
     }
 }
@@ -84,7 +85,7 @@ impl Config {
         (cache_capacity, get_cache_capacity, set_cache_capacity, usize, "maximum size for the system page cache"),
         (use_os_cache, get_use_os_cache, set_use_os_cache, bool, "whether to use the OS page cache"),
         (use_compression, get_use_compression, set_use_compression, bool, "whether to use zstd compression"),
-        (flush_every_ms, get_flush_every_ms, set_flush_every_ms, Option<usize>, "number of ms between IO buffer flushes"),
+        (flush_every_ms, get_flush_every_ms, set_flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
         (snapshot_after_ops, get_snapshot_after_ops, set_snapshot_after_ops, usize, "number of operations between page table snapshots"),
         (snapshot_path, get_snapshot_path, set_snapshot_path, Option<String>, "snapshot file location")
     );
@@ -102,12 +103,14 @@ impl Config {
     /// Retrieve a thread-local file handle to the configured underlying storage,
     /// or create a new one if this is the first time the thread is accessing it.
     pub fn cached_file(&self) -> Rc<RefCell<fs::File>> {
-        self.tc.get_or_else(|| if let Some(p) = self.get_path() {
+        self.tc.get_or_else(|| {
+            let path = self.get_path().unwrap_or(self.tmp_path.clone());
             let mut options = fs::OpenOptions::new();
             options.create(true);
             options.read(true);
             options.write(true);
 
+            #[cfg(feature = "libc")]
             #[cfg(target_os = "linux")]
             {
                 if !self.use_os_cache {
@@ -117,9 +120,15 @@ impl Config {
                 }
             }
 
-            options.open(p).unwrap()
-        } else {
-            self.tmp.lock().unwrap().reopen().unwrap()
+            options.open(path).unwrap()
         })
+    }
+}
+
+impl Drop for Config {
+    fn drop(&mut self) {
+        if self.get_path().is_none() {
+            if let Err(_) = fs::remove_file(self.tmp_path.clone()) {}
+        }
     }
 }

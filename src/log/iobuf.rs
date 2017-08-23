@@ -1,5 +1,6 @@
 use std::io::{Seek, Write};
 
+#[cfg(feature = "zstd")]
 use zstd::block::compress;
 
 use super::*;
@@ -87,6 +88,7 @@ pub struct IoBufs {
     // may be buffers that have been written out-of-order to stable storage
     // due to interesting thread interleavings.
     stable: AtomicUsize,
+    file_for_writing: Mutex<std::fs::File>,
 }
 
 impl Debug for IoBufs {
@@ -118,6 +120,12 @@ impl IoBufs {
         let current_buf = 0;
         bufs[current_buf].set_log_offset(disk_offset);
 
+        let path = config.get_path().unwrap_or(config.tmp_path.clone());
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true);
+        options.write(true);
+        let file = options.open(path).unwrap();
+
         IoBufs {
             bufs: bufs,
             current_buf: AtomicUsize::new(current_buf),
@@ -125,6 +133,7 @@ impl IoBufs {
             intervals: Mutex::new(vec![]),
             stable: AtomicUsize::new(disk_offset as usize),
             config: config,
+            file_for_writing: Mutex::new(file),
         }
     }
 
@@ -163,6 +172,7 @@ impl IoBufs {
         macro_rules! trace_once {
             ($($msg:expr),*) => {
                 if !printed {
+                    #[cfg(feature = "log")]
                     trace!($($msg),*);
                     printed = true;
                 }};
@@ -175,6 +185,7 @@ impl IoBufs {
 
             spins += 1;
             if spins > 1_000_000 {
+                #[cfg(feature = "log")]
                 debug!("{:?} stalling in reserve, idx {}", tn(), idx);
                 spins = 0;
             }
@@ -242,7 +253,7 @@ impl IoBufs {
                 self
             );
 
-            let mut out_buf = unsafe { (*iobuf.buf.get()).as_mut_slice() };
+            let out_buf = unsafe { (*iobuf.buf.get()).as_mut_slice() };
 
             let res_start = buf_offset as usize;
             let res_end = res_start + buf.len();
@@ -271,6 +282,7 @@ impl IoBufs {
         loop {
             spins += 1;
             if spins > 10 {
+                #[cfg(feature = "log")]
                 debug!("{:?} have spun >10x in decr", tn());
                 spins = 0;
             }
@@ -333,6 +345,7 @@ impl IoBufs {
             // cas failed, don't try to continue
             return;
         }
+        #[cfg(feature = "log")]
         trace!("({:?}) {} sealed", tn(), idx);
 
         // open new slot
@@ -355,18 +368,26 @@ impl IoBufs {
         while next_iobuf.cas_log_offset(max, next_offset).is_err() {
             spins += 1;
             if spins > 1_000_000 {
+                #[cfg(feature = "log")]
                 debug!("have spun >1,000,000x in seal of buf {}", idx);
                 spins = 0;
             }
         }
+        #[cfg(feature = "log")]
         trace!("({:?}) {} log set", tn(), next_idx);
 
         // NB allows new threads to start writing into this buffer
         next_iobuf.set_header(0);
+        #[cfg(feature = "log")]
         trace!("({:?}) {} zeroed header", tn(), next_idx);
 
-        let current_buf = self.current_buf.fetch_add(1, SeqCst) + 1;
-        trace!("({:?}) {} current_buf", tn(), current_buf % self.config.get_io_bufs());
+        let _current_buf = self.current_buf.fetch_add(1, SeqCst) + 1;
+        #[cfg(feature = "log")]
+        trace!(
+            "({:?}) {} current_buf",
+            tn(),
+            _current_buf % self.config.get_io_bufs()
+        );
 
         // if writers is 0, it's our responsibility to write the buffer.
         if n_writers(sealed) == 0 {
@@ -393,19 +414,20 @@ impl IoBufs {
         let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
         let dirty_bytes = &data[0..res_len];
 
-        let cached_f = self.config.cached_file();
-        let mut f = cached_f.borrow_mut();
+        let mut f = self.file_for_writing.lock().unwrap();
         f.seek(SeekFrom::Start(log_offset)).unwrap();
         f.write_all(dirty_bytes).unwrap();
 
         // signal that this IO buffer is uninitialized
         let max = std::usize::MAX as LogID;
         iobuf.set_log_offset(max);
+        #[cfg(feature = "log")]
         trace!("({:?}) {} log <- MAX", tn(), idx);
 
         // communicate to other threads that we have written an IO buffer.
-        let written_bufs = self.written_bufs.fetch_add(1, SeqCst);
-        trace!("({:?}) {} written", tn(), written_bufs % self.config.get_io_bufs());
+        let _written_bufs = self.written_bufs.fetch_add(1, SeqCst);
+        #[cfg(feature = "log")]
+        trace!("({:?}) {} written", tn(), _written_bufs % self.config.get_io_bufs());
 
         self.mark_interval(interval);
     }
@@ -440,16 +462,22 @@ impl Drop for IoBufs {
         for _ in 0..self.config.get_io_bufs() {
             self.flush();
         }
+        let f = self.file_for_writing.lock().unwrap();
+        f.sync_all().unwrap();
     }
 }
 
 #[inline(always)]
-fn encapsulate(raw_buf: Vec<u8>, use_compression: bool) -> Vec<u8> {
-    let mut buf = if use_compression {
+fn encapsulate(raw_buf: Vec<u8>, _use_compression: bool) -> Vec<u8> {
+    #[cfg(feature = "zstd")]
+    let mut buf = if _use_compression {
         compress(&*raw_buf, 5).unwrap()
     } else {
         raw_buf
     };
+
+    #[cfg(not(feature = "zstd"))]
+    let mut buf = raw_buf;
 
     let size_bytes: [u8; 4] = unsafe { std::mem::transmute(buf.len() as u32) };
     let mut valid_bytes = vec![1u8];

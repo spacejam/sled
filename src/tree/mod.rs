@@ -80,7 +80,7 @@ impl Tree {
         }
     }
 
-    /// Returns a copy of the current `Config` in use by the system.
+    /// Returns a ref to the current `Config` in use by the system.
     pub fn config(&self) -> &Config {
         self.pages.config()
     }
@@ -429,7 +429,7 @@ impl Tree {
     }
 
     #[doc(hidden)]
-    pub fn __delete_all_files(self) {
+    pub fn __delete_all_files(&self) {
         self.pages.__delete_all_files();
     }
 

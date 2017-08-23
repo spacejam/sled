@@ -2,7 +2,7 @@
 
 use std::sync::atomic::Ordering::SeqCst;
 
-use coco::epoch::{Atomic, Owned, Ptr, Scope, pin};
+use coco::epoch::{Atomic, Owned, Ptr, Scope, pin, unprotected};
 
 use super::*;
 
@@ -32,6 +32,29 @@ impl<T> Default for Node<T> {
     }
 }
 
+impl<T> Drop for Node<T> {
+    fn drop(&mut self) {
+        unsafe {
+            pin(|scope| {
+                let inner = self.inner.load(SeqCst, scope).as_raw();
+                if !inner.is_null() {
+                    drop(Box::from_raw(inner as *mut T));
+                }
+
+                let children: Vec<*const Node<T>> = self.children
+                    .iter()
+                    .map(|c| c.load(SeqCst, scope).as_raw())
+                    .filter(|c| !c.is_null())
+                    .collect();
+
+                for child in children {
+                    drop(Box::from_raw(child as *mut Node<T>));
+                }
+            })
+        }
+    }
+}
+
 /// A simple lock-free radix tree.
 pub struct Radix<T> {
     head: Atomic<Node<T>>,
@@ -42,6 +65,17 @@ impl<T> Default for Radix<T> {
         let head = Owned::new(Node::default());
         Radix {
             head: Atomic::from_owned(head),
+        }
+    }
+}
+
+impl<T> Drop for Radix<T> {
+    fn drop(&mut self) {
+        unsafe {
+            unprotected(|scope| {
+                let head = self.head.load(SeqCst, scope).as_raw();
+                drop(Box::from_raw(head as *mut Node<T>));
+            })
         }
     }
 }
@@ -81,7 +115,6 @@ impl<T> Radix<T> {
             match tip.deref().inner.compare_and_swap(old, new, SeqCst, scope) {
                 Ok(()) => {
                     if !old.is_null() {
-                        trace!("defer_drop called from radix::cas on {:?}", old.as_raw());
                         scope.defer_drop(old);
                     }
                     Ok(new)
@@ -106,7 +139,6 @@ impl<T> Radix<T> {
         pin(|scope| {
             let old = self.swap(pid, Ptr::null(), scope);
             if !old.is_null() {
-                trace!("defer_drop called from radix::del on {:?}", old.as_raw());
                 unsafe { scope.defer_drop(old) };
             }
         })

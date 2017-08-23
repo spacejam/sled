@@ -4,6 +4,7 @@
 /// SSD that can efficiently handle random reads.
 use std::collections::BTreeMap;
 use std::fmt::{self, Debug};
+use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 
@@ -124,5 +125,13 @@ impl<R> Default for Snapshot<R> {
             free: vec![],
             recovery: None,
         }
+    }
+}
+
+struct PidDropper(PageID, Arc<Stack<PageID>>);
+
+impl Drop for PidDropper {
+    fn drop(&mut self) {
+        self.1.push(self.0);
     }
 }

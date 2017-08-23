@@ -1,9 +1,15 @@
 use std::io::{Read, Seek, Write};
+use std::path::Path;
+use std::sync::Arc;
 
 use crossbeam::sync::AtomicOption;
+use coco::epoch::{Owned, Ptr, Scope, pin};
+
+#[cfg(feature = "rayon")]
 use rayon::prelude::*;
+
+#[cfg(feature = "zstd")]
 use zstd::block::{compress, decompress};
-use coco::epoch::{Ptr, Scope, pin};
 
 use super::*;
 
@@ -12,11 +18,19 @@ pub struct PageCache<PM, L, P, R> {
     t: PM,
     inner: Radix<Stack<CacheEntry<P>>>,
     max_pid: AtomicUsize,
-    free: Stack<PageID>,
+    free: Arc<Stack<PageID>>,
     log: L,
     lru: lru::Lru,
     updates: AtomicUsize,
     last_snapshot: AtomicOption<Snapshot<R>>,
+}
+
+impl<PM, L, P, R> Drop for PageCache<PM, L, P, R> {
+    fn drop(&mut self) {
+        // this is necessary because AtomicOption leaks
+        // the inner object if left on its own
+        self.last_snapshot.take(SeqCst);
+    }
 }
 
 unsafe impl<PM, L, P, R> Send for PageCache<PM, L, P, R>
@@ -63,7 +77,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             t: pm,
             inner: Radix::default(),
             max_pid: AtomicUsize::new(0),
-            free: Stack::default(),
+            free: Arc::new(Stack::default()),
             log: LockFreeLog::start_system(config),
             lru: lru,
             updates: AtomicUsize::new(0),
@@ -91,6 +105,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         let recovery = snapshot.recovery.clone();
         self.last_snapshot.swap(snapshot, SeqCst);
 
+        #[cfg(feature = "log")]
         debug!(
             "recovery complete, returning recovery state to PageCache owner: {:?}",
             recovery
@@ -104,6 +119,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         let pid = self.free.pop().unwrap_or_else(
             || self.max_pid.fetch_add(1, SeqCst),
         );
+        #[cfg(feature = "log")]
         trace!("allocating pid {}", pid);
         self.inner.insert(pid, Stack::default()).unwrap();
 
@@ -120,7 +136,6 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
     /// Free a particular page.
     pub fn free(&self, pid: PageID) {
-        // FIXME GC page ID's in a safe way
         self.inner.del(pid);
 
         // write info to log
@@ -132,7 +147,13 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         self.log.write(bytes);
 
         // add pid to free stack to reduce fragmentation over time
-        self.free.push(pid);
+        pin(|scope| {
+            let pd = Owned::new(PidDropper(pid, self.free.clone()));
+            let ptr = pd.into_ptr(scope);
+            unsafe {
+                scope.defer_drop(ptr);
+            }
+        });
     }
 
     /// Try to retrieve a page by its logical ID.
@@ -152,21 +173,15 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
     }
 
     #[doc(hidden)]
-    pub fn __delete_all_files(self) {
-        let prefix = self.snapshot_prefix();
-        if prefix.is_none() {
-            return;
-        }
-        let prefix = prefix.unwrap();
-        let prefix_glob = format!("{}.[0-9]*", prefix);
-        for entry in glob::glob(&*prefix_glob).unwrap() {
-            if let Ok(entry) = entry {
-                info!("removing old snapshot file {:?}", entry);
-                std::fs::remove_file(entry).unwrap();
-            }
+    pub fn __delete_all_files(&self) {
+        for path in self.get_snapshot_files() {
+            #[cfg(feature = "log")]
+            info!("removing old snapshot file {:?}", path);
+            std::fs::remove_file(path).unwrap();
         }
 
         if let Some(path) = self.config().get_path() {
+            #[cfg(feature = "log")]
             info!("removing data file {:?}", path);
             std::fs::remove_file(&path).unwrap();
         }
@@ -253,16 +268,24 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             _ => true,
         });
         if contains_non_resident {
-            cache_entries.par_iter_mut().for_each(
-                |ref mut cache_entry| {
-                    let (pp, lid) = match **cache_entry {
-                        CacheEntry::Resident(ref pp, ref lid) => (pp.clone(), *lid),
-                        CacheEntry::Flush(lid) |
-                        CacheEntry::PartialFlush(lid) => (self.pull(lid), lid),
-                    };
-                    **cache_entry = CacheEntry::Resident(pp, lid);
-                },
-            );
+            let pull = |cache_entry: &mut CacheEntry<P>| {
+                let (pp, lid) = match *cache_entry {
+                    CacheEntry::Resident(ref pp, ref lid) => (pp.clone(), *lid),
+                    CacheEntry::Flush(lid) |
+                    CacheEntry::PartialFlush(lid) => (self.pull(lid), lid),
+                };
+                *cache_entry = CacheEntry::Resident(pp, lid);
+            };
+
+            #[cfg(feature = "rayon")]
+            {
+                cache_entries.par_iter_mut().for_each(pull);
+            }
+
+            #[cfg(not(feature = "rayon"))]
+            for ce in cache_entries.iter_mut() {
+                pull(ce);
+            }
 
             let node = node_from_frag_vec(cache_entries.clone());
             let res = unsafe { stack_ptr.deref().cas(head, node.into_ptr(scope), scope) };
@@ -381,6 +404,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         let snapshot_opt = self.last_snapshot.take(SeqCst);
         if snapshot_opt.is_none() {
             // some other thread is snapshotting
+            #[cfg(feature = "log")]
             warn!(
                 "snapshot skipped because previous attempt \
                   appears not to have completed"
@@ -392,6 +416,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
         let current_stable = self.log.stable_offset();
 
+        #[cfg(feature = "log")]
         info!(
             "snapshot starting from offset {} to {}",
             snapshot.max_lid,
@@ -419,7 +444,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
                             }
                         }
 
-                        let mut lids = snapshot.pt.get_mut(&prepend.pid).unwrap();
+                        let lids = snapshot.pt.get_mut(&prepend.pid).unwrap();
                         lids.push(log_id);
                     }
                     Update::Compact(partial_pages) => {
@@ -448,11 +473,18 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         snapshot.recovery = recovery;
 
         let raw_bytes = serialize(&snapshot, Infinite).unwrap();
+
+
+        #[cfg(feature = "zstd")]
         let bytes = if self.config().get_use_compression() {
             compress(&*raw_bytes, 5).unwrap()
         } else {
             raw_bytes
         };
+
+        #[cfg(not(feature = "zstd"))]
+        let bytes = raw_bytes;
+
         let crc64: [u8; 8] = unsafe { std::mem::transmute(crc64::crc64(&*bytes)) };
 
         self.last_snapshot.swap(snapshot, SeqCst);
@@ -471,17 +503,18 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         f.sync_all().unwrap();
         drop(f);
 
-        if let Err(e) = std::fs::rename(path_1, &path_2) {
-            error!("failed to write snapshot: {}", e);
-        }
+        std::fs::rename(path_1, &path_2).expect("failed to write snapshot");
 
         // clean up any old snapshots
-        let prefix_glob = format!("{}.[0-9]*", prefix);
-        for entry in glob::glob(&*prefix_glob).unwrap() {
-            if let Ok(entry) = entry {
-                if entry.to_str().unwrap() != &*path_2 {
-                    info!("removing old snapshot file {:?}", entry);
-                    std::fs::remove_file(entry).unwrap();
+        let candidates = self.get_snapshot_files();
+        for path in candidates {
+            if Path::new(&path).file_name().unwrap() != &*path_2 {
+                #[cfg(feature = "log")]
+                info!("removing old snapshot file {:?}", path);
+
+                if let Err(_e) = std::fs::remove_file(path) {
+                    #[cfg(feature = "log")]
+                    warn!("failed to remove old snapshot file, maybe snapshot race? {}", _e);
                 }
             }
         }
@@ -494,26 +527,57 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         snapshot_path.or(path)
     }
 
-    fn read_snapshot(&mut self) -> Snapshot<R> {
-        let prefix = self.snapshot_prefix();
-        if prefix.is_none() {
+    fn get_snapshot_files(&self) -> Vec<String> {
+        let prefix_opt = self.snapshot_prefix();
+        if prefix_opt.is_none() {
             // not configured to persist...
-            return Snapshot::default();
+            return vec![];
         }
-        let prefix = prefix.unwrap();
-        let prefix_glob = format!("{}.[0-9]*", prefix);
-        let mut candidates = vec![];
-        for entry_res in glob::glob(&*prefix_glob).unwrap() {
-            if let Ok(entry_pb) = entry_res {
-                candidates.push(entry_pb);
+        let mut prefix = prefix_opt.unwrap();
+        prefix.push_str(".");
+
+        let abs_prefix: String = if Path::new(&prefix).is_absolute() {
+            prefix
+        } else {
+            let mut abs_path =
+                std::env::current_dir().expect("could not read current dir, maybe deleted?");
+            abs_path.push(prefix.clone());
+            abs_path.to_str().unwrap().to_owned()
+        };
+
+
+        let filter = |dir_entry: std::io::Result<std::fs::DirEntry>| if let Ok(de) = dir_entry {
+            let path_buf = de.path();
+            let path = path_buf.as_path();
+            let path_str = path.to_str().unwrap();
+            if path_str.starts_with(&abs_prefix) && !path_str.ends_with(".in___motion") {
+                Some(path_str.to_owned())
+            } else {
+                None
             }
-        }
+        } else {
+            None
+        };
+
+        let snap_dir = Path::new(&abs_prefix).parent().expect(
+            "could not read snapshot directory",
+        );
+        snap_dir
+            .read_dir()
+            .expect("could not read snapshot directory")
+            .filter_map(filter)
+            .collect()
+    }
+
+    fn read_snapshot(&mut self) -> Snapshot<R> {
+        let mut candidates = self.get_snapshot_files();
         if candidates.is_empty() {
+            #[cfg(feature = "log")]
             info!("no previous snapshot found");
             return Snapshot::default();
         }
 
-        candidates.sort_by_key(|path| path.metadata().unwrap().created().unwrap());
+        candidates.sort_by_key(|path| std::fs::metadata(path).unwrap().created().unwrap());
 
         let path = candidates.pop().unwrap();
 
@@ -535,11 +599,15 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             panic!("crc for snapshot file {:?} failed!", path);
         }
 
+        #[cfg(feature = "zstd")]
         let bytes = if self.config().get_use_compression() {
             decompress(&*buf, 1_000_000).unwrap()
         } else {
             buf
         };
+
+        #[cfg(not(feature = "zstd"))]
+        let bytes = buf;
 
         let snapshot = deserialize::<Snapshot<R>>(&*bytes).unwrap();
 
@@ -555,11 +623,13 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         free.sort();
         free.reverse();
         for pid in free {
+            #[cfg(feature = "log")]
             info!("adding {} to free during load_snapshot", pid);
             self.free.push(pid);
         }
 
         for (pid, lids) in &snapshot.pt {
+            #[cfg(feature = "log")]
             info!("loading pid {} in load_snapshot", pid);
             let mut lids = lids.clone();
             let stack = Stack::default();

@@ -1,31 +1,46 @@
 [package]
 name = "rsdb"
-version = "0.7.1"
+version = "0.7.2"
 authors = ["Tyler Neely <t@jujit.su>"]
-description = "a flash-sympathetic persistent lock-free B+ tree"
+description = "a flash-sympathetic persistent lock-free B+ tree, pagecache, and log"
 license = "Apache-2.0"
 homepage = "https://github.com/spacejam/rsdb"
 keywords = ["database", "embedded", "concurrent", "persistent", "lock-free"]
 documentation = "https://docs.rs/rsdb/"
+readme = "README.md"
+
+[features]
+default = ["rayon", "zstd"]
+bench = ["clap", "num_cpus", "env_logger", "rayon", "zstd"]
+race = ["docopt", "chan-signal", "rand", "rayon", "env_logger"]
+
+[[bin]]
+name = "bench"
+required-features = ["bench"]
+
+[[bin]]
+name = "stress"
+required-features = ["race"]
 
 [dependencies]
-rayon = "0.8"
 crossbeam = "0.3"
 coco = "0.2"
 bincode = "0.8"
 serde = "1.0"
 serde_derive = "1.0"
-libc = "0.2"
-time = "0.1"
-rand = "0.3"
-env_logger = "0.4"
-log = "0.3"
-num_cpus = "1.6"
-tempfile = "2.1"
-zstd = "0.4"
-clap = "2.26"
-glob = "0.2"
-clippy = {version = "0.0.150", optional = true}
+lazy_static = "0.2"
+log = {version = "0.3", optional = true}
+libc = {version = "0.2", optional = true}
+rayon = {version = "0.8", optional = true}
+env_logger = {version = "0.4", optional = true}
+num_cpus = {version = "1.6", optional = true}
+zstd = {version = "0.4", optional = true}
+clippy = {version = "*", optional = true}
+clap = {version = "2.26", optional = true}
+docopt = {version = "0.8", optional = true}
+chan-signal = {version = "0.3", optional = true}
+rand = {version = "0.3", optional = true}
 
 [dev-dependencies]
 quickcheck = "0.2"
+rand = "0.3"
