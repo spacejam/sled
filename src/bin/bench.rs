@@ -283,14 +283,19 @@ struct KV {
 impl KV {
     /// creates a new Key-Value instance
     fn new() -> KV {
-        let key: Vec<u8> = rand::thread_rng()
+        let mut key: Vec<u8> = rand::thread_rng()
             .gen_iter::<u8>()
-            .take(64)
+            .take(2)
             .collect::<Vec<u8>>();
-        let value: Vec<u8> = rand::thread_rng()
+        let mut value: Vec<u8> = rand::thread_rng()
             .gen_iter::<u8>()
-            .take(512)
+            .take(2)
             .collect::<Vec<u8>>();
+        let mut key_padding: Vec<u8> = vec![0; 62];
+        let mut value_padding: Vec<u8> = vec![0; 510];
+
+        key.append(&mut key_padding);
+        value.append(&mut value_padding);
 
         KV {
             key,
