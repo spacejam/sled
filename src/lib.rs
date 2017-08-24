@@ -121,7 +121,7 @@ extern crate zstd;
 extern crate rand;
 
 /// atomic lock-free tree
-pub use tree::Tree;
+pub use tree::{Tree, TreeIter};
 /// lock-free pagecache
 pub use page::{Materializer, PageCache};
 /// lock-free log-structured storage
@@ -132,6 +132,10 @@ use stack::Stack;
 pub use radix::Radix;
 /// general-purpose configuration
 pub use config::Config;
+
+/// C-compatible API for the lock-free log-structured B+tree.
+#[cfg(feature = "libc")]
+pub mod c;
 
 use crc16::crc16_arr;
 
