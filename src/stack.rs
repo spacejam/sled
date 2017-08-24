@@ -89,23 +89,27 @@ impl<T> Node<T> {
 
 impl<T> Stack<T> {
     pub fn push(&self, inner: T) {
-        pin(|scope| {
-            let node = Owned::new(Node {
-                inner: inner,
-                next: Atomic::null(),
-            }).into_ptr(scope);
+        let node = Owned::new(Node {
+            inner: inner,
+            next: Atomic::null(),
+        });
 
-            loop {
-                let head = self.head(scope);
-                unsafe { node.deref().next.store(head, SeqCst) };
-                if self.head
-                    .compare_and_swap(head, node, SeqCst, scope)
-                    .is_ok()
-                {
-                    return;
+        unsafe {
+            unprotected(|scope| {
+                let node = node.into_ptr(scope);
+
+                loop {
+                    let head = self.head(scope);
+                    node.deref().next.store(head, SeqCst);
+                    if self.head
+                        .compare_and_swap(head, node, SeqCst, scope)
+                        .is_ok()
+                    {
+                        return;
+                    }
                 }
-            }
-        })
+            })
+        }
     }
 
     pub fn pop(&self) -> Option<T> {
