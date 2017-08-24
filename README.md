@@ -48,6 +48,7 @@ progress
 - [x] LRU cache
 - [x] pagetable snapshotting for faster recovery
 - [x] epoch-based gc
+- [x] C API
 - [ ] formal verification of lock-free algorithms via symbolic execution
 - [ ] log cleaning
 - [ ] higher-level interface with multi-key transaction and snapshot support
