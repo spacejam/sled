@@ -6,6 +6,19 @@ use std::sync::Arc;
 use super::*;
 
 /// Top-level configuration for the system.
+///
+/// # Examples
+///
+/// ```
+/// let config = rsdb::Config::default()
+///     .path(Some("/path/to/data".to_owned()))
+///     .cache_capacity(10_000_000_000)
+///     .use_compression(true)
+///     .flush_every_ms(Some(1000))
+///     .snapshot_after_ops(100_000);
+///
+/// let tree = config.tree();
+/// ```
 #[derive(Debug, Clone)]
 pub struct Config {
     io_bufs: usize,

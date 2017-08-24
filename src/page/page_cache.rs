@@ -13,7 +13,63 @@ use zstd::block::{compress, decompress};
 
 use super::*;
 
-/// A lock-free pagecache.
+/// A lock-free pagecache which supports fragmented pages for dramatically
+/// improving write throughput.
+///
+/// # Working with the `PageCache`
+///
+/// ```
+/// extern crate rsdb;
+///
+/// use rsdb::Materializer;
+///
+/// pub struct TestMaterializer;
+///
+/// impl Materializer for TestMaterializer {
+///     type MaterializedPage = String;
+///     type PartialPage = String;
+///     type Recovery = ();
+///
+///     fn materialize(&self, frags: &[String]) -> String {
+///         self.consolidate(frags).pop().unwrap()
+///     }
+///
+///     fn consolidate(&self, frags: &[String]) -> Vec<String> {
+///         let mut consolidated = String::new();
+///         for frag in frags.into_iter() {
+///             consolidated.push_str(&*frag);
+///         }
+///
+///         vec![consolidated]
+///     }
+///
+///     fn recover(&self, _: &String) -> Option<()> {
+///         None
+///     }
+/// }
+///
+/// fn main() {
+///     let path = "test_pagecache_doc.log";
+///     let conf = rsdb::Config::default().path(Some(path.to_owned()));
+///     let pc = rsdb::PageCache::new(TestMaterializer, conf.clone());
+///     let (id, key) = pc.allocate();
+///
+///     // The first item in a page should be set using replace, which
+///     // signals that this is the beginning of a new page history, and
+///     // that any previous items associated with this page should be
+///     // forgotten.
+///     let key = pc.replace(id, key, vec!["a".to_owned()]).unwrap();
+///     let key = pc.prepend(id, key, "b".to_owned()).unwrap();
+///     let _key = pc.prepend(id, key, "c".to_owned()).unwrap();
+///
+///     let (consolidated, _key) = pc.get(id).unwrap();
+///
+///     assert_eq!(consolidated, "abc".to_owned());
+///
+///     drop(pc);
+///     std::fs::remove_file(path).unwrap();
+/// }
+/// ```
 pub struct PageCache<PM, L, P, R> {
     t: PM,
     inner: Radix<Stack<CacheEntry<P>>>,
