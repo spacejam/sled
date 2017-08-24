@@ -1,7 +1,3 @@
-/// A lock-free pagecache which supports fragmented pages for dramatically
-/// improving write throughput. Reads need to scatter-gather, so this is
-/// built with the assumption that it will be run on something like an
-/// SSD that can efficiently handle random reads.
 use std::collections::BTreeMap;
 use std::fmt::{self, Debug};
 use std::sync::Arc;
@@ -21,8 +17,8 @@ mod lru;
 
 pub use self::page_cache::PageCache;
 
-/// A tenant of a `PageCache` needs to provide a `Materializer` which
-/// handles the processing of pages.
+/// A user of a `PageCache` needs to provide a `Materializer` which
+/// handles the merging of page fragments.
 pub trait Materializer {
     /// The "complete" page, returned to clients who want to retrieve the
     /// logical page state.

@@ -11,8 +11,36 @@ use zstd::block::decompress;
 
 use super::*;
 
-/// `LockFreeLog` is responsible for putting data on disk, and retrieving
-/// it later on.
+/// A sequential store which allows users to create
+/// reservations placed at known log offsets, used
+/// for writing persistent data structures that need
+/// to know where to find persisted bits in the future.
+///
+/// # Working with `LockFreeLog`
+///
+/// ```
+/// use rsdb::Log;
+///
+/// let log = rsdb::Config::default().log();
+/// let first_offset = log.write(b"1".to_vec());
+/// log.write(b"22".to_vec());
+/// log.write(b"333".to_vec());
+///
+/// // stick an abort in the middle, which should not be returned
+/// let res = log.reserve(b"never_gonna_hit_disk".to_vec());
+/// res.abort();
+///
+/// log.write(b"4444".to_vec());
+/// let last_offset = log.write(b"55555".to_vec());
+/// log.make_stable(last_offset);
+/// let mut iter = log.iter_from(first_offset);
+/// assert_eq!(iter.next().unwrap().1, b"1".to_vec());
+/// assert_eq!(iter.next().unwrap().1, b"22".to_vec());
+/// assert_eq!(iter.next().unwrap().1, b"333".to_vec());
+/// assert_eq!(iter.next().unwrap().1, b"4444".to_vec());
+/// assert_eq!(iter.next().unwrap().1, b"55555".to_vec());
+/// assert_eq!(iter.next(), None);
+/// ```
 pub struct LockFreeLog {
     pub(super) iobufs: Arc<IoBufs>,
     flusher_shutdown: Arc<AtomicBool>,
