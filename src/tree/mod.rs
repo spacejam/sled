@@ -562,6 +562,7 @@ impl Debug for Tree {
     }
 }
 
+/// An iterator over keys and values in a `Tree`.
 pub struct TreeIter<'a> {
     id: PageID,
     inner: &'a PageCache<BLinkMaterializer, LockFreeLog, Frag, PageID>,
