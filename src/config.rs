@@ -16,8 +16,6 @@ use super::*;
 ///     .use_compression(true)
 ///     .flush_every_ms(Some(1000))
 ///     .snapshot_after_ops(100_000);
-///
-/// let tree = config.tree();
 /// ```
 #[derive(Debug, Clone)]
 pub struct Config {
