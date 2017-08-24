@@ -613,22 +613,24 @@ impl Materializer for BLinkMaterializer {
     fn materialize(&self, frags: &[Frag]) -> Node {
         let consolidated = self.consolidate(frags);
         let base = &consolidated[0];
-        match *base {
-            Frag::Base(ref b, _root) => b.clone(),
-            _ => panic!("non-Base consolidated frags"),
-        }
+        base.base().unwrap().0
     }
 
     fn consolidate(&self, frags: &[Frag]) -> Vec<Frag> {
-        let mut fc = frags.to_vec();
-        let base_frag = fc.remove(0);
-        let (mut base_node, root) = base_frag.base().unwrap();
+        let mut base_node_opt: Option<Node> = None;
+        let mut root = false;
 
-        for frag in fc {
-            base_node.apply(&frag);
+        for frag in frags {
+            if let Some(ref mut base_node) = base_node_opt {
+                base_node.apply(&frag);
+            } else {
+                let (base_node, is_root) = frag.base().unwrap();
+                base_node_opt = Some(base_node);
+                root = is_root;
+            }
         }
 
-        vec![Frag::Base(base_node, root)]
+        vec![Frag::Base(base_node_opt.unwrap(), root)]
     }
 
     fn recover(&self, frag: &Frag) -> Option<PageID> {
