@@ -1,6 +1,6 @@
 [package]
 name = "rsdb"
-version = "0.7.3"
+version = "0.7.4"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "a flash-sympathetic persistent lock-free B+ tree, pagecache, and log"
 license = "Apache-2.0"
@@ -10,7 +10,7 @@ documentation = "https://docs.rs/rsdb/"
 readme = "README.md"
 
 [features]
-default = ["rayon", "zstd"]
+default = ["rayon", "zstd", "libc"]
 bench = ["clap", "num_cpus", "env_logger", "rayon", "zstd"]
 race = ["docopt", "chan-signal", "rand", "rayon", "env_logger"]
 

@@ -1,6 +1,14 @@
 # RSDB
 
-a flash-sympathetic persistent lock-free B+ tree, pagecache, and log
+A modern lock-free atomic embedded database designed to beat LSM trees for
+reads and traditional B+ trees for writes. 
+
+It uses a modular design which can also be used to implement your own high
+performance persistent systems, using the included `LockFreeLog` and `PageCache`.
+Eventually, a versioned DB will be built on top of the `Tree` which provides
+multi-key transactions and snapshots.
+
+The `Tree` has a C API, so you can use this from any mainstream language.
 
 [documentation](https://docs.rs/rsdb)
 
@@ -10,52 +18,58 @@ a flash-sympathetic persistent lock-free B+ tree, pagecache, and log
 extern crate rsdb;
 
 let tree = rsdb::Config::default()
-  .path(Some("/var/lib/mydb/storage_file".to_owned()))
+  .path(Some("rsdb.state".to_owned()))
   .tree();
 
-let k1 = b"yo!".to_vec();
-let v1 = b"v1".to_vec();
-
 // set and get
-tree.set(k1.clone(), v1.clone());
-assert_eq!(tree.get(&k1), Some(v1.clone()));
-
-let v2 = b"v2".to_vec();
+tree.set(k, v1);
+assert_eq!(tree.get(&k), Some(v1));
 
 // compare and swap
-assert_eq!(
-  //    key         old       new
-  tree.cas(k1.clone(), Some(v1), Some(v2.clone())),
-  Ok(()),
-);
+tree.cas(k, Some(v1), Some(v2));
 
 // scans
-let mut iter = tree.scan(b"a non-present key before yo!");
-assert_eq!(iter.next(), Some((k1, v2)));
+let mut iter = tree.scan(b"a non-present key < k!");
+assert_eq!(iter.next(), Some((k, v2)));
 assert_eq!(iter.next(), None);
 
 // deletion
-tree.del(b"yo!");
+tree.del(&k);
 ```
 
-progress
+# Warnings
 
+* Quite young, there are lots of fuzz tests but don't bet a billion
+  dollar business on it yet!
+* Log cleaning is not yet implemented, so if you write the same
+  key over and over, you will run out of disk space eventually.
+  This is going to be implemented in the next week!
+* The C API is likely to change rapidly
+* Has not yet received much attention for performance tuning,
+  it has an extremely high theoretical performance but there
+  is a bit of tuning to get there. This will be happening soon!
+
+# Contribution Welcome!
+
+* Want to help advance the state of the art in open source embedded
+  databases? Check out [CONTRIBUTING.md](CONTRIBUTING.md)!
+
+# Features
+
+- [x] lock-free b-link tree
 - [x] lock-free log with reservable slots
 - [x] lock-free pagecache with cache-friendly partial updates
-- [x] lock-free b-link tree
-- [x] recovery
 - [x] zstd compression
-- [x] LRU cache
-- [x] pagetable snapshotting for faster recovery
-- [x] epoch-based gc
+- [x] configurable cache size
 - [x] C API
-- [ ] formal verification of lock-free algorithms via symbolic execution
 - [ ] log cleaning
-- [ ] higher-level interface with multi-key transaction and snapshot support
 - [ ] merge operator support
+- [ ] higher-level interface with multi-key transaction and snapshot support
+- [ ] formal verification of lock-free algorithms via symbolic execution
 
 # Goals
 
+1. beat LSM's on read performance and traditional B+ trees on write performance.
 1. don't use so much electricity. our data structures should play to modern hardware's strengths.
 1. don't surprise users with performance traps.
 1. bring reliability techniques from academia into real-world practice.
