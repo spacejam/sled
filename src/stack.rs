@@ -9,12 +9,12 @@ use coco::epoch::{Atomic, Owned, Ptr, Scope, pin, unprotected};
 use test_fail;
 
 #[derive(Debug)]
-pub struct Node<T> {
+pub struct Node<T: Send> {
     inner: T,
     next: Atomic<Node<T>>,
 }
 
-impl<T> Drop for Node<T> {
+impl<T: Send> Drop for Node<T> {
     fn drop(&mut self) {
         unsafe {
             unprotected(|scope| {
@@ -27,11 +27,11 @@ impl<T> Drop for Node<T> {
     }
 }
 
-pub struct Stack<T> {
+pub struct Stack<T: Send> {
     head: Atomic<Node<T>>,
 }
 
-impl<T> Default for Stack<T> {
+impl<T: Send> Default for Stack<T> {
     fn default() -> Stack<T> {
         Stack {
             head: Atomic::null(),
@@ -39,7 +39,7 @@ impl<T> Default for Stack<T> {
     }
 }
 
-impl<T> Drop for Stack<T> {
+impl<T: Send> Drop for Stack<T> {
     fn drop(&mut self) {
         unsafe {
             unprotected(|scope| {
@@ -52,7 +52,9 @@ impl<T> Drop for Stack<T> {
     }
 }
 
-impl<T: Debug> Debug for Stack<T> {
+impl<T> Debug for Stack<T>
+    where T: Debug + Send + Sync
+{
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         pin(|scope| {
             let head = self.head(scope);
@@ -74,20 +76,20 @@ impl<T: Debug> Debug for Stack<T> {
     }
 }
 
-impl<T> Deref for Node<T> {
+impl<T: Send> Deref for Node<T> {
     type Target = T;
     fn deref(&self) -> &T {
         &self.inner
     }
 }
 
-impl<T> Node<T> {
+impl<T: Send> Node<T> {
     pub fn next<'s>(&self, scope: &'s Scope) -> Ptr<'s, Node<T>> {
         self.next.load(SeqCst, scope)
     }
 }
 
-impl<T> Stack<T> {
+impl<T: Send> Stack<T> {
     pub fn push(&self, inner: T) {
         let node = Owned::new(Node {
             inner: inner,
@@ -190,12 +192,16 @@ impl<T> Stack<T> {
     }
 }
 
-pub struct StackIter<'a, T: 'a> {
+pub struct StackIter<'a, T>
+    where T: 'a + Send + Sync
+{
     inner: Ptr<'a, Node<T>>,
     scope: &'a Scope,
 }
 
-impl<'a, T: 'a> StackIter<'a, T> {
+impl<'a, T> StackIter<'a, T>
+    where T: 'a + Send + Sync
+{
     pub fn from_ptr<'b>(ptr: Ptr<'b, Node<T>>, scope: &'b Scope) -> StackIter<'b, T> {
         StackIter {
             inner: ptr,
@@ -204,7 +210,9 @@ impl<'a, T: 'a> StackIter<'a, T> {
     }
 }
 
-impl<'a, T> Iterator for StackIter<'a, T> {
+impl<'a, T> Iterator for StackIter<'a, T>
+    where T: Send + Sync
+{
     type Item = &'a T;
     fn next(&mut self) -> Option<Self::Item> {
         if self.inner.is_null() {
@@ -219,7 +227,9 @@ impl<'a, T> Iterator for StackIter<'a, T> {
     }
 }
 
-pub fn node_from_frag_vec<T>(from: Vec<T>) -> Owned<Node<T>> {
+pub fn node_from_frag_vec<T>(from: Vec<T>) -> Owned<Node<T>>
+    where T: Send + Sync
+{
     let mut last = None;
 
     for item in from.into_iter().rev() {

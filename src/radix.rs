@@ -56,11 +56,15 @@ impl<T> Drop for Node<T> {
 }
 
 /// A simple lock-free radix tree.
-pub struct Radix<T> {
+pub struct Radix<T>
+    where T: Send + Sync
+{
     head: Atomic<Node<T>>,
 }
 
-impl<T> Default for Radix<T> {
+impl<T> Default for Radix<T>
+    where T: Send + Sync
+{
     fn default() -> Radix<T> {
         let head = Owned::new(Node::default());
         Radix {
@@ -69,7 +73,9 @@ impl<T> Default for Radix<T> {
     }
 }
 
-impl<T> Drop for Radix<T> {
+impl<T> Drop for Radix<T>
+    where T: Send + Sync
+{
     fn drop(&mut self) {
         unsafe {
             unprotected(|scope| {
@@ -80,7 +86,9 @@ impl<T> Drop for Radix<T> {
     }
 }
 
-impl<T> Radix<T> {
+impl<T> Radix<T>
+    where T: Send + Sync
+{
     /// Try to create a new item in the tree.
     pub fn insert(&self, pid: PageID, item: T) -> Result<(), ()> {
         pin(|scope| {

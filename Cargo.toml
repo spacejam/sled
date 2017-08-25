@@ -1,6 +1,6 @@
 [package]
 name = "rsdb"
-version = "0.7.4"
+version = "0.8.0"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "a flash-sympathetic persistent lock-free B+ tree, pagecache, and log"
 license = "Apache-2.0"
