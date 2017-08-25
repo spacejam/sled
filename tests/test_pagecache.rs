@@ -7,21 +7,16 @@ use rsdb::*;
 pub struct TestMaterializer;
 
 impl Materializer for TestMaterializer {
-    type MaterializedPage = String;
-    type PartialPage = String;
+    type PageFrag = String;
     type Recovery = ();
 
-    fn materialize(&self, frags: &[String]) -> String {
-        self.consolidate(frags).pop().unwrap()
-    }
-
-    fn consolidate(&self, frags: &[String]) -> Vec<String> {
+    fn merge(&self, frags: &[String]) -> String {
         let mut consolidated = String::new();
         for frag in frags.into_iter() {
             consolidated.push_str(&*frag);
         }
 
-        vec![consolidated]
+        consolidated
     }
 
     fn recover(&self, _: &String) -> Option<()> {
@@ -41,9 +36,9 @@ fn basic_recovery() {
     let mut pc = PageCache::new(TestMaterializer, conf.clone());
     pc.recover();
     let (id, key) = pc.allocate();
-    let key = pc.replace(id, key, vec!["a".to_owned()]).unwrap();
-    let key = pc.prepend(id, key, "b".to_owned()).unwrap();
-    let _key = pc.prepend(id, key, "c".to_owned()).unwrap();
+    let key = pc.set(id, key, "a".to_owned()).unwrap();
+    let key = pc.merge(id, key, "b".to_owned()).unwrap();
+    let _key = pc.merge(id, key, "c".to_owned()).unwrap();
     let (consolidated, _) = pc.get(id).unwrap();
     assert_eq!(consolidated, "abc".to_owned());
     drop(pc);
@@ -53,7 +48,7 @@ fn basic_recovery() {
     let (consolidated2, key) = pc2.get(id).unwrap();
     assert_eq!(consolidated, consolidated2);
 
-    pc2.prepend(id, key, "d".to_owned()).unwrap();
+    pc2.merge(id, key, "d".to_owned()).unwrap();
     drop(pc2);
 
     let mut pc3 = PageCache::new(TestMaterializer, conf.clone());

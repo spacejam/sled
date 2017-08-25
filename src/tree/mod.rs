@@ -69,8 +69,8 @@ impl Tree {
                 true,
             );
 
-            pages.replace(root_id, root_cas_key, vec![root]).unwrap();
-            pages.replace(leaf_id, leaf_cas_key, vec![leaf]).unwrap();
+            pages.set(root_id, root_cas_key, root).unwrap();
+            pages.set(leaf_id, leaf_cas_key, leaf).unwrap();
             root_id
         };
 
@@ -135,7 +135,7 @@ impl Tree {
 
             let &mut (ref node, ref cas_key) = path.last_mut().unwrap();
             if self.pages
-                .prepend(node.id, cas_key.clone(), frag.clone())
+                .merge(node.id, cas_key.clone(), frag.clone())
                 .is_ok()
             {
                 return Ok(());
@@ -151,7 +151,7 @@ impl Tree {
             let mut path = self.path_for_key(&*key);
             let (mut last_node, last_cas_key) = path.pop().unwrap();
             // println!("last before: {:?}", last);
-            if let Ok(new_cas_key) = self.pages.prepend(last_node.id, last_cas_key, frag.clone()) {
+            if let Ok(new_cas_key) = self.pages.merge(last_node.id, last_cas_key, frag.clone()) {
                 last_node.apply(&frag);
                 // println!("last after: {:?}", last);
                 let should_split = last_node.should_split();
@@ -197,7 +197,7 @@ impl Tree {
             }
 
             let frag = Frag::Del(key.to_vec());
-            if self.pages.prepend(leaf_node.id, leaf_cas_key, frag).is_ok() {
+            if self.pages.merge(leaf_node.id, leaf_cas_key, frag).is_ok() {
                 // success
                 break;
             } else {
@@ -266,10 +266,10 @@ impl Tree {
         //      b. locate split point
         //      c. create new consolidated pages for both sides
         //      d. add new node to pagetable
-        //      e. prepend split delta to original page P with physical pointer to Q
+        //      e. merge split delta to original page P with physical pointer to Q
         //      f. if failed, free the new page
         //  2. parent update: install new index term on parent
-        //      a. prepend "index term delta record" to parent, containing:
+        //      a. merge "index term delta record" to parent, containing:
         //          i. new bounds for P & Q
         //          ii. logical pointer to Q
         //
@@ -341,12 +341,12 @@ impl Tree {
 
         // install the new right side
         self.pages
-            .replace(new_pid, new_cas_key, vec![Frag::Base(rhs, false)])
+            .set(new_pid, new_cas_key, Frag::Base(rhs, false))
             .expect("failed to initialize child split");
 
         // try to install a child split on the left side
         if self.pages
-            .prepend(node.id, node_cas_key, child_split)
+            .merge(node.id, node_cas_key, child_split)
             .is_err()
         {
             // if we failed, don't follow through with the parent split
@@ -365,7 +365,7 @@ impl Tree {
         parent_split: ParentSplit,
     ) -> Result<CasKey<Frag>, CasKey<Frag>> {
         // install parent split
-        let res = self.pages.prepend(
+        let res = self.pages.merge(
             parent_node.id,
             parent_cas_key,
             Frag::ParentSplit(parent_split.clone()),
@@ -395,7 +395,7 @@ impl Tree {
             true,
         );
         self.pages
-            .replace(new_root_pid, new_root_cas_key, vec![new_root])
+            .set(new_root_pid, new_root_cas_key, new_root)
             .unwrap();
         // println!("split is {:?}", parent_split);
         // println!("trying to cas root at {:?} with real value {:?}", path.first().unwrap().pid, self.root.load(SeqCst));
@@ -460,7 +460,8 @@ impl Tree {
                 cursor = self.root.load(SeqCst);
                 continue;
             }
-            let (node, cas_key) = get_cursor.unwrap();
+            let (frag, cas_key) = get_cursor.unwrap();
+            let (node, _is_root) = frag.base().unwrap();
 
             // TODO this may need to change when handling (half) merges
             assert!(node.lo <= key_bound, "overshot key somehow");
@@ -485,7 +486,7 @@ impl Tree {
                     to: node.id,
                 });
 
-                let _res = self.pages.prepend(parent_node.id, parent_cas_key, ps);
+                let _res = self.pages.merge(parent_node.id, parent_cas_key, ps);
                 // println!("trying to fix incomplete parent split: {:?}", res);
                 // println!("after: {:?}", self);
             }
@@ -525,7 +526,8 @@ impl Debug for Tree {
         f.write_str("\tlevel 0:\n").unwrap();
 
         loop {
-            let (node, _cas_key) = self.pages.get(pid).unwrap();
+            let (frag, _cas_key) = self.pages.get(pid).unwrap();
+            let (node, _is_root) = frag.base().unwrap();
 
             f.write_str("\t\t").unwrap();
             node.fmt(f).unwrap();
@@ -535,7 +537,8 @@ impl Debug for Tree {
                 pid = next_pid;
             } else {
                 // we've traversed our level, time to bump down
-                let (left_node, _left_cas_key) = self.pages.get(left_most).unwrap();
+                let (left_frag, _left_cas_key) = self.pages.get(left_most).unwrap();
+                let (left_node, _is_root) = left_frag.base().unwrap();
 
                 match left_node.data {
                     Data::Index(ptrs) => {
@@ -575,19 +578,20 @@ impl<'a> Iterator for TreeIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            let (page, _cas_key) = self.inner.get(self.id).unwrap();
-            // TODO this could be None if the page was removed since the last
-            // iteration, and we need to just get the inner page again...
-            for (ref k, ref v) in page.data.leaf().unwrap() {
+            let (frag, _cas_key) = self.inner.get(self.id).unwrap();
+            let (node, _is_root) = frag.base().unwrap();
+            // TODO this could be None if the node was removed since the last
+            // iteration, and we need to just get the inner node again...
+            for (ref k, ref v) in node.data.leaf().unwrap() {
                 if Bound::Inc(k.clone()) > self.last_key {
                     self.last_key = Bound::Inc(k.to_vec());
                     return Some((k.clone(), v.clone()));
                 }
             }
-            if page.next.is_none() {
+            if node.next.is_none() {
                 return None;
             }
-            self.id = page.next.unwrap();
+            self.id = node.next.unwrap();
         }
     }
 }
@@ -606,17 +610,10 @@ pub struct BLinkMaterializer {
 }
 
 impl Materializer for BLinkMaterializer {
-    type MaterializedPage = Node;
-    type PartialPage = Frag;
+    type PageFrag = Frag;
     type Recovery = PageID;
 
-    fn materialize(&self, frags: &[Frag]) -> Node {
-        let consolidated = self.consolidate(frags);
-        let base = &consolidated[0];
-        base.base().unwrap().0
-    }
-
-    fn consolidate(&self, frags: &[Frag]) -> Vec<Frag> {
+    fn merge(&self, frags: &[Frag]) -> Frag {
         let mut base_node_opt: Option<Node> = None;
         let mut root = false;
 
@@ -630,7 +627,7 @@ impl Materializer for BLinkMaterializer {
             }
         }
 
-        vec![Frag::Base(base_node_opt.unwrap(), root)]
+        Frag::Base(base_node_opt.unwrap(), root)
     }
 
     fn recover(&self, frag: &Frag) -> Option<PageID> {
