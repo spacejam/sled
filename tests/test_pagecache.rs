@@ -10,7 +10,7 @@ impl Materializer for TestMaterializer {
     type PageFrag = String;
     type Recovery = ();
 
-    fn merge(&self, frags: &[String]) -> String {
+    fn merge(&self, frags: &[&String]) -> String {
         let mut consolidated = String::new();
         for frag in frags.into_iter() {
             consolidated.push_str(&*frag);

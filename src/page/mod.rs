@@ -32,7 +32,7 @@ pub trait Materializer {
 
     /// Used to compress long chains of partial pages into a condensed form
     /// during compaction.
-    fn merge(&self, &[Self::PageFrag]) -> Self::PageFrag;
+    fn merge(&self, &[&Self::PageFrag]) -> Self::PageFrag;
 
     /// Used to feed custom recovery information back to a higher-level abstraction
     /// during startup. For example, a B-Link tree must know what the current
@@ -43,6 +43,9 @@ pub trait Materializer {
 /// Points to either a memory location or a disk location to page-in data from.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CacheEntry<M: Send + Sync> {
+    /// A cache item that contains the most recent fully-merged page state, also in secondary
+    /// storage.
+    MergedResident(M, LogID),
     /// A cache item that is in memory, and also in secondary storage.
     Resident(M, LogID),
     /// A cache item that is present in secondary storage.

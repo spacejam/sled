@@ -6,7 +6,7 @@ pub struct Reservation<'a> {
     pub data: Vec<u8>,
     pub destination: &'a mut [u8],
     pub flushed: bool,
-    pub base_disk_offset: LogID,
+    pub reservation_offset: LogID,
 }
 
 impl<'a> Drop for Reservation<'a> {
@@ -32,7 +32,7 @@ impl<'a> Reservation<'a> {
 
     /// get the log_id for accessing this buffer in the future
     pub fn log_id(&self) -> LogID {
-        self.base_disk_offset
+        self.reservation_offset
     }
 
     fn flush(&mut self, valid: bool) -> LogID {
