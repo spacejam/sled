@@ -20,37 +20,31 @@ pub use self::page_cache::PageCache;
 /// A user of a `PageCache` needs to provide a `Materializer` which
 /// handles the merging of page fragments.
 pub trait Materializer {
-    /// The "complete" page, returned to clients who want to retrieve the
-    /// logical page state.
-    type MaterializedPage;
-
-    /// The "partial" page, written to log storage sequentially, and
+    /// The possibly fragmented page, written to log storage sequentially, and
     /// read in parallel from multiple locations on disk when serving
-    /// a request to read the page.
-    type PartialPage;
+    /// a request to read the page. These will be merged to a single version
+    /// at read time, and possibly cached.
+    type PageFrag;
 
     /// The state returned by a call to `PageCache::recover`, as
     /// described by `Materializer::recover`
     type Recovery;
 
-    /// Used to generate the result of `get` requests on the `PageCache`
-    fn materialize(&self, &[Self::PartialPage]) -> Self::MaterializedPage;
-
     /// Used to compress long chains of partial pages into a condensed form
     /// during compaction.
-    fn consolidate(&self, &[Self::PartialPage]) -> Vec<Self::PartialPage>;
+    fn merge(&self, &[Self::PageFrag]) -> Self::PageFrag;
 
     /// Used to feed custom recovery information back to a higher-level abstraction
     /// during startup. For example, a B-Link tree must know what the current
     /// root node is before it can start serving requests.
-    fn recover(&self, &Self::PartialPage) -> Option<Self::Recovery>;
+    fn recover(&self, &Self::PageFrag) -> Option<Self::Recovery>;
 }
 
 /// Points to either a memory location or a disk location to page-in data from.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CacheEntry<M: Send + Sync> {
     /// A cache item that is in memory, and also in secondary storage.
-    Resident(Vec<M>, LogID),
+    Resident(M, LogID),
     /// A cache item that is present in secondary storage.
     PartialFlush(LogID),
     /// A cache item that is present in secondary storage, and is the base segment
@@ -89,20 +83,20 @@ impl<'s, P> Into<Ptr<'s, stack::Node<CacheEntry<P>>>> for CasKey<P>
 /// sequentially, to reduce IO during page reads.
 #[serde(bound(deserialize = ""))]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(super) struct LoggedUpdate<PartialPage>
-    where PartialPage: Serialize + DeserializeOwned
+pub(super) struct LoggedUpdate<PageFrag>
+    where PageFrag: Serialize + DeserializeOwned
 {
     pid: PageID,
-    update: Update<PartialPage>,
+    update: Update<PageFrag>,
 }
 
 #[serde(bound(deserialize = ""))]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-enum Update<PartialPage>
-    where PartialPage: DeserializeOwned + Serialize
+enum Update<PageFrag>
+    where PageFrag: DeserializeOwned + Serialize
 {
-    Append(Vec<PartialPage>),
-    Compact(Vec<PartialPage>),
+    Append(PageFrag),
+    Compact(PageFrag),
     Del,
     Alloc,
 }

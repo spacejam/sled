@@ -26,21 +26,16 @@ use super::*;
 /// pub struct TestMaterializer;
 ///
 /// impl Materializer for TestMaterializer {
-///     type MaterializedPage = String;
-///     type PartialPage = String;
+///     type PageFrag = String;
 ///     type Recovery = ();
 ///
-///     fn materialize(&self, frags: &[String]) -> String {
-///         self.consolidate(frags).pop().unwrap()
-///     }
-///
-///     fn consolidate(&self, frags: &[String]) -> Vec<String> {
+///     fn merge(&self, frags: &[String]) -> String {
 ///         let mut consolidated = String::new();
 ///         for frag in frags.into_iter() {
 ///             consolidated.push_str(&*frag);
 ///         }
 ///
-///         vec![consolidated]
+///         consolidated
 ///     }
 ///
 ///     fn recover(&self, _: &String) -> Option<()> {
@@ -58,9 +53,9 @@ use super::*;
 ///     // signals that this is the beginning of a new page history, and
 ///     // that any previous items associated with this page should be
 ///     // forgotten.
-///     let key = pc.replace(id, key, vec!["a".to_owned()]).unwrap();
-///     let key = pc.prepend(id, key, "b".to_owned()).unwrap();
-///     let _key = pc.prepend(id, key, "c".to_owned()).unwrap();
+///     let key = pc.set(id, key, "a".to_owned()).unwrap();
+///     let key = pc.merge(id, key, "b".to_owned()).unwrap();
+///     let _key = pc.merge(id, key, "c".to_owned()).unwrap();
 ///
 ///     let (consolidated, _key) = pc.get(id).unwrap();
 ///
@@ -121,11 +116,10 @@ impl<PM, L, P, R> Debug for PageCache<PM, L, P, R>
 }
 
 impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
-    where PM: Materializer<PartialPage = P, Recovery = R>,
+    where PM: Materializer<PageFrag = P, Recovery = R>,
           PM: Send + Sync,
           P: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
-          R: Debug + PartialEq + Clone + Serialize + DeserializeOwned,
-          PM::MaterializedPage: Debug
+          R: Debug + PartialEq + Clone + Serialize + DeserializeOwned
 {
     /// Instantiate a new `PageCache`.
     pub fn new(pm: PM, config: Config) -> PageCache<PM, LockFreeLog, P, R> {
@@ -221,7 +215,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
     }
 
     /// Try to retrieve a page by its logical ID.
-    pub fn get(&self, pid: PageID) -> Option<(PM::MaterializedPage, CasKey<P>)> {
+    pub fn get(&self, pid: PageID) -> Option<(PM::PageFrag, CasKey<P>)> {
         pin(|scope| {
             let stack_ptr = self.inner.get(pid, scope);
             if stack_ptr.is_none() {
@@ -299,7 +293,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         }
     }
 
-    fn pull(&self, lid: LogID) -> Vec<P> {
+    fn pull(&self, lid: LogID) -> P {
         let bytes = match self.log.read(lid).map_err(|_| ()) {
             Ok(LogRead::Flush(data, _len)) => data,
             _ => panic!("read invalid data at lid {}", lid),
@@ -322,7 +316,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         mut head: Ptr<'s, stack::Node<CacheEntry<P>>>,
         stack_ptr: Ptr<'s, stack::Stack<CacheEntry<P>>>,
         scope: &'s Scope,
-    ) -> (PM::MaterializedPage, CasKey<P>) {
+    ) -> (PM::PageFrag, CasKey<P>) {
         let stack_iter = StackIter::from_ptr(head, scope);
         let mut cache_entries: Vec<CacheEntry<P>> = stack_iter.map(|ptr| (*ptr).clone()).collect();
 
@@ -355,12 +349,19 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             let res = unsafe { stack_ptr.deref().cas(head, node.into_ptr(scope), scope) };
             if let Ok(new_head) = res {
                 head = new_head;
+            } else {
+                // NB explicitly DON'T update head, as our witnessed
+                // entries do NOT contain the latest state. This
+                // may not matter to callers who only care about
+                // reading, but maybe we should signal that it's
+                // out of date for those who page_in in an attempt
+                // to modify!
             }
         }
 
         let mut partial_pages: Vec<P> = cache_entries
             .into_iter()
-            .flat_map(|cache_entry| match cache_entry {
+            .map(|cache_entry| match cache_entry {
                 CacheEntry::Resident(pp, _lid) => pp,
                 _ => panic!("non-resident entry found, after trying to page-in all entries"),
             })
@@ -376,24 +377,19 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         self.page_out(to_evict, scope);
 
         if partial_pages.len() > self.config().get_page_consolidation_threshold() {
-            let consolidated = self.t.consolidate(&partial_pages);
-            if let Ok(new_head) = self.replace(pid, head.into(), consolidated) {
+            let consolidated = self.t.merge(&partial_pages);
+            if let Ok(new_head) = self.set(pid, head.into(), consolidated) {
                 head = new_head.into();
             }
         }
 
-        let materialized = self.t.materialize(&partial_pages);
+        let materialized = self.t.merge(&partial_pages);
 
         (materialized, head.into())
     }
 
-    /// Replace an existing page with a different set of `PartialPage`s.
-    pub fn replace(
-        &self,
-        pid: PageID,
-        old: CasKey<P>,
-        new: Vec<P>,
-    ) -> Result<CasKey<P>, CasKey<P>> {
+    /// Replace an existing page with a different set of `PageFrag`s.
+    pub fn set(&self, pid: PageID, old: CasKey<P>, new: P) -> Result<CasKey<P>, CasKey<P>> {
         let replace: LoggedUpdate<P> = LoggedUpdate {
             pid: pid,
             update: Update::Compact(new.clone()),
@@ -422,17 +418,17 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
     }
 
 
-    /// Try to atomically prepend a `Materializer::PartialPage` to the page.
-    pub fn prepend(&self, pid: PageID, old: CasKey<P>, new: P) -> Result<CasKey<P>, CasKey<P>> {
+    /// Try to atomically add a `PageFrag` to the page.
+    pub fn merge(&self, pid: PageID, old: CasKey<P>, new: P) -> Result<CasKey<P>, CasKey<P>> {
         let prepend: LoggedUpdate<P> = LoggedUpdate {
             pid: pid,
-            update: Update::Append(vec![new.clone()]),
+            update: Update::Append(new.clone()),
         };
         let bytes = serialize(&prepend, Infinite).unwrap();
         let log_reservation = self.log.reserve(bytes);
         let log_offset = log_reservation.log_id();
 
-        let cache_entry = CacheEntry::Resident(vec![new], log_offset);
+        let cache_entry = CacheEntry::Resident(new, log_offset);
 
         pin(|scope| {
             let stack_ptr = self.inner.get(pid, scope).unwrap();
@@ -500,23 +496,19 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
                 }
 
                 match prepend.update {
-                    Update::Append(partial_pages) => {
-                        for partial_page in partial_pages {
-                            let r = self.t.recover(&partial_page);
-                            if r.is_some() {
-                                recovery = r;
-                            }
+                    Update::Append(partial_page) => {
+                        let r = self.t.recover(&partial_page);
+                        if r.is_some() {
+                            recovery = r;
                         }
 
                         let lids = snapshot.pt.get_mut(&prepend.pid).unwrap();
                         lids.push(log_id);
                     }
-                    Update::Compact(partial_pages) => {
-                        for partial_page in partial_pages {
-                            let r = self.t.recover(&partial_page);
-                            if r.is_some() {
-                                recovery = r;
-                            }
+                    Update::Compact(partial_page) => {
+                        let r = self.t.recover(&partial_page);
+                        if r.is_some() {
+                            recovery = r;
                         }
 
                         snapshot.pt.insert(prepend.pid, vec![log_id]);
