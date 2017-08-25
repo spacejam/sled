@@ -70,7 +70,9 @@ use super::*;
 ///     std::fs::remove_file(path).unwrap();
 /// }
 /// ```
-pub struct PageCache<PM, L, P, R> {
+pub struct PageCache<PM, L, P, R>
+    where P: Send + Sync
+{
     t: PM,
     inner: Radix<Stack<CacheEntry<P>>>,
     max_pid: AtomicUsize,
@@ -81,7 +83,9 @@ pub struct PageCache<PM, L, P, R> {
     last_snapshot: AtomicOption<Snapshot<R>>,
 }
 
-impl<PM, L, P, R> Drop for PageCache<PM, L, P, R> {
+impl<PM, L, P, R> Drop for PageCache<PM, L, P, R>
+    where P: Send + Sync
+{
     fn drop(&mut self) {
         // this is necessary because AtomicOption leaks
         // the inner object if left on its own
@@ -91,6 +95,7 @@ impl<PM, L, P, R> Drop for PageCache<PM, L, P, R> {
 
 unsafe impl<PM, L, P, R> Send for PageCache<PM, L, P, R>
     where PM: Send,
+          P: Send + Sync,
           L: Send,
           R: Send
 {
@@ -98,11 +103,14 @@ unsafe impl<PM, L, P, R> Send for PageCache<PM, L, P, R>
 
 unsafe impl<PM, L, P, R> Sync for PageCache<PM, L, P, R>
     where PM: Sync,
+          P: Send + Sync,
           L: Sync
 {
 }
 
-impl<PM, L, P, R> Debug for PageCache<PM, L, P, R> {
+impl<PM, L, P, R> Debug for PageCache<PM, L, P, R>
+    where P: Send + Sync
+{
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         f.write_str(&*format!(
             "PageCache {{ max: {:?} free: {:?} }}\n",
@@ -115,7 +123,7 @@ impl<PM, L, P, R> Debug for PageCache<PM, L, P, R> {
 impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
     where PM: Materializer<PartialPage = P, Recovery = R>,
           PM: Send + Sync,
-          P: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send,
+          P: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
           R: Debug + PartialEq + Clone + Serialize + DeserializeOwned,
           PM::MaterializedPage: Debug
 {

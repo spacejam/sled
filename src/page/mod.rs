@@ -48,7 +48,7 @@ pub trait Materializer {
 
 /// Points to either a memory location or a disk location to page-in data from.
 #[derive(Debug, Clone, PartialEq)]
-pub enum CacheEntry<M> {
+pub enum CacheEntry<M: Send + Sync> {
     /// A cache item that is in memory, and also in secondary storage.
     Resident(Vec<M>, LogID),
     /// A cache item that is present in secondary storage.
@@ -58,15 +58,17 @@ pub enum CacheEntry<M> {
     Flush(LogID),
 }
 
-unsafe impl<M: Send> Send for CacheEntry<M> {}
-
 #[derive(Debug, Clone)]
-pub struct CasKey<P> {
+pub struct CasKey<P>
+    where P: Send + Sync
+{
     ptr: *const stack::Node<CacheEntry<P>>,
     tag: usize,
 }
 
-impl<'s, P> From<Ptr<'s, stack::Node<CacheEntry<P>>>> for CasKey<P> {
+impl<'s, P> From<Ptr<'s, stack::Node<CacheEntry<P>>>> for CasKey<P>
+    where P: Send + Sync
+{
     fn from(ptr: Ptr<'s, stack::Node<CacheEntry<P>>>) -> CasKey<P> {
         CasKey {
             ptr: ptr.as_raw(),
@@ -75,7 +77,9 @@ impl<'s, P> From<Ptr<'s, stack::Node<CacheEntry<P>>>> for CasKey<P> {
     }
 }
 
-impl<'s, P> Into<Ptr<'s, stack::Node<CacheEntry<P>>>> for CasKey<P> {
+impl<'s, P> Into<Ptr<'s, stack::Node<CacheEntry<P>>>> for CasKey<P>
+    where P: Send + Sync
+{
     fn into(self) -> Ptr<'s, stack::Node<CacheEntry<P>>> {
         unsafe { Ptr::from_raw(self.ptr).with_tag(self.tag) }
     }
