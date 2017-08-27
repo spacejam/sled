@@ -358,8 +358,6 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             return None;
         }
 
-        to_merge.reverse();
-
         let mut fetched = Vec::with_capacity(lids.len());
 
         // Did not find a previously merged value in memory,
@@ -377,23 +375,19 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             for &&lid in to_pull {
                 fetched.push(self.pull(lid));
             }
-
-            fetched.reverse();
         }
 
-        let combined: Vec<&P> = fetched
+        let combined: Vec<&P> = to_merge
             .iter()
-            .map(|v| v)
-            .chain(to_merge.iter().map(|&v| v))
+            .map(|&v| v)
+            .chain(fetched.iter().map(|v| v))
+            .rev()
             .collect();
 
         let merged = self.t.merge(&*combined);
 
         let size = std::mem::size_of_val(&merged);
         let to_evict = self.lru.accessed(pid, size);
-        if !to_evict.is_empty() {
-            println!("size {} kicked out pids {:?}", size, to_evict);
-        }
         self.page_out(to_evict, scope);
 
         if lids.len() > self.config().get_page_consolidation_threshold() {
@@ -405,18 +399,18 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         } else if fix_up_length >= self.config().get_cache_fixup_threshold() {
             let mut new_entries = Vec::with_capacity(lids.len());
 
-            let head_lid = lids.pop().unwrap();
+            let head_lid = lids.remove(0);
             let head_entry = CacheEntry::MergedResident(merged.clone(), *head_lid);
             new_entries.push(head_entry);
 
             let mut tail = if !lids.is_empty() {
-                let lid = lids.remove(0);
+                let lid = lids.pop().unwrap();
                 Some(CacheEntry::Flush(*lid))
             } else {
                 None
             };
 
-            for &&lid in lids.iter().rev() {
+            for &&lid in lids.iter() {
                 new_entries.push(CacheEntry::PartialFlush(lid));
             }
 
