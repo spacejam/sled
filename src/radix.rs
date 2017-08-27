@@ -143,11 +143,14 @@ impl<T> Radix<T>
     }
 
     /// Delete a value from the tree, returning the old value.
-    pub fn del(&self, pid: PageID) {
+    pub fn del(&self, pid: PageID) -> bool {
         pin(|scope| {
             let old = self.swap(pid, Ptr::null(), scope);
             if !old.is_null() {
                 unsafe { scope.defer_drop(old) };
+                true
+            } else {
+                false
             }
         })
     }

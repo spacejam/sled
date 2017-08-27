@@ -55,7 +55,9 @@ pub enum CacheEntry<M: Send + Sync> {
     Flush(LogID),
 }
 
-#[derive(Debug, Clone)]
+/// A wrapper struct for a pointer to a (possibly invalid, hence inaccessible)
+/// `PageFrag` used for applying updates atomically to shared pages.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CasKey<P>
     where P: Send + Sync
 {

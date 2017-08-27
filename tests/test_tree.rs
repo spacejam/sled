@@ -225,6 +225,7 @@ fn prop_tree_matches_btreemap(ops: OpVec, blink_fanout: u8, snapshot_after: u8) 
     let config = Config::default()
         .snapshot_after_ops(snapshot_after as usize + 1)
         .blink_fanout(blink_fanout as usize + 1)
+        .cache_capacity(1_000_000_000)
         .path(Some(path));
     let mut tree = config.tree();
     let mut reference = BTreeMap::new();
@@ -343,6 +344,28 @@ fn test_snapshot_bug_3() {
                 Set(189, 186),
                 Restart,
                 Scan(198, 11),
+            ],
+        },
+        0,
+        0,
+    );
+}
+
+#[test]
+fn test_snapshot_bug_4() {
+    use Op::*;
+    prop_tree_matches_btreemap(
+        OpVec {
+            ops: vec![
+                Set(158, 31),
+                Set(111, 134),
+                Set(230, 187),
+                Set(169, 58),
+                Set(131, 10),
+                Set(108, 246),
+                Set(127, 155),
+                Restart,
+                Set(59, 119),
             ],
         },
         0,

@@ -193,7 +193,10 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
     /// Free a particular page.
     pub fn free(&self, pid: PageID) {
-        self.inner.del(pid);
+        let deleted = self.inner.del(pid);
+        if !deleted {
+            return;
+        }
 
         // write info to log
         let prepend: LoggedUpdate<P> = LoggedUpdate {
@@ -225,7 +228,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
             let head = unsafe { stack_ptr.deref().head(scope) };
 
-            Some(self.page_in(pid, head, stack_ptr, scope))
+            self.page_in(pid, head, stack_ptr, scope)
         })
     }
 
@@ -255,6 +258,11 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
             let head = unsafe { stack_ptr.deref().head(scope) };
             let stack_iter = StackIter::from_ptr(head, scope);
+
+            let stack_iter2 = StackIter::from_ptr(head, scope);
+            let all: Vec<_> = stack_iter2.collect();
+            println!("-> page_out stack: {:?}", all);
+
             let mut cache_entries: Vec<CacheEntry<P>> =
                 stack_iter.map(|ptr| (*ptr).clone()).collect();
 
@@ -318,7 +326,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         mut head: Ptr<'s, stack::Node<CacheEntry<P>>>,
         stack_ptr: Ptr<'s, stack::Stack<CacheEntry<P>>>,
         scope: &'s Scope,
-    ) -> (PM::PageFrag, CasKey<P>) {
+    ) -> Option<(PM::PageFrag, CasKey<P>)> {
         let stack_iter = StackIter::from_ptr(head, scope);
 
         let mut to_merge = vec![];
@@ -349,6 +357,10 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             }
         }
 
+        if lids.is_empty() {
+            return None;
+        }
+
         to_merge.reverse();
 
         let mut fetched = Vec::with_capacity(lids.len());
@@ -372,6 +384,9 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             }
 
             fetched.reverse();
+            let stack_iter2 = StackIter::from_ptr(head, scope);
+            let all: Vec<_> = stack_iter2.collect();
+            println!("<- page_in stack: {:?}", all);
             println!("fetched: {:?}", fetched);
             println!("lids: {:?}", lids);
         }
@@ -384,12 +399,18 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
         let merged = self.t.merge(&*combined);
 
-        let to_evict = self.lru.accessed(pid, std::mem::size_of_val(&merged));
+        let size = std::mem::size_of_val(&merged);
+        let to_evict = self.lru.accessed(pid, size);
+        if !to_evict.is_empty() {
+            println!("size {} kicked out pids {:?}", size, to_evict);
+        }
         self.page_out(to_evict, scope);
 
         if lids.len() > self.config().get_page_consolidation_threshold() {
-            if let Ok(new_head) = self.set(pid, head.into(), merged.clone()) {
-                head = new_head.into();
+            match self.set(pid, head.into(), merged.clone()) {
+                Some(Ok(new_head)) => head = new_head.into(),
+                None => return None,
+                _ => {}
             }
         } else if fix_up_length >= self.config().get_cache_fixup_threshold() {
             let mut new_entries = Vec::with_capacity(lids.len());
@@ -428,25 +449,29 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             }
         }
 
-        (merged, head.into())
+        Some((merged, head.into()))
     }
 
     /// Replace an existing page with a different set of `PageFrag`s.
-    pub fn set(&self, pid: PageID, old: CasKey<P>, new: P) -> Result<CasKey<P>, CasKey<P>> {
-        let replace: LoggedUpdate<P> = LoggedUpdate {
-            pid: pid,
-            update: Update::Compact(new.clone()),
-        };
-        let bytes = serialize(&replace, Infinite).unwrap();
-        let log_reservation = self.log.reserve(bytes);
-        let log_offset = log_reservation.log_id();
-
-        let cache_entry = CacheEntry::MergedResident(new, log_offset);
-
+    pub fn set(&self, pid: PageID, old: CasKey<P>, new: P) -> Option<Result<CasKey<P>, CasKey<P>>> {
         pin(|scope| {
-            let node = node_from_frag_vec(vec![cache_entry]).into_ptr(scope);
+            let stack_ptr = self.inner.get(pid, scope);
+            if stack_ptr.is_none() {
+                return None;
+            }
+            let stack_ptr = stack_ptr.unwrap();
 
-            let stack_ptr = self.inner.get(pid, scope).unwrap();
+            let replace: LoggedUpdate<P> = LoggedUpdate {
+                pid: pid,
+                update: Update::Compact(new.clone()),
+            };
+            let bytes = serialize(&replace, Infinite).unwrap();
+            let log_reservation = self.log.reserve(bytes);
+            let log_offset = log_reservation.log_id();
+
+            let cache_entry = CacheEntry::MergedResident(new, log_offset);
+
+            let node = node_from_frag_vec(vec![cache_entry]).into_ptr(scope);
 
             let result = unsafe { stack_ptr.deref().cas(old.clone().into(), node, scope) };
 
@@ -456,25 +481,35 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
                 log_reservation.abort();
             }
 
-            result.map(|ok| ok.into()).map_err(|e| e.into())
+            Some(result.map(|ok| ok.into()).map_err(|e| e.into()))
         })
     }
 
 
     /// Try to atomically add a `PageFrag` to the page.
-    pub fn merge(&self, pid: PageID, old: CasKey<P>, new: P) -> Result<CasKey<P>, CasKey<P>> {
-        let prepend: LoggedUpdate<P> = LoggedUpdate {
-            pid: pid,
-            update: Update::Append(new.clone()),
-        };
-        let bytes = serialize(&prepend, Infinite).unwrap();
-        let log_reservation = self.log.reserve(bytes);
-        let log_offset = log_reservation.log_id();
-
-        let cache_entry = CacheEntry::Resident(new, log_offset);
-
+    pub fn merge(
+        &self,
+        pid: PageID,
+        old: CasKey<P>,
+        new: P,
+    ) -> Option<Result<CasKey<P>, CasKey<P>>> {
         pin(|scope| {
-            let stack_ptr = self.inner.get(pid, scope).unwrap();
+            let stack_ptr = self.inner.get(pid, scope);
+            if stack_ptr.is_none() {
+                return None;
+            }
+            let stack_ptr = stack_ptr.unwrap();
+
+            let prepend: LoggedUpdate<P> = LoggedUpdate {
+                pid: pid,
+                update: Update::Append(new.clone()),
+            };
+            let bytes = serialize(&prepend, Infinite).unwrap();
+            let log_reservation = self.log.reserve(bytes);
+            let log_offset = log_reservation.log_id();
+
+            let cache_entry = CacheEntry::Resident(new, log_offset);
+
             let result = unsafe { stack_ptr.deref().cap(old.into(), cache_entry, scope) };
 
             if result.is_err() {
@@ -489,7 +524,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
                 }
             }
 
-            result.map(|ok| ok.into()).map_err(|e| e.into())
+            Some(result.map(|ok| ok.into()).map_err(|e| e.into()))
         })
     }
 
@@ -554,13 +589,15 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
                             recovery = r;
                         }
 
-                        snapshot.pt.insert(prepend.pid, vec![log_id]);
+                        let lids = snapshot.pt.get_mut(&prepend.pid).unwrap();
+                        lids.push(log_id);
                     }
                     Update::Del => {
                         snapshot.pt.remove(&prepend.pid);
                         snapshot.free.push(prepend.pid);
                     }
                     Update::Alloc => {
+                        snapshot.pt.insert(prepend.pid, vec![]);
                         snapshot.free.retain(|&pid| pid != prepend.pid);
                     }
                 }
@@ -733,11 +770,13 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             let mut lids = lids.clone();
             let stack = Stack::default();
 
-            let base = lids.remove(0);
-            stack.push(CacheEntry::Flush(base));
+            if !lids.is_empty() {
+                let base = lids.remove(0);
+                stack.push(CacheEntry::Flush(base));
 
-            for lid in lids {
-                stack.push(CacheEntry::PartialFlush(lid));
+                for lid in lids {
+                    stack.push(CacheEntry::PartialFlush(lid));
+                }
             }
 
             self.inner.insert(*pid, stack).unwrap();

@@ -54,7 +54,7 @@ impl Default for Config {
             flush_every_ms: Some(100),
             snapshot_after_ops: 1_000_000,
             snapshot_path: None,
-            cache_fixup_threshold: 1,
+            cache_fixup_threshold: 100000000,
             tc: Arc::new(ThreadCache::default()),
             tmp_path: tmp_path.to_owned(),
         }
