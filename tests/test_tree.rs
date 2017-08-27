@@ -225,7 +225,7 @@ fn prop_tree_matches_btreemap(ops: OpVec, blink_fanout: u8, snapshot_after: u8) 
     let config = Config::default()
         .snapshot_after_ops(snapshot_after as usize + 1)
         .blink_fanout(blink_fanout as usize + 1)
-        .cache_capacity(1_000_000_000)
+        .cache_capacity(40)
         .path(Some(path));
     let mut tree = config.tree();
     let mut reference = BTreeMap::new();
