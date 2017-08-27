@@ -69,8 +69,8 @@ impl Tree {
                 true,
             );
 
-            pages.set(root_id, root_cas_key, root).unwrap().unwrap();
-            pages.set(leaf_id, leaf_cas_key, leaf).unwrap().unwrap();
+            pages.set(root_id, root_cas_key, root).unwrap();
+            pages.set(leaf_id, leaf_cas_key, leaf).unwrap();
             root_id
         };
 
@@ -134,7 +134,10 @@ impl Tree {
             }
 
             let &mut (ref node, ref cas_key) = path.last_mut().unwrap();
-            if let Some(Ok(_)) = self.pages.merge(node.id, cas_key.clone(), frag.clone()) {
+            if self.pages
+                .merge(node.id, cas_key.clone(), frag.clone())
+                .is_ok()
+            {
                 return Ok(());
             }
         }
@@ -148,9 +151,7 @@ impl Tree {
             let mut path = self.path_for_key(&*key);
             let (mut last_node, last_cas_key) = path.pop().unwrap();
             // println!("last before: {:?}", last);
-            if let Some(Ok(new_cas_key)) =
-                self.pages.merge(last_node.id, last_cas_key, frag.clone())
-            {
+            if let Ok(new_cas_key) = self.pages.merge(last_node.id, last_cas_key, frag.clone()) {
                 last_node.apply(&frag);
                 // println!("last after: {:?}", last);
                 let should_split = last_node.should_split();
@@ -196,7 +197,7 @@ impl Tree {
             }
 
             let frag = Frag::Del(key.to_vec());
-            if let Some(Ok(_)) = self.pages.merge(leaf_node.id, leaf_cas_key, frag) {
+            if self.pages.merge(leaf_node.id, leaf_cas_key, frag).is_ok() {
                 // success
                 break;
             } else {
@@ -299,7 +300,7 @@ impl Tree {
                         parent_split.clone(),
                     );
 
-                    if let Some(Ok(res)) = res {
+                    if let Ok(res) = res {
                         parent_node.apply(&Frag::ParentSplit(parent_split));
                         *parent_cas_key = res;
                     } else {
@@ -341,13 +342,11 @@ impl Tree {
         // install the new right side
         self.pages
             .set(new_pid, new_cas_key, Frag::Base(rhs, false))
-            .unwrap()
             .expect("failed to initialize child split");
 
         // try to install a child split on the left side
         if self.pages
             .merge(node.id, node_cas_key, child_split)
-            .unwrap()
             .is_err()
         {
             // if we failed, don't follow through with the parent split
@@ -364,7 +363,7 @@ impl Tree {
         parent_node: Node,
         parent_cas_key: CasKey<Frag>,
         parent_split: ParentSplit,
-    ) -> Option<Result<CasKey<Frag>, CasKey<Frag>>> {
+    ) -> Result<CasKey<Frag>, Option<CasKey<Frag>>> {
         // install parent split
         let res = self.pages.merge(
             parent_node.id,
@@ -372,11 +371,8 @@ impl Tree {
             Frag::ParentSplit(parent_split.clone()),
         );
 
-        match res {
-            None | Some(Err(_)) => {
-                // println!("{}: {} <- {:?}|{} -", tn(), parent_node.id, parent_split.at, parent_split.to);
-            } 
-            _ => {}
+        if res.is_err() {
+            // println!("{}: {} <- {:?}|{} -", tn(), parent_node.id, parent_split.at, parent_split.to);
         }
 
         res
@@ -400,7 +396,6 @@ impl Tree {
         );
         self.pages
             .set(new_root_pid, new_root_cas_key, new_root)
-            .unwrap()
             .unwrap();
         // println!("split is {:?}", parent_split);
         // println!("trying to cas root at {:?} with real value {:?}", path.first().unwrap().pid, self.root.load(SeqCst));

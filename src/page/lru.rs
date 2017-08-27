@@ -16,7 +16,7 @@ impl Lru {
             cache_bits <= 20,
             "way too many shards. use a smaller number of cache_bits"
         );
-        let size = 2 << cache_bits;
+        let size = 1 << cache_bits;
         let shard_capacity = cache_capacity / size;
         Lru {
             shards: rep_no_copy![Mutex::new(Shard::new(shard_capacity)); size],

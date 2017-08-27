@@ -5,7 +5,8 @@ use std::sync::Arc;
 use crossbeam::sync::AtomicOption;
 use coco::epoch::{Owned, Ptr, Scope, pin};
 
-// #[cfg(feature = "rayon")] use rayon::prelude::*;
+#[cfg(feature = "rayon")]
+use rayon::prelude::*;
 
 #[cfg(feature = "zstd")]
 use zstd::block::{compress, decompress};
@@ -259,10 +260,6 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             let head = unsafe { stack_ptr.deref().head(scope) };
             let stack_iter = StackIter::from_ptr(head, scope);
 
-            let stack_iter2 = StackIter::from_ptr(head, scope);
-            let all: Vec<_> = stack_iter2.collect();
-            println!("-> page_out stack: {:?}", all);
-
             let mut cache_entries: Vec<CacheEntry<P>> =
                 stack_iter.map(|ptr| (*ptr).clone()).collect();
 
@@ -368,7 +365,6 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         // Did not find a previously merged value in memory,
         // may need to go to disk.
         if !merged_resident {
-            /*
             let to_pull = &lids[to_merge.len()..];
 
             #[cfg(feature = "rayon")]
@@ -378,17 +374,11 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             }
 
             #[cfg(not(feature = "rayon"))]
-            */
-            for &&lid in &lids[to_merge.len()..] {
+            for &&lid in to_pull {
                 fetched.push(self.pull(lid));
             }
 
             fetched.reverse();
-            let stack_iter2 = StackIter::from_ptr(head, scope);
-            let all: Vec<_> = stack_iter2.collect();
-            println!("<- page_in stack: {:?}", all);
-            println!("fetched: {:?}", fetched);
-            println!("lids: {:?}", lids);
         }
 
         let combined: Vec<&P> = fetched
@@ -408,8 +398,8 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
         if lids.len() > self.config().get_page_consolidation_threshold() {
             match self.set(pid, head.into(), merged.clone()) {
-                Some(Ok(new_head)) => head = new_head.into(),
-                None => return None,
+                Ok(new_head) => head = new_head.into(),
+                Err(None) => return None,
                 _ => {}
             }
         } else if fix_up_length >= self.config().get_cache_fixup_threshold() {
@@ -453,11 +443,14 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
     }
 
     /// Replace an existing page with a different set of `PageFrag`s.
-    pub fn set(&self, pid: PageID, old: CasKey<P>, new: P) -> Option<Result<CasKey<P>, CasKey<P>>> {
+    /// Returns `Ok(new_key)` if the operation was successful. Returns
+    /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
+    /// if the page has changed since the provided `CasKey` was created.
+    pub fn set(&self, pid: PageID, old: CasKey<P>, new: P) -> Result<CasKey<P>, Option<CasKey<P>>> {
         pin(|scope| {
             let stack_ptr = self.inner.get(pid, scope);
             if stack_ptr.is_none() {
-                return None;
+                return Err(None);
             }
             let stack_ptr = stack_ptr.unwrap();
 
@@ -481,22 +474,25 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
                 log_reservation.abort();
             }
 
-            Some(result.map(|ok| ok.into()).map_err(|e| e.into()))
+            result.map(|ok| ok.into()).map_err(|e| Some(e.into()))
         })
     }
 
 
     /// Try to atomically add a `PageFrag` to the page.
+    /// Returns `Ok(new_key)` if the operation was successful. Returns
+    /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
+    /// if the page has changed since the provided `CasKey` was created.
     pub fn merge(
         &self,
         pid: PageID,
         old: CasKey<P>,
         new: P,
-    ) -> Option<Result<CasKey<P>, CasKey<P>>> {
+    ) -> Result<CasKey<P>, Option<CasKey<P>>> {
         pin(|scope| {
             let stack_ptr = self.inner.get(pid, scope);
             if stack_ptr.is_none() {
-                return None;
+                return Err(None);
             }
             let stack_ptr = stack_ptr.unwrap();
 
@@ -524,7 +520,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
                 }
             }
 
-            Some(result.map(|ok| ok.into()).map_err(|e| e.into()))
+            result.map(|ok| ok.into()).map_err(|e| Some(e.into()))
         })
     }
 
@@ -589,8 +585,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
                             recovery = r;
                         }
 
-                        let lids = snapshot.pt.get_mut(&prepend.pid).unwrap();
-                        lids.push(log_id);
+                        snapshot.pt.insert(prepend.pid, vec![log_id]);
                     }
                     Update::Del => {
                         snapshot.pt.remove(&prepend.pid);

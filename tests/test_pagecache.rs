@@ -37,7 +37,7 @@ impl Materializer for TestMaterializer {
 #[test]
 fn test_cache() {
     let path = "test_pagecache_caching";
-    let conf = Config::default().cache_capacity(50).cache_bits(1).path(
+    let conf = Config::default().cache_capacity(40).cache_bits(0).path(
         Some(
             path.to_owned(),
         ),
@@ -47,16 +47,16 @@ fn test_cache() {
     pc.recover();
 
     let mut keys = HashMap::new();
-    for _ in 0..10 {
+    for _ in 0..2 {
         let (id, key) = pc.allocate();
         let key = pc.set(id, key, "a".to_owned()).unwrap();
         keys.insert(id, key);
     }
 
-    for i in 0..100 {
-        let id = i as usize % 10;
-        let key = keys.get(&id).cloned().unwrap().unwrap();
-        let key = pc.merge(id, key, "b".to_owned()).unwrap();
+    for i in 0..10000 {
+        let id = i as usize % 2;
+        let key = keys.get(&id).cloned().unwrap();
+        let key = pc.merge(id, key, "arstrastrats".to_owned()).unwrap();
         keys.insert(id, key);
     }
 
@@ -75,9 +75,9 @@ fn basic_recovery() {
     let mut pc = PageCache::new(TestMaterializer, conf.clone());
     pc.recover();
     let (id, key) = pc.allocate();
-    let key = pc.set(id, key, "a".to_owned()).unwrap().unwrap();
-    let key = pc.merge(id, key, "b".to_owned()).unwrap().unwrap();
-    let _key = pc.merge(id, key, "c".to_owned()).unwrap().unwrap();
+    let key = pc.set(id, key, "a".to_owned()).unwrap();
+    let key = pc.merge(id, key, "b".to_owned()).unwrap();
+    let _key = pc.merge(id, key, "c".to_owned()).unwrap();
     let (consolidated, _) = pc.get(id).unwrap();
     assert_eq!(consolidated, "abc".to_owned());
     drop(pc);
@@ -87,7 +87,7 @@ fn basic_recovery() {
     let (consolidated2, key) = pc2.get(id).unwrap();
     assert_eq!(consolidated, consolidated2);
 
-    pc2.merge(id, key, "d".to_owned()).unwrap().unwrap();
+    pc2.merge(id, key, "d".to_owned()).unwrap();
     drop(pc2);
 
     let mut pc3 = PageCache::new(TestMaterializer, conf.clone());
@@ -180,6 +180,8 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
     let nonce: String = thread_rng().gen_ascii_chars().take(10).collect();
     let path = format!("quickcheck_pagecache_works_{}", nonce);
     let config = Config::default()
+        .cache_bits(0)
+        .cache_capacity(0)
         .cache_fixup_threshold(cache_fixup_threshold as usize)
         .path(Some(path));
 
@@ -201,16 +203,16 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
 
                     if good_key {
                         let res = pc.merge(pid, old_key.clone(), c.clone());
-                        let new_key = res.unwrap().unwrap();
+                        let new_key = res.unwrap();
                         *old_key = new_key;
                         existing.push_str(&*c);
                     } else {
                         let res = pc.merge(pid, bad_ptr.into(), c);
-                        assert!(res.unwrap().is_err());
+                        assert!(res.is_err());
                     }
                 } else {
                     let res = pc.set(pid, bad_ptr.into(), c.clone());
-                    assert!(res.is_none());
+                    assert_eq!(res, Err(None));
                 }
             }
             Merge(pid, c, good_key) => {
@@ -221,16 +223,16 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
 
                     if good_key {
                         let res = pc.merge(pid, old_key.clone(), c.clone());
-                        let new_key = res.unwrap().unwrap();
+                        let new_key = res.unwrap();
                         *old_key = new_key;
                         existing.push_str(&*c);
                     } else {
                         let res = pc.merge(pid, bad_ptr.into(), c);
-                        assert!(res.unwrap().is_err());
+                        assert!(res.is_err());
                     }
                 } else {
                     let res = pc.merge(pid, bad_ptr.into(), c.clone());
-                    assert!(res.is_none());
+                    assert_eq!(res, Err(None));
                 }
             }
             Get(pid) => {
@@ -347,7 +349,7 @@ fn test_pagecache_bug_5() {
 #[ignore]
 fn test_pagecache_bug_() {
     // postmortem: TEMPLATE
-    use Op::*;
+    // use Op::*;
     prop_pagecache_works(
         OpVec {
             ops: vec![],

@@ -290,11 +290,11 @@ fn quickcheck_tree_matches_btreemap() {
         .quickcheck(prop_tree_matches_btreemap as fn(OpVec, u8, u8) -> bool);
 }
 
-// found after adding the first quickcheck test.
-// this was a bug in the snapshot recovery, where
-// it led to max_id dropping by 1 after a restart.
 #[test]
 fn test_snapshot_bug_1() {
+    // postmortem:
+    // this was a bug in the snapshot recovery, where
+    // it led to max_id dropping by 1 after a restart.
     use Op::*;
     prop_tree_matches_btreemap(
         OpVec {
@@ -306,16 +306,16 @@ fn test_snapshot_bug_1() {
 
 }
 
-// found after adding the first quickcheck test.
-// this was a bug in the way that the `Materializer`
-// was fed data, possibly out of order, if recover
-// in the pagecache had to run over log entries
-// that were later run through the same `Materializer`
-// then the second time (triggered by a snapshot)
-// would not pick up on the importance of seeing
-// the new root set.
 #[test]
 fn test_snapshot_bug_2() {
+    // postmortem:
+    // this was a bug in the way that the `Materializer`
+    // was fed data, possibly out of order, if recover
+    // in the pagecache had to run over log entries
+    // that were later run through the same `Materializer`
+    // then the second time (triggered by a snapshot)
+    // would not pick up on the importance of seeing
+    // the new root set.
     use Op::*;
     prop_tree_matches_btreemap(
         OpVec {
@@ -326,11 +326,9 @@ fn test_snapshot_bug_2() {
     );
 }
 
-// found after adding the first quickcheck test.
-// the tree has a root hoist, which does not
-// persist across the restart.
 #[test]
 fn test_snapshot_bug_3() {
+    // postmortem: the tree was not persisting and recovering root hoists
     use Op::*;
     prop_tree_matches_btreemap(
         OpVec {
@@ -353,6 +351,8 @@ fn test_snapshot_bug_3() {
 
 #[test]
 fn test_snapshot_bug_4() {
+    // postmortem: pagecache was failing to replace the LogID list
+    // when it encountered a new Update::Compact.
     use Op::*;
     prop_tree_matches_btreemap(
         OpVec {
