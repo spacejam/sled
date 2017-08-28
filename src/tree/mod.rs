@@ -363,7 +363,7 @@ impl Tree {
         parent_node: Node,
         parent_cas_key: CasKey<Frag>,
         parent_split: ParentSplit,
-    ) -> Result<CasKey<Frag>, CasKey<Frag>> {
+    ) -> Result<CasKey<Frag>, Option<CasKey<Frag>>> {
         // install parent split
         let res = self.pages.merge(
             parent_node.id,
@@ -613,11 +613,11 @@ impl Materializer for BLinkMaterializer {
     type PageFrag = Frag;
     type Recovery = PageID;
 
-    fn merge(&self, frags: &[Frag]) -> Frag {
+    fn merge(&self, frags: &[&Frag]) -> Frag {
         let mut base_node_opt: Option<Node> = None;
         let mut root = false;
 
-        for frag in frags {
+        for &frag in frags {
             if let Some(ref mut base_node) = base_node_opt {
                 base_node.apply(&frag);
             } else {

@@ -225,6 +225,7 @@ fn prop_tree_matches_btreemap(ops: OpVec, blink_fanout: u8, snapshot_after: u8) 
     let config = Config::default()
         .snapshot_after_ops(snapshot_after as usize + 1)
         .blink_fanout(blink_fanout as usize + 1)
+        .cache_capacity(40)
         .path(Some(path));
     let mut tree = config.tree();
     let mut reference = BTreeMap::new();
@@ -289,11 +290,11 @@ fn quickcheck_tree_matches_btreemap() {
         .quickcheck(prop_tree_matches_btreemap as fn(OpVec, u8, u8) -> bool);
 }
 
-// found after adding the first quickcheck test.
-// this was a bug in the snapshot recovery, where
-// it led to max_id dropping by 1 after a restart.
 #[test]
 fn test_snapshot_bug_1() {
+    // postmortem:
+    // this was a bug in the snapshot recovery, where
+    // it led to max_id dropping by 1 after a restart.
     use Op::*;
     prop_tree_matches_btreemap(
         OpVec {
@@ -305,16 +306,16 @@ fn test_snapshot_bug_1() {
 
 }
 
-// found after adding the first quickcheck test.
-// this was a bug in the way that the `Materializer`
-// was fed data, possibly out of order, if recover
-// in the pagecache had to run over log entries
-// that were later run through the same `Materializer`
-// then the second time (triggered by a snapshot)
-// would not pick up on the importance of seeing
-// the new root set.
 #[test]
 fn test_snapshot_bug_2() {
+    // postmortem:
+    // this was a bug in the way that the `Materializer`
+    // was fed data, possibly out of order, if recover
+    // in the pagecache had to run over log entries
+    // that were later run through the same `Materializer`
+    // then the second time (triggered by a snapshot)
+    // would not pick up on the importance of seeing
+    // the new root set.
     use Op::*;
     prop_tree_matches_btreemap(
         OpVec {
@@ -325,11 +326,9 @@ fn test_snapshot_bug_2() {
     );
 }
 
-// found after adding the first quickcheck test.
-// the tree has a root hoist, which does not
-// persist across the restart.
 #[test]
 fn test_snapshot_bug_3() {
+    // postmortem: the tree was not persisting and recovering root hoists
     use Op::*;
     prop_tree_matches_btreemap(
         OpVec {
@@ -343,6 +342,30 @@ fn test_snapshot_bug_3() {
                 Set(189, 186),
                 Restart,
                 Scan(198, 11),
+            ],
+        },
+        0,
+        0,
+    );
+}
+
+#[test]
+fn test_snapshot_bug_4() {
+    // postmortem: pagecache was failing to replace the LogID list
+    // when it encountered a new Update::Compact.
+    use Op::*;
+    prop_tree_matches_btreemap(
+        OpVec {
+            ops: vec![
+                Set(158, 31),
+                Set(111, 134),
+                Set(230, 187),
+                Set(169, 58),
+                Set(131, 10),
+                Set(108, 246),
+                Set(127, 155),
+                Restart,
+                Set(59, 119),
             ],
         },
         0,

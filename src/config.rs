@@ -31,6 +31,7 @@ pub struct Config {
     flush_every_ms: Option<u64>,
     snapshot_after_ops: usize,
     snapshot_path: Option<String>,
+    cache_fixup_threshold: usize,
     tc: Arc<ThreadCache<fs::File>>,
     pub(super) tmp_path: String,
 }
@@ -53,6 +54,7 @@ impl Default for Config {
             flush_every_ms: Some(100),
             snapshot_after_ops: 1_000_000,
             snapshot_path: None,
+            cache_fixup_threshold: 1,
             tc: Arc::new(ThreadCache::default()),
             tmp_path: tmp_path.to_owned(),
         }
@@ -98,7 +100,8 @@ impl Config {
         (use_compression, get_use_compression, set_use_compression, bool, "whether to use zstd compression"),
         (flush_every_ms, get_flush_every_ms, set_flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
         (snapshot_after_ops, get_snapshot_after_ops, set_snapshot_after_ops, usize, "number of operations between page table snapshots"),
-        (snapshot_path, get_snapshot_path, set_snapshot_path, Option<String>, "snapshot file location")
+        (snapshot_path, get_snapshot_path, set_snapshot_path, Option<String>, "snapshot file location"),
+        (cache_fixup_threshold, get_cache_fixup_threshold, set_cache_fixup_threshold, usize, "the maximum length of a cached page fragment chain")
     );
 
     /// create a new `Tree` based on this configuration
