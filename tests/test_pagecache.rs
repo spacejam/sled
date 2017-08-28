@@ -1,12 +1,10 @@
-#[macro_use]
-extern crate lazy_static;
 extern crate rsdb;
 extern crate coco;
 extern crate rand;
 extern crate quickcheck;
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{ATOMIC_USIZE_INIT, AtomicUsize, Ordering};
 
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::{Rng, thread_rng};
@@ -126,9 +124,8 @@ impl Arbitrary for Op {
 
         let choice = g.gen_range(0, 5);
 
-        lazy_static! {
-            static ref COUNTER: AtomicUsize = AtomicUsize::new(1);
-        }
+        static COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
+        COUNTER.compare_and_swap(0, 1, Ordering::SeqCst);
 
         let pid = (g.gen::<u8>() % 8) as PageID;
 
