@@ -1,18 +1,26 @@
+extern crate rsdb;
+extern crate rand;
+
+#[cfg(feature = "stress")]
 #[macro_use]
 extern crate serde_derive;
-extern crate rsdb;
+
+#[cfg(feature = "stress")]
 extern crate docopt;
+
+#[cfg(feature = "stress")]
 extern crate chan_signal;
-extern crate rand;
-#[cfg(feature = "log")]
-extern crate env_logger;
 
 use std::thread;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
+#[cfg(feature = "stress")]
 use chan_signal::Signal;
+
+#[cfg(feature = "stress")]
 use docopt::Docopt;
+
 use rand::{Rng, thread_rng};
 
 const USAGE: &'static str = "
@@ -21,10 +29,10 @@ Usage: stress [--threads=<#>] [--burn-in] [--duration=<s>]
 Options:
     --threads=<#>      Number of threads [default: 4].
     --burn-in          Don't halt until we receive a signal.
-    --duration=<s>     Seconds to run for [default: 20].
+    --duration=<s>     Seconds to run for [default: 10].
 ";
 
-#[derive(Deserialize)]
+#[cfg_attr(feature = "docopt", derive(Deserialize))]
 struct Args {
     flag_threads: usize,
     flag_burn_in: bool,
@@ -69,15 +77,16 @@ fn run(tree: Arc<rsdb::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>
 }
 
 fn main() {
-    #[cfg(feature = "log")] env_logger::init();
-
+    #[cfg(feature = "stress")]
     let args: Args = Docopt::new(USAGE)
         .and_then(|d| d.argv(std::env::args().into_iter()).deserialize())
         .unwrap_or_else(|e| e.exit());
 
+    #[cfg(feature = "stress")]
     let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
-    let shutdown = Arc::new(AtomicBool::new(false));
+
     let total = Arc::new(AtomicUsize::new(0));
+    let shutdown = Arc::new(AtomicBool::new(false));
 
     let nonce: String = thread_rng().gen_ascii_chars().take(10).collect();
     let path = format!("rsdb_stress_{}", nonce);
@@ -97,7 +106,13 @@ fn main() {
 
     let now = std::time::Instant::now();
 
-    for _ in 0..args.flag_threads {
+    #[cfg(feature = "stress")]
+    let n_threads = args.flag_threads;
+
+    #[cfg(not(feature = "stress"))]
+    let n_threads = 4;
+
+    for _ in 0..n_threads {
         let tree = tree.clone();
         let shutdown = shutdown.clone();
         let total = total.clone();
@@ -105,12 +120,17 @@ fn main() {
         threads.push(t);
     }
 
-    if args.flag_burn_in {
-        signal.recv();
-        println!("got shutdown signal, cleaning up...");
-    } else {
-        thread::sleep(std::time::Duration::from_secs(args.flag_duration));
+    #[cfg(feature = "stress")]
+    {
+        if args.flag_burn_in {
+            signal.recv();
+            println!("got shutdown signal, cleaning up...");
+        } else {
+            thread::sleep(std::time::Duration::from_secs(args.flag_duration));
+        }
     }
+
+    #[cfg(not(feature = "stress"))] thread::sleep(std::time::Duration::from_secs(10));
 
     shutdown.store(true, Ordering::SeqCst);
 
@@ -120,6 +140,7 @@ fn main() {
 
     let ops = total.load(Ordering::SeqCst);
     let time = now.elapsed().as_secs() as usize;
+
     println!("did {} total ops in {} seconds. {} ops/s", ops, time, ops / time);
 
     tree.__delete_all_files();

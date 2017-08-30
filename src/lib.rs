@@ -40,7 +40,7 @@ extern crate rand;
 /// atomic lock-free tree
 pub use tree::{Tree, TreeIter};
 /// lock-free pagecache
-pub use page::{Materializer, PageCache};
+pub use page::{CasKey, Materializer, PageCache};
 /// lock-free log-structured storage
 pub use log::{HEADER_LEN, LockFreeLog, Log, LogRead};
 /// lock-free stack
@@ -94,7 +94,6 @@ mod config;
 mod thread_cache;
 
 use bound::Bound;
-use page::CasKey;
 use stack::{StackIter, node_from_frag_vec};
 use thread_cache::ThreadCache;
 

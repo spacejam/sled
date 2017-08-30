@@ -66,7 +66,7 @@ impl<T> Debug for Stack<T>
                 if written {
                     formatter.write_str(", ")?;
                 }
-                formatter.write_str(&*format!("({:?})", &node as *const _))?;
+                formatter.write_str(&*format!("({:?}) ", &node as *const _))?;
                 node.fmt(formatter)?;
                 written = true;
             }

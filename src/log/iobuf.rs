@@ -258,6 +258,7 @@ impl IoBufs {
             let res_start = buf_offset as usize;
             let res_end = res_start + buf.len();
             let destination = &mut (out_buf)[res_start..res_end];
+            let reservation_offset = log_offset + buf_offset as LogID;
 
             return Reservation {
                 idx: idx,
@@ -265,7 +266,7 @@ impl IoBufs {
                 data: buf,
                 destination: destination,
                 flushed: false,
-                base_disk_offset: log_offset as LogID,
+                reservation_offset: reservation_offset,
             };
         }
     }

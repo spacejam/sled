@@ -1,5 +1,9 @@
 # RSDB
 
+[![Build Status](https://travis-ci.org/spacejam/rsdb.svg?branch=master)](https://travis-ci.org/spacejam/rsdb)
+[![crates.io](http://meritbadge.herokuapp.com/rsdb)](https://crates.io/crates/rsdb)
+[![documentation](https://docs.rs/rsdb/badge.svg)](https://docs.rs/rsdb)
+
 A modern lock-free atomic embedded database designed to beat LSM trees for
 reads and traditional B+ trees for writes. 
 
@@ -9,10 +13,6 @@ Eventually, a versioned DB will be built on top of the `Tree` which provides
 multi-key transactions and snapshots.
 
 The `Tree` has a C API, so you can use this from any mainstream language.
-
-[documentation](https://docs.rs/rsdb)
-
-`rsdb = "0.7"`
 
 ```rust
 extern crate rsdb;

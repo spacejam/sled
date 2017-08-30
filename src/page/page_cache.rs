@@ -29,7 +29,7 @@ use super::*;
 ///     type PageFrag = String;
 ///     type Recovery = ();
 ///
-///     fn merge(&self, frags: &[String]) -> String {
+///     fn merge(&self, frags: &[&String]) -> String {
 ///         let mut consolidated = String::new();
 ///         for frag in frags.into_iter() {
 ///             consolidated.push_str(&*frag);
@@ -194,7 +194,10 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
     /// Free a particular page.
     pub fn free(&self, pid: PageID) {
-        self.inner.del(pid);
+        let deleted = self.inner.del(pid);
+        if !deleted {
+            return;
+        }
 
         // write info to log
         let prepend: LoggedUpdate<P> = LoggedUpdate {
@@ -226,7 +229,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
             let head = unsafe { stack_ptr.deref().head(scope) };
 
-            Some(self.page_in(pid, head, stack_ptr, scope))
+            self.page_in(pid, head, stack_ptr, scope)
         })
     }
 
@@ -256,14 +259,16 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
             let head = unsafe { stack_ptr.deref().head(scope) };
             let stack_iter = StackIter::from_ptr(head, scope);
+
             let mut cache_entries: Vec<CacheEntry<P>> =
                 stack_iter.map(|ptr| (*ptr).clone()).collect();
 
             // ensure the last entry is a Flush
             let last = cache_entries.pop().map(|last_ce| match last_ce {
-                CacheEntry::Resident(_, ref lid) => CacheEntry::Flush(*lid),
-                CacheEntry::PartialFlush(_) => panic!("got PartialFlush at end of stack..."),
+                CacheEntry::MergedResident(_, lid) |
+                CacheEntry::Resident(_, lid) |
                 CacheEntry::Flush(lid) => CacheEntry::Flush(lid),
+                CacheEntry::PartialFlush(_) => panic!("got PartialFlush at end of stack..."),
             });
 
             if last.is_none() {
@@ -273,13 +278,12 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             let mut new_stack = vec![];
             for entry in cache_entries {
                 match entry {
-                    CacheEntry::Resident(_, ref lid) => {
-                        new_stack.push(CacheEntry::PartialFlush(*lid));
-                    }
-                    CacheEntry::Flush(_) => panic!("got Flush in middle of stack..."),
-                    CacheEntry::PartialFlush(lid) => {
+                    CacheEntry::PartialFlush(lid) |
+                    CacheEntry::MergedResident(_, lid) |
+                    CacheEntry::Resident(_, lid) => {
                         new_stack.push(CacheEntry::PartialFlush(lid));
                     }
+                    CacheEntry::Flush(_) => panic!("got Flush in middle of stack..."),
                 }
             }
             new_stack.push(last.unwrap());
@@ -294,6 +298,9 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
     }
 
     fn pull(&self, lid: LogID) -> P {
+        // NB make_stable here is necessary when cache is thrashing like crazy or we'll
+        // need to page in and out things that haven't hit the disk yet...
+        self.log.make_stable(lid);
         let bytes = match self.log.read(lid).map_err(|_| ()) {
             Ok(LogRead::Flush(data, _len)) => data,
             _ => panic!("read invalid data at lid {}", lid),
@@ -304,8 +311,8 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             .expect("failed to deserialize data");
 
         match logged_update.update {
-            Update::Compact(pps) |
-            Update::Append(pps) => pps,
+            Update::Compact(page_frag) |
+            Update::Append(page_frag) => page_frag,
             _ => panic!("non-append/compact found in pull"),
         }
     }
@@ -316,36 +323,103 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         mut head: Ptr<'s, stack::Node<CacheEntry<P>>>,
         stack_ptr: Ptr<'s, stack::Stack<CacheEntry<P>>>,
         scope: &'s Scope,
-    ) -> (PM::PageFrag, CasKey<P>) {
+    ) -> Option<(PM::PageFrag, CasKey<P>)> {
         let stack_iter = StackIter::from_ptr(head, scope);
-        let mut cache_entries: Vec<CacheEntry<P>> = stack_iter.map(|ptr| (*ptr).clone()).collect();
 
-        // read items off of disk in parallel if anything isn't already resident
-        let contains_non_resident = cache_entries.iter().any(|cache_entry| match *cache_entry {
-            CacheEntry::Resident(_, _) => false,
-            _ => true,
-        });
-        if contains_non_resident {
-            let pull = |cache_entry: &mut CacheEntry<P>| {
-                let (pp, lid) = match *cache_entry {
-                    CacheEntry::Resident(ref pp, ref lid) => (pp.clone(), *lid),
-                    CacheEntry::Flush(lid) |
-                    CacheEntry::PartialFlush(lid) => (self.pull(lid), lid),
-                };
-                *cache_entry = CacheEntry::Resident(pp, lid);
-            };
+        let mut to_merge = vec![];
+        let mut merged_resident = false;
+        let mut lids = vec![];
+        let mut fix_up_length = 0;
+
+        for cache_entry_ptr in stack_iter {
+            match *cache_entry_ptr {
+                CacheEntry::Resident(ref page_frag, ref lid) => {
+                    if !merged_resident {
+                        to_merge.push(page_frag);
+                    }
+                    lids.push(lid);
+                }
+                CacheEntry::MergedResident(ref page_frag, ref lid) => {
+                    if !merged_resident {
+                        to_merge.push(page_frag);
+                        merged_resident = true;
+                        fix_up_length = lids.len();
+                    }
+                    lids.push(lid);
+                }
+                CacheEntry::PartialFlush(ref lid) |
+                CacheEntry::Flush(ref lid) => {
+                    lids.push(lid);
+                }
+            }
+        }
+
+        if lids.is_empty() {
+            return None;
+        }
+
+        let mut fetched = Vec::with_capacity(lids.len());
+
+        // Did not find a previously merged value in memory,
+        // may need to go to disk.
+        if !merged_resident {
+            let to_pull = &lids[to_merge.len()..];
 
             #[cfg(feature = "rayon")]
             {
-                cache_entries.par_iter_mut().for_each(pull);
+                let mut pulled: Vec<P> = to_pull.par_iter().map(|&&lid| self.pull(lid)).collect();
+                fetched.append(&mut pulled);
             }
 
             #[cfg(not(feature = "rayon"))]
-            for ce in cache_entries.iter_mut() {
-                pull(ce);
+            for &&lid in to_pull {
+                fetched.push(self.pull(lid));
+            }
+        }
+
+        let combined: Vec<&P> = to_merge
+            .iter()
+            .map(|&v| v)
+            .chain(fetched.iter().map(|v| v))
+            .rev()
+            .collect();
+
+        let merged = self.t.merge(&*combined);
+
+        let size = std::mem::size_of_val(&merged);
+        let to_evict = self.lru.accessed(pid, size);
+        self.page_out(to_evict, scope);
+
+        if lids.len() > self.config().get_page_consolidation_threshold() {
+            match self.set(pid, head.into(), merged.clone()) {
+                Ok(new_head) => head = new_head.into(),
+                Err(None) => return None,
+                _ => {}
+            }
+        } else if fix_up_length >= self.config().get_cache_fixup_threshold() {
+            let mut new_entries = Vec::with_capacity(lids.len());
+
+            let head_lid = lids.remove(0);
+            let head_entry = CacheEntry::MergedResident(merged.clone(), *head_lid);
+            new_entries.push(head_entry);
+
+            let mut tail = if !lids.is_empty() {
+                let lid = lids.pop().unwrap();
+                Some(CacheEntry::Flush(*lid))
+            } else {
+                None
+            };
+
+            for &&lid in lids.iter() {
+                new_entries.push(CacheEntry::PartialFlush(lid));
             }
 
-            let node = node_from_frag_vec(cache_entries.clone());
+            if let Some(tail) = tail.take() {
+                new_entries.push(tail);
+            }
+
+            let node = node_from_frag_vec(new_entries);
+
             let res = unsafe { stack_ptr.deref().cas(head, node.into_ptr(scope), scope) };
             if let Ok(new_head) = res {
                 head = new_head;
@@ -359,51 +433,32 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             }
         }
 
-        let mut partial_pages: Vec<P> = cache_entries
-            .into_iter()
-            .map(|cache_entry| match cache_entry {
-                CacheEntry::Resident(pp, _lid) => pp,
-                _ => panic!("non-resident entry found, after trying to page-in all entries"),
-            })
-            .collect();
-
-        partial_pages.reverse();
-        let partial_pages = partial_pages;
-
-        let to_evict = self.lru.accessed(
-            pid,
-            std::mem::size_of_val(&partial_pages),
-        );
-        self.page_out(to_evict, scope);
-
-        if partial_pages.len() > self.config().get_page_consolidation_threshold() {
-            let consolidated = self.t.merge(&partial_pages);
-            if let Ok(new_head) = self.set(pid, head.into(), consolidated) {
-                head = new_head.into();
-            }
-        }
-
-        let materialized = self.t.merge(&partial_pages);
-
-        (materialized, head.into())
+        Some((merged, head.into()))
     }
 
     /// Replace an existing page with a different set of `PageFrag`s.
-    pub fn set(&self, pid: PageID, old: CasKey<P>, new: P) -> Result<CasKey<P>, CasKey<P>> {
-        let replace: LoggedUpdate<P> = LoggedUpdate {
-            pid: pid,
-            update: Update::Compact(new.clone()),
-        };
-        let bytes = serialize(&replace, Infinite).unwrap();
-        let log_reservation = self.log.reserve(bytes);
-        let log_offset = log_reservation.log_id();
-
-        let cache_entry = CacheEntry::Resident(new, log_offset);
-
+    /// Returns `Ok(new_key)` if the operation was successful. Returns
+    /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
+    /// if the page has changed since the provided `CasKey` was created.
+    pub fn set(&self, pid: PageID, old: CasKey<P>, new: P) -> Result<CasKey<P>, Option<CasKey<P>>> {
         pin(|scope| {
-            let node = node_from_frag_vec(vec![cache_entry]).into_ptr(scope);
+            let stack_ptr = self.inner.get(pid, scope);
+            if stack_ptr.is_none() {
+                return Err(None);
+            }
+            let stack_ptr = stack_ptr.unwrap();
 
-            let stack_ptr = self.inner.get(pid, scope).unwrap();
+            let replace: LoggedUpdate<P> = LoggedUpdate {
+                pid: pid,
+                update: Update::Compact(new.clone()),
+            };
+            let bytes = serialize(&replace, Infinite).unwrap();
+            let log_reservation = self.log.reserve(bytes);
+            let log_offset = log_reservation.log_id();
+
+            let cache_entry = CacheEntry::MergedResident(new, log_offset);
+
+            let node = node_from_frag_vec(vec![cache_entry]).into_ptr(scope);
 
             let result = unsafe { stack_ptr.deref().cas(old.clone().into(), node, scope) };
 
@@ -413,25 +468,38 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
                 log_reservation.abort();
             }
 
-            result.map(|ok| ok.into()).map_err(|e| e.into())
+            result.map(|ok| ok.into()).map_err(|e| Some(e.into()))
         })
     }
 
 
     /// Try to atomically add a `PageFrag` to the page.
-    pub fn merge(&self, pid: PageID, old: CasKey<P>, new: P) -> Result<CasKey<P>, CasKey<P>> {
-        let prepend: LoggedUpdate<P> = LoggedUpdate {
-            pid: pid,
-            update: Update::Append(new.clone()),
-        };
-        let bytes = serialize(&prepend, Infinite).unwrap();
-        let log_reservation = self.log.reserve(bytes);
-        let log_offset = log_reservation.log_id();
-
-        let cache_entry = CacheEntry::Resident(new, log_offset);
-
+    /// Returns `Ok(new_key)` if the operation was successful. Returns
+    /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
+    /// if the page has changed since the provided `CasKey` was created.
+    pub fn merge(
+        &self,
+        pid: PageID,
+        old: CasKey<P>,
+        new: P,
+    ) -> Result<CasKey<P>, Option<CasKey<P>>> {
         pin(|scope| {
-            let stack_ptr = self.inner.get(pid, scope).unwrap();
+            let stack_ptr = self.inner.get(pid, scope);
+            if stack_ptr.is_none() {
+                return Err(None);
+            }
+            let stack_ptr = stack_ptr.unwrap();
+
+            let prepend: LoggedUpdate<P> = LoggedUpdate {
+                pid: pid,
+                update: Update::Append(new.clone()),
+            };
+            let bytes = serialize(&prepend, Infinite).unwrap();
+            let log_reservation = self.log.reserve(bytes);
+            let log_offset = log_reservation.log_id();
+
+            let cache_entry = CacheEntry::Resident(new, log_offset);
+
             let result = unsafe { stack_ptr.deref().cap(old.into(), cache_entry, scope) };
 
             if result.is_err() {
@@ -446,7 +514,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
                 }
             }
 
-            result.map(|ok| ok.into()).map_err(|e| e.into())
+            result.map(|ok| ok.into()).map_err(|e| Some(e.into()))
         })
     }
 
@@ -518,6 +586,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
                         snapshot.free.push(prepend.pid);
                     }
                     Update::Alloc => {
+                        snapshot.pt.insert(prepend.pid, vec![]);
                         snapshot.free.retain(|&pid| pid != prepend.pid);
                     }
                 }
@@ -690,11 +759,13 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             let mut lids = lids.clone();
             let stack = Stack::default();
 
-            let base = lids.remove(0);
-            stack.push(CacheEntry::Flush(base));
+            if !lids.is_empty() {
+                let base = lids.remove(0);
+                stack.push(CacheEntry::Flush(base));
 
-            for lid in lids {
-                stack.push(CacheEntry::PartialFlush(lid));
+                for lid in lids {
+                    stack.push(CacheEntry::PartialFlush(lid));
+                }
             }
 
             self.inner.insert(*pid, stack).unwrap();
