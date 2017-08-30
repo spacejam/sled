@@ -81,7 +81,6 @@ fn test_fail() -> bool {
 }
 
 mod tree;
-mod bound;
 mod log;
 mod stack;
 mod page;
@@ -91,7 +90,6 @@ mod thread_cache;
 mod hash;
 
 use hash::{crc16_arr, crc64, hash};
-use bound::Bound;
 use stack::{StackIter, node_from_frag_vec};
 use thread_cache::ThreadCache;
 

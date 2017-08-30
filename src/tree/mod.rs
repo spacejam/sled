@@ -6,10 +6,12 @@ use std::sync::atomic::Ordering::SeqCst;
 
 use super::*;
 
+mod bound;
+mod data;
 mod frag;
 mod node;
-mod data;
 
+pub use self::bound::*;
 pub use self::frag::*;
 pub use self::data::*;
 pub use self::node::*;
