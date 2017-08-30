@@ -44,7 +44,7 @@ impl Lru {
 
     fn idx(&self, pid: PageID) -> usize {
         let k: [u8; 8] = unsafe { std::mem::transmute(pid) };
-        let h = hash::hash(&k, 0) as usize;
+        let h = hash(&k, 0) as usize;
         h % (1 << self.cache_bits)
     }
 }

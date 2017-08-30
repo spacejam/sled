@@ -19,7 +19,7 @@ impl Bound {
 
 impl PartialOrd for Bound {
     fn partial_cmp(&self, other: &Bound) -> Option<Ordering> {
-        use Bound::*;
+        use self::Bound::*;
         match *self {
             Inc(ref lhs) => {
                 match *other {
@@ -59,7 +59,7 @@ impl PartialOrd for Bound {
 
 #[test]
 fn test_bounds() {
-    use Bound::*;
+    use self::Bound::*;
     assert_eq!(Inf, Inf);
     assert_eq!(Non(vec![]), Non(vec![]));
     assert_eq!(Inc(vec![]), Inc(vec![]));
