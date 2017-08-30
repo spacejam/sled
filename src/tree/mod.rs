@@ -1,5 +1,4 @@
 /// A flash-sympathetic persistent lock-free B+ tree.
-
 use std::fmt::{self, Debug};
 use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;

@@ -96,7 +96,7 @@ fn main() {
         .blink_fanout(3)
         .page_consolidation_threshold(3)
         .cache_bits(2)
-        .cache_capacity(2 << 14)
+        .cache_capacity(1_000_000)
         .flush_every_ms(Some(30))
         .snapshot_after_ops(1000)
         .path(Some(path));

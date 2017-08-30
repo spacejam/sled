@@ -610,7 +610,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         #[cfg(not(feature = "zstd"))]
         let bytes = raw_bytes;
 
-        let crc64: [u8; 8] = unsafe { std::mem::transmute(crc64::crc64(&*bytes)) };
+        let crc64: [u8; 8] = unsafe { std::mem::transmute(crc64(&*bytes)) };
 
         self.last_snapshot.swap(snapshot, SeqCst);
 
@@ -718,7 +718,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         f.read_exact(&mut crc_expected_bytes).unwrap();
 
         let crc_expected: u64 = unsafe { std::mem::transmute(crc_expected_bytes) };
-        let crc_actual = crc64::crc64(&*buf);
+        let crc_actual = crc64(&*buf);
 
         if crc_expected != crc_actual {
             panic!("crc for snapshot file {:?} failed!", path);

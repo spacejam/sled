@@ -12,7 +12,6 @@ use coco::epoch::Ptr;
 use super::*;
 
 mod page_cache;
-mod hash;
 mod lru;
 
 pub use self::page_cache::PageCache;

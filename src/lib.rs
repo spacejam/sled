@@ -54,8 +54,6 @@ pub use config::Config;
 #[cfg(feature = "libc")]
 pub mod c;
 
-use crc16::crc16_arr;
-
 macro_rules! rep_no_copy {
     ($e:expr; $n:expr) => {
         {
@@ -85,14 +83,14 @@ fn test_fail() -> bool {
 mod tree;
 mod bound;
 mod log;
-mod crc16;
-mod crc64;
 mod stack;
 mod page;
 mod radix;
 mod config;
 mod thread_cache;
+mod hash;
 
+use hash::{crc16_arr, crc64, hash};
 use bound::Bound;
 use stack::{StackIter, node_from_frag_vec};
 use thread_cache::ThreadCache;
