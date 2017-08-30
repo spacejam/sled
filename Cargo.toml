@@ -12,9 +12,9 @@ readme = "README.md"
 
 [features]
 default = ["libc"]
-bench = ["clap", "num_cpus", "env_logger", "log", "rayon", "zstd"]
-race = ["rand"]
+bench = ["clap", "num_cpus", "log", "rand", "rayon", "zstd", "env_logger"]
 stress = ["docopt", "chan-signal"]
+race = ["rand"]
 
 [[bin]]
 name = "bench"
