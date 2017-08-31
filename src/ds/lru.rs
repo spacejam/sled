@@ -32,7 +32,7 @@ impl Lru {
         let mut shard = shard_mu.lock().unwrap();
         let mut rel_ids = shard.accessed(rel_idx, sz);
 
-        for mut rel_id in &mut rel_ids {
+        for rel_id in &mut rel_ids {
             let real_id = (*rel_id * self.shards.len()) + shard_idx;
             *rel_id = real_id;
         }
@@ -79,7 +79,7 @@ impl Shard {
         }
 
         {
-            let mut entry = &mut self.entries[rel_idx];
+            let entry = &mut self.entries[rel_idx];
 
             self.sz -= entry.sz;
             entry.sz = sz;
