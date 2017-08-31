@@ -4,18 +4,21 @@ extern crate num_cpus;
 extern crate log;
 extern crate rand;
 extern crate sled;
+extern crate historian;
+extern crate chrono;
 
 use std::error::Error;
 use std::io::prelude::*;
 use std::process;
 use std::collections::HashMap;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use clap::{App, Arg};
 use rand::Rng;
+use historian::Histo;
 
 use sled::Tree;
 
@@ -189,6 +192,7 @@ fn perform_tree_operations(tree: Tree, config: Config) {
     let ops_per_thread = config.num_operations / config.num_threads; // TODO update to handle division errors
     let mut threads = Vec::new();
     let ops_per_second = AtomicUsize::new(0);
+    let histo = Arc::new(Histo::default());
 
     let tree = Arc::new(tree);
     let ops = Arc::new(ops);
@@ -210,8 +214,10 @@ fn perform_tree_operations(tree: Tree, config: Config) {
         let tree = tree.clone();
         let ops = ops.clone();
         let ops_per_second = ops_per_second.clone();
+        let histo = histo.clone();
         let t = thread::spawn(move || for _ in 0..ops_per_thread {
             let op_to_perform = get_operation_choice(&ops, sum_ops);
+            let now = Instant::now();
 
             match op_to_perform {
                 Some(&Op::Set) => perform_set_operation(&tree),
@@ -222,6 +228,13 @@ fn perform_tree_operations(tree: Tree, config: Config) {
                 _ => (),
             };
 
+            let us = chrono::Duration::from_std(now.elapsed())
+                .unwrap()
+                .num_microseconds()
+                .unwrap() as f64;
+
+            histo.measure(us);
+
             ops_per_second.fetch_add(1, Ordering::Relaxed);
         });
         threads.push(t);
@@ -230,6 +243,19 @@ fn perform_tree_operations(tree: Tree, config: Config) {
     for t in threads.into_iter() {
         t.join();
     }
+
+    println!("");
+    println!("0th: {}us", histo.percentile(0.).round() as usize);
+    println!("50th: {}us", histo.percentile(50.).round() as usize);
+    println!("75th: {}us", histo.percentile(75.).round() as usize);
+    println!("90th: {}us", histo.percentile(90.).round() as usize);
+    println!("95th: {}us", histo.percentile(95.).round() as usize);
+    println!("97.5th: {}us", histo.percentile(97.5).round() as usize);
+    println!("99th: {}us", histo.percentile(99.).round() as usize);
+    println!("99.9th: {}us", histo.percentile(99.9).round() as usize);
+    println!("99.99th: {}us", histo.percentile(99.99).round() as usize);
+    println!("99.999th: {}us", histo.percentile(99.999).round() as usize);
+    println!("100th: {}us", histo.percentile(100.).round() as usize);
 }
 
 fn perform_set_operation(tree: &Tree) {
