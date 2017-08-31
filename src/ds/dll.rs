@@ -11,6 +11,16 @@ pub struct Node {
     prev: *mut Node,
 }
 
+impl Drop for Node {
+    fn drop(&mut self) {
+        if !self.prev.is_null() {
+            unsafe {
+                drop(Box::from_raw(self.prev));
+            }
+        }
+    }
+}
+
 impl Node {
     fn unwire(&self) {
         unsafe {
@@ -29,6 +39,16 @@ pub struct Dll {
     head: *mut Node,
     tail: *mut Node,
     len: usize,
+}
+
+impl Drop for Dll {
+    fn drop(&mut self) {
+        if !self.head.is_null() {
+            unsafe {
+                drop(Box::from_raw(self.head));
+            }
+        }
+    }
 }
 
 impl Default for Dll {
