@@ -43,10 +43,7 @@ pub use tree::{Tree, TreeIter};
 pub use page::{CasKey, Materializer, PageCache};
 /// lock-free log-structured storage
 pub use log::{HEADER_LEN, LockFreeLog, Log, LogRead};
-/// lock-free stack
-use stack::Stack;
-/// lock-free radix tree
-pub use radix::Radix;
+pub use ds::{Radix, Stack};
 /// general-purpose configuration
 pub use config::Config;
 
@@ -82,15 +79,14 @@ fn test_fail() -> bool {
 
 mod tree;
 mod log;
-mod stack;
 mod page;
-mod radix;
 mod config;
 mod thread_cache;
 mod hash;
+mod ds;
 
-use hash::{crc16_arr, crc64, hash};
-use stack::{StackIter, node_from_frag_vec};
+use ds::{Lru, StackIter, node_from_frag_vec};
+use hash::{crc16_arr, crc64};
 use thread_cache::ThreadCache;
 
 type LogID = u64; // LogID == file position to simplify file mapping

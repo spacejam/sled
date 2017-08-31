@@ -27,6 +27,8 @@ impl<T: Send> Drop for Node<T> {
     }
 }
 
+/// A simple lock-free stack, with the ability to atomically
+/// append or entirely swap-out entries.
 pub struct Stack<T: Send> {
     head: Atomic<Node<T>>,
 }
@@ -90,6 +92,7 @@ impl<T: Send> Node<T> {
 }
 
 impl<T: Send> Stack<T> {
+    /// Add an item to the stack, spinning until successful.
     pub fn push(&self, inner: T) {
         let node = Owned::new(Node {
             inner: inner,
@@ -114,6 +117,7 @@ impl<T: Send> Stack<T> {
         }
     }
 
+    /// Pop the next item off the stack. Returns None if nothing is there.
     pub fn pop(&self) -> Option<T> {
         pin(|scope| {
             let mut head = self.head(scope);
@@ -187,6 +191,8 @@ impl<T: Send> Stack<T> {
         }
     }
 
+    /// Returns the current head pointer of the stack, which can
+    /// later be used as the key for cas and cap operations.
     pub fn head<'s>(&self, scope: &'s Scope) -> Ptr<'s, Node<T>> {
         self.head.load(SeqCst, scope)
     }

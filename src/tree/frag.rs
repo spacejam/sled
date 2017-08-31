@@ -26,6 +26,13 @@ impl Frag {
             _ => None,
         }
     }
+
+    pub fn into_base(self) -> Option<(tree::Node, bool)> {
+        match self {
+            Frag::Base(base, root) => Some((base, root)),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
