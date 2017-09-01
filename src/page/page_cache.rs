@@ -275,7 +275,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
                 return;
             }
 
-            let mut new_stack = vec![];
+            let mut new_stack = Vec::with_capacity(cache_entries.len() + 1);
             for entry in cache_entries {
                 match entry {
                     CacheEntry::PartialFlush(lid) |
@@ -402,8 +402,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             let head_entry = CacheEntry::MergedResident(merged.clone(), *head_lid);
             new_entries.push(head_entry);
 
-            let mut tail = if !lids.is_empty() {
-                let lid = lids.pop().unwrap();
+            let mut tail = if let Some(lid) = lids.pop() {
                 Some(CacheEntry::Flush(*lid))
             } else {
                 None
