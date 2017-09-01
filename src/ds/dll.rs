@@ -22,7 +22,7 @@ impl Drop for Node {
 }
 
 impl Node {
-    fn unwire(&self) {
+    fn unwire(&mut self) {
         unsafe {
             if !self.prev.is_null() {
                 (*self.prev).next = self.next;
@@ -32,6 +32,9 @@ impl Node {
                 (*self.next).prev = self.prev;
             }
         }
+
+        self.next = ptr::null_mut();
+        self.prev = ptr::null_mut();
     }
 }
 
@@ -136,7 +139,7 @@ impl Dll {
         self.len -= 1;
 
         unsafe {
-            let head = Box::from_raw(self.head);
+            let mut head = Box::from_raw(self.head);
 
             if self.head == self.tail {
                 self.tail = ptr::null_mut();
@@ -158,7 +161,7 @@ impl Dll {
         self.len -= 1;
 
         unsafe {
-            let tail = Box::from_raw(self.tail);
+            let mut tail = Box::from_raw(self.tail);
 
             if self.head == self.tail {
                 self.head = ptr::null_mut();
@@ -175,7 +178,7 @@ impl Dll {
     pub unsafe fn pop_ptr(&mut self, ptr: *mut Node) -> PageID {
         self.len -= 1;
 
-        let node = Box::from_raw(ptr);
+        let mut node = Box::from_raw(ptr);
 
         if self.tail == ptr {
             self.tail = node.next;
