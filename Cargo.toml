@@ -13,8 +13,7 @@ readme = "README.md"
 [features]
 default = ["libc"]
 bench = ["clap", "num_cpus", "log", "rand", "rayon", "zstd", "env_logger"]
-stress = ["docopt", "chan-signal"]
-race = ["rand"]
+stress = ["docopt", "chan-signal", "rayon", "rand"]
 
 [[bin]]
 name = "bench"
@@ -22,7 +21,7 @@ required-features = ["bench"]
 
 [[bin]]
 name = "stress"
-required-features = ["race"]
+required-features = ["stress"]
 
 [dependencies]
 crossbeam = "0.3"

@@ -1,7 +1,8 @@
 export RUSTFLAGS="-Z sanitizer=$1"
+export TSAN_OPTIONS="suppressions=hack/suppressions.cfg"
 
 rustup run nightly-2017-07-06-x86_64-unknown-linux-gnu cargo run \
   --bin=stress \
-  --features="race" \
+  --features="stress" \
   --target x86_64-unknown-linux-gnu \
-  --verbose -- --duration=5
+  --verbose -- --duration=1
