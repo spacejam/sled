@@ -458,11 +458,12 @@ impl Tree {
         loop {
             let get_cursor = self.pages.get(cursor);
             if get_cursor.is_none() {
+                // restart search from the tree's root
                 cursor = self.root.load(SeqCst);
                 continue;
             }
             let (frag, cas_key) = get_cursor.unwrap();
-            let (node, _is_root) = frag.base().unwrap();
+            let (node, _is_root) = frag.into_base().unwrap();
 
             // TODO this may need to change when handling (half) merges
             assert!(node.lo <= key_bound, "overshot key somehow");
@@ -492,9 +493,9 @@ impl Tree {
                 // println!("after: {:?}", self);
             }
 
-            path.push((node.clone(), cas_key));
+            path.push((node, cas_key));
 
-            match node.data {
+            match path.last().unwrap().0.data {
                 Data::Index(ref ptrs) => {
                     let old_cursor = cursor;
                     for &(ref sep_k, ref ptr) in ptrs {
@@ -509,10 +510,12 @@ impl Tree {
                     }
                 }
                 Data::Leaf(_) => {
-                    return path;
+                    break;
                 }
             }
         }
+
+        path
     }
 }
 

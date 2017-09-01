@@ -12,7 +12,6 @@ use coco::epoch::Ptr;
 use super::*;
 
 mod page_cache;
-mod lru;
 
 pub use self::page_cache::PageCache;
 
@@ -60,14 +59,14 @@ pub enum CacheEntry<M: Send + Sync> {
 pub struct CasKey<P>
     where P: Send + Sync
 {
-    ptr: *const stack::Node<CacheEntry<P>>,
+    ptr: *const ds::stack::Node<CacheEntry<P>>,
     tag: usize,
 }
 
-impl<'s, P> From<Ptr<'s, stack::Node<CacheEntry<P>>>> for CasKey<P>
+impl<'s, P> From<Ptr<'s, ds::stack::Node<CacheEntry<P>>>> for CasKey<P>
     where P: Send + Sync
 {
-    fn from(ptr: Ptr<'s, stack::Node<CacheEntry<P>>>) -> CasKey<P> {
+    fn from(ptr: Ptr<'s, ds::stack::Node<CacheEntry<P>>>) -> CasKey<P> {
         CasKey {
             ptr: ptr.as_raw(),
             tag: ptr.tag(),
@@ -75,10 +74,10 @@ impl<'s, P> From<Ptr<'s, stack::Node<CacheEntry<P>>>> for CasKey<P>
     }
 }
 
-impl<'s, P> Into<Ptr<'s, stack::Node<CacheEntry<P>>>> for CasKey<P>
+impl<'s, P> Into<Ptr<'s, ds::stack::Node<CacheEntry<P>>>> for CasKey<P>
     where P: Send + Sync
 {
-    fn into(self) -> Ptr<'s, stack::Node<CacheEntry<P>>> {
+    fn into(self) -> Ptr<'s, ds::stack::Node<CacheEntry<P>>> {
         unsafe { Ptr::from_raw(self.ptr).with_tag(self.tag) }
     }
 }

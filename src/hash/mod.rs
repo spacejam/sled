@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 mod hash;
 mod crc16;
 mod crc64;

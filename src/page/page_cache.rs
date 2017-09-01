@@ -73,7 +73,7 @@ pub struct PageCache<PM, L, P, R>
     max_pid: AtomicUsize,
     free: Arc<Stack<PageID>>,
     log: L,
-    lru: lru::Lru,
+    lru: Lru,
     updates: AtomicUsize,
     last_snapshot: AtomicOption<Snapshot<R>>,
 }
@@ -125,7 +125,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
     pub fn new(pm: PM, config: Config) -> PageCache<PM, LockFreeLog, P, R> {
         let cache_capacity = config.get_cache_capacity();
         let cache_shard_bits = config.get_cache_bits();
-        let lru = lru::Lru::new(cache_capacity, cache_shard_bits);
+        let lru = Lru::new(cache_capacity, cache_shard_bits);
 
         let snapshot = Snapshot::default();
         let last_snapshot = AtomicOption::new();
@@ -290,7 +290,6 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             let node = node_from_frag_vec(new_stack);
             let res = unsafe { stack_ptr.deref().cas(head, node.into_ptr(scope), scope) };
             if res.is_ok() {
-                self.lru.page_out_succeeded(pid);
             } else {
                 // if this failed, it's because something wrote to the page in the mean time
             }
@@ -320,8 +319,8 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
     fn page_in<'s>(
         &self,
         pid: PageID,
-        mut head: Ptr<'s, stack::Node<CacheEntry<P>>>,
-        stack_ptr: Ptr<'s, stack::Stack<CacheEntry<P>>>,
+        mut head: Ptr<'s, ds::stack::Node<CacheEntry<P>>>,
+        stack_ptr: Ptr<'s, ds::stack::Stack<CacheEntry<P>>>,
         scope: &'s Scope,
     ) -> Option<(PM::PageFrag, CasKey<P>)> {
         let stack_iter = StackIter::from_ptr(head, scope);

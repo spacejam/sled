@@ -92,13 +92,13 @@ fn main() {
     let path = format!("rsdb_stress_{}", nonce);
     let config = rsdb::Config::default()
         .io_bufs(2)
-        .io_buf_size(2 << 13)
-        .blink_fanout(3)
-        .page_consolidation_threshold(3)
-        .cache_bits(2)
+        .io_buf_size(8_000_000)
+        .blink_fanout(32)
+        .page_consolidation_threshold(10)
+        .cache_bits(6)
         .cache_capacity(1_000_000)
-        .flush_every_ms(Some(30))
-        .snapshot_after_ops(1000)
+        .flush_every_ms(Some(100))
+        .snapshot_after_ops(1000000)
         .path(Some(path));
     let tree = Arc::new(config.tree());
 
