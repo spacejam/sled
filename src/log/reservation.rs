@@ -23,8 +23,8 @@ impl<'a> Drop for Reservation<'a> {
 
 impl<'a> Reservation<'a> {
     /// cancel the reservation, placing a failed flush on disk
-    pub fn abort(mut self) {
-        self.flush(false);
+    pub fn abort(mut self) -> LogID {
+        self.flush(false)
     }
 
     /// complete the reservation, placing the buffer on disk at the log_id

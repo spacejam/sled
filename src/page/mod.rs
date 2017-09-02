@@ -133,12 +133,15 @@ impl Drop for PidDropper {
     }
 }
 
-struct LidDropper(LogID, Config);
+struct _LidDropper(LogID, Config);
 
-impl Drop for LidDropper {
+impl Drop for _LidDropper {
     fn drop(&mut self) {
         let cached_f = self.1.cached_file();
         let mut f = cached_f.borrow_mut();
-        log::punch_hole(&mut f, self.0);
+        if let Err(_e) = log::punch_hole(&mut f, self.0) {
+            #[cfg(feature = "log")]
+            error!("failed to punch hole in log: {}", _e);
+        }
     }
 }

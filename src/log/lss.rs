@@ -1,3 +1,4 @@
+use std::io::ErrorKind::UnexpectedEof;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -105,8 +106,9 @@ impl Log for LockFreeLog {
         let mut f = cached_f.borrow_mut();
         f.seek(SeekFrom::Start(id))?;
 
-        let mut valid = [0u8; 1];
-        f.read_exact(&mut valid)?;
+        let mut valid_buf = [0u8; 1];
+        f.read_exact(&mut valid_buf)?;
+        let valid = valid_buf[0] == 1;
 
         let mut len_buf = [0u8; 4];
         f.read_exact(&mut len_buf)?;
@@ -118,11 +120,17 @@ impl Log for LockFreeLog {
             #[cfg(feature = "log")]
             error!("log read invalid message length, {} should be <= {}", len, max);
             return Ok(LogRead::Corrupted(len));
-        } else if len == 0 {
+        } else if len == 0 && !valid {
             // skip to next record, which starts with 1
             loop {
                 let mut byte = [0u8; 1];
-                f.read_exact(&mut byte)?;
+                if let Err(e) = f.read_exact(&mut byte) {
+                    if e.kind() == UnexpectedEof {
+                        // we've hit the end of the file
+                        break;
+                    }
+                    panic!("{:?}", e);
+                }
                 if byte[0] != 1 {
                     debug_assert_eq!(byte[0], 0);
                     len += 1;
@@ -132,7 +140,7 @@ impl Log for LockFreeLog {
             }
         }
 
-        if valid[0] == 0 {
+        if !valid {
             return Ok(LogRead::Zeroed(len + 5));
         }
 

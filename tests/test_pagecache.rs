@@ -408,9 +408,7 @@ fn test_pagecache_bug_8() {
     );
 }
 
-#[test]
-#[ignore]
-fn test_pagecache_bug_() {
+fn _test_pagecache_bug_() {
     // postmortem: TEMPLATE
     // use Op::*;
     prop_pagecache_works(

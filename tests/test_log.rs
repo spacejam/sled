@@ -8,92 +8,12 @@ extern crate rsdb;
 use std::fs;
 use std::thread;
 use std::sync::Arc;
+use std::sync::atomic::{ATOMIC_USIZE_INIT, AtomicUsize, Ordering};
 
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
-use rand::Rng;
+use rand::{Rng, thread_rng};
 
 use rsdb::{Config, HEADER_LEN, LockFreeLog, Log, LogRead};
-
-#[derive(Debug, Clone)]
-enum Op {
-    Write(Vec<u8>),
-    WriteReservation(Vec<u8>),
-    AbortReservation(Vec<u8>),
-    Stabilize,
-    Complete,
-    Abort,
-    Restart,
-}
-
-impl Arbitrary for Op {
-    fn arbitrary<G: Gen>(g: &mut G) -> Op {
-        if g.gen_weighted_bool(2) {
-            Op::Abort
-        } else {
-            Op::Complete
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct OpVec {
-    ops: Vec<Op>,
-}
-
-impl Arbitrary for OpVec {
-    fn arbitrary<G: Gen>(g: &mut G) -> OpVec {
-        let mut ops = vec![];
-        for _ in 0..g.gen_range(1, 100) {
-            let op = Op::arbitrary(g);
-            ops.push(op);
-
-        }
-        OpVec {
-            ops: ops,
-        }
-    }
-
-    fn shrink(&self) -> Box<Iterator<Item = OpVec>> {
-        let mut smaller = vec![];
-        for i in 0..self.ops.len() {
-            let mut clone = self.clone();
-            clone.ops.remove(i);
-            smaller.push(clone);
-        }
-
-        Box::new(smaller.into_iter())
-    }
-}
-
-fn prop_read_stable(ops: OpVec) -> bool {
-    use self::Op::*;
-    let log = Config::default().log();
-    for op in ops.ops.into_iter() {
-        match op {
-            Write(buf) => {
-                log.write(buf);
-            }
-            WriteReservation(ref buf) => {}
-            AbortReservation(ref buf) => {}
-            Stabilize => {}
-            Complete => {}
-            Abort => {}
-            Restart => {}
-        }
-    }
-    true
-}
-
-#[test]
-#[ignore]
-fn qc_merge_converges() {
-    QuickCheck::new()
-        .gen(StdGen::new(rand::thread_rng(), 1))
-        .tests(10)
-        .max_tests(10)
-        .quickcheck(prop_read_stable as fn(OpVec) -> bool);
-}
-
 
 #[test]
 #[ignore]
@@ -110,7 +30,6 @@ fn more_reservations_than_buffers() {
 }
 
 #[test]
-#[ignore]
 fn non_contiguous_flush() {
     let conf = Config::default();
     let log = conf.log();
@@ -227,16 +146,25 @@ fn test_log_aborts() {
 fn test_hole_punching() {
     let log = Config::default().log();
 
-    let data_bytes = b"yoyoyoyo";
-    let res = log.reserve(data_bytes.to_vec());
-    let id = res.log_id();
-    res.complete();
-    log.make_stable(id);
-    log.read(id).unwrap().unwrap();
+    let id1 = log.write(b"first".to_vec());
+    let id2 = log.write(b"second".to_vec());
 
-    log.punch_hole(id);
+    log.make_stable(id2);
 
-    assert!(log.read(id).unwrap().is_abort());
+    assert_eq!(log.read(id1).unwrap().unwrap(), b"first".to_vec());
+
+    let mut iter = log.iter_from(0);
+    assert_eq!(iter.next().unwrap().1, b"first".to_vec());
+    assert_eq!(iter.next().unwrap().1, b"second".to_vec());
+    assert_eq!(iter.next(), None);
+
+    log.punch_hole(id1);
+
+    let mut iter = log.iter_from(0);
+    assert_eq!(iter.next().unwrap().1, b"second".to_vec());
+    assert_eq!(iter.next(), None);
+
+    assert!(log.read(id1).unwrap().is_zeroed());
 }
 
 #[test]
@@ -261,4 +189,201 @@ fn test_log_iterator() {
     assert_eq!(iter.next().unwrap().1, b"4444".to_vec());
     assert_eq!(iter.next().unwrap().1, b"55555".to_vec());
     assert_eq!(iter.next(), None);
+}
+
+#[derive(Debug, Clone)]
+enum Op {
+    Write(Vec<u8>),
+    WriteReservation(Vec<u8>),
+    AbortReservation(Vec<u8>),
+    Read(u64),
+    Restart,
+}
+
+impl Arbitrary for Op {
+    fn arbitrary<G: Gen>(g: &mut G) -> Op {
+        if g.gen_weighted_bool(7) {
+            return Op::Restart;
+        }
+
+        static COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
+
+        let mut incr =
+            || vec![COUNTER.fetch_add(1, Ordering::Relaxed) as u8; thread_rng().gen_range(0, 2)];
+
+        let choice = g.gen_range(0, 4);
+
+        match choice {
+            0 => Op::Write(incr()),
+            1 => Op::WriteReservation(incr()),
+            2 => Op::AbortReservation(incr()),
+            3 => Op::Read(g.gen_range(0, 15)),
+            _ => panic!("impossible choice"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct OpVec {
+    ops: Vec<Op>,
+}
+
+impl Arbitrary for OpVec {
+    fn arbitrary<G: Gen>(g: &mut G) -> OpVec {
+        let mut ops = vec![];
+        for _ in 0..g.gen_range(1, 100) {
+            let op = Op::arbitrary(g);
+            ops.push(op);
+
+        }
+        OpVec {
+            ops: ops,
+        }
+    }
+
+    fn shrink(&self) -> Box<Iterator<Item = OpVec>> {
+        let mut smaller = vec![];
+        for i in 0..self.ops.len() {
+            let mut clone = self.clone();
+            clone.ops.remove(i);
+            smaller.push(clone);
+        }
+
+        // reduce write sizes
+        let mut clone = self.clone();
+        let mut lowered = false;
+        for mut op in clone.ops.iter_mut() {
+            match *op {
+                Op::WriteReservation(ref mut buf) |
+                Op::AbortReservation(ref mut buf) |
+                Op::Write(ref mut buf) if buf.len() > 0 => {
+                    buf.pop().unwrap();
+                }
+                _ => {}
+            }
+        }
+        if lowered {
+            smaller.push(clone);
+        }
+
+        // shrink read offsets
+        let mut clone = self.clone();
+        let mut lowered = false;
+        for mut op in clone.ops.iter_mut() {
+            match *op {
+                Op::Read(ref mut lid) if *lid > 0 => {
+                    lowered = true;
+                    *lid -= 1;
+                }
+                _ => {}
+            }
+        }
+        if lowered {
+            smaller.push(clone);
+        }
+
+        Box::new(smaller.into_iter())
+    }
+}
+
+fn prop_log_works(ops: OpVec) -> bool {
+    use self::Op::*;
+    let nonce: String = thread_rng().gen_ascii_chars().take(10).collect();
+    let path = format!("quickcheck_log_works_{}", nonce);
+    let config = Config::default().path(Some(path));
+
+    let mut log = config.log();
+    let mut reference: Vec<(u64, Option<Vec<u8>>)> = vec![];
+
+    for op in ops.ops.into_iter() {
+        match op {
+            Read(lid) => {
+                if reference.len() <= lid as usize {
+                    continue;
+                }
+                let (lid, ref expected) = reference[lid as usize];
+                log.make_stable(lid);
+                let read = log.read(lid).unwrap();
+                if expected.is_none() {
+                    assert!(read.is_zeroed());
+                } else {
+                    let flush = read.flush();
+                    assert_eq!(flush, *expected);
+                }
+            }
+            Write(buf) => {
+                let lid = log.write(buf.clone());
+                reference.push((lid, Some(buf)));
+            }
+            WriteReservation(buf) => {
+                let lid = log.reserve(buf.clone()).complete();
+                reference.push((lid, Some(buf)));
+            }
+            AbortReservation(buf) => {
+                let lid = log.reserve(buf).abort();
+                reference.push((lid, None));
+            }
+            Restart => {
+                drop(log);
+                log = config.log();
+            }
+        }
+    }
+    true
+}
+
+#[test]
+fn quickcheck_log_works() {
+    QuickCheck::new()
+        .gen(StdGen::new(rand::thread_rng(), 1))
+        .tests(50)
+        .max_tests(100)
+        .quickcheck(prop_log_works as fn(OpVec) -> bool);
+}
+
+#[test]
+fn test_log_bug_1() {
+    // postmortem: test was not stabilizing its buffers before reading
+    use Op::*;
+    prop_log_works(OpVec {
+        ops: vec![
+            AbortReservation(vec![]),
+            WriteReservation(vec![34]),
+            Write(vec![35]),
+            WriteReservation(vec![36]),
+            Read(3),
+        ],
+    });
+}
+
+#[test]
+fn test_log_bug_2() {
+    // postmortem: the logic that scans through zeroed entries
+    // until the next readable byte hit the end of the file.
+    // fix: when something hits the end of the file, return
+    // LogRead::Zeroed.
+    use Op::*;
+    prop_log_works(OpVec {
+        ops: vec![AbortReservation(vec![46]), Read(0)],
+    });
+}
+
+#[test]
+fn test_log_bug_3() {
+    // postmortem: the skip-ahead logic for continuing to
+    // the next valid log entry when reading a zeroed entry
+    // was being triggered on valid entries of size 0.
+    // fix: don't skip-ahead for empty valid entries.
+    use Op::*;
+    prop_log_works(OpVec {
+        ops: vec![Write(vec![]), Read(0)],
+    });
+}
+
+fn _test_log_bug_() {
+    // postmortem: TEMPLATE
+    // use Op::*;
+    prop_log_works(OpVec {
+        ops: vec![],
+    });
 }
