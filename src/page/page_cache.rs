@@ -462,6 +462,33 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
             if result.is_ok() {
                 log_reservation.complete();
+
+                // generate a list of the old log ID's
+                let old_head_ptr = old.into();
+                let stack_iter = StackIter::from_ptr(old_head_ptr, scope);
+                let mut lids = vec![];
+
+                for cache_entry_ptr in stack_iter {
+                    match *cache_entry_ptr {
+                        CacheEntry::Resident(_, ref lid) |
+                        CacheEntry::MergedResident(_, ref lid) |
+                        CacheEntry::PartialFlush(ref lid) |
+                        CacheEntry::Flush(ref lid) => {
+                            lids.push(*lid);
+                        }
+                    }
+                }
+
+                if !lids.is_empty() {
+                    self.log.make_stable(*lids.iter().max().unwrap());
+                    let dropper = Owned::new(LidDropper(lids, self.config().clone()));
+
+                    unsafe {
+                        // after the scope passes, these lids will
+                        // have their disk space hole punched.
+                        scope.defer_drop(dropper.into_ptr(scope));
+                    }
+                }
             } else {
                 log_reservation.abort();
             }

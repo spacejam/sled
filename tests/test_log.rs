@@ -197,6 +197,7 @@ enum Op {
     WriteReservation(Vec<u8>),
     AbortReservation(Vec<u8>),
     Read(u64),
+    PunchHole(u64),
     Restart,
 }
 
@@ -211,13 +212,14 @@ impl Arbitrary for Op {
         let mut incr =
             || vec![COUNTER.fetch_add(1, Ordering::Relaxed) as u8; thread_rng().gen_range(0, 2)];
 
-        let choice = g.gen_range(0, 4);
+        let choice = g.gen_range(0, 5);
 
         match choice {
             0 => Op::Write(incr()),
             1 => Op::WriteReservation(incr()),
             2 => Op::AbortReservation(incr()),
             3 => Op::Read(g.gen_range(0, 15)),
+            4 => Op::PunchHole(g.gen_range(0, 15)),
             _ => panic!("impossible choice"),
         }
     }
@@ -257,7 +259,7 @@ impl Arbitrary for OpVec {
                 Op::WriteReservation(ref mut buf) |
                 Op::AbortReservation(ref mut buf) |
                 Op::Write(ref mut buf) if buf.len() > 0 => {
-                    buf.pop().unwrap();
+                    buf.clear();
                 }
                 _ => {}
             }
@@ -297,6 +299,30 @@ fn prop_log_works(ops: OpVec) -> bool {
 
     for op in ops.ops.into_iter() {
         match op {
+            PunchHole(lid) => {
+                if reference.len() <= lid as usize {
+                    continue;
+                }
+                {
+                    let (lid, ref mut expected) = reference[lid as usize];
+                    log.make_stable(lid);
+                    if expected.take().is_some() {
+                        log.punch_hole(lid);
+                    }
+                }
+                if lid > 0 {
+                    // we want to remove this record if the previous record is
+                    // also zeroed, as during reads, zeroed records become
+                    // indistinguishable.
+                    let should_remove = {
+                        let (lid, ref expected) = reference[(lid - 1) as usize];
+                        if expected.is_none() { true } else { false }
+                    };
+                    if should_remove {
+                        reference.remove(lid as usize);
+                    }
+                }
+            }
             Read(lid) => {
                 if reference.len() <= lid as usize {
                     continue;
@@ -377,6 +403,18 @@ fn test_log_bug_3() {
     use Op::*;
     prop_log_works(OpVec {
         ops: vec![Write(vec![]), Read(0)],
+    });
+}
+
+#[test]
+fn test_log_bug_4() {
+    // postmortem: was calling punch_hole on lids that
+    // were still only present in the log's IO buffer
+    // fix: ensure that callers of punch_hole first
+    // call make_stable.
+    use Op::*;
+    prop_log_works(OpVec {
+        ops: vec![Write(vec![]), PunchHole(0)],
     });
 }
 
