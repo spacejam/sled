@@ -1,10 +1,5 @@
-use std::io::{Read, Seek, Write};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-
-#[cfg(feature = "libc")]
-#[cfg(target_os = "linux")]
-use libc::{FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE, fallocate};
 
 #[cfg(feature = "zstd")]
 use zstd::block::decompress;
@@ -117,16 +112,28 @@ impl Log for LockFreeLog {
         f.read_exact(&mut len_buf)?;
 
         let len32: u32 = unsafe { std::mem::transmute(len_buf) };
-        let len = len32 as usize;
+        let mut len = len32 as usize;
         let max = self.config().get_io_buf_size() - HEADER_LEN;
         if len > max {
             #[cfg(feature = "log")]
             error!("log read invalid message length, {} should be <= {}", len, max);
             return Ok(LogRead::Corrupted(len));
+        } else if len == 0 {
+            // skip to next record, which starts with 1
+            loop {
+                let mut byte = [0u8; 1];
+                f.read_exact(&mut byte)?;
+                if byte[0] != 1 {
+                    debug_assert_eq!(byte[0], 0);
+                    len += 1;
+                } else {
+                    break;
+                }
+            }
         }
 
         if valid[0] == 0 {
-            return Ok(LogRead::Aborted(len));
+            return Ok(LogRead::Zeroed(len + 5));
         }
 
         let mut crc16_buf = [0u8; 2];
@@ -184,26 +191,6 @@ impl Log for LockFreeLog {
         // in the actual data, but keep the len for recovery.
         let cached_f = self.config().cached_file();
         let mut f = cached_f.borrow_mut();
-        // zero out valid bit
-        f.seek(SeekFrom::Start(id)).unwrap();
-        let zeros = vec![0];
-        f.write_all(&*zeros).unwrap();
-        f.seek(SeekFrom::Start(id + 1)).unwrap();
-        let mut len_buf = [0u8; 4];
-        f.read_exact(&mut len_buf).unwrap();
-
-        #[cfg(feature = "libc")]
-        #[cfg(target_os = "linux")]
-        {
-            use std::os::unix::io::AsRawFd;
-            let len32: u32 = unsafe { std::mem::transmute(len_buf) };
-            let len = len32 as usize;
-            let mode = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE;
-            let fd = f.as_raw_fd();
-            unsafe {
-                // 5 is valid (1) + len (4), 2 is crc16
-                fallocate(fd, mode, id as i64 + 5, len as i64 + 2);
-            }
-        }
+        punch_hole(&mut f, id).unwrap();
     }
 }

@@ -1,3 +1,5 @@
+use std::ptr;
+
 use super::*;
 
 pub struct Reservation<'a> {
@@ -42,27 +44,17 @@ impl<'a> Reservation<'a> {
 
         self.flushed = true;
 
-        if !valid {
-            zero_failed_buf(&mut self.data);
+        if valid {
+            self.destination.copy_from_slice(&*self.data);
+        } else {
+            // zero the bytes, as aborted reservations skip writing
+            unsafe {
+                ptr::write_bytes(self.destination.as_ptr() as *mut u8, 0, self.data.len());
+            }
         }
-
-        self.destination.copy_from_slice(&*self.data);
 
         self.iobufs.exit_reservation(self.idx);
 
         self.log_id()
-    }
-}
-
-#[inline(always)]
-fn zero_failed_buf(buf: &mut [u8]) {
-    if buf.len() < HEADER_LEN {
-        panic!("somehow zeroing a buf shorter than HEADER_LEN");
-    }
-
-    // zero the valid byte, and the bytes after the size in the header
-    buf[0] = 0;
-    for c in buf[5..].iter_mut() {
-        *c = 0;
     }
 }

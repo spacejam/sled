@@ -82,9 +82,6 @@ fn main() {
         .and_then(|d| d.argv(std::env::args().into_iter()).deserialize())
         .unwrap_or_else(|e| e.exit());
 
-    #[cfg(feature = "stress")]
-    let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
-
     let total = Arc::new(AtomicUsize::new(0));
     let shutdown = Arc::new(AtomicBool::new(false));
 
@@ -123,6 +120,7 @@ fn main() {
     #[cfg(feature = "stress")]
     {
         if args.flag_burn_in {
+            let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
             signal.recv();
             println!("got shutdown signal, cleaning up...");
         } else {

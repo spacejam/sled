@@ -1,9 +1,14 @@
 use std::cell::UnsafeCell;
 use std::fmt::{self, Debug};
-use std::io::{self, SeekFrom};
+use std::fs::File;
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
+
+#[cfg(feature = "libc")]
+#[cfg(target_os = "linux")]
+use libc::{FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE, fallocate};
 
 use super::*;
 
@@ -56,7 +61,7 @@ pub trait Log: Sized {
 #[derive(Debug)]
 pub enum LogRead {
     Flush(Vec<u8>, usize),
-    Aborted(usize),
+    Zeroed(usize),
     Corrupted(usize),
 }
 
@@ -79,9 +84,9 @@ impl LogRead {
     }
 
     /// Return true if we read an aborted flush.
-    pub fn is_abort(&self) -> bool {
+    pub fn is_zeroed(&self) -> bool {
         match *self {
-            LogRead::Aborted(_) => true,
+            LogRead::Zeroed(_) => true,
             _ => false,
         }
     }
@@ -125,9 +130,36 @@ impl<'a, L> Iterator for LogIter<'a, L>
                     self.next_offset += len as LogID + HEADER_LEN as LogID;
                     return Some((offset, buf));
                 }
-                Ok(LogRead::Aborted(len)) => self.next_offset += len as LogID + HEADER_LEN as LogID,
+                Ok(LogRead::Zeroed(len)) => {
+                    self.next_offset += len as LogID;
+                }
                 _ => return None,
             }
         }
     }
+}
+
+pub fn punch_hole(f: &mut File, id: LogID) -> io::Result<()> {
+    // zero out valid bit
+    f.seek(SeekFrom::Start(id))?;
+    let zeros = vec![0];
+    f.write_all(&*zeros)?;
+    f.seek(SeekFrom::Start(id + 1))?;
+    let mut len_buf = [0u8; 4];
+    f.read_exact(&mut len_buf)?;
+
+    #[cfg(feature = "libc")]
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::io::AsRawFd;
+        let len32: u32 = unsafe { std::mem::transmute(len_buf) };
+        let len = len32 as usize;
+        let mode = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE;
+        let fd = f.as_raw_fd();
+        unsafe {
+            // 5 is valid (1) + len (4), 2 is crc16
+            fallocate(fd, mode, id as i64, len as i64 + HEADER_LEN as i64);
+        }
+    }
+    Ok(())
 }

@@ -132,3 +132,13 @@ impl Drop for PidDropper {
         self.1.push(self.0);
     }
 }
+
+struct LidDropper(LogID, Config);
+
+impl Drop for LidDropper {
+    fn drop(&mut self) {
+        let cached_f = self.1.cached_file();
+        let mut f = cached_f.borrow_mut();
+        log::punch_hole(&mut f, self.0);
+    }
+}
