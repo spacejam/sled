@@ -288,10 +288,13 @@ impl<PM, P, R> PageCache<PM, P, R>
             }
             new_stack.push(last.unwrap());
             let node = node_from_frag_vec(new_stack);
-            let res = unsafe { stack_ptr.deref().cas(head, node.into_ptr(scope), scope) };
-            if res.is_ok() {
-            } else {
-                // if this failed, it's because something wrote to the page in the mean time
+
+            unsafe {
+                if stack_ptr
+                    .deref()
+                    .cas(head, node.into_ptr(scope), scope)
+                    .is_err()
+                {}
             }
         }
     }
@@ -378,8 +381,8 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         let combined: Vec<&P> = to_merge
             .iter()
-            .map(|&v| v)
-            .chain(fetched.iter().map(|v| v))
+            .cloned()
+            .chain(fetched.iter())
             .rev()
             .collect();
 
@@ -408,7 +411,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 None
             };
 
-            for &&lid in lids.iter() {
+            for &&lid in &lids {
                 new_entries.push(CacheEntry::PartialFlush(lid));
             }
 

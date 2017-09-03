@@ -117,12 +117,10 @@ pub unsafe extern "C" fn rsdb_set(
     let k = slice::from_raw_parts(key, keylen).to_vec();
     let v = slice::from_raw_parts(val, vallen).to_vec();
     (*db).set(k.clone(), v.clone());
-    mem::forget(k);
-    mem::forget(v);
 }
 
 /// Get the value of a key.
-/// Caller is responsible for freeing the returned value with rsdb_free_buf if it's non-null.
+/// Caller is responsible for freeing the returned value with `rsdb_free_buf` if it's non-null.
 #[no_mangle]
 pub unsafe extern "C" fn rsdb_get(
     db: *mut Tree,
@@ -132,7 +130,6 @@ pub unsafe extern "C" fn rsdb_get(
 ) -> *mut c_char {
     let k = slice::from_raw_parts(key as *const u8, keylen);
     let res = (*db).get(k);
-    mem::forget(k);
     match res {
         None => ptr::null_mut(),
         Some(v) => leak_buf(v, vallen),
@@ -144,14 +141,13 @@ pub unsafe extern "C" fn rsdb_get(
 pub unsafe extern "C" fn rsdb_del(db: *mut Tree, key: *const c_char, keylen: size_t) {
     let k = slice::from_raw_parts(key as *const u8, keylen);
     (*db).del(k);
-    mem::forget(k);
 }
 
 /// Compare and swap.
 /// Returns 1 if successful, 0 if unsuccessful.
-/// Otherwise sets actual_val and actual_vallen to the current value,
-/// which must be freed using rsdb_free_buf by the caller if non-null.
-/// actual_val will be null and actual_vallen 0 if the current value is not set.
+/// Otherwise sets `actual_val` and `actual_vallen` to the current value,
+/// which must be freed using `rsdb_free_buf` by the caller if non-null.
+/// `actual_val` will be null and `actual_vallen` 0 if the current value is not set.
 #[no_mangle]
 pub unsafe extern "C" fn rsdb_cas(
     db: *mut Tree,
@@ -170,8 +166,7 @@ pub unsafe extern "C" fn rsdb_cas(
         None
     } else {
         let old_slice = slice::from_raw_parts(old_val as *const u8, old_vallen);
-        let copy = old_slice.clone().to_vec();
-        mem::forget(old_slice);
+        let copy = old_slice.to_vec();
         Some(copy)
     };
 
@@ -179,31 +174,29 @@ pub unsafe extern "C" fn rsdb_cas(
         None
     } else {
         let new_slice = slice::from_raw_parts(new_val as *const u8, new_vallen);
-        let copy = new_slice.clone().to_vec();
-        mem::forget(new_slice);
+        let copy = new_slice.to_vec();
         Some(copy)
     };
 
     let res = (*db).cas(k.clone(), old, new);
-    mem::forget(k);
 
     match res {
         Ok(()) => {
-            return 1;
+            1
         }
         Err(None) => {
             *actual_vallen = 0;
-            return 0;
+            0
         }
         Err(Some(v)) => {
             *actual_val = leak_buf(v, actual_vallen) as *const u8;
-            return 0;
+            0
         }
     }
 }
 
 /// Iterate from a starting key.
-/// Caller is responsible for freeing the returned iterator with rsdb_free_iter.
+/// Caller is responsible for freeing the returned iterator with `rsdb_free_iter`.
 #[no_mangle]
 pub unsafe extern "C" fn rsdb_scan<'a>(
     db: *mut Tree,
@@ -216,7 +209,7 @@ pub unsafe extern "C" fn rsdb_scan<'a>(
 }
 
 /// Get they next kv pair from an iterator.
-/// Caller is responsible for freeing the key and value with rsdb_free_buf.
+/// Caller is responsible for freeing the key and value with `rsdb_free_buf`.
 /// Returns 0 when exhausted.
 #[no_mangle]
 pub unsafe extern "C" fn rsdb_iter_next(
@@ -230,10 +223,8 @@ pub unsafe extern "C" fn rsdb_iter_next(
         Some((k, v)) => {
             *key = leak_buf(k, keylen);
             *val = leak_buf(v, vallen);
-            return 1;
+            1
         }
-        None => {
-            return 0;
-        }
+        None => 0,
     }
 }

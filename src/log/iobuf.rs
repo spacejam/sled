@@ -120,7 +120,7 @@ impl IoBufs {
         let current_buf = 0;
         bufs[current_buf].set_log_offset(disk_offset);
 
-        let path = config.get_path().unwrap_or(config.get_tmp_path());
+        let path = config.get_path().unwrap_or_else(|| config.get_tmp_path());
         let mut options = std::fs::OpenOptions::new();
         options.create(true);
         options.write(true);

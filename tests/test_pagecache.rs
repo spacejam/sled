@@ -154,7 +154,7 @@ impl Arbitrary for OpVec {
 
         let mut clone = self.clone();
         let mut lowered = false;
-        for mut op in clone.ops.iter_mut() {
+        for op in clone.ops.iter_mut() {
             match *op {
                 Op::Set(ref mut pid, _) |
                 Op::Merge(ref mut pid, _) |

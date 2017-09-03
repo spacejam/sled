@@ -136,7 +136,6 @@ impl<'a, L> Iterator for LogIter<'a, L>
 }
 
 pub fn punch_hole(f: &mut File, id: LogID) -> io::Result<()> {
-    // zero out valid bit
     f.seek(SeekFrom::Start(id + 1))?;
     let mut len_buf = [0u8; 4];
     f.read_exact(&mut len_buf)?;

@@ -147,7 +147,7 @@ impl ConfigInner {
     /// or create a new one if this is the first time the thread is accessing it.
     pub fn cached_file(&self) -> Rc<RefCell<fs::File>> {
         self.tc.get_or_else(|| {
-            let path = self.get_path().unwrap_or(self.tmp_path.clone());
+            let path = self.get_path().unwrap_or_else(|| self.tmp_path.clone());
             let mut options = fs::OpenOptions::new();
             options.create(true);
             options.read(true);
@@ -220,7 +220,8 @@ impl ConfigInner {
 impl Drop for ConfigInner {
     fn drop(&mut self) {
         if self.get_path().is_none() {
-            if let Err(_) = fs::remove_file(self.tmp_path.clone()) {}
+            let res = fs::remove_file(self.tmp_path.clone());
+            if res.is_err() {}
         }
 
         if self.get_path().is_none() && self.get_snapshot_path().is_none() {

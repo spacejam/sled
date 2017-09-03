@@ -618,7 +618,7 @@ impl Materializer for BLinkMaterializer {
 
         for &frag in frags {
             if let Some(ref mut base_node) = base_node_opt {
-                base_node.apply(&frag);
+                base_node.apply(frag);
             } else {
                 let (base_node, is_root) = frag.base().unwrap();
                 base_node_opt = Some(base_node);
