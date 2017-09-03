@@ -360,6 +360,12 @@ impl<PM, P, R> PageCache<PM, P, R>
             return None;
         }
 
+        // Short circuit merging and fix-up if we only
+        // have one frag.
+        if merged_resident && to_merge.len() == 1 {
+            return Some((to_merge[0].clone(), head.into()));
+        }
+
         let mut fetched = Vec::with_capacity(lids.len());
 
         // Did not find a previously merged value in memory,
@@ -386,12 +392,6 @@ impl<PM, P, R> PageCache<PM, P, R>
             .rev()
             .collect();
 
-        // Short circuit merging and fix-up if we only
-        // have one frag.
-        if combined.len() == 1 {
-            return Some((combined[0].clone(), head.into()));
-        }
-
         let merged = self.t.merge(&*combined);
 
         let size = std::mem::size_of_val(&merged);
@@ -404,7 +404,9 @@ impl<PM, P, R> PageCache<PM, P, R>
                 Err(None) => return None,
                 _ => {}
             }
-        } else if fix_up_length >= self.config().get_cache_fixup_threshold() {
+        } else if !fetched.is_empty() ||
+                   fix_up_length >= self.config().get_cache_fixup_threshold()
+        {
             let mut new_entries = Vec::with_capacity(lids.len());
 
             let head_lid = lids.remove(0);
@@ -750,6 +752,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 // after the scope passes, these lids will
                 // have their disk space hole punched.
                 scope.defer_drop(dropper.into_ptr(scope));
+                scope.flush();
             }
         }
     }
