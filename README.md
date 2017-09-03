@@ -1,4 +1,4 @@
-# RSDB
+# rsdb
 
 [![Build Status](https://travis-ci.org/spacejam/rsdb.svg?branch=master)](https://travis-ci.org/spacejam/rsdb)
 [![crates.io](http://meritbadge.herokuapp.com/rsdb)](https://crates.io/crates/rsdb)
@@ -62,7 +62,7 @@ tree.del(&k);
 - [x] zstd compression
 - [x] configurable cache size
 - [x] C API
-- [ ] log cleaning
+- [x] log cleaning
 - [ ] merge operator support
 - [ ] higher-level interface with multi-key transaction and snapshot support
 - [ ] formal verification of lock-free algorithms via symbolic execution

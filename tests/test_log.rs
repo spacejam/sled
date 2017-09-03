@@ -141,12 +141,21 @@ fn test_log_aborts() {
 
 #[test]
 fn test_hole_punching() {
-    let log = Config::default().log();
+    use std::os::linux::fs::MetadataExt;
+
+    let conf = Config::default();
+    let log = conf.log();
 
     let id1 = log.write(b"first".to_vec());
     let id2 = log.write(b"second".to_vec());
 
     log.make_stable(id2);
+
+    let blocks_before = {
+        let cf = conf.cached_file();
+        let f = cf.borrow();
+        f.metadata().unwrap().st_blocks();
+    };
 
     assert_eq!(log.read(id1).unwrap().unwrap(), b"first".to_vec());
 

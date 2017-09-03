@@ -91,18 +91,6 @@ impl<PM, P, R> Drop for PageCache<PM, P, R>
         // this is necessary because AtomicOption leaks
         // the inner object if left on its own
         self.last_snapshot.take(SeqCst);
-
-        let config = self.config();
-        if config.get_path().is_none() && config.get_snapshot_path().is_none() {
-            // Our files are temporary, so nuke them.
-            let candidates = self.get_snapshot_files();
-            for path in candidates {
-                if let Err(_e) = std::fs::remove_file(path) {
-                    #[cfg(feature = "log")]
-                    warn!("failed to remove old snapshot file, maybe snapshot race? {}", _e);
-                }
-            }
-        }
     }
 }
 
@@ -533,7 +521,7 @@ impl<PM, P, R> PageCache<PM, P, R>
     fn write_snapshot(&self) {
         self.log.flush();
 
-        let prefix = self.snapshot_prefix();
+        let prefix = self.config().snapshot_prefix();
 
         let snapshot_opt = self.last_snapshot.take(SeqCst);
         if snapshot_opt.is_none() {
@@ -637,7 +625,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         std::fs::rename(path_1, &path_2).expect("failed to write snapshot");
 
         // clean up any old snapshots
-        let candidates = self.get_snapshot_files();
+        let candidates = self.config().get_snapshot_files();
         for path in candidates {
             if Path::new(&path).file_name().unwrap() != &*path_2 {
                 #[cfg(feature = "log")]
@@ -651,52 +639,8 @@ impl<PM, P, R> PageCache<PM, P, R>
         }
     }
 
-    fn snapshot_prefix(&self) -> String {
-        let config = self.config();
-        let snapshot_path = config.get_snapshot_path();
-        let path = config.get_path();
-        snapshot_path.or(path).unwrap_or(config.get_tmp_path())
-    }
-
-    fn get_snapshot_files(&self) -> Vec<String> {
-        let mut prefix = self.snapshot_prefix();
-        prefix.push_str(".");
-
-        let abs_prefix: String = if Path::new(&prefix).is_absolute() {
-            prefix
-        } else {
-            let mut abs_path =
-                std::env::current_dir().expect("could not read current dir, maybe deleted?");
-            abs_path.push(prefix.clone());
-            abs_path.to_str().unwrap().to_owned()
-        };
-
-
-        let filter = |dir_entry: std::io::Result<std::fs::DirEntry>| if let Ok(de) = dir_entry {
-            let path_buf = de.path();
-            let path = path_buf.as_path();
-            let path_str = path.to_str().unwrap();
-            if path_str.starts_with(&abs_prefix) && !path_str.ends_with(".in___motion") {
-                Some(path_str.to_owned())
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        let snap_dir = Path::new(&abs_prefix).parent().expect(
-            "could not read snapshot directory",
-        );
-        snap_dir
-            .read_dir()
-            .expect("could not read snapshot directory")
-            .filter_map(filter)
-            .collect()
-    }
-
     fn read_snapshot(&mut self) -> Snapshot<R> {
-        let mut candidates = self.get_snapshot_files();
+        let mut candidates = self.config().get_snapshot_files();
         if candidates.is_empty() {
             #[cfg(feature = "log")]
             info!("no previous snapshot found");

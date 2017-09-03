@@ -1,6 +1,7 @@
 use std::cell::{RefCell, UnsafeCell};
 use std::fs;
 use std::ops::{Deref, DerefMut};
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -169,6 +170,52 @@ impl ConfigInner {
     pub fn get_tmp_path(&self) -> String {
         self.tmp_path.clone()
     }
+
+    /// returns the current snapshot file prefix
+    pub fn snapshot_prefix(&self) -> String {
+        let snapshot_path = self.get_snapshot_path();
+        let path = self.get_path();
+        let tmp = self.get_tmp_path();
+        snapshot_path.or(path).unwrap_or(tmp)
+    }
+
+    /// returns the snapshot file paths for this system
+    pub fn get_snapshot_files(&self) -> Vec<String> {
+        let mut prefix = self.snapshot_prefix();
+        prefix.push_str(".");
+
+        let abs_prefix: String = if Path::new(&prefix).is_absolute() {
+            prefix
+        } else {
+            let mut abs_path =
+                std::env::current_dir().expect("could not read current dir, maybe deleted?");
+            abs_path.push(prefix.clone());
+            abs_path.to_str().unwrap().to_owned()
+        };
+
+
+        let filter = |dir_entry: std::io::Result<std::fs::DirEntry>| if let Ok(de) = dir_entry {
+            let path_buf = de.path();
+            let path = path_buf.as_path();
+            let path_str = path.to_str().unwrap();
+            if path_str.starts_with(&abs_prefix) && !path_str.ends_with(".in___motion") {
+                Some(path_str.to_owned())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let snap_dir = Path::new(&abs_prefix).parent().expect(
+            "could not read snapshot directory",
+        );
+        snap_dir
+            .read_dir()
+            .expect("could not read snapshot directory")
+            .filter_map(filter)
+            .collect()
+    }
 }
 
 impl Drop for ConfigInner {
@@ -176,5 +223,17 @@ impl Drop for ConfigInner {
         if self.get_path().is_none() {
             if let Err(_) = fs::remove_file(self.tmp_path.clone()) {}
         }
+
+        if self.get_path().is_none() && self.get_snapshot_path().is_none() {
+            // Our files are temporary, so nuke them.
+            let candidates = self.get_snapshot_files();
+            for path in candidates {
+                if let Err(_e) = std::fs::remove_file(path) {
+                    #[cfg(feature = "log")]
+                    warn!("failed to remove old snapshot file, maybe snapshot race? {}", _e);
+                }
+            }
+        }
+
     }
 }
