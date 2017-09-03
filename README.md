@@ -42,6 +42,7 @@ tree.del(&k);
 * Quite young, there are lots of fuzz tests but don't bet a billion
   dollar business on it yet!
 * The C API is likely to change rapidly
+* Log cleaning is currently only implemented for linux via `fallocate`!
 * Has not yet received much attention for performance tuning,
   it has an extremely high theoretical performance but there
   is a bit of tuning to get there. Currently only around 200k
