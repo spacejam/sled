@@ -218,7 +218,7 @@ fn prop_tree_matches_btreemap(ops: OpVec, blink_fanout: u8, snapshot_after: u8) 
     use self::Op::*;
     let config = Config::default()
         .snapshot_after_ops(snapshot_after as usize + 1)
-        .blink_fanout(blink_fanout as usize + 1)
+        .blink_fanout(blink_fanout as usize + 2)
         .cache_capacity(40);
     let mut tree = config.tree();
     let mut reference = BTreeMap::new();
@@ -282,7 +282,7 @@ fn quickcheck_tree_matches_btreemap() {
 }
 
 #[test]
-fn test_snapshot_bug_1() {
+fn test_tree_bug_1() {
     // postmortem:
     // this was a bug in the snapshot recovery, where
     // it led to max_id dropping by 1 after a restart.
@@ -298,7 +298,7 @@ fn test_snapshot_bug_1() {
 }
 
 #[test]
-fn test_snapshot_bug_2() {
+fn test_tree_bug_2() {
     // postmortem:
     // this was a bug in the way that the `Materializer`
     // was fed data, possibly out of order, if recover
@@ -318,7 +318,7 @@ fn test_snapshot_bug_2() {
 }
 
 #[test]
-fn test_snapshot_bug_3() {
+fn test_tree_bug_3() {
     // postmortem: the tree was not persisting and recovering root hoists
     use Op::*;
     prop_tree_matches_btreemap(
@@ -341,7 +341,7 @@ fn test_snapshot_bug_3() {
 }
 
 #[test]
-fn test_snapshot_bug_4() {
+fn test_tree_bug_4() {
     // postmortem: pagecache was failing to replace the LogID list
     // when it encountered a new Update::Compact.
     use Op::*;

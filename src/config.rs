@@ -130,7 +130,7 @@ impl ConfigInner {
     builder!(
         (io_bufs, get_io_bufs, set_io_bufs, usize, "number of io buffers"),
         (io_buf_size, get_io_buf_size, set_io_buf_size, usize, "size of each io flush buffer"),
-        (blink_fanout, get_blink_fanout, set_blink_fanout, usize, "b-link node fanout"),
+        (blink_fanout, get_blink_fanout, set_blink_fanout, usize, "b-link node fanout, minimum of 2"),
         (page_consolidation_threshold, get_page_consolidation_threshold, set_page_consolidation_threshold, usize, "page consolidation threshold"),
         (path, get_path, set_path, Option<String>, "path for the main storage file"),
         (cache_bits, get_cache_bits, set_cache_bits, usize, "log base 2 of the number of cache shards"),
