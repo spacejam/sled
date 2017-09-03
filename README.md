@@ -18,7 +18,7 @@ The `Tree` has a C API, so you can use this from any mainstream language.
 extern crate rsdb;
 
 let tree = rsdb::Config::default()
-  .path(Some("rsdb.state".to_owned()))
+  .path(Some(path))
   .tree();
 
 // set and get
@@ -41,13 +41,12 @@ tree.del(&k);
 
 * Quite young, there are lots of fuzz tests but don't bet a billion
   dollar business on it yet!
-* Log cleaning is not yet implemented, so if you write the same
-  key over and over, you will run out of disk space eventually.
-  This is going to be implemented in the next week!
 * The C API is likely to change rapidly
 * Has not yet received much attention for performance tuning,
   it has an extremely high theoretical performance but there
-  is a bit of tuning to get there. This will be happening soon!
+  is a bit of tuning to get there. Currently only around 200k
+  operations per second with certain contrived workloads. This
+  will be improving soon!
 
 # Contribution Welcome!
 
