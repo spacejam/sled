@@ -1,26 +1,16 @@
-extern crate rsdb;
-extern crate rand;
-
-#[cfg(feature = "stress")]
 #[macro_use]
 extern crate serde_derive;
-
-#[cfg(feature = "stress")]
 extern crate docopt;
-
-#[cfg(feature = "stress")]
 extern crate chan_signal;
+extern crate rand;
+extern crate rsdb;
 
 use std::thread;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-#[cfg(feature = "stress")]
 use chan_signal::Signal;
-
-#[cfg(feature = "stress")]
 use docopt::Docopt;
-
 use rand::{Rng, thread_rng};
 
 const USAGE: &'static str = "
@@ -32,11 +22,23 @@ Options:
     --duration=<s>     Seconds to run for [default: 10].
 ";
 
-#[cfg_attr(feature = "docopt", derive(Deserialize))]
+#[derive(Deserialize)]
 struct Args {
     flag_threads: usize,
     flag_burn_in: bool,
     flag_duration: u64,
+}
+
+fn report(shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
+    let mut last = 0;
+    while !shutdown.load(Ordering::Relaxed) {
+        thread::sleep(std::time::Duration::from_secs(1));
+        let total = total.load(Ordering::Acquire);
+
+        println!("did {} ops", total - last);
+
+        last = total;
+    }
 }
 
 fn run(tree: Arc<rsdb::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
@@ -44,10 +46,8 @@ fn run(tree: Arc<rsdb::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>
     let mut byte = || vec![rng.gen::<u8>()];
     let mut rng = thread_rng();
 
-    let mut ops = 0;
-
     while !shutdown.load(Ordering::Relaxed) {
-        ops += 1;
+        total.fetch_add(1, Ordering::Release);
         let choice = rng.gen_range(0, 5);
 
         match choice {
@@ -72,18 +72,14 @@ fn run(tree: Arc<rsdb::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>
         }
 
     }
-
-    total.fetch_add(ops, Ordering::Release);
 }
 
 fn main() {
-    #[cfg(feature = "stress")]
+    let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
+
     let args: Args = Docopt::new(USAGE)
         .and_then(|d| d.argv(std::env::args().into_iter()).deserialize())
         .unwrap_or_else(|e| e.exit());
-
-    #[cfg(feature = "stress")]
-    let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
 
     let total = Arc::new(AtomicUsize::new(0));
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -106,31 +102,29 @@ fn main() {
 
     let now = std::time::Instant::now();
 
-    #[cfg(feature = "stress")]
     let n_threads = args.flag_threads;
 
-    #[cfg(not(feature = "stress"))]
-    let n_threads = 4;
-
-    for _ in 0..n_threads {
+    for i in 0..n_threads + 1 {
         let tree = tree.clone();
         let shutdown = shutdown.clone();
         let total = total.clone();
-        let t = thread::spawn(move || run(tree, shutdown, total));
+
+        let t = if i == 0 {
+            thread::spawn(move || report(shutdown, total))
+        } else {
+            thread::spawn(move || run(tree, shutdown, total))
+        };
+
         threads.push(t);
     }
 
-    #[cfg(feature = "stress")]
-    {
-        if args.flag_burn_in {
-            signal.recv();
-            println!("got shutdown signal, cleaning up...");
-        } else {
-            thread::sleep(std::time::Duration::from_secs(args.flag_duration));
-        }
+    if args.flag_burn_in {
+        println!("waiting on signal");
+        signal.recv();
+        println!("got shutdown signal, cleaning up...");
+    } else {
+        thread::sleep(std::time::Duration::from_secs(args.flag_duration));
     }
-
-    #[cfg(not(feature = "stress"))] thread::sleep(std::time::Duration::from_secs(10));
 
     shutdown.store(true, Ordering::SeqCst);
 

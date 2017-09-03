@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{ATOMIC_USIZE_INIT, AtomicUsize, Ordering};
 
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
-use rand::{Rng, thread_rng};
 use coco::epoch::Ptr;
 
 use rsdb::*;
@@ -38,12 +37,7 @@ impl Materializer for TestMaterializer {
 
 #[test]
 fn test_cache() {
-    let path = "test_pagecache_caching";
-    let conf = Config::default().cache_capacity(40).cache_bits(0).path(
-        Some(
-            path.to_owned(),
-        ),
-    );
+    let conf = Config::default().cache_capacity(40).cache_bits(0);
 
     let mut pc = PageCache::new(TestMaterializer, conf.clone());
     pc.recover();
@@ -61,18 +55,11 @@ fn test_cache() {
         let key = pc.merge(id, key, vec![i]).unwrap();
         keys.insert(id, key);
     }
-
-    pc.__delete_all_files();
 }
 
 #[test]
 fn basic_recovery() {
-    let path = "test_pagecache_recovery";
-    let snapshot_path = "test_pagecache.snapshot";
-    let conf = Config::default()
-        .flush_every_ms(None)
-        .path(Some(path.to_owned()))
-        .snapshot_path(Some(snapshot_path.to_owned()));
+    let conf = Config::default().flush_every_ms(None);
 
     let mut pc = PageCache::new(TestMaterializer, conf.clone());
     pc.recover();
@@ -103,7 +90,6 @@ fn basic_recovery() {
     pc4.recover();
     let res = pc4.get(id);
     assert!(res.is_none());
-    pc4.__delete_all_files();
 }
 
 #[derive(Debug, Clone)]
@@ -168,7 +154,7 @@ impl Arbitrary for OpVec {
 
         let mut clone = self.clone();
         let mut lowered = false;
-        for mut op in clone.ops.iter_mut() {
+        for op in clone.ops.iter_mut() {
             match *op {
                 Op::Set(ref mut pid, _) |
                 Op::Merge(ref mut pid, _) |
@@ -191,13 +177,10 @@ impl Arbitrary for OpVec {
 
 fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
     use self::Op::*;
-    let nonce: String = thread_rng().gen_ascii_chars().take(10).collect();
-    let path = format!("quickcheck_pagecache_works_{}", nonce);
     let config = Config::default()
         .cache_bits(0)
         .cache_capacity(40)
-        .cache_fixup_threshold(cache_fixup_threshold as usize)
-        .path(Some(path));
+        .cache_fixup_threshold(cache_fixup_threshold as usize);
 
     let mut pc = PageCache::new(TestMaterializer, config.clone());
     pc.recover();
@@ -283,8 +266,6 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
             }
         }
     }
-
-    pc.__delete_all_files();
 
     true
 }
@@ -408,9 +389,7 @@ fn test_pagecache_bug_8() {
     );
 }
 
-#[test]
-#[ignore]
-fn test_pagecache_bug_() {
+fn _test_pagecache_bug_() {
     // postmortem: TEMPLATE
     // use Op::*;
     prop_pagecache_works(

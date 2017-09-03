@@ -28,7 +28,6 @@ extern crate lazy_static;
 #[cfg(feature = "log")]
 #[macro_use]
 extern crate log as _log;
-#[cfg(feature = "libc")]
 extern crate libc;
 #[cfg(feature = "rayon")]
 extern crate rayon;
@@ -48,7 +47,6 @@ pub use ds::{Radix, Stack};
 pub use config::Config;
 
 /// C-compatible API for the lock-free log-structured B+tree.
-#[cfg(feature = "libc")]
 pub mod c;
 
 macro_rules! rep_no_copy {

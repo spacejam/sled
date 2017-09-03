@@ -1,6 +1,6 @@
 [package]
 name = "rsdb"
-version = "0.10.0"
+version = "0.11.0"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "a flash-sympathetic persistent lock-free B+ tree, pagecache, and log"
 license = "Apache-2.0"
@@ -11,9 +11,9 @@ documentation = "https://docs.rs/rsdb/"
 readme = "README.md"
 
 [features]
-default = ["libc"]
+default = []
 bench = ["clap", "num_cpus", "log", "rand", "rayon", "zstd", "env_logger"]
-stress = ["docopt", "chan-signal", "rayon", "rand"]
+stress = ["docopt", "chan-signal", "rayon", "rand", "zstd"]
 
 [[bin]]
 name = "bench"
@@ -24,6 +24,7 @@ name = "stress"
 required-features = ["stress"]
 
 [dependencies]
+libc = "0.2"
 crossbeam = "0.3"
 coco = "0.2"
 bincode = "0.8"
@@ -31,7 +32,6 @@ serde = "1.0"
 serde_derive = "1.0"
 lazy_static = "0.2"
 log = {version = "0.3", optional = true}
-libc = {version = "0.2", optional = true}
 rayon = {version = "0.8", optional = true}
 env_logger = {version = "0.4", optional = true}
 num_cpus = {version = "1.6", optional = true}

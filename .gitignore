@@ -13,3 +13,4 @@ target
 Cargo.lock
 *swp
 *swo
+rsdb.tmp.*
