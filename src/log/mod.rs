@@ -152,11 +152,15 @@ pub fn punch_hole(f: &mut File, id: LogID) -> io::Result<()> {
     #[cfg(feature = "libc")]
     #[cfg(target_os = "linux")]
     {
+        use std::os::unix::io::AsRawFd;
+
         let len32: u32 = unsafe { std::mem::transmute(len_buf) };
         let len = len32 as usize;
-        use std::os::unix::io::AsRawFd;
+
         let mode = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE;
+
         let fd = f.as_raw_fd();
+
         unsafe {
             // 5 is valid (1) + len (4), 2 is crc16
             fallocate(fd, mode, id as i64, len as i64 + HEADER_LEN as i64);

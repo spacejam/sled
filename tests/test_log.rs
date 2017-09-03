@@ -139,6 +139,8 @@ fn test_log_aborts() {
     test_abort(&log);
 }
 
+#[cfg(feature = "libc")]
+#[cfg(target_os = "linux")]
 #[test]
 fn test_hole_punching() {
     use std::os::linux::fs::MetadataExt;
