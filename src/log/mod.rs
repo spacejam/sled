@@ -1,7 +1,7 @@
 use std::cell::UnsafeCell;
 use std::fmt::{self, Debug};
 use std::fs::File;
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
@@ -146,6 +146,8 @@ pub fn punch_hole(f: &mut File, id: LogID) -> io::Result<()> {
 
     #[cfg(not(target_os = "linux"))]
     {
+        use std::io::Write;
+
         f.seek(SeekFrom::Start(id))?;
         let zeros = vec![0; HEADER_LEN + len];
         f.write_all(&*zeros)?;
