@@ -65,46 +65,68 @@ use super::*;
 ///     std::fs::remove_file(path).unwrap();
 /// }
 /// ```
-pub struct PageCache<PM, L, P, R>
-    where P: Send + Sync
+pub struct PageCache<PM, P, R>
+    where PM: Materializer<PageFrag = P, Recovery = R>,
+          PM: Send + Sync,
+          P: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
+          R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
 {
     t: PM,
     inner: Radix<Stack<CacheEntry<P>>>,
     max_pid: AtomicUsize,
     free: Arc<Stack<PageID>>,
-    log: L,
+    log: LockFreeLog,
     lru: Lru,
     updates: AtomicUsize,
     last_snapshot: AtomicOption<Snapshot<R>>,
 }
 
-impl<PM, L, P, R> Drop for PageCache<PM, L, P, R>
-    where P: Send + Sync
+impl<PM, P, R> Drop for PageCache<PM, P, R>
+    where PM: Materializer<PageFrag = P, Recovery = R>,
+          PM: Send + Sync,
+          P: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
+          R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
 {
     fn drop(&mut self) {
         // this is necessary because AtomicOption leaks
         // the inner object if left on its own
         self.last_snapshot.take(SeqCst);
+
+        let config = self.config();
+        if config.get_path().is_none() && config.get_snapshot_path().is_none() {
+            // Our files are temporary, so nuke them.
+            let candidates = self.get_snapshot_files();
+            for path in candidates {
+                if let Err(_e) = std::fs::remove_file(path) {
+                    #[cfg(feature = "log")]
+                    warn!("failed to remove old snapshot file, maybe snapshot race? {}", _e);
+                }
+            }
+        }
     }
 }
 
-unsafe impl<PM, L, P, R> Send for PageCache<PM, L, P, R>
-    where PM: Send,
-          P: Send + Sync,
-          L: Send,
-          R: Send
+unsafe impl<PM, P, R> Send for PageCache<PM, P, R>
+    where PM: Materializer<PageFrag = P, Recovery = R>,
+          PM: Send + Sync,
+          P: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
+          R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
 {
 }
 
-unsafe impl<PM, L, P, R> Sync for PageCache<PM, L, P, R>
-    where PM: Sync,
-          P: Send + Sync,
-          L: Sync
+unsafe impl<PM, P, R> Sync for PageCache<PM, P, R>
+    where PM: Materializer<PageFrag = P, Recovery = R>,
+          PM: Send + Sync,
+          P: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
+          R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
 {
 }
 
-impl<PM, L, P, R> Debug for PageCache<PM, L, P, R>
-    where P: Send + Sync
+impl<PM, P, R> Debug for PageCache<PM, P, R>
+    where PM: Materializer<PageFrag = P, Recovery = R>,
+          PM: Send + Sync,
+          P: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
+          R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         f.write_str(&*format!(
@@ -115,14 +137,14 @@ impl<PM, L, P, R> Debug for PageCache<PM, L, P, R>
     }
 }
 
-impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
+impl<PM, P, R> PageCache<PM, P, R>
     where PM: Materializer<PageFrag = P, Recovery = R>,
           PM: Send + Sync,
           P: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
-          R: Debug + PartialEq + Clone + Serialize + DeserializeOwned
+          R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
 {
     /// Instantiate a new `PageCache`.
-    pub fn new(pm: PM, config: Config) -> PageCache<PM, LockFreeLog, P, R> {
+    pub fn new(pm: PM, config: Config) -> PageCache<PM, P, R> {
         let cache_capacity = config.get_cache_capacity();
         let cache_shard_bits = config.get_cache_bits();
         let lru = Lru::new(cache_capacity, cache_shard_bits);
@@ -194,21 +216,26 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
     /// Free a particular page.
     pub fn free(&self, pid: PageID) {
-        let deleted = self.inner.del(pid);
-        if !deleted {
-            return;
-        }
-
-        // write info to log
-        let prepend: LoggedUpdate<P> = LoggedUpdate {
-            pid: pid,
-            update: Update::Del,
-        };
-        let bytes = serialize(&prepend, Infinite).unwrap();
-        self.log.write(bytes);
-
-        // add pid to free stack to reduce fragmentation over time
         pin(|scope| {
+            let deleted = self.inner.del(pid, scope);
+            if deleted.is_none() {
+                return;
+            }
+
+            // write info to log
+            let prepend: LoggedUpdate<P> = LoggedUpdate {
+                pid: pid,
+                update: Update::Del,
+            };
+            let bytes = serialize(&prepend, Infinite).unwrap();
+            self.log.write(bytes);
+
+            // add pid to free stack to reduce fragmentation over time
+            unsafe {
+                let cas_key = deleted.unwrap().deref().head(scope).into();
+                self.drop_lids_from_stack(cas_key, scope);
+            }
+
             let pd = Owned::new(PidDropper(pid, self.free.clone()));
             let ptr = pd.into_ptr(scope);
             unsafe {
@@ -231,21 +258,6 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
 
             self.page_in(pid, head, stack_ptr, scope)
         })
-    }
-
-    #[doc(hidden)]
-    pub fn __delete_all_files(&self) {
-        for path in self.get_snapshot_files() {
-            #[cfg(feature = "log")]
-            info!("removing old snapshot file {:?}", path);
-            std::fs::remove_file(path).unwrap();
-        }
-
-        if let Some(path) = self.config().get_path() {
-            #[cfg(feature = "log")]
-            info!("removing data file {:?}", path);
-            std::fs::remove_file(&path).unwrap();
-        }
     }
 
     fn page_out<'s>(&self, to_evict: Vec<PageID>, scope: &'s Scope) {
@@ -463,32 +475,7 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             if result.is_ok() {
                 log_reservation.complete();
 
-                // generate a list of the old log ID's
-                let old_head_ptr = old.into();
-                let stack_iter = StackIter::from_ptr(old_head_ptr, scope);
-                let mut lids = vec![];
-
-                for cache_entry_ptr in stack_iter {
-                    match *cache_entry_ptr {
-                        CacheEntry::Resident(_, ref lid) |
-                        CacheEntry::MergedResident(_, ref lid) |
-                        CacheEntry::PartialFlush(ref lid) |
-                        CacheEntry::Flush(ref lid) => {
-                            lids.push(*lid);
-                        }
-                    }
-                }
-
-                if !lids.is_empty() {
-                    self.log.make_stable(*lids.iter().max().unwrap());
-                    let dropper = Owned::new(LidDropper(lids, self.config().clone()));
-
-                    unsafe {
-                        // after the scope passes, these lids will
-                        // have their disk space hole punched.
-                        scope.defer_drop(dropper.into_ptr(scope));
-                    }
-                }
+                self.drop_lids_from_stack(old, scope);
             } else {
                 log_reservation.abort();
             }
@@ -547,12 +534,6 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         self.log.flush();
 
         let prefix = self.snapshot_prefix();
-        if prefix.is_none() {
-            // we have not been configured to write any log data, so this
-            // won't find anything to form a snapshot with.
-            return;
-        }
-        let prefix = prefix.unwrap();
 
         let snapshot_opt = self.last_snapshot.take(SeqCst);
         if snapshot_opt.is_none() {
@@ -670,20 +651,15 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
         }
     }
 
-    fn snapshot_prefix(&self) -> Option<String> {
+    fn snapshot_prefix(&self) -> String {
         let config = self.config();
         let snapshot_path = config.get_snapshot_path();
         let path = config.get_path();
-        snapshot_path.or(path)
+        snapshot_path.or(path).unwrap_or(config.get_tmp_path())
     }
 
     fn get_snapshot_files(&self) -> Vec<String> {
-        let prefix_opt = self.snapshot_prefix();
-        if prefix_opt.is_none() {
-            // not configured to persist...
-            return vec![];
-        }
-        let mut prefix = prefix_opt.unwrap();
+        let mut prefix = self.snapshot_prefix();
         prefix.push_str(".");
 
         let abs_prefix: String = if Path::new(&prefix).is_absolute() {
@@ -794,6 +770,34 @@ impl<PM, P, R> PageCache<PM, LockFreeLog, P, R>
             }
 
             self.inner.insert(*pid, stack).unwrap();
+        }
+    }
+
+    fn drop_lids_from_stack(&self, stack_ptr: CasKey<P>, scope: &Scope) {
+        // generate a list of the old log ID's
+        let stack_iter = StackIter::from_ptr(stack_ptr.into(), scope);
+        let mut lids = vec![];
+
+        for cache_entry_ptr in stack_iter {
+            match *cache_entry_ptr {
+                CacheEntry::Resident(_, ref lid) |
+                CacheEntry::MergedResident(_, ref lid) |
+                CacheEntry::PartialFlush(ref lid) |
+                CacheEntry::Flush(ref lid) => {
+                    lids.push(*lid);
+                }
+            }
+        }
+
+        if !lids.is_empty() {
+            self.log.make_stable(*lids.iter().max().unwrap());
+            let dropper = Owned::new(LidDropper(lids, self.config().clone()));
+
+            unsafe {
+                // after the scope passes, these lids will
+                // have their disk space hole punched.
+                scope.defer_drop(dropper.into_ptr(scope));
+            }
         }
     }
 }

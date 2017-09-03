@@ -9,6 +9,14 @@ pub struct ThreadCache<T> {
     inner: Arc<RwLock<HashMap<ThreadId, Rc<RefCell<T>>>>>,
 }
 
+impl<T> Clone for ThreadCache<T> {
+    fn clone(&self) -> ThreadCache<T> {
+        ThreadCache {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
 unsafe impl<T> Send for ThreadCache<T> {}
 unsafe impl<T> Sync for ThreadCache<T> {}
 

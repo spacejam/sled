@@ -44,8 +44,7 @@ fn non_contiguous_flush() {
 #[test]
 fn concurrent_logging() {
     // TODO linearize res bufs, verify they are correct
-    let path = "test_log.log";
-    let log = Arc::new(Config::default().path(Some(path.to_owned())).log());
+    let log = Arc::new(Config::default().log());
     let iobs2 = log.clone();
     let iobs3 = log.clone();
     let iobs4 = log.clone();
@@ -106,8 +105,6 @@ fn concurrent_logging() {
     t4.join().unwrap();
     t5.join().unwrap();
     t6.join().unwrap();
-
-    fs::remove_file(path).unwrap();
 }
 
 fn test_write(log: &LockFreeLog) {
@@ -290,9 +287,7 @@ impl Arbitrary for OpVec {
 
 fn prop_log_works(ops: OpVec) -> bool {
     use self::Op::*;
-    let nonce: String = thread_rng().gen_ascii_chars().take(10).collect();
-    let path = format!("quickcheck_log_works_{}", nonce);
-    let config = Config::default().path(Some(path));
+    let config = Config::default();
 
     let mut log = config.log();
     let mut reference: Vec<(u64, Option<Vec<u8>>)> = vec![];

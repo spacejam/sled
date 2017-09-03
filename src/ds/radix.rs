@@ -142,17 +142,15 @@ impl<T> Radix<T>
         if res.is_null() { None } else { Some(res) }
     }
 
-    /// Delete a value from the tree, returning true if successful.
-    pub fn del(&self, pid: PageID) -> bool {
-        pin(|scope| {
-            let old = self.swap(pid, Ptr::null(), scope);
-            if !old.is_null() {
-                unsafe { scope.defer_drop(old) };
-                true
-            } else {
-                false
-            }
-        })
+    /// Delete a value from the tree, returning the old value if it was set.
+    pub fn del<'s>(&self, pid: PageID, scope: &'s Scope) -> Option<Ptr<'s, T>> {
+        let old = self.swap(pid, Ptr::null(), scope);
+        if !old.is_null() {
+            unsafe { scope.defer_drop(old) };
+            Some(old)
+        } else {
+            None
+        }
     }
 }
 
@@ -208,7 +206,7 @@ fn basic_functionality() {
         rt.cas(0, ptr, Owned::new(6).into_ptr(scope), scope)
             .unwrap();
         assert_eq!(rt.get(0, scope).unwrap().deref(), &6);
-        rt.del(0);
+        rt.del(0, scope);
         assert!(rt.get(0, scope).is_none());
 
         rt.insert(321, 2).unwrap();

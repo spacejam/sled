@@ -1,5 +1,6 @@
-use std::cell::RefCell;
+use std::cell::{RefCell, UnsafeCell};
 use std::fs;
+use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -19,29 +20,18 @@ use super::*;
 /// ```
 #[derive(Debug, Clone)]
 pub struct Config {
-    io_bufs: usize,
-    io_buf_size: usize,
-    blink_fanout: usize,
-    page_consolidation_threshold: usize,
-    path: Option<String>,
-    cache_bits: usize,
-    cache_capacity: usize,
-    use_os_cache: bool,
-    use_compression: bool,
-    flush_every_ms: Option<u64>,
-    snapshot_after_ops: usize,
-    snapshot_path: Option<String>,
-    cache_fixup_threshold: usize,
-    tc: Arc<ThreadCache<fs::File>>,
-    pub(super) tmp_path: String,
+    inner: Arc<UnsafeCell<ConfigInner>>,
 }
+
+unsafe impl Send for Config {}
+unsafe impl Sync for Config {}
 
 impl Default for Config {
     fn default() -> Config {
         let now = uptime();
         let nanos = (now.as_secs() * 1_000_000_000) + now.subsec_nanos() as u64;
         let tmp_path = format!("rsdb.tmp.{}", nanos);
-        Config {
+        let inner = Arc::new(UnsafeCell::new(ConfigInner {
             io_bufs: 3,
             io_buf_size: 2 << 22, // 8mb
             blink_fanout: 128,
@@ -55,10 +45,58 @@ impl Default for Config {
             snapshot_after_ops: 1_000_000,
             snapshot_path: None,
             cache_fixup_threshold: 1,
-            tc: Arc::new(ThreadCache::default()),
+            tc: ThreadCache::default(),
             tmp_path: tmp_path.to_owned(),
+        }));
+        Config {
+            inner: inner,
         }
     }
+}
+
+impl Deref for Config {
+    type Target = ConfigInner;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*self.inner.get() }
+    }
+}
+
+impl DerefMut for Config {
+    fn deref_mut(&mut self) -> &mut ConfigInner {
+        unsafe { &mut *self.inner.get() }
+    }
+}
+
+impl Config {
+    /// create a new `Tree` based on this configuration
+    pub fn tree(&self) -> Tree {
+        Tree::new(self.clone())
+    }
+
+    /// create a new `LockFreeLog` based on this configuration
+    pub fn log(&self) -> LockFreeLog {
+        LockFreeLog::start_system(self.clone())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ConfigInner {
+    io_bufs: usize,
+    io_buf_size: usize,
+    blink_fanout: usize,
+    page_consolidation_threshold: usize,
+    path: Option<String>,
+    cache_bits: usize,
+    cache_capacity: usize,
+    use_os_cache: bool,
+    use_compression: bool,
+    flush_every_ms: Option<u64>,
+    snapshot_after_ops: usize,
+    snapshot_path: Option<String>,
+    cache_fixup_threshold: usize,
+    tc: ThreadCache<fs::File>,
+    tmp_path: String,
 }
 
 macro_rules! builder {
@@ -81,13 +119,13 @@ macro_rules! builder {
             pub fn $name(&self, to: $t) -> Config {
                 let mut ret = self.clone();
                 ret.$name = to;
-                ret
+                Config { inner: Arc::new(UnsafeCell::new(ret))}
             }
         )*
     }
 }
 
-impl Config {
+impl ConfigInner {
     builder!(
         (io_bufs, get_io_bufs, set_io_bufs, usize, "number of io buffers"),
         (io_buf_size, get_io_buf_size, set_io_buf_size, usize, "size of each io flush buffer"),
@@ -103,16 +141,6 @@ impl Config {
         (snapshot_path, get_snapshot_path, set_snapshot_path, Option<String>, "snapshot file location"),
         (cache_fixup_threshold, get_cache_fixup_threshold, set_cache_fixup_threshold, usize, "the maximum length of a cached page fragment chain")
     );
-
-    /// create a new `Tree` based on this configuration
-    pub fn tree(&self) -> Tree {
-        Tree::new(self.clone())
-    }
-
-    /// create a new `LockFreeLog` based on this configuration
-    pub fn log(&self) -> LockFreeLog {
-        LockFreeLog::start_system(self.clone())
-    }
 
     /// Retrieve a thread-local file handle to the configured underlying storage,
     /// or create a new one if this is the first time the thread is accessing it.
@@ -137,9 +165,13 @@ impl Config {
             options.open(path).unwrap()
         })
     }
+
+    pub fn get_tmp_path(&self) -> String {
+        self.tmp_path.clone()
+    }
 }
 
-impl Drop for Config {
+impl Drop for ConfigInner {
     fn drop(&mut self) {
         if self.get_path().is_none() {
             if let Err(_) = fs::remove_file(self.tmp_path.clone()) {}

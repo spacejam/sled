@@ -7,7 +7,6 @@ use std::thread;
 use std::sync::Arc;
 
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
-use rand::{Rng, thread_rng};
 
 use rsdb::*;
 
@@ -130,12 +129,10 @@ fn iterator() {
 #[test]
 fn recover_tree() {
     println!("========== recovery ==========");
-    let path = "test_tree.log";
     let conf = Config::default()
         .blink_fanout(2)
         .flush_every_ms(None)
-        .snapshot_after_ops(100)
-        .path(Some(path.to_owned()));
+        .snapshot_after_ops(100);
     let t = conf.tree();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
@@ -156,7 +153,6 @@ fn recover_tree() {
         let k = kv(i);
         assert_eq!(t.get(&*k), None);
     }
-    t.__delete_all_files();
 }
 
 #[derive(Debug, Clone)]
@@ -220,13 +216,10 @@ impl Arbitrary for OpVec {
 
 fn prop_tree_matches_btreemap(ops: OpVec, blink_fanout: u8, snapshot_after: u8) -> bool {
     use self::Op::*;
-    let nonce: String = thread_rng().gen_ascii_chars().take(10).collect();
-    let path = format!("quickcheck_tree_matches_btreemap_{}", nonce);
     let config = Config::default()
         .snapshot_after_ops(snapshot_after as usize + 1)
         .blink_fanout(blink_fanout as usize + 1)
-        .cache_capacity(40)
-        .path(Some(path));
+        .cache_capacity(40);
     let mut tree = config.tree();
     let mut reference = BTreeMap::new();
 
@@ -275,8 +268,6 @@ fn prop_tree_matches_btreemap(ops: OpVec, blink_fanout: u8, snapshot_after: u8) 
             }
         }
     }
-
-    tree.__delete_all_files();
 
     true
 }

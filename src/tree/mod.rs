@@ -20,7 +20,7 @@ pub const FANOUT: usize = 2;
 
 /// A flash-sympathetic persistent lock-free B+ tree
 pub struct Tree {
-    pages: PageCache<BLinkMaterializer, LockFreeLog, Frag, PageID>,
+    pages: PageCache<BLinkMaterializer, Frag, PageID>,
     root: AtomicUsize,
 }
 
@@ -430,11 +430,6 @@ impl Tree {
     }
 
     #[doc(hidden)]
-    pub fn __delete_all_files(&self) {
-        self.pages.__delete_all_files();
-    }
-
-    #[doc(hidden)]
     pub fn key_debug_str(&self, key: &[u8]) -> String {
         let path = self.path_for_key(key);
         let mut ret = String::new();
@@ -572,7 +567,7 @@ impl Debug for Tree {
 /// An iterator over keys and values in a `Tree`.
 pub struct TreeIter<'a> {
     id: PageID,
-    inner: &'a PageCache<BLinkMaterializer, LockFreeLog, Frag, PageID>,
+    inner: &'a PageCache<BLinkMaterializer, Frag, PageID>,
     last_key: Bound,
     // TODO we have to refactor this in light of pages being deleted
 }

@@ -1,6 +1,6 @@
 [package]
 name = "rsdb"
-version = "0.10.0"
+version = "0.11.0"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "a flash-sympathetic persistent lock-free B+ tree, pagecache, and log"
 license = "Apache-2.0"
@@ -13,7 +13,7 @@ readme = "README.md"
 [features]
 default = ["libc"]
 bench = ["clap", "num_cpus", "log", "rand", "rayon", "zstd", "env_logger"]
-stress = ["docopt", "chan-signal", "rayon", "rand"]
+stress = ["docopt", "chan-signal", "rayon", "rand", "libc", "zstd"]
 
 [[bin]]
 name = "bench"
