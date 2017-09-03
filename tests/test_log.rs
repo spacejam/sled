@@ -424,6 +424,22 @@ fn test_log_bug_4() {
     });
 }
 
+#[test]
+fn test_log_bug_5() {
+    // postmortem: on non-linux systems, punch_hole
+    // was not zeroing out the bytes in a record.
+    use Op::*;
+    prop_log_works(OpVec {
+        ops: vec![
+            Write(vec![]),
+            PunchHole(0),
+            Write(vec![44]),
+            PunchHole(1),
+            Read(0),
+        ],
+    });
+}
+
 fn _test_log_bug_() {
     // postmortem: TEMPLATE
     // use Op::*;

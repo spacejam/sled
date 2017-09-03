@@ -6,10 +6,6 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 
-#[cfg(feature = "libc")]
-#[cfg(target_os = "linux")]
-use libc::{FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE, fallocate};
-
 use super::*;
 
 mod lss;
@@ -145,26 +141,29 @@ pub fn punch_hole(f: &mut File, id: LogID) -> io::Result<()> {
     let mut len_buf = [0u8; 4];
     f.read_exact(&mut len_buf)?;
 
-    f.seek(SeekFrom::Start(id))?;
-    let zeros = vec![0; HEADER_LEN];
-    f.write_all(&*zeros)?;
+    let len32: u32 = unsafe { std::mem::transmute(len_buf) };
+    let len = len32 as usize;
 
-    #[cfg(feature = "libc")]
+    #[cfg(not(target_os = "linux"))]
+    {
+        f.seek(SeekFrom::Start(id))?;
+        let zeros = vec![0; HEADER_LEN + len];
+        f.write_all(&*zeros)?;
+    }
+
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::io::AsRawFd;
-
-        let len32: u32 = unsafe { std::mem::transmute(len_buf) };
-        let len = len32 as usize;
+        use libc::{FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE, fallocate};
 
         let mode = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE;
 
         let fd = f.as_raw_fd();
 
         unsafe {
-            // 5 is valid (1) + len (4), 2 is crc16
             fallocate(fd, mode, id as i64, len as i64 + HEADER_LEN as i64);
         }
     }
+
     Ok(())
 }

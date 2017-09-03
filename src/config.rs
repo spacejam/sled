@@ -153,7 +153,6 @@ impl ConfigInner {
             options.read(true);
             options.write(true);
 
-            #[cfg(feature = "libc")]
             #[cfg(target_os = "linux")]
             {
                 if !self.use_os_cache {
