@@ -144,16 +144,16 @@ pub fn punch_hole(f: &mut File, id: LogID) -> io::Result<()> {
     f.seek(SeekFrom::Start(id + 1))?;
     let mut len_buf = [0u8; 4];
     f.read_exact(&mut len_buf)?;
-    let len32: u32 = unsafe { std::mem::transmute(len_buf) };
-    let len = len32 as usize;
 
     f.seek(SeekFrom::Start(id))?;
-    let zeros = vec![0; 5];
+    let zeros = vec![0; HEADER_LEN];
     f.write_all(&*zeros)?;
 
     #[cfg(feature = "libc")]
     #[cfg(target_os = "linux")]
     {
+        let len32: u32 = unsafe { std::mem::transmute(len_buf) };
+        let len = len32 as usize;
         use std::os::unix::io::AsRawFd;
         let mode = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE;
         let fd = f.as_raw_fd();
