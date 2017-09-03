@@ -16,8 +16,6 @@ pub use self::frag::*;
 pub use self::data::*;
 pub use self::node::*;
 
-pub const FANOUT: usize = 2;
-
 /// A flash-sympathetic persistent lock-free B+ tree
 pub struct Tree {
     pages: PageCache<BLinkMaterializer, Frag, PageID>,
@@ -155,7 +153,7 @@ impl Tree {
             if let Ok(new_cas_key) = self.pages.merge(last_node.id, last_cas_key, frag.clone()) {
                 last_node.apply(&frag);
                 // println!("last after: {:?}", last);
-                let should_split = last_node.should_split();
+                let should_split = last_node.should_split(self.fanout());
                 path.push((last_node.clone(), new_cas_key));
                 // success
                 if should_split {
@@ -288,7 +286,7 @@ impl Tree {
 
         while let Some((node, cas_key)) = all_page_views.pop() {
             // println!("splitting node {:?}", node);
-            if node.should_split() {
+            if node.should_split(self.fanout()) {
                 // try to child split
                 if let Ok(parent_split) = self.child_split(&node, cas_key) {
                     // now try to parent split
@@ -315,7 +313,7 @@ impl Tree {
 
         let (root_node, root_cas_key) = root_and_key;
 
-        if root_node.should_split() {
+        if root_node.should_split(self.fanout()) {
             // println!("{}: hoisting root {}", name, root_frag.node.id);
             if let Ok(parent_split) = self.child_split(&root_node, root_cas_key) {
                 self.root_hoist(root_node.id, parent_split.to, parent_split.at.inner().unwrap());
@@ -427,6 +425,10 @@ impl Tree {
             }
             _ => panic!("last node in path is not leaf"),
         }
+    }
+
+    fn fanout(&self) -> usize {
+        self.config().get_blink_fanout()
     }
 
     #[doc(hidden)]

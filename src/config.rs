@@ -35,11 +35,11 @@ impl Default for Config {
         let inner = Arc::new(UnsafeCell::new(ConfigInner {
             io_bufs: 3,
             io_buf_size: 2 << 22, // 8mb
-            blink_fanout: 128,
+            blink_fanout: 32,
             page_consolidation_threshold: 10,
             path: None,
-            cache_bits: 6,
-            cache_capacity: 1024 * 1024 * 1024,
+            cache_bits: 6, // 64 shards
+            cache_capacity: 1024 * 1024 * 1024, // 1gb
             use_os_cache: true,
             use_compression: true,
             flush_every_ms: Some(100),

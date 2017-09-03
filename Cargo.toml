@@ -1,6 +1,6 @@
 [package]
 name = "rsdb"
-version = "0.11.0"
+version = "0.11.1"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "a flash-sympathetic persistent lock-free B+ tree, pagecache, and log"
 license = "Apache-2.0"
@@ -21,6 +21,10 @@ required-features = ["bench"]
 
 [[bin]]
 name = "stress"
+required-features = ["stress"]
+
+[[bin]]
+name = "stress2"
 required-features = ["stress"]
 
 [dependencies]
