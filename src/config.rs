@@ -35,11 +35,11 @@ impl Default for Config {
         let inner = Arc::new(UnsafeCell::new(ConfigInner {
             io_bufs: 3,
             io_buf_size: 2 << 22, // 8mb
-            blink_fanout: 128,
+            blink_fanout: 32,
             page_consolidation_threshold: 10,
             path: None,
-            cache_bits: 6,
-            cache_capacity: 1024 * 1024 * 1024,
+            cache_bits: 6, // 64 shards
+            cache_capacity: 1024 * 1024 * 1024, // 1gb
             use_os_cache: true,
             use_compression: true,
             flush_every_ms: Some(100),
@@ -130,7 +130,7 @@ impl ConfigInner {
     builder!(
         (io_bufs, get_io_bufs, set_io_bufs, usize, "number of io buffers"),
         (io_buf_size, get_io_buf_size, set_io_buf_size, usize, "size of each io flush buffer"),
-        (blink_fanout, get_blink_fanout, set_blink_fanout, usize, "b-link node fanout"),
+        (blink_fanout, get_blink_fanout, set_blink_fanout, usize, "b-link node fanout, minimum of 2"),
         (page_consolidation_threshold, get_page_consolidation_threshold, set_page_consolidation_threshold, usize, "page consolidation threshold"),
         (path, get_path, set_path, Option<String>, "path for the main storage file"),
         (cache_bits, get_cache_bits, set_cache_bits, usize, "log base 2 of the number of cache shards"),

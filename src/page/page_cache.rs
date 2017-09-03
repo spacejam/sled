@@ -386,6 +386,12 @@ impl<PM, P, R> PageCache<PM, P, R>
             .rev()
             .collect();
 
+        // Short circuit merging and fix-up if we only
+        // have one frag.
+        if combined.len() == 1 {
+            return Some((combined[0].clone(), head.into()));
+        }
+
         let merged = self.t.merge(&*combined);
 
         let size = std::mem::size_of_val(&merged);
