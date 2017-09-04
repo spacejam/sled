@@ -86,9 +86,11 @@ impl Tree {
 
     /// Retrieve a value from the `Tree` if it exists.
     pub fn get(&self, key: &[u8]) -> Option<Value> {
+        let start = clock();
         // println!("starting get");
         let (_, ret) = self.get_internal(key);
         // println!("done get");
+        M.tree_get.measure(clock() - start);
         ret
     }
 
@@ -121,6 +123,7 @@ impl Tree {
         old: Option<Value>,
         new: Option<Value>,
     ) -> Result<(), Option<Value>> {
+        let start = clock();
         // we need to retry caps until old != cur, since just because
         // cap fails it doesn't mean our value was changed.
         let frag = new.map(|n| Frag::Set(key.clone(), n)).unwrap_or_else(|| {
@@ -129,6 +132,7 @@ impl Tree {
         loop {
             let (mut path, cur) = self.get_internal(&*key);
             if old != cur {
+                M.tree_cas.measure(clock() - start);
                 return Err(cur);
             }
 
@@ -137,13 +141,16 @@ impl Tree {
                 .merge(node.id, cas_key.clone(), frag.clone())
                 .is_ok()
             {
+                M.tree_cas.measure(clock() - start);
                 return Ok(());
             }
+            M.tree_looped();
         }
     }
 
     /// Set a key to a new value.
     pub fn set(&self, key: Key, value: Value) {
+        let start = clock();
         // println!("starting set of {:?} -> {:?}", key, value);
         let frag = Frag::Set(key.clone(), value);
         loop {
@@ -160,8 +167,10 @@ impl Tree {
                     // println!("need to split {:?}", last_node.id);
                     self.recursive_split(&path);
                 }
+                M.tree_set.measure(clock() - start);
                 return;
             }
+            M.tree_looped();
         }
         // println!("done set of {:?}", key);
     }
@@ -178,6 +187,7 @@ impl Tree {
     /// assert_eq!(t.del(&*vec![1]), None);
     /// ```
     pub fn del(&self, key: &[u8]) -> Option<Value> {
+        let start = clock();
         let mut ret: Option<Value>;
         loop {
             let mut path = self.path_for_key(&*key);
@@ -202,7 +212,9 @@ impl Tree {
             } else {
                 // failure, retry
             }
+            M.tree_looped();
         }
+        M.tree_del.measure(clock() - start);
         ret
     }
 

@@ -162,6 +162,7 @@ impl IoBufs {
     /// Panics if the desired reservation is greater than 8388601 bytes..
     /// (config io buf size - 7)
     pub(super) fn reserve(&self, raw_buf: Vec<u8>) -> Reservation {
+        let start = clock();
         assert_eq!((raw_buf.len() + HEADER_LEN) >> 32, 0);
 
         let buf = encapsulate(raw_buf, self.config.get_use_compression());
@@ -195,6 +196,7 @@ impl IoBufs {
                 // before the sealing thread gets around to bumping
                 // current_buf.
                 trace_once!("({:?}) written ahead of sealed, spinning", tn());
+                M.log_looped();
                 continue;
             }
 
@@ -202,6 +204,7 @@ impl IoBufs {
                 // if written is too far behind, we need to
                 // spin while it catches up to avoid overlap
                 trace_once!("({:?}) old io buffer not written yet, spinning", tn());
+                M.log_looped();
                 continue;
             }
 
@@ -214,6 +217,7 @@ impl IoBufs {
                 // already sealed, start over and hope cur
                 // has already been bumped by sealer.
                 trace_once!("({:?}) io buffer already sealed, spinning", tn());
+                M.log_looped();
                 continue;
             }
 
@@ -225,6 +229,7 @@ impl IoBufs {
                 // there are zero writers.
                 self.maybe_seal_and_write_iobuf(idx, header);
                 trace_once!("({:?}) io buffer too full, spinning", tn());
+                M.log_looped();
                 continue;
             }
 
@@ -236,6 +241,7 @@ impl IoBufs {
             if iobuf.cas_header(header, claimed).is_err() {
                 // CAS failed, start over
                 trace_once!("({:?}) CAS failed while claiming buffer slot, spinning", tn());
+                M.log_looped();
                 continue;
             }
 
@@ -259,6 +265,8 @@ impl IoBufs {
             let res_end = res_start + buf.len();
             let destination = &mut (out_buf)[res_start..res_end];
             let reservation_offset = log_offset + buf_offset as LogID;
+
+            M.reserve.measure(clock() - start);
 
             return Reservation {
                 idx: idx,
@@ -399,6 +407,7 @@ impl IoBufs {
     // Write an IO buffer's data to stable storage and set up the
     // next IO buffer for writing.
     fn write_to_log(&self, idx: usize) {
+        let start = clock();
         let iobuf = &self.bufs[idx];
         let header = iobuf.get_header();
         let log_offset = iobuf.get_log_offset();
@@ -431,6 +440,8 @@ impl IoBufs {
         trace!("({:?}) {} written", tn(), _written_bufs % self.config.get_io_bufs());
 
         self.mark_interval(interval);
+
+        M.write_to_log.measure(clock() - start);
     }
 
     // It's possible that IO buffers are written out of order!
@@ -472,7 +483,10 @@ impl Drop for IoBufs {
 fn encapsulate(raw_buf: Vec<u8>, _use_compression: bool) -> Vec<u8> {
     #[cfg(feature = "zstd")]
     let mut buf = if _use_compression {
-        compress(&*raw_buf, 5).unwrap()
+        let start = clock();
+        let res = compress(&*raw_buf, 5).unwrap();
+        M.compress.measure(clock() - start);
+        res
     } else {
         raw_buf
     };

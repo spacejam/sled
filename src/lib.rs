@@ -23,6 +23,7 @@ extern crate serde;
 extern crate crossbeam;
 extern crate coco;
 extern crate bincode;
+extern crate historian;
 #[macro_use]
 extern crate lazy_static;
 #[cfg(feature = "log")]
@@ -82,7 +83,9 @@ mod config;
 mod thread_cache;
 mod hash;
 mod ds;
+mod metrics;
 
+use metrics::Metrics;
 use ds::{Lru, StackIter, node_from_frag_vec};
 use hash::{crc16_arr, crc64};
 use thread_cache::ThreadCache;
@@ -94,11 +97,22 @@ type Key = Vec<u8>;
 type KeyRef<'a> = &'a [u8];
 type Value = Vec<u8>;
 
+lazy_static! {
+    /// A metric collector for all rsdb instances running in this
+    /// process.
+    pub static ref M: Metrics = Metrics::default();
+}
+
 // get thread identifier
 #[inline(always)]
 fn tn() -> String {
     use std::thread;
     thread::current().name().unwrap_or("unknown").to_owned()
+}
+
+fn clock() -> f64 {
+    let u = uptime();
+    (u.as_secs() * 1_000_000_000) as f64 + u.subsec_nanos() as f64
 }
 
 // not correct, since it starts counting at the first observance...

@@ -102,6 +102,7 @@ impl Log for LockFreeLog {
 
     /// read a buffer from the disk
     fn read(&self, id: LogID) -> io::Result<LogRead> {
+        let start = clock();
         let cached_f = self.config().cached_file();
         let mut f = cached_f.borrow_mut();
         f.seek(SeekFrom::Start(id))?;
@@ -119,6 +120,7 @@ impl Log for LockFreeLog {
         if len > max {
             #[cfg(feature = "log")]
             error!("log read invalid message length, {} should be <= {}", len, max);
+            M.read.measure(clock() - start);
             return Ok(LogRead::Corrupted(len));
         } else if len == 0 && !valid {
             // skip to next record, which starts with 1
@@ -141,6 +143,7 @@ impl Log for LockFreeLog {
         }
 
         if !valid {
+            M.read.measure(clock() - start);
             return Ok(LogRead::Zeroed(len + 5));
         }
 
@@ -155,19 +158,27 @@ impl Log for LockFreeLog {
 
         let checksum = crc16_arr(&buf);
         if checksum != crc16_buf {
+            M.read.measure(clock() - start);
             return Ok(LogRead::Corrupted(len));
         }
 
         #[cfg(feature = "zstd")]
-        {
+        let res = {
             if self.config().get_use_compression() {
-                Ok(LogRead::Flush(decompress(&*buf, max).unwrap(), len))
+                let start = clock();
+                let res = Ok(LogRead::Flush(decompress(&*buf, max).unwrap(), len));
+                M.decompress.measure(clock() - start);
+                res
             } else {
                 Ok(LogRead::Flush(buf, len))
             }
-        }
+        };
 
-        #[cfg(not(feature = "zstd"))] Ok(LogRead::Flush(buf, len))
+        #[cfg(not(feature = "zstd"))]
+        let res = Ok(LogRead::Flush(buf, len));
+
+        M.read.measure(clock() - start);
+        res
     }
 
     /// returns the current stable offset written to disk
@@ -177,6 +188,7 @@ impl Log for LockFreeLog {
 
     /// blocks until the specified id has been made stable on disk
     fn make_stable(&self, id: LogID) {
+        let start = clock();
         let mut spins = 0;
         loop {
             self.iobufs.flush();
@@ -188,6 +200,7 @@ impl Log for LockFreeLog {
             }
             let cur = self.iobufs.stable();
             if cur > id {
+                M.make_stable.measure(clock() - start);
                 return;
             }
         }

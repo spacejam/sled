@@ -153,5 +153,7 @@ fn main() {
     let ops = total.load(Ordering::SeqCst);
     let time = now.elapsed().as_secs() as usize;
 
+    println!("{:#?}", &*rsdb::M);
+
     println!("did {} total ops in {} seconds. {} ops/s", ops, time, ops / time);
 }
