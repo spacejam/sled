@@ -233,7 +233,7 @@ impl<PM, P, R> PageCache<PM, P, R>
     }
 
     /// Try to retrieve a page by its logical ID.
-    pub fn get(&self, pid: PageID) -> Option<(PM::PageFrag, CasKey<P>)> {
+    pub fn get(&self, pid: PageID) -> Option<(Arc<PM::PageFrag>, CasKey<P>)> {
         pin(|scope| {
             let stack_ptr = self.inner.get(pid, scope);
             if stack_ptr.is_none() {
@@ -325,7 +325,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         mut head: Ptr<'s, ds::stack::Node<CacheEntry<P>>>,
         stack_ptr: Ptr<'s, ds::stack::Stack<CacheEntry<P>>>,
         scope: &'s Scope,
-    ) -> Option<(PM::PageFrag, CasKey<P>)> {
+    ) -> Option<(Arc<PM::PageFrag>, CasKey<P>)> {
         let stack_iter = StackIter::from_ptr(head, scope);
 
         let mut to_merge = vec![];
@@ -342,6 +342,11 @@ impl<PM, P, R> PageCache<PM, P, R>
                     lids.push(lid);
                 }
                 CacheEntry::MergedResident(ref page_frag, ref lid) => {
+                    if lids.is_empty() {
+                        // Short circuit merging and fix-up if we only
+                        // have one frag.
+                        return Some((page_frag.clone(), head.into()));
+                    }
                     if !merged_resident {
                         to_merge.push(page_frag);
                         merged_resident = true;
@@ -358,12 +363,6 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         if lids.is_empty() {
             return None;
-        }
-
-        // Short circuit merging and fix-up if we only
-        // have one frag.
-        if merged_resident && to_merge.len() == 1 {
-            return Some((to_merge[0].clone(), head.into()));
         }
 
         let mut fetched = Vec::with_capacity(lids.len());
@@ -392,14 +391,14 @@ impl<PM, P, R> PageCache<PM, P, R>
             .rev()
             .collect();
 
-        let merged = self.t.merge(&*combined);
+        let merged = Arc::new(self.t.merge(&*combined));
 
         let size = std::mem::size_of_val(&merged);
         let to_evict = self.lru.accessed(pid, size);
         self.page_out(to_evict, scope);
 
         if lids.len() > self.config().get_page_consolidation_threshold() {
-            match self.set(pid, head.into(), merged.clone()) {
+            match self.set(pid, head.into(), (*merged).clone()) {
                 Ok(new_head) => head = new_head.into(),
                 Err(None) => return None,
                 _ => {}
@@ -465,7 +464,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             let log_reservation = self.log.reserve(bytes);
             let log_offset = log_reservation.log_id();
 
-            let cache_entry = CacheEntry::MergedResident(new, log_offset);
+            let cache_entry = CacheEntry::MergedResident(Arc::new(new), log_offset);
 
             let node = node_from_frag_vec(vec![cache_entry]).into_ptr(scope);
 

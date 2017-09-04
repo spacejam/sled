@@ -43,7 +43,7 @@ pub trait Materializer {
 pub enum CacheEntry<M: Send + Sync> {
     /// A cache item that contains the most recent fully-merged page state, also in secondary
     /// storage.
-    MergedResident(M, LogID),
+    MergedResident(Arc<M>, LogID),
     /// A cache item that is in memory, and also in secondary storage.
     Resident(M, LogID),
     /// A cache item that is present in secondary storage.

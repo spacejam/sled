@@ -27,6 +27,13 @@ impl Frag {
         }
     }
 
+    pub fn base_ref(&self) -> Option<&tree::Node> {
+        match self {
+            &Frag::Base(ref base, root) => Some(base),
+            _ => None,
+        }
+    }
+
     pub fn into_base(self) -> Option<(tree::Node, bool)> {
         match self {
             Frag::Base(base, root) => Some((base, root)),

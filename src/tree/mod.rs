@@ -443,7 +443,7 @@ impl Tree {
 
     /// returns the traversal path, completing any observed
     /// partially complete splits or merges along the way.
-    fn path_for_key(&self, key: &[u8]) -> Vec<(Node, CasKey<Frag>)> {
+    fn path_for_key(&self, key: &[u8]) -> Vec<(&Node, CasKey<Frag>)> {
         let key_bound = Bound::Inc(key.into());
         let mut cursor = self.root.load(SeqCst);
         let mut path = vec![];
@@ -460,7 +460,7 @@ impl Tree {
                 continue;
             }
             let (frag, cas_key) = get_cursor.unwrap();
-            let (node, _is_root) = frag.into_base().unwrap();
+            let node = frag.base_ref().unwrap();
 
             // TODO this may need to change when handling (half) merges
             assert!(node.lo <= key_bound, "overshot key somehow");
