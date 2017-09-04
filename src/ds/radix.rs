@@ -17,12 +17,12 @@ fn split_fanout(i: usize) -> (usize, usize) {
     (first, rem)
 }
 
-struct Node<T> {
+struct Node<T: Send + 'static> {
     inner: Atomic<T>,
     children: Vec<Atomic<Node<T>>>,
 }
 
-impl<T> Default for Node<T> {
+impl<T: Send + 'static> Default for Node<T> {
     fn default() -> Node<T> {
         let children = rep_no_copy!(Atomic::null(); FANOUT);
         Node {
@@ -32,7 +32,7 @@ impl<T> Default for Node<T> {
     }
 }
 
-impl<T> Drop for Node<T> {
+impl<T: Send + 'static> Drop for Node<T> {
     fn drop(&mut self) {
         unsafe {
             pin(|scope| {
@@ -57,13 +57,13 @@ impl<T> Drop for Node<T> {
 
 /// A simple lock-free radix tree.
 pub struct Radix<T>
-    where T: Send + Sync
+    where T: 'static + Send + Sync
 {
     head: Atomic<Node<T>>,
 }
 
 impl<T> Default for Radix<T>
-    where T: Send + Sync
+    where T: 'static + Send + Sync
 {
     fn default() -> Radix<T> {
         let head = Owned::new(Node::default());
@@ -74,7 +74,7 @@ impl<T> Default for Radix<T>
 }
 
 impl<T> Drop for Radix<T>
-    where T: Send + Sync
+    where T: 'static + Send + Sync
 {
     fn drop(&mut self) {
         unsafe {
@@ -87,7 +87,7 @@ impl<T> Drop for Radix<T>
 }
 
 impl<T> Radix<T>
-    where T: Send + Sync
+    where T: 'static + Send + Sync
 {
     /// Try to create a new item in the tree.
     pub fn insert(&self, pid: PageID, item: T) -> Result<(), ()> {
@@ -155,7 +155,7 @@ impl<T> Radix<T>
 }
 
 #[inline(always)]
-fn traverse<'s, T>(
+fn traverse<'s, T: 'static + Send>(
     ptr: Ptr<'s, Node<T>>,
     pid: PageID,
     create_intermediate: bool,
