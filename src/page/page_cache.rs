@@ -68,7 +68,7 @@ use super::*;
 pub struct PageCache<PM, P, R>
     where PM: Materializer<PageFrag = P, Recovery = R>,
           PM: Send + Sync,
-          P: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
+          P: 'static + Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
           R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
 {
     t: PM,
@@ -84,7 +84,7 @@ pub struct PageCache<PM, P, R>
 impl<PM, P, R> Drop for PageCache<PM, P, R>
     where PM: Materializer<PageFrag = P, Recovery = R>,
           PM: Send + Sync,
-          P: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
+          P: 'static + Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
           R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
 {
     fn drop(&mut self) {
@@ -97,7 +97,7 @@ impl<PM, P, R> Drop for PageCache<PM, P, R>
 unsafe impl<PM, P, R> Send for PageCache<PM, P, R>
     where PM: Materializer<PageFrag = P, Recovery = R>,
           PM: Send + Sync,
-          P: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
+          P: 'static + Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
           R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
 {
 }
@@ -105,7 +105,7 @@ unsafe impl<PM, P, R> Send for PageCache<PM, P, R>
 unsafe impl<PM, P, R> Sync for PageCache<PM, P, R>
     where PM: Materializer<PageFrag = P, Recovery = R>,
           PM: Send + Sync,
-          P: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
+          P: 'static + Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
           R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
 {
 }
@@ -113,7 +113,7 @@ unsafe impl<PM, P, R> Sync for PageCache<PM, P, R>
 impl<PM, P, R> Debug for PageCache<PM, P, R>
     where PM: Materializer<PageFrag = P, Recovery = R>,
           PM: Send + Sync,
-          P: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
+          P: 'static + Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
           R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
@@ -128,7 +128,7 @@ impl<PM, P, R> Debug for PageCache<PM, P, R>
 impl<PM, P, R> PageCache<PM, P, R>
     where PM: Materializer<PageFrag = P, Recovery = R>,
           PM: Send + Sync,
-          P: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
+          P: 'static + Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
           R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
 {
     /// Instantiate a new `PageCache`.

@@ -57,14 +57,14 @@ pub enum CacheEntry<M: Send + Sync> {
 /// `PageFrag` used for applying updates atomically to shared pages.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CasKey<P>
-    where P: Send + Sync
+    where P: 'static + Send + Sync
 {
     ptr: *const ds::stack::Node<CacheEntry<P>>,
     tag: usize,
 }
 
 impl<'s, P> From<Ptr<'s, ds::stack::Node<CacheEntry<P>>>> for CasKey<P>
-    where P: Send + Sync
+    where P: 'static + Send + Sync
 {
     fn from(ptr: Ptr<'s, ds::stack::Node<CacheEntry<P>>>) -> CasKey<P> {
         CasKey {
@@ -75,7 +75,7 @@ impl<'s, P> From<Ptr<'s, ds::stack::Node<CacheEntry<P>>>> for CasKey<P>
 }
 
 impl<'s, P> Into<Ptr<'s, ds::stack::Node<CacheEntry<P>>>> for CasKey<P>
-    where P: Send + Sync
+    where P: 'static + Send + Sync
 {
     fn into(self) -> Ptr<'s, ds::stack::Node<CacheEntry<P>>> {
         unsafe { Ptr::from_raw(self.ptr).with_tag(self.tag) }

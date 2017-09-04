@@ -9,12 +9,12 @@ use coco::epoch::{Atomic, Owned, Ptr, Scope, pin, unprotected};
 use test_fail;
 
 #[derive(Debug)]
-pub struct Node<T: Send> {
+pub struct Node<T: Send + 'static> {
     inner: T,
     next: Atomic<Node<T>>,
 }
 
-impl<T: Send> Drop for Node<T> {
+impl<T: Send + 'static> Drop for Node<T> {
     fn drop(&mut self) {
         unsafe {
             unprotected(|scope| {
@@ -29,11 +29,11 @@ impl<T: Send> Drop for Node<T> {
 
 /// A simple lock-free stack, with the ability to atomically
 /// append or entirely swap-out entries.
-pub struct Stack<T: Send> {
+pub struct Stack<T: Send + 'static> {
     head: Atomic<Node<T>>,
 }
 
-impl<T: Send> Default for Stack<T> {
+impl<T: Send + 'static> Default for Stack<T> {
     fn default() -> Stack<T> {
         Stack {
             head: Atomic::null(),
@@ -41,7 +41,7 @@ impl<T: Send> Default for Stack<T> {
     }
 }
 
-impl<T: Send> Drop for Stack<T> {
+impl<T: Send + 'static> Drop for Stack<T> {
     fn drop(&mut self) {
         unsafe {
             unprotected(|scope| {
@@ -55,7 +55,7 @@ impl<T: Send> Drop for Stack<T> {
 }
 
 impl<T> Debug for Stack<T>
-    where T: Debug + Send + Sync
+    where T: Debug + Send + 'static + Sync
 {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         pin(|scope| {
@@ -78,20 +78,20 @@ impl<T> Debug for Stack<T>
     }
 }
 
-impl<T: Send> Deref for Node<T> {
+impl<T: Send + 'static> Deref for Node<T> {
     type Target = T;
     fn deref(&self) -> &T {
         &self.inner
     }
 }
 
-impl<T: Send> Node<T> {
+impl<T: Send + 'static> Node<T> {
     pub fn next<'s>(&self, scope: &'s Scope) -> Ptr<'s, Node<T>> {
         self.next.load(SeqCst, scope)
     }
 }
 
-impl<T: Send> Stack<T> {
+impl<T: Send + 'static> Stack<T> {
     /// Add an item to the stack, spinning until successful.
     pub fn push(&self, inner: T) {
         let node = Owned::new(Node {
@@ -199,14 +199,14 @@ impl<T: Send> Stack<T> {
 }
 
 pub struct StackIter<'a, T>
-    where T: 'a + Send + Sync
+    where T: 'a + Send + 'static + Sync
 {
     inner: Ptr<'a, Node<T>>,
     scope: &'a Scope,
 }
 
 impl<'a, T> StackIter<'a, T>
-    where T: 'a + Send + Sync
+    where T: 'a + Send + 'static + Sync
 {
     pub fn from_ptr<'b>(ptr: Ptr<'b, Node<T>>, scope: &'b Scope) -> StackIter<'b, T> {
         StackIter {
@@ -217,7 +217,7 @@ impl<'a, T> StackIter<'a, T>
 }
 
 impl<'a, T> Iterator for StackIter<'a, T>
-    where T: Send + Sync
+    where T: Send + 'static + Sync
 {
     type Item = &'a T;
     fn next(&mut self) -> Option<Self::Item> {
@@ -234,7 +234,7 @@ impl<'a, T> Iterator for StackIter<'a, T>
 }
 
 pub fn node_from_frag_vec<T>(from: Vec<T>) -> Owned<Node<T>>
-    where T: Send + Sync
+    where T: Send + 'static + Sync
 {
     let mut last = None;
 
