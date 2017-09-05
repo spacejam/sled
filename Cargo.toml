@@ -28,8 +28,8 @@ name = "stress2"
 required-features = ["stress"]
 
 [dependencies.historian]
-features = ["bypass"]
 version = "3.0"
+# features = ["bypass"]
 
 [dependencies]
 libc = "0.2"
