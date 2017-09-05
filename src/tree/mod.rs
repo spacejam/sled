@@ -590,6 +590,7 @@ impl<'a> Iterator for TreeIter<'a> {
     type Item = (Vec<u8>, Vec<u8>);
 
     fn next(&mut self) -> Option<Self::Item> {
+        let start = clock();
         loop {
             let (frag, _cas_key) = self.inner.get(self.id).unwrap();
             let (node, _is_root) = frag.base().unwrap();
@@ -598,10 +599,13 @@ impl<'a> Iterator for TreeIter<'a> {
             for (ref k, ref v) in node.data.leaf().unwrap() {
                 if Bound::Inc(k.clone()) > self.last_key {
                     self.last_key = Bound::Inc(k.to_vec());
-                    return Some((k.clone(), v.clone()));
+                    let ret = Some((k.clone(), v.clone()));
+                    M.tree_scan.measure(clock() - start);
+                    return ret;
                 }
             }
             if node.next.is_none() {
+                M.tree_scan.measure(clock() - start);
                 return None;
             }
             self.id = node.next.unwrap();

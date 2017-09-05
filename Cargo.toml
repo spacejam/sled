@@ -28,7 +28,7 @@ name = "stress2"
 required-features = ["stress"]
 
 [dependencies]
-historian = "2.0"
+historian = "3.0"
 libc = "0.2"
 crossbeam = "0.3"
 coco = "0.2"

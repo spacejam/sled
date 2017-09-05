@@ -136,6 +136,4 @@ fn main() {
     let time = now.elapsed().as_secs() as usize;
 
     println!("did {} total ops in {} seconds. {} ops/s", ops, time, ops / time);
-
-    tree.__delete_all_files();
 }

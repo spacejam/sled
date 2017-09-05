@@ -406,7 +406,9 @@ impl<PM, P, R> PageCache<PM, P, R>
             .rev()
             .collect();
 
+        let before_merge = clock();
         let merged = self.t.merge(&*combined);
+        M.merge_page.measure(clock() - before_merge);
 
         let size = std::mem::size_of_val(&merged);
         let to_evict = self.lru.accessed(pid, size);
