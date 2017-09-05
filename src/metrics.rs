@@ -101,7 +101,7 @@ impl Metrics {
             f("write", &self.write_to_log),
         ];
 
-        tuples.sort_by_key(|t| (t.7 * -1.) as i64);
+        tuples.sort_by_key(|t| (t.7 * -1. * 1e3) as i64);
 
         for tuple in tuples.into_iter() {
             p(tuple);

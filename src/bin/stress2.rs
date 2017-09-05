@@ -155,5 +155,10 @@ fn main() {
 
     rsdb::M.print_profile();
 
-    println!("did {} total ops in {} seconds. {} ops/s", ops, time, ops / time);
+    println!(
+        "did {} total ops in {} seconds. {} ops/s",
+        ops,
+        time,
+        (ops * 1_000) / (time * 1_000)
+    );
 }
