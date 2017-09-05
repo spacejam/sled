@@ -196,7 +196,9 @@ impl<PM, P, R> PageCache<PM, P, R>
             pid: pid,
             update: Update::Alloc,
         };
+        let serialize_start = clock();
         let bytes = serialize(&prepend, Infinite).unwrap();
+        M.serialize.measure(clock() - serialize_start);
         self.log.write(bytes);
 
         (pid, Ptr::null().into())
@@ -215,7 +217,9 @@ impl<PM, P, R> PageCache<PM, P, R>
                 pid: pid,
                 update: Update::Del,
             };
+            let serialize_start = clock();
             let bytes = serialize(&prepend, Infinite).unwrap();
+            M.serialize.measure(clock() - serialize_start);
             self.log.write(bytes);
 
             // add pid to free stack to reduce fragmentation over time
@@ -249,6 +253,7 @@ impl<PM, P, R> PageCache<PM, P, R>
     }
 
     fn page_out<'s>(&self, to_evict: Vec<PageID>, scope: &'s Scope) {
+        let start = clock();
         for pid in to_evict {
             let stack_ptr = self.inner.get(pid, scope);
             if stack_ptr.is_none() {
@@ -272,6 +277,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             });
 
             if last.is_none() {
+                M.page_out.measure(clock() - start);
                 return;
             }
 
@@ -297,9 +303,11 @@ impl<PM, P, R> PageCache<PM, P, R>
                 {}
             }
         }
+        M.page_out.measure(clock() - start);
     }
 
     fn pull(&self, lid: LogID) -> P {
+        let start = clock();
         // NB make_stable here is necessary when cache is thrashing like crazy or we'll
         // need to page in and out things that haven't hit the disk yet...
         self.log.make_stable(lid);
@@ -308,10 +316,13 @@ impl<PM, P, R> PageCache<PM, P, R>
             _ => panic!("read invalid data at lid {}", lid),
         };
 
+        let deserialize_start = clock();
         let logged_update = deserialize::<LoggedUpdate<P>>(&*bytes)
             .map_err(|_| ())
             .expect("failed to deserialize data");
+        M.deserialize.measure(clock() - deserialize_start);
 
+        M.pull.measure(clock() - start);
         match logged_update.update {
             Update::Compact(page_frag) |
             Update::Append(page_frag) => page_frag,
@@ -326,6 +337,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         stack_ptr: Ptr<'s, ds::stack::Stack<CacheEntry<P>>>,
         scope: &'s Scope,
     ) -> Option<(Arc<PM::PageFrag>, CasKey<P>)> {
+        let start = clock();
         let stack_iter = StackIter::from_ptr(head, scope);
 
         let mut to_merge = vec![];
@@ -362,6 +374,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         }
 
         if lids.is_empty() {
+            M.page_in.measure(clock() - start);
             return None;
         }
 
@@ -391,7 +404,9 @@ impl<PM, P, R> PageCache<PM, P, R>
             .rev()
             .collect();
 
+        let before_merge = clock();
         let merged = Arc::new(self.t.merge(&*combined));
+        M.merge_page.measure(clock() - before_merge);
 
         let size = std::mem::size_of_val(&merged);
         let to_evict = self.lru.accessed(pid, size);
@@ -441,6 +456,8 @@ impl<PM, P, R> PageCache<PM, P, R>
             }
         }
 
+        M.page_in.measure(clock() - start);
+
         Some((merged, head.into()))
     }
 
@@ -460,7 +477,9 @@ impl<PM, P, R> PageCache<PM, P, R>
                 pid: pid,
                 update: Update::Compact(new.clone()),
             };
+            let serialize_start = clock();
             let bytes = serialize(&replace, Infinite).unwrap();
+            M.serialize.measure(clock() - serialize_start);
             let log_reservation = self.log.reserve(bytes);
             let log_offset = log_reservation.log_id();
 
@@ -504,7 +523,9 @@ impl<PM, P, R> PageCache<PM, P, R>
                 pid: pid,
                 update: Update::Append(new.clone()),
             };
+            let serialize_start = clock();
             let bytes = serialize(&prepend, Infinite).unwrap();
+            M.serialize.measure(clock() - serialize_start);
             let log_reservation = self.log.reserve(bytes);
             let log_offset = log_reservation.log_id();
 
@@ -529,6 +550,7 @@ impl<PM, P, R> PageCache<PM, P, R>
     }
 
     fn write_snapshot(&self) {
+        let start = clock();
         self.log.flush();
 
         let prefix = self.config().snapshot_prefix();
@@ -541,6 +563,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 "snapshot skipped because previous attempt \
                   appears not to have completed"
             );
+            M.write_snapshot.measure(clock() - start);
             return;
         }
 
@@ -647,6 +670,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 }
             }
         }
+        M.write_snapshot.measure(clock() - start);
     }
 
     fn read_snapshot(&mut self) -> Snapshot<R> {

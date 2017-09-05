@@ -135,7 +135,10 @@ fn main() {
     let ops = total.load(Ordering::SeqCst);
     let time = now.elapsed().as_secs() as usize;
 
-    println!("did {} total ops in {} seconds. {} ops/s", ops, time, ops / time);
-
-    tree.__delete_all_files();
+    println!(
+        "did {} total ops in {} seconds. {} ops/s",
+        ops,
+        time,
+        (ops * 1_000) / (time * 1_000)
+    );
 }
