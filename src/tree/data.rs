@@ -50,4 +50,11 @@ impl Data {
             Data::Leaf(ref items) => Some(items.clone()),
         }
     }
+
+    pub fn leaf_ref(&self) -> Option<&Vec<(Key, Value)>> {
+        match *self {
+            Data::Index(_) => None,
+            Data::Leaf(ref items) => Some(items),
+        }
+    }
 }

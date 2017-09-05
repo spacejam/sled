@@ -354,6 +354,11 @@ impl<PM, P, R> PageCache<PM, P, R>
                     lids.push(lid);
                 }
                 CacheEntry::MergedResident(ref page_frag, ref lid) => {
+                    if lids.is_empty() {
+                        // Short circuit merging and fix-up if we only
+                        // have one frag.
+                        return Some((page_frag.clone(), head.into()));
+                    }
                     if !merged_resident {
                         to_merge.push(page_frag);
                         merged_resident = true;
@@ -371,13 +376,6 @@ impl<PM, P, R> PageCache<PM, P, R>
         if lids.is_empty() {
             M.page_in.measure(clock() - start);
             return None;
-        }
-
-        // Short circuit merging and fix-up if we only
-        // have one frag.
-        if merged_resident && to_merge.len() == 1 {
-            M.page_in.measure(clock() - start);
-            return Some((to_merge[0].clone(), head.into()));
         }
 
         let mut fetched = Vec::with_capacity(lids.len());
