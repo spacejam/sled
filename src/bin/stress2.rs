@@ -56,7 +56,7 @@ fn do_get(tree: Arc<rsdb::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsi
     while !shutdown.load(Ordering::Relaxed) {
         total.fetch_add(1, Ordering::Release);
         tree.get(&*vec![k]);
-        k = if k == 256 { 0 } else { k + 1 };
+        k = if k == 255 { 0 } else { k + 1 };
     }
 }
 
@@ -153,5 +153,12 @@ fn main() {
     let ops = total.load(Ordering::SeqCst);
     let time = now.elapsed().as_secs() as usize;
 
-    println!("did {} total ops in {} seconds. {} ops/s", ops, time, ops / time);
+    rsdb::M.print_profile();
+
+    println!(
+        "did {} total ops in {} seconds. {} ops/s",
+        ops,
+        time,
+        (ops * 1_000) / (time * 1_000)
+    );
 }

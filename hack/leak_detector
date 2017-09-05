@@ -1,8 +1,11 @@
+#!/bin/sh
+set -e 
+
 export RUSTFLAGS="-Z sanitizer=leak"
 
 cargo build \
   --bin=stress \
-  --features="race" \
+  --features="stress" \
   --target x86_64-unknown-linux-gnu \
   --verbose
 
