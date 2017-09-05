@@ -235,7 +235,7 @@ impl Tree {
     /// ```
     pub fn scan(&self, key: &[u8]) -> TreeIter {
         let (path, _) = self.get_internal(key);
-        let (last_node, _last_cas_key) = path.last().cloned().unwrap();
+        let &(ref last_node, ref _last_cas_key) = path.last().unwrap();
         TreeIter {
             id: last_node.id,
             inner: &self.pages,
@@ -261,7 +261,7 @@ impl Tree {
     /// ```
     pub fn iter(&self) -> TreeIter {
         let (path, _) = self.get_internal(b"");
-        let (last_node, _last_cas_key) = path.last().cloned().unwrap();
+        let &(ref last_node, ref _last_cas_key) = path.last().unwrap();
         TreeIter {
             id: last_node.id,
             inner: &self.pages,
@@ -422,21 +422,21 @@ impl Tree {
 
     fn get_internal(&self, key: &[u8]) -> (Vec<(Node, CasKey<Frag>)>, Option<Value>) {
         let path = self.path_for_key(&*key);
-        let (last_node, _last_cas_key) = path.last().cloned().unwrap();
-        match last_node.data.clone() {
-            Data::Leaf(ref items) => {
-                // println!("comparing leaf! items: {:?}", items.len());
-                let search = items.binary_search_by(|&(ref k, ref _v)| (**k).cmp(key));
-                if let Ok(idx) = search {
-                    // cap a del frag below
-                    (path, Some(items[idx].1.clone()))
-                } else {
-                    // key does not exist
-                    (path, None)
-                }
+
+        let ret = path.last().and_then(|&(ref last_node, ref _last_cas_key)| {
+            let data = &last_node.data;
+            let items = data.leaf_ref().unwrap();
+            let search = items.binary_search_by(|&(ref k, ref _v)| (**k).cmp(key));
+            if let Ok(idx) = search {
+                // cap a del frag below
+                Some(items[idx].1.clone())
+            } else {
+                // key does not exist
+                None
             }
-            _ => panic!("last node in path is not leaf"),
-        }
+        });
+
+        (path, ret)
     }
 
     fn fanout(&self) -> usize {
@@ -455,14 +455,14 @@ impl Tree {
 
     /// returns the traversal path, completing any observed
     /// partially complete splits or merges along the way.
-    fn path_for_key(&self, key: &[u8]) -> Vec<(&Node, CasKey<Frag>)> {
+    fn path_for_key(&self, key: &[u8]) -> Vec<(Node, CasKey<Frag>)> {
         let key_bound = Bound::Inc(key.into());
         let mut cursor = self.root.load(SeqCst);
-        let mut path = vec![];
+        let mut path: Vec<(Node, CasKey<Frag>)> = vec![];
 
         // unsplit_parent is used for tracking need
         // to complete partial splits.
-        let mut unsplit_parent: Option<(Node, CasKey<Frag>)> = None;
+        let mut unsplit_parent: Option<usize> = None;
 
         loop {
             let get_cursor = self.pages.get(cursor);
@@ -472,7 +472,7 @@ impl Tree {
                 continue;
             }
             let (frag, cas_key) = get_cursor.unwrap();
-            let node = frag.base_ref().unwrap();
+            let (node, _is_root) = frag.into_base().unwrap();
 
             // TODO this may need to change when handling (half) merges
             assert!(node.lo <= key_bound, "overshot key somehow");
@@ -484,20 +484,23 @@ impl Tree {
                 // having hit the parent split above.
                 cursor = node.next.unwrap();
                 if unsplit_parent.is_none() {
-                    unsplit_parent = path.last().cloned();
+                    if !path.is_empty() {
+                        unsplit_parent = Some(path.len() - 1);
+                    }
                 }
                 continue;
-            } else if let Some((parent_node, parent_cas_key)) = unsplit_parent.take() {
+            } else if let Some(idx) = unsplit_parent.take() {
                 // we have found the proper page for
                 // our split.
                 // println!("before: {:?}", self);
+                let &(ref parent_node, ref parent_cas_key): &(Node, CasKey<Frag>) = &path[idx];
 
                 let ps = Frag::ParentSplit(ParentSplit {
                     at: node.lo.clone(),
                     to: node.id,
                 });
 
-                let _res = self.pages.merge(parent_node.id, parent_cas_key, ps);
+                let _res = self.pages.merge(parent_node.id, parent_cas_key.clone(), ps);
                 // println!("trying to fix incomplete parent split: {:?}", res);
                 // println!("after: {:?}", self);
             }
