@@ -8,15 +8,7 @@
 [![crates.io](http://meritbadge.herokuapp.com/sled)](https://crates.io/crates/sled)
 [![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled)
 
-A modern lock-free atomic embedded database designed to beat LSM trees for
-reads and traditional B+ trees for writes. 
-
-It uses a modular design which can also be used to implement your own high
-performance persistent systems, using the included `LockFreeLog` and `PageCache`.
-Eventually, a versioned DB will be built on top of the `Tree` which provides
-multi-key transactions and snapshots.
-
-The `Tree` has a C API, so you can use this from any mainstream language.
+A modern embedded database.
 
 ```rust
 extern crate sled;
@@ -41,7 +33,15 @@ assert_eq!(iter.next(), None);
 tree.del(&k);
 ```
 
-# Warnings
+# features
+
+* fully atomic, supports CAS
+* cpu-scalable lock-free implementation
+* SSD-optimized log-structured storage
+* configurable zstd compression (use the zstd feature)
+* designed to beat LSM trees for reads and traditional B+ trees for writes
+
+# warnings
 
 * Quite young, there are lots of fuzz tests but don't bet a billion
   dollar business on it yet!
@@ -53,40 +53,30 @@ tree.del(&k);
   operations per second with certain contrived workloads. This
   will be improving soon!
 
-# Contribution Welcome!
+# contribution welcome!
 
 * Want to help advance the state of the art in open source embedded
   databases? Check out [CONTRIBUTING.md](CONTRIBUTING.md)!
 
-# Features
-
-- [x] lock-free b-link tree
-- [x] lock-free log with reservable slots
-- [x] lock-free pagecache with cache-friendly partial updates
-- [x] zstd compression
-- [x] configurable cache size
-- [x] C API
-- [x] log cleaning
-- [ ] merge operator support
-- [ ] higher-level interface with multi-key transaction and snapshot support
-- [ ] formal verification of lock-free algorithms via symbolic execution
-
-# Goals
+# goals
 
 1. beat LSM's on read performance and traditional B+ trees on write performance.
 1. don't use so much electricity. our data structures should play to modern hardware's strengths.
 1. don't surprise users with performance traps.
 1. bring reliability techniques from academia into real-world practice.
 
-# Architecture
+# architecture
 
-Lock-free trees on a lock-free pagecache on a lock-free log. The pagecache scatters
+Lock-free tree on a lock-free pagecache on a lock-free log. The pagecache scatters
 partial page fragments across the log, rather than rewriting entire pages at a time
 as B+ trees for spinning disks historically have. On page reads, we concurrently
 scatter-gather reads across the log to materialize the page from its fragments.
 
 The system is largely inspired by the Deuteronomy architecture, and aims to implement
 the best features from RocksDB as well.
+
+The `LockFreeLog` and `PageCache` are usable on their own for implementing your own 
+high-performance stateful systems!
 
 # References
 
