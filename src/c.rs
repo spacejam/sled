@@ -33,15 +33,10 @@ pub unsafe extern "C" fn sled_destroy_config(config: *mut Config) {
 /// calling this (it is copied in this function).
 #[no_mangle]
 pub unsafe extern "C" fn sled_config_set_path(config: *mut Config, path: *const c_char) {
-    let value = if path.is_null() {
-        None
-    } else {
-        let c_str = CString::from_raw(path as *mut i8);
-        let c_str2 = c_str.clone();
-        let value = c_str2.into_string().unwrap();
-        mem::forget(c_str);
-        Some(value)
-    };
+    let c_str = CString::from_raw(path as *mut i8);
+    let c_str2 = c_str.clone();
+    let value = c_str2.into_string().unwrap();
+    mem::forget(c_str);
 
     (*config).set_path(value)
 }

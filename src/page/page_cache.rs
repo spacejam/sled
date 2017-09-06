@@ -45,7 +45,7 @@ use super::*;
 ///
 /// fn main() {
 ///     let path = "test_pagecache_doc.log";
-///     let conf = sled::Config::default().path(Some(path.to_owned()));
+///     let conf = sled::Config::default().path(path.to_owned());
 ///     let pc = sled::PageCache::new(TestMaterializer, conf.clone());
 ///     let (id, key) = pc.allocate();
 ///

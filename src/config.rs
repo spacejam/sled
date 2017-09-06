@@ -13,7 +13,7 @@ use super::*;
 ///
 /// ```
 /// let config = sled::Config::default()
-///     .path(Some("/path/to/data".to_owned()))
+///     .path("/path/to/data".to_owned())
 ///     .cache_capacity(10_000_000_000)
 ///     .use_compression(true)
 ///     .flush_every_ms(Some(1000))
@@ -37,7 +37,7 @@ impl Default for Config {
             io_buf_size: 2 << 22, // 8mb
             blink_fanout: 32,
             page_consolidation_threshold: 10,
-            path: None,
+            path: tmp_path.to_owned(),
             cache_bits: 6, // 64 shards
             cache_capacity: 1024 * 1024 * 1024, // 1gb
             use_os_cache: true,
@@ -87,7 +87,7 @@ pub struct ConfigInner {
     io_buf_size: usize,
     blink_fanout: usize,
     page_consolidation_threshold: usize,
-    path: Option<String>,
+    path: String,
     cache_bits: usize,
     cache_capacity: usize,
     use_os_cache: bool,
@@ -132,7 +132,7 @@ impl ConfigInner {
         (io_buf_size, get_io_buf_size, set_io_buf_size, usize, "size of each io flush buffer"),
         (blink_fanout, get_blink_fanout, set_blink_fanout, usize, "b-link node fanout, minimum of 2"),
         (page_consolidation_threshold, get_page_consolidation_threshold, set_page_consolidation_threshold, usize, "page consolidation threshold"),
-        (path, get_path, set_path, Option<String>, "path for the main storage file"),
+        (path, get_path, set_path, String, "path for the main storage file"),
         (cache_bits, get_cache_bits, set_cache_bits, usize, "log base 2 of the number of cache shards"),
         (cache_capacity, get_cache_capacity, set_cache_capacity, usize, "maximum size for the system page cache"),
         (use_os_cache, get_use_os_cache, set_use_os_cache, bool, "whether to use the OS page cache"),
@@ -147,7 +147,7 @@ impl ConfigInner {
     /// or create a new one if this is the first time the thread is accessing it.
     pub fn cached_file(&self) -> Rc<RefCell<fs::File>> {
         self.tc.get_or_else(|| {
-            let path = self.get_path().unwrap_or_else(|| self.tmp_path.clone());
+            let path = self.get_path();
             let mut options = fs::OpenOptions::new();
             options.create(true);
             options.read(true);
@@ -174,8 +174,7 @@ impl ConfigInner {
     pub fn snapshot_prefix(&self) -> String {
         let snapshot_path = self.get_snapshot_path();
         let path = self.get_path();
-        let tmp = self.get_tmp_path();
-        snapshot_path.or(path).unwrap_or(tmp)
+        snapshot_path.unwrap_or(path)
     }
 
     /// returns the snapshot file paths for this system
@@ -219,21 +218,21 @@ impl ConfigInner {
 
 impl Drop for ConfigInner {
     fn drop(&mut self) {
-        if self.get_path().is_none() {
-            let res = fs::remove_file(self.tmp_path.clone());
-            if res.is_err() {}
+        let ephemeral = self.get_path() == self.get_tmp_path();
+        if !ephemeral {
+            return;
         }
 
-        if self.get_path().is_none() && self.get_snapshot_path().is_none() {
-            // Our files are temporary, so nuke them.
-            let candidates = self.get_snapshot_files();
-            for path in candidates {
-                if let Err(_e) = std::fs::remove_file(path) {
+        // Our files are temporary, so nuke them.
+
+        let _res = fs::remove_file(self.tmp_path.clone());
+
+        let candidates = self.get_snapshot_files();
+        for path in candidates {
+            if let Err(_e) = std::fs::remove_file(path) {
                     #[cfg(feature = "log")]
-                    warn!("failed to remove old snapshot file, maybe snapshot race? {}", _e);
-                }
+                warn!("failed to remove old snapshot file, maybe snapshot race? {}", _e);
             }
         }
-
     }
 }

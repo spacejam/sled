@@ -14,7 +14,11 @@ A modern embedded database.
 extern crate sled;
 
 let tree = sled::Config::default()
-  .path(Some(path))
+  .path(path)
+  .cache_capacity(1e9 as usize)       // 1gb of cache
+  .use_compression(true)              // requires the zstd build feature
+  .flush_every_ms(Some(1000))         // flush IO buffers every second
+  .snapshot_after_ops(100_000);       // snapshot the pagetable every 100k ops
   .tree();
 
 // set and get
