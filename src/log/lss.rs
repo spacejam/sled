@@ -15,9 +15,9 @@ use super::*;
 /// # Working with `LockFreeLog`
 ///
 /// ```
-/// use rsdb::Log;
+/// use sled::Log;
 ///
-/// let log = rsdb::Config::default().log();
+/// let log = sled::Config::default().log();
 /// let first_offset = log.write(b"1".to_vec());
 /// log.write(b"22".to_vec());
 /// log.write(b"333".to_vec());

@@ -1,8 +1,12 @@
-# rsdb
+# sled
 
-[![Build Status](https://travis-ci.org/spacejam/rsdb.svg?branch=master)](https://travis-ci.org/spacejam/rsdb)
-[![crates.io](http://meritbadge.herokuapp.com/rsdb)](https://crates.io/crates/rsdb)
-[![documentation](https://docs.rs/rsdb/badge.svg)](https://docs.rs/rsdb)
+<p>
+  <img src="https://github.com/spacejam/rsdb/blob/master/art/tree_face.png" width="20%" height="auto" />
+</p>
+
+[![Build Status](https://travis-ci.org/spacejam/sled.svg?branch=master)](https://travis-ci.org/spacejam/sled)
+[![crates.io](http://meritbadge.herokuapp.com/sled)](https://crates.io/crates/sled)
+[![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled)
 
 A modern lock-free atomic embedded database designed to beat LSM trees for
 reads and traditional B+ trees for writes. 
@@ -15,9 +19,9 @@ multi-key transactions and snapshots.
 The `Tree` has a C API, so you can use this from any mainstream language.
 
 ```rust
-extern crate rsdb;
+extern crate sled;
 
-let tree = rsdb::Config::default()
+let tree = sled::Config::default()
   .path(Some(path))
   .tree();
 

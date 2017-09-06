@@ -1,7 +1,7 @@
-//! `rsdb` is a flash-sympathetic persistent lock-free B+ tree, pagecache, and log.
+//! `sled` is a flash-sympathetic persistent lock-free B+ tree, pagecache, and log.
 //!
 //! ```
-//! let t = rsdb::Config::default().tree();
+//! let t = sled::Config::default().tree();
 //! t.set(b"yo!".to_vec(), b"v1".to_vec());
 //! assert_eq!(t.get(b"yo!"), Some(b"v1".to_vec()));
 //! t.cas(b"yo!".to_vec(), Some(b"v1".to_vec()), Some(b"v2".to_vec())).unwrap();
@@ -98,7 +98,7 @@ type KeyRef<'a> = &'a [u8];
 type Value = Vec<u8>;
 
 lazy_static! {
-    /// A metric collector for all rsdb instances running in this
+    /// A metric collector for all sled instances running in this
     /// process.
     pub static ref M: Metrics = Metrics::default();
 }

@@ -1,13 +1,13 @@
 [package]
-name = "rsdb"
+name = "sled"
 version = "0.12.1"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "a flash-sympathetic persistent lock-free B+ tree, pagecache, and log"
 license = "Apache-2.0"
-homepage = "https://github.com/spacejam/rsdb"
-repository = "https://github.com/spacejam/rsdb"
+homepage = "https://github.com/spacejam/sled"
+repository = "https://github.com/spacejam/sled"
 keywords = ["database", "embedded", "concurrent", "persistent", "lock-free"]
-documentation = "https://docs.rs/rsdb/"
+documentation = "https://docs.rs/sled/"
 readme = "README.md"
 
 [features]

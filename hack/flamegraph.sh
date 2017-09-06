@@ -1,6 +1,6 @@
 #!/bin/bash
 set -ex
-echo "detecting running rsdb instance"
+echo "detecting running sled instance"
 cargo test -- --nocapture &
 PID=$!
 perf record -F 99 -p "$PID" -g -- wait $PID || true

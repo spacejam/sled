@@ -19,9 +19,9 @@ use super::*;
 /// # Working with the `PageCache`
 ///
 /// ```
-/// extern crate rsdb;
+/// extern crate sled;
 ///
-/// use rsdb::Materializer;
+/// use sled::Materializer;
 ///
 /// pub struct TestMaterializer;
 ///
@@ -45,8 +45,8 @@ use super::*;
 ///
 /// fn main() {
 ///     let path = "test_pagecache_doc.log";
-///     let conf = rsdb::Config::default().path(Some(path.to_owned()));
-///     let pc = rsdb::PageCache::new(TestMaterializer, conf.clone());
+///     let conf = sled::Config::default().path(Some(path.to_owned()));
+///     let pc = sled::PageCache::new(TestMaterializer, conf.clone());
 ///     let (id, key) = pc.allocate();
 ///
 ///     // The first item in a page should be set using replace, which

@@ -1,4 +1,4 @@
-extern crate rsdb;
+extern crate sled;
 extern crate coco;
 extern crate rand;
 extern crate quickcheck;
@@ -9,7 +9,7 @@ use std::sync::atomic::{ATOMIC_USIZE_INIT, AtomicUsize, Ordering};
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use coco::epoch::Ptr;
 
-use rsdb::*;
+use sled::*;
 
 type PageID = usize;
 

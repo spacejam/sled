@@ -3,7 +3,7 @@ extern crate serde_derive;
 extern crate docopt;
 extern crate chan_signal;
 extern crate rand;
-extern crate rsdb;
+extern crate sled;
 
 use std::mem;
 use std::thread;
@@ -60,35 +60,35 @@ fn byte() -> Vec<u8> {
     v
 }
 
-fn do_set(tree: Arc<rsdb::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
+fn do_set(tree: Arc<sled::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
     while !shutdown.load(Ordering::Relaxed) {
         total.fetch_add(1, Ordering::Release);
         tree.set(byte(), byte());
     }
 }
 
-fn do_get(tree: Arc<rsdb::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
+fn do_get(tree: Arc<sled::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
     while !shutdown.load(Ordering::Relaxed) {
         total.fetch_add(1, Ordering::Release);
         tree.get(&*byte());
     }
 }
 
-fn do_del(tree: Arc<rsdb::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
+fn do_del(tree: Arc<sled::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
     while !shutdown.load(Ordering::Relaxed) {
         total.fetch_add(1, Ordering::Release);
         tree.del(&*byte());
     }
 }
 
-fn do_cas(tree: Arc<rsdb::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
+fn do_cas(tree: Arc<sled::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
     while !shutdown.load(Ordering::Relaxed) {
         total.fetch_add(1, Ordering::Release);
         if let Err(_) = tree.cas(byte(), Some(byte()), Some(byte())) {};
     }
 }
 
-fn do_scan(tree: Arc<rsdb::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
+fn do_scan(tree: Arc<sled::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
     while !shutdown.load(Ordering::Relaxed) {
         total.fetch_add(1, Ordering::Release);
         tree.scan(&*byte())
@@ -97,7 +97,7 @@ fn do_scan(tree: Arc<rsdb::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUs
     }
 }
 
-fn prepopulate(tree: Arc<rsdb::Tree>) {
+fn prepopulate(tree: Arc<sled::Tree>) {
     for i in 0..256_usize.pow(unsafe { KEY_BYTES as u32 }) {
         let bytes: [u8; 8] = unsafe { mem::transmute(i) };
         let k = bytes[8 - unsafe { KEY_BYTES }..8].to_vec();
@@ -120,7 +120,7 @@ fn main() {
     let total = Arc::new(AtomicUsize::new(0));
     let shutdown = Arc::new(AtomicBool::new(false));
 
-    let config = rsdb::Config::default()
+    let config = sled::Config::default()
         .io_bufs(2)
         .io_buf_size(8_000_000)
         .blink_fanout(15)
@@ -185,7 +185,7 @@ fn main() {
     let ops = total.load(Ordering::SeqCst);
     let time = now.elapsed().as_secs() as usize;
 
-    rsdb::M.print_profile();
+    sled::M.print_profile();
 
     println!(
         "did {} total ops in {} seconds. {} ops/s",

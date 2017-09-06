@@ -3,7 +3,7 @@ extern crate num_cpus;
 #[macro_use]
 extern crate log;
 extern crate rand;
-extern crate rsdb;
+extern crate sled;
 
 use std::error::Error;
 use std::io::prelude::*;
@@ -15,14 +15,14 @@ use std::sync::Arc;
 use clap::{App, Arg};
 use rand::Rng;
 
-use rsdb::Tree;
+use sled::Tree;
 
 fn main() {
     let cpus = &(num_cpus::get().to_string());
 
-    let matches = App::new("RSDB bench")
+    let matches = App::new("sled bench")
         .version("0.1.0")
-        .about("RSDB benchmarking tool")
+        .about("sled benchmarking tool")
         .author("Tyler Neely, Philipp Muens")
         .arg(Arg::with_name("num_threads")
             .short("t")
@@ -166,9 +166,9 @@ fn main() {
 fn run(config: Config) -> Result<(), Box<Error>> {
     println!("running benchmarking suite...");
 
-    // create a default rsdb config
-    let rsdb_config = rsdb::Config::default();
-    let tree = rsdb_config.tree();
+    // create a default sled config
+    let sled_config = sled::Config::default();
+    let tree = sled_config.tree();
 
     perform_tree_operations(tree, config);
 
