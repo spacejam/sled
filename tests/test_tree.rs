@@ -1,6 +1,6 @@
 extern crate quickcheck;
 extern crate rand;
-extern crate rsdb;
+extern crate sled;
 
 use std::collections::BTreeMap;
 use std::thread;
@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 
-use rsdb::*;
+use sled::*;
 
 const SPACE: usize = N;
 const N_THREADS: usize = 5;

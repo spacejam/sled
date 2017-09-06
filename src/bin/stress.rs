@@ -3,7 +3,7 @@ extern crate serde_derive;
 extern crate docopt;
 extern crate chan_signal;
 extern crate rand;
-extern crate rsdb;
+extern crate sled;
 
 use std::thread;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -41,7 +41,7 @@ fn report(shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
     }
 }
 
-fn run(tree: Arc<rsdb::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
+fn run(tree: Arc<sled::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
     let mut rng = thread_rng();
     let mut byte = || vec![rng.gen::<u8>()];
     let mut rng = thread_rng();
@@ -85,8 +85,8 @@ fn main() {
     let shutdown = Arc::new(AtomicBool::new(false));
 
     let nonce: String = thread_rng().gen_ascii_chars().take(10).collect();
-    let path = format!("rsdb_stress_{}", nonce);
-    let config = rsdb::Config::default()
+    let path = format!("sled_stress_{}", nonce);
+    let config = sled::Config::default()
         .io_bufs(2)
         .io_buf_size(8_000_000)
         .blink_fanout(32)

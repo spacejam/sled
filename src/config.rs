@@ -12,7 +12,7 @@ use super::*;
 /// # Examples
 ///
 /// ```
-/// let config = rsdb::Config::default()
+/// let config = sled::Config::default()
 ///     .path(Some("/path/to/data".to_owned()))
 ///     .cache_capacity(10_000_000_000)
 ///     .use_compression(true)
@@ -31,7 +31,7 @@ impl Default for Config {
     fn default() -> Config {
         let now = uptime();
         let nanos = (now.as_secs() * 1_000_000_000) + now.subsec_nanos() as u64;
-        let tmp_path = format!("rsdb.tmp.{}", nanos);
+        let tmp_path = format!("sled.tmp.{}", nanos);
         let inner = Arc::new(UnsafeCell::new(ConfigInner {
             io_bufs: 3,
             io_buf_size: 2 << 22, // 8mb

@@ -3,7 +3,7 @@
 
 extern crate quickcheck;
 extern crate rand;
-extern crate rsdb;
+extern crate sled;
 
 use std::fs;
 use std::thread;
@@ -13,7 +13,7 @@ use std::sync::atomic::{ATOMIC_USIZE_INIT, AtomicUsize, Ordering};
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::{Rng, thread_rng};
 
-use rsdb::{Config, HEADER_LEN, LockFreeLog, Log, LogRead};
+use sled::{Config, HEADER_LEN, LockFreeLog, Log, LogRead};
 
 #[test]
 #[ignore]

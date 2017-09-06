@@ -102,7 +102,7 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use rsdb::Config;
+    /// use sled::Config;
     /// let t = Config::default().tree();
     ///
     /// // unique creation
@@ -180,7 +180,7 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use rsdb::Config;
+    /// use sled::Config;
     /// let t = Config::default().tree();
     /// t.set(vec![1], vec![1]);
     /// assert_eq!(t.del(&*vec![1]), Some(vec![1]));
@@ -223,7 +223,7 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use rsdb::Config;
+    /// use sled::Config;
     /// let t = Config::default().tree();
     /// t.set(vec![1], vec![10]);
     /// t.set(vec![2], vec![20]);
@@ -248,7 +248,7 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use rsdb::Config;
+    /// use sled::Config;
     /// let t = Config::default().tree();
     /// t.set(vec![1], vec![10]);
     /// t.set(vec![2], vec![20]);
