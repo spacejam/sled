@@ -14,6 +14,10 @@ readme = "README.md"
 default = []
 bench = ["clap", "num_cpus", "log", "rand", "rayon", "zstd", "env_logger"]
 stress = ["docopt", "chan-signal", "rayon", "rand", "zstd"]
+o_direct_writer = []
+
+# [profile.release]
+# debug = 2
 
 [[bin]]
 name = "bench"
