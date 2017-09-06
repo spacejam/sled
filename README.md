@@ -15,10 +15,10 @@ extern crate sled;
 
 let tree = sled::Config::default()
   .path(path)
-  .cache_capacity(1e9 as usize)       // 1gb of cache
-  .use_compression(true)              // requires the zstd build feature
-  .flush_every_ms(Some(1000))         // flush IO buffers every second
-  .snapshot_after_ops(100_000);       // snapshot the pagetable every 100k ops
+  .cache_capacity(1e9 as usize)      // 1gb of cache
+  .use_compression(true)             // requires the zstd build feature
+  .flush_every_ms(Some(1000))        // flush IO buffers every second
+  .snapshot_after_ops(100_000)       // snapshot the pagetable every 100k ops
   .tree();
 
 // set and get
@@ -79,7 +79,7 @@ scatter-gather reads across the log to materialize the page from its fragments.
 The system is largely inspired by the Deuteronomy architecture, and aims to implement
 the best features from RocksDB as well.
 
-The `LockFreeLog` and `PageCache` are usable on their own for implementing your own 
+The `LockFreeLog` and `PageCache` are usable on their own for implementing your own
 high-performance stateful systems!
 
 # References
