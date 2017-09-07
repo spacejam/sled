@@ -84,8 +84,6 @@ fn main() {
     let total = Arc::new(AtomicUsize::new(0));
     let shutdown = Arc::new(AtomicBool::new(false));
 
-    let nonce: String = thread_rng().gen_ascii_chars().take(10).collect();
-    let path = format!("sled_stress_{}", nonce);
     let config = sled::Config::default()
         .io_bufs(2)
         .io_buf_size(8_000_000)
@@ -94,8 +92,8 @@ fn main() {
         .cache_bits(6)
         .cache_capacity(1_000_000)
         .flush_every_ms(Some(100))
-        .snapshot_after_ops(1000000)
-        .path(Some(path));
+        .snapshot_after_ops(1000000);
+
     let tree = Arc::new(config.tree());
 
     let mut threads = vec![];
