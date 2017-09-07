@@ -1,11 +1,14 @@
+extern crate sled;
+extern crate libc;
+
 use std::ffi::CString;
 use std::mem;
 use std::ptr;
 use std::slice;
 
-use super::*;
-
 use libc::*;
+
+use sled::{Config, Tree, TreeIter};
 
 fn leak_buf(v: Vec<u8>, vallen: *mut size_t) -> *mut c_char {
     unsafe {
@@ -20,12 +23,13 @@ fn leak_buf(v: Vec<u8>, vallen: *mut size_t) -> *mut c_char {
 /// Create a new configuration.
 #[no_mangle]
 pub unsafe extern "C" fn sled_create_config() -> *mut Config {
-    Box::into_raw(Box::new(Config::default()))
+    let ptr = Box::into_raw(Box::new(Config::default()));
+    ptr
 }
 
 /// Destroy a configuration.
 #[no_mangle]
-pub unsafe extern "C" fn sled_destroy_config(config: *mut Config) {
+pub unsafe extern "C" fn sled_free_config(config: *mut Config) {
     drop(Box::from_raw(config));
 }
 
@@ -34,9 +38,7 @@ pub unsafe extern "C" fn sled_destroy_config(config: *mut Config) {
 #[no_mangle]
 pub unsafe extern "C" fn sled_config_set_path(config: *mut Config, path: *const c_char) {
     let c_str = CString::from_raw(path as *mut i8);
-    let c_str2 = c_str.clone();
-    let value = c_str2.into_string().unwrap();
-    mem::forget(c_str);
+    let value = c_str.into_string().unwrap();
 
     (*config).set_path(value)
 }
@@ -78,7 +80,7 @@ pub unsafe extern "C" fn sled_config_snapshot_after_ops(
 
 /// Open a sled lock-free log-structured tree.
 #[no_mangle]
-pub unsafe extern "C" fn sled_open(config: *mut Config) -> *mut Tree {
+pub unsafe extern "C" fn sled_open_tree(config: *mut Config) -> *mut Tree {
     let conf_2 = (*config).clone();
     Box::into_raw(Box::new(Tree::new(conf_2)))
 }
@@ -90,15 +92,22 @@ pub unsafe extern "C" fn sled_close(db: *mut Tree) {
 }
 
 /// Free a buffer originally allocated by sled.
+#[no_mangle]
 pub unsafe extern "C" fn sled_free_buf(buf: *mut c_char, sz: size_t) {
     drop(Vec::from_raw_parts(buf, sz, sz));
 }
 
+/// Free a Tree created by sled.
+#[no_mangle]
+pub unsafe extern "C" fn sled_free_tree(tree: *mut Tree) {
+    drop(Box::from_raw(tree));
+}
+
 /// Free an iterator.
+#[no_mangle]
 pub unsafe extern "C" fn sled_free_iter(iter: *mut TreeIter) {
     drop(Box::from_raw(iter));
 }
-
 
 /// Set a key to a value.
 #[no_mangle]

@@ -47,9 +47,6 @@ pub use ds::{Radix, Stack};
 /// general-purpose configuration
 pub use config::Config;
 
-/// C-compatible API for the lock-free log-structured B+tree.
-pub mod c;
-
 macro_rules! rep_no_copy {
     ($e:expr; $n:expr) => {
         {

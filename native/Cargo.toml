@@ -1,0 +1,18 @@
+[package]
+name = "sled-native"
+version = "0.1.0"
+authors = ["Tyler Neely <t@jujit.su>"]
+description = "a C-compatible API for sled"
+license = "Apache-2.0"
+homepage = "https://github.com/spacejam/sled"
+repository = "https://github.com/spacejam/sled/sled-native"
+keywords = ["database", "embedded", "concurrent", "persistent", "c"]
+documentation = "https://docs.rs/sled-native/"
+
+[lib]
+name = "sled"
+crate-type = ["dylib"]
+
+[dependencies]
+libc = "0.2"
+sled = {version = "0.14", path = ".."}
