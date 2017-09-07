@@ -1,4 +1,5 @@
 use std::io::{Seek, Write};
+use std::ptr;
 
 #[cfg(feature = "zstd")]
 use zstd::block::compress;
@@ -126,8 +127,12 @@ impl IoBufs {
         options.create(true);
         options.write(true);
 
-        //use std::os::unix::fs::OpenOptionsExt;
-        //options.custom_flags(libc::O_DIRECT);
+        #[cfg(target_os = "linux")]
+        #[cfg(feature = "o_direct_writer")]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_DIRECT);
+        }
 
         let file = options.open(path).unwrap();
 
@@ -364,6 +369,16 @@ impl IoBufs {
 
         // open new slot
         let res_len = offset(sealed) as usize;
+
+        #[cfg(feature = "o_direct_writer")]
+        let pad_len = {
+            let remainder = res_len % 512;
+            if remainder == 0 { 0 } else { 512 - remainder }
+        };
+
+        #[cfg(not(feature = "o_direct_writer"))]
+        let pad_len = 0;
+
         let max = std::usize::MAX as LogID;
 
         assert_ne!(
@@ -374,7 +389,8 @@ impl IoBufs {
             idx,
             self
         );
-        let next_offset = log_offset + res_len as LogID;
+
+        let next_offset = log_offset + (res_len + pad_len) as LogID;
         let next_idx = (idx + 1) % self.config.get_io_bufs();
         let next_iobuf = &self.bufs[next_idx];
 
@@ -416,7 +432,6 @@ impl IoBufs {
         let iobuf = &self.bufs[idx];
         let header = iobuf.get_header();
         let log_offset = iobuf.get_log_offset();
-        let interval = (log_offset, log_offset + offset(header) as LogID);
 
         assert_ne!(
             log_offset as usize,
@@ -426,12 +441,31 @@ impl IoBufs {
         );
 
         let res_len = offset(header) as usize;
-        let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
-        let dirty_bytes = &data[0..res_len];
 
+        #[cfg(feature = "o_direct_writer")]
+        let pad_len = {
+            let remainder = res_len % 512;
+            if remainder == 0 { 0 } else { 512 - remainder }
+        };
+
+        #[cfg(not(feature = "o_direct_writer"))]
+        let pad_len = 0;
+
+        let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
+
+        {
+            let pad_buf = &data[res_len..res_len + pad_len];
+            unsafe {
+                ptr::write_bytes(pad_buf.as_ptr() as *mut u8, 0, pad_len);
+            }
+        }
+        let dirty_bytes = &data[0..res_len + pad_len];
         let mut f = self.file_for_writing.lock().unwrap();
         f.seek(SeekFrom::Start(log_offset)).unwrap();
         f.write_all(dirty_bytes).unwrap();
+
+        M.written(dirty_bytes.len());
+        M.padded(pad_len);
 
         // signal that this IO buffer is uninitialized
         let max = std::usize::MAX as LogID;
@@ -443,6 +477,8 @@ impl IoBufs {
         let _written_bufs = self.written_bufs.fetch_add(1, SeqCst);
         #[cfg(feature = "log")]
         trace!("({:?}) {} written", tn(), _written_bufs % self.config.get_io_bufs());
+
+        let interval = (log_offset, log_offset + (res_len + pad_len) as LogID);
 
         self.mark_interval(interval);
 

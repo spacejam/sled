@@ -26,6 +26,8 @@ pub struct Metrics {
     pub read: Histo,
     pub tree_loops: AtomicUsize,
     pub log_loops: AtomicUsize,
+    pub written_bytes: AtomicUsize,
+    pub written_padding: AtomicUsize,
 }
 
 impl Metrics {
@@ -35,6 +37,14 @@ impl Metrics {
 
     pub fn log_looped(&self) {
         self.log_loops.fetch_add(1, Relaxed);
+    }
+
+    pub fn written(&self, bytes: usize) {
+        self.written_bytes.fetch_add(bytes, Relaxed);
+    }
+
+    pub fn padded(&self, bytes: usize) {
+        self.written_padding.fetch_add(bytes, Relaxed);
     }
 
     pub fn print_profile(&self) {
@@ -121,5 +131,7 @@ impl Metrics {
             f("reserve", &self.reserve),
         ]);
         println!("log contention loops: {}", self.log_loops.load(Acquire));
+        println!("total bytes written: {}", self.written_bytes.load(Acquire));
+        println!("pad bytes written: {}", self.written_padding.load(Acquire));
     }
 }
