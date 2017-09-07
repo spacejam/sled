@@ -38,7 +38,7 @@ pub unsafe extern "C" fn sled_free_config(config: *mut Config) {
 #[no_mangle]
 pub unsafe extern "C" fn sled_config_set_path(config: *mut Config, path: *const c_char) {
     let c_str = CString::from_raw(path as *mut i8);
-    let value = c_str.intg_string().unwrap();
+    let value = c_str.into_string().unwrap();
 
     (*config).set_path(value)
 }
