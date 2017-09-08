@@ -207,11 +207,11 @@ impl Log for LockFreeLog {
     }
 
     /// deallocates the data part of a log id
-    fn punch_hole(&self, id: LogID) {
+    fn punch_hole(&self, id: LogID) -> std::io::Result<()> {
         // we zero out the valid byte, and use fallocate to punch a hole
         // in the actual data, but keep the len for recovery.
         let cached_f = self.config().cached_file();
         let mut f = cached_f.borrow_mut();
-        punch_hole(&mut f, id).unwrap();
+        punch_hole(&mut f, id)
     }
 }

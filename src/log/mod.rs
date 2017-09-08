@@ -38,7 +38,7 @@ pub trait Log: Sized {
 
     /// Mark the provided message as deletable by the
     /// underlying storage.
-    fn punch_hole(&self, id: LogID);
+    fn punch_hole(&self, id: LogID) -> io::Result<()>;
 
     /// Return the configuration in use by the system.
     fn config(&self) -> &Config;
