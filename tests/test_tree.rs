@@ -92,6 +92,7 @@ fn subdir() {
     let t = sled::Config::default()
         .path("test_tree_subdir/test.db".to_owned())
         .tree();
+
     t.set(vec![1], vec![1]);
 
     drop(t);

@@ -91,6 +91,9 @@ impl<PM, P, R> Drop for PageCache<PM, P, R>
         // this is necessary because AtomicOption leaks
         // the inner object if left on its own
         self.last_snapshot.take(SeqCst);
+
+        #[cfg(feature = "log")]
+        trace!("PageCache dropped");
     }
 }
 
@@ -660,11 +663,12 @@ impl<PM, P, R> PageCache<PM, P, R>
         // clean up any old snapshots
         let candidates = self.config().get_snapshot_files();
         for path in candidates {
-            if Path::new(&path).file_name().unwrap() != &*path_2 {
+            let path_str = Path::new(&path).file_name().unwrap().to_str().unwrap();
+            if !path_2.ends_with(&*path_str) {
                 #[cfg(feature = "log")]
                 info!("removing old snapshot file {:?}", path);
 
-                if let Err(_e) = std::fs::remove_file(path) {
+                if let Err(_e) = std::fs::remove_file(&path) {
                     #[cfg(feature = "log")]
                     warn!("failed to remove old snapshot file, maybe snapshot race? {}", _e);
                 }
