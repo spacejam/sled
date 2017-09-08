@@ -1,4 +1,5 @@
 use std::io::{Seek, Write};
+use std::path::Path;
 use std::ptr;
 
 #[cfg(feature = "zstd")]
@@ -110,18 +111,21 @@ impl Debug for IoBufs {
 /// writes to underlying storage.
 impl IoBufs {
     pub fn new(config: Config) -> IoBufs {
-        let disk_offset = {
-            let cached_f = config.cached_file();
-            let file = cached_f.borrow();
-            file.metadata().unwrap().len()
-        };
-
-        let bufs = rep_no_copy![IoBuf::new(config.get_io_buf_size()); config.get_io_bufs()];
-
-        let current_buf = 0;
-        bufs[current_buf].set_log_offset(disk_offset);
-
         let path = config.get_path();
+
+        let dir = Path::new(&path).parent().expect(
+            "could not parse provided path",
+        );
+
+        if dir != Path::new("") {
+            if dir.is_file() {
+                panic!("provided parent directory is a file, not a directory: {:?}", dir);
+            }
+
+            if !dir.exists() {
+                std::fs::create_dir_all(dir).unwrap();
+            }
+        }
 
         let mut options = std::fs::OpenOptions::new();
         options.create(true);
@@ -134,7 +138,13 @@ impl IoBufs {
             options.custom_flags(libc::O_DIRECT);
         }
 
-        let file = options.open(path).unwrap();
+        let file = options.open(&path).unwrap();
+        let disk_offset = file.metadata().unwrap().len();
+
+        let bufs = rep_no_copy![IoBuf::new(config.get_io_buf_size()); config.get_io_bufs()];
+
+        let current_buf = 0;
+        bufs[current_buf].set_log_offset(disk_offset);
 
         IoBufs {
             bufs: bufs,
@@ -517,6 +527,9 @@ impl Drop for IoBufs {
         }
         let f = self.file_for_writing.lock().unwrap();
         f.sync_all().unwrap();
+
+        #[cfg(feature = "log")]
+        trace!("IoBufs dropped");
     }
 }
 

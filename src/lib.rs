@@ -29,6 +29,7 @@ extern crate lazy_static;
 #[cfg(feature = "log")]
 #[macro_use]
 extern crate log as _log;
+#[cfg(target_os = "linux")]
 extern crate libc;
 #[cfg(feature = "rayon")]
 extern crate rayon;

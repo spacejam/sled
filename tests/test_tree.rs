@@ -88,6 +88,29 @@ fn parallel_ops() {
 }
 
 #[test]
+fn subdir() {
+    let t = sled::Config::default()
+        .path("test_tree_subdir/test.db".to_owned())
+        .tree();
+
+    t.set(vec![1], vec![1]);
+
+    drop(t);
+
+    let t = sled::Config::default()
+        .path("test_tree_subdir/test.db".to_owned())
+        .tree();
+
+    let res = t.get(&*vec![1]);
+
+    drop(t);
+
+    std::fs::remove_dir_all("test_tree_subdir").unwrap();
+
+    assert_eq!(res, Some(vec![1]));
+}
+
+#[test]
 fn iterator() {
     println!("========== iterator ==========");
     let t = Config::default()

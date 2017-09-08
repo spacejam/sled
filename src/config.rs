@@ -191,7 +191,6 @@ impl ConfigInner {
             abs_path.to_str().unwrap().to_owned()
         };
 
-
         let filter = |dir_entry: std::io::Result<std::fs::DirEntry>| if let Ok(de) = dir_entry {
             let path_buf = de.path();
             let path = path_buf.as_path();
@@ -208,6 +207,7 @@ impl ConfigInner {
         let snap_dir = Path::new(&abs_prefix).parent().expect(
             "could not read snapshot directory",
         );
+
         snap_dir
             .read_dir()
             .expect("could not read snapshot directory")
