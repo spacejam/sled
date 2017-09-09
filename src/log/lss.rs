@@ -204,7 +204,7 @@ impl Log for LockFreeLog {
     fn make_stable(&self, id: LogID) {
         let start = clock();
         let mut spins = 0;
-        while self.iobufs.stable() < id {
+        while self.iobufs.stable() <= id {
             self.iobufs.flush();
             spins += 1;
             if spins > 2_000_000 {

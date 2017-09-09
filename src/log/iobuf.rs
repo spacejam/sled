@@ -522,20 +522,18 @@ impl IoBufs {
     // been written yet! It's OK to use a mutex here because it is pretty
     // fast, compared to the other operations on shared state.
     fn mark_interval(&self, interval: (LogID, LogID)) {
-        {
-            let mut intervals = self.intervals.lock().unwrap();
-            intervals.push(interval);
-            intervals.sort();
+        let mut intervals = self.intervals.lock().unwrap();
+        intervals.push(interval);
+        intervals.sort();
 
-            while let Some(&(low, high)) = intervals.get(0) {
-                let cur_stable = self.stable.load(SeqCst) as LogID;
-                if cur_stable == low {
-                    let old = self.stable.swap(high as usize, SeqCst);
-                    assert_eq!(old, cur_stable as usize);
-                    intervals.remove(0);
-                } else {
-                    break;
-                }
+        while let Some(&(low, high)) = intervals.get(0) {
+            let cur_stable = self.stable.load(SeqCst) as LogID;
+            if cur_stable == low {
+                let old = self.stable.swap(high as usize, SeqCst);
+                assert_eq!(old, cur_stable as usize);
+                intervals.remove(0);
+            } else {
+                break;
             }
         }
     }
