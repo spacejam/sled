@@ -496,8 +496,6 @@ impl IoBufs {
         f.write_all(dirty_bytes).unwrap();
         M.written_bytes.measure(res_len as f64 + pad_len as f64);
         M.written_padding.measure(pad_len as f64);
-        println!("res_len: {}", res_len);
-
         // signal that this IO buffer is uninitialized
         let max = std::usize::MAX as LogID;
         iobuf.set_log_offset(max);

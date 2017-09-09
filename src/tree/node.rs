@@ -74,8 +74,6 @@ impl Node {
             let search = records.binary_search_by(|&(ref k, ref _v)| (**k).cmp(key));
             if let Ok(idx) = search {
                 records.remove(idx);
-            } else {
-                print!(".");
             }
         } else {
             panic!("tried to attach a Del to an Index chain");

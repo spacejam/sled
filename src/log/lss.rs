@@ -57,7 +57,6 @@ impl Drop for LockFreeLog {
         if let Some(join_handle) = self.flusher_handle.take() {
             join_handle.join().unwrap();
         }
-        M.print_profile();
     }
 }
 
@@ -206,7 +205,6 @@ impl Log for LockFreeLog {
         let start = clock();
         let mut spins = 0;
         while self.iobufs.stable() < id {
-            println!("make_stable loop");
             self.iobufs.flush();
             spins += 1;
             if spins > 2_000_000 {
