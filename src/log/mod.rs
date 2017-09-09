@@ -136,6 +136,7 @@ impl<'a, L> Iterator for LogIter<'a, L>
 }
 
 pub fn punch_hole(f: &mut File, id: LogID) -> io::Result<()> {
+    let start = clock();
     f.seek(SeekFrom::Start(id + 1))?;
     let mut len_buf = [0u8; 4];
     f.read_exact(&mut len_buf)?;
@@ -165,6 +166,8 @@ pub fn punch_hole(f: &mut File, id: LogID) -> io::Result<()> {
             fallocate(fd, mode, id as i64, len as i64 + HEADER_LEN as i64);
         }
     }
+
+    M.punch_hole.measure(clock() - start);
 
     Ok(())
 }

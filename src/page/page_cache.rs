@@ -758,8 +758,8 @@ impl<PM, P, R> PageCache<PM, P, R>
     fn drop_lids_from_stack(&self, stack_ptr: CasKey<P>, scope: &Scope) {
         // generate a list of the old log ID's
         let stack_iter = StackIter::from_ptr(stack_ptr.into(), scope);
-        let mut lids = vec![];
 
+        let mut lids = vec![];
         for cache_entry_ptr in stack_iter {
             match *cache_entry_ptr {
                 CacheEntry::Resident(_, ref lid) |
@@ -772,15 +772,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         }
 
         if !lids.is_empty() {
-            self.log.make_stable(*lids.iter().max().unwrap());
-            let dropper = Owned::new(LidDropper(lids, self.config().clone()));
-
-            unsafe {
-                // after the scope passes, these lids will
-                // have their disk space hole punched.
-                scope.defer_drop(dropper.into_ptr(scope));
-                scope.flush();
-            }
+            self.log.defer_hole_punch(lids);
         }
     }
 }

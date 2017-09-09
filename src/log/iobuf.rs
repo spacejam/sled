@@ -1,6 +1,9 @@
+use std::sync::Arc;
 use std::io::{Seek, Write};
 use std::path::Path;
 use std::ptr;
+
+use crossbeam::sync::SegQueue;
 
 #[cfg(feature = "zstd")]
 use zstd::block::compress;
@@ -91,6 +94,7 @@ pub struct IoBufs {
     // due to interesting thread interleavings.
     stable: AtomicUsize,
     file_for_writing: Mutex<std::fs::File>,
+    deferred_hole_punches: Arc<SegQueue<LogID>>,
 }
 
 impl Debug for IoBufs {
@@ -110,7 +114,7 @@ impl Debug for IoBufs {
 /// `IoBufs` is a set of lock-free buffers for coordinating
 /// writes to underlying storage.
 impl IoBufs {
-    pub fn new(config: Config) -> IoBufs {
+    pub fn new(config: Config, deferred_hole_punches: Arc<SegQueue<LogID>>) -> IoBufs {
         let path = config.get_path();
 
         let dir = Path::new(&path).parent().expect(
@@ -154,6 +158,7 @@ impl IoBufs {
             stable: AtomicUsize::new(disk_offset as usize),
             config: config,
             file_for_writing: Mutex::new(file),
+            deferred_hole_punches: deferred_hole_punches,
         }
     }
 
@@ -169,6 +174,22 @@ impl IoBufs {
     /// Returns the last stable offset in storage.
     pub(super) fn stable(&self) -> LogID {
         self.stable.load(SeqCst) as LogID
+    }
+
+    /// Clean up log entries for data that may not
+    /// yet be on the disk yet.
+    pub(super) fn defer_hole_punch(&self, lids: Vec<LogID>) {
+        let stable = self.stable();
+        for &lid in &lids {
+            if stable > lid {
+                // immediately drop
+                let cached_f = self.config.cached_file();
+                let mut f = cached_f.borrow_mut();
+                punch_hole(&mut f, lid).unwrap();
+            } else {
+                self.deferred_hole_punches.push(lid);
+            }
+        }
     }
 
     /// Tries to claim a reservation for writing a buffer to a
@@ -473,10 +494,8 @@ impl IoBufs {
         let mut f = self.file_for_writing.lock().unwrap();
         f.seek(SeekFrom::Start(log_offset)).unwrap();
         f.write_all(dirty_bytes).unwrap();
-
-        M.written(dirty_bytes.len());
-        M.padded(pad_len);
-
+        M.written_bytes.measure(res_len as f64 + pad_len as f64);
+        M.written_padding.measure(pad_len as f64);
         // signal that this IO buffer is uninitialized
         let max = std::usize::MAX as LogID;
         iobuf.set_log_offset(max);

@@ -23,11 +23,12 @@ pub struct Metrics {
     pub make_stable: Histo,
     pub reserve: Histo,
     pub write_to_log: Histo,
+    pub written_bytes: Histo,
+    pub written_padding: Histo,
+    pub punch_hole: Histo,
     pub read: Histo,
     pub tree_loops: AtomicUsize,
     pub log_loops: AtomicUsize,
-    pub written_bytes: AtomicUsize,
-    pub written_padding: AtomicUsize,
 }
 
 impl Metrics {
@@ -39,18 +40,10 @@ impl Metrics {
         self.log_loops.fetch_add(1, Relaxed);
     }
 
-    pub fn written(&self, bytes: usize) {
-        self.written_bytes.fetch_add(bytes, Relaxed);
-    }
-
-    pub fn padded(&self, bytes: usize) {
-        self.written_padding.fetch_add(bytes, Relaxed);
-    }
-
     pub fn print_profile(&self) {
         println!(
             "sled profile:\n\
-            {0: >12} | {1: >10} | {2: >10} | {3: >10} | {4: >10} | {5: >10} | {6: >10} | {7: >10}",
+            {0: >17} | {1: >10} | {2: >10} | {3: >10} | {4: >10} | {5: >10} | {6: >10} | {7: >10}",
             "op",
             "min (us)",
             "90 (us)",
@@ -66,7 +59,7 @@ impl Metrics {
             tuples.sort_by_key(|t| (t.7 * -1. * 1e3) as i64);
             for v in tuples.into_iter() {
                 println!(
-                    "{0: >12} | {1: >10.1} | {2: >10.1} | {3: >10.1} \
+                    "{0: >17} | {1: >10.1} | {2: >10.1} | {3: >10.1} \
                 | {4: >10.1} | {5: >10.1} | {6: >10.1} | {7: >10.3}",
                     v.0,
                     v.1,
@@ -128,10 +121,11 @@ impl Metrics {
             f("make_stable", &self.make_stable),
             f("read", &self.read),
             f("write", &self.write_to_log),
+            f("written bytes", &self.written_bytes),
+            f("written padding", &self.written_padding),
             f("reserve", &self.reserve),
+            f("punch_hole", &self.punch_hole),
         ]);
         println!("log contention loops: {}", self.log_loops.load(Acquire));
-        println!("total bytes written: {}", self.written_bytes.load(Acquire));
-        println!("pad bytes written: {}", self.written_padding.load(Acquire));
     }
 }
