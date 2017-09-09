@@ -5,6 +5,8 @@ use std::sync::atomic::AtomicBool;
 #[cfg(feature = "zstd")]
 use zstd::block::decompress;
 
+use crossbeam::sync::SegQueue;
+
 use super::*;
 
 /// A sequential store which allows users to create
@@ -55,21 +57,28 @@ impl Drop for LockFreeLog {
         if let Some(join_handle) = self.flusher_handle.take() {
             join_handle.join().unwrap();
         }
+        M.print_profile();
     }
 }
 
 impl LockFreeLog {
     /// create new lock-free log
     pub fn start_system(config: Config) -> LockFreeLog {
-        let iobufs = Arc::new(IoBufs::new(config.clone()));
+        #[cfg(feature = "log")]
+        let _r = env_logger::init();
+
+        let deferred_hole_punches = Arc::new(SegQueue::new());
+        let iobufs = Arc::new(IoBufs::new(config.clone(), deferred_hole_punches.clone()));
 
         let flusher_shutdown = Arc::new(AtomicBool::new(false));
         let flusher_handle = config.get_flush_every_ms().map(|flush_every_ms| {
             periodic_flusher::flusher(
                 "log flusher".to_owned(),
+                config.clone(),
                 iobufs.clone(),
                 flusher_shutdown.clone(),
                 flush_every_ms,
+                deferred_hole_punches,
             ).unwrap()
         });
 
@@ -83,6 +92,12 @@ impl LockFreeLog {
     /// Flush the next io buffer.
     pub fn flush(&self) {
         self.iobufs.flush();
+    }
+
+    /// Clean up log entries for data that may not
+    /// yet be on the disk yet.
+    pub fn defer_hole_punch(&self, lids: Vec<LogID>) {
+        self.iobufs.defer_hole_punch(lids);
     }
 }
 
@@ -190,7 +205,8 @@ impl Log for LockFreeLog {
     fn make_stable(&self, id: LogID) {
         let start = clock();
         let mut spins = 0;
-        loop {
+        while self.iobufs.stable() < id {
+            println!("make_stable loop");
             self.iobufs.flush();
             spins += 1;
             if spins > 2_000_000 {
@@ -198,12 +214,8 @@ impl Log for LockFreeLog {
                 debug!("have spun >2000000x in make_stable");
                 spins = 0;
             }
-            let cur = self.iobufs.stable();
-            if cur > id {
-                M.make_stable.measure(clock() - start);
-                return;
-            }
         }
+        M.make_stable.measure(clock() - start);
     }
 
     /// deallocates the data part of a log id
