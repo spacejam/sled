@@ -90,7 +90,8 @@ use ds::{Lru, StackIter, node_from_frag_vec};
 use hash::{crc16_arr, crc64};
 use thread_cache::ThreadCache;
 
-type LogID = u64; // LogID == file position to simplify file mapping
+type LogID = u64;
+type Lsn = u64;
 type PageID = usize;
 
 type Key = Vec<u8>;

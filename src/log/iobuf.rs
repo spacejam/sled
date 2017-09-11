@@ -401,14 +401,7 @@ impl IoBufs {
         // open new slot
         let res_len = offset(sealed) as usize;
 
-        #[cfg(feature = "o_direct_writer")]
-        let pad_len = {
-            let remainder = res_len % 512;
-            if remainder == 0 { 0 } else { 512 - remainder }
-        };
-
-        #[cfg(not(feature = "o_direct_writer"))]
-        let pad_len = 0;
+        let pad_len = self.config.get_io_buf_size() - res_len;
 
         let max = std::usize::MAX as LogID;
 
@@ -438,6 +431,7 @@ impl IoBufs {
         trace!("({:?}) {} log set", tn(), next_idx);
 
         // NB allows new threads to start writing into this buffer
+        // TODO write LSN, prev LogID, next LogID to base of segment
         next_iobuf.set_header(0);
         #[cfg(feature = "log")]
         trace!("({:?}) {} zeroed header", tn(), next_idx);
@@ -473,27 +467,19 @@ impl IoBufs {
 
         let res_len = offset(header) as usize;
 
-        #[cfg(feature = "o_direct_writer")]
-        let pad_len = {
-            let remainder = res_len % 512;
-            if remainder == 0 { 0 } else { 512 - remainder }
-        };
-
-        #[cfg(not(feature = "o_direct_writer"))]
-        let pad_len = 0;
+        // must pad each segment with zeroes
+        let pad_len = self.config.get_io_buf_size() - res_len;
 
         let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
 
-        {
-            let pad_buf = &data[res_len..res_len + pad_len];
-            unsafe {
-                ptr::write_bytes(pad_buf.as_ptr() as *mut u8, 0, pad_len);
-            }
+        let pad_buf = &data[res_len..res_len + pad_len];
+        unsafe {
+            ptr::write_bytes(pad_buf.as_ptr() as *mut u8, 0, pad_len);
         }
-        let dirty_bytes = &data[0..res_len + pad_len];
+
         let mut f = self.file_for_writing.lock().unwrap();
         f.seek(SeekFrom::Start(log_offset)).unwrap();
-        f.write_all(dirty_bytes).unwrap();
+        f.write_all(data).unwrap();
         M.written_bytes.measure(res_len as f64 + pad_len as f64);
         M.written_padding.measure(pad_len as f64);
         // signal that this IO buffer is uninitialized
