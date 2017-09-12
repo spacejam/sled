@@ -17,6 +17,7 @@ mod segment_accountant;
 pub use self::lss::*;
 pub use self::iobuf::*;
 pub use self::reservation::*;
+pub use self::segment_accountant::*;
 
 /// A trait for objects which facilitate log-structured storage.
 pub trait Log: Sized {

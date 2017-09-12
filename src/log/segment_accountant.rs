@@ -3,7 +3,7 @@ use std::collections::{HashSet, VecDeque};
 use super::*;
 
 #[derive(Default, Debug)]
-pub(super) struct SegmentAccountant {
+pub struct SegmentAccountant {
     pub tip: LogID,
     pub segments: Vec<Segment>,
     pub to_clean: HashSet<LogID>,
@@ -48,6 +48,42 @@ impl SegmentAccountant {
         ret.config = config;
         ret.tip = tip;
         ret
+    }
+
+    pub fn freed(&mut self, pid: PageID, old_lids: Vec<LogID>, lsn: Lsn) {
+        self.pending_clean.remove(&pid);
+
+        for old_lid in old_lids.into_iter() {
+            let idx = old_lid as usize / self.config.get_io_buf_size();
+
+            let mut segment = &mut self.segments[idx];
+
+            if segment.lsn > lsn {
+                // has been replaced after this call already,
+                // quite a big race happened
+                continue;
+            }
+
+            if segment.pids_len == 0 {
+                segment.pids_len = segment.pids.len();
+            }
+
+            segment.pids.remove(&pid);
+
+            let segment_start = (idx * self.config.get_io_buf_size()) as LogID;
+
+            if segment.pids.is_empty() {
+                // can be reused immediately
+                self.to_clean.remove(&segment_start);
+                self.free.push_back(segment_start);
+            } else if segment.pids.len() as f64 / segment.pids_len as f64 <=
+                       self.config.get_segment_cleanup_threshold()
+            {
+                // can be cleaned
+                self.to_clean.insert(segment_start);
+            }
+        }
+
     }
 
     pub fn set(&mut self, pid: PageID, old_lids: Vec<LogID>, new_lid: LogID, lsn: Lsn) {

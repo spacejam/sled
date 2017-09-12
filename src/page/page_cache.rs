@@ -228,7 +228,9 @@ impl<PM, P, R> PageCache<PM, P, R>
             // add pid to free stack to reduce fragmentation over time
             unsafe {
                 let cas_key = deleted.unwrap().deref().head(scope).into();
-                self.drop_lids_from_stack(cas_key, scope);
+
+                let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
+                sa.freed(pid, lids_from_stack(cas_key, scope), self.log.iobufs.lsn());
             }
 
             let pd = Owned::new(PidDropper(pid, self.free.clone()));
@@ -493,9 +495,11 @@ impl<PM, P, R> PageCache<PM, P, R>
             let result = unsafe { stack_ptr.deref().cas(old.clone().into(), node, scope) };
 
             if result.is_ok() {
+                let id = log_reservation.log_id();
                 log_reservation.complete();
 
-                self.drop_lids_from_stack(old, scope);
+                let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
+                sa.set(pid, lids_from_stack(old, scope), id, self.log.iobufs.lsn());
             } else {
                 log_reservation.abort();
             }
@@ -539,7 +543,11 @@ impl<PM, P, R> PageCache<PM, P, R>
             if result.is_err() {
                 log_reservation.abort();
             } else {
+                let id = log_reservation.log_id();
                 log_reservation.complete();
+
+                let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
+                sa.merged(pid, id, self.log.iobufs.lsn());
 
                 let count = self.updates.fetch_add(1, SeqCst) + 1;
                 let should_snapshot = count % self.config().get_snapshot_after_ops() == 0;
@@ -754,25 +762,22 @@ impl<PM, P, R> PageCache<PM, P, R>
             self.inner.insert(*pid, stack).unwrap();
         }
     }
+}
 
-    fn drop_lids_from_stack(&self, stack_ptr: CasKey<P>, scope: &Scope) {
-        // generate a list of the old log ID's
-        let stack_iter = StackIter::from_ptr(stack_ptr.into(), scope);
+fn lids_from_stack<P: Send + Sync>(stack_ptr: CasKey<P>, scope: &Scope) -> Vec<LogID> {
+    // generate a list of the old log ID's
+    let stack_iter = StackIter::from_ptr(stack_ptr.into(), scope);
 
-        let mut lids = vec![];
-        for cache_entry_ptr in stack_iter {
-            match *cache_entry_ptr {
-                CacheEntry::Resident(_, ref lid) |
-                CacheEntry::MergedResident(_, ref lid) |
-                CacheEntry::PartialFlush(ref lid) |
-                CacheEntry::Flush(ref lid) => {
-                    lids.push(*lid);
-                }
+    let mut lids = vec![];
+    for cache_entry_ptr in stack_iter {
+        match *cache_entry_ptr {
+            CacheEntry::Resident(_, ref lid) |
+            CacheEntry::MergedResident(_, ref lid) |
+            CacheEntry::PartialFlush(ref lid) |
+            CacheEntry::Flush(ref lid) => {
+                lids.push(*lid);
             }
         }
-
-        if !lids.is_empty() {
-            self.log.defer_hole_punch(lids);
-        }
     }
+    lids
 }

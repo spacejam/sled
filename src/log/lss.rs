@@ -40,7 +40,8 @@ use super::*;
 /// assert_eq!(iter.next(), None);
 /// ```
 pub struct LockFreeLog {
-    pub(super) iobufs: Arc<IoBufs>,
+    /// iobufs is the underlying IO writer
+    pub iobufs: Arc<IoBufs>,
     flusher_shutdown: Arc<AtomicBool>,
     flusher_handle: Option<std::thread::JoinHandle<()>>,
 }

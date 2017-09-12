@@ -95,6 +95,8 @@ pub struct IoBufs {
     stable: AtomicUsize,
     file_for_writing: Mutex<std::fs::File>,
     deferred_hole_punches: Arc<SegQueue<LogID>>,
+    pub segment_accountant: Mutex<SegmentAccountant>,
+    max_lsn: AtomicUsize,
 }
 
 impl Debug for IoBufs {
@@ -145,6 +147,15 @@ impl IoBufs {
         let file = options.open(&path).unwrap();
         let disk_offset = file.metadata().unwrap().len();
 
+        let remainder = disk_offset % config.get_io_buf_size() as LogID;
+        let next_disk_offset = if remainder == 0 {
+            disk_offset
+        } else {
+            disk_offset + (config.get_io_buf_size() as LogID - remainder)
+        };
+
+        let segment_accountant = SegmentAccountant::new(config.clone(), next_disk_offset);
+
         let bufs = rep_no_copy![IoBuf::new(config.get_io_buf_size()); config.get_io_bufs()];
 
         let current_buf = 0;
@@ -159,7 +170,14 @@ impl IoBufs {
             config: config,
             file_for_writing: Mutex::new(file),
             deferred_hole_punches: deferred_hole_punches,
+            segment_accountant: Mutex::new(segment_accountant),
+            // TODO recover lsn
+            max_lsn: AtomicUsize::new(0),
         }
+    }
+
+    pub fn lsn(&self) -> Lsn {
+        (self.max_lsn.fetch_add(1, SeqCst) + 1) as Lsn
     }
 
     pub fn config(&self) -> &Config {
