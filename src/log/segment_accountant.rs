@@ -15,7 +15,7 @@ pub(super) struct SegmentAccountant {
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct Segment {
     pids: HashSet<PageID>,
-    original_len: usize,
+    pids_len: usize,
     lsn: Lsn,
 }
 
@@ -43,7 +43,16 @@ pub struct Segment {
 //      we need the next log offset, which gets this lsn
 
 impl SegmentAccountant {
+    pub fn new(config: Config, tip: LogID) -> SegmentAccountant {
+        let mut ret = SegmentAccountant::default();
+        ret.config = config;
+        ret.tip = tip;
+        ret
+    }
+
     pub fn set(&mut self, pid: PageID, old_lids: Vec<LogID>, new_lid: LogID, lsn: Lsn) {
+        self.pending_clean.remove(&pid);
+
         let new_idx = new_lid as usize / self.config.get_io_buf_size();
 
         for old_lid in old_lids.into_iter() {
@@ -63,9 +72,8 @@ impl SegmentAccountant {
                 continue;
             }
 
-            if segment.original_len == 0 {
-                // mark the length before decrementing it
-                segment.original_len = segment.pids.len();
+            if segment.pids_len == 0 {
+                segment.pids_len = segment.pids.len();
             }
 
             segment.pids.remove(&pid);
@@ -76,7 +84,7 @@ impl SegmentAccountant {
                 // can be reused immediately
                 self.to_clean.remove(&segment_start);
                 self.free.push_back(segment_start);
-            } else if segment.pids.len() as f64 / segment.original_len as f64 <=
+            } else if segment.pids.len() as f64 / segment.pids_len as f64 <=
                        self.config.get_segment_cleanup_threshold()
             {
                 // can be cleaned
@@ -88,6 +96,8 @@ impl SegmentAccountant {
     }
 
     pub fn merged(&mut self, pid: PageID, lid: LogID, lsn: Lsn) {
+        self.pending_clean.remove(&pid);
+
         let idx = lid as usize / self.config.get_io_buf_size();
 
         let mut segment = &mut self.segments[idx];
@@ -98,8 +108,6 @@ impl SegmentAccountant {
         }
 
         assert_ne!(segment.lsn, 0);
-
-        assert_eq!(segment.lsn as usize / self.config.get_io_buf_size(), idx);
 
         segment.pids.insert(pid);
     }
@@ -124,4 +132,74 @@ impl SegmentAccountant {
 
         lid
     }
+
+    pub fn clean(&mut self) -> Option<PageID> {
+        if self.free.len() > self.config.get_min_free_segments() || self.to_clean.is_empty() {
+            return None;
+        }
+
+        for lid in &self.to_clean {
+            let idx = *lid as usize / self.config.get_io_buf_size();
+            let segment = &self.segments[idx];
+            for pid in &segment.pids {
+                if self.pending_clean.contains(&pid) {
+                    continue;
+                }
+                self.pending_clean.insert(*pid);
+                return Some(*pid);
+            }
+        }
+
+        None
+    }
+}
+
+#[test]
+fn basic_workflow() {
+    // empty clean is None
+    let conf = Config::default();
+    let mut sa = SegmentAccountant::new(conf, 0);
+
+    let mut highest = 0;
+    let mut lsn = || {
+        highest += 1;
+        highest
+    };
+
+    let first = sa.next(lsn());
+    let second = sa.next(lsn());
+    let third = sa.next(lsn());
+
+    sa.merged(0, first, lsn());
+
+    // assert that sets for the same pid don't yield anything to clean yet
+    sa.set(0, vec![first], first, lsn());
+    assert_eq!(sa.clean(), None);
+    sa.set(0, vec![first], first, lsn());
+    assert_eq!(sa.clean(), None);
+    sa.set(0, vec![first], first, lsn());
+    assert_eq!(sa.clean(), None);
+    sa.set(0, vec![first], first, lsn());
+    assert_eq!(sa.clean(), None);
+
+    // assert that when we roll over to the next log, we can immediately reuse first
+    let fourth = sa.next(lsn());
+    sa.set(0, vec![first], second, lsn());
+    assert_eq!(sa.clean(), None);
+    let fifth = sa.next(lsn());
+    assert_eq!(fifth, first);
+    sa.merged(1, second, lsn());
+    sa.merged(2, second, lsn());
+    sa.merged(3, second, lsn());
+    sa.merged(4, second, lsn());
+    sa.merged(5, second, lsn());
+
+    // now move a page from second to third, and assert pid 1 can be cleaned
+    sa.set(0, vec![second], third, lsn());
+    sa.set(2, vec![second], third, lsn());
+    sa.set(3, vec![second], third, lsn());
+    sa.set(4, vec![second], third, lsn());
+    sa.set(5, vec![second], third, lsn());
+    assert_eq!(sa.clean(), Some(1));
+    assert_eq!(sa.clean(), None);
 }
