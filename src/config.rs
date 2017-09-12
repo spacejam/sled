@@ -46,6 +46,8 @@ impl Default for Config {
             snapshot_after_ops: 1_000_000,
             snapshot_path: None,
             cache_fixup_threshold: 1,
+            segment_cleanup_threshold: 0.2,
+            min_free_segments: 3,
             tc: ThreadCache::default(),
             tmp_path: tmp_path.to_owned(),
         }));
@@ -96,6 +98,8 @@ pub struct ConfigInner {
     snapshot_after_ops: usize,
     snapshot_path: Option<String>,
     cache_fixup_threshold: usize,
+    segment_cleanup_threshold: f64,
+    min_free_segments: usize,
     tc: ThreadCache<fs::File>,
     tmp_path: String,
 }
@@ -140,7 +144,9 @@ impl ConfigInner {
         (flush_every_ms, get_flush_every_ms, set_flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
         (snapshot_after_ops, get_snapshot_after_ops, set_snapshot_after_ops, usize, "number of operations between page table snapshots"),
         (snapshot_path, get_snapshot_path, set_snapshot_path, Option<String>, "snapshot file location"),
-        (cache_fixup_threshold, get_cache_fixup_threshold, set_cache_fixup_threshold, usize, "the maximum length of a cached page fragment chain")
+        (cache_fixup_threshold, get_cache_fixup_threshold, set_cache_fixup_threshold, usize, "the maximum length of a cached page fragment chain"),
+        (segment_cleanup_threshold, get_segment_cleanup_threshold, set_segment_cleanup_threshold, f64, "the proportion of remaining valid pages in the segment"),
+        (min_free_segments, get_min_free_segments, set_min_free_segments, usize, "the minimum number of free segments to have on-deck before a compaction occurs")
     );
 
     /// Retrieve a thread-local file handle to the configured underlying storage,

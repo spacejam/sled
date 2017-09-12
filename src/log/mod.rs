@@ -12,6 +12,7 @@ mod lss;
 mod iobuf;
 mod reservation;
 mod periodic_flusher;
+mod segment_accountant;
 
 pub use self::lss::*;
 pub use self::iobuf::*;
