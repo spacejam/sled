@@ -230,8 +230,10 @@ impl SegmentAccountant {
         None
     }
 
-    pub fn segment_snapshot_iter(&self) -> Box<Iterator<Item = (Lsn, LogID)>> {
-        Box::new(self.ordering.clone().into_iter())
+    pub fn segment_snapshot_iter_from(&self, lsn: Lsn) -> Box<Iterator<Item = (Lsn, LogID)>> {
+        Box::new(self.ordering.clone().into_iter().filter(
+            move |&(l, _)| l >= lsn,
+        ))
     }
 }
 
@@ -287,10 +289,4 @@ fn basic_workflow() {
     sa.set(5, vec![second], third, lsn());
     assert_eq!(sa.clean(), Some(1));
     assert_eq!(sa.clean(), None);
-}
-
-#[test]
-fn set_shoot_in_foot() {
-    // two sets for the same pid land in one segment, merges in later ones
-    // is the segment up for grabs?
 }

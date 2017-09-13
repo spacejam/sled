@@ -1,7 +1,6 @@
 use std::cell::UnsafeCell;
 use std::fmt::{self, Debug};
-use std::fs::File;
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io::{self, SeekFrom};
 use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
@@ -40,10 +39,6 @@ pub trait Log: Sized {
     /// Try to flush all pending writes up until the
     /// specified log sequence number.
     fn make_stable(&self, lsn: Lsn);
-
-    /// Mark the provided message as deletable by the
-    /// underlying storage.
-    fn punch_hole(&self, id: LogID) -> io::Result<()>;
 
     /// Return the configuration in use by the system.
     fn config(&self) -> &Config;
@@ -109,13 +104,59 @@ impl LogRead {
 }
 
 pub struct Segment {
-    bytes: Vec<u8>,
+    buf: Vec<u8>,
     lsn: Lsn,
-    offset: usize,
+    read_offset: usize,
+    position: LogID,
+}
+
+impl Segment {
+    fn read_next(&mut self) -> Option<LogRead> {
+        if self.read_offset + HEADER_LEN > self.buf.len() {
+            return None;
+        }
+
+        let rel_i = self.read_offset;
+
+        let valid = self.buf[rel_i] == 1;
+        let len_buf = &self.buf[rel_i + 1..rel_i + 5];
+        let crc16_buf = &self.buf[rel_i + 5..rel_i + HEADER_LEN];
+
+        let len32: u32 =
+            unsafe { std::mem::transmute([len_buf[0], len_buf[1], len_buf[2], len_buf[3]]) };
+        let mut len = len32 as usize;
+
+        if len > self.buf.len() - self.read_offset {
+            #[cfg(feature = "log")]
+            error!("log read invalid message length, {} should be <= {}", len, max);
+            return Some(LogRead::Corrupted(len));
+        } else if len == 0 && !valid {
+            assert_eq!(crc16_buf, [0, 0]);
+            len = HEADER_LEN;
+            for byte in &self.buf[rel_i + HEADER_LEN..] {
+                if *byte != 0 {
+                    break;
+                }
+                len += 1;
+            }
+        }
+
+        if !valid {
+            self.read_offset += len;
+            return Some(LogRead::Zeroed(len));
+        }
+
+        let lower_bound = rel_i + HEADER_LEN;
+        let upper_bound = lower_bound + len;
+        let buf = self.buf[lower_bound..upper_bound].to_vec();
+
+        self.read_offset = upper_bound;
+
+        Some(LogRead::Flush(buf, len))
+    }
 }
 
 pub struct LogIter<'a, L: 'a + Log> {
-    next_offset: LogID,
     log: &'a L,
     segment: Option<Segment>,
     segment_iter: Box<Iterator<Item = (Lsn, LogID)>>,
@@ -128,54 +169,39 @@ impl<'a, L> Iterator for LogIter<'a, L>
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            match self.log.read(self.next_offset) {
-                Ok(LogRead::Flush(buf, len)) => {
-                    let offset = self.next_offset;
-                    self.next_offset += len as LogID + HEADER_LEN as LogID;
-                    return Some((offset, buf));
+            if let Some(ref mut segment) = self.segment {
+                // if segment.read_next is None, roll it
+                match segment.read_next() {
+                    Some(LogRead::Zeroed(_)) => continue,
+                    Some(LogRead::Flush(buf, len)) => {
+                        let base = segment.position;
+                        let rel_i = segment.read_offset - (len + HEADER_LEN);
+                        return Some((base + rel_i as LogID, buf));
+                    }
+                    Some(LogRead::Corrupted(_)) => return None,
+                    None => {}
                 }
-                Ok(LogRead::Zeroed(len)) => {
-                    self.next_offset += len as LogID;
+            } else {
+                // if segment is None, read_segment
+                let next = self.segment_iter.next();
+                if next.is_none() {
+                    return None;
                 }
-                _ => return None,
+                let (lsn, lid) = next.unwrap();
+                let next_segment = self.log.read_segment(lid);
+                if let Err(_e) = next_segment {
+                    #[cfg(feature = "log")]
+                    error!("log read_segment failed: {:?}", _e);
+                    return None;
+                }
+
+                let next_segment = next_segment.unwrap();
+                assert_eq!(lsn, next_segment.lsn);
+
+                self.segment = Some(next_segment);
+                continue;
             }
+            self.segment.take();
         }
     }
-}
-
-pub fn punch_hole(f: &mut File, id: LogID) -> io::Result<()> {
-    let start = clock();
-    f.seek(SeekFrom::Start(id + 1))?;
-    let mut len_buf = [0u8; 4];
-    f.read_exact(&mut len_buf)?;
-
-    let len32: u32 = unsafe { std::mem::transmute(len_buf) };
-    let len = len32 as usize;
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        use std::io::Write;
-
-        f.seek(SeekFrom::Start(id))?;
-        let zeros = vec![0; HEADER_LEN + len];
-        f.write_all(&*zeros)?;
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::unix::io::AsRawFd;
-        use libc::{FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE, fallocate};
-
-        let mode = FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE;
-
-        let fd = f.as_raw_fd();
-
-        unsafe {
-            fallocate(fd, mode, id as i64, len as i64 + HEADER_LEN as i64);
-        }
-    }
-
-    M.punch_hole.measure(clock() - start);
-
-    Ok(())
 }

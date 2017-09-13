@@ -1,4 +1,5 @@
-use std::io::ErrorKind::UnexpectedEof;
+use std::io::{Error, Read, Seek};
+use std::io::ErrorKind::{Other, UnexpectedEof};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -108,6 +109,13 @@ impl Log for LockFreeLog {
     /// pausing segment rewriting on the segment accountant!
     fn read_segment(&self, id: LogID) -> io::Result<Segment> {
         let segment_header_read = self.read(id)?;
+        println!("shr: {:?}", segment_header_read);
+        if segment_header_read.is_corrupt() {
+            return Err(Error::new(Other, "corrupt segment"));
+        }
+        if segment_header_read.is_zeroed() {
+            return Err(Error::new(Other, "empty segment"));
+        }
         let lsn_vec = segment_header_read.flush().unwrap();
         let mut lsn_buf = [0u8; 8];
         lsn_buf.copy_from_slice(&*lsn_vec);
@@ -126,20 +134,20 @@ impl Log for LockFreeLog {
         }
 
         Ok(Segment {
-            bytes: buf,
+            buf: buf,
             lsn: lsn,
-            offset: 8 + HEADER_LEN,
+            read_offset: 8 + HEADER_LEN,
+            position: id,
         })
     }
 
     /// Return an iterator over the log, starting with
     /// a specified offset.
-    fn iter_from(&self, id: LogID) -> LogIter<Self> {
+    fn iter_from(&self, lsn: Lsn) -> LogIter<Self> {
         let sa = self.iobufs.segment_accountant.lock().unwrap();
-        let segment_iter = sa.segment_snapshot_iter();
+        let segment_iter = sa.segment_snapshot_iter_from(lsn);
 
         LogIter {
-            next_offset: id,
             log: self,
             segment: None,
             segment_iter: segment_iter,
@@ -190,6 +198,8 @@ impl Log for LockFreeLog {
 
         if !valid {
             M.read.measure(clock() - start);
+            // this is + 5 not + HEADER_LEN because we're 2 short when
+            // we started seeking for a non-zero byte (crc16)
             return Ok(LogRead::Zeroed(len + 5));
         }
 
@@ -232,7 +242,8 @@ impl Log for LockFreeLog {
         self.iobufs.stable()
     }
 
-    /// blocks until the specified id has been made stable on disk
+    /// blocks until the specified log sequence number has
+    /// been made stable on disk
     fn make_stable(&self, lsn: Lsn) {
         let start = clock();
         let mut spins = 0;
@@ -246,14 +257,5 @@ impl Log for LockFreeLog {
             }
         }
         M.make_stable.measure(clock() - start);
-    }
-
-    /// deallocates the data part of a log id
-    fn punch_hole(&self, id: LogID) -> std::io::Result<()> {
-        // we zero out the valid byte, and use fallocate to punch a hole
-        // in the actual data, but keep the len for recovery.
-        let cached_f = self.config().cached_file();
-        let mut f = cached_f.borrow_mut();
-        punch_hole(&mut f, id)
     }
 }

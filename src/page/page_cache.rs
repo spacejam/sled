@@ -313,9 +313,6 @@ impl<PM, P, R> PageCache<PM, P, R>
 
     fn pull(&self, lid: LogID) -> P {
         let start = clock();
-        // NB make_stable here is necessary when cache is thrashing like crazy or we'll
-        // need to page in and out things that haven't hit the disk yet...
-        self.log.make_stable(lid);
         let bytes = match self.log.read(lid).map_err(|_| ()) {
             Ok(LogRead::Flush(data, _len)) => data,
             _ => panic!("read invalid data at lid {}", lid),
