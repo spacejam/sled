@@ -121,6 +121,9 @@ impl SegmentAccountant {
             }
 
             let segment = &mut self.segments[idx];
+            if segment.lsn.is_none() {
+                segment.lsn = Some(lsn);
+            }
 
             if segment.lsn.unwrap() > lsn {
                 // has been replaced after this call already,
@@ -162,6 +165,9 @@ impl SegmentAccountant {
         }
 
         let segment = &mut self.segments[idx];
+        if segment.lsn.is_none() {
+            segment.lsn = Some(lsn);
+        }
 
         if segment.lsn.unwrap() > lsn {
             // a race happened, and our Lsn does not apply anymore
@@ -181,7 +187,6 @@ impl SegmentAccountant {
             self.free.pop_front()
         }.unwrap_or_else(|| {
             let lid = self.tip;
-            println!("tip: {} + {}", self.tip, self.config.get_io_buf_size());
             self.tip += self.config.get_io_buf_size() as LogID;
             lid
         });
@@ -206,7 +211,9 @@ impl SegmentAccountant {
 
         self.ordering.insert(lsn, lid);
 
-        println!("returning lid: {}", lid);
+        #[cfg(feature = "log")]
+        debug!("segment accountant returning offset {}", lid);
+
         lid
     }
 
@@ -234,6 +241,21 @@ impl SegmentAccountant {
         Box::new(self.ordering.clone().into_iter().filter(
             move |&(l, _)| l >= lsn,
         ))
+    }
+
+    pub fn is_recovered(&self) -> bool {
+        !self.segments.is_empty()
+    }
+
+    pub fn recover(&mut self, lsn: Lsn, lid: LogID) {
+        let idx = lid as usize / self.config.get_io_buf_size();
+
+        if self.segments.len() <= idx {
+            self.segments.resize(idx + 1, Segment::default());
+        }
+
+        self.segments[idx].lsn = Some(lsn);
+        self.ordering.insert(lsn, lid);
     }
 }
 

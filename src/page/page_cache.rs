@@ -595,21 +595,21 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         let mut snapshot = snapshot_opt.unwrap();
 
-        let current_stable = self.log.stable_offset();
+        self.log.scan_segment_lsns();
 
         #[cfg(feature = "log")]
         info!(
-            "snapshot starting from offset {} to {}",
-            snapshot.max_lid,
-            current_stable
+            "snapshot starting from offset {} to the segment containing {}",
+            snapshot.max_segment_lsn,
+            self.log.stable_offset(),
         );
 
         let mut recovery = snapshot.recovery.take();
+        let mut max_segment_lsn = snapshot.max_segment_lsn;
 
-        for (log_id, bytes) in self.log.iter_from(snapshot.max_lid) {
-            if log_id >= current_stable {
-                // don't need to go farther
-                break;
+        for (segment_lsn, log_id, bytes) in self.log.iter_from(snapshot.max_segment_lsn) {
+            if segment_lsn > max_segment_lsn {
+                max_segment_lsn = segment_lsn;
             }
 
             if let Ok(prepend) = deserialize::<LoggedUpdate<P>>(&*bytes) {
@@ -648,7 +648,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         }
         snapshot.free.sort();
         snapshot.free.reverse();
-        snapshot.max_lid = current_stable;
+        snapshot.max_segment_lsn = max_segment_lsn;
         snapshot.recovery = recovery;
 
         let raw_bytes = serialize(&snapshot, Infinite).unwrap();
@@ -668,8 +668,8 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         self.last_snapshot.swap(snapshot, SeqCst);
 
-        let path_1 = format!("{}.{}.in___motion", prefix, current_stable);
-        let path_2 = format!("{}.{}", prefix, current_stable);
+        let path_1 = format!("{}.{}.in___motion", prefix, max_segment_lsn);
+        let path_2 = format!("{}.{}", prefix, max_segment_lsn);
         let mut f = std::fs::OpenOptions::new()
             .write(true)
             .create(true)

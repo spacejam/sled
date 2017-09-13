@@ -89,6 +89,28 @@ impl LockFreeLog {
     pub fn flush(&self) {
         self.iobufs.flush();
     }
+
+    /// Scan the log file if we don't know of any
+    /// Lsn offsets yet.
+    pub fn scan_segment_lsns(&self) {
+        let mut sa = self.iobufs.segment_accountant.lock().unwrap();
+        if sa.is_recovered() {
+            return;
+        }
+
+        let mut cursor = 0;
+        loop {
+            // in the future this can be optimized to just read
+            // the initial header at that position... but we need to
+            // make sure the segment is not torn
+            if let Ok(segment) = self.read_segment(cursor) {
+                sa.recover(segment.lsn, segment.position);
+                cursor += self.config().get_io_buf_size() as LogID;
+            } else {
+                break;
+            }
+        }
+    }
 }
 
 impl Log for LockFreeLog {

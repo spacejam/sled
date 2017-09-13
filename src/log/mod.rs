@@ -44,8 +44,8 @@ pub trait Log: Sized {
     fn config(&self) -> &Config;
 
     /// Return an iterator over the log, starting with
-    /// a specified offset.
-    fn iter_from(&self, id: LogID) -> LogIter<Self>;
+    /// a specified log sequence number.
+    fn iter_from(&self, lsn: Lsn) -> LogIter<Self>;
 }
 
 #[doc(hidden)]
@@ -128,7 +128,11 @@ impl Segment {
 
         if len > self.buf.len() - self.read_offset {
             #[cfg(feature = "log")]
-            error!("log read invalid message length, {} should be <= {}", len, max);
+            error!(
+                "log read invalid message length, {} should be <= {}",
+                len,
+                self.buf.len() - self.read_offset
+            );
             return Some(LogRead::Corrupted(len));
         } else if len == 0 && !valid {
             assert_eq!(crc16_buf, [0, 0]);
@@ -165,7 +169,7 @@ pub struct LogIter<'a, L: 'a + Log> {
 impl<'a, L> Iterator for LogIter<'a, L>
     where L: 'a + Log
 {
-    type Item = (LogID, Vec<u8>);
+    type Item = (Lsn, LogID, Vec<u8>);
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -176,7 +180,7 @@ impl<'a, L> Iterator for LogIter<'a, L>
                     Some(LogRead::Flush(buf, len)) => {
                         let base = segment.position;
                         let rel_i = segment.read_offset - (len + HEADER_LEN);
-                        return Some((base + rel_i as LogID, buf));
+                        return Some((segment.lsn, base + rel_i as LogID, buf));
                     }
                     Some(LogRead::Corrupted(_)) => return None,
                     None => {}

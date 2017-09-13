@@ -128,7 +128,7 @@ fn main() {
         .cache_bits(6)
         .cache_capacity(128_000_000)
         .flush_every_ms(None)
-        .snapshot_after_ops(100000000);
+        .snapshot_after_ops(1000000);
 
     let tree = Arc::new(config.tree());
 
