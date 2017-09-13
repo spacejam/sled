@@ -115,6 +115,48 @@ impl Log for LockFreeLog {
         self.iobufs.reserve(buf).complete()
     }
 
+    /// read a segment of log messages. Only call after
+    /// pausing segment rewriting on the segment accountant!
+    fn read_segment(&self, id: LogID) -> io::Result<Segment> {
+        let segment_header_read = self.read(id)?;
+        let lsn_vec = segment_header_read.flush().unwrap();
+        let mut lsn_buf = [0u8; 8];
+        lsn_buf.copy_from_slice(&*lsn_vec);
+        let lsn: Lsn = unsafe { std::mem::transmute(lsn_buf) };
+
+        let mut buf = Vec::with_capacity(self.config().get_io_buf_size());
+        unsafe {
+            buf.set_len(self.config().get_io_buf_size());
+        }
+        {
+            let cached_f = self.config().cached_file();
+            let mut f = cached_f.borrow_mut();
+            f.seek(SeekFrom::Start(id))?;
+
+            f.read_exact(&mut *buf)?;
+        }
+
+        Ok(Segment {
+            bytes: buf,
+            lsn: lsn,
+            offset: 8 + HEADER_LEN,
+        })
+    }
+
+    /// Return an iterator over the log, starting with
+    /// a specified offset.
+    fn iter_from(&self, id: LogID) -> LogIter<Self> {
+        let sa = self.iobufs.segment_accountant.lock().unwrap();
+        let segment_iter = sa.segment_snapshot_iter();
+
+        LogIter {
+            next_offset: id,
+            log: self,
+            segment: None,
+            segment_iter: segment_iter,
+        }
+    }
+
     /// read a buffer from the disk
     fn read(&self, id: LogID) -> io::Result<LogRead> {
         let start = clock();

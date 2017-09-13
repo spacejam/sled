@@ -18,8 +18,6 @@ struct IoBuf {
     header: AtomicUsize,
     log_offset: AtomicUsize,
     lsn: AtomicUsize,
-    last_lid: AtomicUsize,
-    next_lid: AtomicUsize,
 }
 
 unsafe impl Sync for IoBuf {}
@@ -45,25 +43,15 @@ impl IoBuf {
             header: AtomicUsize::new(0),
             log_offset: AtomicUsize::new(std::usize::MAX),
             lsn: AtomicUsize::new(0),
-            last_lid: AtomicUsize::new(0),
-            next_lid: AtomicUsize::new(0),
         }
     }
 
-    fn store_segment_header(
-        &self,
-        lsn: Lsn,
-        last_lid: LogID,
-        next_lid: LogID,
-        use_compression: bool,
-    ) {
+    fn store_segment_header(&self, lsn: Lsn, use_compression: bool) {
         // set internal
         self.lsn.store(lsn as usize, SeqCst);
-        self.last_lid.store(last_lid as usize, SeqCst);
-        self.next_lid.store(next_lid as usize, SeqCst);
 
         // generate bytes
-        let bytes: [u8; 24] = unsafe { std::mem::transmute([lsn, last_lid, next_lid]) };
+        let bytes: [u8; 8] = unsafe { std::mem::transmute(lsn) };
         let mut header_vec = encapsulate(bytes.to_vec(), use_compression);
 
         // bump offset
@@ -195,18 +183,12 @@ impl IoBufs {
 
         // TODO recover lsn and last LogID
         let max_lsn = AtomicUsize::new(0);
-        let last_lid = 0;
         let segment_lsn = (max_lsn.fetch_add(1, SeqCst) + 1) as LogID;
-        let (offset_to_write, next_offset_to_write) = segment_accountant.next(segment_lsn);
+        let offset_to_write = segment_accountant.next(segment_lsn);
 
         // TODO record lsn, pointers
         bufs[current_buf].set_log_offset(offset_to_write);
-        bufs[current_buf].store_segment_header(
-            segment_lsn,
-            last_lid,
-            next_offset_to_write,
-            config.get_use_compression(),
-        );
+        bufs[current_buf].store_segment_header(segment_lsn, config.get_use_compression());
 
         IoBufs {
             bufs: bufs,
@@ -477,7 +459,7 @@ impl IoBufs {
 
         let mut sa = self.segment_accountant.lock().unwrap();
         let header_lsn = self.lsn();
-        let (next_offset, next_next_offset) = sa.next(header_lsn);
+        let next_offset = sa.next(header_lsn);
 
         let next_idx = (idx + 1) % self.config.get_io_bufs();
         let next_iobuf = &self.bufs[next_idx];
@@ -495,12 +477,7 @@ impl IoBufs {
         trace!("({:?}) {} log set", tn(), next_idx);
 
         // NB allows new threads to start writing into this buffer
-        next_iobuf.store_segment_header(
-            header_lsn,
-            iobuf.last_lid.load(SeqCst) as LogID,
-            next_next_offset,
-            self.config.get_use_compression(),
-        );
+        next_iobuf.store_segment_header(header_lsn, self.config.get_use_compression());
 
         #[cfg(feature = "log")]
         trace!("({:?}) {} zeroed header", tn(), next_idx);

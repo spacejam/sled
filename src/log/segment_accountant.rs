@@ -1,23 +1,24 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 
 use super::*;
 
 #[derive(Default, Debug)]
 pub struct SegmentAccountant {
-    pub tip: LogID,
-    pub segments: Vec<Segment>,
-    pub to_clean: HashSet<LogID>,
-    pub pending_clean: HashSet<PageID>,
-    pub free: VecDeque<LogID>,
-    pub config: Config,
-    on_deck: Option<LogID>,
+    tip: LogID,
+    segments: Vec<Segment>,
+    to_clean: HashSet<LogID>,
+    pending_clean: HashSet<PageID>,
+    free: VecDeque<LogID>,
+    config: Config,
+    pause_rewriting: bool,
+    ordering: BTreeMap<Lsn, LogID>,
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct Segment {
     pids: HashSet<PageID>,
     pids_len: usize,
-    lsn: Lsn,
+    lsn: Option<Lsn>,
     freed: bool,
 }
 
@@ -52,6 +53,18 @@ impl SegmentAccountant {
         ret
     }
 
+    /// this will cause all new allocations to occur at the end of the log, which
+    /// is necessary to preserve consistency while concurrently iterating through
+    /// the log during snapshot creation.
+    pub fn pause_rewriting(&mut self) {
+        self.pause_rewriting = true;
+    }
+
+    /// this re-enables segment rewriting after they no longer contain fresh data.
+    pub fn resume_rewriting(&mut self) {
+        self.pause_rewriting = false;
+    }
+
     pub fn freed(&mut self, pid: PageID, old_lids: Vec<LogID>, lsn: Lsn) {
         self.pending_clean.remove(&pid);
 
@@ -60,7 +73,7 @@ impl SegmentAccountant {
 
             let segment = &mut self.segments[idx];
 
-            if segment.lsn > lsn {
+            if segment.lsn.unwrap() > lsn {
                 // has been replaced after this call already,
                 // quite a big race happened
                 continue;
@@ -109,7 +122,7 @@ impl SegmentAccountant {
 
             let segment = &mut self.segments[idx];
 
-            if segment.lsn > lsn {
+            if segment.lsn.unwrap() > lsn {
                 // has been replaced after this call already,
                 // quite a big race happened
                 continue;
@@ -150,7 +163,7 @@ impl SegmentAccountant {
 
         let segment = &mut self.segments[idx];
 
-        if segment.lsn > lsn {
+        if segment.lsn.unwrap() > lsn {
             // a race happened, and our Lsn does not apply anymore
             return;
         }
@@ -160,27 +173,18 @@ impl SegmentAccountant {
         segment.pids.insert(pid);
     }
 
-    fn roll_on_deck(&mut self) -> LogID {
+    pub fn next(&mut self, lsn: Lsn) -> LogID {
         // pop free or add to end
-        let lid = self.free.pop_front().unwrap_or_else(|| {
+        let lid = if self.pause_rewriting {
+            None
+        } else {
+            self.free.pop_front()
+        }.unwrap_or_else(|| {
             let lid = self.tip;
             println!("tip: {} + {}", self.tip, self.config.get_io_buf_size());
             self.tip += self.config.get_io_buf_size() as LogID;
             lid
         });
-        self.on_deck = Some(lid);
-        lid
-    }
-
-    pub fn next(&mut self, lsn: Lsn) -> (LogID, LogID) {
-        // pop free or add to end
-        if self.on_deck.is_none() {
-            self.roll_on_deck();
-        }
-
-        let lid = self.on_deck.unwrap();
-
-        let next = self.roll_on_deck();
 
         // pin lsn to this segment
         let idx = lid as usize / self.config.get_io_buf_size();
@@ -190,17 +194,20 @@ impl SegmentAccountant {
         }
 
         let segment = &mut self.segments[idx];
-        if !segment.pids.is_empty() {
-            println!("bad reuse of segment at {}", lid);
-        }
-        segment.lsn = lsn;
-        segment.freed = false;
-        segment.pids_len = 0;
         assert!(segment.pids.is_empty());
 
+        if let Some(old_lsn) = segment.lsn {
+            self.ordering.remove(&old_lsn);
+        }
 
-        println!("returning lid: {} and next: {}", lid, next);
-        (lid, next)
+        segment.lsn = Some(lsn);
+        segment.freed = false;
+        segment.pids_len = 0;
+
+        self.ordering.insert(lsn, lid);
+
+        println!("returning lid: {}", lid);
+        lid
     }
 
     pub fn clean(&mut self) -> Option<PageID> {
@@ -221,6 +228,10 @@ impl SegmentAccountant {
         }
 
         None
+    }
+
+    pub fn segment_snapshot_iter(&self) -> Box<Iterator<Item = (Lsn, LogID)>> {
+        Box::new(self.ordering.clone().into_iter())
     }
 }
 
@@ -276,4 +287,10 @@ fn basic_workflow() {
     sa.set(5, vec![second], third, lsn());
     assert_eq!(sa.clean(), Some(1));
     assert_eq!(sa.clean(), None);
+}
+
+#[test]
+fn set_shoot_in_foot() {
+    // two sets for the same pid land in one segment, merges in later ones
+    // is the segment up for grabs?
 }

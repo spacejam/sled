@@ -246,6 +246,10 @@ impl Arbitrary for Op {
     }
 }
 
+#[test]
+#[ignore]
+fn test_segments_connect() {}
+
 #[derive(Debug, Clone)]
 struct OpVec {
     ops: Vec<Op>,

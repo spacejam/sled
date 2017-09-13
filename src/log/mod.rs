@@ -31,6 +31,9 @@ pub trait Log: Sized {
     /// Read a buffer from underlying storage.
     fn read(&self, id: LogID) -> io::Result<LogRead>;
 
+    /// Read a segment of log messages.
+    fn read_segment(&self, id: LogID) -> io::Result<Segment>;
+
     /// Return the current stable offset.
     fn stable_offset(&self) -> LogID;
 
@@ -47,12 +50,7 @@ pub trait Log: Sized {
 
     /// Return an iterator over the log, starting with
     /// a specified offset.
-    fn iter_from(&self, id: LogID) -> LogIter<Self> {
-        LogIter {
-            next_offset: id,
-            log: self,
-        }
-    }
+    fn iter_from(&self, id: LogID) -> LogIter<Self>;
 }
 
 #[doc(hidden)]
@@ -110,9 +108,17 @@ impl LogRead {
     }
 }
 
+pub struct Segment {
+    bytes: Vec<u8>,
+    lsn: Lsn,
+    offset: usize,
+}
+
 pub struct LogIter<'a, L: 'a + Log> {
     next_offset: LogID,
     log: &'a L,
+    segment: Option<Segment>,
+    segment_iter: Box<Iterator<Item = (Lsn, LogID)>>,
 }
 
 impl<'a, L> Iterator for LogIter<'a, L>

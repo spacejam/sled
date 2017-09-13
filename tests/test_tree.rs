@@ -154,6 +154,7 @@ fn recover_tree() {
     println!("========== recovery ==========");
     let conf = Config::default()
         .blink_fanout(2)
+        .io_buf_size(1024)
         .flush_every_ms(None)
         .snapshot_after_ops(100);
     let t = conf.tree();
@@ -241,6 +242,7 @@ fn prop_tree_matches_btreemap(ops: OpVec, blink_fanout: u8, snapshot_after: u8) 
     use self::Op::*;
     let config = Config::default()
         .snapshot_after_ops(snapshot_after as usize + 1)
+        .io_buf_size(1024)
         .blink_fanout(blink_fanout as usize + 2)
         .cache_capacity(40);
     let mut tree = config.tree();

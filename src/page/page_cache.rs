@@ -498,8 +498,16 @@ impl<PM, P, R> PageCache<PM, P, R>
                 let id = log_reservation.log_id();
                 log_reservation.complete();
 
-                let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
-                sa.set(pid, lids_from_stack(old, scope), id, self.log.iobufs.lsn());
+                {
+                    let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
+                    sa.set(pid, lids_from_stack(old, scope), id, self.log.iobufs.lsn());
+                }
+
+                let count = self.updates.fetch_add(1, SeqCst) + 1;
+                let should_snapshot = count % self.config().get_snapshot_after_ops() == 0;
+                if should_snapshot {
+                    self.write_snapshot();
+                }
             } else {
                 log_reservation.abort();
             }
@@ -546,8 +554,10 @@ impl<PM, P, R> PageCache<PM, P, R>
                 let id = log_reservation.log_id();
                 log_reservation.complete();
 
-                let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
-                sa.merged(pid, id, self.log.iobufs.lsn());
+                {
+                    let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
+                    sa.merged(pid, id, self.log.iobufs.lsn());
+                }
 
                 let count = self.updates.fetch_add(1, SeqCst) + 1;
                 let should_snapshot = count % self.config().get_snapshot_after_ops() == 0;
@@ -562,6 +572,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
     fn write_snapshot(&self) {
         let start = clock();
+
         self.log.flush();
 
         let prefix = self.config().snapshot_prefix();
@@ -576,6 +587,13 @@ impl<PM, P, R> PageCache<PM, P, R>
             );
             M.write_snapshot.measure(clock() - start);
             return;
+        }
+
+        // we disable rewriting so that our log becomes append-only,
+        // allowing us to iterate through it without corrupting ourselves.
+        {
+            let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
+            sa.pause_rewriting();
         }
 
         let mut snapshot = snapshot_opt.unwrap();
@@ -596,6 +614,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 // don't need to go farther
                 break;
             }
+
             if let Ok(prepend) = deserialize::<LoggedUpdate<P>>(&*bytes) {
                 if prepend.pid >= snapshot.max_pid {
                     snapshot.max_pid = prepend.pid + 1;
@@ -681,6 +700,10 @@ impl<PM, P, R> PageCache<PM, P, R>
                     warn!("failed to remove old snapshot file, maybe snapshot race? {}", _e);
                 }
             }
+        }
+        {
+            let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
+            sa.resume_rewriting();
         }
         M.write_snapshot.measure(clock() - start);
     }

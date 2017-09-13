@@ -48,6 +48,7 @@ impl Default for Config {
             cache_fixup_threshold: 1,
             segment_cleanup_threshold: 0.2,
             min_free_segments: 3,
+            zero_copy_storage: false,
             tc: ThreadCache::default(),
             tmp_path: tmp_path.to_owned(),
         }));
@@ -100,6 +101,7 @@ pub struct ConfigInner {
     cache_fixup_threshold: usize,
     segment_cleanup_threshold: f64,
     min_free_segments: usize,
+    zero_copy_storage: bool,
     tc: ThreadCache<fs::File>,
     tmp_path: String,
 }
@@ -146,7 +148,8 @@ impl ConfigInner {
         (snapshot_path, get_snapshot_path, set_snapshot_path, Option<String>, "snapshot file location"),
         (cache_fixup_threshold, get_cache_fixup_threshold, set_cache_fixup_threshold, usize, "the maximum length of a cached page fragment chain"),
         (segment_cleanup_threshold, get_segment_cleanup_threshold, set_segment_cleanup_threshold, f64, "the proportion of remaining valid pages in the segment"),
-        (min_free_segments, get_min_free_segments, set_min_free_segments, usize, "the minimum number of free segments to have on-deck before a compaction occurs")
+        (min_free_segments, get_min_free_segments, set_min_free_segments, usize, "the minimum number of free segments to have on-deck before a compaction occurs"),
+        (zero_copy_storage, get_zero_copy_storage, set_zero_copy_storage, bool, "disabling of the log segment copy cleaner")
     );
 
     /// Retrieve a thread-local file handle to the configured underlying storage,
