@@ -122,13 +122,12 @@ fn main() {
 
     let config = sled::Config::default()
         .io_bufs(2)
-        .io_buf_size(8_000_000)
         .blink_fanout(15)
         .page_consolidation_threshold(10)
         .cache_fixup_threshold(2)
         .cache_bits(6)
         .cache_capacity(128_000_000)
-        .flush_every_ms(Some(500))
+        .flush_every_ms(None)
         .snapshot_after_ops(100000000);
 
     let tree = Arc::new(config.tree());

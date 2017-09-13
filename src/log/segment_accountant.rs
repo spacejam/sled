@@ -10,6 +10,7 @@ pub struct SegmentAccountant {
     pub pending_clean: HashSet<PageID>,
     pub free: VecDeque<LogID>,
     pub config: Config,
+    on_deck: Option<LogID>,
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
@@ -17,6 +18,7 @@ pub struct Segment {
     pids: HashSet<PageID>,
     pids_len: usize,
     lsn: Lsn,
+    freed: bool,
 }
 
 // concurrency properties:
@@ -56,7 +58,7 @@ impl SegmentAccountant {
         for old_lid in old_lids.into_iter() {
             let idx = old_lid as usize / self.config.get_io_buf_size();
 
-            let mut segment = &mut self.segments[idx];
+            let segment = &mut self.segments[idx];
 
             if segment.lsn > lsn {
                 // has been replaced after this call already,
@@ -72,8 +74,9 @@ impl SegmentAccountant {
 
             let segment_start = (idx * self.config.get_io_buf_size()) as LogID;
 
-            if segment.pids.is_empty() {
+            if segment.pids.is_empty() && !segment.freed {
                 // can be reused immediately
+                segment.freed = true;
                 self.to_clean.remove(&segment_start);
                 self.free.push_back(segment_start);
             } else if segment.pids.len() as f64 / segment.pids_len as f64 <=
@@ -100,7 +103,11 @@ impl SegmentAccountant {
                 continue;
             }
 
-            let mut segment = &mut self.segments[idx];
+            if self.segments.len() <= idx {
+                self.segments.resize(idx + 1, Segment::default());
+            }
+
+            let segment = &mut self.segments[idx];
 
             if segment.lsn > lsn {
                 // has been replaced after this call already,
@@ -116,8 +123,9 @@ impl SegmentAccountant {
 
             let segment_start = (idx * self.config.get_io_buf_size()) as LogID;
 
-            if segment.pids.is_empty() {
+            if segment.pids.is_empty() && !segment.freed {
                 // can be reused immediately
+                segment.freed = true;
                 self.to_clean.remove(&segment_start);
                 self.free.push_back(segment_start);
             } else if segment.pids.len() as f64 / segment.pids_len as f64 <=
@@ -136,37 +144,63 @@ impl SegmentAccountant {
 
         let idx = lid as usize / self.config.get_io_buf_size();
 
-        let mut segment = &mut self.segments[idx];
+        if self.segments.len() <= idx {
+            self.segments.resize(idx + 1, Segment::default());
+        }
+
+        let segment = &mut self.segments[idx];
 
         if segment.lsn > lsn {
             // a race happened, and our Lsn does not apply anymore
             return;
         }
 
-        assert_ne!(segment.lsn, 0);
+        //assert_ne!(segment.lsn, 0);
 
         segment.pids.insert(pid);
     }
 
-    pub fn next(&mut self, lsn: Lsn) -> LogID {
+    fn roll_on_deck(&mut self) -> LogID {
         // pop free or add to end
-        let lid = if let Some(lid) = self.free.pop_front() {
-            lid
-        } else {
+        let lid = self.free.pop_front().unwrap_or_else(|| {
             let lid = self.tip;
+            println!("tip: {} + {}", self.tip, self.config.get_io_buf_size());
             self.tip += self.config.get_io_buf_size() as LogID;
             lid
-        };
+        });
+        self.on_deck = Some(lid);
+        lid
+    }
 
+    pub fn next(&mut self, lsn: Lsn) -> (LogID, LogID) {
+        // pop free or add to end
+        if self.on_deck.is_none() {
+            self.roll_on_deck();
+        }
+
+        let lid = self.on_deck.unwrap();
+
+        let next = self.roll_on_deck();
+
+        // pin lsn to this segment
         let idx = lid as usize / self.config.get_io_buf_size();
 
         if self.segments.len() <= idx {
             self.segments.resize(idx + 1, Segment::default());
         }
 
-        self.segments[idx].lsn = lsn;
+        let segment = &mut self.segments[idx];
+        if !segment.pids.is_empty() {
+            println!("bad reuse of segment at {}", lid);
+        }
+        segment.lsn = lsn;
+        segment.freed = false;
+        segment.pids_len = 0;
+        assert!(segment.pids.is_empty());
 
-        lid
+
+        println!("returning lid: {} and next: {}", lid, next);
+        (lid, next)
     }
 
     pub fn clean(&mut self) -> Option<PageID> {
@@ -193,7 +227,10 @@ impl SegmentAccountant {
 #[test]
 fn basic_workflow() {
     // empty clean is None
-    let conf = Config::default();
+    let conf = Config::default()
+        .io_buf_size(1000)
+        .segment_cleanup_threshold(0.2)
+        .min_free_segments(3);
     let mut sa = SegmentAccountant::new(conf, 0);
 
     let mut highest = 0;
@@ -202,9 +239,9 @@ fn basic_workflow() {
         highest
     };
 
-    let first = sa.next(lsn());
-    let second = sa.next(lsn());
-    let third = sa.next(lsn());
+    let first = sa.next(lsn()).0;
+    let second = sa.next(lsn()).0;
+    let third = sa.next(lsn()).0;
 
     sa.merged(0, first, lsn());
 
@@ -219,11 +256,12 @@ fn basic_workflow() {
     assert_eq!(sa.clean(), None);
 
     // assert that when we roll over to the next log, we can immediately reuse first
-    let fourth = sa.next(lsn());
+    let _fourth = sa.next(lsn()).0;
     sa.set(0, vec![first], second, lsn());
     assert_eq!(sa.clean(), None);
-    let fifth = sa.next(lsn());
-    assert_eq!(fifth, first);
+    let (fifth, sixth) = sa.next(lsn());
+    assert_eq!(4000, fifth);
+    assert_eq!(sixth, first);
     sa.merged(1, second, lsn());
     sa.merged(2, second, lsn());
     sa.merged(3, second, lsn());

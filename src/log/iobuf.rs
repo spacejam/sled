@@ -17,6 +17,9 @@ struct IoBuf {
     buf: UnsafeCell<Vec<u8>>,
     header: AtomicUsize,
     log_offset: AtomicUsize,
+    lsn: AtomicUsize,
+    last_lid: AtomicUsize,
+    next_lid: AtomicUsize,
 }
 
 unsafe impl Sync for IoBuf {}
@@ -41,7 +44,37 @@ impl IoBuf {
             buf: UnsafeCell::new(vec![0; buf_size]),
             header: AtomicUsize::new(0),
             log_offset: AtomicUsize::new(std::usize::MAX),
+            lsn: AtomicUsize::new(0),
+            last_lid: AtomicUsize::new(0),
+            next_lid: AtomicUsize::new(0),
         }
+    }
+
+    fn store_segment_header(
+        &self,
+        lsn: Lsn,
+        last_lid: LogID,
+        next_lid: LogID,
+        use_compression: bool,
+    ) {
+        // set internal
+        self.lsn.store(lsn as usize, SeqCst);
+        self.last_lid.store(last_lid as usize, SeqCst);
+        self.next_lid.store(next_lid as usize, SeqCst);
+
+        // generate bytes
+        let bytes: [u8; 24] = unsafe { std::mem::transmute([lsn, last_lid, next_lid]) };
+        let mut header_vec = encapsulate(bytes.to_vec(), use_compression);
+
+        // bump offset
+        let bumped = bump_offset(0, header_vec.len() as u32);
+
+        // write normal message into buffer
+        unsafe {
+            (*self.buf.get()).append(&mut header_vec);
+        }
+
+        self.set_header(bumped);
     }
 
     fn set_log_offset(&self, offset: LogID) {
@@ -154,12 +187,26 @@ impl IoBufs {
             disk_offset + (config.get_io_buf_size() as LogID - remainder)
         };
 
-        let segment_accountant = SegmentAccountant::new(config.clone(), next_disk_offset);
+        let mut segment_accountant = SegmentAccountant::new(config.clone(), next_disk_offset);
 
         let bufs = rep_no_copy![IoBuf::new(config.get_io_buf_size()); config.get_io_bufs()];
 
         let current_buf = 0;
-        bufs[current_buf].set_log_offset(disk_offset);
+
+        // TODO recover lsn and last LogID
+        let max_lsn = AtomicUsize::new(0);
+        let last_lid = 0;
+        let segment_lsn = (max_lsn.fetch_add(1, SeqCst) + 1) as LogID;
+        let (offset_to_write, next_offset_to_write) = segment_accountant.next(segment_lsn);
+
+        // TODO record lsn, pointers
+        bufs[current_buf].set_log_offset(offset_to_write);
+        bufs[current_buf].store_segment_header(
+            segment_lsn,
+            last_lid,
+            next_offset_to_write,
+            config.get_use_compression(),
+        );
 
         IoBufs {
             bufs: bufs,
@@ -172,7 +219,7 @@ impl IoBufs {
             deferred_hole_punches: deferred_hole_punches,
             segment_accountant: Mutex::new(segment_accountant),
             // TODO recover lsn
-            max_lsn: AtomicUsize::new(0),
+            max_lsn: max_lsn,
         }
     }
 
@@ -417,10 +464,6 @@ impl IoBufs {
         trace!("({:?}) {} sealed", tn(), idx);
 
         // open new slot
-        let res_len = offset(sealed) as usize;
-
-        let pad_len = self.config.get_io_buf_size() - res_len;
-
         let max = std::usize::MAX as LogID;
 
         assert_ne!(
@@ -432,7 +475,10 @@ impl IoBufs {
             self
         );
 
-        let next_offset = log_offset + (res_len + pad_len) as LogID;
+        let mut sa = self.segment_accountant.lock().unwrap();
+        let header_lsn = self.lsn();
+        let (next_offset, next_next_offset) = sa.next(header_lsn);
+
         let next_idx = (idx + 1) % self.config.get_io_bufs();
         let next_iobuf = &self.bufs[next_idx];
 
@@ -449,8 +495,13 @@ impl IoBufs {
         trace!("({:?}) {} log set", tn(), next_idx);
 
         // NB allows new threads to start writing into this buffer
-        // TODO write LSN, prev LogID, next LogID to base of segment
-        next_iobuf.set_header(0);
+        next_iobuf.store_segment_header(
+            header_lsn,
+            iobuf.last_lid.load(SeqCst) as LogID,
+            next_next_offset,
+            self.config.get_use_compression(),
+        );
+
         #[cfg(feature = "log")]
         trace!("({:?}) {} zeroed header", tn(), next_idx);
 
@@ -490,7 +541,7 @@ impl IoBufs {
 
         let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
 
-        let pad_buf = &data[res_len..res_len + pad_len];
+        let pad_buf = &data[res_len..];
         unsafe {
             ptr::write_bytes(pad_buf.as_ptr() as *mut u8, 0, pad_len);
         }
@@ -556,7 +607,6 @@ impl Drop for IoBufs {
     }
 }
 
-#[inline(always)]
 fn encapsulate(raw_buf: Vec<u8>, _use_compression: bool) -> Vec<u8> {
     #[cfg(feature = "zstd")]
     let mut buf = if _use_compression {
