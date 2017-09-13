@@ -1,9 +1,6 @@
-use std::sync::Arc;
 use std::io::{Seek, Write};
 use std::path::Path;
 use std::ptr;
-
-use crossbeam::sync::SegQueue;
 
 #[cfg(feature = "zstd")]
 use zstd::block::compress;
@@ -115,7 +112,6 @@ pub struct IoBufs {
     // due to interesting thread interleavings.
     stable: AtomicUsize,
     file_for_writing: Mutex<std::fs::File>,
-    deferred_hole_punches: Arc<SegQueue<LogID>>,
     pub segment_accountant: Mutex<SegmentAccountant>,
     max_lsn: AtomicUsize,
 }
@@ -137,7 +133,7 @@ impl Debug for IoBufs {
 /// `IoBufs` is a set of lock-free buffers for coordinating
 /// writes to underlying storage.
 impl IoBufs {
-    pub fn new(config: Config, deferred_hole_punches: Arc<SegQueue<LogID>>) -> IoBufs {
+    pub fn new(config: Config) -> IoBufs {
         let path = config.get_path();
 
         let dir = Path::new(&path).parent().expect(
@@ -198,7 +194,6 @@ impl IoBufs {
             stable: AtomicUsize::new(disk_offset as usize),
             config: config,
             file_for_writing: Mutex::new(file),
-            deferred_hole_punches: deferred_hole_punches,
             segment_accountant: Mutex::new(segment_accountant),
             // TODO recover lsn
             max_lsn: max_lsn,
@@ -219,24 +214,8 @@ impl IoBufs {
     }
 
     /// Returns the last stable offset in storage.
-    pub(super) fn stable(&self) -> LogID {
-        self.stable.load(SeqCst) as LogID
-    }
-
-    /// Clean up log entries for data that may not
-    /// yet be on the disk yet.
-    pub(super) fn defer_hole_punch(&self, lids: Vec<LogID>) {
-        let stable = self.stable();
-        for &lid in &lids {
-            if stable > lid {
-                // immediately drop
-                let cached_f = self.config.cached_file();
-                let mut f = cached_f.borrow_mut();
-                punch_hole(&mut f, lid).unwrap();
-            } else {
-                self.deferred_hole_punches.push(lid);
-            }
-        }
+    pub(super) fn stable(&self) -> Lsn {
+        self.stable.load(SeqCst) as Lsn
     }
 
     /// Tries to claim a reservation for writing a buffer to a

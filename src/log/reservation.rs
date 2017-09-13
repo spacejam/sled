@@ -24,7 +24,6 @@ impl<'a> Drop for Reservation<'a> {
 impl<'a> Reservation<'a> {
     /// cancel the reservation, placing a failed flush on disk
     pub fn abort(mut self) -> LogID {
-        self.iobufs.defer_hole_punch(vec![self.log_id()]);
         self.flush(false)
     }
 

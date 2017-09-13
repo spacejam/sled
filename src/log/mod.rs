@@ -38,8 +38,8 @@ pub trait Log: Sized {
     fn stable_offset(&self) -> LogID;
 
     /// Try to flush all pending writes up until the
-    /// specified log offset.
-    fn make_stable(&self, id: LogID);
+    /// specified log sequence number.
+    fn make_stable(&self, lsn: Lsn);
 
     /// Mark the provided message as deletable by the
     /// underlying storage.
