@@ -252,9 +252,9 @@ fn basic_workflow() {
         highest
     };
 
-    let first = sa.next(lsn()).0;
-    let second = sa.next(lsn()).0;
-    let third = sa.next(lsn()).0;
+    let first = sa.next(lsn());
+    let second = sa.next(lsn());
+    let third = sa.next(lsn());
 
     sa.merged(0, first, lsn());
 
@@ -269,12 +269,11 @@ fn basic_workflow() {
     assert_eq!(sa.clean(), None);
 
     // assert that when we roll over to the next log, we can immediately reuse first
-    let _fourth = sa.next(lsn()).0;
+    let _fourth = sa.next(lsn());
     sa.set(0, vec![first], second, lsn());
     assert_eq!(sa.clean(), None);
-    let (fifth, sixth) = sa.next(lsn());
-    assert_eq!(4000, fifth);
-    assert_eq!(sixth, first);
+    let fifth = sa.next(lsn());
+    assert_eq!(fifth, first);
     sa.merged(1, second, lsn());
     sa.merged(2, second, lsn());
     sa.merged(3, second, lsn());

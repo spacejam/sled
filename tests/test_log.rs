@@ -142,42 +142,6 @@ fn test_log_aborts() {
     test_abort(&log);
 }
 
-#[cfg(feature = "libc")]
-#[cfg(target_os = "linux")]
-#[test]
-fn test_hole_punching() {
-    use std::os::linux::fs::MetadataExt;
-
-    let conf = Config::default();
-    let log = conf.log();
-
-    let id1 = log.write(b"first".to_vec());
-    let id2 = log.write(b"second".to_vec());
-
-    log.make_stable(id2);
-
-    let blocks_before = {
-        let cf = conf.cached_file();
-        let f = cf.borrow();
-        f.metadata().unwrap().st_blocks();
-    };
-
-    assert_eq!(log.read(id1).unwrap().unwrap(), b"first".to_vec());
-
-    let mut iter = log.iter_from(0);
-    assert_eq!(iter.next().unwrap().1, b"first".to_vec());
-    assert_eq!(iter.next().unwrap().1, b"second".to_vec());
-    assert_eq!(iter.next(), None);
-
-    log.punch_hole(id1);
-
-    let mut iter = log.iter_from(0);
-    assert_eq!(iter.next().unwrap().1, b"second".to_vec());
-    assert_eq!(iter.next(), None);
-
-    assert!(log.read(id1).unwrap().is_zeroed());
-}
-
 #[test]
 fn test_log_iterator() {
     let log = Config::default().log();
@@ -208,7 +172,6 @@ enum Op {
     WriteReservation(Vec<u8>),
     AbortReservation(Vec<u8>),
     Read(u64),
-    PunchHole(u64),
     Restart,
     Truncate(u64),
 }
@@ -233,14 +196,13 @@ impl Arbitrary for Op {
             return Op::Truncate(thread_rng().gen_range(0, len as u64));
         }
 
-        let choice = g.gen_range(0, 5);
+        let choice = g.gen_range(0, 4);
 
         match choice {
             0 => Op::Write(incr()),
             1 => Op::WriteReservation(incr()),
             2 => Op::AbortReservation(incr()),
             3 => Op::Read(g.gen_range(0, 15)),
-            4 => Op::PunchHole(g.gen_range(0, 15)),
             _ => panic!("impossible choice"),
         }
     }
@@ -280,10 +242,6 @@ impl Arbitrary for OpVec {
                     lowered = true;
                     *lid -= 1;
                 }
-                Op::PunchHole(ref mut lid) if *lid > 0 => {
-                    lowered = true;
-                    *lid -= 1;
-                }
                 Op::Truncate(ref mut len) if *len > 0 => {
                     lowered = true;
                     *len -= 1;
@@ -316,18 +274,6 @@ fn prop_log_works(ops: OpVec) -> bool {
 
     for op in ops.ops.into_iter() {
         match op {
-            PunchHole(lid) => {
-                if reference.len() <= lid as usize {
-                    continue;
-                }
-                {
-                    let (lid, ref mut expected, _len) = reference[lid as usize];
-                    log.flush();
-                    if expected.take().is_some() {
-                        log.punch_hole(lid);
-                    }
-                }
-            }
             Read(lid) => {
                 if reference.len() <= lid as usize {
                     continue;
@@ -457,60 +403,6 @@ fn test_log_bug_3() {
 }
 
 #[test]
-fn test_log_bug_4() {
-    // postmortem: was calling punch_hole on lids that
-    // were still only present in the log's IO buffer
-    // fix: ensure that callers of punch_hole first
-    // call make_stable.
-    use Op::*;
-    prop_log_works(OpVec {
-        ops: vec![Write(vec![]), PunchHole(0)],
-    });
-}
-
-#[test]
-fn test_log_bug_5() {
-    // postmortem: on non-linux systems, punch_hole
-    // was not zeroing out the bytes in a record.
-    use Op::*;
-    prop_log_works(OpVec {
-        ops: vec![
-            Write(vec![]),
-            PunchHole(0),
-            Write(vec![44]),
-            PunchHole(1),
-            Read(0),
-        ],
-    });
-}
-
-#[test]
-fn test_log_bug_6() {
-    // postmortem: test alignment
-    use Op::*;
-    prop_log_works(OpVec {
-        ops: vec![
-            WriteReservation(vec![2]),
-            AbortReservation(vec![3]),
-            AbortReservation(vec![]),
-            Write(vec![5]),
-            AbortReservation(vec![]),
-            PunchHole(3),
-            PunchHole(3),
-            AbortReservation(vec![7]),
-            AbortReservation(vec![9]),
-            WriteReservation(vec![10]),
-            PunchHole(4),
-            WriteReservation(vec![]),
-            PunchHole(3),
-            Truncate(63),
-            PunchHole(3),
-            Read(3),
-        ],
-    });
-}
-
-#[test]
 fn test_log_bug_7() {
     // postmortem: test alignment
     use Op::*;
@@ -526,16 +418,6 @@ fn test_log_bug_7() {
             Write(vec![20]),
             Read(4),
         ],
-    });
-}
-
-#[test]
-fn test_log_bug_8() {
-    // postmortem: punch_hole did not protect against the file being too short to
-    // read the size bytes at that offset.
-    use Op::*;
-    prop_log_works(OpVec {
-        ops: vec![Truncate(671), Write(vec![]), Truncate(7), PunchHole(0)],
     });
 }
 
