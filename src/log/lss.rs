@@ -63,7 +63,7 @@ impl Drop for LockFreeLog {
 impl LockFreeLog {
     /// create new lock-free log
     pub fn start_system(config: Config) -> LockFreeLog {
-        #[cfg(feature = "log")]
+        #[cfg(feature = "env_logger")]
         let _r = env_logger::init();
 
         let iobufs = Arc::new(IoBufs::new(config.clone()));

@@ -44,6 +44,9 @@ impl IoBuf {
     }
 
     fn store_segment_header(&self, lsn: Lsn, use_compression: bool) {
+        #[cfg(feature = "log")]
+        debug!("storing lsn {} in beginning of buffer", lsn);
+
         // set internal
         self.lsn.store(lsn as usize, SeqCst);
 
@@ -182,7 +185,9 @@ impl IoBufs {
         let segment_lsn = (max_lsn.fetch_add(1, SeqCst) + 1) as LogID;
         let offset_to_write = segment_accountant.next(segment_lsn);
 
-        // TODO record lsn, pointers
+        #[cfg(feature = "log")]
+        debug!("starting log at initial offset {}", offset_to_write);
+
         bufs[current_buf].set_log_offset(offset_to_write);
         bufs[current_buf].store_segment_header(segment_lsn, config.get_use_compression());
 

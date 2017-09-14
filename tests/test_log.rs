@@ -158,11 +158,11 @@ fn test_log_iterator() {
     log.make_stable(last_offset);
 
     let mut iter = log.iter_from(first_offset);
-    assert_eq!(iter.next().unwrap().1, b"1".to_vec());
-    assert_eq!(iter.next().unwrap().1, b"22".to_vec());
-    assert_eq!(iter.next().unwrap().1, b"333".to_vec());
-    assert_eq!(iter.next().unwrap().1, b"4444".to_vec());
-    assert_eq!(iter.next().unwrap().1, b"55555".to_vec());
+    assert_eq!(iter.next().unwrap().2, b"1".to_vec());
+    assert_eq!(iter.next().unwrap().2, b"22".to_vec());
+    assert_eq!(iter.next().unwrap().2, b"333".to_vec());
+    assert_eq!(iter.next().unwrap().2, b"4444".to_vec());
+    assert_eq!(iter.next().unwrap().2, b"55555".to_vec());
     assert_eq!(iter.next(), None);
 }
 
@@ -266,7 +266,7 @@ impl Arbitrary for OpVec {
 
 fn prop_log_works(ops: OpVec) -> bool {
     use self::Op::*;
-    let config = Config::default();
+    let config = Config::default().flush_every_ms(None);
 
     let mut tip = 0;
     let mut log = config.log();
@@ -291,19 +291,19 @@ fn prop_log_works(ops: OpVec) -> bool {
             Write(buf) => {
                 let lid = log.write(buf.clone());
                 let len = buf.len();
-                tip += len + HEADER_LEN;
+                tip = lid as usize + len + HEADER_LEN;
                 reference.push((lid, Some(buf), len));
             }
             WriteReservation(buf) => {
                 let lid = log.reserve(buf.clone()).complete();
                 let len = buf.len();
-                tip += len + HEADER_LEN;
+                tip = lid as usize + len + HEADER_LEN;
                 reference.push((lid, Some(buf), len));
             }
             AbortReservation(buf) => {
                 let len = buf.len();
-                tip += len + HEADER_LEN;
                 let lid = log.reserve(buf).abort();
+                tip = lid as usize + len + HEADER_LEN;
                 reference.push((lid, None, len));
             }
             Restart => {
@@ -324,11 +324,12 @@ fn prop_log_works(ops: OpVec) -> bool {
 
                     let mut sz_total = 0;
                     let mut keep = 0;
-                    for &mut (_, ref mut expected, sz) in &mut reference {
-                        sz_total += sz + HEADER_LEN;
-                        if sz_total <= new_len as usize {
-                            keep += 1;
+                    for &mut (lid, ref mut expected, sz) in &mut reference {
+                        let tip = lid as usize + sz + HEADER_LEN;
+                        if new_len < tip as u64 {
+                            break;
                         }
+                        keep += 1;
                     }
 
                     unsafe {
@@ -364,7 +365,7 @@ fn quickcheck_log_works() {
 }
 
 #[test]
-fn test_log_bug_1() {
+fn test_log_bug_01() {
     // postmortem: test was not stabilizing its buffers before reading
     use Op::*;
     prop_log_works(OpVec {

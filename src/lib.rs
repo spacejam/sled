@@ -26,7 +26,7 @@ extern crate bincode;
 extern crate historian;
 #[macro_use]
 extern crate lazy_static;
-#[cfg(feature = "log")]
+#[cfg(feature = "env_logger")]
 extern crate env_logger;
 #[cfg(feature = "log")]
 #[macro_use]
