@@ -83,7 +83,8 @@ impl Config {
         Tree::new(self.clone())
     }
 
-    /// create a new `LockFreeLog` based on this configuration
+    /// create a new `LockFreeLog` based on this
+    /// configuration
     pub fn log(&self) -> LockFreeLog {
         LockFreeLog::start_system(self.clone())
     }
@@ -157,8 +158,10 @@ impl ConfigInner {
         (zero_copy_storage, get_zero_copy_storage, set_zero_copy_storage, bool, "disabling of the log segment copy cleaner")
     );
 
-    /// Retrieve a thread-local file handle to the configured underlying storage,
-    /// or create a new one if this is the first time the thread is accessing it.
+    /// Retrieve a thread-local file handle to the
+    /// configured underlying storage,
+    /// or create a new one if this is the first time the
+    /// thread is accessing it.
     pub fn cached_file(&self) -> Rc<RefCell<fs::File>> {
         self.tc.get_or_else(|| {
             let path = self.get_path();
@@ -231,31 +234,29 @@ impl ConfigInner {
 
     /// read a segment of log messages. Only call after
     /// pausing segment rewriting on the segment accountant!
-    pub fn read_segment(&self, id: LogID) -> std::io::Result<log::Segment> {
-        let segment_header_read = self.read(id)?;
+    pub fn read_segment(&self, offset: LogID) -> std::io::Result<log::Segment> {
+        let segment_header_read = self.read(offset)?;
         if segment_header_read.is_corrupt() {
             return Err(Error::new(Other, "corrupt segment"));
         }
         if segment_header_read.is_zeroed() {
             return Err(Error::new(Other, "empty segment"));
         }
-        let lsn_vec = segment_header_read.flush().unwrap();
-        let mut lsn_buf = [0u8; 8];
-        lsn_buf.copy_from_slice(&*lsn_vec);
-        let lsn: Lsn = unsafe { std::mem::transmute(lsn_buf) };
+        let (lsn, _, _) = segment_header_read.flush().unwrap();
+        assert_eq!(lsn % self.get_io_buf_size() as Lsn, 0);
 
         let mut buf = vec![];
         let cached_f = self.cached_file();
         let mut f = cached_f.borrow_mut();
-        f.seek(SeekFrom::Start(id))?;
 
+        f.seek(SeekFrom::Start(offset))?;
         read_up_to(f, &mut buf, self.get_io_buf_size())?;
 
         Ok(log::Segment {
             buf: buf,
             lsn: lsn,
             read_offset: 8 + HEADER_LEN,
-            position: id,
+            position: offset,
         })
     }
 
@@ -269,6 +270,10 @@ impl ConfigInner {
         let mut valid_buf = [0u8; 1];
         f.read_exact(&mut valid_buf)?;
         let valid = valid_buf[0] == 1;
+
+        let mut lsn_buf = [0u8; 4];
+        f.read_exact(&mut lsn_buf)?;
+        let lsn = expand_lsn(unsafe { std::mem::transmute(lsn_buf) });
 
         let mut len_buf = [0u8; 4];
         f.read_exact(&mut len_buf)?;
@@ -327,16 +332,16 @@ impl ConfigInner {
         let res = {
             if self.config().get_use_compression() {
                 let start = clock();
-                let res = Ok(LogRead::Flush(decompress(&*buf, max).unwrap(), len));
+                let res = Ok(LogRead::Flush(lsn, decompress(&*buf, max).unwrap(), len));
                 M.decompress.measure(clock() - start);
                 res
             } else {
-                Ok(LogRead::Flush(buf, len))
+                Ok(LogRead::Flush(lsn, buf, len))
             }
         };
 
         #[cfg(not(feature = "zstd"))]
-        let res = Ok(LogRead::Flush(buf, len));
+        let res = Ok(LogRead::Flush(lsn, buf, len));
 
         M.read.measure(clock() - start);
         res

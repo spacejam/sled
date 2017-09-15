@@ -48,6 +48,11 @@ pub struct Segment {
 
 impl SegmentAccountant {
     pub fn new(config: Config, tip: LogID) -> SegmentAccountant {
+        assert!(
+            tip % config.get_io_buf_size() as LogID == 0,
+            "unaligned Lsn provided to new!"
+        );
+
         let mut ret = SegmentAccountant::default();
         ret.config = config;
         ret.tip = tip;
@@ -71,10 +76,44 @@ impl SegmentAccountant {
             if let Ok(segment) = self.config.read_segment(cursor) {
                 self.recover(segment.lsn, segment.position);
                 cursor += self.config.get_io_buf_size() as LogID;
+                if segment.lsn > self.max_lsn {
+                    self.max_lsn = segment.lsn;
+                }
             } else {
                 break;
             }
         }
+
+        println!("trying to get highest lsn in segment for lsn {}", self.max_lsn);
+        if let Some(max_cursor) = self.ordering.get(&self.max_lsn) {
+            if let Ok(mut segment) = self.config.read_segment(*max_cursor) {
+                println!("got a segment... {}", segment.lsn);
+                self.max_lsn += segment.read_offset as LogID;
+                while let Some(log_read) = segment.read_next() {
+                    println!("got a thing...");
+                    match log_read {
+                        LogRead::Zeroed(_) => {
+                            println!("got a zeroed");
+                            continue;
+                        }
+                        LogRead::Flush(lsn, _, len) => {
+                            println!("got lsn {} with len {}", lsn, len);
+                            if lsn > self.max_lsn {
+                                self.max_lsn = lsn + (len + HEADER_LEN) as Lsn;
+                            } else {
+                                break;
+                            }
+                        }
+                        LogRead::Corrupted(_) => break,
+                    }
+                }
+            }
+        }
+        println!("our max_lsn:{}", self.max_lsn);
+    }
+
+    pub fn recovered_max_lsn(&self) -> Lsn {
+        self.max_lsn
     }
 
     /// this will cause all new allocations to occur at the end of the log, which
@@ -99,7 +138,8 @@ impl SegmentAccountant {
 
             if segment.lsn.unwrap() > lsn {
                 // has been replaced after this call already,
-                // quite a big race happened
+                // quite a big race happened.
+                // FIXME this is an unsafe leak when operating under zero-copy mode
                 continue;
             }
 
@@ -123,7 +163,6 @@ impl SegmentAccountant {
                 self.to_clean.insert(segment_start);
             }
         }
-
     }
 
     pub fn set(&mut self, pid: PageID, old_lids: Vec<LogID>, new_lid: LogID, lsn: Lsn) {
@@ -204,6 +243,11 @@ impl SegmentAccountant {
     }
 
     pub fn next(&mut self, lsn: Lsn) -> LogID {
+        assert!(
+            lsn % self.config.get_io_buf_size() as Lsn == 0,
+            "unaligned Lsn provided to next!"
+        );
+
         // pop free or add to end
         let lid = if self.pause_rewriting {
             None

@@ -8,7 +8,7 @@ use zstd::block::compress;
 use super::*;
 
 #[doc(hidden)]
-pub const HEADER_LEN: usize = 7;
+pub const HEADER_LEN: usize = 11;
 
 struct IoBuf {
     buf: UnsafeCell<Vec<u8>>,
@@ -53,16 +53,23 @@ impl IoBuf {
         self.capacity.load(SeqCst)
     }
 
+    fn set_lsn(&self, lsn: Lsn) {
+        self.lsn.store(lsn as usize, SeqCst);
+    }
+
+    fn get_lsn(&self) -> Lsn {
+        self.lsn.load(SeqCst) as Lsn
+    }
+
     fn store_segment_header(&self, lsn: Lsn, use_compression: bool) {
         #[cfg(feature = "log")]
         debug!("storing lsn {} in beginning of buffer", lsn);
 
         // set internal
-        self.lsn.store(lsn as usize, SeqCst);
+        self.set_lsn(lsn);
 
         // generate bytes
-        let bytes: [u8; 8] = unsafe { std::mem::transmute(lsn) };
-        let header_vec = encapsulate(bytes.to_vec(), use_compression);
+        let header_vec = encapsulate(vec![], lsn, use_compression);
 
         assert!(self.get_capacity() >= header_vec.len());
 
@@ -127,7 +134,6 @@ pub struct IoBufs {
     stable: AtomicUsize,
     file_for_writing: Mutex<std::fs::File>,
     pub segment_accountant: Mutex<SegmentAccountant>,
-    max_lsn: AtomicUsize,
 }
 
 impl Debug for IoBufs {
@@ -177,39 +183,42 @@ impl IoBufs {
 
         let file = options.open(&path).unwrap();
         let disk_offset = file.metadata().unwrap().len();
+        println!("disk offset: {}", disk_offset);
 
-        // println!("file is {} bytes long", disk_offset);
+        let io_buf_size = config.get_io_buf_size();
 
-        let remainder = disk_offset % config.get_io_buf_size() as LogID;
-        let next_disk_offset = if remainder == 0 {
-            disk_offset
-        } else {
-            disk_offset + (config.get_io_buf_size() as LogID - remainder)
-        };
+        let remainder = (io_buf_size as LogID - (disk_offset % io_buf_size as LogID)) %
+            io_buf_size as LogID;
+        let next_disk_offset = disk_offset + remainder;
 
         let mut segment_accountant = SegmentAccountant::new(config.clone(), next_disk_offset);
 
-        let bufs = rep_no_copy![IoBuf::new(config.get_io_buf_size()); config.get_io_bufs()];
+        let bufs = rep_no_copy![IoBuf::new(io_buf_size); config.get_io_bufs()];
 
         let current_buf = 0;
+        let segment_lsn = segment_accountant.recovered_max_lsn();
+        let segment_lsn_overhang = segment_lsn % io_buf_size as Lsn;
+        let new_offset = (disk_offset / io_buf_size as Lsn * io_buf_size as Lsn) +
+            segment_lsn_overhang;
 
-        let max_lsn = AtomicUsize::new(0);
         if remainder == 0 {
-            let segment_lsn = max_lsn.fetch_add(1, SeqCst) as LogID;
+            // This is a new log, or one with an untorn final segment.
             let next_offset = segment_accountant.next(segment_lsn);
             bufs[current_buf].set_log_offset(next_offset);
-            bufs[current_buf].set_capacity(config.get_io_buf_size());
+            bufs[current_buf].set_capacity(io_buf_size);
             bufs[current_buf].store_segment_header(segment_lsn, config.get_use_compression());
 
             #[cfg(feature = "log")]
             debug!("starting log at clean offset {}", next_offset);
         } else {
             // This should only occur when the tip of the log was
-            // torn while rewriting.
+            // torn while writing a segment.
+            bufs[current_buf].set_lsn(segment_lsn);
             bufs[current_buf].set_capacity(remainder as usize);
-            bufs[current_buf].set_log_offset(disk_offset);
+            bufs[current_buf].set_log_offset(new_offset);
+
             #[cfg(feature = "log")]
-            debug!("starting log at split offset {}", disk_offset);
+            debug!("starting log at split offset {}", new_offset);
         }
 
         IoBufs {
@@ -221,13 +230,7 @@ impl IoBufs {
             config: config,
             file_for_writing: Mutex::new(file),
             segment_accountant: Mutex::new(segment_accountant),
-            // TODO recover lsn
-            max_lsn: max_lsn,
         }
-    }
-
-    pub fn lsn(&self) -> Lsn {
-        (self.max_lsn.fetch_add(1, SeqCst) + 1) as Lsn
     }
 
     pub fn config(&self) -> &Config {
@@ -258,7 +261,7 @@ impl IoBufs {
         let start = clock();
         assert_eq!((raw_buf.len() + HEADER_LEN) >> 32, 0);
 
-        let buf = encapsulate(raw_buf, self.config.get_use_compression());
+        let buf = encapsulate(raw_buf, 0, self.config.get_use_compression());
 
         assert!(buf.len() <= self.config.get_io_buf_size());
 
@@ -359,11 +362,17 @@ impl IoBufs {
             let res_start = buf_offset as usize;
             let res_end = res_start + buf.len();
             let destination = &mut (out_buf)[res_start..res_end];
+
             let reservation_offset = log_offset + buf_offset as LogID;
+            let reservation_lsn = iobuf.get_lsn() + buf_offset as Lsn;
+
+            // we assign the LSN now that we know what it is
+            assert_eq!(&buf[1..5], &[0u8, 0, 0, 0]);
+            let lsn_bytes: [u8; 4] = unsafe { std::mem::transmute(crunch_lsn(reservation_lsn)) };
+            let mut buf = buf;
+            buf[1..5].copy_from_slice(&lsn_bytes);
 
             M.reserve.measure(clock() - start);
-
-            // println!("reserved slot at idx {}", idx);
 
             return Reservation {
                 idx: idx,
@@ -371,7 +380,8 @@ impl IoBufs {
                 data: buf,
                 destination: destination,
                 flushed: false,
-                reservation_offset: reservation_offset,
+                lsn: reservation_lsn,
+                lid: reservation_offset,
             };
         }
     }
@@ -445,6 +455,7 @@ impl IoBufs {
         // written and reset by another thread afterward
         let log_offset = iobuf.get_log_offset();
         let capacity = iobuf.get_capacity();
+        let io_buf_size = self.config.get_io_buf_size();
 
         let sealed = mk_sealed(header);
 
@@ -468,19 +479,27 @@ impl IoBufs {
             self
         );
 
-        let mut header_lsn = None;
+        let mut next_lsn = iobuf.get_lsn();
 
         let next_offset = if from_reserve {
             let mut sa = self.segment_accountant.lock().unwrap();
-            header_lsn = Some(self.lsn());
-            sa.next(header_lsn.unwrap())
+
+            // roll lsn to the next offset
+            next_lsn += io_buf_size as Lsn - (next_lsn % io_buf_size as Lsn);
+
+            sa.next(next_lsn)
         } else {
+            next_lsn += res_len as Lsn;
+
             log_offset + res_len as LogID
         };
 
         let next_idx = (idx + 1) % self.config.get_io_bufs();
         let next_iobuf = &self.bufs[next_idx];
 
+        // NB we spin on this CAS because the next iobuf may not actually
+        // be written to disk yet! (we've lapped the writer in the iobuf
+        // ring buffer)
         let mut spins = 0;
         while next_iobuf.cas_log_offset(max, next_offset).is_err() {
             spins += 1;
@@ -493,14 +512,18 @@ impl IoBufs {
         #[cfg(feature = "log")]
         trace!("({:?}) {} log set", tn(), next_idx);
 
-        // NB allows new threads to start writing into this buffer
+        // NB as soon as the "sealed" bit is 0, this allows new threads
+        // to start writing into this buffer, so do that after it's all
+        // set up. expect this thread to block until the buffer completes
+        // its entire lifecycle as soon as we do that.
         if from_reserve {
             next_iobuf.set_capacity(self.config.get_io_buf_size());
-            next_iobuf.store_segment_header(header_lsn.unwrap(), self.config.get_use_compression());
+            next_iobuf.store_segment_header(next_lsn, self.config.get_use_compression());
         } else {
-            next_iobuf.set_header(0);
             let new_cap = capacity - res_len;
             next_iobuf.set_capacity(new_cap);
+            next_iobuf.set_lsn(next_lsn);
+            next_iobuf.set_header(0);
         }
 
         #[cfg(feature = "log")]
@@ -527,7 +550,6 @@ impl IoBufs {
         let iobuf = &self.bufs[idx];
         let header = iobuf.get_header();
         let log_offset = iobuf.get_log_offset();
-        // println!("writing to offset starting at {}", log_offset);
 
         assert_ne!(
             log_offset as usize,
@@ -555,7 +577,8 @@ impl IoBufs {
         #[cfg(feature = "log")]
         trace!("({:?}) {} written", tn(), _written_bufs % self.config.get_io_bufs());
 
-        let interval = (log_offset, log_offset + res_len as LogID);
+        let base_lsn = iobuf.get_lsn();
+        let interval = (base_lsn, base_lsn + res_len as Lsn);
 
         self.mark_interval(interval);
 
@@ -580,7 +603,6 @@ impl IoBufs {
             let cur_stable = self.stable.load(SeqCst) as LogID;
             if cur_stable == low {
                 let old = self.stable.swap(high as usize, SeqCst);
-                // println!("bumped stable offset from {} to {}", old, high);
                 assert_eq!(old, cur_stable as usize);
                 intervals.pop();
             } else {
@@ -603,7 +625,7 @@ impl Drop for IoBufs {
     }
 }
 
-fn encapsulate(raw_buf: Vec<u8>, _use_compression: bool) -> Vec<u8> {
+fn encapsulate(raw_buf: Vec<u8>, lsn: Lsn, _use_compression: bool) -> Vec<u8> {
     #[cfg(feature = "zstd")]
     let mut buf = if _use_compression {
         let start = clock();
@@ -617,12 +639,14 @@ fn encapsulate(raw_buf: Vec<u8>, _use_compression: bool) -> Vec<u8> {
     #[cfg(not(feature = "zstd"))]
     let mut buf = raw_buf;
 
-    let size_bytes: [u8; 4] = unsafe { std::mem::transmute(buf.len() as u32) };
     let mut valid_bytes = vec![1u8];
+    let lsn_bytes: [u8; 4] = unsafe { std::mem::transmute(crunch_lsn(lsn)) };
+    let size_bytes: [u8; 4] = unsafe { std::mem::transmute(buf.len() as u32) };
     let mut crc16_bytes = crc16_arr(&buf).to_vec();
 
     let mut out = Vec::with_capacity(HEADER_LEN + buf.len());
     out.append(&mut valid_bytes);
+    out.append(&mut lsn_bytes.to_vec());
     out.append(&mut size_bytes.to_vec());
     out.append(&mut crc16_bytes);
     assert_eq!(out.len(), HEADER_LEN);

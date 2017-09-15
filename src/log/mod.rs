@@ -47,7 +47,7 @@ pub trait Log: Sized {
 #[doc(hidden)]
 #[derive(Debug)]
 pub enum LogRead {
-    Flush(Vec<u8>, usize),
+    Flush(Lsn, Vec<u8>, usize),
     Zeroed(usize),
     Corrupted(usize),
 }
@@ -55,9 +55,9 @@ pub enum LogRead {
 impl LogRead {
     /// Optionally return successfully read bytes, or None if
     /// the data was corrupt or this log entry was aborted.
-    pub fn flush(&self) -> Option<Vec<u8>> {
+    pub fn flush(&self) -> Option<(Lsn, Vec<u8>, usize)> {
         match *self {
-            LogRead::Flush(ref bytes, _) => Some(bytes.clone()),
+            LogRead::Flush(lsn, ref bytes, len) => Some((lsn, bytes.clone(), len)),
             _ => None,
         }
     }
@@ -65,7 +65,7 @@ impl LogRead {
     /// Return true if we read a completed write successfully.
     pub fn is_flush(&self) -> bool {
         match *self {
-            LogRead::Flush(_, _) => true,
+            LogRead::Flush(_, _, _) => true,
             _ => false,
         }
     }
@@ -91,14 +91,15 @@ impl LogRead {
     /// # Panics
     ///
     /// panics if `is_flush()` is false.
-    pub fn unwrap(self) -> Vec<u8> {
+    pub fn unwrap(self) -> (Lsn, Vec<u8>, usize) {
         match self {
-            LogRead::Flush(bytes, _) => bytes,
+            LogRead::Flush(lsn, bytes, len) => (lsn, bytes, len),
             _ => panic!("called unwrap on a non-flush LogRead"),
         }
     }
 }
 
+#[derive(Debug)]
 pub struct Segment {
     pub buf: Vec<u8>,
     pub lsn: Lsn,
@@ -115,8 +116,14 @@ impl Segment {
         let rel_i = self.read_offset;
 
         let valid = self.buf[rel_i] == 1;
-        let len_buf = &self.buf[rel_i + 1..rel_i + 5];
-        let crc16_buf = &self.buf[rel_i + 5..rel_i + HEADER_LEN];
+        let lsn_buf = &self.buf[rel_i + 1..rel_i + 5];
+        let len_buf = &self.buf[rel_i + 5..rel_i + 9];
+        let crc16_buf = &self.buf[rel_i + 9..rel_i + HEADER_LEN];
+
+        let mut lsn_arr = [0u8; 4];
+        lsn_arr.copy_from_slice(&*lsn_buf);
+        let crunched_lsn: u32 = unsafe { std::mem::transmute(lsn_arr) };
+        let lsn = expand_lsn(crunched_lsn);
 
         let len32: u32 =
             unsafe { std::mem::transmute([len_buf[0], len_buf[1], len_buf[2], len_buf[3]]) };
@@ -157,12 +164,13 @@ impl Segment {
 
         self.read_offset = upper_bound;
 
-        Some(LogRead::Flush(buf, len))
+        Some(LogRead::Flush(lsn, buf, len))
     }
 }
 
 pub struct LogIter<'a, L: 'a + Log> {
-    start: Lsn,
+    min_lsn: Lsn,
+    max_encountered_lsn: Lsn,
     log: &'a L,
     segment: Option<Segment>,
     segment_iter: Box<Iterator<Item = (Lsn, LogID)>>,
@@ -179,13 +187,26 @@ impl<'a, L> Iterator for LogIter<'a, L>
                 // if segment.read_next is None, roll it
                 match segment.read_next() {
                     Some(LogRead::Zeroed(_)) => continue,
-                    Some(LogRead::Flush(buf, len)) => {
-                        let base = segment.position;
-                        let rel_i = segment.read_offset - (len + HEADER_LEN);
+                    Some(LogRead::Flush(read_lsn, buf, len)) => {
+                        if read_lsn < self.max_encountered_lsn {
+                            // we've hit a tear, we should cut our scan short
+                            #[cfg(feature = "log")]
+                            error!(
+                                "torn segment encountered, cutting log scan short at LSN {}",
+                                self.max_encountered_lsn
+                            );
+                            return None;
+                        } else {
+                            self.max_encountered_lsn = read_lsn;
+                        }
 
-                        if segment.read_offset < self.start as usize {
+                        if (segment.lsn + segment.read_offset as Lsn) < self.min_lsn {
+                            // we have not yet reached our desired offset
                             continue;
                         }
+
+                        let base = segment.position;
+                        let rel_i = segment.read_offset - (len + HEADER_LEN);
 
                         return Some((segment.lsn, base + rel_i as LogID, buf));
                     }

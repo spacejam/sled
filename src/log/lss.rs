@@ -115,7 +115,8 @@ impl Log for LockFreeLog {
         let segment_iter = sa.segment_snapshot_iter_from(lsn);
 
         LogIter {
-            start: lsn,
+            max_encountered_lsn: 0,
+            min_lsn: lsn,
             log: self,
             segment: None,
             segment_iter: segment_iter,

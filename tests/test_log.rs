@@ -38,7 +38,7 @@ fn non_contiguous_flush() {
     let log = conf.log();
     let res1 = log.reserve(vec![0; conf.get_io_buf_size() - HEADER_LEN]);
     let res2 = log.reserve(vec![0; conf.get_io_buf_size() - HEADER_LEN]);
-    let id = res2.log_id();
+    let id = res2.lid();
     res2.abort();
     res1.abort();
     log.make_stable(id);
@@ -95,7 +95,7 @@ fn concurrent_logging() {
         .spawn(move || for i in 0..5_000 {
             let buf = vec![6; i % 8192];
             let res = iobs6.reserve(buf);
-            let id = res.log_id();
+            let id = res.lid();
             res.complete();
             iobs6.make_stable(id);
         })
@@ -113,20 +113,20 @@ fn concurrent_logging() {
 fn test_write(log: &LockFreeLog) {
     let data_bytes = b"yoyoyoyo";
     let res = log.reserve(data_bytes.to_vec());
-    let id = res.log_id();
+    let id = res.lid();
     res.complete();
     log.make_stable(id);
-    let read_buf = log.read(id).unwrap().unwrap();
+    let (_, read_buf, _) = log.read(id).unwrap().unwrap();
     assert_eq!(read_buf, data_bytes);
 }
 
 fn test_abort(log: &LockFreeLog) {
     let res = log.reserve(vec![0; 5]);
-    let id = res.log_id();
+    let id = res.lid();
     res.abort();
     log.make_stable(id);
     match log.read(id) {
-        Ok(LogRead::Flush(_, _)) => panic!("sucessfully read an aborted request! BAD! SAD!"),
+        Ok(LogRead::Flush(_, _, _)) => panic!("sucessfully read an aborted request! BAD! SAD!"),
         _ => (), // good
     }
 }
@@ -151,7 +151,8 @@ fn test_log_iterator() {
     log.write(b"22".to_vec());
     log.write(b"333".to_vec());
 
-    // stick an abort in the middle, which should not be returned
+    // stick an abort in the middle, which should not be
+    // returned
     {
         let res = log.reserve(b"never_gonna_hit_disk".to_vec());
         res.abort();
@@ -290,10 +291,17 @@ fn prop_log_works(ops: OpVec) -> bool {
                 let (lid, ref expected, _len) = reference[lid as usize];
                 log.flush();
                 let read_res = log.read(lid);
+                println!(
+                    "expected {:?} read_res {:?} tip {} lid {}",
+                    expected,
+                    read_res,
+                    tip,
+                    lid
+                );
                 if expected.is_none() || tip as u64 <= lid {
                     assert!(read_res.is_err() || !read_res.unwrap().is_flush());
                 } else {
-                    let flush = read_res.unwrap().flush();
+                    let flush = read_res.unwrap().flush().map(|f| f.1);
                     assert_eq!(flush, *expected);
                 }
             }
@@ -324,6 +332,8 @@ fn prop_log_works(ops: OpVec) -> bool {
                     // we are testing data loss, not rogue extensions
                     continue;
                 }
+
+                tip = new_len as usize;
 
                 drop(log);
 
@@ -369,7 +379,8 @@ fn quickcheck_log_works() {
 
 #[test]
 fn test_log_bug_01() {
-    // postmortem: test was not stabilizing its buffers before reading
+    // postmortem: test was not stabilizing its buffers before
+    // reading
     use Op::*;
     prop_log_works(OpVec {
         ops: vec![
@@ -427,7 +438,8 @@ fn test_log_bug_7() {
 
 #[test]
 fn test_log_bug_9() {
-    // postmortem: test was mishandling truncation, which should test loss, not extension
+    // postmortem: test was mishandling truncation, which
+    // should test loss, not extension
     use Op::*;
     prop_log_works(OpVec {
         ops: vec![
@@ -461,6 +473,47 @@ fn test_log_bug_10() {
             Write(vec![249]),
             WriteReservation(vec![250]),
             Read(7),
+        ],
+    });
+}
+
+#[test]
+fn test_log_bug_11() {
+    // postmortem: was miscalculating the initial disk offset
+    // on startup
+    use Op::*;
+    prop_log_works(OpVec {
+        ops: vec![Write(vec![]), Restart],
+    });
+}
+
+#[test]
+fn test_log_bug_12() {
+    // postmortem: after a torn page is encountered, we were
+    // just reusing the tip as the next start location. this
+    // breaks recovery. fix: traverse the segment until we
+    // encounter the last valid entry.
+    use Op::*;
+    prop_log_works(OpVec {
+        ops: vec![
+            Write(vec![]),
+            Truncate(20),
+            AbortReservation(vec![]),
+            Read(0),
+        ],
+    });
+}
+
+#[test]
+fn test_log_bug_13() {
+    // postmortem:
+    use Op::*;
+    prop_log_works(OpVec {
+        ops: vec![
+            WriteReservation(vec![35]),
+            Restart,
+            AbortReservation(vec![36]),
+            Read(0),
         ],
     });
 }

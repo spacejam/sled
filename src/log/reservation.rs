@@ -8,7 +8,8 @@ pub struct Reservation<'a> {
     pub data: Vec<u8>,
     pub destination: &'a mut [u8],
     pub flushed: bool,
-    pub reservation_offset: LogID,
+    pub lsn: Lsn,
+    pub lid: LogID,
 }
 
 impl<'a> Drop for Reservation<'a> {
@@ -32,9 +33,14 @@ impl<'a> Reservation<'a> {
         self.flush(true)
     }
 
-    /// get the log_id for accessing this buffer in the future
-    pub fn log_id(&self) -> LogID {
-        self.reservation_offset
+    /// get the log offset for reading this buffer in the future
+    pub fn lid(&self) -> LogID {
+        self.lid
+    }
+
+    /// get the log sequence number for this update
+    pub fn lsn(&self) -> Lsn {
+        self.lsn
     }
 
     fn flush(&mut self, valid: bool) -> LogID {
@@ -55,6 +61,6 @@ impl<'a> Reservation<'a> {
 
         self.iobufs.exit_reservation(self.idx);
 
-        self.log_id()
+        self.lsn()
     }
 }

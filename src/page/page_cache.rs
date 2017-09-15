@@ -202,6 +202,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         let serialize_start = clock();
         let bytes = serialize(&prepend, Infinite).unwrap();
         M.serialize.measure(clock() - serialize_start);
+
         self.log.write(bytes);
 
         (pid, Ptr::null().into())
@@ -223,14 +224,17 @@ impl<PM, P, R> PageCache<PM, P, R>
             let serialize_start = clock();
             let bytes = serialize(&prepend, Infinite).unwrap();
             M.serialize.measure(clock() - serialize_start);
-            self.log.write(bytes);
+
+            let res = self.log.reserve(bytes);
+            let lsn = res.lsn();
+            res.complete();
 
             // add pid to free stack to reduce fragmentation over time
             unsafe {
                 let cas_key = deleted.unwrap().deref().head(scope).into();
 
                 let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
-                sa.freed(pid, lids_from_stack(cas_key, scope), self.log.iobufs.lsn());
+                sa.freed(pid, lids_from_stack(cas_key, scope), lsn);
             }
 
             let pd = Owned::new(PidDropper(pid, self.free.clone()));
@@ -314,7 +318,7 @@ impl<PM, P, R> PageCache<PM, P, R>
     fn pull(&self, lid: LogID) -> P {
         let start = clock();
         let bytes = match self.log.read(lid).map_err(|_| ()) {
-            Ok(LogRead::Flush(data, _len)) => data,
+            Ok(LogRead::Flush(_lsn, data, _len)) => data,
             _ => panic!("read invalid data at lid {}", lid),
         };
 
@@ -483,21 +487,22 @@ impl<PM, P, R> PageCache<PM, P, R>
             let bytes = serialize(&replace, Infinite).unwrap();
             M.serialize.measure(clock() - serialize_start);
             let log_reservation = self.log.reserve(bytes);
-            let log_offset = log_reservation.log_id();
+            let lid = log_reservation.lid();
 
-            let cache_entry = CacheEntry::MergedResident(new, log_offset);
+            let cache_entry = CacheEntry::MergedResident(new, lid);
 
             let node = node_from_frag_vec(vec![cache_entry]).into_ptr(scope);
 
             let result = unsafe { stack_ptr.deref().cas(old.clone().into(), node, scope) };
 
             if result.is_ok() {
-                let id = log_reservation.log_id();
+                let lid = log_reservation.lid();
+                let lsn = log_reservation.lsn();
                 log_reservation.complete();
 
                 {
                     let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
-                    sa.set(pid, lids_from_stack(old, scope), id, self.log.iobufs.lsn());
+                    sa.set(pid, lids_from_stack(old, scope), lid, lsn);
                 }
 
                 let count = self.updates.fetch_add(1, SeqCst) + 1;
@@ -539,21 +544,21 @@ impl<PM, P, R> PageCache<PM, P, R>
             let bytes = serialize(&prepend, Infinite).unwrap();
             M.serialize.measure(clock() - serialize_start);
             let log_reservation = self.log.reserve(bytes);
-            let log_offset = log_reservation.log_id();
+            let lid = log_reservation.lid();
 
-            let cache_entry = CacheEntry::Resident(new, log_offset);
+            let cache_entry = CacheEntry::Resident(new, lid);
 
             let result = unsafe { stack_ptr.deref().cap(old.into(), cache_entry, scope) };
 
             if result.is_err() {
                 log_reservation.abort();
             } else {
-                let id = log_reservation.log_id();
+                let lsn = log_reservation.lsn();
                 log_reservation.complete();
 
                 {
                     let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
-                    sa.merged(pid, id, self.log.iobufs.lsn());
+                    sa.merged(pid, lid, lsn);
                 }
 
                 let count = self.updates.fetch_add(1, SeqCst) + 1;
