@@ -595,8 +595,6 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         let mut snapshot = snapshot_opt.unwrap();
 
-        self.log.scan_segment_lsns();
-
         #[cfg(feature = "log")]
         info!(
             "snapshot starting from offset {} to the segment containing {}",

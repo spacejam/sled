@@ -24,7 +24,6 @@ pub struct Metrics {
     pub reserve: Histo,
     pub write_to_log: Histo,
     pub written_bytes: Histo,
-    pub written_padding: Histo,
     pub punch_hole: Histo,
     pub read: Histo,
     pub tree_loops: AtomicUsize,
@@ -122,7 +121,6 @@ impl Metrics {
             f("read", &self.read),
             f("write", &self.write_to_log),
             f("written bytes", &self.written_bytes),
-            f("written padding", &self.written_padding),
             f("reserve", &self.reserve),
             f("punch_hole", &self.punch_hole),
         ]);

@@ -144,20 +144,29 @@ fn test_log_aborts() {
 
 #[test]
 fn test_log_iterator() {
-    let log = Config::default().log();
-    let first_offset = log.write(b"1".to_vec());
+    let conf = Config::default();
+    let log = conf.log();
+    let first_offset = log.write(b"".to_vec());
+    log.write(b"1".to_vec());
     log.write(b"22".to_vec());
     log.write(b"333".to_vec());
 
     // stick an abort in the middle, which should not be returned
-    let res = log.reserve(b"never_gonna_hit_disk".to_vec());
-    res.abort();
+    {
+        let res = log.reserve(b"never_gonna_hit_disk".to_vec());
+        res.abort();
+    }
 
     log.write(b"4444".to_vec());
     let last_offset = log.write(b"55555".to_vec());
     log.make_stable(last_offset);
 
+    drop(log);
+
+    let log = conf.log();
+
     let mut iter = log.iter_from(first_offset);
+    assert_eq!(iter.next().unwrap().2, b"".to_vec());
     assert_eq!(iter.next().unwrap().2, b"1".to_vec());
     assert_eq!(iter.next().unwrap().2, b"22".to_vec());
     assert_eq!(iter.next().unwrap().2, b"333".to_vec());
@@ -266,7 +275,7 @@ impl Arbitrary for OpVec {
 
 fn prop_log_works(ops: OpVec) -> bool {
     use self::Op::*;
-    let config = Config::default().flush_every_ms(None);
+    let config = Config::default().io_buf_size(1024 * 8);
 
     let mut tip = 0;
     let mut log = config.log();
@@ -323,17 +332,11 @@ fn prop_log_works(ops: OpVec) -> bool {
                     let path = config.get_path();
 
                     let mut sz_total = 0;
-                    let mut keep = 0;
                     for &mut (lid, ref mut expected, sz) in &mut reference {
                         let tip = lid as usize + sz + HEADER_LEN;
                         if new_len < tip as u64 {
-                            break;
+                            *expected = None;
                         }
-                        keep += 1;
-                    }
-
-                    unsafe {
-                        reference.set_len(keep);
                     }
 
                     use std::os::unix::io::AsRawFd;

@@ -5,6 +5,11 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use std::io::{Error, Read, Seek, SeekFrom};
+use std::fs::File;
+use std::io::ErrorKind::{Interrupted, Other, UnexpectedEof};
+
+
 use super::*;
 
 /// Top-level configuration for the system.
@@ -223,6 +228,119 @@ impl ConfigInner {
             .filter_map(filter)
             .collect()
     }
+
+    /// read a segment of log messages. Only call after
+    /// pausing segment rewriting on the segment accountant!
+    pub fn read_segment(&self, id: LogID) -> std::io::Result<log::Segment> {
+        let segment_header_read = self.read(id)?;
+        if segment_header_read.is_corrupt() {
+            return Err(Error::new(Other, "corrupt segment"));
+        }
+        if segment_header_read.is_zeroed() {
+            return Err(Error::new(Other, "empty segment"));
+        }
+        let lsn_vec = segment_header_read.flush().unwrap();
+        let mut lsn_buf = [0u8; 8];
+        lsn_buf.copy_from_slice(&*lsn_vec);
+        let lsn: Lsn = unsafe { std::mem::transmute(lsn_buf) };
+
+        let mut buf = vec![];
+        let cached_f = self.cached_file();
+        let mut f = cached_f.borrow_mut();
+        f.seek(SeekFrom::Start(id))?;
+
+        read_up_to(f, &mut buf, self.get_io_buf_size())?;
+
+        Ok(log::Segment {
+            buf: buf,
+            lsn: lsn,
+            read_offset: 8 + HEADER_LEN,
+            position: id,
+        })
+    }
+
+    /// read a buffer from the disk
+    pub fn read(&self, id: LogID) -> std::io::Result<LogRead> {
+        let start = clock();
+        let cached_f = self.cached_file();
+        let mut f = cached_f.borrow_mut();
+        f.seek(SeekFrom::Start(id))?;
+
+        let mut valid_buf = [0u8; 1];
+        f.read_exact(&mut valid_buf)?;
+        let valid = valid_buf[0] == 1;
+
+        let mut len_buf = [0u8; 4];
+        f.read_exact(&mut len_buf)?;
+
+        let len32: u32 = unsafe { std::mem::transmute(len_buf) };
+        let mut len = len32 as usize;
+        let max = self.get_io_buf_size() - HEADER_LEN;
+        if len > max {
+            #[cfg(feature = "log")]
+            error!("log read invalid message length, {} should be <= {}", len, max);
+            M.read.measure(clock() - start);
+            return Ok(LogRead::Corrupted(len));
+        } else if len == 0 && !valid {
+            // skip to next record, which starts with 1
+            loop {
+                let mut byte = [0u8; 1];
+                if let Err(e) = f.read_exact(&mut byte) {
+                    if e.kind() == UnexpectedEof {
+                        // we've hit the end of the file
+                        break;
+                    }
+                    panic!("{:?}", e);
+                }
+                if byte[0] != 1 {
+                    debug_assert_eq!(byte[0], 0);
+                    len += 1;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        if !valid {
+            M.read.measure(clock() - start);
+            // this is + 5 not + HEADER_LEN because we're 2 short when
+            // we started seeking for a non-zero byte (crc16)
+            return Ok(LogRead::Zeroed(len + 5));
+        }
+
+        let mut crc16_buf = [0u8; 2];
+        f.read_exact(&mut crc16_buf)?;
+
+        let mut buf = Vec::with_capacity(len);
+        unsafe {
+            buf.set_len(len);
+        }
+        f.read_exact(&mut buf)?;
+
+        let checksum = crc16_arr(&buf);
+        if checksum != crc16_buf {
+            M.read.measure(clock() - start);
+            return Ok(LogRead::Corrupted(len));
+        }
+
+        #[cfg(feature = "zstd")]
+        let res = {
+            if self.config().get_use_compression() {
+                let start = clock();
+                let res = Ok(LogRead::Flush(decompress(&*buf, max).unwrap(), len));
+                M.decompress.measure(clock() - start);
+                res
+            } else {
+                Ok(LogRead::Flush(buf, len))
+            }
+        };
+
+        #[cfg(not(feature = "zstd"))]
+        let res = Ok(LogRead::Flush(buf, len));
+
+        M.read.measure(clock() - start);
+        res
+    }
 }
 
 impl Drop for ConfigInner {
@@ -242,6 +360,33 @@ impl Drop for ConfigInner {
                     #[cfg(feature = "log")]
                 warn!("failed to remove old snapshot file, maybe snapshot race? {}", _e);
             }
+        }
+    }
+}
+
+fn read_up_to(
+    mut f: std::cell::RefMut<File>,
+    buf: &mut Vec<u8>,
+    max: usize,
+) -> std::io::Result<usize> {
+    buf.reserve(max);
+    unsafe {
+        buf.set_len(max);
+    }
+    let mut len = 0;
+    loop {
+        match f.read(&mut buf[len..max]) {
+            Ok(0) => {
+                unsafe {
+                    buf.set_len(len);
+                }
+                return Ok(len);
+            }
+            Ok(n) => {
+                len += n;
+            }
+            Err(ref e) if e.kind() == Interrupted => {}
+            Err(e) => return Err(e),
         }
     }
 }

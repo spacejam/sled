@@ -1,7 +1,6 @@
 use std::cell::UnsafeCell;
 use std::fmt::{self, Debug};
 use std::io::{self, SeekFrom};
-use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 
@@ -29,9 +28,6 @@ pub trait Log: Sized {
 
     /// Read a buffer from underlying storage.
     fn read(&self, id: LogID) -> io::Result<LogRead>;
-
-    /// Read a segment of log messages.
-    fn read_segment(&self, id: LogID) -> io::Result<Segment>;
 
     /// Return the current stable offset.
     fn stable_offset(&self) -> LogID;
@@ -104,10 +100,10 @@ impl LogRead {
 }
 
 pub struct Segment {
-    buf: Vec<u8>,
-    lsn: Lsn,
-    read_offset: usize,
-    position: LogID,
+    pub buf: Vec<u8>,
+    pub lsn: Lsn,
+    pub read_offset: usize,
+    pub position: LogID,
 }
 
 impl Segment {
@@ -152,6 +148,11 @@ impl Segment {
 
         let lower_bound = rel_i + HEADER_LEN;
         let upper_bound = lower_bound + len;
+
+        if self.buf.len() < upper_bound {
+            return None;
+        }
+
         let buf = self.buf[lower_bound..upper_bound].to_vec();
 
         self.read_offset = upper_bound;
@@ -161,6 +162,7 @@ impl Segment {
 }
 
 pub struct LogIter<'a, L: 'a + Log> {
+    start: Lsn,
     log: &'a L,
     segment: Option<Segment>,
     segment_iter: Box<Iterator<Item = (Lsn, LogID)>>,
@@ -180,6 +182,11 @@ impl<'a, L> Iterator for LogIter<'a, L>
                     Some(LogRead::Flush(buf, len)) => {
                         let base = segment.position;
                         let rel_i = segment.read_offset - (len + HEADER_LEN);
+
+                        if segment.read_offset < self.start as usize {
+                            continue;
+                        }
+
                         return Some((segment.lsn, base + rel_i as LogID, buf));
                     }
                     Some(LogRead::Corrupted(_)) => return None,
@@ -192,7 +199,7 @@ impl<'a, L> Iterator for LogIter<'a, L>
                     return None;
                 }
                 let (lsn, lid) = next.unwrap();
-                let next_segment = self.log.read_segment(lid);
+                let next_segment = self.log.config().read_segment(lid);
                 if let Err(_e) = next_segment {
                     #[cfg(feature = "log")]
                     error!("log read_segment failed: {:?}", _e);

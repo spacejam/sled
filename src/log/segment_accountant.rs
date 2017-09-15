@@ -5,6 +5,7 @@ use super::*;
 #[derive(Default, Debug)]
 pub struct SegmentAccountant {
     tip: LogID,
+    max_lsn: Lsn,
     segments: Vec<Segment>,
     to_clean: HashSet<LogID>,
     pending_clean: HashSet<PageID>,
@@ -50,7 +51,30 @@ impl SegmentAccountant {
         let mut ret = SegmentAccountant::default();
         ret.config = config;
         ret.tip = tip;
+        ret.scan_segment_lsns();
         ret
+    }
+
+    /// Scan the log file if we don't know of any
+    /// Lsn offsets yet, and recover the order of
+    /// segments, and the highest Lsn.
+    pub fn scan_segment_lsns(&mut self) {
+        if self.is_recovered() {
+            return;
+        }
+
+        let mut cursor = 0;
+        loop {
+            // in the future this can be optimized to just read
+            // the initial header at that position... but we need to
+            // make sure the segment is not torn
+            if let Ok(segment) = self.config.read_segment(cursor) {
+                self.recover(segment.lsn, segment.position);
+                cursor += self.config.get_io_buf_size() as LogID;
+            } else {
+                break;
+            }
+        }
     }
 
     /// this will cause all new allocations to occur at the end of the log, which
@@ -238,9 +262,11 @@ impl SegmentAccountant {
     }
 
     pub fn segment_snapshot_iter_from(&self, lsn: Lsn) -> Box<Iterator<Item = (Lsn, LogID)>> {
-        Box::new(self.ordering.clone().into_iter().filter(
-            move |&(l, _)| l >= lsn,
-        ))
+        let segment_len = self.config.get_io_buf_size() as Lsn;
+        let normalized_lsn = lsn / segment_len * segment_len;
+        Box::new(self.ordering.clone().into_iter().filter(move |&(l, _)| {
+            l >= normalized_lsn
+        }))
     }
 
     pub fn is_recovered(&self) -> bool {

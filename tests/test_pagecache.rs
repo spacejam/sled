@@ -178,6 +178,7 @@ impl Arbitrary for OpVec {
 fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
     use self::Op::*;
     let config = Config::default()
+        .io_buf_size(1024 * 8)
         .cache_bits(0)
         .cache_capacity(40)
         .cache_fixup_threshold(cache_fixup_threshold as usize);
