@@ -6,6 +6,7 @@ use super::*;
 pub struct SegmentAccountant {
     tip: LogID,
     max_lsn: Lsn,
+    initial_offset: LogID,
     segments: Vec<Segment>,
     to_clean: HashSet<LogID>,
     pending_clean: HashSet<PageID>,
@@ -93,7 +94,7 @@ impl SegmentAccountant {
                     // println!("got a thing...");
                     match log_read {
                         LogRead::Zeroed(_len) => {
-                            // println!("got a zeroed of len {}", _len);
+                            // println!("got a zeroed of len {}", len);
                             continue;
                         }
                         LogRead::Flush(lsn, _, len) => {
@@ -108,9 +109,15 @@ impl SegmentAccountant {
                         LogRead::Corrupted(_) => break,
                     }
                 }
+                let segment_overhang = self.max_lsn % self.config.get_io_buf_size() as LogID;
+                self.initial_offset = segment.position + segment_overhang;
             }
         }
         // println!("our max_lsn:{}", self.max_lsn);
+    }
+
+    pub fn initial_lid(&self) -> LogID {
+        self.initial_offset
     }
 
     pub fn recovered_max_lsn(&self) -> Lsn {
@@ -334,7 +341,7 @@ impl SegmentAccountant {
 fn basic_workflow() {
     // empty clean is None
     let conf = Config::default()
-        .io_buf_size(1000)
+        .io_buf_size(1)
         .segment_cleanup_threshold(0.2)
         .min_free_segments(3);
     let mut sa = SegmentAccountant::new(conf, 0);

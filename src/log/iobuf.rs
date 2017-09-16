@@ -196,29 +196,29 @@ impl IoBufs {
         let bufs = rep_no_copy![IoBuf::new(io_buf_size); config.get_io_bufs()];
 
         let current_buf = 0;
-        let segment_lsn = segment_accountant.recovered_max_lsn();
-        let segment_lsn_overhang = segment_lsn % io_buf_size as Lsn;
-        let new_offset = (disk_offset / io_buf_size as Lsn * io_buf_size as Lsn) +
-            segment_lsn_overhang;
+        let initial_lsn = segment_accountant.recovered_max_lsn();
+        let initial_lid = segment_accountant.initial_lid();
 
-        if remainder == 0 || segment_lsn == 0 {
-            // This is a new log, or one with an untorn final segment.
-            let next_offset = segment_accountant.next(segment_lsn);
-            bufs[current_buf].set_log_offset(next_offset);
-            bufs[current_buf].set_capacity(io_buf_size);
-            bufs[current_buf].store_segment_header(segment_lsn, config.get_use_compression());
+        if initial_lid % io_buf_size as LogID == 0 {
+            // clean offset, need to create a new one and initialize it
+            let iobuf = &bufs[current_buf];
+            let next_offset = segment_accountant.next(initial_lsn);
+            iobuf.set_log_offset(initial_lid);
+            iobuf.set_capacity(io_buf_size);
+            iobuf.store_segment_header(initial_lsn, config.get_use_compression());
 
             #[cfg(feature = "log")]
             debug!("starting log at clean offset {}", next_offset);
         } else {
-            // This should only occur when the tip of the log was
-            // torn while writing a segment.
-            bufs[current_buf].set_lsn(segment_lsn);
-            bufs[current_buf].set_capacity(remainder as usize);
-            bufs[current_buf].set_log_offset(new_offset);
+            // the tip offset is not completely full yet, reuse it
+            let iobuf = &bufs[current_buf];
+            let offset = initial_lid % io_buf_size as LogID;
+            iobuf.set_log_offset(offset);
+            iobuf.set_capacity(remainder as usize);
+            iobuf.set_lsn(initial_lsn);
 
             #[cfg(feature = "log")]
-            debug!("starting log at split offset {}", new_offset);
+            debug!("starting log at split offset {}", offset);
         }
 
         IoBufs {
@@ -487,6 +487,11 @@ impl IoBufs {
             // roll lsn to the next offset
             next_lsn += io_buf_size as Lsn - (next_lsn % io_buf_size as Lsn);
 
+            // mark unused as clear
+            println!("rollin it");
+            let max_lsn = log_offset - (log_offset % io_buf_size as Lsn) + io_buf_size as Lsn;
+            self.mark_interval((log_offset + res_len as Lsn, max_lsn));
+
             sa.next(next_lsn)
         } else {
             next_lsn += res_len as Lsn;
@@ -577,10 +582,19 @@ impl IoBufs {
         #[cfg(feature = "log")]
         trace!("({:?}) {} written", tn(), _written_bufs % self.config.get_io_bufs());
 
-        let base_lsn = iobuf.get_lsn();
-        let interval = (base_lsn, base_lsn + res_len as Lsn);
+        if res_len != 0 {
+            let base_lsn = iobuf.get_lsn();
+            let interval = (base_lsn, base_lsn + res_len as Lsn);
 
-        self.mark_interval(interval);
+            println!(
+                "wrote to lids {}-{} lsns {}-{}",
+                log_offset,
+                log_offset + res_len as LogID,
+                base_lsn,
+                base_lsn + res_len as Lsn
+            );
+            self.mark_interval(interval);
+        }
 
         M.write_to_log.measure(clock() - start);
     }
@@ -592,8 +606,10 @@ impl IoBufs {
     // above an offset that corresponds to a buffer that hasn't actually
     // been written yet! It's OK to use a mutex here because it is pretty
     // fast, compared to the other operations on shared state.
-    fn mark_interval(&self, interval: (LogID, LogID)) {
+    fn mark_interval(&self, interval: (Lsn, Lsn)) {
+        println!("mark_interval({:?})", interval);
         let mut intervals = self.intervals.lock().unwrap();
+        println!("intervals on deck: {:?}", *intervals);
         intervals.push(interval);
 
         // reverse sort
@@ -604,6 +620,7 @@ impl IoBufs {
             if cur_stable == low {
                 let old = self.stable.swap(high as usize, SeqCst);
                 assert_eq!(old, cur_stable as usize);
+                println!("new highest interval: {} - {}", low, high);
                 intervals.pop();
             } else {
                 break;
