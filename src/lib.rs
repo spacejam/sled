@@ -124,13 +124,3 @@ fn uptime() -> std::time::Duration {
 
     START.elapsed()
 }
-
-#[inline(always)]
-fn crunch_lsn(input: Lsn) -> u32 {
-    (input >> 20) as u32
-}
-
-#[inline(always)]
-fn expand_lsn(input: u32) -> Lsn {
-    (input << 20) as Lsn
-}

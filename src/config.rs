@@ -255,7 +255,7 @@ impl ConfigInner {
         Ok(log::Segment {
             buf: buf,
             lsn: lsn,
-            read_offset: 8 + HEADER_LEN,
+            read_offset: HEADER_LEN,
             position: offset,
         })
     }
@@ -271,9 +271,9 @@ impl ConfigInner {
         f.read_exact(&mut valid_buf)?;
         let valid = valid_buf[0] == 1;
 
-        let mut lsn_buf = [0u8; 4];
+        let mut lsn_buf = [0u8; 8];
         f.read_exact(&mut lsn_buf)?;
-        let lsn = expand_lsn(unsafe { std::mem::transmute(lsn_buf) });
+        let lsn: Lsn = unsafe { std::mem::transmute(lsn_buf) };
 
         let mut len_buf = [0u8; 4];
         f.read_exact(&mut len_buf)?;
@@ -308,9 +308,10 @@ impl ConfigInner {
 
         if !valid {
             M.read.measure(clock() - start);
-            // this is + 5 not + HEADER_LEN because we're 2 short when
-            // we started seeking for a non-zero byte (crc16)
-            return Ok(LogRead::Zeroed(len + 5));
+            // we're 2 short when we started seeking for a non-zero byte (crc16)
+            return Ok(LogRead::Zeroed(len + HEADER_LEN - 2));
+        } else if (lsn % self.get_io_buf_size() as Lsn) != (id % self.get_io_buf_size() as LogID) {
+            return Ok(LogRead::Corrupted(len + HEADER_LEN - 2));
         }
 
         let mut crc16_buf = [0u8; 2];

@@ -8,7 +8,7 @@ use zstd::block::compress;
 use super::*;
 
 #[doc(hidden)]
-pub const HEADER_LEN: usize = 11;
+pub const HEADER_LEN: usize = 15;
 
 struct IoBuf {
     buf: UnsafeCell<Vec<u8>>,
@@ -183,7 +183,7 @@ impl IoBufs {
 
         let file = options.open(&path).unwrap();
         let disk_offset = file.metadata().unwrap().len();
-        println!("disk offset: {}", disk_offset);
+        // println!("disk offset: {}", disk_offset);
 
         let io_buf_size = config.get_io_buf_size();
 
@@ -201,7 +201,7 @@ impl IoBufs {
         let new_offset = (disk_offset / io_buf_size as Lsn * io_buf_size as Lsn) +
             segment_lsn_overhang;
 
-        if remainder == 0 {
+        if remainder == 0 || segment_lsn == 0 {
             // This is a new log, or one with an untorn final segment.
             let next_offset = segment_accountant.next(segment_lsn);
             bufs[current_buf].set_log_offset(next_offset);
@@ -367,10 +367,10 @@ impl IoBufs {
             let reservation_lsn = iobuf.get_lsn() + buf_offset as Lsn;
 
             // we assign the LSN now that we know what it is
-            assert_eq!(&buf[1..5], &[0u8, 0, 0, 0]);
-            let lsn_bytes: [u8; 4] = unsafe { std::mem::transmute(crunch_lsn(reservation_lsn)) };
+            assert_eq!(&buf[1..9], &[0u8; 8]);
+            let lsn_bytes: [u8; 8] = unsafe { std::mem::transmute(reservation_lsn) };
             let mut buf = buf;
-            buf[1..5].copy_from_slice(&lsn_bytes);
+            buf[1..9].copy_from_slice(&lsn_bytes);
 
             M.reserve.measure(clock() - start);
 
@@ -640,7 +640,7 @@ fn encapsulate(raw_buf: Vec<u8>, lsn: Lsn, _use_compression: bool) -> Vec<u8> {
     let mut buf = raw_buf;
 
     let mut valid_bytes = vec![1u8];
-    let lsn_bytes: [u8; 4] = unsafe { std::mem::transmute(crunch_lsn(lsn)) };
+    let lsn_bytes: [u8; 8] = unsafe { std::mem::transmute(lsn) };
     let size_bytes: [u8; 4] = unsafe { std::mem::transmute(buf.len() as u32) };
     let mut crc16_bytes = crc16_arr(&buf).to_vec();
 

@@ -116,14 +116,13 @@ impl Segment {
         let rel_i = self.read_offset;
 
         let valid = self.buf[rel_i] == 1;
-        let lsn_buf = &self.buf[rel_i + 1..rel_i + 5];
-        let len_buf = &self.buf[rel_i + 5..rel_i + 9];
-        let crc16_buf = &self.buf[rel_i + 9..rel_i + HEADER_LEN];
+        let lsn_buf = &self.buf[rel_i + 1..rel_i + 9];
+        let len_buf = &self.buf[rel_i + 9..rel_i + 13];
+        let crc16_buf = &self.buf[rel_i + 13..rel_i + HEADER_LEN];
 
-        let mut lsn_arr = [0u8; 4];
+        let mut lsn_arr = [0u8; 8];
         lsn_arr.copy_from_slice(&*lsn_buf);
-        let crunched_lsn: u32 = unsafe { std::mem::transmute(lsn_arr) };
-        let lsn = expand_lsn(crunched_lsn);
+        let lsn: Lsn = unsafe { std::mem::transmute(lsn_arr) };
 
         let len32: u32 =
             unsafe { std::mem::transmute([len_buf[0], len_buf[1], len_buf[2], len_buf[3]]) };
@@ -149,6 +148,7 @@ impl Segment {
         }
 
         if !valid {
+            // println!("bumping read_offset by {}", len);
             self.read_offset += len;
             return Some(LogRead::Zeroed(len));
         }
@@ -162,6 +162,7 @@ impl Segment {
 
         let buf = self.buf[lower_bound..upper_bound].to_vec();
 
+        // println!("setting read_offset to upper bound: {}", upper_bound);
         self.read_offset = upper_bound;
 
         Some(LogRead::Flush(lsn, buf, len))

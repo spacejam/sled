@@ -291,13 +291,7 @@ fn prop_log_works(ops: OpVec) -> bool {
                 let (lid, ref expected, _len) = reference[lid as usize];
                 log.flush();
                 let read_res = log.read(lid);
-                println!(
-                    "expected {:?} read_res {:?} tip {} lid {}",
-                    expected,
-                    read_res,
-                    tip,
-                    lid
-                );
+                // println!( "expected {:?} read_res {:?} tip {} lid {}", expected, read_res, tip, lid);
                 if expected.is_none() || tip as u64 <= lid {
                     assert!(read_res.is_err() || !read_res.unwrap().is_flush());
                 } else {
@@ -325,6 +319,20 @@ fn prop_log_works(ops: OpVec) -> bool {
             }
             Restart => {
                 drop(log);
+
+                // on recovery, we will rewind over any aborted tip entries
+                while !reference.is_empty() {
+                    let should_pop = if reference.last().unwrap().1.is_none() {
+                        true
+                    } else {
+                        false
+                    };
+                    if should_pop {
+                        reference.pop();
+                    } else {
+                        break;
+                    }
+                }
                 log = config.log();
             }
             Truncate(new_len) => {
@@ -346,6 +354,19 @@ fn prop_log_works(ops: OpVec) -> bool {
                         let tip = lid as usize + sz + HEADER_LEN;
                         if new_len < tip as u64 {
                             *expected = None;
+                        }
+                    }
+
+                    while !reference.is_empty() {
+                        let should_pop = if reference.last().unwrap().1.is_none() {
+                            true
+                        } else {
+                            false
+                        };
+                        if should_pop {
+                            reference.pop();
+                        } else {
+                            break;
                         }
                     }
 
@@ -372,8 +393,8 @@ fn prop_log_works(ops: OpVec) -> bool {
 fn quickcheck_log_works() {
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 1))
-        .tests(50)
-        .max_tests(1000)
+        .tests(5000)
+        .max_tests(10000)
         .quickcheck(prop_log_works as fn(OpVec) -> bool);
 }
 
@@ -506,13 +527,49 @@ fn test_log_bug_12() {
 
 #[test]
 fn test_log_bug_13() {
-    // postmortem:
+    // postmortem: was not recording the proper highest lsn on recovery.
     use Op::*;
     prop_log_works(OpVec {
         ops: vec![
             WriteReservation(vec![35]),
             Restart,
             AbortReservation(vec![36]),
+            Read(0),
+        ],
+    });
+}
+
+#[test]
+fn test_log_bug_14() {
+    // postmortem: was not simulating the "rewind" behavior of the
+    // log to replace aborted flushes at the log tip properly.
+    use Op::*;
+    prop_log_works(OpVec {
+        ops: vec![AbortReservation(vec![12]), Restart, Write(vec![]), Read(0)],
+    });
+}
+
+#[test]
+fn test_log_bug_15() {
+    // postmortem: was not properly clearing previously
+    // overwritten writes during truncation
+    use Op::*;
+    prop_log_works(OpVec {
+        ops: vec![Write(vec![]), Truncate(0), Write(vec![]), Read(0)],
+    });
+}
+
+#[test]
+fn test_log_bug_16() {
+    // postmortem:
+    use Op::*;
+    prop_log_works(OpVec {
+        ops: vec![
+            Write(vec![189]),
+            Truncate(1),
+            Write(vec![206]),
+            Restart,
+            Write(vec![208]),
             Read(0),
         ],
     });

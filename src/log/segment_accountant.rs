@@ -84,22 +84,23 @@ impl SegmentAccountant {
             }
         }
 
-        println!("trying to get highest lsn in segment for lsn {}", self.max_lsn);
+        // println!("trying to get highest lsn in segment for lsn {}", self.max_lsn);
         if let Some(max_cursor) = self.ordering.get(&self.max_lsn) {
             if let Ok(mut segment) = self.config.read_segment(*max_cursor) {
-                println!("got a segment... {}", segment.lsn);
+                // println!( "got a segment... lsn: {} read_offset: {}", segment.lsn, segment.read_offset);
                 self.max_lsn += segment.read_offset as LogID;
                 while let Some(log_read) = segment.read_next() {
-                    println!("got a thing...");
+                    // println!("got a thing...");
                     match log_read {
-                        LogRead::Zeroed(_) => {
-                            println!("got a zeroed");
+                        LogRead::Zeroed(_len) => {
+                            // println!("got a zeroed of len {}", _len);
                             continue;
                         }
                         LogRead::Flush(lsn, _, len) => {
-                            println!("got lsn {} with len {}", lsn, len);
-                            if lsn > self.max_lsn {
-                                self.max_lsn = lsn + (len + HEADER_LEN) as Lsn;
+                            // println!("got lsn {} with len {}", lsn, len);
+                            let tip = lsn + HEADER_LEN as Lsn + len as Lsn;
+                            if tip > self.max_lsn {
+                                self.max_lsn = tip;
                             } else {
                                 break;
                             }
@@ -109,7 +110,7 @@ impl SegmentAccountant {
                 }
             }
         }
-        println!("our max_lsn:{}", self.max_lsn);
+        // println!("our max_lsn:{}", self.max_lsn);
     }
 
     pub fn recovered_max_lsn(&self) -> Lsn {
