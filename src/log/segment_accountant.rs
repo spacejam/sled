@@ -87,10 +87,12 @@ impl SegmentAccountant {
 
         // println!("trying to get highest lsn in segment for lsn {}", self.max_lsn);
         if let Some(max_cursor) = self.ordering.get(&self.max_lsn) {
+            let mut empty_tip = true;
             if let Ok(mut segment) = self.config.read_segment(*max_cursor) {
                 // println!( "got a segment... lsn: {} read_offset: {}", segment.lsn, segment.read_offset);
                 self.max_lsn += segment.read_offset as LogID;
                 while let Some(log_read) = segment.read_next() {
+                    empty_tip = false;
                     // println!("got a thing...");
                     match log_read {
                         LogRead::Zeroed(_len) => {
@@ -112,7 +114,12 @@ impl SegmentAccountant {
                 let segment_overhang = self.max_lsn % self.config.get_io_buf_size() as LogID;
                 self.initial_offset = segment.position + segment_overhang;
             }
+            if empty_tip {
+                println!("pushing empty tip from lid {} to free list", max_cursor);
+                self.free.push_back(*max_cursor);
+            }
         }
+
         // println!("our max_lsn:{}", self.max_lsn);
     }
 

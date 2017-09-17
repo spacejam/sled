@@ -137,16 +137,22 @@ impl Log for LockFreeLog {
     /// been made stable on disk
     fn make_stable(&self, lsn: Lsn) {
         let start = clock();
-        let mut spins = 0;
+
+        // we make sure stable > lsn because stable starts at 0,
+        // before we write the 0th byte of the file.
         while self.iobufs.stable() <= lsn {
             self.iobufs.flush();
-            spins += 1;
-            if spins > 2_000_000 {
-                #[cfg(feature = "log")]
-                debug!("have spun >2000000x in make_stable");
-                spins = 0;
+
+            // block until another thread updates the stable lsn
+            let waiter = self.iobufs.intervals.lock().unwrap();
+
+            if self.iobufs.stable() <= lsn {
+                let _waiter = self.iobufs.interval_updated.wait(waiter).unwrap();
+            } else {
+                break;
             }
         }
+
         M.make_stable.measure(clock() - start);
     }
 }

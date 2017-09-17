@@ -47,13 +47,15 @@ fn non_contiguous_flush() {
 #[test]
 fn concurrent_logging() {
     // TODO linearize res bufs, verify they are correct
-    let log = Arc::new(Config::default().log());
+    let conf = Config::default().io_buf_size(10000);
+    let log = Arc::new(conf.log());
     let iobs2 = log.clone();
     let iobs3 = log.clone();
     let iobs4 = log.clone();
     let iobs5 = log.clone();
     let iobs6 = log.clone();
     let log7 = log.clone();
+
     let t1 = thread::Builder::new()
         .name("c1".to_string())
         .spawn(move || for i in 0..5_000 {
@@ -358,12 +360,7 @@ fn prop_log_works(ops: OpVec) -> bool {
                     }
 
                     while !reference.is_empty() {
-                        let should_pop = if reference.last().unwrap().1.is_none() {
-                            true
-                        } else {
-                            false
-                        };
-                        if should_pop {
+                        if reference.last().unwrap().1.is_none() {
                             reference.pop();
                         } else {
                             break;

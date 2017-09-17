@@ -1,6 +1,6 @@
 use std::io::{Seek, Write};
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
 
 #[cfg(feature = "zstd")]
 use zstd::block::compress;
@@ -126,7 +126,8 @@ pub struct IoBufs {
     // Pending intervals that have been written to stable storage, but may be
     // higher than the current value of `stable` due to interesting thread
     // interleavings.
-    intervals: Mutex<Vec<(LogID, LogID)>>,
+    pub(super) intervals: Mutex<Vec<(LogID, LogID)>>,
+    pub(super) interval_updated: Condvar,
     // The highest CONTIGUOUS log sequence number that has been written to stable
     // storage. This may be lower than the length of the underlying file, and there
     // may be buffers that have been written out-of-order to stable storage
@@ -183,7 +184,6 @@ impl IoBufs {
 
         let file = options.open(&path).unwrap();
         let disk_offset = file.metadata().unwrap().len();
-        // println!("disk offset: {}", disk_offset);
 
         let io_buf_size = config.get_io_buf_size();
 
@@ -202,13 +202,13 @@ impl IoBufs {
         if initial_lid % io_buf_size as LogID == 0 {
             // clean offset, need to create a new one and initialize it
             let iobuf = &bufs[current_buf];
-            let next_offset = segment_accountant.next(initial_lsn);
+            let initial_lid = segment_accountant.next(initial_lsn);
             iobuf.set_log_offset(initial_lid);
             iobuf.set_capacity(io_buf_size);
             iobuf.store_segment_header(initial_lsn, config.get_use_compression());
 
             #[cfg(feature = "log")]
-            debug!("starting log at clean offset {}", next_offset);
+            debug!("starting log at clean offset {}", initial_lid);
         } else {
             // the tip offset is not completely full yet, reuse it
             let iobuf = &bufs[current_buf];
@@ -226,6 +226,7 @@ impl IoBufs {
             current_buf: AtomicUsize::new(current_buf),
             written_bufs: AtomicUsize::new(0),
             intervals: Mutex::new(vec![]),
+            interval_updated: Condvar::new(),
             stable: AtomicUsize::new(disk_offset as usize),
             config: config,
             file_for_writing: Mutex::new(file),
@@ -259,11 +260,18 @@ impl IoBufs {
     /// (config io buf size - 7)
     pub(super) fn reserve(&self, raw_buf: Vec<u8>) -> Reservation {
         let start = clock();
+
         assert_eq!((raw_buf.len() + HEADER_LEN) >> 32, 0);
 
         let buf = encapsulate(raw_buf, 0, self.config.get_use_compression());
 
-        assert!(buf.len() <= self.config.get_io_buf_size());
+        assert!(
+            buf.len() + HEADER_LEN <= self.config.get_io_buf_size(),
+            "trying to write a buffer that is too large to be stored in the IO buffer."
+        );
+
+        #[cfg(feature = "log")]
+        debug!("reserving buf of len {}", buf.len());
 
         let mut printed = false;
         macro_rules! trace_once {
@@ -481,23 +489,45 @@ impl IoBufs {
 
         let mut next_lsn = iobuf.get_lsn();
 
-        let next_offset = if from_reserve {
+        let maxed = res_len == capacity;
+
+        let next_offset = if from_reserve || maxed {
             let mut sa = self.segment_accountant.lock().unwrap();
 
             // roll lsn to the next offset
             next_lsn += io_buf_size as Lsn - (next_lsn % io_buf_size as Lsn);
 
             // mark unused as clear
-            println!("rollin it");
-            let max_lsn = log_offset - (log_offset % io_buf_size as Lsn) + io_buf_size as Lsn;
-            self.mark_interval((log_offset + res_len as Lsn, max_lsn));
+            #[cfg(feature = "log")]
+            debug!(
+                "rolling to new segment after clearing {}-{}",
+                log_offset,
+                log_offset + res_len
+            );
+
+            if res_len != io_buf_size {
+                let max_lsn = log_offset - (log_offset % io_buf_size as Lsn) + io_buf_size as Lsn;
+                self.mark_interval((log_offset + res_len as Lsn, max_lsn));
+            }
 
             sa.next(next_lsn)
         } else {
+            #[cfg(feature = "log")]
+            debug!(
+                "advancing offset within the current segment from {} to {}",
+                log_offset,
+                log_offset + res_len as LogID
+            );
             next_lsn += res_len as Lsn;
 
             log_offset + res_len as LogID
         };
+
+        /*
+        if log_offset > 60000 {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        */
 
         let next_idx = (idx + 1) % self.config.get_io_bufs();
         let next_iobuf = &self.bufs[next_idx];
@@ -521,11 +551,12 @@ impl IoBufs {
         // to start writing into this buffer, so do that after it's all
         // set up. expect this thread to block until the buffer completes
         // its entire lifecycle as soon as we do that.
-        if from_reserve {
+        if from_reserve || maxed {
             next_iobuf.set_capacity(self.config.get_io_buf_size());
             next_iobuf.store_segment_header(next_lsn, self.config.get_use_compression());
         } else {
             let new_cap = capacity - res_len;
+            assert_ne!(new_cap, 0);
             next_iobuf.set_capacity(new_cap);
             next_iobuf.set_lsn(next_lsn);
             next_iobuf.set_header(0);
@@ -586,12 +617,13 @@ impl IoBufs {
             let base_lsn = iobuf.get_lsn();
             let interval = (base_lsn, base_lsn + res_len as Lsn);
 
-            println!(
-                "wrote to lids {}-{} lsns {}-{}",
-                log_offset,
-                log_offset + res_len as LogID,
+            #[cfg(feature = "log")]
+            debug!(
+                "wrote lsns {}-{} to disk at offsets {}-{}",
                 base_lsn,
                 base_lsn + res_len as Lsn
+                log_offset,
+                log_offset + res_len as LogID,
             );
             self.mark_interval(interval);
         }
@@ -607,24 +639,33 @@ impl IoBufs {
     // been written yet! It's OK to use a mutex here because it is pretty
     // fast, compared to the other operations on shared state.
     fn mark_interval(&self, interval: (Lsn, Lsn)) {
-        println!("mark_interval({:?})", interval);
         let mut intervals = self.intervals.lock().unwrap();
-        println!("intervals on deck: {:?}", *intervals);
         intervals.push(interval);
+
+        // debug_assert!(intervals.len() < 50, "intervals is getting crazy...");
 
         // reverse sort
         intervals.sort_unstable_by(|a, b| b.cmp(a));
 
+        let mut updated = false;
+
         while let Some(&(low, high)) = intervals.last() {
             let cur_stable = self.stable.load(SeqCst) as LogID;
+            assert!(low >= cur_stable);
             if cur_stable == low {
                 let old = self.stable.swap(high as usize, SeqCst);
                 assert_eq!(old, cur_stable as usize);
-                println!("new highest interval: {} - {}", low, high);
+                #[cfg(feature = "log")]
+                debug!("new highest interval: {} - {}", low, high);
                 intervals.pop();
+                updated = true;
             } else {
                 break;
             }
+        }
+
+        if updated {
+            self.interval_updated.notify_all();
         }
     }
 }
