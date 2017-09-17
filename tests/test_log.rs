@@ -390,7 +390,7 @@ fn prop_log_works(ops: OpVec) -> bool {
 fn quickcheck_log_works() {
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 1))
-        .tests(5000)
+        .tests(100)
         .max_tests(10000)
         .quickcheck(prop_log_works as fn(OpVec) -> bool);
 }

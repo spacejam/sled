@@ -171,27 +171,9 @@ impl IoBufs {
             }
         }
 
-        let mut options = std::fs::OpenOptions::new();
-        options.create(true);
-        options.write(true);
-
-        #[cfg(target_os = "linux")]
-        #[cfg(feature = "o_direct_writer")]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.custom_flags(libc::O_DIRECT);
-        }
-
-        let file = options.open(&path).unwrap();
-        let disk_offset = file.metadata().unwrap().len();
-
         let io_buf_size = config.get_io_buf_size();
 
-        let remainder = (io_buf_size as LogID - (disk_offset % io_buf_size as LogID)) %
-            io_buf_size as LogID;
-        let next_disk_offset = disk_offset + remainder;
-
-        let mut segment_accountant = SegmentAccountant::new(config.clone(), next_disk_offset);
+        let mut segment_accountant = SegmentAccountant::new(config.clone());
 
         let bufs = rep_no_copy![IoBuf::new(io_buf_size); config.get_io_bufs()];
 
@@ -199,6 +181,7 @@ impl IoBufs {
         let initial_lsn = segment_accountant.recovered_max_lsn();
         let initial_lid = segment_accountant.initial_lid();
 
+        println!("initial_lsn: {} initial_lid: {}", initial_lsn, initial_lid);
         if initial_lid % io_buf_size as LogID == 0 {
             // clean offset, need to create a new one and initialize it
             let iobuf = &bufs[current_buf];
@@ -214,12 +197,25 @@ impl IoBufs {
             let iobuf = &bufs[current_buf];
             let offset = initial_lid % io_buf_size as LogID;
             iobuf.set_log_offset(offset);
-            iobuf.set_capacity(remainder as usize);
+            iobuf.set_capacity(io_buf_size - offset as usize);
             iobuf.set_lsn(initial_lsn);
 
             #[cfg(feature = "log")]
             debug!("starting log at split offset {}", offset);
         }
+
+        // open file for writing
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true);
+        options.write(true);
+
+        #[cfg(target_os = "linux")]
+        #[cfg(feature = "o_direct_writer")]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_DIRECT);
+        }
+        let file = options.open(&path).unwrap();
 
         IoBufs {
             bufs: bufs,
@@ -227,7 +223,7 @@ impl IoBufs {
             written_bufs: AtomicUsize::new(0),
             intervals: Mutex::new(vec![]),
             interval_updated: Condvar::new(),
-            stable: AtomicUsize::new(disk_offset as usize),
+            stable: AtomicUsize::new(initial_lsn as usize),
             config: config,
             file_for_writing: Mutex::new(file),
             segment_accountant: Mutex::new(segment_accountant),
@@ -491,6 +487,7 @@ impl IoBufs {
 
         let maxed = res_len == capacity;
 
+        // println!( "from_reserve: {}, res_len: {}, capacity: {}", from_reserve, res_len, capacity);
         let next_offset = if from_reserve || maxed {
             let mut sa = self.segment_accountant.lock().unwrap();
 
@@ -502,7 +499,7 @@ impl IoBufs {
             debug!(
                 "rolling to new segment after clearing {}-{}",
                 log_offset,
-                log_offset + res_len
+                log_offset + res_len as LogID,
             );
 
             if res_len != io_buf_size {
@@ -621,7 +618,7 @@ impl IoBufs {
             debug!(
                 "wrote lsns {}-{} to disk at offsets {}-{}",
                 base_lsn,
-                base_lsn + res_len as Lsn
+                base_lsn + res_len as Lsn,
                 log_offset,
                 log_offset + res_len as LogID,
             );

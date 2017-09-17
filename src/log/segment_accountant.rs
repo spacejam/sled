@@ -48,15 +48,9 @@ pub struct Segment {
 //      we need the next log offset, which gets this lsn
 
 impl SegmentAccountant {
-    pub fn new(config: Config, tip: LogID) -> SegmentAccountant {
-        assert!(
-            tip % config.get_io_buf_size() as LogID == 0,
-            "unaligned Lsn provided to new!"
-        );
-
+    pub fn new(config: Config) -> SegmentAccountant {
         let mut ret = SegmentAccountant::default();
         ret.config = config;
-        ret.tip = tip;
         ret.scan_segment_lsns();
         ret
     }
@@ -96,7 +90,7 @@ impl SegmentAccountant {
                     // println!("got a thing...");
                     match log_read {
                         LogRead::Zeroed(_len) => {
-                            // println!("got a zeroed of len {}", len);
+                            // println!("got a zeroed of len {}", _len);
                             continue;
                         }
                         LogRead::Flush(lsn, _, len) => {
@@ -115,9 +109,12 @@ impl SegmentAccountant {
                 self.initial_offset = segment.position + segment_overhang;
             }
             if empty_tip {
-                println!("pushing empty tip from lid {} to free list", max_cursor);
+                // println!("pushing empty tip from lid {} to free list", max_cursor);
                 self.free.push_back(*max_cursor);
             }
+        } else {
+            assert!(self.ordering.is_empty());
+            self.tip = 0;
         }
 
         // println!("our max_lsn:{}", self.max_lsn);
@@ -351,7 +348,7 @@ fn basic_workflow() {
         .io_buf_size(1)
         .segment_cleanup_threshold(0.2)
         .min_free_segments(3);
-    let mut sa = SegmentAccountant::new(conf, 0);
+    let mut sa = SegmentAccountant::new(conf);
 
     let mut highest = 0;
     let mut lsn = || {
