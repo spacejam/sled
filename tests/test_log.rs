@@ -34,10 +34,12 @@ fn more_reservations_than_buffers() {
 
 #[test]
 fn non_contiguous_flush() {
-    let conf = Config::default();
+    let conf = Config::default().io_buf_size(1000);
     let log = conf.log();
-    let res1 = log.reserve(vec![0; conf.get_io_buf_size() - HEADER_LEN]);
-    let res2 = log.reserve(vec![0; conf.get_io_buf_size() - HEADER_LEN]);
+
+    let buf_len = conf.get_io_buf_size() - HEADER_LEN * 2;
+    let res1 = log.reserve(vec![0; buf_len]);
+    let res2 = log.reserve(vec![0; buf_len]);
     let id = res2.lid();
     res2.abort();
     res1.abort();
@@ -103,7 +105,9 @@ fn concurrent_logging() {
             let res = iobs6.reserve(buf);
             let id = res.lid();
             res.complete();
+            // println!("+");
             iobs6.make_stable(id);
+            // println!("-");
         })
         .unwrap();
 
@@ -197,7 +201,7 @@ impl Arbitrary for Op {
         static LEN: AtomicUsize = ATOMIC_USIZE_INIT;
 
         let mut incr = || {
-            let len = thread_rng().gen_range(0, 2);
+            let len = thread_rng().gen_range(1, 2);
             LEN.fetch_add(len + HEADER_LEN, Ordering::Relaxed);
             vec![COUNTER.fetch_add(1, Ordering::Relaxed) as u8; len]
         };
