@@ -181,7 +181,7 @@ impl IoBufs {
         let initial_lsn = segment_accountant.recovered_max_lsn();
         let initial_lid = segment_accountant.initial_lid();
 
-        println!("initial_lsn: {} initial_lid: {}", initial_lsn, initial_lid);
+        // println!("initial_lsn: {} initial_lid: {}", initial_lsn, initial_lid);
         if initial_lid % io_buf_size as LogID == 0 {
             // clean offset, need to create a new one and initialize it
             let iobuf = &bufs[current_buf];
@@ -255,6 +255,7 @@ impl IoBufs {
     /// Panics if the desired reservation is greater than 8388601 bytes..
     /// (config io buf size - 7)
     pub(super) fn reserve(&self, raw_buf: Vec<u8>) -> Reservation {
+        // std::thread::sleep(std::time::Duration::from_millis(10));
         let start = clock();
 
         assert_eq!((raw_buf.len() + HEADER_LEN) >> 32, 0);
@@ -503,8 +504,11 @@ impl IoBufs {
             );
 
             if res_len != io_buf_size {
-                let max_lsn = log_offset - (log_offset % io_buf_size as Lsn) + io_buf_size as Lsn;
-                self.mark_interval((log_offset + res_len as Lsn, max_lsn));
+                // we want to just mark the part that won't get marked in
+                // write_to_log, which is basically just the wasted tip here.
+                let lsn = iobuf.get_lsn();
+                let max_lsn = lsn - (lsn % io_buf_size as Lsn) + io_buf_size as Lsn;
+                self.mark_interval((lsn + res_len as Lsn, max_lsn));
             }
 
             sa.next(next_lsn)
@@ -519,12 +523,6 @@ impl IoBufs {
 
             log_offset + res_len as LogID
         };
-
-        /*
-        if log_offset > 60000 {
-            std::thread::sleep(std::time::Duration::from_secs(1));
-        }
-        */
 
         let next_idx = (idx + 1) % self.config.get_io_bufs();
         let next_iobuf = &self.bufs[next_idx];
@@ -583,6 +581,11 @@ impl IoBufs {
         let iobuf = &self.bufs[idx];
         let header = iobuf.get_header();
         let log_offset = iobuf.get_log_offset();
+        let base_lsn = iobuf.get_lsn();
+
+        let io_buf_size = self.config.get_io_buf_size();
+
+        assert_eq!(log_offset % io_buf_size as LogID, base_lsn % io_buf_size as Lsn);
 
         assert_ne!(
             log_offset as usize,
@@ -611,7 +614,6 @@ impl IoBufs {
         trace!("({:?}) {} written", tn(), _written_bufs % self.config.get_io_bufs());
 
         if res_len != 0 {
-            let base_lsn = iobuf.get_lsn();
             let interval = (base_lsn, base_lsn + res_len as Lsn);
 
             #[cfg(feature = "log")]
@@ -636,10 +638,29 @@ impl IoBufs {
     // been written yet! It's OK to use a mutex here because it is pretty
     // fast, compared to the other operations on shared state.
     fn mark_interval(&self, interval: (Lsn, Lsn)) {
+        // println!("mark_interval({} - {})", interval.0, interval.1);
         let mut intervals = self.intervals.lock().unwrap();
-        intervals.push(interval);
 
-        // debug_assert!(intervals.len() < 50, "intervals is getting crazy...");
+        let mut merged = false;
+
+        // merge existing intervals if possible
+        for &mut (ref mut low, ref mut high) in intervals.iter_mut() {
+            if *low == interval.1 || *high == interval.0 {
+                // println!("before: {} {}", low, high);
+                *low = std::cmp::min(*low, interval.0);
+                *high = std::cmp::max(*high, interval.1);
+                // println!("after: {} {}", low, high);
+                merged = true;
+                break;
+            }
+        }
+
+        if !merged {
+            intervals.push(interval);
+        }
+
+        // println!("intervals: {:?} ", *intervals);
+        debug_assert!(intervals.len() < 100, "intervals is getting crazy...");
 
         // reverse sort
         intervals.sort_unstable_by(|a, b| b.cmp(a));
@@ -648,12 +669,14 @@ impl IoBufs {
 
         while let Some(&(low, high)) = intervals.last() {
             let cur_stable = self.stable.load(SeqCst) as LogID;
+            // println!("cur_stable: {}", cur_stable);
             assert!(low >= cur_stable);
             if cur_stable == low {
                 let old = self.stable.swap(high as usize, SeqCst);
                 assert_eq!(old, cur_stable as usize);
                 #[cfg(feature = "log")]
                 debug!("new highest interval: {} - {}", low, high);
+                // println!("new highest: {}", high);
                 intervals.pop();
                 updated = true;
             } else {
@@ -662,6 +685,7 @@ impl IoBufs {
         }
 
         if updated {
+            // println!("notifying all");
             self.interval_updated.notify_all();
         }
     }

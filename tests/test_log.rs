@@ -47,7 +47,7 @@ fn non_contiguous_flush() {
 #[test]
 fn concurrent_logging() {
     // TODO linearize res bufs, verify they are correct
-    let conf = Config::default().io_buf_size(10000);
+    let conf = Config::default().io_buf_size(1000);
     let log = Arc::new(conf.log());
     let iobs2 = log.clone();
     let iobs3 = log.clone();
@@ -58,51 +58,54 @@ fn concurrent_logging() {
 
     let t1 = thread::Builder::new()
         .name("c1".to_string())
-        .spawn(move || for i in 0..5_000 {
-            let buf = vec![1; i % 8192];
+        .spawn(move || for i in 0..1_000 {
+            let buf = vec![1; i % 896];
             log.write(buf);
         })
         .unwrap();
+
     let t2 = thread::Builder::new()
         .name("c2".to_string())
-        .spawn(move || for i in 0..5_000 {
-            let buf = vec![2; i % 8192];
+        .spawn(move || for i in 0..1_000 {
+            let buf = vec![2; i % 896];
             iobs2.write(buf);
         })
         .unwrap();
+
     let t3 = thread::Builder::new()
         .name("c3".to_string())
-        .spawn(move || for i in 0..5_000 {
-            let buf = vec![3; i % 8192];
+        .spawn(move || for i in 0..1_000 {
+            let buf = vec![3; i % 896];
             iobs3.write(buf);
         })
         .unwrap();
+
     let t4 = thread::Builder::new()
         .name("c4".to_string())
-        .spawn(move || for i in 0..5_000 {
-            let buf = vec![4; i % 8192];
+        .spawn(move || for i in 0..1_000 {
+            let buf = vec![4; i % 896];
             iobs4.write(buf);
         })
         .unwrap();
+
     let t5 = thread::Builder::new()
         .name("c5".to_string())
-        .spawn(move || for i in 0..5_000 {
-            let buf = vec![5; i % 8192];
+        .spawn(move || for i in 0..1_000 {
+            let buf = vec![5; i % 896];
             iobs5.write(buf);
         })
         .unwrap();
 
     let t6 = thread::Builder::new()
         .name("c6".to_string())
-        .spawn(move || for i in 0..5_000 {
-            let buf = vec![6; i % 8192];
+        .spawn(move || for i in 0..1_000 {
+            let buf = vec![6; i % 896];
             let res = iobs6.reserve(buf);
             let id = res.lid();
             res.complete();
             iobs6.make_stable(id);
         })
         .unwrap();
-
 
     t1.join().unwrap();
     t2.join().unwrap();
@@ -391,7 +394,7 @@ fn quickcheck_log_works() {
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 1))
         .tests(100)
-        .max_tests(10000)
+        .max_tests(1000)
         .quickcheck(prop_log_works as fn(OpVec) -> bool);
 }
 
