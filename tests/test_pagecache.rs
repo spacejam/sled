@@ -390,6 +390,26 @@ fn test_pagecache_bug_8() {
     );
 }
 
+#[test]
+fn test_pagecache_bug_9() {
+    // postmortem:
+    use Op::*;
+    prop_pagecache_works(
+        OpVec {
+            ops: vec![
+                Allocate,
+                Allocate,
+                Merge(1, 208),
+                Merge(1, 211),
+                Merge(0, 212),
+                Set(0, 213),
+                Set(1, 214),
+            ],
+        },
+        0,
+    );
+}
+
 fn _test_pagecache_bug_() {
     // postmortem: TEMPLATE
     // use Op::*;
