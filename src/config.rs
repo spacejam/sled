@@ -47,7 +47,7 @@ impl Default for Config {
             cache_capacity: 1024 * 1024 * 1024, // 1gb
             use_os_cache: true,
             use_compression: true,
-            flush_every_ms: None,
+            flush_every_ms: Some(500),
             snapshot_after_ops: 1_000_000,
             snapshot_path: None,
             cache_fixup_threshold: 1,
