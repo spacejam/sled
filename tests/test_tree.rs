@@ -242,7 +242,8 @@ fn prop_tree_matches_btreemap(ops: OpVec, blink_fanout: u8, snapshot_after: u8) 
     use self::Op::*;
     let config = Config::default()
         .snapshot_after_ops(snapshot_after as usize + 1)
-        .io_buf_size(1024)
+        .flush_every_ms(Some(1))
+        .io_buf_size(1000)
         .blink_fanout(blink_fanout as usize + 2)
         .cache_capacity(40);
     let mut tree = config.tree();
@@ -345,6 +346,8 @@ fn test_tree_bug_2() {
 #[test]
 fn test_tree_bug_3() {
     // postmortem: the tree was not persisting and recovering root hoists
+    // postmortem 2: when refactoring the log storage, we failed to restart
+    // log writing in the proper location.
     use Op::*;
     prop_tree_matches_btreemap(
         OpVec {
@@ -369,6 +372,9 @@ fn test_tree_bug_3() {
 fn test_tree_bug_4() {
     // postmortem: pagecache was failing to replace the LogID list
     // when it encountered a new Update::Compact.
+    // postmortem 2: after refactoring log storage, we were not properly
+    // setting the log tip, and the beginning got clobbered after writing
+    // after a restart.
     use Op::*;
     prop_tree_matches_btreemap(
         OpVec {
@@ -382,6 +388,27 @@ fn test_tree_bug_4() {
                 Set(127, 155),
                 Restart,
                 Set(59, 119),
+            ],
+        },
+        0,
+        0,
+    );
+}
+#[test]
+fn test_tree_bug_5() {
+    // postmortem:
+    use Op::*;
+    prop_tree_matches_btreemap(
+        OpVec {
+            ops: vec![
+                Set(231, 107),
+                Set(251, 42),
+                Set(80, 81),
+                Set(178, 130),
+                Set(150, 232),
+                Restart,
+                Set(98, 78),
+                Set(0, 45),
             ],
         },
         0,

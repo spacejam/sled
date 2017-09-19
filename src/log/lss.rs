@@ -158,6 +158,8 @@ impl Log for LockFreeLog {
             }
         }
 
+        // println!("make_stable({}) returning", lsn);
+
         M.make_stable.measure(clock() - start);
     }
 }

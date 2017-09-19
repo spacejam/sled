@@ -570,7 +570,7 @@ fn test_log_bug_15() {
 
 #[test]
 fn test_log_bug_16() {
-    // postmortem:
+    // postmortem: a bug in recovery created by the massive log overhaul
     use Op::*;
     prop_log_works(OpVec {
         ops: vec![
@@ -602,6 +602,15 @@ fn test_log_bug_17() {
             Write(vec![82]),
             Read(6),
         ],
+    });
+}
+
+#[test]
+fn test_log_bug_18() {
+    // postmortem:
+    use Op::*;
+    prop_log_works(OpVec {
+        ops: vec![Restart],
     });
 }
 

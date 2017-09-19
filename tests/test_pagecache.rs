@@ -179,6 +179,7 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
     use self::Op::*;
     let config = Config::default()
         .io_buf_size(1024 * 8)
+        .flush_every_ms(Some(1))
         .cache_bits(0)
         .cache_capacity(40)
         .cache_fixup_threshold(cache_fixup_threshold as usize);
@@ -392,7 +393,8 @@ fn test_pagecache_bug_8() {
 
 #[test]
 fn test_pagecache_bug_9() {
-    // postmortem:
+    // postmortem: this started failing in the giant refactor for log structured storage,
+    // and was possibly fixed by properly handling intervals in mark_interval
     use Op::*;
     prop_pagecache_works(
         OpVec {

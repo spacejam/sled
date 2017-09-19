@@ -113,6 +113,7 @@ impl Segment {
 
         let rel_i = self.read_offset;
 
+        // println!( "processing header for segment at id {}: {:?}", self.read_offset + self.position as usize, &self.buf[rel_i..rel_i + HEADER_LEN]);
         let valid = self.buf[rel_i] == 1;
         let lsn_buf = &self.buf[rel_i + 1..rel_i + 9];
         let len_buf = &self.buf[rel_i + 9..rel_i + 13];

@@ -71,6 +71,12 @@ impl SegmentAccountant {
             if let Ok(segment) = self.config.read_segment(cursor) {
                 self.recover(segment.lsn, segment.position);
                 cursor += self.config.get_io_buf_size() as LogID;
+
+                // NB we set tip AFTER bumping cursor, as we want this to
+                // eventually extend 1 segment width above the highest valid
+                // (partial or complete) segment's base.
+                self.tip = cursor;
+
                 if segment.lsn > self.max_lsn {
                     self.max_lsn = segment.lsn;
                 }
@@ -79,22 +85,27 @@ impl SegmentAccountant {
             }
         }
 
-        // println!("trying to get highest lsn in segment for lsn {}", self.max_lsn);
+
+        println!("trying to get highest lsn in segment for lsn {}", self.max_lsn);
         if let Some(max_cursor) = self.ordering.get(&self.max_lsn) {
             let mut empty_tip = true;
             if let Ok(mut segment) = self.config.read_segment(*max_cursor) {
-                // println!( "got a segment... lsn: {} read_offset: {}", segment.lsn, segment.read_offset);
+                println!(
+                    "got a segment... lsn: {} read_offset: {}",
+                    segment.lsn,
+                    segment.read_offset
+                );
                 self.max_lsn += segment.read_offset as LogID;
                 while let Some(log_read) = segment.read_next() {
                     empty_tip = false;
-                    // println!("got a thing...");
+                    println!("got a thing...");
                     match log_read {
                         LogRead::Zeroed(_len) => {
-                            // println!("got a zeroed of len {}", _len);
+                            println!("got a zeroed of len {}", _len);
                             continue;
                         }
                         LogRead::Flush(lsn, _, len) => {
-                            // println!("got lsn {} with len {}", lsn, len);
+                            println!("got lsn {} with len {}", lsn, len);
                             let tip = lsn + HEADER_LEN as Lsn + len as Lsn;
                             if tip > self.max_lsn {
                                 self.max_lsn = tip;
@@ -109,15 +120,14 @@ impl SegmentAccountant {
                 self.initial_offset = segment.position + segment_overhang;
             }
             if empty_tip {
-                // println!("pushing empty tip from lid {} to free list", max_cursor);
+                println!("pushing free {} to free list in new", *max_cursor);
                 self.free.push_back(*max_cursor);
             }
         } else {
             assert!(self.ordering.is_empty());
-            self.tip = 0;
         }
 
-        // println!("our max_lsn:{}", self.max_lsn);
+        println!("our max_lsn:{}", self.max_lsn);
     }
 
     pub fn initial_lid(&self) -> LogID {
@@ -167,6 +177,7 @@ impl SegmentAccountant {
                 // can be reused immediately
                 segment.freed = true;
                 self.to_clean.remove(&segment_start);
+                println!("pushing free {} to free list in freed", segment_start);
                 self.free.push_back(segment_start);
             } else if segment.pids.len() as f64 / segment.pids_len as f64 <=
                        self.config.get_segment_cleanup_threshold()
@@ -218,6 +229,7 @@ impl SegmentAccountant {
                 // can be reused immediately
                 segment.freed = true;
                 self.to_clean.remove(&segment_start);
+                println!("pushing free {} to free list from set", segment_start);
                 self.free.push_back(segment_start);
             } else if segment.pids.len() as f64 / segment.pids_len as f64 <=
                        self.config.get_segment_cleanup_threshold()
@@ -268,6 +280,7 @@ impl SegmentAccountant {
         }.unwrap_or_else(|| {
             let lid = self.tip;
             self.tip += self.config.get_io_buf_size() as LogID;
+            println!("SA advancing tip from {} to {}", lid, self.tip);
             lid
         });
 

@@ -763,13 +763,13 @@ impl<PM, P, R> PageCache<PM, P, R>
         free.reverse();
         for pid in free {
             #[cfg(feature = "log")]
-            info!("adding {} to free during load_snapshot", pid);
+            trace!("adding {} to free during load_snapshot", pid);
             self.free.push(pid);
         }
 
         for (pid, lids) in &snapshot.pt {
             #[cfg(feature = "log")]
-            info!("loading pid {} in load_snapshot", pid);
+            trace!("loading pid {} in load_snapshot", pid);
             let mut lids = lids.clone();
             let stack = Stack::default();
 

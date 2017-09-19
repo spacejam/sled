@@ -210,12 +210,12 @@ impl IoBufs {
             // the tip offset is not completely full yet, reuse it
             let iobuf = &bufs[current_buf];
             let offset = initial_lid % io_buf_size as LogID;
-            iobuf.set_log_offset(offset);
+            iobuf.set_log_offset(initial_lid);
             iobuf.set_capacity(io_buf_size - offset as usize);
             iobuf.set_lsn(initial_lsn);
 
             #[cfg(feature = "log")]
-            debug!("starting log at split offset {}", offset);
+            debug!("starting log at split offset {}", initial_lid);
         }
 
         // open file for writing
@@ -636,8 +636,8 @@ impl IoBufs {
         if res_len != 0 {
             let interval = (base_lsn, base_lsn + res_len as Lsn);
 
-            #[cfg(feature = "log")]
-            debug!(
+            // #[cfg(feature = "log")]
+            println!(
                 "wrote lsns {}-{} to disk at offsets {}-{}",
                 base_lsn,
                 base_lsn + res_len as Lsn,
@@ -664,6 +664,10 @@ impl IoBufs {
             // TODO why does this happen?
             return;
         }
+        assert!(
+            interval.0 < interval.1,
+            "tried to mark_interval with a high-end lower than the low-end"
+        );
         let mut intervals = self.intervals.lock().unwrap();
 
         /*
@@ -707,7 +711,7 @@ impl IoBufs {
                 assert_eq!(old, cur_stable as usize);
                 #[cfg(feature = "log")]
                 debug!("new highest interval: {} - {}", low, high);
-                // println!("new highest: {}", high);
+                println!("new highest: {}", high);
                 intervals.pop();
                 updated = true;
             } else {
