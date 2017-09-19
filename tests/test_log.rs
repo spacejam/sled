@@ -49,7 +49,7 @@ fn non_contiguous_flush() {
 #[test]
 fn concurrent_logging() {
     // TODO linearize res bufs, verify they are correct
-    let conf = Config::default().io_buf_size(1000);
+    let conf = Config::default().io_buf_size(1000).flush_every_ms(Some(50));
     let log = Arc::new(conf.log());
     let iobs2 = log.clone();
     let iobs3 = log.clone();
@@ -200,8 +200,12 @@ impl Arbitrary for Op {
         static COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
         static LEN: AtomicUsize = ATOMIC_USIZE_INIT;
 
+        // ensure len never is loaded at 0, as it will crash
+        // the call to gen_range below if low >= high
+        LEN.compare_and_swap(0, 1, Ordering::SeqCst);
+
         let mut incr = || {
-            let len = thread_rng().gen_range(1, 2);
+            let len = thread_rng().gen_range(0, 2);
             LEN.fetch_add(len + HEADER_LEN, Ordering::Relaxed);
             vec![COUNTER.fetch_add(1, Ordering::Relaxed) as u8; len]
         };
@@ -298,7 +302,6 @@ fn prop_log_works(ops: OpVec) -> bool {
                     continue;
                 }
                 let (lid, ref expected, _len) = reference[lid as usize];
-                log.flush();
                 let read_res = log.read(lid);
                 // println!( "expected {:?} read_res {:?} tip {} lid {}", expected, read_res, tip, lid);
                 if expected.is_none() || tip as u64 <= lid {
@@ -577,6 +580,29 @@ fn test_log_bug_16() {
             Read(0),
         ],
     });
+}
+
+#[test]
+fn test_log_bug_17() {
+    // postmortem: this was a transient failure caused by failing to stabilize
+    // an update before later reading it.
+    use Op::*;
+    loop {
+        prop_log_works(OpVec {
+            ops: vec![
+                Write(vec![]),
+                Read(7),
+                Write(vec![81]),
+                Read(14),
+                Read(9),
+                Read(14),
+                Read(0),
+                Read(8),
+                Write(vec![82]),
+                Read(6),
+            ],
+        });
+    }
 }
 
 fn _test_log_bug_() {
