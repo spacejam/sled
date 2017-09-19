@@ -1,8 +1,6 @@
 use std::cell::UnsafeCell;
 use std::fmt::{self, Debug};
 use std::io::{self, SeekFrom};
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering::SeqCst;
 
 use super::*;
 

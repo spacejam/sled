@@ -1,6 +1,8 @@
 use std::io::{Seek, Write};
 use std::path::Path;
 use std::sync::{Condvar, Mutex};
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::SeqCst;
 
 #[cfg(feature = "zstd")]
 use zstd::block::compress;
@@ -45,22 +47,6 @@ impl IoBuf {
         }
     }
 
-    fn set_capacity(&self, cap: usize) {
-        self.capacity.store(cap, SeqCst);
-    }
-
-    fn get_capacity(&self) -> usize {
-        self.capacity.load(SeqCst)
-    }
-
-    fn set_lsn(&self, lsn: Lsn) {
-        self.lsn.store(lsn as usize, SeqCst);
-    }
-
-    fn get_lsn(&self) -> Lsn {
-        self.lsn.load(SeqCst) as Lsn
-    }
-
     fn store_segment_header(&self, lsn: Lsn, use_compression: bool) {
         #[cfg(feature = "log")]
         debug!("storing lsn {} in beginning of buffer", lsn);
@@ -83,23 +69,48 @@ impl IoBuf {
         self.set_header(bumped);
     }
 
+    fn set_capacity(&self, cap: usize) {
+        debug_delay();
+        self.capacity.store(cap, SeqCst);
+    }
+
+    fn get_capacity(&self) -> usize {
+        debug_delay();
+        self.capacity.load(SeqCst)
+    }
+
+    fn set_lsn(&self, lsn: Lsn) {
+        debug_delay();
+        self.lsn.store(lsn as usize, SeqCst);
+    }
+
+    fn get_lsn(&self) -> Lsn {
+        debug_delay();
+        self.lsn.load(SeqCst) as Lsn
+    }
+
     fn set_log_offset(&self, offset: LogID) {
+        debug_delay();
         self.log_offset.store(offset as usize, SeqCst);
     }
 
     fn get_log_offset(&self) -> LogID {
+        debug_delay();
         self.log_offset.load(SeqCst) as LogID
     }
 
     fn get_header(&self) -> u32 {
+        debug_delay();
         self.header.load(SeqCst) as u32
     }
 
     fn set_header(&self, new: u32) {
+        debug_delay();
         self.header.store(new as usize, SeqCst);
     }
 
     fn cas_header(&self, old: u32, new: u32) -> Result<u32, u32> {
+        debug_delay();
         let res = self.header.compare_and_swap(
             old as usize,
             new as usize,
@@ -109,6 +120,7 @@ impl IoBuf {
     }
 
     fn cas_log_offset(&self, old: LogID, new: LogID) -> Result<LogID, LogID> {
+        debug_delay();
         let res = self.log_offset.compare_and_swap(
             old as usize,
             new as usize,
@@ -139,7 +151,9 @@ pub struct IoBufs {
 
 impl Debug for IoBufs {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        debug_delay();
         let current_buf = self.current_buf.load(SeqCst);
+        debug_delay();
         let written_bufs = self.written_bufs.load(SeqCst);
 
         formatter.write_fmt(format_args!(
@@ -235,12 +249,14 @@ impl IoBufs {
     }
 
     fn idx(&self) -> usize {
+        debug_delay();
         let current_buf = self.current_buf.load(SeqCst);
         current_buf % self.config.get_io_bufs()
     }
 
     /// Returns the last stable offset in storage.
     pub(super) fn stable(&self) -> Lsn {
+        debug_delay();
         self.stable.load(SeqCst) as Lsn
     }
 
@@ -255,7 +271,6 @@ impl IoBufs {
     /// Panics if the desired reservation is greater than 8388601 bytes..
     /// (config io buf size - 7)
     pub(super) fn reserve(&self, raw_buf: Vec<u8>) -> Reservation {
-        // std::thread::sleep(std::time::Duration::from_millis(10));
         let start = clock();
 
         assert_eq!((raw_buf.len() + HEADER_LEN) >> 32, 0);
@@ -268,7 +283,7 @@ impl IoBufs {
         );
 
         #[cfg(feature = "log")]
-        debug!("reserving buf of len {}", buf.len());
+        trace!("reserving buf of len {}", buf.len());
 
         let mut printed = false;
         macro_rules! trace_once {
@@ -281,7 +296,9 @@ impl IoBufs {
         }
         let mut spins = 0;
         loop {
+            debug_delay();
             let written_bufs = self.written_bufs.load(SeqCst);
+            debug_delay();
             let current_buf = self.current_buf.load(SeqCst);
             let idx = current_buf % self.config.get_io_bufs();
 
@@ -560,6 +577,7 @@ impl IoBufs {
         #[cfg(feature = "log")]
         trace!("({:?}) {} zeroed header", tn(), next_idx);
 
+        debug_delay();
         let _current_buf = self.current_buf.fetch_add(1, SeqCst) + 1;
         #[cfg(feature = "log")]
         trace!(
@@ -601,6 +619,7 @@ impl IoBufs {
         let mut f = self.file_for_writing.lock().unwrap();
         f.seek(SeekFrom::Start(log_offset)).unwrap();
         f.write_all(&data[..res_len]).unwrap();
+        f.sync_all().unwrap();
         M.written_bytes.measure(res_len as f64);
         // signal that this IO buffer is uninitialized
         let max = std::usize::MAX as LogID;
@@ -609,6 +628,7 @@ impl IoBufs {
         trace!("({:?}) {} log <- MAX", tn(), idx);
 
         // communicate to other threads that we have written an IO buffer.
+        debug_delay();
         let _written_bufs = self.written_bufs.fetch_add(1, SeqCst);
         #[cfg(feature = "log")]
         trace!("({:?}) {} written", tn(), _written_bufs % self.config.get_io_bufs());
@@ -639,8 +659,14 @@ impl IoBufs {
     // fast, compared to the other operations on shared state.
     fn mark_interval(&self, interval: (Lsn, Lsn)) {
         // println!("mark_interval({} - {})", interval.0, interval.1);
+        if interval.0 == interval.1 {
+            // no need to work with this
+            // TODO why does this happen?
+            return;
+        }
         let mut intervals = self.intervals.lock().unwrap();
 
+        /*
         let mut merged = false;
 
         // merge existing intervals if possible
@@ -654,10 +680,12 @@ impl IoBufs {
                 break;
             }
         }
-
         if !merged {
-            intervals.push(interval);
         }
+        */
+
+        intervals.push(interval);
+
 
         // println!("intervals: {:?} ", *intervals);
         debug_assert!(intervals.len() < 100, "intervals is getting crazy...");
@@ -668,10 +696,13 @@ impl IoBufs {
         let mut updated = false;
 
         while let Some(&(low, high)) = intervals.last() {
+            assert_ne!(low, high);
+            debug_delay();
             let cur_stable = self.stable.load(SeqCst) as LogID;
             // println!("cur_stable: {}", cur_stable);
             assert!(low >= cur_stable);
             if cur_stable == low {
+                debug_delay();
                 let old = self.stable.swap(high as usize, SeqCst);
                 assert_eq!(old, cur_stable as usize);
                 #[cfg(feature = "log")]
@@ -769,4 +800,16 @@ fn offset(v: u32) -> u32 {
 fn bump_offset(v: u32, by: u32) -> u32 {
     assert_eq!(by >> 24, 0);
     v + by
+}
+
+#[inline(always)]
+fn debug_delay() {
+    #[cfg(test)]
+    {
+        use rand::{Rng, thread_rng};
+
+        if thread_rng().gen_weighted_bool(1000) {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
 }
