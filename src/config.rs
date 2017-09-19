@@ -36,7 +36,14 @@ impl Default for Config {
     fn default() -> Config {
         let now = uptime();
         let nanos = (now.as_secs() * 1_000_000_000) + now.subsec_nanos() as u64;
+
+        // use shared memory for temporary linux files
+        #[cfg(target_os = "linux")]
+        let tmp_path = format!("/dev/shm/sled.tmp.{}", nanos);
+
+        #[cfg(not(target_os = "linux"))]
         let tmp_path = format!("sled.tmp.{}", nanos);
+
         let inner = Arc::new(UnsafeCell::new(ConfigInner {
             io_bufs: 3,
             io_buf_size: 2 << 22, // 8mb
