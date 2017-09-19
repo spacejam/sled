@@ -289,7 +289,9 @@ impl Arbitrary for OpVec {
 
 fn prop_log_works(ops: OpVec) -> bool {
     use self::Op::*;
-    let config = Config::default().io_buf_size(1024 * 8);
+    let config = Config::default().io_buf_size(1024 * 8).flush_every_ms(
+        Some(1),
+    );
 
     let mut tip = 0;
     let mut log = config.log();
@@ -587,22 +589,20 @@ fn test_log_bug_17() {
     // postmortem: this was a transient failure caused by failing to stabilize
     // an update before later reading it.
     use Op::*;
-    loop {
-        prop_log_works(OpVec {
-            ops: vec![
-                Write(vec![]),
-                Read(7),
-                Write(vec![81]),
-                Read(14),
-                Read(9),
-                Read(14),
-                Read(0),
-                Read(8),
-                Write(vec![82]),
-                Read(6),
-            ],
-        });
-    }
+    prop_log_works(OpVec {
+        ops: vec![
+            Write(vec![]),
+            Read(7),
+            Write(vec![81]),
+            Read(14),
+            Read(9),
+            Read(14),
+            Read(0),
+            Read(8),
+            Write(vec![82]),
+            Read(6),
+        ],
+    });
 }
 
 fn _test_log_bug_() {
