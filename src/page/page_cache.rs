@@ -666,7 +666,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                         if let Some(lids) = snapshot.pt.get(&prepend.pid) {
                             for lid in lids {
                                 let old_idx = *lid as usize / io_buf_size;
-                                let mut old_segment = &mut snapshot.segments[old_idx];
+                                let old_segment = &mut snapshot.segments[old_idx];
                                 if old_segment.pids_len == 0 {
                                     old_segment.pids_len = old_segment.pids.len();
                                 }
@@ -687,7 +687,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                         if let Some(lids) = snapshot.pt.get(&prepend.pid) {
                             for lid in lids {
                                 let old_idx = *lid as usize / io_buf_size;
-                                let mut old_segment = &mut snapshot.segments[old_idx];
+                                let old_segment = &mut snapshot.segments[old_idx];
                                 if old_segment.pids_len == 0 {
                                     old_segment.pids_len = old_segment.pids.len();
                                 }
