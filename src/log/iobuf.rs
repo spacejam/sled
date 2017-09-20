@@ -655,13 +655,7 @@ impl IoBufs {
             let interval = (base_lsn, base_lsn + res_len as Lsn);
 
             // #[cfg(feature = "log")]
-            println!(
-                "wrote lsns {}-{} to disk at offsets {}-{}",
-                base_lsn,
-                base_lsn + res_len as Lsn,
-                log_offset,
-                log_offset + res_len as LogID,
-            );
+            //println!( "wrote lsns {}-{} to disk at offsets {}-{}", base_lsn, base_lsn + res_len as Lsn, log_offset, log_offset + res_len as LogID,);
             self.mark_interval(interval);
         }
 
