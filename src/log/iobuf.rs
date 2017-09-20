@@ -638,8 +638,8 @@ impl IoBufs {
         if res_len != 0 {
             let interval = (base_lsn, base_lsn + res_len as Lsn);
 
-            // #[cfg(feature = "log")]
-            println!(
+            #[cfg(feature = "log")]
+            debug!(
                 "wrote lsns {}-{} to disk at offsets {}-{}",
                 base_lsn,
                 base_lsn + res_len as Lsn,
@@ -713,7 +713,6 @@ impl IoBufs {
                 assert_eq!(old, cur_stable as usize);
                 #[cfg(feature = "log")]
                 debug!("new highest interval: {} - {}", low, high);
-                println!("new highest: {}", high);
                 intervals.pop();
                 updated = true;
             } else {

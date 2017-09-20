@@ -124,15 +124,11 @@ impl Segment {
         lsn_arr.copy_from_slice(&*lsn_buf);
         let lsn: Lsn = unsafe { std::mem::transmute(lsn_arr) };
 
-        if lsn <= self.max_encountered_lsn {
-            // we've overrun our valid entries, maybe this segment was
-            // torn during write. time to move on to the next Segment in
-            // iteration.
-
-            // TODO ideally we'd also verify that lsn % io_buf_size == rel_i % io_buf_size
-            return None;
-        } else {
+        if lsn > self.max_encountered_lsn {
+            // println!("bumping segment max lsn from {} to {}", self.max_encountered_lsn, lsn);
             self.max_encountered_lsn = lsn;
+        } else {
+            assert_eq!(valid, false);
         }
 
         let len32: u32 =

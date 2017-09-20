@@ -607,7 +607,7 @@ fn test_log_bug_17() {
 
 #[test]
 fn test_log_bug_18() {
-    // postmortem:
+    // postmortem: this was a recovery bug
     use Op::*;
     prop_log_works(OpVec {
         ops: vec![Restart],
