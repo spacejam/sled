@@ -510,7 +510,9 @@ impl IoBufs {
             let mut sa = self.segment_accountant.lock().unwrap();
 
             // roll lsn to the next offset
-            next_lsn += io_buf_size as Lsn - (next_lsn % io_buf_size as Lsn);
+            let segment_offset = next_lsn % io_buf_size as Lsn;
+            let segment_remainder = io_buf_size as Lsn - segment_offset;
+            next_lsn += segment_remainder;
 
             // mark unused as clear
             #[cfg(feature = "log")]
@@ -520,12 +522,12 @@ impl IoBufs {
                 log_offset + res_len as LogID,
             );
 
-            if res_len != io_buf_size {
+            if res_len != io_buf_size && res_len != segment_remainder as usize {
                 // we want to just mark the part that won't get marked in
                 // write_to_log, which is basically just the wasted tip here.
                 let lsn = iobuf.get_lsn();
-                let max_lsn = lsn - (lsn % io_buf_size as Lsn) + io_buf_size as Lsn;
-                self.mark_interval((lsn + res_len as Lsn, max_lsn));
+                let low_lsn = lsn + res_len as Lsn;
+                self.mark_interval((low_lsn, next_lsn));
             }
 
             sa.next(next_lsn)
@@ -564,7 +566,7 @@ impl IoBufs {
         // set up. expect this thread to block until the buffer completes
         // its entire lifecycle as soon as we do that.
         if from_reserve || maxed {
-            next_iobuf.set_capacity(self.config.get_io_buf_size());
+            next_iobuf.set_capacity(io_buf_size);
             next_iobuf.store_segment_header(next_lsn, self.config.get_use_compression());
         } else {
             let new_cap = capacity - res_len;
@@ -659,11 +661,11 @@ impl IoBufs {
     // fast, compared to the other operations on shared state.
     fn mark_interval(&self, interval: (Lsn, Lsn)) {
         // println!("mark_interval({} - {})", interval.0, interval.1);
-        if interval.0 == interval.1 {
-            // no need to work with this
-            // TODO why does this happen?
-            return;
-        }
+        assert_ne!(
+            interval.0,
+            interval.1,
+            "mark_interval called with a zero-length range!"
+        );
         assert!(
             interval.0 < interval.1,
             "tried to mark_interval with a high-end lower than the low-end"

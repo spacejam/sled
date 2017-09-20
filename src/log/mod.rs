@@ -103,6 +103,7 @@ pub struct Segment {
     pub lsn: Lsn,
     pub read_offset: usize,
     pub position: LogID,
+    pub max_encountered_lsn: Lsn,
 }
 
 impl Segment {
@@ -123,6 +124,17 @@ impl Segment {
         lsn_arr.copy_from_slice(&*lsn_buf);
         let lsn: Lsn = unsafe { std::mem::transmute(lsn_arr) };
 
+        if lsn <= self.max_encountered_lsn {
+            // we've overrun our valid entries, maybe this segment was
+            // torn during write. time to move on to the next Segment in
+            // iteration.
+
+            // TODO ideally we'd also verify that lsn % io_buf_size == rel_i % io_buf_size
+            return None;
+        } else {
+            self.max_encountered_lsn = lsn;
+        }
+
         let len32: u32 =
             unsafe { std::mem::transmute([len_buf[0], len_buf[1], len_buf[2], len_buf[3]]) };
         let mut len = len32 as usize;
@@ -136,7 +148,11 @@ impl Segment {
             );
             return Some(LogRead::Corrupted(len));
         } else if len == 0 && !valid {
-            assert_eq!(crc16_buf, [0, 0]);
+            if crc16_buf != [0, 0] {
+                // we've hit garbage, return None
+                // println!("failed on segment {:?}", self);
+                return None;
+            }
             len = HEADER_LEN;
             for byte in &self.buf[rel_i + HEADER_LEN..] {
                 if *byte != 0 {

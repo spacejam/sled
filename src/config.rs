@@ -264,6 +264,7 @@ impl ConfigInner {
             lsn: lsn,
             read_offset: HEADER_LEN,
             position: offset,
+            max_encountered_lsn: lsn,
         })
     }
 
