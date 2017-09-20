@@ -16,11 +16,11 @@ pub struct SegmentAccountant {
     ordering: BTreeMap<Lsn, LogID>,
 }
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct Segment {
-    pids: HashSet<PageID>,
-    pids_len: usize,
-    lsn: Option<Lsn>,
+    pub pids: HashSet<PageID>,
+    pub pids_len: usize,
+    pub lsn: Option<Lsn>,
     freed: bool,
 }
 
@@ -55,10 +55,31 @@ impl SegmentAccountant {
         ret
     }
 
+    pub fn initialize_from_segments(&mut self, segments: Vec<Segment>) {
+        self.segments = segments;
+
+        for (idx, ref mut segment) in self.segments.iter_mut().enumerate() {
+            let segment_start = (idx * self.config.get_io_buf_size()) as LogID;
+
+            // populate free and to_clean
+            if segment.pids.is_empty() {
+                // can be reused immediately
+                segment.freed = true;
+                // println!("pushing free {} to free list in initialization", segment_start);
+                self.free.push_back(segment_start);
+            } else if segment.pids.len() as f64 / segment.pids_len as f64 <=
+                       self.config.get_segment_cleanup_threshold()
+            {
+                // can be cleaned
+                self.to_clean.insert(segment_start);
+            }
+        }
+    }
+
     /// Scan the log file if we don't know of any
     /// Lsn offsets yet, and recover the order of
     /// segments, and the highest Lsn.
-    pub fn scan_segment_lsns(&mut self) {
+    fn scan_segment_lsns(&mut self) {
         if self.is_recovered() {
             return;
         }
@@ -84,7 +105,6 @@ impl SegmentAccountant {
                 break;
             }
         }
-
 
         println!("trying to get highest lsn in segment for lsn {}", self.max_lsn);
         if let Some(max_cursor) = self.ordering.get(&self.max_lsn) {

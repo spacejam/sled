@@ -98,7 +98,7 @@ impl LogRead {
 }
 
 #[derive(Debug)]
-pub struct Segment {
+pub struct SegmentIter {
     pub buf: Vec<u8>,
     pub lsn: Lsn,
     pub read_offset: usize,
@@ -106,7 +106,7 @@ pub struct Segment {
     pub max_encountered_lsn: Lsn,
 }
 
-impl Segment {
+impl SegmentIter {
     fn read_next(&mut self) -> Option<LogRead> {
         if self.read_offset + HEADER_LEN > self.buf.len() {
             return None;
@@ -188,7 +188,7 @@ pub struct LogIter<'a, L: 'a + Log> {
     min_lsn: Lsn,
     max_encountered_lsn: Lsn,
     log: &'a L,
-    segment: Option<Segment>,
+    segment: Option<SegmentIter>,
     segment_iter: Box<Iterator<Item = (Lsn, LogID)>>,
 }
 

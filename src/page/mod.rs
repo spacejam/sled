@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fmt::{self, Debug};
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
@@ -109,7 +109,7 @@ struct Snapshot<R> {
     pub max_segment_lsn: Lsn,
     pub max_pid: PageID,
     pub pt: BTreeMap<PageID, Vec<LogID>>,
-    pub sa: HashMap<LogID, Vec<PageID>>,
+    pub segments: Vec<log::Segment>,
     pub free: Vec<PageID>,
     pub recovery: Option<R>,
 }
@@ -120,7 +120,7 @@ impl<R> Default for Snapshot<R> {
             max_segment_lsn: 0,
             max_pid: 0,
             pt: BTreeMap::new(),
-            sa: HashMap::new(),
+            segments: vec![],
             free: vec![],
             recovery: None,
         }
