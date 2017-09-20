@@ -233,8 +233,12 @@ impl<PM, P, R> PageCache<PM, P, R>
             unsafe {
                 let cas_key = deleted.unwrap().deref().head(scope).into();
 
+                let start = clock();
                 let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
+                let locked = clock();
+                M.accountant_lock.measure(locked - start);
                 sa.freed(pid, lids_from_stack(cas_key, scope), lsn);
+                M.accountant_hold.measure(clock() - locked);
             }
 
             let pd = Owned::new(PidDropper(pid, self.free.clone()));
@@ -501,8 +505,12 @@ impl<PM, P, R> PageCache<PM, P, R>
                 log_reservation.complete();
 
                 {
+                    let start = clock();
                     let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
+                    let locked = clock();
+                    M.accountant_lock.measure(locked - start);
                     sa.set(pid, lids_from_stack(old, scope), lid, lsn);
+                    M.accountant_hold.measure(clock() - locked);
                 }
 
                 let count = self.updates.fetch_add(1, SeqCst) + 1;
@@ -557,8 +565,12 @@ impl<PM, P, R> PageCache<PM, P, R>
                 log_reservation.complete();
 
                 {
+                    let start = clock();
                     let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
+                    let locked = clock();
+                    M.accountant_lock.measure(locked - start);
                     sa.merged(pid, lid, lsn);
+                    M.accountant_hold.measure(clock() - locked);
                 }
 
                 let count = self.updates.fetch_add(1, SeqCst) + 1;
@@ -594,8 +606,12 @@ impl<PM, P, R> PageCache<PM, P, R>
         // we disable rewriting so that our log becomes append-only,
         // allowing us to iterate through it without corrupting ourselves.
         {
+            let start = clock();
             let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
+            let locked = clock();
+            M.accountant_lock.measure(locked - start);
             sa.pause_rewriting();
+            M.accountant_hold.measure(clock() - locked);
         }
 
         let mut snapshot = snapshot_opt.unwrap();
@@ -702,8 +718,12 @@ impl<PM, P, R> PageCache<PM, P, R>
             }
         }
         {
+            let start = clock();
             let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
+            let locked = clock();
+            M.accountant_lock.measure(locked - start);
             sa.resume_rewriting();
+            M.accountant_hold.measure(clock() - locked);
         }
         M.write_snapshot.measure(clock() - start);
     }

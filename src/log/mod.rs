@@ -124,13 +124,6 @@ impl Segment {
         lsn_arr.copy_from_slice(&*lsn_buf);
         let lsn: Lsn = unsafe { std::mem::transmute(lsn_arr) };
 
-        if lsn > self.max_encountered_lsn {
-            // println!("bumping segment max lsn from {} to {}", self.max_encountered_lsn, lsn);
-            self.max_encountered_lsn = lsn;
-        } else {
-            assert_eq!(valid, false);
-        }
-
         let len32: u32 =
             unsafe { std::mem::transmute([len_buf[0], len_buf[1], len_buf[2], len_buf[3]]) };
         let mut len = len32 as usize;
@@ -173,6 +166,17 @@ impl Segment {
 
         let buf = self.buf[lower_bound..upper_bound].to_vec();
 
+        let checksum = crc16_arr(&buf);
+        if checksum != crc16_buf {
+            // overan our valid buffer
+            return None;
+        }
+
+        if lsn > self.max_encountered_lsn {
+            // println!( "bumping segment max lsn from {} to {} in read_next", self.max_encountered_lsn, lsn);
+            self.max_encountered_lsn = lsn;
+        }
+
         // println!("setting read_offset to upper bound: {}", upper_bound);
         self.read_offset = upper_bound;
 
@@ -209,6 +213,7 @@ impl<'a, L> Iterator for LogIter<'a, L>
                             );
                             return None;
                         } else {
+                            // println!( "bumping max_encountered_lsn from {} to {} in LogIter", self.max_encountered_lsn, read_lsn);
                             self.max_encountered_lsn = read_lsn;
                         }
 

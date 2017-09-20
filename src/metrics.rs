@@ -28,6 +28,8 @@ pub struct Metrics {
     pub read: Histo,
     pub tree_loops: AtomicUsize,
     pub log_loops: AtomicUsize,
+    pub accountant_lock: Histo,
+    pub accountant_hold: Histo,
 }
 
 impl Metrics {
@@ -125,5 +127,12 @@ impl Metrics {
             f("punch_hole", &self.punch_hole),
         ]);
         println!("log contention loops: {}", self.log_loops.load(Acquire));
+
+        println!("{}", repeat("-").take(103).collect::<String>());
+        println!("segment accountant:");
+        p(vec![
+            f("acquire", &self.accountant_lock),
+            f("hold", &self.accountant_hold),
+        ]);
     }
 }

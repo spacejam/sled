@@ -1,9 +1,6 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-#[cfg(feature = "zstd")]
-use zstd::block::decompress;
-
 use super::*;
 
 /// A sequential store which allows users to create
@@ -111,8 +108,12 @@ impl Log for LockFreeLog {
     /// Return an iterator over the log, starting with
     /// a specified offset.
     fn iter_from(&self, lsn: Lsn) -> LogIter<Self> {
+        let start = clock();
         let sa = self.iobufs.segment_accountant.lock().unwrap();
+        let locked = clock();
+        M.accountant_lock.measure(locked - start);
         let segment_iter = sa.segment_snapshot_iter_from(lsn);
+        M.accountant_hold.measure(clock() - locked);
 
         LogIter {
             max_encountered_lsn: 0,

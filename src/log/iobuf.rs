@@ -69,6 +69,15 @@ impl IoBuf {
         self.set_header(bumped);
     }
 
+    fn zero_remainder(&self) {
+        let offset = offset(self.get_header()) as usize;
+        let cap = self.get_capacity() as usize;
+        unsafe {
+            let remainder = &(&**self.buf.get())[offset..cap];
+            std::ptr::write_bytes(remainder.as_ptr() as *mut u8, 0, cap - offset);
+        }
+    }
+
     fn set_capacity(&self, cap: usize) {
         debug_delay();
         self.capacity.store(cap, SeqCst);
@@ -507,7 +516,10 @@ impl IoBufs {
 
         // println!( "from_reserve: {}, res_len: {}, capacity: {}", from_reserve, res_len, capacity);
         let next_offset = if from_reserve || maxed {
+            let start = clock();
             let mut sa = self.segment_accountant.lock().unwrap();
+            let locked = clock();
+            M.accountant_lock.measure(locked - start);
 
             // roll lsn to the next offset
             let segment_offset = next_lsn % io_buf_size as Lsn;
@@ -528,9 +540,13 @@ impl IoBufs {
                 let lsn = iobuf.get_lsn();
                 let low_lsn = lsn + res_len as Lsn;
                 self.mark_interval((low_lsn, next_lsn));
+                // TODO zero out the end of the buffer.
+                iobuf.zero_remainder();
             }
 
-            sa.next(next_lsn)
+            let res = sa.next(next_lsn);
+            M.accountant_hold.measure(clock() - locked);
+            res
         } else {
             #[cfg(feature = "log")]
             debug!(
@@ -638,8 +654,8 @@ impl IoBufs {
         if res_len != 0 {
             let interval = (base_lsn, base_lsn + res_len as Lsn);
 
-            #[cfg(feature = "log")]
-            debug!(
+            // #[cfg(feature = "log")]
+            println!(
                 "wrote lsns {}-{} to disk at offsets {}-{}",
                 base_lsn,
                 base_lsn + res_len as Lsn,

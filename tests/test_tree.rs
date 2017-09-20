@@ -394,9 +394,11 @@ fn test_tree_bug_4() {
         0,
     );
 }
+
 #[test]
 fn test_tree_bug_5() {
-    // postmortem:
+    // postmortem: during recovery, the segment accountant was failing to properly set the file's
+    // tip.
     use Op::*;
     prop_tree_matches_btreemap(
         OpVec {
@@ -409,6 +411,54 @@ fn test_tree_bug_5() {
                 Restart,
                 Set(98, 78),
                 Set(0, 45),
+            ],
+        },
+        0,
+        0,
+    );
+}
+
+#[test]
+fn test_tree_bug_6() {
+    // postmortem: after reusing segments, we were failing to checksum reads performed while
+    // iterating over rewritten segment buffers, and using former garbage data. fix: use the
+    // crc that's there for catching torn writes with high probability, AND zero out buffers.
+    use Op::*;
+    prop_tree_matches_btreemap(
+        OpVec {
+            ops: vec![
+                Set(162, 8),
+                Set(59, 192),
+                Set(238, 83),
+                Set(151, 231),
+                Restart,
+                Set(30, 206),
+                Set(150, 146),
+                Set(18, 34),
+            ],
+        },
+        0,
+        0,
+    );
+}
+
+#[test]
+fn test_tree_bug_7() {
+    // postmortem: the segment accountant was not fully recovered, and thought that it could
+    // reuse a particular segment that wasn't actually empty yet.
+    use Op::*;
+    prop_tree_matches_btreemap(
+        OpVec {
+            ops: vec![
+                Set(135, 22),
+                Set(41, 36),
+                Set(101, 31),
+                Set(111, 35),
+                Restart,
+                Set(47, 36),
+                Set(79, 114),
+                Set(64, 9),
+                Scan(196, 25),
             ],
         },
         0,

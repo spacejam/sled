@@ -9,6 +9,8 @@ use std::io::{Error, Read, Seek, SeekFrom};
 use std::fs::File;
 use std::io::ErrorKind::{Interrupted, Other, UnexpectedEof};
 
+#[cfg(feature = "zstd")]
+use zstd::block::decompress;
 
 use super::*;
 
@@ -339,7 +341,7 @@ impl ConfigInner {
 
         #[cfg(feature = "zstd")]
         let res = {
-            if self.config().get_use_compression() {
+            if self.get_use_compression() {
                 let start = clock();
                 let res = Ok(LogRead::Flush(lsn, decompress(&*buf, max).unwrap(), len));
                 M.decompress.measure(clock() - start);
