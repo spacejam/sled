@@ -682,26 +682,7 @@ impl IoBufs {
         );
         let mut intervals = self.intervals.lock().unwrap();
 
-        /*
-        let mut merged = false;
-
-        // merge existing intervals if possible
-        for &mut (ref mut low, ref mut high) in intervals.iter_mut() {
-            if *low == interval.1 || *high == interval.0 {
-                // println!("before: {} {}", low, high);
-                *low = std::cmp::min(*low, interval.0);
-                *high = std::cmp::max(*high, interval.1);
-                // println!("after: {} {}", low, high);
-                merged = true;
-                break;
-            }
-        }
-        if !merged {
-        }
-        */
-
         intervals.push(interval);
-
 
         // println!("intervals: {:?} ", *intervals);
         debug_assert!(intervals.len() < 100, "intervals is getting crazy...");

@@ -350,17 +350,17 @@ fn prop_log_works(ops: OpVec) -> bool {
                 log = config.log();
             }
             Truncate(new_len) => {
-                if tip as u64 <= new_len {
-                    // we are testing data loss, not rogue extensions
-                    continue;
-                }
-
-                tip = new_len as usize;
-
-                drop(log);
-
                 #[cfg(target_os = "linux")]
                 {
+                    if tip as u64 <= new_len {
+                        // we are testing data loss, not rogue extensions
+                        continue;
+                    }
+
+                    tip = new_len as usize;
+
+                    drop(log);
+
                     let path = config.get_path();
 
                     let mut sz_total = 0;
@@ -381,17 +381,19 @@ fn prop_log_works(ops: OpVec) -> bool {
 
                     use std::os::unix::io::AsRawFd;
 
-                    let cached_f = config.cached_file();
-                    let f = cached_f.borrow_mut();
-                    use libc::ftruncate;
-                    let fd = f.as_raw_fd();
+                    {
+                        let cached_f = config.cached_file();
+                        let f = cached_f.borrow_mut();
+                        use libc::ftruncate;
+                        let fd = f.as_raw_fd();
 
-                    unsafe {
-                        ftruncate(fd, new_len as i64);
+                        unsafe {
+                            ftruncate(fd, new_len as i64);
+                        }
                     }
-                }
 
-                log = config.log();
+                    log = config.log();
+                }
             }
         }
     }
