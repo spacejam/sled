@@ -1,4 +1,7 @@
 use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::sync::{Arc, Mutex};
+
+use coco::epoch::{Owned, pin};
 
 use super::*;
 
@@ -10,10 +13,27 @@ pub struct SegmentAccountant {
     segments: Vec<Segment>,
     to_clean: HashSet<LogID>,
     pending_clean: HashSet<PageID>,
-    free: VecDeque<LogID>,
+    free: Arc<Mutex<VecDeque<LogID>>>,
     config: Config,
     pause_rewriting: bool,
     ordering: BTreeMap<Lsn, LogID>,
+}
+
+// We use a `SegmentDropper` to ensure that we never
+// add a segment's LogID to the free deque while any
+// active thread could be acting on it. This is necessary
+// despite the "safe buffer" in the free queue because
+// the safe buffer only prevents the sole remaining
+// copy of a page from being overwritten. This prevents
+// dangling references to segments that were rewritten after
+// the `LogID` was read.
+struct SegmentDropper(LogID, Arc<Mutex<VecDeque<LogID>>>);
+
+impl Drop for SegmentDropper {
+    fn drop(&mut self) {
+        let mut deque = self.1.lock().unwrap();
+        deque.push_back(self.0);
+    }
 }
 
 #[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -66,7 +86,7 @@ impl SegmentAccountant {
                 // can be reused immediately
                 segment.freed = true;
                 // println!("pushing free {} to free list in initialization", segment_start);
-                self.free.push_back(segment_start);
+                self.free.lock().unwrap().push_back(segment_start);
             } else if segment.pids.len() as f64 / segment.pids_len as f64 <=
                        self.config.get_segment_cleanup_threshold()
             {
@@ -137,7 +157,7 @@ impl SegmentAccountant {
             }
             if empty_tip {
                 // println!("pushing free {} to free list in new", *max_cursor);
-                self.free.push_back(*max_cursor);
+                self.free.lock().unwrap().push_back(*max_cursor);
             }
         } else {
             assert!(self.ordering.is_empty());
@@ -193,7 +213,14 @@ impl SegmentAccountant {
                 self.to_clean.remove(&segment_start);
                 // println!("pushing free {} to free list in freed", segment_start);
                 self.ensure_safe_free_distance();
-                self.free.push_back(segment_start);
+
+                pin(|scope| {
+                    let pd = Owned::new(SegmentDropper(segment_start, self.free.clone()));
+                    let ptr = pd.into_ptr(scope);
+                    unsafe {
+                        scope.defer_drop(ptr);
+                    }
+                });
             } else if self.segments[idx].pids.len() as f64 / self.segments[idx].pids_len as f64 <=
                        self.config.get_segment_cleanup_threshold()
             {
@@ -245,7 +272,14 @@ impl SegmentAccountant {
                 self.to_clean.remove(&segment_start);
                 // println!("pushing free {} to free list from set", segment_start);
                 self.ensure_safe_free_distance();
-                self.free.push_back(segment_start);
+
+                pin(|scope| {
+                    let pd = Owned::new(SegmentDropper(segment_start, self.free.clone()));
+                    let ptr = pd.into_ptr(scope);
+                    unsafe {
+                        scope.defer_drop(ptr);
+                    }
+                });
             } else if self.segments[idx].pids.len() as f64 / self.segments[idx].pids_len as f64 <=
                        self.config.get_segment_cleanup_threshold()
             {
@@ -301,9 +335,9 @@ impl SegmentAccountant {
         // guarantees that the old updates are actually safe
         // somewhere else first. Note that we push_front here
         // so that the log tip is used first.
-        while self.free.len() < self.config.get_io_bufs() {
+        while self.free.lock().unwrap().len() < self.config.get_io_bufs() {
             let new_lid = self.bump_tip();
-            self.free.push_front(new_lid);
+            self.free.lock().unwrap().push_front(new_lid);
         }
 
     }
@@ -318,7 +352,12 @@ impl SegmentAccountant {
         let lid = if self.pause_rewriting {
             self.bump_tip()
         } else {
-            self.free.pop_front().unwrap_or_else(|| self.bump_tip())
+            let res = self.free.lock().unwrap().pop_front();
+            if res.is_none() {
+                self.bump_tip()
+            } else {
+                res.unwrap()
+            }
         };
 
         // pin lsn to this segment
@@ -348,7 +387,9 @@ impl SegmentAccountant {
     }
 
     pub fn clean(&mut self) -> Option<PageID> {
-        if self.free.len() > self.config.get_min_free_segments() || self.to_clean.is_empty() {
+        if self.free.lock().unwrap().len() > self.config.get_min_free_segments() ||
+            self.to_clean.is_empty()
+        {
             return None;
         }
 
@@ -427,11 +468,6 @@ fn basic_workflow() {
     let _fourth = sa.next(lsn());
     sa.set(0, vec![first], second, lsn());
     assert_eq!(sa.clean(), None);
-    // we need to continue io_bufs times to skip the safe buffer
-    let _fifth = sa.next(lsn());
-    let _sixth = sa.next(lsn());
-    let seventh = sa.next(lsn());
-    assert_eq!(seventh, first);
     sa.merged(1, second, lsn());
     sa.merged(2, second, lsn());
     sa.merged(3, second, lsn());
