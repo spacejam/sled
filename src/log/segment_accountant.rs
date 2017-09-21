@@ -172,30 +172,29 @@ impl SegmentAccountant {
         for old_lid in old_lids.into_iter() {
             let idx = old_lid as usize / self.config.get_io_buf_size();
 
-            let segment = &mut self.segments[idx];
-
-            if segment.lsn.unwrap() > lsn {
+            if self.segments[idx].lsn.unwrap() > lsn {
                 // has been replaced after this call already,
                 // quite a big race happened.
                 // FIXME this is an unsafe leak when operating under zero-copy mode
                 continue;
             }
 
-            if segment.pids_len == 0 {
-                segment.pids_len = segment.pids.len();
+            if self.segments[idx].pids_len == 0 {
+                self.segments[idx].pids_len = self.segments[idx].pids.len();
             }
 
-            segment.pids.remove(&pid);
+            self.segments[idx].pids.remove(&pid);
 
             let segment_start = (idx * self.config.get_io_buf_size()) as LogID;
 
-            if segment.pids.is_empty() && !segment.freed {
+            if self.segments[idx].pids.is_empty() && !self.segments[idx].freed {
                 // can be reused immediately
-                segment.freed = true;
+                self.segments[idx].freed = true;
                 self.to_clean.remove(&segment_start);
                 // println!("pushing free {} to free list in freed", segment_start);
+                self.ensure_safe_free_distance();
                 self.free.push_back(segment_start);
-            } else if segment.pids.len() as f64 / segment.pids_len as f64 <=
+            } else if self.segments[idx].pids.len() as f64 / self.segments[idx].pids_len as f64 <=
                        self.config.get_segment_cleanup_threshold()
             {
                 // can be cleaned
@@ -222,32 +221,32 @@ impl SegmentAccountant {
                 self.segments.resize(idx + 1, Segment::default());
             }
 
-            let segment = &mut self.segments[idx];
-            if segment.lsn.is_none() {
-                segment.lsn = Some(lsn);
+            if self.segments[idx].lsn.is_none() {
+                self.segments[idx].lsn = Some(lsn);
             }
 
-            if segment.lsn.unwrap() > lsn {
+            if self.segments[idx].lsn.unwrap() > lsn {
                 // has been replaced after this call already,
                 // quite a big race happened
                 continue;
             }
 
-            if segment.pids_len == 0 {
-                segment.pids_len = segment.pids.len();
+            if self.segments[idx].pids_len == 0 {
+                self.segments[idx].pids_len = self.segments[idx].pids.len();
             }
 
-            segment.pids.remove(&pid);
+            self.segments[idx].pids.remove(&pid);
 
             let segment_start = (idx * self.config.get_io_buf_size()) as LogID;
 
-            if segment.pids.is_empty() && !segment.freed {
+            if self.segments[idx].pids.is_empty() && !self.segments[idx].freed {
                 // can be reused immediately
-                segment.freed = true;
+                self.segments[idx].freed = true;
                 self.to_clean.remove(&segment_start);
                 // println!("pushing free {} to free list from set", segment_start);
+                self.ensure_safe_free_distance();
                 self.free.push_back(segment_start);
-            } else if segment.pids.len() as f64 / segment.pids_len as f64 <=
+            } else if self.segments[idx].pids.len() as f64 / self.segments[idx].pids_len as f64 <=
                        self.config.get_segment_cleanup_threshold()
             {
                 // can be cleaned
@@ -282,6 +281,33 @@ impl SegmentAccountant {
         segment.pids.insert(pid);
     }
 
+    fn bump_tip(&mut self) -> LogID {
+        let lid = self.tip;
+        self.tip += self.config.get_io_buf_size() as LogID;
+        // println!("SA advancing tip from {} to {}", lid, self.tip);
+        lid
+    }
+
+    fn ensure_safe_free_distance(&mut self) {
+        // NB we must maintain a queue of free segments that
+        // is at least as long as the number of io buffers.
+        // This is so that we will never give out a segment
+        // that has been placed on the free queue after its
+        // contained pages have all had updates added to an
+        // IO buffer during a PageCache set, but whose
+        // replacing updates have not actually landed on disk
+        // yet. If updates always have to wait in a queue
+        // at least as long as the number of IO buffers, it
+        // guarantees that the old updates are actually safe
+        // somewhere else first. Note that we push_front here
+        // so that the log tip is used first.
+        while self.free.len() < self.config.get_io_bufs() {
+            let new_lid = self.bump_tip();
+            self.free.push_front(new_lid);
+        }
+
+    }
+
     pub fn next(&mut self, lsn: Lsn) -> LogID {
         assert!(
             lsn % self.config.get_io_buf_size() as Lsn == 0,
@@ -290,15 +316,10 @@ impl SegmentAccountant {
 
         // pop free or add to end
         let lid = if self.pause_rewriting {
-            None
+            self.bump_tip()
         } else {
-            self.free.pop_front()
-        }.unwrap_or_else(|| {
-            let lid = self.tip;
-            self.tip += self.config.get_io_buf_size() as LogID;
-            // println!("SA advancing tip from {} to {}", lid, self.tip);
-            lid
-        });
+            self.free.pop_front().unwrap_or_else(|| self.bump_tip())
+        };
 
         // pin lsn to this segment
         let idx = lid as usize / self.config.get_io_buf_size();
@@ -375,6 +396,7 @@ fn basic_workflow() {
     // empty clean is None
     let conf = Config::default()
         .io_buf_size(1)
+        .io_bufs(2)
         .segment_cleanup_threshold(0.2)
         .min_free_segments(3);
     let mut sa = SegmentAccountant::new(conf);
@@ -405,8 +427,11 @@ fn basic_workflow() {
     let _fourth = sa.next(lsn());
     sa.set(0, vec![first], second, lsn());
     assert_eq!(sa.clean(), None);
-    let fifth = sa.next(lsn());
-    assert_eq!(fifth, first);
+    // we need to continue io_bufs times to skip the safe buffer
+    let _fifth = sa.next(lsn());
+    let _sixth = sa.next(lsn());
+    let seventh = sa.next(lsn());
+    assert_eq!(seventh, first);
     sa.merged(1, second, lsn());
     sa.merged(2, second, lsn());
     sa.merged(3, second, lsn());

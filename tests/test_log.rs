@@ -1,5 +1,4 @@
-#![cfg(test)]
-#![allow(unused)]
+#![cfg_attr(test, allow(unused))]
 
 extern crate quickcheck;
 extern crate rand;

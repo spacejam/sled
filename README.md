@@ -66,9 +66,6 @@ tree.del(&k);
 * the on-disk format is going to change in non-forward compatible ways
   before the `1.0.0` release! after that, we will always support
   forward migrations.
-* log cleaning is a huge slow hack right now. this is the next main
-  piece of functionality that is being tackled. currently only
-  implemented for linux via `fallocate`!
 * has not yet received much attention for performance tuning,
   it has an extremely high theoretical performance but there
   is a bit of tuning to get there. currently only around 200k
