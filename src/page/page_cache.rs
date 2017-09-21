@@ -615,23 +615,34 @@ impl<PM, P, R> PageCache<PM, P, R>
         }
 
         let mut snapshot = snapshot_opt.unwrap();
+        let end_lsn = self.log.stable_offset();
 
         #[cfg(feature = "log")]
         info!(
             "snapshot starting from offset {} to the segment containing {}",
             snapshot.max_segment_lsn,
-            self.log.stable_offset(),
+            end_lsn,
         );
 
-        let mut recovery = snapshot.recovery.take();
-        let mut max_segment_lsn = snapshot.max_segment_lsn;
+        let io_buf_size = self.config().get_io_buf_size();
 
-        for (segment_lsn, log_id, bytes) in self.log.iter_from(snapshot.max_segment_lsn) {
-            if segment_lsn > max_segment_lsn {
-                max_segment_lsn = segment_lsn;
+        let mut recovery = snapshot.recovery.take();
+        let mut max_lsn = snapshot.max_lsn;
+        let start_lsn = max_lsn - (max_lsn % io_buf_size as Lsn);
+
+        for (segment_lsn, log_id, bytes) in self.log.iter_from(start_lsn + 1) {
+            let lsn = segment_lsn + (log_id % io_buf_size as Lsn);
+
+            if lsn > end_lsn {
+                break;
+            } else if lsn <= max_lsn {
+                // println!("continuing in write_snapshot, lsn {} max_lsn {}", lsn, max_lsn);
+                continue;
             }
 
-            let io_buf_size = self.config().get_io_buf_size();
+            // println!( "lsn {} max_lsn {} log_id {} end_lsn {}", lsn, max_lsn, log_id, end_lsn);
+            assert!(lsn > max_lsn);
+            max_lsn = lsn;
 
             let idx = log_id as usize / io_buf_size;
             if snapshot.segments.len() <= idx {
@@ -707,7 +718,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         }
         snapshot.free.sort();
         snapshot.free.reverse();
-        snapshot.max_segment_lsn = max_segment_lsn;
+        snapshot.max_lsn = max_lsn;
         snapshot.recovery = recovery;
 
         let raw_bytes = serialize(&snapshot, Infinite).unwrap();
@@ -727,8 +738,8 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         self.last_snapshot.swap(snapshot, SeqCst);
 
-        let path_1 = format!("{}.{}.in___motion", prefix, max_segment_lsn);
-        let path_2 = format!("{}.{}", prefix, max_segment_lsn);
+        let path_1 = format!("{}.{}.in___motion", prefix, max_lsn);
+        let path_2 = format!("{}.{}", prefix, max_lsn);
         let mut f = std::fs::OpenOptions::new()
             .write(true)
             .create(true)

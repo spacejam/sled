@@ -172,7 +172,9 @@ impl SegmentIter {
             return None;
         }
 
+        assert!(lsn > self.max_encountered_lsn);
         if lsn > self.max_encountered_lsn {
+            // println!( "lsn {} read_offset {} position {} max_encountered_lsn {}", self.lsn, self.read_offset, self.position, self.max_encountered_lsn);
             // println!( "bumping segment max lsn from {} to {} in read_next", self.max_encountered_lsn, lsn);
             self.max_encountered_lsn = lsn;
         }
@@ -214,6 +216,7 @@ impl<'a, L> Iterator for LogIter<'a, L>
                             return None;
                         } else {
                             // println!( "bumping max_encountered_lsn from {} to {} in LogIter", self.max_encountered_lsn, read_lsn);
+                            assert!(read_lsn > self.max_encountered_lsn);
                             self.max_encountered_lsn = read_lsn;
                         }
 
@@ -245,6 +248,8 @@ impl<'a, L> Iterator for LogIter<'a, L>
                 }
 
                 let next_segment = next_segment.unwrap();
+                // println!("got next segment {:?}", next_segment);
+                // FIXME this is failing on a c4 stress2 --get=16 --set=16 --key-len=22
                 assert_eq!(lsn, next_segment.lsn);
 
                 self.segment = Some(next_segment);

@@ -244,6 +244,7 @@ impl ConfigInner {
     /// read a segment of log messages. Only call after
     /// pausing segment rewriting on the segment accountant!
     pub fn read_segment(&self, offset: LogID) -> std::io::Result<log::SegmentIter> {
+        // println!("reading segment {}", offset);
         let segment_header_read = self.read(offset)?;
         if segment_header_read.is_corrupt() {
             return Err(Error::new(Other, "corrupt segment"));

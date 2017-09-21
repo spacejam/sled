@@ -106,7 +106,7 @@ enum Update<PageFrag>
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct Snapshot<R> {
-    pub max_segment_lsn: Lsn,
+    pub max_lsn: Lsn,
     pub max_pid: PageID,
     pub pt: BTreeMap<PageID, Vec<LogID>>,
     pub segments: Vec<log::Segment>,
@@ -117,7 +117,7 @@ struct Snapshot<R> {
 impl<R> Default for Snapshot<R> {
     fn default() -> Snapshot<R> {
         Snapshot {
-            max_segment_lsn: 0,
+            max_lsn: 0,
             max_pid: 0,
             pt: BTreeMap::new(),
             segments: vec![],
