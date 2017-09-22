@@ -104,6 +104,8 @@ pub struct SegmentIter {
     pub read_offset: usize,
     pub position: LogID,
     pub max_encountered_lsn: Lsn,
+    pub prev: LogID,
+    pub trailer: Option<Lsn>,
 }
 
 impl SegmentIter {

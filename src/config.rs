@@ -252,15 +252,23 @@ impl ConfigInner {
         if segment_header_read.is_zeroed() {
             return Err(Error::new(Other, "empty segment"));
         }
-        let (lsn, _, _) = segment_header_read.flush().unwrap();
+        let (lsn, _, prev_buf) = segment_header_read.flush().unwrap();
         assert_eq!(lsn % self.get_io_buf_size() as Lsn, 0);
+
+        let mut prev_arr = [0u8; 8];
+        prev_arr.copy_from_slice(&*prev_buf);
+        let prev: LogID = unsafe { std::mem::transmute(prev_arr) };
 
         let mut buf = vec![];
         let cached_f = self.cached_file();
         let mut f = cached_f.borrow_mut();
 
         f.seek(SeekFrom::Start(offset))?;
-        read_up_to(f, &mut buf, self.get_io_buf_size())?;
+
+        // TODO how to properly handle sizing of SEGMENT_HEADER_LEN? never compress?
+        read_up_to(f, &mut buf, self.get_io_buf_size() - (HEADER_LEN + TRAILER_LEN))?;
+
+        let segment_trailer_read = self.read(offset)?;
 
         Ok(log::SegmentIter {
             buf: buf,
@@ -268,6 +276,8 @@ impl ConfigInner {
             read_offset: HEADER_LEN,
             position: offset,
             max_encountered_lsn: lsn,
+            prev: prev,
+            trailer: 
         })
     }
 
