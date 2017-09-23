@@ -246,7 +246,7 @@ impl ConfigInner {
     pub fn read_segment(&self, offset: LogID) -> std::io::Result<log::SegmentIter> {
         // println!("reading segment {}", offset);
         let sh = self.read_segment_header(offset)?;
-        println!("read sh {:?} at {}", sh, offset);
+        // println!("read sh {:?} at {}", sh, offset);
         assert_eq!(sh.lsn % self.get_io_buf_size() as Lsn, 0);
         // TODO test sh.1 for validity
 
@@ -256,9 +256,9 @@ impl ConfigInner {
         {
             let cached_f = self.cached_file();
             let mut f = cached_f.borrow_mut();
-            f.seek(SeekFrom::Start(offset + SEG_HEADER_LEN as LogID))?;
+            f.seek(SeekFrom::Start(offset))?;
 
-            read_up_to(f, &mut buf, io_buf_size - (SEG_HEADER_LEN + SEG_TRAILER_LEN))?;
+            read_up_to(f, &mut buf, io_buf_size - SEG_TRAILER_LEN)?;
         }
 
         let st = self.read_segment_trailer(offset);
@@ -267,12 +267,12 @@ impl ConfigInner {
             |st| if st.ok { Some(st.lsn) } else { None },
         );
 
-        println!("trailer: {:?}", trailer);
+        // println!("trailer: {:?}", trailer);
 
         Ok(log::SegmentIter {
             buf: buf,
             lsn: sh.lsn,
-            read_offset: 0,
+            read_offset: SEG_HEADER_LEN,
             position: offset,
             max_encountered_lsn: sh.lsn,
             prev: sh.prev,
@@ -282,17 +282,17 @@ impl ConfigInner {
 
     pub fn read_segment_header(&self, id: LogID) -> std::io::Result<SegmentHeader> {
         assert_eq!(id % self.get_io_buf_size() as LogID, 0);
-        println!("seeking to {}", id);
+        // println!("seeking to {}", id);
         let cached_f = self.cached_file();
         let mut f = cached_f.borrow_mut();
         f.seek(SeekFrom::Start(id))?;
 
-        println!("trying to read {} bytes", SEG_HEADER_LEN);
+        // println!("trying to read {} bytes", SEG_HEADER_LEN);
 
         let mut seg_header_buf = [0u8; SEG_HEADER_LEN];
         f.read_exact(&mut seg_header_buf)?;
 
-        println!("read the header!!!");
+        // println!("read the header!!!");
 
         Ok(seg_header_buf.into())
     }
@@ -327,6 +327,7 @@ impl ConfigInner {
 
     /// read a buffer from the disk
     pub fn read_entry(&self, id: LogID) -> std::io::Result<LogRead> {
+        // println!("read_entry({})", id);
         let start = clock();
         let header = self.read_message_header(id)?;
 

@@ -41,7 +41,10 @@ impl Tree {
             root_id
         } else {
             let (root_id, root_cas_key) = pages.allocate();
+            // println!("allocated pid {} for root in new", root_id);
+
             let (leaf_id, leaf_cas_key) = pages.allocate();
+            // println!("allocated pid {} for leaf in new", leaf_id);
 
             let leaf = Frag::Base(
                 Node {
@@ -336,6 +339,7 @@ impl Tree {
 
     fn child_split(&self, node: &Node, node_cas_key: CasKey<Frag>) -> Result<ParentSplit, ()> {
         let (new_pid, new_cas_key) = self.pages.allocate();
+        // println!("allocated pid {} in child_split", new_pid);
 
         // split the node in half
         let rhs = node.split(new_pid);
@@ -392,6 +396,8 @@ impl Tree {
     fn root_hoist(&self, from: PageID, to: PageID, at: Key) {
         // hoist new root, pointing to lhs & rhs
         let (new_root_pid, new_root_cas_key) = self.pages.allocate();
+        // println!("allocated pid {} in root_hoist", new_root_pid);
+
         let mut new_root_vec = vec![];
         new_root_vec.push((vec![], from));
         new_root_vec.push((at, to));
@@ -464,10 +470,13 @@ impl Tree {
         // to complete partial splits.
         let mut unsplit_parent: Option<usize> = None;
 
+        let mut not_found_loops = 0;
         loop {
             let get_cursor = self.pages.get(cursor);
             if get_cursor.is_none() {
                 // restart search from the tree's root
+                not_found_loops += 1;
+                debug_assert_ne!(not_found_loops, 10, "cannot find pid {} in path_for_key", cursor);
                 cursor = self.root.load(SeqCst);
                 continue;
             }

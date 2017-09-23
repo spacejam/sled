@@ -221,7 +221,7 @@ impl IoBufs {
             let iobuf = &bufs[current_buf];
             let (lid, last_given) = segment_accountant.next(recovered_lsn);
             iobuf.set_log_offset(lid);
-            iobuf.set_capacity(io_buf_size);
+            iobuf.set_capacity(io_buf_size - SEG_TRAILER_LEN);
             iobuf.store_segment_header(recovered_lsn, last_given);
 
             #[cfg(feature = "log")]
@@ -231,7 +231,7 @@ impl IoBufs {
             let iobuf = &bufs[current_buf];
             let offset = recovered_lid % io_buf_size as LogID;
             iobuf.set_log_offset(recovered_lid);
-            iobuf.set_capacity(io_buf_size - offset as usize);
+            iobuf.set_capacity(io_buf_size - offset as usize - SEG_TRAILER_LEN);
             iobuf.set_lsn(recovered_lsn);
 
             #[cfg(feature = "log")]
@@ -594,7 +594,7 @@ impl IoBufs {
         // set up. expect this thread to block until the buffer completes
         // its entire lifecycle as soon as we do that.
         if from_reserve || maxed {
-            next_iobuf.set_capacity(io_buf_size);
+            next_iobuf.set_capacity(io_buf_size - SEG_TRAILER_LEN);
             next_iobuf.store_segment_header(next_lsn, last_given.unwrap());
         } else {
             let new_cap = capacity - res_len;

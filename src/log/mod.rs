@@ -97,7 +97,7 @@ impl LogRead {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SegmentIter {
     pub buf: Vec<u8>,
     pub lsn: Lsn,
@@ -111,23 +111,21 @@ pub struct SegmentIter {
 impl SegmentIter {
     fn read_next(&mut self) -> Option<LogRead> {
         if self.read_offset + MSG_HEADER_LEN > self.buf.len() {
-            println!("returning none 1");
+            let mut copy = self.clone();
+            copy.buf = vec![];
+            // println!("read_next none at {:?}", copy);
             return None;
         }
 
         let rel_i = self.read_offset;
 
-        println!(
-            "processing header for entry at id {}: {:?}",
-            self.read_offset + self.position as usize,
-            &self.buf[rel_i..rel_i + MSG_HEADER_LEN]
-        );
+        // println!( "processing header for entry at id {}: {:?}", self.read_offset + self.position as usize, &self.buf[rel_i..rel_i + MSG_HEADER_LEN]);
 
         let mut header_arr = [0u8; MSG_HEADER_LEN];
         header_arr.copy_from_slice(&self.buf[rel_i..rel_i + MSG_HEADER_LEN]);
         let h: MessageHeader = header_arr.into();
 
-        println!("read header {:?} from offset {}", h, rel_i);
+        // println!("read header {:?} from offset {}", h, rel_i);
 
         let mut len = h.len;
 
@@ -142,7 +140,10 @@ impl SegmentIter {
         } else if len == 0 && !h.valid {
             if h.crc16 != [0, 0] {
                 // we've hit garbage, return None
-                println!("failed on segment {:?}", self);
+                // println!("failed on segment {:?}", self);
+                let mut copy = self.clone();
+                copy.buf = vec![];
+                // println!("read_next none 2 at {:?}", copy);
                 return None;
             }
             len = MSG_HEADER_LEN;
@@ -155,8 +156,11 @@ impl SegmentIter {
         }
 
         if !h.valid {
-            println!("bumping read_offset by {}", len);
+            // println!("bumping read_offset by {}", len);
             self.read_offset += len;
+            let mut copy = self.clone();
+            copy.buf = vec![];
+            // println!("read_next zeroed 1 at {:?}", copy);
             return Some(LogRead::Zeroed(len));
         }
 
@@ -164,7 +168,10 @@ impl SegmentIter {
         let upper_bound = lower_bound + len;
 
         if self.buf.len() < upper_bound {
-            println!("returning none 3");
+            // println!("returning none 3");
+            let mut copy = self.clone();
+            copy.buf = vec![];
+            // println!( "read_next none 3 buf header {:?} len {} lower {} upper {} at {:?}", h, self.buf.len(), lower_bound, upper_bound, copy);
             return None;
         }
 
@@ -173,7 +180,10 @@ impl SegmentIter {
         let checksum = crc16_arr(&buf);
         if checksum != h.crc16 {
             // overan our valid buffer
-            println!("returning none 4");
+            // println!("returning none 4");
+            let mut copy = self.clone();
+            copy.buf = vec![];
+            // println!("read_next none 4 at {:?}", copy);
             return None;
         }
 
@@ -184,7 +194,7 @@ impl SegmentIter {
             self.max_encountered_lsn = h.lsn;
         }
 
-        println!("setting read_offset to upper bound: {}", upper_bound);
+        // println!("setting read_offset to upper bound: {}", upper_bound);
         self.read_offset = upper_bound;
 
         Some(LogRead::Flush(h.lsn, buf, len))
@@ -211,7 +221,7 @@ impl<'a, L> Iterator for LogIter<'a, L>
                 match segment.read_next() {
                     Some(LogRead::Zeroed(_)) => continue,
                     Some(LogRead::Flush(read_lsn, buf, len)) => {
-                        println!("got iter item {} {:?} len: {}", read_lsn, buf, len);
+                        // println!("got iter item {} {:?} len: {}", read_lsn, buf, len);
 
                         if read_lsn < self.max_encountered_lsn {
                             // we've hit a tear, we should cut our scan short
@@ -231,7 +241,7 @@ impl<'a, L> Iterator for LogIter<'a, L>
                             self.min_lsn
                         {
                             // we have not yet reached our desired offset
-                            println!("bailing out early");
+                            // println!("bailing out early");
                             continue;
                         }
 
@@ -260,6 +270,7 @@ impl<'a, L> Iterator for LogIter<'a, L>
                 let next_segment = next_segment.unwrap();
                 // println!("got next segment {:?}", next_segment);
                 // FIXME this is failing on a c4 stress2 --get=16 --set=16 --key-len=22
+                // println!("read segment from lid {}", lid);
                 assert_eq!(lsn, next_segment.lsn);
 
                 self.segment = Some(next_segment);
@@ -320,12 +331,10 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
         let len_arr: [u8; 4] = unsafe { std::mem::transmute(self.len as u32) };
         buf[9..13].copy_from_slice(&len_arr);
 
-        println!("writing len {} to buf: {:?}", self.len as u32, len_arr);
-
         buf[13] = self.crc16[0];
         buf[14] = self.crc16[1];
 
-        println!("writing MessageHeader buf: {:?}", buf);
+        // println!("writing MessageHeader buf: {:?}", buf);
 
         buf
     }
@@ -341,15 +350,15 @@ pub struct SegmentHeader {
 
 impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
     fn from(buf: [u8; SEG_HEADER_LEN]) -> SegmentHeader {
-        println!("pulling segment header out of {:?}", buf);
+        // println!("pulling segment header out of {:?}", buf);
         let crc16 = [buf[0], buf[1]];
 
-        let lsn_buf = &buf[1..9];
+        let lsn_buf = &buf[2..10];
         let mut lsn_arr = [0u8; 8];
         lsn_arr.copy_from_slice(&*lsn_buf);
         let lsn: Lsn = unsafe { std::mem::transmute(lsn_arr) };
 
-        let prev_lid_buf = &buf[2..10];
+        let prev_lid_buf = &buf[10..18];
         let mut prev_lid_arr = [0u8; 8];
         prev_lid_arr.copy_from_slice(&*prev_lid_buf);
         let prev_lid: LogID = unsafe { std::mem::transmute(prev_lid_arr) };
@@ -378,7 +387,7 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
         buf[0] = crc16[0];
         buf[1] = crc16[1];
 
-        println!("writing segment header {:?}", buf);
+        // println!("writing segment header {:?}", buf);
 
         buf
     }

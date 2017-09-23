@@ -108,49 +108,39 @@ impl SegmentAccountant {
             // the initial header at that position... but we need to
             // make sure the segment is not torn
             if let Ok(segment) = self.config.read_segment(cursor) {
-                println!("YEP");
                 self.recover(segment.lsn, segment.position);
                 cursor += self.config.get_io_buf_size() as LogID;
-
-                // NB we set tip AFTER bumping cursor, as we want this to
-                // eventually extend 1 segment width above the highest valid
-                // (partial or complete) segment's base.
-                self.tip = cursor;
-
-                if segment.lsn > self.recovered_lsn {
-                    self.recovered_lsn = segment.lsn;
-                }
             } else {
-                println!("NOPE");
                 break;
             }
         }
 
-        println!("scanned in lsns {:?}", self.ordering);
+        // println!("scanned in lsns {:?}", self.ordering);
 
         self.clean_tail_tears();
 
-        println!("trying to get highest lsn in segment for lsn {}", self.recovered_lsn);
-        if let Some(max_cursor) = self.ordering.get(&self.recovered_lsn) {
-            let mut empty_tip = true;
-            if let Ok(mut segment) = self.config.read_segment(*max_cursor) {
-                println!(
-                    "got a segment... lsn: {} read_offset: {}",
-                    segment.lsn,
-                    segment.read_offset
-                );
-                self.recovered_lsn += segment.read_offset as LogID;
+        // println!("trying to get highest lsn in segment for lsn {}", self.recovered_lsn);
+        let mut empty_tip = true;
+
+        let max = self.ordering.iter().rev().nth(0);
+
+        if let Some((_max_lsn, lid)) = max {
+            if let Ok(mut segment) = self.config.read_segment(*lid) {
+                self.last_given = *lid;
+                // println!( "got a segment... lsn: {} read_offset: {}", segment.lsn, segment.read_offset);
                 while let Some(log_read) = segment.read_next() {
-                    println!("got a thing...");
+                    // println!("got a thing...");
                     match log_read {
                         LogRead::Zeroed(_len) => {
                             // println!("got a zeroed of len {}", _len);
                             continue;
                         }
                         LogRead::Flush(lsn, _, len) => {
-                            println!("got lsn {} with len {}", lsn, len);
+                            // println!("got lsn {} with len {}", lsn, len);
                             empty_tip = false;
+
                             let tip = lsn + MSG_HEADER_LEN as Lsn + len as Lsn;
+
                             if tip > self.recovered_lsn {
                                 self.recovered_lsn = tip;
                             } else {
@@ -163,22 +153,32 @@ impl SegmentAccountant {
                 let segment_overhang = self.recovered_lsn % self.config.get_io_buf_size() as LogID;
                 self.recovered_lid = segment.position + segment_overhang;
             }
-            if empty_tip {
-                println!("pushing free {} to free list in new", *max_cursor);
-                // TODO properly set last_given
-                self.free.lock().unwrap().push_back(*max_cursor);
-            } else {
-                println!("tip NOT empty!!!");
-            }
         } else {
-            assert!(self.ordering.is_empty());
+            assert!(
+                self.ordering.is_empty(),
+                "should have found recovered lsn {} in ordering {:?}",
+                self.recovered_lsn,
+                self.ordering
+            );
         }
 
-        println!(
-            "after relative thing our recovered_lsn:{}, lid: {}",
-            self.recovered_lsn,
-            self.recovered_lid
-        );
+        // determine the end of our valid entries
+        for (_lsn, &lid) in &self.ordering {
+            if lid >= self.tip {
+                self.tip = lid + self.config.get_io_buf_size() as LogID;
+            }
+        }
+
+        if empty_tip && max.is_some() {
+            // println!("pushing free {} to free list in new", *max_cursor);
+            self.free.lock().unwrap().push_front(*max.unwrap().0);
+        }
+
+        // println!( "after relative thing our recovered_lsn:{}, lid: {}", self.recovered_lsn, self.recovered_lid);
+        //
+        // TODO
+        //  1. set recovered_lsn after clearing empty tip and cleaning tears
+        //  2. get rid of assertion, just use highest in ordering after clean
     }
 
     fn clean_tail_tears(&mut self) {
@@ -195,7 +195,7 @@ impl SegmentAccountant {
         for (i, &(_lsn, lid)) in logical_tail.iter().enumerate() {
             if i + 1 == logical_tail.len() {
                 // we've reached the end, nothing to check after
-                println!("breaking clean_tail_tears");
+                // println!("breaking clean_tail_tears");
                 break;
             }
 
@@ -207,7 +207,13 @@ impl SegmentAccountant {
             if expected_prev != actual_prev {
                 // detected a tear, everything after
                 #[cfg(feature = "log")]
-                error!("detected corruption during recovery!");
+                error!(
+                    "detected corruption during recovery for segment at {}! expected prev lid: {} actual: {} in last chain {:?}",
+                    lid,
+                    expected_prev,
+                    actual_prev,
+                    logical_tail
+                );
                 tear_at = Some(i);
             }
         }
@@ -216,6 +222,10 @@ impl SegmentAccountant {
             // we need to chop off the elements after the tear
             for j in 0..i {
                 let (lsn_to_chop, lid_to_chop) = logical_tail[j];
+
+                #[cfg(feature = "log")]
+                error!("clearing corrupted segment at lid {}", lid_to_chop);
+
                 self.free.lock().unwrap().push_back(lid_to_chop);
                 self.ordering.remove(&lsn_to_chop);
                 // TODO write zeroes to these segments

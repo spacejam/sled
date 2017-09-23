@@ -36,7 +36,7 @@ impl Materializer for TestMaterializer {
 }
 
 #[test]
-fn test_cache() {
+fn test_pagecache() {
     let conf = Config::default().cache_capacity(40).cache_bits(0);
 
     let mut pc = PageCache::new(TestMaterializer, conf.clone());
@@ -58,7 +58,7 @@ fn test_cache() {
 }
 
 #[test]
-fn basic_recovery() {
+fn basic_pagecache_recovery() {
     let conf = Config::default().flush_every_ms(None);
 
     let mut pc = PageCache::new(TestMaterializer, conf.clone());
@@ -178,7 +178,7 @@ impl Arbitrary for OpVec {
 fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
     use self::Op::*;
     let config = Config::default()
-        .io_buf_size(1024 * 8)
+        .io_buf_size(1000)
         .flush_every_ms(Some(1))
         .cache_bits(0)
         .cache_capacity(40)

@@ -154,7 +154,7 @@ fn recover_tree() {
     println!("========== recovery ==========");
     let conf = Config::default()
         .blink_fanout(2)
-        .io_buf_size(1024)
+        .io_buf_size(1000)
         .flush_every_ms(None)
         .snapshot_after_ops(100);
     let t = conf.tree();
@@ -246,6 +246,7 @@ fn prop_tree_matches_btreemap(ops: OpVec, blink_fanout: u8, snapshot_after: u8) 
         .io_buf_size(1000)
         .blink_fanout(blink_fanout as usize + 2)
         .cache_capacity(40);
+
     let mut tree = config.tree();
     let mut reference = BTreeMap::new();
 
@@ -459,6 +460,29 @@ fn test_tree_bug_7() {
                 Set(79, 114),
                 Set(64, 9),
                 Scan(196, 25),
+            ],
+        },
+        0,
+        0,
+    );
+}
+
+#[test]
+fn test_tree_bug_8() {
+    // postmortem:
+    use Op::*;
+    prop_tree_matches_btreemap(
+        OpVec {
+            ops: vec![
+                Set(145, 151),
+                Set(155, 148),
+                Set(131, 170),
+                Set(163, 60),
+                Set(225, 126),
+                Restart,
+                Set(64, 237),
+                Set(102, 205),
+                Restart,
             ],
         },
         0,

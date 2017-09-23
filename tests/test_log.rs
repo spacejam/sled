@@ -19,7 +19,7 @@ use sled::{Config, LockFreeLog, Log, LogRead, MSG_HEADER_LEN, SEG_HEADER_LEN, SE
 
 #[test]
 #[ignore]
-fn more_reservations_than_buffers() {
+fn more_log_reservations_than_buffers() {
     let log = Config::default().log();
     let mut reservations = vec![];
     for _ in 0..log.config().get_io_bufs() + 1 {
@@ -32,7 +32,7 @@ fn more_reservations_than_buffers() {
 }
 
 #[test]
-fn non_contiguous_flush() {
+fn non_contiguous_log_flush() {
     let conf = Config::default().io_buf_size(1000);
     let log = conf.log();
 

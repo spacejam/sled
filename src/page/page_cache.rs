@@ -562,6 +562,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 log_reservation.abort();
             } else {
                 let lsn = log_reservation.lsn();
+                let lid = log_reservation.lid();
                 log_reservation.complete();
 
                 {
@@ -617,6 +618,8 @@ impl<PM, P, R> PageCache<PM, P, R>
         let mut snapshot = snapshot_opt.unwrap();
         let end_lsn = self.log.stable_offset();
 
+        // println!("old snapshot: {:?}", snapshot);
+
         #[cfg(feature = "log")]
         info!(
             "snapshot starting from offset {} to the segment containing {}",
@@ -630,13 +633,15 @@ impl<PM, P, R> PageCache<PM, P, R>
         let mut max_lsn = snapshot.max_lsn;
         let start_lsn = max_lsn - (max_lsn % io_buf_size as Lsn);
 
-        for (segment_lsn, log_id, bytes) in self.log.iter_from(start_lsn + 1) {
+        for (segment_lsn, log_id, bytes) in self.log.iter_from(start_lsn) {
+            // println!("iterating over this in write_snapshot: {} {}", segment_lsn, log_id);
             let lsn = segment_lsn + (log_id % io_buf_size as Lsn);
 
             if lsn > end_lsn {
+                // println!( "breaking in write_snapshot, lsn {} log_id {} max_lsn {}", lsn, log_id, max_lsn);
                 break;
             } else if lsn <= max_lsn {
-                // println!("continuing in write_snapshot, lsn {} max_lsn {}", lsn, max_lsn);
+                // println!( "continuing in write_snapshot, lsn {} log_id {} max_lsn {}", lsn, log_id, max_lsn);
                 continue;
             }
 
@@ -656,73 +661,76 @@ impl<PM, P, R> PageCache<PM, P, R>
                 "segment lsn is unaligned! fix above lsn statement..."
             );
 
-            if let Ok(prepend) = deserialize::<LoggedUpdate<P>>(&*bytes) {
-                if prepend.pid >= snapshot.max_pid {
-                    snapshot.max_pid = prepend.pid + 1;
+            // unwrapping this because it's already passed the crc check in the log iterator
+            let prepend = deserialize::<LoggedUpdate<P>>(&*bytes).unwrap();
+
+            if prepend.pid >= snapshot.max_pid {
+                snapshot.max_pid = prepend.pid + 1;
+            }
+
+            match prepend.update {
+                Update::Append(partial_page) => {
+                    snapshot.segments[idx].pids.insert(prepend.pid);
+
+                    let r = self.t.recover(&partial_page);
+                    if r.is_some() {
+                        recovery = r;
+                    }
+
+                    let lids = snapshot.pt.get_mut(&prepend.pid).unwrap();
+                    lids.push(log_id);
                 }
-
-                match prepend.update {
-                    Update::Append(partial_page) => {
-                        snapshot.segments[idx].pids.insert(prepend.pid);
-
-                        let r = self.t.recover(&partial_page);
-                        if r.is_some() {
-                            recovery = r;
-                        }
-
-                        let lids = snapshot.pt.get_mut(&prepend.pid).unwrap();
-                        lids.push(log_id);
-                    }
-                    Update::Compact(partial_page) => {
-                        if let Some(lids) = snapshot.pt.get(&prepend.pid) {
-                            for lid in lids {
-                                let old_idx = *lid as usize / io_buf_size;
-                                let old_segment = &mut snapshot.segments[old_idx];
-                                if old_segment.pids_len == 0 {
-                                    old_segment.pids_len = old_segment.pids.len();
-                                }
-                                old_segment.pids.remove(&(*lid as PageID));
+                Update::Compact(partial_page) => {
+                    if let Some(lids) = snapshot.pt.get(&prepend.pid) {
+                        for lid in lids {
+                            let old_idx = *lid as usize / io_buf_size;
+                            let old_segment = &mut snapshot.segments[old_idx];
+                            if old_segment.pids_len == 0 {
+                                old_segment.pids_len = old_segment.pids.len();
                             }
+                            old_segment.pids.remove(&(*lid as PageID));
                         }
-
-                        snapshot.segments[idx].pids.insert(prepend.pid);
-
-                        let r = self.t.recover(&partial_page);
-                        if r.is_some() {
-                            recovery = r;
-                        }
-
-                        snapshot.pt.insert(prepend.pid, vec![log_id]);
                     }
-                    Update::Del => {
-                        if let Some(lids) = snapshot.pt.get(&prepend.pid) {
-                            for lid in lids {
-                                let old_idx = *lid as usize / io_buf_size;
-                                let old_segment = &mut snapshot.segments[old_idx];
-                                if old_segment.pids_len == 0 {
-                                    old_segment.pids_len = old_segment.pids.len();
-                                }
-                                old_segment.pids.remove(&(*lid as PageID));
+
+                    snapshot.segments[idx].pids.insert(prepend.pid);
+
+                    let r = self.t.recover(&partial_page);
+                    if r.is_some() {
+                        recovery = r;
+                    }
+
+                    snapshot.pt.insert(prepend.pid, vec![log_id]);
+                }
+                Update::Del => {
+                    if let Some(lids) = snapshot.pt.get(&prepend.pid) {
+                        for lid in lids {
+                            let old_idx = *lid as usize / io_buf_size;
+                            let old_segment = &mut snapshot.segments[old_idx];
+                            if old_segment.pids_len == 0 {
+                                old_segment.pids_len = old_segment.pids.len();
                             }
+                            old_segment.pids.remove(&(*lid as PageID));
                         }
+                    }
 
-                        snapshot.pt.remove(&prepend.pid);
-                        snapshot.free.push(prepend.pid);
-                    }
-                    Update::Alloc => {
-                        snapshot.pt.insert(prepend.pid, vec![]);
-                        snapshot.free.retain(|&pid| pid != prepend.pid);
-                    }
+                    snapshot.pt.remove(&prepend.pid);
+                    snapshot.free.push(prepend.pid);
+                }
+                Update::Alloc => {
+                    snapshot.pt.insert(prepend.pid, vec![]);
+                    snapshot.free.retain(|&pid| pid != prepend.pid);
                 }
             }
         }
+
         snapshot.free.sort();
         snapshot.free.reverse();
         snapshot.max_lsn = max_lsn;
         snapshot.recovery = recovery;
 
-        let raw_bytes = serialize(&snapshot, Infinite).unwrap();
+        // println!("new snapshot: {:?}", snapshot);
 
+        let raw_bytes = serialize(&snapshot, Infinite).unwrap();
 
         #[cfg(feature = "zstd")]
         let bytes = if self.config().get_use_compression() {
@@ -752,7 +760,11 @@ impl<PM, P, R> PageCache<PM, P, R>
         f.sync_all().unwrap();
         drop(f);
 
+        // println!("wrote snapshot to {}", path_1);
+
         std::fs::rename(path_1, &path_2).expect("failed to write snapshot");
+
+        // println!("renamed snapshot to {}", path_2);
 
         // clean up any old snapshots
         let candidates = self.config().get_snapshot_files();
