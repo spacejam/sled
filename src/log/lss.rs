@@ -127,7 +127,7 @@ impl Log for LockFreeLog {
     /// read a buffer from the disk
     fn read(&self, id: LogID) -> io::Result<LogRead> {
         self.make_stable(id);
-        self.config().read(id)
+        self.config().read_entry(id)
     }
 
     /// returns the current stable offset written to disk

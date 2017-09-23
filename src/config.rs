@@ -5,9 +5,9 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use std::io::{Error, Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom};
 use std::fs::File;
-use std::io::ErrorKind::{Interrupted, Other, UnexpectedEof};
+use std::io::ErrorKind::{Interrupted, UnexpectedEof};
 
 #[cfg(feature = "zstd")]
 use zstd::block::decompress;
@@ -245,69 +245,103 @@ impl ConfigInner {
     /// pausing segment rewriting on the segment accountant!
     pub fn read_segment(&self, offset: LogID) -> std::io::Result<log::SegmentIter> {
         // println!("reading segment {}", offset);
-        let segment_header_read = self.read(offset)?;
-        if segment_header_read.is_corrupt() {
-            return Err(Error::new(Other, "corrupt segment"));
-        }
-        if segment_header_read.is_zeroed() {
-            return Err(Error::new(Other, "empty segment"));
-        }
-        let (lsn, _, prev_buf) = segment_header_read.flush().unwrap();
-        assert_eq!(lsn % self.get_io_buf_size() as Lsn, 0);
+        let sh = self.read_segment_header(offset)?;
+        println!("read sh {:?} at {}", sh, offset);
+        assert_eq!(sh.lsn % self.get_io_buf_size() as Lsn, 0);
+        // TODO test sh.1 for validity
 
-        let mut prev_arr = [0u8; 8];
-        prev_arr.copy_from_slice(&*prev_buf);
-        let prev: LogID = unsafe { std::mem::transmute(prev_arr) };
-
+        let io_buf_size = self.get_io_buf_size();
         let mut buf = vec![];
-        let cached_f = self.cached_file();
-        let mut f = cached_f.borrow_mut();
 
-        f.seek(SeekFrom::Start(offset))?;
+        {
+            let cached_f = self.cached_file();
+            let mut f = cached_f.borrow_mut();
+            f.seek(SeekFrom::Start(offset + SEG_HEADER_LEN as LogID))?;
 
-        // TODO how to properly handle sizing of SEGMENT_HEADER_LEN? never compress?
-        read_up_to(f, &mut buf, self.get_io_buf_size() - (HEADER_LEN + TRAILER_LEN))?;
+            read_up_to(f, &mut buf, io_buf_size - (SEG_HEADER_LEN + SEG_TRAILER_LEN))?;
+        }
 
-        let segment_trailer_read = self.read(offset)?;
+        let st = self.read_segment_trailer(offset);
+
+        let trailer = st.ok().and_then(
+            |st| if st.ok { Some(st.lsn) } else { None },
+        );
+
+        println!("trailer: {:?}", trailer);
 
         Ok(log::SegmentIter {
             buf: buf,
-            lsn: lsn,
-            read_offset: HEADER_LEN,
+            lsn: sh.lsn,
+            read_offset: 0,
             position: offset,
-            max_encountered_lsn: lsn,
-            prev: prev,
-            trailer: 
+            max_encountered_lsn: sh.lsn,
+            prev: sh.prev,
+            trailer: trailer,
         })
     }
 
-    /// read a buffer from the disk
-    pub fn read(&self, id: LogID) -> std::io::Result<LogRead> {
-        let start = clock();
+    pub fn read_segment_header(&self, id: LogID) -> std::io::Result<SegmentHeader> {
+        assert_eq!(id % self.get_io_buf_size() as LogID, 0);
+        println!("seeking to {}", id);
         let cached_f = self.cached_file();
         let mut f = cached_f.borrow_mut();
         f.seek(SeekFrom::Start(id))?;
 
-        let mut valid_buf = [0u8; 1];
-        f.read_exact(&mut valid_buf)?;
-        let valid = valid_buf[0] == 1;
+        println!("trying to read {} bytes", SEG_HEADER_LEN);
 
-        let mut lsn_buf = [0u8; 8];
-        f.read_exact(&mut lsn_buf)?;
-        let lsn: Lsn = unsafe { std::mem::transmute(lsn_buf) };
+        let mut seg_header_buf = [0u8; SEG_HEADER_LEN];
+        f.read_exact(&mut seg_header_buf)?;
 
-        let mut len_buf = [0u8; 4];
-        f.read_exact(&mut len_buf)?;
+        println!("read the header!!!");
 
-        let len32: u32 = unsafe { std::mem::transmute(len_buf) };
-        let mut len = len32 as usize;
-        let max = self.get_io_buf_size() - HEADER_LEN;
+        Ok(seg_header_buf.into())
+    }
+
+    pub fn read_segment_trailer(&self, id: LogID) -> std::io::Result<SegmentTrailer> {
+        assert_eq!(id % self.get_io_buf_size() as LogID, 0);
+        let cached_f = self.cached_file();
+        let mut f = cached_f.borrow_mut();
+        f.seek(SeekFrom::Start(
+            id + self.get_io_buf_size() as LogID -
+                SEG_TRAILER_LEN as LogID,
+        ))?;
+
+
+        let mut seg_trailer_buf = [0u8; SEG_TRAILER_LEN];
+        f.read_exact(&mut seg_trailer_buf)?;
+
+        Ok(seg_trailer_buf.into())
+    }
+
+    pub fn read_message_header(&self, id: LogID) -> std::io::Result<MessageHeader> {
+        let cached_f = self.cached_file();
+        let mut f = cached_f.borrow_mut();
+        f.seek(SeekFrom::Start(id))?;
+
+
+        let mut msg_header_buf = [0u8; MSG_HEADER_LEN];
+        f.read_exact(&mut msg_header_buf)?;
+
+        Ok(msg_header_buf.into())
+    }
+
+    /// read a buffer from the disk
+    pub fn read_entry(&self, id: LogID) -> std::io::Result<LogRead> {
+        let start = clock();
+        let header = self.read_message_header(id)?;
+
+        let cached_f = self.cached_file();
+        let mut f = cached_f.borrow_mut();
+        f.seek(SeekFrom::Start(id + MSG_HEADER_LEN as LogID))?;
+
+        let max = self.get_io_buf_size() - MSG_HEADER_LEN;
+        let mut len = header.len;
         if len > max {
             #[cfg(feature = "log")]
             error!("log read invalid message length, {} should be <= {}", len, max);
             M.read.measure(clock() - start);
             return Ok(LogRead::Corrupted(len));
-        } else if len == 0 && !valid {
+        } else if len == 0 && !header.valid {
             // skip to next record, which starts with 1
             loop {
                 let mut byte = [0u8; 1];
@@ -327,16 +361,14 @@ impl ConfigInner {
             }
         }
 
-        if !valid {
+        if !header.valid {
             M.read.measure(clock() - start);
-            // we're 2 short when we started seeking for a non-zero byte (crc16)
-            return Ok(LogRead::Zeroed(len + HEADER_LEN - 2));
-        } else if (lsn % self.get_io_buf_size() as Lsn) != (id % self.get_io_buf_size() as LogID) {
-            return Ok(LogRead::Corrupted(len + HEADER_LEN - 2));
+            return Ok(LogRead::Zeroed(len + MSG_HEADER_LEN));
+        } else if (header.lsn % self.get_io_buf_size() as Lsn) !=
+                   (id % self.get_io_buf_size() as LogID)
+        {
+            return Ok(LogRead::Corrupted(len + MSG_HEADER_LEN));
         }
-
-        let mut crc16_buf = [0u8; 2];
-        f.read_exact(&mut crc16_buf)?;
 
         let mut buf = Vec::with_capacity(len);
         unsafe {
@@ -345,7 +377,7 @@ impl ConfigInner {
         f.read_exact(&mut buf)?;
 
         let checksum = crc16_arr(&buf);
-        if checksum != crc16_buf {
+        if checksum != header.crc16 {
             M.read.measure(clock() - start);
             return Ok(LogRead::Corrupted(len));
         }
@@ -354,16 +386,16 @@ impl ConfigInner {
         let res = {
             if self.get_use_compression() {
                 let start = clock();
-                let res = Ok(LogRead::Flush(lsn, decompress(&*buf, max).unwrap(), len));
+                let res = Ok(LogRead::Flush(header.lsn, decompress(&*buf, max).unwrap(), len));
                 M.decompress.measure(clock() - start);
                 res
             } else {
-                Ok(LogRead::Flush(lsn, buf, len))
+                Ok(LogRead::Flush(header.lsn, buf, len))
             }
         };
 
         #[cfg(not(feature = "zstd"))]
-        let res = Ok(LogRead::Flush(lsn, buf, len));
+        let res = Ok(LogRead::Flush(header.lsn, buf, len));
 
         M.read.measure(clock() - start);
         res

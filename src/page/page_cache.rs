@@ -620,7 +620,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         #[cfg(feature = "log")]
         info!(
             "snapshot starting from offset {} to the segment containing {}",
-            snapshot.max_segment_lsn,
+            snapshot.max_lsn,
             end_lsn,
         );
 

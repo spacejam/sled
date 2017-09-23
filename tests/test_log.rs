@@ -15,7 +15,7 @@ use std::sync::atomic::{ATOMIC_USIZE_INIT, AtomicUsize, Ordering};
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::{Rng, thread_rng};
 
-use sled::{Config, HEADER_LEN, LockFreeLog, Log, LogRead};
+use sled::{Config, LockFreeLog, Log, LogRead, MSG_HEADER_LEN, SEG_HEADER_LEN, SEG_TRAILER_LEN};
 
 #[test]
 #[ignore]
@@ -23,7 +23,7 @@ fn more_reservations_than_buffers() {
     let log = Config::default().log();
     let mut reservations = vec![];
     for _ in 0..log.config().get_io_bufs() + 1 {
-        reservations.push(log.reserve(vec![0; log.config().get_io_buf_size() - HEADER_LEN]))
+        reservations.push(log.reserve(vec![0; log.config().get_io_buf_size() - MSG_HEADER_LEN]))
     }
     for res in reservations.into_iter().rev() {
         // abort in reverse order
@@ -36,7 +36,8 @@ fn non_contiguous_flush() {
     let conf = Config::default().io_buf_size(1000);
     let log = conf.log();
 
-    let buf_len = conf.get_io_buf_size() - HEADER_LEN * 2;
+    let overhead = MSG_HEADER_LEN + SEG_HEADER_LEN + SEG_TRAILER_LEN;
+    let buf_len = conf.get_io_buf_size() - overhead;
     let res1 = log.reserve(vec![0; buf_len]);
     let res2 = log.reserve(vec![0; buf_len]);
     let id = res2.lid();
@@ -152,7 +153,7 @@ fn test_log_aborts() {
 
 #[test]
 fn test_log_iterator() {
-    let conf = Config::default();
+    let conf = Config::default().io_buf_size(1000);
     let log = conf.log();
     let first_offset = log.write(b"".to_vec());
     log.write(b"1".to_vec());
@@ -205,7 +206,7 @@ impl Arbitrary for Op {
 
         let mut incr = || {
             let len = thread_rng().gen_range(0, 2);
-            LEN.fetch_add(len + HEADER_LEN, Ordering::Relaxed);
+            LEN.fetch_add(len + MSG_HEADER_LEN, Ordering::Relaxed);
             vec![COUNTER.fetch_add(1, Ordering::Relaxed) as u8; len]
         };
 
@@ -315,19 +316,19 @@ fn prop_log_works(ops: OpVec) -> bool {
             Write(buf) => {
                 let lid = log.write(buf.clone());
                 let len = buf.len();
-                tip = lid as usize + len + HEADER_LEN;
+                tip = lid as usize + len + MSG_HEADER_LEN;
                 reference.push((lid, Some(buf), len));
             }
             WriteReservation(buf) => {
                 let lid = log.reserve(buf.clone()).complete();
                 let len = buf.len();
-                tip = lid as usize + len + HEADER_LEN;
+                tip = lid as usize + len + MSG_HEADER_LEN;
                 reference.push((lid, Some(buf), len));
             }
             AbortReservation(buf) => {
                 let len = buf.len();
                 let lid = log.reserve(buf).abort();
-                tip = lid as usize + len + HEADER_LEN;
+                tip = lid as usize + len + MSG_HEADER_LEN;
                 reference.push((lid, None, len));
             }
             Restart => {
@@ -364,7 +365,7 @@ fn prop_log_works(ops: OpVec) -> bool {
 
                     let mut sz_total = 0;
                     for &mut (lid, ref mut expected, sz) in &mut reference {
-                        let tip = lid as usize + sz + HEADER_LEN;
+                        let tip = lid as usize + sz + MSG_HEADER_LEN;
                         if new_len < tip as u64 {
                             *expected = None;
                         }

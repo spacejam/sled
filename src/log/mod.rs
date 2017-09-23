@@ -110,25 +110,26 @@ pub struct SegmentIter {
 
 impl SegmentIter {
     fn read_next(&mut self) -> Option<LogRead> {
-        if self.read_offset + HEADER_LEN > self.buf.len() {
+        if self.read_offset + MSG_HEADER_LEN > self.buf.len() {
+            println!("returning none 1");
             return None;
         }
 
         let rel_i = self.read_offset;
 
-        // println!( "processing header for segment at id {}: {:?}", self.read_offset + self.position as usize, &self.buf[rel_i..rel_i + HEADER_LEN]);
-        let valid = self.buf[rel_i] == 1;
-        let lsn_buf = &self.buf[rel_i + 1..rel_i + 9];
-        let len_buf = &self.buf[rel_i + 9..rel_i + 13];
-        let crc16_buf = &self.buf[rel_i + 13..rel_i + HEADER_LEN];
+        println!(
+            "processing header for entry at id {}: {:?}",
+            self.read_offset + self.position as usize,
+            &self.buf[rel_i..rel_i + MSG_HEADER_LEN]
+        );
 
-        let mut lsn_arr = [0u8; 8];
-        lsn_arr.copy_from_slice(&*lsn_buf);
-        let lsn: Lsn = unsafe { std::mem::transmute(lsn_arr) };
+        let mut header_arr = [0u8; MSG_HEADER_LEN];
+        header_arr.copy_from_slice(&self.buf[rel_i..rel_i + MSG_HEADER_LEN]);
+        let h: MessageHeader = header_arr.into();
 
-        let len32: u32 =
-            unsafe { std::mem::transmute([len_buf[0], len_buf[1], len_buf[2], len_buf[3]]) };
-        let mut len = len32 as usize;
+        println!("read header {:?} from offset {}", h, rel_i);
+
+        let mut len = h.len;
 
         if len > self.buf.len() - self.read_offset {
             #[cfg(feature = "log")]
@@ -138,14 +139,14 @@ impl SegmentIter {
                 self.buf.len() - self.read_offset
             );
             return Some(LogRead::Corrupted(len));
-        } else if len == 0 && !valid {
-            if crc16_buf != [0, 0] {
+        } else if len == 0 && !h.valid {
+            if h.crc16 != [0, 0] {
                 // we've hit garbage, return None
-                // println!("failed on segment {:?}", self);
+                println!("failed on segment {:?}", self);
                 return None;
             }
-            len = HEADER_LEN;
-            for byte in &self.buf[rel_i + HEADER_LEN..] {
+            len = MSG_HEADER_LEN;
+            for byte in &self.buf[rel_i + MSG_HEADER_LEN..] {
                 if *byte != 0 {
                     break;
                 }
@@ -153,38 +154,40 @@ impl SegmentIter {
             }
         }
 
-        if !valid {
-            // println!("bumping read_offset by {}", len);
+        if !h.valid {
+            println!("bumping read_offset by {}", len);
             self.read_offset += len;
             return Some(LogRead::Zeroed(len));
         }
 
-        let lower_bound = rel_i + HEADER_LEN;
+        let lower_bound = rel_i + MSG_HEADER_LEN;
         let upper_bound = lower_bound + len;
 
         if self.buf.len() < upper_bound {
+            println!("returning none 3");
             return None;
         }
 
         let buf = self.buf[lower_bound..upper_bound].to_vec();
 
         let checksum = crc16_arr(&buf);
-        if checksum != crc16_buf {
+        if checksum != h.crc16 {
             // overan our valid buffer
+            println!("returning none 4");
             return None;
         }
 
-        assert!(lsn > self.max_encountered_lsn);
-        if lsn > self.max_encountered_lsn {
+        assert!(h.lsn > self.max_encountered_lsn);
+        if h.lsn > self.max_encountered_lsn {
             // println!( "lsn {} read_offset {} position {} max_encountered_lsn {}", self.lsn, self.read_offset, self.position, self.max_encountered_lsn);
             // println!( "bumping segment max lsn from {} to {} in read_next", self.max_encountered_lsn, lsn);
-            self.max_encountered_lsn = lsn;
+            self.max_encountered_lsn = h.lsn;
         }
 
-        // println!("setting read_offset to upper bound: {}", upper_bound);
+        println!("setting read_offset to upper bound: {}", upper_bound);
         self.read_offset = upper_bound;
 
-        Some(LogRead::Flush(lsn, buf, len))
+        Some(LogRead::Flush(h.lsn, buf, len))
     }
 }
 
@@ -208,6 +211,8 @@ impl<'a, L> Iterator for LogIter<'a, L>
                 match segment.read_next() {
                     Some(LogRead::Zeroed(_)) => continue,
                     Some(LogRead::Flush(read_lsn, buf, len)) => {
+                        println!("got iter item {} {:?} len: {}", read_lsn, buf, len);
+
                         if read_lsn < self.max_encountered_lsn {
                             // we've hit a tear, we should cut our scan short
                             #[cfg(feature = "log")]
@@ -222,13 +227,16 @@ impl<'a, L> Iterator for LogIter<'a, L>
                             self.max_encountered_lsn = read_lsn;
                         }
 
-                        if (segment.lsn + segment.read_offset as Lsn) < self.min_lsn {
+                        if (segment.lsn + (MSG_HEADER_LEN + segment.read_offset) as Lsn) <
+                            self.min_lsn
+                        {
                             // we have not yet reached our desired offset
+                            println!("bailing out early");
                             continue;
                         }
 
                         let base = segment.position;
-                        let rel_i = segment.read_offset - (len + HEADER_LEN);
+                        let rel_i = segment.read_offset - (len + MSG_HEADER_LEN);
 
                         return Some((segment.lsn, base + rel_i as LogID, buf));
                     }
@@ -259,5 +267,161 @@ impl<'a, L> Iterator for LogIter<'a, L>
             }
             self.segment.take();
         }
+    }
+}
+
+/// All log messages are prepended with this header
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct MessageHeader {
+    pub valid: bool,
+    pub lsn: Lsn,
+    pub len: usize,
+    pub crc16: [u8; 2],
+}
+
+impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
+    fn from(buf: [u8; MSG_HEADER_LEN]) -> MessageHeader {
+        let valid = buf[0] == 1;
+
+        let lsn_buf = &buf[1..9];
+        let mut lsn_arr = [0u8; 8];
+        lsn_arr.copy_from_slice(&*lsn_buf);
+        let lsn: Lsn = unsafe { std::mem::transmute(lsn_arr) };
+
+        let len_buf = &buf[9..13];
+        let mut len_arr = [0u8; 4];
+        len_arr.copy_from_slice(&*len_buf);
+        let len: u32 = unsafe { std::mem::transmute(len_arr) };
+
+        let crc16 = [buf[13], buf[14]];
+
+        MessageHeader {
+            valid: valid,
+            lsn: lsn,
+            len: len as usize,
+            crc16: crc16,
+        }
+    }
+}
+
+impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
+    fn into(self) -> [u8; MSG_HEADER_LEN] {
+        let mut buf = [0u8; MSG_HEADER_LEN];
+        if self.valid {
+            buf[0] = 1;
+        }
+
+        // NB LSN actually gets written after the reservation
+        // for the item is claimed, when we actually know the lsn,
+        // in PageCache::reserve.
+        let lsn_arr: [u8; 8] = unsafe { std::mem::transmute(self.lsn) };
+        buf[1..9].copy_from_slice(&lsn_arr);
+
+        let len_arr: [u8; 4] = unsafe { std::mem::transmute(self.len as u32) };
+        buf[9..13].copy_from_slice(&len_arr);
+
+        println!("writing len {} to buf: {:?}", self.len as u32, len_arr);
+
+        buf[13] = self.crc16[0];
+        buf[14] = self.crc16[1];
+
+        println!("writing MessageHeader buf: {:?}", buf);
+
+        buf
+    }
+}
+
+/// A segment's header contains the new base LSN and a reference to the previous log segment.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct SegmentHeader {
+    pub lsn: Lsn,
+    pub prev: LogID,
+    pub ok: bool,
+}
+
+impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
+    fn from(buf: [u8; SEG_HEADER_LEN]) -> SegmentHeader {
+        println!("pulling segment header out of {:?}", buf);
+        let crc16 = [buf[0], buf[1]];
+
+        let lsn_buf = &buf[1..9];
+        let mut lsn_arr = [0u8; 8];
+        lsn_arr.copy_from_slice(&*lsn_buf);
+        let lsn: Lsn = unsafe { std::mem::transmute(lsn_arr) };
+
+        let prev_lid_buf = &buf[2..10];
+        let mut prev_lid_arr = [0u8; 8];
+        prev_lid_arr.copy_from_slice(&*prev_lid_buf);
+        let prev_lid: LogID = unsafe { std::mem::transmute(prev_lid_arr) };
+
+        let crc16_tested = crc16_arr(&prev_lid_arr);
+
+        SegmentHeader {
+            lsn: lsn,
+            prev: prev_lid,
+            ok: crc16_tested == crc16,
+        }
+    }
+}
+
+impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
+    fn into(self) -> [u8; SEG_HEADER_LEN] {
+        let mut buf = [0u8; SEG_HEADER_LEN];
+
+        let lsn_arr: [u8; 8] = unsafe { std::mem::transmute(self.lsn) };
+        buf[2..10].copy_from_slice(&lsn_arr);
+
+        let prev_lid_arr: [u8; 8] = unsafe { std::mem::transmute(self.prev) };
+        buf[10..18].copy_from_slice(&prev_lid_arr);
+
+        let crc16 = crc16_arr(&prev_lid_arr);
+        buf[0] = crc16[0];
+        buf[1] = crc16[1];
+
+        println!("writing segment header {:?}", buf);
+
+        buf
+    }
+}
+
+/// A segment's trailer contains the base Lsn for the segment. It is written
+/// after the rest of the segment has been fsync'd, and helps us indicate
+/// if a segment has been torn.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct SegmentTrailer {
+    pub lsn: Lsn,
+    pub ok: bool,
+}
+
+impl From<[u8; SEG_TRAILER_LEN]> for SegmentTrailer {
+    fn from(buf: [u8; SEG_TRAILER_LEN]) -> SegmentTrailer {
+        let crc16 = [buf[0], buf[1]];
+
+        let lsn_buf = &buf[2..10];
+        let mut lsn_arr = [0u8; 8];
+        lsn_arr.copy_from_slice(&*lsn_buf);
+        let lsn: LogID = unsafe { std::mem::transmute(lsn_arr) };
+
+        let crc16_tested = crc16_arr(&lsn_arr);
+
+        SegmentTrailer {
+            lsn: lsn,
+            ok: crc16_tested == crc16,
+        }
+    }
+}
+
+impl Into<[u8; SEG_TRAILER_LEN]> for SegmentTrailer {
+    fn into(self) -> [u8; SEG_TRAILER_LEN] {
+        let mut buf = [0u8; SEG_TRAILER_LEN];
+
+        let lsn_arr: [u8; 8] = unsafe { std::mem::transmute(self.lsn) };
+        buf[2..10].copy_from_slice(&lsn_arr);
+
+        let crc16 = crc16_arr(&lsn_arr);
+        buf[0] = crc16[0];
+        buf[1] = crc16[1];
+
+        buf
     }
 }

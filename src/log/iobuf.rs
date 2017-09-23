@@ -10,10 +10,13 @@ use zstd::block::compress;
 use super::*;
 
 #[doc(hidden)]
-pub const HEADER_LEN: usize = 15;
+pub const MSG_HEADER_LEN: usize = 15;
 
 #[doc(hidden)]
-pub const TRAILER_LEN: usize = HEADER_LEN;
+pub const SEG_HEADER_LEN: usize = 18;
+
+#[doc(hidden)]
+pub const SEG_TRAILER_LEN: usize = 10;
 
 struct IoBuf {
     buf: UnsafeCell<Vec<u8>>,
@@ -50,7 +53,7 @@ impl IoBuf {
         }
     }
 
-    fn store_segment_header(&self, lsn: Lsn, last_given: LogID, use_compression: bool) {
+    fn store_segment_header(&self, lsn: Lsn, prev: LogID) {
         #[cfg(feature = "log")]
         debug!("storing lsn {} in beginning of buffer", lsn);
 
@@ -58,18 +61,22 @@ impl IoBuf {
         self.set_lsn(lsn);
 
         // generate bytes
-        let lsn_bytes: [u8; 8] = unsafe { std::mem::transmute(last_given) };
-        let header_vec = encapsulate(lsn_bytes.to_vec(), lsn, use_compression);
+        let header = SegmentHeader {
+            lsn: lsn,
+            prev: prev,
+            ok: true,
+        };
+        let header_bytes: [u8; SEG_HEADER_LEN] = header.into();
 
-        assert!(self.get_capacity() >= header_vec.len());
+        assert!(self.get_capacity() >= SEG_HEADER_LEN + SEG_TRAILER_LEN);
 
         // write normal message into buffer
         unsafe {
-            (*self.buf.get())[0..header_vec.len()].copy_from_slice(&*header_vec);
+            (*self.buf.get())[0..SEG_HEADER_LEN].copy_from_slice(&header_bytes);
         }
 
         // bump offset
-        let bumped = bump_offset(0, header_vec.len() as u32);
+        let bumped = bump_offset(0, SEG_HEADER_LEN as u32);
         self.set_header(bumped);
     }
 
@@ -215,7 +222,7 @@ impl IoBufs {
             let (lid, last_given) = segment_accountant.next(recovered_lsn);
             iobuf.set_log_offset(lid);
             iobuf.set_capacity(io_buf_size);
-            iobuf.store_segment_header(recovered_lsn, last_given, config.get_use_compression());
+            iobuf.store_segment_header(recovered_lsn, last_given);
 
             #[cfg(feature = "log")]
             debug!("starting log at clean offset {}", recovered_lid);
@@ -286,12 +293,12 @@ impl IoBufs {
     pub(super) fn reserve(&self, raw_buf: Vec<u8>) -> Reservation {
         let start = clock();
 
-        assert_eq!((raw_buf.len() + HEADER_LEN) >> 32, 0);
+        assert_eq!((raw_buf.len() + MSG_HEADER_LEN) >> 32, 0);
 
         let buf = encapsulate(raw_buf, 0, self.config.get_use_compression());
 
         assert!(
-            buf.len() + HEADER_LEN <= self.config.get_io_buf_size(),
+            buf.len() <= self.config.get_io_buf_size() - (SEG_HEADER_LEN + SEG_TRAILER_LEN),
             "trying to write a buffer that is too large to be stored in the IO buffer."
         );
 
@@ -588,11 +595,7 @@ impl IoBufs {
         // its entire lifecycle as soon as we do that.
         if from_reserve || maxed {
             next_iobuf.set_capacity(io_buf_size);
-            next_iobuf.store_segment_header(
-                next_lsn,
-                last_given.unwrap(),
-                self.config.get_use_compression(),
-            );
+            next_iobuf.store_segment_header(next_lsn, last_given.unwrap());
         } else {
             let new_cap = capacity - res_len;
             assert_ne!(new_cap, 0);
@@ -663,8 +666,8 @@ impl IoBufs {
         if res_len != 0 {
             let interval = (base_lsn, base_lsn + res_len as Lsn);
 
-            // #[cfg(feature = "log")]
-            //println!( "wrote lsns {}-{} to disk at offsets {}-{}", base_lsn, base_lsn + res_len as Lsn, log_offset, log_offset + res_len as LogID,);
+            #[cfg(feature = "log")]
+            debug!( "wrote lsns {}-{} to disk at offsets {}-{}", base_lsn, base_lsn + res_len as Lsn, log_offset, log_offset + res_len as LogID,);
             self.mark_interval(interval);
         }
 
@@ -736,13 +739,13 @@ impl Drop for IoBufs {
         f.sync_all().unwrap();
 
         #[cfg(feature = "log")]
-        trace!("IoBufs dropped");
+        debug!("IoBufs dropped");
     }
 }
 
 fn encapsulate(raw_buf: Vec<u8>, lsn: Lsn, _use_compression: bool) -> Vec<u8> {
     #[cfg(feature = "zstd")]
-    let mut buf = if _use_compression {
+    let buf = if _use_compression {
         let start = clock();
         let res = compress(&*raw_buf, 5).unwrap();
         M.compress.measure(clock() - start);
@@ -752,20 +755,22 @@ fn encapsulate(raw_buf: Vec<u8>, lsn: Lsn, _use_compression: bool) -> Vec<u8> {
     };
 
     #[cfg(not(feature = "zstd"))]
-    let mut buf = raw_buf;
+    let buf = raw_buf;
 
-    let mut valid_bytes = vec![1u8];
-    let lsn_bytes: [u8; 8] = unsafe { std::mem::transmute(lsn) };
-    let size_bytes: [u8; 4] = unsafe { std::mem::transmute(buf.len() as u32) };
-    let mut crc16_bytes = crc16_arr(&buf).to_vec();
+    let crc16 = crc16_arr(&buf);
 
-    let mut out = Vec::with_capacity(HEADER_LEN + buf.len());
-    out.append(&mut valid_bytes);
-    out.append(&mut lsn_bytes.to_vec());
-    out.append(&mut size_bytes.to_vec());
-    out.append(&mut crc16_bytes);
-    assert_eq!(out.len(), HEADER_LEN);
-    out.append(&mut buf);
+    let header = MessageHeader {
+        valid: true,
+        lsn: lsn,
+        len: buf.len(),
+        crc16: crc16,
+    };
+
+    let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
+
+    let mut out = vec![0; MSG_HEADER_LEN + buf.len()];
+    out[0..MSG_HEADER_LEN].copy_from_slice(&header_bytes);
+    out[MSG_HEADER_LEN..].copy_from_slice(&*buf);
     out
 }
 

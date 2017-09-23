@@ -299,6 +299,7 @@ fn test_pagecache_bug_2() {
     // postmortem: historically needed to "seed" a page by writing
     // a compacting base to it. changed the snapshot and page-in code
     // to allow a merge being the first update to hit a page.
+    // portmortem 2:
     use Op::*;
     prop_pagecache_works(
         OpVec {
@@ -414,6 +415,7 @@ fn test_pagecache_bug_9() {
 
 fn _test_pagecache_bug_() {
     // postmortem: TEMPLATE
+    // portmortem 2: ...
     // use Op::*;
     prop_pagecache_works(
         OpVec {

@@ -45,7 +45,7 @@ pub use tree::{Tree, TreeIter};
 /// lock-free pagecache
 pub use page::{CasKey, Materializer, PageCache};
 /// lock-free log-structured storage
-pub use log::{HEADER_LEN, LockFreeLog, Log, LogRead};
+pub use log::{LockFreeLog, Log, LogRead, MSG_HEADER_LEN, SEG_HEADER_LEN, SEG_TRAILER_LEN};
 pub use ds::{Radix, Stack};
 /// general-purpose configuration
 pub use config::Config;
@@ -85,6 +85,7 @@ mod hash;
 mod ds;
 mod metrics;
 
+use log::{MessageHeader, SegmentHeader, SegmentTrailer};
 use metrics::Metrics;
 use ds::{Lru, StackIter, node_from_frag_vec};
 use hash::{crc16_arr, crc64};
