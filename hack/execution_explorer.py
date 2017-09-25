@@ -22,7 +22,7 @@ import random
 ###############################################################################
 #                                   config                                    #
 ###############################################################################
-# set this to a number for reproducing results
+# set this to a number for reproducing results or None to explore randomly
 seed = 156112673742  # None  # 951931004895
 
 # set this to the number of valid threads in the program
