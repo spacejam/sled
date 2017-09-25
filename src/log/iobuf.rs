@@ -54,7 +54,6 @@ impl IoBuf {
     }
 
     fn store_segment_header(&self, lsn: Lsn, prev: LogID) {
-        #[cfg(feature = "log")]
         debug!("storing lsn {} in beginning of buffer", lsn);
 
         // set internal
@@ -215,29 +214,6 @@ impl IoBufs {
         let recovered_lsn = segment_accountant.recovered_lsn();
         let recovered_lid = segment_accountant.recovered_lid();
 
-        // println!("recovered_lsn: {} recovered_lid: {}", recovered_lsn, recovered_lid);
-        if recovered_lid % io_buf_size as LogID == 0 {
-            // clean offset, need to create a new one and initialize it
-            let iobuf = &bufs[current_buf];
-            let (lid, last_given) = segment_accountant.next(recovered_lsn);
-            iobuf.set_log_offset(lid);
-            iobuf.set_capacity(io_buf_size - SEG_TRAILER_LEN);
-            iobuf.store_segment_header(recovered_lsn, last_given);
-
-            #[cfg(feature = "log")]
-            debug!("starting log at clean offset {}", recovered_lid);
-        } else {
-            // the tip offset is not completely full yet, reuse it
-            let iobuf = &bufs[current_buf];
-            let offset = recovered_lid % io_buf_size as LogID;
-            iobuf.set_log_offset(recovered_lid);
-            iobuf.set_capacity(io_buf_size - offset as usize - SEG_TRAILER_LEN);
-            iobuf.set_lsn(recovered_lsn);
-
-            #[cfg(feature = "log")]
-            debug!("starting log at split offset {}", recovered_lid);
-        }
-
         // open file for writing
         let mut options = std::fs::OpenOptions::new();
         options.create(true);
@@ -249,7 +225,32 @@ impl IoBufs {
             use std::os::unix::fs::OpenOptionsExt;
             options.custom_flags(libc::O_DIRECT);
         }
-        let file = options.open(&path).unwrap();
+        let mut file = options.open(&path).unwrap();
+
+        // println!("recovered_lsn: {} recovered_lid: {}", recovered_lsn, recovered_lid);
+        if recovered_lid % io_buf_size as LogID == 0 {
+            // clean offset, need to create a new one and initialize it
+            let iobuf = &bufs[current_buf];
+            let (lid, last_given) = segment_accountant.next(recovered_lsn);
+            iobuf.set_log_offset(lid);
+            iobuf.set_capacity(io_buf_size - SEG_TRAILER_LEN);
+            iobuf.store_segment_header(recovered_lsn, last_given);
+
+            file.seek(SeekFrom::Start(lid)).unwrap();
+            file.write_all(&*vec![0; config.get_io_buf_size()]).unwrap();
+            file.sync_all().unwrap();
+
+            debug!("starting log at clean offset {}", recovered_lid);
+        } else {
+            // the tip offset is not completely full yet, reuse it
+            let iobuf = &bufs[current_buf];
+            let offset = recovered_lid % io_buf_size as LogID;
+            iobuf.set_log_offset(recovered_lid);
+            iobuf.set_capacity(io_buf_size - offset as usize - SEG_TRAILER_LEN);
+            iobuf.set_lsn(recovered_lsn);
+
+            debug!("starting log at split offset {}", recovered_lid);
+        }
 
         IoBufs {
             bufs: bufs,
@@ -302,14 +303,12 @@ impl IoBufs {
             "trying to write a buffer that is too large to be stored in the IO buffer."
         );
 
-        #[cfg(feature = "log")]
         trace!("reserving buf of len {}", buf.len());
 
         let mut printed = false;
         macro_rules! trace_once {
             ($($msg:expr),*) => {
                 if !printed {
-                    #[cfg(feature = "log")]
                     trace!($($msg),*);
                     printed = true;
                 }};
@@ -324,7 +323,6 @@ impl IoBufs {
 
             spins += 1;
             if spins > 1_000_000 {
-                #[cfg(feature = "log")]
                 debug!("{:?} stalling in reserve, idx {}", tn(), idx);
                 spins = 0;
             }
@@ -416,6 +414,8 @@ impl IoBufs {
 
             M.reserve.measure(clock() - start);
 
+            // println!( "writing {} bytes to lid {} (lsn {})", buf.len(), reservation_offset, reservation_lsn);
+
             return Reservation {
                 idx: idx,
                 iobufs: self,
@@ -440,7 +440,6 @@ impl IoBufs {
         loop {
             spins += 1;
             if spins > 10 {
-                #[cfg(feature = "log")]
                 debug!("{:?} have spun >10x in decr", tn());
                 spins = 0;
             }
@@ -505,7 +504,6 @@ impl IoBufs {
             // cas failed, don't try to continue
             return;
         }
-        #[cfg(feature = "log")]
         trace!("({:?}) {} sealed", tn(), idx);
 
         // open new slot
@@ -538,7 +536,6 @@ impl IoBufs {
             next_lsn += segment_remainder;
 
             // mark unused as clear
-            #[cfg(feature = "log")]
             debug!(
                 "rolling to new segment after clearing {}-{}",
                 log_offset,
@@ -556,10 +553,16 @@ impl IoBufs {
             }
 
             let (next_offset, last_given) = sa.next(next_lsn);
+
+            let mut f = self.file_for_writing.lock().unwrap();
+            f.seek(SeekFrom::Start(next_offset)).unwrap();
+            f.write_all(&*vec![0; self.config.get_io_buf_size()])
+                .unwrap();
+            f.sync_all().unwrap();
+
             M.accountant_hold.measure(clock() - locked);
             (next_offset, Some(last_given))
         } else {
-            #[cfg(feature = "log")]
             debug!(
                 "advancing offset within the current segment from {} to {}",
                 log_offset,
@@ -581,12 +584,10 @@ impl IoBufs {
         while next_iobuf.cas_log_offset(max, next_offset).is_err() {
             spins += 1;
             if spins > 1_000_000 {
-                #[cfg(feature = "log")]
                 debug!("have spun >1,000,000x in seal of buf {}", idx);
                 spins = 0;
             }
         }
-        #[cfg(feature = "log")]
         trace!("({:?}) {} log set", tn(), next_idx);
 
         // NB as soon as the "sealed" bit is 0, this allows new threads
@@ -604,12 +605,10 @@ impl IoBufs {
             next_iobuf.set_header(0);
         }
 
-        #[cfg(feature = "log")]
         trace!("({:?}) {} zeroed header", tn(), next_idx);
 
         debug_delay();
         let _current_buf = self.current_buf.fetch_add(1, SeqCst) + 1;
-        #[cfg(feature = "log")]
         trace!(
             "({:?}) {} current_buf",
             tn(),
@@ -654,19 +653,16 @@ impl IoBufs {
         // signal that this IO buffer is uninitialized
         let max = std::usize::MAX as LogID;
         iobuf.set_log_offset(max);
-        #[cfg(feature = "log")]
         trace!("({:?}) {} log <- MAX", tn(), idx);
 
         // communicate to other threads that we have written an IO buffer.
         debug_delay();
         let _written_bufs = self.written_bufs.fetch_add(1, SeqCst);
-        #[cfg(feature = "log")]
         trace!("({:?}) {} written", tn(), _written_bufs % self.config.get_io_bufs());
 
         if res_len != 0 {
             let interval = (base_lsn, base_lsn + res_len as Lsn);
 
-            #[cfg(feature = "log")]
             debug!( "wrote lsns {}-{} to disk at offsets {}-{}", base_lsn, base_lsn + res_len as Lsn, log_offset, log_offset + res_len as LogID,);
             self.mark_interval(interval);
         }
@@ -714,7 +710,6 @@ impl IoBufs {
                 debug_delay();
                 let old = self.stable.swap(high as usize, SeqCst);
                 assert_eq!(old, cur_stable as usize);
-                #[cfg(feature = "log")]
                 debug!("new highest interval: {} - {}", low, high);
                 intervals.pop();
                 updated = true;
@@ -738,7 +733,6 @@ impl Drop for IoBufs {
         let f = self.file_for_writing.lock().unwrap();
         f.sync_all().unwrap();
 
-        #[cfg(feature = "log")]
         debug!("IoBufs dropped");
     }
 }

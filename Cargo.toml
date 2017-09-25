@@ -12,7 +12,7 @@ readme = "README.md"
 
 [features]
 default = []
-bench = ["clap", "num_cpus", "log", "rand", "rayon", "zstd", "env_logger"]
+bench = ["clap", "num_cpus", "rand", "rayon", "zstd", "env_logger"]
 stress = ["docopt", "chan-signal", "rayon", "rand", "zstd"]
 o_direct_writer = []
 
@@ -35,6 +35,10 @@ required-features = ["stress"]
 version = "3.0"
 # features = ["bypass"]
 
+[dependencies.log]
+version = "0.3"
+features = ["max_level_off"]
+
 [dependencies]
 libc = "0.2"
 crossbeam = "0.3"
@@ -43,7 +47,6 @@ bincode = "0.8"
 serde = "1.0"
 serde_derive = "1.0"
 lazy_static = "0.2"
-log = {version = "0.3", optional = true}
 rayon = {version = "0.8", optional = true}
 env_logger = {version = "0.4", optional = true}
 num_cpus = {version = "1.6", optional = true}

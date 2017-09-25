@@ -28,7 +28,6 @@ extern crate historian;
 extern crate lazy_static;
 #[cfg(feature = "env_logger")]
 extern crate env_logger;
-#[cfg(feature = "log")]
 #[macro_use]
 extern crate log as _log;
 #[cfg(target_os = "linux")]

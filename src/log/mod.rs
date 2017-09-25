@@ -106,6 +106,7 @@ pub struct SegmentIter {
     pub max_encountered_lsn: Lsn,
     pub prev: LogID,
     pub trailer: Option<Lsn>,
+    pub io_buf_size: usize,
 }
 
 impl SegmentIter {
@@ -113,37 +114,48 @@ impl SegmentIter {
         if self.read_offset + MSG_HEADER_LEN > self.buf.len() {
             let mut copy = self.clone();
             copy.buf = vec![];
-            // println!("read_next none at {:?}", copy);
+            trace!("read_next ret none (at end of buf) at {:?}", copy);
             return None;
         }
 
         let rel_i = self.read_offset;
 
-        // println!( "processing header for entry at id {}: {:?}", self.read_offset + self.position as usize, &self.buf[rel_i..rel_i + MSG_HEADER_LEN]);
+        trace!(
+            "processing header for entry at id {}: {:?}",
+            rel_i + self.position as usize,
+            &self.buf[rel_i..rel_i + MSG_HEADER_LEN]
+        );
 
         let mut header_arr = [0u8; MSG_HEADER_LEN];
         header_arr.copy_from_slice(&self.buf[rel_i..rel_i + MSG_HEADER_LEN]);
         let h: MessageHeader = header_arr.into();
 
-        // println!("read header {:?} from offset {}", h, rel_i);
+        if h.lsn % self.io_buf_size as Lsn != rel_i as Lsn {
+            trace!(
+                "read corrupt log message with header {:?} at segment offset {}",
+                h,
+                rel_i
+            );
+            return None;
+        }
+
+        trace!("read header {:?} from offset {}", h, rel_i);
 
         let mut len = h.len;
 
-        if len > self.buf.len() - self.read_offset {
-            #[cfg(feature = "log")]
+        if len > self.buf.len() - rel_i {
             error!(
-                "log read invalid message length, {} should be <= {}",
+                "read corrupt message length, {} should be <= {}",
                 len,
-                self.buf.len() - self.read_offset
+                self.buf.len() - rel_i
             );
             return Some(LogRead::Corrupted(len));
         } else if len == 0 && !h.valid {
             if h.crc16 != [0, 0] {
                 // we've hit garbage, return None
-                // println!("failed on segment {:?}", self);
                 let mut copy = self.clone();
                 copy.buf = vec![];
-                // println!("read_next none 2 at {:?}", copy);
+                error!("read_next none (crc failed) at {:?}", copy);
                 return None;
             }
             len = MSG_HEADER_LEN;
@@ -156,11 +168,10 @@ impl SegmentIter {
         }
 
         if !h.valid {
-            // println!("bumping read_offset by {}", len);
             self.read_offset += len;
             let mut copy = self.clone();
             copy.buf = vec![];
-            // println!("read_next zeroed 1 at {:?}", copy);
+            trace!("read_next zeroed of len {} at {:?}", len, copy);
             return Some(LogRead::Zeroed(len));
         }
 
@@ -168,10 +179,12 @@ impl SegmentIter {
         let upper_bound = lower_bound + len;
 
         if self.buf.len() < upper_bound {
-            // println!("returning none 3");
             let mut copy = self.clone();
             copy.buf = vec![];
-            // println!( "read_next none 3 buf header {:?} len {} lower {} upper {} at {:?}", h, self.buf.len(), lower_bound, upper_bound, copy);
+            trace!(
+                "returning none (len is bigger than what's left in buffer) at {:?}",
+                copy
+            );
             return None;
         }
 
@@ -180,22 +193,37 @@ impl SegmentIter {
         let checksum = crc16_arr(&buf);
         if checksum != h.crc16 {
             // overan our valid buffer
-            // println!("returning none 4");
             let mut copy = self.clone();
             copy.buf = vec![];
-            // println!("read_next none 4 at {:?}", copy);
+            trace!(
+                "read_next none (checksum mismatch) at {:?} expected {:?} actual {:?}",
+                copy,
+                h.crc16,
+                checksum
+            );
             return None;
         }
 
-        assert!(h.lsn > self.max_encountered_lsn);
         if h.lsn > self.max_encountered_lsn {
-            // println!( "lsn {} read_offset {} position {} max_encountered_lsn {}", self.lsn, self.read_offset, self.position, self.max_encountered_lsn);
-            // println!( "bumping segment max lsn from {} to {} in read_next", self.max_encountered_lsn, lsn);
+            trace!(
+                "bumping segment max lsn from {} to {} in read_next",
+                self.max_encountered_lsn,
+                h.lsn
+            );
             self.max_encountered_lsn = h.lsn;
+        } else {
+            // we've run over the valid LSN's for this segment
+            trace!(
+                "read_next none (regressive read) h.lsn {} max_encountered_lsn {}",
+                h.lsn,
+                self.max_encountered_lsn
+            );
+            return None;
         }
 
-        // println!("setting read_offset to upper bound: {}", upper_bound);
         self.read_offset = upper_bound;
+
+        // trace!("read_next flush lsn {} at lid {} with len {}", h.lsn, lid, len);
 
         Some(LogRead::Flush(h.lsn, buf, len))
     }
@@ -225,7 +253,6 @@ impl<'a, L> Iterator for LogIter<'a, L>
 
                         if read_lsn < self.max_encountered_lsn {
                             // we've hit a tear, we should cut our scan short
-                            #[cfg(feature = "log")]
                             error!(
                                 "torn segment encountered, cutting log scan short at LSN {}",
                                 self.max_encountered_lsn
@@ -260,9 +287,12 @@ impl<'a, L> Iterator for LogIter<'a, L>
                     return None;
                 }
                 let (lsn, lid) = next.unwrap();
+
+                // make sure our segment is stable before reading it
+                self.log.make_stable(lsn);
+
                 let next_segment = self.log.config().read_segment(lid);
                 if let Err(_e) = next_segment {
-                    #[cfg(feature = "log")]
                     error!("log read_segment failed: {:?}", _e);
                     return None;
                 }

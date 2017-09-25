@@ -277,6 +277,7 @@ impl ConfigInner {
             max_encountered_lsn: sh.lsn,
             prev: sh.prev,
             trailer: trailer,
+            io_buf_size: self.get_io_buf_size(),
         })
     }
 
@@ -338,7 +339,6 @@ impl ConfigInner {
         let max = self.get_io_buf_size() - MSG_HEADER_LEN;
         let mut len = header.len;
         if len > max {
-            #[cfg(feature = "log")]
             error!("log read invalid message length, {} should be <= {}", len, max);
             M.read.measure(clock() - start);
             return Ok(LogRead::Corrupted(len));
@@ -417,7 +417,6 @@ impl Drop for ConfigInner {
         let candidates = self.get_snapshot_files();
         for path in candidates {
             if let Err(_e) = std::fs::remove_file(path) {
-                    #[cfg(feature = "log")]
                 warn!("failed to remove old snapshot file, maybe snapshot race? {}", _e);
             }
         }

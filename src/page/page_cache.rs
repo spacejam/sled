@@ -92,7 +92,6 @@ impl<PM, P, R> Drop for PageCache<PM, P, R>
         // the inner object if left on its own
         self.last_snapshot.take(SeqCst);
 
-        #[cfg(feature = "log")]
         trace!("PageCache dropped");
     }
 }
@@ -140,7 +139,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         let cache_shard_bits = config.get_cache_bits();
         let lru = Lru::new(cache_capacity, cache_shard_bits);
 
-        let snapshot = Snapshot::default();
+        let snapshot = read_snapshot(&config);
         let last_snapshot = AtomicOption::new();
         last_snapshot.swap(snapshot, SeqCst);
 
@@ -172,11 +171,10 @@ impl<PM, P, R> PageCache<PM, P, R>
         self.write_snapshot();
 
         // we then read it back,
-        let snapshot = self.read_snapshot();
+        let snapshot = self.advance_snapshot();
         let recovery = snapshot.recovery.clone();
         self.last_snapshot.swap(snapshot, SeqCst);
 
-        #[cfg(feature = "log")]
         debug!(
             "recovery complete, returning recovery state to PageCache owner: {:?}",
             recovery
@@ -190,7 +188,6 @@ impl<PM, P, R> PageCache<PM, P, R>
         let pid = self.free.pop().unwrap_or_else(
             || self.max_pid.fetch_add(1, SeqCst),
         );
-        #[cfg(feature = "log")]
         trace!("allocating pid {}", pid);
         self.inner.insert(pid, Stack::default()).unwrap();
 
@@ -595,7 +592,6 @@ impl<PM, P, R> PageCache<PM, P, R>
         let snapshot_opt = self.last_snapshot.take(SeqCst);
         if snapshot_opt.is_none() {
             // some other thread is snapshotting
-            #[cfg(feature = "log")]
             warn!(
                 "snapshot skipped because previous attempt \
                   appears not to have completed"
@@ -618,9 +614,8 @@ impl<PM, P, R> PageCache<PM, P, R>
         let mut snapshot = snapshot_opt.unwrap();
         let end_lsn = self.log.stable_offset();
 
-        // println!("old snapshot: {:?}", snapshot);
+        trace!("building on top of old snapshot: {:?}", snapshot);
 
-        #[cfg(feature = "log")]
         info!(
             "snapshot starting from offset {} to the segment containing {}",
             snapshot.max_lsn,
@@ -634,18 +629,33 @@ impl<PM, P, R> PageCache<PM, P, R>
         let start_lsn = max_lsn - (max_lsn % io_buf_size as Lsn);
 
         for (segment_lsn, log_id, bytes) in self.log.iter_from(start_lsn) {
-            // println!("iterating over this in write_snapshot: {} {}", segment_lsn, log_id);
             let lsn = segment_lsn + (log_id % io_buf_size as Lsn);
 
+            trace!(
+                "in write_snapshot looking at item: segment lsn {} lsn {} lid {}",
+                segment_lsn,
+                lsn,
+                log_id
+            );
+
             if lsn > end_lsn {
-                // println!( "breaking in write_snapshot, lsn {} log_id {} max_lsn {}", lsn, log_id, max_lsn);
+                trace!(
+                    "breaking in write_snapshot, lsn {} log_id {} max_lsn {}",
+                    lsn,
+                    log_id,
+                    max_lsn
+                );
                 break;
             } else if lsn <= max_lsn {
-                // println!( "continuing in write_snapshot, lsn {} log_id {} max_lsn {}", lsn, log_id, max_lsn);
+                trace!(
+                    "continuing in write_snapshot, lsn {} log_id {} max_lsn {}",
+                    lsn,
+                    log_id,
+                    max_lsn
+                );
                 continue;
             }
 
-            // println!( "lsn {} max_lsn {} log_id {} end_lsn {}", lsn, max_lsn, log_id, end_lsn);
             assert!(lsn > max_lsn);
             max_lsn = lsn;
 
@@ -662,7 +672,20 @@ impl<PM, P, R> PageCache<PM, P, R>
             );
 
             // unwrapping this because it's already passed the crc check in the log iterator
-            let prepend = deserialize::<LoggedUpdate<P>>(&*bytes).unwrap();
+            trace!("trying to deserialize buf {:?} for lid {} lsn {}", bytes, log_id, lsn);
+            let deserialization = deserialize::<LoggedUpdate<P>>(&*bytes);
+
+            if let Err(e) = deserialization {
+                error!(
+                    "failed to deserialize buffer for item in log: lsn {} lid {}: {:?}",
+                    lsn,
+                    log_id,
+                    e
+                );
+                continue;
+            }
+
+            let prepend = deserialization.unwrap();
 
             if prepend.pid >= snapshot.max_pid {
                 snapshot.max_pid = prepend.pid + 1;
@@ -670,6 +693,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
             match prepend.update {
                 Update::Append(partial_page) => {
+                    trace!("append of pid {} at lid {} lsn {}", prepend.pid, log_id, lsn);
                     snapshot.segments[idx].pids.insert(prepend.pid);
 
                     let r = self.t.recover(&partial_page);
@@ -681,6 +705,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                     lids.push(log_id);
                 }
                 Update::Compact(partial_page) => {
+                    trace!("compact of pid {} at lid {} lsn {}", prepend.pid, log_id, lsn);
                     if let Some(lids) = snapshot.pt.get(&prepend.pid) {
                         for lid in lids {
                             let old_idx = *lid as usize / io_buf_size;
@@ -702,6 +727,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                     snapshot.pt.insert(prepend.pid, vec![log_id]);
                 }
                 Update::Del => {
+                    trace!("del of pid {} at lid {} lsn {}", prepend.pid, log_id, lsn);
                     if let Some(lids) = snapshot.pt.get(&prepend.pid) {
                         for lid in lids {
                             let old_idx = *lid as usize / io_buf_size;
@@ -717,9 +743,15 @@ impl<PM, P, R> PageCache<PM, P, R>
                     snapshot.free.push(prepend.pid);
                 }
                 Update::Alloc => {
+                    trace!("alloc of pid {} at lid {} lsn {}", prepend.pid, log_id, lsn);
+
                     snapshot.pt.insert(prepend.pid, vec![]);
                     snapshot.free.retain(|&pid| pid != prepend.pid);
                 }
+            }
+
+            if lsn == end_lsn {
+                break;
             }
         }
 
@@ -728,7 +760,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         snapshot.max_lsn = max_lsn;
         snapshot.recovery = recovery;
 
-        // println!("new snapshot: {:?}", snapshot);
+        trace!("generated new snapshot: {:?}", snapshot);
 
         let raw_bytes = serialize(&snapshot, Infinite).unwrap();
 
@@ -760,26 +792,25 @@ impl<PM, P, R> PageCache<PM, P, R>
         f.sync_all().unwrap();
         drop(f);
 
-        // println!("wrote snapshot to {}", path_1);
+        trace!("wrote snapshot to {}", path_1);
 
         std::fs::rename(path_1, &path_2).expect("failed to write snapshot");
 
-        // println!("renamed snapshot to {}", path_2);
+        trace!("renamed snapshot to {}", path_2);
 
         // clean up any old snapshots
         let candidates = self.config().get_snapshot_files();
         for path in candidates {
             let path_str = Path::new(&path).file_name().unwrap().to_str().unwrap();
             if !path_2.ends_with(&*path_str) {
-                #[cfg(feature = "log")]
                 info!("removing old snapshot file {:?}", path);
 
                 if let Err(_e) = std::fs::remove_file(&path) {
-                    #[cfg(feature = "log")]
                     warn!("failed to remove old snapshot file, maybe snapshot race? {}", _e);
                 }
             }
         }
+
         {
             let start = clock();
             let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
@@ -788,50 +819,12 @@ impl<PM, P, R> PageCache<PM, P, R>
             sa.resume_rewriting();
             M.accountant_hold.measure(clock() - locked);
         }
+
         M.write_snapshot.measure(clock() - start);
     }
 
-    fn read_snapshot(&mut self) -> Snapshot<R> {
-        let mut candidates = self.config().get_snapshot_files();
-        if candidates.is_empty() {
-            #[cfg(feature = "log")]
-            info!("no previous snapshot found");
-            return Snapshot::default();
-        }
-
-        candidates.sort_by_key(|path| std::fs::metadata(path).unwrap().created().unwrap());
-
-        let path = candidates.pop().unwrap();
-
-        let mut f = std::fs::OpenOptions::new().read(true).open(&path).unwrap();
-
-        let mut buf = vec![];
-        f.read_to_end(&mut buf).unwrap();
-        let len = buf.len();
-        buf.split_off(len - 8);
-
-        let mut crc_expected_bytes = [0u8; 8];
-        f.seek(std::io::SeekFrom::End(-8)).unwrap();
-        f.read_exact(&mut crc_expected_bytes).unwrap();
-
-        let crc_expected: u64 = unsafe { std::mem::transmute(crc_expected_bytes) };
-        let crc_actual = crc64(&*buf);
-
-        if crc_expected != crc_actual {
-            panic!("crc for snapshot file {:?} failed!", path);
-        }
-
-        #[cfg(feature = "zstd")]
-        let bytes = if self.config().get_use_compression() {
-            decompress(&*buf, 1_000_000).unwrap()
-        } else {
-            buf
-        };
-
-        #[cfg(not(feature = "zstd"))]
-        let bytes = buf;
-
-        let snapshot = deserialize::<Snapshot<R>>(&*bytes).unwrap();
+    fn advance_snapshot(&mut self) -> Snapshot<R> {
+        let snapshot = read_snapshot(self.config());
 
         self.load_snapshot(&snapshot);
 
@@ -845,13 +838,11 @@ impl<PM, P, R> PageCache<PM, P, R>
         free.sort();
         free.reverse();
         for pid in free {
-            #[cfg(feature = "log")]
             trace!("adding {} to free during load_snapshot", pid);
             self.free.push(pid);
         }
 
         for (pid, lids) in &snapshot.pt {
-            #[cfg(feature = "log")]
             trace!("loading pid {} in load_snapshot", pid);
             let mut lids = lids.clone();
             let stack = Stack::default();
@@ -889,4 +880,46 @@ fn lids_from_stack<P: Send + Sync>(stack_ptr: CasKey<P>, scope: &Scope) -> Vec<L
         }
     }
     lids
+}
+
+fn read_snapshot<R: DeserializeOwned>(config: &Config) -> Snapshot<R> {
+    let mut candidates = config.get_snapshot_files();
+    if candidates.is_empty() {
+        info!("no previous snapshot found");
+        return Snapshot::default();
+    }
+
+    candidates.sort_by_key(|path| std::fs::metadata(path).unwrap().created().unwrap());
+
+    let path = candidates.pop().unwrap();
+
+    let mut f = std::fs::OpenOptions::new().read(true).open(&path).unwrap();
+
+    let mut buf = vec![];
+    f.read_to_end(&mut buf).unwrap();
+    let len = buf.len();
+    buf.split_off(len - 8);
+
+    let mut crc_expected_bytes = [0u8; 8];
+    f.seek(std::io::SeekFrom::End(-8)).unwrap();
+    f.read_exact(&mut crc_expected_bytes).unwrap();
+
+    let crc_expected: u64 = unsafe { std::mem::transmute(crc_expected_bytes) };
+    let crc_actual = crc64(&*buf);
+
+    if crc_expected != crc_actual {
+        panic!("crc for snapshot file {:?} failed!", path);
+    }
+
+        #[cfg(feature = "zstd")]
+    let bytes = if config.get_use_compression() {
+        decompress(&*buf, 1_000_000).unwrap()
+    } else {
+        buf
+    };
+
+        #[cfg(not(feature = "zstd"))]
+    let bytes = buf;
+
+    deserialize::<Snapshot<R>>(&*bytes).unwrap()
 }

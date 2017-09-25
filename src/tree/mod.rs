@@ -478,6 +478,7 @@ impl Tree {
                 not_found_loops += 1;
                 debug_assert_ne!(not_found_loops, 10, "cannot find pid {} in path_for_key", cursor);
                 cursor = self.root.load(SeqCst);
+                println!("path not found loops: {}", not_found_loops);
                 continue;
             }
             let (frag, cas_key) = get_cursor.unwrap();

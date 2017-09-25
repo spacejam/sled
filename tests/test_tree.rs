@@ -154,7 +154,7 @@ fn recover_tree() {
     println!("========== recovery ==========");
     let conf = Config::default()
         .blink_fanout(2)
-        .io_buf_size(1000)
+        .io_buf_size(200)
         .flush_every_ms(None)
         .snapshot_after_ops(100);
     let t = conf.tree();
@@ -243,7 +243,7 @@ fn prop_tree_matches_btreemap(ops: OpVec, blink_fanout: u8, snapshot_after: u8) 
     let config = Config::default()
         .snapshot_after_ops(snapshot_after as usize + 1)
         .flush_every_ms(Some(1))
-        .io_buf_size(1000)
+        .io_buf_size(200)
         .blink_fanout(blink_fanout as usize + 2)
         .cache_capacity(40);
 
@@ -301,11 +301,14 @@ fn prop_tree_matches_btreemap(ops: OpVec, blink_fanout: u8, snapshot_after: u8) 
 
 #[test]
 fn quickcheck_tree_matches_btreemap() {
-    QuickCheck::new()
-        .gen(StdGen::new(rand::thread_rng(), 1))
-        .tests(50)
-        .max_tests(100)
-        .quickcheck(prop_tree_matches_btreemap as fn(OpVec, u8, u8) -> bool);
+    for i in 0..1_000_000 {
+        println!("on test {}", i);
+        QuickCheck::new()
+            .gen(StdGen::new(rand::thread_rng(), 1))
+            .tests(50)
+            .max_tests(100)
+            .quickcheck(prop_tree_matches_btreemap as fn(OpVec, u8, u8) -> bool);
+    }
 }
 
 #[test]
@@ -469,7 +472,8 @@ fn test_tree_bug_7() {
 
 #[test]
 fn test_tree_bug_8() {
-    // postmortem:
+    // postmortem: failed to properly recover the state in the segment accountant
+    // that tracked the previously issued segment.
     use Op::*;
     prop_tree_matches_btreemap(
         OpVec {
@@ -483,6 +487,181 @@ fn test_tree_bug_8() {
                 Set(64, 237),
                 Set(102, 205),
                 Restart,
+            ],
+        },
+        0,
+        0,
+    );
+}
+
+#[test]
+fn test_tree_bug_9() {
+    // postmortem: was failing to load existing snapshots on initialization. would
+    // encounter uninitialized segments at the log tip and overwrite the first segment
+    // (indexed by LSN of 0) in the segment accountant ordering, skipping over
+    // important updates.
+    use Op::*;
+    prop_tree_matches_btreemap(
+        OpVec {
+            ops: vec![
+                Set(189, 36),
+                Set(254, 194),
+                Set(132, 50),
+                Set(91, 221),
+                Set(126, 6),
+                Set(199, 183),
+                Set(71, 125),
+                Scan(67, 16),
+                Set(190, 16),
+                Restart,
+            ],
+        },
+        0,
+        0,
+    );
+}
+
+#[test]
+fn test_tree_bug_10() {
+    // postmortem: after reusing a segment, but not completely writing a segment,
+    // we were hitting an old LSN and violating an assert, rather than just ending.
+    use Op::*;
+    prop_tree_matches_btreemap(
+        OpVec {
+            ops: vec![
+                Set(152, 163),
+                Set(105, 191),
+                Set(207, 217),
+                Set(128, 19),
+                Set(106, 22),
+                Scan(20, 24),
+                Set(14, 150),
+                Set(80, 43),
+                Set(174, 134),
+                Set(20, 150),
+                Set(13, 171),
+                Restart,
+                Scan(240, 25),
+                Scan(77, 37),
+                Set(153, 232),
+                Del(2),
+                Set(227, 169),
+                Get(232),
+                Cas(247, 151, 70),
+                Set(78, 52),
+                Get(16),
+                Del(78),
+                Cas(201, 93, 196),
+                Set(172, 84),
+            ],
+        },
+        0,
+        0,
+    );
+}
+
+#[test]
+fn test_tree_bug_11() {
+    // postmortem: a stall was happening because LSNs and LogIDs were being
+    // conflated in calls to make_stable. A higher LogID than any LSN was
+    // being created, then passed in.
+    use Op::*;
+    prop_tree_matches_btreemap(
+        OpVec {
+            ops: vec![
+                Set(38, 148),
+                Set(176, 175),
+                Set(82, 88),
+                Set(164, 85),
+                Set(139, 74),
+                Set(73, 23),
+                Cas(34, 67, 151),
+                Set(115, 133),
+                Set(249, 138),
+                Restart,
+                Set(243, 6),
+            ],
+        },
+        0,
+        0,
+    );
+}
+
+#[test]
+fn test_tree_bug_12() {
+    // postmortem: was not checking that a log entry's LSN matches its position as
+    // part of detecting tears / partial rewrites.
+    use Op::*;
+    prop_tree_matches_btreemap(
+        OpVec {
+            ops: vec![
+                Set(118, 156),
+                Set(8, 63),
+                Set(165, 110),
+                Set(219, 108),
+                Set(91, 61),
+                Set(18, 98),
+                Scan(73, 6),
+                Set(240, 108),
+                Cas(71, 28, 189),
+                Del(199),
+                Restart,
+                Set(30, 140),
+                Scan(118, 13),
+                Get(180),
+                Cas(115, 151, 116),
+                Restart,
+                Set(31, 95),
+                Cas(79, 153, 225),
+                Set(34, 161),
+                Get(213),
+                Set(237, 215),
+                Del(52),
+                Set(56, 78),
+                Scan(141, 2),
+                Cas(228, 114, 170),
+                Get(231),
+                Get(223),
+                Del(167),
+                Restart,
+                Scan(240, 31),
+                Del(54),
+                Del(2),
+                Set(117, 165),
+                Set(223, 50),
+                Scan(69, 4),
+                Get(156),
+                Set(214, 72),
+            ],
+        },
+        0,
+        0,
+    );
+}
+
+#[test]
+fn test_tree_bug_13() {
+    // postmortem:
+    use Op::*;
+    prop_tree_matches_btreemap(
+        OpVec {
+            ops: vec![
+                Set(42, 10),
+                Set(137, 220),
+                Set(183, 129),
+                Set(91, 145),
+                Set(126, 26),
+                Set(255, 67),
+                Set(69, 18),
+                Restart,
+                Set(24, 92),
+                Set(193, 17),
+                Set(3, 143),
+                Cas(50, 13, 84),
+                Restart,
+                Set(191, 116),
+                Restart,
+                Del(165),
             ],
         },
         0,

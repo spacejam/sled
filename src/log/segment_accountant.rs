@@ -82,6 +82,7 @@ impl SegmentAccountant {
                     self.ensure_safe_free_distance();
                 }
 
+                // println!("pushing segment {} to free from initialize", segment_start);
                 self.free.lock().unwrap().push_back(segment_start);
             } else if segment.pids.len() as f64 / segment.pids_len as f64 <=
                        self.config.get_segment_cleanup_threshold()
@@ -170,15 +171,12 @@ impl SegmentAccountant {
         }
 
         if empty_tip && max.is_some() {
-            // println!("pushing free {} to free list in new", *max_cursor);
-            self.free.lock().unwrap().push_front(*max.unwrap().0);
+            let lid = *max.unwrap().0;
+            // println!("pushing free {} to free list in new", lid);
+            self.free.lock().unwrap().push_front(lid);
         }
 
         // println!( "after relative thing our recovered_lsn:{}, lid: {}", self.recovered_lsn, self.recovered_lid);
-        //
-        // TODO
-        //  1. set recovered_lsn after clearing empty tip and cleaning tears
-        //  2. get rid of assertion, just use highest in ordering after clean
     }
 
     fn clean_tail_tears(&mut self) {
@@ -206,7 +204,6 @@ impl SegmentAccountant {
 
             if expected_prev != actual_prev {
                 // detected a tear, everything after
-                #[cfg(feature = "log")]
                 error!(
                     "detected corruption during recovery for segment at {}! expected prev lid: {} actual: {} in last chain {:?}",
                     lid,
@@ -223,7 +220,6 @@ impl SegmentAccountant {
             for j in 0..i {
                 let (lsn_to_chop, lid_to_chop) = logical_tail[j];
 
-                #[cfg(feature = "log")]
                 error!("clearing corrupted segment at lid {}", lid_to_chop);
 
                 self.free.lock().unwrap().push_back(lid_to_chop);
@@ -281,6 +277,7 @@ impl SegmentAccountant {
                 // println!("pushing free {} to free list in freed", segment_start);
                 self.ensure_safe_free_distance();
 
+                // println!("pushing to free from freed: {}", segment_start);
                 pin(|scope| {
                     let pd = Owned::new(SegmentDropper(segment_start, self.free.clone()));
                     let ptr = pd.into_ptr(scope);
@@ -340,6 +337,7 @@ impl SegmentAccountant {
                 // println!("pushing free {} to free list from set", segment_start);
                 self.ensure_safe_free_distance();
 
+                // println!("pushing to free from set: {}", segment_start);
                 pin(|scope| {
                     let pd = Owned::new(SegmentDropper(segment_start, self.free.clone()));
                     let ptr = pd.into_ptr(scope);
@@ -454,7 +452,6 @@ impl SegmentAccountant {
 
         self.ordering.insert(lsn, lid);
 
-        #[cfg(feature = "log")]
         debug!("segment accountant returning offset {} last {}", lid, last_given);
 
         self.last_given = lid;
@@ -498,14 +495,19 @@ impl SegmentAccountant {
     }
 
     pub fn recover(&mut self, lsn: Lsn, lid: LogID) {
+        // println!("recovered lsn {} at lid {}", lsn, lid);
         let idx = lid as usize / self.config.get_io_buf_size();
 
         if self.segments.len() <= idx {
             self.segments.resize(idx + 1, Segment::default());
         }
 
-        self.segments[idx].lsn = Some(lsn);
-        self.ordering.insert(lsn, lid);
+        if lsn == 0 && lid != 0 {
+            // TODO figure out why this is happening, stahp it
+        } else {
+            self.segments[idx].lsn = Some(lsn);
+            self.ordering.insert(lsn, lid);
+        }
     }
 }
 

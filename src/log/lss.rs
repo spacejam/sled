@@ -126,7 +126,7 @@ impl Log for LockFreeLog {
 
     /// read a buffer from the disk
     fn read(&self, id: LogID) -> io::Result<LogRead> {
-        self.make_stable(id);
+        // TODO stabilize LSN not LID self.make_stable(id);
         self.config().read_entry(id)
     }
 
@@ -143,9 +143,17 @@ impl Log for LockFreeLog {
         // we make sure stable > lsn because stable starts at 0,
         // before we write the 0th byte of the file.
         // println!("before loop, waiting on lsn {}", lsn);
+        // let mut exploder = 0;
         while self.iobufs.stable() <= lsn {
+            //println!("stable is {}", self.iobufs.stable());
             // println!("top of loop");
             self.iobufs.flush();
+            /*
+            exploder += 1;
+            if exploder > 1000 {
+                panic!("exploded from too much time in make_stable");
+            }
+            */
 
             // block until another thread updates the stable lsn
             let waiter = self.iobufs.intervals.lock().unwrap();
