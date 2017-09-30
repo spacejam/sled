@@ -18,10 +18,8 @@ impl<'a> Iterator for Iter<'a> {
         // return None if there are no more remaining segments.
         let segment_len = self.log.config().get_io_buf_size();
         loop {
-            if self.cur_lsn >= self.max_lsn {
-                // all done
-                return None;
-            }
+            println!("cur is {}", self.cur_lsn);
+            println!("max is {}", self.max_lsn);
             if self.segment_base.is_none() ||
                 self.segment_base.unwrap() + segment_len as LogID <=
                     self.cur_lsn + SEG_TRAILER_LEN as LogID
@@ -33,10 +31,14 @@ impl<'a> Iterator for Iter<'a> {
                 }
             }
 
+            if self.cur_lsn >= self.max_lsn {
+                // all done
+                return None;
+            }
+
             let lid = self.segment_base.unwrap() +
                 (self.cur_lsn % self.log.config().get_io_buf_size() as LogID);
 
-            println!("max is {}", self.max_lsn);
             println!("lid is {}", lid);
             match self.log.read(lid) {
                 Ok(LogRead::Flush(lsn, buf, on_disk_len)) => {
