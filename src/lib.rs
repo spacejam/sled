@@ -42,8 +42,9 @@ extern crate rand;
 /// atomic lock-free tree
 pub use tree::{Tree, TreeIter};
 /// lock-free pagecache
+#[doc(hidden)]
 pub use page::{CasKey, Materializer, PageCache};
-/// lock-free log-structured storage
+#[doc(hidden)]
 pub use log::{Log, LogRead, MSG_HEADER_LEN, SEG_HEADER_LEN, SEG_TRAILER_LEN};
 pub use ds::{Radix, Stack};
 /// general-purpose configuration

@@ -627,8 +627,8 @@ impl<PM, P, R> PageCache<PM, P, R>
         let mut max_lsn = snapshot.max_lsn;
         let start_lsn = max_lsn - (max_lsn % io_buf_size as Lsn);
 
-        for (segment_lsn, log_id, bytes) in self.log.iter_from(start_lsn) {
-            let lsn = segment_lsn + (log_id % io_buf_size as Lsn);
+        for (lsn, log_id, bytes) in self.log.iter_from(start_lsn) {
+            let segment_lsn = lsn / io_buf_size as Lsn * io_buf_size as Lsn;
 
             trace!(
                 "in write_snapshot looking at item: segment lsn {} lsn {} lid {}",

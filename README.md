@@ -88,9 +88,6 @@ scatter-gather reads across the log to materialize the page from its fragments.
 the system is largely inspired by the Deuteronomy architecture, and aims to implement
 the best features from RocksDB as well.
 
-the `Log` and `PageCache` are usable on their own for implementing your own
-high-performance stateful systems!
-
 # References
 
 * [The Bw-Tree: A B-tree for New Hardware Platforms](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/bw-tree-icde2013-final.pdf)
