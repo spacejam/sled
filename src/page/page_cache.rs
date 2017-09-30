@@ -75,7 +75,7 @@ pub struct PageCache<PM, P, R>
     inner: Radix<Stack<CacheEntry<P>>>,
     max_pid: AtomicUsize,
     free: Arc<Stack<PageID>>,
-    log: LockFreeLog,
+    log: Log,
     lru: Lru,
     updates: AtomicUsize,
     last_snapshot: AtomicOption<Snapshot<R>>,
@@ -148,7 +148,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             inner: Radix::default(),
             max_pid: AtomicUsize::new(0),
             free: Arc::new(Stack::default()),
-            log: LockFreeLog::start_system(config),
+            log: Log::start_system(config),
             lru: lru,
             updates: AtomicUsize::new(0),
             last_snapshot: last_snapshot,
@@ -612,14 +612,13 @@ impl<PM, P, R> PageCache<PM, P, R>
         }
 
         let mut snapshot = snapshot_opt.unwrap();
-        let end_lsn = self.log.stable_offset();
 
         trace!("building on top of old snapshot: {:?}", snapshot);
 
         info!(
-            "snapshot starting from offset {} to the segment containing {}",
+            "snapshot starting from offset {} to the segment containing ~{}",
             snapshot.max_lsn,
-            end_lsn,
+            self.log.stable_offset(),
         );
 
         let io_buf_size = self.config().get_io_buf_size();
@@ -638,15 +637,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 log_id
             );
 
-            if lsn > end_lsn {
-                trace!(
-                    "breaking in write_snapshot, lsn {} log_id {} max_lsn {}",
-                    lsn,
-                    log_id,
-                    max_lsn
-                );
-                break;
-            } else if lsn <= max_lsn {
+            if lsn <= max_lsn {
                 trace!(
                     "continuing in write_snapshot, lsn {} log_id {} max_lsn {}",
                     lsn,
@@ -748,10 +739,6 @@ impl<PM, P, R> PageCache<PM, P, R>
                     snapshot.pt.insert(prepend.pid, vec![]);
                     snapshot.free.retain(|&pid| pid != prepend.pid);
                 }
-            }
-
-            if lsn == end_lsn {
-                break;
             }
         }
 

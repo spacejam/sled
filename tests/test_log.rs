@@ -15,7 +15,7 @@ use std::sync::atomic::{ATOMIC_USIZE_INIT, AtomicUsize, Ordering};
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::{Rng, thread_rng};
 
-use sled::{Config, LockFreeLog, Log, LogRead, MSG_HEADER_LEN, SEG_HEADER_LEN, SEG_TRAILER_LEN};
+use sled::{Config, Log, LogRead, MSG_HEADER_LEN, SEG_HEADER_LEN, SEG_TRAILER_LEN};
 
 #[test]
 #[ignore]
@@ -119,7 +119,7 @@ fn concurrent_logging() {
     t6.join().unwrap();
 }
 
-fn test_write(log: &LockFreeLog) {
+fn test_write(log: &Log) {
     let data_bytes = b"yoyoyoyo";
     let res = log.reserve(data_bytes.to_vec());
     let id = res.lid();
@@ -129,7 +129,7 @@ fn test_write(log: &LockFreeLog) {
     assert_eq!(read_buf, data_bytes);
 }
 
-fn test_abort(log: &LockFreeLog) {
+fn test_abort(log: &Log) {
     let res = log.reserve(vec![0; 5]);
     let id = res.lid();
     res.abort();
@@ -180,8 +180,10 @@ fn test_log_iterator() {
     assert_eq!(iter.next().unwrap().2, b"1".to_vec());
     assert_eq!(iter.next().unwrap().2, b"22".to_vec());
     assert_eq!(iter.next().unwrap().2, b"333".to_vec());
+    println!("------- skipping over failed");
     assert_eq!(iter.next().unwrap().2, b"4444".to_vec());
     assert_eq!(iter.next().unwrap().2, b"55555".to_vec());
+    println!("at the end of the run");
     assert_eq!(iter.next(), None);
 }
 
@@ -243,7 +245,7 @@ struct OpVec {
 impl Arbitrary for OpVec {
     fn arbitrary<G: Gen>(g: &mut G) -> OpVec {
         let mut ops = vec![];
-        for _ in 0..g.gen_range(1, 100) {
+        for _ in 0..g.gen_range(1, 10) {
             let op = Op::arbitrary(g);
             ops.push(op);
 
@@ -292,6 +294,7 @@ fn prop_log_works(ops: OpVec) -> bool {
     let config = Config::default().io_buf_size(1024 * 8).flush_every_ms(
         Some(1),
     );
+    println!("testing {:?}", ops);
 
     let mut tip = 0;
     let mut log = config.log();
@@ -304,6 +307,7 @@ fn prop_log_works(ops: OpVec) -> bool {
                     continue;
                 }
                 let (lid, ref expected, _len) = reference[lid as usize];
+                // log.make_stable(lid);
                 let read_res = log.read(lid);
                 // println!( "expected {:?} read_res {:?} tip {} lid {}", expected, read_res, tip, lid);
                 if expected.is_none() || tip as u64 <= lid {
@@ -613,6 +617,23 @@ fn test_log_bug_18() {
     use Op::*;
     prop_log_works(OpVec {
         ops: vec![Restart],
+    });
+}
+
+#[test]
+fn test_log_bug_19() {
+    // postmortem: this was stalling in make_stable
+    use Op::*;
+    prop_log_works(OpVec {
+        ops: vec![
+            Restart,
+            Restart,
+            Write(vec![]),
+            AbortReservation(vec![]),
+            Write(vec![47]),
+            Restart,
+            Read(2),
+        ],
     });
 }
 

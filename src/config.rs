@@ -5,10 +5,6 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use std::io::{Read, Seek, SeekFrom};
-use std::fs::File;
-use std::io::ErrorKind::{Interrupted, UnexpectedEof};
-
 #[cfg(feature = "zstd")]
 use zstd::block::decompress;
 
@@ -92,10 +88,10 @@ impl Config {
         Tree::new(self.clone())
     }
 
-    /// create a new `LockFreeLog` based on this
+    /// create a new `Log` based on this
     /// configuration
-    pub fn log(&self) -> LockFreeLog {
-        LockFreeLog::start_system(self.clone())
+    pub fn log(&self) -> Log {
+        Log::start_system(self.clone())
     }
 }
 
@@ -240,167 +236,6 @@ impl ConfigInner {
             .filter_map(filter)
             .collect()
     }
-
-    /// read a segment of log messages. Only call after
-    /// pausing segment rewriting on the segment accountant!
-    pub fn read_segment(&self, offset: LogID) -> std::io::Result<log::SegmentIter> {
-        // println!("reading segment {}", offset);
-        let sh = self.read_segment_header(offset)?;
-        // println!("read sh {:?} at {}", sh, offset);
-        assert_eq!(sh.lsn % self.get_io_buf_size() as Lsn, 0);
-        // TODO test sh.1 for validity
-
-        let io_buf_size = self.get_io_buf_size();
-        let mut buf = vec![];
-
-        {
-            let cached_f = self.cached_file();
-            let mut f = cached_f.borrow_mut();
-            f.seek(SeekFrom::Start(offset))?;
-
-            read_up_to(f, &mut buf, io_buf_size - SEG_TRAILER_LEN)?;
-        }
-
-        let st = self.read_segment_trailer(offset);
-
-        let trailer = st.ok().and_then(
-            |st| if st.ok { Some(st.lsn) } else { None },
-        );
-
-        // println!("trailer: {:?}", trailer);
-
-        Ok(log::SegmentIter {
-            buf: buf,
-            lsn: sh.lsn,
-            read_offset: SEG_HEADER_LEN,
-            position: offset,
-            max_encountered_lsn: sh.lsn,
-            prev: sh.prev,
-            trailer: trailer,
-            io_buf_size: self.get_io_buf_size(),
-        })
-    }
-
-    pub fn read_segment_header(&self, id: LogID) -> std::io::Result<SegmentHeader> {
-        assert_eq!(id % self.get_io_buf_size() as LogID, 0);
-        // println!("seeking to {}", id);
-        let cached_f = self.cached_file();
-        let mut f = cached_f.borrow_mut();
-        f.seek(SeekFrom::Start(id))?;
-
-        // println!("trying to read {} bytes", SEG_HEADER_LEN);
-
-        let mut seg_header_buf = [0u8; SEG_HEADER_LEN];
-        f.read_exact(&mut seg_header_buf)?;
-
-        // println!("read the header!!!");
-
-        Ok(seg_header_buf.into())
-    }
-
-    pub fn read_segment_trailer(&self, id: LogID) -> std::io::Result<SegmentTrailer> {
-        assert_eq!(id % self.get_io_buf_size() as LogID, 0);
-        let cached_f = self.cached_file();
-        let mut f = cached_f.borrow_mut();
-        f.seek(SeekFrom::Start(
-            id + self.get_io_buf_size() as LogID -
-                SEG_TRAILER_LEN as LogID,
-        ))?;
-
-
-        let mut seg_trailer_buf = [0u8; SEG_TRAILER_LEN];
-        f.read_exact(&mut seg_trailer_buf)?;
-
-        Ok(seg_trailer_buf.into())
-    }
-
-    pub fn read_message_header(&self, id: LogID) -> std::io::Result<MessageHeader> {
-        let cached_f = self.cached_file();
-        let mut f = cached_f.borrow_mut();
-        f.seek(SeekFrom::Start(id))?;
-
-
-        let mut msg_header_buf = [0u8; MSG_HEADER_LEN];
-        f.read_exact(&mut msg_header_buf)?;
-
-        Ok(msg_header_buf.into())
-    }
-
-    /// read a buffer from the disk
-    pub fn read_entry(&self, id: LogID) -> std::io::Result<LogRead> {
-        // println!("read_entry({})", id);
-        let start = clock();
-        let header = self.read_message_header(id)?;
-
-        let cached_f = self.cached_file();
-        let mut f = cached_f.borrow_mut();
-        f.seek(SeekFrom::Start(id + MSG_HEADER_LEN as LogID))?;
-
-        let max = self.get_io_buf_size() - MSG_HEADER_LEN;
-        let mut len = header.len;
-        if len > max {
-            error!("log read invalid message length, {} should be <= {}", len, max);
-            M.read.measure(clock() - start);
-            return Ok(LogRead::Corrupted(len));
-        } else if len == 0 && !header.valid {
-            // skip to next record, which starts with 1
-            loop {
-                let mut byte = [0u8; 1];
-                if let Err(e) = f.read_exact(&mut byte) {
-                    if e.kind() == UnexpectedEof {
-                        // we've hit the end of the file
-                        break;
-                    }
-                    panic!("{:?}", e);
-                }
-                if byte[0] != 1 {
-                    debug_assert_eq!(byte[0], 0);
-                    len += 1;
-                } else {
-                    break;
-                }
-            }
-        }
-
-        if !header.valid {
-            M.read.measure(clock() - start);
-            return Ok(LogRead::Zeroed(len + MSG_HEADER_LEN));
-        } else if (header.lsn % self.get_io_buf_size() as Lsn) !=
-                   (id % self.get_io_buf_size() as LogID)
-        {
-            return Ok(LogRead::Corrupted(len + MSG_HEADER_LEN));
-        }
-
-        let mut buf = Vec::with_capacity(len);
-        unsafe {
-            buf.set_len(len);
-        }
-        f.read_exact(&mut buf)?;
-
-        let checksum = crc16_arr(&buf);
-        if checksum != header.crc16 {
-            M.read.measure(clock() - start);
-            return Ok(LogRead::Corrupted(len));
-        }
-
-        #[cfg(feature = "zstd")]
-        let res = {
-            if self.get_use_compression() {
-                let start = clock();
-                let res = Ok(LogRead::Flush(header.lsn, decompress(&*buf, max).unwrap(), len));
-                M.decompress.measure(clock() - start);
-                res
-            } else {
-                Ok(LogRead::Flush(header.lsn, buf, len))
-            }
-        };
-
-        #[cfg(not(feature = "zstd"))]
-        let res = Ok(LogRead::Flush(header.lsn, buf, len));
-
-        M.read.measure(clock() - start);
-        res
-    }
 }
 
 impl Drop for ConfigInner {
@@ -419,33 +254,6 @@ impl Drop for ConfigInner {
             if let Err(_e) = std::fs::remove_file(path) {
                 warn!("failed to remove old snapshot file, maybe snapshot race? {}", _e);
             }
-        }
-    }
-}
-
-fn read_up_to(
-    mut f: std::cell::RefMut<File>,
-    buf: &mut Vec<u8>,
-    max: usize,
-) -> std::io::Result<usize> {
-    buf.reserve(max);
-    unsafe {
-        buf.set_len(max);
-    }
-    let mut len = 0;
-    loop {
-        match f.read(&mut buf[len..max]) {
-            Ok(0) => {
-                unsafe {
-                    buf.set_len(len);
-                }
-                return Ok(len);
-            }
-            Ok(n) => {
-                len += n;
-            }
-            Err(ref e) if e.kind() == Interrupted => {}
-            Err(e) => return Err(e),
         }
     }
 }

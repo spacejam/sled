@@ -37,7 +37,7 @@ version = "3.0"
 
 [dependencies.log]
 version = "0.3"
-features = ["max_level_off"]
+# features = ["max_level_off"]
 
 [dependencies]
 libc = "0.2"

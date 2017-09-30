@@ -36,7 +36,7 @@ impl Materializer for TestMaterializer {
 }
 
 #[test]
-fn test_pagecache() {
+fn test_pagecache_caching() {
     let conf = Config::default().cache_capacity(40).cache_bits(0);
 
     let mut pc = PageCache::new(TestMaterializer, conf.clone());

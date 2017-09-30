@@ -88,7 +88,7 @@ scatter-gather reads across the log to materialize the page from its fragments.
 the system is largely inspired by the Deuteronomy architecture, and aims to implement
 the best features from RocksDB as well.
 
-the `LockFreeLog` and `PageCache` are usable on their own for implementing your own
+the `Log` and `PageCache` are usable on their own for implementing your own
 high-performance stateful systems!
 
 # References

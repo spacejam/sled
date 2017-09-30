@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::fs::File;
 use std::sync::{Arc, Mutex};
 
 use coco::epoch::{Owned, pin};
@@ -103,14 +104,22 @@ impl SegmentAccountant {
             return;
         }
 
+        let segment_len = self.config.get_io_buf_size() as LogID;
         let mut cursor = 0;
+        let cached_f = self.config.cached_file();
+        let mut f = cached_f.borrow_mut();
         loop {
             // in the future this can be optimized to just read
             // the initial header at that position... but we need to
             // make sure the segment is not torn
-            if let Ok(segment) = self.config.read_segment(cursor) {
-                self.recover(segment.lsn, segment.position);
-                cursor += self.config.get_io_buf_size() as LogID;
+            if let Ok(segment) = f.read_segment_header(cursor) {
+                if segment.ok {
+                    self.recover(segment.lsn, cursor);
+                } else {
+                    // TODO DATA CORRUPTION AAHHHHHH
+                    panic!("detected corrupt segment header at {}", cursor);
+                }
+                cursor += segment_len;
             } else {
                 break;
             }
@@ -118,42 +127,47 @@ impl SegmentAccountant {
 
         // println!("scanned in lsns {:?}", self.ordering);
 
-        self.clean_tail_tears();
+        self.clean_tail_tears(&mut f);
 
         // println!("trying to get highest lsn in segment for lsn {}", self.recovered_lsn);
         let mut empty_tip = true;
 
         let max = self.ordering.iter().rev().nth(0);
 
-        if let Some((_max_lsn, lid)) = max {
-            if let Ok(mut segment) = self.config.read_segment(*lid) {
-                self.last_given = *lid;
-                // println!( "got a segment... lsn: {} read_offset: {}", segment.lsn, segment.read_offset);
-                while let Some(log_read) = segment.read_next() {
-                    // println!("got a thing...");
-                    match log_read {
-                        LogRead::Zeroed(_len) => {
-                            // println!("got a zeroed of len {}", _len);
-                            continue;
-                        }
-                        LogRead::Flush(lsn, _, len) => {
-                            // println!("got lsn {} with len {}", lsn, len);
-                            empty_tip = false;
-
-                            let tip = lsn + MSG_HEADER_LEN as Lsn + len as Lsn;
-
-                            if tip > self.recovered_lsn {
-                                self.recovered_lsn = tip;
-                            } else {
-                                break;
-                            }
-                        }
-                        LogRead::Corrupted(_) => break,
+        if let Some((base_lsn, lid)) = max {
+            self.last_given = *lid;
+            let mut tip = lid + SEG_HEADER_LEN as LogID;
+            let segment_ceiling = lid + segment_len - SEG_TRAILER_LEN as LogID;
+            println!("got a segment... lsn: {} read_offset: {}", base_lsn, lid);
+            while let Ok(log_read) = f.read_entry(tip) {
+                println!("got a thing...");
+                match log_read {
+                    LogRead::Zeroed(len) => {
+                        println!("got a zeroed of len {}", len);
+                        tip += len as LogID;
+                        continue;
                     }
+                    LogRead::Flush(lsn, _, len) => {
+                        println!("got good lsn {} with len {}", lsn, len);
+                        empty_tip = false;
+
+                        tip += MSG_HEADER_LEN as Lsn + len as Lsn;
+
+                        if tip > segment_ceiling {
+                            break;
+                        }
+
+                        if tip > self.recovered_lid {
+                            self.recovered_lid = tip;
+                        } else {
+                            break;
+                        }
+                    }
+                    LogRead::Corrupted(_) => break,
                 }
-                let segment_overhang = self.recovered_lsn % self.config.get_io_buf_size() as LogID;
-                self.recovered_lid = segment.position + segment_overhang;
             }
+            let segment_overhang = self.recovered_lid % self.config.get_io_buf_size() as LogID;
+            self.recovered_lsn = base_lsn + segment_overhang;
         } else {
             assert!(
                 self.ordering.is_empty(),
@@ -176,10 +190,14 @@ impl SegmentAccountant {
             self.free.lock().unwrap().push_front(lid);
         }
 
-        // println!( "after relative thing our recovered_lsn:{}, lid: {}", self.recovered_lsn, self.recovered_lid);
+        println!(
+            "after relative thing our recovered_lsn:{}, lid: {}",
+            self.recovered_lsn,
+            self.recovered_lid
+        );
     }
 
-    fn clean_tail_tears(&mut self) {
+    fn clean_tail_tears(&mut self, f: &mut File) {
         let safety_buffer = self.config.get_io_bufs();
         let logical_tail: Vec<(Lsn, LogID)> = self.ordering
             .iter()
@@ -198,8 +216,13 @@ impl SegmentAccountant {
             }
 
             // check link
-            let segment_iter = self.config.read_segment(lid).unwrap();
-            let expected_prev = segment_iter.prev;
+            let segment_header = f.read_segment_header(lid).unwrap();
+            if !segment_header.ok {
+                error!("read corrupted segment header during recovery of segment {}", lid);
+                tear_at = Some(i);
+                continue;
+            }
+            let expected_prev = segment_header.prev;
             let actual_prev = logical_tail[i + 1].1;
 
             if expected_prev != actual_prev {

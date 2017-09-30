@@ -8,7 +8,7 @@ use super::*;
 /// for writing persistent data structures that need
 /// to know where to find persisted bits in the future.
 ///
-/// # Working with `LockFreeLog`
+/// # Working with `Log`
 ///
 /// ```
 /// use sled::Log;
@@ -33,17 +33,17 @@ use super::*;
 /// assert_eq!(iter.next().unwrap().2, b"55555".to_vec());
 /// assert_eq!(iter.next(), None);
 /// ```
-pub struct LockFreeLog {
+pub struct Log {
     /// iobufs is the underlying IO writer
     pub iobufs: Arc<IoBufs>,
     flusher_shutdown: Arc<AtomicBool>,
     flusher_handle: Option<std::thread::JoinHandle<()>>,
 }
 
-unsafe impl Send for LockFreeLog {}
-unsafe impl Sync for LockFreeLog {}
+unsafe impl Send for Log {}
+unsafe impl Sync for Log {}
 
-impl Drop for LockFreeLog {
+impl Drop for Log {
     fn drop(&mut self) {
         self.flusher_shutdown.store(
             true,
@@ -55,9 +55,9 @@ impl Drop for LockFreeLog {
     }
 }
 
-impl LockFreeLog {
+impl Log {
     /// create new lock-free log
-    pub fn start_system(config: Config) -> LockFreeLog {
+    pub fn start_system(config: Config) -> Log {
         #[cfg(feature = "env_logger")]
         let _r = env_logger::init();
 
@@ -65,7 +65,7 @@ impl LockFreeLog {
 
         let flusher_shutdown = Arc::new(AtomicBool::new(false));
 
-        let mut log = LockFreeLog {
+        let mut log = Log {
             iobufs: iobufs.clone(),
             flusher_shutdown: flusher_shutdown.clone(),
             flusher_handle: None,
@@ -89,25 +89,26 @@ impl LockFreeLog {
     pub fn flush(&self) {
         self.iobufs.flush();
     }
-}
 
-impl Log for LockFreeLog {
-    fn reserve(&self, buf: Vec<u8>) -> Reservation {
+    /// Reserve space in the log for a pending linearized operation.
+    pub fn reserve(&self, buf: Vec<u8>) -> Reservation {
         self.iobufs.reserve(buf)
     }
 
-    /// return the config in use for this log
-    fn config(&self) -> &Config {
+    /// Return the config in use for this log.
+    // TODO no need, fix up config
+    pub fn config(&self) -> &Config {
         self.iobufs.config()
     }
 
-    fn write(&self, buf: Vec<u8>) -> LogID {
+    /// Write a buffer into the log.
+    pub fn write(&self, buf: Vec<u8>) -> LogID {
         self.iobufs.reserve(buf).complete()
     }
 
     /// Return an iterator over the log, starting with
     /// a specified offset.
-    fn iter_from(&self, lsn: Lsn) -> LogIter<Self> {
+    pub fn iter_from(&self, lsn: Lsn) -> Iter {
         let start = clock();
         let sa = self.iobufs.segment_accountant.lock().unwrap();
         let locked = clock();
@@ -115,38 +116,42 @@ impl Log for LockFreeLog {
         let segment_iter = sa.segment_snapshot_iter_from(lsn);
         M.accountant_hold.measure(clock() - locked);
 
-        LogIter {
-            max_encountered_lsn: 0,
-            min_lsn: lsn,
+        Iter {
             log: self,
-            segment: None,
+            max_lsn: self.stable_offset(),
+            cur_lsn: lsn,
+            segment_base: None,
             segment_iter: segment_iter,
+            trailer: None,
         }
     }
 
     /// read a buffer from the disk
-    fn read(&self, id: LogID) -> io::Result<LogRead> {
-        // TODO stabilize LSN not LID self.make_stable(id);
-        self.config().read_entry(id)
+    pub fn read(&self, id: LogID) -> io::Result<LogRead> {
+        self.make_stable(id);
+        let cached_f = self.config().cached_file();
+        let mut f = cached_f.borrow_mut();
+        // TODO check the lsn of the read log entry below
+        f.read_entry(id)
     }
 
     /// returns the current stable offset written to disk
-    fn stable_offset(&self) -> LogID {
+    pub fn stable_offset(&self) -> LogID {
         self.iobufs.stable()
     }
 
     /// blocks until the specified log sequence number has
     /// been made stable on disk
-    fn make_stable(&self, lsn: Lsn) {
+    pub fn make_stable(&self, lsn: Lsn) {
         let start = clock();
 
         // we make sure stable > lsn because stable starts at 0,
         // before we write the 0th byte of the file.
-        // println!("before loop, waiting on lsn {}", lsn);
+        println!("before loop, waiting on lsn {}", lsn);
         // let mut exploder = 0;
         while self.iobufs.stable() <= lsn {
-            //println!("stable is {}", self.iobufs.stable());
-            // println!("top of loop");
+            println!("stable is {}", self.iobufs.stable());
+            println!("top of loop");
             self.iobufs.flush();
             /*
             exploder += 1;
@@ -159,15 +164,15 @@ impl Log for LockFreeLog {
             let waiter = self.iobufs.intervals.lock().unwrap();
 
             if self.iobufs.stable() <= lsn {
-                // println!("waiting on cond var");
+                println!("waiting on cond var");
                 let _waiter = self.iobufs.interval_updated.wait(waiter).unwrap();
-            // println!("back from cond var");
+                println!("back from cond var");
             } else {
                 break;
             }
         }
 
-        // println!("make_stable({}) returning", lsn);
+        println!("make_stable({}) returning", lsn);
 
         M.make_stable.measure(clock() - start);
     }

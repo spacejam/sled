@@ -240,7 +240,11 @@ impl IoBufs {
             file.write_all(&*vec![0; config.get_io_buf_size()]).unwrap();
             file.sync_all().unwrap();
 
-            debug!("starting log at clean offset {}", recovered_lid);
+            debug!(
+                "starting log at clean offset {}, recovered lsn {}",
+                recovered_lid,
+                recovered_lsn
+            );
         } else {
             // the tip offset is not completely full yet, reuse it
             let iobuf = &bufs[current_buf];
@@ -249,7 +253,11 @@ impl IoBufs {
             iobuf.set_capacity(io_buf_size - offset as usize - SEG_TRAILER_LEN);
             iobuf.set_lsn(recovered_lsn);
 
-            debug!("starting log at split offset {}", recovered_lid);
+            debug!(
+                "starting log at split offset {}, recovered lsn {}",
+                recovered_lid,
+                recovered_lsn
+            );
         }
 
         IoBufs {
