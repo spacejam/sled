@@ -165,6 +165,7 @@ impl SegmentAccountant {
                 empty_tip = false;
                 tip = lid;
 
+                println!("tip in recover: {}", tip);
                 println!("ceiling in recover: {}", segment_ceiling);
                 assert!(tip <= segment_ceiling);
             }
@@ -176,8 +177,13 @@ impl SegmentAccountant {
                     .unwrap()
                     .flush()
                     .unwrap();
-                tip += len as LogID;
+                tip += MSG_HEADER_LEN as LogID + len as LogID;
                 self.recovered_lid = tip;
+                println!(
+                    "final recovery tip {} recovered lid {}",
+                    tip,
+                    self.recovered_lid
+                );
             }
 
             let segment_overhang = self.recovered_lid %

@@ -37,7 +37,10 @@ impl Materializer for TestMaterializer {
 
 #[test]
 fn pagecache_caching() {
-    let conf = Config::default().cache_capacity(40).cache_bits(0);
+    let conf = Config::default()
+        .cache_capacity(40)
+        .cache_bits(0)
+        .io_buf_size(200);
 
     let mut pc = PageCache::new(TestMaterializer, conf.clone());
     pc.recover();
@@ -59,7 +62,7 @@ fn pagecache_caching() {
 
 #[test]
 fn basic_pagecache_recovery() {
-    let conf = Config::default().flush_every_ms(None);
+    let conf = Config::default().flush_every_ms(None).io_buf_size(200);
 
     let mut pc = PageCache::new(TestMaterializer, conf.clone());
     pc.recover();
