@@ -247,7 +247,7 @@ fn prop_tree_matches_btreemap(
     let config = Config::default()
         .snapshot_after_ops(snapshot_after as usize + 1)
         .flush_every_ms(Some(1))
-        .io_buf_size(200)
+        .io_buf_size(10000)
         .blink_fanout(blink_fanout as usize + 2)
         .cache_capacity(40);
 
@@ -306,14 +306,11 @@ fn prop_tree_matches_btreemap(
 
 #[test]
 fn quickcheck_tree_matches_btreemap() {
-    for i in 0..1_000_000 {
-        println!("on test {}", i);
-        QuickCheck::new()
-            .gen(StdGen::new(rand::thread_rng(), 1))
-            .tests(50)
-            .max_tests(100)
-            .quickcheck(prop_tree_matches_btreemap as fn(OpVec, u8, u8) -> bool);
-    }
+    QuickCheck::new()
+        .gen(StdGen::new(rand::thread_rng(), 1))
+        .tests(50)
+        .max_tests(100)
+        .quickcheck(prop_tree_matches_btreemap as fn(OpVec, u8, u8) -> bool);
 }
 
 #[test]
