@@ -322,10 +322,10 @@ impl<PM, P, R> PageCache<PM, P, R>
 
             // ensure the last entry is a Flush
             let last = cache_entries.pop().map(|last_ce| match last_ce {
-                CacheEntry::MergedResident(_, lid) |
-                CacheEntry::Resident(_, lid) |
-                CacheEntry::Flush(lid) => CacheEntry::Flush(lid),
-                CacheEntry::PartialFlush(_) => {
+                CacheEntry::MergedResident(_, lsn, lid) |
+                CacheEntry::Resident(_, lsn, lid) |
+                CacheEntry::Flush(lsn, lid) => CacheEntry::Flush(lsn, lid),
+                CacheEntry::PartialFlush(_, _) => {
                     panic!("got PartialFlush at end of stack...")
                 }
             });
@@ -338,12 +338,12 @@ impl<PM, P, R> PageCache<PM, P, R>
             let mut new_stack = Vec::with_capacity(cache_entries.len() + 1);
             for entry in cache_entries {
                 match entry {
-                    CacheEntry::PartialFlush(lid) |
-                    CacheEntry::MergedResident(_, lid) |
-                    CacheEntry::Resident(_, lid) => {
-                        new_stack.push(CacheEntry::PartialFlush(lid));
+                    CacheEntry::PartialFlush(lsn, lid) |
+                    CacheEntry::MergedResident(_, lsn, lid) |
+                    CacheEntry::Resident(_, lsn, lid) => {
+                        new_stack.push(CacheEntry::PartialFlush(lsn, lid));
                     }
-                    CacheEntry::Flush(_) => {
+                    CacheEntry::Flush(_, _) => {
                         panic!("got Flush in middle of stack...")
                     }
                 }
@@ -362,10 +362,10 @@ impl<PM, P, R> PageCache<PM, P, R>
         M.page_out.measure(clock() - start);
     }
 
-    fn pull(&self, lid: LogID) -> P {
+    fn pull(&self, lsn: Lsn, lid: LogID) -> P {
         println!("pull {}", lid);
         let start = clock();
-        let bytes = match self.log.read(lid).map_err(|_| ()) {
+        let bytes = match self.log.read(lsn, lid).map_err(|_| ()) {
             Ok(LogRead::Flush(_lsn, data, _len)) => data,
             _ => panic!("read invalid data at lid {}", lid),
         };
@@ -401,13 +401,13 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         for cache_entry_ptr in stack_iter {
             match *cache_entry_ptr {
-                CacheEntry::Resident(ref page_frag, ref lid) => {
+                CacheEntry::Resident(ref page_frag, lsn, lid) => {
                     if !merged_resident {
                         to_merge.push(page_frag);
                     }
-                    lids.push(lid);
+                    lids.push((lsn, lid));
                 }
-                CacheEntry::MergedResident(ref page_frag, ref lid) => {
+                CacheEntry::MergedResident(ref page_frag, lsn, lid) => {
                     if lids.is_empty() {
                         // Short circuit merging and fix-up if we only
                         // have one frag.
@@ -418,11 +418,11 @@ impl<PM, P, R> PageCache<PM, P, R>
                         merged_resident = true;
                         fix_up_length = lids.len();
                     }
-                    lids.push(lid);
+                    lids.push((lsn, lid));
                 }
-                CacheEntry::PartialFlush(ref lid) |
-                CacheEntry::Flush(ref lid) => {
-                    lids.push(lid);
+                CacheEntry::PartialFlush(lsn, lid) |
+                CacheEntry::Flush(lsn, lid) => {
+                    lids.push((lsn, lid));
                 }
             }
         }
@@ -447,8 +447,8 @@ impl<PM, P, R> PageCache<PM, P, R>
             }
 
             #[cfg(not(feature = "rayon"))]
-            for &&lid in to_pull {
-                fetched.push(self.pull(lid));
+            for &(lsn, lid) in to_pull {
+                fetched.push(self.pull(lsn, lid));
             }
         }
 
@@ -478,19 +478,19 @@ impl<PM, P, R> PageCache<PM, P, R>
         {
             let mut new_entries = Vec::with_capacity(lids.len());
 
-            let head_lid = lids.remove(0);
+            let (head_lsn, head_lid) = lids.remove(0);
             let head_entry =
-                CacheEntry::MergedResident(merged.clone(), *head_lid);
+                CacheEntry::MergedResident(merged.clone(), head_lsn, head_lid);
             new_entries.push(head_entry);
 
-            let mut tail = if let Some(lid) = lids.pop() {
-                Some(CacheEntry::Flush(*lid))
+            let mut tail = if let Some((lsn, lid)) = lids.pop() {
+                Some(CacheEntry::Flush(lsn, lid))
             } else {
                 None
             };
 
-            for &&lid in &lids {
-                new_entries.push(CacheEntry::PartialFlush(lid));
+            for (lsn, lid) in lids {
+                new_entries.push(CacheEntry::PartialFlush(lsn, lid));
             }
 
             if let Some(tail) = tail.take() {
@@ -544,9 +544,10 @@ impl<PM, P, R> PageCache<PM, P, R>
             let bytes = serialize(&replace, Infinite).unwrap();
             M.serialize.measure(clock() - serialize_start);
             let log_reservation = self.log.reserve(bytes);
+            let lsn = log_reservation.lsn();
             let lid = log_reservation.lid();
 
-            let cache_entry = CacheEntry::MergedResident(new, lid);
+            let cache_entry = CacheEntry::MergedResident(new, lsn, lid);
 
             let node = node_from_frag_vec(vec![cache_entry]).into_ptr(scope);
 
@@ -609,9 +610,10 @@ impl<PM, P, R> PageCache<PM, P, R>
             let bytes = serialize(&prepend, Infinite).unwrap();
             M.serialize.measure(clock() - serialize_start);
             let log_reservation = self.log.reserve(bytes);
+            let lsn = log_reservation.lsn();
             let lid = log_reservation.lid();
 
-            let cache_entry = CacheEntry::Resident(new, lid);
+            let cache_entry = CacheEntry::Resident(new, lsn, lid);
 
             let result = unsafe {
                 stack_ptr.deref().cap(old.into(), cache_entry, scope)
@@ -767,7 +769,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                     }
 
                     let lids = snapshot.pt.get_mut(&prepend.pid).unwrap();
-                    lids.push(log_id);
+                    lids.push((lsn, log_id));
                 }
                 Update::Compact(partial_page) => {
                     trace!(
@@ -777,13 +779,13 @@ impl<PM, P, R> PageCache<PM, P, R>
                         lsn
                     );
                     if let Some(lids) = snapshot.pt.get(&prepend.pid) {
-                        for lid in lids {
-                            let old_idx = *lid as usize / io_buf_size;
+                        for &(_lsn, lid) in lids {
+                            let old_idx = lid as usize / io_buf_size;
                             let old_segment = &mut snapshot.segments[old_idx];
                             if old_segment.pids_len == 0 {
                                 old_segment.pids_len = old_segment.pids.len();
                             }
-                            old_segment.pids.remove(&(*lid as PageID));
+                            old_segment.pids.remove(&prepend.pid);
                         }
                     }
 
@@ -794,7 +796,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                         recovery = r;
                     }
 
-                    snapshot.pt.insert(prepend.pid, vec![log_id]);
+                    snapshot.pt.insert(prepend.pid, vec![(lsn, log_id)]);
                 }
                 Update::Del => {
                     trace!(
@@ -804,13 +806,13 @@ impl<PM, P, R> PageCache<PM, P, R>
                         lsn
                     );
                     if let Some(lids) = snapshot.pt.get(&prepend.pid) {
-                        for lid in lids {
-                            let old_idx = *lid as usize / io_buf_size;
+                        for &(_lsn, lid) in lids {
+                            let old_idx = lid as usize / io_buf_size;
                             let old_segment = &mut snapshot.segments[old_idx];
                             if old_segment.pids_len == 0 {
                                 old_segment.pids_len = old_segment.pids.len();
                             }
-                            old_segment.pids.remove(&(*lid as PageID));
+                            old_segment.pids.remove(&prepend.pid);
                         }
                     }
 
@@ -928,11 +930,11 @@ impl<PM, P, R> PageCache<PM, P, R>
             let stack = Stack::default();
 
             if !lids.is_empty() {
-                let base = lids.remove(0);
-                stack.push(CacheEntry::Flush(base));
+                let (base_lsn, base_lid) = lids.remove(0);
+                stack.push(CacheEntry::Flush(base_lsn, base_lid));
 
-                for lid in lids {
-                    stack.push(CacheEntry::PartialFlush(lid));
+                for (lsn, lid) in lids {
+                    stack.push(CacheEntry::PartialFlush(lsn, lid));
                 }
             }
 
@@ -954,10 +956,10 @@ fn lids_from_stack<P: Send + Sync>(
     let mut lids = vec![];
     for cache_entry_ptr in stack_iter {
         match *cache_entry_ptr {
-            CacheEntry::Resident(_, ref lid) |
-            CacheEntry::MergedResident(_, ref lid) |
-            CacheEntry::PartialFlush(ref lid) |
-            CacheEntry::Flush(ref lid) => {
+            CacheEntry::Resident(_, _, ref lid) |
+            CacheEntry::MergedResident(_, _, ref lid) |
+            CacheEntry::PartialFlush(_, ref lid) |
+            CacheEntry::Flush(_, ref lid) => {
                 lids.push(*lid);
             }
         }

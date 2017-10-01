@@ -130,13 +130,21 @@ impl Log {
     }
 
     /// read a buffer from the disk
-    pub fn read(&self, id: LogID) -> io::Result<LogRead> {
-        println!("read {}", id);
-        self.make_stable(id);
+    pub fn read(&self, lsn: Lsn, lid: LogID) -> io::Result<LogRead> {
+        println!("read lsn {} lid {}", lsn, lid);
+        self.make_stable(lsn);
         let cached_f = self.config().cached_file();
         let mut f = cached_f.borrow_mut();
         // TODO check the lsn of the read log entry below
-        f.read_entry(id, self.config().get_io_buf_size())
+
+        let read = f.read_entry(lid, self.config().get_io_buf_size());
+        read.and_then(|log_read| match log_read {
+            LogRead::Flush(read_lsn, _, _) => {
+                assert_eq!(lsn, read_lsn);
+                Ok(log_read)
+            }
+            _ => Ok(log_read),
+        })
     }
 
     /// returns the current stable offset written to disk

@@ -43,14 +43,14 @@ pub trait Materializer {
 pub enum CacheEntry<M: Send + Sync> {
     /// A cache item that contains the most recent fully-merged page state, also in secondary
     /// storage.
-    MergedResident(M, LogID),
+    MergedResident(M, Lsn, LogID),
     /// A cache item that is in memory, and also in secondary storage.
-    Resident(M, LogID),
+    Resident(M, Lsn, LogID),
     /// A cache item that is present in secondary storage.
-    PartialFlush(LogID),
+    PartialFlush(Lsn, LogID),
     /// A cache item that is present in secondary storage, and is the base segment
     /// of a page.
-    Flush(LogID),
+    Flush(Lsn, LogID),
 }
 
 /// A wrapper struct for a pointer to a (possibly invalid, hence inaccessible)
@@ -108,7 +108,7 @@ enum Update<PageFrag>
 struct Snapshot<R> {
     pub max_lsn: Lsn,
     pub max_pid: PageID,
-    pub pt: BTreeMap<PageID, Vec<LogID>>,
+    pub pt: BTreeMap<PageID, Vec<(Lsn, LogID)>>,
     pub segments: Vec<log::Segment>,
     pub free: Vec<PageID>,
     pub recovery: Option<R>,

@@ -15,7 +15,11 @@ use std::sync::atomic::{ATOMIC_USIZE_INIT, AtomicUsize, Ordering};
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::{Rng, thread_rng};
 
-use sled::{Config, Log, LogRead, MSG_HEADER_LEN, SEG_HEADER_LEN, SEG_TRAILER_LEN};
+use sled::{Config, Log, LogRead, MSG_HEADER_LEN, SEG_HEADER_LEN,
+           SEG_TRAILER_LEN};
+
+type Lsn = u64;
+type LogID = u64;
 
 #[test]
 #[ignore]
@@ -23,7 +27,9 @@ fn more_log_reservations_than_buffers() {
     let log = Config::default().log();
     let mut reservations = vec![];
     for _ in 0..log.config().get_io_bufs() + 1 {
-        reservations.push(log.reserve(vec![0; log.config().get_io_buf_size() - MSG_HEADER_LEN]))
+        reservations.push(log.reserve(
+            vec![0; log.config().get_io_buf_size() - MSG_HEADER_LEN],
+        ))
     }
     for res in reservations.into_iter().rev() {
         // abort in reverse order
@@ -122,20 +128,22 @@ fn concurrent_logging() {
 fn write(log: &Log) {
     let data_bytes = b"yoyoyoyo";
     let res = log.reserve(data_bytes.to_vec());
-    let id = res.lid();
+    let lsn = res.lsn();
+    let lid = res.lid();
     res.complete();
-    log.make_stable(id);
-    let (_, read_buf, _) = log.read(id).unwrap().unwrap();
+    let (_, read_buf, _) = log.read(lsn, lid).unwrap().unwrap();
     assert_eq!(read_buf, data_bytes);
 }
 
 fn abort(log: &Log) {
     let res = log.reserve(vec![0; 5]);
-    let id = res.lid();
+    let lsn = res.lsn();
+    let lid = res.lid();
     res.abort();
-    log.make_stable(id);
-    match log.read(id) {
-        Ok(LogRead::Flush(_, _, _)) => panic!("sucessfully read an aborted request! BAD! SAD!"),
+    match log.read(lsn, lid) {
+        Ok(LogRead::Flush(_, _, _)) => {
+            panic!("sucessfully read an aborted request! BAD! SAD!")
+        }
         _ => (), // good
     }
 }
@@ -298,7 +306,7 @@ fn prop_log_works(ops: OpVec) -> bool {
 
     let mut tip = 0;
     let mut log = config.log();
-    let mut reference: Vec<(u64, Option<Vec<u8>>, usize)> = vec![];
+    let mut reference: Vec<(Lsn, LogID, Option<Vec<u8>>, usize)> = vec![];
 
     for op in ops.ops.into_iter() {
         match op {
@@ -306,9 +314,9 @@ fn prop_log_works(ops: OpVec) -> bool {
                 if reference.len() <= lid as usize {
                     continue;
                 }
-                let (lid, ref expected, _len) = reference[lid as usize];
+                let (lsn, lid, ref expected, _len) = reference[lid as usize];
                 // log.make_stable(lid);
-                let read_res = log.read(lid);
+                let read_res = log.read(lsn, lid);
                 // println!( "expected {:?} read_res {:?} tip {} lid {}", expected, read_res, tip, lid);
                 if expected.is_none() || tip as u64 <= lid {
                     assert!(read_res.is_err() || !read_res.unwrap().is_flush());
@@ -318,29 +326,36 @@ fn prop_log_works(ops: OpVec) -> bool {
                 }
             }
             Write(buf) => {
-                let lid = log.write(buf.clone());
                 let len = buf.len();
+                let res = log.reserve(buf.clone());
+                let lsn = res.lsn();
+                let lid = res.lid();
+                res.complete();
                 tip = lid as usize + len + MSG_HEADER_LEN;
-                reference.push((lid, Some(buf), len));
+                reference.push((lsn, lid, Some(buf), len));
             }
             WriteReservation(buf) => {
-                let lid = log.reserve(buf.clone()).complete();
                 let len = buf.len();
+                let res = log.reserve(buf.clone());
+                let lsn = res.lsn();
+                let lid = res.lid();
                 tip = lid as usize + len + MSG_HEADER_LEN;
-                reference.push((lid, Some(buf), len));
+                reference.push((lsn, lid, Some(buf), len));
             }
             AbortReservation(buf) => {
                 let len = buf.len();
-                let lid = log.reserve(buf).abort();
+                let res = log.reserve(buf.clone());
+                let lsn = res.lsn();
+                let lid = res.lid();
                 tip = lid as usize + len + MSG_HEADER_LEN;
-                reference.push((lid, None, len));
+                reference.push((lsn, lid, None, len));
             }
             Restart => {
                 drop(log);
 
                 // on recovery, we will rewind over any aborted tip entries
                 while !reference.is_empty() {
-                    let should_pop = if reference.last().unwrap().1.is_none() {
+                    let should_pop = if reference.last().unwrap().2.is_none() {
                         true
                     } else {
                         false
@@ -368,7 +383,9 @@ fn prop_log_works(ops: OpVec) -> bool {
                     let path = config.get_path();
 
                     let mut sz_total = 0;
-                    for &mut (lid, ref mut expected, sz) in &mut reference {
+                    for &mut (lsn, lid, ref mut expected, sz) in
+                        &mut reference
+                    {
                         let tip = lid as usize + sz + MSG_HEADER_LEN;
                         if new_len < tip as u64 {
                             *expected = None;
@@ -376,7 +393,7 @@ fn prop_log_works(ops: OpVec) -> bool {
                     }
 
                     while !reference.is_empty() {
-                        if reference.last().unwrap().1.is_none() {
+                        if reference.last().unwrap().2.is_none() {
                             reference.pop();
                         } else {
                             break;
