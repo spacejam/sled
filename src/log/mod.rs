@@ -58,7 +58,9 @@ impl LogRead {
     /// the data was corrupt or this log entry was aborted.
     pub fn flush(&self) -> Option<(Lsn, Vec<u8>, usize)> {
         match *self {
-            LogRead::Flush(lsn, ref bytes, len) => Some((lsn, bytes.clone(), len)),
+            LogRead::Flush(lsn, ref bytes, len) => Some(
+                (lsn, bytes.clone(), len),
+            ),
             _ => None,
         }
     }
@@ -226,4 +228,15 @@ impl Into<[u8; SEG_TRAILER_LEN]> for SegmentTrailer {
 
         buf
     }
+}
+
+fn valid_entry_offset(lid: LogID, segment_len: usize) -> bool {
+    let seg_start = lid / segment_len as LogID * segment_len as LogID;
+
+    let max_lid = seg_start + segment_len as LogID -
+        SEG_TRAILER_LEN as LogID - MSG_HEADER_LEN as LogID;
+
+    let min_lid = seg_start + SEG_HEADER_LEN as LogID;
+
+    lid >= min_lid && lid <= max_lid
 }

@@ -36,7 +36,7 @@ impl Materializer for TestMaterializer {
 }
 
 #[test]
-fn test_pagecache_caching() {
+fn pagecache_caching() {
     let conf = Config::default().cache_capacity(40).cache_bits(0);
 
     let mut pc = PageCache::new(TestMaterializer, conf.clone());
@@ -282,7 +282,7 @@ fn quickcheck_pagecache_works() {
 }
 
 #[test]
-fn test_pagecache_bug_1() {
+fn pagecache_bug_1() {
     // postmortem: this happened because `PageCache::page_in` assumed
     // at least one update had been stored for a retrieved page.
     use Op::*;
@@ -295,7 +295,7 @@ fn test_pagecache_bug_1() {
 }
 
 #[test]
-fn test_pagecache_bug_2() {
+fn pagecache_bug_2() {
     // postmortem: historically needed to "seed" a page by writing
     // a compacting base to it. changed the snapshot and page-in code
     // to allow a merge being the first update to hit a page.
@@ -310,7 +310,7 @@ fn test_pagecache_bug_2() {
 }
 
 #[test]
-fn test_pagecache_bug_3() {
+fn pagecache_bug_3() {
     // postmortem: this was a mismatch in semantics in the test harness itself
     use Op::*;
     prop_pagecache_works(
@@ -322,7 +322,7 @@ fn test_pagecache_bug_3() {
 }
 
 #[test]
-fn test_pagecache_bug_4() {
+fn pagecache_bug_4() {
     // postmortem: previously this caused a panic, we shouldn't break
     // when the user asks us to mutate non-existant pages!
     use Op::*;
@@ -335,7 +335,7 @@ fn test_pagecache_bug_4() {
 }
 
 #[test]
-fn test_pagecache_bug_5() {
+fn pagecache_bug_5() {
     // postmortem: this was a mismatch in semantics in the test harness itself
     use Op::*;
     prop_pagecache_works(
@@ -347,7 +347,7 @@ fn test_pagecache_bug_5() {
 }
 
 #[test]
-fn test_pagecache_bug_6() {
+fn pagecache_bug_6() {
     // postmortem: the test wasn't actually recording changes to the reference page...
     use Op::*;
     prop_pagecache_works(
@@ -359,7 +359,7 @@ fn test_pagecache_bug_6() {
 }
 
 #[test]
-fn test_pagecache_bug_7() {
+fn pagecache_bug_7() {
     // postmortem: the test wasn't correctly recording the replacement effect of a set
     // in the reference page
     use Op::*;
@@ -372,7 +372,7 @@ fn test_pagecache_bug_7() {
 }
 
 #[test]
-fn test_pagecache_bug_8() {
+fn pagecache_bug_8() {
     // postmortem: page_in messed up the stack ordering when storing a merged stack
     use Op::*;
     prop_pagecache_works(
@@ -393,7 +393,7 @@ fn test_pagecache_bug_8() {
 }
 
 #[test]
-fn test_pagecache_bug_9() {
+fn pagecache_bug_9() {
     // postmortem: this started failing in the giant refactor for log structured storage,
     // and was possibly fixed by properly handling intervals in mark_interval
     use Op::*;
@@ -413,7 +413,7 @@ fn test_pagecache_bug_9() {
     );
 }
 
-fn _test_pagecache_bug_() {
+fn _pagecache_bug_() {
     // postmortem: TEMPLATE
     // portmortem 2: ...
     // use Op::*;

@@ -106,28 +106,32 @@ impl SegmentAccountant {
 
         let segment_len = self.config.get_io_buf_size() as LogID;
         let mut cursor = 0;
-        let cached_f = self.config.cached_file();
-        let mut f = cached_f.borrow_mut();
-        loop {
-            // in the future this can be optimized to just read
-            // the initial header at that position... but we need to
-            // make sure the segment is not torn
-            if let Ok(segment) = f.read_segment_header(cursor) {
-                if segment.ok {
-                    self.recover(segment.lsn, cursor);
+
+        {
+            let cached_f = self.config.cached_file();
+            let mut f = cached_f.borrow_mut();
+            loop {
+                // in the future this can be optimized to just read
+                // the initial header at that position... but we need to
+                // make sure the segment is not torn
+                if let Ok(segment) = f.read_segment_header(cursor) {
+                    if segment.ok {
+                        self.recover(segment.lsn, cursor);
+                    } else {
+                        // TODO DATA CORRUPTION AAHHHHHH
+                        panic!("detected corrupt segment header at {}", cursor);
+                    }
+                    cursor += segment_len;
                 } else {
-                    // TODO DATA CORRUPTION AAHHHHHH
-                    panic!("detected corrupt segment header at {}", cursor);
+                    break;
                 }
-                cursor += segment_len;
-            } else {
-                break;
             }
+
+            // println!("scanned in lsns {:?}", self.ordering);
+
+            self.clean_tail_tears(&mut f);
+            // NB implicit drop of f
         }
-
-        // println!("scanned in lsns {:?}", self.ordering);
-
-        self.clean_tail_tears(&mut f);
 
         // println!("trying to get highest lsn in segment for lsn {}", self.recovered_lsn);
         let mut empty_tip = true;
@@ -135,38 +139,49 @@ impl SegmentAccountant {
         let max = self.ordering.iter().rev().nth(0);
 
         if let Some((base_lsn, lid)) = max {
+            let segment_base = lid / segment_len * segment_len;
+            assert_eq!(*lid, segment_base);
+
             self.last_given = *lid;
             let mut tip = lid + SEG_HEADER_LEN as LogID;
-            let segment_ceiling = lid + segment_len - SEG_TRAILER_LEN as LogID;
+
+            let segment_ceiling = segment_base + segment_len -
+                SEG_TRAILER_LEN as LogID -
+                MSG_HEADER_LEN as LogID;
             println!("got a segment... lsn: {} read_offset: {}", base_lsn, lid);
-            while let Ok(log_read) = f.read_entry(tip) {
+
+            let mut iter = Iter {
+                config: &self.config,
+                max_lsn: segment_ceiling,
+                cur_lsn: tip,
+                segment_base: Some(*base_lsn),
+                segment_iter: Box::new(vec![].into_iter()),
+                segment_len: segment_len as usize,
+                trailer: None,
+            };
+
+            while let Some((_lsn, lid, _buf)) = iter.next() {
                 println!("got a thing...");
-                match log_read {
-                    LogRead::Zeroed(len) => {
-                        println!("got a zeroed of len {}", len);
-                        tip += len as LogID;
-                        continue;
-                    }
-                    LogRead::Flush(lsn, _, len) => {
-                        println!("got good lsn {} with len {}", lsn, len);
-                        empty_tip = false;
+                empty_tip = false;
+                tip = lid;
 
-                        tip += MSG_HEADER_LEN as Lsn + len as Lsn;
-
-                        if tip > segment_ceiling {
-                            break;
-                        }
-
-                        if tip > self.recovered_lid {
-                            self.recovered_lid = tip;
-                        } else {
-                            break;
-                        }
-                    }
-                    LogRead::Corrupted(_) => break,
-                }
+                println!("ceiling in recover: {}", segment_ceiling);
+                assert!(tip <= segment_ceiling);
             }
-            let segment_overhang = self.recovered_lid % self.config.get_io_buf_size() as LogID;
+
+            if !empty_tip {
+                let cached_f = self.config.cached_file();
+                let mut f = cached_f.borrow_mut();
+                let (_, _, len) = f.read_entry(tip, segment_len as usize)
+                    .unwrap()
+                    .flush()
+                    .unwrap();
+                tip += len as LogID;
+                self.recovered_lid = tip;
+            }
+
+            let segment_overhang = self.recovered_lid %
+                self.config.get_io_buf_size() as LogID;
             self.recovered_lsn = base_lsn + segment_overhang;
         } else {
             assert!(
@@ -218,7 +233,10 @@ impl SegmentAccountant {
             // check link
             let segment_header = f.read_segment_header(lid).unwrap();
             if !segment_header.ok {
-                error!("read corrupted segment header during recovery of segment {}", lid);
+                error!(
+                    "read corrupted segment header during recovery of segment {}",
+                    lid
+                );
                 tear_at = Some(i);
                 continue;
             }
@@ -302,13 +320,16 @@ impl SegmentAccountant {
 
                 // println!("pushing to free from freed: {}", segment_start);
                 pin(|scope| {
-                    let pd = Owned::new(SegmentDropper(segment_start, self.free.clone()));
+                    let pd = Owned::new(
+                        SegmentDropper(segment_start, self.free.clone()),
+                    );
                     let ptr = pd.into_ptr(scope);
                     unsafe {
                         scope.defer_drop(ptr);
                     }
                 });
-            } else if self.segments[idx].pids.len() as f64 / self.segments[idx].pids_len as f64 <=
+            } else if self.segments[idx].pids.len() as f64 /
+                       self.segments[idx].pids_len as f64 <=
                        self.config.get_segment_cleanup_threshold()
             {
                 // can be cleaned
@@ -317,7 +338,13 @@ impl SegmentAccountant {
         }
     }
 
-    pub fn set(&mut self, pid: PageID, old_lids: Vec<LogID>, new_lid: LogID, lsn: Lsn) {
+    pub fn set(
+        &mut self,
+        pid: PageID,
+        old_lids: Vec<LogID>,
+        new_lid: LogID,
+        lsn: Lsn,
+    ) {
         self.pending_clean.remove(&pid);
 
         let new_idx = new_lid as usize / self.config.get_io_buf_size();
@@ -362,13 +389,16 @@ impl SegmentAccountant {
 
                 // println!("pushing to free from set: {}", segment_start);
                 pin(|scope| {
-                    let pd = Owned::new(SegmentDropper(segment_start, self.free.clone()));
+                    let pd = Owned::new(
+                        SegmentDropper(segment_start, self.free.clone()),
+                    );
                     let ptr = pd.into_ptr(scope);
                     unsafe {
                         scope.defer_drop(ptr);
                     }
                 });
-            } else if self.segments[idx].pids.len() as f64 / self.segments[idx].pids_len as f64 <=
+            } else if self.segments[idx].pids.len() as f64 /
+                       self.segments[idx].pids_len as f64 <=
                        self.config.get_segment_cleanup_threshold()
             {
                 // can be cleaned
@@ -475,7 +505,11 @@ impl SegmentAccountant {
 
         self.ordering.insert(lsn, lid);
 
-        debug!("segment accountant returning offset {} last {}", lid, last_given);
+        debug!(
+            "segment accountant returning offset {} last {}",
+            lid,
+            last_given
+        );
 
         self.last_given = lid;
 
@@ -483,7 +517,8 @@ impl SegmentAccountant {
     }
 
     pub fn clean(&mut self) -> Option<PageID> {
-        if self.free.lock().unwrap().len() > self.config.get_min_free_segments() ||
+        if self.free.lock().unwrap().len() >
+            self.config.get_min_free_segments() ||
             self.to_clean.is_empty()
         {
             return None;
@@ -504,7 +539,10 @@ impl SegmentAccountant {
         None
     }
 
-    pub fn segment_snapshot_iter_from(&self, lsn: Lsn) -> Box<Iterator<Item = (Lsn, LogID)>> {
+    pub fn segment_snapshot_iter_from(
+        &self,
+        lsn: Lsn,
+    ) -> Box<Iterator<Item = (Lsn, LogID)>> {
         let segment_len = self.config.get_io_buf_size() as Lsn;
         let normalized_lsn = lsn / segment_len * segment_len;
         // println!("ordering >= {}: {:?}", lsn, self.ordering);

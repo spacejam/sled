@@ -71,14 +71,15 @@ impl Log {
             flusher_handle: None,
         };
 
-        let flusher_handle = config.get_flush_every_ms().map(|flush_every_ms| {
-            periodic_flusher::flusher(
-                "log flusher".to_owned(),
-                iobufs,
-                flusher_shutdown,
-                flush_every_ms,
-            ).unwrap()
-        });
+        let flusher_handle =
+            config.get_flush_every_ms().map(|flush_every_ms| {
+                periodic_flusher::flusher(
+                    "log flusher".to_owned(),
+                    iobufs,
+                    flusher_shutdown,
+                    flush_every_ms,
+                ).unwrap()
+            });
 
         log.flusher_handle = flusher_handle;
 
@@ -109,6 +110,7 @@ impl Log {
     /// Return an iterator over the log, starting with
     /// a specified offset.
     pub fn iter_from(&self, lsn: Lsn) -> Iter {
+        println!("iter_from {}", lsn);
         let start = clock();
         let sa = self.iobufs.segment_accountant.lock().unwrap();
         let locked = clock();
@@ -117,22 +119,24 @@ impl Log {
         M.accountant_hold.measure(clock() - locked);
 
         Iter {
-            log: self,
+            config: self.config(),
             max_lsn: self.stable_offset(),
             cur_lsn: lsn,
             segment_base: None,
             segment_iter: segment_iter,
+            segment_len: self.config().get_io_buf_size(),
             trailer: None,
         }
     }
 
     /// read a buffer from the disk
     pub fn read(&self, id: LogID) -> io::Result<LogRead> {
+        println!("read {}", id);
         self.make_stable(id);
         let cached_f = self.config().cached_file();
         let mut f = cached_f.borrow_mut();
         // TODO check the lsn of the read log entry below
-        f.read_entry(id)
+        f.read_entry(id, self.config().get_io_buf_size())
     }
 
     /// returns the current stable offset written to disk
@@ -145,7 +149,7 @@ impl Log {
     pub fn make_stable(&self, lsn: Lsn) {
         let start = clock();
 
-        // we make sure stable > lsn because stable starts at 0,
+        // NB we make sure stable > lsn because stable starts at 0,
         // before we write the 0th byte of the file.
         println!("before loop, waiting on lsn {}", lsn);
         // let mut exploder = 0;
@@ -165,7 +169,8 @@ impl Log {
 
             if self.iobufs.stable() <= lsn {
                 println!("waiting on cond var");
-                let _waiter = self.iobufs.interval_updated.wait(waiter).unwrap();
+                let _waiter =
+                    self.iobufs.interval_updated.wait(waiter).unwrap();
                 println!("back from cond var");
             } else {
                 break;

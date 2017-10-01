@@ -88,7 +88,7 @@ fn parallel_ops() {
 }
 
 #[test]
-fn subdir() {
+fn tree_subdir() {
     let t = sled::Config::default()
         .path("test_tree_subdir/test.db".to_owned())
         .tree();
@@ -111,7 +111,7 @@ fn subdir() {
 }
 
 #[test]
-fn iterator() {
+fn tree_iterator() {
     println!("========== iterator ==========");
     let t = Config::default()
         .blink_fanout(2)
@@ -238,7 +238,11 @@ impl Arbitrary for OpVec {
     }
 }
 
-fn prop_tree_matches_btreemap(ops: OpVec, blink_fanout: u8, snapshot_after: u8) -> bool {
+fn prop_tree_matches_btreemap(
+    ops: OpVec,
+    blink_fanout: u8,
+    snapshot_after: u8,
+) -> bool {
     use self::Op::*;
     let config = Config::default()
         .snapshot_after_ops(snapshot_after as usize + 1)
@@ -277,7 +281,8 @@ fn prop_tree_matches_btreemap(ops: OpVec, blink_fanout: u8, snapshot_after: u8) 
                 }
             }
             Scan(k, len) => {
-                let tree_iter = tree.scan(&*vec![k]).take(len).map(|(ref tk, ref tv)| {
+                let tree_iter = tree.scan(&*vec![k]).take(len).map(|(ref tk,
+                  ref tv)| {
                     (tk[0], tv[0])
                 });
                 let ref_iter = reference
@@ -312,10 +317,16 @@ fn quickcheck_tree_matches_btreemap() {
 }
 
 #[test]
-fn test_tree_bug_1() {
+fn tree_bug_01() {
     // postmortem:
     // this was a bug in the snapshot recovery, where
     // it led to max_id dropping by 1 after a restart.
+    // postmortem 2:
+    // we were stalling here because we had a new log with stable of
+    // SEG_HEADER_LEN, but when we iterated over it to create a new
+    // snapshot (snapshot every 1 set in Config), we iterated up until
+    // that offset. make_stable requires our stable offset to be >=
+    // the provided one, to deal with 0.
     use Op::*;
     prop_tree_matches_btreemap(
         OpVec {
@@ -328,7 +339,7 @@ fn test_tree_bug_1() {
 }
 
 #[test]
-fn test_tree_bug_2() {
+fn tree_bug_2() {
     // postmortem:
     // this was a bug in the way that the `Materializer`
     // was fed data, possibly out of order, if recover
@@ -340,7 +351,13 @@ fn test_tree_bug_2() {
     use Op::*;
     prop_tree_matches_btreemap(
         OpVec {
-            ops: vec![Restart, Set(215, 121), Restart, Set(216, 203), Scan(210, 4)],
+            ops: vec![
+                Restart,
+                Set(215, 121),
+                Restart,
+                Set(216, 203),
+                Scan(210, 4),
+            ],
         },
         0,
         0,
@@ -348,7 +365,7 @@ fn test_tree_bug_2() {
 }
 
 #[test]
-fn test_tree_bug_3() {
+fn tree_bug_3() {
     // postmortem: the tree was not persisting and recovering root hoists
     // postmortem 2: when refactoring the log storage, we failed to restart
     // log writing in the proper location.
@@ -373,7 +390,7 @@ fn test_tree_bug_3() {
 }
 
 #[test]
-fn test_tree_bug_4() {
+fn tree_bug_4() {
     // postmortem: pagecache was failing to replace the LogID list
     // when it encountered a new Update::Compact.
     // postmortem 2: after refactoring log storage, we were not properly
@@ -400,7 +417,7 @@ fn test_tree_bug_4() {
 }
 
 #[test]
-fn test_tree_bug_5() {
+fn tree_bug_5() {
     // postmortem: during recovery, the segment accountant was failing to properly set the file's
     // tip.
     use Op::*;
@@ -423,7 +440,7 @@ fn test_tree_bug_5() {
 }
 
 #[test]
-fn test_tree_bug_6() {
+fn tree_bug_6() {
     // postmortem: after reusing segments, we were failing to checksum reads performed while
     // iterating over rewritten segment buffers, and using former garbage data. fix: use the
     // crc that's there for catching torn writes with high probability, AND zero out buffers.
@@ -447,7 +464,7 @@ fn test_tree_bug_6() {
 }
 
 #[test]
-fn test_tree_bug_7() {
+fn tree_bug_7() {
     // postmortem: the segment accountant was not fully recovered, and thought that it could
     // reuse a particular segment that wasn't actually empty yet.
     use Op::*;
@@ -471,7 +488,7 @@ fn test_tree_bug_7() {
 }
 
 #[test]
-fn test_tree_bug_8() {
+fn tree_bug_8() {
     // postmortem: failed to properly recover the state in the segment accountant
     // that tracked the previously issued segment.
     use Op::*;
@@ -495,7 +512,7 @@ fn test_tree_bug_8() {
 }
 
 #[test]
-fn test_tree_bug_9() {
+fn tree_bug_9() {
     // postmortem: was failing to load existing snapshots on initialization. would
     // encounter uninitialized segments at the log tip and overwrite the first segment
     // (indexed by LSN of 0) in the segment accountant ordering, skipping over
@@ -522,7 +539,7 @@ fn test_tree_bug_9() {
 }
 
 #[test]
-fn test_tree_bug_10() {
+fn tree_bug_10() {
     // postmortem: after reusing a segment, but not completely writing a segment,
     // we were hitting an old LSN and violating an assert, rather than just ending.
     use Op::*;
@@ -561,7 +578,7 @@ fn test_tree_bug_10() {
 }
 
 #[test]
-fn test_tree_bug_11() {
+fn tree_bug_11() {
     // postmortem: a stall was happening because LSNs and LogIDs were being
     // conflated in calls to make_stable. A higher LogID than any LSN was
     // being created, then passed in.
@@ -588,7 +605,7 @@ fn test_tree_bug_11() {
 }
 
 #[test]
-fn test_tree_bug_12() {
+fn tree_bug_12() {
     // postmortem: was not checking that a log entry's LSN matches its position as
     // part of detecting tears / partial rewrites.
     use Op::*;
@@ -640,7 +657,7 @@ fn test_tree_bug_12() {
 }
 
 #[test]
-fn test_tree_bug_13() {
+fn tree_bug_13() {
     // postmortem:
     use Op::*;
     prop_tree_matches_btreemap(

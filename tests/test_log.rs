@@ -119,7 +119,7 @@ fn concurrent_logging() {
     t6.join().unwrap();
 }
 
-fn test_write(log: &Log) {
+fn write(log: &Log) {
     let data_bytes = b"yoyoyoyo";
     let res = log.reserve(data_bytes.to_vec());
     let id = res.lid();
@@ -129,7 +129,7 @@ fn test_write(log: &Log) {
     assert_eq!(read_buf, data_bytes);
 }
 
-fn test_abort(log: &Log) {
+fn abort(log: &Log) {
     let res = log.reserve(vec![0; 5]);
     let id = res.lid();
     res.abort();
@@ -141,18 +141,18 @@ fn test_abort(log: &Log) {
 }
 
 #[test]
-fn test_log_aborts() {
+fn log_aborts() {
     let log = Config::default().log();
-    test_write(&log);
-    test_abort(&log);
-    test_write(&log);
-    test_abort(&log);
-    test_write(&log);
-    test_abort(&log);
+    write(&log);
+    abort(&log);
+    write(&log);
+    abort(&log);
+    write(&log);
+    abort(&log);
 }
 
 #[test]
-fn test_log_iterator() {
+fn log_iterator() {
     let conf = Config::default().io_buf_size(1000);
     let log = conf.log();
     let first_offset = log.write(b"".to_vec());
@@ -235,7 +235,7 @@ impl Arbitrary for Op {
 
 #[test]
 #[ignore]
-fn test_segments_connect() {}
+fn segments_connect() {}
 
 #[derive(Debug, Clone)]
 struct OpVec {
@@ -414,7 +414,7 @@ fn quickcheck_log_works() {
 }
 
 #[test]
-fn test_log_bug_01() {
+fn log_bug_01() {
     // postmortem: test was not stabilizing its buffers before
     // reading
     use Op::*;
@@ -430,7 +430,7 @@ fn test_log_bug_01() {
 }
 
 #[test]
-fn test_log_bug_2() {
+fn log_bug_2() {
     // postmortem: the logic that scans through zeroed entries
     // until the next readable byte hit the end of the file.
     // fix: when something hits the end of the file, return
@@ -442,7 +442,7 @@ fn test_log_bug_2() {
 }
 
 #[test]
-fn test_log_bug_3() {
+fn log_bug_3() {
     // postmortem: the skip-ahead logic for continuing to
     // the next valid log entry when reading a zeroed entry
     // was being triggered on valid entries of size 0.
@@ -454,7 +454,7 @@ fn test_log_bug_3() {
 }
 
 #[test]
-fn test_log_bug_7() {
+fn log_bug_7() {
     // postmortem: test alignment
     use Op::*;
     prop_log_works(OpVec {
@@ -473,7 +473,7 @@ fn test_log_bug_7() {
 }
 
 #[test]
-fn test_log_bug_9() {
+fn log_bug_9() {
     // postmortem: test was mishandling truncation, which
     // should test loss, not extension
     use Op::*;
@@ -488,7 +488,7 @@ fn test_log_bug_9() {
 }
 
 #[test]
-fn test_log_bug_10() {
+fn log_bug_10() {
     // postmortem: test alignment
     use Op::*;
     prop_log_works(OpVec {
@@ -514,7 +514,7 @@ fn test_log_bug_10() {
 }
 
 #[test]
-fn test_log_bug_11() {
+fn log_bug_11() {
     // postmortem: was miscalculating the initial disk offset
     // on startup
     use Op::*;
@@ -524,7 +524,7 @@ fn test_log_bug_11() {
 }
 
 #[test]
-fn test_log_bug_12() {
+fn log_bug_12() {
     // postmortem: after a torn page is encountered, we were
     // just reusing the tip as the next start location. this
     // breaks recovery. fix: traverse the segment until we
@@ -541,7 +541,7 @@ fn test_log_bug_12() {
 }
 
 #[test]
-fn test_log_bug_13() {
+fn log_bug_13() {
     // postmortem: was not recording the proper highest lsn on recovery.
     use Op::*;
     prop_log_works(OpVec {
@@ -555,7 +555,7 @@ fn test_log_bug_13() {
 }
 
 #[test]
-fn test_log_bug_14() {
+fn log_bug_14() {
     // postmortem: was not simulating the "rewind" behavior of the
     // log to replace aborted flushes at the log tip properly.
     use Op::*;
@@ -565,7 +565,7 @@ fn test_log_bug_14() {
 }
 
 #[test]
-fn test_log_bug_15() {
+fn log_bug_15() {
     // postmortem: was not properly clearing previously
     // overwritten writes during truncation
     use Op::*;
@@ -575,7 +575,7 @@ fn test_log_bug_15() {
 }
 
 #[test]
-fn test_log_bug_16() {
+fn log_bug_16() {
     // postmortem: a bug in recovery created by the massive log overhaul
     use Op::*;
     prop_log_works(OpVec {
@@ -591,7 +591,7 @@ fn test_log_bug_16() {
 }
 
 #[test]
-fn test_log_bug_17() {
+fn log_bug_17() {
     // postmortem: this was a transient failure caused by failing to stabilize
     // an update before later reading it.
     use Op::*;
@@ -612,7 +612,7 @@ fn test_log_bug_17() {
 }
 
 #[test]
-fn test_log_bug_18() {
+fn log_bug_18() {
     // postmortem: this was a recovery bug
     use Op::*;
     prop_log_works(OpVec {
@@ -621,7 +621,7 @@ fn test_log_bug_18() {
 }
 
 #[test]
-fn test_log_bug_19() {
+fn log_bug_19() {
     // postmortem: this was stalling in make_stable
     use Op::*;
     prop_log_works(OpVec {
@@ -637,7 +637,7 @@ fn test_log_bug_19() {
     });
 }
 
-fn _test_log_bug_() {
+fn _log_bug_() {
     // postmortem: TEMPLATE
     // use Op::*;
     prop_log_works(OpVec {

@@ -1,9 +1,10 @@
 use super::*;
 
 pub struct Iter<'a> {
-    pub(super) log: &'a Log,
+    pub(super) config: &'a Config,
     pub(super) segment_iter: Box<Iterator<Item = (Lsn, LogID)>>,
     pub(super) segment_base: Option<LogID>,
+    pub(super) segment_len: usize,
     pub(super) max_lsn: Lsn,
     pub(super) cur_lsn: Lsn,
     pub(super) trailer: Option<Lsn>,
@@ -16,13 +17,13 @@ impl<'a> Iterator for Iter<'a> {
         // If segment is None, get next on segment_iter, panic
         // if we can't read something we expect to be able to,
         // return None if there are no more remaining segments.
-        let segment_len = self.log.config().get_io_buf_size();
         loop {
             println!("cur is {}", self.cur_lsn);
             println!("max is {}", self.max_lsn);
+            println!("base is {:?}", self.segment_base);
+            println!("segment_len {}", self.segment_len);
             if self.segment_base.is_none() ||
-                self.segment_base.unwrap() + segment_len as LogID <=
-                    self.cur_lsn + SEG_TRAILER_LEN as LogID
+                !valid_entry_offset(self.cur_lsn, self.segment_len)
             {
                 if let Some((next_lsn, next_lid)) = self.segment_iter.next() {
                     self.read_segment(next_lsn, next_lid).unwrap();
@@ -31,16 +32,23 @@ impl<'a> Iterator for Iter<'a> {
                 }
             }
 
-            if self.cur_lsn >= self.max_lsn {
+            if self.cur_lsn > self.max_lsn {
                 // all done
                 return None;
             }
 
             let lid = self.segment_base.unwrap() +
-                (self.cur_lsn % self.log.config().get_io_buf_size() as LogID);
+                (self.cur_lsn % self.segment_len as LogID);
+
+            if self.max_lsn <= lid {
+                // we've hit the end of the log.
+                return None;
+            }
 
             println!("lid is {}", lid);
-            match self.log.read(lid) {
+            let cached_f = self.config.cached_file();
+            let mut f = cached_f.borrow_mut();
+            match f.read_entry(lid, self.segment_len) {
                 Ok(LogRead::Flush(lsn, buf, on_disk_len)) => {
                     println!("{}", on_disk_len);
                     println!("cur_lsn before: {}", self.cur_lsn);
@@ -69,24 +77,23 @@ impl<'a> Iter<'a> {
     /// read a segment of log messages. Only call after
     /// pausing segment rewriting on the segment accountant!
     fn read_segment(&mut self, lsn: Lsn, offset: LogID) -> std::io::Result<()> {
-        let segment_len = self.log.config().get_io_buf_size();
         // println!("reading segment {}", offset);
 
-        let cached_f = self.log.config().cached_file();
+        let cached_f = self.config.cached_file();
         let mut f = cached_f.borrow_mut();
-
         let segment_header = f.read_segment_header(offset)?;
         // println!("read sh {:?} at {}", sh, offset);
-        assert_eq!(offset % segment_len as Lsn, 0);
-        assert_eq!(segment_header.lsn % segment_len as Lsn, 0);
+        assert_eq!(offset % self.segment_len as Lsn, 0);
+        assert_eq!(segment_header.lsn % self.segment_len as Lsn, 0);
         assert_eq!(segment_header.lsn, lsn);
-        assert!(segment_header.lsn + self.log.config().get_io_buf_size() as LogID >= self.cur_lsn);
+        assert!(segment_header.lsn + self.segment_len as LogID >= self.cur_lsn);
         // TODO turn those asserts into returned Errors? Torn pages or invariant?
 
         let segment_trailer = f.read_segment_trailer(offset);
 
         let trailer_lsn = segment_trailer.ok().and_then(|st| if st.ok &&
-            st.lsn == segment_header.lsn
+            st.lsn ==
+                segment_header.lsn
         {
             Some(st.lsn)
         } else {

@@ -55,7 +55,11 @@ impl<'a> Reservation<'a> {
         } else {
             // zero the bytes, as aborted reservations skip writing
             unsafe {
-                ptr::write_bytes(self.destination.as_ptr() as *mut u8, 0, self.data.len());
+                ptr::write_bytes(
+                    self.destination.as_ptr() as *mut u8,
+                    0,
+                    self.data.len(),
+                );
             }
         }
 

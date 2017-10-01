@@ -160,7 +160,12 @@ impl Tree {
             let mut path = self.path_for_key(&*key);
             let (mut last_node, last_cas_key) = path.pop().unwrap();
             // println!("last before: {:?}", last);
-            if let Ok(new_cas_key) = self.pages.merge(last_node.id, last_cas_key, frag.clone()) {
+            if let Ok(new_cas_key) = self.pages.merge(
+                last_node.id,
+                last_cas_key,
+                frag.clone(),
+            )
+            {
                 last_node.apply(&frag);
                 // println!("last after: {:?}", last);
                 let should_split = last_node.should_split(self.fanout());
@@ -197,7 +202,9 @@ impl Tree {
             let (leaf_node, leaf_cas_key) = path.pop().unwrap();
             match leaf_node.data {
                 Data::Leaf(ref items) => {
-                    let search = items.binary_search_by(|&(ref k, ref _v)| (**k).cmp(key));
+                    let search = items.binary_search_by(
+                        |&(ref k, ref _v)| (**k).cmp(key),
+                    );
                     if let Ok(idx) = search {
                         ret = Some(items[idx].1.clone());
                     } else {
@@ -330,14 +337,26 @@ impl Tree {
 
         if root_node.should_split(self.fanout()) {
             // println!("{}: hoisting root {}", name, root_frag.node.id);
-            if let Ok(parent_split) = self.child_split(&root_node, root_cas_key) {
-                self.root_hoist(root_node.id, parent_split.to, parent_split.at.inner().unwrap());
+            if let Ok(parent_split) = self.child_split(
+                &root_node,
+                root_cas_key,
+            )
+            {
+                self.root_hoist(
+                    root_node.id,
+                    parent_split.to,
+                    parent_split.at.inner().unwrap(),
+                );
             }
         }
         // println!("after:\n{:?}\n", self);
     }
 
-    fn child_split(&self, node: &Node, node_cas_key: CasKey<Frag>) -> Result<ParentSplit, ()> {
+    fn child_split(
+        &self,
+        node: &Node,
+        node_cas_key: CasKey<Frag>,
+    ) -> Result<ParentSplit, ()> {
         let (new_pid, new_cas_key) = self.pages.allocate();
         // println!("allocated pid {} in child_split", new_pid);
 
@@ -426,13 +445,17 @@ impl Tree {
         }
     }
 
-    fn get_internal(&self, key: &[u8]) -> (Vec<(Node, CasKey<Frag>)>, Option<Value>) {
+    fn get_internal(
+        &self,
+        key: &[u8],
+    ) -> (Vec<(Node, CasKey<Frag>)>, Option<Value>) {
         let path = self.path_for_key(&*key);
 
         let ret = path.last().and_then(|&(ref last_node, ref _last_cas_key)| {
             let data = &last_node.data;
             let items = data.leaf_ref().unwrap();
-            let search = items.binary_search_by(|&(ref k, ref _v)| (**k).cmp(key));
+            let search =
+                items.binary_search_by(|&(ref k, ref _v)| (**k).cmp(key));
             if let Ok(idx) = search {
                 // cap a del frag below
                 Some(items[idx].1.clone())
@@ -476,7 +499,12 @@ impl Tree {
             if get_cursor.is_none() {
                 // restart search from the tree's root
                 not_found_loops += 1;
-                debug_assert_ne!(not_found_loops, 10, "cannot find pid {} in path_for_key", cursor);
+                debug_assert_ne!(
+                    not_found_loops,
+                    10,
+                    "cannot find pid {} in path_for_key",
+                    cursor
+                );
                 cursor = self.root.load(SeqCst);
                 println!("path not found loops: {}", not_found_loops);
                 continue;
@@ -510,7 +538,11 @@ impl Tree {
                     to: node.id,
                 });
 
-                let _res = self.pages.merge(parent_node.id, parent_cas_key.clone(), ps);
+                let _res = self.pages.merge(
+                    parent_node.id,
+                    parent_cas_key.clone(),
+                    ps,
+                );
                 // println!("trying to fix incomplete parent split: {:?}", res);
                 // println!("after: {:?}", self);
             }
@@ -563,7 +595,8 @@ impl Debug for Tree {
                 pid = next_pid;
             } else {
                 // we've traversed our level, time to bump down
-                let (left_frag, _left_cas_key) = self.pages.get(left_most).unwrap();
+                let (left_frag, _left_cas_key) =
+                    self.pages.get(left_most).unwrap();
                 let (left_node, _is_root) = left_frag.base().unwrap();
 
                 match left_node.data {
@@ -572,7 +605,8 @@ impl Debug for Tree {
                             pid = *next_pid;
                             left_most = *next_pid;
                             level += 1;
-                            f.write_str(&*format!("\n\tlevel {}:\n", level)).unwrap();
+                            f.write_str(&*format!("\n\tlevel {}:\n", level))
+                                .unwrap();
                         } else {
                             panic!("trying to debug print empty index node");
                         }

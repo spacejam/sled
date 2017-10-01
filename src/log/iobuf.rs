@@ -84,7 +84,11 @@ impl IoBuf {
         let cap = self.get_capacity() as usize;
         unsafe {
             let remainder = &(&**self.buf.get())[offset..cap];
-            std::ptr::write_bytes(remainder.as_ptr() as *mut u8, 0, cap - offset);
+            std::ptr::write_bytes(
+                remainder.as_ptr() as *mut u8,
+                0,
+                cap - offset,
+            );
         }
     }
 
@@ -196,7 +200,10 @@ impl IoBufs {
 
         if dir != Path::new("") {
             if dir.is_file() {
-                panic!("provided parent directory is a file, not a directory: {:?}", dir);
+                panic!(
+                    "provided parent directory is a file, not a directory: {:?}",
+                    dir
+                );
             }
 
             if !dir.exists() {
@@ -307,7 +314,9 @@ impl IoBufs {
         let buf = encapsulate(raw_buf, 0, self.config.get_use_compression());
 
         assert!(
-            buf.len() <= self.config.get_io_buf_size() - (SEG_HEADER_LEN + SEG_TRAILER_LEN),
+            buf.len() <=
+                self.config.get_io_buf_size() -
+                    (SEG_HEADER_LEN + SEG_TRAILER_LEN),
             "trying to write a buffer that is too large to be stored in the IO buffer."
         );
 
@@ -347,7 +356,10 @@ impl IoBufs {
             if current_buf - written_bufs >= self.config.get_io_bufs() {
                 // if written is too far behind, we need to
                 // spin while it catches up to avoid overlap
-                trace_once!("({:?}) old io buffer not written yet, spinning", tn());
+                trace_once!(
+                    "({:?}) old io buffer not written yet, spinning",
+                    tn()
+                );
                 M.log_looped();
                 continue;
             }
@@ -386,7 +398,10 @@ impl IoBufs {
 
             if iobuf.cas_header(header, claimed).is_err() {
                 // CAS failed, start over
-                trace_once!("({:?}) CAS failed while claiming buffer slot, spinning", tn());
+                trace_once!(
+                    "({:?}) CAS failed while claiming buffer slot, spinning",
+                    tn()
+                );
                 M.log_looped();
                 continue;
             }
@@ -416,7 +431,8 @@ impl IoBufs {
 
             // we assign the LSN now that we know what it is
             assert_eq!(&buf[1..9], &[0u8; 8]);
-            let lsn_bytes: [u8; 8] = unsafe { std::mem::transmute(reservation_lsn) };
+            let lsn_bytes: [u8; 8] =
+                unsafe { std::mem::transmute(reservation_lsn) };
             let mut buf = buf;
             buf[1..9].copy_from_slice(&lsn_bytes);
 
@@ -492,7 +508,12 @@ impl IoBufs {
     // Attempt to seal the current IO buffer, possibly
     // writing it to disk if there are no other writers
     // operating on it.
-    fn maybe_seal_and_write_iobuf(&self, idx: usize, header: u32, from_reserve: bool) {
+    fn maybe_seal_and_write_iobuf(
+        &self,
+        idx: usize,
+        header: u32,
+        from_reserve: bool,
+    ) {
         let iobuf = &self.bufs[idx];
 
         if is_sealed(header) {
@@ -640,7 +661,10 @@ impl IoBufs {
 
         let io_buf_size = self.config.get_io_buf_size();
 
-        assert_eq!(log_offset % io_buf_size as LogID, base_lsn % io_buf_size as Lsn);
+        assert_eq!(
+            log_offset % io_buf_size as LogID,
+            base_lsn % io_buf_size as Lsn
+        );
 
         assert_ne!(
             log_offset as usize,
@@ -666,7 +690,11 @@ impl IoBufs {
         // communicate to other threads that we have written an IO buffer.
         debug_delay();
         let _written_bufs = self.written_bufs.fetch_add(1, SeqCst);
-        trace!("({:?}) {} written", tn(), _written_bufs % self.config.get_io_bufs());
+        trace!(
+            "({:?}) {} written",
+            tn(),
+            _written_bufs % self.config.get_io_bufs()
+        );
 
         if res_len != 0 {
             let interval = (base_lsn, base_lsn + res_len as Lsn);

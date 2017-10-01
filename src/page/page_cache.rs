@@ -68,7 +68,14 @@ use super::*;
 pub struct PageCache<PM, P, R>
     where PM: Materializer<PageFrag = P, Recovery = R>,
           PM: Send + Sync,
-          P: 'static + Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
+          P: 'static
+                 + Debug
+                 + PartialEq
+                 + Clone
+                 + Serialize
+                 + DeserializeOwned
+                 + Send
+                 + Sync,
           R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
 {
     t: PM,
@@ -84,7 +91,14 @@ pub struct PageCache<PM, P, R>
 impl<PM, P, R> Drop for PageCache<PM, P, R>
     where PM: Materializer<PageFrag = P, Recovery = R>,
           PM: Send + Sync,
-          P: 'static + Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
+          P: 'static
+                 + Debug
+                 + PartialEq
+                 + Clone
+                 + Serialize
+                 + DeserializeOwned
+                 + Send
+                 + Sync,
           R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
 {
     fn drop(&mut self) {
@@ -99,7 +113,14 @@ impl<PM, P, R> Drop for PageCache<PM, P, R>
 unsafe impl<PM, P, R> Send for PageCache<PM, P, R>
     where PM: Materializer<PageFrag = P, Recovery = R>,
           PM: Send + Sync,
-          P: 'static + Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
+          P: 'static
+                 + Debug
+                 + PartialEq
+                 + Clone
+                 + Serialize
+                 + DeserializeOwned
+                 + Send
+                 + Sync,
           R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
 {
 }
@@ -107,7 +128,14 @@ unsafe impl<PM, P, R> Send for PageCache<PM, P, R>
 unsafe impl<PM, P, R> Sync for PageCache<PM, P, R>
     where PM: Materializer<PageFrag = P, Recovery = R>,
           PM: Send + Sync,
-          P: 'static + Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
+          P: 'static
+                 + Debug
+                 + PartialEq
+                 + Clone
+                 + Serialize
+                 + DeserializeOwned
+                 + Send
+                 + Sync,
           R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
 {
 }
@@ -115,7 +143,14 @@ unsafe impl<PM, P, R> Sync for PageCache<PM, P, R>
 impl<PM, P, R> Debug for PageCache<PM, P, R>
     where PM: Materializer<PageFrag = P, Recovery = R>,
           PM: Send + Sync,
-          P: 'static + Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
+          P: 'static
+                 + Debug
+                 + PartialEq
+                 + Clone
+                 + Serialize
+                 + DeserializeOwned
+                 + Send
+                 + Sync,
           R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
@@ -130,7 +165,14 @@ impl<PM, P, R> Debug for PageCache<PM, P, R>
 impl<PM, P, R> PageCache<PM, P, R>
     where PM: Materializer<PageFrag = P, Recovery = R>,
           PM: Send + Sync,
-          P: 'static + Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync,
+          P: 'static
+                 + Debug
+                 + PartialEq
+                 + Clone
+                 + Serialize
+                 + DeserializeOwned
+                 + Send
+                 + Sync,
           R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
 {
     /// Instantiate a new `PageCache`.
@@ -283,7 +325,9 @@ impl<PM, P, R> PageCache<PM, P, R>
                 CacheEntry::MergedResident(_, lid) |
                 CacheEntry::Resident(_, lid) |
                 CacheEntry::Flush(lid) => CacheEntry::Flush(lid),
-                CacheEntry::PartialFlush(_) => panic!("got PartialFlush at end of stack..."),
+                CacheEntry::PartialFlush(_) => {
+                    panic!("got PartialFlush at end of stack...")
+                }
             });
 
             if last.is_none() {
@@ -299,7 +343,9 @@ impl<PM, P, R> PageCache<PM, P, R>
                     CacheEntry::Resident(_, lid) => {
                         new_stack.push(CacheEntry::PartialFlush(lid));
                     }
-                    CacheEntry::Flush(_) => panic!("got Flush in middle of stack..."),
+                    CacheEntry::Flush(_) => {
+                        panic!("got Flush in middle of stack...")
+                    }
                 }
             }
             new_stack.push(last.unwrap());
@@ -317,6 +363,7 @@ impl<PM, P, R> PageCache<PM, P, R>
     }
 
     fn pull(&self, lid: LogID) -> P {
+        println!("pull {}", lid);
         let start = clock();
         let bytes = match self.log.read(lid).map_err(|_| ()) {
             Ok(LogRead::Flush(_lsn, data, _len)) => data,
@@ -394,7 +441,8 @@ impl<PM, P, R> PageCache<PM, P, R>
 
             #[cfg(feature = "rayon")]
             {
-                let mut pulled: Vec<P> = to_pull.par_iter().map(|&&lid| self.pull(lid)).collect();
+                let mut pulled: Vec<P> =
+                    to_pull.par_iter().map(|&&lid| self.pull(lid)).collect();
                 fetched.append(&mut pulled);
             }
 
@@ -431,7 +479,8 @@ impl<PM, P, R> PageCache<PM, P, R>
             let mut new_entries = Vec::with_capacity(lids.len());
 
             let head_lid = lids.remove(0);
-            let head_entry = CacheEntry::MergedResident(merged.clone(), *head_lid);
+            let head_entry =
+                CacheEntry::MergedResident(merged.clone(), *head_lid);
             new_entries.push(head_entry);
 
             let mut tail = if let Some(lid) = lids.pop() {
@@ -450,7 +499,9 @@ impl<PM, P, R> PageCache<PM, P, R>
 
             let node = node_from_frag_vec(new_entries);
 
-            let res = unsafe { stack_ptr.deref().cas(head, node.into_ptr(scope), scope) };
+            let res = unsafe {
+                stack_ptr.deref().cas(head, node.into_ptr(scope), scope)
+            };
             if let Ok(new_head) = res {
                 head = new_head;
             } else {
@@ -472,7 +523,12 @@ impl<PM, P, R> PageCache<PM, P, R>
     /// Returns `Ok(new_key)` if the operation was successful. Returns
     /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
     /// if the page has changed since the provided `CasKey` was created.
-    pub fn set(&self, pid: PageID, old: CasKey<P>, new: P) -> Result<CasKey<P>, Option<CasKey<P>>> {
+    pub fn set(
+        &self,
+        pid: PageID,
+        old: CasKey<P>,
+        new: P,
+    ) -> Result<CasKey<P>, Option<CasKey<P>>> {
         pin(|scope| {
             let stack_ptr = self.inner.get(pid, scope);
             if stack_ptr.is_none() {
@@ -494,7 +550,9 @@ impl<PM, P, R> PageCache<PM, P, R>
 
             let node = node_from_frag_vec(vec![cache_entry]).into_ptr(scope);
 
-            let result = unsafe { stack_ptr.deref().cas(old.clone().into(), node, scope) };
+            let result = unsafe {
+                stack_ptr.deref().cas(old.clone().into(), node, scope)
+            };
 
             if result.is_ok() {
                 let lid = log_reservation.lid();
@@ -503,7 +561,8 @@ impl<PM, P, R> PageCache<PM, P, R>
 
                 {
                     let start = clock();
-                    let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
+                    let mut sa =
+                        self.log.iobufs.segment_accountant.lock().unwrap();
                     let locked = clock();
                     M.accountant_lock.measure(locked - start);
                     sa.set(pid, lids_from_stack(old, scope), lid, lsn);
@@ -511,7 +570,8 @@ impl<PM, P, R> PageCache<PM, P, R>
                 }
 
                 let count = self.updates.fetch_add(1, SeqCst) + 1;
-                let should_snapshot = count % self.config().get_snapshot_after_ops() == 0;
+                let should_snapshot =
+                    count % self.config().get_snapshot_after_ops() == 0;
                 if should_snapshot {
                     self.write_snapshot();
                 }
@@ -553,7 +613,9 @@ impl<PM, P, R> PageCache<PM, P, R>
 
             let cache_entry = CacheEntry::Resident(new, lid);
 
-            let result = unsafe { stack_ptr.deref().cap(old.into(), cache_entry, scope) };
+            let result = unsafe {
+                stack_ptr.deref().cap(old.into(), cache_entry, scope)
+            };
 
             if result.is_err() {
                 log_reservation.abort();
@@ -564,7 +626,8 @@ impl<PM, P, R> PageCache<PM, P, R>
 
                 {
                     let start = clock();
-                    let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
+                    let mut sa =
+                        self.log.iobufs.segment_accountant.lock().unwrap();
                     let locked = clock();
                     M.accountant_lock.measure(locked - start);
                     sa.merged(pid, lid, lsn);
@@ -572,7 +635,8 @@ impl<PM, P, R> PageCache<PM, P, R>
                 }
 
                 let count = self.updates.fetch_add(1, SeqCst) + 1;
-                let should_snapshot = count % self.config().get_snapshot_after_ops() == 0;
+                let should_snapshot =
+                    count % self.config().get_snapshot_after_ops() == 0;
                 if should_snapshot {
                     self.write_snapshot();
                 }
@@ -663,7 +727,12 @@ impl<PM, P, R> PageCache<PM, P, R>
             );
 
             // unwrapping this because it's already passed the crc check in the log iterator
-            trace!("trying to deserialize buf {:?} for lid {} lsn {}", bytes, log_id, lsn);
+            trace!(
+                "trying to deserialize buf {:?} for lid {} lsn {}",
+                bytes,
+                log_id,
+                lsn
+            );
             let deserialization = deserialize::<LoggedUpdate<P>>(&*bytes);
 
             if let Err(e) = deserialization {
@@ -684,7 +753,12 @@ impl<PM, P, R> PageCache<PM, P, R>
 
             match prepend.update {
                 Update::Append(partial_page) => {
-                    trace!("append of pid {} at lid {} lsn {}", prepend.pid, log_id, lsn);
+                    trace!(
+                        "append of pid {} at lid {} lsn {}",
+                        prepend.pid,
+                        log_id,
+                        lsn
+                    );
                     snapshot.segments[idx].pids.insert(prepend.pid);
 
                     let r = self.t.recover(&partial_page);
@@ -696,7 +770,12 @@ impl<PM, P, R> PageCache<PM, P, R>
                     lids.push(log_id);
                 }
                 Update::Compact(partial_page) => {
-                    trace!("compact of pid {} at lid {} lsn {}", prepend.pid, log_id, lsn);
+                    trace!(
+                        "compact of pid {} at lid {} lsn {}",
+                        prepend.pid,
+                        log_id,
+                        lsn
+                    );
                     if let Some(lids) = snapshot.pt.get(&prepend.pid) {
                         for lid in lids {
                             let old_idx = *lid as usize / io_buf_size;
@@ -718,7 +797,12 @@ impl<PM, P, R> PageCache<PM, P, R>
                     snapshot.pt.insert(prepend.pid, vec![log_id]);
                 }
                 Update::Del => {
-                    trace!("del of pid {} at lid {} lsn {}", prepend.pid, log_id, lsn);
+                    trace!(
+                        "del of pid {} at lid {} lsn {}",
+                        prepend.pid,
+                        log_id,
+                        lsn
+                    );
                     if let Some(lids) = snapshot.pt.get(&prepend.pid) {
                         for lid in lids {
                             let old_idx = *lid as usize / io_buf_size;
@@ -734,7 +818,12 @@ impl<PM, P, R> PageCache<PM, P, R>
                     snapshot.free.push(prepend.pid);
                 }
                 Update::Alloc => {
-                    trace!("alloc of pid {} at lid {} lsn {}", prepend.pid, log_id, lsn);
+                    trace!(
+                        "alloc of pid {} at lid {} lsn {}",
+                        prepend.pid,
+                        log_id,
+                        lsn
+                    );
 
                     snapshot.pt.insert(prepend.pid, vec![]);
                     snapshot.free.retain(|&pid| pid != prepend.pid);
@@ -788,12 +877,16 @@ impl<PM, P, R> PageCache<PM, P, R>
         // clean up any old snapshots
         let candidates = self.config().get_snapshot_files();
         for path in candidates {
-            let path_str = Path::new(&path).file_name().unwrap().to_str().unwrap();
+            let path_str =
+                Path::new(&path).file_name().unwrap().to_str().unwrap();
             if !path_2.ends_with(&*path_str) {
                 info!("removing old snapshot file {:?}", path);
 
                 if let Err(_e) = std::fs::remove_file(&path) {
-                    warn!("failed to remove old snapshot file, maybe snapshot race? {}", _e);
+                    warn!(
+                        "failed to remove old snapshot file, maybe snapshot race? {}",
+                        _e
+                    );
                 }
             }
         }
@@ -851,7 +944,10 @@ impl<PM, P, R> PageCache<PM, P, R>
     }
 }
 
-fn lids_from_stack<P: Send + Sync>(stack_ptr: CasKey<P>, scope: &Scope) -> Vec<LogID> {
+fn lids_from_stack<P: Send + Sync>(
+    stack_ptr: CasKey<P>,
+    scope: &Scope,
+) -> Vec<LogID> {
     // generate a list of the old log ID's
     let stack_iter = StackIter::from_ptr(stack_ptr.into(), scope);
 
@@ -876,7 +972,9 @@ fn read_snapshot<R: DeserializeOwned>(config: &Config) -> Snapshot<R> {
         return Snapshot::default();
     }
 
-    candidates.sort_by_key(|path| std::fs::metadata(path).unwrap().created().unwrap());
+    candidates.sort_by_key(|path| {
+        std::fs::metadata(path).unwrap().created().unwrap()
+    });
 
     let path = candidates.pop().unwrap();
 

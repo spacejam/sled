@@ -5,14 +5,33 @@ use std::io::ErrorKind::UnexpectedEof;
 use super::*;
 
 pub trait LogReader {
-    fn read_segment_header(&mut self, id: LogID) -> std::io::Result<SegmentHeader>;
-    fn read_segment_trailer(&mut self, id: LogID) -> std::io::Result<SegmentTrailer>;
-    fn read_message_header(&mut self, id: LogID) -> std::io::Result<MessageHeader>;
-    fn read_entry(&mut self, id: LogID) -> std::io::Result<LogRead>;
+    fn read_segment_header(
+        &mut self,
+        id: LogID,
+    ) -> std::io::Result<SegmentHeader>;
+
+    fn read_segment_trailer(
+        &mut self,
+        id: LogID,
+    ) -> std::io::Result<SegmentTrailer>;
+
+    fn read_message_header(
+        &mut self,
+        id: LogID,
+    ) -> std::io::Result<MessageHeader>;
+
+    fn read_entry(
+        &mut self,
+        id: LogID,
+        segment_len: usize,
+    ) -> std::io::Result<LogRead>;
 }
 
 impl LogReader for File {
-    fn read_segment_header(&mut self, id: LogID) -> std::io::Result<SegmentHeader> {
+    fn read_segment_header(
+        &mut self,
+        id: LogID,
+    ) -> std::io::Result<SegmentHeader> {
         // println!("seeking to {}", id);
         self.seek(SeekFrom::Start(id))?;
 
@@ -26,7 +45,10 @@ impl LogReader for File {
         Ok(seg_header_buf.into())
     }
 
-    fn read_segment_trailer(&mut self, id: LogID) -> std::io::Result<SegmentTrailer> {
+    fn read_segment_trailer(
+        &mut self,
+        id: LogID,
+    ) -> std::io::Result<SegmentTrailer> {
         self.seek(SeekFrom::Start(id))?;
 
         let mut seg_trailer_buf = [0u8; SEG_TRAILER_LEN];
@@ -35,7 +57,10 @@ impl LogReader for File {
         Ok(seg_trailer_buf.into())
     }
 
-    fn read_message_header(&mut self, id: LogID) -> std::io::Result<MessageHeader> {
+    fn read_message_header(
+        &mut self,
+        id: LogID,
+    ) -> std::io::Result<MessageHeader> {
         self.seek(SeekFrom::Start(id))?;
 
         let mut msg_header_buf = [0u8; MSG_HEADER_LEN];
@@ -45,22 +70,40 @@ impl LogReader for File {
     }
 
     /// read a buffer from the disk
-    fn read_entry(&mut self, id: LogID) -> std::io::Result<LogRead> {
-        // println!("read_entry({})", id);
+    fn read_entry(
+        &mut self,
+        id: LogID,
+        segment_len: usize,
+    ) -> std::io::Result<LogRead> {
+        println!("read_entry({})", id);
         let start = clock();
+        let seg_start = id / segment_len as LogID * segment_len as LogID;
+        assert!(seg_start + MSG_HEADER_LEN as LogID <= id);
+
+        let ceiling = seg_start + segment_len as LogID -
+            SEG_TRAILER_LEN as LogID;
+        println!("ceiling: {} id: {}", ceiling, id);
+
+        assert!(id + MSG_HEADER_LEN as LogID <= ceiling);
+
         let header = self.read_message_header(id)?;
+        assert!(id + MSG_HEADER_LEN as LogID + header.len as LogID <= ceiling);
 
         self.seek(SeekFrom::Start(id + MSG_HEADER_LEN as LogID))?;
 
-        let max = 2 << 22; // FIXME self.get_io_buf_size() - MSG_HEADER_LEN;
+        let max = (ceiling - id - MSG_HEADER_LEN as LogID) as usize;
         let mut len = header.len;
         if len > max {
-            error!("log read invalid message length, {} should be <= {}", len, max);
+            error!(
+                "log read invalid message length, {} should be <= {}",
+                len,
+                max
+            );
             M.read.measure(clock() - start);
             return Ok(LogRead::Corrupted(len));
         } else if len == 0 && !header.valid {
             // skip to next record, which starts with 1
-            loop {
+            while len <= max {
                 let mut byte = [0u8; 1];
                 if let Err(e) = self.read_exact(&mut byte) {
                     if e.kind() == UnexpectedEof {
@@ -70,6 +113,9 @@ impl LogReader for File {
                     panic!("{:?}", e);
                 }
                 if byte[0] != 1 {
+                    if byte[0] != 0 {
+                        println!("failing at len {}, header {:?}", len, header);
+                    }
                     debug_assert_eq!(byte[0], 0);
                     len += 1;
                 } else {
@@ -99,7 +145,11 @@ impl LogReader for File {
         let res = {
             if self.get_use_compression() {
                 let start = clock();
-                let res = Ok(LogRead::Flush(header.lsn, decompress(&*buf, max).unwrap(), len));
+                let res = Ok(LogRead::Flush(
+                    header.lsn,
+                    decompress(&*buf, max).unwrap(),
+                    len,
+                ));
                 M.decompress.measure(clock() - start);
                 res
             } else {
@@ -112,5 +162,44 @@ impl LogReader for File {
 
         M.read.measure(clock() - start);
         res
+    }
+}
+
+impl LogReader for Config {
+    fn read_segment_header(
+        &mut self,
+        id: LogID,
+    ) -> std::io::Result<SegmentHeader> {
+        let cached_f = self.cached_file();
+        let mut f = cached_f.borrow_mut();
+        f.read_segment_header(id)
+    }
+
+    fn read_segment_trailer(
+        &mut self,
+        id: LogID,
+    ) -> std::io::Result<SegmentTrailer> {
+        let cached_f = self.cached_file();
+        let mut f = cached_f.borrow_mut();
+        f.read_segment_trailer(id)
+    }
+
+    fn read_message_header(
+        &mut self,
+        id: LogID,
+    ) -> std::io::Result<MessageHeader> {
+        let cached_f = self.cached_file();
+        let mut f = cached_f.borrow_mut();
+        f.read_message_header(id)
+    }
+
+    fn read_entry(
+        &mut self,
+        id: LogID,
+        segment_len: usize,
+    ) -> std::io::Result<LogRead> {
+        let cached_f = self.cached_file();
+        let mut f = cached_f.borrow_mut();
+        f.read_entry(id, segment_len)
     }
 }
