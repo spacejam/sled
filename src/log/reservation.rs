@@ -23,13 +23,15 @@ impl<'a> Drop for Reservation<'a> {
 }
 
 impl<'a> Reservation<'a> {
-    /// cancel the reservation, placing a failed flush on disk
-    pub fn abort(mut self) -> LogID {
+    /// cancel the reservation, placing a failed flush on disk, returning
+    /// the (cancelled) log sequence number and file offset.
+    pub fn abort(mut self) -> (Lsn, LogID) {
         self.flush(false)
     }
 
-    /// complete the reservation, placing the buffer on disk at the log_id
-    pub fn complete(mut self) -> LogID {
+    /// complete the reservation, placing the buffer on disk. returns
+    /// the log sequence number of the write, and the file offset.
+    pub fn complete(mut self) -> (Lsn, LogID) {
         self.flush(true)
     }
 
@@ -43,7 +45,7 @@ impl<'a> Reservation<'a> {
         self.lsn
     }
 
-    fn flush(&mut self, valid: bool) -> LogID {
+    fn flush(&mut self, valid: bool) -> (Lsn, LogID) {
         if self.flushed {
             panic!("flushing already-flushed reservation!");
         }
@@ -65,6 +67,6 @@ impl<'a> Reservation<'a> {
 
         self.iobufs.exit_reservation(self.idx);
 
-        self.lsn()
+        (self.lsn(), self.lid())
     }
 }

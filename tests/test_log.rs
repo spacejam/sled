@@ -47,9 +47,10 @@ fn non_contiguous_log_flush() {
     let res1 = log.reserve(vec![0; buf_len]);
     let res2 = log.reserve(vec![0; buf_len]);
     let id = res2.lid();
+    let lsn = res2.lsn();
     res2.abort();
     res1.abort();
-    log.make_stable(id);
+    log.make_stable(lsn);
 }
 
 #[test]
@@ -108,11 +109,9 @@ fn concurrent_logging() {
         .name("c6".to_string())
         .spawn(move || for i in 0..1_000 {
             let buf = vec![6; i % 896];
-            let res = iobs6.reserve(buf);
-            let id = res.lid();
-            res.complete();
+            let (lsn, _lid) = iobs6.write(buf);
             // println!("+");
-            iobs6.make_stable(id);
+            iobs6.make_stable(lsn);
             // println!("-");
         })
         .unwrap();
@@ -127,19 +126,14 @@ fn concurrent_logging() {
 
 fn write(log: &Log) {
     let data_bytes = b"yoyoyoyo";
-    let res = log.reserve(data_bytes.to_vec());
-    let lsn = res.lsn();
-    let lid = res.lid();
-    res.complete();
+    let (lsn, lid) = log.write(data_bytes.to_vec());
     let (_, read_buf, _) = log.read(lsn, lid).unwrap().unwrap();
     assert_eq!(read_buf, data_bytes);
 }
 
 fn abort(log: &Log) {
     let res = log.reserve(vec![0; 5]);
-    let lsn = res.lsn();
-    let lid = res.lid();
-    res.abort();
+    let (lsn, lid) = res.abort();
     match log.read(lsn, lid) {
         Ok(LogRead::Flush(_, _, _)) => {
             panic!("sucessfully read an aborted request! BAD! SAD!")
@@ -163,7 +157,7 @@ fn log_aborts() {
 fn log_iterator() {
     let conf = Config::default().io_buf_size(1000);
     let log = conf.log();
-    let first_offset = log.write(b"".to_vec());
+    let (first_lsn, _) = log.write(b"".to_vec());
     log.write(b"1".to_vec());
     log.write(b"22".to_vec());
     log.write(b"333".to_vec());
@@ -176,14 +170,14 @@ fn log_iterator() {
     }
 
     log.write(b"4444".to_vec());
-    let last_offset = log.write(b"55555".to_vec());
-    log.make_stable(last_offset);
+    let (last_lsn, _) = log.write(b"55555".to_vec());
+    log.make_stable(last_lsn);
 
     drop(log);
 
     let log = conf.log();
 
-    let mut iter = log.iter_from(first_offset);
+    let mut iter = log.iter_from(first_lsn);
     assert_eq!(iter.next().unwrap().2, b"".to_vec());
     assert_eq!(iter.next().unwrap().2, b"1".to_vec());
     assert_eq!(iter.next().unwrap().2, b"22".to_vec());
@@ -327,18 +321,13 @@ fn prop_log_works(ops: OpVec) -> bool {
             }
             Write(buf) => {
                 let len = buf.len();
-                let res = log.reserve(buf.clone());
-                let lsn = res.lsn();
-                let lid = res.lid();
-                res.complete();
+                let (lsn, lid) = log.write(buf.clone());
                 tip = lid as usize + len + MSG_HEADER_LEN;
                 reference.push((lsn, lid, Some(buf), len));
             }
             WriteReservation(buf) => {
                 let len = buf.len();
-                let res = log.reserve(buf.clone());
-                let lsn = res.lsn();
-                let lid = res.lid();
+                let (lsn, lid) = log.write(buf.clone());
                 tip = lid as usize + len + MSG_HEADER_LEN;
                 reference.push((lsn, lid, Some(buf), len));
             }
@@ -347,6 +336,7 @@ fn prop_log_works(ops: OpVec) -> bool {
                 let res = log.reserve(buf.clone());
                 let lsn = res.lsn();
                 let lid = res.lid();
+                res.abort();
                 tip = lid as usize + len + MSG_HEADER_LEN;
                 reference.push((lsn, lid, None, len));
             }

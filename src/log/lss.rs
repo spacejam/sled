@@ -11,10 +11,8 @@ use super::*;
 /// # Working with `Log`
 ///
 /// ```
-/// use sled::Log;
-///
 /// let log = sled::Config::default().log();
-/// let first_offset = log.write(b"1".to_vec());
+/// let (first_lsn, _first_offset) = log.write(b"1".to_vec());
 /// log.write(b"22".to_vec());
 /// log.write(b"333".to_vec());
 ///
@@ -23,9 +21,9 @@ use super::*;
 /// res.abort();
 ///
 /// log.write(b"4444".to_vec());
-/// let last_offset = log.write(b"55555".to_vec());
-/// log.make_stable(last_offset);
-/// let mut iter = log.iter_from(first_offset);
+/// let (last_lsn, _last_offset) = log.write(b"55555".to_vec());
+/// log.make_stable(last_lsn);
+/// let mut iter = log.iter_from(first_lsn);
 /// assert_eq!(iter.next().unwrap().2, b"1".to_vec());
 /// assert_eq!(iter.next().unwrap().2, b"22".to_vec());
 /// assert_eq!(iter.next().unwrap().2, b"333".to_vec());
@@ -102,8 +100,9 @@ impl Log {
         self.iobufs.config()
     }
 
-    /// Write a buffer into the log.
-    pub fn write(&self, buf: Vec<u8>) -> LogID {
+    /// Write a buffer into the log. Returns the log sequence
+    /// number and the file offset of the write.
+    pub fn write(&self, buf: Vec<u8>) -> (Lsn, LogID) {
         self.iobufs.reserve(buf).complete()
     }
 
