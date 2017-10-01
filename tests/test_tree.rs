@@ -154,7 +154,7 @@ fn recover_tree() {
     println!("========== recovery ==========");
     let conf = Config::default()
         .blink_fanout(2)
-        .io_buf_size(200)
+        .io_buf_size(5000)
         .flush_every_ms(None)
         .snapshot_after_ops(100);
     let t = conf.tree();
