@@ -148,7 +148,11 @@ impl SegmentAccountant {
             let segment_ceiling = segment_base + segment_len -
                 SEG_TRAILER_LEN as LogID -
                 MSG_HEADER_LEN as LogID;
-            println!("got a segment... lsn: {} read_offset: {}", base_lsn, lid);
+            println!(
+                "SA recovery got a segment... lsn: {} read_offset: {}",
+                base_lsn,
+                lid
+            );
 
             let mut iter = Iter {
                 config: &self.config,
@@ -161,12 +165,12 @@ impl SegmentAccountant {
             };
 
             while let Some((_lsn, lid, _buf)) = iter.next() {
-                println!("got a thing...");
+                // println!("got a thing...");
                 empty_tip = false;
                 tip = lid;
 
-                println!("tip in recover: {}", tip);
-                println!("ceiling in recover: {}", segment_ceiling);
+                // println!("tip in recover: {}", tip);
+                // println!("ceiling in recover: {}", segment_ceiling);
                 assert!(tip <= segment_ceiling);
             }
 

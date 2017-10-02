@@ -38,10 +38,11 @@ impl Tree {
         let root_opt = pages.recover();
 
         let root_id = if let Some(root_id) = root_opt {
+            debug!("recovered root {} while starting tree", root_id);
             root_id
         } else {
             let (root_id, root_cas_key) = pages.allocate();
-            // println!("allocated pid {} for root in new", root_id);
+            debug!("allocated pid {} for root of new tree", root_id);
 
             let (leaf_id, leaf_cas_key) = pages.allocate();
             // println!("allocated pid {} for leaf in new", leaf_id);
@@ -358,7 +359,7 @@ impl Tree {
         node_cas_key: CasKey<Frag>,
     ) -> Result<ParentSplit, ()> {
         let (new_pid, new_cas_key) = self.pages.allocate();
-        // println!("allocated pid {} in child_split", new_pid);
+        debug!("allocated pid {} in child_split", new_pid);
 
         // split the node in half
         let rhs = node.split(new_pid);
@@ -415,7 +416,7 @@ impl Tree {
     fn root_hoist(&self, from: PageID, to: PageID, at: Key) {
         // hoist new root, pointing to lhs & rhs
         let (new_root_pid, new_root_cas_key) = self.pages.allocate();
-        // println!("allocated pid {} in root_hoist", new_root_pid);
+        debug!("allocated pid {} in root_hoist", new_root_pid);
 
         let mut new_root_vec = vec![];
         new_root_vec.push((vec![], from));
@@ -430,18 +431,24 @@ impl Tree {
             },
             true,
         );
-        self.pages
-            .set(new_root_pid, new_root_cas_key, new_root)
-            .unwrap();
         // println!("split is {:?}", parent_split);
         // println!("trying to cas root at {:?} with real value {:?}", path.first().unwrap().pid, self.root.load(SeqCst));
         // println!("root_id is {}", root_id);
         let cas = self.root.compare_and_swap(from, new_root_pid, SeqCst);
         if cas == from {
-            // println!("{}: root hoist of {} +", tn(), from);
+            // TODO think about the racyness of this
+            self.pages
+                .set(new_root_pid, new_root_cas_key, new_root)
+                .unwrap();
+            debug!(
+                "{}: root hoist from {} to {} successful",
+                tn(),
+                from,
+                new_root_pid
+            );
         } else {
+            debug!("root hoist from {} to {} failed", from, new_root_pid);
             self.pages.free(new_root_pid);
-            // println!("root hoist of {} -", from);
         }
     }
 
@@ -669,7 +676,10 @@ impl<'a> IntoIterator for &'a Tree {
     }
 }
 
+#[derive(Default, Debug)]
 pub struct BLinkMaterializer {
+    // TODO use interval-based tracking to handle race conditions in hoists where higher is not
+    // later.
     roots: Mutex<Vec<PageID>>,
 }
 
@@ -686,6 +696,9 @@ impl Materializer for BLinkMaterializer {
                 base_node.apply(frag);
             } else {
                 let (base_node, is_root) = frag.base().unwrap();
+                if is_root {
+                    debug!("merged node {} is root", base_node.id);
+                }
                 base_node_opt = Some(base_node);
                 root = is_root;
             }

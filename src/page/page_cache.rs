@@ -729,12 +729,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             );
 
             // unwrapping this because it's already passed the crc check in the log iterator
-            trace!(
-                "trying to deserialize buf {:?} for lid {} lsn {}",
-                bytes,
-                log_id,
-                lsn
-            );
+            trace!("trying to deserialize buf for lid {} lsn {}", log_id, lsn);
             let deserialization = deserialize::<LoggedUpdate<P>>(&*bytes);
 
             if let Err(e) = deserialization {
@@ -926,6 +921,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         for (pid, lids) in &snapshot.pt {
             trace!("loading pid {} in load_snapshot", pid);
+
             let mut lids = lids.clone();
             let stack = Stack::default();
 

@@ -75,14 +75,14 @@ impl LogReader for File {
         id: LogID,
         segment_len: usize,
     ) -> std::io::Result<LogRead> {
-        println!("read_entry({})", id);
+        // println!("read_entry({})", id);
         let start = clock();
         let seg_start = id / segment_len as LogID * segment_len as LogID;
         assert!(seg_start + MSG_HEADER_LEN as LogID <= id);
 
         let ceiling = seg_start + segment_len as LogID -
             SEG_TRAILER_LEN as LogID;
-        println!("ceiling: {} id: {}", ceiling, id);
+        // println!("ceiling: {} id: {}", ceiling, id);
 
         assert!(id + MSG_HEADER_LEN as LogID <= ceiling);
 
