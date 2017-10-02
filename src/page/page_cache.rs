@@ -441,8 +441,10 @@ impl<PM, P, R> PageCache<PM, P, R>
 
             #[cfg(feature = "rayon")]
             {
-                let mut pulled: Vec<P> =
-                    to_pull.par_iter().map(|&&lid| self.pull(lid)).collect();
+                let mut pulled: Vec<P> = to_pull
+                    .par_iter()
+                    .map(|&(lsn, lid)| self.pull(lsn, lid))
+                    .collect();
                 fetched.append(&mut pulled);
             }
 

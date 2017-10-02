@@ -508,7 +508,7 @@ impl Tree {
                 not_found_loops += 1;
                 debug_assert_ne!(
                     not_found_loops,
-                    10,
+                    10000,
                     "cannot find pid {} in path_for_key",
                     cursor
                 );

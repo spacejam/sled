@@ -71,6 +71,7 @@ fn parallel_ops() {
         k2.reverse();
         tree.cas(k1.clone(), Some(k1), Some(k2)).unwrap();
     }};
+
     par!{t, |tree: &Tree, k: Vec<u8>| {
         let k1 = k.clone();
         let mut k2 = k.clone();
@@ -82,6 +83,7 @@ fn parallel_ops() {
     par!{t, |tree: &Tree, k: Vec<u8>| {
         tree.del(&*k);
     }};
+
     par!{t, |tree: &Tree, k: Vec<u8>| {
         assert_eq!(tree.get(&*k), None);
     }};

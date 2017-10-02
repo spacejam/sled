@@ -5,9 +5,6 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
-#[cfg(feature = "zstd")]
-use zstd::block::decompress;
-
 use super::*;
 
 /// Top-level configuration for the system.
