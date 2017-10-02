@@ -124,6 +124,7 @@ impl Log {
             segment_base: None,
             segment_iter: segment_iter,
             segment_len: self.config().get_io_buf_size(),
+            use_compression: self.config().get_use_compression(),
             trailer: None,
         }
     }
@@ -136,7 +137,11 @@ impl Log {
         let mut f = cached_f.borrow_mut();
         // TODO check the lsn of the read log entry below
 
-        let read = f.read_entry(lid, self.config().get_io_buf_size());
+        let read = f.read_entry(
+            lid,
+            self.config().get_io_buf_size(),
+            self.config().get_use_compression(),
+        );
         read.and_then(|log_read| match log_read {
             LogRead::Flush(read_lsn, _, _) => {
                 assert_eq!(lsn, read_lsn);

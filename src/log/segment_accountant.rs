@@ -161,6 +161,7 @@ impl SegmentAccountant {
                 segment_base: Some(*base_lsn),
                 segment_iter: Box::new(vec![].into_iter()),
                 segment_len: segment_len as usize,
+                use_compression: self.config.get_use_compression(),
                 trailer: None,
             };
 
@@ -177,8 +178,11 @@ impl SegmentAccountant {
             if !empty_tip {
                 let cached_f = self.config.cached_file();
                 let mut f = cached_f.borrow_mut();
-                let (_, _, len) = f.read_entry(tip, segment_len as usize)
-                    .unwrap()
+                let (_, _, len) = f.read_entry(
+                    tip,
+                    segment_len as usize,
+                    self.config.get_use_compression(),
+                ).unwrap()
                     .flush()
                     .unwrap();
                 tip += MSG_HEADER_LEN as LogID + len as LogID;

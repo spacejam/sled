@@ -5,6 +5,7 @@ pub struct Iter<'a> {
     pub(super) segment_iter: Box<Iterator<Item = (Lsn, LogID)>>,
     pub(super) segment_base: Option<LogID>,
     pub(super) segment_len: usize,
+    pub(super) use_compression: bool,
     pub(super) max_lsn: Lsn,
     pub(super) cur_lsn: Lsn,
     pub(super) trailer: Option<Lsn>,
@@ -48,7 +49,7 @@ impl<'a> Iterator for Iter<'a> {
             // println!("lid is {}", lid);
             let cached_f = self.config.cached_file();
             let mut f = cached_f.borrow_mut();
-            match f.read_entry(lid, self.segment_len) {
+            match f.read_entry(lid, self.segment_len, self.use_compression) {
                 Ok(LogRead::Flush(lsn, buf, on_disk_len)) => {
                     // println!("{}", on_disk_len);
                     // println!("cur_lsn before: {}", self.cur_lsn);

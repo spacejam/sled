@@ -2,6 +2,9 @@ use std::io::{Read, Seek, SeekFrom};
 use std::fs::File;
 use std::io::ErrorKind::UnexpectedEof;
 
+#[cfg(feature = "zstd")]
+use zstd::block::decompress;
+
 use super::*;
 
 pub trait LogReader {
@@ -24,6 +27,7 @@ pub trait LogReader {
         &mut self,
         id: LogID,
         segment_len: usize,
+        use_compression: bool,
     ) -> std::io::Result<LogRead>;
 }
 
@@ -74,6 +78,7 @@ impl LogReader for File {
         &mut self,
         id: LogID,
         segment_len: usize,
+        _use_compression: bool,
     ) -> std::io::Result<LogRead> {
         // println!("read_entry({})", id);
         let start = clock();
@@ -143,7 +148,7 @@ impl LogReader for File {
 
         #[cfg(feature = "zstd")]
         let res = {
-            if self.get_use_compression() {
+            if _use_compression {
                 let start = clock();
                 let res = Ok(LogRead::Flush(
                     header.lsn,
