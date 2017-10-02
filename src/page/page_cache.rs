@@ -363,7 +363,7 @@ impl<PM, P, R> PageCache<PM, P, R>
     }
 
     fn pull(&self, lsn: Lsn, lid: LogID) -> P {
-        println!("pull {}", lid);
+        // println!("pull {}", lid);
         let start = clock();
         let bytes = match self.log.read(lsn, lid).map_err(|_| ()) {
             Ok(LogRead::Flush(_lsn, data, _len)) => data,

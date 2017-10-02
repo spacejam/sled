@@ -182,10 +182,8 @@ fn log_iterator() {
     assert_eq!(iter.next().unwrap().2, b"1".to_vec());
     assert_eq!(iter.next().unwrap().2, b"22".to_vec());
     assert_eq!(iter.next().unwrap().2, b"333".to_vec());
-    println!("------- skipping over failed");
     assert_eq!(iter.next().unwrap().2, b"4444".to_vec());
     assert_eq!(iter.next().unwrap().2, b"55555".to_vec());
-    println!("at the end of the run");
     assert_eq!(iter.next(), None);
 }
 
@@ -296,7 +294,7 @@ fn prop_log_works(ops: OpVec) -> bool {
     let config = Config::default().io_buf_size(1024 * 8).flush_every_ms(
         Some(1),
     );
-    println!("testing {:?}", ops);
+    // println!("testing {:?}", ops);
 
     let mut tip = 0;
     let mut log = config.log();

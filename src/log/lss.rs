@@ -109,7 +109,7 @@ impl Log {
     /// Return an iterator over the log, starting with
     /// a specified offset.
     pub fn iter_from(&self, lsn: Lsn) -> Iter {
-        println!("iter_from {}", lsn);
+        // println!("iter_from {}", lsn);
         let start = clock();
         let sa = self.iobufs.segment_accountant.lock().unwrap();
         let locked = clock();
@@ -130,7 +130,7 @@ impl Log {
 
     /// read a buffer from the disk
     pub fn read(&self, lsn: Lsn, lid: LogID) -> io::Result<LogRead> {
-        println!("read lsn {} lid {}", lsn, lid);
+        // println!("read lsn {} lid {}", lsn, lid);
         self.make_stable(lsn);
         let cached_f = self.config().cached_file();
         let mut f = cached_f.borrow_mut();
@@ -158,11 +158,11 @@ impl Log {
 
         // NB we make sure stable > lsn because stable starts at 0,
         // before we write the 0th byte of the file.
-        println!("before loop, waiting on lsn {}", lsn);
+        // println!("before loop, waiting on lsn {}", lsn);
         // let mut exploder = 0;
         while self.iobufs.stable() <= lsn {
-            println!("stable is {}", self.iobufs.stable());
-            println!("top of loop");
+            // println!("stable is {}", self.iobufs.stable());
+            // println!("top of loop");
             self.iobufs.flush();
             /*
             exploder += 1;
@@ -175,16 +175,16 @@ impl Log {
             let waiter = self.iobufs.intervals.lock().unwrap();
 
             if self.iobufs.stable() <= lsn {
-                println!("waiting on cond var");
+                // println!("waiting on cond var");
                 let _waiter =
                     self.iobufs.interval_updated.wait(waiter).unwrap();
-                println!("back from cond var");
+            //println!("back from cond var");
             } else {
                 break;
             }
         }
 
-        println!("make_stable({}) returning", lsn);
+        // println!("make_stable({}) returning", lsn);
 
         M.make_stable.measure(clock() - start);
     }

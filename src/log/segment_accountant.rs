@@ -148,8 +148,8 @@ impl SegmentAccountant {
             let segment_ceiling = segment_base + segment_len -
                 SEG_TRAILER_LEN as LogID -
                 MSG_HEADER_LEN as LogID;
-            println!(
-                "SA recovery got a segment... lsn: {} read_offset: {}",
+            trace!(
+                "segment accountant recovering segment at lsn: {} read_offset: {}",
                 base_lsn,
                 lid
             );
@@ -183,11 +183,6 @@ impl SegmentAccountant {
                     .unwrap();
                 tip += MSG_HEADER_LEN as LogID + len as LogID;
                 self.recovered_lid = tip;
-                println!(
-                    "final recovery tip {} recovered lid {}",
-                    tip,
-                    self.recovered_lid
-                );
             }
 
             let segment_overhang = self.recovered_lid %
@@ -215,8 +210,8 @@ impl SegmentAccountant {
             self.free.lock().unwrap().push_front(lid);
         }
 
-        println!(
-            "after relative thing our recovered_lsn:{}, lid: {}",
+        debug!(
+            "segment accountant recovered max lsn:{}, lid: {}",
             self.recovered_lsn,
             self.recovered_lid
         );

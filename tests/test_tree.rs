@@ -655,7 +655,9 @@ fn tree_bug_12() {
 
 #[test]
 fn tree_bug_13() {
-    // postmortem:
+    // postmortem: failed root hoists were being improperly recovered before the
+    // following free was done on their page, but we treated the written node as
+    // if it were a successful completed root hoist.
     use Op::*;
     prop_tree_matches_btreemap(
         OpVec {

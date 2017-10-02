@@ -202,37 +202,46 @@ impl ConfigInner {
     /// returns the snapshot file paths for this system
     pub fn get_snapshot_files(&self) -> Vec<String> {
         let mut prefix = self.snapshot_prefix();
+
         prefix.push_str(".");
+
+        let err_msg = format!("could not read snapshot directory ({})", prefix);
+
 
         let abs_prefix: String = if Path::new(&prefix).is_absolute() {
             prefix
         } else {
-            let mut abs_path =
-                std::env::current_dir().expect("could not read current dir, maybe deleted?");
+            let mut abs_path = std::env::current_dir().expect(&*err_msg);
             abs_path.push(prefix.clone());
             abs_path.to_str().unwrap().to_owned()
         };
 
-        let filter = |dir_entry: std::io::Result<std::fs::DirEntry>| if let Ok(de) = dir_entry {
-            let path_buf = de.path();
-            let path = path_buf.as_path();
-            let path_str = path.to_str().unwrap();
-            if path_str.starts_with(&abs_prefix) && !path_str.ends_with(".in___motion") {
-                Some(path_str.to_owned())
+        let filter = |dir_entry: std::io::Result<std::fs::DirEntry>| {
+            if let Ok(de) = dir_entry {
+                let path_buf = de.path();
+                let path = path_buf.as_path();
+                let path_str = path.to_str().unwrap();
+                if path_str.starts_with(&abs_prefix) &&
+                    !path_str.ends_with(".in___motion")
+                {
+                    Some(path_str.to_owned())
+                } else {
+                    None
+                }
             } else {
                 None
             }
-        } else {
-            None
         };
 
-        let snap_dir = Path::new(&abs_prefix).parent().expect(
-            "could not read snapshot directory",
-        );
+        let snap_dir = Path::new(&abs_prefix).parent().expect(&*err_msg);
+
+        if !snap_dir.exists() {
+            std::fs::create_dir_all(snap_dir).unwrap();
+        }
 
         snap_dir
             .read_dir()
-            .expect("could not read snapshot directory")
+            .expect(&*err_msg)
             .filter_map(filter)
             .collect()
     }
