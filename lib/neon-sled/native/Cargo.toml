@@ -1,6 +1,6 @@
 [package]
 name = "neon-sled"
-version = "0.1.0"
+version = "0.1.2"
 authors = ["Matthias Nehlsen <matthias.nehlsen@gmail.com>",
            "Tyler Neely <t@jujit.su>"]
 license = "Apache 2"
