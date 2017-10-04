@@ -118,10 +118,6 @@ impl LogReader for File {
                     panic!("{:?}", e);
                 }
                 if byte[0] != 1 {
-                    if byte[0] != 0 {
-                        println!("failing at len {}, header {:?}", len, header);
-                    }
-                    debug_assert_eq!(byte[0], 0);
                     len += 1;
                 } else {
                     break;
