@@ -15,4 +15,4 @@ neon-build = "0.1.20"
 
 [dependencies]
 neon = "0.1.20"
-sled = "0.13"
+sled = "0.14"

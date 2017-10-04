@@ -2,17 +2,10 @@
 extern crate neon;
 extern crate sled;
 
-
 use neon::vm::{Call, JsResult};
 use neon::js::JsString;
-use neon::js::JsNumber;
 use neon::js::JsNull;
 use neon::js::Value;
-use neon::js::Variant;
-
-fn threading_hint(call: Call) -> JsResult<JsNumber> {
-    Ok(JsNumber::new(call.scope, num_cpus::get() as f64))
-}
 
 fn extract_arg(call: &mut Call, idx: i32) -> Result<String, ()> {
     let args = &call.arguments;
@@ -20,18 +13,38 @@ fn extract_arg(call: &mut Call, idx: i32) -> Result<String, ()> {
     Ok((*handle).to_string(call.scope).map_err(|_| ())?.value())
 }
 
-fn set(mut call: Call) -> JsResult<JsString> {
-    let arg0 = extract_arg(&mut call, 0);
-    let arg1 = extract_arg(&mut call, 1);
-
-    println!("SET args {:?} {:?}", arg0, arg1);
-
+fn create_db(mut call: Call) -> JsResult<JsString> {
+    let path = extract_arg(&mut call, 0).unwrap();
     let t = sled::Config::default()
-        .path("sled.db".to_owned())
+        .path(path)
         .tree();
 
-    let k = arg0.unwrap().into_bytes();
-    let v = arg1.unwrap().into_bytes();
+    let ptr = Box::into_raw(Box::new(t));
+    let ptr_string = format!("{}", ptr as usize);
+    Ok(JsString::new(call.scope, &*ptr_string).unwrap())
+}
+
+fn cast_string_to_ptr<'a>(ptr_str: String) -> &'a sled::Tree {
+    let ptr_from_str = ptr_str.parse::<usize>().unwrap();
+    //println!("ptr_from_str: {}", ptr_from_str);
+
+    let ptr = ptr_from_str as *mut sled::Tree;
+    unsafe {
+        &*ptr
+    }
+}
+
+fn set(mut call: Call) -> JsResult<JsString> {
+    let arg0 = extract_arg(&mut call, 0).unwrap();
+    let arg1 = extract_arg(&mut call, 1);
+    let arg2 = extract_arg(&mut call, 2);
+
+    //println!("SET args {:?} {:?}", arg0, arg1);
+
+    let t = cast_string_to_ptr(arg0);
+
+    let k = arg1.unwrap().into_bytes();
+    let v = arg2.unwrap().into_bytes();
 
     t.set(k.clone(), v);
 
@@ -42,21 +55,17 @@ fn set(mut call: Call) -> JsResult<JsString> {
         })
         .unwrap_or_else(|| JsString::new(call.scope, "").unwrap());
 
-    drop(t);
-
     Ok(from_db)
 }
 
 fn get(mut call: Call) -> JsResult<JsString> {
-    let arg0 = extract_arg(&mut call, 0);
+    let arg0 = extract_arg(&mut call, 0).unwrap();
+    let arg1 = extract_arg(&mut call, 1);
 
-    println!("GET args {:?}", arg0);
+    //println!("GET args {:?}", arg0);
 
-    let t = sled::Config::default()
-        .path("sled.db".to_owned())
-        .tree();
-
-    let k = arg0.unwrap().into_bytes();
+    let t = cast_string_to_ptr(arg0);
+    let k = arg1.unwrap().into_bytes();
 
     let from_db = t.get(&*k)
         .map( |from_db| {
@@ -68,7 +77,34 @@ fn get(mut call: Call) -> JsResult<JsString> {
     Ok(from_db)
 }
 
+fn del(mut call: Call) -> JsResult<JsNull> {
+    let arg0 = extract_arg(&mut call, 0).unwrap();
+    let arg1 = extract_arg(&mut call, 1);
+
+    let t = cast_string_to_ptr(arg0);
+    let k = arg1.unwrap().into_bytes();
+
+    t.del(&*k);
+
+    Ok(JsNull::new())
+}
+
+fn sync_and_close(mut call: Call) -> JsResult<JsNull> {
+    let arg0 = extract_arg(&mut call, 0).unwrap();
+    let ptr_from_str = arg0.parse::<usize>().unwrap();
+    let ptr = ptr_from_str as *mut sled::Tree;
+
+    unsafe {
+        let t = Box::from_raw(ptr);
+        drop(t);
+    }
+    Ok(JsNull::new())
+}
+
 register_module!(m, {
-    m.export("get", get);
-    m.export("set", set);
+    m.export("get", get)?;
+    m.export("set", set)?;
+    m.export("del", del)?;
+    m.export("createDb", create_db)?;
+    m.export("syncAndClose", sync_and_close)
 });
