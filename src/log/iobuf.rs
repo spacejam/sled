@@ -1,7 +1,7 @@
 use std::io::{Seek, Write};
 use std::path::Path;
 use std::sync::{Condvar, Mutex};
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::atomic::Ordering::SeqCst;
 
 #[cfg(feature = "zstd")]
@@ -24,6 +24,7 @@ struct IoBuf {
     log_offset: AtomicUsize,
     lsn: AtomicUsize,
     capacity: AtomicUsize,
+    maxed: AtomicBool,
 }
 
 unsafe impl Sync for IoBuf {}
@@ -50,6 +51,7 @@ impl IoBuf {
             log_offset: AtomicUsize::new(std::usize::MAX),
             lsn: AtomicUsize::new(0),
             capacity: AtomicUsize::new(0),
+            maxed: AtomicBool::new(false),
         }
     }
 
@@ -105,6 +107,16 @@ impl IoBuf {
     fn set_lsn(&self, lsn: Lsn) {
         debug_delay();
         self.lsn.store(lsn as usize, SeqCst);
+    }
+
+    fn set_maxed(&self, maxed: bool) {
+        debug_delay();
+        self.maxed.store(maxed, SeqCst);
+    }
+
+    fn get_maxed(&self) -> bool {
+        debug_delay();
+        self.maxed.load(SeqCst)
     }
 
     fn get_lsn(&self) -> Lsn {
@@ -554,6 +566,9 @@ impl IoBufs {
 
         // println!( "from_reserve: {}, res_len: {}, capacity: {}", from_reserve, res_len, capacity);
         let (next_offset, last_given) = if from_reserve || maxed {
+            // we will write a trailer to the iobuf after writing it.
+            iobuf.set_maxed(true);
+
             let start = clock();
             let mut sa = self.segment_accountant.lock().unwrap();
             let locked = clock();
@@ -681,6 +696,38 @@ impl IoBufs {
         f.seek(SeekFrom::Start(log_offset)).unwrap();
         f.write_all(&data[..res_len]).unwrap();
         f.sync_all().unwrap();
+
+        // write a trailer if we're maxed
+        if iobuf.get_maxed() {
+            let segment_lsn = base_lsn / io_buf_size as Lsn *
+                io_buf_size as Lsn;
+            let segment_lid = log_offset / io_buf_size as LogID *
+                io_buf_size as LogID;
+
+            let trailer_overhang = io_buf_size as Lsn - SEG_TRAILER_LEN as Lsn;
+
+            let trailer_lid = segment_lid + trailer_overhang;
+            let trailer_lsn = segment_lsn + trailer_overhang;
+
+            let trailer = SegmentTrailer {
+                lsn: trailer_lsn,
+                ok: true,
+            };
+
+            let trailer_bytes: [u8; SEG_TRAILER_LEN] = trailer.into();
+
+            trace!(
+                "writing trailer at lid {} for lsn {}",
+                trailer_lid,
+                trailer_lsn
+            );
+
+            f.seek(SeekFrom::Start(trailer_lid)).unwrap();
+            f.write_all(&trailer_bytes).unwrap();
+            f.sync_all().unwrap();
+            iobuf.set_maxed(false);
+        }
+
         M.written_bytes.measure(res_len as f64);
         // signal that this IO buffer is uninitialized
         let max = std::usize::MAX as LogID;

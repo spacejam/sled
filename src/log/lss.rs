@@ -109,21 +109,26 @@ impl Log {
     /// Return an iterator over the log, starting with
     /// a specified offset.
     pub fn iter_from(&self, lsn: Lsn) -> Iter {
+        let io_buf_size = self.config().get_io_buf_size();
+        let segment_base_lsn = lsn / io_buf_size as Lsn * io_buf_size as Lsn;
+        let min_lsn = segment_base_lsn + SEG_HEADER_LEN as Lsn;
+        let corrected_lsn = std::cmp::max(lsn, min_lsn);
+
         // println!("iter_from {}", lsn);
         let start = clock();
         let sa = self.iobufs.segment_accountant.lock().unwrap();
         let locked = clock();
         M.accountant_lock.measure(locked - start);
-        let segment_iter = sa.segment_snapshot_iter_from(lsn);
+        let segment_iter = sa.segment_snapshot_iter_from(segment_base_lsn);
         M.accountant_hold.measure(clock() - locked);
 
         Iter {
             config: self.config(),
             max_lsn: self.stable_offset(),
-            cur_lsn: lsn,
+            cur_lsn: corrected_lsn,
             segment_base: None,
             segment_iter: segment_iter,
-            segment_len: self.config().get_io_buf_size(),
+            segment_len: io_buf_size,
             use_compression: self.config().get_use_compression(),
             trailer: None,
         }

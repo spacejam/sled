@@ -23,9 +23,12 @@ impl<'a> Iterator for Iter<'a> {
             // println!("max is {}", self.max_lsn);
             // println!("base is {:?}", self.segment_base);
             // println!("segment_len {}", self.segment_len);
-            if self.segment_base.is_none() ||
-                !valid_entry_offset(self.cur_lsn, self.segment_len)
-            {
+            let at_end = !valid_entry_offset(self.cur_lsn, self.segment_len);
+            if self.trailer.is_none() && at_end {
+                // We've read to the end of a torn
+                // segment and should stop now.
+                return None;
+            } else if self.segment_base.is_none() || at_end {
                 if let Some((next_lsn, next_lid)) = self.segment_iter.next() {
                     self.read_segment(next_lsn, next_lid).unwrap();
                 } else {
@@ -84,17 +87,28 @@ impl<'a> Iter<'a> {
         let mut f = cached_f.borrow_mut();
         let segment_header = f.read_segment_header(offset)?;
         // println!("read sh {:?} at {}", sh, offset);
+        // TODO turn those asserts into returned Errors? Torn pages or invariant?
         assert_eq!(offset % self.segment_len as Lsn, 0);
         assert_eq!(segment_header.lsn % self.segment_len as Lsn, 0);
-        assert_eq!(segment_header.lsn, lsn);
-        assert!(segment_header.lsn + self.segment_len as LogID >= self.cur_lsn);
-        // TODO turn those asserts into returned Errors? Torn pages or invariant?
 
-        let segment_trailer = f.read_segment_trailer(offset);
+        // FIXME left: `83886080` right: 0, merge -> write_snapshot -> Iter::next
+        assert_eq!(segment_header.lsn, lsn);
+
+        assert!(segment_header.lsn + self.segment_len as LogID >= self.cur_lsn);
+
+        let trailer_offset = offset + self.segment_len as LogID -
+            SEG_TRAILER_LEN as LogID;
+        let trailer_lsn = segment_header.lsn + self.segment_len as Lsn -
+            SEG_TRAILER_LEN as Lsn;
+
+        trace!("trying to read trailer from {}", trailer_offset);
+        let segment_trailer = f.read_segment_trailer(trailer_offset);
+
+        trace!("read segment header {:?}", segment_header);
+        trace!("read segment trailer {:?}", segment_trailer);
 
         let trailer_lsn = segment_trailer.ok().and_then(|st| if st.ok &&
-            st.lsn ==
-                segment_header.lsn
+            st.lsn == trailer_lsn
         {
             Some(st.lsn)
         } else {

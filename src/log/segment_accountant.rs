@@ -158,8 +158,8 @@ impl SegmentAccountant {
                 config: &self.config,
                 max_lsn: segment_ceiling,
                 cur_lsn: tip,
-                segment_base: Some(*base_lsn),
-                segment_iter: Box::new(vec![].into_iter()),
+                segment_base: None,
+                segment_iter: Box::new(vec![(*base_lsn, *lid)].into_iter()),
                 segment_len: segment_len as usize,
                 use_compression: self.config.get_use_compression(),
                 trailer: None,
@@ -308,7 +308,6 @@ impl SegmentAccountant {
             if self.segments[idx].lsn.unwrap() > lsn {
                 // has been replaced after this call already,
                 // quite a big race happened.
-                // FIXME this is an unsafe leak when operating under zero-copy mode
                 continue;
             }
 
@@ -335,6 +334,7 @@ impl SegmentAccountant {
                     let ptr = pd.into_ptr(scope);
                     unsafe {
                         scope.defer_drop(ptr);
+                        scope.flush();
                     }
                 });
             } else if self.segments[idx].pids.len() as f64 /
@@ -404,6 +404,7 @@ impl SegmentAccountant {
                     let ptr = pd.into_ptr(scope);
                     unsafe {
                         scope.defer_drop(ptr);
+                        scope.flush();
                     }
                 });
             } else if self.segments[idx].pids.len() as f64 /
@@ -526,7 +527,7 @@ impl SegmentAccountant {
     }
 
     pub fn clean(&mut self) -> Option<PageID> {
-        if self.free.lock().unwrap().len() >
+        if self.free.lock().unwrap().len() >=
             self.config.get_min_free_segments() ||
             self.to_clean.is_empty()
         {

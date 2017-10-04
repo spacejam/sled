@@ -60,43 +60,6 @@ fn byte() -> Vec<u8> {
     v
 }
 
-fn do_set(tree: Arc<sled::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
-    while !shutdown.load(Ordering::Relaxed) {
-        total.fetch_add(1, Ordering::Release);
-        tree.set(byte(), byte());
-    }
-}
-
-fn do_get(tree: Arc<sled::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
-    while !shutdown.load(Ordering::Relaxed) {
-        total.fetch_add(1, Ordering::Release);
-        tree.get(&*byte());
-    }
-}
-
-fn do_del(tree: Arc<sled::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
-    while !shutdown.load(Ordering::Relaxed) {
-        total.fetch_add(1, Ordering::Release);
-        tree.del(&*byte());
-    }
-}
-
-fn do_cas(tree: Arc<sled::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
-    while !shutdown.load(Ordering::Relaxed) {
-        total.fetch_add(1, Ordering::Release);
-        if let Err(_) = tree.cas(byte(), Some(byte()), Some(byte())) {};
-    }
-}
-
-fn do_scan(tree: Arc<sled::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
-    while !shutdown.load(Ordering::Relaxed) {
-        total.fetch_add(1, Ordering::Release);
-        tree.scan(&*byte())
-            .take(thread_rng().gen_range(1, 3))
-            .collect::<Vec<_>>();
-    }
-}
-
 fn prepopulate(tree: Arc<sled::Tree>) {
     for i in 0..256_usize.pow(unsafe { KEY_BYTES as u32 }) {
         let bytes: [u8; 8] = unsafe { mem::transmute(i) };
@@ -107,8 +70,6 @@ fn prepopulate(tree: Arc<sled::Tree>) {
 }
 
 fn main() {
-    let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
-
     let args: Args = Docopt::new(USAGE)
         .and_then(|d| d.argv(std::env::args().into_iter()).deserialize())
         .unwrap_or_else(|e| e.exit());
@@ -124,51 +85,64 @@ fn main() {
         .io_bufs(2)
         .blink_fanout(15)
         .page_consolidation_threshold(10)
-        .cache_fixup_threshold(2)
+        .cache_fixup_threshold(5)
         .cache_bits(6)
-        .cache_capacity(128_000_000)
-        .flush_every_ms(None)
-        .snapshot_after_ops(1000000);
+        .cache_capacity(128 * 1024 * 1024)
+        .flush_every_ms(Some(500))
+        .snapshot_after_ops(1_000_000);
 
     let tree = Arc::new(config.tree());
 
     macro_rules! cloned {
         ($f:expr) => {{
             let tree = tree.clone();
-            let shutdown = shutdown.clone();
             let total = total.clone();
+            let shutdown = shutdown.clone();
             thread::spawn(|| $f(tree, shutdown, total))
         }};
     }
 
     prepopulate(tree.clone());
 
-    let mut threads = vec![cloned!(|_, shutdown, total| report(shutdown, total))];
+    let mut threads =
+        vec![cloned!(|_, shutdown, total| report(shutdown, total))];
 
-    for _ in 0..args.flag_get {
-        threads.push(cloned!(|tree, shutdown, total| do_get(tree, shutdown, total)));
+    macro_rules! spin_up {
+        ($($n:expr, $fn:expr;)*)=> (
+            $(
+            for _ in 0..$n {
+                let tree = tree.clone();
+                let shutdown = shutdown.clone();
+                let total = total.clone();
+                let thread = thread::spawn(move || {
+                    while !shutdown.load(Ordering::Relaxed) {
+                        total.fetch_add(1, Ordering::Release);
+                        $fn(&tree);
+                    }
+                });
+                threads.push(thread);
+            }
+            )*
+        );
     }
 
-    for _ in 0..args.flag_set {
-        threads.push(cloned!(|tree, shutdown, total| do_set(tree, shutdown, total)));
-    }
-
-    for _ in 0..args.flag_del {
-        threads.push(cloned!(|tree, shutdown, total| do_del(tree, shutdown, total)));
-    }
-
-    for _ in 0..args.flag_cas {
-        threads.push(cloned!(|tree, shutdown, total| do_cas(tree, shutdown, total)));
-    }
-
-    for _ in 0..args.flag_scan {
-        threads.push(cloned!(|tree, shutdown, total| do_scan(tree, shutdown, total)));
-    }
-
+    #[rustfmt_skip]
+    spin_up![
+        args.flag_get, |t: &Arc<sled::Tree>| t.get(&*byte());
+        args.flag_set, |t: &Arc<sled::Tree>| t.set(byte(), byte());
+        args.flag_del, |t: &Arc<sled::Tree>| t.del(&*byte());
+        args.flag_cas, |t: &Arc<sled::Tree>| if let Err(_) = t.cas(byte(), Some(byte()), Some(byte())) {};
+        args.flag_scan, |t: &Arc<sled::Tree>| t.scan(&*byte())
+            .take(thread_rng().gen_range(1, 3))
+            .collect::<Vec<_>>();
+    ];
 
     let now = std::time::Instant::now();
 
     if args.flag_burn_in {
+        println!("burning in");
+        let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
+
         signal.recv();
         println!("got shutdown signal, cleaning up...");
     } else {

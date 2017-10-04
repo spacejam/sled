@@ -12,7 +12,7 @@ use super::*;
 /// # Examples
 ///
 /// ```
-/// let config = sled::Config::default()
+/// let _config = sled::Config::default()
 ///     .path("/path/to/data".to_owned())
 ///     .cache_capacity(10_000_000_000)
 ///     .use_compression(true)

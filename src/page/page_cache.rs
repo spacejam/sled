@@ -284,6 +284,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             let ptr = pd.into_ptr(scope);
             unsafe {
                 scope.defer_drop(ptr);
+                scope.flush();
             }
         });
     }
@@ -646,6 +647,25 @@ impl<PM, P, R> PageCache<PM, P, R>
                 }
             }
 
+            let mut to_clean;
+
+            {
+                let start = clock();
+                let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
+                let locked = clock();
+                M.accountant_lock.measure(locked - start);
+                to_clean = sa.clean();
+                M.accountant_hold.measure(clock() - locked);
+            }
+
+            if let Some(pid) = to_clean.take() {
+                if let Some((page, key)) = self.get(pid) {
+                    let _ = self.set(pid, key, page);
+                } else {
+                    // FIXME this is possibly some sort of leak
+                }
+            }
+
             result.map(|ok| ok.into()).map_err(|e| Some(e.into()))
         })
     }
@@ -765,6 +785,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                         recovery = r;
                     }
 
+                    // FIXME unwrapped on None, page_cache::merge predecessor
                     let lids = snapshot.pt.get_mut(&prepend.pid).unwrap();
                     lids.push((lsn, log_id));
                 }

@@ -234,8 +234,32 @@ impl Arbitrary for Op {
 }
 
 #[test]
-#[ignore]
-fn segments_connect() {}
+fn multi_segment_invariants() {
+    // ensure segments are being linked
+    // ensure trailers are valid
+    let conf = Config::default().io_buf_size(100);
+    let len = conf.get_io_buf_size() - SEG_HEADER_LEN - SEG_TRAILER_LEN -
+        MSG_HEADER_LEN;
+    let log = conf.log();
+
+    for i in 0..conf.get_io_bufs() * 2 {
+        let buf = vec![i as u8; len];
+        log.write(buf);
+    }
+
+    drop(log);
+
+    let log = conf.log();
+
+    // start iterating just past the first segment header
+    let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
+
+    for i in 0..conf.get_io_bufs() * 2 {
+        let expected = vec![i as u8; len];
+        let (_lsn, _lid, buf) = iter.next().unwrap();
+        assert_eq!(expected, buf);
+    }
+}
 
 #[derive(Debug, Clone)]
 struct OpVec {
