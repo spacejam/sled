@@ -85,13 +85,6 @@ impl IoBufs {
         let mut options = std::fs::OpenOptions::new();
         options.create(true);
         options.write(true);
-
-        #[cfg(target_os = "linux")]
-        #[cfg(feature = "o_direct_writer")]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.custom_flags(libc::O_DIRECT);
-        }
         let mut file = options.open(&path).unwrap();
 
         // println!("recovered_lsn: {} recovered_lid: {}", recovered_lsn, recovered_lid);
@@ -879,6 +872,9 @@ fn bump_offset(v: u32, by: u32) -> u32 {
     v + by
 }
 
+// This function is useful for inducing random jitter into our atomic
+// operations, shaking out more possible interleavings quickly. It gets
+// fully elliminated by the compiler in non-test code.
 #[inline(always)]
 fn debug_delay() {
     #[cfg(test)]

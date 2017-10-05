@@ -2,6 +2,10 @@ use std::ptr;
 
 use super::*;
 
+/// A pending log reservation which can be aborted or completed.
+/// NB the holder should quickly call `complete` or `abort` as
+/// taking too long to decide will cause the underlying IO
+/// buffer to become blocked.
 pub struct Reservation<'a> {
     pub iobufs: &'a IoBufs,
     pub idx: usize,
@@ -23,24 +27,24 @@ impl<'a> Drop for Reservation<'a> {
 }
 
 impl<'a> Reservation<'a> {
-    /// cancel the reservation, placing a failed flush on disk, returning
+    /// Cancel the reservation, placing a failed flush on disk, returning
     /// the (cancelled) log sequence number and file offset.
     pub fn abort(mut self) -> (Lsn, LogID) {
         self.flush(false)
     }
 
-    /// complete the reservation, placing the buffer on disk. returns
+    /// Complete the reservation, placing the buffer on disk. returns
     /// the log sequence number of the write, and the file offset.
     pub fn complete(mut self) -> (Lsn, LogID) {
         self.flush(true)
     }
 
-    /// get the log offset for reading this buffer in the future
+    /// Get the log file offset for reading this buffer in the future.
     pub fn lid(&self) -> LogID {
         self.lid
     }
 
-    /// get the log sequence number for this update
+    /// Get the log sequence number for this update.
     pub fn lsn(&self) -> Lsn {
         self.lsn
     }

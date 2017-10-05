@@ -1,4 +1,4 @@
-/// A simple lock-free radix tree, assumes a dense keyspace.
+/// A simple wait-free, grow-only radix tree, assumes a dense keyspace.
 
 use std::sync::atomic::Ordering::SeqCst;
 
@@ -100,7 +100,12 @@ impl<T> Radix<T>
     }
 
     /// Atomically swap the previous value in a tree with a new one.
-    pub fn swap<'s>(&self, pid: PageID, new: Ptr<'s, T>, scope: &'s Scope) -> Ptr<'s, T> {
+    pub fn swap<'s>(
+        &self,
+        pid: PageID,
+        new: Ptr<'s, T>,
+        scope: &'s Scope,
+    ) -> Ptr<'s, T> {
         let tip = traverse(self.head.load(SeqCst, scope), pid, true, scope);
         unsafe { tip.deref().inner.swap(new, SeqCst, scope) }
     }
@@ -176,7 +181,12 @@ fn traverse<'s, T: 'static + Send>(
         }
 
         let next_child = Owned::new(Node::default()).into_ptr(scope);
-        let ret = children[child_index].compare_and_swap(next_ptr, next_child, SeqCst, scope);
+        let ret = children[child_index].compare_and_swap(
+            next_ptr,
+            next_child,
+            SeqCst,
+            scope,
+        );
         if ret.is_ok() && !test_fail() {
             // CAS worked
             next_ptr = next_child;

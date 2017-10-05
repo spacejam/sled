@@ -1,3 +1,67 @@
+//! The `SegmentAccountant` is an allocator for equally-
+//! sized chunks of the underlying storage file (segments).
+//!
+//! It must maintain these critical safety properties:
+//!
+//! A. We must not overwrite existing segments when they
+//!    contain the most-recent stable state for a page.
+//! B. We must not overwrite existing segments when active
+//!    threads may have references to LogID's that point
+//!    into those segments.
+//!
+//! To complicate matters, the `PageCache` only knows
+//! when it has put a page into an IO buffer, but it
+//! doesn't keep track of when that IO buffer is
+//! stabilized (until write coalescing is implemented).
+//!
+//! To address these safety concerns, we rely on
+//! these techniques:
+//!
+//! 1. We delay the reuse of any existing segment
+//!    by ensuring there are at least <# io buffers>
+//!    freed segments in front of the newly freed
+//!    segment in the free list. This ensures that
+//!    any pending IO buffer writes will hit
+//!    stable storage before we overwrite the
+//!    segment that may have contained the previous
+//!    latest stable copy of a page's state.
+//! 2. we use a `SegmentDropper` that guarantees
+//!    any segment that has been logically freed
+//!    or emptied by the `PageCache` will have its
+//!    addition to the free segment list be delayed
+//!    until any active threads that were acting on
+//!    the shared state have checked-out.
+//!
+//! Another concern that arises due to the fact that
+//! IO buffers may be written out-of-order is the
+//! correct recovery of segments. If there is data
+//! loss in recently written segments, we must be
+//! careful to preserve linearizability in the log.
+//! To do this, we must detect "torn segments" that
+//! were not able to be fully written before a crash
+//! happened. We detect torn individual segments by
+//! writing a `SegmentTrailer` to the end of the
+//! segment AFTER we have sync'd it. If the trailer
+//! is not present during recovery, the recovery
+//! process will not continue to a segment that
+//! may contain logically later data.
+//!
+//! But what if we wrote a later segment, and its
+//! trailer, before we were able to write its
+//! immediate predecessor segment, and then a
+//! crash happened? We must preserve linearizability,
+//! so we can not accidentally recover the later
+//! segment when its predecessor was lost in the crash.
+//!
+//! 3. This case is solved again by having used
+//!    <# io buffers> segments before reuse. We guarantee
+//!    that the last <# io buffers> segments will be
+//!    present, which means we can write a "previous
+//!    log sequence number pointer" to the header of
+//!    each segment. During recovery, if these previous
+//!    segment Lsn pointers don't match up, we know we
+//!    have encountered a lost segment, and we will not
+//!    continue the recovery past the detected gap.
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fs::File;
 use std::sync::{Arc, Mutex};
@@ -6,6 +70,9 @@ use coco::epoch::{Owned, pin};
 
 use super::*;
 
+/// The segment accountant keeps track of the logical blocks
+/// of storage. It scans through all segments quickly during
+/// recovery and attempts to locate torn segments.
 #[derive(Default, Debug)]
 pub struct SegmentAccountant {
     // static or one-time set
@@ -13,7 +80,7 @@ pub struct SegmentAccountant {
     recovered_lsn: Lsn,
     recovered_lid: LogID,
 
-    // can be sharded
+    // TODO these should be sharded to improve performance
     segments: Vec<Segment>,
     pending_clean: HashSet<PageID>,
 
@@ -43,6 +110,11 @@ impl Drop for SegmentDropper {
     }
 }
 
+/// A `Segment` holds the bookkeeping information for
+/// a contiguous block of the disk. It may contain many
+/// fragments from different pages. Over time, we track
+/// when segments become reusable and allow them to be
+/// overwritten for new data.
 #[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct Segment {
     pub pids: HashSet<PageID>,
@@ -59,6 +131,8 @@ impl SegmentAccountant {
         ret
     }
 
+    /// Called from the `PageCache` recovery logic, this initializes the
+    /// `SegmentAccountant` based on recovered segment information.
     pub fn initialize_from_segments(&mut self, mut segments: Vec<Segment>) {
         let safety_buffer = self.config.get_io_bufs();
         let logical_tail: Vec<LogID> = self.ordering
@@ -75,15 +149,15 @@ impl SegmentAccountant {
             if segment.pids.is_empty() {
                 // can be reused immediately
                 segment.freed = true;
-                // println!("pushing free {} to free list in initialization", segment_start);
+                trace!("pid {} freed @initialize_from_segments", segment_start);
 
                 if logical_tail.contains(&segment_start) {
-                    // we depend on the invariant that the last segments always link together,
-                    // so that we can detect torn segments during recovery.
+                    // we depend on the invariant that the last segments
+                    // always link together, so that we can detect torn
+                    // segments during recovery.
                     self.ensure_safe_free_distance();
                 }
 
-                // println!("pushing segment {} to free from initialize", segment_start);
                 self.free.lock().unwrap().push_back(segment_start);
             } else if segment.pids.len() as f64 / segment.pids_len as f64 <=
                        self.config.get_segment_cleanup_threshold()
@@ -96,9 +170,8 @@ impl SegmentAccountant {
         self.segments = segments;
     }
 
-    /// Scan the log file if we don't know of any
-    /// Lsn offsets yet, and recover the order of
-    /// segments, and the highest Lsn.
+    /// Scan the log file if we don't know of any Lsn offsets yet, and recover
+    /// the order of segments, and the highest Lsn.
     fn scan_segment_lsns(&mut self) {
         if self.is_recovered() {
             return;
@@ -107,33 +180,34 @@ impl SegmentAccountant {
         let segment_len = self.config.get_io_buf_size() as LogID;
         let mut cursor = 0;
 
-        {
-            let cached_f = self.config.cached_file();
-            let mut f = cached_f.borrow_mut();
-            loop {
-                // in the future this can be optimized to just read
-                // the initial header at that position... but we need to
-                // make sure the segment is not torn
-                if let Ok(segment) = f.read_segment_header(cursor) {
-                    if segment.ok {
-                        self.recover(segment.lsn, cursor);
-                    } else {
-                        // TODO DATA CORRUPTION AAHHHHHH
-                        panic!("detected corrupt segment header at {}", cursor);
-                    }
-                    cursor += segment_len;
+        let cached_f = self.config.cached_file();
+        let mut f = cached_f.borrow_mut();
+        loop {
+            // in the future this can be optimized to just read
+            // the initial header at that position... but we need to
+            // make sure the segment is not torn
+            if let Ok(segment) = f.read_segment_header(cursor) {
+                if segment.ok {
+                    self.recover(segment.lsn, cursor);
                 } else {
-                    break;
+                    // TODO DATA CORRUPTION AAHHHHHH
+                    // add to free list? can't break...
+                    panic!("detected corrupt segment header at {}", cursor);
                 }
+                cursor += segment_len;
+            } else {
+                break;
             }
-
-            // println!("scanned in lsns {:?}", self.ordering);
-
-            self.clean_tail_tears(&mut f);
-            // NB implicit drop of f
         }
 
-        // println!("trying to get highest lsn in segment for lsn {}", self.recovered_lsn);
+        // Check that the last <# io buffers> segments properly
+        // link their previous segment pointers.
+        self.clean_tail_tears(&mut f);
+
+        // Drop the file so that the `Iter` below is able to borrow
+        // the thread's file handle.
+        drop(f);
+
         let mut empty_tip = true;
 
         let max = self.ordering.iter().rev().nth(0);
@@ -148,8 +222,10 @@ impl SegmentAccountant {
             let segment_ceiling = segment_base + segment_len -
                 SEG_TRAILER_LEN as LogID -
                 MSG_HEADER_LEN as LogID;
+
             trace!(
-                "segment accountant recovering segment at lsn: {} read_offset: {}",
+                "segment accountant recovering segment at lsn: {} \
+                read_offset: {}",
                 base_lsn,
                 lid
             );
@@ -166,17 +242,13 @@ impl SegmentAccountant {
             };
 
             while let Some((_lsn, lid, _buf)) = iter.next() {
-                // println!("got a thing...");
                 empty_tip = false;
                 tip = lid;
-
-                // println!("tip in recover: {}", tip);
-                // println!("ceiling in recover: {}", segment_ceiling);
                 assert!(tip <= segment_ceiling);
             }
 
             if !empty_tip {
-                let cached_f = self.config.cached_file();
+                // if we found any later
                 let mut f = cached_f.borrow_mut();
                 let (_, _, len) = f.read_entry(
                     tip,
@@ -210,7 +282,7 @@ impl SegmentAccountant {
 
         if empty_tip && max.is_some() {
             let lid = *max.unwrap().0;
-            // println!("pushing free {} to free list in new", lid);
+            debug!("freed empty segment {} while recovering segments", lid);
             self.free.lock().unwrap().push_front(lid);
         }
 
@@ -221,6 +293,11 @@ impl SegmentAccountant {
         );
     }
 
+    // This ensures that the last <# io buffers> segments on
+    // disk connect via their previous segment pointers in
+    // the header. This is important because we expect that
+    // the last <# io buffers> segments will join up, and we
+    // never reuse buffers within this safety range.
     fn clean_tail_tears(&mut self, f: &mut File) {
         let safety_buffer = self.config.get_io_bufs();
         let logical_tail: Vec<(Lsn, LogID)> = self.ordering
@@ -235,7 +312,6 @@ impl SegmentAccountant {
         for (i, &(_lsn, lid)) in logical_tail.iter().enumerate() {
             if i + 1 == logical_tail.len() {
                 // we've reached the end, nothing to check after
-                // println!("breaking clean_tail_tears");
                 break;
             }
 
@@ -255,7 +331,8 @@ impl SegmentAccountant {
             if expected_prev != actual_prev {
                 // detected a tear, everything after
                 error!(
-                    "detected corruption during recovery for segment at {}! expected prev lid: {} actual: {} in last chain {:?}",
+                    "detected corruption during recovery for segment at {}! \
+                    expected prev lid: {} actual: {} in last chain {:?}",
                     lid,
                     expected_prev,
                     actual_prev,
@@ -274,7 +351,8 @@ impl SegmentAccountant {
 
                 self.free.lock().unwrap().push_back(lid_to_chop);
                 self.ordering.remove(&lsn_to_chop);
-                // TODO write zeroes to these segments
+                // TODO write zeroes to these segments to reduce
+                // false recovery.
             }
         }
     }
@@ -287,18 +365,22 @@ impl SegmentAccountant {
         self.recovered_lsn
     }
 
-    /// this will cause all new allocations to occur at the end of the log, which
+    /// Causes all new allocations to occur at the end of the file, which
     /// is necessary to preserve consistency while concurrently iterating through
     /// the log during snapshot creation.
     pub fn pause_rewriting(&mut self) {
         self.pause_rewriting = true;
     }
 
-    /// this re-enables segment rewriting after they no longer contain fresh data.
+    /// Re-enables segment rewriting after iteration is complete.
     pub fn resume_rewriting(&mut self) {
         self.pause_rewriting = false;
     }
 
+    /// Called by the `PageCache` when a page has been freed. We
+    /// mark each segment that contained its updates accordingly.
+    /// If any of those segments are now reusable or candidates for
+    /// accelerated cleaning, we mark the appropriate structures.
     pub fn freed(&mut self, pid: PageID, old_lids: Vec<LogID>, lsn: Lsn) {
         self.pending_clean.remove(&pid);
 
@@ -323,10 +405,9 @@ impl SegmentAccountant {
                 // can be reused immediately
                 self.segments[idx].freed = true;
                 self.to_clean.remove(&segment_start);
-                // println!("pushing free {} to free list in freed", segment_start);
+                trace!("freed segment {} while freeing page", segment_start);
                 self.ensure_safe_free_distance();
 
-                // println!("pushing to free from freed: {}", segment_start);
                 pin(|scope| {
                     let pd = Owned::new(
                         SegmentDropper(segment_start, self.free.clone()),
@@ -347,6 +428,10 @@ impl SegmentAccountant {
         }
     }
 
+    /// Called by the `PageCache` when a page has been rewritten completely.
+    /// We mark all of the old segments that contained the previous state
+    /// from the page, and if the old segments are empty or clear enough to
+    /// begin accelerated cleaning we mark them as so.
     pub fn set(
         &mut self,
         pid: PageID,
@@ -393,10 +478,9 @@ impl SegmentAccountant {
                 // can be reused immediately
                 self.segments[idx].freed = true;
                 self.to_clean.remove(&segment_start);
-                // println!("pushing free {} to free list from set", segment_start);
+                trace!("freed segment {} in set", segment_start);
                 self.ensure_safe_free_distance();
 
-                // println!("pushing to free from set: {}", segment_start);
                 pin(|scope| {
                     let pd = Owned::new(
                         SegmentDropper(segment_start, self.free.clone()),
@@ -419,6 +503,9 @@ impl SegmentAccountant {
         self.merged(pid, new_lid, lsn);
     }
 
+    /// Called from `PageCache` when some state has been added
+    /// to a logical page at a particular offset. We ensure the
+    /// page is present in the segment's page set.
     pub fn merged(&mut self, pid: PageID, lid: LogID, lsn: Lsn) {
         self.pending_clean.remove(&pid);
 
@@ -438,15 +525,13 @@ impl SegmentAccountant {
             return;
         }
 
-        //assert_ne!(segment.lsn, 0);
-
         segment.pids.insert(pid);
     }
 
     fn bump_tip(&mut self) -> LogID {
         let lid = self.tip;
         self.tip += self.config.get_io_buf_size() as LogID;
-        // println!("SA advancing tip from {} to {}", lid, self.tip);
+        trace!("advancing file tip from {} to {}", lid, self.tip);
         lid
     }
 
@@ -526,6 +611,8 @@ impl SegmentAccountant {
         (lid, last_given)
     }
 
+    /// Called by the `PageCache` to find useful pages
+    /// it should try to rewrite.
     pub fn clean(&mut self) -> Option<PageID> {
         if self.free.lock().unwrap().len() >=
             self.config.get_min_free_segments() ||
@@ -549,13 +636,14 @@ impl SegmentAccountant {
         None
     }
 
+    /// Returns an iterator over a snapshot of current segment
+    /// log sequence numbers and their corresponding file offsets.
     pub fn segment_snapshot_iter_from(
         &self,
         lsn: Lsn,
     ) -> Box<Iterator<Item = (Lsn, LogID)>> {
         let segment_len = self.config.get_io_buf_size() as Lsn;
         let normalized_lsn = lsn / segment_len * segment_len;
-        // println!("ordering >= {}: {:?}", lsn, self.ordering);
         Box::new(self.ordering.clone().into_iter().filter(move |&(l, _)| {
             l >= normalized_lsn
         }))
@@ -565,7 +653,9 @@ impl SegmentAccountant {
         !self.segments.is_empty()
     }
 
-    pub fn recover(&mut self, lsn: Lsn, lid: LogID) {
+    // Mark a specific segment as being present at a particular
+    // file offset.
+    fn recover(&mut self, lsn: Lsn, lid: LogID) {
         // println!("recovered lsn {} at lid {}", lsn, lid);
         let idx = lid as usize / self.config.get_io_buf_size();
 
@@ -604,7 +694,7 @@ fn basic_workflow() {
 
     sa.merged(0, first, lsn());
 
-    // assert that sets for the same pid don't yield anything to clean yet
+    // Assert that sets for the same pid don't yield anything to clean yet.
     sa.set(0, vec![first], first, lsn());
     assert_eq!(sa.clean(), None);
     sa.set(0, vec![first], first, lsn());
@@ -614,7 +704,8 @@ fn basic_workflow() {
     sa.set(0, vec![first], first, lsn());
     assert_eq!(sa.clean(), None);
 
-    // assert that when we roll over to the next log, we can immediately reuse first
+    // Assert that when we roll over to the next log, we can immediately
+    // reuse first.
     let _fourth = sa.next(lsn()).0;
     sa.set(0, vec![first], second, lsn());
     assert_eq!(sa.clean(), None);
@@ -624,7 +715,7 @@ fn basic_workflow() {
     sa.merged(4, second, lsn());
     sa.merged(5, second, lsn());
 
-    // now move a page from second to third, and assert pid 1 can be cleaned
+    // Move a page from second to third, and assert pid 1 can be cleaned.
     sa.set(0, vec![second], third, lsn());
     sa.set(2, vec![second], third, lsn());
     sa.set(3, vec![second], third, lsn());

@@ -95,6 +95,7 @@ impl Dll {
         ptr
     }
 
+    #[cfg(test)]
     pub fn push_tail(&mut self, item: PageID) {
         self.len += 1;
 
@@ -131,6 +132,7 @@ impl Dll {
         }
     }
 
+    #[cfg(test)]
     pub fn pop_head(&mut self) -> Option<PageID> {
         if self.head.is_null() {
             return None;
@@ -193,6 +195,7 @@ impl Dll {
         node.inner
     }
 
+    #[cfg(test)]
     pub fn into_vec(mut self) -> Vec<PageID> {
         let mut res = vec![];
         while let Some(val) = self.pop_head() {

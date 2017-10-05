@@ -32,7 +32,7 @@ use super::*;
 /// assert_eq!(iter.next(), None);
 /// ```
 pub struct Log {
-    /// iobufs is the underlying IO writer
+    /// iobufs is the underlying lock-free IO write buffer.
     pub iobufs: Arc<IoBufs>,
     flusher_shutdown: Arc<AtomicBool>,
     flusher_handle: Option<std::thread::JoinHandle<()>>,

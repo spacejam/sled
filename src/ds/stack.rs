@@ -125,7 +125,12 @@ impl<T: Send + 'static> Stack<T> {
                 match unsafe { head.as_ref() } {
                     Some(h) => {
                         let next = h.next.load(SeqCst, scope);
-                        match self.head.compare_and_swap(head, next, SeqCst, scope) {
+                        match self.head.compare_and_swap(
+                            head,
+                            next,
+                            SeqCst,
+                            scope,
+                        ) {
                             Ok(()) => unsafe {
                                 scope.defer_free(head);
                                 return Some(ptr::read(&h.inner));
@@ -208,7 +213,10 @@ pub struct StackIter<'a, T>
 impl<'a, T> StackIter<'a, T>
     where T: 'a + Send + 'static + Sync
 {
-    pub fn from_ptr<'b>(ptr: Ptr<'b, Node<T>>, scope: &'b Scope) -> StackIter<'b, T> {
+    pub fn from_ptr<'b>(
+        ptr: Ptr<'b, Node<T>>,
+        scope: &'b Scope,
+    ) -> StackIter<'b, T> {
         StackIter {
             inner: ptr,
             scope: scope,
