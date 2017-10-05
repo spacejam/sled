@@ -29,142 +29,6 @@ struct IoBuf {
 
 unsafe impl Sync for IoBuf {}
 
-impl Debug for IoBuf {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        let header = self.get_header();
-        formatter.write_fmt(format_args!(
-            "\n\tIoBuf {{ log_offset: {}, n_writers: {}, offset: \
-                                          {}, sealed: {} }}",
-            self.get_log_offset(),
-            n_writers(header),
-            offset(header),
-            is_sealed(header)
-        ))
-    }
-}
-
-impl IoBuf {
-    fn new(buf_size: usize) -> IoBuf {
-        IoBuf {
-            buf: UnsafeCell::new(vec![0; buf_size]),
-            header: AtomicUsize::new(0),
-            log_offset: AtomicUsize::new(std::usize::MAX),
-            lsn: AtomicUsize::new(0),
-            capacity: AtomicUsize::new(0),
-            maxed: AtomicBool::new(false),
-        }
-    }
-
-    fn store_segment_header(&self, lsn: Lsn, prev: LogID) {
-        debug!("storing lsn {} in beginning of buffer", lsn);
-
-        // set internal
-        self.set_lsn(lsn);
-
-        // generate bytes
-        let header = SegmentHeader {
-            lsn: lsn,
-            prev: prev,
-            ok: true,
-        };
-        let header_bytes: [u8; SEG_HEADER_LEN] = header.into();
-
-        assert!(self.get_capacity() >= SEG_HEADER_LEN + SEG_TRAILER_LEN);
-
-        // write normal message into buffer
-        unsafe {
-            (*self.buf.get())[0..SEG_HEADER_LEN].copy_from_slice(&header_bytes);
-        }
-
-        // bump offset
-        let bumped = bump_offset(0, SEG_HEADER_LEN as u32);
-        self.set_header(bumped);
-    }
-
-    fn zero_remainder(&self) {
-        let offset = offset(self.get_header()) as usize;
-        let cap = self.get_capacity() as usize;
-        unsafe {
-            let remainder = &(&**self.buf.get())[offset..cap];
-            std::ptr::write_bytes(
-                remainder.as_ptr() as *mut u8,
-                0,
-                cap - offset,
-            );
-        }
-    }
-
-    fn set_capacity(&self, cap: usize) {
-        debug_delay();
-        self.capacity.store(cap, SeqCst);
-    }
-
-    fn get_capacity(&self) -> usize {
-        debug_delay();
-        self.capacity.load(SeqCst)
-    }
-
-    fn set_lsn(&self, lsn: Lsn) {
-        debug_delay();
-        self.lsn.store(lsn as usize, SeqCst);
-    }
-
-    fn set_maxed(&self, maxed: bool) {
-        debug_delay();
-        self.maxed.store(maxed, SeqCst);
-    }
-
-    fn get_maxed(&self) -> bool {
-        debug_delay();
-        self.maxed.load(SeqCst)
-    }
-
-    fn get_lsn(&self) -> Lsn {
-        debug_delay();
-        self.lsn.load(SeqCst) as Lsn
-    }
-
-    fn set_log_offset(&self, offset: LogID) {
-        debug_delay();
-        self.log_offset.store(offset as usize, SeqCst);
-    }
-
-    fn get_log_offset(&self) -> LogID {
-        debug_delay();
-        self.log_offset.load(SeqCst) as LogID
-    }
-
-    fn get_header(&self) -> u32 {
-        debug_delay();
-        self.header.load(SeqCst) as u32
-    }
-
-    fn set_header(&self, new: u32) {
-        debug_delay();
-        self.header.store(new as usize, SeqCst);
-    }
-
-    fn cas_header(&self, old: u32, new: u32) -> Result<u32, u32> {
-        debug_delay();
-        let res = self.header.compare_and_swap(
-            old as usize,
-            new as usize,
-            SeqCst,
-        ) as u32;
-        if res == old { Ok(new) } else { Err(res) }
-    }
-
-    fn cas_log_offset(&self, old: LogID, new: LogID) -> Result<LogID, LogID> {
-        debug_delay();
-        let res = self.log_offset.compare_and_swap(
-            old as usize,
-            new as usize,
-            SeqCst,
-        ) as LogID;
-        if res == old { Ok(new) } else { Err(res) }
-    }
-}
-
 pub struct IoBufs {
     config: Config,
     bufs: Vec<IoBuf>,
@@ -182,22 +46,6 @@ pub struct IoBufs {
     stable: AtomicUsize,
     file_for_writing: Mutex<std::fs::File>,
     pub segment_accountant: Mutex<SegmentAccountant>,
-}
-
-impl Debug for IoBufs {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        debug_delay();
-        let current_buf = self.current_buf.load(SeqCst);
-        debug_delay();
-        let written_bufs = self.written_bufs.load(SeqCst);
-
-        formatter.write_fmt(format_args!(
-            "IoBufs {{ sealed: {}, written: {}, bufs: {:?} }}",
-            current_buf,
-            written_bufs,
-            self.bufs
-        ))
-    }
 }
 
 /// `IoBufs` is a set of lock-free buffers for coordinating
@@ -308,6 +156,42 @@ impl IoBufs {
         self.stable.load(SeqCst) as Lsn
     }
 
+    // Adds a header to the buffer, and optionally compresses
+    // the buffer.
+    // NB the caller is responsible for later
+    // setting the Lsn bytes after a reservation has been
+    // acquired.
+    fn encapsulate(&self, raw_buf: Vec<u8>) -> Vec<u8> {
+        #[cfg(feature = "zstd")]
+        let buf = if self.config.get_use_compression() {
+            let start = clock();
+            let res = compress(&*raw_buf, 5).unwrap();
+            M.compress.measure(clock() - start);
+            res
+        } else {
+            raw_buf
+        };
+
+        #[cfg(not(feature = "zstd"))]
+        let buf = raw_buf;
+
+        let crc16 = crc16_arr(&buf);
+
+        let header = MessageHeader {
+            valid: true,
+            lsn: 0,
+            len: buf.len(),
+            crc16: crc16,
+        };
+
+        let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
+
+        let mut out = vec![0; MSG_HEADER_LEN + buf.len()];
+        out[0..MSG_HEADER_LEN].copy_from_slice(&header_bytes);
+        out[MSG_HEADER_LEN..].copy_from_slice(&*buf);
+        out
+    }
+
     /// Tries to claim a reservation for writing a buffer to a
     /// particular location in stable storge, which may either be
     /// completed or aborted later. Useful for maintaining
@@ -323,7 +207,7 @@ impl IoBufs {
 
         assert_eq!((raw_buf.len() + MSG_HEADER_LEN) >> 32, 0);
 
-        let buf = encapsulate(raw_buf, 0, self.config.get_use_compression());
+        let buf = self.encapsulate(raw_buf);
 
         assert!(
             buf.len() <=
@@ -592,8 +476,6 @@ impl IoBufs {
                 let lsn = iobuf.get_lsn();
                 let low_lsn = lsn + res_len as Lsn;
                 self.mark_interval((low_lsn, next_lsn));
-                // TODO zero out the end of the buffer.
-                iobuf.zero_remainder();
             }
 
             let (next_offset, last_given) = sa.next(next_lsn);
@@ -820,35 +702,143 @@ impl Drop for IoBufs {
     }
 }
 
-fn encapsulate(raw_buf: Vec<u8>, lsn: Lsn, _use_compression: bool) -> Vec<u8> {
-    #[cfg(feature = "zstd")]
-    let buf = if _use_compression {
-        let start = clock();
-        let res = compress(&*raw_buf, 5).unwrap();
-        M.compress.measure(clock() - start);
-        res
-    } else {
-        raw_buf
-    };
+impl Debug for IoBufs {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        debug_delay();
+        let current_buf = self.current_buf.load(SeqCst);
+        debug_delay();
+        let written_bufs = self.written_bufs.load(SeqCst);
 
-    #[cfg(not(feature = "zstd"))]
-    let buf = raw_buf;
+        formatter.write_fmt(format_args!(
+            "IoBufs {{ sealed: {}, written: {}, bufs: {:?} }}",
+            current_buf,
+            written_bufs,
+            self.bufs
+        ))
+    }
+}
 
-    let crc16 = crc16_arr(&buf);
+impl Debug for IoBuf {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        let header = self.get_header();
+        formatter.write_fmt(format_args!(
+            "\n\tIoBuf {{ log_offset: {}, n_writers: {}, offset: \
+                                          {}, sealed: {} }}",
+            self.get_log_offset(),
+            n_writers(header),
+            offset(header),
+            is_sealed(header)
+        ))
+    }
+}
 
-    let header = MessageHeader {
-        valid: true,
-        lsn: lsn,
-        len: buf.len(),
-        crc16: crc16,
-    };
+impl IoBuf {
+    fn new(buf_size: usize) -> IoBuf {
+        IoBuf {
+            buf: UnsafeCell::new(vec![0; buf_size]),
+            header: AtomicUsize::new(0),
+            log_offset: AtomicUsize::new(std::usize::MAX),
+            lsn: AtomicUsize::new(0),
+            capacity: AtomicUsize::new(0),
+            maxed: AtomicBool::new(false),
+        }
+    }
 
-    let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
+    // This is called upon the initialization of a fresh segment.
+    // We write a new segment header to the beginning of the buffer
+    // for assistance during recovery. The caller is responsible
+    // for ensuring that the IoBuf's capacity has been set properly.
+    fn store_segment_header(&self, lsn: Lsn, prev: LogID) {
+        debug!("storing lsn {} in beginning of buffer", lsn);
+        assert!(self.get_capacity() >= SEG_HEADER_LEN + SEG_TRAILER_LEN);
 
-    let mut out = vec![0; MSG_HEADER_LEN + buf.len()];
-    out[0..MSG_HEADER_LEN].copy_from_slice(&header_bytes);
-    out[MSG_HEADER_LEN..].copy_from_slice(&*buf);
-    out
+        self.set_lsn(lsn);
+
+        let header = SegmentHeader {
+            lsn: lsn,
+            prev: prev,
+            ok: true,
+        };
+        let header_bytes: [u8; SEG_HEADER_LEN] = header.into();
+
+        unsafe {
+            (*self.buf.get())[0..SEG_HEADER_LEN].copy_from_slice(&header_bytes);
+        }
+
+        // ensure writes to the buffer land after our header.
+        let bumped = bump_offset(0, SEG_HEADER_LEN as u32);
+        self.set_header(bumped);
+    }
+
+    fn set_capacity(&self, cap: usize) {
+        debug_delay();
+        self.capacity.store(cap, SeqCst);
+    }
+
+    fn get_capacity(&self) -> usize {
+        debug_delay();
+        self.capacity.load(SeqCst)
+    }
+
+    fn set_lsn(&self, lsn: Lsn) {
+        debug_delay();
+        self.lsn.store(lsn as usize, SeqCst);
+    }
+
+    fn set_maxed(&self, maxed: bool) {
+        debug_delay();
+        self.maxed.store(maxed, SeqCst);
+    }
+
+    fn get_maxed(&self) -> bool {
+        debug_delay();
+        self.maxed.load(SeqCst)
+    }
+
+    fn get_lsn(&self) -> Lsn {
+        debug_delay();
+        self.lsn.load(SeqCst) as Lsn
+    }
+
+    fn set_log_offset(&self, offset: LogID) {
+        debug_delay();
+        self.log_offset.store(offset as usize, SeqCst);
+    }
+
+    fn get_log_offset(&self) -> LogID {
+        debug_delay();
+        self.log_offset.load(SeqCst) as LogID
+    }
+
+    fn get_header(&self) -> u32 {
+        debug_delay();
+        self.header.load(SeqCst) as u32
+    }
+
+    fn set_header(&self, new: u32) {
+        debug_delay();
+        self.header.store(new as usize, SeqCst);
+    }
+
+    fn cas_header(&self, old: u32, new: u32) -> Result<u32, u32> {
+        debug_delay();
+        let res = self.header.compare_and_swap(
+            old as usize,
+            new as usize,
+            SeqCst,
+        ) as u32;
+        if res == old { Ok(new) } else { Err(res) }
+    }
+
+    fn cas_log_offset(&self, old: LogID, new: LogID) -> Result<LogID, LogID> {
+        debug_delay();
+        let res = self.log_offset.compare_and_swap(
+            old as usize,
+            new as usize,
+            SeqCst,
+        ) as LogID;
+        if res == old { Ok(new) } else { Err(res) }
+    }
 }
 
 #[inline(always)]
