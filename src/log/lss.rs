@@ -161,26 +161,21 @@ impl Log {
 
         // NB we make sure stable > lsn because stable starts at 0,
         // before we write the 0th byte of the file.
-        // println!("before loop, waiting on lsn {}", lsn);
         while self.iobufs.stable() <= lsn {
-            // println!("stable is {}", self.iobufs.stable());
-            // println!("top of loop");
             self.iobufs.flush();
 
             // block until another thread updates the stable lsn
             let waiter = self.iobufs.intervals.lock().unwrap();
 
             if self.iobufs.stable() <= lsn {
-                // println!("waiting on cond var");
+                trace!("waiting on cond var for make_stable({})", lsn);
                 let _waiter =
                     self.iobufs.interval_updated.wait(waiter).unwrap();
-            //println!("back from cond var");
             } else {
+                trace!("make_stable({}) returning", lsn);
                 break;
             }
         }
-
-        // println!("make_stable({}) returning", lsn);
 
         M.make_stable.measure(clock() - start);
     }
