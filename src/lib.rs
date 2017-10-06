@@ -20,7 +20,6 @@
 #[macro_use]
 extern crate serde_derive;
 extern crate serde;
-extern crate crossbeam;
 extern crate coco;
 extern crate bincode;
 extern crate historian;
@@ -30,8 +29,6 @@ extern crate lazy_static;
 extern crate env_logger;
 #[macro_use]
 extern crate log as _log;
-#[cfg(target_os = "linux")]
-extern crate libc;
 #[cfg(feature = "rayon")]
 extern crate rayon;
 #[cfg(feature = "zstd")]

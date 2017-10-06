@@ -1,8 +1,7 @@
 use std::io::{Read, Seek, Write};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use crossbeam::sync::AtomicOption;
 use coco::epoch::{Owned, Ptr, Scope, pin};
 
 #[cfg(feature = "rayon")]
@@ -86,29 +85,7 @@ pub struct PageCache<PM, P, R>
     log: Log,
     lru: Lru,
     updates: AtomicUsize,
-    last_snapshot: AtomicOption<Snapshot<R>>,
-}
-
-impl<PM, P, R> Drop for PageCache<PM, P, R>
-    where PM: Materializer<PageFrag = P, Recovery = R>,
-          PM: Send + Sync,
-          P: 'static
-                 + Debug
-                 + PartialEq
-                 + Clone
-                 + Serialize
-                 + DeserializeOwned
-                 + Send
-                 + Sync,
-          R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
-{
-    fn drop(&mut self) {
-        // this is necessary because AtomicOption leaks
-        // the inner object if left on its own
-        self.last_snapshot.take(SeqCst);
-
-        trace!("PageCache dropped");
-    }
+    last_snapshot: Mutex<Option<Snapshot<R>>>,
 }
 
 unsafe impl<PM, P, R> Send for PageCache<PM, P, R>
@@ -182,10 +159,6 @@ impl<PM, P, R> PageCache<PM, P, R>
         let cache_shard_bits = config.get_cache_bits();
         let lru = Lru::new(cache_capacity, cache_shard_bits);
 
-        let snapshot = read_snapshot(&config);
-        let last_snapshot = AtomicOption::new();
-        last_snapshot.swap(snapshot, SeqCst);
-
         PageCache {
             t: pm,
             config: config.clone(),
@@ -195,29 +168,37 @@ impl<PM, P, R> PageCache<PM, P, R>
             log: Log::start_system(config),
             lru: lru,
             updates: AtomicUsize::new(0),
-            last_snapshot: last_snapshot,
+            last_snapshot: Mutex::new(None),
         }
     }
 
     /// Read updates from the log, apply them to our pagecache.
     pub fn recover(&mut self) -> Option<R> {
-        // we call write_snapshot here to "catch-up" the snapshot before
-        // recovering from it. this allows us to reuse the snapshot
-        // generation logic as initial log parsing logic. this is also
-        // important for ensuring that we feed the provided `Materializer`
+        // we call write_snapshot here to "catch-up" the snapshot using the
+        // logged updates before recovering from it. this allows us to reuse
+        // the snapshot generation logic as initial log parsing logic. this is
+        // also important for ensuring that we feed the provided `Materializer`
         // a single, linearized history, rather than going back in time
         // when generating a snapshot.
         self.write_snapshot();
 
-        // we then read it back,
-        let snapshot = self.advance_snapshot();
-        let recovery = snapshot.recovery.clone();
-        self.last_snapshot.swap(snapshot, SeqCst);
+        // now we read it back in
+        self.read_snapshot();
+        self.load_snapshot();
+
+        let mu = &self.last_snapshot.lock().unwrap();
+
+        let recovery = if let Some(ref snapshot) = **mu {
+            snapshot.recovery.clone()
+        } else {
+            None
+        };
 
         debug!(
             "recovery complete, returning recovery state to PageCache owner: {:?}",
             recovery
         );
+
         recovery
     }
 
@@ -648,8 +629,8 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         let prefix = self.config.snapshot_prefix();
 
-        let snapshot_opt = self.last_snapshot.take(SeqCst);
-        if snapshot_opt.is_none() {
+        let snapshot_opt_res = self.last_snapshot.try_lock();
+        if snapshot_opt_res.is_err() {
             // some other thread is snapshotting
             warn!(
                 "snapshot skipped because previous attempt \
@@ -658,12 +639,14 @@ impl<PM, P, R> PageCache<PM, P, R>
             M.write_snapshot.measure(clock() - start);
             return;
         }
+        let mut snapshot_opt = snapshot_opt_res.unwrap();
+        let mut snapshot =
+            snapshot_opt.take().unwrap_or_else(|| Snapshot::default());
 
         // we disable rewriting so that our log becomes append-only,
         // allowing us to iterate through it without corrupting ourselves.
         self.log.with_sa(|sa| sa.pause_rewriting());
 
-        let mut snapshot = snapshot_opt.unwrap();
 
         trace!("building on top of old snapshot: {:?}", snapshot);
 
@@ -836,8 +819,6 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         let crc64: [u8; 8] = unsafe { std::mem::transmute(crc64(&*bytes)) };
 
-        self.last_snapshot.swap(snapshot, SeqCst);
-
         let path_1 = format!("{}.{}.in___motion", prefix, max_lsn);
         let path_2 = format!("{}.{}", prefix, max_lsn);
         let mut f = std::fs::OpenOptions::new()
@@ -877,49 +858,99 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         self.log.with_sa(|sa| sa.resume_rewriting());
 
+        // NB replacing the snapshot must come after the resume_rewriting call
+        // otherwise we create a race condition where we corrupt an in-progress
+        // snapshot generating iterator.
+        *snapshot_opt = Some(snapshot);
+
         M.write_snapshot.measure(clock() - start);
     }
 
-    fn advance_snapshot(&mut self) -> Snapshot<R> {
-        let snapshot = read_snapshot(&self.config);
+    fn read_snapshot(&self) {
+        let mut candidates = self.config.get_snapshot_files();
+        if candidates.is_empty() {
+            info!("no previous snapshot found");
+            return;
+        }
 
-        self.load_snapshot(&snapshot);
+        candidates.sort_by_key(
+            |path| std::fs::metadata(path).unwrap().created().unwrap(),
+        );
 
-        snapshot
+        let path = candidates.pop().unwrap();
+
+        let mut f = std::fs::OpenOptions::new().read(true).open(&path).unwrap();
+
+        let mut buf = vec![];
+        f.read_to_end(&mut buf).unwrap();
+        let len = buf.len();
+        buf.split_off(len - 8);
+
+        let mut crc_expected_bytes = [0u8; 8];
+        f.seek(std::io::SeekFrom::End(-8)).unwrap();
+        f.read_exact(&mut crc_expected_bytes).unwrap();
+
+        let crc_expected: u64 =
+            unsafe { std::mem::transmute(crc_expected_bytes) };
+        let crc_actual = crc64(&*buf);
+
+        if crc_expected != crc_actual {
+            panic!("crc for snapshot file {:?} failed!", path);
+        }
+
+        #[cfg(feature = "zstd")]
+        let bytes = if self.config.get_use_compression() {
+            decompress(&*buf, 1_000_000).unwrap()
+        } else {
+            buf
+        };
+
+        #[cfg(not(feature = "zstd"))]
+        let bytes = buf;
+
+        let snapshot = deserialize::<Snapshot<R>>(&*bytes).unwrap();
+
+        let mut mu = self.last_snapshot.lock().unwrap();
+        *mu = Some(snapshot);
     }
 
-    fn load_snapshot(&mut self, snapshot: &Snapshot<R>) {
-        self.max_pid.store(snapshot.max_pid, SeqCst);
+    fn load_snapshot(&mut self) {
+        let mu = self.last_snapshot.lock().unwrap();
+        if let Some(ref snapshot) = *mu {
+            self.max_pid.store(snapshot.max_pid, SeqCst);
 
-        let mut free = snapshot.free.clone();
-        free.sort();
-        free.reverse();
-        for pid in free {
-            trace!("adding {} to free during load_snapshot", pid);
-            self.free.push(pid);
-        }
-
-        for (pid, lids) in &snapshot.pt {
-            trace!("loading pid {} in load_snapshot", pid);
-
-            let mut lids = lids.clone();
-            let stack = Stack::default();
-
-            if !lids.is_empty() {
-                let (base_lsn, base_lid) = lids.remove(0);
-                stack.push(CacheEntry::Flush(base_lsn, base_lid));
-
-                for (lsn, lid) in lids {
-                    stack.push(CacheEntry::PartialFlush(lsn, lid));
-                }
+            let mut free = snapshot.free.clone();
+            free.sort();
+            free.reverse();
+            for pid in free {
+                trace!("adding {} to free during load_snapshot", pid);
+                self.free.push(pid);
             }
 
-            self.inner.insert(*pid, stack).unwrap();
-        }
+            for (pid, lids) in &snapshot.pt {
+                trace!("loading pid {} in load_snapshot", pid);
 
-        self.log.with_sa(
-            |sa| sa.initialize_from_segments(snapshot.segments.clone()),
-        );
+                let mut lids = lids.clone();
+                let stack = Stack::default();
+
+                if !lids.is_empty() {
+                    let (base_lsn, base_lid) = lids.remove(0);
+                    stack.push(CacheEntry::Flush(base_lsn, base_lid));
+
+                    for (lsn, lid) in lids {
+                        stack.push(CacheEntry::PartialFlush(lsn, lid));
+                    }
+                }
+
+                self.inner.insert(*pid, stack).unwrap();
+            }
+
+            self.log.with_sa(
+                |sa| sa.initialize_from_segments(snapshot.segments.clone()),
+            );
+        } else {
+            panic!("no snapshot present in load_snapshot");
+        }
     }
 }
 
@@ -942,48 +973,4 @@ fn lids_from_stack<P: Send + Sync>(
         }
     }
     lids
-}
-
-fn read_snapshot<R: DeserializeOwned>(config: &Config) -> Snapshot<R> {
-    let mut candidates = config.get_snapshot_files();
-    if candidates.is_empty() {
-        info!("no previous snapshot found");
-        return Snapshot::default();
-    }
-
-    candidates.sort_by_key(|path| {
-        std::fs::metadata(path).unwrap().created().unwrap()
-    });
-
-    let path = candidates.pop().unwrap();
-
-    let mut f = std::fs::OpenOptions::new().read(true).open(&path).unwrap();
-
-    let mut buf = vec![];
-    f.read_to_end(&mut buf).unwrap();
-    let len = buf.len();
-    buf.split_off(len - 8);
-
-    let mut crc_expected_bytes = [0u8; 8];
-    f.seek(std::io::SeekFrom::End(-8)).unwrap();
-    f.read_exact(&mut crc_expected_bytes).unwrap();
-
-    let crc_expected: u64 = unsafe { std::mem::transmute(crc_expected_bytes) };
-    let crc_actual = crc64(&*buf);
-
-    if crc_expected != crc_actual {
-        panic!("crc for snapshot file {:?} failed!", path);
-    }
-
-        #[cfg(feature = "zstd")]
-    let bytes = if config.get_use_compression() {
-        decompress(&*buf, 1_000_000).unwrap()
-    } else {
-        buf
-    };
-
-        #[cfg(not(feature = "zstd"))]
-    let bytes = buf;
-
-    deserialize::<Snapshot<R>>(&*bytes).unwrap()
 }

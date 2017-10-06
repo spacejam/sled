@@ -40,8 +40,6 @@ version = "0.3"
 # features = ["max_level_off"]
 
 [dependencies]
-libc = "0.2"
-crossbeam = "0.3"
 coco = "0.2"
 bincode = "0.8"
 serde = "1.0"
@@ -59,4 +57,5 @@ chan-signal = {version = "0.3", optional = true}
 
 [dev-dependencies]
 quickcheck = "0.2"
+libc = "0.2"
 rand = "0.3"
