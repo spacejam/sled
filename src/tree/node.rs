@@ -61,7 +61,6 @@ impl Node {
     }
 
     pub fn parent_split(&mut self, ps: &ParentSplit) {
-        // println!("splitting parent: {:?}\nwith {:?}", self, ps);
         if let Data::Index(ref mut ptrs) = self.data {
             ptrs.push((ps.at.inner().unwrap(), ps.to));
             ptrs.sort_by(|a, b| a.0.cmp(&b.0));

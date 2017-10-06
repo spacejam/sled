@@ -46,7 +46,7 @@ impl Tree {
             debug!("allocated pid {} for root of new tree", root_id);
 
             let (leaf_id, leaf_cas_key) = pages.allocate();
-            // println!("allocated pid {} for leaf in new", leaf_id);
+            trace!("allocated pid {} for leaf in new", leaf_id);
 
             let leaf = Frag::Base(
                 Node {
@@ -88,9 +88,7 @@ impl Tree {
     /// Retrieve a value from the `Tree` if it exists.
     pub fn get(&self, key: &[u8]) -> Option<Value> {
         let start = clock();
-        // println!("starting get");
         let (_, ret) = self.get_internal(key);
-        // println!("done get");
         M.tree_get.measure(clock() - start);
         ret
     }
@@ -510,7 +508,6 @@ impl Tree {
                     cursor
                 );
                 cursor = self.root.load(SeqCst);
-                // println!("path not found loops: {}", not_found_loops);
                 continue;
             }
             let (frag, cas_key) = get_cursor.unwrap();

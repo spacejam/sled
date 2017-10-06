@@ -640,7 +640,7 @@ impl IoBufs {
     // been written yet! It's OK to use a mutex here because it is pretty
     // fast, compared to the other operations on shared state.
     fn mark_interval(&self, interval: (Lsn, Lsn)) {
-        // println!("mark_interval({} - {})", interval.0, interval.1);
+        trace!("mark_interval({} - {})", interval.0, interval.1);
         assert_ne!(
             interval.0,
             interval.1,
@@ -654,7 +654,6 @@ impl IoBufs {
 
         intervals.push(interval);
 
-        // println!("intervals: {:?} ", *intervals);
         debug_assert!(intervals.len() < 100, "intervals is getting crazy...");
 
         // reverse sort
@@ -666,7 +665,6 @@ impl IoBufs {
             assert_ne!(low, high);
             debug_delay();
             let cur_stable = self.stable.load(SeqCst) as LogID;
-            // println!("cur_stable: {}", cur_stable);
             assert!(low >= cur_stable);
             if cur_stable == low {
                 debug_delay();
@@ -681,7 +679,6 @@ impl IoBufs {
         }
 
         if updated {
-            // println!("notifying all");
             self.interval_updated.notify_all();
         }
     }
