@@ -30,10 +30,10 @@ pub(super) struct IoBufs {
     // interleavings.
     pub(super) intervals: Mutex<Vec<(LogID, LogID)>>,
     pub(super) interval_updated: Condvar,
-    // The highest CONTIGUOUS log sequence number that has been written to stable
-    // storage. This may be lower than the length of the underlying file, and there
-    // may be buffers that have been written out-of-order to stable storage
-    // due to interesting thread interleavings.
+    // The highest CONTIGUOUS log sequence number that has been written to
+    // stable storage. This may be lower than the length of the underlying
+    // file, and there may be buffers that have been written out-of-order
+    // to stable storage due to interesting thread interleavings.
     stable: AtomicUsize,
     file_for_writing: Mutex<std::fs::File>,
     pub segment_accountant: Mutex<SegmentAccountant>,
@@ -52,7 +52,8 @@ impl IoBufs {
         if dir != Path::new("") {
             if dir.is_file() {
                 panic!(
-                    "provided parent directory is a file, not a directory: {:?}",
+                    "provided parent directory is a file, \
+                    not a directory: {:?}",
                     dir
                 );
             }
@@ -78,7 +79,13 @@ impl IoBufs {
         options.write(true);
         let mut file = options.open(&path).unwrap();
 
-        // println!("recovered_lsn: {} recovered_lid: {}", recovered_lsn, recovered_lid);
+        trace!(
+            "starting IoBufs with recovered_lsn: {} \
+               recovered_lid: {}",
+            recovered_lsn,
+            recovered_lid
+        );
+
         if recovered_lid % io_buf_size as LogID == 0 {
             // clean offset, need to create a new one and initialize it
             let iobuf = &bufs[current_buf];
@@ -138,9 +145,8 @@ impl IoBufs {
 
     // Adds a header to the buffer, and optionally compresses
     // the buffer.
-    // NB the caller is responsible for later
-    // setting the Lsn bytes after a reservation has been
-    // acquired.
+    // NB the caller is responsible for later setting the Lsn
+    // bytes after a reservation has been acquired.
     fn encapsulate(&self, raw_buf: Vec<u8>) -> Vec<u8> {
         #[cfg(feature = "zstd")]
         let buf = if self.config.get_use_compression() {
@@ -180,8 +186,9 @@ impl IoBufs {
     ///
     /// # Panics
     ///
-    /// Panics if the desired reservation is greater than 8388601 bytes..
-    /// (config io buf size - 7)
+    /// Panics if the desired reservation is greater than the
+    /// io buffer size minus the size of a segment header +
+    /// a segment footer + a message header.
     pub(super) fn reserve(&self, raw_buf: Vec<u8>) -> Reservation {
         let start = clock();
 
@@ -193,7 +200,8 @@ impl IoBufs {
             buf.len() <=
                 self.config.get_io_buf_size() -
                     (SEG_HEADER_LEN + SEG_TRAILER_LEN),
-            "trying to write a buffer that is too large to be stored in the IO buffer."
+            "trying to write a buffer that is too large \
+            to be stored in the IO buffer."
         );
 
         trace!("reserving buf of len {}", buf.len());
@@ -314,7 +322,12 @@ impl IoBufs {
 
             M.reserve.measure(clock() - start);
 
-            // println!( "writing {} bytes to lid {} (lsn {})", buf.len(), reservation_offset, reservation_lsn);
+            trace!(
+                "reserved {} bytes at lsn {} lid {}",
+                buf.len(),
+                reservation_lsn,
+                reservation_offset,
+            );
 
             return Reservation {
                 idx: idx,
@@ -357,8 +370,8 @@ impl IoBufs {
             }
         }
 
-        // Succeeded in decrementing writers, if we decremented writers to 0
-        // and it's sealed then we should write it to storage.
+        // Succeeded in decrementing writers, if we decremented writers
+        // to 0 and it's sealed then we should write it to storage.
         if n_writers(header) == 0 && is_sealed(header) {
             self.write_to_log(idx);
         }
@@ -418,7 +431,8 @@ impl IoBufs {
         assert_ne!(
             log_offset,
             max,
-            "({:?}) sealing something that should never have been claimed (idx {})\n{:?}",
+            "({:?}) sealing something that should never have \
+            been claimed (idx {})\n{:?}",
             tn(),
             idx,
             self
@@ -428,15 +442,9 @@ impl IoBufs {
 
         let maxed = res_len == capacity;
 
-        // println!( "from_reserve: {}, res_len: {}, capacity: {}", from_reserve, res_len, capacity);
         let (next_offset, last_given) = if from_reserve || maxed {
             // we will write a trailer to the iobuf after writing it.
             iobuf.set_maxed(true);
-
-            let start = clock();
-            let mut sa = self.segment_accountant.lock().unwrap();
-            let locked = clock();
-            M.accountant_lock.measure(locked - start);
 
             // roll lsn to the next offset
             let segment_offset = next_lsn % io_buf_size as Lsn;
@@ -458,15 +466,22 @@ impl IoBufs {
                 self.mark_interval((low_lsn, next_lsn));
             }
 
+            // TODO put this file writing logic into the SegmentAccountant
+            let start = clock();
+            let mut sa = self.segment_accountant.lock().unwrap();
+            let locked = clock();
+            M.accountant_lock.measure(locked - start);
             let (next_offset, last_given) = sa.next(next_lsn);
+            M.accountant_hold.measure(clock() - locked);
+            drop(sa);
 
+            // zero out the entire new segment on disk
             let mut f = self.file_for_writing.lock().unwrap();
             f.seek(SeekFrom::Start(next_offset)).unwrap();
             f.write_all(&*vec![0; self.config.get_io_buf_size()])
                 .unwrap();
             f.sync_all().unwrap();
 
-            M.accountant_hold.measure(clock() - locked);
             (next_offset, Some(last_given))
         } else {
             debug!(
@@ -608,7 +623,9 @@ impl IoBufs {
         if res_len != 0 {
             let interval = (base_lsn, base_lsn + res_len as Lsn);
 
-            debug!( "wrote lsns {}-{} to disk at offsets {}-{}", base_lsn, base_lsn + res_len as Lsn, log_offset, log_offset + res_len as LogID,);
+            debug!("wrote lsns {}-{} to disk at offsets {}-{}", 
+                    base_lsn, base_lsn + res_len as Lsn, log_offset,
+                    log_offset + res_len as LogID,);
             self.mark_interval(interval);
         }
 
