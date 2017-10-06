@@ -1,0 +1,18 @@
+[package]
+name = "neon-sled"
+version = "0.1.2"
+authors = ["Matthias Nehlsen <matthias.nehlsen@gmail.com>",
+           "Tyler Neely <t@jujit.su>"]
+license = "Apache 2"
+build = "build.rs"
+
+[lib]
+name = "neon_sled"
+crate-type = ["dylib"]
+
+[build-dependencies]
+neon-build = "0.1.20"
+
+[dependencies]
+neon = "0.1.20"
+sled = "0.14"
