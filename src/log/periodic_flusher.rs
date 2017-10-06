@@ -7,7 +7,7 @@ use std::time::Duration;
 use super::*;
 
 /// Spawns a thread that periodically calls `flush` on
-/// an IoBufs structure until its shutdown atomic bool
+/// an `IoBufs` structure until its shutdown atomic bool
 /// is set to true.
 pub(super) fn flusher(
     name: String,

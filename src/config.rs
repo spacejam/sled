@@ -30,7 +30,8 @@ unsafe impl Sync for Config {}
 impl Default for Config {
     fn default() -> Config {
         let now = uptime();
-        let nanos = (now.as_secs() * 1_000_000_000) + now.subsec_nanos() as u64;
+        let nanos = (now.as_secs() * 1_000_000_000) +
+            u64::from(now.subsec_nanos());
 
         // use shared memory for temporary linux files
         #[cfg(target_os = "linux")]

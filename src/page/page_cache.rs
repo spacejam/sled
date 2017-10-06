@@ -65,17 +65,7 @@ use super::*;
 /// }
 /// ```
 pub struct PageCache<PM, P, R>
-    where PM: Materializer<PageFrag = P, Recovery = R>,
-          PM: Send + Sync,
-          P: 'static
-                 + Debug
-                 + PartialEq
-                 + Clone
-                 + Serialize
-                 + DeserializeOwned
-                 + Send
-                 + Sync,
-          R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
+    where P: 'static + Send + Sync
 {
     t: PM,
     config: Config,
@@ -89,47 +79,23 @@ pub struct PageCache<PM, P, R>
 }
 
 unsafe impl<PM, P, R> Send for PageCache<PM, P, R>
-    where PM: Materializer<PageFrag = P, Recovery = R>,
-          PM: Send + Sync,
-          P: 'static
-                 + Debug
-                 + PartialEq
-                 + Clone
-                 + Serialize
-                 + DeserializeOwned
-                 + Send
-                 + Sync,
-          R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
+    where PM: Send + Sync,
+          P: 'static + Send + Sync,
+          R: Send
 {
 }
 
 unsafe impl<PM, P, R> Sync for PageCache<PM, P, R>
-    where PM: Materializer<PageFrag = P, Recovery = R>,
-          PM: Send + Sync,
-          P: 'static
-                 + Debug
-                 + PartialEq
-                 + Clone
-                 + Serialize
-                 + DeserializeOwned
-                 + Send
-                 + Sync,
-          R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
+    where PM: Send + Sync,
+          P: 'static + Send + Sync,
+          R: Send
 {
 }
 
 impl<PM, P, R> Debug for PageCache<PM, P, R>
-    where PM: Materializer<PageFrag = P, Recovery = R>,
-          PM: Send + Sync,
-          P: 'static
-                 + Debug
-                 + PartialEq
-                 + Clone
-                 + Serialize
-                 + DeserializeOwned
-                 + Send
-                 + Sync,
-          R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
+    where PM: Send + Sync,
+          P: Debug + Send + Sync,
+          R: Debug + Send
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         f.write_str(&*format!(
@@ -143,15 +109,8 @@ impl<PM, P, R> Debug for PageCache<PM, P, R>
 impl<PM, P, R> PageCache<PM, P, R>
     where PM: Materializer<PageFrag = P, Recovery = R>,
           PM: Send + Sync,
-          P: 'static
-                 + Debug
-                 + PartialEq
-                 + Clone
-                 + Serialize
-                 + DeserializeOwned
-                 + Send
-                 + Sync,
-          R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
+          P: 'static + Clone + Serialize + DeserializeOwned + Send + Sync,
+          R: Debug + Clone + Serialize + DeserializeOwned
 {
     /// Instantiate a new `PageCache`.
     pub fn new(pm: PM, config: Config) -> PageCache<PM, P, R> {
@@ -174,13 +133,13 @@ impl<PM, P, R> PageCache<PM, P, R>
 
     /// Read updates from the log, apply them to our pagecache.
     pub fn recover(&mut self) -> Option<R> {
-        // we call write_snapshot here to "catch-up" the snapshot using the
+        // we call advance_snapshot here to "catch-up" the snapshot using the
         // logged updates before recovering from it. this allows us to reuse
         // the snapshot generation logic as initial log parsing logic. this is
         // also important for ensuring that we feed the provided `Materializer`
         // a single, linearized history, rather than going back in time
         // when generating a snapshot.
-        self.write_snapshot();
+        self.advance_snapshot();
 
         // now we read it back in
         self.read_snapshot();
@@ -546,7 +505,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 let should_snapshot =
                     count % self.config.get_snapshot_after_ops() == 0;
                 if should_snapshot {
-                    self.write_snapshot();
+                    self.advance_snapshot();
                 }
             } else {
                 log_reservation.abort();
@@ -604,7 +563,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 let should_snapshot =
                     count % self.config.get_snapshot_after_ops() == 0;
                 if should_snapshot {
-                    self.write_snapshot();
+                    self.advance_snapshot();
                 }
             }
 
@@ -613,8 +572,6 @@ impl<PM, P, R> PageCache<PM, P, R>
             if let Some(pid) = to_clean {
                 if let Some((page, key)) = self.get(pid) {
                     let _ = self.set(pid, key, page);
-                } else {
-                    // FIXME this is possibly some sort of leak
                 }
             }
 
@@ -622,12 +579,10 @@ impl<PM, P, R> PageCache<PM, P, R>
         })
     }
 
-    fn write_snapshot(&self) {
+    fn advance_snapshot(&self) {
         let start = clock();
 
         self.log.flush();
-
-        let prefix = self.config.snapshot_prefix();
 
         let snapshot_opt_res = self.last_snapshot.try_lock();
         if snapshot_opt_res.is_err() {
@@ -636,12 +591,12 @@ impl<PM, P, R> PageCache<PM, P, R>
                 "snapshot skipped because previous attempt \
                   appears not to have completed"
             );
-            M.write_snapshot.measure(clock() - start);
+            M.advance_snapshot.measure(clock() - start);
             return;
         }
         let mut snapshot_opt = snapshot_opt_res.unwrap();
         let mut snapshot =
-            snapshot_opt.take().unwrap_or_else(|| Snapshot::default());
+            snapshot_opt.take().unwrap_or_else(Snapshot::default);
 
         // we disable rewriting so that our log becomes append-only,
         // allowing us to iterate through it without corrupting ourselves.
@@ -666,7 +621,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             let segment_lsn = lsn / io_buf_size as Lsn * io_buf_size as Lsn;
 
             trace!(
-                "in write_snapshot looking at item: segment lsn {} lsn {} lid {}",
+                "in advance_snapshot looking at item: segment lsn {} lsn {} lid {}",
                 segment_lsn,
                 lsn,
                 log_id
@@ -674,7 +629,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
             if lsn <= max_lsn {
                 trace!(
-                    "continuing in write_snapshot, lsn {} log_id {} max_lsn {}",
+                    "continuing in advance_snapshot, lsn {} log_id {} max_lsn {}",
                     lsn,
                     log_id,
                     max_lsn
@@ -697,13 +652,15 @@ impl<PM, P, R> PageCache<PM, P, R>
                 "segment lsn is unaligned! fix above lsn statement..."
             );
 
-            // unwrapping this because it's already passed the crc check in the log iterator
+            // unwrapping this because it's already passed the crc check
+            // in the log iterator
             trace!("trying to deserialize buf for lid {} lsn {}", log_id, lsn);
             let deserialization = deserialize::<LoggedUpdate<P>>(&*bytes);
 
             if let Err(e) = deserialization {
                 error!(
-                    "failed to deserialize buffer for item in log: lsn {} lid {}: {:?}",
+                    "failed to deserialize buffer for item in log: lsn {} \
+                    lid {}: {:?}",
                     lsn,
                     log_id,
                     e
@@ -803,8 +760,21 @@ impl<PM, P, R> PageCache<PM, P, R>
         snapshot.max_lsn = max_lsn;
         snapshot.recovery = recovery;
 
+        self.write_snapshot(&snapshot);
+
         trace!("generated new snapshot: {:?}", snapshot);
 
+        self.log.with_sa(|sa| sa.resume_rewriting());
+
+        // NB replacing the snapshot must come after the resume_rewriting call
+        // otherwise we create a race condition where we corrupt an in-progress
+        // snapshot generating iterator.
+        *snapshot_opt = Some(snapshot);
+
+        M.advance_snapshot.measure(clock() - start);
+    }
+
+    fn write_snapshot(&self, snapshot: &Snapshot<R>) {
         let raw_bytes = serialize(&snapshot, Infinite).unwrap();
 
         #[cfg(feature = "zstd")]
@@ -819,8 +789,10 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         let crc64: [u8; 8] = unsafe { std::mem::transmute(crc64(&*bytes)) };
 
-        let path_1 = format!("{}.{}.in___motion", prefix, max_lsn);
-        let path_2 = format!("{}.{}", prefix, max_lsn);
+        let prefix = self.config.snapshot_prefix();
+
+        let path_1 = format!("{}.{}.in___motion", prefix, snapshot.max_lsn);
+        let path_2 = format!("{}.{}", prefix, snapshot.max_lsn);
         let mut f = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -855,15 +827,6 @@ impl<PM, P, R> PageCache<PM, P, R>
                 }
             }
         }
-
-        self.log.with_sa(|sa| sa.resume_rewriting());
-
-        // NB replacing the snapshot must come after the resume_rewriting call
-        // otherwise we create a race condition where we corrupt an in-progress
-        // snapshot generating iterator.
-        *snapshot_opt = Some(snapshot);
-
-        M.write_snapshot.measure(clock() - start);
     }
 
     fn read_snapshot(&self) {

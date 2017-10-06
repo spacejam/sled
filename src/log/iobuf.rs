@@ -302,8 +302,8 @@ impl IoBufs {
             let res_end = res_start + buf.len();
             let destination = &mut (out_buf)[res_start..res_end];
 
-            let reservation_offset = log_offset + buf_offset as LogID;
-            let reservation_lsn = iobuf.get_lsn() + buf_offset as Lsn;
+            let reservation_offset = log_offset + u64::from(buf_offset);
+            let reservation_lsn = iobuf.get_lsn() + u64::from(buf_offset);
 
             // we assign the LSN now that we know what it is
             assert_eq!(&buf[1..9], &[0u8; 8]);

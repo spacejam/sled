@@ -111,7 +111,7 @@ fn tn() -> String {
 
 fn clock() -> f64 {
     let u = uptime();
-    (u.as_secs() * 1_000_000_000) as f64 + u.subsec_nanos() as f64
+    (u.as_secs() * 1_000_000_000) as f64 + f64::from(u.subsec_nanos())
 }
 
 // not correct, since it starts counting at the first observance...

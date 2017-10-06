@@ -184,22 +184,18 @@ impl SegmentAccountant {
 
         let cached_f = self.config.cached_file();
         let mut f = cached_f.borrow_mut();
-        loop {
+        while let Ok(segment) = f.read_segment_header(cursor) {
             // in the future this can be optimized to just read
             // the initial header at that position... but we need to
             // make sure the segment is not torn
-            if let Ok(segment) = f.read_segment_header(cursor) {
-                if segment.ok {
-                    self.recover(segment.lsn, cursor);
-                } else {
-                    // TODO DATA CORRUPTION AAHHHHHH
-                    // add to free list? can't break...
-                    panic!("detected corrupt segment header at {}", cursor);
-                }
-                cursor += segment_len;
+            if segment.ok {
+                self.recover(segment.lsn, cursor);
             } else {
-                break;
+                // TODO DATA CORRUPTION AAHHHHHH
+                // add to free list? can't break...
+                panic!("detected corrupt segment header at {}", cursor);
             }
+            cursor += segment_len;
         }
 
         // Check that the last <# io buffers> segments properly
@@ -232,7 +228,7 @@ impl SegmentAccountant {
                 lid
             );
 
-            let mut iter = Iter {
+            let iter = Iter {
                 config: &self.config,
                 max_lsn: segment_ceiling,
                 cur_lsn: tip,
@@ -243,7 +239,7 @@ impl SegmentAccountant {
                 trailer: None,
             };
 
-            while let Some((_lsn, lid, _buf)) = iter.next() {
+            for (_lsn, lid, _buf) in iter {
                 empty_tip = false;
                 tip = lid;
                 assert!(tip <= segment_ceiling);
@@ -276,7 +272,7 @@ impl SegmentAccountant {
         }
 
         // determine the end of our valid entries
-        for (_lsn, &lid) in &self.ordering {
+        for &lid in self.ordering.values() {
             if lid >= self.tip {
                 self.tip = lid + self.config.get_io_buf_size() as LogID;
             }
@@ -346,9 +342,7 @@ impl SegmentAccountant {
 
         if let Some(i) = tear_at {
             // we need to chop off the elements after the tear
-            for j in 0..i {
-                let (lsn_to_chop, lid_to_chop) = logical_tail[j];
-
+            for &(lsn_to_chop, lid_to_chop) in &logical_tail[0..i] {
                 error!("clearing corrupted segment at lid {}", lid_to_chop);
 
                 self.free.lock().unwrap().push_back(lid_to_chop);
@@ -386,7 +380,7 @@ impl SegmentAccountant {
     pub fn freed(&mut self, pid: PageID, old_lids: Vec<LogID>, lsn: Lsn) {
         self.pending_clean.remove(&pid);
 
-        for old_lid in old_lids.into_iter() {
+        for old_lid in old_lids {
             let idx = old_lid as usize / self.config.get_io_buf_size();
 
             if self.segments[idx].lsn.unwrap() > lsn {
@@ -445,7 +439,7 @@ impl SegmentAccountant {
 
         let new_idx = new_lid as usize / self.config.get_io_buf_size();
 
-        for old_lid in old_lids.into_iter() {
+        for old_lid in old_lids {
             let idx = old_lid as usize / self.config.get_io_buf_size();
 
             if new_idx == idx {
@@ -562,8 +556,9 @@ impl SegmentAccountant {
     /// was allocated, so that we can detect missing
     /// out-of-order segments during recovery.
     pub fn next(&mut self, lsn: Lsn) -> (LogID, LogID) {
-        assert!(
-            lsn % self.config.get_io_buf_size() as Lsn == 0,
+        assert_eq!(
+            lsn % self.config.get_io_buf_size() as Lsn,
+            0,
             "unaligned Lsn provided to next!"
         );
 
@@ -627,7 +622,7 @@ impl SegmentAccountant {
             let idx = *lid as usize / self.config.get_io_buf_size();
             let segment = &self.segments[idx];
             for pid in &segment.pids {
-                if self.pending_clean.contains(&pid) {
+                if self.pending_clean.contains(pid) {
                     continue;
                 }
                 self.pending_clean.insert(*pid);

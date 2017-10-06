@@ -505,7 +505,7 @@ impl Tree {
                 not_found_loops += 1;
                 debug_assert_ne!(
                     not_found_loops,
-                    10000,
+                    10_000,
                     "cannot find pid {} in path_for_key",
                     cursor
                 );
@@ -525,10 +525,8 @@ impl Tree {
                 // we have encountered a child split, without
                 // having hit the parent split above.
                 cursor = node.next.unwrap();
-                if unsplit_parent.is_none() {
-                    if !path.is_empty() {
-                        unsplit_parent = Some(path.len() - 1);
-                    }
+                if unsplit_parent.is_none() && !path.is_empty() {
+                    unsplit_parent = Some(path.len() - 1);
                 }
                 continue;
             } else if let Some(idx) = unsplit_parent.take() {

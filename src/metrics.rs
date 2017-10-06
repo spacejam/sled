@@ -6,7 +6,7 @@ use historian::Histo;
 
 #[derive(Default, Debug)]
 pub struct Metrics {
-    pub write_snapshot: Histo,
+    pub advance_snapshot: Histo,
     pub tree_set: Histo,
     pub tree_get: Histo,
     pub tree_del: Histo,
@@ -57,7 +57,7 @@ impl Metrics {
 
         let p = |mut tuples: Vec<(String, _, _, _, _, _, _, _)>| {
             tuples.sort_by_key(|t| (t.7 * -1. * 1e3) as i64);
-            for v in tuples.into_iter() {
+            for v in tuples {
                 println!(
                     "{0: >17} | {1: >10.1} | {2: >10.1} | {3: >10.1} \
                 | {4: >10.1} | {5: >10.1} | {6: >10.1} | {7: >10.3}",
@@ -99,7 +99,7 @@ impl Metrics {
         println!("{}", repeat("-").take(103).collect::<String>());
         println!("pagecache:");
         p(vec![
-            f("snapshot", &self.write_snapshot),
+            f("snapshot", &self.advance_snapshot),
             f("page_in", &self.page_in),
             f("merge", &self.merge_page),
             f("pull", &self.pull),
