@@ -110,7 +110,7 @@ impl<PM, P, R> PageCache<PM, P, R>
     where PM: Materializer<PageFrag = P, Recovery = R>,
           PM: Send + Sync,
           P: 'static + Clone + Serialize + DeserializeOwned + Send + Sync,
-          R: Debug + Clone + Serialize + DeserializeOwned
+          R: Debug + Clone + Serialize + DeserializeOwned + Send
 {
     /// Instantiate a new `PageCache`.
     pub fn new(pm: PM, config: Config) -> PageCache<PM, P, R> {
