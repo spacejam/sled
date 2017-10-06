@@ -1,0 +1,1 @@
+{"active":"release","targets":{"release":{"rustc":"rustc 1.20.0 (f3d6973f4 2017-08-27)","env":{"npm_config_target":"1.7.8","npm_config_arch":"x64","npm_config_target_arch":"x64","npm_config_disturl":"https://atom.io/download/electron","npm_config_runtime":"electron","npm_config_build_from_source":"true","npm_config_devdir":"/Users/mn/.electron-gyp"}}}}

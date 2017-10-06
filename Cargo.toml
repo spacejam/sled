@@ -12,7 +12,7 @@ readme = "README.md"
 
 [features]
 default = []
-bench = ["clap", "num_cpus", "rand", "rayon", "zstd", "env_logger"]
+bench = ["clap", "num_cpus", "log", "rand", "chrono", "rayon", "zstd", "env_logger"]
 stress = ["docopt", "chan-signal", "rayon", "rand"]
 o_direct_writer = []
 
@@ -54,6 +54,7 @@ clap = {version = "2.26", optional = true}
 rand = {version = "0.3", optional = true}
 docopt = {version = "0.8", optional = true}
 chan-signal = {version = "0.3", optional = true}
+chrono = {version = "0.4", optional = true}
 
 [dev-dependencies]
 quickcheck = "0.2"
