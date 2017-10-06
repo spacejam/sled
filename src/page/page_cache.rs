@@ -616,8 +616,13 @@ impl<PM, P, R> PageCache<PM, P, R>
         let mut recovery = snapshot.recovery.take();
         let mut max_lsn = snapshot.max_lsn;
         let start_lsn = max_lsn - (max_lsn % io_buf_size as Lsn);
+        let stop_lsn = self.log.stable_offset();
 
         for (lsn, log_id, bytes) in self.log.iter_from(start_lsn) {
+            if stop_lsn > 0 && lsn > stop_lsn {
+                // we've gone past the known-stable offset.
+                break;
+            }
             let segment_lsn = lsn / io_buf_size as Lsn * io_buf_size as Lsn;
 
             trace!(
@@ -628,6 +633,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             );
 
             if lsn <= max_lsn {
+                // don't process alread-processed Lsn's.
                 trace!(
                     "continuing in advance_snapshot, lsn {} log_id {} max_lsn {}",
                     lsn,
@@ -689,9 +695,23 @@ impl<PM, P, R> PageCache<PM, P, R>
                         recovery = r;
                     }
 
-                    // FIXME unwrapped on None, page_cache::merge predecessor
-                    let lids = snapshot.pt.get_mut(&prepend.pid).unwrap();
-                    lids.push((lsn, log_id));
+                    // FIXME unwrapped on None, page_cache::merge and set predecessor
+                    let scopy = snapshot.clone();
+                    if let Some(lids) = snapshot.pt.get_mut(&prepend.pid) {
+                        lids.push((lsn, log_id));
+                    } else {
+                        println!(
+                            "failed to look up pid {} in snapshot table: {:?}",
+                            prepend.pid,
+                            scopy
+                        );
+                        error!(
+                            "failed to look up pid {} in snapshot table: {:?}",
+                            prepend.pid,
+                            scopy
+                        );
+                        panic!(":(");
+                    }
                 }
                 Update::Compact(partial_page) => {
                     trace!(

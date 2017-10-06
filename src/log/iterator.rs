@@ -1,3 +1,5 @@
+use std::io::{Error, ErrorKind};
+
 use super::*;
 
 pub struct Iter<'a> {
@@ -26,7 +28,14 @@ impl<'a> Iterator for Iter<'a> {
                 return None;
             } else if self.segment_base.is_none() || at_end {
                 if let Some((next_lsn, next_lid)) = self.segment_iter.next() {
-                    self.read_segment(next_lsn, next_lid).unwrap();
+                    if let Err(e) = self.read_segment(next_lsn, next_lid) {
+                        debug!(
+                            "hit snap while reading segments in \
+                            iterator: {:?}",
+                            e
+                        );
+                        return None;
+                    }
                 } else {
                     return None;
                 }
@@ -76,12 +85,15 @@ impl<'a> Iter<'a> {
         let cached_f = self.config.cached_file();
         let mut f = cached_f.borrow_mut();
         let segment_header = f.read_segment_header(offset)?;
-        // TODO turn those asserts into returned Errors? Torn pages or invariant?
         assert_eq!(offset % self.segment_len as Lsn, 0);
         assert_eq!(segment_header.lsn % self.segment_len as Lsn, 0);
 
-        // FIXME left: `83886080` right: 0, merge -> write_snapshot -> Iter::next
-        assert_eq!(segment_header.lsn, lsn);
+        if segment_header.lsn != lsn {
+            // this page was torn, nothing to read
+            return Err(
+                Error::new(ErrorKind::Other, "encountered torn segment"),
+            );
+        }
 
         assert!(segment_header.lsn + self.segment_len as LogID >= self.cur_lsn);
 

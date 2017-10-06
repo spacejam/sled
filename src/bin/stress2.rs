@@ -70,6 +70,8 @@ fn prepopulate(tree: Arc<sled::Tree>) {
 }
 
 fn main() {
+    let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
+
     let args: Args = Docopt::new(USAGE)
         .and_then(|d| d.argv(std::env::args().into_iter()).deserialize())
         .unwrap_or_else(|e| e.exit());
@@ -85,7 +87,7 @@ fn main() {
         .io_bufs(2)
         .blink_fanout(15)
         .page_consolidation_threshold(10)
-        .cache_fixup_threshold(5)
+        .cache_fixup_threshold(1)
         .cache_bits(6)
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(500))
@@ -131,7 +133,9 @@ fn main() {
         args.flag_get, |t: &Arc<sled::Tree>| t.get(&*byte());
         args.flag_set, |t: &Arc<sled::Tree>| t.set(byte(), byte());
         args.flag_del, |t: &Arc<sled::Tree>| t.del(&*byte());
-        args.flag_cas, |t: &Arc<sled::Tree>| if let Err(_) = t.cas(byte(), Some(byte()), Some(byte())) {};
+        args.flag_cas, |t: &Arc<sled::Tree>| {
+            let _ = t.cas(byte(), Some(byte()), Some(byte()));
+        };
         args.flag_scan, |t: &Arc<sled::Tree>| t.scan(&*byte())
             .take(thread_rng().gen_range(1, 3))
             .collect::<Vec<_>>();
@@ -141,8 +145,6 @@ fn main() {
 
     if args.flag_burn_in {
         println!("burning in");
-        let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
-
         signal.recv();
         println!("got shutdown signal, cleaning up...");
     } else {
@@ -152,7 +154,7 @@ fn main() {
     shutdown.store(true, Ordering::SeqCst);
 
     for t in threads.into_iter() {
-        t.join().unwrap();
+        let _ = t.join();
     }
 
     let ops = total.load(Ordering::SeqCst);
