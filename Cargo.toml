@@ -12,8 +12,8 @@ readme = "README.md"
 
 [features]
 default = []
-bench = ["clap", "num_cpus", "log", "rand", "chrono", "rayon", "zstd", "env_logger"]
-stress = ["docopt", "chan-signal", "rayon", "rand"]
+bench = ["clap", "num_cpus", "rand", "chrono", "rayon", "zstd", "env_logger"]
+stress = ["docopt", "chan-signal", "rayon", "rand", "zstd"]
 o_direct_writer = []
 
 [profile.release]

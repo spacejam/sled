@@ -144,7 +144,7 @@ impl LogReader for File {
                 let start = clock();
                 let res = Ok(LogRead::Flush(
                     header.lsn,
-                    decompress(&*buf, max).unwrap(),
+                    decompress(&*buf, segment_len).unwrap(),
                     len,
                 ));
                 M.decompress.measure(clock() - start);

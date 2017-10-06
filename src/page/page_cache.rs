@@ -883,7 +883,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         #[cfg(feature = "zstd")]
         let bytes = if self.config.get_use_compression() {
-            decompress(&*buf, 1_000_000).unwrap()
+            decompress(&*buf, self.config.get_io_buf_size()).unwrap()
         } else {
             buf
         };
