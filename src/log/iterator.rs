@@ -19,10 +19,6 @@ impl<'a> Iterator for Iter<'a> {
         // if we can't read something we expect to be able to,
         // return None if there are no more remaining segments.
         loop {
-            // println!("cur is {}", self.cur_lsn);
-            // println!("max is {}", self.max_lsn);
-            // println!("base is {:?}", self.segment_base);
-            // println!("segment_len {}", self.segment_len);
             let at_end = !valid_entry_offset(self.cur_lsn, self.segment_len);
             if self.trailer.is_none() && at_end {
                 // We've read to the end of a torn
@@ -49,15 +45,11 @@ impl<'a> Iterator for Iter<'a> {
                 return None;
             }
 
-            // println!("lid is {}", lid);
             let cached_f = self.config.cached_file();
             let mut f = cached_f.borrow_mut();
             match f.read_message(lid, self.segment_len, self.use_compression) {
                 Ok(LogRead::Flush(lsn, buf, on_disk_len)) => {
-                    // println!("{}", on_disk_len);
-                    // println!("cur_lsn before: {}", self.cur_lsn);
                     self.cur_lsn += (MSG_HEADER_LEN + on_disk_len) as LogID;
-                    // println!("cur_lsn after: {}", self.cur_lsn);
                     return Some((lsn, lid, buf));
                 }
                 Ok(LogRead::Zeroed(on_disk_len)) => {
@@ -81,12 +73,9 @@ impl<'a> Iter<'a> {
     /// read a segment of log messages. Only call after
     /// pausing segment rewriting on the segment accountant!
     fn read_segment(&mut self, lsn: Lsn, offset: LogID) -> std::io::Result<()> {
-        // println!("reading segment {}", offset);
-
         let cached_f = self.config.cached_file();
         let mut f = cached_f.borrow_mut();
         let segment_header = f.read_segment_header(offset)?;
-        // println!("read sh {:?} at {}", sh, offset);
         // TODO turn those asserts into returned Errors? Torn pages or invariant?
         assert_eq!(offset % self.segment_len as Lsn, 0);
         assert_eq!(segment_header.lsn % self.segment_len as Lsn, 0);
