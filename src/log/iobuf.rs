@@ -9,15 +9,6 @@ use zstd::block::compress;
 
 use super::*;
 
-#[doc(hidden)]
-pub const MSG_HEADER_LEN: usize = 15;
-
-#[doc(hidden)]
-pub const SEG_HEADER_LEN: usize = 18;
-
-#[doc(hidden)]
-pub const SEG_TRAILER_LEN: usize = 10;
-
 struct IoBuf {
     buf: UnsafeCell<Vec<u8>>,
     header: AtomicUsize,
@@ -29,7 +20,7 @@ struct IoBuf {
 
 unsafe impl Sync for IoBuf {}
 
-pub struct IoBufs {
+pub(super) struct IoBufs {
     config: Config,
     bufs: Vec<IoBuf>,
     current_buf: AtomicUsize,
@@ -131,10 +122,6 @@ impl IoBufs {
             file_for_writing: Mutex::new(file),
             segment_accountant: Mutex::new(segment_accountant),
         }
-    }
-
-    pub fn config(&self) -> &Config {
-        &self.config
     }
 
     fn idx(&self) -> usize {

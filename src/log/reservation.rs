@@ -7,7 +7,7 @@ use super::*;
 /// taking too long to decide will cause the underlying IO
 /// buffer to become blocked.
 pub struct Reservation<'a> {
-    pub iobufs: &'a IoBufs,
+    pub(super) iobufs: &'a IoBufs,
     pub idx: usize,
     pub data: Vec<u8>,
     pub destination: &'a mut [u8],

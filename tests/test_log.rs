@@ -24,11 +24,12 @@ type LogID = u64;
 #[test]
 #[ignore]
 fn more_log_reservations_than_buffers() {
-    let log = Config::default().log();
+    let config = Config::default();
+    let log = config.log();
     let mut reservations = vec![];
-    for _ in 0..log.config().get_io_bufs() + 1 {
+    for _ in 0..config.get_io_bufs() + 1 {
         reservations.push(log.reserve(
-            vec![0; log.config().get_io_buf_size() - MSG_HEADER_LEN],
+            vec![0; config.get_io_buf_size() - MSG_HEADER_LEN],
         ))
     }
     for res in reservations.into_iter().rev() {

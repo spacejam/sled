@@ -23,7 +23,7 @@ pub trait LogReader {
         id: LogID,
     ) -> std::io::Result<MessageHeader>;
 
-    fn read_entry(
+    fn read_message(
         &mut self,
         id: LogID,
         segment_len: usize,
@@ -36,15 +36,11 @@ impl LogReader for File {
         &mut self,
         id: LogID,
     ) -> std::io::Result<SegmentHeader> {
-        // println!("seeking to {}", id);
+        trace!("reading segment header at {}", id);
         self.seek(SeekFrom::Start(id))?;
-
-        // println!("trying to read {} bytes", SEG_HEADER_LEN);
 
         let mut seg_header_buf = [0u8; SEG_HEADER_LEN];
         self.read_exact(&mut seg_header_buf)?;
-
-        // println!("read the header!!!");
 
         Ok(seg_header_buf.into())
     }
@@ -53,6 +49,7 @@ impl LogReader for File {
         &mut self,
         id: LogID,
     ) -> std::io::Result<SegmentTrailer> {
+        trace!("reading segment trailer at {}", id);
         self.seek(SeekFrom::Start(id))?;
 
         let mut seg_trailer_buf = [0u8; SEG_TRAILER_LEN];
@@ -74,20 +71,19 @@ impl LogReader for File {
     }
 
     /// read a buffer from the disk
-    fn read_entry(
+    fn read_message(
         &mut self,
         id: LogID,
         segment_len: usize,
         _use_compression: bool,
     ) -> std::io::Result<LogRead> {
-        // println!("read_entry({})", id);
+        trace!("reading message at {}", id);
         let start = clock();
         let seg_start = id / segment_len as LogID * segment_len as LogID;
         assert!(seg_start + MSG_HEADER_LEN as LogID <= id);
 
         let ceiling = seg_start + segment_len as LogID -
             SEG_TRAILER_LEN as LogID;
-        // println!("ceiling: {} id: {}", ceiling, id);
 
         assert!(id + MSG_HEADER_LEN as LogID <= ceiling);
 

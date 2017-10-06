@@ -52,7 +52,7 @@ impl<'a> Iterator for Iter<'a> {
             // println!("lid is {}", lid);
             let cached_f = self.config.cached_file();
             let mut f = cached_f.borrow_mut();
-            match f.read_entry(lid, self.segment_len, self.use_compression) {
+            match f.read_message(lid, self.segment_len, self.use_compression) {
                 Ok(LogRead::Flush(lsn, buf, on_disk_len)) => {
                     // println!("{}", on_disk_len);
                     // println!("cur_lsn before: {}", self.cur_lsn);
@@ -121,4 +121,15 @@ impl<'a> Iter<'a> {
 
         Ok(())
     }
+}
+
+fn valid_entry_offset(lid: LogID, segment_len: usize) -> bool {
+    let seg_start = lid / segment_len as LogID * segment_len as LogID;
+
+    let max_lid = seg_start + segment_len as LogID -
+        SEG_TRAILER_LEN as LogID - MSG_HEADER_LEN as LogID;
+
+    let min_lid = seg_start + SEG_HEADER_LEN as LogID;
+
+    lid >= min_lid && lid <= max_lid
 }

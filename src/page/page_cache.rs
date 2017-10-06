@@ -79,6 +79,7 @@ pub struct PageCache<PM, P, R>
           R: Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send
 {
     t: PM,
+    config: Config,
     inner: Radix<Stack<CacheEntry<P>>>,
     max_pid: AtomicUsize,
     free: Arc<Stack<PageID>>,
@@ -187,6 +188,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         PageCache {
             t: pm,
+            config: config.clone(),
             inner: Radix::default(),
             max_pid: AtomicUsize::new(0),
             free: Arc::new(Stack::default()),
@@ -195,11 +197,6 @@ impl<PM, P, R> PageCache<PM, P, R>
             updates: AtomicUsize::new(0),
             last_snapshot: last_snapshot,
         }
-    }
-
-    /// Return the configuration used by the underlying system.
-    pub fn config(&self) -> &Config {
-        self.log.config()
     }
 
     /// Read updates from the log, apply them to our pagecache.
@@ -272,12 +269,9 @@ impl<PM, P, R> PageCache<PM, P, R>
             unsafe {
                 let cas_key = deleted.unwrap().deref().head(scope).into();
 
-                let start = clock();
-                let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
-                let locked = clock();
-                M.accountant_lock.measure(locked - start);
-                sa.freed(pid, lids_from_stack(cas_key, scope), lsn);
-                M.accountant_hold.measure(clock() - locked);
+                self.log.with_sa(|sa| {
+                    sa.freed(pid, lids_from_stack(cas_key, scope), lsn)
+                });
             }
 
             let pd = Owned::new(PidDropper(pid, self.free.clone()));
@@ -470,14 +464,14 @@ impl<PM, P, R> PageCache<PM, P, R>
         let to_evict = self.lru.accessed(pid, size);
         self.page_out(to_evict, scope);
 
-        if lids.len() > self.config().get_page_consolidation_threshold() {
+        if lids.len() > self.config.get_page_consolidation_threshold() {
             match self.set(pid, head.into(), merged.clone()) {
                 Ok(new_head) => head = new_head.into(),
                 Err(None) => return None,
                 _ => {}
             }
         } else if !fetched.is_empty() ||
-                   fix_up_length >= self.config().get_cache_fixup_threshold()
+                   fix_up_length >= self.config.get_cache_fixup_threshold()
         {
             let mut new_entries = Vec::with_capacity(lids.len());
 
@@ -563,19 +557,13 @@ impl<PM, P, R> PageCache<PM, P, R>
                 let lsn = log_reservation.lsn();
                 log_reservation.complete();
 
-                {
-                    let start = clock();
-                    let mut sa =
-                        self.log.iobufs.segment_accountant.lock().unwrap();
-                    let locked = clock();
-                    M.accountant_lock.measure(locked - start);
-                    sa.set(pid, lids_from_stack(old, scope), lid, lsn);
-                    M.accountant_hold.measure(clock() - locked);
-                }
+                self.log.with_sa(
+                    |sa| sa.set(pid, lids_from_stack(old, scope), lid, lsn),
+                );
 
                 let count = self.updates.fetch_add(1, SeqCst) + 1;
                 let should_snapshot =
-                    count % self.config().get_snapshot_after_ops() == 0;
+                    count % self.config.get_snapshot_after_ops() == 0;
                 if should_snapshot {
                     self.write_snapshot();
                 }
@@ -629,36 +617,19 @@ impl<PM, P, R> PageCache<PM, P, R>
                 let lid = log_reservation.lid();
                 log_reservation.complete();
 
-                {
-                    let start = clock();
-                    let mut sa =
-                        self.log.iobufs.segment_accountant.lock().unwrap();
-                    let locked = clock();
-                    M.accountant_lock.measure(locked - start);
-                    sa.merged(pid, lid, lsn);
-                    M.accountant_hold.measure(clock() - locked);
-                }
+                self.log.with_sa(|sa| sa.merged(pid, lid, lsn));
 
                 let count = self.updates.fetch_add(1, SeqCst) + 1;
                 let should_snapshot =
-                    count % self.config().get_snapshot_after_ops() == 0;
+                    count % self.config.get_snapshot_after_ops() == 0;
                 if should_snapshot {
                     self.write_snapshot();
                 }
             }
 
-            let mut to_clean;
+            let to_clean = self.log.with_sa(|sa| sa.clean());
 
-            {
-                let start = clock();
-                let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
-                let locked = clock();
-                M.accountant_lock.measure(locked - start);
-                to_clean = sa.clean();
-                M.accountant_hold.measure(clock() - locked);
-            }
-
-            if let Some(pid) = to_clean.take() {
+            if let Some(pid) = to_clean {
                 if let Some((page, key)) = self.get(pid) {
                     let _ = self.set(pid, key, page);
                 } else {
@@ -675,7 +646,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         self.log.flush();
 
-        let prefix = self.config().snapshot_prefix();
+        let prefix = self.config.snapshot_prefix();
 
         let snapshot_opt = self.last_snapshot.take(SeqCst);
         if snapshot_opt.is_none() {
@@ -690,14 +661,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         // we disable rewriting so that our log becomes append-only,
         // allowing us to iterate through it without corrupting ourselves.
-        {
-            let start = clock();
-            let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
-            let locked = clock();
-            M.accountant_lock.measure(locked - start);
-            sa.pause_rewriting();
-            M.accountant_hold.measure(clock() - locked);
-        }
+        self.log.with_sa(|sa| sa.pause_rewriting());
 
         let mut snapshot = snapshot_opt.unwrap();
 
@@ -709,7 +673,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             self.log.stable_offset(),
         );
 
-        let io_buf_size = self.config().get_io_buf_size();
+        let io_buf_size = self.config.get_io_buf_size();
 
         let mut recovery = snapshot.recovery.take();
         let mut max_lsn = snapshot.max_lsn;
@@ -861,7 +825,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         let raw_bytes = serialize(&snapshot, Infinite).unwrap();
 
         #[cfg(feature = "zstd")]
-        let bytes = if self.config().get_use_compression() {
+        let bytes = if self.config.get_use_compression() {
             compress(&*raw_bytes, 5).unwrap()
         } else {
             raw_bytes
@@ -895,7 +859,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         trace!("renamed snapshot to {}", path_2);
 
         // clean up any old snapshots
-        let candidates = self.config().get_snapshot_files();
+        let candidates = self.config.get_snapshot_files();
         for path in candidates {
             let path_str =
                 Path::new(&path).file_name().unwrap().to_str().unwrap();
@@ -911,20 +875,13 @@ impl<PM, P, R> PageCache<PM, P, R>
             }
         }
 
-        {
-            let start = clock();
-            let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
-            let locked = clock();
-            M.accountant_lock.measure(locked - start);
-            sa.resume_rewriting();
-            M.accountant_hold.measure(clock() - locked);
-        }
+        self.log.with_sa(|sa| sa.resume_rewriting());
 
         M.write_snapshot.measure(clock() - start);
     }
 
     fn advance_snapshot(&mut self) -> Snapshot<R> {
-        let snapshot = read_snapshot(self.config());
+        let snapshot = read_snapshot(&self.config);
 
         self.load_snapshot(&snapshot);
 
@@ -960,8 +917,9 @@ impl<PM, P, R> PageCache<PM, P, R>
             self.inner.insert(*pid, stack).unwrap();
         }
 
-        let mut sa = self.log.iobufs.segment_accountant.lock().unwrap();
-        sa.initialize_from_segments(snapshot.segments.clone());
+        self.log.with_sa(
+            |sa| sa.initialize_from_segments(snapshot.segments.clone()),
+        );
     }
 }
 

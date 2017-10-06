@@ -1,3 +1,6 @@
+//! This module contains the systems that deal with files
+//! directly. The `Log` is the point of contact for other
+//! modules.
 use std::cell::UnsafeCell;
 use std::fmt::{self, Debug};
 use std::io::{self, SeekFrom};
@@ -12,8 +15,17 @@ mod segment_accountant;
 mod iterator;
 mod reader;
 
+#[doc(hidden)]
+pub const MSG_HEADER_LEN: usize = 15;
+
+#[doc(hidden)]
+pub const SEG_HEADER_LEN: usize = 18;
+
+#[doc(hidden)]
+pub const SEG_TRAILER_LEN: usize = 10;
+
 pub use self::lss::*;
-pub use self::iobuf::*;
+use self::iobuf::*;
 pub use self::reservation::*;
 pub use self::segment_accountant::*;
 pub use self::iterator::*;
@@ -28,7 +40,8 @@ pub struct MessageHeader {
     pub crc16: [u8; 2],
 }
 
-/// A segment's header contains the new base LSN and a reference to the previous log segment.
+/// A segment's header contains the new base LSN and a reference
+/// to the previous log segment.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct SegmentHeader {
     pub lsn: Lsn,
@@ -36,9 +49,9 @@ pub struct SegmentHeader {
     pub ok: bool,
 }
 
-/// A segment's trailer contains the base Lsn for the segment. It is written
-/// after the rest of the segment has been fsync'd, and helps us indicate
-/// if a segment has been torn.
+/// A segment's trailer contains the base Lsn for the segment.
+/// It is written after the rest of the segment has been fsync'd,
+/// and helps us indicate if a segment has been torn.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct SegmentTrailer {
     pub lsn: Lsn,
@@ -56,11 +69,9 @@ pub enum LogRead {
 impl LogRead {
     /// Optionally return successfully read bytes, or None if
     /// the data was corrupt or this log entry was aborted.
-    pub fn flush(&self) -> Option<(Lsn, Vec<u8>, usize)> {
-        match *self {
-            LogRead::Flush(lsn, ref bytes, len) => Some(
-                (lsn, bytes.clone(), len),
-            ),
+    pub fn flush(self) -> Option<(Lsn, Vec<u8>, usize)> {
+        match self {
+            LogRead::Flush(lsn, bytes, len) => Some((lsn, bytes, len)),
             _ => None,
         }
     }
@@ -146,15 +157,12 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
         buf[13] = self.crc16[0];
         buf[14] = self.crc16[1];
 
-        // println!("writing MessageHeader buf: {:?}", buf);
-
         buf
     }
 }
 
 impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
     fn from(buf: [u8; SEG_HEADER_LEN]) -> SegmentHeader {
-        // println!("pulling segment header out of {:?}", buf);
         let crc16 = [buf[0], buf[1]];
 
         let lsn_buf = &buf[2..10];
@@ -191,8 +199,6 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
         buf[0] = crc16[0];
         buf[1] = crc16[1];
 
-        // println!("writing segment header {:?}", buf);
-
         buf
     }
 }
@@ -228,15 +234,4 @@ impl Into<[u8; SEG_TRAILER_LEN]> for SegmentTrailer {
 
         buf
     }
-}
-
-fn valid_entry_offset(lid: LogID, segment_len: usize) -> bool {
-    let seg_start = lid / segment_len as LogID * segment_len as LogID;
-
-    let max_lid = seg_start + segment_len as LogID -
-        SEG_TRAILER_LEN as LogID - MSG_HEADER_LEN as LogID;
-
-    let min_lid = seg_start + SEG_HEADER_LEN as LogID;
-
-    lid >= min_lid && lid <= max_lid
 }

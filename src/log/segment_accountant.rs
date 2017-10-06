@@ -84,7 +84,9 @@ pub struct SegmentAccountant {
     segments: Vec<Segment>,
     pending_clean: HashSet<PageID>,
 
-    // can be behing a mutex, rarely touched
+    // TODO put behind a single mutex
+    // NB MUST group pause_rewriting with ordering
+    // and free!
     free: Arc<Mutex<VecDeque<LogID>>>,
     tip: LogID,
     to_clean: HashSet<LogID>,
@@ -250,7 +252,7 @@ impl SegmentAccountant {
             if !empty_tip {
                 // if we found any later
                 let mut f = cached_f.borrow_mut();
-                let (_, _, len) = f.read_entry(
+                let (_, _, len) = f.read_message(
                     tip,
                     segment_len as usize,
                     self.config.get_use_compression(),
@@ -656,7 +658,7 @@ impl SegmentAccountant {
     // Mark a specific segment as being present at a particular
     // file offset.
     fn recover(&mut self, lsn: Lsn, lid: LogID) {
-        // println!("recovered lsn {} at lid {}", lsn, lid);
+        trace!("recovered segment lsn {} at lid {}", lsn, lid);
         let idx = lid as usize / self.config.get_io_buf_size();
 
         if self.segments.len() <= idx {

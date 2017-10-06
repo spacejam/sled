@@ -19,6 +19,7 @@ pub use self::node::*;
 /// A flash-sympathetic persistent lock-free B+ tree
 pub struct Tree {
     pages: PageCache<BLinkMaterializer, Frag, PageID>,
+    config: Config,
     root: AtomicUsize,
 }
 
@@ -32,7 +33,7 @@ impl Tree {
             BLinkMaterializer {
                 roots: Mutex::new(vec![]),
             },
-            config,
+            config.clone(),
         );
 
         let root_opt = pages.recover();
@@ -79,13 +80,9 @@ impl Tree {
 
         Tree {
             pages: pages,
+            config: config,
             root: AtomicUsize::new(root_id),
         }
-    }
-
-    /// Returns a ref to the current `Config` in use by the system.
-    pub fn config(&self) -> &Config {
-        self.pages.config()
     }
 
     /// Retrieve a value from the `Tree` if it exists.
@@ -476,7 +473,7 @@ impl Tree {
     }
 
     fn fanout(&self) -> usize {
-        self.config().get_blink_fanout()
+        self.config.get_blink_fanout()
     }
 
     #[doc(hidden)]

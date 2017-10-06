@@ -33,7 +33,8 @@ use super::*;
 /// ```
 pub struct Log {
     /// iobufs is the underlying lock-free IO write buffer.
-    pub iobufs: Arc<IoBufs>,
+    iobufs: Arc<IoBufs>,
+    config: Config,
     flusher_shutdown: Arc<AtomicBool>,
     flusher_handle: Option<std::thread::JoinHandle<()>>,
 }
@@ -54,7 +55,8 @@ impl Drop for Log {
 }
 
 impl Log {
-    /// create new lock-free log
+    /// Start the log, open or create the configured file,
+    /// and optionally start the periodic buffer flush thread.
     pub fn start_system(config: Config) -> Log {
         #[cfg(feature = "env_logger")]
         let _r = env_logger::init();
@@ -65,6 +67,7 @@ impl Log {
 
         let mut log = Log {
             iobufs: iobufs.clone(),
+            config: config.clone(),
             flusher_shutdown: flusher_shutdown.clone(),
             flusher_handle: None,
         };
@@ -94,12 +97,6 @@ impl Log {
         self.iobufs.reserve(buf)
     }
 
-    /// Return the config in use for this log.
-    // TODO no need, fix up config
-    pub fn config(&self) -> &Config {
-        self.iobufs.config()
-    }
-
     /// Write a buffer into the log. Returns the log sequence
     /// number and the file offset of the write.
     pub fn write(&self, buf: Vec<u8>) -> (Lsn, LogID) {
@@ -109,44 +106,40 @@ impl Log {
     /// Return an iterator over the log, starting with
     /// a specified offset.
     pub fn iter_from(&self, lsn: Lsn) -> Iter {
-        let io_buf_size = self.config().get_io_buf_size();
+        trace!("iterating from lsn {}", lsn);
+        let io_buf_size = self.config.get_io_buf_size();
         let segment_base_lsn = lsn / io_buf_size as Lsn * io_buf_size as Lsn;
         let min_lsn = segment_base_lsn + SEG_HEADER_LEN as Lsn;
         let corrected_lsn = std::cmp::max(lsn, min_lsn);
 
-        // println!("iter_from {}", lsn);
-        let start = clock();
-        let sa = self.iobufs.segment_accountant.lock().unwrap();
-        let locked = clock();
-        M.accountant_lock.measure(locked - start);
-        let segment_iter = sa.segment_snapshot_iter_from(segment_base_lsn);
-        M.accountant_hold.measure(clock() - locked);
+        let segment_iter =
+            self.with_sa(|sa| sa.segment_snapshot_iter_from(lsn));
 
         Iter {
-            config: self.config(),
+            config: &self.config,
             max_lsn: self.stable_offset(),
             cur_lsn: corrected_lsn,
             segment_base: None,
             segment_iter: segment_iter,
             segment_len: io_buf_size,
-            use_compression: self.config().get_use_compression(),
+            use_compression: self.config.get_use_compression(),
             trailer: None,
         }
     }
 
     /// read a buffer from the disk
     pub fn read(&self, lsn: Lsn, lid: LogID) -> io::Result<LogRead> {
-        // println!("read lsn {} lid {}", lsn, lid);
+        trace!("reading log lsn {} lid {}", lsn, lid);
         self.make_stable(lsn);
-        let cached_f = self.config().cached_file();
+        let cached_f = self.config.cached_file();
         let mut f = cached_f.borrow_mut();
-        // TODO check the lsn of the read log entry below
 
-        let read = f.read_entry(
+        let read = f.read_message(
             lid,
-            self.config().get_io_buf_size(),
-            self.config().get_use_compression(),
+            self.config.get_io_buf_size(),
+            self.config.get_use_compression(),
         );
+
         read.and_then(|log_read| match log_read {
             LogRead::Flush(read_lsn, _, _) => {
                 assert_eq!(lsn, read_lsn);
@@ -190,5 +183,24 @@ impl Log {
         // println!("make_stable({}) returning", lsn);
 
         M.make_stable.measure(clock() - start);
+    }
+
+    /// SegmentAccountant access for coordination with the `PageCache`
+    pub fn with_sa<B, F>(&self, f: F) -> B
+        where F: FnOnce(&mut SegmentAccountant) -> B
+    {
+        let start = clock();
+
+        let mut sa = self.iobufs.segment_accountant.lock().unwrap();
+
+        let locked_at = clock();
+
+        M.accountant_lock.measure(locked_at - start);
+
+        let ret = f(&mut sa);
+
+        M.accountant_hold.measure(clock() - locked_at);
+
+        ret
     }
 }
