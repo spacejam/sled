@@ -12,8 +12,10 @@ use coco::epoch::Ptr;
 use super::*;
 
 mod page_cache;
+mod snapshot;
 
 pub use self::page_cache::PageCache;
+pub use self::snapshot::Snapshot;
 
 /// A user of a `PageCache` needs to provide a `Materializer` which
 /// handles the merging of page fragments.
@@ -102,29 +104,6 @@ enum Update<PageFrag>
     Compact(PageFrag),
     Del,
     Alloc,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct Snapshot<R> {
-    pub max_lsn: Lsn,
-    pub max_pid: PageID,
-    pub pt: BTreeMap<PageID, Vec<(Lsn, LogID)>>,
-    pub segments: Vec<log::Segment>,
-    pub free: Vec<PageID>,
-    pub recovery: Option<R>,
-}
-
-impl<R> Default for Snapshot<R> {
-    fn default() -> Snapshot<R> {
-        Snapshot {
-            max_lsn: 0,
-            max_pid: 0,
-            pt: BTreeMap::new(),
-            segments: vec![],
-            free: vec![],
-            recovery: None,
-        }
-    }
 }
 
 struct PidDropper(PageID, Arc<Stack<PageID>>);

@@ -130,6 +130,7 @@ impl Log {
     /// read a buffer from the disk
     pub fn read(&self, lsn: Lsn, lid: LogID) -> io::Result<LogRead> {
         trace!("reading log lsn {} lid {}", lsn, lid);
+        // TODO don't skip segments in SA, unify reuse_segment logic, remove from ordering consistently assert!(lsn >= lid, "lsn should never be less than the log offset");
         self.make_stable(lsn);
         let cached_f = self.config.cached_file();
         let mut f = cached_f.borrow_mut();

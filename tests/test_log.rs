@@ -235,7 +235,45 @@ impl Arbitrary for Op {
 }
 
 #[test]
-fn multi_segment_invariants() {
+#[ignore]
+fn snapshot_with_out_of_order_buffers() {
+    let conf = Config::default()
+        .io_buf_size(100)
+        .io_bufs(2)
+        .snapshot_after_ops(5);
+
+    let len = conf.get_io_buf_size() - SEG_HEADER_LEN - SEG_TRAILER_LEN -
+        MSG_HEADER_LEN;
+
+    let log = conf.log();
+
+    for i in 0..4 {
+        let buf = vec![i as u8; len];
+        let (lsn, _lid) = log.write(buf);
+        log.make_stable(lsn);
+    }
+
+    {
+        // erase the third segment trailer to represent
+        // an out-of-order segment write before
+    }
+
+    drop(log);
+
+    let log = conf.log();
+
+    // start iterating just past the first segment header
+    let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
+
+    for i in 0..conf.get_io_bufs() * 2 {
+        let expected = vec![i as u8; len];
+        let (_lsn, _lid, buf) = iter.next().unwrap();
+        assert_eq!(expected, buf);
+    }
+}
+
+#[test]
+fn multi_segment_iteration() {
     // ensure segments are being linked
     // ensure trailers are valid
     let conf = Config::default().io_buf_size(100);

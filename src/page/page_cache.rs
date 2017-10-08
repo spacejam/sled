@@ -52,9 +52,9 @@ use super::*;
 ///     // signals that this is the beginning of a new page history, and
 ///     // that any previous items associated with this page should be
 ///     // forgotten.
-///     let key = pc.set(id, key, "a".to_owned()).unwrap();
-///     let key = pc.merge(id, key, "b".to_owned()).unwrap();
-///     let _key = pc.merge(id, key, "c".to_owned()).unwrap();
+///     let key = pc.replace(id, key, "a".to_owned()).unwrap();
+///     let key = pc.link(id, key, "b".to_owned()).unwrap();
+///     let _key = pc.link(id, key, "c".to_owned()).unwrap();
 ///
 ///     let (consolidated, _key) = pc.get(id).unwrap();
 ///
@@ -109,7 +109,13 @@ impl<PM, P, R> Debug for PageCache<PM, P, R>
 impl<PM, P, R> PageCache<PM, P, R>
     where PM: Materializer<PageFrag = P, Recovery = R>,
           PM: Send + Sync,
-          P: 'static + Clone + Serialize + DeserializeOwned + Send + Sync,
+          P: 'static
+                 + Debug
+                 + Clone
+                 + Serialize
+                 + DeserializeOwned
+                 + Send
+                 + Sync,
           R: Debug + Clone + Serialize + DeserializeOwned + Send
 {
     /// Instantiate a new `PageCache`.
@@ -259,7 +265,13 @@ impl<PM, P, R> PageCache<PM, P, R>
             let last = cache_entries.pop().map(|last_ce| match last_ce {
                 CacheEntry::MergedResident(_, lsn, lid) |
                 CacheEntry::Resident(_, lsn, lid) |
-                CacheEntry::Flush(lsn, lid) => CacheEntry::Flush(lsn, lid),
+                CacheEntry::Flush(lsn, lid) => {
+                    // NB stabilize the most recent LSN before
+                    // paging out! This SHOULD very rarely block...
+                    // TODO measure to make sure
+                    self.log.make_stable(lsn);
+                    CacheEntry::Flush(lsn, lid)
+                }
                 CacheEntry::PartialFlush(_, _) => {
                     panic!("got PartialFlush at end of stack...")
                 }
@@ -405,7 +417,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         self.page_out(to_evict, scope);
 
         if lids.len() > self.config.get_page_consolidation_threshold() {
-            match self.set(pid, head.into(), merged.clone()) {
+            match self.replace(pid, head.into(), merged.clone()) {
                 Ok(new_head) => head = new_head.into(),
                 Err(None) => return None,
                 _ => {}
@@ -456,11 +468,23 @@ impl<PM, P, R> PageCache<PM, P, R>
         Some((merged, head.into()))
     }
 
+    // If we can relocate any pages to clean a segment,
+    // try to do so.
+    fn try_cleaning_segment(&self) {
+        let to_clean = self.log.with_sa(|sa| sa.clean());
+
+        if let Some(pid) = to_clean {
+            if let Some((page, key)) = self.get(pid) {
+                let _ = self.replace(pid, key, page);
+            }
+        }
+    }
+
     /// Replace an existing page with a different set of `PageFrag`s.
     /// Returns `Ok(new_key)` if the operation was successful. Returns
     /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
     /// if the page has changed since the provided `CasKey` was created.
-    pub fn set(
+    pub fn replace(
         &self,
         pid: PageID,
         old: CasKey<P>,
@@ -497,19 +521,23 @@ impl<PM, P, R> PageCache<PM, P, R>
                 let lsn = log_reservation.lsn();
                 log_reservation.complete();
 
-                self.log.with_sa(
-                    |sa| sa.set(pid, lids_from_stack(old, scope), lid, lsn),
-                );
+                self.log.with_sa(|sa| {
+                    sa.mark_replace(pid, lids_from_stack(old, scope), lid, lsn)
+                });
 
                 let count = self.updates.fetch_add(1, SeqCst) + 1;
                 let should_snapshot =
                     count % self.config.get_snapshot_after_ops() == 0;
                 if should_snapshot {
+                    println!("before snapshot");
                     self.advance_snapshot();
+                    println!("after snapshot");
                 }
             } else {
                 log_reservation.abort();
             }
+
+            self.try_cleaning_segment();
 
             result.map(|ok| ok.into()).map_err(|e| Some(e.into()))
         })
@@ -520,7 +548,7 @@ impl<PM, P, R> PageCache<PM, P, R>
     /// Returns `Ok(new_key)` if the operation was successful. Returns
     /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
     /// if the page has changed since the provided `CasKey` was created.
-    pub fn merge(
+    pub fn link(
         &self,
         pid: PageID,
         old: CasKey<P>,
@@ -533,9 +561,15 @@ impl<PM, P, R> PageCache<PM, P, R>
             }
             let stack_ptr = stack_ptr.unwrap();
 
+            let old_key: Ptr<_> = old.into();
+
             let prepend: LoggedUpdate<P> = LoggedUpdate {
                 pid: pid,
-                update: Update::Append(new.clone()),
+                update: if old_key.is_null() {
+                    Update::Compact(new.clone())
+                } else {
+                    Update::Append(new.clone())
+                },
             };
             let serialize_start = clock();
             let bytes = serialize(&prepend, Infinite).unwrap();
@@ -546,9 +580,8 @@ impl<PM, P, R> PageCache<PM, P, R>
 
             let cache_entry = CacheEntry::Resident(new, lsn, lid);
 
-            let result = unsafe {
-                stack_ptr.deref().cap(old.into(), cache_entry, scope)
-            };
+            let result =
+                unsafe { stack_ptr.deref().cap(old_key, cache_entry, scope) };
 
             if result.is_err() {
                 log_reservation.abort();
@@ -557,7 +590,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 let lid = log_reservation.lid();
                 log_reservation.complete();
 
-                self.log.with_sa(|sa| sa.merged(pid, lid, lsn));
+                self.log.with_sa(|sa| sa.mark_link(pid, lid, lsn));
 
                 let count = self.updates.fetch_add(1, SeqCst) + 1;
                 let should_snapshot =
@@ -567,13 +600,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 }
             }
 
-            let to_clean = self.log.with_sa(|sa| sa.clean());
-
-            if let Some(pid) = to_clean {
-                if let Some((page, key)) = self.get(pid) {
-                    let _ = self.set(pid, key, page);
-                }
-            }
+            self.try_cleaning_segment();
 
             result.map(|ok| ok.into()).map_err(|e| Some(e.into()))
         })
@@ -601,6 +628,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         // we disable rewriting so that our log becomes append-only,
         // allowing us to iterate through it without corrupting ourselves.
         self.log.with_sa(|sa| sa.pause_rewriting());
+        println!("disabled rewriting in advance_snapshot");
 
 
         trace!("building on top of old snapshot: {:?}", snapshot);
@@ -696,22 +724,24 @@ impl<PM, P, R> PageCache<PM, P, R>
                     }
 
                     // FIXME unwrapped on None, page_cache::merge and set predecessor
-                    let scopy = snapshot.clone();
+
+                    let mut worked = false;
                     if let Some(lids) = snapshot.pt.get_mut(&prepend.pid) {
+                        worked = true;
                         lids.push((lsn, log_id));
-                    } else {
+                    }
+
+                    if !worked {
+                        let scopy = snapshot.clone();
                         println!(
                             "failed to look up pid {} in snapshot table: {:?}",
                             prepend.pid,
                             scopy
                         );
-                        error!(
-                            "failed to look up pid {} in snapshot table: {:?}",
-                            prepend.pid,
-                            scopy
-                        );
-                        panic!(":(");
+                        println!("page: {:?}", partial_page);
+                        std::process::exit(1);
                     }
+
                 }
                 Update::Compact(partial_page) => {
                     trace!(
@@ -720,8 +750,8 @@ impl<PM, P, R> PageCache<PM, P, R>
                         log_id,
                         lsn
                     );
-                    if let Some(lids) = snapshot.pt.get(&prepend.pid) {
-                        for &(_lsn, lid) in lids {
+                    if let Some(lids) = snapshot.pt.remove(&prepend.pid) {
+                        for (_lsn, lid) in lids {
                             let old_idx = lid as usize / io_buf_size;
                             let old_segment = &mut snapshot.segments[old_idx];
                             if old_segment.pids_len == 0 {
@@ -747,8 +777,9 @@ impl<PM, P, R> PageCache<PM, P, R>
                         log_id,
                         lsn
                     );
-                    if let Some(lids) = snapshot.pt.get(&prepend.pid) {
-                        for &(_lsn, lid) in lids {
+                    if let Some(lids) = snapshot.pt.remove(&prepend.pid) {
+                        // this could fail if our Alloc was nuked
+                        for (_lsn, lid) in lids {
                             let old_idx = lid as usize / io_buf_size;
                             let old_segment = &mut snapshot.segments[old_idx];
                             if old_segment.pids_len == 0 {
@@ -758,7 +789,6 @@ impl<PM, P, R> PageCache<PM, P, R>
                         }
                     }
 
-                    snapshot.pt.remove(&prepend.pid);
                     snapshot.free.push(prepend.pid);
                 }
                 Update::Alloc => {
@@ -785,6 +815,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         trace!("generated new snapshot: {:?}", snapshot);
 
         self.log.with_sa(|sa| sa.resume_rewriting());
+        println!("resumed rewriting in advance_snapshot");
 
         // NB replacing the snapshot must come after the resume_rewriting call
         // otherwise we create a race condition where we corrupt an in-progress

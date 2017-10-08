@@ -91,7 +91,9 @@ fn main() {
         .cache_bits(6)
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(500))
-        .snapshot_after_ops(1_000_000);
+        // .io_buf_size(10000)
+        .path("stress2.db".to_string())
+        .snapshot_after_ops(100000);
 
     let tree = Arc::new(config.tree());
 

@@ -172,8 +172,27 @@ impl SegmentAccountant {
         self.segments = segments;
     }
 
-    /// Scan the log file if we don't know of any Lsn offsets yet, and recover
-    /// the order of segments, and the highest Lsn.
+    // Mark a specific segment as being present at a particular
+    // file offset.
+    fn recover(&mut self, lsn: Lsn, lid: LogID) {
+        trace!("recovered segment lsn {} at lid {}", lsn, lid);
+        let idx = lid as usize / self.config.get_io_buf_size();
+
+        if self.segments.len() <= idx {
+            self.segments.resize(idx + 1, Segment::default());
+        }
+
+        if lsn == 0 && lid != 0 {
+            // TODO figure out why this is happening, stahp it
+            panic!("lsn of 0 provided with lid {}", lid);
+        } else {
+            self.segments[idx].lsn = Some(lsn);
+            self.ordering.insert(lsn, lid);
+        }
+    }
+
+    // Scan the log file if we don't know of any Lsn offsets yet, and recover
+    // the order of segments, and the highest Lsn.
     fn scan_segment_lsns(&mut self) {
         if self.is_recovered() {
             return;
@@ -189,7 +208,13 @@ impl SegmentAccountant {
             // the initial header at that position... but we need to
             // make sure the segment is not torn
             if segment.ok {
-                self.recover(segment.lsn, cursor);
+                if segment.lsn != 0 || cursor == 0 {
+                    // if lsn is 0, this is free
+                    self.recover(segment.lsn, cursor);
+                } else {
+                    // this segment was skipped or is free
+                    self.free.lock().unwrap().push_front(cursor);
+                }
             } else {
                 // TODO DATA CORRUPTION AAHHHHHH
                 // add to free list? can't break...
@@ -216,6 +241,7 @@ impl SegmentAccountant {
 
             self.last_given = *lid;
             let mut tip = lid + SEG_HEADER_LEN as LogID;
+            let cur_lsn = base_lsn + SEG_HEADER_LEN as Lsn;
 
             let segment_ceiling = segment_base + segment_len -
                 SEG_TRAILER_LEN as LogID -
@@ -231,7 +257,7 @@ impl SegmentAccountant {
             let iter = Iter {
                 config: &self.config,
                 max_lsn: segment_ceiling,
-                cur_lsn: tip,
+                cur_lsn: cur_lsn,
                 segment_base: None,
                 segment_iter: Box::new(vec![(*base_lsn, *lid)].into_iter()),
                 segment_len: segment_len as usize,
@@ -428,7 +454,7 @@ impl SegmentAccountant {
     /// We mark all of the old segments that contained the previous state
     /// from the page, and if the old segments are empty or clear enough to
     /// begin accelerated cleaning we mark them as so.
-    pub fn set(
+    pub fn mark_replace(
         &mut self,
         pid: PageID,
         old_lids: Vec<LogID>,
@@ -474,7 +500,7 @@ impl SegmentAccountant {
                 // can be reused immediately
                 self.segments[idx].freed = true;
                 self.to_clean.remove(&segment_start);
-                trace!("freed segment {} in set", segment_start);
+                trace!("freed segment {} in replace", segment_start);
                 self.ensure_safe_free_distance();
 
                 pin(|scope| {
@@ -496,13 +522,13 @@ impl SegmentAccountant {
             }
         }
 
-        self.merged(pid, new_lid, lsn);
+        self.mark_link(pid, new_lid, lsn);
     }
 
     /// Called from `PageCache` when some state has been added
     /// to a logical page at a particular offset. We ensure the
     /// page is present in the segment's page set.
-    pub fn merged(&mut self, pid: PageID, lid: LogID, lsn: Lsn) {
+    pub fn mark_link(&mut self, pid: PageID, lid: LogID, lsn: Lsn) {
         self.pending_clean.remove(&pid);
 
         let idx = lid as usize / self.config.get_io_buf_size();
@@ -537,7 +563,7 @@ impl SegmentAccountant {
         // This is so that we will never give out a segment
         // that has been placed on the free queue after its
         // contained pages have all had updates added to an
-        // IO buffer during a PageCache set, but whose
+        // IO buffer during a PageCache replace, but whose
         // replacing updates have not actually landed on disk
         // yet. If updates always have to wait in a queue
         // at least as long as the number of IO buffers, it
@@ -598,12 +624,20 @@ impl SegmentAccountant {
         self.ordering.insert(lsn, lid);
 
         debug!(
-            "segment accountant returning offset {} last {}",
+            "segment accountant returning offset: {} paused: {} last: {}",
             lid,
+            self.pause_rewriting,
             last_given
         );
 
         self.last_given = lid;
+
+        println!(
+            "SA giving out lid {}, paused: {}, on deck: {:?}",
+            lid,
+            self.pause_rewriting,
+            self.free
+        );
 
         (lid, last_given)
     }
@@ -649,24 +683,6 @@ impl SegmentAccountant {
     pub fn is_recovered(&self) -> bool {
         !self.segments.is_empty()
     }
-
-    // Mark a specific segment as being present at a particular
-    // file offset.
-    fn recover(&mut self, lsn: Lsn, lid: LogID) {
-        trace!("recovered segment lsn {} at lid {}", lsn, lid);
-        let idx = lid as usize / self.config.get_io_buf_size();
-
-        if self.segments.len() <= idx {
-            self.segments.resize(idx + 1, Segment::default());
-        }
-
-        if lsn == 0 && lid != 0 {
-            // TODO figure out why this is happening, stahp it
-        } else {
-            self.segments[idx].lsn = Some(lsn);
-            self.ordering.insert(lsn, lid);
-        }
-    }
 }
 
 #[test]
@@ -689,35 +705,35 @@ fn basic_workflow() {
     let second = sa.next(lsn()).0;
     let third = sa.next(lsn()).0;
 
-    sa.merged(0, first, lsn());
+    sa.mark_link(0, first, lsn());
 
-    // Assert that sets for the same pid don't yield anything to clean yet.
-    sa.set(0, vec![first], first, lsn());
+    // Assert that replaces for the same pid don't yield anything to clean yet.
+    sa.mark_replace(0, vec![first], first, lsn());
     assert_eq!(sa.clean(), None);
-    sa.set(0, vec![first], first, lsn());
+    sa.mark_replace(0, vec![first], first, lsn());
     assert_eq!(sa.clean(), None);
-    sa.set(0, vec![first], first, lsn());
+    sa.mark_replace(0, vec![first], first, lsn());
     assert_eq!(sa.clean(), None);
-    sa.set(0, vec![first], first, lsn());
+    sa.mark_replace(0, vec![first], first, lsn());
     assert_eq!(sa.clean(), None);
 
     // Assert that when we roll over to the next log, we can immediately
     // reuse first.
     let _fourth = sa.next(lsn()).0;
-    sa.set(0, vec![first], second, lsn());
+    sa.mark_replace(0, vec![first], second, lsn());
     assert_eq!(sa.clean(), None);
-    sa.merged(1, second, lsn());
-    sa.merged(2, second, lsn());
-    sa.merged(3, second, lsn());
-    sa.merged(4, second, lsn());
-    sa.merged(5, second, lsn());
+    sa.mark_link(1, second, lsn());
+    sa.mark_link(2, second, lsn());
+    sa.mark_link(3, second, lsn());
+    sa.mark_link(4, second, lsn());
+    sa.mark_link(5, second, lsn());
 
     // Move a page from second to third, and assert pid 1 can be cleaned.
-    sa.set(0, vec![second], third, lsn());
-    sa.set(2, vec![second], third, lsn());
-    sa.set(3, vec![second], third, lsn());
-    sa.set(4, vec![second], third, lsn());
-    sa.set(5, vec![second], third, lsn());
+    sa.mark_replace(0, vec![second], third, lsn());
+    sa.mark_replace(2, vec![second], third, lsn());
+    sa.mark_replace(3, vec![second], third, lsn());
+    sa.mark_replace(4, vec![second], third, lsn());
+    sa.mark_replace(5, vec![second], third, lsn());
     assert_eq!(sa.clean(), Some(1));
     assert_eq!(sa.clean(), None);
 }

@@ -73,8 +73,8 @@ impl Tree {
                 true,
             );
 
-            pages.set(root_id, root_cas_key, root).unwrap();
-            pages.set(leaf_id, leaf_cas_key, leaf).unwrap();
+            pages.replace(root_id, root_cas_key, root).unwrap();
+            pages.replace(leaf_id, leaf_cas_key, leaf).unwrap();
             root_id
         };
 
@@ -137,7 +137,7 @@ impl Tree {
 
             let &mut (ref node, ref cas_key) = path.last_mut().unwrap();
             if self.pages
-                .merge(node.id, cas_key.clone(), frag.clone())
+                .link(node.id, cas_key.clone(), frag.clone())
                 .is_ok()
             {
                 M.tree_cas.measure(clock() - start);
@@ -156,7 +156,7 @@ impl Tree {
             let mut path = self.path_for_key(&*key);
             let (mut last_node, last_cas_key) = path.pop().unwrap();
             // println!("last before: {:?}", last);
-            if let Ok(new_cas_key) = self.pages.merge(
+            if let Ok(new_cas_key) = self.pages.link(
                 last_node.id,
                 last_cas_key,
                 frag.clone(),
@@ -212,7 +212,7 @@ impl Tree {
             }
 
             let frag = Frag::Del(key.to_vec());
-            if self.pages.merge(leaf_node.id, leaf_cas_key, frag).is_ok() {
+            if self.pages.link(leaf_node.id, leaf_cas_key, frag).is_ok() {
                 // success
                 break;
             } else {
@@ -371,14 +371,11 @@ impl Tree {
 
         // install the new right side
         self.pages
-            .set(new_pid, new_cas_key, Frag::Base(rhs, false))
+            .replace(new_pid, new_cas_key, Frag::Base(rhs, false))
             .expect("failed to initialize child split");
 
         // try to install a child split on the left side
-        if self.pages
-            .merge(node.id, node_cas_key, child_split)
-            .is_err()
-        {
+        if self.pages.link(node.id, node_cas_key, child_split).is_err() {
             // if we failed, don't follow through with the parent split
             // println!("{}: {}|{} @ {:?} -", tn(), node.id, new_pid, parent_split.at);
             self.pages.free(new_pid);
@@ -395,7 +392,7 @@ impl Tree {
         parent_split: ParentSplit,
     ) -> Result<CasKey<Frag>, Option<CasKey<Frag>>> {
         // install parent split
-        let res = self.pages.merge(
+        let res = self.pages.link(
             parent_node.id,
             parent_cas_key,
             Frag::ParentSplit(parent_split.clone()),
@@ -433,7 +430,7 @@ impl Tree {
         if cas == from {
             // TODO think about the racyness of this
             self.pages
-                .set(new_root_pid, new_root_cas_key, new_root)
+                .replace(new_root_pid, new_root_cas_key, new_root)
                 .unwrap();
             debug!(
                 "{}: root hoist from {} to {} successful",
@@ -537,11 +534,8 @@ impl Tree {
                     to: node.id,
                 });
 
-                let _res = self.pages.merge(
-                    parent_node.id,
-                    parent_cas_key.clone(),
-                    ps,
-                );
+                let _res =
+                    self.pages.link(parent_node.id, parent_cas_key.clone(), ps);
                 // println!("trying to fix incomplete parent split: {:?}", res);
                 // println!("after: {:?}", self);
             }

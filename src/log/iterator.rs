@@ -28,6 +28,11 @@ impl<'a> Iterator for Iter<'a> {
                 return None;
             } else if self.segment_base.is_none() || at_end {
                 if let Some((next_lsn, next_lid)) = self.segment_iter.next() {
+                    assert!(
+                        next_lsn + (self.segment_len as Lsn) >= self.cur_lsn,
+                        "caller is responsible for providing segments \
+                            that contain the initial cur_lsn value or higher"
+                    );
                     if let Err(e) = self.read_segment(next_lsn, next_lid) {
                         debug!(
                             "hit snap while reading segments in \
@@ -82,6 +87,11 @@ impl<'a> Iter<'a> {
     /// read a segment of log messages. Only call after
     /// pausing segment rewriting on the segment accountant!
     fn read_segment(&mut self, lsn: Lsn, offset: LogID) -> std::io::Result<()> {
+        // we add segment_len to this check because we may be getting the
+        // initial segment that is a bit behind where we left off before.
+        println!("lsn: {:?} cur_lsn: {:?}", lsn, self.cur_lsn);
+        // TODO don't skip segments in SA, unify reuse_segment logic, remove from ordering consistently assert!(lsn >= offset, "lsn should never be less than the log offset");
+        assert!(lsn + self.segment_len as Lsn >= self.cur_lsn);
         let cached_f = self.config.cached_file();
         let mut f = cached_f.borrow_mut();
         let segment_header = f.read_segment_header(offset)?;
@@ -94,8 +104,6 @@ impl<'a> Iter<'a> {
                 Error::new(ErrorKind::Other, "encountered torn segment"),
             );
         }
-
-        assert!(segment_header.lsn + self.segment_len as LogID >= self.cur_lsn);
 
         let trailer_offset = offset + self.segment_len as LogID -
             SEG_TRAILER_LEN as LogID;
