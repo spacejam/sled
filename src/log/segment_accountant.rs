@@ -183,7 +183,6 @@ impl SegmentAccountant {
         }
 
         if lsn == 0 && lid != 0 {
-            // TODO figure out why this is happening, stahp it
             panic!("lsn of 0 provided with lid {}", lid);
         } else {
             self.segments[idx].lsn = Some(lsn);
@@ -243,15 +242,17 @@ impl SegmentAccountant {
             let mut tip = lid + SEG_HEADER_LEN as LogID;
             let cur_lsn = base_lsn + SEG_HEADER_LEN as Lsn;
 
-            let segment_ceiling = segment_base + segment_len -
+            let segment_ceiling = base_lsn + segment_len -
                 SEG_TRAILER_LEN as LogID -
                 MSG_HEADER_LEN as LogID;
 
             trace!(
                 "segment accountant recovering segment at lsn: {} \
-                read_offset: {}",
+                read_offset: {}, ceiling: {}, cur_lsn: {}",
                 base_lsn,
-                lid
+                lid,
+                segment_ceiling,
+                cur_lsn
             );
 
             let iter = Iter {
@@ -304,10 +305,12 @@ impl SegmentAccountant {
             }
         }
 
+        println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
         if empty_tip && max.is_some() {
-            let lid = *max.unwrap().0;
+            let (lsn, lid) = max.unwrap();
             debug!("freed empty segment {} while recovering segments", lid);
-            self.free.lock().unwrap().push_front(lid);
+            self.recovered_lsn = *lsn;
+            self.recovered_lid = *lid;
         }
 
         debug!(
@@ -461,6 +464,7 @@ impl SegmentAccountant {
         new_lid: LogID,
         lsn: Lsn,
     ) {
+        println!("mark_replace pid {} at lid {}", pid, new_lid);
         self.pending_clean.remove(&pid);
 
         let new_idx = new_lid as usize / self.config.get_io_buf_size();
@@ -529,6 +533,7 @@ impl SegmentAccountant {
     /// to a logical page at a particular offset. We ensure the
     /// page is present in the segment's page set.
     pub fn mark_link(&mut self, pid: PageID, lid: LogID, lsn: Lsn) {
+        println!("mark_link pid {} at lid {}", pid, lid);
         self.pending_clean.remove(&pid);
 
         let idx = lid as usize / self.config.get_io_buf_size();
@@ -660,6 +665,7 @@ impl SegmentAccountant {
                     continue;
                 }
                 self.pending_clean.insert(*pid);
+                println!("SA telling caller to clean {}", *pid);
                 return Some(*pid);
             }
         }

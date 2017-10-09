@@ -12,8 +12,8 @@ use zstd::block::{compress, decompress};
 
 use super::*;
 
-/// A lock-free pagecache which supports fragmented pages for dramatically
-/// improving write throughput.
+/// A lock-free pagecache which supports fragmented pages
+/// for dramatically improving write throughput.
 ///
 /// # Working with the `PageCache`
 ///
@@ -45,17 +45,22 @@ use super::*;
 /// fn main() {
 ///     let path = "test_pagecache_doc.log";
 ///     let conf = sled::Config::default().path(path.to_owned());
-///     let pc = sled::PageCache::new(TestMaterializer, conf.clone());
+///     let pc = sled::PageCache::new(TestMaterializer,
+///                                   conf.clone());
 ///     let (id, key) = pc.allocate();
 ///
-///     // The first item in a page should be set using replace, which
-///     // signals that this is the beginning of a new page history, and
-///     // that any previous items associated with this page should be
-///     // forgotten.
+///     // The first item in a page should be set using replace,
+///     // which signals that this is the beginning of a new
+///     // page history, and that any previous items associated
+///     // with this page should be forgotten.
 ///     let key = pc.replace(id, key, "a".to_owned()).unwrap();
+///
+///     // Subsequent atomic updates should be added with link.
 ///     let key = pc.link(id, key, "b".to_owned()).unwrap();
 ///     let _key = pc.link(id, key, "c".to_owned()).unwrap();
 ///
+///     // When getting a page, the provide `Materializer` is
+///     // used to merge all pages together.
 ///     let (consolidated, _key) = pc.get(id).unwrap();
 ///
 ///     assert_eq!(consolidated, "abc".to_owned());
@@ -173,7 +178,6 @@ impl<PM, P, R> PageCache<PM, P, R>
         let pid = self.free.pop().unwrap_or_else(
             || self.max_pid.fetch_add(1, SeqCst),
         );
-        trace!("allocating pid {}", pid);
         self.inner.insert(pid, Stack::default()).unwrap();
 
         // write info to log
@@ -185,7 +189,8 @@ impl<PM, P, R> PageCache<PM, P, R>
         let bytes = serialize(&prepend, Infinite).unwrap();
         M.serialize.measure(clock() - serialize_start);
 
-        self.log.write(bytes);
+        let (lsn, lid) = self.log.write(bytes);
+        trace!("allocating pid {} at lsn {} lid {}", pid, lsn, lid);
 
         (pid, Ptr::null().into())
     }
@@ -358,6 +363,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                     if lids.is_empty() {
                         // Short circuit merging and fix-up if we only
                         // have one frag.
+                        println!("short circuiting");
                         return Some((page_frag.clone(), head.into()));
                     }
                     if !merged_resident {
@@ -417,10 +423,14 @@ impl<PM, P, R> PageCache<PM, P, R>
         self.page_out(to_evict, scope);
 
         if lids.len() > self.config.get_page_consolidation_threshold() {
+            println!("consolidating pid {}!", pid);
             match self.replace(pid, head.into(), merged.clone()) {
-                Ok(new_head) => head = new_head.into(),
+                Ok(new_head) => {
+                    println!("setting new head to {:?}", new_head);
+                    head = new_head.into()
+                }
                 Err(None) => return None,
-                _ => {}
+                _ => println!("some other thing beat us or something"),
             }
         } else if !fetched.is_empty() ||
                    fix_up_length >= self.config.get_cache_fixup_threshold()
@@ -452,8 +462,13 @@ impl<PM, P, R> PageCache<PM, P, R>
                 stack_ptr.deref().cas(head, node.into_ptr(scope), scope)
             };
             if let Ok(new_head) = res {
+                println!("another cas worked!");
                 head = new_head;
             } else {
+                println!(
+                    "our fix-up didn't work, something else won: {:?}",
+                    res
+                );
                 // NB explicitly DON'T update head, as our witnessed
                 // entries do NOT contain the latest state. This
                 // may not matter to callers who only care about
@@ -465,6 +480,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         M.page_in.measure(clock() - start);
 
+        println!("page_in returning key {:?}", head);
         Some((merged, head.into()))
     }
 
@@ -490,6 +506,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         old: CasKey<P>,
         new: P,
     ) -> Result<CasKey<P>, Option<CasKey<P>>> {
+        println!("replacing pid {}", pid);
         pin(|scope| {
             let stack_ptr = self.inner.get(pid, scope);
             if stack_ptr.is_none() {
@@ -522,6 +539,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 log_reservation.complete();
 
                 self.log.with_sa(|sa| {
+                    println!("mark_replace {}", pid);
                     sa.mark_replace(pid, lids_from_stack(old, scope), lid, lsn)
                 });
 
@@ -555,6 +573,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         new: P,
     ) -> Result<CasKey<P>, Option<CasKey<P>>> {
         pin(|scope| {
+            println!("a");
             let stack_ptr = self.inner.get(pid, scope);
             if stack_ptr.is_none() {
                 return Err(None);
@@ -580,6 +599,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
             let cache_entry = CacheEntry::Resident(new, lsn, lid);
 
+            println!("b");
             let result =
                 unsafe { stack_ptr.deref().cap(old_key, cache_entry, scope) };
 
@@ -631,6 +651,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         println!("disabled rewriting in advance_snapshot");
 
 
+        println!("building on top of old snapshot: {:?}", snapshot);
         trace!("building on top of old snapshot: {:?}", snapshot);
 
         info!(
@@ -710,38 +731,27 @@ impl<PM, P, R> PageCache<PM, P, R>
 
             match prepend.update {
                 Update::Append(partial_page) => {
-                    trace!(
-                        "append of pid {} at lid {} lsn {}",
-                        prepend.pid,
-                        log_id,
-                        lsn
-                    );
-                    snapshot.segments[idx].pids.insert(prepend.pid);
-
-                    let r = self.t.recover(&partial_page);
-                    if r.is_some() {
-                        recovery = r;
-                    }
-
-                    // FIXME unwrapped on None, page_cache::merge and set predecessor
-
-                    let mut worked = false;
+                    // Because we rewrite pages over time, we may have relocated
+                    // a page's initial Compact to a later segment. We should skip
+                    // over pages here unless we've encountered a Compact or Alloc
+                    // for them.
                     if let Some(lids) = snapshot.pt.get_mut(&prepend.pid) {
-                        worked = true;
+                        trace!(
+                            "append of pid {} at lid {} lsn {}",
+                            prepend.pid,
+                            log_id,
+                            lsn
+                        );
+
+                        snapshot.segments[idx].pids.insert(prepend.pid);
+
+                        let r = self.t.recover(&partial_page);
+                        if r.is_some() {
+                            recovery = r;
+                        }
+
                         lids.push((lsn, log_id));
                     }
-
-                    if !worked {
-                        let scopy = snapshot.clone();
-                        println!(
-                            "failed to look up pid {} in snapshot table: {:?}",
-                            prepend.pid,
-                            scopy
-                        );
-                        println!("page: {:?}", partial_page);
-                        std::process::exit(1);
-                    }
-
                 }
                 Update::Compact(partial_page) => {
                     trace!(
@@ -754,6 +764,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                         for (_lsn, lid) in lids {
                             let old_idx = lid as usize / io_buf_size;
                             let old_segment = &mut snapshot.segments[old_idx];
+                            // FIXME this pids_len is borked
                             if old_segment.pids_len == 0 {
                                 old_segment.pids_len = old_segment.pids.len();
                             }
@@ -782,6 +793,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                         for (_lsn, lid) in lids {
                             let old_idx = lid as usize / io_buf_size;
                             let old_segment = &mut snapshot.segments[old_idx];
+                            // FIXME this pids_len is borked
                             if old_segment.pids_len == 0 {
                                 old_segment.pids_len = old_segment.pids.len();
                             }
@@ -813,6 +825,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         self.write_snapshot(&snapshot);
 
         trace!("generated new snapshot: {:?}", snapshot);
+        println!("generated new snapshot: {:?}", snapshot);
 
         self.log.with_sa(|sa| sa.resume_rewriting());
         println!("resumed rewriting in advance_snapshot");

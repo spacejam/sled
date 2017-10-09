@@ -40,6 +40,8 @@ fn pagecache_caching() {
     let conf = Config::default()
         .cache_capacity(40)
         .cache_bits(0)
+        .flush_every_ms(None)
+        .snapshot_after_ops(1_000_000)
         .io_buf_size(5000);
 
     let mut pc = PageCache::new(TestMaterializer, conf.clone());
@@ -57,6 +59,80 @@ fn pagecache_caching() {
         let (_, key) = pc.get(id).unwrap();
         let key = pc.link(id, key, vec![i]).unwrap();
         keys.insert(id, key);
+    }
+}
+
+#[test]
+fn pagecache_strange_crash_1() {
+    let conf = Config::default()
+        .cache_capacity(40)
+        .cache_bits(0)
+        .flush_every_ms(None)
+        .snapshot_after_ops(1_000_000)
+        .io_buf_size(5000);
+
+    let max_lsn = {
+        let mut pc = PageCache::new(TestMaterializer, conf.clone());
+        pc.recover();
+
+        let mut keys = HashMap::new();
+        for _ in 0..2 {
+            let (id, key) = pc.allocate();
+            let key = pc.replace(id, key, vec![0]).unwrap();
+            keys.insert(id, key);
+        }
+
+        for i in 0..1000 {
+            let id = i as usize % 2;
+            let (_, key) = pc.get(id).unwrap();
+            let key = pc.link(id, key, vec![i]).unwrap();
+            keys.insert(id, key);
+        }
+
+        // pc.stable();
+    };
+    println!("!!!!!!!!!!!!!!!!!!!!! recovering !!!!!!!!!!!!!!!!!!!!!!");
+    let mut pc = PageCache::new(TestMaterializer, conf.clone());
+    pc.recover();
+    // TODO test no eaten lsn's on recovery
+    // TODO test that we don't skip multiple segments ahead on recovery (confusing Lsn & Lid)
+}
+
+#[test]
+fn pagecache_strange_crash_2() {
+    for x in 0..10 {
+        let conf = Config::default()
+            .cache_capacity(40)
+            .cache_bits(0)
+            .flush_every_ms(None)
+            .snapshot_after_ops(1_000_000)
+            .io_buf_size(5000);
+
+        println!("!!!!!!!!!!!!!!!!!!!!! {} !!!!!!!!!!!!!!!!!!!!!!", x);
+        let mut pc = PageCache::new(TestMaterializer, conf.clone());
+        pc.recover();
+
+        let mut keys = HashMap::new();
+        for _ in 0..2 {
+            let (id, key) = pc.allocate();
+            let key = pc.replace(id, key, vec![0]).unwrap();
+            keys.insert(id, key);
+        }
+
+        for i in 0..1000 {
+            let id = i as usize % 2;
+            println!("------ beginning op on pid {} ------", id);
+            let (_, key) = pc.get(id).unwrap();
+            println!("got key {:?} for pid {}", key, id);
+            let ptr: Ptr<_> = key.clone().into();
+            assert!(!ptr.is_null());
+            let key_res = pc.link(id, key, vec![i]);
+            if key_res.is_err() {
+                println!("failed linking pid {}", id);
+            }
+            let key = key_res.unwrap();
+            keys.insert(id, key);
+        }
     }
 }
 
