@@ -119,10 +119,49 @@ impl Drop for SegmentDropper {
 /// overwritten for new data.
 #[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct Segment {
-    pub pids: HashSet<PageID>,
-    pub pids_len: usize,
-    pub lsn: Option<Lsn>,
+    added: HashSet<PageID>,
+    removed: HashSet<PageID>,
+    lsn: Lsn,
     freed: bool,
+}
+
+impl Segment {
+    fn reset(&mut self, lsn: Lsn) {
+        self.lsn = lsn;
+        self.freed = false;
+        self.added.clear();
+        self.removed.clear();
+    }
+
+    /// Add a pid to the Segment. The caller must provide
+    /// the Segment's LSN.
+    pub fn insert_pid(&mut self, pid: PageID, lsn: Lsn) {
+        assert_eq!(lsn, self.lsn);
+        assert!(!self.removed.contains(&pid));
+        assert!(!self.freed);
+        self.added.insert(pid);
+    }
+
+    /// Mark that a pid in this Segment has been relocated.
+    /// The caller must provide the Segment's LSN.
+    pub fn remove_pid(&mut self, pid: PageID, lsn: Lsn) {
+        assert_eq!(lsn, self.lsn);
+        assert!(!self.freed);
+        assert!(self.added.contains(&pid));
+        self.removed.insert(pid);
+    }
+
+    fn present(&self) -> Vec<&PageID> {
+        self.added.difference(&self.removed).collect()
+    }
+
+    fn live_pct(&self) -> f64 {
+        (self.added.len() - self.removed.len()) as f64 / self.added.len() as f64
+    }
+
+    fn is_empty(&self) -> bool {
+        self.removed.len() == self.added.len()
+    }
 }
 
 impl SegmentAccountant {
@@ -148,9 +187,10 @@ impl SegmentAccountant {
             let segment_start = (idx * self.config.get_io_buf_size()) as LogID;
 
             // populate free and to_clean
-            if segment.pids.is_empty() {
+            if segment.is_empty() {
                 // can be reused immediately
                 segment.freed = true;
+                self.to_clean.remove(&segment_start);
                 trace!("pid {} freed @initialize_from_segments", segment_start);
 
                 if logical_tail.contains(&segment_start) {
@@ -161,7 +201,7 @@ impl SegmentAccountant {
                 }
 
                 self.free.lock().unwrap().push_back(segment_start);
-            } else if segment.pids.len() as f64 / segment.pids_len as f64 <=
+            } else if segment.live_pct() <=
                        self.config.get_segment_cleanup_threshold()
             {
                 // can be cleaned
@@ -185,7 +225,8 @@ impl SegmentAccountant {
         if lsn == 0 && lid != 0 {
             panic!("lsn of 0 provided with lid {}", lid);
         } else {
-            self.segments[idx].lsn = Some(lsn);
+            self.segments[idx].reset(lsn);
+            assert!(!self.ordering.contains_key(&lsn));
             self.ordering.insert(lsn, lid);
         }
     }
@@ -305,10 +346,10 @@ impl SegmentAccountant {
             }
         }
 
-        println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
         if empty_tip && max.is_some() {
             let (lsn, lid) = max.unwrap();
             debug!("freed empty segment {} while recovering segments", lid);
+            self.free.lock().unwrap().push_front(*lid);
             self.recovered_lsn = *lsn;
             self.recovered_lid = *lid;
         }
@@ -318,6 +359,7 @@ impl SegmentAccountant {
             self.recovered_lsn,
             self.recovered_lid
         );
+        println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
     }
 
     // This ensures that the last <# io buffers> segments on
@@ -411,22 +453,19 @@ impl SegmentAccountant {
 
         for old_lid in old_lids {
             let idx = old_lid as usize / self.config.get_io_buf_size();
+            let segment_start = (idx * self.config.get_io_buf_size()) as LogID;
 
-            if self.segments[idx].lsn.unwrap() > lsn {
+            if self.segments[idx].lsn > lsn {
                 // has been replaced after this call already,
-                // quite a big race happened.
+                // there was a race with another thread that
+                // freed, allocated or relocated this pid.
+                // TODO is this possible with our segment delay?
                 continue;
             }
 
-            if self.segments[idx].pids_len == 0 {
-                self.segments[idx].pids_len = self.segments[idx].pids.len();
-            }
+            self.segments[idx].remove_pid(pid, segment_start);
 
-            self.segments[idx].pids.remove(&pid);
-
-            let segment_start = (idx * self.config.get_io_buf_size()) as LogID;
-
-            if self.segments[idx].pids.is_empty() && !self.segments[idx].freed {
+            if self.segments[idx].is_empty() && !self.segments[idx].freed {
                 // can be reused immediately
                 self.segments[idx].freed = true;
                 self.to_clean.remove(&segment_start);
@@ -443,8 +482,7 @@ impl SegmentAccountant {
                         scope.flush();
                     }
                 });
-            } else if self.segments[idx].pids.len() as f64 /
-                       self.segments[idx].pids_len as f64 <=
+            } else if self.segments[idx].live_pct() <=
                        self.config.get_segment_cleanup_threshold()
             {
                 // can be cleaned
@@ -464,17 +502,29 @@ impl SegmentAccountant {
         new_lid: LogID,
         lsn: Lsn,
     ) {
-        println!("mark_replace pid {} at lid {}", pid, new_lid);
+        println!(
+            "mark_replace pid {} at lid {} with lsn {}",
+            pid,
+            new_lid,
+            lsn
+        );
         self.pending_clean.remove(&pid);
 
         let new_idx = new_lid as usize / self.config.get_io_buf_size();
 
+        // make sure we're not actively trying to replace the destination
+        let new_segment_start = new_idx as LogID *
+            self.config.get_io_buf_size() as LogID;
+        self.to_clean.remove(&new_segment_start);
+
         for old_lid in old_lids {
             let idx = old_lid as usize / self.config.get_io_buf_size();
+            let segment_start = (idx * self.config.get_io_buf_size()) as LogID;
 
             if new_idx == idx {
                 // we probably haven't flushed this segment yet, so don't
                 // mark the pid as being removed from it
+                println!("SA ignoring replace of item in same segment");
                 continue;
             }
 
@@ -482,28 +532,21 @@ impl SegmentAccountant {
                 self.segments.resize(idx + 1, Segment::default());
             }
 
-            if self.segments[idx].lsn.is_none() {
-                self.segments[idx].lsn = Some(lsn);
-            }
-
-            if self.segments[idx].lsn.unwrap() > lsn {
+            if self.segments[idx].lsn > lsn {
                 // has been replaced after this call already,
                 // quite a big race happened
+                // TODO think about how this happens with our segment delay
+                println!("SA ignoring old lsn");
                 continue;
             }
 
-            if self.segments[idx].pids_len == 0 {
-                self.segments[idx].pids_len = self.segments[idx].pids.len();
-            }
+            self.segments[idx].remove_pid(pid, segment_start);
 
-            self.segments[idx].pids.remove(&pid);
-
-            let segment_start = (idx * self.config.get_io_buf_size()) as LogID;
-
-            if self.segments[idx].pids.is_empty() && !self.segments[idx].freed {
+            if self.segments[idx].is_empty() && !self.segments[idx].freed {
                 // can be reused immediately
                 self.segments[idx].freed = true;
                 self.to_clean.remove(&segment_start);
+                println!("SA freed segment {} in replace", segment_start);
                 trace!("freed segment {} in replace", segment_start);
                 self.ensure_safe_free_distance();
 
@@ -517,16 +560,47 @@ impl SegmentAccountant {
                         scope.flush();
                     }
                 });
-            } else if self.segments[idx].pids.len() as f64 /
-                       self.segments[idx].pids_len as f64 <=
+            } else if self.segments[idx].live_pct() <=
                        self.config.get_segment_cleanup_threshold()
             {
                 // can be cleaned
+                println!("SA inserting {} into to_clean", segment_start);
                 self.to_clean.insert(segment_start);
             }
         }
 
         self.mark_link(pid, new_lid, lsn);
+    }
+
+    /// Called by the `PageCache` to find useful pages
+    /// it should try to rewrite.
+    pub fn clean(&mut self) -> Option<PageID> {
+        if self.free.lock().unwrap().len() >=
+            self.config.get_min_free_segments() ||
+            self.to_clean.is_empty()
+        {
+            return None;
+        }
+
+        for lid in &self.to_clean {
+            let idx = *lid as usize / self.config.get_io_buf_size();
+            let segment = &self.segments[idx];
+            for &pid in &segment.present() {
+                if self.pending_clean.contains(&pid) {
+                    continue;
+                }
+                self.pending_clean.insert(*pid);
+                println!(
+                    "SA telling caller to clean {} from segment at {}: {:?}",
+                    *pid,
+                    lid,
+                    segment
+                );
+                return Some(*pid);
+            }
+        }
+
+        None
     }
 
     /// Called from `PageCache` when some state has been added
@@ -538,21 +612,25 @@ impl SegmentAccountant {
 
         let idx = lid as usize / self.config.get_io_buf_size();
 
+        // make sure we're not actively trying to replace the destination
+        let new_segment_start = idx as LogID *
+            self.config.get_io_buf_size() as LogID;
+
+        self.to_clean.remove(&new_segment_start);
+
         if self.segments.len() <= idx {
             self.segments.resize(idx + 1, Segment::default());
         }
 
         let segment = &mut self.segments[idx];
-        if segment.lsn.is_none() {
-            segment.lsn = Some(lsn);
-        }
 
-        if segment.lsn.unwrap() > lsn {
+        if segment.lsn > lsn {
             // a race happened, and our Lsn does not apply anymore
+            // TODO think about how this happens with segment delay
             return;
         }
 
-        segment.pids.insert(pid);
+        segment.insert_pid(pid, new_segment_start);
     }
 
     fn bump_tip(&mut self) -> LogID {
@@ -615,16 +693,12 @@ impl SegmentAccountant {
         }
 
         let segment = &mut self.segments[idx];
-        assert!(segment.pids.is_empty());
+        assert!(segment.is_empty());
 
         // remove the ordering from our list
-        if let Some(old_lsn) = segment.lsn {
-            self.ordering.remove(&old_lsn);
-        }
+        self.ordering.remove(&segment.lsn);
 
-        segment.lsn = Some(lsn);
-        segment.freed = false;
-        segment.pids_len = 0;
+        segment.reset(lsn);
 
         self.ordering.insert(lsn, lid);
 
@@ -645,32 +719,6 @@ impl SegmentAccountant {
         );
 
         (lid, last_given)
-    }
-
-    /// Called by the `PageCache` to find useful pages
-    /// it should try to rewrite.
-    pub fn clean(&mut self) -> Option<PageID> {
-        if self.free.lock().unwrap().len() >=
-            self.config.get_min_free_segments() ||
-            self.to_clean.is_empty()
-        {
-            return None;
-        }
-
-        for lid in &self.to_clean {
-            let idx = *lid as usize / self.config.get_io_buf_size();
-            let segment = &self.segments[idx];
-            for pid in &segment.pids {
-                if self.pending_clean.contains(pid) {
-                    continue;
-                }
-                self.pending_clean.insert(*pid);
-                println!("SA telling caller to clean {}", *pid);
-                return Some(*pid);
-            }
-        }
-
-        None
     }
 
     /// Returns an iterator over a snapshot of current segment
@@ -701,10 +749,10 @@ fn basic_workflow() {
         .min_free_segments(3);
     let mut sa = SegmentAccountant::new(conf);
 
-    let mut highest = 0;
+    let mut highest = -1i64;
     let mut lsn = || {
         highest += 1;
-        highest
+        highest as u64
     };
 
     let first = sa.next(lsn()).0;

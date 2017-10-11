@@ -690,7 +690,9 @@ fn log_bug_18() {
 
 #[test]
 fn log_bug_19() {
-    // postmortem: this was stalling in make_stable
+    // postmortem: this was stallin]g in make_stable
+    // postmortem 2: SA recovery skipped the first segment because we
+    // were not properly adding the empty tip to the free list.
     use Op::*;
     prop_log_works(OpVec {
         ops: vec![

@@ -391,6 +391,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         // may need to go to disk.
         if !merged_resident {
             let to_pull = &lids[to_merge.len()..];
+            println!("need to pull some pages off disk for pid {}", pid);
 
             #[cfg(feature = "rayon")]
             {
@@ -420,10 +421,11 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         let size = std::mem::size_of_val(&merged);
         let to_evict = self.lru.accessed(pid, size);
+        println!("accessed pid {} -> to_evict {:?}", pid, to_evict);
         self.page_out(to_evict, scope);
 
         if lids.len() > self.config.get_page_consolidation_threshold() {
-            println!("consolidating pid {}!", pid);
+            println!("consolidating pid {} with len {}!", pid, lids.len());
             match self.replace(pid, head.into(), merged.clone()) {
                 Ok(new_head) => {
                     println!("setting new head to {:?}", new_head);
@@ -435,6 +437,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         } else if !fetched.is_empty() ||
                    fix_up_length >= self.config.get_cache_fixup_threshold()
         {
+            println!("fixing up pid {}", pid);
             let mut new_entries = Vec::with_capacity(lids.len());
 
             let (head_lsn, head_lid) = lids.remove(0);
@@ -539,7 +542,6 @@ impl<PM, P, R> PageCache<PM, P, R>
                 log_reservation.complete();
 
                 self.log.with_sa(|sa| {
-                    println!("mark_replace {}", pid);
                     sa.mark_replace(pid, lids_from_stack(old, scope), lid, lsn)
                 });
 
@@ -699,7 +701,6 @@ impl<PM, P, R> PageCache<PM, P, R>
             if snapshot.segments.len() <= idx {
                 snapshot.segments.resize(idx + 1, log::Segment::default());
             }
-            snapshot.segments[idx].lsn = Some(segment_lsn);
 
             assert_eq!(
                 segment_lsn / io_buf_size as Lsn * io_buf_size as Lsn,
@@ -743,7 +744,10 @@ impl<PM, P, R> PageCache<PM, P, R>
                             lsn
                         );
 
-                        snapshot.segments[idx].pids.insert(prepend.pid);
+                        snapshot.segments[idx].insert_pid(
+                            prepend.pid,
+                            segment_lsn,
+                        );
 
                         let r = self.t.recover(&partial_page);
                         if r.is_some() {
@@ -761,18 +765,15 @@ impl<PM, P, R> PageCache<PM, P, R>
                         lsn
                     );
                     if let Some(lids) = snapshot.pt.remove(&prepend.pid) {
-                        for (_lsn, lid) in lids {
-                            let old_idx = lid as usize / io_buf_size;
+                        for (_lsn, old_lid) in lids {
+                            let old_idx = old_lid as usize / io_buf_size;
                             let old_segment = &mut snapshot.segments[old_idx];
-                            // FIXME this pids_len is borked
-                            if old_segment.pids_len == 0 {
-                                old_segment.pids_len = old_segment.pids.len();
-                            }
-                            old_segment.pids.remove(&prepend.pid);
+
+                            old_segment.remove_pid(prepend.pid, segment_lsn);
                         }
                     }
 
-                    snapshot.segments[idx].pids.insert(prepend.pid);
+                    snapshot.segments[idx].insert_pid(prepend.pid, segment_lsn);
 
                     let r = self.t.recover(&partial_page);
                     if r.is_some() {
@@ -790,14 +791,11 @@ impl<PM, P, R> PageCache<PM, P, R>
                     );
                     if let Some(lids) = snapshot.pt.remove(&prepend.pid) {
                         // this could fail if our Alloc was nuked
-                        for (_lsn, lid) in lids {
-                            let old_idx = lid as usize / io_buf_size;
+                        for (_lsn, old_lid) in lids {
+                            let old_idx = old_lid as usize / io_buf_size;
                             let old_segment = &mut snapshot.segments[old_idx];
                             // FIXME this pids_len is borked
-                            if old_segment.pids_len == 0 {
-                                old_segment.pids_len = old_segment.pids.len();
-                            }
-                            old_segment.pids.remove(&prepend.pid);
+                            old_segment.remove_pid(prepend.pid, segment_lsn);
                         }
                     }
 

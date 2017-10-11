@@ -71,7 +71,7 @@ fn pagecache_strange_crash_1() {
         .snapshot_after_ops(1_000_000)
         .io_buf_size(5000);
 
-    let max_lsn = {
+    {
         let mut pc = PageCache::new(TestMaterializer, conf.clone());
         pc.recover();
 
@@ -88,9 +88,7 @@ fn pagecache_strange_crash_1() {
             let key = pc.link(id, key, vec![i]).unwrap();
             keys.insert(id, key);
         }
-
-        // pc.stable();
-    };
+    }
     println!("!!!!!!!!!!!!!!!!!!!!! recovering !!!!!!!!!!!!!!!!!!!!!!");
     let mut pc = PageCache::new(TestMaterializer, conf.clone());
     pc.recover();
