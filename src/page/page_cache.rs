@@ -640,7 +640,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         trace!("building on top of old snapshot: {:?}", snapshot);
 
-        info!(
+        debug!(
             "snapshot starting from offset {} to the segment containing ~{}",
             snapshot.max_lsn,
             self.log.stable_offset(),
@@ -873,7 +873,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             let path_str =
                 Path::new(&path).file_name().unwrap().to_str().unwrap();
             if !path_2.ends_with(&*path_str) {
-                info!("removing old snapshot file {:?}", path);
+                debug!("removing old snapshot file {:?}", path);
 
                 if let Err(_e) = std::fs::remove_file(&path) {
                     warn!(

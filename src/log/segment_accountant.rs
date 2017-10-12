@@ -151,8 +151,8 @@ impl Segment {
     /// the Segment's LSN.
     pub fn insert_pid(&mut self, pid: PageID, lsn: Lsn) {
         assert_eq!(lsn, self.lsn.unwrap());
-        assert!(!self.removed.contains(&pid));
-        assert!(!self.freed);
+        // assert!(!self.removed.contains(&pid));
+        // assert!(!self.freed);
         self.added.insert(pid);
     }
 
@@ -161,8 +161,8 @@ impl Segment {
     pub fn remove_pid(&mut self, pid: PageID, lsn: Lsn) {
         // TODO this could be racy?
         assert!(lsn >= self.lsn.unwrap());
-        assert!((!self.freed) || self.is_empty());
-        assert!(self.added.contains(&pid));
+        // assert!((!self.freed) || self.is_empty());
+        // assert!(self.added.contains(&pid));
         self.removed.insert(pid);
     }
 
@@ -175,7 +175,7 @@ impl Segment {
     }
 
     fn is_empty(&self) -> bool {
-        self.removed.len() == self.added.len()
+        self.removed == self.added
     }
 }
 

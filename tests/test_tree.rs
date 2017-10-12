@@ -10,33 +10,10 @@ use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 
 use sled::*;
 
-const SPACE: usize = N;
 const N_THREADS: usize = 5;
 const N_PER_THREAD: usize = 300;
 const N: usize = N_THREADS * N_PER_THREAD; // NB N should be multiple of N_THREADS
-
-macro_rules! par {
-    ($t:ident, $f:expr) => {
-        let mut threads = vec![];
-        for tn in 0..N_THREADS {
-            let sz = N / N_THREADS;
-            let tree = $t.clone();
-            let thread = thread::Builder::new()
-                .name(format!("t({})", tn))
-                .spawn(move || {
-                    for i in (tn * sz)..((tn + 1) * sz) {
-                        let k = kv(i);
-                        $f(&*tree, k);
-                    }
-                })
-                .unwrap();
-            threads.push(thread);
-        }
-        while let Some(thread) = threads.pop() {
-            thread.join().unwrap();
-        }
-    };
-}
+const SPACE: usize = N;
 
 #[inline(always)]
 fn kv(i: usize) -> Vec<u8> {
@@ -46,7 +23,30 @@ fn kv(i: usize) -> Vec<u8> {
 }
 
 #[test]
-fn parallel_ops() {
+fn parallel_tree_ops() {
+    macro_rules! par {
+        ($t:ident, $f:expr) => {
+            let mut threads = vec![];
+            for tn in 0..N_THREADS {
+                let sz = N / N_THREADS;
+                let tree = $t.clone();
+                let thread = thread::Builder::new()
+                    .name(format!("t({})", tn))
+                    .spawn(move || {
+                        for i in (tn * sz)..((tn + 1) * sz) {
+                            let k = kv(i);
+                            $f(&*tree, k);
+                        }
+                    })
+                    .unwrap();
+                threads.push(thread);
+            }
+            while let Some(thread) = threads.pop() {
+                thread.join().unwrap();
+            }
+        };
+    }
+
     println!("========== initial sets ==========");
     let conf = Config::default().blink_fanout(2);
     let t = Arc::new(conf.tree());

@@ -490,6 +490,24 @@ fn pagecache_bug_9() {
     );
 }
 
+#[test]
+fn pagecache_bug_10() {
+    // postmortem:
+    use Op::*;
+    prop_pagecache_works(
+        OpVec {
+            ops: vec![
+                Allocate,
+                Replace(0, 425),
+                Free(0),
+                Allocate,
+                Link(1, 427),
+            ],
+        },
+        0,
+    );
+}
+
 fn _pagecache_bug_() {
     // postmortem: TEMPLATE
     // portmortem 2: ...
