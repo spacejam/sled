@@ -23,6 +23,7 @@ impl<'a> Iterator for Iter<'a> {
         loop {
             let at_end = !valid_entry_offset(self.cur_lsn, self.segment_len);
             if self.trailer.is_none() && at_end {
+                println!("at end, no trailer");
                 // We've read to the end of a torn
                 // segment and should stop now.
                 return None;
@@ -42,12 +43,14 @@ impl<'a> Iterator for Iter<'a> {
                         return None;
                     }
                 } else {
+                    println!("no more segments");
                     return None;
                 }
             }
 
             if self.cur_lsn > self.max_lsn {
                 // all done
+                println!("cur_lsn > max_lsn");
                 return None;
             }
 
@@ -56,6 +59,11 @@ impl<'a> Iterator for Iter<'a> {
 
             if self.max_lsn <= lid {
                 // we've hit the end of the log.
+                trace!(
+                    "in Iter::next self.max_lsn {} <= lid {}",
+                    self.max_lsn,
+                    lid
+                );
                 return None;
             }
 
@@ -63,13 +71,16 @@ impl<'a> Iterator for Iter<'a> {
             let mut f = cached_f.borrow_mut();
             match f.read_message(lid, self.segment_len, self.use_compression) {
                 Ok(LogRead::Flush(lsn, buf, on_disk_len)) => {
+                    println!("read flush");
                     self.cur_lsn += (MSG_HEADER_LEN + on_disk_len) as LogID;
                     return Some((lsn, lid, buf));
                 }
                 Ok(LogRead::Zeroed(on_disk_len)) => {
+                    println!("read zeroed");
                     self.cur_lsn += on_disk_len as LogID;
                 }
                 _ => {
+                    println!("read failed");
                     if self.trailer.is_none() {
                         // This segment was torn, nothing left to read.
                         return None;
@@ -90,7 +101,7 @@ impl<'a> Iter<'a> {
         // we add segment_len to this check because we may be getting the
         // initial segment that is a bit behind where we left off before.
         println!("lsn: {:?} cur_lsn: {:?}", lsn, self.cur_lsn);
-        // TODO don't skip segments in SA, unify reuse_segment logic, remove from ordering consistently assert!(lsn >= offset, "lsn should never be less than the log offset");
+        // TODO done? don't skip segments in SA, unify reuse_segment logic, remove from ordering consistently assert!(lsn >= offset, "lsn should never be less than the log offset");
         assert!(lsn + self.segment_len as Lsn >= self.cur_lsn);
         let cached_f = self.config.cached_file();
         let mut f = cached_f.borrow_mut();

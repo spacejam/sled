@@ -542,7 +542,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 log_reservation.complete();
 
                 self.log.with_sa(|sa| {
-                    sa.mark_replace(pid, lids_from_stack(old, scope), lid, lsn)
+                    sa.mark_replace(pid, lsn, lids_from_stack(old, scope), lid)
                 });
 
                 let count = self.updates.fetch_add(1, SeqCst) + 1;
@@ -608,11 +608,11 @@ impl<PM, P, R> PageCache<PM, P, R>
             if result.is_err() {
                 log_reservation.abort();
             } else {
-                let lsn = log_reservation.lsn();
-                let lid = log_reservation.lid();
-                log_reservation.complete();
+                let (lsn, lid) = log_reservation.complete();
 
-                self.log.with_sa(|sa| sa.mark_link(pid, lid, lsn));
+                println!("reservation lsn {} lid {}", lsn, lid);
+
+                self.log.with_sa(|sa| sa.mark_link(pid, lsn, lid));
 
                 let count = self.updates.fetch_add(1, SeqCst) + 1;
                 let should_snapshot =
@@ -698,7 +698,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             max_lsn = lsn;
 
             let idx = log_id as usize / io_buf_size;
-            if snapshot.segments.len() <= idx {
+            if snapshot.segments.len() < idx + 1 {
                 snapshot.segments.resize(idx + 1, log::Segment::default());
             }
 
@@ -729,6 +729,8 @@ impl<PM, P, R> PageCache<PM, P, R>
             if prepend.pid >= snapshot.max_pid {
                 snapshot.max_pid = prepend.pid + 1;
             }
+
+            snapshot.segments[idx].recovery_reset(segment_lsn);
 
             match prepend.update {
                 Update::Append(partial_page) => {
@@ -767,8 +769,17 @@ impl<PM, P, R> PageCache<PM, P, R>
                     if let Some(lids) = snapshot.pt.remove(&prepend.pid) {
                         for (_lsn, old_lid) in lids {
                             let old_idx = old_lid as usize / io_buf_size;
+                            if old_idx == idx {
+                                // don't remove pid if it's still there
+                                continue;
+                            }
                             let old_segment = &mut snapshot.segments[old_idx];
 
+                            println!(
+                                "removing pid {} from {}",
+                                prepend.pid,
+                                segment_lsn
+                            );
                             old_segment.remove_pid(prepend.pid, segment_lsn);
                         }
                     }
@@ -793,11 +804,16 @@ impl<PM, P, R> PageCache<PM, P, R>
                         // this could fail if our Alloc was nuked
                         for (_lsn, old_lid) in lids {
                             let old_idx = old_lid as usize / io_buf_size;
+                            if old_idx == idx {
+                                // don't remove pid if it's still there
+                                continue;
+                            }
                             let old_segment = &mut snapshot.segments[old_idx];
-                            // FIXME this pids_len is borked
                             old_segment.remove_pid(prepend.pid, segment_lsn);
                         }
                     }
+
+                    snapshot.segments[idx].insert_pid(prepend.pid, segment_lsn);
 
                     snapshot.free.push(prepend.pid);
                 }
@@ -811,6 +827,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
                     snapshot.pt.insert(prepend.pid, vec![]);
                     snapshot.free.retain(|&pid| pid != prepend.pid);
+                    snapshot.segments[idx].insert_pid(prepend.pid, segment_lsn);
                 }
             }
         }
@@ -970,6 +987,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 self.inner.insert(*pid, stack).unwrap();
             }
 
+            println!("!!!!! should be initializing...");
             self.log.with_sa(
                 |sa| sa.initialize_from_segments(snapshot.segments.clone()),
             );

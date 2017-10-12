@@ -65,6 +65,7 @@ impl LogReader for File {
         self.seek(SeekFrom::Start(id))?;
 
         let mut msg_header_buf = [0u8; MSG_HEADER_LEN];
+        println!("header buf {:?}", msg_header_buf);
         self.read_exact(&mut msg_header_buf)?;
 
         Ok(msg_header_buf.into())
@@ -77,7 +78,7 @@ impl LogReader for File {
         segment_len: usize,
         _use_compression: bool,
     ) -> std::io::Result<LogRead> {
-        trace!("reading message at {}", id);
+        trace!("reading message at lid {}", id);
         let start = clock();
         let seg_start = id / segment_len as LogID * segment_len as LogID;
         assert!(seg_start + MSG_HEADER_LEN as LogID <= id);
@@ -89,6 +90,7 @@ impl LogReader for File {
 
         let header = self.read_message_header(id)?;
         assert!(id + MSG_HEADER_LEN as LogID + header.len as LogID <= ceiling);
+        println!("read header: {:?}", header);
 
         self.seek(SeekFrom::Start(id + MSG_HEADER_LEN as LogID))?;
 
