@@ -363,7 +363,6 @@ impl<PM, P, R> PageCache<PM, P, R>
                     if lids.is_empty() {
                         // Short circuit merging and fix-up if we only
                         // have one frag.
-                        println!("short circuiting");
                         return Some((page_frag.clone(), head.into()));
                     }
                     if !merged_resident {
@@ -391,7 +390,6 @@ impl<PM, P, R> PageCache<PM, P, R>
         // may need to go to disk.
         if !merged_resident {
             let to_pull = &lids[to_merge.len()..];
-            println!("need to pull some pages off disk for pid {}", pid);
 
             #[cfg(feature = "rayon")]
             {
@@ -421,23 +419,24 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         let size = std::mem::size_of_val(&merged);
         let to_evict = self.lru.accessed(pid, size);
-        println!("accessed pid {} -> to_evict {:?}", pid, to_evict);
+        trace!("accessed pid {} -> paging out pid {:?}", pid, to_evict);
         self.page_out(to_evict, scope);
 
         if lids.len() > self.config.get_page_consolidation_threshold() {
-            println!("consolidating pid {} with len {}!", pid, lids.len());
+            trace!("consolidating pid {} with len {}!", pid, lids.len());
             match self.replace(pid, head.into(), merged.clone()) {
-                Ok(new_head) => {
-                    println!("setting new head to {:?}", new_head);
-                    head = new_head.into()
-                }
+                Ok(new_head) => head = new_head.into(),
                 Err(None) => return None,
-                _ => println!("some other thing beat us or something"),
+                _ => (),
             }
         } else if !fetched.is_empty() ||
                    fix_up_length >= self.config.get_cache_fixup_threshold()
         {
-            println!("fixing up pid {}", pid);
+            trace!(
+                "fixing up pid {} with {} traversed frags",
+                pid,
+                fix_up_length
+            );
             let mut new_entries = Vec::with_capacity(lids.len());
 
             let (head_lsn, head_lid) = lids.remove(0);
@@ -465,13 +464,8 @@ impl<PM, P, R> PageCache<PM, P, R>
                 stack_ptr.deref().cas(head, node.into_ptr(scope), scope)
             };
             if let Ok(new_head) = res {
-                println!("another cas worked!");
                 head = new_head;
             } else {
-                println!(
-                    "our fix-up didn't work, something else won: {:?}",
-                    res
-                );
                 // NB explicitly DON'T update head, as our witnessed
                 // entries do NOT contain the latest state. This
                 // may not matter to callers who only care about
@@ -483,7 +477,6 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         M.page_in.measure(clock() - start);
 
-        println!("page_in returning key {:?}", head);
         Some((merged, head.into()))
     }
 
@@ -509,7 +502,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         old: CasKey<P>,
         new: P,
     ) -> Result<CasKey<P>, Option<CasKey<P>>> {
-        println!("replacing pid {}", pid);
+        trace!("replacing pid {}", pid);
         pin(|scope| {
             let stack_ptr = self.inner.get(pid, scope);
             if stack_ptr.is_none() {
@@ -549,9 +542,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 let should_snapshot =
                     count % self.config.get_snapshot_after_ops() == 0;
                 if should_snapshot {
-                    println!("before snapshot");
                     self.advance_snapshot();
-                    println!("after snapshot");
                 }
             } else {
                 log_reservation.abort();
@@ -575,7 +566,6 @@ impl<PM, P, R> PageCache<PM, P, R>
         new: P,
     ) -> Result<CasKey<P>, Option<CasKey<P>>> {
         pin(|scope| {
-            println!("a");
             let stack_ptr = self.inner.get(pid, scope);
             if stack_ptr.is_none() {
                 return Err(None);
@@ -601,7 +591,6 @@ impl<PM, P, R> PageCache<PM, P, R>
 
             let cache_entry = CacheEntry::Resident(new, lsn, lid);
 
-            println!("b");
             let result =
                 unsafe { stack_ptr.deref().cap(old_key, cache_entry, scope) };
 
@@ -609,8 +598,6 @@ impl<PM, P, R> PageCache<PM, P, R>
                 log_reservation.abort();
             } else {
                 let (lsn, lid) = log_reservation.complete();
-
-                println!("reservation lsn {} lid {}", lsn, lid);
 
                 self.log.with_sa(|sa| sa.mark_link(pid, lsn, lid));
 
@@ -650,10 +637,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         // we disable rewriting so that our log becomes append-only,
         // allowing us to iterate through it without corrupting ourselves.
         self.log.with_sa(|sa| sa.pause_rewriting());
-        println!("disabled rewriting in advance_snapshot");
 
-
-        println!("building on top of old snapshot: {:?}", snapshot);
         trace!("building on top of old snapshot: {:?}", snapshot);
 
         info!(
@@ -775,11 +759,6 @@ impl<PM, P, R> PageCache<PM, P, R>
                             }
                             let old_segment = &mut snapshot.segments[old_idx];
 
-                            println!(
-                                "removing pid {} from {}",
-                                prepend.pid,
-                                segment_lsn
-                            );
                             old_segment.remove_pid(prepend.pid, segment_lsn);
                         }
                     }
@@ -840,10 +819,8 @@ impl<PM, P, R> PageCache<PM, P, R>
         self.write_snapshot(&snapshot);
 
         trace!("generated new snapshot: {:?}", snapshot);
-        println!("generated new snapshot: {:?}", snapshot);
 
         self.log.with_sa(|sa| sa.resume_rewriting());
-        println!("resumed rewriting in advance_snapshot");
 
         // NB replacing the snapshot must come after the resume_rewriting call
         // otherwise we create a race condition where we corrupt an in-progress
@@ -987,7 +964,6 @@ impl<PM, P, R> PageCache<PM, P, R>
                 self.inner.insert(*pid, stack).unwrap();
             }
 
-            println!("!!!!! should be initializing...");
             self.log.with_sa(
                 |sa| sa.initialize_from_segments(snapshot.segments.clone()),
             );

@@ -65,7 +65,6 @@ impl LogReader for File {
         self.seek(SeekFrom::Start(id))?;
 
         let mut msg_header_buf = [0u8; MSG_HEADER_LEN];
-        println!("header buf {:?}", msg_header_buf);
         self.read_exact(&mut msg_header_buf)?;
 
         Ok(msg_header_buf.into())
@@ -90,7 +89,6 @@ impl LogReader for File {
 
         let header = self.read_message_header(id)?;
         assert!(id + MSG_HEADER_LEN as LogID + header.len as LogID <= ceiling);
-        println!("read header: {:?}", header);
 
         self.seek(SeekFrom::Start(id + MSG_HEADER_LEN as LogID))?;
 

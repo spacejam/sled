@@ -477,7 +477,6 @@ impl IoBufs {
 
             // zero out the entire new segment on disk
             debug!("zeroing out segment beginning at {}", next_offset);
-            println!("zeroing out segment beginning at {}", next_offset);
             let mut f = self.file_for_writing.lock().unwrap();
             f.seek(SeekFrom::Start(next_offset)).unwrap();
             f.write_all(&*vec![0; self.config.get_io_buf_size()])

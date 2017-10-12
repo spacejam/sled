@@ -130,10 +130,7 @@ impl Segment {
         if let Some(current_lsn) = self.lsn {
             assert_eq!(current_lsn, lsn);
         } else {
-            println!(
-                "!!!!!! (from pagecache) resetting segment to have lsn {}",
-                lsn
-            );
+            trace!("(snapshot) resetting segment to have lsn {}", lsn);
             self.reset(lsn);
         }
     }
@@ -147,7 +144,7 @@ impl Segment {
         self.freed = false;
         self.added.clear();
         self.removed.clear();
-        println!("!!!!!! resetting segment to have lsn {}", lsn);
+        trace!("resetting segment to have lsn {}", lsn);
     }
 
     /// Add a pid to the Segment. The caller must provide
@@ -232,11 +229,13 @@ impl SegmentAccountant {
         }
 
         if !segments.is_empty() {
-            println!("!!!! set self.segments to {:?}", segments);
+            trace!("initialized self.segments to {:?}", segments);
             self.segments = segments;
         } else {
-            println!(
-                "pagecache recovered no segments so not initializing from it"
+            // this is basically just for when we recover with a single
+            // empty-yet-initialized segment
+            debug!(
+                "pagecache recovered no segments so not initializing from any"
             );
         }
     }
@@ -254,7 +253,6 @@ impl SegmentAccountant {
         if lsn == 0 && lid != 0 {
             panic!("lsn of 0 provided with lid {}", lid);
         } else {
-            println!("ACTUALLY recovering lsn {} lid {}", lsn, lid);
             self.segments[idx].reset(lsn);
             assert!(!self.ordering.contains_key(&lsn));
             self.ordering.insert(lsn, lid);
@@ -277,7 +275,7 @@ impl SegmentAccountant {
             // in the future this can be optimized to just read
             // the initial header at that position... but we need to
             // make sure the segment is not torn
-            println!("SA scanned header {:?}", segment);
+            trace!("SA scanned header during startup {:?}", segment);
             if segment.ok && (segment.lsn != 0 || cursor == 0) {
                 // if lsn is 0, this is free
                 self.recover(segment.lsn, cursor);
@@ -384,7 +382,6 @@ impl SegmentAccountant {
             self.recovered_lsn,
             self.recovered_lid
         );
-        println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
     }
 
     // This ensures that the last <# io buffers> segments on
@@ -527,13 +524,7 @@ impl SegmentAccountant {
         old_lids: Vec<LogID>,
         new_lid: LogID,
     ) {
-        println!(
-            "mark_replace pid {} at lid {} with lsn {}",
-            pid,
-            new_lid,
-            lsn
-        );
-        println!("current segments: {:?}", self.segments);
+        trace!("mark_replace pid {} at lid {} with lsn {}", pid, new_lid, lsn);
         self.pending_clean.remove(&pid);
 
         let new_idx = new_lid as usize / self.config.get_io_buf_size();
@@ -550,7 +541,6 @@ impl SegmentAccountant {
             if new_idx == idx {
                 // we probably haven't flushed this segment yet, so don't
                 // mark the pid as being removed from it
-                println!("SA ignoring replace of item in same segment");
                 continue;
             }
 
@@ -562,7 +552,6 @@ impl SegmentAccountant {
                 // has been replaced after this call already,
                 // quite a big race happened
                 // TODO think about how this happens with our segment delay
-                println!("SA ignoring old lsn");
                 continue;
             }
 
@@ -572,7 +561,6 @@ impl SegmentAccountant {
                 // can be reused immediately
                 self.segments[idx].freed = true;
                 self.to_clean.remove(&segment_start);
-                println!("SA freed segment {} in replace", segment_start);
                 trace!("freed segment {} in replace", segment_start);
                 self.ensure_safe_free_distance();
 
@@ -590,7 +578,7 @@ impl SegmentAccountant {
                        self.config.get_segment_cleanup_threshold()
             {
                 // can be cleaned
-                println!("SA inserting {} into to_clean", segment_start);
+                trace!("SA inserting {} into to_clean", segment_start);
                 self.to_clean.insert(segment_start);
             }
         }
@@ -616,8 +604,8 @@ impl SegmentAccountant {
                     continue;
                 }
                 self.pending_clean.insert(*pid);
-                println!(
-                    "SA telling caller to clean {} from segment at {}: {:?}",
+                trace!(
+                    "telling caller to clean {} from segment at {}: {:?}",
                     *pid,
                     lid,
                     segment
@@ -633,7 +621,7 @@ impl SegmentAccountant {
     /// to a logical page at a particular offset. We ensure the
     /// page is present in the segment's page set.
     pub fn mark_link(&mut self, pid: PageID, lsn: Lsn, lid: LogID) {
-        println!("mark_link pid {} at lid {}", pid, lid);
+        trace!("mark_link pid {} at lid {}", pid, lid);
         self.pending_clean.remove(&pid);
 
         let idx = lid as usize / self.config.get_io_buf_size();
@@ -734,20 +722,14 @@ impl SegmentAccountant {
         self.ordering.insert(lsn, lid);
 
         debug!(
-            "segment accountant returning offset: {} paused: {} last: {}",
+            "segment accountant returning offset: {} paused: {} last: {} on deck: {:?}",
             lid,
             self.pause_rewriting,
-            last_given
+            last_given,
+            self.free
         );
 
         self.last_given = lid;
-
-        println!(
-            "SA giving out lid {}, paused: {}, on deck: {:?}",
-            lid,
-            self.pause_rewriting,
-            self.free
-        );
 
         (lid, last_given)
     }
