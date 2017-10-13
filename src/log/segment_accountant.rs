@@ -311,6 +311,8 @@ impl SegmentAccountant {
                        self.config.get_segment_cleanup_threshold()
             {
                 // can be cleaned
+                let current_lsn = segment.lsn();
+                segment.inactive_to_draining(current_lsn);
                 self.to_clean.insert(segment_start);
             }
         }
@@ -659,7 +661,7 @@ impl SegmentAccountant {
         for lid in &self.to_clean {
             let idx = *lid as usize / self.config.get_io_buf_size();
             let segment = &self.segments[idx];
-            assert!(segment.is_draining());
+            assert_eq!(segment.state, Draining);
             for &pid in &segment.present() {
                 if self.pending_clean.contains(&pid) {
                     continue;

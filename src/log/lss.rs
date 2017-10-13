@@ -51,6 +51,11 @@ impl Drop for Log {
         if let Some(join_handle) = self.flusher_handle.take() {
             join_handle.join().unwrap();
         }
+
+        #[cfg(feature = "cpuprofiler")]
+        {
+            cpuprofiler::PROFILER.lock().unwrap().stop().unwrap();
+        }
     }
 }
 
@@ -60,6 +65,19 @@ impl Log {
     pub fn start_system(config: Config) -> Log {
         #[cfg(feature = "env_logger")]
         let _r = env_logger::init();
+
+        #[cfg(feature = "cpuprofiler")]
+        {
+            use std::env;
+
+            let key = "CPUPROFILE";
+            let path = match env::var(key) {
+                Ok(val) => val,
+                Err(_) => "sled.profile".to_owned(),
+            };
+            cpuprofiler::PROFILER.lock().unwrap().start(path).unwrap();
+        }
+
 
         let iobufs = Arc::new(IoBufs::new(config.clone()));
 

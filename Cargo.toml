@@ -12,8 +12,9 @@ readme = "README.md"
 
 [features]
 default = []
+profiler = ["stress", "cpuprofiler"]
 bench = ["clap", "num_cpus", "rand", "chrono", "rayon", "zstd", "env_logger"]
-stress = ["docopt", "chan-signal", "rayon", "rand", "zstd"]
+stress = ["docopt", "chan-signal", "rayon", "rand"]
 o_direct_writer = []
 
 [profile.release]
@@ -55,6 +56,7 @@ rand = {version = "0.3", optional = true}
 docopt = {version = "0.8", optional = true}
 chan-signal = {version = "0.3", optional = true}
 chrono = {version = "0.4", optional = true}
+cpuprofiler = {version = "0.0.3", optional = true}
 
 [dev-dependencies]
 quickcheck = "0.2"

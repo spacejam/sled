@@ -33,6 +33,8 @@ extern crate log as _log;
 extern crate rayon;
 #[cfg(feature = "zstd")]
 extern crate zstd;
+#[cfg(feature = "cpuprofiler")]
+extern crate cpuprofiler;
 #[cfg(test)]
 extern crate rand;
 
