@@ -102,7 +102,7 @@ enum Update<PageFrag>
 {
     Append(PageFrag),
     Compact(PageFrag),
-    Del,
+    Free,
     Alloc,
 }
 

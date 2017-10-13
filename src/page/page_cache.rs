@@ -206,22 +206,26 @@ impl<PM, P, R> PageCache<PM, P, R>
             // write info to log
             let prepend: LoggedUpdate<P> = LoggedUpdate {
                 pid: pid,
-                update: Update::Del,
+                update: Update::Free,
             };
             let serialize_start = clock();
             let bytes = serialize(&prepend, Infinite).unwrap();
             M.serialize.measure(clock() - serialize_start);
 
             let res = self.log.reserve(bytes);
-            let lsn = res.lsn();
-            res.complete();
+            let (lsn, lid) = res.complete();
 
             // add pid to free stack to reduce fragmentation over time
             unsafe {
                 let cas_key = deleted.unwrap().deref().head(scope).into();
 
                 self.log.with_sa(|sa| {
-                    sa.freed(pid, lids_from_stack(cas_key, scope), lsn)
+                    sa.mark_replace(
+                        pid,
+                        lsn,
+                        lids_from_stack(cas_key, scope),
+                        lid,
+                    )
                 });
             }
 
@@ -653,6 +657,8 @@ impl<PM, P, R> PageCache<PM, P, R>
         let start_lsn = max_lsn - (max_lsn % io_buf_size as Lsn);
         let stop_lsn = self.log.stable_offset();
 
+        let mut last_segment = None;
+
         for (lsn, log_id, bytes) in self.log.iter_from(start_lsn) {
             if stop_lsn > 0 && lsn > stop_lsn {
                 // we've gone past the known-stable offset.
@@ -714,7 +720,28 @@ impl<PM, P, R> PageCache<PM, P, R>
                 snapshot.max_pid = prepend.pid + 1;
             }
 
-            snapshot.segments[idx].recovery_reset(segment_lsn);
+            snapshot.segments[idx].recovery_ensure_initialized(segment_lsn);
+
+            let last_idx = *last_segment.get_or_insert(idx);
+            if last_idx != idx {
+                // if we have moved to a new segment, mark the previous one
+                // as inactive.
+                trace!(
+                    "PageCache recovery setting segment {} to inactive",
+                    log_id
+                );
+                snapshot.segments[last_idx].active_to_inactive(segment_lsn);
+                if snapshot.segments[last_idx].is_empty() {
+                    trace!(
+                        "PageCache recovery setting segment {} to draining",
+                        log_id
+                    );
+                    snapshot.segments[last_idx].inactive_to_draining(
+                        segment_lsn,
+                    );
+                }
+            }
+            last_segment = Some(idx);
 
             match prepend.update {
                 Update::Append(partial_page) => {
@@ -772,7 +799,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
                     snapshot.pt.insert(prepend.pid, vec![(lsn, log_id)]);
                 }
-                Update::Del => {
+                Update::Free => {
                     trace!(
                         "del of pid {} at lid {} lsn {}",
                         prepend.pid,

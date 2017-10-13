@@ -492,7 +492,9 @@ fn pagecache_bug_9() {
 
 #[test]
 fn pagecache_bug_10() {
-    // postmortem:
+    // postmortem: the segment was marked free before it
+    // was actually full, because the pids inside were
+    // rewritten.
     use Op::*;
     prop_pagecache_works(
         OpVec {

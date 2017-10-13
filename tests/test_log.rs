@@ -273,7 +273,7 @@ fn snapshot_with_out_of_order_buffers() {
 }
 
 #[test]
-fn multi_segment_iteration() {
+fn multi_segment_log_iteration() {
     // ensure segments are being linked
     // ensure trailers are valid
     let conf = Config::default().io_buf_size(100);
