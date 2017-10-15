@@ -65,6 +65,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::fs::File;
 use std::sync::{Arc, Mutex};
+use std::mem;
 
 use coco::epoch::{Owned, pin};
 
@@ -121,6 +122,7 @@ impl Drop for SegmentDropper {
 pub struct Segment {
     present: BTreeSet<PageID>,
     removed: HashSet<PageID>,
+    deferred_remove: HashSet<PageID>,
     lsn: Option<Lsn>,
     state: SegmentState,
 }
@@ -197,6 +199,12 @@ impl Segment {
         assert_eq!(self.state, Active);
         assert!(lsn >= self.lsn());
         self.state = Inactive;
+
+        // now we can push any deferred removals to the removed set
+        let deferred = mem::replace(&mut self.deferred_remove, HashSet::new());
+        for pid in deferred {
+            self.remove_pid(pid, lsn);
+        }
     }
 
     pub fn inactive_to_draining(&mut self, lsn: Lsn) {
@@ -217,9 +225,10 @@ impl Segment {
 
     pub fn recovery_ensure_initialized(&mut self, lsn: Lsn) {
         if let Some(current_lsn) = self.lsn {
-            assert_ne!(self.state, Free);
-            // FIXME current lsn is way lower
-            assert_eq!(current_lsn, lsn);
+            if current_lsn != lsn {
+                trace!("(snapshot) resetting segment to have lsn {}", lsn);
+                self.free_to_active(lsn);
+            }
         } else {
             trace!("(snapshot) resetting segment to have lsn {}", lsn);
             self.free_to_active(lsn);
@@ -244,10 +253,23 @@ impl Segment {
     /// The caller must provide the LSN of the removal.
     pub fn remove_pid(&mut self, pid: PageID, lsn: Lsn) {
         // TODO this could be racy?
-        assert_ne!(self.state, Free);
         assert!(lsn >= self.lsn.unwrap());
-        assert!(self.present.contains(&pid));
-        self.removed.insert(pid);
+        match self.state {
+            Active => {
+                // we have received a removal before
+                // transferring this segment to Inactive, so
+                // we defer this pid's removal until the transfer.
+                self.deferred_remove.insert(pid);
+            }
+            Inactive | Draining => {
+                assert!(
+                    self.present.contains(&pid) || self.removed.contains(&pid)
+                );
+                self.present.remove(&pid);
+                self.removed.insert(pid);
+            }
+            Free => panic!("remove_pid called on a Free Segment"),
+        }
     }
 
     fn live_pct(&self) -> f64 {
@@ -779,6 +801,7 @@ impl SegmentAccountant {
             self.segments.resize(idx + 1, Segment::default());
         }
 
+        // FIXME Active somehow given out???
         assert_eq!(self.segments[idx].state, Free);
 
         // remove the ordering from our list
