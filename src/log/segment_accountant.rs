@@ -62,7 +62,7 @@
 //!    segment Lsn pointers don't match up, we know we
 //!    have encountered a lost segment, and we will not
 //!    continue the recovery past the detected gap.
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::fs::File;
 use std::sync::{Arc, Mutex};
 
@@ -89,7 +89,7 @@ pub struct SegmentAccountant {
     // and free!
     free: Arc<Mutex<VecDeque<LogID>>>,
     tip: LogID,
-    to_clean: HashSet<LogID>,
+    to_clean: BTreeSet<LogID>,
     pause_rewriting: bool,
     last_given: LogID,
     ordering: BTreeMap<Lsn, LogID>,
@@ -119,7 +119,7 @@ impl Drop for SegmentDropper {
 /// overwritten for new data.
 #[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct Segment {
-    added: HashSet<PageID>,
+    present: BTreeSet<PageID>,
     removed: HashSet<PageID>,
     lsn: Option<Lsn>,
     state: SegmentState,
@@ -186,7 +186,7 @@ impl Segment {
     fn free_to_active(&mut self, new_lsn: Lsn) {
         trace!("setting Segment to Active with new lsn {:?}", new_lsn);
         assert_eq!(self.state, Free);
-        self.added.clear();
+        self.present.clear();
         self.removed.clear();
         self.lsn = Some(new_lsn);
         self.state = Active;
@@ -210,15 +210,16 @@ impl Segment {
         trace!("setting Segment with lsn {:?} to Free", self.lsn());
         assert!(self.is_draining());
         assert!(lsn >= self.lsn());
-        self.added.clear();
+        self.present.clear();
         self.removed.clear();
         self.state = Free;
     }
 
     pub fn recovery_ensure_initialized(&mut self, lsn: Lsn) {
         if let Some(current_lsn) = self.lsn {
-            assert_eq!(current_lsn, lsn);
             assert_ne!(self.state, Free);
+            // FIXME current lsn is way lower
+            assert_eq!(current_lsn, lsn);
         } else {
             trace!("(snapshot) resetting segment to have lsn {}", lsn);
             self.free_to_active(lsn);
@@ -233,9 +234,10 @@ impl Segment {
     /// the Segment's LSN.
     pub fn insert_pid(&mut self, pid: PageID, lsn: Lsn) {
         assert_eq!(lsn, self.lsn.unwrap());
+        // FIXME Inactive panic
         assert_eq!(self.state, Active);
         assert!(!self.removed.contains(&pid));
-        self.added.insert(pid);
+        self.present.insert(pid);
     }
 
     /// Mark that a pid in this Segment has been relocated.
@@ -244,16 +246,13 @@ impl Segment {
         // TODO this could be racy?
         assert_ne!(self.state, Free);
         assert!(lsn >= self.lsn.unwrap());
-        assert!(self.added.contains(&pid));
+        assert!(self.present.contains(&pid));
         self.removed.insert(pid);
     }
 
-    fn present(&self) -> Vec<&PageID> {
-        self.added.difference(&self.removed).collect()
-    }
-
     fn live_pct(&self) -> f64 {
-        (self.added.len() - self.removed.len()) as f64 / self.added.len() as f64
+        let total = self.present.len() + self.removed.len();
+        self.present.len() as f64 / total as f64
     }
 
     fn can_free(&self) -> bool {
@@ -261,7 +260,7 @@ impl Segment {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.removed == self.added
+        self.present.is_empty()
     }
 }
 
@@ -662,14 +661,14 @@ impl SegmentAccountant {
             let idx = *lid as usize / self.config.get_io_buf_size();
             let segment = &self.segments[idx];
             assert_eq!(segment.state, Draining);
-            for &pid in &segment.present() {
-                if self.pending_clean.contains(&pid) {
+            for pid in &segment.present {
+                if self.pending_clean.contains(pid) {
                     continue;
                 }
                 self.pending_clean.insert(*pid);
                 trace!(
                     "telling caller to clean {} from segment at {}: {:?}",
-                    *pid,
+                    pid,
                     lid,
                     segment
                 );
