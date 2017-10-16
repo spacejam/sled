@@ -144,6 +144,9 @@ impl<PM, P, R> PageCache<PM, P, R>
 
     /// Read updates from the log, apply them to our pagecache.
     pub fn recover(&mut self) -> Option<R> {
+        // pull any existing snapshot off disk
+        self.read_snapshot();
+
         // we call advance_snapshot here to "catch-up" the snapshot using the
         // logged updates before recovering from it. this allows us to reuse
         // the snapshot generation logic as initial log parsing logic. this is
@@ -153,7 +156,6 @@ impl<PM, P, R> PageCache<PM, P, R>
         self.advance_snapshot();
 
         // now we read it back in
-        self.read_snapshot();
         self.load_snapshot();
 
         let mu = &self.last_snapshot.lock().unwrap();
