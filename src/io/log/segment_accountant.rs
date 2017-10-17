@@ -198,18 +198,18 @@ impl Segment {
     /// Transitions a segment to being in the Inactive state.
     /// Called in:
     ///
-    /// SegmentAccountant::next for the previously
-    /// allocated segment, but this should maybe be done by
-    /// a dropper from IoBufs::write_to_log...
-    ///
     /// PageCache::advance_snapshot for marking when a
     /// segment has been completely read
     ///
     /// SegmentAccountant::recover for when
-    pub fn active_to_inactive(&mut self, lsn: Lsn) {
+    pub fn active_to_inactive(&mut self, lsn: Lsn, from_recovery: bool) {
         trace!("setting Segment with lsn {:?} to Inactive", self.lsn());
         assert_eq!(self.state, Active);
-        assert!(lsn >= self.lsn());
+        if from_recovery {
+            assert!(lsn >= self.lsn());
+        } else {
+            assert_eq!(self.lsn.unwrap(), lsn);
+        }
         self.state = Inactive;
 
         // now we can push any deferred removals to the removed set
@@ -239,6 +239,7 @@ impl Segment {
         if let Some(current_lsn) = self.lsn {
             if current_lsn != lsn {
                 trace!("(snapshot) resetting segment to have lsn {}", lsn);
+                self.state = Free;
                 self.free_to_active(lsn);
             }
         } else {
@@ -255,8 +256,11 @@ impl Segment {
     /// the Segment's LSN.
     pub fn insert_pid(&mut self, pid: PageID, lsn: Lsn) {
         assert_eq!(lsn, self.lsn.unwrap());
-        // FIXME Inactive panic
-        assert!(self.state == Active || self.state == Inactive);
+        // if this breaks, we didn't implement the transition
+        // logic right in write_to_log, and maybe a thread is
+        // using the SA to add pids AFTER their calls to
+        // res.complete() worked.
+        assert_eq!(self.state, Active);
         assert!(!self.removed.contains(&pid));
         self.present.insert(pid);
     }
@@ -369,7 +373,8 @@ impl SegmentAccountant {
     // file offset.
     fn recover(&mut self, lsn: Lsn, lid: LogID) {
         trace!("recovered segment lsn {} at lid {}", lsn, lid);
-        let idx = lid as usize / self.config.get_io_buf_size();
+        let io_buf_size = self.config.get_io_buf_size() as LogID;
+        let idx = lid as usize / io_buf_size as usize;
 
         if self.segments.len() < idx + 1 {
             self.segments.resize(idx + 1, Segment::default());
@@ -380,7 +385,9 @@ impl SegmentAccountant {
         } else {
             if !self.segments[idx].is_empty() {
                 self.segments[idx].free_to_active(lsn);
-                self.segments[idx].active_to_inactive(lsn);
+
+                let segment_lsn = lsn / io_buf_size * io_buf_size;
+                self.segments[idx].active_to_inactive(segment_lsn, true);
             }
 
             assert!(!self.ordering.contains_key(&lsn));
@@ -749,6 +756,18 @@ impl SegmentAccountant {
         segment.insert_pid(pid, segment_lsn);
     }
 
+    /// Called after the trailer of a segment has been written to disk,
+    /// indicating that no more pids will be added to a segment. Moves
+    /// the segment into the Inactive state.
+    ///
+    /// # Panics
+    /// The provided lsn and lid must exactly match the existing segment.
+    pub fn deactivate_segment(&mut self, lsn: Lsn, lid: LogID) {
+        let io_buf_size = self.config.get_io_buf_size();
+        let idx = lid as usize / io_buf_size;
+        self.segments[idx].active_to_inactive(lsn, false);
+    }
+
     fn bump_tip(&mut self) -> LogID {
         let lid = self.tip;
 
@@ -817,6 +836,7 @@ impl SegmentAccountant {
         }
 
         // FIXME Active somehow given out???
+        // FIXME Draining somehow given out???
         assert_eq!(self.segments[idx].state, Free);
 
         // remove the ordering from our list
@@ -835,15 +855,6 @@ impl SegmentAccountant {
             last_given,
             self.free
         );
-
-        // these will be the same for the initial call to next, when
-        // working with the 0th segment. for all other cases, we want
-        // to transition the last given segment to inactive.
-        if self.last_given != lid {
-            let last_idx = self.last_given as usize /
-                self.config.get_io_buf_size();
-            self.segments[last_idx].active_to_inactive(lsn);
-        }
 
         self.last_given = lid;
 

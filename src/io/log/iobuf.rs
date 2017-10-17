@@ -12,7 +12,7 @@ use super::*;
 struct IoBuf {
     buf: UnsafeCell<Vec<u8>>,
     header: AtomicUsize,
-    log_offset: AtomicUsize,
+    lid: AtomicUsize,
     lsn: AtomicUsize,
     capacity: AtomicUsize,
     maxed: AtomicBool,
@@ -90,7 +90,7 @@ impl IoBufs {
             // clean offset, need to create a new one and initialize it
             let iobuf = &bufs[current_buf];
             let (lid, last_given) = segment_accountant.next(recovered_lsn);
-            iobuf.set_log_offset(lid);
+            iobuf.set_lid(lid);
             iobuf.set_capacity(io_buf_size - SEG_TRAILER_LEN);
             iobuf.store_segment_header(recovered_lsn, last_given);
 
@@ -107,7 +107,7 @@ impl IoBufs {
             // the tip offset is not completely full yet, reuse it
             let iobuf = &bufs[current_buf];
             let offset = recovered_lid % io_buf_size as LogID;
-            iobuf.set_log_offset(recovered_lid);
+            iobuf.set_lid(recovered_lid);
             iobuf.set_capacity(io_buf_size - offset as usize - SEG_TRAILER_LEN);
             iobuf.set_lsn(recovered_lsn);
 
@@ -313,9 +313,9 @@ impl IoBufs {
             // the writer count should be positive
             assert_ne!(n_writers(claimed), 0);
 
-            let log_offset = iobuf.get_log_offset();
+            let lid = iobuf.get_lid();
             assert_ne!(
-                log_offset as usize,
+                lid as usize,
                 std::usize::MAX,
                 "({:?}) fucked up on idx {}\n{:?}",
                 tn(),
@@ -329,7 +329,7 @@ impl IoBufs {
             let res_end = res_start + buf.len();
             let destination = &mut (out_buf)[res_start..res_end];
 
-            let reservation_offset = log_offset + u64::from(buf_offset);
+            let reservation_offset = lid + u64::from(buf_offset);
             let reservation_lsn = iobuf.get_lsn() + u64::from(buf_offset);
 
             // we assign the LSN now that we know what it is
@@ -431,7 +431,8 @@ impl IoBufs {
 
         // NB need to do this before CAS because it can get
         // written and reset by another thread afterward
-        let log_offset = iobuf.get_log_offset();
+        let lid = iobuf.get_lid();
+        let lsn = iobuf.get_lsn();
         let capacity = iobuf.get_capacity();
         let io_buf_size = self.config.get_io_buf_size();
 
@@ -448,7 +449,7 @@ impl IoBufs {
         let max = std::usize::MAX as LogID;
 
         assert_ne!(
-            log_offset,
+            lid,
             max,
             "({:?}) sealing something that should never have \
             been claimed (idx {})\n{:?}",
@@ -457,7 +458,7 @@ impl IoBufs {
             self
         );
 
-        let mut next_lsn = iobuf.get_lsn();
+        let mut next_lsn = lsn;
 
         let maxed = res_len == capacity;
 
@@ -473,27 +474,21 @@ impl IoBufs {
             // mark unused as clear
             debug!(
                 "rolling to new segment after clearing {}-{}",
-                log_offset,
-                log_offset + res_len as LogID,
+                lid,
+                lid + res_len as LogID,
             );
 
             if res_len != io_buf_size && res_len != segment_remainder as usize {
                 // we want to just mark the part that won't get marked in
                 // write_to_log, which is basically just the wasted tip here.
-                let lsn = iobuf.get_lsn();
                 let low_lsn = lsn + res_len as Lsn;
                 self.mark_interval((low_lsn, next_lsn));
             }
 
-            // TODO put this file writing logic into the SegmentAccountant
-            let start = clock();
-            let mut sa = self.segment_accountant.lock().unwrap();
-            let locked = clock();
-            M.accountant_lock.measure(locked - start);
-            let (next_offset, last_given) = sa.next(next_lsn);
-            M.accountant_hold.measure(clock() - locked);
-            drop(sa);
+            let (next_offset, last_given) =
+                self.with_sa(|sa| sa.next(next_lsn));
 
+            // TODO put this file writing logic into the SegmentAccountant
             // zero out the entire new segment on disk
             debug!("zeroing out segment beginning at {}", next_offset);
             let mut f = self.file_for_writing.lock().unwrap();
@@ -506,12 +501,12 @@ impl IoBufs {
         } else {
             debug!(
                 "advancing offset within the current segment from {} to {}",
-                log_offset,
-                log_offset + res_len as LogID
+                lid,
+                lid + res_len as LogID
             );
             next_lsn += res_len as Lsn;
 
-            let next_offset = log_offset + res_len as LogID;
+            let next_offset = lid + res_len as LogID;
             (next_offset, None)
         };
 
@@ -522,7 +517,7 @@ impl IoBufs {
         // be written to disk yet! (we've lapped the writer in the iobuf
         // ring buffer)
         let mut spins = 0;
-        while next_iobuf.cas_log_offset(max, next_offset).is_err() {
+        while next_iobuf.cas_lid(max, next_offset).is_err() {
             spins += 1;
             if spins > 1_000_000 {
                 debug!("have spun >1,000,000x in seal of buf {}", idx);
@@ -568,18 +563,15 @@ impl IoBufs {
         let start = clock();
         let iobuf = &self.bufs[idx];
         let header = iobuf.get_header();
-        let log_offset = iobuf.get_log_offset();
+        let lid = iobuf.get_lid();
         let base_lsn = iobuf.get_lsn();
 
         let io_buf_size = self.config.get_io_buf_size();
 
-        assert_eq!(
-            log_offset % io_buf_size as LogID,
-            base_lsn % io_buf_size as Lsn
-        );
+        assert_eq!(lid % io_buf_size as LogID, base_lsn % io_buf_size as Lsn);
 
         assert_ne!(
-            log_offset as usize,
+            lid as usize,
             std::usize::MAX,
             "({:?}) created reservation for uninitialized slot",
             tn()
@@ -590,7 +582,7 @@ impl IoBufs {
         let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
 
         let mut f = self.file_for_writing.lock().unwrap();
-        f.seek(SeekFrom::Start(log_offset)).unwrap();
+        f.seek(SeekFrom::Start(lid)).unwrap();
         f.write_all(&data[..res_len]).unwrap();
         f.sync_all().unwrap();
 
@@ -598,8 +590,7 @@ impl IoBufs {
         if iobuf.get_maxed() {
             let segment_lsn = base_lsn / io_buf_size as Lsn *
                 io_buf_size as Lsn;
-            let segment_lid = log_offset / io_buf_size as LogID *
-                io_buf_size as LogID;
+            let segment_lid = lid / io_buf_size as LogID * io_buf_size as LogID;
 
             let trailer_overhang = io_buf_size as Lsn - SEG_TRAILER_LEN as Lsn;
 
@@ -623,12 +614,17 @@ impl IoBufs {
             f.write_all(&trailer_bytes).unwrap();
             f.sync_all().unwrap();
             iobuf.set_maxed(false);
+
+            // transition this segment into deplete-only mode now
+            // that n_writers is 0, and all calls to mark_replace/link
+            // happen before the reservation completes.
+            self.with_sa(|sa| sa.deactivate_segment(segment_lsn, segment_lid));
         }
 
         M.written_bytes.measure(res_len as f64);
         // signal that this IO buffer is uninitialized
         let max = std::usize::MAX as LogID;
-        iobuf.set_log_offset(max);
+        iobuf.set_lid(max);
         trace!("({:?}) {} log <- MAX", tn(), idx);
 
         // communicate to other threads that we have written an IO buffer.
@@ -644,8 +640,8 @@ impl IoBufs {
             let interval = (base_lsn, base_lsn + res_len as Lsn);
 
             debug!("wrote lsns {}-{} to disk at offsets {}-{}", 
-                    base_lsn, base_lsn + res_len as Lsn, log_offset,
-                    log_offset + res_len as LogID,);
+                    base_lsn, base_lsn + res_len as Lsn, lid,
+                    lid + res_len as LogID,);
             self.mark_interval(interval);
         }
 
@@ -736,9 +732,9 @@ impl Debug for IoBuf {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         let header = self.get_header();
         formatter.write_fmt(format_args!(
-            "\n\tIoBuf {{ log_offset: {}, n_writers: {}, offset: \
+            "\n\tIoBuf {{ lid: {}, n_writers: {}, offset: \
                                           {}, sealed: {} }}",
-            self.get_log_offset(),
+            self.get_lid(),
             n_writers(header),
             offset(header),
             is_sealed(header)
@@ -751,7 +747,7 @@ impl IoBuf {
         IoBuf {
             buf: UnsafeCell::new(vec![0; buf_size]),
             header: AtomicUsize::new(0),
-            log_offset: AtomicUsize::new(std::usize::MAX),
+            lid: AtomicUsize::new(std::usize::MAX),
             lsn: AtomicUsize::new(0),
             capacity: AtomicUsize::new(0),
             maxed: AtomicBool::new(false),
@@ -814,14 +810,14 @@ impl IoBuf {
         self.lsn.load(SeqCst) as Lsn
     }
 
-    fn set_log_offset(&self, offset: LogID) {
+    fn set_lid(&self, offset: LogID) {
         debug_delay();
-        self.log_offset.store(offset as usize, SeqCst);
+        self.lid.store(offset as usize, SeqCst);
     }
 
-    fn get_log_offset(&self) -> LogID {
+    fn get_lid(&self) -> LogID {
         debug_delay();
-        self.log_offset.load(SeqCst) as LogID
+        self.lid.load(SeqCst) as LogID
     }
 
     fn get_header(&self) -> u32 {
@@ -844,9 +840,9 @@ impl IoBuf {
         if res == old { Ok(new) } else { Err(res) }
     }
 
-    fn cas_log_offset(&self, old: LogID, new: LogID) -> Result<LogID, LogID> {
+    fn cas_lid(&self, old: LogID, new: LogID) -> Result<LogID, LogID> {
         debug_delay();
-        let res = self.log_offset.compare_and_swap(
+        let res = self.lid.compare_and_swap(
             old as usize,
             new as usize,
             SeqCst,

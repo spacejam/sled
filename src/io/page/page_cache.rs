@@ -215,11 +215,13 @@ impl<PM, P, R> PageCache<PM, P, R>
             M.serialize.measure(clock() - serialize_start);
 
             let res = self.log.reserve(bytes);
-            let (lsn, lid) = res.complete();
 
             // add pid to free stack to reduce fragmentation over time
             unsafe {
                 let cas_key = deleted.unwrap().deref().head(scope).into();
+
+                let lsn = res.lsn();
+                let lid = res.lid();
 
                 self.log.with_sa(|sa| {
                     sa.mark_replace(
@@ -230,6 +232,11 @@ impl<PM, P, R> PageCache<PM, P, R>
                     )
                 });
             }
+
+            // NB complete must happen AFTER calls to SA, because
+            // when the iobuf's n_writers hits 0, we may transition
+            // the segment to inactive, resulting in a race otherwise.
+            res.complete();
 
             let pd = Owned::new(PidDropper(pid, self.free.clone()));
             let ptr = pd.into_ptr(scope);
@@ -538,11 +545,15 @@ impl<PM, P, R> PageCache<PM, P, R>
             if result.is_ok() {
                 let lid = log_reservation.lid();
                 let lsn = log_reservation.lsn();
-                log_reservation.complete();
 
                 self.log.with_sa(|sa| {
                     sa.mark_replace(pid, lsn, lids_from_stack(old, scope), lid)
                 });
+
+                // NB complete must happen AFTER calls to SA, because
+                // when the iobuf's n_writers hits 0, we may transition
+                // the segment to inactive, resulting in a race otherwise.
+                log_reservation.complete();
 
                 let count = self.updates.fetch_add(1, SeqCst) + 1;
                 let should_snapshot =
@@ -603,9 +614,12 @@ impl<PM, P, R> PageCache<PM, P, R>
             if result.is_err() {
                 log_reservation.abort();
             } else {
-                let (lsn, lid) = log_reservation.complete();
-
                 self.log.with_sa(|sa| sa.mark_link(pid, lsn, lid));
+
+                // NB complete must happen AFTER calls to SA, because
+                // when the iobuf's n_writers hits 0, we may transition
+                // the segment to inactive, resulting in a race otherwise.
+                log_reservation.complete();
 
                 let count = self.updates.fetch_add(1, SeqCst) + 1;
                 let should_snapshot =
@@ -732,7 +746,8 @@ impl<PM, P, R> PageCache<PM, P, R>
                     "PageCache recovery setting segment {} to inactive",
                     log_id
                 );
-                snapshot.segments[last_idx].active_to_inactive(segment_lsn);
+                let last_lid = (last_idx * io_buf_size) as LogID;
+                snapshot.segments[last_idx].active_to_inactive(last_lid, true);
                 if snapshot.segments[last_idx].is_empty() {
                     trace!(
                         "PageCache recovery setting segment {} to draining",
@@ -741,6 +756,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                     snapshot.segments[last_idx].inactive_to_draining(
                         segment_lsn,
                     );
+                    // TODO how to handle Draining? we need to check %'s...
                 }
             }
             last_segment = Some(idx);
