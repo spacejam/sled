@@ -42,12 +42,10 @@ extern crate rand;
 pub use tree::{Tree, TreeIter};
 /// lock-free pagecache
 #[doc(hidden)]
-pub use page::{CasKey, Materializer, PageCache};
-#[doc(hidden)]
-pub use log::{Log, LogRead, MSG_HEADER_LEN, SEG_HEADER_LEN, SEG_TRAILER_LEN};
 pub use ds::{Radix, Stack};
 /// general-purpose configuration
 pub use config::Config;
+pub use io::*;
 
 macro_rules! rep_no_copy {
     ($e:expr; $n:expr) => {
@@ -75,20 +73,17 @@ fn test_fail() -> bool {
     false
 }
 
+mod io;
 mod tree;
-mod log;
-mod page;
 mod config;
-mod thread_cache;
 mod hash;
 mod ds;
 mod metrics;
 
 // use log::{Iter, MessageHeader, SegmentHeader, SegmentTrailer};
 use metrics::Metrics;
-use ds::{Lru, StackIter, node_from_frag_vec};
+use ds::*;
 use hash::{crc16_arr, crc64};
-use thread_cache::ThreadCache;
 
 type LogID = u64;
 type Lsn = u64;

@@ -36,7 +36,7 @@ pub(super) struct IoBufs {
     // to stable storage due to interesting thread interleavings.
     stable: AtomicUsize,
     file_for_writing: Mutex<std::fs::File>,
-    pub segment_accountant: Mutex<SegmentAccountant>,
+    segment_accountant: Mutex<SegmentAccountant>,
 }
 
 /// `IoBufs` is a set of lock-free buffers for coordinating
@@ -129,6 +129,25 @@ impl IoBufs {
             file_for_writing: Mutex::new(file),
             segment_accountant: Mutex::new(segment_accountant),
         }
+    }
+
+    /// SegmentAccountant access for coordination with the `PageCache`
+    pub(super) fn with_sa<B, F>(&self, f: F) -> B
+        where F: FnOnce(&mut SegmentAccountant) -> B
+    {
+        let start = clock();
+
+        let mut sa = self.segment_accountant.lock().unwrap();
+
+        let locked_at = clock();
+
+        M.accountant_lock.measure(locked_at - start);
+
+        let ret = f(&mut sa);
+
+        M.accountant_hold.measure(clock() - locked_at);
+
+        ret
     }
 
     fn idx(&self) -> usize {

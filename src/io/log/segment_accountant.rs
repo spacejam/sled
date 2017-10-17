@@ -187,6 +187,7 @@ impl Segment {
 
     fn free_to_active(&mut self, new_lsn: Lsn) {
         trace!("setting Segment to Active with new lsn {:?}", new_lsn);
+        // FIXME called while Inactive in advance_snapshot -> ensure_initialized
         assert_eq!(self.state, Free);
         self.present.clear();
         self.removed.clear();
@@ -194,6 +195,17 @@ impl Segment {
         self.state = Active;
     }
 
+    /// Transitions a segment to being in the Inactive state.
+    /// Called in:
+    ///
+    /// SegmentAccountant::next for the previously
+    /// allocated segment, but this should maybe be done by
+    /// a dropper from IoBufs::write_to_log...
+    ///
+    /// PageCache::advance_snapshot for marking when a
+    /// segment has been completely read
+    ///
+    /// SegmentAccountant::recover for when
     pub fn active_to_inactive(&mut self, lsn: Lsn) {
         trace!("setting Segment with lsn {:?} to Inactive", self.lsn());
         assert_eq!(self.state, Active);
@@ -244,7 +256,7 @@ impl Segment {
     pub fn insert_pid(&mut self, pid: PageID, lsn: Lsn) {
         assert_eq!(lsn, self.lsn.unwrap());
         // FIXME Inactive panic
-        assert_eq!(self.state, Active);
+        assert!(self.state == Active || self.state == Inactive);
         assert!(!self.removed.contains(&pid));
         self.present.insert(pid);
     }
@@ -262,9 +274,12 @@ impl Segment {
                 self.deferred_remove.insert(pid);
             }
             Inactive | Draining => {
+                /*
+                // FIXME this assert won't work given the insert_pid delay
                 assert!(
                     self.present.contains(&pid) || self.removed.contains(&pid)
                 );
+                */
                 self.present.remove(&pid);
                 self.removed.insert(pid);
             }

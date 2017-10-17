@@ -199,22 +199,10 @@ impl Log {
         M.make_stable.measure(clock() - start);
     }
 
-    /// SegmentAccountant access for coordination with the `PageCache`
-    pub fn with_sa<B, F>(&self, f: F) -> B
+    // SegmentAccountant access for coordination with the `PageCache`
+    pub(in io) fn with_sa<B, F>(&self, f: F) -> B
         where F: FnOnce(&mut SegmentAccountant) -> B
     {
-        let start = clock();
-
-        let mut sa = self.iobufs.segment_accountant.lock().unwrap();
-
-        let locked_at = clock();
-
-        M.accountant_lock.measure(locked_at - start);
-
-        let ret = f(&mut sa);
-
-        M.accountant_hold.measure(clock() - locked_at);
-
-        ret
+        self.iobufs.with_sa(f)
     }
 }
