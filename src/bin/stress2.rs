@@ -61,7 +61,8 @@ fn byte() -> Vec<u8> {
 }
 
 fn prepopulate(tree: Arc<sled::Tree>) {
-    for i in 0..256_usize.pow(unsafe { KEY_BYTES as u32 }) {
+    let max = 256_usize.pow(unsafe { KEY_BYTES as u32 });
+    for i in 0..max {
         let bytes: [u8; 8] = unsafe { mem::transmute(i) };
         let k = bytes[8 - unsafe { KEY_BYTES }..8].to_vec();
         let v = vec![];
@@ -70,8 +71,6 @@ fn prepopulate(tree: Arc<sled::Tree>) {
 }
 
 fn main() {
-    let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
-
     let args: Args = Docopt::new(USAGE)
         .and_then(|d| d.argv(std::env::args().into_iter()).deserialize())
         .unwrap_or_else(|e| e.exit());
@@ -90,11 +89,12 @@ fn main() {
         .cache_fixup_threshold(1)
         .cache_bits(6)
         .cache_capacity(128 * 1024 * 1024)
-        .flush_every_ms(Some(500))
+        .flush_every_ms(None)
         // .io_buf_size(10000)
         .path("stress2.db".to_string())
         .snapshot_after_ops(100000);
 
+    println!("recovering");
     let tree = Arc::new(config.tree());
 
     macro_rules! cloned {
@@ -106,7 +106,9 @@ fn main() {
         }};
     }
 
+    println!("before prepopulate");
     prepopulate(tree.clone());
+    println!("after prepopulate");
 
     let mut threads =
         vec![cloned!(|_, shutdown, total| report(shutdown, total))];
@@ -146,6 +148,8 @@ fn main() {
     let now = std::time::Instant::now();
 
     if args.flag_burn_in {
+        let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
+
         println!("burning in");
         signal.recv();
         println!("got shutdown signal, cleaning up...");

@@ -14,20 +14,20 @@ pub enum Frag {
     Del(Key),
     /// The bool in Base means this node has been a root at some point.
     /// This is useful during recovery to figure out the current root.
-    Base(tree::Node, bool),
+    Base(Node, bool),
     ChildSplit(ChildSplit),
     ParentSplit(ParentSplit),
 }
 
 impl Frag {
-    pub fn base(&self) -> Option<(tree::Node, bool)> {
+    pub fn base(&self) -> Option<(Node, bool)> {
         match *self {
             Frag::Base(ref base, ref root) => Some((base.clone(), *root)),
             _ => None,
         }
     }
 
-    pub fn into_base(self) -> Option<(tree::Node, bool)> {
+    pub fn into_base(self) -> Option<(Node, bool)> {
         match self {
             Frag::Base(base, root) => Some((base, root)),
             _ => None,

@@ -6,7 +6,7 @@ use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 
 use coco::epoch::{Atomic, Owned, Ptr, Scope, pin, unprotected};
 
-use test_fail;
+use {debug_delay, test_fail};
 
 #[derive(Debug)]
 pub struct Node<T: Send + 'static> {
@@ -94,6 +94,7 @@ impl<T: Send + 'static> Node<T> {
 impl<T: Send + 'static> Stack<T> {
     /// Add an item to the stack, spinning until successful.
     pub fn push(&self, inner: T) {
+        debug_delay();
         let node = Owned::new(Node {
             inner: inner,
             next: Atomic::null(),
@@ -119,6 +120,7 @@ impl<T: Send + 'static> Stack<T> {
 
     /// Pop the next item off the stack. Returns None if nothing is there.
     pub fn pop(&self) -> Option<T> {
+        debug_delay();
         pin(|scope| {
             let mut head = self.head(scope);
             loop {
@@ -151,6 +153,7 @@ impl<T: Send + 'static> Stack<T> {
         new: T,
         scope: &'s Scope,
     ) -> Result<Ptr<'s, Node<T>>, Ptr<'s, Node<T>>> {
+        debug_delay();
         let node = Owned::new(Node {
             inner: new,
             next: Atomic::null(),
@@ -181,6 +184,7 @@ impl<T: Send + 'static> Stack<T> {
         new: Ptr<'s, Node<T>>,
         scope: &'s Scope,
     ) -> Result<Ptr<'s, Node<T>>, Ptr<'s, Node<T>>> {
+        debug_delay();
         let res = self.head.compare_and_swap(old, new, SeqCst, scope);
         if res.is_ok() && !test_fail() {
             if !old.is_null() {
@@ -229,6 +233,7 @@ impl<'a, T> Iterator for StackIter<'a, T>
 {
     type Item = &'a T;
     fn next(&mut self) -> Option<Self::Item> {
+        debug_delay();
         if self.inner.is_null() {
             None
         } else {

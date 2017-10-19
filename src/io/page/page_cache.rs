@@ -316,6 +316,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             new_stack.push(last.unwrap());
             let node = node_from_frag_vec(new_stack);
 
+            debug_delay();
             unsafe {
                 if stack_ptr
                     .deref()
@@ -473,6 +474,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
             let node = node_from_frag_vec(new_entries);
 
+            debug_delay();
             let res = unsafe {
                 stack_ptr.deref().cas(head, node.into_ptr(scope), scope)
             };
@@ -538,6 +540,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
             let node = node_from_frag_vec(vec![cache_entry]).into_ptr(scope);
 
+            debug_delay();
             let result = unsafe {
                 stack_ptr.deref().cas(old.clone().into(), node, scope)
             };
@@ -746,8 +749,10 @@ impl<PM, P, R> PageCache<PM, P, R>
                     "PageCache recovery setting segment {} to inactive",
                     log_id
                 );
-                let last_lid = (last_idx * io_buf_size) as LogID;
-                snapshot.segments[last_idx].active_to_inactive(last_lid, true);
+                snapshot.segments[last_idx].active_to_inactive(
+                    segment_lsn,
+                    true,
+                );
                 if snapshot.segments[last_idx].is_empty() {
                     trace!(
                         "PageCache recovery setting segment {} to draining",

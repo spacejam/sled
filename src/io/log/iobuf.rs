@@ -888,18 +888,3 @@ fn bump_offset(v: u32, by: u32) -> u32 {
     assert_eq!(by >> 24, 0);
     v + by
 }
-
-// This function is useful for inducing random jitter into our atomic
-// operations, shaking out more possible interleavings quickly. It gets
-// fully elliminated by the compiler in non-test code.
-#[inline(always)]
-fn debug_delay() {
-    #[cfg(test)]
-    {
-        use rand::{Rng, thread_rng};
-
-        if thread_rng().gen_weighted_bool(1000) {
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-    }
-}
