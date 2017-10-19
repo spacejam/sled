@@ -180,6 +180,8 @@ impl<PM, P, R> PageCache<PM, P, R>
         let pid = self.free.pop().unwrap_or_else(
             || self.max_pid.fetch_add(1, SeqCst),
         );
+        // FIXME unwrap called on Err value
+        // suspect: recovery issue?
         self.inner.insert(pid, Stack::default()).unwrap();
 
         // write info to log
@@ -761,6 +763,9 @@ impl<PM, P, R> PageCache<PM, P, R>
                     snapshot.segments[last_idx].inactive_to_draining(
                         segment_lsn,
                     );
+                    if snapshot.segments[last_idx].is_empty() {
+                    snapshot.segments[last_idx].draining_to_free(
+                    }
                     // TODO how to handle Draining? we need to check %'s...
                 }
             }

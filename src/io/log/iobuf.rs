@@ -463,6 +463,7 @@ impl IoBufs {
         let maxed = res_len == capacity;
 
         let (next_offset, last_given) = if from_reserve || maxed {
+            // FIXME this isn't linearized with the thread that actually writes it
             // we will write a trailer to the iobuf after writing it.
             iobuf.set_maxed(true);
 
@@ -618,7 +619,13 @@ impl IoBufs {
             // transition this segment into deplete-only mode now
             // that n_writers is 0, and all calls to mark_replace/link
             // happen before the reservation completes.
+            trace!("deactivating segment with lsn {}", segment_lsn);
             self.with_sa(|sa| sa.deactivate_segment(segment_lsn, segment_lid));
+        } else {
+            trace!(
+                "not deactivating segment with lsn {}",
+                base_lsn / io_buf_size as Lsn * io_buf_size as Lsn
+            );
         }
 
         M.written_bytes.measure(res_len as f64);

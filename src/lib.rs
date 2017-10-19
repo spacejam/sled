@@ -35,7 +35,7 @@ extern crate rayon;
 extern crate zstd;
 #[cfg(feature = "cpuprofiler")]
 extern crate cpuprofiler;
-#[cfg(test)]
+#[cfg(any(test, feature = "lock_free_delays"))]
 extern crate rand;
 
 /// atomic lock-free tree
@@ -125,12 +125,12 @@ fn uptime() -> std::time::Duration {
 // fully elliminated by the compiler in non-test code.
 #[inline(always)]
 fn debug_delay() {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "lock_free_delays"))]
     {
         use rand::{Rng, thread_rng};
 
         if thread_rng().gen_weighted_bool(1000) {
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
 }

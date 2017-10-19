@@ -108,7 +108,6 @@ struct SegmentDropper(LogID, Arc<Mutex<VecDeque<LogID>>>);
 
 impl Drop for SegmentDropper {
     fn drop(&mut self) {
-        println!("freed segment {} from SegmentDropper", self.0);
         let mut deque = self.1.lock().unwrap();
         deque.push_back(self.0);
     }
@@ -187,8 +186,11 @@ impl Segment {
     }
 
     fn free_to_active(&mut self, new_lsn: Lsn) {
-        trace!("setting Segment to Active with new lsn {:?}", new_lsn);
-        // FIXME called while Inactive in advance_snapshot -> ensure_initialized
+        trace!(
+            "setting Segment to Active with new lsn {:?}, was {:?}",
+            new_lsn,
+            self.lsn
+        );
         assert_eq!(self.state, Free);
         self.present.clear();
         self.removed.clear();
@@ -227,7 +229,7 @@ impl Segment {
         self.state = Draining;
     }
 
-    fn draining_to_free(&mut self, lsn: Lsn) {
+    pub fn draining_to_free(&mut self, lsn: Lsn) {
         trace!("setting Segment with lsn {:?} to Free", self.lsn());
         assert!(self.is_draining());
         assert!(lsn >= self.lsn());
@@ -326,9 +328,20 @@ impl SegmentAccountant {
             let segment_start = idx as LogID *
                 self.config.get_io_buf_size() as LogID;
 
+            let lsn = segment.lsn();
+
             // populate free and to_clean if the segment has seen
-            if segment.can_free() {
+            if segment.is_empty() {
                 // can be reused immediately
+
+                if segment.state == Active {
+                    segment.active_to_inactive(lsn, true);
+                }
+
+                if segment.state == Inactive {
+                    segment.inactive_to_draining(lsn);
+                }
+
                 self.to_clean.remove(&segment_start);
                 trace!("pid {} freed @initialize_from_segments", segment_start);
 
@@ -339,16 +352,36 @@ impl SegmentAccountant {
                     self.ensure_safe_free_distance();
                 }
 
-                let current_lsn = segment.lsn();
-                segment.draining_to_free(current_lsn);
-                self.free_segment(segment_start, true);
+                segment.draining_to_free(lsn);
+                if self.tip != segment_start &&
+                    !self.free.lock().unwrap().contains(&segment_start)
+                {
+                    // don't give out this segment twice
+                    trace!(
+                        "freeing segment {} from initialize_from_segments, tip: {}",
+                        segment_start,
+                        self.tip
+                    );
+                    self.free_segment(segment_start, true);
+                }
             } else if segment.live_pct() <=
                        self.config.get_segment_cleanup_threshold()
             {
                 // can be cleaned
-                let current_lsn = segment.lsn();
-                segment.inactive_to_draining(current_lsn);
+                trace!(
+                    "setting segment {} to Draining from initialize_from_segments",
+                    segment_start
+                );
+
+                if segment.state == Active {
+                    segment.active_to_inactive(lsn, true);
+                }
+
+                segment.inactive_to_draining(lsn);
                 self.to_clean.insert(segment_start);
+                self.free.lock().unwrap().retain(|&s| s != segment_start);
+            } else {
+                self.free.lock().unwrap().retain(|&s| s != segment_start);
             }
         }
 
@@ -379,7 +412,6 @@ impl SegmentAccountant {
             self.segments[idx].active_to_inactive(segment_lsn, true);
         }
 
-        // FIXME already contains it...
         assert!(!self.ordering.contains_key(&lsn));
         self.ordering.insert(lsn, lid);
     }
@@ -404,6 +436,10 @@ impl SegmentAccountant {
                 self.recover(segment.lsn, cursor);
             } else {
                 // this segment was skipped or is free
+                trace!(
+                    "freeing segment {} from scan_segment_lsns",
+                    cursor,
+                );
                 self.free_segment(cursor, true);
             }
             cursor += segment_len;
@@ -493,7 +529,8 @@ impl SegmentAccountant {
         // determine the end of our valid entries
         for &lid in self.ordering.values() {
             if lid >= self.tip {
-                self.tip = lid + self.config.get_io_buf_size() as LogID;
+                let new_tip = lid + self.config.get_io_buf_size() as LogID;
+                self.tip = new_tip;
             }
         }
 
@@ -501,6 +538,11 @@ impl SegmentAccountant {
             let (_lsn, lid) = max.unwrap();
             debug!("freed empty segment {} while recovering segments", lid);
             self.free_segment(lid, true);
+        }
+
+        // make sure we don't double-allocate a segment
+        while self.free.lock().unwrap().contains(&self.tip) {
+            self.tip += self.config.get_io_buf_size() as LogID;
         }
 
         debug!(
@@ -511,10 +553,13 @@ impl SegmentAccountant {
     }
 
     fn free_segment(&mut self, lid: LogID, in_recovery: bool) {
-        println!("pushing segment {} to free", lid);
         debug!("freeing segment {}", lid);
         let idx = self.lid_to_idx(lid);
         assert_eq!(self.segments[idx].state, Free);
+        assert!(
+            !self.free.lock().unwrap().contains(&lid),
+            "double-free of a segment occurred"
+        );
 
         if in_recovery {
             self.free.lock().unwrap().push_front(lid);
@@ -681,7 +726,10 @@ impl SegmentAccountant {
                            self.config.get_segment_cleanup_threshold()
             {
                 // can be cleaned
-                trace!("SA inserting {} into to_clean", segment_start);
+                trace!(
+                    "SA inserting {} into to_clean from mark_replace",
+                    segment_start
+                );
                 self.segments[old_idx].inactive_to_draining(lsn);
                 self.to_clean.insert(segment_start);
             }
@@ -789,6 +837,10 @@ impl SegmentAccountant {
         // so that the log tip is used first.
         while self.free.lock().unwrap().len() < self.config.get_io_bufs() {
             let new_lid = self.bump_tip();
+            trace!(
+                "pushing segment {} to free from ensure_safe_free_distance",
+                new_lid
+            );
             self.free.lock().unwrap().push_front(new_lid);
         }
 
@@ -822,10 +874,6 @@ impl SegmentAccountant {
         // pin lsn to this segment
         let idx = self.lid_to_idx(lid);
 
-        println!("about to give out segment {}", lid);
-
-        // FIXME Active somehow given out???
-        // FIXME Draining somehow given out???
         assert_eq!(self.segments[idx].state, Free);
 
         // remove the ordering from our list

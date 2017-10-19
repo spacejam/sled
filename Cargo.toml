@@ -16,6 +16,7 @@ profiler = ["stress", "cpuprofiler"]
 bench = ["clap", "num_cpus", "rand", "chrono", "rayon", "zstd", "env_logger"]
 stress = ["docopt", "chan-signal", "rayon", "rand"]
 o_direct_writer = []
+lock_free_delays = []
 
 [profile.release]
 debug = 2
