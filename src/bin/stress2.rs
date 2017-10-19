@@ -120,12 +120,14 @@ fn main() {
                 let tree = tree.clone();
                 let shutdown = shutdown.clone();
                 let total = total.clone();
-                let thread = thread::spawn(move || {
+                let thread = thread::Builder::new()
+                    .stack_size(2 << 23) // make some bigass 16mb stacks
+                    .spawn(move || {
                     while !shutdown.load(Ordering::Relaxed) {
                         total.fetch_add(1, Ordering::Release);
                         $fn(&tree);
                     }
-                });
+                }).unwrap();
                 threads.push(thread);
             }
             )*
