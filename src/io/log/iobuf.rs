@@ -3,7 +3,6 @@ use std::path::Path;
 use std::sync::{Condvar, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::atomic::Ordering::SeqCst;
-use std::thread::yield_now;
 
 #[cfg(feature = "zstd")]
 use zstd::block::compress;
@@ -899,4 +898,17 @@ fn offset(v: u32) -> u32 {
 fn bump_offset(v: u32, by: u32) -> u32 {
     assert_eq!(by >> 24, 0);
     v + by
+}
+
+#[inline(always)]
+fn yield_now() {
+    #[cfg(nightly)]
+    {
+        std::sync::atomic::hint_core_should_pause();
+    }
+
+    #[cfg(not(nightly))]
+    {
+        std::thread::yield_now();
+    }
 }
