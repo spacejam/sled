@@ -3,6 +3,7 @@ use std::path::Path;
 use std::sync::{Condvar, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::atomic::Ordering::SeqCst;
+use std::thread::yield_now;
 
 #[cfg(feature = "zstd")]
 use zstd::block::compress;
@@ -253,6 +254,7 @@ impl IoBufs {
                 // current_buf.
                 trace_once!("({:?}) written ahead of sealed, spinning", tn());
                 M.log_looped();
+                yield_now();
                 continue;
             }
 
@@ -264,6 +266,7 @@ impl IoBufs {
                     tn()
                 );
                 M.log_looped();
+                yield_now();
                 continue;
             }
 
@@ -277,6 +280,7 @@ impl IoBufs {
                 // has already been bumped by sealer.
                 trace_once!("({:?}) io buffer already sealed, spinning", tn());
                 M.log_looped();
+                yield_now();
                 continue;
             }
 
@@ -291,6 +295,7 @@ impl IoBufs {
                 self.maybe_seal_and_write_iobuf(idx, header, true);
                 trace_once!("({:?}) io buffer too full, spinning", tn());
                 M.log_looped();
+                yield_now();
                 continue;
             }
 
@@ -306,6 +311,7 @@ impl IoBufs {
                     tn()
                 );
                 M.log_looped();
+                yield_now();
                 continue;
             }
 
@@ -524,6 +530,7 @@ impl IoBufs {
                 debug!("have spun >1,000,000x in seal of buf {}", idx);
                 spins = 0;
             }
+            yield_now();
         }
         trace!("({:?}) {} log set", tn(), next_idx);
 
@@ -686,11 +693,9 @@ impl IoBufs {
 
         while let Some(&(low, high)) = intervals.last() {
             assert_ne!(low, high);
-            debug_delay();
             let cur_stable = self.stable.load(SeqCst) as LogID;
             assert!(low >= cur_stable);
             if cur_stable == low {
-                debug_delay();
                 let old = self.stable.swap(high as usize, SeqCst);
                 assert_eq!(old, cur_stable as usize);
                 debug!("new highest interval: {} - {}", low, high);

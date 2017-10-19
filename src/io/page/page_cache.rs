@@ -497,18 +497,6 @@ impl<PM, P, R> PageCache<PM, P, R>
         Some((merged, head.into()))
     }
 
-    // If we can relocate any pages to clean a segment,
-    // try to do so.
-    fn try_cleaning_segment(&self) {
-        let to_clean = self.log.with_sa(|sa| sa.clean());
-
-        if let Some(pid) = to_clean {
-            if let Some((page, key)) = self.get(pid) {
-                let _ = self.replace(pid, key, page);
-            }
-        }
-    }
-
     /// Replace an existing page with a different set of `PageFrag`s.
     /// Returns `Ok(new_key)` if the operation was successful. Returns
     /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
@@ -518,6 +506,16 @@ impl<PM, P, R> PageCache<PM, P, R>
         pid: PageID,
         old: CasKey<P>,
         new: P,
+    ) -> Result<CasKey<P>, Option<CasKey<P>>> {
+        self.replace_recurse_once(pid, old, new, false)
+    }
+
+    fn replace_recurse_once(
+        &self,
+        pid: PageID,
+        old: CasKey<P>,
+        new: P,
+        recursed: bool,
     ) -> Result<CasKey<P>, Option<CasKey<P>>> {
         trace!("replacing pid {}", pid);
         pin(|scope| {
@@ -551,9 +549,21 @@ impl<PM, P, R> PageCache<PM, P, R>
                 let lid = log_reservation.lid();
                 let lsn = log_reservation.lsn();
 
-                self.log.with_sa(|sa| {
-                    sa.mark_replace(pid, lsn, lids_from_stack(old, scope), lid)
+                let to_clean = self.log.with_sa(|sa| {
+                    sa.mark_replace(pid, lsn, lids_from_stack(old, scope), lid);
+                    if recursed { None } else { sa.clean(Some(pid)) }
                 });
+                if let Some(to_clean) = to_clean {
+                    assert_ne!(pid, to_clean);
+                    if let Some((page, key)) = self.get(to_clean) {
+                        let _ = self.replace_recurse_once(
+                            to_clean,
+                            key,
+                            page,
+                            true,
+                        );
+                    }
+                }
 
                 // NB complete must happen AFTER calls to SA, because
                 // when the iobuf's n_writers hits 0, we may transition
@@ -569,8 +579,6 @@ impl<PM, P, R> PageCache<PM, P, R>
             } else {
                 log_reservation.abort();
             }
-
-            self.try_cleaning_segment();
 
             result.map(|ok| ok.into()).map_err(|e| Some(e.into()))
         })
@@ -619,7 +627,20 @@ impl<PM, P, R> PageCache<PM, P, R>
             if result.is_err() {
                 log_reservation.abort();
             } else {
-                self.log.with_sa(|sa| sa.mark_link(pid, lsn, lid));
+                let to_clean = self.log.with_sa(|sa| {
+                    sa.mark_link(pid, lsn, lid);
+                    sa.clean(None)
+                });
+                if let Some(to_clean) = to_clean {
+                    if let Some((page, key)) = self.get(to_clean) {
+                        let _ = self.replace_recurse_once(
+                            to_clean,
+                            key,
+                            page,
+                            true,
+                        );
+                    }
+                }
 
                 // NB complete must happen AFTER calls to SA, because
                 // when the iobuf's n_writers hits 0, we may transition
@@ -633,8 +654,6 @@ impl<PM, P, R> PageCache<PM, P, R>
                     self.advance_snapshot();
                 }
             }
-
-            self.try_cleaning_segment();
 
             result.map(|ok| ok.into()).map_err(|e| Some(e.into()))
         })

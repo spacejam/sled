@@ -740,7 +740,7 @@ impl SegmentAccountant {
 
     /// Called by the `PageCache` to find useful pages
     /// it should try to rewrite.
-    pub fn clean(&mut self) -> Option<PageID> {
+    pub fn clean(&mut self, ignore: Option<PageID>) -> Option<PageID> {
         // try to maintain about twice the number of necessary
         // on-deck segments, to reduce the amount of log growth.
         if self.free.lock().unwrap().len() >=
@@ -756,7 +756,7 @@ impl SegmentAccountant {
             let segment = &self.segments[idx];
             assert_eq!(segment.state, Draining);
             for pid in &segment.present {
-                if self.pending_clean.contains(pid) {
+                if self.pending_clean.contains(pid) || ignore == Some(*pid) {
                     continue;
                 }
                 self.pending_clean.insert(*pid);
