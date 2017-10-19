@@ -518,8 +518,17 @@ impl SegmentAccountant {
 
         if in_recovery {
             self.free.lock().unwrap().push_front(lid);
-        } else {
 
+            // We only want to immediately remove the segment
+            // mapping if we're in recovery because otherwise
+            // we may be acting on updates relating to things
+            // in IO buffers, before they have been flushed.
+            // The latter will be removed from the mapping
+            // before being reused, in the next() method.
+            if let Some(old_lsn) = self.segments[idx].lsn {
+                self.ordering.remove(&old_lsn);
+            }
+        } else {
             self.ensure_safe_free_distance();
 
             pin(|scope| {
@@ -584,11 +593,10 @@ impl SegmentAccountant {
 
         if let Some(i) = tear_at {
             // we need to chop off the elements after the tear
-            for &(lsn_to_chop, lid_to_chop) in &logical_tail[0..i] {
+            for &(_lsn_to_chop, lid_to_chop) in &logical_tail[0..i] {
                 error!("clearing corrupted segment at lid {}", lid_to_chop);
 
                 self.free_segment(lid_to_chop, true);
-                self.ordering.remove(&lsn_to_chop);
                 // TODO write zeroes to these segments to reduce
                 // false recovery.
             }
@@ -829,7 +837,7 @@ impl SegmentAccountant {
 
         self.ordering.insert(lsn, lid);
 
-        error!(
+        debug!(
             "segment accountant returning offset: {} paused: {} last: {} on deck: {:?}",
             lid,
             self.pause_rewriting,
@@ -848,18 +856,7 @@ impl SegmentAccountant {
         &mut self,
         lsn: Lsn,
     ) -> Box<Iterator<Item = (Lsn, LogID)>> {
-        assert!(
-            self.pause_rewriting,
-            "must pause rewriting before iterating over segments"
-        );
-        let free = self.free.lock().unwrap().clone();
-        for lid in free {
-            // remove the ordering from our list
-            let idx = self.lid_to_idx(lid);
-            if let Some(old_lsn) = self.segments[idx].lsn {
-                self.ordering.remove(&old_lsn);
-            }
-        }
+        // assert!( self.pause_rewriting, "must pause rewriting before iterating over segments");
 
         let segment_len = self.config.get_io_buf_size() as Lsn;
         let normalized_lsn = lsn / segment_len * segment_len;
