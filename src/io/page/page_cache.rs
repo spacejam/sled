@@ -763,10 +763,6 @@ impl<PM, P, R> PageCache<PM, P, R>
                     snapshot.segments[last_idx].inactive_to_draining(
                         segment_lsn,
                     );
-                    if snapshot.segments[last_idx].is_empty() {
-                    snapshot.segments[last_idx].draining_to_free(
-                    }
-                    // TODO how to handle Draining? we need to check %'s...
                 }
             }
             last_segment = Some(idx);
