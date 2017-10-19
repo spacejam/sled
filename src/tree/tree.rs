@@ -347,7 +347,7 @@ impl Tree {
         node_cas_key: CasKey<Frag>,
     ) -> Result<ParentSplit, ()> {
         let (new_pid, new_cas_key) = self.pages.allocate();
-        debug!("allocated pid {} in child_split", new_pid);
+        trace!("allocated pid {} in child_split", new_pid);
 
         // split the node in half
         let rhs = node.split(new_pid);
