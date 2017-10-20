@@ -18,11 +18,16 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
     // find how far we got
     let mut contiguous = 1;
     let mut lowest = 0;
-    for (k, v) in iter {
+    for (mut k, v) in iter {
         if v == highest_vec {
             contiguous += 1;
         } else {
-            println!("different k: {:?} v: {:?}", k, v);
+            k.reverse();
+            println!(
+                "different k: {} v: {}",
+                slice_to_u32(&*k),
+                slice_to_u32(&*v)
+            );
             let expected = highest - 1;
             let actual = slice_to_u32(&*v);
             assert_eq!(expected, actual);
@@ -36,13 +41,13 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
     let lowest_vec = u32_to_vec(lowest);
 
     // ensure nothing changes after this point
-    let mut low_beginning = u32_to_vec(contiguous + 1);
-    low_beginning.reverse();
+    let low_beginning = u32_to_vec(contiguous + 1);
 
-    println!("expecting {:?} from {:?} and up", lowest_vec, low_beginning);
-    for (k, v) in tree.scan(&*low_beginning) {
+    println!("from {} and up expecting {:?}", contiguous + 1, lowest_vec);
+    for (mut k, v) in tree.scan(&*low_beginning) {
         if v != lowest_vec {
-            println!("k: {:?} v: {:?}", k, v);
+            k.reverse();
+            println!("k: {} v: {}", slice_to_u32(&*k), slice_to_u32(&*v));
         }
         assert_eq!(v, lowest_vec);
     }

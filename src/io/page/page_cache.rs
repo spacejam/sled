@@ -440,7 +440,12 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         if lids.len() > self.config.get_page_consolidation_threshold() {
             trace!("consolidating pid {} with len {}!", pid, lids.len());
-            match self.replace(pid, head.into(), merged.clone()) {
+            match self.replace_recurse_once(
+                pid,
+                head.into(),
+                merged.clone(),
+                true,
+            ) {
                 Ok(new_head) => head = new_head.into(),
                 Err(None) => return None,
                 _ => (),
@@ -548,9 +553,10 @@ impl<PM, P, R> PageCache<PM, P, R>
             if result.is_ok() {
                 let lid = log_reservation.lid();
                 let lsn = log_reservation.lsn();
+                let lids = lids_from_stack(old, scope);
 
                 let to_clean = self.log.with_sa(|sa| {
-                    sa.mark_replace(pid, lsn, lids_from_stack(old, scope), lid);
+                    sa.mark_replace(pid, lsn, lids, lid);
                     if recursed { None } else { sa.clean(Some(pid)) }
                 });
                 if let Some(to_clean) = to_clean {
