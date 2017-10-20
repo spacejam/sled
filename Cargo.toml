@@ -26,6 +26,9 @@ name = "bench"
 required-features = ["bench"]
 
 [[bin]]
+name = "cyclical_linearizability"
+
+[[bin]]
 name = "stress"
 required-features = ["stress"]
 

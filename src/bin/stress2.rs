@@ -90,9 +90,9 @@ fn main() {
         .cache_bits(6)
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(None)
-        // .io_buf_size(10000)
+        // .io_buf_size(1 << 16)
         .path("stress2.db".to_string())
-        .snapshot_after_ops(100000);
+        .snapshot_after_ops(1 << 16);
 
     println!("recovering");
     let tree = Arc::new(config.tree());
@@ -106,9 +106,8 @@ fn main() {
         }};
     }
 
-    println!("before prepopulate");
+    println!("prepopulating");
     prepopulate(tree.clone());
-    println!("after prepopulate");
 
     let mut threads =
         vec![cloned!(|_, shutdown, total| report(shutdown, total))];
@@ -134,6 +133,7 @@ fn main() {
         );
     }
 
+    println!("spinning up threads");
     #[rustfmt_skip]
     spin_up![
         args.flag_get, |t: &Arc<sled::Tree>| t.get(&*byte());

@@ -4,6 +4,9 @@ use std::sync::{Condvar, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::atomic::Ordering::SeqCst;
 
+#[cfg(feature = "rayon")]
+use rayon::prelude::*;
+
 #[cfg(feature = "zstd")]
 use zstd::block::compress;
 

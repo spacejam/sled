@@ -241,6 +241,7 @@ impl Segment {
     pub fn recovery_ensure_initialized(&mut self, lsn: Lsn) {
         if let Some(current_lsn) = self.lsn {
             if current_lsn != lsn {
+                assert!(lsn > current_lsn);
                 trace!("(snapshot) resetting segment to have lsn {}", lsn);
                 self.state = Free;
                 self.free_to_active(lsn);
@@ -385,15 +386,36 @@ impl SegmentAccountant {
             }
         }
 
+        self.set_last_given();
+
         if !segments.is_empty() {
             trace!("initialized self.segments to {:?}", segments);
-            self.segments = segments;
+            for (i, segment) in segments.into_iter().enumerate() {
+                // we should not forget about segments that we've added
+                // during the initial segment scan, but freed for being
+                // empty, as that's where we set an LSN for them.
+                self.segments[i] = segment;
+            }
         } else {
             // this is basically just for when we recover with a single
             // empty-yet-initialized segment
             debug!(
                 "pagecache recovered no segments so not initializing from any"
             );
+        }
+    }
+
+    fn set_last_given(&mut self) {
+        let new_max = self.ordering
+            .iter()
+            .rev()
+            .nth(0)
+            .map(|(lsn, lid)| (*lsn, *lid))
+            .clone();
+
+        if let Some((_lsn, lid)) = new_max {
+            trace!("setting last_given to {}", lid);
+            self.last_given = lid;
         }
     }
 
@@ -410,6 +432,11 @@ impl SegmentAccountant {
 
             let segment_lsn = lsn / io_buf_size * io_buf_size;
             self.segments[idx].active_to_inactive(segment_lsn, true);
+        } else {
+            // this is necessary for properly removing the ordering
+            // info later on, if this segment is found to be empty
+            // during recovery.
+            self.segments[idx].lsn = Some(lsn);
         }
 
         assert!(!self.ordering.contains_key(&lsn));
@@ -466,7 +493,6 @@ impl SegmentAccountant {
             let segment_base = lid / segment_len * segment_len;
             assert_eq!(lid, segment_base);
 
-            self.last_given = lid;
             let mut tip = lid + SEG_HEADER_LEN as LogID;
             let cur_lsn = base_lsn + SEG_HEADER_LEN as Lsn;
 
@@ -536,7 +562,7 @@ impl SegmentAccountant {
 
         if empty_tip && max.is_some() {
             let (_lsn, lid) = max.unwrap();
-            debug!("freed empty segment {} while recovering segments", lid);
+            debug!("freed empty tip segment {} while recovering segments", lid);
             self.free_segment(lid, true);
         }
 
@@ -571,6 +597,11 @@ impl SegmentAccountant {
             // The latter will be removed from the mapping
             // before being reused, in the next() method.
             if let Some(old_lsn) = self.segments[idx].lsn {
+                trace!(
+                    "removing segment {} with lsn {} from ordering",
+                    lid,
+                    old_lsn
+                );
                 self.ordering.remove(&old_lsn);
             }
         } else {
@@ -895,6 +926,10 @@ impl SegmentAccountant {
 
         self.last_given = lid;
 
+        if last_given != 0 {
+            assert_ne!(last_given, lid);
+        }
+
         (lid, last_given)
     }
 
@@ -916,6 +951,10 @@ impl SegmentAccountant {
     fn lid_to_idx(&mut self, lid: LogID) -> usize {
         let idx = lid as usize / self.config.get_io_buf_size();
         if self.segments.len() < idx + 1 {
+            trace!(
+                "expanding self.segments to cover segment at {}",
+                (idx + 1) * self.config.get_io_buf_size()
+            );
             self.segments.resize(idx + 1, Segment::default());
         }
         idx
