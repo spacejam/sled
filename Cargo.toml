@@ -1,6 +1,6 @@
 [package]
 name = "sled"
-version = "0.15.0"
+version = "0.15.0-alpha-1"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "a flash-sympathetic persistent lock-free B+ tree, pagecache, and log"
 license = "Apache-2.0"
