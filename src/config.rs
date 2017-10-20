@@ -12,7 +12,7 @@ use super::*;
 /// # Examples
 ///
 /// ```
-/// let config = sled::Config::default()
+/// let _config = sled::Config::default()
 ///     .path("/path/to/data".to_owned())
 ///     .cache_capacity(10_000_000_000)
 ///     .use_compression(true)
@@ -30,8 +30,16 @@ unsafe impl Sync for Config {}
 impl Default for Config {
     fn default() -> Config {
         let now = uptime();
-        let nanos = (now.as_secs() * 1_000_000_000) + now.subsec_nanos() as u64;
+        let nanos = (now.as_secs() * 1_000_000_000) +
+            u64::from(now.subsec_nanos());
+
+        // use shared memory for temporary linux files
+        #[cfg(target_os = "linux")]
+        let tmp_path = format!("/dev/shm/sled.tmp.{}", nanos);
+
+        #[cfg(not(target_os = "linux"))]
         let tmp_path = format!("sled.tmp.{}", nanos);
+
         let inner = Arc::new(UnsafeCell::new(ConfigInner {
             io_bufs: 3,
             io_buf_size: 2 << 22, // 8mb
@@ -42,10 +50,13 @@ impl Default for Config {
             cache_capacity: 1024 * 1024 * 1024, // 1gb
             use_os_cache: true,
             use_compression: true,
-            flush_every_ms: Some(100),
+            flush_every_ms: Some(500),
             snapshot_after_ops: 1_000_000,
             snapshot_path: None,
             cache_fixup_threshold: 1,
+            segment_cleanup_threshold: 0.2,
+            min_free_segments: 3,
+            zero_copy_storage: false,
             tc: ThreadCache::default(),
             tmp_path: tmp_path.to_owned(),
         }));
@@ -75,9 +86,10 @@ impl Config {
         Tree::new(self.clone())
     }
 
-    /// create a new `LockFreeLog` based on this configuration
-    pub fn log(&self) -> LockFreeLog {
-        LockFreeLog::start_system(self.clone())
+    /// create a new `Log` based on this
+    /// configuration
+    pub fn log(&self) -> Log {
+        Log::start_system(self.clone())
     }
 }
 
@@ -96,6 +108,9 @@ pub struct ConfigInner {
     snapshot_after_ops: usize,
     snapshot_path: Option<String>,
     cache_fixup_threshold: usize,
+    segment_cleanup_threshold: f64,
+    min_free_segments: usize,
+    zero_copy_storage: bool,
     tc: ThreadCache<fs::File>,
     tmp_path: String,
 }
@@ -140,11 +155,16 @@ impl ConfigInner {
         (flush_every_ms, get_flush_every_ms, set_flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
         (snapshot_after_ops, get_snapshot_after_ops, set_snapshot_after_ops, usize, "number of operations between page table snapshots"),
         (snapshot_path, get_snapshot_path, set_snapshot_path, Option<String>, "snapshot file location"),
-        (cache_fixup_threshold, get_cache_fixup_threshold, set_cache_fixup_threshold, usize, "the maximum length of a cached page fragment chain")
+        (cache_fixup_threshold, get_cache_fixup_threshold, set_cache_fixup_threshold, usize, "the maximum length of a cached page fragment chain"),
+        (segment_cleanup_threshold, get_segment_cleanup_threshold, set_segment_cleanup_threshold, f64, "the proportion of remaining valid pages in the segment"),
+        (min_free_segments, get_min_free_segments, set_min_free_segments, usize, "the minimum number of free segments to have on-deck before a compaction occurs"),
+        (zero_copy_storage, get_zero_copy_storage, set_zero_copy_storage, bool, "disabling of the log segment copy cleaner")
     );
 
-    /// Retrieve a thread-local file handle to the configured underlying storage,
-    /// or create a new one if this is the first time the thread is accessing it.
+    /// Retrieve a thread-local file handle to the
+    /// configured underlying storage,
+    /// or create a new one if this is the first time the
+    /// thread is accessing it.
     pub fn cached_file(&self) -> Rc<RefCell<fs::File>> {
         self.tc.get_or_else(|| {
             let path = self.get_path();
@@ -152,16 +172,6 @@ impl ConfigInner {
             options.create(true);
             options.read(true);
             options.write(true);
-
-            #[cfg(target_os = "linux")]
-            {
-                if !self.use_os_cache {
-                    use std::os::unix::fs::OpenOptionsExt;
-                    options.custom_flags(libc::O_DIRECT);
-                    panic!("O_DIRECT support not sussed out yet.");
-                }
-            }
-
             options.open(path).unwrap()
         })
     }
@@ -180,37 +190,46 @@ impl ConfigInner {
     /// returns the snapshot file paths for this system
     pub fn get_snapshot_files(&self) -> Vec<String> {
         let mut prefix = self.snapshot_prefix();
+
         prefix.push_str(".");
+
+        let err_msg = format!("could not read snapshot directory ({})", prefix);
+
 
         let abs_prefix: String = if Path::new(&prefix).is_absolute() {
             prefix
         } else {
-            let mut abs_path =
-                std::env::current_dir().expect("could not read current dir, maybe deleted?");
+            let mut abs_path = std::env::current_dir().expect(&*err_msg);
             abs_path.push(prefix.clone());
             abs_path.to_str().unwrap().to_owned()
         };
 
-        let filter = |dir_entry: std::io::Result<std::fs::DirEntry>| if let Ok(de) = dir_entry {
-            let path_buf = de.path();
-            let path = path_buf.as_path();
-            let path_str = path.to_str().unwrap();
-            if path_str.starts_with(&abs_prefix) && !path_str.ends_with(".in___motion") {
-                Some(path_str.to_owned())
+        let filter = |dir_entry: std::io::Result<std::fs::DirEntry>| {
+            if let Ok(de) = dir_entry {
+                let path_buf = de.path();
+                let path = path_buf.as_path();
+                let path_str = path.to_str().unwrap();
+                if path_str.starts_with(&abs_prefix) &&
+                    !path_str.ends_with(".in___motion")
+                {
+                    Some(path_str.to_owned())
+                } else {
+                    None
+                }
             } else {
                 None
             }
-        } else {
-            None
         };
 
-        let snap_dir = Path::new(&abs_prefix).parent().expect(
-            "could not read snapshot directory",
-        );
+        let snap_dir = Path::new(&abs_prefix).parent().expect(&*err_msg);
+
+        if !snap_dir.exists() {
+            std::fs::create_dir_all(snap_dir).unwrap();
+        }
 
         snap_dir
             .read_dir()
-            .expect("could not read snapshot directory")
+            .expect(&*err_msg)
             .filter_map(filter)
             .collect()
     }
@@ -230,7 +249,6 @@ impl Drop for ConfigInner {
         let candidates = self.get_snapshot_files();
         for path in candidates {
             if let Err(_e) = std::fs::remove_file(path) {
-                    #[cfg(feature = "log")]
                 warn!("failed to remove old snapshot file, maybe snapshot race? {}", _e);
             }
         }

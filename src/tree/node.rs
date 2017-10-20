@@ -40,7 +40,8 @@ impl Node {
 
     pub fn set_leaf(&mut self, key: Key, val: Value) {
         if let Data::Leaf(ref mut records) = self.data {
-            let search = records.binary_search_by(|&(ref k, ref _v)| (**k).cmp(&*key));
+            let search =
+                records.binary_search_by(|&(ref k, ref _v)| (**k).cmp(&*key));
             if let Ok(idx) = search {
                 records.push((key, val));
                 records.swap_remove(idx);
@@ -60,7 +61,6 @@ impl Node {
     }
 
     pub fn parent_split(&mut self, ps: &ParentSplit) {
-        // println!("splitting parent: {:?}\nwith {:?}", self, ps);
         if let Data::Index(ref mut ptrs) = self.data {
             ptrs.push((ps.at.inner().unwrap(), ps.to));
             ptrs.sort_by(|a, b| a.0.cmp(&b.0));
@@ -71,7 +71,8 @@ impl Node {
 
     pub fn del_leaf(&mut self, key: KeyRef) {
         if let Data::Leaf(ref mut records) = self.data {
-            let search = records.binary_search_by(|&(ref k, ref _v)| (**k).cmp(key));
+            let search =
+                records.binary_search_by(|&(ref k, ref _v)| (**k).cmp(key));
             if let Ok(idx) = search {
                 records.remove(idx);
             }

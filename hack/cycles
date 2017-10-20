@@ -1,0 +1,10 @@
+#!/bin/bash
+
+trap "killall cyclical_linearizability; exit" SIGINT SIGTERM
+
+cargo build --features=env_logger --release --bin cyclical_linearizability
+while [[ $? -eq 0 ]]; do
+  RUST_LOG=sled=info target/release/cyclical_linearizability &
+  sleep `shuf -i 5-15 -n 1`
+  kill $!
+done

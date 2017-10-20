@@ -1,10 +1,10 @@
-/// A simple lock-free radix tree, assumes a dense keyspace.
+/// A simple wait-free, grow-only radix tree, assumes a dense keyspace.
 
 use std::sync::atomic::Ordering::SeqCst;
 
 use coco::epoch::{Atomic, Owned, Ptr, Scope, pin, unprotected};
 
-use super::*;
+use {PageID, debug_delay, test_fail};
 
 const FANFACTOR: usize = 6;
 const FANOUT: usize = 1 << FANFACTOR;
@@ -91,6 +91,7 @@ impl<T> Radix<T>
 {
     /// Try to create a new item in the tree.
     pub fn insert(&self, pid: PageID, item: T) -> Result<(), ()> {
+        debug_delay();
         pin(|scope| {
             let new = Owned::new(item).into_ptr(scope);
             self.cas(pid, Ptr::null(), new, scope).map(|_| ()).map_err(
@@ -100,7 +101,13 @@ impl<T> Radix<T>
     }
 
     /// Atomically swap the previous value in a tree with a new one.
-    pub fn swap<'s>(&self, pid: PageID, new: Ptr<'s, T>, scope: &'s Scope) -> Ptr<'s, T> {
+    pub fn swap<'s>(
+        &self,
+        pid: PageID,
+        new: Ptr<'s, T>,
+        scope: &'s Scope,
+    ) -> Ptr<'s, T> {
+        debug_delay();
         let tip = traverse(self.head.load(SeqCst, scope), pid, true, scope);
         unsafe { tip.deref().inner.swap(new, SeqCst, scope) }
     }
@@ -113,6 +120,7 @@ impl<T> Radix<T>
         new: Ptr<'s, T>,
         scope: &'s Scope,
     ) -> Result<Ptr<'s, T>, Ptr<'s, T>> {
+        debug_delay();
         let tip = traverse(self.head.load(SeqCst, scope), pid, true, scope);
 
         if test_fail() {
@@ -134,6 +142,7 @@ impl<T> Radix<T>
 
     /// Try to get a value from the tree.
     pub fn get<'s>(&self, pid: PageID, scope: &'s Scope) -> Option<Ptr<'s, T>> {
+        debug_delay();
         let tip = traverse(self.head.load(SeqCst, scope), pid, false, scope);
         if tip.is_null() {
             return None;
@@ -144,6 +153,7 @@ impl<T> Radix<T>
 
     /// Delete a value from the tree, returning the old value if it was set.
     pub fn del<'s>(&self, pid: PageID, scope: &'s Scope) -> Option<Ptr<'s, T>> {
+        debug_delay();
         let old = self.swap(pid, Ptr::null(), scope);
         if !old.is_null() {
             unsafe { scope.defer_drop(old) };
@@ -176,7 +186,12 @@ fn traverse<'s, T: 'static + Send>(
         }
 
         let next_child = Owned::new(Node::default()).into_ptr(scope);
-        let ret = children[child_index].compare_and_swap(next_ptr, next_child, SeqCst, scope);
+        let ret = children[child_index].compare_and_swap(
+            next_ptr,
+            next_child,
+            SeqCst,
+            scope,
+        );
         if ret.is_ok() && !test_fail() {
             // CAS worked
             next_ptr = next_child;

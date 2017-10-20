@@ -12,8 +12,10 @@ use coco::epoch::Ptr;
 use super::*;
 
 mod page_cache;
+mod snapshot;
 
 pub use self::page_cache::PageCache;
+pub use self::snapshot::Snapshot;
 
 /// A user of a `PageCache` needs to provide a `Materializer` which
 /// handles the merging of page fragments.
@@ -43,14 +45,14 @@ pub trait Materializer {
 pub enum CacheEntry<M: Send + Sync> {
     /// A cache item that contains the most recent fully-merged page state, also in secondary
     /// storage.
-    MergedResident(M, LogID),
+    MergedResident(M, Lsn, LogID),
     /// A cache item that is in memory, and also in secondary storage.
-    Resident(M, LogID),
+    Resident(M, Lsn, LogID),
     /// A cache item that is present in secondary storage.
-    PartialFlush(LogID),
+    PartialFlush(Lsn, LogID),
     /// A cache item that is present in secondary storage, and is the base segment
     /// of a page.
-    Flush(LogID),
+    Flush(Lsn, LogID),
 }
 
 /// A wrapper struct for a pointer to a (possibly invalid, hence inaccessible)
@@ -100,29 +102,8 @@ enum Update<PageFrag>
 {
     Append(PageFrag),
     Compact(PageFrag),
-    Del,
+    Free,
     Alloc,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct Snapshot<R> {
-    pub max_lid: LogID,
-    pub max_pid: PageID,
-    pub pt: BTreeMap<PageID, Vec<LogID>>,
-    pub free: Vec<PageID>,
-    pub recovery: Option<R>,
-}
-
-impl<R> Default for Snapshot<R> {
-    fn default() -> Snapshot<R> {
-        Snapshot {
-            max_lid: 0,
-            max_pid: 0,
-            pt: BTreeMap::new(),
-            free: vec![],
-            recovery: None,
-        }
-    }
 }
 
 struct PidDropper(PageID, Arc<Stack<PageID>>);

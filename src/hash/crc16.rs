@@ -72,7 +72,7 @@ const CRC16TAB: [u16; 256] =
 pub fn crc16(buf: &[u8]) -> u16 {
     let mut crc = 0u16;
     for &b in &*buf {
-        let idx = ((crc >> 8) ^ b as u16) & 0x00FF;
+        let idx = ((crc >> 8) ^ u16::from(b)) & 0x00FF;
         let lookup = CRC16TAB[idx as usize];
         crc = (crc << 8) ^ lookup;
     }

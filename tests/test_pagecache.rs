@@ -36,8 +36,13 @@ impl Materializer for TestMaterializer {
 }
 
 #[test]
-fn test_cache() {
-    let conf = Config::default().cache_capacity(40).cache_bits(0);
+fn pagecache_caching() {
+    let conf = Config::default()
+        .cache_capacity(40)
+        .cache_bits(0)
+        .flush_every_ms(None)
+        .snapshot_after_ops(1_000_000)
+        .io_buf_size(5000);
 
     let mut pc = PageCache::new(TestMaterializer, conf.clone());
     pc.recover();
@@ -45,28 +50,100 @@ fn test_cache() {
     let mut keys = HashMap::new();
     for _ in 0..2 {
         let (id, key) = pc.allocate();
-        let key = pc.set(id, key, vec![0]).unwrap();
+        let key = pc.replace(id, key, vec![0]).unwrap();
         keys.insert(id, key);
     }
 
     for i in 0..1000 {
         let id = i as usize % 2;
         let (_, key) = pc.get(id).unwrap();
-        let key = pc.merge(id, key, vec![i]).unwrap();
+        let key = pc.link(id, key, vec![i]).unwrap();
         keys.insert(id, key);
     }
 }
 
 #[test]
-fn basic_recovery() {
-    let conf = Config::default().flush_every_ms(None);
+fn pagecache_strange_crash_1() {
+    let conf = Config::default()
+        .cache_capacity(40)
+        .cache_bits(0)
+        .flush_every_ms(None)
+        .snapshot_after_ops(1_000_000)
+        .io_buf_size(5000);
+
+    {
+        let mut pc = PageCache::new(TestMaterializer, conf.clone());
+        pc.recover();
+
+        let mut keys = HashMap::new();
+        for _ in 0..2 {
+            let (id, key) = pc.allocate();
+            let key = pc.replace(id, key, vec![0]).unwrap();
+            keys.insert(id, key);
+        }
+
+        for i in 0..1000 {
+            let id = i as usize % 2;
+            let (_, key) = pc.get(id).unwrap();
+            let key = pc.link(id, key, vec![i]).unwrap();
+            keys.insert(id, key);
+        }
+    }
+    println!("!!!!!!!!!!!!!!!!!!!!! recovering !!!!!!!!!!!!!!!!!!!!!!");
+    let mut pc = PageCache::new(TestMaterializer, conf.clone());
+    pc.recover();
+    // TODO test no eaten lsn's on recovery
+    // TODO test that we don't skip multiple segments ahead on recovery (confusing Lsn & Lid)
+}
+
+#[test]
+fn pagecache_strange_crash_2() {
+    for x in 0..10 {
+        let conf = Config::default()
+            .cache_capacity(40)
+            .cache_bits(0)
+            .flush_every_ms(None)
+            .snapshot_after_ops(1_000_000)
+            .io_buf_size(5000);
+
+        println!("!!!!!!!!!!!!!!!!!!!!! {} !!!!!!!!!!!!!!!!!!!!!!", x);
+        let mut pc = PageCache::new(TestMaterializer, conf.clone());
+        pc.recover();
+
+        let mut keys = HashMap::new();
+        for _ in 0..2 {
+            let (id, key) = pc.allocate();
+            let key = pc.replace(id, key, vec![0]).unwrap();
+            keys.insert(id, key);
+        }
+
+        for i in 0..1000 {
+            let id = i as usize % 2;
+            println!("------ beginning op on pid {} ------", id);
+            let (_, key) = pc.get(id).unwrap();
+            println!("got key {:?} for pid {}", key, id);
+            let ptr: Ptr<_> = key.clone().into();
+            assert!(!ptr.is_null());
+            let key_res = pc.link(id, key, vec![i]);
+            if key_res.is_err() {
+                println!("failed linking pid {}", id);
+            }
+            let key = key_res.unwrap();
+            keys.insert(id, key);
+        }
+    }
+}
+
+#[test]
+fn basic_pagecache_recovery() {
+    let conf = Config::default().flush_every_ms(None).io_buf_size(200);
 
     let mut pc = PageCache::new(TestMaterializer, conf.clone());
     pc.recover();
     let (id, key) = pc.allocate();
-    let key = pc.set(id, key, vec![1]).unwrap();
-    let key = pc.merge(id, key, vec![2]).unwrap();
-    let _key = pc.merge(id, key, vec![3]).unwrap();
+    let key = pc.replace(id, key, vec![1]).unwrap();
+    let key = pc.link(id, key, vec![2]).unwrap();
+    let _key = pc.link(id, key, vec![3]).unwrap();
     let (consolidated, _) = pc.get(id).unwrap();
     assert_eq!(consolidated, vec![1, 2, 3]);
     drop(pc);
@@ -76,7 +153,7 @@ fn basic_recovery() {
     let (consolidated2, key) = pc2.get(id).unwrap();
     assert_eq!(consolidated, consolidated2);
 
-    pc2.merge(id, key, vec![4]).unwrap();
+    pc2.link(id, key, vec![4]).unwrap();
     drop(pc2);
 
     let mut pc3 = PageCache::new(TestMaterializer, conf.clone());
@@ -94,8 +171,8 @@ fn basic_recovery() {
 
 #[derive(Debug, Clone)]
 enum Op {
-    Set(PageID, usize),
-    Merge(PageID, usize),
+    Replace(PageID, usize),
+    Link(PageID, usize),
     Get(PageID),
     Free(PageID),
     Allocate,
@@ -116,8 +193,8 @@ impl Arbitrary for Op {
         let pid = (g.gen::<u8>() % 8) as PageID;
 
         match choice {
-            0 => Op::Set(pid, COUNTER.fetch_add(1, Ordering::Relaxed)),
-            1 => Op::Merge(pid, COUNTER.fetch_add(1, Ordering::Relaxed)),
+            0 => Op::Replace(pid, COUNTER.fetch_add(1, Ordering::Relaxed)),
+            1 => Op::Link(pid, COUNTER.fetch_add(1, Ordering::Relaxed)),
             2 => Op::Get(pid),
             3 => Op::Free(pid),
             4 => Op::Allocate,
@@ -156,8 +233,8 @@ impl Arbitrary for OpVec {
         let mut lowered = false;
         for op in clone.ops.iter_mut() {
             match *op {
-                Op::Set(ref mut pid, _) |
-                Op::Merge(ref mut pid, _) |
+                Op::Replace(ref mut pid, _) |
+                Op::Link(ref mut pid, _) |
                 Op::Get(ref mut pid) |
                 Op::Free(ref mut pid) if *pid > 0 => {
                     lowered = true;
@@ -178,6 +255,8 @@ impl Arbitrary for OpVec {
 fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
     use self::Op::*;
     let config = Config::default()
+        .io_buf_size(1000)
+        .flush_every_ms(Some(1))
         .cache_bits(0)
         .cache_capacity(40)
         .cache_fixup_threshold(cache_fixup_threshold as usize);
@@ -192,7 +271,7 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
 
     for op in ops.ops.into_iter() {
         match op {
-            Set(pid, c) => {
+            Replace(pid, c) => {
                 let present = reference.contains_key(&pid);
 
                 if present {
@@ -204,15 +283,15 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
                         old_key
                     };
 
-                    pc.set(pid, old_key.clone(), vec![c]).unwrap();
+                    pc.replace(pid, old_key.clone(), vec![c]).unwrap();
                     existing.clear();
                     existing.push(c);
                 } else {
-                    let res = pc.set(pid, bad_ptr.into(), vec![c]);
+                    let res = pc.replace(pid, bad_ptr.into(), vec![c]);
                     assert_eq!(res, Err(None));
                 }
             }
-            Merge(pid, c) => {
+            Link(pid, c) => {
                 let present = reference.contains_key(&pid);
 
                 if present {
@@ -224,10 +303,10 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
                         old_key
                     };
 
-                    pc.merge(pid, old_key.clone(), vec![c]).unwrap();
+                    pc.link(pid, old_key.clone(), vec![c]).unwrap();
                     existing.push(c);
                 } else {
-                    let res = pc.merge(pid, bad_ptr.into(), vec![c]);
+                    let res = pc.link(pid, bad_ptr.into(), vec![c]);
                     assert_eq!(res, Err(None));
                 }
             }
@@ -280,7 +359,7 @@ fn quickcheck_pagecache_works() {
 }
 
 #[test]
-fn test_pagecache_bug_1() {
+fn pagecache_bug_1() {
     // postmortem: this happened because `PageCache::page_in` assumed
     // at least one update had been stored for a retrieved page.
     use Op::*;
@@ -293,21 +372,22 @@ fn test_pagecache_bug_1() {
 }
 
 #[test]
-fn test_pagecache_bug_2() {
+fn pagecache_bug_2() {
     // postmortem: historically needed to "seed" a page by writing
     // a compacting base to it. changed the snapshot and page-in code
-    // to allow a merge being the first update to hit a page.
+    // to allow a link being the first update to hit a page.
+    // portmortem 2:
     use Op::*;
     prop_pagecache_works(
         OpVec {
-            ops: vec![Allocate, Restart, Merge(0, 1)],
+            ops: vec![Allocate, Restart, Link(0, 1)],
         },
         0,
     );
 }
 
 #[test]
-fn test_pagecache_bug_3() {
+fn pagecache_bug_3() {
     // postmortem: this was a mismatch in semantics in the test harness itself
     use Op::*;
     prop_pagecache_works(
@@ -319,69 +399,69 @@ fn test_pagecache_bug_3() {
 }
 
 #[test]
-fn test_pagecache_bug_4() {
+fn pagecache_bug_4() {
     // postmortem: previously this caused a panic, we shouldn't break
     // when the user asks us to mutate non-existant pages!
     use Op::*;
     prop_pagecache_works(
         OpVec {
-            ops: vec![Merge(98, 1)],
+            ops: vec![Link(98, 1)],
         },
         0,
     );
 }
 
 #[test]
-fn test_pagecache_bug_5() {
+fn pagecache_bug_5() {
     // postmortem: this was a mismatch in semantics in the test harness itself
     use Op::*;
     prop_pagecache_works(
         OpVec {
-            ops: vec![Merge(132, 1), Set(132, 1)],
+            ops: vec![Link(132, 1), Replace(132, 1)],
         },
         0,
     );
 }
 
 #[test]
-fn test_pagecache_bug_6() {
+fn pagecache_bug_6() {
     // postmortem: the test wasn't actually recording changes to the reference page...
     use Op::*;
     prop_pagecache_works(
         OpVec {
-            ops: vec![Allocate, Set(0, 53), Set(0, 54)],
+            ops: vec![Allocate, Replace(0, 53), Replace(0, 54)],
         },
         0,
     );
 }
 
 #[test]
-fn test_pagecache_bug_7() {
-    // postmortem: the test wasn't correctly recording the replacement effect of a set
+fn pagecache_bug_7() {
+    // postmortem: the test wasn't correctly recording the replacement effect of a replace
     // in the reference page
     use Op::*;
     prop_pagecache_works(
         OpVec {
-            ops: vec![Allocate, Merge(0, 201), Set(0, 208), Get(0)],
+            ops: vec![Allocate, Link(0, 201), Replace(0, 208), Get(0)],
         },
         0,
     );
 }
 
 #[test]
-fn test_pagecache_bug_8() {
-    // postmortem: page_in messed up the stack ordering when storing a merged stack
+fn pagecache_bug_8() {
+    // postmortem: page_in messed up the stack ordering when storing a linked stack
     use Op::*;
     prop_pagecache_works(
         OpVec {
             ops: vec![
                 Allocate,
-                Set(0, 188),
+                Replace(0, 188),
                 Allocate,
-                Merge(1, 196),
-                Merge(1, 198),
-                Merge(1, 200),
-                Merge(0, 201),
+                Link(1, 196),
+                Link(1, 198),
+                Link(1, 200),
+                Link(0, 201),
                 Get(1),
             ],
         },
@@ -389,8 +469,50 @@ fn test_pagecache_bug_8() {
     );
 }
 
-fn _test_pagecache_bug_() {
+#[test]
+fn pagecache_bug_9() {
+    // postmortem: this started failing in the giant refactor for log structured storage,
+    // and was possibly fixed by properly handling intervals in mark_interval
+    use Op::*;
+    prop_pagecache_works(
+        OpVec {
+            ops: vec![
+                Allocate,
+                Allocate,
+                Link(1, 208),
+                Link(1, 211),
+                Link(0, 212),
+                Replace(0, 213),
+                Replace(1, 214),
+            ],
+        },
+        0,
+    );
+}
+
+#[test]
+fn pagecache_bug_10() {
+    // postmortem: the segment was marked free before it
+    // was actually full, because the pids inside were
+    // rewritten.
+    use Op::*;
+    prop_pagecache_works(
+        OpVec {
+            ops: vec![
+                Allocate,
+                Replace(0, 425),
+                Free(0),
+                Allocate,
+                Link(1, 427),
+            ],
+        },
+        0,
+    );
+}
+
+fn _pagecache_bug_() {
     // postmortem: TEMPLATE
+    // portmortem 2: ...
     // use Op::*;
     prop_pagecache_works(
         OpVec {

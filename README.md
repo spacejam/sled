@@ -66,9 +66,6 @@ tree.del(&k);
 * the on-disk format is going to change in non-forward compatible ways
   before the `1.0.0` release! after that, we will always support
   forward migrations.
-* log cleaning is a huge slow hack right now. this is the next main
-  piece of functionality that is being tackled. currently only
-  implemented for linux via `fallocate`!
 * has not yet received much attention for performance tuning,
   it has an extremely high theoretical performance but there
   is a bit of tuning to get there. currently only around 200k
@@ -90,9 +87,6 @@ scatter-gather reads across the log to materialize the page from its fragments.
 
 the system is largely inspired by the Deuteronomy architecture, and aims to implement
 the best features from RocksDB as well.
-
-the `LockFreeLog` and `PageCache` are usable on their own for implementing your own
-high-performance stateful systems!
 
 # References
 

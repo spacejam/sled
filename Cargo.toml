@@ -1,6 +1,6 @@
 [package]
 name = "sled"
-version = "0.14.1"
+version = "0.15.0-alpha-1"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "a flash-sympathetic persistent lock-free B+ tree, pagecache, and log"
 license = "Apache-2.0"
@@ -12,16 +12,21 @@ readme = "README.md"
 
 [features]
 default = []
-bench = ["clap", "num_cpus", "log", "rand", "chrono", "rayon", "zstd", "env_logger"]
-stress = ["docopt", "chan-signal", "rayon", "rand", "zstd"]
+profiler = ["stress", "cpuprofiler"]
+bench = ["clap", "num_cpus", "rand", "chrono", "rayon", "zstd", "env_logger"]
+stress = ["docopt", "chan-signal", "rayon", "rand"]
 o_direct_writer = []
+lock_free_delays = []
 
-# [profile.release]
-# debug = 2
+[profile.release]
+debug = 2
 
 [[bin]]
 name = "bench"
 required-features = ["bench"]
+
+[[bin]]
+name = "cyclical_linearizability"
 
 [[bin]]
 name = "stress"
@@ -35,15 +40,16 @@ required-features = ["stress"]
 version = "3.0"
 # features = ["bypass"]
 
+[dependencies.log]
+version = "0.3"
+# features = ["max_level_off"]
+
 [dependencies]
-libc = "0.2"
-crossbeam = "0.3"
 coco = "0.2"
 bincode = "0.8"
 serde = "1.0"
 serde_derive = "1.0"
 lazy_static = "0.2"
-log = {version = "0.3", optional = true}
 rayon = {version = "0.8", optional = true}
 env_logger = {version = "0.4", optional = true}
 num_cpus = {version = "1.6", optional = true}
@@ -54,7 +60,9 @@ rand = {version = "0.3", optional = true}
 docopt = {version = "0.8", optional = true}
 chan-signal = {version = "0.3", optional = true}
 chrono = {version = "0.4", optional = true}
+cpuprofiler = {version = "0.0.3", optional = true}
 
 [dev-dependencies]
 quickcheck = "0.2"
+libc = "0.2"
 rand = "0.3"

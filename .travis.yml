@@ -14,9 +14,9 @@ matrix:
   include:
     - rust: nightly
       env: TEST=clippy
-    - rust: nightly-2017-07-06
+    - rust: nightly-2017-10-19
       env: TEST=tsan
-    - rust: nightly-2017-07-06
+    - rust: nightly-2017-10-19
       env: TEST=lsan
 
 script:
@@ -31,6 +31,10 @@ script:
                  ./hack/race_detector
                  ;;
                *)
+                 cargo check;
+                 cargo check --features=zstd;
+                 cargo check --features=rayon;
+                 cargo check --features=zstd,rayon;
                  cargo test
                  ;;
              esac'

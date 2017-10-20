@@ -20,35 +20,32 @@
 #[macro_use]
 extern crate serde_derive;
 extern crate serde;
-extern crate crossbeam;
 extern crate coco;
 extern crate bincode;
 extern crate historian;
 #[macro_use]
 extern crate lazy_static;
-#[cfg(feature = "log")]
+#[cfg(feature = "env_logger")]
 extern crate env_logger;
-#[cfg(feature = "log")]
 #[macro_use]
 extern crate log as _log;
-#[cfg(target_os = "linux")]
-extern crate libc;
 #[cfg(feature = "rayon")]
 extern crate rayon;
 #[cfg(feature = "zstd")]
 extern crate zstd;
-#[cfg(test)]
+#[cfg(feature = "cpuprofiler")]
+extern crate cpuprofiler;
+#[cfg(any(test, feature = "lock_free_delays"))]
 extern crate rand;
 
 /// atomic lock-free tree
-pub use tree::{Tree, TreeIter};
+pub use tree::{Iter, Tree};
 /// lock-free pagecache
-pub use page::{CasKey, Materializer, PageCache};
-/// lock-free log-structured storage
-pub use log::{HEADER_LEN, LockFreeLog, Log, LogRead};
+#[doc(hidden)]
 pub use ds::{Radix, Stack};
 /// general-purpose configuration
 pub use config::Config;
+pub use io::*;
 
 macro_rules! rep_no_copy {
     ($e:expr; $n:expr) => {
@@ -76,21 +73,20 @@ fn test_fail() -> bool {
     false
 }
 
+mod io;
 mod tree;
-mod log;
-mod page;
 mod config;
-mod thread_cache;
 mod hash;
 mod ds;
 mod metrics;
 
+// use log::{Iter, MessageHeader, SegmentHeader, SegmentTrailer};
 use metrics::Metrics;
-use ds::{Lru, StackIter, node_from_frag_vec};
+use ds::*;
 use hash::{crc16_arr, crc64};
-use thread_cache::ThreadCache;
 
-type LogID = u64; // LogID == file position to simplify file mapping
+type LogID = u64;
+type Lsn = u64;
 type PageID = usize;
 
 type Key = Vec<u8>;
@@ -112,7 +108,7 @@ fn tn() -> String {
 
 fn clock() -> f64 {
     let u = uptime();
-    (u.as_secs() * 1_000_000_000) as f64 + u.subsec_nanos() as f64
+    (u.as_secs() * 1_000_000_000) as f64 + f64::from(u.subsec_nanos())
 }
 
 // not correct, since it starts counting at the first observance...
@@ -122,4 +118,19 @@ fn uptime() -> std::time::Duration {
     }
 
     START.elapsed()
+}
+
+// This function is useful for inducing random jitter into our atomic
+// operations, shaking out more possible interleavings quickly. It gets
+// fully elliminated by the compiler in non-test code.
+#[inline(always)]
+fn debug_delay() {
+    #[cfg(any(test, feature = "lock_free_delays"))]
+    {
+        use rand::{Rng, thread_rng};
+
+        if thread_rng().gen_weighted_bool(1000) {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
 }
