@@ -93,6 +93,8 @@ type Key = Vec<u8>;
 type KeyRef<'a> = &'a [u8];
 type Value = Vec<u8>;
 
+type HPtr<'s, P> = coco::epoch::Ptr<'s, ds::stack::Node<io::CacheEntry<P>>>;
+
 lazy_static! {
     /// A metric collector for all sled instances running in this
     /// process.
