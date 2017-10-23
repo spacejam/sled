@@ -3,7 +3,7 @@ set -e
 
 export RUSTFLAGS="-Z sanitizer=thread"
 
-rm target/x86_64-unknown-linux-gnu/debug/stress
+rm target/x86_64-unknown-linux-gnu/debug/stress || true
 
 cargo build \
   --bin=stress \
