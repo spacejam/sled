@@ -24,7 +24,7 @@ use super::*;
 /// ```
 /// let _config = sled::Config::default()
 ///     .path("/path/to/data".to_owned())
-///     .readonly(true);
+///     .read_only(true);
 /// ```
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -53,7 +53,7 @@ impl Default for Config {
             blink_fanout: 32,
             page_consolidation_threshold: 10,
             path: tmp_path.to_owned(),
-            readonly: false,
+            read_only: false,
             cache_bits: 6, // 64 shards
             cache_capacity: 1024 * 1024 * 1024, // 1gb
             use_os_cache: true,
@@ -108,7 +108,7 @@ pub struct ConfigInner {
     blink_fanout: usize,
     page_consolidation_threshold: usize,
     path: String,
-    readonly: bool,
+    read_only: bool,
     cache_bits: usize,
     cache_capacity: usize,
     use_os_cache: bool,
@@ -157,7 +157,7 @@ impl ConfigInner {
         (blink_fanout, get_blink_fanout, set_blink_fanout, usize, "b-link node fanout, minimum of 2"),
         (page_consolidation_threshold, get_page_consolidation_threshold, set_page_consolidation_threshold, usize, "page consolidation threshold"),
         (path, get_path, set_path, String, "path for the main storage file"),
-        (readonly, get_readonly, set_readonly, bool, "whether to run in read-only mode"),
+        (read_only, get_read_only, set_read_only, bool, "whether to run in read-only mode"),
         (cache_bits, get_cache_bits, set_cache_bits, usize, "log base 2 of the number of cache shards"),
         (cache_capacity, get_cache_capacity, set_cache_capacity, usize, "maximum size for the system page cache"),
         (use_os_cache, get_use_os_cache, set_use_os_cache, bool, "whether to use the OS page cache"),

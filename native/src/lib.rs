@@ -45,11 +45,11 @@ pub unsafe extern "C" fn sled_config_set_path(config: *mut Config, path: *const 
 
 /// Configure read-only mode.
 #[no_mangle]
-pub unsafe extern "C" fn sled_config_readonly(
+pub unsafe extern "C" fn sled_config_read_only(
     config: *mut Config,
-    readonly: c_uchar,
+    read_only: c_uchar,
 ) {
-    (*config).set_readonly(readonly == 1)
+    (*config).set_read_only(read_only == 1)
 }
 
 /// Set the configured cache capacity in bytes.

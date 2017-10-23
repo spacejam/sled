@@ -110,8 +110,8 @@ impl Tree {
     /// assert_eq!(t.cas(vec![1], Some(vec![2]), None), Ok(()));
     /// assert_eq!(t.get(&*vec![1]), None);
     ///
-    /// // readonly tree
-    /// let t = Config::default().readonly(true).tree();
+    /// // read-only tree
+    /// let t = Config::default().read_only(true).tree();
     /// assert_eq!(t.cas(vec![10], Some(vec![2]), None), Err(None));
     /// ```
     pub fn cas(
@@ -120,7 +120,7 @@ impl Tree {
         old: Option<Value>,
         new: Option<Value>,
     ) -> Result<(), Option<Value>> {
-        if self.config.get_readonly() {
+        if self.config.get_read_only() {
             return Err(None);
         }
         let start = clock();
@@ -150,7 +150,7 @@ impl Tree {
 
     /// Set a key to a new value.
     pub fn set(&self, key: Key, value: Value) {
-        if self.config.get_readonly() {
+        if self.config.get_read_only() {
             return;
         }
         let start = clock();
@@ -195,7 +195,7 @@ impl Tree {
     /// assert_eq!(t.del(&*vec![1]), None);
     /// ```
     pub fn del(&self, key: &[u8]) -> Option<Value> {
-        if self.config.get_readonly() {
+        if self.config.get_read_only() {
             return None;
         }
         let start = clock();
