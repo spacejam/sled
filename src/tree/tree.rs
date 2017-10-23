@@ -97,6 +97,7 @@ impl Tree {
     /// or deletion. If old is None, this will only set the value if it doesn't
     /// exist yet. If new is None, will delete the value if old is correct.
     /// If both old and new are Some, will modify the value if old is correct.
+    /// If Tree is read-only, will do nothing.
     ///
     /// # Examples
     ///
@@ -115,6 +116,10 @@ impl Tree {
     /// // conditional deletion
     /// assert_eq!(t.cas(vec![1], Some(vec![2]), None), Ok(()));
     /// assert_eq!(t.get(&*vec![1]), None);
+    ///
+    /// // read-only tree
+    /// let t = Config::default().read_only(true).tree();
+    /// assert_eq!(t.cas(vec![10], Some(vec![2]), None), Err(None));
     /// ```
     pub fn cas(
         &self,
@@ -122,6 +127,9 @@ impl Tree {
         old: Option<Value>,
         new: Option<Value>,
     ) -> Result<(), Option<Value>> {
+        if self.config.get_read_only() {
+            return Err(None);
+        }
         let start = clock();
         // we need to retry caps until old != cur, since just because
         // cap fails it doesn't mean our value was changed.
@@ -149,6 +157,9 @@ impl Tree {
 
     /// Set a key to a new value.
     pub fn set(&self, key: Key, value: Value) {
+        if self.config.get_read_only() {
+            return;
+        }
         let start = clock();
         // println!("starting set of {:?} -> {:?}", key, value);
         let frag = Frag::Set(key.clone(), value);
@@ -194,6 +205,9 @@ impl Tree {
     /// assert_eq!(t.del(&*vec![1]), None);
     /// ```
     pub fn del(&self, key: &[u8]) -> Option<Value> {
+        if self.config.get_read_only() {
+            return None;
+        }
         let start = clock();
         pin(|scope| {
             let mut ret: Option<Value>;
