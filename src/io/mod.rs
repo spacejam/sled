@@ -1,7 +1,7 @@
 mod log;
 mod page;
 
-pub use self::page::{CasKey, Materializer, PageCache};
+pub use self::page::{CacheEntry, Materializer, PageCache};
 
 pub use self::log::Log;
 

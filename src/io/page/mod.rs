@@ -7,7 +7,6 @@ use std::sync::atomic::Ordering::SeqCst;
 use bincode::{Infinite, deserialize, serialize};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use coco::epoch::Ptr;
 
 use super::*;
 
@@ -53,35 +52,6 @@ pub enum CacheEntry<M: Send + Sync> {
     /// A cache item that is present in secondary storage, and is the base segment
     /// of a page.
     Flush(Lsn, LogID),
-}
-
-/// A wrapper struct for a pointer to a (possibly invalid, hence inaccessible)
-/// `PageFrag` used for applying updates atomically to shared pages.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct CasKey<P>
-    where P: 'static + Send + Sync
-{
-    ptr: *const ds::stack::Node<CacheEntry<P>>,
-    tag: usize,
-}
-
-impl<'s, P> From<Ptr<'s, ds::stack::Node<CacheEntry<P>>>> for CasKey<P>
-    where P: 'static + Send + Sync
-{
-    fn from(ptr: Ptr<'s, ds::stack::Node<CacheEntry<P>>>) -> CasKey<P> {
-        CasKey {
-            ptr: ptr.as_raw(),
-            tag: ptr.tag(),
-        }
-    }
-}
-
-impl<'s, P> Into<Ptr<'s, ds::stack::Node<CacheEntry<P>>>> for CasKey<P>
-    where P: 'static + Send + Sync
-{
-    fn into(self) -> Ptr<'s, ds::stack::Node<CacheEntry<P>>> {
-        unsafe { Ptr::from_raw(self.ptr).with_tag(self.tag) }
-    }
 }
 
 /// `LoggedUpdate` is for writing blocks of `Update`'s to disk
