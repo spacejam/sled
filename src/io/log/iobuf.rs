@@ -45,7 +45,7 @@ pub(super) struct IoBufs {
 /// `IoBufs` is a set of lock-free buffers for coordinating
 /// writes to underlying storage.
 impl IoBufs {
-    pub fn new(config: Config) -> IoBufs {
+    pub fn start(config: Config) -> IoBufs {
         let path = config.get_path();
 
         let dir = Path::new(&path).parent().expect(
@@ -68,7 +68,7 @@ impl IoBufs {
 
         let io_buf_size = config.get_io_buf_size();
 
-        let mut segment_accountant = SegmentAccountant::new(config.clone());
+        let mut segment_accountant = SegmentAccountant::start(config.clone());
 
         let bufs = rep_no_copy![IoBuf::new(io_buf_size); config.get_io_bufs()];
 

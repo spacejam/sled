@@ -79,7 +79,7 @@ fn main() {
         .flush_every_ms(None)
         // .io_buf_size(1 << 16)
         .path("cycles.db".to_string())
-        .snapshot_after_ops(1 << 16);
+        .snapshot_after_ops(1 << 56);
 
     println!("restoring");
     let tree = config.tree();

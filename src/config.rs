@@ -83,13 +83,13 @@ impl DerefMut for Config {
 impl Config {
     /// create a new `Tree` based on this configuration
     pub fn tree(&self) -> Tree {
-        Tree::new(self.clone())
+        Tree::start(self.clone())
     }
 
     /// create a new `Log` based on this
     /// configuration
     pub fn log(&self) -> Log {
-        Log::start_system(self.clone())
+        Log::start(self.clone())
     }
 }
 

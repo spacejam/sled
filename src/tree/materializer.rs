@@ -2,14 +2,19 @@ use super::*;
 
 #[derive(Default, Debug)]
 pub struct BLinkMaterializer {
-    // TODO use interval-based tracking to handle race conditions in hoists where higher is not
-    // later.
+    // TODO use interval-based tracking to handle race conditions in
+    // hoists where higher is not later.
     pub(super) roots: Mutex<Vec<PageID>>,
 }
 
 impl Materializer for BLinkMaterializer {
     type PageFrag = Frag;
     type Recovery = PageID;
+
+    fn initialize_with_previous_recovery(&self, last_root: &PageID) {
+        let mut roots = self.roots.lock().unwrap();
+        roots.push(*last_root);
+    }
 
     fn merge(&self, frags: &[&Frag]) -> Frag {
         let mut base_node_opt: Option<Node> = None;

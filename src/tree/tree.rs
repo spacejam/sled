@@ -21,15 +21,15 @@ unsafe impl Sync for Tree {}
 
 impl Tree {
     /// Load existing or create a new `Tree`.
-    pub fn new(config: Config) -> Tree {
-        let mut pages = PageCache::new(
+    pub fn start(config: Config) -> Tree {
+        let pages = PageCache::start(
             BLinkMaterializer {
                 roots: Mutex::new(vec![]),
             },
             config.clone(),
         );
 
-        let root_opt = pages.recover();
+        let root_opt = pages.recovered_state();
 
         let root_id = if let Some(root_id) = root_opt {
             debug!("recovered root {} while starting tree", root_id);

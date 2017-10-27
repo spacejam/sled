@@ -44,8 +44,7 @@ fn pagecache_caching() {
         .snapshot_after_ops(1_000_000)
         .io_buf_size(5000);
 
-    let mut pc = PageCache::new(TestMaterializer, conf.clone());
-    pc.recover();
+    let pc = PageCache::start(TestMaterializer, conf.clone());
 
     let mut keys = HashMap::new();
     for _ in 0..2 {
@@ -72,8 +71,7 @@ fn pagecache_strange_crash_1() {
         .io_buf_size(5000);
 
     {
-        let mut pc = PageCache::new(TestMaterializer, conf.clone());
-        pc.recover();
+        let pc = PageCache::start(TestMaterializer, conf.clone());
 
         let mut keys = HashMap::new();
         for _ in 0..2 {
@@ -90,8 +88,7 @@ fn pagecache_strange_crash_1() {
         }
     }
     println!("!!!!!!!!!!!!!!!!!!!!! recovering !!!!!!!!!!!!!!!!!!!!!!");
-    let mut pc = PageCache::new(TestMaterializer, conf.clone());
-    pc.recover();
+    let _pc = PageCache::start(TestMaterializer, conf.clone());
     // TODO test no eaten lsn's on recovery
     // TODO test that we don't skip multiple segments ahead on recovery (confusing Lsn & Lid)
 }
@@ -99,16 +96,23 @@ fn pagecache_strange_crash_1() {
 #[test]
 fn pagecache_strange_crash_2() {
     for x in 0..10 {
-        let conf = Config::default()
-            .cache_capacity(40)
-            .cache_bits(0)
-            .flush_every_ms(None)
-            .snapshot_after_ops(1_000_000)
-            .io_buf_size(5000);
+        pin(|scope| {
+            let conf = Config::default()
+                .cache_capacity(40)
+                .cache_bits(0)
+                .flush_every_ms(None)
+                .snapshot_after_ops(1_000_000)
+                .io_buf_size(5000);
 
-        println!("!!!!!!!!!!!!!!!!!!!!! {} !!!!!!!!!!!!!!!!!!!!!!", x);
-        let mut pc = PageCache::new(TestMaterializer, conf.clone());
-        pc.recover();
+            println!("!!!!!!!!!!!!!!!!!!!!! {} !!!!!!!!!!!!!!!!!!!!!!", x);
+            let pc = PageCache::start(TestMaterializer, conf.clone());
+
+            let mut keys = HashMap::new();
+            for _ in 0..2 {
+                let (id, key) = pc.allocate(scope);
+                let key = pc.replace(id, key, vec![0], scope).unwrap();
+                keys.insert(id, key);
+            }
 
         let mut keys = HashMap::new();
         for _ in 0..2 {
@@ -138,35 +142,34 @@ fn pagecache_strange_crash_2() {
 fn basic_pagecache_recovery() {
     let conf = Config::default().flush_every_ms(None).io_buf_size(200);
 
-    let mut pc = PageCache::new(TestMaterializer, conf.clone());
-    pc.recover();
-    let (id, key) = pc.allocate();
-    let key = pc.replace(id, key, vec![1]).unwrap();
-    let key = pc.link(id, key, vec![2]).unwrap();
-    let _key = pc.link(id, key, vec![3]).unwrap();
-    let (consolidated, _) = pc.get(id).unwrap();
-    assert_eq!(consolidated, vec![1, 2, 3]);
-    drop(pc);
+    let pc = PageCache::start(TestMaterializer, conf.clone());
 
-    let mut pc2 = PageCache::new(TestMaterializer, conf.clone());
-    pc2.recover();
-    let (consolidated2, key) = pc2.get(id).unwrap();
-    assert_eq!(consolidated, consolidated2);
+    pin(|scope| {
+        let (id, key) = pc.allocate(scope);
+        let key = pc.replace(id, key, vec![1], scope).unwrap();
+        let key = pc.link(id, key, vec![2], scope).unwrap();
+        let _key = pc.link(id, key, vec![3], scope).unwrap();
+        let (consolidated, _) = pc.get(id, scope).unwrap();
+        assert_eq!(consolidated, vec![1, 2, 3]);
+        drop(pc);
 
-    pc2.link(id, key, vec![4]).unwrap();
-    drop(pc2);
+        let pc2 = PageCache::start(TestMaterializer, conf.clone());
+        let (consolidated2, key) = pc2.get(id, scope).unwrap();
+        assert_eq!(consolidated, consolidated2);
 
-    let mut pc3 = PageCache::new(TestMaterializer, conf.clone());
-    pc3.recover();
-    let (consolidated3, _key) = pc3.get(id).unwrap();
-    assert_eq!(consolidated3, vec![1, 2, 3, 4]);
-    pc3.free(id);
-    drop(pc3);
+        pc2.link(id, key, vec![4], scope).unwrap();
+        drop(pc2);
 
-    let mut pc4 = PageCache::new(TestMaterializer, conf.clone());
-    pc4.recover();
-    let res = pc4.get(id);
-    assert!(res.is_none());
+        let pc3 = PageCache::start(TestMaterializer, conf.clone());
+        let (consolidated3, _key) = pc3.get(id, scope).unwrap();
+        assert_eq!(consolidated3, vec![1, 2, 3, 4]);
+        pc3.free(id);
+        drop(pc3);
+
+        let pc4 = PageCache::start(TestMaterializer, conf.clone());
+        let res = pc4.get(id, scope);
+        assert!(res.is_none());
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -261,8 +264,7 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
         .cache_capacity(40)
         .cache_fixup_threshold(cache_fixup_threshold as usize);
 
-    let mut pc = PageCache::new(TestMaterializer, config.clone());
-    pc.recover();
+    let mut pc = PageCache::start(TestMaterializer, config.clone());
 
     let mut reference: HashMap<PageID, Vec<usize>> = HashMap::new();
 
@@ -340,8 +342,7 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
             }
             Restart => {
                 drop(pc);
-                pc = PageCache::new(TestMaterializer, config.clone());
-                pc.recover();
+                pc = PageCache::start(TestMaterializer, config.clone());
             }
         }
     }

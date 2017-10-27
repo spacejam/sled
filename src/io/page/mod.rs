@@ -30,6 +30,10 @@ pub trait Materializer {
     /// described by `Materializer::recover`
     type Recovery;
 
+    /// Used to provide the `Materializer` with the previously recovered
+    /// state before receiving new updates during recovery.
+    fn initialize_with_previous_recovery(&self, &Self::Recovery) {}
+
     /// Used to compress long chains of partial pages into a condensed form
     /// during compaction.
     fn merge(&self, &[&Self::PageFrag]) -> Self::PageFrag;

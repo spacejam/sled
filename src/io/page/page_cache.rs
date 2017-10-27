@@ -45,9 +45,10 @@ use super::*;
 /// fn main() {
 ///     let path = "test_pagecache_doc.log";
 ///     let conf = sled::Config::default().path(path.to_owned());
-///     let pc = sled::PageCache::new(TestMaterializer,
-///                                   conf.clone());
-///     let (id, key) = pc.allocate();
+///     let pc = sled::PageCache::start(TestMaterializer,
+///                                     conf.clone());
+///     pin(|scope| {
+///         let (id, key) = pc.allocate(scope);
 ///
 ///     // The first item in a page should be set using replace,
 ///     // which signals that this is the beginning of a new
@@ -124,26 +125,41 @@ impl<PM, P, R> PageCache<PM, P, R>
           R: Debug + Clone + Serialize + DeserializeOwned + Send
 {
     /// Instantiate a new `PageCache`.
-    pub fn new(pm: PM, config: Config) -> PageCache<PM, P, R> {
+    pub fn start(pm: PM, config: Config) -> PageCache<PM, P, R> {
         let cache_capacity = config.get_cache_capacity();
         let cache_shard_bits = config.get_cache_bits();
         let lru = Lru::new(cache_capacity, cache_shard_bits);
 
-        PageCache {
+        let mut pc = PageCache {
             t: pm,
             config: config.clone(),
             inner: Radix::default(),
             max_pid: AtomicUsize::new(0),
             free: Arc::new(Stack::default()),
-            log: Log::start_system(config),
+            log: Log::start(config),
             lru: lru,
             updates: AtomicUsize::new(0),
             last_snapshot: Mutex::new(None),
+        };
+
+        pc.recover();
+
+        pc
+    }
+
+    /// Return the recovered state from the snapshot
+    pub fn recovered_state(&self) -> Option<R> {
+        let mu = &self.last_snapshot.lock().unwrap();
+
+        if let Some(ref snapshot) = **mu {
+            snapshot.recovery.clone()
+        } else {
+            None
         }
     }
 
-    /// Read updates from the log, apply them to our pagecache.
-    pub fn recover(&mut self) -> Option<R> {
+    // Read updates from the log, apply them to our pagecache.
+    fn recover(&mut self) {
         // pull any existing snapshot off disk
         self.read_snapshot();
 
@@ -158,20 +174,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         // now we read it back in
         self.load_snapshot();
 
-        let mu = &self.last_snapshot.lock().unwrap();
-
-        let recovery = if let Some(ref snapshot) = **mu {
-            snapshot.recovery.clone()
-        } else {
-            None
-        };
-
-        debug!(
-            "recovery complete, returning recovery state to PageCache owner: {:?}",
-            recovery
-        );
-
-        recovery
+        debug!("recovery complete");
     }
 
     /// Create a new page, trying to reuse old freed pages if possible
@@ -335,6 +338,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         let start = clock();
         let bytes = match self.log.read(lsn, lid).map_err(|_| ()) {
             Ok(LogRead::Flush(_lsn, data, _len)) => data,
+            // FIXME 'read invalid data at lid 66244182' in cycle test
             _ => panic!("read invalid data at lid {}", lid),
         };
 
