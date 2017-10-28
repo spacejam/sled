@@ -73,15 +73,15 @@ use super::*;
 pub struct PageCache<PM, P, R>
     where P: 'static + Send + Sync
 {
-    t: PM,
-    config: Config,
+    t: Arc<PM>,
+    config: Arc<Config>,
     inner: Radix<Stack<CacheEntry<P>>>,
     max_pid: AtomicUsize,
     free: Arc<Stack<PageID>>,
-    log: Log,
+    log: Arc<Log>,
     lru: Lru,
     updates: AtomicUsize,
-    last_snapshot: Mutex<Option<Snapshot<R>>>,
+    last_snapshot: Arc<Mutex<Option<Snapshot<R>>>>,
 }
 
 unsafe impl<PM, P, R> Send for PageCache<PM, P, R>
@@ -125,21 +125,26 @@ impl<PM, P, R> PageCache<PM, P, R>
           R: Debug + Clone + Serialize + DeserializeOwned + Send
 {
     /// Instantiate a new `PageCache`.
-    pub fn start(pm: PM, config: Config) -> PageCache<PM, P, R> {
+    pub fn start(pm: PM, config: Arc<Config>) -> PageCache<PM, P, R> {
         let cache_capacity = config.get_cache_capacity();
         let cache_shard_bits = config.get_cache_bits();
         let lru = Lru::new(cache_capacity, cache_shard_bits);
 
+        // recover mapping of segments
+
+        // recover snapshot with segments
+        let segments = vec![]; // TODO
+
         let mut pc = PageCache {
-            t: pm,
+            t: Arc::new(pm),
             config: config.clone(),
             inner: Radix::default(),
             max_pid: AtomicUsize::new(0),
             free: Arc::new(Stack::default()),
-            log: Log::start(config),
+            log: Arc::new(Log::start(config, segments)),
             lru: lru,
             updates: AtomicUsize::new(0),
-            last_snapshot: Mutex::new(None),
+            last_snapshot: Arc::new(Mutex::new(None)),
         };
 
         pc.recover();
@@ -594,6 +599,54 @@ impl<PM, P, R> PageCache<PM, P, R>
         })
     }
 
+    // caller is expected to have instantiated self.last_snapshot
+    // in recovery already.
+    fn advance_snapshot(&self) {
+        let snapshot_opt_res = self.last_snapshot.try_lock();
+        if snapshot_opt_res.is_err() {
+            // some other thread is snapshotting
+            warn!(
+                "snapshot skipped because previous attempt \
+            appears not to have completed"
+            );
+            return;
+        }
+
+        let mut snapshot_opt = snapshot_opt_res.unwrap();
+        let last_snapshot = snapshot_opt.take().expect(
+            "PageCache::advance_snapshot called before recovery",
+        );
+
+        self.log.flush();
+
+        // we disable rewriting so that our log becomes append-only,
+        // allowing us to iterate through it without corrupting ourselves.
+        // NB must be called after taking the snapshot mutex.
+        self.log.with_sa(|sa| sa.pause_rewriting());
+
+        let mut max_lsn = last_snapshot.max_lsn;
+        let start_lsn = max_lsn -
+            (max_lsn % self.config.get_io_buf_size() as Lsn);
+
+        debug!(
+            "snapshot starting from offset {} to the segment containing ~{}",
+            last_snapshot.max_lsn,
+            self.log.stable_offset(),
+        );
+
+        let iter = self.log.iter_from(start_lsn);
+
+        let next_snapshot =
+            advance_snapshot(iter, last_snapshot, self.t, self.config.clone());
+
+        self.log.with_sa(|sa| sa.resume_rewriting());
+
+        // NB it's important to resume writing before replacing the snapshot
+        // into the mutex, otherwise we create a race condition where the SA is
+        // not actually paused when a snapshot happens.
+        *snapshot_opt = Some(next_snapshot);
+    }
+
 
     /// Try to atomically add a `PageFrag` to the page.
     /// Returns `Ok(new_key)` if the operation was successful. Returns
@@ -669,350 +722,6 @@ impl<PM, P, R> PageCache<PM, P, R>
         })
     }
 
-    fn advance_snapshot(&self) {
-        let start = clock();
-
-        self.log.flush();
-
-        let snapshot_opt_res = self.last_snapshot.try_lock();
-        if snapshot_opt_res.is_err() {
-            // some other thread is snapshotting
-            warn!(
-                "snapshot skipped because previous attempt \
-                  appears not to have completed"
-            );
-            M.advance_snapshot.measure(clock() - start);
-            return;
-        }
-        let mut snapshot_opt = snapshot_opt_res.unwrap();
-        let mut snapshot =
-            snapshot_opt.take().unwrap_or_else(Snapshot::default);
-
-        // we disable rewriting so that our log becomes append-only,
-        // allowing us to iterate through it without corrupting ourselves.
-        self.log.with_sa(|sa| sa.pause_rewriting());
-
-        trace!("building on top of old snapshot: {:?}", snapshot);
-
-        debug!(
-            "snapshot starting from offset {} to the segment containing ~{}",
-            snapshot.max_lsn,
-            self.log.stable_offset(),
-        );
-
-        let io_buf_size = self.config.get_io_buf_size();
-
-        let mut recovery = snapshot.recovery.take();
-        let mut max_lsn = snapshot.max_lsn;
-        let start_lsn = max_lsn - (max_lsn % io_buf_size as Lsn);
-        let stop_lsn = self.log.stable_offset();
-
-        let mut last_segment = None;
-
-        for (lsn, log_id, bytes) in self.log.iter_from(start_lsn) {
-            if stop_lsn > 0 && lsn > stop_lsn {
-                // we've gone past the known-stable offset.
-                break;
-            }
-            let segment_lsn = lsn / io_buf_size as Lsn * io_buf_size as Lsn;
-
-            trace!(
-                "in advance_snapshot looking at item: segment lsn {} lsn {} lid {}",
-                segment_lsn,
-                lsn,
-                log_id
-            );
-
-            if lsn <= max_lsn {
-                // don't process alread-processed Lsn's.
-                trace!(
-                    "continuing in advance_snapshot, lsn {} log_id {} max_lsn {}",
-                    lsn,
-                    log_id,
-                    max_lsn
-                );
-                continue;
-            }
-
-            assert!(lsn > max_lsn);
-            max_lsn = lsn;
-
-            let idx = log_id as usize / io_buf_size;
-            if snapshot.segments.len() < idx + 1 {
-                snapshot.segments.resize(idx + 1, log::Segment::default());
-            }
-
-            assert_eq!(
-                segment_lsn / io_buf_size as Lsn * io_buf_size as Lsn,
-                segment_lsn,
-                "segment lsn is unaligned! fix above lsn statement..."
-            );
-
-            // unwrapping this because it's already passed the crc check
-            // in the log iterator
-            trace!("trying to deserialize buf for lid {} lsn {}", log_id, lsn);
-            let deserialization = deserialize::<LoggedUpdate<P>>(&*bytes);
-
-            if let Err(e) = deserialization {
-                error!(
-                    "failed to deserialize buffer for item in log: lsn {} \
-                    lid {}: {:?}",
-                    lsn,
-                    log_id,
-                    e
-                );
-                continue;
-            }
-
-            let prepend = deserialization.unwrap();
-
-            if prepend.pid >= snapshot.max_pid {
-                snapshot.max_pid = prepend.pid + 1;
-            }
-
-            snapshot.segments[idx].recovery_ensure_initialized(segment_lsn);
-
-            let last_idx = *last_segment.get_or_insert(idx);
-            if last_idx != idx {
-                // if we have moved to a new segment, mark the previous one
-                // as inactive.
-                trace!(
-                    "PageCache recovery setting segment {} to inactive",
-                    log_id
-                );
-                snapshot.segments[last_idx].active_to_inactive(
-                    segment_lsn,
-                    true,
-                );
-                if snapshot.segments[last_idx].is_empty() {
-                    trace!(
-                        "PageCache recovery setting segment {} to draining",
-                        log_id
-                    );
-                    snapshot.segments[last_idx].inactive_to_draining(
-                        segment_lsn,
-                    );
-                }
-            }
-            last_segment = Some(idx);
-
-            match prepend.update {
-                Update::Append(partial_page) => {
-                    // Because we rewrite pages over time, we may have relocated
-                    // a page's initial Compact to a later segment. We should skip
-                    // over pages here unless we've encountered a Compact or Alloc
-                    // for them.
-                    if let Some(lids) = snapshot.pt.get_mut(&prepend.pid) {
-                        trace!(
-                            "append of pid {} at lid {} lsn {}",
-                            prepend.pid,
-                            log_id,
-                            lsn
-                        );
-
-                        snapshot.segments[idx].insert_pid(
-                            prepend.pid,
-                            segment_lsn,
-                        );
-
-                        let r = self.t.recover(&partial_page);
-                        if r.is_some() {
-                            recovery = r;
-                        }
-
-                        lids.push((lsn, log_id));
-                    }
-                }
-                Update::Compact(partial_page) => {
-                    trace!(
-                        "compact of pid {} at lid {} lsn {}",
-                        prepend.pid,
-                        log_id,
-                        lsn
-                    );
-                    if let Some(lids) = snapshot.pt.remove(&prepend.pid) {
-                        for (_lsn, old_lid) in lids {
-                            let old_idx = old_lid as usize / io_buf_size;
-                            if old_idx == idx {
-                                // don't remove pid if it's still there
-                                continue;
-                            }
-                            let old_segment = &mut snapshot.segments[old_idx];
-
-                            old_segment.remove_pid(prepend.pid, segment_lsn);
-                        }
-                    }
-
-                    snapshot.segments[idx].insert_pid(prepend.pid, segment_lsn);
-
-                    let r = self.t.recover(&partial_page);
-                    if r.is_some() {
-                        recovery = r;
-                    }
-
-                    snapshot.pt.insert(prepend.pid, vec![(lsn, log_id)]);
-                }
-                Update::Free => {
-                    trace!(
-                        "del of pid {} at lid {} lsn {}",
-                        prepend.pid,
-                        log_id,
-                        lsn
-                    );
-                    if let Some(lids) = snapshot.pt.remove(&prepend.pid) {
-                        // this could fail if our Alloc was nuked
-                        for (_lsn, old_lid) in lids {
-                            let old_idx = old_lid as usize / io_buf_size;
-                            if old_idx == idx {
-                                // don't remove pid if it's still there
-                                continue;
-                            }
-                            let old_segment = &mut snapshot.segments[old_idx];
-                            old_segment.remove_pid(prepend.pid, segment_lsn);
-                        }
-                    }
-
-                    snapshot.segments[idx].insert_pid(prepend.pid, segment_lsn);
-
-                    snapshot.free.push(prepend.pid);
-                }
-                Update::Alloc => {
-                    trace!(
-                        "alloc of pid {} at lid {} lsn {}",
-                        prepend.pid,
-                        log_id,
-                        lsn
-                    );
-
-                    snapshot.pt.insert(prepend.pid, vec![]);
-                    snapshot.free.retain(|&pid| pid != prepend.pid);
-                    snapshot.segments[idx].insert_pid(prepend.pid, segment_lsn);
-                }
-            }
-        }
-
-        snapshot.free.sort();
-        snapshot.free.reverse();
-        snapshot.max_lsn = max_lsn;
-        snapshot.recovery = recovery;
-
-        self.write_snapshot(&snapshot);
-
-        trace!("generated new snapshot: {:?}", snapshot);
-
-        self.log.with_sa(|sa| sa.resume_rewriting());
-
-        // NB replacing the snapshot must come after the resume_rewriting call
-        // otherwise we create a race condition where we corrupt an in-progress
-        // snapshot generating iterator.
-        *snapshot_opt = Some(snapshot);
-
-        M.advance_snapshot.measure(clock() - start);
-    }
-
-    fn write_snapshot(&self, snapshot: &Snapshot<R>) {
-        let raw_bytes = serialize(&snapshot, Infinite).unwrap();
-
-        #[cfg(feature = "zstd")]
-        let bytes = if self.config.get_use_compression() {
-            compress(&*raw_bytes, 5).unwrap()
-        } else {
-            raw_bytes
-        };
-
-        #[cfg(not(feature = "zstd"))]
-        let bytes = raw_bytes;
-
-        let crc64: [u8; 8] = unsafe { std::mem::transmute(crc64(&*bytes)) };
-
-        let prefix = self.config.snapshot_prefix();
-
-        let path_1 = format!("{}.{}.in___motion", prefix, snapshot.max_lsn);
-        let path_2 = format!("{}.{}", prefix, snapshot.max_lsn);
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .open(&path_1)
-            .unwrap();
-
-        // write the snapshot bytes, followed by a crc64 checksum at the end
-        f.write_all(&*bytes).unwrap();
-        f.write_all(&crc64).unwrap();
-        f.sync_all().unwrap();
-        drop(f);
-
-        trace!("wrote snapshot to {}", path_1);
-
-        std::fs::rename(path_1, &path_2).expect("failed to write snapshot");
-
-        trace!("renamed snapshot to {}", path_2);
-
-        // clean up any old snapshots
-        let candidates = self.config.get_snapshot_files();
-        for path in candidates {
-            let path_str =
-                Path::new(&path).file_name().unwrap().to_str().unwrap();
-            if !path_2.ends_with(&*path_str) {
-                debug!("removing old snapshot file {:?}", path);
-
-                if let Err(_e) = std::fs::remove_file(&path) {
-                    warn!(
-                        "failed to remove old snapshot file, maybe snapshot race? {}",
-                        _e
-                    );
-                }
-            }
-        }
-    }
-
-    fn read_snapshot(&self) {
-        let mut candidates = self.config.get_snapshot_files();
-        if candidates.is_empty() {
-            info!("no previous snapshot found");
-            return;
-        }
-
-        candidates.sort_by_key(
-            |path| std::fs::metadata(path).unwrap().created().unwrap(),
-        );
-
-        let path = candidates.pop().unwrap();
-
-        let mut f = std::fs::OpenOptions::new().read(true).open(&path).unwrap();
-
-        let mut buf = vec![];
-        f.read_to_end(&mut buf).unwrap();
-        let len = buf.len();
-        buf.split_off(len - 8);
-
-        let mut crc_expected_bytes = [0u8; 8];
-        f.seek(std::io::SeekFrom::End(-8)).unwrap();
-        f.read_exact(&mut crc_expected_bytes).unwrap();
-
-        let crc_expected: u64 =
-            unsafe { std::mem::transmute(crc_expected_bytes) };
-        let crc_actual = crc64(&*buf);
-
-        if crc_expected != crc_actual {
-            panic!("crc for snapshot file {:?} failed!", path);
-        }
-
-        #[cfg(feature = "zstd")]
-        let bytes = if self.config.get_use_compression() {
-            decompress(&*buf, self.config.get_io_buf_size()).unwrap()
-        } else {
-            buf
-        };
-
-        #[cfg(not(feature = "zstd"))]
-        let bytes = buf;
-
-        let snapshot = deserialize::<Snapshot<R>>(&*bytes).unwrap();
-
-        let mut mu = self.last_snapshot.lock().unwrap();
-        *mu = Some(snapshot);
-    }
-
     fn load_snapshot(&mut self) {
         let mu = self.last_snapshot.lock().unwrap();
         if let Some(ref snapshot) = *mu {
@@ -1072,4 +781,316 @@ fn lids_from_stack<P: Send + Sync>(
         }
     }
     lids
+}
+
+fn advance_snapshot<P, R>(
+    iter: log::Iter,
+    last_snapshot: Snapshot<R>,
+    materializer: Arc<Materializer<PageFrag = P, Recovery = R>>,
+    config: Arc<Config>,
+) {
+    let start = clock();
+
+    let snapshot_opt_res = last_snapshot.try_lock();
+    if snapshot_opt_res.is_err() {
+        // some other thread is snapshotting
+        warn!(
+            "snapshot skipped because previous attempt \
+                  appears not to have completed"
+        );
+        M.advance_snapshot.measure(clock() - start);
+        return;
+    }
+    let mut snapshot_opt = snapshot_opt_res.unwrap();
+    let mut snapshot = snapshot_opt.take().unwrap_or_else(Snapshot::default);
+
+    trace!("building on top of old snapshot: {:?}", snapshot);
+
+    let io_buf_size = config.get_io_buf_size();
+
+    let mut recovery = snapshot.recovery.take();
+    let mut max_lsn = snapshot.max_lsn;
+    let start_lsn = max_lsn - (max_lsn % io_buf_size as Lsn);
+
+    let mut last_segment = None;
+
+    for (lsn, log_id, bytes) in iter {
+        let segment_lsn = lsn / io_buf_size as Lsn * io_buf_size as Lsn;
+
+        trace!(
+            "in advance_snapshot looking at item: segment lsn {} lsn {} lid {}",
+            segment_lsn,
+            lsn,
+            log_id
+        );
+
+        if lsn <= max_lsn {
+            // don't process alread-processed Lsn's.
+            trace!(
+                "continuing in advance_snapshot, lsn {} log_id {} max_lsn {}",
+                lsn,
+                log_id,
+                max_lsn
+            );
+            continue;
+        }
+
+        assert!(lsn > max_lsn);
+        max_lsn = lsn;
+
+        let idx = log_id as usize / io_buf_size;
+        if snapshot.segments.len() < idx + 1 {
+            snapshot.segments.resize(idx + 1, log::Segment::default());
+        }
+
+        assert_eq!(
+            segment_lsn / io_buf_size as Lsn * io_buf_size as Lsn,
+            segment_lsn,
+            "segment lsn is unaligned! fix above lsn statement..."
+        );
+
+        // unwrapping this because it's already passed the crc check
+        // in the log iterator
+        trace!("trying to deserialize buf for lid {} lsn {}", log_id, lsn);
+        let deserialization = deserialize::<LoggedUpdate<P>>(&*bytes);
+
+        if let Err(e) = deserialization {
+            error!(
+                "failed to deserialize buffer for item in log: lsn {} \
+                    lid {}: {:?}",
+                lsn,
+                log_id,
+                e
+            );
+            continue;
+        }
+
+        let prepend = deserialization.unwrap();
+
+        if prepend.pid >= snapshot.max_pid {
+            snapshot.max_pid = prepend.pid + 1;
+        }
+
+        snapshot.segments[idx].recovery_ensure_initialized(segment_lsn);
+
+        let last_idx = *last_segment.get_or_insert(idx);
+        if last_idx != idx {
+            // if we have moved to a new segment, mark the previous one
+            // as inactive.
+            trace!("PageCache recovery setting segment {} to inactive", log_id);
+            snapshot.segments[last_idx].active_to_inactive(segment_lsn, true);
+            if snapshot.segments[last_idx].is_empty() {
+                trace!(
+                    "PageCache recovery setting segment {} to draining",
+                    log_id
+                );
+                snapshot.segments[last_idx].inactive_to_draining(segment_lsn);
+            }
+        }
+        last_segment = Some(idx);
+
+        match prepend.update {
+            Update::Append(partial_page) => {
+                // Because we rewrite pages over time, we may have relocated
+                // a page's initial Compact to a later segment. We should skip
+                // over pages here unless we've encountered a Compact or Alloc
+                // for them.
+                if let Some(lids) = snapshot.pt.get_mut(&prepend.pid) {
+                    trace!(
+                        "append of pid {} at lid {} lsn {}",
+                        prepend.pid,
+                        log_id,
+                        lsn
+                    );
+
+                    snapshot.segments[idx].insert_pid(prepend.pid, segment_lsn);
+
+                    let r = materializer.recover(&partial_page);
+                    if r.is_some() {
+                        recovery = r;
+                    }
+
+                    lids.push((lsn, log_id));
+                }
+            }
+            Update::Compact(partial_page) => {
+                trace!(
+                    "compact of pid {} at lid {} lsn {}",
+                    prepend.pid,
+                    log_id,
+                    lsn
+                );
+                if let Some(lids) = snapshot.pt.remove(&prepend.pid) {
+                    for (_lsn, old_lid) in lids {
+                        let old_idx = old_lid as usize / io_buf_size;
+                        if old_idx == idx {
+                            // don't remove pid if it's still there
+                            continue;
+                        }
+                        let old_segment = &mut snapshot.segments[old_idx];
+
+                        old_segment.remove_pid(prepend.pid, segment_lsn);
+                    }
+                }
+
+                snapshot.segments[idx].insert_pid(prepend.pid, segment_lsn);
+
+                let r = materializer.recover(&partial_page);
+                if r.is_some() {
+                    recovery = r;
+                }
+
+                snapshot.pt.insert(prepend.pid, vec![(lsn, log_id)]);
+            }
+            Update::Free => {
+                trace!(
+                    "del of pid {} at lid {} lsn {}",
+                    prepend.pid,
+                    log_id,
+                    lsn
+                );
+                if let Some(lids) = snapshot.pt.remove(&prepend.pid) {
+                    // this could fail if our Alloc was nuked
+                    for (_lsn, old_lid) in lids {
+                        let old_idx = old_lid as usize / io_buf_size;
+                        if old_idx == idx {
+                            // don't remove pid if it's still there
+                            continue;
+                        }
+                        let old_segment = &mut snapshot.segments[old_idx];
+                        old_segment.remove_pid(prepend.pid, segment_lsn);
+                    }
+                }
+
+                snapshot.segments[idx].insert_pid(prepend.pid, segment_lsn);
+
+                snapshot.free.push(prepend.pid);
+            }
+            Update::Alloc => {
+                trace!(
+                    "alloc of pid {} at lid {} lsn {}",
+                    prepend.pid,
+                    log_id,
+                    lsn
+                );
+
+                snapshot.pt.insert(prepend.pid, vec![]);
+                snapshot.free.retain(|&pid| pid != prepend.pid);
+                snapshot.segments[idx].insert_pid(prepend.pid, segment_lsn);
+            }
+        }
+    }
+
+    snapshot.free.sort();
+    snapshot.free.reverse();
+    snapshot.max_lsn = max_lsn;
+    snapshot.recovery = recovery;
+
+    write_snapshot(config, &snapshot);
+
+    trace!("generated new snapshot: {:?}", snapshot);
+
+    M.advance_snapshot.measure(clock() - start);
+
+    snapshot
+}
+
+fn read_snapshot<R>(config: Arc<Config>) -> Option<Snapshot<R>> {
+    let mut candidates = config.get_snapshot_files();
+    if candidates.is_empty() {
+        info!("no previous snapshot found");
+        return;
+    }
+
+    candidates.sort_by_key(|path| {
+        std::fs::metadata(path).unwrap().created().unwrap()
+    });
+
+    let path = candidates.pop().unwrap();
+
+    let mut f = std::fs::OpenOptions::new().read(true).open(&path).unwrap();
+
+    let mut buf = vec![];
+    f.read_to_end(&mut buf).unwrap();
+    let len = buf.len();
+    buf.split_off(len - 8);
+
+    let mut crc_expected_bytes = [0u8; 8];
+    f.seek(std::io::SeekFrom::End(-8)).unwrap();
+    f.read_exact(&mut crc_expected_bytes).unwrap();
+
+    let crc_expected: u64 = unsafe { std::mem::transmute(crc_expected_bytes) };
+    let crc_actual = crc64(&*buf);
+
+    if crc_expected != crc_actual {
+        panic!("crc for snapshot file {:?} failed!", path);
+    }
+
+        #[cfg(feature = "zstd")]
+    let bytes = if config.get_use_compression() {
+        decompress(&*buf, config.get_io_buf_size()).unwrap()
+    } else {
+        buf
+    };
+
+        #[cfg(not(feature = "zstd"))]
+    let bytes = buf;
+
+    let snapshot = deserialize::<Snapshot<R>>(&*bytes).unwrap();
+
+    Some(snapshot)
+}
+
+fn write_snapshot<R>(config: Arc<Config>, snapshot: &Snapshot<R>) {
+    let raw_bytes = serialize(&snapshot, Infinite).unwrap();
+
+        #[cfg(feature = "zstd")]
+    let bytes = if config.get_use_compression() {
+        compress(&*raw_bytes, 5).unwrap()
+    } else {
+        raw_bytes
+    };
+
+        #[cfg(not(feature = "zstd"))]
+    let bytes = raw_bytes;
+
+    let crc64: [u8; 8] = unsafe { std::mem::transmute(crc64(&*bytes)) };
+
+    let prefix = config.snapshot_prefix();
+
+    let path_1 = format!("{}.{}.in___motion", prefix, snapshot.max_lsn);
+    let path_2 = format!("{}.{}", prefix, snapshot.max_lsn);
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open(&path_1)
+        .unwrap();
+
+    // write the snapshot bytes, followed by a crc64 checksum at the end
+    f.write_all(&*bytes).unwrap();
+    f.write_all(&crc64).unwrap();
+    f.sync_all().unwrap();
+    drop(f);
+
+    trace!("wrote snapshot to {}", path_1);
+
+    std::fs::rename(path_1, &path_2).expect("failed to write snapshot");
+
+    trace!("renamed snapshot to {}", path_2);
+
+    // clean up any old snapshots
+    let candidates = config.get_snapshot_files();
+    for path in candidates {
+        let path_str = Path::new(&path).file_name().unwrap().to_str().unwrap();
+        if !path_2.ends_with(&*path_str) {
+            debug!("removing old snapshot file {:?}", path);
+
+            if let Err(_e) = std::fs::remove_file(&path) {
+                warn!(
+                    "failed to remove old snapshot file, maybe snapshot race? {}",
+                    _e
+                );
+            }
+        }
+    }
 }

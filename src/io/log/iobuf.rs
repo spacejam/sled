@@ -1,6 +1,7 @@
 use std::io::{Seek, Write};
 use std::path::Path;
 use std::sync::{Condvar, Mutex};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::atomic::Ordering::SeqCst;
 
@@ -24,7 +25,7 @@ struct IoBuf {
 unsafe impl Sync for IoBuf {}
 
 pub(super) struct IoBufs {
-    config: Config,
+    config: Arc<Config>,
     bufs: Vec<IoBuf>,
     current_buf: AtomicUsize,
     written_bufs: AtomicUsize,
@@ -45,7 +46,7 @@ pub(super) struct IoBufs {
 /// `IoBufs` is a set of lock-free buffers for coordinating
 /// writes to underlying storage.
 impl IoBufs {
-    pub fn start(config: Config) -> IoBufs {
+    pub fn start(config: Arc<Config>, segments: Vec<Segment>) -> IoBufs {
         let path = config.get_path();
 
         let dir = Path::new(&path).parent().expect(
@@ -68,7 +69,8 @@ impl IoBufs {
 
         let io_buf_size = config.get_io_buf_size();
 
-        let mut segment_accountant = SegmentAccountant::start(config.clone());
+        let mut segment_accountant =
+            SegmentAccountant::start(config.clone(), segments);
 
         let bufs = rep_no_copy![IoBuf::new(io_buf_size); config.get_io_bufs()];
 

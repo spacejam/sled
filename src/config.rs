@@ -1,9 +1,7 @@
-use std::cell::{RefCell, UnsafeCell};
 use std::fs;
-use std::ops::{Deref, DerefMut};
+use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::Arc;
 
 use super::*;
 
@@ -21,80 +19,6 @@ use super::*;
 /// ```
 #[derive(Debug, Clone)]
 pub struct Config {
-    inner: Arc<UnsafeCell<ConfigInner>>,
-}
-
-unsafe impl Send for Config {}
-unsafe impl Sync for Config {}
-
-impl Default for Config {
-    fn default() -> Config {
-        let now = uptime();
-        let nanos = (now.as_secs() * 1_000_000_000) +
-            u64::from(now.subsec_nanos());
-
-        // use shared memory for temporary linux files
-        #[cfg(target_os = "linux")]
-        let tmp_path = format!("/dev/shm/sled.tmp.{}", nanos);
-
-        #[cfg(not(target_os = "linux"))]
-        let tmp_path = format!("sled.tmp.{}", nanos);
-
-        let inner = Arc::new(UnsafeCell::new(ConfigInner {
-            io_bufs: 3,
-            io_buf_size: 2 << 22, // 8mb
-            blink_fanout: 32,
-            page_consolidation_threshold: 10,
-            path: tmp_path.to_owned(),
-            cache_bits: 6, // 64 shards
-            cache_capacity: 1024 * 1024 * 1024, // 1gb
-            use_os_cache: true,
-            use_compression: true,
-            flush_every_ms: Some(500),
-            snapshot_after_ops: 1_000_000,
-            snapshot_path: None,
-            cache_fixup_threshold: 1,
-            segment_cleanup_threshold: 0.2,
-            min_free_segments: 3,
-            zero_copy_storage: false,
-            tc: ThreadCache::default(),
-            tmp_path: tmp_path.to_owned(),
-        }));
-        Config {
-            inner: inner,
-        }
-    }
-}
-
-impl Deref for Config {
-    type Target = ConfigInner;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*self.inner.get() }
-    }
-}
-
-impl DerefMut for Config {
-    fn deref_mut(&mut self) -> &mut ConfigInner {
-        unsafe { &mut *self.inner.get() }
-    }
-}
-
-impl Config {
-    /// create a new `Tree` based on this configuration
-    pub fn tree(&self) -> Tree {
-        Tree::start(self.clone())
-    }
-
-    /// create a new `Log` based on this
-    /// configuration
-    pub fn log(&self) -> Log {
-        Log::start(self.clone())
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ConfigInner {
     io_bufs: usize,
     io_buf_size: usize,
     blink_fanout: usize,
@@ -113,6 +37,45 @@ pub struct ConfigInner {
     zero_copy_storage: bool,
     tc: ThreadCache<fs::File>,
     tmp_path: String,
+}
+
+unsafe impl Send for Config {}
+unsafe impl Sync for Config {}
+
+impl Default for Config {
+    fn default() -> Config {
+        let now = uptime();
+        let nanos = (now.as_secs() * 1_000_000_000) +
+            u64::from(now.subsec_nanos());
+
+        // use shared memory for temporary linux files
+        #[cfg(target_os = "linux")]
+        let tmp_path = format!("/dev/shm/sled.tmp.{}", nanos);
+
+        #[cfg(not(target_os = "linux"))]
+        let tmp_path = format!("sled.tmp.{}", nanos);
+
+        Config {
+            io_bufs: 3,
+            io_buf_size: 2 << 22, // 8mb
+            blink_fanout: 32,
+            page_consolidation_threshold: 10,
+            path: tmp_path.to_owned(),
+            cache_bits: 6, // 64 shards
+            cache_capacity: 1024 * 1024 * 1024, // 1gb
+            use_os_cache: true,
+            use_compression: true,
+            flush_every_ms: Some(500),
+            snapshot_after_ops: 1_000_000,
+            snapshot_path: None,
+            cache_fixup_threshold: 1,
+            segment_cleanup_threshold: 0.2,
+            min_free_segments: 3,
+            zero_copy_storage: false,
+            tc: ThreadCache::default(),
+            tmp_path: tmp_path.to_owned(),
+        }
+    }
 }
 
 macro_rules! builder {
@@ -135,13 +98,13 @@ macro_rules! builder {
             pub fn $name(&self, to: $t) -> Config {
                 let mut ret = self.clone();
                 ret.$name = to;
-                Config { inner: Arc::new(UnsafeCell::new(ret))}
+                ret
             }
         )*
     }
 }
 
-impl ConfigInner {
+impl Config {
     builder!(
         (io_bufs, get_io_bufs, set_io_bufs, usize, "number of io buffers"),
         (io_buf_size, get_io_buf_size, set_io_buf_size, usize, "size of each io flush buffer. MUST be multiple of 512!"),
@@ -160,6 +123,17 @@ impl ConfigInner {
         (min_free_segments, get_min_free_segments, set_min_free_segments, usize, "the minimum number of free segments to have on-deck before a compaction occurs"),
         (zero_copy_storage, get_zero_copy_storage, set_zero_copy_storage, bool, "disabling of the log segment copy cleaner")
     );
+
+    /// create a new `Tree` based on this configuration
+    pub fn tree(&self) -> Tree {
+        Tree::start(self.clone())
+    }
+
+    /// create a new `Log` based on this
+    /// configuration
+    pub fn log(&self) -> Log {
+        Log::start(self.clone())
+    }
 
     /// Retrieve a thread-local file handle to the
     /// configured underlying storage,
@@ -235,7 +209,7 @@ impl ConfigInner {
     }
 }
 
-impl Drop for ConfigInner {
+impl Drop for Config {
     fn drop(&mut self) {
         let ephemeral = self.get_path() == self.get_tmp_path();
         if !ephemeral {
