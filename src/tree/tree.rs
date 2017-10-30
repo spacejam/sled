@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use super::*;
 
 impl<'a> IntoIterator for &'a Tree {
@@ -14,7 +12,7 @@ impl<'a> IntoIterator for &'a Tree {
 /// A flash-sympathetic persistent lock-free B+ tree
 pub struct Tree {
     pages: PageCache<BLinkMaterializer, Frag, PageID>,
-    config: Arc<Config>,
+    config: FinalConfig,
     root: AtomicUsize,
 }
 
@@ -23,7 +21,7 @@ unsafe impl Sync for Tree {}
 
 impl Tree {
     /// Load existing or create a new `Tree`.
-    pub fn start(config: Arc<Config>) -> Tree {
+    pub fn start(config: FinalConfig) -> Tree {
         let pages = PageCache::start(
             BLinkMaterializer {
                 roots: Mutex::new(vec![]),

@@ -1,7 +1,9 @@
 use std::fs;
 use std::cell::RefCell;
+use std::ops::Deref;
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use super::*;
 
@@ -198,6 +200,16 @@ impl Config {
             .filter_map(filter)
             .collect()
     }
+
+    /// Finalize the configuration.
+    pub fn build(self) -> FinalConfig {
+        FinalConfig(Arc::new(self))
+    }
+
+    /// Creates a `Tree` from this `Config`, consuming the `Config`
+    pub fn tree(self) -> Tree {
+        self.build().tree()
+    }
 }
 
 impl Drop for Config {
@@ -217,5 +229,25 @@ impl Drop for Config {
                 warn!("failed to remove old snapshot file, maybe snapshot race? {}", _e);
             }
         }
+    }
+}
+
+/// A finalized `Config` that can be use multiple times
+/// to open a `Tree` or `Log`.
+#[derive(Clone, Debug, Default)]
+pub struct FinalConfig(Arc<Config>);
+
+impl Deref for FinalConfig {
+    type Target = Config;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
+
+impl FinalConfig {
+    /// Start a `Tree` using this finalized configuration.
+    pub fn tree(&self) -> Tree {
+        Tree::start(self.clone())
     }
 }

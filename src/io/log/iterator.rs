@@ -1,10 +1,9 @@
 use std::io::{Error, ErrorKind};
-use std::sync::Arc;
 
 use super::*;
 
 pub struct LogIter {
-    pub config: Arc<Config>,
+    pub config: FinalConfig,
     pub segment_iter: Box<Iterator<Item = (Lsn, LogID)>>,
     pub segment_base: Option<LogID>,
     pub segment_len: usize,

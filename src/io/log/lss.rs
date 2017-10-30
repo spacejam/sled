@@ -34,7 +34,7 @@ use super::*;
 pub struct Log {
     /// iobufs is the underlying lock-free IO write buffer.
     iobufs: Arc<IoBufs>,
-    config: Arc<Config>,
+    config: FinalConfig,
     flusher_shutdown: Arc<AtomicBool>,
     flusher_handle: Option<std::thread::JoinHandle<()>>,
 }
@@ -62,7 +62,7 @@ impl Drop for Log {
 impl Log {
     /// Start the log, open or create the configured file,
     /// and optionally start the periodic buffer flush thread.
-    pub fn start(config: Arc<Config>, segments: Vec<Segment>) -> Log {
+    pub fn start(config: FinalConfig, segments: Vec<Segment>) -> Log {
         #[cfg(feature = "env_logger")]
         let _r = env_logger::init();
 

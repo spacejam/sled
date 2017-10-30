@@ -77,7 +77,7 @@ use super::*;
 #[derive(Default, Debug)]
 pub struct SegmentAccountant {
     // static or one-time set
-    config: Arc<Config>,
+    config: FinalConfig,
     recovered_lsn: Lsn,
     recovered_lid: LogID,
 
@@ -307,7 +307,7 @@ impl Segment {
 impl SegmentAccountant {
     /// Create a new SegmentAccountant from previously recovered segments.
     pub fn start(
-        config: Arc<Config>,
+        config: FinalConfig,
         segments: Vec<Segment>,
     ) -> SegmentAccountant {
         let mut ret = SegmentAccountant::default();
@@ -428,7 +428,7 @@ impl SegmentAccountant {
     // the order of segments, and the highest Lsn.
     pub fn scan_segment_lsns(
         min: Lsn,
-        config: Arc<Config>,
+        config: FinalConfig,
     ) -> BTreeMap<Lsn, LogID> {
         let mut ordering = BTreeMap::new();
 
@@ -504,7 +504,7 @@ impl SegmentAccountant {
     // never reuse buffers within this safety range.
     fn clean_tail_tears(
         mut ordering: BTreeMap<Lsn, LogID>,
-        config: Arc<Config>,
+        config: FinalConfig,
         f: &mut File,
     ) -> BTreeMap<Lsn, LogID> {
         let safety_buffer = config.get_io_bufs();

@@ -42,7 +42,8 @@ fn pagecache_caching() {
         .cache_bits(0)
         .flush_every_ms(None)
         .snapshot_after_ops(1_000_000)
-        .io_buf_size(5000);
+        .io_buf_size(5000)
+        .build();
 
     let pc = PageCache::start(TestMaterializer, conf.clone());
 
@@ -68,7 +69,8 @@ fn pagecache_strange_crash_1() {
         .cache_bits(0)
         .flush_every_ms(None)
         .snapshot_after_ops(1_000_000)
-        .io_buf_size(5000);
+        .io_buf_size(5000)
+        .build();
 
     {
         let pc = PageCache::start(TestMaterializer, conf.clone());
@@ -102,7 +104,8 @@ fn pagecache_strange_crash_2() {
                 .cache_bits(0)
                 .flush_every_ms(None)
                 .snapshot_after_ops(1_000_000)
-                .io_buf_size(5000);
+                .io_buf_size(5000)
+                .build();
 
             println!("!!!!!!!!!!!!!!!!!!!!! {} !!!!!!!!!!!!!!!!!!!!!!", x);
             let pc = PageCache::start(TestMaterializer, conf.clone());
@@ -114,33 +117,37 @@ fn pagecache_strange_crash_2() {
                 keys.insert(id, key);
             }
 
-        let mut keys = HashMap::new();
-        for _ in 0..2 {
-            let (id, key) = pc.allocate();
-            let key = pc.replace(id, key, vec![0]).unwrap();
-            keys.insert(id, key);
-        }
-
-        for i in 0..1000 {
-            let id = i as usize % 2;
-            println!("------ beginning op on pid {} ------", id);
-            let (_, key) = pc.get(id).unwrap();
-            println!("got key {:?} for pid {}", key, id);
-            let ptr: Ptr<_> = key.clone().into();
-            assert!(!ptr.is_null());
-            let key_res = pc.link(id, key, vec![i]);
-            if key_res.is_err() {
-                println!("failed linking pid {}", id);
+            let mut keys = HashMap::new();
+            for _ in 0..2 {
+                let (id, key) = pc.allocate();
+                let key = pc.replace(id, key, vec![0]).unwrap();
+                keys.insert(id, key);
             }
-            let key = key_res.unwrap();
-            keys.insert(id, key);
-        }
+
+            for i in 0..1000 {
+                let id = i as usize % 2;
+                println!("------ beginning op on pid {} ------", id);
+                let (_, key) = pc.get(id).unwrap();
+                println!("got key {:?} for pid {}", key, id);
+                let ptr: Ptr<_> = key.clone().into();
+                assert!(!ptr.is_null());
+                let key_res = pc.link(id, key, vec![i]);
+                if key_res.is_err() {
+                    println!("failed linking pid {}", id);
+                }
+                let key = key_res.unwrap();
+                keys.insert(id, key);
+            }
+        })
     }
 }
 
 #[test]
 fn basic_pagecache_recovery() {
-    let conf = Config::default().flush_every_ms(None).io_buf_size(200);
+    let conf = Config::default()
+        .flush_every_ms(None)
+        .io_buf_size(200)
+        .build();
 
     let pc = PageCache::start(TestMaterializer, conf.clone());
 
@@ -262,7 +269,8 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
         .flush_every_ms(Some(1))
         .cache_bits(0)
         .cache_capacity(40)
-        .cache_fixup_threshold(cache_fixup_threshold as usize);
+        .cache_fixup_threshold(cache_fixup_threshold as usize)
+        .build();
 
     let mut pc = PageCache::start(TestMaterializer, config.clone());
 

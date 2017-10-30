@@ -75,7 +75,7 @@ pub struct PageCache<PM, P, R>
     where P: 'static + Send + Sync
 {
     t: Arc<PM>,
-    config: Arc<Config>,
+    config: FinalConfig,
     inner: Radix<Stack<CacheEntry<P>>>,
     max_pid: AtomicUsize,
     free: Arc<Stack<PageID>>,
@@ -126,7 +126,7 @@ impl<PM, P, R> PageCache<PM, P, R>
           R: Debug + Clone + Serialize + DeserializeOwned + Send
 {
     /// Instantiate a new `PageCache`.
-    pub fn start(pm: PM, config: Arc<Config>) -> PageCache<PM, P, R> {
+    pub fn start(pm: PM, config: FinalConfig) -> PageCache<PM, P, R> {
         let cache_capacity = config.get_cache_capacity();
         let cache_shard_bits = config.get_cache_bits();
         let lru = Lru::new(cache_capacity, cache_shard_bits);
@@ -814,7 +814,7 @@ fn advance_snapshot<P, R>(
     iter: log::LogIter,
     mut snapshot: Snapshot<R>,
     materializer: Arc<Materializer<PageFrag = P, Recovery = R>>,
-    config: Arc<Config>,
+    config: FinalConfig,
 ) -> Snapshot<R>
     where P: 'static
                  + Debug
@@ -1017,7 +1017,7 @@ fn advance_snapshot<P, R>(
     snapshot
 }
 
-fn read_snapshot<R>(config: Arc<Config>) -> Option<Snapshot<R>>
+fn read_snapshot<R>(config: FinalConfig) -> Option<Snapshot<R>>
     where R: Debug + Clone + Serialize + DeserializeOwned + Send
 {
     let mut candidates = config.get_snapshot_files();
@@ -1065,7 +1065,7 @@ fn read_snapshot<R>(config: Arc<Config>) -> Option<Snapshot<R>>
     Some(snapshot)
 }
 
-fn write_snapshot<R>(config: Arc<Config>, snapshot: &Snapshot<R>)
+fn write_snapshot<R>(config: FinalConfig, snapshot: &Snapshot<R>)
     where R: Debug + Clone + Serialize + DeserializeOwned + Send
 {
     let raw_bytes = serialize(&snapshot, Infinite).unwrap();
