@@ -1,4 +1,4 @@
-# sled
+# sled: (sled likes eating data! it's pre-alpha)
 
 <p>
   <img src="https://github.com/spacejam/rsdb/blob/master/art/tree_face.png" width="20%" height="auto" />

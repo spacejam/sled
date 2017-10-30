@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{ATOMIC_USIZE_INIT, AtomicUsize, Ordering};
 
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
-use coco::epoch::Ptr;
+use coco::epoch::{Ptr, pin};
 
 use sled::*;
 
@@ -47,19 +47,22 @@ fn pagecache_caching() {
 
     let pc = PageCache::start(TestMaterializer, conf.clone());
 
-    let mut keys = HashMap::new();
-    for _ in 0..2 {
-        let (id, key) = pc.allocate();
-        let key = pc.replace(id, key, vec![0]).unwrap();
-        keys.insert(id, key);
-    }
+    pin(|scope| {
+        let mut keys = HashMap::new();
 
-    for i in 0..1000 {
-        let id = i as usize % 2;
-        let (_, key) = pc.get(id).unwrap();
-        let key = pc.link(id, key, vec![i]).unwrap();
-        keys.insert(id, key);
-    }
+        for _ in 0..2 {
+            let (id, key) = pc.allocate(scope);
+            let key = pc.replace(id, key, vec![0], scope).unwrap();
+            keys.insert(id, key);
+        }
+
+        for i in 0..1000 {
+            let id = i as usize % 2;
+            let (_, key) = pc.get(id, scope).unwrap();
+            let key = pc.link(id, key, vec![i], scope).unwrap();
+            keys.insert(id, key);
+        }
+    });
 }
 
 #[test]
@@ -75,19 +78,21 @@ fn pagecache_strange_crash_1() {
     {
         let pc = PageCache::start(TestMaterializer, conf.clone());
 
-        let mut keys = HashMap::new();
-        for _ in 0..2 {
-            let (id, key) = pc.allocate();
-            let key = pc.replace(id, key, vec![0]).unwrap();
-            keys.insert(id, key);
-        }
+        pin(|scope| {
+            let mut keys = HashMap::new();
+            for _ in 0..2 {
+                let (id, key) = pc.allocate(scope);
+                let key = pc.replace(id, key, vec![0], scope).unwrap();
+                keys.insert(id, key);
+            }
 
-        for i in 0..1000 {
-            let id = i as usize % 2;
-            let (_, key) = pc.get(id).unwrap();
-            let key = pc.link(id, key, vec![i]).unwrap();
-            keys.insert(id, key);
-        }
+            for i in 0..1000 {
+                let id = i as usize % 2;
+                let (_, key) = pc.get(id, scope).unwrap();
+                let key = pc.link(id, key, vec![i], scope).unwrap();
+                keys.insert(id, key);
+            }
+        });
     }
     println!("!!!!!!!!!!!!!!!!!!!!! recovering !!!!!!!!!!!!!!!!!!!!!!");
     let _pc = PageCache::start(TestMaterializer, conf.clone());
@@ -117,21 +122,13 @@ fn pagecache_strange_crash_2() {
                 keys.insert(id, key);
             }
 
-            let mut keys = HashMap::new();
-            for _ in 0..2 {
-                let (id, key) = pc.allocate();
-                let key = pc.replace(id, key, vec![0]).unwrap();
-                keys.insert(id, key);
-            }
-
             for i in 0..1000 {
                 let id = i as usize % 2;
                 println!("------ beginning op on pid {} ------", id);
-                let (_, key) = pc.get(id).unwrap();
+                let (_, key) = pc.get(id, scope).unwrap();
                 println!("got key {:?} for pid {}", key, id);
-                let ptr: Ptr<_> = key.clone().into();
-                assert!(!ptr.is_null());
-                let key_res = pc.link(id, key, vec![i]);
+                assert!(!key.is_null());
+                let key_res = pc.link(id, key, vec![i], scope);
                 if key_res.is_err() {
                     println!("failed linking pid {}", id);
                 }
@@ -286,19 +283,25 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
 
                 if present {
                     let ref mut existing = reference.get_mut(&pid).unwrap();
-                    let old_key = if existing.is_empty() {
-                        Ptr::null().into()
-                    } else {
-                        let (_, old_key) = pc.get(pid).unwrap();
-                        old_key
-                    };
+                    pin(|scope| {
+                        let old_key = if existing.is_empty() {
+                            Ptr::null().into()
+                        } else {
+                            let (_, old_key) = pc.get(pid, scope).unwrap();
+                            old_key
+                        };
 
-                    pc.replace(pid, old_key.clone(), vec![c]).unwrap();
+                        pc.replace(pid, old_key.clone(), vec![c], scope)
+                            .unwrap();
+                    });
                     existing.clear();
                     existing.push(c);
                 } else {
-                    let res = pc.replace(pid, bad_ptr.into(), vec![c]);
-                    assert_eq!(res, Err(None));
+                    pin(|scope| {
+                        let res =
+                            pc.replace(pid, bad_ptr.into(), vec![c], scope);
+                        assert!(res.unwrap_err().is_none());
+                    })
                 }
             }
             Link(pid, c) => {
@@ -306,47 +309,57 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
 
                 if present {
                     let ref mut existing = reference.get_mut(&pid).unwrap();
-                    let old_key = if existing.is_empty() {
-                        Ptr::null().into()
-                    } else {
-                        let (_, old_key) = pc.get(pid).unwrap();
-                        old_key
-                    };
+                    pin(|scope| {
+                        let old_key = if existing.is_empty() {
+                            Ptr::null().into()
+                        } else {
+                            let (_, old_key) = pc.get(pid, scope).unwrap();
+                            old_key
+                        };
 
-                    pc.link(pid, old_key.clone(), vec![c]).unwrap();
+                        pc.link(pid, old_key.clone(), vec![c], scope).unwrap();
+                    });
                     existing.push(c);
                 } else {
-                    let res = pc.link(pid, bad_ptr.into(), vec![c]);
-                    assert_eq!(res, Err(None));
+                    pin(|scope| {
+                        let res = pc.link(pid, bad_ptr, vec![c], scope);
+                        assert!(res.unwrap_err().is_none());
+                    });
                 }
             }
             Get(pid) => {
-                let r = reference.get(&pid).cloned();
-                let a = pc.get(pid).map(|(a, _)| a);
-                if let Some(ref s) = r {
-                    if s.is_empty() {
-                        assert_eq!(a, None);
+                pin(|scope| {
+                    let r = reference.get(&pid).cloned();
+                    let a = pc.get(pid, scope).map(|(a, _)| a);
+                    if let Some(ref s) = r {
+                        if s.is_empty() {
+                            assert_eq!(a, None);
+                        } else {
+                            assert_eq!(r, a);
+                            let values = a.unwrap();
+                            values.iter().fold(0, |acc, cur| {
+                                if *cur <= acc {
+                                    panic!(
+                                        "out of order page fragments in page!"
+                                    );
+                                }
+                                *cur
+                            });
+                        }
                     } else {
-                        assert_eq!(r, a);
-                        let values = a.unwrap();
-                        values.iter().fold(0, |acc, cur| {
-                            if *cur <= acc {
-                                panic!("out of order page fragments in page!");
-                            }
-                            *cur
-                        });
+                        assert_eq!(None, a);
                     }
-                } else {
-                    assert_eq!(None, a);
-                }
+                });
             }
             Free(pid) => {
                 pc.free(pid);
                 reference.remove(&pid);
             }
             Allocate => {
-                let (pid, _key) = pc.allocate();
-                reference.insert(pid, vec![]);
+                pin(|scope| {
+                    let (pid, _key) = pc.allocate(scope);
+                    reference.insert(pid, vec![]);
+                });
             }
             Restart => {
                 drop(pc);
