@@ -424,33 +424,12 @@ impl SegmentAccountant {
         }
     }
 
-    // Mark a specific segment as being present at a particular
-    // file offset.
-    fn recover(&mut self, lsn: Lsn, lid: LogID) {
-        trace!("recovered segment lsn {} at lid {}", lsn, lid);
-        let io_buf_size = self.config.get_io_buf_size() as LogID;
-        let idx = self.lid_to_idx(lid);
-
-        assert!(!(lsn == 0 && lid != 0), "lsn 0 provided with non-zero lid");
-        if !self.segments[idx].is_empty() {
-            self.segments[idx].free_to_active(lsn);
-
-            let segment_lsn = lsn / io_buf_size * io_buf_size;
-            self.segments[idx].active_to_inactive(segment_lsn, true);
-        } else {
-            // this is necessary for properly removing the ordering
-            // info later on, if this segment is found to be empty
-            // during recovery.
-            self.segments[idx].lsn = Some(lsn);
-        }
-
-        assert!(!self.ordering.contains_key(&lsn));
-        self.ordering.insert(lsn, lid);
-    }
-
     // Scan the log file if we don't know of any Lsn offsets yet, and recover
     // the order of segments, and the highest Lsn.
-    fn scan_segment_lsns(config: Arc<Config>) -> BTreeMap<Lsn, LogID> {
+    pub fn scan_segment_lsns(
+        min: Lsn,
+        config: Arc<Config>,
+    ) -> BTreeMap<Lsn, LogID> {
         let mut ordering = BTreeMap::new();
 
         let segment_len = config.get_io_buf_size() as LogID;
@@ -463,7 +442,9 @@ impl SegmentAccountant {
             // the initial header at that position... but we need to
             // make sure the segment is not torn
             trace!("SA scanned header during startup {:?}", segment);
-            if segment.ok && (segment.lsn != 0 || cursor == 0) {
+            if segment.ok && (segment.lsn != 0 || cursor == 0) &&
+                segment.lsn >= min
+            {
                 // if lsn is 0, this is free
                 ordering.insert(segment.lsn, cursor);
             }

@@ -10,6 +10,7 @@ use rayon::prelude::*;
 #[cfg(feature = "zstd")]
 use zstd::block::{compress, decompress};
 
+use io::log::LogIter;
 use super::*;
 
 /// A lock-free pagecache which supports fragmented pages
@@ -114,7 +115,7 @@ impl<PM, P, R> Debug for PageCache<PM, P, R>
 
 impl<PM, P, R> PageCache<PM, P, R>
     where PM: Materializer<PageFrag = P, Recovery = R>,
-          PM: Send + Sync,
+          PM: 'static + Send + Sync,
           P: 'static
                  + Debug
                  + Clone
@@ -130,13 +131,60 @@ impl<PM, P, R> PageCache<PM, P, R>
         let cache_shard_bits = config.get_cache_bits();
         let lru = Lru::new(cache_capacity, cache_shard_bits);
 
-        // recover mapping of segments
+        let materializer = Arc::new(pm);
+
+        // pull any existing snapshot off disk
+        let old_snapshot_opt: Option<Snapshot<R>> =
+            read_snapshot(config.clone());
+        let old_snapshot = old_snapshot_opt.unwrap_or_else(|| {
+            info!("unable to read snapshot at startup. using default.");
+            Snapshot::default()
+        });
+
+        let segment_base_lsn = old_snapshot.max_lsn /
+            config.get_io_buf_size() as Lsn *
+            config.get_io_buf_size() as Lsn;
+        let min_lsn = segment_base_lsn + SEG_HEADER_LEN as Lsn;
+
+        // corrected_lsn accounts for the segment header length
+        let corrected_lsn = std::cmp::max(old_snapshot.max_lsn, min_lsn);
 
         // recover snapshot with segments
-        let segments = vec![]; // TODO
+        let segment_iter = Box::new(
+            io::log::SegmentAccountant::scan_segment_lsns(
+                segment_base_lsn,
+                config.clone(),
+            ).into_iter(),
+        );
+
+        let iter = LogIter {
+            config: config.clone(),
+            max_lsn: std::u64::MAX,
+            cur_lsn: corrected_lsn,
+            segment_base: None,
+            segment_iter: segment_iter,
+            segment_len: config.get_io_buf_size(),
+            use_compression: config.get_use_compression(),
+            trailer: None,
+        };
+
+        // we call advance_snapshot here to "catch-up" the snapshot using the
+        // logged updates before recovering from it. this allows us to reuse
+        // the snapshot generation logic as initial log parsing logic. this is
+        // also important for ensuring that we feed the provided `Materializer`
+        // a single, linearized history, rather than going back in time
+        // when generating a snapshot.
+        let caught_up_snapshot = advance_snapshot(
+            iter,
+            old_snapshot,
+            materializer.clone(),
+            config.clone(),
+        );
+
+        let segments = caught_up_snapshot.segments.clone();
 
         let mut pc = PageCache {
-            t: Arc::new(pm),
+            t: materializer,
             config: config.clone(),
             inner: Radix::default(),
             max_pid: AtomicUsize::new(0),
@@ -144,10 +192,13 @@ impl<PM, P, R> PageCache<PM, P, R>
             log: Arc::new(Log::start(config, segments)),
             lru: lru,
             updates: AtomicUsize::new(0),
-            last_snapshot: Arc::new(Mutex::new(None)),
+            last_snapshot: Arc::new(
+                Mutex::new(Some(caught_up_snapshot.clone())),
+            ),
         };
 
-        pc.recover();
+        // now we read it back in
+        pc.load_snapshot(&caught_up_snapshot);
 
         pc
     }
@@ -161,25 +212,6 @@ impl<PM, P, R> PageCache<PM, P, R>
         } else {
             None
         }
-    }
-
-    // Read updates from the log, apply them to our pagecache.
-    fn recover(&mut self) {
-        // pull any existing snapshot off disk
-        self.read_snapshot();
-
-        // we call advance_snapshot here to "catch-up" the snapshot using the
-        // logged updates before recovering from it. this allows us to reuse
-        // the snapshot generation logic as initial log parsing logic. this is
-        // also important for ensuring that we feed the provided `Materializer`
-        // a single, linearized history, rather than going back in time
-        // when generating a snapshot.
-        self.advance_snapshot();
-
-        // now we read it back in
-        self.load_snapshot();
-
-        debug!("recovery complete");
     }
 
     /// Create a new page, trying to reuse old freed pages if possible
@@ -624,7 +656,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         // NB must be called after taking the snapshot mutex.
         self.log.with_sa(|sa| sa.pause_rewriting());
 
-        let mut max_lsn = last_snapshot.max_lsn;
+        let max_lsn = last_snapshot.max_lsn;
         let start_lsn = max_lsn -
             (max_lsn % self.config.get_io_buf_size() as Lsn);
 
@@ -636,8 +668,12 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         let iter = self.log.iter_from(start_lsn);
 
-        let next_snapshot =
-            advance_snapshot(iter, last_snapshot, self.t, self.config.clone());
+        let next_snapshot = advance_snapshot(
+            iter,
+            last_snapshot,
+            self.t.clone(),
+            self.config.clone(),
+        );
 
         self.log.with_sa(|sa| sa.resume_rewriting());
 
@@ -722,42 +758,33 @@ impl<PM, P, R> PageCache<PM, P, R>
         })
     }
 
-    fn load_snapshot(&mut self) {
-        let mu = self.last_snapshot.lock().unwrap();
-        if let Some(ref snapshot) = *mu {
-            self.max_pid.store(snapshot.max_pid, SeqCst);
+    fn load_snapshot(&mut self, snapshot: &Snapshot<R>) {
+        self.max_pid.store(snapshot.max_pid, SeqCst);
 
-            let mut free = snapshot.free.clone();
-            free.sort();
-            free.reverse();
-            for pid in free {
-                trace!("adding {} to free during load_snapshot", pid);
-                self.free.push(pid);
-            }
+        let mut free = snapshot.free.clone();
+        free.sort();
+        free.reverse();
+        for pid in free {
+            trace!("adding {} to free during load_snapshot", pid);
+            self.free.push(pid);
+        }
 
-            for (pid, lids) in &snapshot.pt {
-                trace!("loading pid {} in load_snapshot", pid);
+        for (pid, lids) in &snapshot.pt {
+            trace!("loading pid {} in load_snapshot", pid);
 
-                let mut lids = lids.clone();
-                let stack = Stack::default();
+            let mut lids = lids.clone();
+            let stack = Stack::default();
 
-                if !lids.is_empty() {
-                    let (base_lsn, base_lid) = lids.remove(0);
-                    stack.push(CacheEntry::Flush(base_lsn, base_lid));
+            if !lids.is_empty() {
+                let (base_lsn, base_lid) = lids.remove(0);
+                stack.push(CacheEntry::Flush(base_lsn, base_lid));
 
-                    for (lsn, lid) in lids {
-                        stack.push(CacheEntry::PartialFlush(lsn, lid));
-                    }
+                for (lsn, lid) in lids {
+                    stack.push(CacheEntry::PartialFlush(lsn, lid));
                 }
-
-                self.inner.insert(*pid, stack).unwrap();
             }
 
-            self.log.with_sa(
-                |sa| sa.initialize_from_segments(snapshot.segments.clone()),
-            );
-        } else {
-            panic!("no snapshot present in load_snapshot");
+            self.inner.insert(*pid, stack).unwrap();
         }
     }
 }
@@ -784,25 +811,21 @@ fn lids_from_stack<P: Send + Sync>(
 }
 
 fn advance_snapshot<P, R>(
-    iter: log::Iter,
-    last_snapshot: Snapshot<R>,
+    iter: log::LogIter,
+    mut snapshot: Snapshot<R>,
     materializer: Arc<Materializer<PageFrag = P, Recovery = R>>,
     config: Arc<Config>,
-) {
+) -> Snapshot<R>
+    where P: 'static
+                 + Debug
+                 + Clone
+                 + Serialize
+                 + DeserializeOwned
+                 + Send
+                 + Sync,
+          R: Debug + Clone + Serialize + DeserializeOwned + Send
+{
     let start = clock();
-
-    let snapshot_opt_res = last_snapshot.try_lock();
-    if snapshot_opt_res.is_err() {
-        // some other thread is snapshotting
-        warn!(
-            "snapshot skipped because previous attempt \
-                  appears not to have completed"
-        );
-        M.advance_snapshot.measure(clock() - start);
-        return;
-    }
-    let mut snapshot_opt = snapshot_opt_res.unwrap();
-    let mut snapshot = snapshot_opt.take().unwrap_or_else(Snapshot::default);
 
     trace!("building on top of old snapshot: {:?}", snapshot);
 
@@ -810,7 +833,6 @@ fn advance_snapshot<P, R>(
 
     let mut recovery = snapshot.recovery.take();
     let mut max_lsn = snapshot.max_lsn;
-    let start_lsn = max_lsn - (max_lsn % io_buf_size as Lsn);
 
     let mut last_segment = None;
 
@@ -995,11 +1017,13 @@ fn advance_snapshot<P, R>(
     snapshot
 }
 
-fn read_snapshot<R>(config: Arc<Config>) -> Option<Snapshot<R>> {
+fn read_snapshot<R>(config: Arc<Config>) -> Option<Snapshot<R>>
+    where R: Debug + Clone + Serialize + DeserializeOwned + Send
+{
     let mut candidates = config.get_snapshot_files();
     if candidates.is_empty() {
         info!("no previous snapshot found");
-        return;
+        return None;
     }
 
     candidates.sort_by_key(|path| {
@@ -1041,7 +1065,9 @@ fn read_snapshot<R>(config: Arc<Config>) -> Option<Snapshot<R>> {
     Some(snapshot)
 }
 
-fn write_snapshot<R>(config: Arc<Config>, snapshot: &Snapshot<R>) {
+fn write_snapshot<R>(config: Arc<Config>, snapshot: &Snapshot<R>)
+    where R: Debug + Clone + Serialize + DeserializeOwned + Send
+{
     let raw_bytes = serialize(&snapshot, Infinite).unwrap();
 
         #[cfg(feature = "zstd")]

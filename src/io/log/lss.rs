@@ -123,18 +123,20 @@ impl Log {
 
     /// Return an iterator over the log, starting with
     /// a specified offset.
-    pub fn iter_from(&self, lsn: Lsn) -> Iter {
+    pub fn iter_from(&self, lsn: Lsn) -> LogIter {
         trace!("iterating from lsn {}", lsn);
         let io_buf_size = self.config.get_io_buf_size();
         let segment_base_lsn = lsn / io_buf_size as Lsn * io_buf_size as Lsn;
         let min_lsn = segment_base_lsn + SEG_HEADER_LEN as Lsn;
+
+        // corrected_lsn accounts for the segment header length
         let corrected_lsn = std::cmp::max(lsn, min_lsn);
 
         let segment_iter =
-            self.with_sa(|sa| sa.segment_snapshot_iter_from(lsn));
+            self.with_sa(|sa| sa.segment_snapshot_iter_from(corrected_lsn));
 
-        Iter {
-            config: &self.config,
+        LogIter {
+            config: self.config.clone(),
             max_lsn: self.stable_offset(),
             cur_lsn: corrected_lsn,
             segment_base: None,

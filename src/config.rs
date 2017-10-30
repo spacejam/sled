@@ -124,17 +124,6 @@ impl Config {
         (zero_copy_storage, get_zero_copy_storage, set_zero_copy_storage, bool, "disabling of the log segment copy cleaner")
     );
 
-    /// create a new `Tree` based on this configuration
-    pub fn tree(&self) -> Tree {
-        Tree::start(self.clone())
-    }
-
-    /// create a new `Log` based on this
-    /// configuration
-    pub fn log(&self) -> Log {
-        Log::start(self.clone())
-    }
-
     /// Retrieve a thread-local file handle to the
     /// configured underlying storage,
     /// or create a new one if this is the first time the
@@ -150,6 +139,8 @@ impl Config {
         })
     }
 
+    /// Get the temporary path of the database, used as temporary
+    /// storage if none is provided.
     pub fn get_tmp_path(&self) -> String {
         self.tmp_path.clone()
     }

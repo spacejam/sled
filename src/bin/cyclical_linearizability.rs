@@ -1,5 +1,7 @@
 extern crate sled;
 
+use std::sync::Arc;
+
 /// Verifies that the keys in the tree are correctly recovered.
 /// Panics if they are incorrect.
 /// Returns the key that should be resumed at, and the current cycle value.
@@ -81,8 +83,10 @@ fn main() {
         .path("cycles.db".to_string())
         .snapshot_after_ops(1 << 56);
 
+    let config = Arc::new(config);
+
     println!("restoring");
-    let tree = config.tree();
+    let tree = sled::Tree::start(config);
 
     println!("verifying");
     let (key, highest) = verify(&tree);
