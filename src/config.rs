@@ -216,9 +216,14 @@ impl Config {
         FinalConfig(Arc::new(self))
     }
 
-    /// Creates a `Tree` from this `Config`, consuming the `Config`
+    /// Consumes the `Config` and produces a `Tree` from it.
     pub fn tree(self) -> Tree {
         self.build().tree()
+    }
+
+    /// Consumes the `Config` and produces a `Log` from it.
+    pub fn log(self) -> Log {
+        self.build().log()
     }
 }
 
@@ -230,7 +235,6 @@ impl Drop for Config {
         }
 
         // Our files are temporary, so nuke them.
-
         let _res = fs::remove_file(self.tmp_path.clone());
 
         let candidates = self.get_snapshot_files();
@@ -259,5 +263,10 @@ impl FinalConfig {
     /// Start a `Tree` using this finalized configuration.
     pub fn tree(&self) -> Tree {
         Tree::start(self.clone())
+    }
+
+    /// Start a `Log` using this finalized configuration.
+    pub fn log(&self) -> Log {
+        Log::start(self.clone(), vec![])
     }
 }

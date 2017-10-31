@@ -424,38 +424,6 @@ impl SegmentAccountant {
         }
     }
 
-    // Scan the log file if we don't know of any Lsn offsets yet, and recover
-    // the order of segments, and the highest Lsn.
-    pub fn scan_segment_lsns(
-        min: Lsn,
-        config: FinalConfig,
-    ) -> BTreeMap<Lsn, LogID> {
-        let mut ordering = BTreeMap::new();
-
-        let segment_len = config.get_io_buf_size() as LogID;
-        let mut cursor = 0;
-
-        let cached_f = config.cached_file();
-        let mut f = cached_f.borrow_mut();
-        while let Ok(segment) = f.read_segment_header(cursor) {
-            // in the future this can be optimized to just read
-            // the initial header at that position... but we need to
-            // make sure the segment is not torn
-            trace!("SA scanned header during startup {:?}", segment);
-            if segment.ok && (segment.lsn != 0 || cursor == 0) &&
-                segment.lsn >= min
-            {
-                // if lsn is 0, this is free
-                ordering.insert(segment.lsn, cursor);
-            }
-            cursor += segment_len;
-        }
-
-        // Check that the last <# io buffers> segments properly
-        // link their previous segment pointers.
-        SegmentAccountant::clean_tail_tears(ordering, config, &mut f)
-    }
-
     // TODO do we need this at all in recovery once recovery is decoupled?
     fn free_segment(&mut self, lid: LogID, in_recovery: bool) {
         debug!("freeing segment {}", lid);
@@ -495,73 +463,6 @@ impl SegmentAccountant {
                 }
             });
         }
-    }
-
-    // This ensures that the last <# io buffers> segments on
-    // disk connect via their previous segment pointers in
-    // the header. This is important because we expect that
-    // the last <# io buffers> segments will join up, and we
-    // never reuse buffers within this safety range.
-    fn clean_tail_tears(
-        mut ordering: BTreeMap<Lsn, LogID>,
-        config: FinalConfig,
-        f: &mut File,
-    ) -> BTreeMap<Lsn, LogID> {
-        let safety_buffer = config.get_io_bufs();
-        let logical_tail: Vec<(Lsn, LogID)> = ordering
-            .iter()
-            .rev()
-            .take(safety_buffer)
-            .map(|(lsn, lid)| (*lsn, *lid))
-            .collect();
-
-        let mut tear_at = None;
-
-        for (i, &(_lsn, lid)) in logical_tail.iter().enumerate() {
-            if i + 1 == logical_tail.len() {
-                // we've reached the end, nothing to check after
-                break;
-            }
-
-            // check link
-            let segment_header = f.read_segment_header(lid).unwrap();
-            if !segment_header.ok {
-                error!(
-                    "read corrupted segment header during recovery of segment {}",
-                    lid
-                );
-                tear_at = Some(i);
-                continue;
-            }
-            let expected_prev = segment_header.prev;
-            let actual_prev = logical_tail[i + 1].1;
-
-            if expected_prev != actual_prev {
-                // detected a tear, everything after
-                error!(
-                    "detected corruption during recovery for segment at {}! \
-                    expected prev lid: {} actual: {} in last chain {:?}",
-                    lid,
-                    expected_prev,
-                    actual_prev,
-                    logical_tail
-                );
-                tear_at = Some(i);
-            }
-        }
-
-        if let Some(i) = tear_at {
-            // we need to chop off the elements after the tear
-            for &(lsn_to_chop, lid_to_chop) in &logical_tail[0..i] {
-                error!("clearing corrupted segment at lid {}", lid_to_chop);
-
-                ordering.remove(&lsn_to_chop);
-                // TODO write zeroes to these segments to reduce
-                // false recovery.
-            }
-        }
-
-        ordering
     }
 
     pub fn recovered_lid(&self) -> LogID {
@@ -844,4 +745,113 @@ impl SegmentAccountant {
         }
         idx
     }
+}
+
+// Scan the log file if we don't know of any Lsn offsets yet, and recover
+// the order of segments, and the highest Lsn.
+pub fn scan_segment_lsns(
+    min: Lsn,
+    config: FinalConfig,
+) -> BTreeMap<Lsn, LogID> {
+    let mut ordering = BTreeMap::new();
+
+    let segment_len = config.get_io_buf_size() as LogID;
+    let mut cursor = 0;
+
+    let cached_f = config.cached_file();
+    let mut f = cached_f.borrow_mut();
+    while let Ok(segment) = f.read_segment_header(cursor) {
+        // in the future this can be optimized to just read
+        // the initial header at that position... but we need to
+        // make sure the segment is not torn
+        trace!("SA scanned header during startup {:?}", segment);
+        if segment.ok && (segment.lsn != 0 || cursor == 0) &&
+            segment.lsn >= min
+        {
+            // if lsn is 0, this is free
+            ordering.insert(segment.lsn, cursor);
+        }
+        cursor += segment_len;
+    }
+
+    // Check that the last <# io buffers> segments properly
+    // link their previous segment pointers.
+    clean_tail_tears(ordering, config, &mut f)
+}
+
+// This ensures that the last <# io buffers> segments on
+// disk connect via their previous segment pointers in
+// the header. This is important because we expect that
+// the last <# io buffers> segments will join up, and we
+// never reuse buffers within this safety range.
+fn clean_tail_tears(
+    mut ordering: BTreeMap<Lsn, LogID>,
+    config: FinalConfig,
+    f: &mut File,
+) -> BTreeMap<Lsn, LogID> {
+    let safety_buffer = config.get_io_bufs();
+    let logical_tail: Vec<Lsn> = ordering
+        .iter()
+        .rev()
+        .take(safety_buffer)
+        .map(|(lsn, _lid)| *lsn)
+        .collect();
+
+    let io_buf_size = config.get_io_buf_size();
+
+    let mut tear_at = None;
+
+    // make sure the last <# io_bufs> segments are contiguous
+    for window in logical_tail.windows(2) {
+        if window[0] != window[1] + io_buf_size as Lsn {
+            tear_at = Some(window[1]);
+        }
+    }
+
+    // if any segment doesn't have a proper trailer, invalidate
+    // everything after it, since we can't preserve linearizability
+    // for segments after a tear.
+    for (&lsn, &lid) in &ordering {
+        let trailer_lid = lid + io_buf_size as LogID - SEG_TRAILER_LEN as LogID;
+        let trailer_res = f.read_segment_trailer(trailer_lid);
+
+        if trailer_res.is_err() {
+            // trailer could not be read
+            if let Some(existing_tear) = tear_at {
+                if existing_tear > lsn {
+                    tear_at = Some(lsn);
+                }
+            } else {
+                tear_at = Some(lsn);
+            }
+            break;
+        }
+
+        let trailer = trailer_res.unwrap();
+
+        if !trailer.ok || trailer.lsn != lsn || (lsn == 0 && lid != 0) {
+            // trailer's checksum failed, or
+            // the lsn is outdated, or
+            // the lsn is 0 but the lid isn't 0 (zeroed segment)
+            if let Some(existing_tear) = tear_at {
+                if existing_tear > lsn {
+                    tear_at = Some(lsn);
+                }
+            } else {
+                tear_at = Some(lsn);
+            }
+        }
+    }
+
+    if let Some(tear) = tear_at {
+        // we need to chop off the elements after the tear
+        ordering = ordering
+            .into_iter()
+            .filter(|&(lsn, _lid)| lsn <= tear)
+            .collect();
+        // TODO write zeroes to these segments to reduce
+        // false recovery.
+    }
+
+    ordering
 }

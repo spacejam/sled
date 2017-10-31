@@ -7,4 +7,7 @@ while [[ $? -eq 0 ]]; do
   RUST_LOG=sled=info target/release/cyclical_linearizability &
   sleep `shuf -i 5-15 -n 1`
   kill $!
+  # TODO sometimes randomly truncate the file, or corrupt part of it
+  # linearizability should still be preserved, and recovery should halt
+  # past the corruption.
 done

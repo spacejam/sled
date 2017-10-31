@@ -154,12 +154,11 @@ impl<PM, P, R> PageCache<PM, P, R>
         let corrected_lsn = std::cmp::max(old_snapshot.max_lsn, min_lsn);
 
         // recover snapshot with segments
-        let segment_iter = Box::new(
-            io::log::SegmentAccountant::scan_segment_lsns(
-                segment_base_lsn,
-                config.clone(),
-            ).into_iter(),
-        );
+        let segment_iter =
+            Box::new(
+                io::log::scan_segment_lsns(segment_base_lsn, config.clone())
+                    .into_iter(),
+            );
 
         let iter = LogIter {
             config: config.clone(),

@@ -24,7 +24,7 @@ type LogID = u64;
 #[test]
 #[ignore]
 fn more_log_reservations_than_buffers() {
-    let config = Config::default();
+    let config = Config::default().build();
     let log = config.log();
     let mut reservations = vec![];
     for _ in 0..config.get_io_bufs() + 1 {
@@ -40,7 +40,7 @@ fn more_log_reservations_than_buffers() {
 
 #[test]
 fn non_contiguous_log_flush() {
-    let conf = Config::default().io_buf_size(1000);
+    let conf = Config::default().io_buf_size(1000).build();
     let log = conf.log();
 
     let overhead = MSG_HEADER_LEN + SEG_HEADER_LEN + SEG_TRAILER_LEN;
@@ -57,7 +57,10 @@ fn non_contiguous_log_flush() {
 #[test]
 fn concurrent_logging() {
     // TODO linearize res bufs, verify they are correct
-    let conf = Config::default().io_buf_size(1000).flush_every_ms(Some(50));
+    let conf = Config::default()
+        .io_buf_size(1000)
+        .flush_every_ms(Some(50))
+        .build();
     let log = Arc::new(conf.log());
     let iobs2 = log.clone();
     let iobs3 = log.clone();
@@ -156,7 +159,7 @@ fn log_aborts() {
 
 #[test]
 fn log_iterator() {
-    let conf = Config::default().io_buf_size(1000);
+    let conf = Config::default().io_buf_size(1000).build();
     let log = conf.log();
     let (first_lsn, _) = log.write(b"".to_vec());
     log.write(b"1".to_vec());
@@ -240,7 +243,8 @@ fn snapshot_with_out_of_order_buffers() {
     let conf = Config::default()
         .io_buf_size(100)
         .io_bufs(2)
-        .snapshot_after_ops(5);
+        .snapshot_after_ops(5)
+        .build();
 
     let len = conf.get_io_buf_size() - SEG_HEADER_LEN - SEG_TRAILER_LEN -
         MSG_HEADER_LEN;
@@ -276,7 +280,7 @@ fn snapshot_with_out_of_order_buffers() {
 fn multi_segment_log_iteration() {
     // ensure segments are being linked
     // ensure trailers are valid
-    let conf = Config::default().io_buf_size(100);
+    let conf = Config::default().io_buf_size(100).build();
     let len = conf.get_io_buf_size() - SEG_HEADER_LEN - SEG_TRAILER_LEN -
         MSG_HEADER_LEN;
     let log = conf.log();
@@ -354,9 +358,10 @@ impl Arbitrary for OpVec {
 
 fn prop_log_works(ops: OpVec) -> bool {
     use self::Op::*;
-    let config = Config::default().io_buf_size(1024 * 8).flush_every_ms(
-        Some(1),
-    );
+    let config = Config::default()
+        .io_buf_size(1024 * 8)
+        .flush_every_ms(Some(1))
+        .build();
     // println!("testing {:?}", ops);
 
     let mut tip = 0;
