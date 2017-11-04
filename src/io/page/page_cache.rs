@@ -184,15 +184,13 @@ impl<PM, P, R> PageCache<PM, P, R>
             config.clone(),
         );
 
-        let segments = caught_up_snapshot.segments.clone();
-
         let mut pc = PageCache {
             t: materializer,
             config: config.clone(),
             inner: Radix::default(),
             max_pid: AtomicUsize::new(0),
             free: Arc::new(Stack::default()),
-            log: Arc::new(Log::start(config, segments)),
+            log: Arc::new(Log::start(config, caught_up_snapshot.clone())),
             lru: lru,
             updates: AtomicUsize::new(0),
             last_snapshot: Arc::new(
@@ -815,6 +813,7 @@ fn advance_snapshot<P, R>(
 
     let mut recovery = snapshot.recovery.take();
     let mut max_lsn = snapshot.max_lsn;
+    let mut last_lid = snapshot.last_lid;
 
     let mut last_segment = None;
 
@@ -829,7 +828,7 @@ fn advance_snapshot<P, R>(
         );
 
         if lsn <= max_lsn {
-            // don't process alread-processed Lsn's.
+            // don't process already-processed Lsn's.
             trace!(
                 "continuing in advance_snapshot, lsn {} log_id {} max_lsn {}",
                 lsn,
@@ -841,6 +840,7 @@ fn advance_snapshot<P, R>(
 
         assert!(lsn > max_lsn);
         max_lsn = lsn;
+        last_lid = log_id;
 
         let idx = log_id as usize / io_buf_size;
         if snapshot.segments.len() < idx + 1 {
@@ -988,6 +988,7 @@ fn advance_snapshot<P, R>(
     snapshot.free.sort();
     snapshot.free.reverse();
     snapshot.max_lsn = max_lsn;
+    snapshot.last_lid = last_lid;
     snapshot.recovery = recovery;
 
     write_snapshot(config, &snapshot);

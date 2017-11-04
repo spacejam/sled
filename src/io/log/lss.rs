@@ -62,7 +62,7 @@ impl Drop for Log {
 impl Log {
     /// Start the log, open or create the configured file,
     /// and optionally start the periodic buffer flush thread.
-    pub fn start(config: FinalConfig, segments: Vec<Segment>) -> Log {
+    pub fn start<R>(config: FinalConfig, snapshot: Snapshot<R>) -> Log {
         #[cfg(feature = "env_logger")]
         let _r = env_logger::init();
 
@@ -79,7 +79,7 @@ impl Log {
         }
 
 
-        let iobufs = Arc::new(IoBufs::start(config.clone(), segments));
+        let iobufs = Arc::new(IoBufs::start(config.clone(), snapshot));
 
         let flusher_shutdown = Arc::new(AtomicBool::new(false));
 

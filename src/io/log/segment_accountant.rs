@@ -78,8 +78,6 @@ use super::*;
 pub struct SegmentAccountant {
     // static or one-time set
     config: FinalConfig,
-    recovered_lsn: Lsn,
-    recovered_lid: LogID,
 
     // TODO these should be sharded to improve performance
     segments: Vec<Segment>,
@@ -306,19 +304,25 @@ impl Segment {
 
 impl SegmentAccountant {
     /// Create a new SegmentAccountant from previously recovered segments.
-    pub fn start(
+    pub fn start<R>(
         config: FinalConfig,
-        segments: Vec<Segment>,
+        snapshot: Snapshot<R>,
     ) -> SegmentAccountant {
         let mut ret = SegmentAccountant::default();
         ret.config = config;
-        ret.initialize_from_segments(segments);
+        ret.initialize_from_segments(snapshot.segments);
         ret
     }
 
     /// Called from the `PageCache` recovery logic, this initializes the
     /// `SegmentAccountant` based on recovered segment information.
     fn initialize_from_segments(&mut self, mut segments: Vec<Segment>) {
+        // populate ordering from segments
+        //
+        // use last segment as active even if it's full
+        //
+
+
         let safety_buffer = self.config.get_io_bufs();
         let logical_tail: Vec<LogID> = self.ordering
             .iter()
@@ -463,14 +467,6 @@ impl SegmentAccountant {
                 }
             });
         }
-    }
-
-    pub fn recovered_lid(&self) -> LogID {
-        self.recovered_lid
-    }
-
-    pub fn recovered_lsn(&self) -> Lsn {
-        self.recovered_lsn
     }
 
     /// Causes all new allocations to occur at the end of the file, which

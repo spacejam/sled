@@ -45,7 +45,7 @@ pub(super) struct IoBufs {
 /// `IoBufs` is a set of lock-free buffers for coordinating
 /// writes to underlying storage.
 impl IoBufs {
-    pub fn start(config: FinalConfig, segments: Vec<Segment>) -> IoBufs {
+    pub fn start<R>(config: FinalConfig, snapshot: Snapshot<R>) -> IoBufs {
         let path = config.get_path();
 
         let dir = Path::new(&path).parent().expect(
@@ -66,22 +66,41 @@ impl IoBufs {
             }
         }
 
-        let io_buf_size = config.get_io_buf_size();
-
-        let mut segment_accountant =
-            SegmentAccountant::start(config.clone(), segments);
-
-        let bufs = rep_no_copy![IoBuf::new(io_buf_size); config.get_io_bufs()];
-
-        let current_buf = 0;
-        let recovered_lsn = segment_accountant.recovered_lsn();
-        let recovered_lid = segment_accountant.recovered_lid();
-
         // open file for writing
         let mut options = std::fs::OpenOptions::new();
         options.create(true);
         options.write(true);
         let mut file = options.open(&path).unwrap();
+
+        let io_buf_size = config.get_io_buf_size();
+
+        let snapshot_max_lsn = snapshot.max_lsn;
+        let snapshot_last_lid = snapshot.last_lid;
+
+        let (recovered_lsn, recovered_lid) = if snapshot_max_lsn == 0 {
+            (0, 0)
+        } else {
+            match file.read_message(
+                snapshot_last_lid,
+                io_buf_size,
+                config.get_use_compression(),
+            ) {
+                Ok(LogRead::Flush(_lsn, _buf, len)) => (
+                    snapshot_max_lsn +
+                        len as Lsn,
+                    snapshot_last_lid +
+                        len as LogID,
+                ),
+                _ => panic!("failed to read last log item"),
+            }
+        };
+
+        let mut segment_accountant =
+            SegmentAccountant::start(config.clone(), snapshot);
+
+        let bufs = rep_no_copy![IoBuf::new(io_buf_size); config.get_io_bufs()];
+
+        let current_buf = 0;
 
         trace!(
             "starting IoBufs with recovered_lsn: {} \
@@ -90,10 +109,12 @@ impl IoBufs {
             recovered_lid
         );
 
-        if recovered_lid % io_buf_size as LogID == 0 {
-            // clean offset, need to create a new one and initialize it
+        if recovered_lid == 0 {
+            // no recovered state, start fresh
+            assert_eq!(recovered_lid, recovered_lsn);
             let iobuf = &bufs[current_buf];
-            let (lid, last_given) = segment_accountant.next(recovered_lsn);
+            let (lid, last_given) = segment_accountant.next(0);
+
             iobuf.set_lid(lid);
             iobuf.set_capacity(io_buf_size - SEG_TRAILER_LEN);
             iobuf.store_segment_header(recovered_lsn, last_given);
