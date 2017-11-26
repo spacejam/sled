@@ -127,7 +127,10 @@ impl<T: Send + 'static> Stack<T> {
                         &guard,
                     ) {
                         Ok(_) => unsafe {
-                            guard.defer(move || head.into_owned());
+                            guard.defer(move || {
+                                let head: *mut Node<T> = Box::into_raw(head.into_owned().into());
+                                drop(Vec::from_raw_parts(head, 0, 1));
+                            });
                             return Some(ptr::read(&h.inner));
                         },
                         Err(h) => head = h.current,
