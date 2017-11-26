@@ -2,7 +2,7 @@
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::*;
 
-use coco::epoch::{Atomic, Owned, Ptr, Scope, pin, unprotected};
+use epoch::{Atomic, Owned, Shared, Guard, pin, unprotected};
 
 use super::*;
 
@@ -35,8 +35,8 @@ impl<T> Default for Node<T> {
 }
 
 impl<T> Node<T> {
-    fn upgrade(&self, scope: &Scope) {
-        let children = self.children.load(Acquire, scope);
+    fn upgrade(&self, guard: &Scope) {
+        let children = self.children.load(Acquire, guard);
         let &(keys, ptrs) = children.deref();
 
         assert_eq!(keys.len(), ptrs.len());
@@ -59,10 +59,10 @@ impl<T> Node<T> {
         pin(|scope| {})
     }
 
-    fn claim(&self, key: u8, scope: &Scope) -> usize {
+    fn claim(&self, key: u8, guard: &Scope) -> usize {
         loop {
             // try to claim spot in keys vec
-            let children = self.children.load(Acquire, scope);
+            let children = self.children.load(Acquire, guard);
             let (keys, _ptrs) = *children;
 
             let predicate = |&&k| k.compare_and_swap(0, key as usize, SeqCst) == 0;
@@ -73,7 +73,7 @@ impl<T> Node<T> {
             }
 
             // if keys vec is full, try to upgrade
-            self.upgrade(scope);
+            self.upgrade(guard);
         }
     }
 }

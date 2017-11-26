@@ -4,7 +4,7 @@ use std::ptr;
 use std::ops::Deref;
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 
-use coco::epoch::{Atomic, Owned, Ptr, Scope, pin, unprotected};
+use epoch::{Atomic, Owned, Shared, Guard, pin, unprotected};
 
 use {debug_delay, test_fail};
 
@@ -17,12 +17,10 @@ pub struct Node<T: Send + 'static> {
 impl<T: Send + 'static> Drop for Node<T> {
     fn drop(&mut self) {
         unsafe {
-            unprotected(|scope| {
-                let next = self.next.load(Relaxed, scope).as_raw();
-                if !next.is_null() {
-                    drop(Box::from_raw(next as *mut Node<T>));
-                }
-            })
+            let next = self.next.load(Relaxed, unprotected()).as_raw();
+            if !next.is_null() {
+                drop(Box::from_raw(next as *mut Node<T>));
+            }
         }
     }
 }
@@ -44,12 +42,10 @@ impl<T: Send + 'static> Default for Stack<T> {
 impl<T: Send + 'static> Drop for Stack<T> {
     fn drop(&mut self) {
         unsafe {
-            unprotected(|scope| {
-                let curr = self.head.load(Relaxed, scope).as_raw();
-                if !curr.is_null() {
-                    drop(Box::from_raw(curr as *mut Node<T>));
-                }
-            })
+            let curr = self.head.load(Relaxed, unprotected()).as_raw();
+            if !curr.is_null() {
+                drop(Box::from_raw(curr as *mut Node<T>));
+            }
         }
     }
 }
@@ -58,23 +54,22 @@ impl<T> Debug for Stack<T>
     where T: Debug + Send + 'static + Sync
 {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        pin(|scope| {
-            let head = self.head(scope);
-            let iter = StackIter::from_ptr(head, scope);
+        let guard = pin();
+        let head = self.head(&guard);
+        let iter = StackIter::from_ptr(head, &guard);
 
-            formatter.write_str("Stack [")?;
-            let mut written = false;
-            for node in iter {
-                if written {
-                    formatter.write_str(", ")?;
-                }
-                formatter.write_str(&*format!("({:?}) ", &node as *const _))?;
-                node.fmt(formatter)?;
-                written = true;
+        formatter.write_str("Stack [")?;
+        let mut written = false;
+        for node in iter {
+            if written {
+                formatter.write_str(", ")?;
             }
-            formatter.write_str("]")?;
-            Ok(())
-        })
+            formatter.write_str(&*format!("({:?}) ", &node as *const _))?;
+            node.fmt(formatter)?;
+            written = true;
+        }
+        formatter.write_str("]")?;
+        Ok(())
     }
 }
 
@@ -86,8 +81,8 @@ impl<T: Send + 'static> Deref for Node<T> {
 }
 
 impl<T: Send + 'static> Node<T> {
-    pub fn next<'s>(&self, scope: &'s Scope) -> Ptr<'s, Node<T>> {
-        self.next.load(SeqCst, scope)
+    pub fn next<'g>(&self, guard: &'g Guard) -> Shared<'g, Node<T>> {
+        self.next.load(SeqCst, guard)
     }
 }
 
@@ -101,58 +96,55 @@ impl<T: Send + 'static> Stack<T> {
         });
 
         unsafe {
-            unprotected(|scope| {
-                let node = node.into_ptr(scope);
+            let node = node.into_shared(unprotected());
 
-                loop {
-                    let head = self.head(scope);
-                    node.deref().next.store(head, SeqCst);
-                    if self.head
-                        .compare_and_swap(head, node, SeqCst, scope)
-                        .is_ok()
-                    {
-                        return;
-                    }
+            loop {
+                let head = self.head(unprotected());
+                node.deref().next.store(head, SeqCst);
+                if self.head
+                    .compare_and_set(head, node, SeqCst, unprotected())
+                    .is_ok()
+                {
+                    return;
                 }
-            })
+            }
         }
     }
 
     /// Pop the next item off the stack. Returns None if nothing is there.
     pub fn pop(&self) -> Option<T> {
         debug_delay();
-        pin(|scope| {
-            let mut head = self.head(scope);
-            loop {
-                match unsafe { head.as_ref() } {
-                    Some(h) => {
-                        let next = h.next.load(SeqCst, scope);
-                        match self.head.compare_and_swap(
-                            head,
-                            next,
-                            SeqCst,
-                            scope,
-                        ) {
-                            Ok(()) => unsafe {
-                                scope.defer_free(head);
-                                return Some(ptr::read(&h.inner));
-                            },
-                            Err(h) => head = h,
-                        }
+        let guard = pin();
+        let mut head = self.head(&guard);
+        loop {
+            match unsafe { head.as_ref() } {
+                Some(h) => {
+                    let next = h.next.load(SeqCst, &guard);
+                    match self.head.compare_and_set(
+                        head,
+                        next,
+                        SeqCst,
+                        &guard,
+                    ) {
+                        Ok(_) => unsafe {
+                            guard.defer(move || head.into_owned());
+                            return Some(ptr::read(&h.inner));
+                        },
+                        Err(h) => head = h.current,
                     }
-                    None => return None,
                 }
+                None => return None,
             }
-        })
+        }
     }
 
     /// compare and push
-    pub fn cap<'s>(
+    pub fn cap<'g>(
         &self,
-        old: Ptr<Node<T>>,
+        old: Shared<Node<T>>,
         new: T,
-        scope: &'s Scope,
-    ) -> Result<Ptr<'s, Node<T>>, Ptr<'s, Node<T>>> {
+        guard: &'g Guard,
+    ) -> Result<Shared<'g, Node<T>>, Shared<'g, Node<T>>> {
         debug_delay();
         let node = Owned::new(Node {
             inner: new,
@@ -161,15 +153,15 @@ impl<T: Send + 'static> Stack<T> {
 
         node.next.store(old, SeqCst);
 
-        let node = node.into_ptr(scope);
+        let node = node.into_shared(guard);
 
-        let res = self.head.compare_and_swap(old, node, SeqCst, scope);
+        let res = self.head.compare_and_set(old, node, SeqCst, guard);
         if res.is_err() {
             unsafe {
-                node.deref().next.store(Ptr::null(), SeqCst);
-                scope.defer_drop(node);
+                node.deref().next.store(Shared::null(), SeqCst);
+                guard.defer(move || node.into_owned());
             }
-            Err(res.unwrap_err())
+            Err(res.unwrap_err().current)
         } else if test_fail() {
             unimplemented!()
         } else {
@@ -178,52 +170,52 @@ impl<T: Send + 'static> Stack<T> {
     }
 
     /// attempt consolidation
-    pub fn cas<'s>(
+    pub fn cas<'g>(
         &self,
-        old: Ptr<'s, Node<T>>,
-        new: Ptr<'s, Node<T>>,
-        scope: &'s Scope,
-    ) -> Result<Ptr<'s, Node<T>>, Ptr<'s, Node<T>>> {
+        old: Shared<'g, Node<T>>,
+        new: Shared<'g, Node<T>>,
+        guard: &'g Guard,
+    ) -> Result<Shared<'g, Node<T>>, Shared<'g, Node<T>>> {
         debug_delay();
-        let res = self.head.compare_and_swap(old, new, SeqCst, scope);
+        let res = self.head.compare_and_set(old, new, SeqCst, guard);
         if res.is_ok() && !test_fail() {
             if !old.is_null() {
-                unsafe { scope.defer_drop(old) };
+                unsafe { guard.defer(move || old.into_owned()) };
             }
             Ok(new)
         } else {
             if !new.is_null() {
-                unsafe { scope.defer_drop(new) };
+                unsafe { guard.defer(move || new.into_owned()) };
             }
 
-            Err(res.unwrap_err())
+            Err(res.unwrap_err().current)
         }
     }
 
     /// Returns the current head pointer of the stack, which can
     /// later be used as the key for cas and cap operations.
-    pub fn head<'s>(&self, scope: &'s Scope) -> Ptr<'s, Node<T>> {
-        self.head.load(SeqCst, scope)
+    pub fn head<'g>(&self, guard: &'g Guard) -> Shared<'g, Node<T>> {
+        self.head.load(SeqCst, guard)
     }
 }
 
 pub struct StackIter<'a, T>
     where T: 'a + Send + 'static + Sync
 {
-    inner: Ptr<'a, Node<T>>,
-    scope: &'a Scope,
+    inner: Shared<'a, Node<T>>,
+    guard: &'a Guard,
 }
 
 impl<'a, T> StackIter<'a, T>
     where T: 'a + Send + 'static + Sync
 {
     pub fn from_ptr<'b>(
-        ptr: Ptr<'b, Node<T>>,
-        scope: &'b Scope,
+        ptr: Shared<'b, Node<T>>,
+        guard: &'b Guard,
     ) -> StackIter<'b, T> {
         StackIter {
             inner: ptr,
-            scope: scope,
+            guard: guard,
         }
     }
 }
@@ -239,7 +231,7 @@ impl<'a, T> Iterator for StackIter<'a, T>
         } else {
             unsafe {
                 let ret = &self.inner.deref().inner;
-                self.inner = self.inner.deref().next.load(SeqCst, self.scope);
+                self.inner = self.inner.deref().next.load(SeqCst, self.guard);
                 Some(ret)
             }
         }
@@ -258,7 +250,7 @@ pub fn node_from_frag_vec<T>(from: Vec<T>) -> Owned<Node<T>>
         });
 
         if let Some(last) = last {
-            node.next.store_owned(last, SeqCst);
+            node.next.store(last, SeqCst);
         }
 
         last = Some(node);

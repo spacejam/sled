@@ -2,7 +2,7 @@
 
 use std::sync::atomic::Ordering::SeqCst;
 
-use coco::epoch::{Atomic, Owned, Ptr, Scope, pin, unprotected};
+use epoch::{Atomic, Owned, Shared, Guard, pin, unprotected};
 
 use {PageID, debug_delay, test_fail};
 
@@ -35,22 +35,21 @@ impl<T: Send + 'static> Default for Node<T> {
 impl<T: Send + 'static> Drop for Node<T> {
     fn drop(&mut self) {
         unsafe {
-            pin(|scope| {
-                let inner = self.inner.load(SeqCst, scope).as_raw();
-                if !inner.is_null() {
-                    drop(Box::from_raw(inner as *mut T));
-                }
+            let guard = pin();
+            let inner = self.inner.load(SeqCst, &guard).as_raw();
+            if !inner.is_null() {
+                drop(Box::from_raw(inner as *mut T));
+            }
 
-                let children: Vec<*const Node<T>> = self.children
-                    .iter()
-                    .map(|c| c.load(SeqCst, scope).as_raw())
-                    .filter(|c| !c.is_null())
-                    .collect();
+            let children: Vec<*const Node<T>> = self.children
+                .iter()
+                .map(|c| c.load(SeqCst, &guard).as_raw())
+                .filter(|c| !c.is_null())
+                .collect();
 
-                for child in children {
-                    drop(Box::from_raw(child as *mut Node<T>));
-                }
-            })
+            for child in children {
+                drop(Box::from_raw(child as *mut Node<T>));
+            }
         }
     }
 }
@@ -68,7 +67,7 @@ impl<T> Default for Radix<T>
     fn default() -> Radix<T> {
         let head = Owned::new(Node::default());
         Radix {
-            head: Atomic::from_owned(head),
+            head: Atomic::from(head),
         }
     }
 }
@@ -78,10 +77,8 @@ impl<T> Drop for Radix<T>
 {
     fn drop(&mut self) {
         unsafe {
-            unprotected(|scope| {
-                let head = self.head.load(SeqCst, scope).as_raw();
-                drop(Box::from_raw(head as *mut Node<T>));
-            })
+            let head = self.head.load(SeqCst, unprotected()).as_raw();
+            drop(Box::from_raw(head as *mut Node<T>));
         }
     }
 }
@@ -92,71 +89,70 @@ impl<T> Radix<T>
     /// Try to create a new item in the tree.
     pub fn insert(&self, pid: PageID, item: T) -> Result<(), ()> {
         debug_delay();
-        pin(|scope| {
-            let new = Owned::new(item).into_ptr(scope);
-            self.cas(pid, Ptr::null(), new, scope).map(|_| ()).map_err(
-                |_| (),
-            )
-        })
+        let guard = pin();
+        let new = Owned::new(item).into_shared(&guard);
+        self.cas(pid, Shared::null(), new, &guard).map(|_| ()).map_err(
+            |_| (),
+        )
     }
 
     /// Atomically swap the previous value in a tree with a new one.
-    pub fn swap<'s>(
+    pub fn swap<'g>(
         &self,
         pid: PageID,
-        new: Ptr<'s, T>,
-        scope: &'s Scope,
-    ) -> Ptr<'s, T> {
+        new: Shared<'g, T>,
+        guard: &'g Guard,
+    ) -> Shared<'g, T> {
         debug_delay();
-        let tip = traverse(self.head.load(SeqCst, scope), pid, true, scope);
-        unsafe { tip.deref().inner.swap(new, SeqCst, scope) }
+        let tip = traverse(self.head.load(SeqCst, guard), pid, true, guard);
+        unsafe { tip.deref().inner.swap(new, SeqCst, guard) }
     }
 
     /// Compare and swap an old value to a new one.
-    pub fn cas<'s>(
+    pub fn cas<'g>(
         &self,
         pid: PageID,
-        old: Ptr<'s, T>,
-        new: Ptr<'s, T>,
-        scope: &'s Scope,
-    ) -> Result<Ptr<'s, T>, Ptr<'s, T>> {
+        old: Shared<'g, T>,
+        new: Shared<'g, T>,
+        guard: &'g Guard,
+    ) -> Result<Shared<'g, T>, Shared<'g, T>> {
         debug_delay();
-        let tip = traverse(self.head.load(SeqCst, scope), pid, true, scope);
+        let tip = traverse(self.head.load(SeqCst, guard), pid, true, guard);
 
         if test_fail() {
             // TODO
         }
 
         unsafe {
-            match tip.deref().inner.compare_and_swap(old, new, SeqCst, scope) {
-                Ok(()) => {
+            match tip.deref().inner.compare_and_set(old, new, SeqCst, guard) {
+                Ok(_) => {
                     if !old.is_null() {
-                        scope.defer_drop(old);
+                        guard.defer(move || old.into_owned());
                     }
                     Ok(new)
                 }
-                Err(e) => Err(e),
+                Err(e) => Err(e.current),
             }
         }
     }
 
     /// Try to get a value from the tree.
-    pub fn get<'s>(&self, pid: PageID, scope: &'s Scope) -> Option<Ptr<'s, T>> {
+    pub fn get<'g>(&self, pid: PageID, guard: &'g Guard) -> Option<Shared<'g, T>> {
         debug_delay();
-        let tip = traverse(self.head.load(SeqCst, scope), pid, false, scope);
+        let tip = traverse(self.head.load(SeqCst, guard), pid, false, guard);
         if tip.is_null() {
             return None;
         }
-        let res = unsafe { tip.deref().inner.load(SeqCst, scope) };
+        let res = unsafe { tip.deref().inner.load(SeqCst, guard) };
         if res.is_null() { None } else { Some(res) }
     }
 
     /// Delete a value from the tree, returning the old value if it was set.
-    pub fn del<'s>(&self, pid: PageID, scope: &'s Scope) -> Option<Ptr<'s, T>> {
+    pub fn del<'g>(&self, pid: PageID, guard: &'g Guard) -> Option<Shared<'g, T>> {
         debug_delay();
-        let old = self.swap(pid, Ptr::null(), scope);
+        let old = self.swap(pid, Shared::null(), guard);
         if !old.is_null() {
-            unsafe { scope.defer_drop(old) };
+            unsafe { guard.defer(move || old.into_owned()); }
             Some(old)
         } else {
             None
@@ -165,12 +161,12 @@ impl<T> Radix<T>
 }
 
 #[inline(always)]
-fn traverse<'s, T: 'static + Send>(
-    ptr: Ptr<'s, Node<T>>,
+fn traverse<'g, T: 'static + Send>(
+    ptr: Shared<'g, Node<T>>,
     pid: PageID,
     create_intermediate: bool,
-    scope: &'s Scope,
-) -> Ptr<'s, Node<T>> {
+    guard: &'g Guard,
+) -> Shared<'g, Node<T>> {
     if pid == 0 {
         return ptr;
     }
@@ -178,19 +174,19 @@ fn traverse<'s, T: 'static + Send>(
     let (first_bits, remainder) = split_fanout(pid);
     let child_index = first_bits;
     let children = unsafe { &ptr.deref().children };
-    let mut next_ptr = children[child_index].load(SeqCst, scope);
+    let mut next_ptr = children[child_index].load(SeqCst, guard);
 
     if next_ptr.is_null() {
         if !create_intermediate {
-            return Ptr::null();
+            return Shared::null();
         }
 
-        let next_child = Owned::new(Node::default()).into_ptr(scope);
-        let ret = children[child_index].compare_and_swap(
+        let next_child = Owned::new(Node::default()).into_shared(guard);
+        let ret = children[child_index].compare_and_set(
             next_ptr,
             next_child,
             SeqCst,
-            scope,
+            guard,
         );
         if ret.is_ok() && !test_fail() {
             // CAS worked
@@ -198,11 +194,11 @@ fn traverse<'s, T: 'static + Send>(
         } else {
             // another thread beat us, drop unused created
             // child and use what is already set
-            next_ptr = ret.unwrap_err();
+            next_ptr = ret.unwrap_err().current;
         }
     }
 
-    traverse(next_ptr, remainder, create_intermediate, scope)
+    traverse(next_ptr, remainder, create_intermediate, guard)
 }
 
 #[test]
@@ -213,22 +209,23 @@ fn test_split_fanout() {
 
 #[test]
 fn basic_functionality() {
-    pin(|scope| unsafe {
+    unsafe {
+        let guard = pin();
         let rt = Radix::default();
         rt.insert(0, 5).unwrap();
-        let ptr = rt.get(0, scope).unwrap();
+        let ptr = rt.get(0, &guard).unwrap();
         assert_eq!(ptr.deref(), &5);
-        rt.cas(0, ptr, Owned::new(6).into_ptr(scope), scope)
+        rt.cas(0, ptr, Owned::new(6).into_shared(&guard), &guard)
             .unwrap();
-        assert_eq!(rt.get(0, scope).unwrap().deref(), &6);
-        rt.del(0, scope);
-        assert!(rt.get(0, scope).is_none());
+        assert_eq!(rt.get(0, &guard).unwrap().deref(), &6);
+        rt.del(0, &guard);
+        assert!(rt.get(0, &guard).is_none());
 
         rt.insert(321, 2).unwrap();
-        assert_eq!(rt.get(321, scope).unwrap().deref(), &2);
-        assert!(rt.get(322, scope).is_none());
+        assert_eq!(rt.get(321, &guard).unwrap().deref(), &2);
+        assert!(rt.get(322, &guard).is_none());
         rt.insert(322, 3).unwrap();
-        assert_eq!(rt.get(322, scope).unwrap().deref(), &3);
-        assert_eq!(rt.get(321, scope).unwrap().deref(), &2);
-    })
+        assert_eq!(rt.get(322, &guard).unwrap().deref(), &3);
+        assert_eq!(rt.get(321, &guard).unwrap().deref(), &2);
+    }
 }

@@ -45,7 +45,7 @@ version = "0.3"
 # features = ["max_level_off"]
 
 [dependencies]
-coco = "0.2"
+crossbeam-epoch = "0.1"
 bincode = "0.8"
 serde = "1.0"
 serde_derive = "1.0"
