@@ -267,6 +267,7 @@ impl FinalConfig {
 
     /// Start a `Log` using this finalized configuration.
     pub fn log(&self) -> Log {
-        Log::start::<()>(self.clone(), Snapshot::default())
+        let snapshot = Snapshot::default();
+        Log::start::<()>(self.clone(), snapshot)
     }
 }

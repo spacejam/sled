@@ -21,6 +21,7 @@ use sled::{Config, Log, LogRead, MSG_HEADER_LEN, SEG_HEADER_LEN,
 type Lsn = u64;
 type LogID = u64;
 
+
 #[test]
 #[ignore]
 fn more_log_reservations_than_buffers() {
@@ -695,7 +696,7 @@ fn log_bug_18() {
 
 #[test]
 fn log_bug_19() {
-    // postmortem: this was stallin]g in make_stable
+    // postmortem: this was stalling in make_stable
     // postmortem 2: SA recovery skipped the first segment because we
     // were not properly adding the empty tip to the free list.
     use Op::*;

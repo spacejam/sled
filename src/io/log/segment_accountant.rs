@@ -310,18 +310,26 @@ impl SegmentAccountant {
     ) -> SegmentAccountant {
         let mut ret = SegmentAccountant::default();
         ret.config = config;
-        ret.initialize_from_segments(snapshot.segments);
+        ret.initialize_from_snapshot(snapshot.segments);
+
+        if snapshot.last_lid > ret.tip {
+            let io_buf_size = ret.config.get_io_buf_size();
+            let last_idx = snapshot.last_lid / io_buf_size as LogID;
+            let new_idx = last_idx + 1;
+            let new_tip = new_idx * io_buf_size as LogID;
+            ret.tip = new_tip;
+        }
+
         ret
     }
 
     /// Called from the `PageCache` recovery logic, this initializes the
     /// `SegmentAccountant` based on recovered segment information.
-    fn initialize_from_segments(&mut self, mut segments: Vec<Segment>) {
+    fn initialize_from_snapshot(&mut self, mut segments: Vec<Segment>) {
         // populate ordering from segments
         //
         // use last segment as active even if it's full
         //
-
 
         let safety_buffer = self.config.get_io_bufs();
         let logical_tail: Vec<LogID> = self.ordering
@@ -331,12 +339,17 @@ impl SegmentAccountant {
             .map(|(_lsn, lid)| *lid)
             .collect();
 
+        let io_buf_size = self.config.get_io_buf_size();
+
         for (idx, ref mut segment) in segments.iter_mut().enumerate() {
             if segment.lsn.is_none() {
                 continue;
             }
-            let segment_start = idx as LogID *
-                self.config.get_io_buf_size() as LogID;
+            let segment_start = idx as LogID * io_buf_size as LogID;
+
+            if segment_start > self.tip {
+                self.tip = segment_start + io_buf_size as LogID;
+            }
 
             let lsn = segment.lsn();
 
@@ -353,7 +366,7 @@ impl SegmentAccountant {
                 }
 
                 self.to_clean.remove(&segment_start);
-                trace!("pid {} freed @initialize_from_segments", segment_start);
+                trace!("pid {} freed @initialize_from_snapshot", segment_start);
 
                 if logical_tail.contains(&segment_start) {
                     // we depend on the invariant that the last segments
@@ -368,7 +381,7 @@ impl SegmentAccountant {
                 {
                     // don't give out this segment twice
                     trace!(
-                        "freeing segment {} from initialize_from_segments, tip: {}",
+                        "freeing segment {} from initialize_from_snapshot, tip: {}",
                         segment_start,
                         self.tip
                     );
@@ -379,7 +392,7 @@ impl SegmentAccountant {
             {
                 // can be cleaned
                 trace!(
-                    "setting segment {} to Draining from initialize_from_segments",
+                    "setting segment {} to Draining from initialize_from_snapshot",
                     segment_start
                 );
 
@@ -408,9 +421,7 @@ impl SegmentAccountant {
         } else {
             // this is basically just for when we recover with a single
             // empty-yet-initialized segment
-            debug!(
-                "pagecache recovered no segments so not initializing from any"
-            );
+            debug!("recovered no segments so not initializing from any");
         }
     }
 
@@ -699,7 +710,8 @@ impl SegmentAccountant {
         self.ordering.insert(lsn, lid);
 
         debug!(
-            "segment accountant returning offset: {} paused: {} last: {} on deck: {:?}",
+            "segment accountant returning offset: {} \
+            paused: {} last: {} on deck: {:?}",
             lid,
             self.pause_rewriting,
             last_given,
@@ -721,7 +733,8 @@ impl SegmentAccountant {
         &mut self,
         lsn: Lsn,
     ) -> Box<Iterator<Item = (Lsn, LogID)>> {
-        // assert!( self.pause_rewriting, "must pause rewriting before iterating over segments");
+        // assert!( self.pause_rewriting, "must pause rewriting before \
+        // iterating over segments");
 
         let segment_len = self.config.get_io_buf_size() as Lsn;
         let normalized_lsn = lsn / segment_len * segment_len;
@@ -743,8 +756,8 @@ impl SegmentAccountant {
     }
 }
 
-// Scan the log file if we don't know of any Lsn offsets yet, and recover
-// the order of segments, and the highest Lsn.
+// Scan the log file if we don't know of any Lsn offsets yet,
+// and recover the order of segments, and the highest Lsn.
 pub fn scan_segment_lsns(
     min: Lsn,
     config: FinalConfig,

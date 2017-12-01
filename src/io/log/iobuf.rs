@@ -45,7 +45,7 @@ pub(super) struct IoBufs {
 /// `IoBufs` is a set of lock-free buffers for coordinating
 /// writes to underlying storage.
 impl IoBufs {
-    pub fn start<R>(config: FinalConfig, snapshot: Snapshot<R>) -> IoBufs {
+    pub fn start<R>(config: FinalConfig, mut snapshot: Snapshot<R>) -> IoBufs {
         let path = config.get_path();
 
         let dir = Path::new(&path).parent().expect(
@@ -78,7 +78,28 @@ impl IoBufs {
         let snapshot_last_lid = snapshot.last_lid;
 
         let (recovered_lsn, recovered_lid) = if snapshot_max_lsn == 0 {
-            (0, 0)
+            // This code exists for recovering Log instances without
+            // PageCaches performing .
+            let len = file.metadata().unwrap().len();
+            let next_len = if len <= SEG_HEADER_LEN as LogID {
+                0
+            } else {
+                // bump it to the next segment
+                let idx = len / io_buf_size as LogID;
+                let new_idx = idx + 1;
+                new_idx * io_buf_size as LogID
+            };
+
+            if next_len != 0 {
+                warn!(
+                    "using non-snapshot recovered length AND lsn of {}",
+                    next_len
+                );
+            }
+
+            snapshot.max_lsn = next_len;
+            snapshot.last_lid = next_len;
+            (next_len, next_len)
         } else {
             match file.read_message(
                 snapshot_last_lid,
@@ -109,11 +130,11 @@ impl IoBufs {
             recovered_lid
         );
 
-        if recovered_lid == 0 {
-            // no recovered state, start fresh
+        if recovered_lsn % io_buf_size as Lsn == 0 {
+            // recovering at segment boundary
             assert_eq!(recovered_lid, recovered_lsn);
             let iobuf = &bufs[current_buf];
-            let (lid, last_given) = segment_accountant.next(0);
+            let (lid, last_given) = segment_accountant.next(recovered_lsn);
 
             iobuf.set_lid(lid);
             iobuf.set_capacity(io_buf_size - SEG_TRAILER_LEN);

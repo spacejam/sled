@@ -80,6 +80,7 @@ impl LogReader for File {
         trace!("reading message at lid {}", id);
         let start = clock();
         let seg_start = id / segment_len as LogID * segment_len as LogID;
+        println!("seg_start: {} id: {}", seg_start, id);
         assert!(seg_start + MSG_HEADER_LEN as LogID <= id);
 
         let ceiling = seg_start + segment_len as LogID -

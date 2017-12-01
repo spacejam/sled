@@ -14,7 +14,7 @@ mod page_cache;
 mod snapshot;
 
 pub use self::page_cache::PageCache;
-pub use self::snapshot::Snapshot;
+pub use self::snapshot::{Snapshot, advance_snapshot, read_snapshot};
 
 /// A user of a `PageCache` needs to provide a `Materializer` which
 /// handles the merging of page fragments.
