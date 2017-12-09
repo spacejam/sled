@@ -8,7 +8,6 @@ use rayon::prelude::*;
 #[cfg(feature = "zstd")]
 use zstd::block::{compress, decompress};
 
-use io::log::LogIter;
 use super::*;
 
 /// A lock-free pagecache which supports fragmented pages
@@ -143,30 +142,16 @@ impl<PM, P, R> PageCache<PM, P, R>
             Snapshot::default()
         });
 
-        let segment_base_lsn = old_snapshot.max_lsn /
-            config.get_io_buf_size() as Lsn *
-            config.get_io_buf_size() as Lsn;
-        let min_lsn = segment_base_lsn + SEG_HEADER_LEN as Lsn;
-
-        // corrected_lsn accounts for the segment header length
-        let corrected_lsn = std::cmp::max(old_snapshot.max_lsn, min_lsn);
-
-        // recover snapshot with segments
-        let segment_iter =
-            Box::new(
-                io::log::scan_segment_lsns(segment_base_lsn, config.clone())
-                    .into_iter(),
-            );
-
-        let iter = LogIter {
+        let mut pc = PageCache {
+            t: materializer,
             config: config.clone(),
-            max_lsn: std::u64::MAX,
-            cur_lsn: corrected_lsn,
-            segment_base: None,
-            segment_iter: segment_iter,
-            segment_len: config.get_io_buf_size(),
-            use_compression: config.get_use_compression(),
-            trailer: None,
+            inner: Radix::default(),
+            max_pid: AtomicUsize::new(0),
+            free: Arc::new(Stack::default()),
+            log: Arc::new(Log::start(config, old_snapshot.clone())),
+            lru: lru,
+            updates: AtomicUsize::new(0),
+            last_snapshot: Arc::new(Mutex::new(Some(old_snapshot.clone()))),
         };
 
         // we call advance_snapshot here to "catch-up" the snapshot using the
@@ -175,29 +160,10 @@ impl<PM, P, R> PageCache<PM, P, R>
         // also important for ensuring that we feed the provided `Materializer`
         // a single, linearized history, rather than going back in time
         // when generating a snapshot.
-        let caught_up_snapshot = advance_snapshot(
-            iter,
-            old_snapshot,
-            materializer.clone(),
-            config.clone(),
-        );
-
-        let mut pc = PageCache {
-            t: materializer,
-            config: config.clone(),
-            inner: Radix::default(),
-            max_pid: AtomicUsize::new(0),
-            free: Arc::new(Stack::default()),
-            log: Arc::new(Log::start(config, caught_up_snapshot.clone())),
-            lru: lru,
-            updates: AtomicUsize::new(0),
-            last_snapshot: Arc::new(
-                Mutex::new(Some(caught_up_snapshot.clone())),
-            ),
-        };
+        pc.advance_snapshot();
 
         // now we read it back in
-        pc.load_snapshot(&caught_up_snapshot);
+        pc.load_snapshot();
 
         pc
     }
@@ -756,7 +722,10 @@ impl<PM, P, R> PageCache<PM, P, R>
         result.map_err(|e| Some(e))
     }
 
-    fn load_snapshot(&mut self, snapshot: &Snapshot<R>) {
+    fn load_snapshot(&mut self) {
+        // panic if not set
+        let snapshot = self.last_snapshot.try_lock().unwrap().clone().unwrap();
+
         self.max_pid.store(snapshot.max_pid, SeqCst);
 
         let mut free = snapshot.free.clone();

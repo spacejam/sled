@@ -112,6 +112,11 @@ impl LogIter {
 
         if segment_header.lsn != lsn {
             // this page was torn, nothing to read
+            error!(
+                "segment header lsn ({}) != expected lsn ({})",
+                segment_header.lsn,
+                lsn
+            );
             return Err(
                 Error::new(ErrorKind::Other, "encountered torn segment"),
             );

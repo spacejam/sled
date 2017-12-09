@@ -738,9 +738,22 @@ impl SegmentAccountant {
 
         let segment_len = self.config.get_io_buf_size() as Lsn;
         let normalized_lsn = lsn / segment_len * segment_len;
+
+        self.ensure_ordering_initialized();
+
         Box::new(self.ordering.clone().into_iter().filter(move |&(l, _)| {
             l >= normalized_lsn
         }))
+    }
+
+    fn ensure_ordering_initialized(&mut self) {
+        if !self.ordering.is_empty() {
+            return;
+        }
+
+        trace!("initializing segment ordering");
+
+        self.ordering = scan_segment_lsns(0, self.config.clone());
     }
 
     fn lid_to_idx(&mut self, lid: LogID) -> usize {
