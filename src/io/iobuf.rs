@@ -75,6 +75,7 @@ impl IoBufs {
         // open file for writing
         let mut options = std::fs::OpenOptions::new();
         options.create(true);
+        options.read(true);
         options.write(true);
         let mut file = options.open(&path).unwrap();
 
@@ -86,44 +87,34 @@ impl IoBufs {
         let snapshot_max_lsn = snapshot.max_lsn;
         let snapshot_last_lid = snapshot.last_lid;
 
-        let (recovered_lsn, recovered_lid) = if snapshot_max_lsn == 0 {
-            // This code exists for recovering Log instances without
-            // PageCaches performing .
-            let len = file.metadata().unwrap().len();
-            let next_len = if len <= SEG_HEADER_LEN as LogID {
-                0
+        let (recovered_lsn, recovered_lid) =
+            if snapshot_max_lsn <= SEG_HEADER_LEN as LogID {
+                snapshot.max_lsn = 0;
+                snapshot.last_lid = 0;
+                (0, 0)
             } else {
-                // bump it to the next segment
-                let idx = len / io_buf_size as LogID;
-                let new_idx = idx + 1;
-                new_idx * io_buf_size as LogID
+                match file.read_message(
+                    snapshot_last_lid,
+                    io_buf_size,
+                    config.get_use_compression(),
+                ) {
+                    Ok(LogRead::Flush(_lsn, _buf, len)) => (
+                        snapshot_max_lsn +
+                            len as Lsn,
+                        snapshot_last_lid +
+                            len as LogID,
+                    ),
+                    other => {
+                        // we can overwrite this non-flush
+                        debug!(
+                            "got non-flush tip while recovering at {}: {:?}",
+                            snapshot_last_lid,
+                            other
+                        );
+                        (snapshot_max_lsn, snapshot_last_lid)
+                    }
+                }
             };
-
-            if next_len != 0 {
-                warn!(
-                    "using non-snapshot recovered length AND lsn of {}",
-                    next_len
-                );
-            }
-
-            snapshot.max_lsn = next_len;
-            snapshot.last_lid = next_len;
-            (next_len, next_len)
-        } else {
-            match file.read_message(
-                snapshot_last_lid,
-                io_buf_size,
-                config.get_use_compression(),
-            ) {
-                Ok(LogRead::Flush(_lsn, _buf, len)) => (
-                    snapshot_max_lsn +
-                        len as Lsn,
-                    snapshot_last_lid +
-                        len as LogID,
-                ),
-                _ => panic!("failed to read last log item"),
-            }
-        };
 
         let mut segment_accountant =
             SegmentAccountant::start(config.clone(), snapshot);

@@ -411,15 +411,9 @@ impl SegmentAccountant {
 
         self.set_last_given();
 
-        if !segments.is_empty() {
-            trace!("initialized self.segments to {:?}", segments);
-            for (i, segment) in segments.into_iter().enumerate() {
-                // we should not forget about segments that we've added
-                // during the initial segment scan, but freed for being
-                // empty, as that's where we set an LSN for them.
-                self.segments[i] = segment;
-            }
-        } else {
+        trace!("initialized self.segments to {:?}", segments);
+        self.segments = segments;
+        if self.segments.is_empty() {
             // this is basically just for when we recover with a single
             // empty-yet-initialized segment
             debug!("recovered no segments so not initializing from any");

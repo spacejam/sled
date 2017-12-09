@@ -683,7 +683,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         let next_snapshot = advance_snapshot(
             iter,
             last_snapshot,
-            self.t.clone(),
+            Some(self.t.clone()),
             self.config.clone(),
         );
 

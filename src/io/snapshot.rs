@@ -58,16 +58,7 @@ impl<R> Snapshot<R> {
                      + Sync,
               R: Debug + Clone + Serialize + DeserializeOwned + Send
     {
-        assert!(lsn > self.max_lsn);
-        self.max_lsn = lsn;
-        self.last_lid = log_id;
-
         let idx = log_id as usize / io_buf_size;
-        if self.segments.len() < idx + 1 {
-            self.segments.resize(idx + 1, Segment::default());
-        }
-
-        self.segments[idx].recovery_ensure_initialized(segment_lsn);
 
         // unwrapping this because it's already passed the crc check
         // in the log iterator
@@ -173,7 +164,7 @@ impl<R> Snapshot<R> {
 pub(super) fn advance_snapshot<P, R>(
     iter: LogIter,
     mut snapshot: Snapshot<R>,
-    materializer: Arc<Materializer<PageFrag = P, Recovery = R>>,
+    materializer_opt: Option<Arc<Materializer<PageFrag = P, Recovery = R>>>,
     config: FinalConfig,
 ) -> Snapshot<R>
     where P: 'static
@@ -237,14 +228,26 @@ pub(super) fn advance_snapshot<P, R>(
         }
         last_segment = Some(idx);
 
-        snapshot.apply(
-            &materializer,
-            lsn,
-            segment_lsn,
-            log_id,
-            io_buf_size,
-            bytes,
-        );
+        assert!(lsn > snapshot.max_lsn);
+        snapshot.max_lsn = lsn;
+        snapshot.last_lid = log_id;
+
+        if snapshot.segments.len() < idx + 1 {
+            snapshot.segments.resize(idx + 1, Segment::default());
+        }
+
+        snapshot.segments[idx].recovery_ensure_initialized(segment_lsn);
+
+        if let Some(ref materializer) = materializer_opt {
+            snapshot.apply(
+                &materializer,
+                lsn,
+                segment_lsn,
+                log_id,
+                io_buf_size,
+                bytes,
+            );
+        }
     }
 
     snapshot.free.sort();
