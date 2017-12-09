@@ -78,31 +78,26 @@ impl Log {
             cpuprofiler::PROFILER.lock().unwrap().start(path).unwrap();
         }
 
-
         let iobufs = Arc::new(IoBufs::start(config.clone(), snapshot));
 
         let flusher_shutdown = Arc::new(AtomicBool::new(false));
-
-        let mut log = Log {
-            iobufs: iobufs.clone(),
-            config: config.clone(),
-            flusher_shutdown: flusher_shutdown.clone(),
-            flusher_handle: None,
-        };
 
         let flusher_handle =
             config.get_flush_every_ms().map(|flush_every_ms| {
                 periodic_flusher::flusher(
                     "log flusher".to_owned(),
-                    iobufs,
-                    flusher_shutdown,
+                    iobufs.clone(),
+                    flusher_shutdown.clone(),
                     flush_every_ms,
                 ).unwrap()
             });
 
-        log.flusher_handle = flusher_handle;
-
-        log
+        Log {
+            iobufs: iobufs,
+            config: config,
+            flusher_shutdown: flusher_shutdown,
+            flusher_handle: flusher_handle,
+        }
     }
 
     /// Flush the next io buffer.
