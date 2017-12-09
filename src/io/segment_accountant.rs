@@ -69,6 +69,7 @@ use std::mem;
 
 use coco::epoch::{Owned, pin};
 
+use self::reader::LogReader;
 use super::*;
 
 /// The segment accountant keeps track of the logical blocks

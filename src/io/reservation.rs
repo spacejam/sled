@@ -8,12 +8,12 @@ use super::*;
 /// buffer to become blocked.
 pub struct Reservation<'a> {
     pub(super) iobufs: &'a IoBufs,
-    pub idx: usize,
-    pub data: Vec<u8>,
-    pub destination: &'a mut [u8],
-    pub flushed: bool,
-    pub lsn: Lsn,
-    pub lid: LogID,
+    pub(super) idx: usize,
+    pub(super) data: Vec<u8>,
+    pub(super) destination: &'a mut [u8],
+    pub(super) flushed: bool,
+    pub(super) lsn: Lsn,
+    pub(super) lid: LogID,
 }
 
 impl<'a> Drop for Reservation<'a> {

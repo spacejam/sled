@@ -1,5 +1,6 @@
 use std::io::{Error, ErrorKind};
 
+use self::reader::LogReader;
 use super::*;
 
 pub struct LogIter {

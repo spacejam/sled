@@ -10,6 +10,8 @@ use rayon::prelude::*;
 #[cfg(feature = "zstd")]
 use zstd::block::compress;
 
+use self::reader::LogReader;
+
 use super::*;
 
 struct IoBuf {
@@ -49,12 +51,13 @@ impl IoBufs {
         // if configured, start env_logger and/or cpuprofiler
         global_init();
 
+        // panic if we can't parse the path
         let path = config.get_path();
-
         let dir = Path::new(&path).parent().expect(
             "could not parse provided path",
         );
 
+        // create data directory if it doesn't exist yet
         if dir != Path::new("") {
             if dir.is_file() {
                 panic!(
@@ -75,6 +78,9 @@ impl IoBufs {
         options.write(true);
         let mut file = options.open(&path).unwrap();
 
+        // TODO this should never change, it should be
+        // stored in a persisted conf file and if it
+        // doesn't match, we should panic.
         let io_buf_size = config.get_io_buf_size();
 
         let snapshot_max_lsn = snapshot.max_lsn;

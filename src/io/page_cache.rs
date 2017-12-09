@@ -10,6 +10,52 @@ use zstd::block::{compress, decompress};
 
 use super::*;
 
+
+/// Points to either a memory location or a disk location to page-in data from.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CacheEntry<M: Send + Sync> {
+    /// A cache item that contains the most recent fully-merged page state, also in secondary
+    /// storage.
+    MergedResident(M, Lsn, LogID),
+    /// A cache item that is in memory, and also in secondary storage.
+    Resident(M, Lsn, LogID),
+    /// A cache item that is present in secondary storage.
+    PartialFlush(Lsn, LogID),
+    /// A cache item that is present in secondary storage, and is the base segment
+    /// of a page.
+    Flush(Lsn, LogID),
+}
+
+/// `LoggedUpdate` is for writing blocks of `Update`'s to disk
+/// sequentially, to reduce IO during page reads.
+#[serde(bound(deserialize = ""))]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(super) struct LoggedUpdate<PageFrag>
+    where PageFrag: Serialize + DeserializeOwned
+{
+    pub(super) pid: PageID,
+    pub(super) update: Update<PageFrag>,
+}
+
+#[serde(bound(deserialize = ""))]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(super) enum Update<PageFrag>
+    where PageFrag: DeserializeOwned + Serialize
+{
+    Append(PageFrag),
+    Compact(PageFrag),
+    Free,
+    Alloc,
+}
+
+struct PidDropper(PageID, Arc<Stack<PageID>>);
+
+impl Drop for PidDropper {
+    fn drop(&mut self) {
+        self.1.push(self.0);
+    }
+}
+
 /// A lock-free pagecache which supports fragmented pages
 /// for dramatically improving write throughput.
 ///

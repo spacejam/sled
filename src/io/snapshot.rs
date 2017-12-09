@@ -18,7 +18,7 @@ pub struct Snapshot<R> {
     /// the mapping from pages to (lsn, lid)
     pub pt: BTreeMap<PageID, Vec<(Lsn, LogID)>>,
     /// the segment accounting information
-    pub segments: Vec<log::Segment>,
+    pub segments: Vec<Segment>,
     /// the free pids
     pub free: Vec<PageID>,
     /// the `Materializer`-specific recovered state
@@ -44,8 +44,8 @@ impl<R> Snapshot<R> {
     fn _apply() {}
 }
 
-pub fn advance_snapshot<P, R>(
-    iter: log::LogIter,
+pub(super) fn advance_snapshot<P, R>(
+    iter: LogIter,
     mut snapshot: Snapshot<R>,
     materializer: Arc<Materializer<PageFrag = P, Recovery = R>>,
     config: FinalConfig,
@@ -98,7 +98,7 @@ pub fn advance_snapshot<P, R>(
 
         let idx = log_id as usize / io_buf_size;
         if snapshot.segments.len() < idx + 1 {
-            snapshot.segments.resize(idx + 1, log::Segment::default());
+            snapshot.segments.resize(idx + 1, Segment::default());
         }
 
         assert_eq!(

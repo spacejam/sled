@@ -7,7 +7,7 @@ use zstd::block::decompress;
 
 use super::*;
 
-pub trait LogReader {
+pub(super) trait LogReader {
     fn read_segment_header(
         &mut self,
         id: LogID,
