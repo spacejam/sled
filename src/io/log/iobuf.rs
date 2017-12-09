@@ -46,6 +46,9 @@ pub(super) struct IoBufs {
 /// writes to underlying storage.
 impl IoBufs {
     pub fn start<R>(config: FinalConfig, mut snapshot: Snapshot<R>) -> IoBufs {
+        // if configured, start env_logger and/or cpuprofiler
+        global_init();
+
         let path = config.get_path();
 
         let dir = Path::new(&path).parent().expect(

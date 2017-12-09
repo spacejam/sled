@@ -63,21 +63,6 @@ impl Log {
     /// Start the log, open or create the configured file,
     /// and optionally start the periodic buffer flush thread.
     pub fn start<R>(config: FinalConfig, snapshot: Snapshot<R>) -> Log {
-        #[cfg(feature = "env_logger")]
-        let _r = env_logger::init();
-
-        #[cfg(feature = "cpuprofiler")]
-        {
-            use std::env;
-
-            let key = "CPUPROFILE";
-            let path = match env::var(key) {
-                Ok(val) => val,
-                Err(_) => "sled.profile".to_owned(),
-            };
-            cpuprofiler::PROFILER.lock().unwrap().start(path).unwrap();
-        }
-
         let iobufs = Arc::new(IoBufs::start(config.clone(), snapshot));
 
         let flusher_shutdown = Arc::new(AtomicBool::new(false));

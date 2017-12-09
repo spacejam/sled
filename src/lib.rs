@@ -136,3 +136,29 @@ fn debug_delay() {
         }
     }
 }
+
+// initialize env_logger and/or cpuprofiler if configured to do so.
+fn global_init() {
+    use std::sync::{ONCE_INIT, Once};
+
+    static ONCE: Once = ONCE_INIT;
+
+    ONCE.call_once(|| {
+        #[cfg(feature = "env_logger")]
+        let _r = env_logger::init();
+
+        #[cfg(feature = "cpuprofiler")]
+        {
+            use std::env;
+
+            let key = "CPUPROFILE";
+            let path = match env::var(key) {
+                Ok(val) => val,
+                Err(_) => "sled.profile".to_owned(),
+            };
+            cpuprofiler::PROFILER.lock().unwrap().start(path).expect(
+                "could not start cpu profiler!",
+            );
+        }
+    });
+}
