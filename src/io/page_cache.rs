@@ -10,7 +10,6 @@ use zstd::block::{compress, decompress};
 
 use super::*;
 
-
 /// Points to either a memory location or a disk location to page-in data from.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CacheEntry<M: Send + Sync> {
@@ -801,7 +800,6 @@ impl<PM, P, R> PageCache<PM, P, R>
         }
     }
 }
-
 
 fn lids_from_stack<'s, P: Send + Sync>(
     head_ptr: HPtr<'s, P>,

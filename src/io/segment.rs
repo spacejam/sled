@@ -632,7 +632,7 @@ impl SegmentAccountant {
     ///
     /// # Panics
     /// The provided lsn and lid must exactly match the existing segment.
-    pub fn deactivate_segment(&mut self, lsn: Lsn, lid: LogID) {
+    pub(super) fn deactivate_segment(&mut self, lsn: Lsn, lid: LogID) {
         let idx = self.lid_to_idx(lid);
         self.segments[idx].active_to_inactive(lsn, false);
     }
@@ -878,3 +878,90 @@ fn clean_tail_tears(
 
     ordering
 }
+
+pub trait Manager {
+    /// Start a new Manager, given a config and snapshot.
+    fn start<R>(config: FinalConfig, snapshot: Snapshot<R>);
+
+    /// Returns the next offset to write a new segment in,
+    /// as well as the offset of the previous segment that
+    /// was allocated, so that we can detect missing
+    /// out-of-order segments during recovery.
+    fn next(&mut self, lsn: Lsn) -> (LogID, LogID);
+
+    /// Called after the trailer of a segment has been written to disk,
+    /// indicating that no more pids will be added to a segment. Moves
+    /// the segment into the Inactive state.
+    ///
+    /// # Panics
+    /// The provided lsn and lid must exactly match the existing segment.
+    fn deactivate_segment(&mut self, lsn: Lsn, lid: LogID);
+
+    /// Causes all new allocations to occur at the end of the file, which
+    /// is necessary to preserve consistency while concurrently iterating through
+    /// the log during snapshot creation.
+    fn pause_rewriting(&mut self);
+
+    /// Re-enables segment rewriting after iteration is complete.
+    fn resume_rewriting(&mut self);
+
+    /// Returns an iterator over a snapshot of current segment
+    /// log sequence numbers and their corresponding file offsets.
+    fn iter_from(&mut self, lsn: Lsn) -> Box<Iterator<Item = (Lsn, LogID)>>;
+
+    /// Called from `PageCache` when some state has been added
+    /// to a logical page at a particular offset. We ensure the
+    /// page is present in the segment's page set.
+    fn mark_link(&mut self, pid: PageID, lsn: Lsn, lid: LogID);
+
+    /// Optionally returns a PageID that the caller should
+    /// relocate to a fresh segment.
+    ///
+    /// Called by the `PageCache` to find useful pages
+    /// it should try to rewrite.
+    fn clean(&mut self, ignore: Option<PageID>) -> Option<PageID>;
+
+    /// Called by the `PageCache` when a page has been rewritten completely.
+    /// We mark all of the old segments that contained the previous state
+    /// from the page, and if the old segments are empty or clear enough to
+    /// begin accelerated cleaning we mark them as so.
+    fn mark_replace(
+        &mut self,
+        pid: PageID,
+        lsn: Lsn,
+        old_lids: Vec<LogID>,
+        new_lid: LogID,
+    );
+}
+
+/// The log may be configured to write data
+/// in several different ways, depending on
+/// the constraints of the system using it.
+#[derive(Debug, Clone)]
+pub enum SegmentMode {
+    /// Write to the end of the log, always.
+    Linear,
+    /// Like linear, but also keep track of
+    /// utilization, and try to use filesystem
+    /// hole punching on empty segments.
+    /// This is only supported on linux with
+    /// filesystems that support hole punching.
+    PunchedLinear,
+    /// Keep track of segment utilization, and
+    /// reuse segments when their contents are
+    /// fully relocated elsewhere.
+    Reuse,
+    /// Like Reuse, but also will try to copy
+    /// data out of segments once they reach a
+    /// configurable threshold.
+    Gc,
+}
+
+/*
+pub enum SegmentManager {
+    Linear,
+    PunchedLinear(SegmentAccountant),
+    Reuse(SegmentAccountant),
+    Gc(SegmentAccountant),
+}
+*/

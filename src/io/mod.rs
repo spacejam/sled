@@ -22,7 +22,7 @@ mod page_cache;
 mod periodic_flusher;
 mod reader;
 mod reservation;
-mod segment_accountant;
+mod segment;
 mod snapshot;
 
 #[doc(hidden)]
@@ -35,10 +35,11 @@ pub use self::log::Log;
 pub use self::materializer::Materializer;
 pub use self::page_cache::{CacheEntry, PageCache};
 pub use self::reservation::Reservation;
+pub use self::segment::SegmentMode;
 
 use self::log::{MessageHeader, SegmentHeader, SegmentTrailer};
 use self::iobuf::IoBufs;
 use self::iterator::LogIter;
 use self::page_cache::{LoggedUpdate, Update};
-use self::segment_accountant::{Segment, SegmentAccountant};
+use self::segment::{Segment, SegmentAccountant};
 use self::snapshot::{advance_snapshot, read_snapshot};

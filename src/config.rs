@@ -47,6 +47,7 @@ pub struct Config {
     tc: ThreadCache<fs::File>,
     tmp_path: String,
     read_only: bool,
+    log_mode: SegmentMode,
 }
 
 unsafe impl Send for Config {}
@@ -85,6 +86,7 @@ impl Default for Config {
             zero_copy_storage: false,
             tc: ThreadCache::default(),
             tmp_path: tmp_path.to_owned(),
+            log_mode: SegmentMode::Gc,
         }
     }
 }

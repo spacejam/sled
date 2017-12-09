@@ -40,8 +40,134 @@ impl<R> Default for Snapshot<R> {
 }
 
 impl<R> Snapshot<R> {
-    // TODO move logic from PageCache::advance_snapshot to here
-    fn _apply() {}
+    fn apply<P>(
+        &mut self,
+        materializer: &Arc<Materializer<PageFrag = P, Recovery = R>>,
+        lsn: Lsn,
+        segment_lsn: Lsn,
+        log_id: LogID,
+        io_buf_size: usize,
+        bytes: Vec<u8>,
+    )
+        where P: 'static
+                     + Debug
+                     + Clone
+                     + Serialize
+                     + DeserializeOwned
+                     + Send
+                     + Sync,
+              R: Debug + Clone + Serialize + DeserializeOwned + Send
+    {
+        assert!(lsn > self.max_lsn);
+        self.max_lsn = lsn;
+        self.last_lid = log_id;
+
+        let idx = log_id as usize / io_buf_size;
+        if self.segments.len() < idx + 1 {
+            self.segments.resize(idx + 1, Segment::default());
+        }
+
+        self.segments[idx].recovery_ensure_initialized(segment_lsn);
+
+        // unwrapping this because it's already passed the crc check
+        // in the log iterator
+        trace!("trying to deserialize buf for lid {} lsn {}", log_id, lsn);
+        let deserialization = deserialize::<LoggedUpdate<P>>(&*bytes);
+
+        if let Err(e) = deserialization {
+            error!(
+                "failed to deserialize buffer for item in log: lsn {} \
+                    lid {}: {:?}",
+                lsn,
+                log_id,
+                e
+            );
+            return;
+        }
+
+        let prepend = deserialization.unwrap();
+        let pid = prepend.pid;
+
+        if pid >= self.max_pid {
+            self.max_pid = pid + 1;
+        }
+
+        match prepend.update {
+            Update::Append(partial_page) => {
+                // Because we rewrite pages over time, we may have relocated
+                // a page's initial Compact to a later segment. We should skip
+                // over pages here unless we've encountered a Compact or Alloc
+                // for them.
+                if let Some(lids) = self.pt.get_mut(&pid) {
+                    trace!(
+                        "append of pid {} at lid {} lsn {}",
+                        pid,
+                        log_id,
+                        lsn
+                    );
+
+                    self.segments[idx].insert_pid(pid, segment_lsn);
+
+                    if let Some(r) = materializer.recover(&partial_page) {
+                        self.recovery = Some(r);
+                    }
+
+                    lids.push((lsn, log_id));
+                }
+                self.free.retain(|&p| p != pid);
+            }
+            Update::Compact(partial_page) => {
+                trace!("compact of pid {} at lid {} lsn {}", pid, log_id, lsn);
+                if let Some(lids) = self.pt.remove(&pid) {
+                    for (_lsn, old_lid) in lids {
+                        let old_idx = old_lid as usize / io_buf_size;
+                        if old_idx == idx {
+                            // don't remove pid if it's still there
+                            continue;
+                        }
+                        let old_segment = &mut self.segments[old_idx];
+
+                        old_segment.remove_pid(pid, segment_lsn);
+                    }
+                }
+
+                self.segments[idx].insert_pid(pid, segment_lsn);
+
+                if let Some(r) = materializer.recover(&partial_page) {
+                    self.recovery = Some(r);
+                }
+
+                self.pt.insert(pid, vec![(lsn, log_id)]);
+                self.free.retain(|&p| p != pid);
+            }
+            Update::Free => {
+                trace!("del of pid {} at lid {} lsn {}", pid, log_id, lsn);
+                if let Some(lids) = self.pt.remove(&pid) {
+                    // this could fail if our Alloc was nuked
+                    for (_lsn, old_lid) in lids {
+                        let old_idx = old_lid as usize / io_buf_size;
+                        if old_idx == idx {
+                            // don't remove pid if it's still there
+                            continue;
+                        }
+
+                        self.segments[old_idx].remove_pid(pid, segment_lsn);
+                    }
+                }
+
+                self.segments[idx].insert_pid(pid, segment_lsn);
+
+                self.free.push(pid);
+            }
+            Update::Alloc => {
+                trace!("alloc of pid {} at lid {} lsn {}", pid, log_id, lsn);
+
+                self.pt.insert(pid, vec![]);
+                self.free.retain(|&p| p != pid);
+                self.segments[idx].insert_pid(pid, segment_lsn);
+            }
+        }
+    }
 }
 
 pub(super) fn advance_snapshot<P, R>(
@@ -65,14 +191,16 @@ pub(super) fn advance_snapshot<P, R>(
 
     let io_buf_size = config.get_io_buf_size();
 
-    let mut recovery = snapshot.recovery.take();
-    let mut max_lsn = snapshot.max_lsn;
-    let mut last_lid = snapshot.last_lid;
-
     let mut last_segment = None;
 
     for (lsn, log_id, bytes) in iter {
         let segment_lsn = lsn / io_buf_size as Lsn * io_buf_size as Lsn;
+
+        assert_eq!(
+            segment_lsn / io_buf_size as Lsn * io_buf_size as Lsn,
+            segment_lsn,
+            "segment lsn is unaligned! fix above lsn statement..."
+        );
 
         trace!(
             "in advance_snapshot looking at item: segment lsn {} lsn {} lid {}",
@@ -81,56 +209,18 @@ pub(super) fn advance_snapshot<P, R>(
             log_id
         );
 
-        if lsn <= max_lsn {
+        if lsn <= snapshot.max_lsn {
             // don't process already-processed Lsn's.
             trace!(
                 "continuing in advance_snapshot, lsn {} log_id {} max_lsn {}",
                 lsn,
                 log_id,
-                max_lsn
+                snapshot.max_lsn
             );
             continue;
         }
-
-        assert!(lsn > max_lsn);
-        max_lsn = lsn;
-        last_lid = log_id;
 
         let idx = log_id as usize / io_buf_size;
-        if snapshot.segments.len() < idx + 1 {
-            snapshot.segments.resize(idx + 1, Segment::default());
-        }
-
-        assert_eq!(
-            segment_lsn / io_buf_size as Lsn * io_buf_size as Lsn,
-            segment_lsn,
-            "segment lsn is unaligned! fix above lsn statement..."
-        );
-
-        // unwrapping this because it's already passed the crc check
-        // in the log iterator
-        trace!("trying to deserialize buf for lid {} lsn {}", log_id, lsn);
-        let deserialization = deserialize::<LoggedUpdate<P>>(&*bytes);
-
-        if let Err(e) = deserialization {
-            error!(
-                "failed to deserialize buffer for item in log: lsn {} \
-                    lid {}: {:?}",
-                lsn,
-                log_id,
-                e
-            );
-            continue;
-        }
-
-        let prepend = deserialization.unwrap();
-
-        if prepend.pid >= snapshot.max_pid {
-            snapshot.max_pid = prepend.pid + 1;
-        }
-
-        snapshot.segments[idx].recovery_ensure_initialized(segment_lsn);
-
         let last_idx = *last_segment.get_or_insert(idx);
         if last_idx != idx {
             // if we have moved to a new segment, mark the previous one
@@ -147,103 +237,18 @@ pub(super) fn advance_snapshot<P, R>(
         }
         last_segment = Some(idx);
 
-        match prepend.update {
-            Update::Append(partial_page) => {
-                // Because we rewrite pages over time, we may have relocated
-                // a page's initial Compact to a later segment. We should skip
-                // over pages here unless we've encountered a Compact or Alloc
-                // for them.
-                if let Some(lids) = snapshot.pt.get_mut(&prepend.pid) {
-                    trace!(
-                        "append of pid {} at lid {} lsn {}",
-                        prepend.pid,
-                        log_id,
-                        lsn
-                    );
-
-                    snapshot.segments[idx].insert_pid(prepend.pid, segment_lsn);
-
-                    let r = materializer.recover(&partial_page);
-                    if r.is_some() {
-                        recovery = r;
-                    }
-
-                    lids.push((lsn, log_id));
-                }
-            }
-            Update::Compact(partial_page) => {
-                trace!(
-                    "compact of pid {} at lid {} lsn {}",
-                    prepend.pid,
-                    log_id,
-                    lsn
-                );
-                if let Some(lids) = snapshot.pt.remove(&prepend.pid) {
-                    for (_lsn, old_lid) in lids {
-                        let old_idx = old_lid as usize / io_buf_size;
-                        if old_idx == idx {
-                            // don't remove pid if it's still there
-                            continue;
-                        }
-                        let old_segment = &mut snapshot.segments[old_idx];
-
-                        old_segment.remove_pid(prepend.pid, segment_lsn);
-                    }
-                }
-
-                snapshot.segments[idx].insert_pid(prepend.pid, segment_lsn);
-
-                let r = materializer.recover(&partial_page);
-                if r.is_some() {
-                    recovery = r;
-                }
-
-                snapshot.pt.insert(prepend.pid, vec![(lsn, log_id)]);
-            }
-            Update::Free => {
-                trace!(
-                    "del of pid {} at lid {} lsn {}",
-                    prepend.pid,
-                    log_id,
-                    lsn
-                );
-                if let Some(lids) = snapshot.pt.remove(&prepend.pid) {
-                    // this could fail if our Alloc was nuked
-                    for (_lsn, old_lid) in lids {
-                        let old_idx = old_lid as usize / io_buf_size;
-                        if old_idx == idx {
-                            // don't remove pid if it's still there
-                            continue;
-                        }
-                        let old_segment = &mut snapshot.segments[old_idx];
-                        old_segment.remove_pid(prepend.pid, segment_lsn);
-                    }
-                }
-
-                snapshot.segments[idx].insert_pid(prepend.pid, segment_lsn);
-
-                snapshot.free.push(prepend.pid);
-            }
-            Update::Alloc => {
-                trace!(
-                    "alloc of pid {} at lid {} lsn {}",
-                    prepend.pid,
-                    log_id,
-                    lsn
-                );
-
-                snapshot.pt.insert(prepend.pid, vec![]);
-                snapshot.free.retain(|&pid| pid != prepend.pid);
-                snapshot.segments[idx].insert_pid(prepend.pid, segment_lsn);
-            }
-        }
+        snapshot.apply(
+            &materializer,
+            lsn,
+            segment_lsn,
+            log_id,
+            io_buf_size,
+            bytes,
+        );
     }
 
     snapshot.free.sort();
     snapshot.free.reverse();
-    snapshot.max_lsn = max_lsn;
-    snapshot.last_lid = last_lid;
-    snapshot.recovery = recovery;
 
     write_snapshot(config, &snapshot);
 
