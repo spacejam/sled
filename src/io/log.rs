@@ -120,7 +120,12 @@ impl Log {
             config.clone(),
         );
 
-        Log::start::<()>(config, snapshot)
+        let log = Log::start::<()>(config, snapshot);
+
+        // this is a hack to prevent segments from being overwritten
+        log.with_sa(|sa| sa.pause_rewriting());
+
+        log
     }
 
     /// Flush the next io buffer.

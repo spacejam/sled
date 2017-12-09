@@ -821,6 +821,7 @@ fn clean_tail_tears(
     // make sure the last <# io_bufs> segments are contiguous
     for window in logical_tail.windows(2) {
         if window[0] != window[1] + io_buf_size as Lsn {
+            warn!("detected torn segment somewhere after {}", window[0]);
             tear_at = Some(window[1]);
         }
     }
@@ -830,10 +831,13 @@ fn clean_tail_tears(
     // for segments after a tear.
     for (&lsn, &lid) in &ordering {
         let trailer_lid = lid + io_buf_size as LogID - SEG_TRAILER_LEN as LogID;
+        let expected_trailer_lsn = lsn + io_buf_size as Lsn -
+            SEG_TRAILER_LEN as Lsn;
         let trailer_res = f.read_segment_trailer(trailer_lid);
 
         if trailer_res.is_err() {
             // trailer could not be read
+            warn!("could not read trailer of segment starting at {}", lid);
             if let Some(existing_tear) = tear_at {
                 if existing_tear > lsn {
                     tear_at = Some(lsn);
@@ -846,10 +850,13 @@ fn clean_tail_tears(
 
         let trailer = trailer_res.unwrap();
 
-        if !trailer.ok || trailer.lsn != lsn || (lsn == 0 && lid != 0) {
+        if !trailer.ok || trailer.lsn != expected_trailer_lsn ||
+            (lsn == 0 && lid != 0)
+        {
             // trailer's checksum failed, or
             // the lsn is outdated, or
             // the lsn is 0 but the lid isn't 0 (zeroed segment)
+            warn!("tear detected at lsn {} for trailer {:?}", lsn, trailer);
             if let Some(existing_tear) = tear_at {
                 if existing_tear > lsn {
                     tear_at = Some(lsn);
@@ -862,6 +869,7 @@ fn clean_tail_tears(
 
     if let Some(tear) = tear_at {
         // we need to chop off the elements after the tear
+        warn!("filtering out segments after detected tear at {}", tear);
         ordering = ordering
             .into_iter()
             .filter(|&(lsn, _lid)| lsn <= tear)
