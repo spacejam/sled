@@ -81,8 +81,8 @@ impl Log {
             config.get_flush_every_ms().map(|flush_every_ms| {
                 periodic_flusher::flusher(
                     "log flusher".to_owned(),
-                    iobufs.clone(),
-                    flusher_shutdown.clone(),
+                    Arc::clone(&iobufs),
+                    Arc::clone(&flusher_shutdown),
                     flush_every_ms,
                 ).unwrap()
             });
@@ -97,18 +97,16 @@ impl Log {
 
     /// Starts a log for use without a materializer.
     pub fn start_raw_log(config: FinalConfig) -> Log {
-        let log_iter = raw_segment_iter(config.clone());
+        let log_iter = raw_segment_iter(&config);
 
         let snapshot = advance_snapshot::<(), ()>(
             log_iter,
             Snapshot::default(),
             None,
-            config.clone(),
+            &config,
         );
 
-        let log = Log::start::<()>(config, snapshot);
-
-        log
+        Log::start::<()>(config, snapshot)
     }
 
     /// Flush the next io buffer.

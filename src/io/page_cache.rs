@@ -179,10 +179,8 @@ impl<PM, P, R> PageCache<PM, P, R>
         // try to pull any existing snapshot off disk, and
         // apply any new data to it to "catch-up" the
         // snapshot before loading it.
-        let snapshot = read_snapshot_or_default(
-            config.clone(),
-            Some(materializer.clone()),
-        );
+        let snapshot =
+            read_snapshot_or_default(&config, Some(materializer.clone()));
 
         let mut pc = PageCache {
             t: materializer,
@@ -279,7 +277,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             // the segment to inactive, resulting in a race otherwise.
             res.complete();
 
-            let pd = Owned::new(PidDropper(pid, self.free.clone()));
+            let pd = Owned::new(PidDropper(pid, Arc::clone(&self.free)));
             let ptr = pd.into_ptr(scope);
             unsafe {
                 scope.defer_drop(ptr);
@@ -590,7 +588,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         let node = node_from_frag_vec(vec![cache_entry]).into_ptr(scope);
 
         debug_delay();
-        let result = unsafe { stack_ptr.deref().cas(old.clone(), node, scope) };
+        let result = unsafe { stack_ptr.deref().cas(old, node, scope) };
 
         if result.is_ok() {
             let lid = log_reservation.lid();
@@ -629,7 +627,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             log_reservation.abort();
         }
 
-        result.map_err(|e| Some(e))
+        result.map_err(Some)
     }
 
     // caller is expected to have instantiated self.last_snapshot
@@ -673,7 +671,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             iter,
             last_snapshot,
             Some(self.t.clone()),
-            self.config.clone(),
+            &self.config,
         );
 
         self.log.with_sa(|sa| sa.resume_rewriting());
@@ -753,7 +751,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             }
         }
 
-        result.map_err(|e| Some(e))
+        result.map_err(Some)
     }
 
     fn load_snapshot(&mut self) {

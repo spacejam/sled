@@ -312,12 +312,9 @@ impl SegmentAccountant {
         let mut ret = SegmentAccountant::default();
         ret.config = config;
 
-        match ret.config.segment_mode {
-            SegmentMode::Linear => {
-                // this is a hack to prevent segments from being overwritten
-                ret.pause_rewriting();
-            }
-            _ => {}
+        if let SegmentMode::Linear = ret.config.segment_mode {
+            // this is a hack to prevent segments from being overwritten
+            ret.pause_rewriting();
         }
         ret.initialize_from_snapshot(snapshot.segments);
 
@@ -433,12 +430,9 @@ impl SegmentAccountant {
     }
 
     fn set_last_given(&mut self) {
-        let new_max = self.ordering
-            .iter()
-            .rev()
-            .nth(0)
-            .map(|(lsn, lid)| (*lsn, *lid))
-            .clone();
+        let new_max = self.ordering.iter().rev().nth(0).map(|(lsn, lid)| {
+            (*lsn, *lid)
+        });
 
         if let Some((_lsn, lid)) = new_max {
             trace!("setting last_given to {}", lid);
@@ -760,7 +754,7 @@ impl SegmentAccountant {
 
         trace!("initializing segment ordering");
 
-        self.ordering = scan_segment_lsns(0, self.config.clone());
+        self.ordering = scan_segment_lsns(0, &self.config);
     }
 
     fn lid_to_idx(&mut self, lid: LogID) -> usize {
@@ -780,7 +774,7 @@ impl SegmentAccountant {
 // and recover the order of segments, and the highest Lsn.
 pub fn scan_segment_lsns(
     min: Lsn,
-    config: FinalConfig,
+    config: &FinalConfig,
 ) -> BTreeMap<Lsn, LogID> {
     let mut ordering = BTreeMap::new();
 
@@ -815,7 +809,7 @@ pub fn scan_segment_lsns(
 // never reuse buffers within this safety range.
 fn clean_tail_tears(
     mut ordering: BTreeMap<Lsn, LogID>,
-    config: FinalConfig,
+    config: &FinalConfig,
     f: &mut File,
 ) -> BTreeMap<Lsn, LogID> {
     let safety_buffer = config.get_io_bufs();
@@ -980,7 +974,7 @@ pub enum SegmentManager {
 }
 */
 
-pub fn raw_segment_iter(config: FinalConfig) -> LogIter {
+pub fn raw_segment_iter(config: &FinalConfig) -> LogIter {
     let mut sa =
         SegmentAccountant::start::<()>(config.clone(), Snapshot::default());
 

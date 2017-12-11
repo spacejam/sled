@@ -50,7 +50,7 @@ impl<R> Snapshot<R> {
         segment_lsn: Lsn,
         log_id: LogID,
         io_buf_size: usize,
-        bytes: Vec<u8>,
+        bytes: &[u8],
     )
         where P: 'static
                      + Debug
@@ -168,7 +168,7 @@ pub(super) fn advance_snapshot<P, R>(
     iter: LogIter,
     mut snapshot: Snapshot<R>,
     materializer_opt: Option<Arc<Materializer<PageFrag = P, Recovery = R>>>,
-    config: FinalConfig,
+    config: &FinalConfig,
 ) -> Snapshot<R>
     where P: 'static
                  + Debug
@@ -244,12 +244,12 @@ pub(super) fn advance_snapshot<P, R>(
 
         if let Some(ref materializer) = materializer_opt {
             snapshot.apply(
-                &materializer,
+                materializer,
                 lsn,
                 segment_lsn,
                 log_id,
                 io_buf_size,
-                bytes,
+                &*bytes,
             );
         }
     }
@@ -267,7 +267,7 @@ pub(super) fn advance_snapshot<P, R>(
 }
 
 pub fn read_snapshot_or_default<P, R>(
-    config: FinalConfig,
+    config: &FinalConfig,
     pm_opt: Option<Arc<Materializer<PageFrag = P, Recovery = R>>>,
 ) -> Snapshot<R>
     where P: 'static
@@ -279,15 +279,14 @@ pub fn read_snapshot_or_default<P, R>(
                  + Sync,
           R: Debug + Clone + Serialize + DeserializeOwned + Send
 {
-    let last_snap =
-        read_snapshot(config.clone()).unwrap_or_else(|| Snapshot::default());
+    let last_snap = read_snapshot(config).unwrap_or_else(Snapshot::default);
 
-    let log_iter = raw_segment_iter(config.clone());
+    let log_iter = raw_segment_iter(config);
 
-    advance_snapshot::<P, R>(log_iter, last_snap, pm_opt, config.clone())
+    advance_snapshot::<P, R>(log_iter, last_snap, pm_opt, config)
 }
 
-fn read_snapshot<R>(config: FinalConfig) -> Option<Snapshot<R>>
+fn read_snapshot<R>(config: &FinalConfig) -> Option<Snapshot<R>>
     where R: Debug + Clone + Serialize + DeserializeOwned + Send
 {
     let mut candidates = config.get_snapshot_files();
@@ -335,7 +334,7 @@ fn read_snapshot<R>(config: FinalConfig) -> Option<Snapshot<R>>
     Some(snapshot)
 }
 
-pub fn write_snapshot<R>(config: FinalConfig, snapshot: &Snapshot<R>)
+pub fn write_snapshot<R>(config: &FinalConfig, snapshot: &Snapshot<R>)
     where R: Debug + Clone + Serialize + DeserializeOwned + Send
 {
     let raw_bytes = serialize(&snapshot, Infinite).unwrap();
