@@ -41,5 +41,5 @@ use self::log::{MessageHeader, SegmentHeader, SegmentTrailer};
 use self::iobuf::IoBufs;
 use self::iterator::LogIter;
 use self::page_cache::{LoggedUpdate, Update};
-use self::segment::{Segment, SegmentAccountant};
-use self::snapshot::{advance_snapshot, read_snapshot};
+use self::segment::{Segment, SegmentAccountant, raw_segment_iter};
+use self::snapshot::{advance_snapshot, read_snapshot_or_default};

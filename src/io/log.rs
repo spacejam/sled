@@ -97,21 +97,7 @@ impl Log {
 
     /// Starts a log for use without a materializer.
     pub fn start_raw_log(config: FinalConfig) -> Log {
-        let mut sa =
-            SegmentAccountant::start::<()>(config.clone(), Snapshot::default());
-
-        let segment_iter = sa.segment_snapshot_iter_from(0);
-
-        let log_iter = LogIter {
-            config: config.clone(),
-            max_lsn: std::isize::MAX,
-            cur_lsn: SEG_HEADER_LEN as Lsn,
-            segment_base: None,
-            segment_iter: segment_iter,
-            segment_len: config.get_io_buf_size(),
-            use_compression: config.get_use_compression(),
-            trailer: None,
-        };
+        let log_iter = raw_segment_iter(config.clone());
 
         let snapshot = advance_snapshot::<(), ()>(
             log_iter,

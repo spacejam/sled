@@ -92,7 +92,7 @@ impl Drop for PidDropper {
 ///     let path = "test_pagecache_doc.log";
 ///     let conf = sled::Config::default().path(path.to_owned());
 ///     let pc = sled::PageCache::start(TestMaterializer,
-///                                     conf.clone());
+///                                     conf.build());
 ///     pin(|scope| {
 ///         let (id, key) = pc.allocate(scope);
 ///
@@ -179,13 +179,13 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         let materializer = Arc::new(pm);
 
-        // pull any existing snapshot off disk
-        let old_snapshot_opt: Option<Snapshot<R>> =
-            read_snapshot(config.clone());
-        let old_snapshot = old_snapshot_opt.unwrap_or_else(|| {
-            info!("unable to read snapshot at startup. using default.");
-            Snapshot::default()
-        });
+        // try to pull any existing snapshot off disk, and
+        // apply any new data to it to "catch-up" the
+        // snapshot before loading it.
+        let snapshot = read_snapshot_or_default(
+            config.clone(),
+            Some(materializer.clone()),
+        );
 
         let mut pc = PageCache {
             t: materializer,
@@ -193,19 +193,11 @@ impl<PM, P, R> PageCache<PM, P, R>
             inner: Radix::default(),
             max_pid: AtomicUsize::new(0),
             free: Arc::new(Stack::default()),
-            log: Arc::new(Log::start(config, old_snapshot.clone())),
+            log: Arc::new(Log::start(config, snapshot.clone())),
             lru: lru,
             updates: AtomicUsize::new(0),
-            last_snapshot: Arc::new(Mutex::new(Some(old_snapshot.clone()))),
+            last_snapshot: Arc::new(Mutex::new(Some(snapshot))),
         };
-
-        // we call advance_snapshot here to "catch-up" the snapshot using the
-        // logged updates before recovering from it. this allows us to reuse
-        // the snapshot generation logic as initial log parsing logic. this is
-        // also important for ensuring that we feed the provided `Materializer`
-        // a single, linearized history, rather than going back in time
-        // when generating a snapshot.
-        pc.advance_snapshot();
 
         // now we read it back in
         pc.load_snapshot();

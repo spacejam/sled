@@ -102,7 +102,7 @@ fn pagecache_strange_crash_1() {
 
 #[test]
 fn pagecache_strange_crash_2() {
-    for x in 0..10 {
+    for _x in 0..10 {
         pin(|scope| {
             let conf = Config::default()
                 .cache_capacity(40)
@@ -112,7 +112,7 @@ fn pagecache_strange_crash_2() {
                 .io_buf_size(5000)
                 .build();
 
-            println!("!!!!!!!!!!!!!!!!!!!!! {} !!!!!!!!!!!!!!!!!!!!!!", x);
+            //println!("!!!!!!!!!!!!!!!!!!!!! {} !!!!!!!!!!!!!!!!!!!!!!", x);
             let pc = PageCache::start(TestMaterializer, conf.clone());
 
             let mut keys = HashMap::new();
@@ -124,9 +124,9 @@ fn pagecache_strange_crash_2() {
 
             for i in 0..1000 {
                 let id = i as usize % 2;
-                println!("------ beginning op on pid {} ------", id);
+                //println!("------ beginning op on pid {} ------", id);
                 let (_, key) = pc.get(id, scope).unwrap();
-                println!("got key {:?} for pid {}", key, id);
+                //println!("got key {:?} for pid {}", key, id);
                 assert!(!key.is_null());
                 let key_res = pc.link(id, key, vec![i], scope);
                 if key_res.is_err() {
@@ -375,8 +375,8 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
 fn quickcheck_pagecache_works() {
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 1))
-        .tests(50)
-        .max_tests(100)
+        .tests(1000)
+        .max_tests(10000)
         .quickcheck(prop_pagecache_works as fn(OpVec, u8) -> bool);
 }
 

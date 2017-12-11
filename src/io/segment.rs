@@ -979,3 +979,21 @@ pub enum SegmentManager {
     Gc(SegmentAccountant),
 }
 */
+
+pub fn raw_segment_iter(config: FinalConfig) -> LogIter {
+    let mut sa =
+        SegmentAccountant::start::<()>(config.clone(), Snapshot::default());
+
+    let segment_iter = sa.segment_snapshot_iter_from(0);
+
+    LogIter {
+        config: config.clone(),
+        max_lsn: std::isize::MAX,
+        cur_lsn: SEG_HEADER_LEN as Lsn,
+        segment_base: None,
+        segment_iter: segment_iter,
+        segment_len: config.get_io_buf_size(),
+        use_compression: config.get_use_compression(),
+        trailer: None,
+    }
+}

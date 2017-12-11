@@ -263,7 +263,28 @@ pub(super) fn advance_snapshot<P, R>(
     snapshot
 }
 
-pub fn read_snapshot<R>(config: FinalConfig) -> Option<Snapshot<R>>
+pub fn read_snapshot_or_default<P, R>(
+    config: FinalConfig,
+    pm_opt: Option<Arc<Materializer<PageFrag = P, Recovery = R>>>,
+) -> Snapshot<R>
+    where P: 'static
+                 + Debug
+                 + Clone
+                 + Serialize
+                 + DeserializeOwned
+                 + Send
+                 + Sync,
+          R: Debug + Clone + Serialize + DeserializeOwned + Send
+{
+    let last_snap =
+        read_snapshot(config.clone()).unwrap_or_else(|| Snapshot::default());
+
+    let log_iter = raw_segment_iter(config.clone());
+
+    advance_snapshot::<P, R>(log_iter, last_snap, pm_opt, config.clone())
+}
+
+fn read_snapshot<R>(config: FinalConfig) -> Option<Snapshot<R>>
     where R: Debug + Clone + Serialize + DeserializeOwned + Send
 {
     let mut candidates = config.get_snapshot_files();
@@ -296,14 +317,14 @@ pub fn read_snapshot<R>(config: FinalConfig) -> Option<Snapshot<R>>
         panic!("crc for snapshot file {:?} failed!", path);
     }
 
-        #[cfg(feature = "zstd")]
+    #[cfg(feature = "zstd")]
     let bytes = if config.get_use_compression() {
         decompress(&*buf, config.get_io_buf_size()).unwrap()
     } else {
         buf
     };
 
-        #[cfg(not(feature = "zstd"))]
+    #[cfg(not(feature = "zstd"))]
     let bytes = buf;
 
     let snapshot = deserialize::<Snapshot<R>>(&*bytes).unwrap();
