@@ -20,7 +20,7 @@
 #[macro_use]
 extern crate serde_derive;
 extern crate serde;
-extern crate coco;
+extern crate crossbeam_epoch as epoch;
 extern crate bincode;
 extern crate historian;
 #[macro_use]
@@ -93,7 +93,7 @@ type Key = Vec<u8>;
 type KeyRef<'a> = &'a [u8];
 type Value = Vec<u8>;
 
-type HPtr<'s, P> = coco::epoch::Ptr<'s, ds::stack::Node<io::CacheEntry<P>>>;
+type HPtr<'g, P> = epoch::Shared<'g, ds::stack::Node<io::CacheEntry<P>>>;
 
 lazy_static! {
     /// A metric collector for all sled instances running in this

@@ -67,7 +67,7 @@ use std::fs::File;
 use std::sync::{Arc, Mutex};
 use std::mem;
 
-use coco::epoch::{Owned, pin};
+use epoch::{Owned, pin};
 
 use self::reader::LogReader;
 use super::*;
@@ -470,14 +470,13 @@ impl SegmentAccountant {
         } else {
             self.ensure_safe_free_distance();
 
-            pin(|scope| {
-                let pd = Owned::new(SegmentDropper(lid, self.free.clone()));
-                let ptr = pd.into_ptr(scope);
-                unsafe {
-                    scope.defer_drop(ptr);
-                    scope.flush();
-                }
-            });
+            let guard = pin();
+            let pd = Owned::new(SegmentDropper(lid, self.free.clone()));
+            let ptr = pd.into_shared(&guard);
+            unsafe {
+                guard.defer(move || ptr.into_owned());
+                guard.flush();
+            }
         }
     }
 

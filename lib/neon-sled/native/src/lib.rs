@@ -9,7 +9,7 @@ use neon::js::Value;
 
 fn extract_arg(call: &mut Call, idx: i32) -> Result<String, ()> {
     let args = &call.arguments;
-    let handle = args.get(call.scope, idx).ok_or(())?;
+    let handle = args.get(call.guard, idx).ok_or(())?;
     Ok((*handle).to_string(call.scope).map_err(|_| ())?.value())
 }
 
@@ -21,7 +21,7 @@ fn create_db(mut call: Call) -> JsResult<JsString> {
 
     let ptr = Box::into_raw(Box::new(t));
     let ptr_string = format!("{}", ptr as usize);
-    Ok(JsString::new(call.scope, &*ptr_string).unwrap())
+    Ok(JsString::new(call.guard, &*ptr_string).unwrap())
 }
 
 fn cast_string_to_ptr<'a>(ptr_str: String) -> &'a sled::Tree {
@@ -51,9 +51,9 @@ fn set(mut call: Call) -> JsResult<JsString> {
     let from_db = t.get(&*k)
         .and_then(|from_db| {
             let str = unsafe { std::str::from_utf8_unchecked(&*from_db) };
-            JsString::new(call.scope, str)
+            JsString::new(call.guard, str)
         })
-        .unwrap_or_else(|| JsString::new(call.scope, "").unwrap());
+        .unwrap_or_else(|| JsString::new(call.guard, "").unwrap());
 
     Ok(from_db)
 }
@@ -70,9 +70,9 @@ fn get(mut call: Call) -> JsResult<JsString> {
     let from_db = t.get(&*k)
         .map( |from_db| {
             let str = unsafe { std::str::from_utf8_unchecked(&*from_db) };
-            JsString::new(call.scope, str).unwrap()
+            JsString::new(call.guard, str).unwrap()
         })
-        .unwrap_or_else(|| JsString::new(call.scope, "").unwrap());
+        .unwrap_or_else(|| JsString::new(call.guard, "").unwrap());
 
     Ok(from_db)
 }
