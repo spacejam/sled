@@ -324,7 +324,7 @@ struct OpVec {
 impl Arbitrary for OpVec {
     fn arbitrary<G: Gen>(g: &mut G) -> OpVec {
         let mut ops = vec![];
-        for _ in 0..g.gen_range(1, 10) {
+        for _ in 0..g.gen_range(1, 50) {
             let op = Op::arbitrary(g);
             ops.push(op);
 
@@ -372,8 +372,8 @@ fn prop_log_works(ops: OpVec) -> bool {
     use self::Op::*;
     let config = Config::default()
         .io_buf_size(1024 * 8)
-        //.flush_every_ms(Some(1))
-        .flush_every_ms(None) // FIXME rm line
+        .flush_every_ms(Some(1))
+        // .flush_every_ms(None) // FIXME rm line
         .segment_mode(SegmentMode::Linear)
         .build();
     // println!("testing {:?}", ops);
@@ -495,8 +495,8 @@ fn prop_log_works(ops: OpVec) -> bool {
 fn quickcheck_log_works() {
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 1))
-        .tests(100)
-        .max_tests(1000)
+        .tests(1000)
+        .max_tests(10000)
         .quickcheck(prop_log_works as fn(OpVec) -> bool);
 }
 
@@ -741,14 +741,31 @@ fn log_bug_19() {
     });
 }
 
+#[test]
 fn log_bug_20() {
-    // postmortem: TEMPLATE
+    // postmortem: message header length was not being included when
+    // calculating the starting log offsets.
     use Op::*;
     prop_log_works(OpVec {
         ops: vec![
             WriteReservation(vec![]),
             Restart,
-            WriteReservation(vec![150]),
+            WriteReservation(vec![2]),
+            Read(1),
+        ],
+    });
+}
+
+#[test]
+fn log_bug_21() {
+    // postmortem: message header length was not being included when
+    // calculating the starting log offsets.
+    use Op::*;
+    prop_log_works(OpVec {
+        ops: vec![
+            WriteReservation(vec![1]),
+            Restart,
+            WriteReservation(vec![2]),
             Read(1),
         ],
     });

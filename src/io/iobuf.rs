@@ -87,7 +87,7 @@ impl IoBufs {
         let snapshot_max_lsn = snapshot.max_lsn;
         let snapshot_last_lid = snapshot.last_lid;
 
-        let (recovered_lsn, recovered_lid) =
+        let (next_lsn, next_lid) =
             if snapshot_max_lsn < SEG_HEADER_LEN as Lsn {
                 snapshot.max_lsn = 0;
                 snapshot.last_lid = 0;
@@ -99,10 +99,12 @@ impl IoBufs {
                     config.get_use_compression(),
                 ) {
                     Ok(LogRead::Flush(_lsn, _buf, len)) => (
-                        snapshot_max_lsn +
-                            len as Lsn,
-                        snapshot_last_lid +
-                            len as LogID,
+                        snapshot_max_lsn + len as Lsn +
+                            MSG_HEADER_LEN as
+                                Lsn,
+                        snapshot_last_lid + len as LogID +
+                            MSG_HEADER_LEN as
+                                LogID,
                     ),
                     other => {
                         // we can overwrite this non-flush
@@ -124,21 +126,21 @@ impl IoBufs {
         let current_buf = 0;
 
         trace!(
-            "starting IoBufs with recovered_lsn: {} \
-               recovered_lid: {}",
-            recovered_lsn,
-            recovered_lid
+            "starting IoBufs with next_lsn: {} \
+               next_lid: {}",
+            next_lsn,
+            next_lid
         );
 
-        if recovered_lsn % io_buf_size as Lsn == 0 {
+        if next_lsn % io_buf_size as Lsn == 0 {
             // recovering at segment boundary
-            assert_eq!(recovered_lid, recovered_lsn as LogID);
+            assert_eq!(next_lid, next_lsn as LogID);
             let iobuf = &bufs[current_buf];
-            let (lid, last_given) = segment_accountant.next(recovered_lsn);
+            let (lid, last_given) = segment_accountant.next(next_lsn);
 
             iobuf.set_lid(lid);
             iobuf.set_capacity(io_buf_size - SEG_TRAILER_LEN);
-            iobuf.store_segment_header(recovered_lsn, last_given);
+            iobuf.store_segment_header(next_lsn, last_given);
 
             file.seek(SeekFrom::Start(lid)).unwrap();
             file.write_all(&*vec![0; config.get_io_buf_size()]).unwrap();
@@ -146,31 +148,27 @@ impl IoBufs {
 
             debug!(
                 "starting log at clean offset {}, recovered lsn {}",
-                recovered_lid,
-                recovered_lsn
+                next_lid,
+                next_lsn
             );
         } else {
             // the tip offset is not completely full yet, reuse it
             let iobuf = &bufs[current_buf];
-            let offset = recovered_lid % io_buf_size as LogID;
-            iobuf.set_lid(recovered_lid);
+            let offset = next_lid % io_buf_size as LogID;
+            iobuf.set_lid(next_lid);
             iobuf.set_capacity(io_buf_size - offset as usize - SEG_TRAILER_LEN);
-            iobuf.set_lsn(recovered_lsn);
+            iobuf.set_lsn(next_lsn);
 
             debug!(
                 "starting log at split offset {}, recovered lsn {}",
-                recovered_lid,
-                recovered_lsn
+                next_lid,
+                next_lsn
             );
         }
 
         // we want stable to begin at -1, since the 0th byte
         // of our file has not yet been written.
-        let stable = if recovered_lsn == 0 {
-            -1
-        } else {
-            recovered_lsn
-        };
+        let stable = if next_lsn == 0 { -1 } else { next_lsn - 1 };
 
         IoBufs {
             bufs: bufs,
