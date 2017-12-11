@@ -201,7 +201,8 @@ pub(super) fn advance_snapshot<P, R>(
         );
 
         if lsn <= snapshot.max_lsn {
-            // don't process already-processed Lsn's.
+            // don't process already-processed Lsn's. max_lsn is for the last
+            // item ALREADY INCLUDED lsn in the snapshot.
             trace!(
                 "continuing in advance_snapshot, lsn {} log_id {} max_lsn {}",
                 lsn,

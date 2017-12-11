@@ -241,12 +241,12 @@ impl Segment {
         if let Some(current_lsn) = self.lsn {
             if current_lsn != lsn {
                 assert!(lsn > current_lsn);
-                trace!("(snapshot) resetting segment to have lsn {}", lsn);
+                trace!("(snapshot) recovering segment with base lsn {}", lsn);
                 self.state = Free;
                 self.free_to_active(lsn);
             }
         } else {
-            trace!("(snapshot) resetting segment to have lsn {}", lsn);
+            trace!("(snapshot) recovering segment with base lsn {}", lsn);
             self.free_to_active(lsn);
         }
     }
@@ -311,6 +311,14 @@ impl SegmentAccountant {
     ) -> SegmentAccountant {
         let mut ret = SegmentAccountant::default();
         ret.config = config;
+
+        match ret.config.segment_mode {
+            SegmentMode::Linear => {
+                // this is a hack to prevent segments from being overwritten
+                ret.pause_rewriting();
+            }
+            _ => {}
+        }
         ret.initialize_from_snapshot(snapshot.segments);
 
         if snapshot.last_lid > ret.tip {
@@ -355,7 +363,7 @@ impl SegmentAccountant {
             let lsn = segment.lsn();
 
             // populate free and to_clean if the segment has seen
-            if segment.is_empty() {
+            if segment.is_empty() && !self.pause_rewriting {
                 // can be reused immediately
 
                 if segment.state == Active {
@@ -389,8 +397,12 @@ impl SegmentAccountant {
                     self.free_segment(segment_start, true);
                 }
             } else if segment.live_pct() <=
-                       self.config.get_segment_cleanup_threshold()
+                       self.config.get_segment_cleanup_threshold() &&
+                       !self.pause_rewriting
             {
+                // hack! we check here for pause_rewriting to work with
+                // raw logs, which are created with this set to true.
+
                 // can be cleaned
                 trace!(
                     "setting segment {} to Draining from initialize_from_snapshot",
@@ -821,7 +833,7 @@ fn clean_tail_tears(
     // make sure the last <# io_bufs> segments are contiguous
     for window in logical_tail.windows(2) {
         if window[0] != window[1] + io_buf_size as Lsn {
-            warn!("detected torn segment somewhere after {}", window[0]);
+            error!("detected torn segment somewhere after {}", window[0]);
             tear_at = Some(window[1]);
         }
     }
@@ -837,7 +849,7 @@ fn clean_tail_tears(
 
         if trailer_res.is_err() {
             // trailer could not be read
-            warn!("could not read trailer of segment starting at {}", lid);
+            debug!("could not read trailer of segment starting at {}", lid);
             if let Some(existing_tear) = tear_at {
                 if existing_tear > lsn {
                     tear_at = Some(lsn);
@@ -856,7 +868,7 @@ fn clean_tail_tears(
             // trailer's checksum failed, or
             // the lsn is outdated, or
             // the lsn is 0 but the lid isn't 0 (zeroed segment)
-            warn!("tear detected at lsn {} for trailer {:?}", lsn, trailer);
+            debug!("tear detected at lsn {} for trailer {:?}", lsn, trailer);
             if let Some(existing_tear) = tear_at {
                 if existing_tear > lsn {
                     tear_at = Some(lsn);
@@ -869,7 +881,7 @@ fn clean_tail_tears(
 
     if let Some(tear) = tear_at {
         // we need to chop off the elements after the tear
-        warn!("filtering out segments after detected tear at {}", tear);
+        debug!("filtering out segments after detected tear at {}", tear);
         ordering = ordering
             .into_iter()
             .filter(|&(lsn, _lid)| lsn <= tear)
@@ -939,7 +951,7 @@ pub trait Manager {
 /// The log may be configured to write data
 /// in several different ways, depending on
 /// the constraints of the system using it.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SegmentMode {
     /// Write to the end of the log, always.
     Linear,

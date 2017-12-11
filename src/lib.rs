@@ -86,7 +86,7 @@ use ds::*;
 use hash::{crc16_arr, crc64};
 
 type LogID = u64;
-type Lsn = u64;
+type Lsn = isize;
 type PageID = usize;
 
 type Key = Vec<u8>;

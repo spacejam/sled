@@ -22,7 +22,8 @@ impl Iterator for LogIter {
         // if we can't read something we expect to be able to,
         // return None if there are no more remaining segments.
         loop {
-            let invalid = !valid_entry_offset(self.cur_lsn, self.segment_len);
+            let invalid =
+                !valid_entry_offset(self.cur_lsn as LogID, self.segment_len);
             if self.trailer.is_none() && invalid {
                 // We've read to the end of a torn
                 // segment and should stop now.
@@ -53,12 +54,12 @@ impl Iterator for LogIter {
             }
 
             let lid = self.segment_base.unwrap() +
-                (self.cur_lsn % self.segment_len as LogID);
+                (self.cur_lsn % self.segment_len as Lsn) as LogID;
 
-            if self.max_lsn <= lid {
+            if self.max_lsn < lid as Lsn {
                 // we've hit the end of the log.
                 trace!(
-                    "in LogIter::next self.max_lsn {} <= lid {}",
+                    "in LogIter::next self.max_lsn {} < lid {}",
                     self.max_lsn,
                     lid
                 );
@@ -70,12 +71,12 @@ impl Iterator for LogIter {
             match f.read_message(lid, self.segment_len, self.use_compression) {
                 Ok(LogRead::Flush(lsn, buf, on_disk_len)) => {
                     trace!("read flush in LogIter::next");
-                    self.cur_lsn += (MSG_HEADER_LEN + on_disk_len) as LogID;
+                    self.cur_lsn += (MSG_HEADER_LEN + on_disk_len) as Lsn;
                     return Some((lsn, lid, buf));
                 }
                 Ok(LogRead::Zeroed(on_disk_len)) => {
                     trace!("read zeroed in LogIter::next");
-                    self.cur_lsn += on_disk_len as LogID;
+                    self.cur_lsn += on_disk_len as Lsn;
                 }
                 _ => {
                     trace!("read failed in LogIter::next");
@@ -108,7 +109,7 @@ impl LogIter {
         let cached_f = self.config.cached_file();
         let mut f = cached_f.borrow_mut();
         let segment_header = f.read_segment_header(offset)?;
-        assert_eq!(offset % self.segment_len as Lsn, 0);
+        assert_eq!(offset % self.segment_len as LogID, 0);
         assert_eq!(segment_header.lsn % self.segment_len as Lsn, 0);
 
         if segment_header.lsn != lsn {

@@ -47,7 +47,7 @@ pub struct Config {
     tc: ThreadCache<fs::File>,
     tmp_path: String,
     read_only: bool,
-    log_mode: SegmentMode,
+    pub(super) segment_mode: SegmentMode,
 }
 
 unsafe impl Send for Config {}
@@ -86,7 +86,7 @@ impl Default for Config {
             zero_copy_storage: false,
             tc: ThreadCache::default(),
             tmp_path: tmp_path.to_owned(),
-            log_mode: SegmentMode::Gc,
+            segment_mode: SegmentMode::Gc,
         }
     }
 }
@@ -135,7 +135,8 @@ impl Config {
         (cache_fixup_threshold, get_cache_fixup_threshold, set_cache_fixup_threshold, usize, "the maximum length of a cached page fragment chain"),
         (segment_cleanup_threshold, get_segment_cleanup_threshold, set_segment_cleanup_threshold, f64, "the proportion of remaining valid pages in the segment"),
         (min_free_segments, get_min_free_segments, set_min_free_segments, usize, "the minimum number of free segments to have on-deck before a compaction occurs"),
-        (zero_copy_storage, get_zero_copy_storage, set_zero_copy_storage, bool, "disabling of the log segment copy cleaner")
+        (zero_copy_storage, get_zero_copy_storage, set_zero_copy_storage, bool, "disabling of the log segment copy cleaner"),
+        (segment_mode, get_segment_mode, set_segment_mode, SegmentMode, "the file segment selection mode")
     );
 
     /// Retrieve a thread-local file handle to the
@@ -224,8 +225,9 @@ impl Config {
     }
 
     /// Consumes the `Config` and produces a `Log` from it.
-    pub fn log(self) -> Log {
-        self.build().log()
+    pub fn log(mut self) -> Log {
+        self.segment_mode = SegmentMode::Linear;
+        Log::start_raw_log(self.build())
     }
 }
 
@@ -269,6 +271,7 @@ impl FinalConfig {
 
     /// Start a `Log` using this finalized configuration.
     pub fn log(&self) -> Log {
+        assert_eq!(self.0.segment_mode, SegmentMode::Linear, "must use SegmentMode::Linear with log!");
         Log::start_raw_log(self.clone())
     }
 }

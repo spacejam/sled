@@ -104,7 +104,7 @@ impl Log {
 
         let log_iter = LogIter {
             config: config.clone(),
-            max_lsn: std::u64::MAX,
+            max_lsn: std::isize::MAX,
             cur_lsn: SEG_HEADER_LEN as Lsn,
             segment_base: None,
             segment_iter: segment_iter,
@@ -121,9 +121,6 @@ impl Log {
         );
 
         let log = Log::start::<()>(config, snapshot);
-
-        // this is a hack to prevent segments from being overwritten
-        log.with_sa(|sa| sa.pause_rewriting());
 
         log
     }
@@ -147,6 +144,7 @@ impl Log {
     /// Return an iterator over the log, starting with
     /// a specified offset.
     pub fn iter_from(&self, lsn: Lsn) -> LogIter {
+        // TODO corrected_lsn = max(lsn, SEG_HEADER_LEN) ? (for any segment?)
         trace!("iterating from lsn {}", lsn);
         let io_buf_size = self.config.get_io_buf_size();
         let segment_base_lsn = lsn / io_buf_size as Lsn * io_buf_size as Lsn;
@@ -194,7 +192,7 @@ impl Log {
     }
 
     /// returns the current stable offset written to disk
-    pub fn stable_offset(&self) -> LogID {
+    pub fn stable_offset(&self) -> Lsn {
         self.iobufs.stable()
     }
 
@@ -203,15 +201,14 @@ impl Log {
     pub fn make_stable(&self, lsn: Lsn) {
         let start = clock();
 
-        // NB we make sure stable > lsn because stable starts at 0,
-        // before we write the 0th byte of the file.
-        while self.iobufs.stable() <= lsn {
+        // NB before we write the 0th byte of the file, stable  is -1
+        while self.iobufs.stable() < lsn {
             self.iobufs.flush();
 
             // block until another thread updates the stable lsn
             let waiter = self.iobufs.intervals.lock().unwrap();
 
-            if self.iobufs.stable() <= lsn {
+            if self.iobufs.stable() < lsn {
                 trace!("waiting on cond var for make_stable({})", lsn);
                 let _waiter =
                     self.iobufs.interval_updated.wait(waiter).unwrap();
@@ -411,7 +408,7 @@ impl From<[u8; SEG_TRAILER_LEN]> for SegmentTrailer {
         let lsn_buf = &buf[2..10];
         let mut lsn_arr = [0u8; 8];
         lsn_arr.copy_from_slice(&*lsn_buf);
-        let lsn: LogID = unsafe { std::mem::transmute(lsn_arr) };
+        let lsn: Lsn = unsafe { std::mem::transmute(lsn_arr) };
 
         let crc16_tested = crc16_arr(&lsn_arr);
 
