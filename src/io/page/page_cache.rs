@@ -2,7 +2,7 @@ use std::io::{Read, Seek, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use coco::epoch::{Owned, Ptr, Scope, pin};
+use epoch::{Owned, Shared, Guard, pin};
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
@@ -19,11 +19,11 @@ use super::*;
 ///
 /// ```
 /// extern crate sled;
-/// extern crate coco;
+/// extern crate crossbeam_epoch as epoch;
 ///
 /// use sled::Materializer;
 ///
-/// use coco::epoch::pin;
+/// use epoch::pin;
 ///
 /// pub struct TestMaterializer;
 ///
@@ -50,25 +50,26 @@ use super::*;
 ///     let conf = sled::Config::default().path(path.to_owned());
 ///     let pc = sled::PageCache::new(TestMaterializer,
 ///                                   conf.clone());
-///     pin(|scope| {
-///         let (id, key) = pc.allocate(scope);
+///     {
+///         let guard = pin();
+///         let (id, key) = pc.allocate(&guard);
 ///
 ///         // The first item in a page should be set using replace,
 ///         // which signals that this is the beginning of a new
 ///         // page history, and that any previous items associated
 ///         // with this page should be forgotten.
-///         let key = pc.replace(id, key, "a".to_owned(), scope).unwrap();
+///         let key = pc.replace(id, key, "a".to_owned(), &guard).unwrap();
 ///
 ///         // Subsequent atomic updates should be added with link.
-///         let key = pc.link(id, key, "b".to_owned(), scope).unwrap();
-///         let _key = pc.link(id, key, "c".to_owned(), scope).unwrap();
+///         let key = pc.link(id, key, "b".to_owned(), &guard).unwrap();
+///         let _key = pc.link(id, key, "c".to_owned(), &guard).unwrap();
 ///
 ///         // When getting a page, the provide `Materializer` is
 ///         // used to merge all pages together.
-///         let (consolidated, _key) = pc.get(id, scope).unwrap();
+///         let (consolidated, _key) = pc.get(id, &guard).unwrap();
 ///
 ///         assert_eq!(consolidated, "abc".to_owned());
-///     });
+///     }
 ///
 ///     drop(pc);
 ///     std::fs::remove_file(path).unwrap();
@@ -181,7 +182,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
     /// Create a new page, trying to reuse old freed pages if possible
     /// to maximize underlying `Radix` pointer density.
-    pub fn allocate<'s>(&self, _: &'s Scope) -> (PageID, HPtr<'s, P>) {
+    pub fn allocate<'g>(&self, _: &'g Guard) -> (PageID, HPtr<'g, P>) {
         let pid = self.free.pop().unwrap_or_else(
             || self.max_pid.fetch_add(1, SeqCst),
         );
@@ -201,89 +202,88 @@ impl<PM, P, R> PageCache<PM, P, R>
         let (lsn, lid) = self.log.write(bytes);
         trace!("allocating pid {} at lsn {} lid {}", pid, lsn, lid);
 
-        (pid, Ptr::null())
+        (pid, Shared::null())
     }
 
     /// Free a particular page.
     pub fn free(&self, pid: PageID) {
-        pin(|scope| {
-            let deleted = self.inner.del(pid, scope);
-            if deleted.is_none() {
-                return;
-            }
+        let guard = pin();
+        let deleted = self.inner.del(pid, &guard);
+        if deleted.is_none() {
+            return;
+        }
 
-            // write info to log
-            let prepend: LoggedUpdate<P> = LoggedUpdate {
-                pid: pid,
-                update: Update::Free,
-            };
-            let serialize_start = clock();
-            let bytes = serialize(&prepend, Infinite).unwrap();
-            M.serialize.measure(clock() - serialize_start);
+        // write info to log
+        let prepend: LoggedUpdate<P> = LoggedUpdate {
+            pid: pid,
+            update: Update::Free,
+        };
+        let serialize_start = clock();
+        let bytes = serialize(&prepend, Infinite).unwrap();
+        M.serialize.measure(clock() - serialize_start);
 
-            let res = self.log.reserve(bytes);
+        let res = self.log.reserve(bytes);
 
-            // add pid to free stack to reduce fragmentation over time
-            unsafe {
-                let cas_key = deleted.unwrap().deref().head(scope);
+        // add pid to free stack to reduce fragmentation over time
+        unsafe {
+            let cas_key = deleted.unwrap().deref().head(&guard);
 
-                let lsn = res.lsn();
-                let lid = res.lid();
+            let lsn = res.lsn();
+            let lid = res.lid();
 
-                self.log.with_sa(|sa| {
-                    sa.mark_replace(
-                        pid,
-                        lsn,
-                        lids_from_stack(cas_key, scope),
-                        lid,
-                    )
-                });
-            }
+            self.log.with_sa(|sa| {
+                sa.mark_replace(
+                    pid,
+                    lsn,
+                    lids_from_stack(cas_key, &guard),
+                    lid,
+                )
+            });
+        }
 
-            // NB complete must happen AFTER calls to SA, because
-            // when the iobuf's n_writers hits 0, we may transition
-            // the segment to inactive, resulting in a race otherwise.
-            res.complete();
+        // NB complete must happen AFTER calls to SA, because
+        // when the iobuf's n_writers hits 0, we may transition
+        // the segment to inactive, resulting in a race otherwise.
+        res.complete();
 
-            let pd = Owned::new(PidDropper(pid, self.free.clone()));
-            let ptr = pd.into_ptr(scope);
-            unsafe {
-                scope.defer_drop(ptr);
-                scope.flush();
-            }
-        });
+        let pd = Owned::new(PidDropper(pid, self.free.clone()));
+        let ptr = pd.into_shared(&guard);
+        unsafe {
+            guard.defer(move || ptr.into_owned());
+            guard.flush();
+        }
     }
 
     /// Try to retrieve a page by its logical ID.
-    pub fn get<'s>(
+    pub fn get<'g>(
         &self,
         pid: PageID,
-        scope: &'s Scope,
-    ) -> Option<(PM::PageFrag, HPtr<'s, P>)> {
-        let stack_ptr = self.inner.get(pid, scope);
+        guard: &'g Guard,
+    ) -> Option<(PM::PageFrag, HPtr<'g, P>)> {
+        let stack_ptr = self.inner.get(pid, guard);
         if stack_ptr.is_none() {
             return None;
         }
 
         let stack_ptr = stack_ptr.unwrap();
 
-        let head = unsafe { stack_ptr.deref().head(scope) };
+        let head = unsafe { stack_ptr.deref().head(guard) };
 
-        self.page_in(pid, head, stack_ptr, scope)
+        self.page_in(pid, head, stack_ptr, guard)
     }
 
-    fn page_out<'s>(&self, to_evict: Vec<PageID>, scope: &'s Scope) {
+    fn page_out<'g>(&self, to_evict: Vec<PageID>, guard: &'g Guard) {
         let start = clock();
         for pid in to_evict {
-            let stack_ptr = self.inner.get(pid, scope);
+            let stack_ptr = self.inner.get(pid, guard);
             if stack_ptr.is_none() {
                 continue;
             }
 
             let stack_ptr = stack_ptr.unwrap();
 
-            let head = unsafe { stack_ptr.deref().head(scope) };
-            let stack_iter = StackIter::from_ptr(head, scope);
+            let head = unsafe { stack_ptr.deref().head(guard) };
+            let stack_iter = StackIter::from_ptr(head, guard);
 
             let mut cache_entries: Vec<CacheEntry<P>> =
                 stack_iter.map(|ptr| (*ptr).clone()).collect();
@@ -329,7 +329,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             unsafe {
                 if stack_ptr
                     .deref()
-                    .cas(head, node.into_ptr(scope), scope)
+                    .cas(head, node.into_shared(guard), guard)
                     .is_err()
                 {}
             }
@@ -359,15 +359,15 @@ impl<PM, P, R> PageCache<PM, P, R>
         }
     }
 
-    fn page_in<'s>(
+    fn page_in<'g>(
         &self,
         pid: PageID,
-        mut head: Ptr<'s, ds::stack::Node<CacheEntry<P>>>,
-        stack_ptr: Ptr<'s, ds::stack::Stack<CacheEntry<P>>>,
-        scope: &'s Scope,
-    ) -> Option<(PM::PageFrag, HPtr<'s, P>)> {
+        mut head: Shared<'g, ds::stack::Node<CacheEntry<P>>>,
+        stack_ptr: Shared<'g, ds::stack::Stack<CacheEntry<P>>>,
+        guard: &'g Guard,
+    ) -> Option<(PM::PageFrag, HPtr<'g, P>)> {
         let start = clock();
-        let stack_iter = StackIter::from_ptr(head, scope);
+        let stack_iter = StackIter::from_ptr(head, guard);
 
         let mut to_merge = vec![];
         let mut merged_resident = false;
@@ -443,7 +443,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         let size = std::mem::size_of_val(&merged);
         let to_evict = self.lru.accessed(pid, size);
         trace!("accessed pid {} -> paging out pid {:?}", pid, to_evict);
-        self.page_out(to_evict, scope);
+        self.page_out(to_evict, guard);
 
         if lids.len() > self.config.get_page_consolidation_threshold() {
             trace!("consolidating pid {} with len {}!", pid, lids.len());
@@ -451,7 +451,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 pid,
                 head,
                 merged.clone(),
-                scope,
+                guard,
                 true,
             ) {
                 Ok(new_head) => head = new_head,
@@ -491,7 +491,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
             debug_delay();
             let res = unsafe {
-                stack_ptr.deref().cas(head, node.into_ptr(scope), scope)
+                stack_ptr.deref().cas(head, node.into_shared(guard), guard)
             };
             if let Ok(new_head) = res {
                 head = new_head;
@@ -514,26 +514,26 @@ impl<PM, P, R> PageCache<PM, P, R>
     /// Returns `Ok(new_key)` if the operation was successful. Returns
     /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
     /// if the atomic swap fails.
-    pub fn replace<'s>(
+    pub fn replace<'g>(
         &self,
         pid: PageID,
-        old: HPtr<'s, P>,
+        old: HPtr<'g, P>,
         new: P,
-        scope: &'s Scope,
-    ) -> Result<HPtr<'s, P>, Option<HPtr<'s, P>>> {
-        self.replace_recurse_once(pid, old, new, scope, false)
+        guard: &'g Guard,
+    ) -> Result<HPtr<'g, P>, Option<HPtr<'g, P>>> {
+        self.replace_recurse_once(pid, old, new, guard, false)
     }
 
-    fn replace_recurse_once<'s>(
+    fn replace_recurse_once<'g>(
         &self,
         pid: PageID,
-        old: HPtr<'s, P>,
+        old: HPtr<'g, P>,
         new: P,
-        scope: &'s Scope,
+        guard: &'g Guard,
         recursed: bool,
-    ) -> Result<HPtr<'s, P>, Option<HPtr<'s, P>>> {
+    ) -> Result<HPtr<'g, P>, Option<HPtr<'g, P>>> {
         trace!("replacing pid {}", pid);
-        let stack_ptr = self.inner.get(pid, scope);
+        let stack_ptr = self.inner.get(pid, guard);
         if stack_ptr.is_none() {
             return Err(None);
         }
@@ -552,15 +552,15 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         let cache_entry = CacheEntry::MergedResident(new, lsn, lid);
 
-        let node = node_from_frag_vec(vec![cache_entry]).into_ptr(scope);
+        let node = node_from_frag_vec(vec![cache_entry]).into_shared(guard);
 
         debug_delay();
-        let result = unsafe { stack_ptr.deref().cas(old.clone(), node, scope) };
+        let result = unsafe { stack_ptr.deref().cas(old.clone(), node, guard) };
 
         if result.is_ok() {
             let lid = log_reservation.lid();
             let lsn = log_reservation.lsn();
-            let lids = lids_from_stack(old, scope);
+            let lids = lids_from_stack(old, guard);
 
             let to_clean = self.log.with_sa(|sa| {
                 sa.mark_replace(pid, lsn, lids, lid);
@@ -568,12 +568,12 @@ impl<PM, P, R> PageCache<PM, P, R>
             });
             if let Some(to_clean) = to_clean {
                 assert_ne!(pid, to_clean);
-                if let Some((page, key)) = self.get(to_clean, scope) {
+                if let Some((page, key)) = self.get(to_clean, guard) {
                     let _ = self.replace_recurse_once(
                         to_clean,
                         key,
                         page,
-                        scope,
+                        guard,
                         true,
                     );
                 }
@@ -602,14 +602,14 @@ impl<PM, P, R> PageCache<PM, P, R>
     /// Returns `Ok(new_key)` if the operation was successful. Returns
     /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
     /// if the atomic append fails.
-    pub fn link<'s>(
+    pub fn link<'g>(
         &self,
         pid: PageID,
-        old: HPtr<'s, P>,
+        old: HPtr<'g, P>,
         new: P,
-        scope: &'s Scope,
-    ) -> Result<HPtr<'s, P>, Option<HPtr<'s, P>>> {
-        let stack_ptr = self.inner.get(pid, scope);
+        guard: &'g Guard,
+    ) -> Result<HPtr<'g, P>, Option<HPtr<'g, P>>> {
+        let stack_ptr = self.inner.get(pid, guard);
         if stack_ptr.is_none() {
             return Err(None);
         }
@@ -632,7 +632,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         let cache_entry = CacheEntry::Resident(new, lsn, lid);
 
-        let result = unsafe { stack_ptr.deref().cap(old, cache_entry, scope) };
+        let result = unsafe { stack_ptr.deref().cap(old, cache_entry, guard) };
 
         if result.is_err() {
             log_reservation.abort();
@@ -642,12 +642,12 @@ impl<PM, P, R> PageCache<PM, P, R>
                 sa.clean(None)
             });
             if let Some(to_clean) = to_clean {
-                if let Some((page, key)) = self.get(to_clean, scope) {
+                if let Some((page, key)) = self.get(to_clean, guard) {
                     let _ = self.replace_recurse_once(
                         to_clean,
                         key,
                         page,
-                        scope,
+                        guard,
                         true,
                     );
                 }
@@ -1053,12 +1053,12 @@ impl<PM, P, R> PageCache<PM, P, R>
     }
 }
 
-fn lids_from_stack<'s, P: Send + Sync>(
-    head_ptr: HPtr<'s, P>,
-    scope: &'s Scope,
+fn lids_from_stack<'g, P: Send + Sync>(
+    head_ptr: HPtr<'g, P>,
+    guard: &'g Guard,
 ) -> Vec<LogID> {
     // generate a list of the old log ID's
-    let stack_iter = StackIter::from_ptr(head_ptr, scope);
+    let stack_iter = StackIter::from_ptr(head_ptr, guard);
 
     let mut lids = vec![];
     for cache_entry_ptr in stack_iter {

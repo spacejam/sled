@@ -1,6 +1,6 @@
 use super::*;
 
-use coco::epoch::pin;
+use epoch::pin;
 
 /// An iterator over keys and values in a `Tree`.
 pub struct Iter<'a> {
@@ -15,26 +15,25 @@ impl<'a> Iterator for Iter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let start = clock();
-        pin(|scope| {
-            loop {
-                let (frag, _cas_key) = self.inner.get(self.id, scope).unwrap();
-                let (node, _is_root) = frag.base().unwrap();
-                // TODO this could be None if the node was removed since the last
-                // iteration, and we need to just get the inner node again...
-                for (ref k, ref v) in node.data.leaf().unwrap() {
-                    if Bound::Inc(k.clone()) > self.last_key {
-                        self.last_key = Bound::Inc(k.to_vec());
-                        let ret = Some((k.clone(), v.clone()));
-                        M.tree_scan.measure(clock() - start);
-                        return ret;
-                    }
-                }
-                if node.next.is_none() {
+        let guard = pin();
+        loop {
+            let (frag, _cas_key) = self.inner.get(self.id, &guard).unwrap();
+            let (node, _is_root) = frag.base().unwrap();
+            // TODO this could be None if the node was removed since the last
+            // iteration, and we need to just get the inner node again...
+            for (ref k, ref v) in node.data.leaf().unwrap() {
+                if Bound::Inc(k.clone()) > self.last_key {
+                    self.last_key = Bound::Inc(k.to_vec());
+                    let ret = Some((k.clone(), v.clone()));
                     M.tree_scan.measure(clock() - start);
-                    return None;
+                    return ret;
                 }
-                self.id = node.next.unwrap();
             }
-        })
+            if node.next.is_none() {
+                M.tree_scan.measure(clock() - start);
+                return None;
+            }
+            self.id = node.next.unwrap();
+        }
     }
 }
