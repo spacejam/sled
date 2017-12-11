@@ -1,6 +1,9 @@
 use std::path::Path;
 use std::io::{Read, Seek, Write};
 
+#[cfg(feature = "zstd")]
+use zstd::block::{compress, decompress};
+
 use super::*;
 
 /// A snapshot of the state required to quickly restart

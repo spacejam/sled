@@ -5,9 +5,6 @@ use coco::epoch::{Owned, Ptr, Scope, pin};
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 
-#[cfg(feature = "zstd")]
-use zstd::block::{compress, decompress};
-
 use super::*;
 
 /// Points to either a memory location or a disk location to page-in data from.
