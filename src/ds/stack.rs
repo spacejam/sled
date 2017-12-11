@@ -270,7 +270,7 @@ fn basic_functionality() {
     let ll = Arc::new(Stack::default());
     assert_eq!(ll.pop(), None);
     ll.push(1);
-    let ll2 = ll.clone();
+    let ll2 = Arc::clone(&ll);
     let t = thread::spawn(move || {
         ll2.push(2);
         ll2.push(3);
@@ -280,14 +280,14 @@ fn basic_functionality() {
     ll.push(5);
     assert_eq!(ll.pop(), Some(5));
     assert_eq!(ll.pop(), Some(4));
-    let ll3 = ll.clone();
+    let ll3 = Arc::clone(&ll);
     let t = thread::spawn(move || {
         assert_eq!(ll3.pop(), Some(3));
         assert_eq!(ll3.pop(), Some(2));
     });
     t.join().unwrap();
     assert_eq!(ll.pop(), Some(1));
-    let ll4 = ll.clone();
+    let ll4 = Arc::clone(&ll);
     let t = thread::spawn(move || {
         assert_eq!(ll4.pop(), None);
     });

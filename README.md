@@ -60,8 +60,7 @@ tree.del(&k);
 
 # warnings
 
-* quite young, there are lots of tests but don't bet a billion
-  dollar business on it yet!
+* quite young, should be considered unstable for the time being
 * the C API is likely to change rapidly
 * the on-disk format is going to change in non-forward compatible ways
   before the `1.0.0` release! after that, we will always support

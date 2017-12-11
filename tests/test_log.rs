@@ -16,15 +16,16 @@ use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::{Rng, thread_rng};
 
 use sled::{Config, Log, LogRead, MSG_HEADER_LEN, SEG_HEADER_LEN,
-           SEG_TRAILER_LEN};
+           SEG_TRAILER_LEN, SegmentMode};
 
-type Lsn = u64;
+type Lsn = isize;
 type LogID = u64;
+
 
 #[test]
 #[ignore]
 fn more_log_reservations_than_buffers() {
-    let config = Config::default();
+    let config = Config::default().segment_mode(SegmentMode::Linear).build();
     let log = config.log();
     let mut reservations = vec![];
     for _ in 0..config.get_io_bufs() + 1 {
@@ -40,7 +41,10 @@ fn more_log_reservations_than_buffers() {
 
 #[test]
 fn non_contiguous_log_flush() {
-    let conf = Config::default().io_buf_size(1000);
+    let conf = Config::default()
+        .segment_mode(SegmentMode::Linear)
+        .io_buf_size(1000)
+        .build();
     let log = conf.log();
 
     let overhead = MSG_HEADER_LEN + SEG_HEADER_LEN + SEG_TRAILER_LEN;
@@ -57,7 +61,11 @@ fn non_contiguous_log_flush() {
 #[test]
 fn concurrent_logging() {
     // TODO linearize res bufs, verify they are correct
-    let conf = Config::default().io_buf_size(1000).flush_every_ms(Some(50));
+    let conf = Config::default()
+        .segment_mode(SegmentMode::Linear)
+        .io_buf_size(1000)
+        .flush_every_ms(Some(50))
+        .build();
     let log = Arc::new(conf.log());
     let iobs2 = log.clone();
     let iobs3 = log.clone();
@@ -156,7 +164,10 @@ fn log_aborts() {
 
 #[test]
 fn log_iterator() {
-    let conf = Config::default().io_buf_size(1000);
+    let conf = Config::default()
+        .segment_mode(SegmentMode::Linear)
+        .io_buf_size(1000)
+        .build();
     let log = conf.log();
     let (first_lsn, _) = log.write(b"".to_vec());
     log.write(b"1".to_vec());
@@ -238,9 +249,11 @@ impl Arbitrary for Op {
 #[ignore]
 fn snapshot_with_out_of_order_buffers() {
     let conf = Config::default()
+        .segment_mode(SegmentMode::Linear)
         .io_buf_size(100)
         .io_bufs(2)
-        .snapshot_after_ops(5);
+        .snapshot_after_ops(5)
+        .build();
 
     let len = conf.get_io_buf_size() - SEG_HEADER_LEN - SEG_TRAILER_LEN -
         MSG_HEADER_LEN;
@@ -276,7 +289,10 @@ fn snapshot_with_out_of_order_buffers() {
 fn multi_segment_log_iteration() {
     // ensure segments are being linked
     // ensure trailers are valid
-    let conf = Config::default().io_buf_size(100);
+    let conf = Config::default()
+        .segment_mode(SegmentMode::Linear)
+        .io_buf_size(100)
+        .build();
     let len = conf.get_io_buf_size() - SEG_HEADER_LEN - SEG_TRAILER_LEN -
         MSG_HEADER_LEN;
     let log = conf.log();
@@ -308,7 +324,7 @@ struct OpVec {
 impl Arbitrary for OpVec {
     fn arbitrary<G: Gen>(g: &mut G) -> OpVec {
         let mut ops = vec![];
-        for _ in 0..g.gen_range(1, 10) {
+        for _ in 0..g.gen_range(1, 50) {
             let op = Op::arbitrary(g);
             ops.push(op);
 
@@ -354,9 +370,12 @@ impl Arbitrary for OpVec {
 
 fn prop_log_works(ops: OpVec) -> bool {
     use self::Op::*;
-    let config = Config::default().io_buf_size(1024 * 8).flush_every_ms(
-        Some(1),
-    );
+    let config = Config::default()
+        .io_buf_size(1024 * 8)
+        .flush_every_ms(Some(1))
+        // .flush_every_ms(None) // FIXME rm line
+        .segment_mode(SegmentMode::Linear)
+        .build();
     // println!("testing {:?}", ops);
 
     let mut tip = 0;
@@ -476,8 +495,8 @@ fn prop_log_works(ops: OpVec) -> bool {
 fn quickcheck_log_works() {
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 1))
-        .tests(100)
-        .max_tests(1000)
+        .tests(1000)
+        .max_tests(10000)
         .quickcheck(prop_log_works as fn(OpVec) -> bool);
 }
 
@@ -623,12 +642,27 @@ fn log_bug_13() {
 }
 
 #[test]
-fn log_bug_14() {
+fn log_bug_14a() {
     // postmortem: was not simulating the "rewind" behavior of the
     // log to replace aborted flushes at the log tip properly.
+    // postmortem 2:
     use Op::*;
     prop_log_works(OpVec {
         ops: vec![AbortReservation(vec![12]), Restart, Write(vec![]), Read(0)],
+    });
+}
+
+#[test]
+fn log_bug_14b() {
+    // postmortem: config was being improperly copied, causing temp
+    // files to be deleted while dangling refs persisted, causing
+    // the original data file to be unlinked and then divergent file
+    // descriptors ended up being used. resulted in weird stuff like
+    // reads not returning recent writes. Lesson: don't go around
+    // FinalConfig!
+    use Op::*;
+    prop_log_works(OpVec {
+        ops: vec![Restart, Write(vec![]), Read(0)],
     });
 }
 
@@ -690,7 +724,7 @@ fn log_bug_18() {
 
 #[test]
 fn log_bug_19() {
-    // postmortem: this was stallin]g in make_stable
+    // postmortem: this was stalling in make_stable
     // postmortem 2: SA recovery skipped the first segment because we
     // were not properly adding the empty tip to the free list.
     use Op::*;
@@ -703,6 +737,36 @@ fn log_bug_19() {
             Write(vec![47]),
             Restart,
             Read(2),
+        ],
+    });
+}
+
+#[test]
+fn log_bug_20() {
+    // postmortem: message header length was not being included when
+    // calculating the starting log offsets.
+    use Op::*;
+    prop_log_works(OpVec {
+        ops: vec![
+            WriteReservation(vec![]),
+            Restart,
+            WriteReservation(vec![2]),
+            Read(1),
+        ],
+    });
+}
+
+#[test]
+fn log_bug_21() {
+    // postmortem: message header length was not being included when
+    // calculating the starting log offsets.
+    use Op::*;
+    prop_log_works(OpVec {
+        ops: vec![
+            WriteReservation(vec![1]),
+            Restart,
+            WriteReservation(vec![2]),
+            Read(1),
         ],
     });
 }

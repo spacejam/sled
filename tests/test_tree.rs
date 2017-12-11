@@ -48,7 +48,7 @@ fn parallel_tree_ops() {
     }
 
     println!("========== initial sets ==========");
-    let conf = Config::default().blink_fanout(2);
+    let conf = Config::default().blink_fanout(2).build();
     let t = Arc::new(conf.tree());
     par!{t, |tree: &Tree, k: Vec<u8>| {
         assert_eq!(tree.get(&*k), None);
@@ -158,7 +158,8 @@ fn recover_tree() {
         .blink_fanout(2)
         .io_buf_size(5000)
         .flush_every_ms(None)
-        .snapshot_after_ops(100);
+        .snapshot_after_ops(100)
+        .build();
     let t = conf.tree();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
@@ -251,7 +252,8 @@ fn prop_tree_matches_btreemap(
         .flush_every_ms(Some(1))
         .io_buf_size(10000)
         .blink_fanout(blink_fanout as usize + 2)
-        .cache_capacity(40);
+        .cache_capacity(40)
+        .build();
 
     let mut tree = config.tree();
     let mut reference = BTreeMap::new();

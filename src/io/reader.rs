@@ -7,7 +7,7 @@ use zstd::block::decompress;
 
 use super::*;
 
-pub trait LogReader {
+pub(super) trait LogReader {
     fn read_segment_header(
         &mut self,
         id: LogID,
@@ -77,9 +77,9 @@ impl LogReader for File {
         segment_len: usize,
         _use_compression: bool,
     ) -> std::io::Result<LogRead> {
-        trace!("reading message at lid {}", id);
         let start = clock();
         let seg_start = id / segment_len as LogID * segment_len as LogID;
+        trace!("reading message from segment: {} at lid: {}", seg_start, id);
         assert!(seg_start + MSG_HEADER_LEN as LogID <= id);
 
         let ceiling = seg_start + segment_len as LogID -
@@ -101,6 +101,7 @@ impl LogReader for File {
                 max
             );
             M.read.measure(clock() - start);
+            trace!("read a corrupted message of len {}", len);
             return Ok(LogRead::Corrupted(len));
         } else if len == 0 && !header.valid {
             // skip to next record, which starts with 1
@@ -123,6 +124,7 @@ impl LogReader for File {
 
         if !header.valid {
             M.read.measure(clock() - start);
+            trace!("read zeroes of len {}", len + MSG_HEADER_LEN);
             return Ok(LogRead::Zeroed(len + MSG_HEADER_LEN));
         }
 
@@ -135,6 +137,7 @@ impl LogReader for File {
         let checksum = crc16_arr(&buf);
         if checksum != header.crc16 {
             M.read.measure(clock() - start);
+            trace!("read a message with a bad checksum of len {}", len);
             return Ok(LogRead::Corrupted(len));
         }
 
@@ -158,6 +161,7 @@ impl LogReader for File {
         let res = Ok(LogRead::Flush(header.lsn, buf, len));
 
         M.read.measure(clock() - start);
+        trace!("read a successful flushed message");
         res
     }
 }

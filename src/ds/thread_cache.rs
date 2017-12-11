@@ -12,7 +12,7 @@ pub struct ThreadCache<T> {
 impl<T> Clone for ThreadCache<T> {
     fn clone(&self) -> ThreadCache<T> {
         ThreadCache {
-            inner: self.inner.clone(),
+            inner: Arc::clone(&self.inner),
         }
     }
 }
@@ -37,13 +37,13 @@ impl<T> ThreadCache<T> {
         {
             let map = self.inner.read().unwrap();
             if map.contains_key(&id) {
-                return map.get(&id).unwrap().clone();
+                return Rc::clone(map.get(&id).unwrap());
             }
         }
 
         let t = Rc::new(RefCell::new(f()));
         let mut map = self.inner.write().unwrap();
         map.insert(id, t);
-        map.get(&id).unwrap().clone()
+        Rc::clone(map.get(&id).unwrap())
     }
 }

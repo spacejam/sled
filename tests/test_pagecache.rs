@@ -42,10 +42,10 @@ fn pagecache_caching() {
         .cache_bits(0)
         .flush_every_ms(None)
         .snapshot_after_ops(1_000_000)
-        .io_buf_size(5000);
+        .io_buf_size(5000)
+        .build();
 
-    let mut pc = PageCache::new(TestMaterializer, conf.clone());
-    pc.recover();
+    let pc = PageCache::start(TestMaterializer, conf.clone());
 
     let guard = pin();
     let mut keys = HashMap::new();
@@ -71,11 +71,11 @@ fn pagecache_strange_crash_1() {
         .cache_bits(0)
         .flush_every_ms(None)
         .snapshot_after_ops(1_000_000)
-        .io_buf_size(5000);
+        .io_buf_size(5000)
+        .build();
 
     {
-        let mut pc = PageCache::new(TestMaterializer, conf.clone());
-        pc.recover();
+        let pc = PageCache::start(TestMaterializer, conf.clone());
 
         let guard = pin();
         let mut keys = HashMap::new();
@@ -93,8 +93,7 @@ fn pagecache_strange_crash_1() {
         }
     }
     println!("!!!!!!!!!!!!!!!!!!!!! recovering !!!!!!!!!!!!!!!!!!!!!!");
-    let mut pc = PageCache::new(TestMaterializer, conf.clone());
-    pc.recover();
+    let _pc = PageCache::start(TestMaterializer, conf.clone());
     // TODO test no eaten lsn's on recovery
     // TODO test that we don't skip multiple segments ahead on recovery (confusing Lsn & Lid)
 }
@@ -108,11 +107,12 @@ fn pagecache_strange_crash_2() {
             .cache_bits(0)
             .flush_every_ms(None)
             .snapshot_after_ops(1_000_000)
-            .io_buf_size(5000);
+            .io_buf_size(5000)
+            .build();
 
         println!("!!!!!!!!!!!!!!!!!!!!! {} !!!!!!!!!!!!!!!!!!!!!!", x);
-        let mut pc = PageCache::new(TestMaterializer, conf.clone());
-        pc.recover();
+        let pc = PageCache::start(TestMaterializer, conf.clone());
+        pc.recovered_state();
 
         let mut keys = HashMap::new();
         for _ in 0..2 {
@@ -139,12 +139,14 @@ fn pagecache_strange_crash_2() {
 
 #[test]
 fn basic_pagecache_recovery() {
-    let conf = Config::default().flush_every_ms(None).io_buf_size(200);
+    let conf = Config::default()
+        .flush_every_ms(None)
+        .io_buf_size(200)
+        .build();
 
-    let mut pc = PageCache::new(TestMaterializer, conf.clone());
+    let pc = PageCache::start(TestMaterializer, conf.clone());
 
     let guard = pin();
-    pc.recover();
     let (id, key) = pc.allocate(&guard);
     let key = pc.replace(id, key, vec![1], &guard).unwrap();
     let key = pc.link(id, key, vec![2], &guard).unwrap();
@@ -153,23 +155,20 @@ fn basic_pagecache_recovery() {
     assert_eq!(consolidated, vec![1, 2, 3]);
     drop(pc);
 
-    let mut pc2 = PageCache::new(TestMaterializer, conf.clone());
-    pc2.recover();
+    let pc2 = PageCache::start(TestMaterializer, conf.clone());
     let (consolidated2, key) = pc2.get(id, &guard).unwrap();
     assert_eq!(consolidated, consolidated2);
 
     pc2.link(id, key, vec![4], &guard).unwrap();
     drop(pc2);
 
-    let mut pc3 = PageCache::new(TestMaterializer, conf.clone());
-    pc3.recover();
+    let pc3 = PageCache::start(TestMaterializer, conf.clone());
     let (consolidated3, _key) = pc3.get(id, &guard).unwrap();
     assert_eq!(consolidated3, vec![1, 2, 3, 4]);
     pc3.free(id);
     drop(pc3);
 
-    let mut pc4 = PageCache::new(TestMaterializer, conf.clone());
-    pc4.recover();
+    let pc4 = PageCache::start(TestMaterializer, conf.clone());
     let res = pc4.get(id, &guard);
     assert!(res.is_none());
 }
@@ -264,10 +263,10 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
         .flush_every_ms(Some(1))
         .cache_bits(0)
         .cache_capacity(40)
-        .cache_fixup_threshold(cache_fixup_threshold as usize);
+        .cache_fixup_threshold(cache_fixup_threshold as usize)
+        .build();
 
-    let mut pc = PageCache::new(TestMaterializer, config.clone());
-    pc.recover();
+    let mut pc = PageCache::start(TestMaterializer, config.clone());
 
     let mut reference: HashMap<PageID, Vec<usize>> = HashMap::new();
 
@@ -297,8 +296,7 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
                     existing.push(c);
                 } else {
                     let guard = pin();
-                    let res =
-                        pc.replace(pid, bad_ptr.into(), vec![c], &guard);
+                    let res = pc.replace(pid, bad_ptr.into(), vec![c], &guard);
                     assert!(res.unwrap_err().is_none());
                 }
             }
@@ -337,9 +335,7 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
                         let values = a.unwrap();
                         values.iter().fold(0, |acc, cur| {
                             if *cur <= acc {
-                                panic!(
-                                    "out of order page fragments in page!"
-                                );
+                                panic!("out of order page fragments in page!");
                             }
                             *cur
                         });
@@ -359,8 +355,7 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
             }
             Restart => {
                 drop(pc);
-                pc = PageCache::new(TestMaterializer, config.clone());
-                pc.recover();
+                pc = PageCache::start(TestMaterializer, config.clone());
             }
         }
     }
@@ -372,8 +367,8 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
 fn quickcheck_pagecache_works() {
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 1))
-        .tests(50)
-        .max_tests(100)
+        .tests(1000)
+        .max_tests(10000)
         .quickcheck(prop_pagecache_works as fn(OpVec, u8) -> bool);
 }
 

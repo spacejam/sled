@@ -44,7 +44,7 @@ pub use tree::{Iter, Tree};
 #[doc(hidden)]
 pub use ds::{Radix, Stack};
 /// general-purpose configuration
-pub use config::Config;
+pub use config::{Config, FinalConfig};
 pub use io::*;
 
 macro_rules! rep_no_copy {
@@ -86,7 +86,7 @@ use ds::*;
 use hash::{crc16_arr, crc64};
 
 type LogID = u64;
-type Lsn = u64;
+type Lsn = isize;
 type PageID = usize;
 
 type Key = Vec<u8>;
@@ -135,4 +135,30 @@ fn debug_delay() {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
+}
+
+// initialize env_logger and/or cpuprofiler if configured to do so.
+fn global_init() {
+    use std::sync::{ONCE_INIT, Once};
+
+    static ONCE: Once = ONCE_INIT;
+
+    ONCE.call_once(|| {
+        #[cfg(feature = "env_logger")]
+        let _r = env_logger::init();
+
+        #[cfg(feature = "cpuprofiler")]
+        {
+            use std::env;
+
+            let key = "CPUPROFILE";
+            let path = match env::var(key) {
+                Ok(val) => val,
+                Err(_) => "sled.profile".to_owned(),
+            };
+            cpuprofiler::PROFILER.lock().unwrap().start(path).expect(
+                "could not start cpu profiler!",
+            );
+        }
+    });
 }

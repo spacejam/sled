@@ -1,14 +1,13 @@
 use std::io::{Seek, Write};
 use std::path::Path;
 use std::sync::{Condvar, Mutex};
-use std::sync::atomic::{AtomicBool, AtomicUsize};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize};
 use std::sync::atomic::Ordering::SeqCst;
-
-#[cfg(feature = "rayon")]
-use rayon::prelude::*;
 
 #[cfg(feature = "zstd")]
 use zstd::block::compress;
+
+use self::reader::LogReader;
 
 use super::*;
 
@@ -24,20 +23,20 @@ struct IoBuf {
 unsafe impl Sync for IoBuf {}
 
 pub(super) struct IoBufs {
-    config: Config,
+    config: FinalConfig,
     bufs: Vec<IoBuf>,
     current_buf: AtomicUsize,
     written_bufs: AtomicUsize,
     // Pending intervals that have been written to stable storage, but may be
     // higher than the current value of `stable` due to interesting thread
     // interleavings.
-    pub(super) intervals: Mutex<Vec<(LogID, LogID)>>,
+    pub(super) intervals: Mutex<Vec<(Lsn, Lsn)>>,
     pub(super) interval_updated: Condvar,
     // The highest CONTIGUOUS log sequence number that has been written to
     // stable storage. This may be lower than the length of the underlying
     // file, and there may be buffers that have been written out-of-order
     // to stable storage due to interesting thread interleavings.
-    stable: AtomicUsize,
+    stable: AtomicIsize,
     file_for_writing: Mutex<std::fs::File>,
     segment_accountant: Mutex<SegmentAccountant>,
 }
@@ -45,13 +44,17 @@ pub(super) struct IoBufs {
 /// `IoBufs` is a set of lock-free buffers for coordinating
 /// writes to underlying storage.
 impl IoBufs {
-    pub fn new(config: Config) -> IoBufs {
-        let path = config.get_path();
+    pub fn start<R>(config: FinalConfig, mut snapshot: Snapshot<R>) -> IoBufs {
+        // if configured, start env_logger and/or cpuprofiler
+        global_init();
 
+        // panic if we can't parse the path
+        let path = config.get_path();
         let dir = Path::new(&path).parent().expect(
             "could not parse provided path",
         );
 
+        // create data directory if it doesn't exist yet
         if dir != Path::new("") {
             if dir.is_file() {
                 panic!(
@@ -66,36 +69,75 @@ impl IoBufs {
             }
         }
 
+        // open file for writing
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true);
+        options.read(true);
+        options.write(true);
+        let mut file = options.open(&path).unwrap();
+
+        // TODO this should never change, it should be
+        // stored in a persisted conf file and if it
+        // doesn't match, we should panic.
         let io_buf_size = config.get_io_buf_size();
 
-        let mut segment_accountant = SegmentAccountant::new(config.clone());
+        let snapshot_max_lsn = snapshot.max_lsn;
+        let snapshot_last_lid = snapshot.last_lid;
+
+        let (next_lsn, next_lid) =
+            if snapshot_max_lsn < SEG_HEADER_LEN as Lsn {
+                snapshot.max_lsn = 0;
+                snapshot.last_lid = 0;
+                (0, 0)
+            } else {
+                match file.read_message(
+                    snapshot_last_lid,
+                    io_buf_size,
+                    config.get_use_compression(),
+                ) {
+                    Ok(LogRead::Flush(_lsn, _buf, len)) => (
+                        snapshot_max_lsn + len as Lsn +
+                            MSG_HEADER_LEN as
+                                Lsn,
+                        snapshot_last_lid + len as LogID +
+                            MSG_HEADER_LEN as
+                                LogID,
+                    ),
+                    other => {
+                        // we can overwrite this non-flush
+                        debug!(
+                            "got non-flush tip while recovering at {}: {:?}",
+                            snapshot_last_lid,
+                            other
+                        );
+                        (snapshot_max_lsn, snapshot_last_lid)
+                    }
+                }
+            };
+
+        let mut segment_accountant =
+            SegmentAccountant::start(config.clone(), snapshot);
 
         let bufs = rep_no_copy![IoBuf::new(io_buf_size); config.get_io_bufs()];
 
         let current_buf = 0;
-        let recovered_lsn = segment_accountant.recovered_lsn();
-        let recovered_lid = segment_accountant.recovered_lid();
-
-        // open file for writing
-        let mut options = std::fs::OpenOptions::new();
-        options.create(true);
-        options.write(true);
-        let mut file = options.open(&path).unwrap();
 
         trace!(
-            "starting IoBufs with recovered_lsn: {} \
-               recovered_lid: {}",
-            recovered_lsn,
-            recovered_lid
+            "starting IoBufs with next_lsn: {} \
+               next_lid: {}",
+            next_lsn,
+            next_lid
         );
 
-        if recovered_lid % io_buf_size as LogID == 0 {
-            // clean offset, need to create a new one and initialize it
+        if next_lsn % io_buf_size as Lsn == 0 {
+            // recovering at segment boundary
+            assert_eq!(next_lid, next_lsn as LogID);
             let iobuf = &bufs[current_buf];
-            let (lid, last_given) = segment_accountant.next(recovered_lsn);
+            let (lid, last_given) = segment_accountant.next(next_lsn);
+
             iobuf.set_lid(lid);
             iobuf.set_capacity(io_buf_size - SEG_TRAILER_LEN);
-            iobuf.store_segment_header(recovered_lsn, last_given);
+            iobuf.store_segment_header(next_lsn, last_given);
 
             file.seek(SeekFrom::Start(lid)).unwrap();
             file.write_all(&*vec![0; config.get_io_buf_size()]).unwrap();
@@ -103,23 +145,27 @@ impl IoBufs {
 
             debug!(
                 "starting log at clean offset {}, recovered lsn {}",
-                recovered_lid,
-                recovered_lsn
+                next_lid,
+                next_lsn
             );
         } else {
             // the tip offset is not completely full yet, reuse it
             let iobuf = &bufs[current_buf];
-            let offset = recovered_lid % io_buf_size as LogID;
-            iobuf.set_lid(recovered_lid);
+            let offset = next_lid % io_buf_size as LogID;
+            iobuf.set_lid(next_lid);
             iobuf.set_capacity(io_buf_size - offset as usize - SEG_TRAILER_LEN);
-            iobuf.set_lsn(recovered_lsn);
+            iobuf.set_lsn(next_lsn);
 
             debug!(
                 "starting log at split offset {}, recovered lsn {}",
-                recovered_lid,
-                recovered_lsn
+                next_lid,
+                next_lsn
             );
         }
+
+        // we want stable to begin at -1, since the 0th byte
+        // of our file has not yet been written.
+        let stable = if next_lsn == 0 { -1 } else { next_lsn - 1 };
 
         IoBufs {
             bufs: bufs,
@@ -127,7 +173,7 @@ impl IoBufs {
             written_bufs: AtomicUsize::new(0),
             intervals: Mutex::new(vec![]),
             interval_updated: Condvar::new(),
-            stable: AtomicUsize::new(recovered_lsn as usize),
+            stable: AtomicIsize::new(stable),
             config: config,
             file_for_writing: Mutex::new(file),
             segment_accountant: Mutex::new(segment_accountant),
@@ -338,7 +384,8 @@ impl IoBufs {
             let destination = &mut (out_buf)[res_start..res_end];
 
             let reservation_offset = lid + u64::from(buf_offset);
-            let reservation_lsn = iobuf.get_lsn() + u64::from(buf_offset);
+            let reservation_lsn = iobuf.get_lsn() +
+                u64::from(buf_offset) as Lsn;
 
             // we assign the LSN now that we know what it is
             assert_eq!(&buf[1..9], &[0u8; 8]);
@@ -491,7 +538,7 @@ impl IoBufs {
                 // we want to just mark the part that won't get marked in
                 // write_to_log, which is basically just the wasted tip here.
                 let low_lsn = lsn + res_len as Lsn;
-                self.mark_interval((low_lsn, next_lsn));
+                self.mark_interval((low_lsn, next_lsn - 1));
             }
 
             let (next_offset, last_given) =
@@ -578,7 +625,10 @@ impl IoBufs {
 
         let io_buf_size = self.config.get_io_buf_size();
 
-        assert_eq!(lid % io_buf_size as LogID, base_lsn % io_buf_size as Lsn);
+        assert_eq!(
+            (lid % io_buf_size as LogID) as Lsn,
+            base_lsn % io_buf_size as Lsn
+        );
 
         assert_ne!(
             lid as usize,
@@ -604,7 +654,7 @@ impl IoBufs {
 
             let trailer_overhang = io_buf_size as Lsn - SEG_TRAILER_LEN as Lsn;
 
-            let trailer_lid = segment_lid + trailer_overhang;
+            let trailer_lid = segment_lid + trailer_overhang as LogID;
             let trailer_lsn = segment_lsn + trailer_overhang;
 
             let trailer = SegmentTrailer {
@@ -653,11 +703,15 @@ impl IoBufs {
         );
 
         if res_len != 0 {
-            let interval = (base_lsn, base_lsn + res_len as Lsn);
+            let interval = (base_lsn, base_lsn + res_len as Lsn - 1);
 
-            debug!("wrote lsns {}-{} to disk at offsets {}-{}", 
-                    base_lsn, base_lsn + res_len as Lsn, lid,
-                    lid + res_len as LogID,);
+            debug!(
+                "wrote lsns {}-{} to disk at offsets {}-{}",
+                base_lsn,
+                base_lsn + res_len as Lsn - 1,
+                lid,
+                lid + res_len as LogID - 1
+            );
             self.mark_interval(interval);
         }
 
@@ -695,11 +749,15 @@ impl IoBufs {
 
         while let Some(&(low, high)) = intervals.last() {
             assert_ne!(low, high);
-            let cur_stable = self.stable.load(SeqCst) as LogID;
+            let cur_stable = self.stable.load(SeqCst);
             assert!(low >= cur_stable);
-            if cur_stable == low {
-                let old = self.stable.swap(high as usize, SeqCst);
-                assert_eq!(old, cur_stable as usize);
+            if cur_stable + 1 == low {
+                let old = self.stable.swap(high, SeqCst);
+                assert_eq!(
+                    old,
+                    cur_stable,
+                    "concurrent stable offset modification detected"
+                );
                 debug!("new highest interval: {} - {}", low, high);
                 intervals.pop();
                 updated = true;

@@ -1,6 +1,6 @@
-use std::cell::{RefCell, UnsafeCell};
 use std::fs;
-use std::ops::{Deref, DerefMut};
+use std::cell::RefCell;
+use std::ops::Deref;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -28,7 +28,26 @@ use super::*;
 /// ```
 #[derive(Debug, Clone)]
 pub struct Config {
-    inner: Arc<UnsafeCell<ConfigInner>>,
+    io_bufs: usize,
+    io_buf_size: usize,
+    blink_fanout: usize,
+    page_consolidation_threshold: usize,
+    path: String,
+    cache_bits: usize,
+    cache_capacity: usize,
+    use_os_cache: bool,
+    use_compression: bool,
+    flush_every_ms: Option<u64>,
+    snapshot_after_ops: usize,
+    snapshot_path: Option<String>,
+    cache_fixup_threshold: usize,
+    segment_cleanup_threshold: f64,
+    min_free_segments: usize,
+    zero_copy_storage: bool,
+    tc: ThreadCache<fs::File>,
+    tmp_path: String,
+    read_only: bool,
+    pub(super) segment_mode: SegmentMode,
 }
 
 unsafe impl Send for Config {}
@@ -47,7 +66,7 @@ impl Default for Config {
         #[cfg(not(target_os = "linux"))]
         let tmp_path = format!("sled.tmp.{}", nanos);
 
-        let inner = Arc::new(UnsafeCell::new(ConfigInner {
+        Config {
             io_bufs: 3,
             io_buf_size: 2 << 22, // 8mb
             blink_fanout: 32,
@@ -67,61 +86,9 @@ impl Default for Config {
             zero_copy_storage: false,
             tc: ThreadCache::default(),
             tmp_path: tmp_path.to_owned(),
-        }));
-        Config {
-            inner: inner,
+            segment_mode: SegmentMode::Gc,
         }
     }
-}
-
-impl Deref for Config {
-    type Target = ConfigInner;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*self.inner.get() }
-    }
-}
-
-impl DerefMut for Config {
-    fn deref_mut(&mut self) -> &mut ConfigInner {
-        unsafe { &mut *self.inner.get() }
-    }
-}
-
-impl Config {
-    /// create a new `Tree` based on this configuration
-    pub fn tree(&self) -> Tree {
-        Tree::new(self.clone())
-    }
-
-    /// create a new `Log` based on this
-    /// configuration
-    pub fn log(&self) -> Log {
-        Log::start_system(self.clone())
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ConfigInner {
-    io_bufs: usize,
-    io_buf_size: usize,
-    blink_fanout: usize,
-    page_consolidation_threshold: usize,
-    path: String,
-    read_only: bool,
-    cache_bits: usize,
-    cache_capacity: usize,
-    use_os_cache: bool,
-    use_compression: bool,
-    flush_every_ms: Option<u64>,
-    snapshot_after_ops: usize,
-    snapshot_path: Option<String>,
-    cache_fixup_threshold: usize,
-    segment_cleanup_threshold: f64,
-    min_free_segments: usize,
-    zero_copy_storage: bool,
-    tc: ThreadCache<fs::File>,
-    tmp_path: String,
 }
 
 macro_rules! builder {
@@ -144,13 +111,13 @@ macro_rules! builder {
             pub fn $name(&self, to: $t) -> Config {
                 let mut ret = self.clone();
                 ret.$name = to;
-                Config { inner: Arc::new(UnsafeCell::new(ret))}
+                ret
             }
         )*
     }
 }
 
-impl ConfigInner {
+impl Config {
     builder!(
         (io_bufs, get_io_bufs, set_io_bufs, usize, "number of io buffers"),
         (io_buf_size, get_io_buf_size, set_io_buf_size, usize, "size of each io flush buffer. MUST be multiple of 512!"),
@@ -168,7 +135,8 @@ impl ConfigInner {
         (cache_fixup_threshold, get_cache_fixup_threshold, set_cache_fixup_threshold, usize, "the maximum length of a cached page fragment chain"),
         (segment_cleanup_threshold, get_segment_cleanup_threshold, set_segment_cleanup_threshold, f64, "the proportion of remaining valid pages in the segment"),
         (min_free_segments, get_min_free_segments, set_min_free_segments, usize, "the minimum number of free segments to have on-deck before a compaction occurs"),
-        (zero_copy_storage, get_zero_copy_storage, set_zero_copy_storage, bool, "disabling of the log segment copy cleaner")
+        (zero_copy_storage, get_zero_copy_storage, set_zero_copy_storage, bool, "disabling of the log segment copy cleaner"),
+        (segment_mode, get_segment_mode, set_segment_mode, SegmentMode, "the file segment selection mode")
     );
 
     /// Retrieve a thread-local file handle to the
@@ -186,6 +154,8 @@ impl ConfigInner {
         })
     }
 
+    /// Get the temporary path of the database, used as temporary
+    /// storage if none is provided.
     pub fn get_tmp_path(&self) -> String {
         self.tmp_path.clone()
     }
@@ -243,9 +213,25 @@ impl ConfigInner {
             .filter_map(filter)
             .collect()
     }
+
+    /// Finalize the configuration.
+    pub fn build(self) -> FinalConfig {
+        FinalConfig(Arc::new(self))
+    }
+
+    /// Consumes the `Config` and produces a `Tree` from it.
+    pub fn tree(self) -> Tree {
+        self.build().tree()
+    }
+
+    /// Consumes the `Config` and produces a `Log` from it.
+    pub fn log(mut self) -> Log {
+        self.segment_mode = SegmentMode::Linear;
+        Log::start_raw_log(self.build())
+    }
 }
 
-impl Drop for ConfigInner {
+impl Drop for Config {
     fn drop(&mut self) {
         let ephemeral = self.get_path() == self.get_tmp_path();
         if !ephemeral {
@@ -253,7 +239,6 @@ impl Drop for ConfigInner {
         }
 
         // Our files are temporary, so nuke them.
-
         let _res = fs::remove_file(self.tmp_path.clone());
 
         let candidates = self.get_snapshot_files();
@@ -262,5 +247,31 @@ impl Drop for ConfigInner {
                 warn!("failed to remove old snapshot file, maybe snapshot race? {}", _e);
             }
         }
+    }
+}
+
+/// A finalized `Config` that can be use multiple times
+/// to open a `Tree` or `Log`.
+#[derive(Clone, Debug, Default)]
+pub struct FinalConfig(Arc<Config>);
+
+impl Deref for FinalConfig {
+    type Target = Config;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
+
+impl FinalConfig {
+    /// Start a `Tree` using this finalized configuration.
+    pub fn tree(&self) -> Tree {
+        Tree::start(self.clone())
+    }
+
+    /// Start a `Log` using this finalized configuration.
+    pub fn log(&self) -> Log {
+        assert_eq!(self.0.segment_mode, SegmentMode::Linear, "must use SegmentMode::Linear with log!");
+        Log::start_raw_log(self.clone())
     }
 }
