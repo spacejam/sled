@@ -18,6 +18,7 @@ struct IoBuf {
     lsn: AtomicUsize,
     capacity: AtomicUsize,
     maxed: AtomicBool,
+    linearizer: Mutex<()>,
 }
 
 unsafe impl Sync for IoBuf {}
@@ -292,7 +293,7 @@ impl IoBufs {
 
             spins += 1;
             if spins > 1_000_000 {
-                debug!("{:?} stalling in reserve, idx {}", tn(), idx);
+                debug!("stalling in reserve, idx {}", idx);
                 spins = 0;
             }
 
@@ -300,7 +301,7 @@ impl IoBufs {
                 // This can happen because a reservation can finish up
                 // before the sealing thread gets around to bumping
                 // current_buf.
-                trace_once!("({:?}) written ahead of sealed, spinning", tn());
+                trace_once!("written ahead of sealed, spinning");
                 M.log_looped();
                 yield_now();
                 continue;
@@ -309,10 +310,7 @@ impl IoBufs {
             if current_buf - written_bufs >= self.config.get_io_bufs() {
                 // if written is too far behind, we need to
                 // spin while it catches up to avoid overlap
-                trace_once!(
-                    "({:?}) old io buffer not written yet, spinning",
-                    tn()
-                );
+                trace_once!("old io buffer not written yet, spinning");
                 M.log_looped();
                 yield_now();
                 continue;
@@ -326,7 +324,7 @@ impl IoBufs {
             if is_sealed(header) {
                 // already sealed, start over and hope cur
                 // has already been bumped by sealer.
-                trace_once!("({:?}) io buffer already sealed, spinning", tn());
+                trace_once!("io buffer already sealed, spinning");
                 M.log_looped();
                 yield_now();
                 continue;
@@ -341,7 +339,7 @@ impl IoBufs {
                 // Try to seal the buffer, and maybe write it if
                 // there are zero writers.
                 self.maybe_seal_and_write_iobuf(idx, header, true);
-                trace_once!("({:?}) io buffer too full, spinning", tn());
+                trace_once!("io buffer too full, spinning");
                 M.log_looped();
                 yield_now();
                 continue;
@@ -354,10 +352,7 @@ impl IoBufs {
 
             if iobuf.cas_header(header, claimed).is_err() {
                 // CAS failed, start over
-                trace_once!(
-                    "({:?}) CAS failed while claiming buffer slot, spinning",
-                    tn()
-                );
+                trace_once!("CAS failed while claiming buffer slot, spinning");
                 M.log_looped();
                 yield_now();
                 continue;
@@ -371,8 +366,7 @@ impl IoBufs {
             assert_ne!(
                 lid as usize,
                 std::usize::MAX,
-                "({:?}) fucked up on idx {}\n{:?}",
-                tn(),
+                "fucked up on idx {}\n{:?}",
                 idx,
                 self
             );
@@ -427,7 +421,7 @@ impl IoBufs {
         loop {
             spins += 1;
             if spins > 10 {
-                debug!("{:?} have spun >10x in decr", tn());
+                debug!("have spun >10x in decr");
                 spins = 0;
             }
 
@@ -447,6 +441,7 @@ impl IoBufs {
         // Succeeded in decrementing writers, if we decremented writers
         // to 0 and it's sealed then we should write it to storage.
         if n_writers(header) == 0 && is_sealed(header) {
+            info!("exiting idx {} from res", idx);
             self.write_to_log(idx);
         }
     }
@@ -493,35 +488,46 @@ impl IoBufs {
 
         let sealed = mk_sealed(header);
 
-        if iobuf.cas_header(header, sealed).is_err() {
-            // cas failed, don't try to continue
+        let res_len = offset(sealed) as usize;
+        let maxed = res_len == capacity;
+
+        let worked = iobuf.linearized(|| {
+            if iobuf.cas_header(header, sealed).is_err() {
+                // cas failed, don't try to continue
+                return false;
+            }
+            if from_reserve || maxed {
+                // NB we linearize this together with sealing
+                // the header here to guarantee that in write_to_log,
+                // which may be executing as soon as the seal is set
+                // by another thread, the thread that calls
+                // iobuf.get_maxed() is linearized with this one!
+                trace!("setting maxed to true for idx {}", idx);
+                iobuf.set_maxed(true);
+            }
+            true
+        });
+        if !worked {
             return;
         }
-        trace!("({:?}) {} sealed", tn(), idx);
 
-        // open new slot
-        let res_len = offset(sealed) as usize;
+        trace!("{} sealed", idx);
+
         let max = std::usize::MAX as LogID;
 
         assert_ne!(
             lid,
             max,
-            "({:?}) sealing something that should never have \
+            "sealing something that should never have \
             been claimed (idx {})\n{:?}",
-            tn(),
             idx,
             self
         );
 
+        // open new slot
         let mut next_lsn = lsn;
 
-        let maxed = res_len == capacity;
-
         let (next_offset, last_given) = if from_reserve || maxed {
-            // FIXME this isn't linearized with the thread that actually writes it
-            // we will write a trailer to the iobuf after writing it.
-            iobuf.set_maxed(true);
-
             // roll lsn to the next offset
             let segment_offset = next_lsn % io_buf_size as Lsn;
             let segment_remainder = io_buf_size as Lsn - segment_offset;
@@ -581,7 +587,7 @@ impl IoBufs {
             }
             yield_now();
         }
-        trace!("({:?}) {} log set", tn(), next_idx);
+        trace!("{} log set to {}", next_idx, next_offset);
 
         // NB as soon as the "sealed" bit is 0, this allows new threads
         // to start writing into this buffer, so do that after it's all
@@ -598,18 +604,15 @@ impl IoBufs {
             next_iobuf.set_header(0);
         }
 
-        trace!("({:?}) {} zeroed header", tn(), next_idx);
+        trace!("{} zeroed header", next_idx);
 
         debug_delay();
         let _current_buf = self.current_buf.fetch_add(1, SeqCst) + 1;
-        trace!(
-            "({:?}) {} current_buf",
-            tn(),
-            _current_buf % self.config.get_io_bufs()
-        );
+        trace!("{} current_buf", _current_buf % self.config.get_io_bufs());
 
         // if writers is 0, it's our responsibility to write the buffer.
         if n_writers(sealed) == 0 {
+            info!("writing idx {} from maybe...", idx);
             self.write_to_log(idx);
         }
     }
@@ -633,8 +636,7 @@ impl IoBufs {
         assert_ne!(
             lid as usize,
             std::usize::MAX,
-            "({:?}) created reservation for uninitialized slot",
-            tn()
+            "created reservation for uninitialized slot",
         );
 
         let res_len = offset(header) as usize;
@@ -647,7 +649,8 @@ impl IoBufs {
         f.sync_all().unwrap();
 
         // write a trailer if we're maxed
-        if iobuf.get_maxed() {
+        let maxed = iobuf.linearized(|| iobuf.get_maxed());
+        if maxed {
             let segment_lsn = base_lsn / io_buf_size as Lsn *
                 io_buf_size as Lsn;
             let segment_lid = lid / io_buf_size as LogID * io_buf_size as LogID;
@@ -678,7 +681,12 @@ impl IoBufs {
             // transition this segment into deplete-only mode now
             // that n_writers is 0, and all calls to mark_replace/link
             // happen before the reservation completes.
-            trace!("deactivating segment with lsn {}", segment_lsn);
+            info!(
+                "deactivating segment with lsn {} at idx {} with lid {}",
+                segment_lsn,
+                idx,
+                lid
+            );
             self.with_sa(|sa| sa.deactivate_segment(segment_lsn, segment_lid));
         } else {
             trace!(
@@ -688,19 +696,16 @@ impl IoBufs {
         }
 
         M.written_bytes.measure(res_len as f64);
-        // signal that this IO buffer is uninitialized
+
+        // signal that this IO buffer is now uninitialized
         let max = std::usize::MAX as LogID;
         iobuf.set_lid(max);
-        trace!("({:?}) {} log <- MAX", tn(), idx);
+        trace!("{} log <- MAX", idx);
 
         // communicate to other threads that we have written an IO buffer.
         debug_delay();
         let _written_bufs = self.written_bufs.fetch_add(1, SeqCst);
-        trace!(
-            "({:?}) {} written",
-            tn(),
-            _written_bufs % self.config.get_io_bufs()
-        );
+        trace!("{} written", _written_bufs % self.config.get_io_bufs());
 
         if res_len != 0 {
             let interval = (base_lsn, base_lsn + res_len as Lsn - 1);
@@ -736,6 +741,7 @@ impl IoBufs {
             interval.0 < interval.1,
             "tried to mark_interval with a high-end lower than the low-end"
         );
+        // FIXME mark_interval called with bad range???
         let mut intervals = self.intervals.lock().unwrap();
 
         intervals.push(interval);
@@ -823,7 +829,17 @@ impl IoBuf {
             lsn: AtomicUsize::new(0),
             capacity: AtomicUsize::new(0),
             maxed: AtomicBool::new(false),
+            linearizer: Mutex::new(()),
         }
+    }
+
+    // use this for operations on an IoBuf that must be
+    // linearized together, and can't fit in the header!
+    fn linearized<F, B>(&self, f: F) -> B
+        where F: FnOnce() -> B
+    {
+        let _l = self.linearizer.lock().unwrap();
+        f()
     }
 
     // This is called upon the initialization of a fresh segment.
