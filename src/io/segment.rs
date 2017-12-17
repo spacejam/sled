@@ -425,7 +425,9 @@ impl SegmentAccountant {
         if self.segments.is_empty() {
             // this is basically just for when we recover with a single
             // empty-yet-initialized segment
-            debug!("recovered no segments so not initializing from any");
+            debug!(
+                "recovered no segments so not initializing from any",
+            );
         }
     }
 
