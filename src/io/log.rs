@@ -155,7 +155,6 @@ impl Log {
     /// read a buffer from the disk
     pub fn read(&self, lsn: Lsn, lid: LogID) -> io::Result<LogRead> {
         trace!("reading log lsn {} lid {}", lsn, lid);
-        // TODO don't skip segments in SA, unify reuse_segment logic, remove from ordering consistently assert!(lsn >= lid, "lsn should never be less than the log offset");
         self.make_stable(lsn);
         let cached_f = self.config.cached_file();
         let mut f = cached_f.borrow_mut();
@@ -216,7 +215,7 @@ impl Log {
 /// All log messages are prepended with this header
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(super) struct MessageHeader {
-    pub valid: bool,
+    pub successful_flush: bool,
     pub lsn: Lsn,
     pub len: usize,
     pub crc16: [u8; 2],
@@ -312,7 +311,7 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
         let crc16 = [buf[13], buf[14]];
 
         MessageHeader {
-            valid: valid,
+            successful_flush: valid,
             lsn: lsn,
             len: len as usize,
             crc16: crc16,
@@ -323,7 +322,7 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
 impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
     fn into(self) -> [u8; MSG_HEADER_LEN] {
         let mut buf = [0u8; MSG_HEADER_LEN];
-        if self.valid {
+        if self.successful_flush {
             buf[0] = 1;
         }
 

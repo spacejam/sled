@@ -233,7 +233,7 @@ impl IoBufs {
         let crc16 = crc16_arr(&buf);
 
         let header = MessageHeader {
-            valid: true,
+            successful_flush: true,
             lsn: 0,
             len: buf.len(),
             crc16: crc16,

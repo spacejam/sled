@@ -368,7 +368,18 @@ impl<PM, P, R> PageCache<PM, P, R>
         trace!("pulling lsn {} lid {} from disk", lsn, lid);
         let start = clock();
         let bytes = match self.log.read(lsn, lid).map_err(|_| ()) {
-            Ok(LogRead::Flush(_lsn, data, _len)) => data,
+            Ok(LogRead::Flush(read_lsn, data, _len)) => {
+                assert_eq!(
+                    read_lsn,
+                    lsn,
+                    "expected lsn {} on pull of lid {}, \
+                    but got lsn {} instead",
+                    lsn,
+                    lid,
+                    read_lsn
+                );
+                data
+            }
             // FIXME 'read invalid data at lid 66244182' in cycle test
             _ => panic!("read invalid data at lid {}", lid),
         };

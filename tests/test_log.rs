@@ -61,76 +61,77 @@ fn non_contiguous_log_flush() {
 #[test]
 fn concurrent_logging() {
     // TODO linearize res bufs, verify they are correct
-    let conf = Config::default()
-        .segment_mode(SegmentMode::Linear)
-        .io_buf_size(1000)
-        .flush_every_ms(Some(50))
-        .build();
-    let log = Arc::new(conf.log());
-    let iobs2 = log.clone();
-    let iobs3 = log.clone();
-    let iobs4 = log.clone();
-    let iobs5 = log.clone();
-    let iobs6 = log.clone();
-    let log7 = log.clone();
+    for i in 0..100 {
+        let conf = Config::default()
+            .segment_mode(SegmentMode::Linear)
+            .io_buf_size(1000)
+            .flush_every_ms(Some(50))
+            .build();
+        let log = Arc::new(conf.log());
+        let iobs2 = log.clone();
+        let iobs3 = log.clone();
+        let iobs4 = log.clone();
+        let iobs5 = log.clone();
+        let iobs6 = log.clone();
+        let log7 = log.clone();
 
-    let t1 = thread::Builder::new()
-        .name("c1".to_string())
-        .spawn(move || for i in 0..1_000 {
-            let buf = vec![1; i % 896];
-            log.write(buf);
-        })
-        .unwrap();
+        let t1 = thread::Builder::new()
+            .name("c1".to_string())
+            .spawn(move || for i in 0..1_000 {
+                let buf = vec![1; i % 896];
+                log.write(buf);
+            })
+            .unwrap();
 
-    let t2 = thread::Builder::new()
-        .name("c2".to_string())
-        .spawn(move || for i in 0..1_000 {
-            let buf = vec![2; i % 896];
-            iobs2.write(buf);
-        })
-        .unwrap();
+        let t2 = thread::Builder::new()
+            .name("c2".to_string())
+            .spawn(move || for i in 0..1_000 {
+                let buf = vec![2; i % 896];
+                iobs2.write(buf);
+            })
+            .unwrap();
 
-    let t3 = thread::Builder::new()
-        .name("c3".to_string())
-        .spawn(move || for i in 0..1_000 {
-            let buf = vec![3; i % 896];
-            iobs3.write(buf);
-        })
-        .unwrap();
+        let t3 = thread::Builder::new()
+            .name("c3".to_string())
+            .spawn(move || for i in 0..1_000 {
+                let buf = vec![3; i % 896];
+                iobs3.write(buf);
+            })
+            .unwrap();
 
-    let t4 = thread::Builder::new()
-        .name("c4".to_string())
-        .spawn(move || for i in 0..1_000 {
-            let buf = vec![4; i % 896];
-            iobs4.write(buf);
-        })
-        .unwrap();
+        let t4 = thread::Builder::new()
+            .name("c4".to_string())
+            .spawn(move || for i in 0..1_000 {
+                let buf = vec![4; i % 896];
+                iobs4.write(buf);
+            })
+            .unwrap();
+        let t5 = thread::Builder::new()
+            .name("c5".to_string())
+            .spawn(move || for i in 0..1_000 {
+                let buf = vec![5; i % 896];
+                iobs5.write(buf);
+            })
+            .unwrap();
 
-    let t5 = thread::Builder::new()
-        .name("c5".to_string())
-        .spawn(move || for i in 0..1_000 {
-            let buf = vec![5; i % 896];
-            iobs5.write(buf);
-        })
-        .unwrap();
+        let t6 = thread::Builder::new()
+            .name("c6".to_string())
+            .spawn(move || for i in 0..1_000 {
+                let buf = vec![6; i % 896];
+                let (lsn, _lid) = iobs6.write(buf);
+                // println!("+");
+                iobs6.make_stable(lsn);
+                // println!("-");
+            })
+            .unwrap();
 
-    let t6 = thread::Builder::new()
-        .name("c6".to_string())
-        .spawn(move || for i in 0..1_000 {
-            let buf = vec![6; i % 896];
-            let (lsn, _lid) = iobs6.write(buf);
-            // println!("+");
-            iobs6.make_stable(lsn);
-            // println!("-");
-        })
-        .unwrap();
-
-    t1.join().unwrap();
-    t2.join().unwrap();
-    t3.join().unwrap();
-    t4.join().unwrap();
-    t5.join().unwrap();
-    t6.join().unwrap();
+        t1.join().unwrap();
+        t2.join().unwrap();
+        t3.join().unwrap();
+        t4.join().unwrap();
+        t5.join().unwrap();
+        t6.join().unwrap();
+    }
 }
 
 fn write(log: &Log) {
