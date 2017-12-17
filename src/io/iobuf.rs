@@ -261,6 +261,8 @@ impl IoBufs {
     pub(super) fn reserve(&self, raw_buf: Vec<u8>) -> Reservation {
         let start = clock();
 
+        let io_bufs = self.config.get_io_bufs();
+
         assert_eq!((raw_buf.len() + MSG_HEADER_LEN) >> 32, 0);
 
         let buf = self.encapsulate(raw_buf);
@@ -289,7 +291,7 @@ impl IoBufs {
             let written_bufs = self.written_bufs.load(SeqCst);
             debug_delay();
             let current_buf = self.current_buf.load(SeqCst);
-            let idx = current_buf % self.config.get_io_bufs();
+            let idx = current_buf % io_bufs;
 
             spins += 1;
             if spins > 1_000_000 {
@@ -307,7 +309,7 @@ impl IoBufs {
                 continue;
             }
 
-            if current_buf - written_bufs >= self.config.get_io_bufs() {
+            if current_buf - written_bufs >= io_bufs {
                 // if written is too far behind, we need to
                 // spin while it catches up to avoid overlap
                 trace_once!("old io buffer not written yet, spinning");
@@ -338,8 +340,8 @@ impl IoBufs {
                 // This buffer is too full to accept our write!
                 // Try to seal the buffer, and maybe write it if
                 // there are zero writers.
-                self.maybe_seal_and_write_iobuf(idx, header, true);
                 trace_once!("io buffer too full, spinning");
+                self.maybe_seal_and_write_iobuf(idx, header, true);
                 M.log_looped();
                 yield_now();
                 continue;
@@ -441,7 +443,7 @@ impl IoBufs {
         // Succeeded in decrementing writers, if we decremented writers
         // to 0 and it's sealed then we should write it to storage.
         if n_writers(header) == 0 && is_sealed(header) {
-            info!("exiting idx {} from res", idx);
+            trace!("exiting idx {} from res", idx);
             self.write_to_log(idx);
         }
     }
@@ -496,6 +498,9 @@ impl IoBufs {
                 // cas failed, don't try to continue
                 return false;
             }
+
+            trace!("{} sealed", idx);
+
             if from_reserve || maxed {
                 // NB we linearize this together with sealing
                 // the header here to guarantee that in write_to_log,
@@ -510,8 +515,6 @@ impl IoBufs {
         if !worked {
             return;
         }
-
-        trace!("{} sealed", idx);
 
         let max = std::usize::MAX as LogID;
 
@@ -529,9 +532,9 @@ impl IoBufs {
 
         let (next_offset, last_given) = if from_reserve || maxed {
             // roll lsn to the next offset
-            let segment_offset = next_lsn % io_buf_size as Lsn;
-            let segment_remainder = io_buf_size as Lsn - segment_offset;
-            next_lsn += segment_remainder;
+            let lsn_idx = lsn / io_buf_size as Lsn;
+            next_lsn = (lsn_idx + 1) * io_buf_size as Lsn;
+            let segment_remainder = next_lsn - (lsn + res_len as Lsn);
 
             // mark unused as clear
             debug!(
@@ -540,12 +543,10 @@ impl IoBufs {
                 lid + res_len as LogID,
             );
 
-            if res_len != io_buf_size && res_len != segment_remainder as usize {
-                // we want to just mark the part that won't get marked in
-                // write_to_log, which is basically just the wasted tip here.
-                let low_lsn = lsn + res_len as Lsn;
-                self.mark_interval((low_lsn, next_lsn - 1));
-            }
+            // we want to just mark the part that won't get marked in
+            // write_to_log, which is basically just the wasted tip here.
+            let low_lsn = lsn + res_len as Lsn;
+            self.mark_interval(low_lsn, segment_remainder as usize);
 
             let (next_offset, last_given) =
                 self.with_sa(|sa| sa.next(next_lsn));
@@ -612,7 +613,6 @@ impl IoBufs {
 
         // if writers is 0, it's our responsibility to write the buffer.
         if n_writers(sealed) == 0 {
-            info!("writing idx {} from maybe...", idx);
             self.write_to_log(idx);
         }
     }
@@ -681,7 +681,7 @@ impl IoBufs {
             // transition this segment into deplete-only mode now
             // that n_writers is 0, and all calls to mark_replace/link
             // happen before the reservation completes.
-            info!(
+            trace!(
                 "deactivating segment with lsn {} at idx {} with lid {}",
                 segment_lsn,
                 idx,
@@ -707,9 +707,7 @@ impl IoBufs {
         let _written_bufs = self.written_bufs.fetch_add(1, SeqCst);
         trace!("{} written", _written_bufs % self.config.get_io_bufs());
 
-        if res_len != 0 {
-            let interval = (base_lsn, base_lsn + res_len as Lsn - 1);
-
+        if res_len > 0 {
             debug!(
                 "wrote lsns {}-{} to disk at offsets {}-{}",
                 base_lsn,
@@ -717,7 +715,7 @@ impl IoBufs {
                 lid,
                 lid + res_len as LogID - 1
             );
-            self.mark_interval(interval);
+            self.mark_interval(base_lsn, res_len);
         }
 
         M.write_to_log.measure(clock() - start);
@@ -730,23 +728,25 @@ impl IoBufs {
     // above an offset that corresponds to a buffer that hasn't actually
     // been written yet! It's OK to use a mutex here because it is pretty
     // fast, compared to the other operations on shared state.
-    fn mark_interval(&self, interval: (Lsn, Lsn)) {
-        trace!("mark_interval({} - {})", interval.0, interval.1);
+    fn mark_interval(&self, whence: Lsn, len: usize) {
+        trace!("mark_interval({}, {})", whence, len);
         assert_ne!(
-            interval.0,
-            interval.1,
-            "mark_interval called with a zero-length range!"
+            len,
+            0,
+            "mark_interval called with a zero-length range, starting from {}",
+            whence
         );
-        assert!(
-            interval.0 < interval.1,
-            "tried to mark_interval with a high-end lower than the low-end"
-        );
-        // FIXME mark_interval called with bad range???
         let mut intervals = self.intervals.lock().unwrap();
+
+        let interval = (whence, whence + len as Lsn - 1);
 
         intervals.push(interval);
 
-        debug_assert!(intervals.len() < 100, "intervals is getting crazy...");
+        debug_assert!(
+            intervals.len() < 100,
+            "intervals is getting crazy... {:?}",
+            *intervals
+        );
 
         // reverse sort
         intervals.sort_unstable_by(|a, b| b.cmp(a));
@@ -756,7 +756,14 @@ impl IoBufs {
         while let Some(&(low, high)) = intervals.last() {
             assert_ne!(low, high);
             let cur_stable = self.stable.load(SeqCst);
-            assert!(low >= cur_stable);
+            assert!(
+                low > cur_stable,
+                "somehow, we marked offset {} stable while \
+                interval {}-{} had not yet been applied!",
+                cur_stable,
+                low,
+                high
+            );
             if cur_stable + 1 == low {
                 let old = self.stable.swap(high, SeqCst);
                 assert_eq!(
