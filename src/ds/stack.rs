@@ -4,7 +4,7 @@ use std::ptr;
 use std::ops::Deref;
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 
-use epoch::{Atomic, Owned, Shared, Guard, pin, unprotected};
+use epoch::{Atomic, Guard, Owned, Shared, pin, unprotected};
 
 use {debug_delay, test_fail};
 

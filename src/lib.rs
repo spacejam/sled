@@ -145,7 +145,23 @@ fn global_init() {
 
     ONCE.call_once(|| {
         #[cfg(feature = "env_logger")]
-        let _r = env_logger::init();
+        {
+            let format = |record: &_log::LogRecord| {
+                format!("{:05} {}: {}", record.level(), tn(), record.args())
+            };
+
+            let mut builder = env_logger::LogBuilder::new();
+            builder.format(format).filter(
+                None,
+                _log::LogLevelFilter::Info,
+            );
+
+            if std::env::var("RUST_LOG").is_ok() {
+                builder.parse(&std::env::var("RUST_LOG").unwrap());
+            }
+
+            let _r = builder.init();
+        }
 
         #[cfg(feature = "cpuprofiler")]
         {

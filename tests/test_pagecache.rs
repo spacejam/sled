@@ -123,9 +123,9 @@ fn pagecache_strange_crash_2() {
 
         for i in 0..1000 {
             let id = i as usize % 2;
-            println!("------ beginning op on pid {} ------", id);
+            // println!("------ beginning op on pid {} ------", id);
             let (_, key) = pc.get(id, &guard).unwrap();
-            println!("got key {:?} for pid {}", key, id);
+            // println!("got key {:?} for pid {}", key, id);
             assert!(!key.is_null());
             let key_res = pc.link(id, key, vec![i], &guard);
             if key_res.is_err() {

@@ -73,26 +73,31 @@ impl LogReader for File {
     /// read a buffer from the disk
     fn read_message(
         &mut self,
-        id: LogID,
+        lid: LogID,
         segment_len: usize,
         _use_compression: bool,
     ) -> std::io::Result<LogRead> {
         let start = clock();
-        let seg_start = id / segment_len as LogID * segment_len as LogID;
-        trace!("reading message from segment: {} at lid: {}", seg_start, id);
-        assert!(seg_start + MSG_HEADER_LEN as LogID <= id);
+        let seg_start = lid / segment_len as LogID * segment_len as LogID;
+        trace!("reading message from segment: {} at lid: {}", seg_start, lid);
+        assert!(seg_start + MSG_HEADER_LEN as LogID <= lid);
 
         let ceiling = seg_start + segment_len as LogID -
             SEG_TRAILER_LEN as LogID;
 
-        assert!(id + MSG_HEADER_LEN as LogID <= ceiling);
+        assert!(lid + MSG_HEADER_LEN as LogID <= ceiling);
 
-        let header = self.read_message_header(id)?;
-        assert!(id + MSG_HEADER_LEN as LogID + header.len as LogID <= ceiling);
+        let header = self.read_message_header(lid)?;
+        assert!(
+            lid + MSG_HEADER_LEN as LogID + header.len as LogID <= ceiling,
+            "while reading message at {}, read an invalid header: {:?}",
+            lid,
+            header
+        );
 
-        self.seek(SeekFrom::Start(id + MSG_HEADER_LEN as LogID))?;
+        self.seek(SeekFrom::Start(lid + MSG_HEADER_LEN as LogID))?;
 
-        let max = (ceiling - id - MSG_HEADER_LEN as LogID) as usize;
+        let max = (ceiling - lid - MSG_HEADER_LEN as LogID) as usize;
         let mut len = header.len;
         if len > max {
             error!(
@@ -103,7 +108,7 @@ impl LogReader for File {
             M.read.measure(clock() - start);
             trace!("read a corrupted message of len {}", len);
             return Ok(LogRead::Corrupted(len));
-        } else if len == 0 && !header.valid {
+        } else if len == 0 && !header.successful_flush {
             // skip to next record, which starts with 1
             while len <= max {
                 let mut byte = [0u8; 1];
@@ -122,7 +127,7 @@ impl LogReader for File {
             }
         }
 
-        if !header.valid {
+        if !header.successful_flush {
             M.read.measure(clock() - start);
             trace!("read zeroes of len {}", len + MSG_HEADER_LEN);
             return Ok(LogRead::Zeroed(len + MSG_HEADER_LEN));

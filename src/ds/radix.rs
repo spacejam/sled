@@ -2,7 +2,7 @@
 
 use std::sync::atomic::Ordering::SeqCst;
 
-use epoch::{Atomic, Owned, Shared, Guard, pin, unprotected};
+use epoch::{Atomic, Guard, Owned, Shared, pin, unprotected};
 
 use {PageID, debug_delay, test_fail};
 
@@ -91,9 +91,9 @@ impl<T> Radix<T>
         debug_delay();
         let guard = pin();
         let new = Owned::new(item).into_shared(&guard);
-        self.cas(pid, Shared::null(), new, &guard).map(|_| ()).map_err(
-            |_| (),
-        )
+        self.cas(pid, Shared::null(), new, &guard)
+            .map(|_| ())
+            .map_err(|_| ())
     }
 
     /// Atomically swap the previous value in a tree with a new one.
@@ -137,7 +137,11 @@ impl<T> Radix<T>
     }
 
     /// Try to get a value from the tree.
-    pub fn get<'g>(&self, pid: PageID, guard: &'g Guard) -> Option<Shared<'g, T>> {
+    pub fn get<'g>(
+        &self,
+        pid: PageID,
+        guard: &'g Guard,
+    ) -> Option<Shared<'g, T>> {
         debug_delay();
         let tip = traverse(self.head.load(SeqCst, guard), pid, false, guard);
         if tip.is_null() {
@@ -148,11 +152,17 @@ impl<T> Radix<T>
     }
 
     /// Delete a value from the tree, returning the old value if it was set.
-    pub fn del<'g>(&self, pid: PageID, guard: &'g Guard) -> Option<Shared<'g, T>> {
+    pub fn del<'g>(
+        &self,
+        pid: PageID,
+        guard: &'g Guard,
+    ) -> Option<Shared<'g, T>> {
         debug_delay();
         let old = self.swap(pid, Shared::null(), guard);
         if !old.is_null() {
-            unsafe { guard.defer(move || old.into_owned()); }
+            unsafe {
+                guard.defer(move || old.into_owned());
+            }
             Some(old)
         } else {
             None

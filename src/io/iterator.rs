@@ -104,7 +104,6 @@ impl LogIter {
             lsn,
             self.cur_lsn
         );
-        // TODO done? don't skip segments in SA, unify reuse_segment logic, remove from ordering consistently assert!(lsn >= offset, "lsn should never be less than the log offset");
         assert!(lsn + self.segment_len as Lsn >= self.cur_lsn);
         let cached_f = self.config.cached_file();
         let mut f = cached_f.borrow_mut();
