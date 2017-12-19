@@ -88,29 +88,26 @@ impl LogReader for File {
         assert!(lid + MSG_HEADER_LEN as LogID <= ceiling);
 
         let header = self.read_message_header(lid)?;
-        assert!(
-            lid + MSG_HEADER_LEN as LogID + header.len as LogID <= ceiling,
-            "while reading message at {}, read an invalid header: {:?}",
-            lid,
-            header
-        );
+
+        let max_possible_len = (ceiling - lid - MSG_HEADER_LEN as LogID) as
+            usize;
+        if header.len > max_possible_len {
+            error!(
+                "log read invalid message length, {} should be <= {}",
+                header.len,
+                max_possible_len
+            );
+            M.read.measure(clock() - start);
+            trace!("read a corrupted message of len {}", header.len);
+            return Ok(LogRead::Corrupted(header.len));
+        }
 
         self.seek(SeekFrom::Start(lid + MSG_HEADER_LEN as LogID))?;
 
-        let max = (ceiling - lid - MSG_HEADER_LEN as LogID) as usize;
         let mut len = header.len;
-        if len > max {
-            error!(
-                "log read invalid message length, {} should be <= {}",
-                len,
-                max
-            );
-            M.read.measure(clock() - start);
-            trace!("read a corrupted message of len {}", len);
-            return Ok(LogRead::Corrupted(len));
-        } else if len == 0 && !header.successful_flush {
+        if len == 0 && !header.successful_flush {
             // skip to next record, which starts with 1
-            while len <= max {
+            while len <= max_possible_len {
                 let mut byte = [0u8; 1];
                 if let Err(e) = self.read_exact(&mut byte) {
                     if e.kind() == UnexpectedEof {
