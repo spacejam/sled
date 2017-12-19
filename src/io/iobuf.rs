@@ -9,6 +9,8 @@ use self::reader::LogReader;
 
 use super::*;
 
+type Header = u64;
+
 struct IoBuf {
     buf: UnsafeCell<Vec<u8>>,
     header: AtomicUsize,
@@ -110,7 +112,7 @@ impl IoBufs {
 
             iobuf.set_lid(lid);
             iobuf.set_capacity(io_buf_size - SEG_TRAILER_LEN);
-            iobuf.store_segment_header(next_lsn, last_given);
+            iobuf.store_segment_header(0, next_lsn, last_given);
 
             file.pwrite_all(&*vec![0; config.get_io_buf_size()], lid)
                 .unwrap();
@@ -319,7 +321,7 @@ impl IoBufs {
             }
 
             // attempt to claim by incrementing an unsealed header
-            let bumped_offset = bump_offset(header, buf.len() as u32);
+            let bumped_offset = bump_offset(header, buf.len() as Header);
             let claimed = incr_writers(bumped_offset);
             assert!(!is_sealed(claimed));
 
@@ -442,7 +444,7 @@ impl IoBufs {
     fn maybe_seal_and_write_iobuf(
         &self,
         idx: usize,
-        header: u32,
+        header: Header,
         from_reserve: bool,
     ) {
         let iobuf = &self.bufs[idx];
@@ -555,13 +557,15 @@ impl IoBufs {
         // its entire lifecycle as soon as we do that.
         if from_reserve || maxed {
             next_iobuf.set_capacity(io_buf_size - SEG_TRAILER_LEN);
-            next_iobuf.store_segment_header(next_lsn, last_given);
+            next_iobuf.store_segment_header(sealed, next_lsn, last_given);
         } else {
             let new_cap = capacity - res_len;
             assert_ne!(new_cap, 0);
             next_iobuf.set_capacity(new_cap);
             next_iobuf.set_lsn(next_lsn);
-            next_iobuf.set_header(0);
+            let last_salt = salt(sealed);
+            let new_salt = bump_salt(last_salt);
+            next_iobuf.set_header(new_salt);
         }
 
         trace!("{} zeroed header", next_idx);
@@ -818,7 +822,7 @@ impl IoBuf {
     // We write a new segment header to the beginning of the buffer
     // for assistance during recovery. The caller is responsible
     // for ensuring that the IoBuf's capacity has been set properly.
-    fn store_segment_header(&self, lsn: Lsn, prev: LogID) {
+    fn store_segment_header(&self, last: Header, lsn: Lsn, prev: LogID) {
         debug!("storing lsn {} in beginning of buffer", lsn);
         assert!(self.get_capacity() >= SEG_HEADER_LEN + SEG_TRAILER_LEN);
 
@@ -836,7 +840,9 @@ impl IoBuf {
         }
 
         // ensure writes to the buffer land after our header.
-        let bumped = bump_offset(0, SEG_HEADER_LEN as u32);
+        let last_salt = salt(last);
+        let new_salt = bump_salt(last_salt);
+        let bumped = bump_offset(new_salt, SEG_HEADER_LEN as Header);
         self.set_header(bumped);
     }
 
@@ -880,23 +886,23 @@ impl IoBuf {
         self.lid.load(SeqCst) as LogID
     }
 
-    fn get_header(&self) -> u32 {
+    fn get_header(&self) -> Header {
         debug_delay();
-        self.header.load(SeqCst) as u32
+        self.header.load(SeqCst) as Header
     }
 
-    fn set_header(&self, new: u32) {
+    fn set_header(&self, new: Header) {
         debug_delay();
         self.header.store(new as usize, SeqCst);
     }
 
-    fn cas_header(&self, old: u32, new: u32) -> Result<u32, u32> {
+    fn cas_header(&self, old: Header, new: Header) -> Result<Header, Header> {
         debug_delay();
         let res = self.header.compare_and_swap(
             old as usize,
             new as usize,
             SeqCst,
-        ) as u32;
+        ) as Header;
         if res == old { Ok(new) } else { Err(res) }
     }
 
@@ -912,41 +918,51 @@ impl IoBuf {
 }
 
 #[inline(always)]
-fn is_sealed(v: u32) -> bool {
-    v >> 31 == 1
+fn is_sealed(v: Header) -> bool {
+    v & 1 << 31 == 1 << 31
 }
 
 #[inline(always)]
-fn mk_sealed(v: u32) -> u32 {
+fn mk_sealed(v: Header) -> Header {
     v | 1 << 31
 }
 
 #[inline(always)]
-fn n_writers(v: u32) -> u32 {
-    v << 1 >> 25
+fn n_writers(v: Header) -> Header {
+    v << 33 >> 57
 }
 
 #[inline(always)]
-fn incr_writers(v: u32) -> u32 {
+fn incr_writers(v: Header) -> Header {
     assert_ne!(n_writers(v), 127);
     v + (1 << 24)
 }
 
 #[inline(always)]
-fn decr_writers(v: u32) -> u32 {
+fn decr_writers(v: Header) -> Header {
     assert_ne!(n_writers(v), 0);
     v - (1 << 24)
 }
 
 #[inline(always)]
-fn offset(v: u32) -> u32 {
-    v << 8 >> 8
+fn offset(v: Header) -> Header {
+    v << 40 >> 40
 }
 
 #[inline(always)]
-fn bump_offset(v: u32, by: u32) -> u32 {
+fn bump_offset(v: Header, by: Header) -> Header {
     assert_eq!(by >> 24, 0);
     v + by
+}
+
+#[inline(always)]
+fn bump_salt(v: Header) -> Header {
+    (v + (1 << 32)) & 0xFFFFFFFF00000000
+}
+
+#[inline(always)]
+fn salt(v: Header) -> Header {
+    v >> 32 << 32
 }
 
 #[inline(always)]
