@@ -158,7 +158,6 @@ impl Config {
 
         let err_msg = format!("could not read snapshot directory ({})", prefix);
 
-
         let abs_prefix: String = if Path::new(&prefix).is_absolute() {
             prefix
         } else {

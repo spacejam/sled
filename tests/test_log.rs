@@ -61,7 +61,7 @@ fn non_contiguous_log_flush() {
 #[test]
 fn concurrent_logging() {
     // TODO linearize res bufs, verify they are correct
-    for i in 0..100 {
+    for i in 0..10 {
         let conf = Config::default()
             .segment_mode(SegmentMode::Linear)
             .io_buf_size(1000)
