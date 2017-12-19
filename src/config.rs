@@ -1,8 +1,6 @@
 use std::fs;
-use std::cell::RefCell;
 use std::ops::Deref;
 use std::path::Path;
-use std::rc::Rc;
 use std::sync::Arc;
 
 use super::*;
@@ -44,7 +42,7 @@ pub struct Config {
     segment_cleanup_threshold: f64,
     min_free_segments: usize,
     zero_copy_storage: bool,
-    tc: ThreadCache<fs::File>,
+    file: Option<Arc<fs::File>>,
     tmp_path: String,
     read_only: bool,
     pub(super) segment_mode: SegmentMode,
@@ -84,7 +82,7 @@ impl Default for Config {
             segment_cleanup_threshold: 0.2,
             min_free_segments: 3,
             zero_copy_storage: false,
-            tc: ThreadCache::default(),
+            file: None,
             tmp_path: tmp_path.to_owned(),
             segment_mode: SegmentMode::Gc,
         }
@@ -138,21 +136,6 @@ impl Config {
         (zero_copy_storage, get_zero_copy_storage, set_zero_copy_storage, bool, "disabling of the log segment copy cleaner"),
         (segment_mode, get_segment_mode, set_segment_mode, SegmentMode, "the file segment selection mode")
     );
-
-    /// Retrieve a thread-local file handle to the
-    /// configured underlying storage,
-    /// or create a new one if this is the first time the
-    /// thread is accessing it.
-    pub fn cached_file(&self) -> Rc<RefCell<fs::File>> {
-        self.tc.get_or_else(|| {
-            let path = self.get_path();
-            let mut options = fs::OpenOptions::new();
-            options.create(true);
-            options.read(true);
-            options.write(true);
-            options.open(path).unwrap()
-        })
-    }
 
     /// Get the temporary path of the database, used as temporary
     /// storage if none is provided.
@@ -215,7 +198,38 @@ impl Config {
     }
 
     /// Finalize the configuration.
-    pub fn build(self) -> FinalConfig {
+    pub fn build(mut self) -> FinalConfig {
+        // panic if we can't parse the path
+        let path = self.get_path();
+        let dir = Path::new(&path).parent().expect(
+            "could not parse provided path",
+        );
+
+        // create data directory if it doesn't exist yet
+        if dir != Path::new("") {
+            if dir.is_file() {
+                panic!(
+                    "provided parent directory is a file, \
+                    not a directory: {:?}",
+                    dir
+                );
+            }
+
+            if !dir.exists() {
+                std::fs::create_dir_all(dir).unwrap();
+            }
+        }
+
+        // open the data file
+        let mut options = fs::OpenOptions::new();
+        options.create(true);
+        options.read(true);
+        options.write(true);
+        let f = options.open(&path).unwrap();
+
+        self.file = Some(Arc::new(f));
+
+        // seal config in a FinalConfig
         FinalConfig(Arc::new(self))
     }
 
@@ -239,12 +253,14 @@ impl Drop for Config {
         }
 
         // Our files are temporary, so nuke them.
+        warn!("removing ephemeral storage file {}", self.tmp_path);
         let _res = fs::remove_file(self.tmp_path.clone());
 
         let candidates = self.get_snapshot_files();
         for path in candidates {
+            warn!("removing old snapshot file {}", path);
             if let Err(_e) = std::fs::remove_file(path) {
-                warn!("failed to remove old snapshot file, maybe snapshot race? {}", _e);
+                error!("failed to remove old snapshot file, maybe snapshot race? {}", _e);
             }
         }
     }
@@ -252,7 +268,7 @@ impl Drop for Config {
 
 /// A finalized `Config` that can be use multiple times
 /// to open a `Tree` or `Log`.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct FinalConfig(Arc<Config>);
 
 impl Deref for FinalConfig {
@@ -273,5 +289,17 @@ impl FinalConfig {
     pub fn log(&self) -> Log {
         assert_eq!(self.0.segment_mode, SegmentMode::Linear, "must use SegmentMode::Linear with log!");
         Log::start_raw_log(self.clone())
+    }
+
+    /// Retrieve a thread-local file handle to the
+    /// configured underlying storage,
+    /// or create a new one if this is the first time the
+    /// thread is accessing it.
+    pub fn file(&self) -> Arc<fs::File> {
+        if let Some(ref f) = self.file {
+            f.clone()
+        } else {
+            unreachable!()
+        }
     }
 }

@@ -75,7 +75,7 @@ use super::*;
 /// The segment accountant keeps track of the logical blocks
 /// of storage. It scans through all segments quickly during
 /// recovery and attempts to locate torn segments.
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct SegmentAccountant {
     // static or one-time set
     config: FinalConfig,
@@ -309,8 +309,17 @@ impl SegmentAccountant {
         config: FinalConfig,
         snapshot: Snapshot<R>,
     ) -> SegmentAccountant {
-        let mut ret = SegmentAccountant::default();
-        ret.config = config;
+        let mut ret = SegmentAccountant {
+            config: config,
+            segments: vec![],
+            pending_clean: HashSet::default(),
+            free: Arc::new(Mutex::new(VecDeque::new())),
+            tip: 0,
+            to_clean: BTreeSet::new(),
+            pause_rewriting: false,
+            last_given: 0,
+            ordering: BTreeMap::new(),
+        };
 
         if let SegmentMode::Linear = ret.config.segment_mode {
             // this is a hack to prevent segments from being overwritten
@@ -695,6 +704,12 @@ impl SegmentAccountant {
             }
         };
 
+        debug!("zeroing out segment beginning at {}", lid);
+        let f = self.config.file();
+        f.pwrite_all(&*vec![0; self.config.get_io_buf_size()], lid)
+            .unwrap();
+        f.sync_all().unwrap();
+
         let last_given = self.last_given;
 
         // pin lsn to this segment
@@ -782,8 +797,7 @@ pub fn scan_segment_lsns(
     let segment_len = config.get_io_buf_size() as LogID;
     let mut cursor = 0;
 
-    let cached_f = config.cached_file();
-    let mut f = cached_f.borrow_mut();
+    let f = config.file();
     while let Ok(segment) = f.read_segment_header(cursor) {
         // in the future this can be optimized to just read
         // the initial header at that position... but we need to
@@ -800,7 +814,7 @@ pub fn scan_segment_lsns(
 
     // Check that the last <# io buffers> segments properly
     // link their previous segment pointers.
-    clean_tail_tears(ordering, config, &mut f)
+    clean_tail_tears(ordering, config, &f)
 }
 
 // This ensures that the last <# io buffers> segments on
@@ -811,7 +825,7 @@ pub fn scan_segment_lsns(
 fn clean_tail_tears(
     mut ordering: BTreeMap<Lsn, LogID>,
     config: &FinalConfig,
-    f: &mut File,
+    f: &File,
 ) -> BTreeMap<Lsn, LogID> {
     let safety_buffer = config.get_io_bufs();
     let logical_tail: Vec<Lsn> = ordering

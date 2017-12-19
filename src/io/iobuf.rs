@@ -1,5 +1,3 @@
-use std::io::{Seek, Write};
-use std::path::Path;
 use std::sync::{Condvar, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize};
 use std::sync::atomic::Ordering::SeqCst;
@@ -38,7 +36,6 @@ pub(super) struct IoBufs {
     // file, and there may be buffers that have been written out-of-order
     // to stable storage due to interesting thread interleavings.
     stable: AtomicIsize,
-    file_for_writing: Mutex<std::fs::File>,
     segment_accountant: Mutex<SegmentAccountant>,
 }
 
@@ -49,33 +46,8 @@ impl IoBufs {
         // if configured, start env_logger and/or cpuprofiler
         global_init();
 
-        // panic if we can't parse the path
-        let path = config.get_path();
-        let dir = Path::new(&path).parent().expect(
-            "could not parse provided path",
-        );
-
-        // create data directory if it doesn't exist yet
-        if dir != Path::new("") {
-            if dir.is_file() {
-                panic!(
-                    "provided parent directory is a file, \
-                    not a directory: {:?}",
-                    dir
-                );
-            }
-
-            if !dir.exists() {
-                std::fs::create_dir_all(dir).unwrap();
-            }
-        }
-
         // open file for writing
-        let mut options = std::fs::OpenOptions::new();
-        options.create(true);
-        options.read(true);
-        options.write(true);
-        let mut file = options.open(&path).unwrap();
+        let file = config.file();
 
         // TODO this should never change, it should be
         // stored in a persisted conf file and if it
@@ -140,8 +112,8 @@ impl IoBufs {
             iobuf.set_capacity(io_buf_size - SEG_TRAILER_LEN);
             iobuf.store_segment_header(next_lsn, last_given);
 
-            file.seek(SeekFrom::Start(lid)).unwrap();
-            file.write_all(&*vec![0; config.get_io_buf_size()]).unwrap();
+            file.pwrite_all(&*vec![0; config.get_io_buf_size()], lid)
+                .unwrap();
             file.sync_all().unwrap();
 
             debug!(
@@ -176,7 +148,6 @@ impl IoBufs {
             interval_updated: Condvar::new(),
             stable: AtomicIsize::new(stable),
             config: config,
-            file_for_writing: Mutex::new(file),
             segment_accountant: Mutex::new(segment_accountant),
         }
     }
@@ -548,19 +519,7 @@ impl IoBufs {
             let low_lsn = lsn + res_len as Lsn;
             self.mark_interval(low_lsn, segment_remainder as usize);
 
-            let (next_offset, last_given) =
-                self.with_sa(|sa| sa.next(next_lsn));
-
-            // TODO put this file writing logic into the SegmentAccountant
-            // zero out the entire new segment on disk
-            debug!("zeroing out segment beginning at {}", next_offset);
-            let mut f = self.file_for_writing.lock().unwrap();
-            f.seek(SeekFrom::Start(next_offset)).unwrap();
-            f.write_all(&*vec![0; self.config.get_io_buf_size()])
-                .unwrap();
-            f.sync_all().unwrap();
-
-            (next_offset, Some(last_given))
+            self.with_sa(|sa| sa.next(next_lsn))
         } else {
             debug!(
                 "advancing offset within the current segment from {} to {}",
@@ -570,7 +529,7 @@ impl IoBufs {
             next_lsn += res_len as Lsn;
 
             let next_offset = lid + res_len as LogID;
-            (next_offset, None)
+            (next_offset, 0)
         };
 
         let next_idx = (idx + 1) % self.config.get_io_bufs();
@@ -596,7 +555,7 @@ impl IoBufs {
         // its entire lifecycle as soon as we do that.
         if from_reserve || maxed {
             next_iobuf.set_capacity(io_buf_size - SEG_TRAILER_LEN);
-            next_iobuf.store_segment_header(next_lsn, last_given.unwrap());
+            next_iobuf.store_segment_header(next_lsn, last_given);
         } else {
             let new_cap = capacity - res_len;
             assert_ne!(new_cap, 0);
@@ -643,9 +602,8 @@ impl IoBufs {
 
         let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
 
-        let mut f = self.file_for_writing.lock().unwrap();
-        f.seek(SeekFrom::Start(lid)).unwrap();
-        f.write_all(&data[..res_len]).unwrap();
+        let f = self.config.file();
+        f.pwrite_all(&data[..res_len], lid).unwrap();
         f.sync_all().unwrap();
 
         // write a trailer if we're maxed
@@ -673,8 +631,7 @@ impl IoBufs {
                 trailer_lsn
             );
 
-            f.seek(SeekFrom::Start(trailer_lid)).unwrap();
-            f.write_all(&trailer_bytes).unwrap();
+            f.pwrite_all(&trailer_bytes, trailer_lid).unwrap();
             f.sync_all().unwrap();
             iobuf.set_maxed(false);
 
@@ -743,7 +700,7 @@ impl IoBufs {
         intervals.push(interval);
 
         debug_assert!(
-            intervals.len() < 100,
+            intervals.len() < 1000,
             "intervals is getting crazy... {:?}",
             *intervals
         );
@@ -753,9 +710,13 @@ impl IoBufs {
 
         let mut updated = false;
 
+        let len_before = intervals.len();
+
         while let Some(&(low, high)) = intervals.last() {
             assert_ne!(low, high);
             let cur_stable = self.stable.load(SeqCst);
+            // FIXME somehow, we marked offset 2233715 stable while interval 2231715-2231999 had
+            // not yet been applied!
             assert!(
                 low > cur_stable,
                 "somehow, we marked offset {} stable while \
@@ -779,6 +740,10 @@ impl IoBufs {
             }
         }
 
+        if len_before - intervals.len() > 100 {
+            debug!("large merge of {} intervals", len_before - intervals.len());
+        }
+
         if updated {
             self.interval_updated.notify_all();
         }
@@ -790,7 +755,7 @@ impl Drop for IoBufs {
         for _ in 0..self.config.get_io_bufs() {
             self.flush();
         }
-        let f = self.file_for_writing.lock().unwrap();
+        let f = self.config.file();
         f.sync_all().unwrap();
 
         debug!("IoBufs dropped");

@@ -1,78 +1,70 @@
-use std::io::{Read, Seek, SeekFrom};
 use std::fs::File;
 use std::io::ErrorKind::UnexpectedEof;
 
 #[cfg(feature = "zstd")]
 use zstd::block::decompress;
 
+use super::Pio;
+
 use super::*;
 
 pub(super) trait LogReader {
-    fn read_segment_header(
-        &mut self,
-        id: LogID,
-    ) -> std::io::Result<SegmentHeader>;
+    fn read_segment_header(&self, id: LogID) -> std::io::Result<SegmentHeader>;
 
     fn read_segment_trailer(
-        &mut self,
+        &self,
         id: LogID,
     ) -> std::io::Result<SegmentTrailer>;
 
-    fn read_message_header(
-        &mut self,
-        id: LogID,
-    ) -> std::io::Result<MessageHeader>;
+    fn read_message_header(&self, id: LogID) -> std::io::Result<MessageHeader>;
 
     fn read_message(
-        &mut self,
+        &self,
         id: LogID,
         segment_len: usize,
         use_compression: bool,
     ) -> std::io::Result<LogRead>;
 }
 
+#[cfg(unix)]
 impl LogReader for File {
     fn read_segment_header(
-        &mut self,
-        id: LogID,
+        &self,
+        lid: LogID,
     ) -> std::io::Result<SegmentHeader> {
-        trace!("reading segment header at {}", id);
-        self.seek(SeekFrom::Start(id))?;
+        trace!("reading segment header at {}", lid);
 
         let mut seg_header_buf = [0u8; SEG_HEADER_LEN];
-        self.read_exact(&mut seg_header_buf)?;
+        self.pread_exact(&mut seg_header_buf, lid)?;
 
         Ok(seg_header_buf.into())
     }
 
     fn read_segment_trailer(
-        &mut self,
-        id: LogID,
+        &self,
+        lid: LogID,
     ) -> std::io::Result<SegmentTrailer> {
-        trace!("reading segment trailer at {}", id);
-        self.seek(SeekFrom::Start(id))?;
+        trace!("reading segment trailer at {}", lid);
 
         let mut seg_trailer_buf = [0u8; SEG_TRAILER_LEN];
-        self.read_exact(&mut seg_trailer_buf)?;
+        self.pread_exact(&mut seg_trailer_buf, lid)?;
 
         Ok(seg_trailer_buf.into())
     }
 
     fn read_message_header(
-        &mut self,
-        id: LogID,
+        &self,
+        lid: LogID,
     ) -> std::io::Result<MessageHeader> {
-        self.seek(SeekFrom::Start(id))?;
-
         let mut msg_header_buf = [0u8; MSG_HEADER_LEN];
-        self.read_exact(&mut msg_header_buf)?;
+        self.pread_exact(&mut msg_header_buf, lid)?;
 
         Ok(msg_header_buf.into())
     }
 
     /// read a buffer from the disk
     fn read_message(
-        &mut self,
+        &self,
         lid: LogID,
         segment_len: usize,
         _use_compression: bool,
@@ -102,14 +94,17 @@ impl LogReader for File {
             return Ok(LogRead::Corrupted(header.len));
         }
 
-        self.seek(SeekFrom::Start(lid + MSG_HEADER_LEN as LogID))?;
-
         let mut len = header.len;
-        if len == 0 && !header.successful_flush {
+        if !header.successful_flush {
+            len = MSG_HEADER_LEN;
             // skip to next record, which starts with 1
             while len <= max_possible_len {
                 let mut byte = [0u8; 1];
-                if let Err(e) = self.read_exact(&mut byte) {
+                if let Err(e) = self.pread_exact(
+                    &mut byte,
+                    lid + len as LogID,
+                )
+                {
                     if e.kind() == UnexpectedEof {
                         // we've hit the end of the file
                         break;
@@ -126,15 +121,15 @@ impl LogReader for File {
 
         if !header.successful_flush {
             M.read.measure(clock() - start);
-            trace!("read zeroes of len {}", len + MSG_HEADER_LEN);
-            return Ok(LogRead::Zeroed(len + MSG_HEADER_LEN));
+            trace!("read zeroes of len {}", len);
+            return Ok(LogRead::Zeroed(len));
         }
 
         let mut buf = Vec::with_capacity(len);
         unsafe {
             buf.set_len(len);
         }
-        self.read_exact(&mut buf)?;
+        self.pread_exact(&mut buf, lid + MSG_HEADER_LEN as LogID)?;
 
         let checksum = crc16_arr(&buf);
         if checksum != header.crc16 {
