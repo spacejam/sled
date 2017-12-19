@@ -61,7 +61,7 @@ fn non_contiguous_log_flush() {
 #[test]
 fn concurrent_logging() {
     // TODO linearize res bufs, verify they are correct
-    for i in 0..10 {
+    for i in 0..100 {
         let conf = Config::default()
             .segment_mode(SegmentMode::Linear)
             .io_buf_size(1000)
@@ -474,8 +474,7 @@ fn prop_log_works(ops: OpVec) -> bool {
                     use std::os::unix::io::AsRawFd;
 
                     {
-                        let cached_f = config.cached_file();
-                        let f = cached_f.borrow_mut();
+                        let f = config.file();
                         use libc::ftruncate;
                         let fd = f.as_raw_fd();
 
