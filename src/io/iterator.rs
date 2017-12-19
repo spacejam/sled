@@ -66,8 +66,7 @@ impl Iterator for LogIter {
                 return None;
             }
 
-            let cached_f = self.config.cached_file();
-            let mut f = cached_f.borrow_mut();
+            let f = self.config.file();
             match f.read_message(lid, self.segment_len, self.use_compression) {
                 Ok(LogRead::Flush(lsn, buf, on_disk_len)) => {
                     trace!("read flush in LogIter::next");
@@ -105,8 +104,7 @@ impl LogIter {
             self.cur_lsn
         );
         assert!(lsn + self.segment_len as Lsn >= self.cur_lsn);
-        let cached_f = self.config.cached_file();
-        let mut f = cached_f.borrow_mut();
+        let f = self.config.file();
         let segment_header = f.read_segment_header(offset)?;
         assert_eq!(offset % self.segment_len as LogID, 0);
         assert_eq!(segment_header.lsn % self.segment_len as Lsn, 0);

@@ -474,8 +474,7 @@ fn prop_log_works(ops: OpVec) -> bool {
                     use std::os::unix::io::AsRawFd;
 
                     {
-                        let cached_f = config.cached_file();
-                        let f = cached_f.borrow_mut();
+                        let f = config.file();
                         use libc::ftruncate;
                         let fd = f.as_raw_fd();
 

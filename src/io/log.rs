@@ -156,8 +156,7 @@ impl Log {
     pub fn read(&self, lsn: Lsn, lid: LogID) -> io::Result<LogRead> {
         trace!("reading log lsn {} lid {}", lsn, lid);
         self.make_stable(lsn);
-        let cached_f = self.config.cached_file();
-        let mut f = cached_f.borrow_mut();
+        let f = self.config.file();
 
         let read = f.read_message(
             lid,
