@@ -7,7 +7,7 @@ extern crate sled;
 
 use std::mem;
 use std::thread;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{ATOMIC_USIZE_INIT, AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use chan_signal::Signal;
@@ -15,13 +15,14 @@ use docopt::Docopt;
 use rand::{Rng, thread_rng};
 
 static mut KEY_BYTES: usize = 2;
+static OPS: AtomicUsize = ATOMIC_USIZE_INIT;
 
 const USAGE: &'static str = "
 Usage: stress2 [options]
 
 Options:
     --burn-in          Don't halt until we receive a signal.
-    --duration=<s>     Seconds to run for [default: 10].
+    --ops=<s>          Number of operations to perform [default: 1000000].
     --get=<threads>    Threads spinning on get operations [default: 1].
     --set=<threads>    Threads spinning on set operations [default: 1].
     --del=<threads>    Threads spinning on del operations [default: 0].
@@ -33,7 +34,7 @@ Options:
 #[derive(Deserialize)]
 struct Args {
     flag_burn_in: bool,
-    flag_duration: u64,
+    flag_ops: usize,
     flag_get: usize,
     flag_set: usize,
     flag_del: usize,
@@ -42,11 +43,11 @@ struct Args {
     flag_key_len: usize,
 }
 
-fn report(shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
+fn report(shutdown: Arc<AtomicBool>) {
     let mut last = 0;
     while !shutdown.load(Ordering::Relaxed) {
         thread::sleep(std::time::Duration::from_secs(1));
-        let total = total.load(Ordering::Acquire);
+        let total = OPS.load(Ordering::Acquire);
 
         println!("did {} ops", total - last);
 
@@ -79,7 +80,6 @@ fn main() {
         KEY_BYTES = args.flag_key_len;
     }
 
-    let total = Arc::new(AtomicUsize::new(0));
     let shutdown = Arc::new(AtomicBool::new(false));
 
     let config = sled::Config::default()
@@ -100,17 +100,15 @@ fn main() {
     macro_rules! cloned {
         ($f:expr) => {{
             let tree = tree.clone();
-            let total = total.clone();
             let shutdown = shutdown.clone();
-            thread::spawn(|| $f(tree, shutdown, total))
+            thread::spawn(|| $f(tree, shutdown))
         }};
     }
 
     println!("prepopulating");
     prepopulate(tree.clone());
 
-    let mut threads =
-        vec![cloned!(|_, shutdown, total| report(shutdown, total))];
+    let mut threads = vec![cloned!(|_, shutdown| report(shutdown))];
 
     macro_rules! spin_up {
         ($($n:expr, $fn:expr;)*)=> (
@@ -118,13 +116,12 @@ fn main() {
             for _ in 0..$n {
                 let tree = tree.clone();
                 let shutdown = shutdown.clone();
-                let total = total.clone();
                 let thread = thread::Builder::new()
                     .stack_size(2 << 23) // make some bigass 16mb stacks
                     .spawn(move || {
                     while !shutdown.load(Ordering::Relaxed) {
-                        total.fetch_add(1, Ordering::Release);
                         $fn(&tree);
+                        OPS.fetch_add(1, Ordering::Release);
                     }
                 }).unwrap();
                 threads.push(thread);
@@ -156,7 +153,12 @@ fn main() {
         signal.recv();
         println!("got shutdown signal, cleaning up...");
     } else {
-        thread::sleep(std::time::Duration::from_secs(args.flag_duration));
+        loop {
+            if OPS.load(Ordering::Relaxed) >= args.flag_ops {
+                break;
+            }
+            thread::sleep(std::time::Duration::from_secs(1));
+        }
     }
 
     shutdown.store(true, Ordering::SeqCst);
@@ -165,7 +167,7 @@ fn main() {
         let _ = t.join();
     }
 
-    let ops = total.load(Ordering::SeqCst);
+    let ops = OPS.load(Ordering::SeqCst);
     let time = now.elapsed().as_secs() as usize;
 
     sled::M.print_profile();
