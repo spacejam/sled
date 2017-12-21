@@ -1,3 +1,5 @@
+stress*
+cachegrind*
 *log
 *.bk
 *orig

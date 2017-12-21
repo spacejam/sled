@@ -41,7 +41,11 @@ fn report(shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
     }
 }
 
-fn run(tree: Arc<sled::Tree>, shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
+fn run(
+    tree: Arc<sled::Tree>,
+    shutdown: Arc<AtomicBool>,
+    total: Arc<AtomicUsize>,
+) {
     let mut rng = thread_rng();
     let mut byte = || vec![rng.gen::<u8>()];
     let mut rng = thread_rng();

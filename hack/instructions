@@ -1,0 +1,32 @@
+#!/bin/sh
+# counts instructions for a standard workload
+set -e
+
+OUTFILE="cachegrind.stress2.`git describe --always --dirty`-`date +%s`"
+
+rm target/release/stress2 || true
+rm stress2.db* || true
+
+cargo build \
+  --bin=stress2 \
+  --features="stress" \
+  --release
+
+valgrind \
+  --tool=cachegrind \
+  --cachegrind-out-file="$OUTFILE" \
+  ./target/release/stress2 \
+    --ops=100000 \
+    --get=5 
+#    --set=1 \
+#    --del=1 \
+#    --cas=1 \
+#    --scan=1 \
+
+LAST=`ls -t cachegrind.stress2.* | sed -n 2p`
+
+echo "--------------------------------------------------------------------------------"
+echo "change since last run:"
+echo "         Ir   I1mr  ILmr          Dr    D1mr    DLmr          Dw    D1mw    DLmw"
+echo "--------------------------------------------------------------------------------"
+cg_diff $LAST $OUTFILE | tail -1
