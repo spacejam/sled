@@ -20,8 +20,6 @@ pub struct Snapshot<R> {
     pub max_pid: PageID,
     /// the mapping from pages to (lsn, lid)
     pub pt: BTreeMap<PageID, Vec<(Lsn, LogID)>>,
-    /// the segment accounting information
-    pub segments: Vec<Segment>,
     /// the free pids
     pub free: Vec<PageID>,
     /// the `Materializer`-specific recovered state
@@ -35,7 +33,6 @@ impl<R> Default for Snapshot<R> {
             last_lid: 0,
             max_pid: 0,
             pt: BTreeMap::new(),
-            segments: vec![],
             free: vec![],
             recovery: None,
         }
@@ -47,7 +44,6 @@ impl<R> Snapshot<R> {
         &mut self,
         materializer: &Arc<Materializer<PageFrag = P, Recovery = R>>,
         lsn: Lsn,
-        segment_lsn: Lsn,
         log_id: LogID,
         io_buf_size: usize,
         bytes: &[u8],
@@ -100,8 +96,6 @@ impl<R> Snapshot<R> {
                         lsn
                     );
 
-                    self.segments[idx].insert_pid(pid, segment_lsn);
-
                     if let Some(r) = materializer.recover(&partial_page) {
                         self.recovery = Some(r);
                     }
@@ -119,13 +113,8 @@ impl<R> Snapshot<R> {
                             // don't remove pid if it's still there
                             continue;
                         }
-                        let old_segment = &mut self.segments[old_idx];
-
-                        old_segment.remove_pid(pid, segment_lsn);
                     }
                 }
-
-                self.segments[idx].insert_pid(pid, segment_lsn);
 
                 if let Some(r) = materializer.recover(&partial_page) {
                     self.recovery = Some(r);
@@ -144,12 +133,8 @@ impl<R> Snapshot<R> {
                             // don't remove pid if it's still there
                             continue;
                         }
-
-                        self.segments[old_idx].remove_pid(pid, segment_lsn);
                     }
                 }
-
-                self.segments[idx].insert_pid(pid, segment_lsn);
 
                 self.free.push(pid);
             }
@@ -158,7 +143,6 @@ impl<R> Snapshot<R> {
 
                 self.pt.insert(pid, vec![]);
                 self.free.retain(|&p| p != pid);
-                self.segments[idx].insert_pid(pid, segment_lsn);
             }
         }
     }
@@ -184,8 +168,6 @@ pub(super) fn advance_snapshot<P, R>(
     trace!("building on top of old snapshot: {:?}", snapshot);
 
     let io_buf_size = config.get_io_buf_size();
-
-    let mut last_segment = None;
 
     for (lsn, log_id, bytes) in iter {
         let segment_lsn = lsn / io_buf_size as Lsn * io_buf_size as Lsn;
@@ -215,42 +197,12 @@ pub(super) fn advance_snapshot<P, R>(
             continue;
         }
 
-        let idx = log_id as usize / io_buf_size;
-        let last_idx = *last_segment.get_or_insert(idx);
-        if last_idx != idx {
-            // if we have moved to a new segment, mark the previous one
-            // as inactive.
-            trace!("PageCache recovery setting segment {} to inactive", log_id);
-            snapshot.segments[last_idx].active_to_inactive(segment_lsn, true);
-            if snapshot.segments[last_idx].is_empty() {
-                trace!(
-                    "PageCache recovery setting segment {} to draining",
-                    log_id
-                );
-                snapshot.segments[last_idx].inactive_to_draining(segment_lsn);
-            }
-        }
-        last_segment = Some(idx);
-
         assert!(lsn > snapshot.max_lsn);
         snapshot.max_lsn = lsn;
         snapshot.last_lid = log_id;
 
-        if snapshot.segments.len() < idx + 1 {
-            snapshot.segments.resize(idx + 1, Segment::default());
-        }
-
-        snapshot.segments[idx].recovery_ensure_initialized(segment_lsn);
-
         if let Some(ref materializer) = materializer_opt {
-            snapshot.apply(
-                materializer,
-                lsn,
-                segment_lsn,
-                log_id,
-                io_buf_size,
-                &*bytes,
-            );
+            snapshot.apply(materializer, lsn, log_id, io_buf_size, &*bytes);
         }
     }
 

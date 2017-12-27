@@ -43,5 +43,5 @@ use self::iobuf::IoBufs;
 use self::iterator::LogIter;
 use self::page_cache::{LoggedUpdate, Update};
 use self::parallel_io::Pio;
-use self::segment::{Segment, SegmentAccountant, raw_segment_iter};
+use self::segment::{SegmentAccountant, raw_segment_iter};
 use self::snapshot::{advance_snapshot, read_snapshot_or_default};
