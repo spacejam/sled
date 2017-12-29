@@ -170,7 +170,7 @@ fn basic_pagecache_recovery() {
 
     let pc4 = PageCache::start(TestMaterializer, conf.clone());
     let res = pc4.get(id, &guard);
-    assert!(res.is_unallocated());
+    assert!(res.is_free());
 }
 
 #[derive(Debug, Clone)]
