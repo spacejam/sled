@@ -40,9 +40,9 @@ extern crate rand;
 
 /// atomic lock-free tree
 pub use tree::{Iter, Tree};
-/// lock-free pagecache
 #[doc(hidden)]
 pub use ds::{Radix, Stack};
+
 /// general-purpose configuration
 pub use config::{Config, FinalConfig};
 pub use io::*;

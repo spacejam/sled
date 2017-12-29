@@ -86,8 +86,7 @@ impl<R> Snapshot<R> {
             Update::Append(partial_page) => {
                 // Because we rewrite pages over time, we may have relocated
                 // a page's initial Compact to a later segment. We should skip
-                // over pages here unless we've encountered a Compact or Alloc
-                // for them.
+                // over pages here unless we've encountered a Compact for them.
                 if let Some(lids) = self.pt.get_mut(&pid) {
                     trace!(
                         "append of pid {} at lid {} lsn {}",
@@ -126,7 +125,6 @@ impl<R> Snapshot<R> {
             Update::Free => {
                 trace!("del of pid {} at lid {} lsn {}", pid, log_id, lsn);
                 if let Some(lids) = self.pt.remove(&pid) {
-                    // this could fail if our Alloc was nuked
                     for (_lsn, old_lid) in lids {
                         let old_idx = old_lid as usize / io_buf_size;
                         if old_idx == idx {
@@ -136,13 +134,11 @@ impl<R> Snapshot<R> {
                     }
                 }
 
-                self.free.push(pid);
-            }
-            Update::Alloc => {
-                trace!("alloc of pid {} at lid {} lsn {}", pid, log_id, lsn);
+                self.segments[idx].insert_pid(pid, segment_lsn);
 
-                self.pt.insert(pid, vec![]);
-                self.free.retain(|&p| p != pid);
+                if !self.free.contains(&pid) {
+                    self.free.push(pid);
+                }
             }
         }
     }

@@ -67,7 +67,7 @@ use std::fs::File;
 use std::sync::{Arc, Mutex};
 use std::mem;
 
-use epoch::{Owned, pin};
+use epoch::pin;
 
 use self::reader::LogReader;
 use super::*;
@@ -504,10 +504,9 @@ impl SegmentAccountant {
             self.ensure_safe_free_distance();
 
             let guard = pin();
-            let pd = Owned::new(SegmentDropper(lid, self.free.clone()));
-            let ptr = pd.into_shared(&guard);
+            let pd = SegmentDropper(lid, self.free.clone());
             unsafe {
-                guard.defer(move || ptr.into_owned());
+                guard.defer(move || pd);
                 guard.flush();
             }
         }
