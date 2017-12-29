@@ -45,7 +45,6 @@ impl<R> Snapshot<R> {
         materializer: &Arc<Materializer<PageFrag = P, Recovery = R>>,
         lsn: Lsn,
         log_id: LogID,
-        io_buf_size: usize,
         bytes: &[u8],
     )
         where P: 'static
@@ -57,8 +56,6 @@ impl<R> Snapshot<R> {
                      + Sync,
               R: Debug + Clone + Serialize + DeserializeOwned + Send
     {
-        let idx = log_id as usize / io_buf_size;
-
         // unwrapping this because it's already passed the crc check
         // in the log iterator
         trace!("trying to deserialize buf for lid {} lsn {}", log_id, lsn);
@@ -105,15 +102,7 @@ impl<R> Snapshot<R> {
             }
             Update::Compact(partial_page) => {
                 trace!("compact of pid {} at lid {} lsn {}", pid, log_id, lsn);
-                if let Some(lids) = self.pt.remove(&pid) {
-                    for (_lsn, old_lid) in lids {
-                        let old_idx = old_lid as usize / io_buf_size;
-                        if old_idx == idx {
-                            // don't remove pid if it's still there
-                            continue;
-                        }
-                    }
-                }
+                self.pt.remove(&pid);
 
                 if let Some(r) = materializer.recover(&partial_page) {
                     self.recovery = Some(r);
@@ -124,17 +113,7 @@ impl<R> Snapshot<R> {
             }
             Update::Free => {
                 trace!("del of pid {} at lid {} lsn {}", pid, log_id, lsn);
-                if let Some(lids) = self.pt.remove(&pid) {
-                    for (_lsn, old_lid) in lids {
-                        let old_idx = old_lid as usize / io_buf_size;
-                        if old_idx == idx {
-                            // don't remove pid if it's still there
-                            continue;
-                        }
-                    }
-                }
-
-                self.segments[idx].insert_pid(pid, segment_lsn);
+                self.pt.insert(pid, vec![(lsn, log_id)]);
 
                 if !self.free.contains(&pid) {
                     self.free.push(pid);
@@ -198,7 +177,7 @@ pub(super) fn advance_snapshot<P, R>(
         snapshot.last_lid = log_id;
 
         if let Some(ref materializer) = materializer_opt {
-            snapshot.apply(materializer, lsn, log_id, io_buf_size, &*bytes);
+            snapshot.apply(materializer, lsn, log_id, &*bytes);
         }
     }
 

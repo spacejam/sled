@@ -864,7 +864,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         let mut free = snapshot.free.clone();
         free.sort();
         free.reverse();
-        for pid in free {
+        for &pid in &free {
             trace!("adding {} to free during load_snapshot", pid);
             self.free.push(pid);
         }
@@ -877,7 +877,12 @@ impl<PM, P, R> PageCache<PM, P, R>
 
             if !lids.is_empty() {
                 let (base_lsn, base_lid) = lids.remove(0);
-                stack.push(CacheEntry::Flush(base_lsn, base_lid));
+                if free.contains(pid) {
+                    stack.push(CacheEntry::Free(base_lsn, base_lid));
+                    assert!(lids.is_empty());
+                } else {
+                    stack.push(CacheEntry::Flush(base_lsn, base_lid));
+                }
 
                 for (lsn, lid) in lids {
                     stack.push(CacheEntry::PartialFlush(lsn, lid));
