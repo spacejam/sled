@@ -51,8 +51,8 @@ fn pagecache_caching() {
     let mut keys = HashMap::new();
 
     for _ in 0..2 {
-        let (id, key) = pc.allocate(&guard);
-        let key = pc.replace(id, key, vec![0], &guard).unwrap();
+        let id = pc.allocate(&guard);
+        let key = pc.replace(id, Shared::null(), vec![0], &guard).unwrap();
         keys.insert(id, key);
     }
 
@@ -80,8 +80,8 @@ fn pagecache_strange_crash_1() {
         let guard = pin();
         let mut keys = HashMap::new();
         for _ in 0..2 {
-            let (id, key) = pc.allocate(&guard);
-            let key = pc.replace(id, key, vec![0], &guard).unwrap();
+            let id = pc.allocate(&guard);
+            let key = pc.replace(id, Shared::null(), vec![0], &guard).unwrap();
             keys.insert(id, key);
         }
 
@@ -116,8 +116,8 @@ fn pagecache_strange_crash_2() {
 
         let mut keys = HashMap::new();
         for _ in 0..2 {
-            let (id, key) = pc.allocate(&guard);
-            let key = pc.replace(id, key, vec![0], &guard).unwrap();
+            let id = pc.allocate(&guard);
+            let key = pc.replace(id, Shared::null(), vec![0], &guard).unwrap();
             keys.insert(id, key);
         }
 
@@ -147,8 +147,8 @@ fn basic_pagecache_recovery() {
     let pc = PageCache::start(TestMaterializer, conf.clone());
 
     let guard = pin();
-    let (id, key) = pc.allocate(&guard);
-    let key = pc.replace(id, key, vec![1], &guard).unwrap();
+    let id = pc.allocate(&guard);
+    let key = pc.replace(id, Shared::null(), vec![1], &guard).unwrap();
     let key = pc.link(id, key, vec![2], &guard).unwrap();
     let _key = pc.link(id, key, vec![3], &guard).unwrap();
     let (consolidated, _) = pc.get(id, &guard).unwrap();
@@ -170,7 +170,7 @@ fn basic_pagecache_recovery() {
 
     let pc4 = PageCache::start(TestMaterializer, conf.clone());
     let res = pc4.get(id, &guard);
-    assert!(res.is_none());
+    assert!(res.is_unallocated());
 }
 
 #[derive(Debug, Clone)]
@@ -260,7 +260,8 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
     use self::Op::*;
     let config = Config::default()
         .io_buf_size(1000)
-        .flush_every_ms(Some(1))
+        .flush_every_ms(None)
+        // FIXME uncomment .flush_every_ms(Some(1))
         .cache_bits(0)
         .cache_capacity(40)
         .cache_fixup_threshold(cache_fixup_threshold as usize)
@@ -273,6 +274,8 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
     let bad_addr = 1 << std::mem::align_of::<Vec<usize>>().trailing_zeros();
     let bad_ptr = Shared::from(bad_addr as *const _);
 
+    // TODO use returned pointers, cleared on restart, with caching set to
+    // a large amount, to test linkage.
     for op in ops.ops.into_iter() {
         match op {
             Replace(pid, c) => {
@@ -296,8 +299,10 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
                     existing.push(c);
                 } else {
                     let guard = pin();
-                    let res = pc.replace(pid, bad_ptr.into(), vec![c], &guard);
-                    assert!(res.unwrap_err().is_none());
+
+                    // ensure this returns an Err of some kind
+                    let _ = pc.replace(pid, bad_ptr.into(), vec![c], &guard)
+                        .unwrap_err();
                 }
             }
             Link(pid, c) => {
@@ -319,21 +324,23 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
                     existing.push(c);
                 } else {
                     let guard = pin();
-                    let res = pc.link(pid, bad_ptr, vec![c], &guard);
-                    assert!(res.unwrap_err().is_none());
+
+                    // ensure this returns an Err of some kind
+                    let _ = pc.link(pid, bad_ptr.into(), vec![c], &guard)
+                        .unwrap_err();
                 }
             }
             Get(pid) => {
                 let guard = pin();
                 let r = reference.get(&pid).cloned();
-                let a = pc.get(pid, &guard).map(|(a, _)| a);
+                let a = pc.get(pid, &guard);
                 if let Some(ref s) = r {
                     if s.is_empty() {
-                        assert_eq!(a, None);
+                        assert!(a.is_free() || a.is_unallocated());
                     } else {
-                        assert_eq!(r, a);
-                        let values = a.unwrap();
-                        values.iter().fold(0, |acc, cur| {
+                        let (a_val, _a_ptr) = a.unwrap();
+                        assert_eq!(s, &a_val);
+                        a_val.iter().fold(0, |acc, cur| {
                             if *cur <= acc {
                                 panic!("out of order page fragments in page!");
                             }
@@ -341,7 +348,7 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
                         });
                     }
                 } else {
-                    assert_eq!(None, a);
+                    assert!(a.is_free() || a.is_unallocated());
                 }
             }
             Free(pid) => {
@@ -350,11 +357,20 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
             }
             Allocate => {
                 let guard = pin();
-                let (pid, _key) = pc.allocate(&guard);
+                let pid = pc.allocate(&guard);
                 reference.insert(pid, vec![]);
             }
             Restart => {
                 drop(pc);
+                // any pages with no updates should be cleared
+                let mut to_clear = vec![];
+                for (pid, items) in &reference {
+                    if items.is_empty() {
+                        to_clear.push(*pid);
+                    }
+                }
+                reference.retain(|p, _v| !to_clear.contains(p));
+
                 pc = PageCache::start(TestMaterializer, config.clone());
             }
         }
@@ -373,7 +389,7 @@ fn quickcheck_pagecache_works() {
 }
 
 #[test]
-fn pagecache_bug_1() {
+fn pagecache_bug_01() {
     // postmortem: this happened because `PageCache::page_in` assumed
     // at least one update had been stored for a retrieved page.
     use Op::*;
@@ -518,6 +534,67 @@ fn pagecache_bug_10() {
                 Free(0),
                 Allocate,
                 Link(1, 427),
+            ],
+        },
+        0,
+    );
+}
+
+#[test]
+fn pagecache_bug_11() {
+    // postmortem: failed to completely back-out an experiment
+    // to tombstone allocations, which removed a check.
+    use Op::*;
+    prop_pagecache_works(
+        OpVec {
+            ops: vec![Free(0)],
+        },
+        0,
+    );
+}
+
+#[test]
+fn pagecache_bug_12() {
+    // postmortem: refactor to add Free tombstones changed
+    // the model.
+    use Op::*;
+    prop_pagecache_works(
+        OpVec {
+            ops: vec![Allocate, Free(0), Replace(0, 66)],
+        },
+        0,
+    );
+}
+
+#[test]
+fn pagecache_bug_13() {
+    // postmortem: Free tombstones mean that the page table may
+    // already have an entry for a newly-allocated page.
+    use Op::*;
+    prop_pagecache_works(
+        OpVec {
+            ops: vec![Allocate, Free(0), Free(0), Restart, Allocate, Allocate],
+        },
+        0,
+    );
+}
+
+#[test]
+fn pagecache_bug_14() {
+    // postmortem: Free tombstones are a little weird with the Lru.
+    // Make sure they don't get paged out.
+    use Op::*;
+    prop_pagecache_works(
+        OpVec {
+            ops: vec![
+                Allocate,
+                Allocate,
+                Replace(0, 955),
+                Replace(1, 956),
+                Restart,
+                Replace(1, 962),
+                Free(1),
+                Get(0),
             ],
         },
         0,

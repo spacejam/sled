@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 
-use epoch::{Guard, pin};
+use epoch::{Guard, Shared, pin};
 
 use super::*;
 
@@ -57,10 +57,10 @@ impl Tree {
             root_id
         } else {
             let guard = pin();
-            let (root_id, root_cas_key) = pages.allocate(&guard);
+            let root_id = pages.allocate(&guard);
             debug!("allocated pid {} for root of new tree", root_id);
 
-            let (leaf_id, leaf_cas_key) = pages.allocate(&guard);
+            let leaf_id = pages.allocate(&guard);
             trace!("allocated pid {} for leaf in new", leaf_id);
 
             let leaf = Frag::Base(
@@ -88,8 +88,12 @@ impl Tree {
                 true,
             );
 
-            pages.replace(root_id, root_cas_key, root, &guard).unwrap();
-            pages.replace(leaf_id, leaf_cas_key, leaf, &guard).unwrap();
+            pages
+                .replace(root_id, Shared::null(), root, &guard)
+                .unwrap();
+            pages
+                .replace(leaf_id, Shared::null(), leaf, &guard)
+                .unwrap();
             root_id
         };
 
@@ -405,7 +409,7 @@ impl Tree {
         node_cas_key: HPtr<'g, Frag>,
         guard: &'g Guard,
     ) -> Result<ParentSplit, ()> {
-        let (new_pid, new_cas_key) = self.pages.allocate(guard);
+        let new_pid = self.pages.allocate(guard);
         trace!("allocated pid {} in child_split", new_pid);
 
         // split the node in half
@@ -423,7 +427,7 @@ impl Tree {
 
         // install the new right side
         self.pages
-            .replace(new_pid, new_cas_key, Frag::Base(rhs, false), guard)
+            .replace(new_pid, Shared::null(), Frag::Base(rhs, false), guard)
             .expect("failed to initialize child split");
 
         // try to install a child split on the left side
@@ -470,7 +474,7 @@ impl Tree {
         guard: &'g Guard,
     ) {
         // hoist new root, pointing to lhs & rhs
-        let (new_root_pid, new_root_cas_key) = self.pages.allocate(guard);
+        let new_root_pid = self.pages.allocate(guard);
         debug!("allocated pid {} in root_hoist", new_root_pid);
 
         let mut new_root_vec = vec![];
@@ -494,7 +498,7 @@ impl Tree {
         if cas == from {
             // TODO think about the racyness of this
             self.pages
-                .replace(new_root_pid, new_root_cas_key, new_root, guard)
+                .replace(new_root_pid, Shared::null(), new_root, guard)
                 .unwrap();
             debug!(
                 "{}: root hoist from {} to {} successful",
@@ -565,7 +569,7 @@ impl Tree {
         let mut not_found_loops = 0;
         loop {
             let get_cursor = self.pages.get(cursor, guard);
-            if get_cursor.is_none() {
+            if get_cursor.is_free() {
                 // restart search from the tree's root
                 not_found_loops += 1;
                 debug_assert_ne!(

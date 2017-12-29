@@ -8,6 +8,7 @@ use epoch::{Atomic, Guard, Owned, Shared, pin, unprotected};
 
 use {debug_delay, test_fail};
 
+/// A node in the lock-free `Stack`.
 #[derive(Debug)]
 pub struct Node<T: Send + 'static> {
     inner: T,
@@ -77,12 +78,6 @@ impl<T: Send + 'static> Deref for Node<T> {
     type Target = T;
     fn deref(&self) -> &T {
         &self.inner
-    }
-}
-
-impl<T: Send + 'static> Node<T> {
-    pub fn next<'g>(&self, guard: &'g Guard) -> Shared<'g, Node<T>> {
-        self.next.load(SeqCst, guard)
     }
 }
 
