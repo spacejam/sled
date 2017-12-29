@@ -37,7 +37,7 @@ pub(super) struct LoggedUpdate<PageFrag>
 
 #[serde(bound(deserialize = ""))]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum Update<PageFrag>
+pub(super) enum Update<PageFrag>
     where PageFrag: DeserializeOwned + Serialize
 {
     Append(PageFrag),

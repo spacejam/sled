@@ -601,6 +601,28 @@ fn pagecache_bug_14() {
     );
 }
 
+#[test]
+fn pagecache_bug_15() {
+    // postmortem:
+    use Op::*;
+    prop_pagecache_works(
+        OpVec {
+            ops: vec![
+                Allocate,
+                Free(0),
+                Free(0),
+                Restart,
+                Allocate,
+                Replace(0, 8485),
+                Allocate,
+                Restart,
+                Get(0),
+            ],
+        },
+        0,
+    );
+}
+
 fn _pagecache_bug_() {
     // postmortem: TEMPLATE
     // portmortem 2: ...

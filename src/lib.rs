@@ -42,8 +42,6 @@ extern crate rand;
 pub use tree::{Iter, Tree};
 #[doc(hidden)]
 pub use ds::{Radix, Stack};
-#[doc(hidden)]
-pub use ds::stack::Node as StackNode;
 
 /// general-purpose configuration
 pub use config::{Config, FinalConfig};

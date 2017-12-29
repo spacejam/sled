@@ -149,7 +149,9 @@ impl<R> Snapshot<R> {
 
                 self.segments[idx].insert_pid(pid, segment_lsn);
 
-                self.free.push(pid);
+                if !self.free.contains(&pid) {
+                    self.free.push(pid);
+                }
             }
         }
     }
