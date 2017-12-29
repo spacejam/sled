@@ -20,6 +20,8 @@ pub enum CacheEntry<M: Send + Sync> {
     /// A cache item that is present in secondary storage, and is the base segment
     /// of a page.
     Flush(Lsn, LogID),
+    /// A freed page tombstone.
+    Free(Lsn, LogID),
 }
 
 /// `LoggedUpdate` is for writing blocks of `Update`'s to disk
@@ -41,7 +43,53 @@ pub(super) enum Update<PageFrag>
     Append(PageFrag),
     Compact(PageFrag),
     Free,
-    Alloc,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum PageGet<'a, PageFrag>
+    where PageFrag: 'static + DeserializeOwned + Serialize + Send + Sync
+{
+    Materialized(PageFrag, HPtr<'a, PageFrag>),
+    Free,
+    Unallocated,
+}
+
+unsafe impl<'a, P> Send for PageGet<'a, P>
+    where P: DeserializeOwned + Serialize + Send + Sync
+{
+}
+
+unsafe impl<'a, P> Sync for PageGet<'a, P>
+    where P: DeserializeOwned + Serialize + Send + Sync
+{
+}
+
+impl<'a, P> PageGet<'a, P>
+    where P: DeserializeOwned + Serialize + Send + Sync
+{
+    pub fn unwrap(self) -> (P, HPtr<'a, P>) {
+        match self {
+            PageGet::Materialized(p, hptr) => (p, hptr),
+            PageGet::Free => panic!("unwrap called on Free"),
+            PageGet::Unallocated => {
+                panic!("unwrap called on PageGet::Unallocated")
+            }
+        }
+    }
+
+    pub fn is_free(&self) -> bool {
+        match *self {
+            PageGet::Free => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_unallocated(&self) -> bool {
+        match *self {
+            PageGet::Unallocated => true,
+            _ => false,
+        }
+    }
 }
 
 struct PidDropper(PageID, Arc<Stack<PageID>>);
@@ -63,7 +111,7 @@ impl Drop for PidDropper {
 ///
 /// use sled::Materializer;
 ///
-/// use epoch::pin;
+/// use epoch::{Shared, pin};
 ///
 /// pub struct TestMaterializer;
 ///
@@ -92,13 +140,13 @@ impl Drop for PidDropper {
 ///                                     conf.build());
 ///     {
 ///         let guard = pin();
-///         let (id, key) = pc.allocate(&guard);
+///         let id = pc.allocate(&guard);
 ///
 ///         // The first item in a page should be set using replace,
 ///         // which signals that this is the beginning of a new
 ///         // page history, and that any previous items associated
 ///         // with this page should be forgotten.
-///         let key = pc.replace(id, key, "a".to_owned(), &guard).unwrap();
+///         let key = pc.replace(id, Shared::null(), "a".to_owned(), &guard).unwrap();
 ///
 ///         // Subsequent atomic updates should be added with link.
 ///         let key = pc.link(id, key, "b".to_owned(), &guard).unwrap();
@@ -214,38 +262,35 @@ impl<PM, P, R> PageCache<PM, P, R>
 
     /// Create a new page, trying to reuse old freed pages if possible
     /// to maximize underlying `Radix` pointer density.
-    pub fn allocate<'g>(&self, _: &'g Guard) -> (PageID, HPtr<'g, P>) {
+    pub fn allocate<'g>(&self, guard: &'g Guard) -> PageID {
         let pid = self.free.pop().unwrap_or_else(
             || self.max_pid.fetch_add(1, SeqCst),
         );
-        // FIXME unwrap called on Err value
-        // suspect: recovery issue?
-        self.inner.insert(pid, Stack::default()).unwrap();
+        trace!("allocating pid {}", pid);
 
-        // write info to log
-        let prepend: LoggedUpdate<P> = LoggedUpdate {
-            pid: pid,
-            update: Update::Alloc,
-        };
-        let serialize_start = clock();
-        let bytes = serialize(&prepend, Infinite).unwrap();
-        M.serialize.measure(clock() - serialize_start);
+        // set up new stack
+        let stack = Stack::default();
 
-        let (lsn, lid) = self.log.write(bytes);
-        trace!("allocating pid {} at lsn {} lid {}", pid, lsn, lid);
+        self.inner.del(pid, guard);
+        self.inner.insert(pid, stack).unwrap();
 
-        (pid, Shared::null())
+        pid
     }
 
     /// Free a particular page.
     pub fn free(&self, pid: PageID) {
         let guard = pin();
-        let deleted = self.inner.del(pid, &guard);
-        if deleted.is_none() {
+
+        let old_stack_opt = self.inner.get(pid, &guard);
+
+        if old_stack_opt.is_none() {
+            // already freed or never allocated
             return;
         }
 
-        // write info to log
+        let old_stack = old_stack_opt.unwrap();
+
+        // serialize log update
         let prepend: LoggedUpdate<P> = LoggedUpdate {
             pid: pid,
             update: Update::Free,
@@ -254,14 +299,23 @@ impl<PM, P, R> PageCache<PM, P, R>
         let bytes = serialize(&prepend, Infinite).unwrap();
         M.serialize.measure(clock() - serialize_start);
 
+        // reserve slot in log
         let res = self.log.reserve(bytes);
+        let lsn = res.lsn();
+        let lid = res.lid();
+
+        // set up new stack
+        let stack = Stack::default();
+        let cache_entry = CacheEntry::Free(lsn, lid);
+        stack.cap(Shared::null(), cache_entry, &guard).unwrap();
+
+        let new_stack = Owned::new(stack).into_shared(&guard);
 
         // add pid to free stack to reduce fragmentation over time
         unsafe {
-            let cas_key = deleted.unwrap().deref().head(&guard);
-
-            let lsn = res.lsn();
-            let lid = res.lid();
+            let cas_key = old_stack.deref().head(&guard);
+            // FIXME this is not threadsafe
+            self.inner.cas(pid, old_stack, new_stack, &guard).unwrap();
 
             self.log.with_sa(|sa| {
                 sa.mark_replace(pid, lsn, lids_from_stack(cas_key, &guard), lid)
@@ -273,12 +327,199 @@ impl<PM, P, R> PageCache<PM, P, R>
         // the segment to inactive, resulting in a race otherwise.
         res.complete();
 
-        let pd = Owned::new(PidDropper(pid, Arc::clone(&self.free)));
-        let ptr = pd.into_shared(&guard);
+        let pd = PidDropper(pid, Arc::clone(&self.free));
         unsafe {
-            guard.defer(move || ptr.into_owned());
+            guard.defer(move || pd);
             guard.flush();
         }
+    }
+
+    /// Try to atomically add a `PageFrag` to the page.
+    /// Returns `Ok(new_key)` if the operation was successful. Returns
+    /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
+    /// if the atomic append fails.
+    pub fn link<'g>(
+        &self,
+        pid: PageID,
+        old: HPtr<'g, P>,
+        new: P,
+        guard: &'g Guard,
+    ) -> Result<HPtr<'g, P>, Option<HPtr<'g, P>>> {
+        let stack_ptr = self.inner.get(pid, guard);
+        if stack_ptr.is_none() {
+            return Err(None);
+        }
+        let stack_ptr = stack_ptr.unwrap();
+
+        let prepend: LoggedUpdate<P> = LoggedUpdate {
+            pid: pid,
+            update: if old.is_null() {
+                Update::Compact(new.clone())
+            } else {
+                Update::Append(new.clone())
+            },
+        };
+        let serialize_start = clock();
+        let bytes = serialize(&prepend, Infinite).unwrap();
+        M.serialize.measure(clock() - serialize_start);
+        let log_reservation = self.log.reserve(bytes);
+        let lsn = log_reservation.lsn();
+        let lid = log_reservation.lid();
+
+        let cache_entry = CacheEntry::Resident(new, lsn, lid);
+
+        let result = unsafe { stack_ptr.deref().cap(old, cache_entry, guard) };
+
+        if result.is_err() {
+            log_reservation.abort();
+        } else {
+            let to_clean = self.log.with_sa(|sa| {
+                sa.mark_link(pid, lsn, lid);
+                sa.clean(None)
+            });
+            if let Some(to_clean) = to_clean {
+                match self.get(to_clean, guard) {
+                    PageGet::Materialized(page, key) => {
+                        let _ = self.replace_recurse_once(
+                            to_clean,
+                            key,
+                            Update::Compact(page),
+                            guard,
+                            true,
+                        );
+                    }
+                    PageGet::Free => {
+                        let _ = self.replace_recurse_once(
+                            to_clean,
+                            Shared::null(),
+                            Update::Free,
+                            guard,
+                            true,
+                        );
+                    }
+                    PageGet::Unallocated => {}
+                }
+            }
+
+            // NB complete must happen AFTER calls to SA, because
+            // when the iobuf's n_writers hits 0, we may transition
+            // the segment to inactive, resulting in a race otherwise.
+            // FIXME can result in deadlock if a node that holds SA
+            // is waiting to acquire a new reservation blocked by this?
+            log_reservation.complete();
+
+            let count = self.updates.fetch_add(1, SeqCst) + 1;
+            let should_snapshot =
+                count % self.config.get_snapshot_after_ops() == 0;
+            if should_snapshot {
+                self.advance_snapshot();
+            }
+        }
+
+        result.map_err(Some)
+    }
+
+    /// Replace an existing page with a different set of `PageFrag`s.
+    /// Returns `Ok(new_key)` if the operation was successful. Returns
+    /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
+    /// if the atomic swap fails.
+    pub fn replace<'g>(
+        &self,
+        pid: PageID,
+        old: HPtr<'g, P>,
+        new: P,
+        guard: &'g Guard,
+    ) -> Result<HPtr<'g, P>, Option<HPtr<'g, P>>> {
+        self.replace_recurse_once(pid, old, Update::Compact(new), guard, false)
+    }
+
+    fn replace_recurse_once<'g>(
+        &self,
+        pid: PageID,
+        old: HPtr<'g, P>,
+        new: Update<P>,
+        guard: &'g Guard,
+        recursed: bool,
+    ) -> Result<HPtr<'g, P>, Option<HPtr<'g, P>>> {
+        trace!("replacing pid {}", pid);
+        let stack_ptr = self.inner.get(pid, guard);
+        if stack_ptr.is_none() {
+            return Err(None);
+        }
+        let stack_ptr = stack_ptr.unwrap();
+
+        let replace: LoggedUpdate<P> = LoggedUpdate {
+            pid: pid,
+            update: new.clone(),
+        };
+        let serialize_start = clock();
+        let bytes = serialize(&replace, Infinite).unwrap();
+        M.serialize.measure(clock() - serialize_start);
+        let log_reservation = self.log.reserve(bytes);
+        let lsn = log_reservation.lsn();
+        let lid = log_reservation.lid();
+
+        let cache_entry = match new {
+            Update::Compact(m) => CacheEntry::MergedResident(m, lsn, lid),
+            Update::Free => CacheEntry::Free(lsn, lid),
+            _ => unimplemented!(),
+        };
+
+        let node = node_from_frag_vec(vec![cache_entry]).into_shared(guard);
+
+        debug_delay();
+        let result = unsafe { stack_ptr.deref().cas(old, node, guard) };
+
+        if result.is_ok() {
+            let lid = log_reservation.lid();
+            let lsn = log_reservation.lsn();
+            let lids = lids_from_stack(old, guard);
+
+            let to_clean = self.log.with_sa(|sa| {
+                sa.mark_replace(pid, lsn, lids, lid);
+                if recursed { None } else { sa.clean(Some(pid)) }
+            });
+            if let Some(to_clean) = to_clean {
+                assert_ne!(pid, to_clean);
+                match self.get(to_clean, guard) {
+                    PageGet::Materialized(page, key) => {
+                        let _ = self.replace_recurse_once(
+                            to_clean,
+                            key,
+                            Update::Compact(page),
+                            guard,
+                            true,
+                        );
+                    }
+                    PageGet::Free => {
+                        let _ = self.replace_recurse_once(
+                            to_clean,
+                            Shared::null(),
+                            Update::Free,
+                            guard,
+                            true,
+                        );
+                    }
+                    PageGet::Unallocated => {}
+                }
+            }
+
+            // NB complete must happen AFTER calls to SA, because
+            // when the iobuf's n_writers hits 0, we may transition
+            // the segment to inactive, resulting in a race otherwise.
+            log_reservation.complete();
+
+            let count = self.updates.fetch_add(1, SeqCst) + 1;
+            let should_snapshot =
+                count % self.config.get_snapshot_after_ops() == 0;
+            if should_snapshot {
+                self.advance_snapshot();
+            }
+        } else {
+            log_reservation.abort();
+        }
+
+        result.map_err(Some)
     }
 
     /// Try to retrieve a page by its logical ID.
@@ -286,10 +527,10 @@ impl<PM, P, R> PageCache<PM, P, R>
         &self,
         pid: PageID,
         guard: &'g Guard,
-    ) -> Option<(PM::PageFrag, HPtr<'g, P>)> {
+    ) -> PageGet<'g, PM::PageFrag> {
         let stack_ptr = self.inner.get(pid, guard);
         if stack_ptr.is_none() {
-            return None;
+            return PageGet::Unallocated;
         }
 
         let stack_ptr = stack_ptr.unwrap();
@@ -299,112 +540,13 @@ impl<PM, P, R> PageCache<PM, P, R>
         self.page_in(pid, head, stack_ptr, guard)
     }
 
-    fn page_out<'g>(&self, to_evict: Vec<PageID>, guard: &'g Guard) {
-        let start = clock();
-        for pid in to_evict {
-            let stack_ptr = self.inner.get(pid, guard);
-            if stack_ptr.is_none() {
-                continue;
-            }
-
-            let stack_ptr = stack_ptr.unwrap();
-
-            let head = unsafe { stack_ptr.deref().head(guard) };
-            let stack_iter = StackIter::from_ptr(head, guard);
-
-            let mut cache_entries: Vec<CacheEntry<P>> =
-                stack_iter.map(|ptr| (*ptr).clone()).collect();
-
-            // ensure the last entry is a Flush
-            let last = cache_entries.pop().map(|last_ce| match last_ce {
-                CacheEntry::MergedResident(_, lsn, lid) |
-                CacheEntry::Resident(_, lsn, lid) |
-                CacheEntry::Flush(lsn, lid) => {
-                    // NB stabilize the most recent LSN before
-                    // paging out! This SHOULD very rarely block...
-                    // TODO measure to make sure
-                    self.log.make_stable(lsn);
-                    CacheEntry::Flush(lsn, lid)
-                }
-                CacheEntry::PartialFlush(_, _) => {
-                    panic!("got PartialFlush at end of stack...")
-                }
-            });
-
-            if last.is_none() {
-                M.page_out.measure(clock() - start);
-                return;
-            }
-
-            let mut new_stack = Vec::with_capacity(cache_entries.len() + 1);
-            for entry in cache_entries {
-                match entry {
-                    CacheEntry::PartialFlush(lsn, lid) |
-                    CacheEntry::MergedResident(_, lsn, lid) |
-                    CacheEntry::Resident(_, lsn, lid) => {
-                        new_stack.push(CacheEntry::PartialFlush(lsn, lid));
-                    }
-                    CacheEntry::Flush(_, _) => {
-                        panic!("got Flush in middle of stack...")
-                    }
-                }
-            }
-            new_stack.push(last.unwrap());
-            let node = node_from_frag_vec(new_stack);
-
-            debug_delay();
-            unsafe {
-                if stack_ptr
-                    .deref()
-                    .cas(head, node.into_shared(guard), guard)
-                    .is_err()
-                {}
-            }
-        }
-        M.page_out.measure(clock() - start);
-    }
-
-    fn pull(&self, lsn: Lsn, lid: LogID) -> P {
-        trace!("pulling lsn {} lid {} from disk", lsn, lid);
-        let start = clock();
-        let bytes = match self.log.read(lsn, lid).map_err(|_| ()) {
-            Ok(LogRead::Flush(read_lsn, data, _len)) => {
-                assert_eq!(
-                    read_lsn,
-                    lsn,
-                    "expected lsn {} on pull of lid {}, \
-                    but got lsn {} instead",
-                    lsn,
-                    lid,
-                    read_lsn
-                );
-                data
-            }
-            // FIXME 'read invalid data at lid 66244182' in cycle test
-            _ => panic!("read invalid data at lid {}", lid),
-        };
-
-        let deserialize_start = clock();
-        let logged_update = deserialize::<LoggedUpdate<P>>(&*bytes)
-            .map_err(|_| ())
-            .expect("failed to deserialize data");
-        M.deserialize.measure(clock() - deserialize_start);
-
-        M.pull.measure(clock() - start);
-        match logged_update.update {
-            Update::Compact(page_frag) |
-            Update::Append(page_frag) => page_frag,
-            _ => panic!("non-append/compact found in pull"),
-        }
-    }
-
     fn page_in<'g>(
         &self,
         pid: PageID,
         mut head: Shared<'g, ds::stack::Node<CacheEntry<P>>>,
         stack_ptr: Shared<'g, ds::stack::Stack<CacheEntry<P>>>,
         guard: &'g Guard,
-    ) -> Option<(PM::PageFrag, HPtr<'g, P>)> {
+    ) -> PageGet<'g, PM::PageFrag> {
         let start = clock();
         let stack_iter = StackIter::from_ptr(head, guard);
 
@@ -425,7 +567,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                     if lids.is_empty() {
                         // Short circuit merging and fix-up if we only
                         // have one frag.
-                        return Some((page_frag.clone(), head));
+                        return PageGet::Materialized(page_frag.clone(), head);
                     }
                     if !merged_resident {
                         to_merge.push(page_frag);
@@ -438,12 +580,13 @@ impl<PM, P, R> PageCache<PM, P, R>
                 CacheEntry::Flush(lsn, lid) => {
                     lids.push((lsn, lid));
                 }
+                CacheEntry::Free(_, _) => return PageGet::Free,
             }
         }
 
         if lids.is_empty() {
             M.page_in.measure(clock() - start);
-            return None;
+            return PageGet::Free;
         }
 
         let mut fetched = Vec::with_capacity(lids.len());
@@ -489,12 +632,12 @@ impl<PM, P, R> PageCache<PM, P, R>
             match self.replace_recurse_once(
                 pid,
                 head,
-                merged.clone(),
+                Update::Compact(merged.clone()),
                 guard,
                 true,
             ) {
                 Ok(new_head) => head = new_head,
-                Err(None) => return None,
+                Err(None) => return PageGet::Free,
                 _ => (),
             }
         } else if !fetched.is_empty() ||
@@ -546,94 +689,118 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         M.page_in.measure(clock() - start);
 
-        Some((merged, head))
+        PageGet::Materialized(merged, head)
     }
 
-    /// Replace an existing page with a different set of `PageFrag`s.
-    /// Returns `Ok(new_key)` if the operation was successful. Returns
-    /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
-    /// if the atomic swap fails.
-    pub fn replace<'g>(
-        &self,
-        pid: PageID,
-        old: HPtr<'g, P>,
-        new: P,
-        guard: &'g Guard,
-    ) -> Result<HPtr<'g, P>, Option<HPtr<'g, P>>> {
-        self.replace_recurse_once(pid, old, new, guard, false)
-    }
+    fn page_out<'g>(&self, to_evict: Vec<PageID>, guard: &'g Guard) {
+        let start = clock();
+        for pid in to_evict {
+            let stack_ptr = self.inner.get(pid, guard);
+            if stack_ptr.is_none() {
+                continue;
+            }
 
-    fn replace_recurse_once<'g>(
-        &self,
-        pid: PageID,
-        old: HPtr<'g, P>,
-        new: P,
-        guard: &'g Guard,
-        recursed: bool,
-    ) -> Result<HPtr<'g, P>, Option<HPtr<'g, P>>> {
-        trace!("replacing pid {}", pid);
-        let stack_ptr = self.inner.get(pid, guard);
-        if stack_ptr.is_none() {
-            return Err(None);
-        }
-        let stack_ptr = stack_ptr.unwrap();
+            let stack_ptr = stack_ptr.unwrap();
 
-        let replace: LoggedUpdate<P> = LoggedUpdate {
-            pid: pid,
-            update: Update::Compact(new.clone()),
-        };
-        let serialize_start = clock();
-        let bytes = serialize(&replace, Infinite).unwrap();
-        M.serialize.measure(clock() - serialize_start);
-        let log_reservation = self.log.reserve(bytes);
-        let lsn = log_reservation.lsn();
-        let lid = log_reservation.lid();
+            let head = unsafe { stack_ptr.deref().head(guard) };
+            let stack_iter = StackIter::from_ptr(head, guard);
 
-        let cache_entry = CacheEntry::MergedResident(new, lsn, lid);
+            let mut cache_entries: Vec<CacheEntry<P>> =
+                stack_iter.map(|ptr| (*ptr).clone()).collect();
 
-        let node = node_from_frag_vec(vec![cache_entry]).into_shared(guard);
-
-        debug_delay();
-        let result = unsafe { stack_ptr.deref().cas(old, node, guard) };
-
-        if result.is_ok() {
-            let lid = log_reservation.lid();
-            let lsn = log_reservation.lsn();
-            let lids = lids_from_stack(old, guard);
-
-            let to_clean = self.log.with_sa(|sa| {
-                sa.mark_replace(pid, lsn, lids, lid);
-                if recursed { None } else { sa.clean(Some(pid)) }
+            // ensure the last entry is a Flush
+            let last = cache_entries.pop().and_then(|last_ce| match last_ce {
+                CacheEntry::MergedResident(_, lsn, lid) |
+                CacheEntry::Resident(_, lsn, lid) |
+                CacheEntry::Flush(lsn, lid) => {
+                    // NB stabilize the most recent LSN before
+                    // paging out! This SHOULD very rarely block...
+                    // TODO measure to make sure
+                    self.log.make_stable(lsn);
+                    Some(CacheEntry::Flush(lsn, lid))
+                }
+                CacheEntry::PartialFlush(_, _) => {
+                    panic!("got PartialFlush at end of stack...")
+                }
+                CacheEntry::Free(_, _) => {
+                    // don't actually evict this. this leads to
+                    // a discrepency in the Lru perceived size
+                    // and the real size, but this should be
+                    // minimal in anticipated workloads.
+                    None
+                }
             });
-            if let Some(to_clean) = to_clean {
-                assert_ne!(pid, to_clean);
-                if let Some((page, key)) = self.get(to_clean, guard) {
-                    let _ = self.replace_recurse_once(
-                        to_clean,
-                        key,
-                        page,
-                        guard,
-                        true,
-                    );
+
+            if last.is_none() {
+                M.page_out.measure(clock() - start);
+                return;
+            }
+
+            let mut new_stack = Vec::with_capacity(cache_entries.len() + 1);
+            for entry in cache_entries {
+                match entry {
+                    CacheEntry::PartialFlush(lsn, lid) |
+                    CacheEntry::MergedResident(_, lsn, lid) |
+                    CacheEntry::Resident(_, lsn, lid) => {
+                        new_stack.push(CacheEntry::PartialFlush(lsn, lid));
+                    }
+                    CacheEntry::Flush(_, _) => {
+                        panic!("got Flush in middle of stack...")
+                    }
+                    CacheEntry::Free(_, _) => {
+                        panic!(
+                            "encountered a Free tombstone page in middle of stack..."
+                        )
+                    }
                 }
             }
+            new_stack.push(last.unwrap());
+            let node = node_from_frag_vec(new_stack);
 
-            // NB complete must happen AFTER calls to SA, because
-            // when the iobuf's n_writers hits 0, we may transition
-            // the segment to inactive, resulting in a race otherwise.
-            log_reservation.complete();
-
-            let count = self.updates.fetch_add(1, SeqCst) + 1;
-            let should_snapshot =
-                count % self.config.get_snapshot_after_ops() == 0;
-            if should_snapshot {
-                self.advance_snapshot();
+            debug_delay();
+            unsafe {
+                if stack_ptr
+                    .deref()
+                    .cas(head, node.into_shared(guard), guard)
+                    .is_err()
+                {}
             }
-        } else {
-            log_reservation.abort();
         }
+        M.page_out.measure(clock() - start);
+    }
 
-        result.map_err(Some)
+    fn pull(&self, lsn: Lsn, lid: LogID) -> P {
+        trace!("pulling lsn {} lid {} from disk", lsn, lid);
+        let start = clock();
+        let bytes = match self.log.read(lsn, lid).map_err(|_| ()) {
+            Ok(LogRead::Flush(read_lsn, data, _len)) => {
+                assert_eq!(
+                    read_lsn,
+                    lsn,
+                    "expected lsn {} on pull of lid {}, \
+                    but got lsn {} instead",
+                    lsn,
+                    lid,
+                    read_lsn
+                );
+                data
+            }
+            // FIXME 'read invalid data at lid 66244182' in cycle test
+            _ => panic!("read invalid data at lid {}", lid),
+        };
+
+        let deserialize_start = clock();
+        let logged_update = deserialize::<LoggedUpdate<P>>(&*bytes)
+            .map_err(|_| ())
+            .expect("failed to deserialize data");
+        M.deserialize.measure(clock() - deserialize_start);
+
+        M.pull.measure(clock() - start);
+        match logged_update.update {
+            Update::Compact(page_frag) |
+            Update::Append(page_frag) => page_frag,
+            _ => panic!("non-append/compact found in pull"),
+        }
     }
 
     // caller is expected to have instantiated self.last_snapshot
@@ -688,78 +855,6 @@ impl<PM, P, R> PageCache<PM, P, R>
         *snapshot_opt = Some(next_snapshot);
     }
 
-
-    /// Try to atomically add a `PageFrag` to the page.
-    /// Returns `Ok(new_key)` if the operation was successful. Returns
-    /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
-    /// if the atomic append fails.
-    pub fn link<'g>(
-        &self,
-        pid: PageID,
-        old: HPtr<'g, P>,
-        new: P,
-        guard: &'g Guard,
-    ) -> Result<HPtr<'g, P>, Option<HPtr<'g, P>>> {
-        let stack_ptr = self.inner.get(pid, guard);
-        if stack_ptr.is_none() {
-            return Err(None);
-        }
-        let stack_ptr = stack_ptr.unwrap();
-
-        let prepend: LoggedUpdate<P> = LoggedUpdate {
-            pid: pid,
-            update: if old.is_null() {
-                Update::Compact(new.clone())
-            } else {
-                Update::Append(new.clone())
-            },
-        };
-        let serialize_start = clock();
-        let bytes = serialize(&prepend, Infinite).unwrap();
-        M.serialize.measure(clock() - serialize_start);
-        let log_reservation = self.log.reserve(bytes);
-        let lsn = log_reservation.lsn();
-        let lid = log_reservation.lid();
-
-        let cache_entry = CacheEntry::Resident(new, lsn, lid);
-
-        let result = unsafe { stack_ptr.deref().cap(old, cache_entry, guard) };
-
-        if result.is_err() {
-            log_reservation.abort();
-        } else {
-            let to_clean = self.log.with_sa(|sa| {
-                sa.mark_link(pid, lsn, lid);
-                sa.clean(None)
-            });
-            if let Some(to_clean) = to_clean {
-                if let Some((page, key)) = self.get(to_clean, guard) {
-                    let _ = self.replace_recurse_once(
-                        to_clean,
-                        key,
-                        page,
-                        guard,
-                        true,
-                    );
-                }
-            }
-
-            // NB complete must happen AFTER calls to SA, because
-            // when the iobuf's n_writers hits 0, we may transition
-            // the segment to inactive, resulting in a race otherwise.
-            log_reservation.complete();
-
-            let count = self.updates.fetch_add(1, SeqCst) + 1;
-            let should_snapshot =
-                count % self.config.get_snapshot_after_ops() == 0;
-            if should_snapshot {
-                self.advance_snapshot();
-            }
-        }
-
-        result.map_err(Some)
-    }
-
     fn load_snapshot(&mut self) {
         // panic if not set
         let snapshot = self.last_snapshot.try_lock().unwrap().clone().unwrap();
@@ -807,6 +902,7 @@ fn lids_from_stack<'g, P: Send + Sync>(
             CacheEntry::Resident(_, _, ref lid) |
             CacheEntry::MergedResident(_, _, ref lid) |
             CacheEntry::PartialFlush(_, ref lid) |
+            CacheEntry::Free(_, ref lid) |
             CacheEntry::Flush(_, ref lid) => {
                 lids.push(*lid);
             }
