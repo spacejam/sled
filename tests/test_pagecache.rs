@@ -603,7 +603,8 @@ fn pagecache_bug_14() {
 
 #[test]
 fn pagecache_bug_15() {
-    // postmortem:
+    // postmortem: non-idempotent PageCache::free.
+    // fixed by deduplicating the free list on recovery.
     use Op::*;
     prop_pagecache_works(
         OpVec {
