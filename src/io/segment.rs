@@ -390,8 +390,20 @@ impl SegmentAccountant {
 
             let lsn = segment.lsn();
 
+            let cleanup_threshold = self.config.get_segment_cleanup_threshold();
+            let min_items = self.config.get_min_segment_items();
+            let segment_low_pct = segment.live_pct() <=
+                self.config.get_segment_cleanup_threshold();
+            let segment_low_count = segment.len() as f64 <=
+                min_items as f64 * segment_low_pct;
+
+            let can_free = segment.is_empty() && !self.pause_rewriting;
+
+            let can_drain = (segment_low_pct || segment_low_count) &&
+                !self.pause_rewriting;
+
             // populate free and to_clean if the segment has seen
-            if segment.is_empty() && !self.pause_rewriting {
+            if can_free {
                 // can be reused immediately
 
                 if segment.state == Active {
@@ -424,10 +436,7 @@ impl SegmentAccountant {
                     );
                     self.free_segment(segment_start, true);
                 }
-            } else if segment.live_pct() <=
-                       self.config.get_segment_cleanup_threshold() &&
-                       !self.pause_rewriting
-            {
+            } else if can_drain {
                 // hack! we check here for pause_rewriting to work with
                 // raw logs, which are created with this set to true.
 
