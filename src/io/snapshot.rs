@@ -189,6 +189,8 @@ pub(super) fn advance_snapshot<P, R>(
     snapshot
 }
 
+/// Read a `Snapshot` or generate a default, then advance it to
+/// the tip of the data file, if present.
 pub fn read_snapshot_or_default<P, R>(
     config: &FinalConfig,
     pm_opt: Option<Arc<Materializer<PageFrag = P, Recovery = R>>>,
@@ -218,6 +220,7 @@ fn read_snapshot<R>(config: &FinalConfig) -> Option<Snapshot<R>>
         return None;
     }
 
+    // TODO use parsed max lsn in filename
     candidates.sort_by_key(|path| {
         std::fs::metadata(path).unwrap().created().unwrap()
     });

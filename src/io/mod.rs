@@ -30,7 +30,7 @@ mod snapshot;
 pub use self::log::{LogRead, MSG_HEADER_LEN, SEG_HEADER_LEN, SEG_TRAILER_LEN};
 
 #[doc(hidden)]
-pub use self::snapshot::Snapshot;
+pub use self::snapshot::{Snapshot, read_snapshot_or_default};
 
 pub use self::log::Log;
 pub use self::materializer::Materializer;
@@ -44,4 +44,4 @@ use self::iterator::LogIter;
 use self::page_cache::{LoggedUpdate, Update};
 use self::parallel_io::Pio;
 use self::segment::{SegmentAccountant, raw_segment_iter};
-use self::snapshot::{advance_snapshot, read_snapshot_or_default};
+use self::snapshot::advance_snapshot;

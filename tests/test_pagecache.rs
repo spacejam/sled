@@ -5,6 +5,7 @@ extern crate quickcheck;
 
 use std::collections::HashMap;
 use std::sync::atomic::{ATOMIC_USIZE_INIT, AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use epoch::{Shared, pin};
@@ -111,6 +112,8 @@ fn pagecache_strange_crash_2() {
             .build();
 
         println!("!!!!!!!!!!!!!!!!!!!!! {} !!!!!!!!!!!!!!!!!!!!!!", x);
+        verify_snapshot(conf.clone());
+
         let pc = PageCache::start(TestMaterializer, conf.clone());
         pc.recovered_state();
 
@@ -256,6 +259,28 @@ impl Arbitrary for OpVec {
     }
 }
 
+fn verify_snapshot(config: sled::FinalConfig) {
+    let incremental_snapshot = sled::read_snapshot_or_default(
+        &config,
+        Some(Arc::new(TestMaterializer)),
+    );
+
+    for snapshot_path in config.get_snapshot_files() {
+        std::fs::remove_file(snapshot_path).unwrap();
+    }
+
+    let fully_regenerated_snapshot = sled::read_snapshot_or_default(
+        &config,
+        Some(Arc::new(TestMaterializer)),
+    );
+
+    assert_eq!(
+        incremental_snapshot,
+        fully_regenerated_snapshot,
+        "snapshots have diverged!"
+    );
+}
+
 fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
     use self::Op::*;
     let config = Config::default()
@@ -276,6 +301,7 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
 
     // TODO use returned pointers, cleared on restart, with caching set to
     // a large amount, to test linkage.
+    // println!("{:?}", ops);
     for op in ops.ops.into_iter() {
         match op {
             Replace(pid, c) => {
@@ -292,6 +318,8 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
                             old_key
                         };
 
+                        // FIXME called `Result::unwrap()` on an `Err`
+                        // value: Some(Shared { raw: 0x7ff813022680, tag: 0 })
                         pc.replace(pid, old_key.clone(), vec![c], &guard)
                             .unwrap();
                     }
@@ -371,6 +399,8 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
                 }
                 reference.retain(|p, _v| !to_clear.contains(p));
 
+                verify_snapshot(config.clone());
+
                 pc = PageCache::start(TestMaterializer, config.clone());
             }
         }
@@ -384,7 +414,7 @@ fn quickcheck_pagecache_works() {
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 1))
         .tests(1000)
-        .max_tests(2000)
+        .max_tests(1000000)
         .quickcheck(prop_pagecache_works as fn(OpVec, u8) -> bool);
 }
 
@@ -626,7 +656,9 @@ fn pagecache_bug_15() {
 
 #[test]
 fn pagecache_bug_16() {
-    // postmortem:
+    // postmortem: non-idempotent PageCache::free.
+    // did not check if a Free tombstone was present,
+    // just if the stack was present.
     use Op::*;
     prop_pagecache_works(
         OpVec {
@@ -640,6 +672,63 @@ fn pagecache_bug_16() {
                 Allocate,
                 Restart,
                 Get(0),
+            ],
+        },
+        0,
+    );
+}
+
+// FIXME currently breaking in new and exciting ways!
+#[test]
+#[ignore]
+fn pagecache_bug_17() {
+    // postmortem:
+    use Op::*;
+    prop_pagecache_works(
+        OpVec {
+            ops: vec![
+                Allocate,
+                Link(0, 205),
+                Allocate,
+                Replace(0, 207),
+                Link(1, 208),
+                Allocate,
+                Allocate,
+                Allocate,
+                Link(2, 213),
+                Replace(3, 215),
+                Replace(2, 216),
+                Replace(3, 218),
+                Free(1),
+                Allocate,
+                Link(4, 220),
+                Restart,
+                Allocate,
+                Allocate,
+                Replace(5, 221),
+                Free(4),
+                Free(3),
+                Link(2, 222),
+                Link(4, 223),
+                Replace(1, 224),
+                Link(0, 226),
+                Restart,
+                Link(0, 227),
+                Allocate,
+                Link(0, 228),
+                Allocate,
+                Replace(4, 229),
+                Free(1),
+                Free(0),
+                Link(3, 230),
+                Link(1, 231),
+                Replace(2, 232),
+                Replace(4, 233),
+                Replace(2, 236),
+                Allocate,
+                Replace(3, 240),
+                Link(3, 241),
+                Replace(1, 242),
             ],
         },
         0,
