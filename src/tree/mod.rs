@@ -1,5 +1,5 @@
 use std::fmt::{self, Debug};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 
@@ -31,10 +31,11 @@ impl<'a> IntoIterator for &'a Tree {
 }
 
 /// A flash-sympathetic persistent lock-free B+ tree
+#[derive(Clone)]
 pub struct Tree {
-    pages: PageCache<BLinkMaterializer, Frag, PageID>,
+    pages: Arc<PageCache<BLinkMaterializer, Frag, PageID>>,
     config: FinalConfig,
-    root: AtomicUsize,
+    root: Arc<AtomicUsize>,
 }
 
 unsafe impl Send for Tree {}
@@ -98,9 +99,9 @@ impl Tree {
         };
 
         Tree {
-            pages: pages,
+            pages: Arc::new(pages),
             config: config,
-            root: AtomicUsize::new(root_id),
+            root: Arc::new(AtomicUsize::new(root_id)),
         }
     }
 
