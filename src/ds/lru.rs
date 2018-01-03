@@ -7,6 +7,8 @@ pub struct Lru {
     shards: Vec<Mutex<Shard>>,
 }
 
+unsafe impl Sync for Lru {}
+
 impl Lru {
     /// Instantiates a new `Lru` cache.
     pub fn new(cache_capacity: usize, cache_bits: usize) -> Lru {
