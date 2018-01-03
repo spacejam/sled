@@ -10,7 +10,7 @@ use super::*;
 
 /// Points to either a memory location or a disk location to page-in data from.
 #[derive(Debug, Clone, PartialEq)]
-pub enum CacheEntry<M: Send + Sync> {
+pub enum CacheEntry<M: Send> {
     /// A cache item that contains the most recent fully-merged page state, also in secondary
     /// storage.
     MergedResident(M, Lsn, LogID),
@@ -177,20 +177,13 @@ pub struct PageCache<PM, P, R>
     inner: Radix<Stack<CacheEntry<P>>>,
     max_pid: AtomicUsize,
     free: Arc<Mutex<BinaryHeap<PageID>>>,
-    log: Arc<Log>,
+    log: Log,
     lru: Lru,
     updates: AtomicUsize,
     last_snapshot: Arc<Mutex<Option<Snapshot<R>>>>,
 }
 
 unsafe impl<PM, P, R> Send for PageCache<PM, P, R>
-    where PM: Send + Sync,
-          P: 'static + Send + Sync,
-          R: Send
-{
-}
-
-unsafe impl<PM, P, R> Sync for PageCache<PM, P, R>
     where PM: Send + Sync,
           P: 'static + Send + Sync,
           R: Send
@@ -243,7 +236,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             inner: Radix::default(),
             max_pid: AtomicUsize::new(0),
             free: Arc::new(Mutex::new(BinaryHeap::new())),
-            log: Arc::new(Log::start(config, snapshot.clone())),
+            log: Log::start(config, snapshot.clone()),
             lru: lru,
             updates: AtomicUsize::new(0),
             last_snapshot: Arc::new(Mutex::new(Some(snapshot))),

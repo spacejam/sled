@@ -50,7 +50,6 @@ pub struct Config {
 }
 
 unsafe impl Send for Config {}
-unsafe impl Sync for Config {}
 
 impl Default for Config {
     fn default() -> Config {
@@ -272,6 +271,9 @@ impl Drop for Config {
 /// to open a `Tree` or `Log`.
 #[derive(Clone, Debug)]
 pub struct FinalConfig(Arc<Config>);
+
+unsafe impl Send for FinalConfig {}
+unsafe impl Sync for FinalConfig {}
 
 impl Deref for FinalConfig {
     type Target = Config;
