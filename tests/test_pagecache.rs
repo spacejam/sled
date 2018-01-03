@@ -42,7 +42,7 @@ fn pagecache_caching() {
         .cache_bits(0)
         .flush_every_ms(None)
         .snapshot_after_ops(1_000_000)
-        .io_buf_size(5000)
+        .io_buf_size(20000)
         .build();
 
     let pc = PageCache::start(TestMaterializer, conf.clone());
@@ -71,7 +71,7 @@ fn pagecache_strange_crash_1() {
         .cache_bits(0)
         .flush_every_ms(None)
         .snapshot_after_ops(1_000_000)
-        .io_buf_size(5000)
+        .io_buf_size(20000)
         .build();
 
     {
@@ -107,7 +107,7 @@ fn pagecache_strange_crash_2() {
             .cache_bits(0)
             .flush_every_ms(None)
             .snapshot_after_ops(1_000_000)
-            .io_buf_size(5000)
+            .io_buf_size(20000)
             .build();
 
         println!("!!!!!!!!!!!!!!!!!!!!! {} !!!!!!!!!!!!!!!!!!!!!!", x);

@@ -147,7 +147,13 @@ fn global_init() {
         #[cfg(feature = "env_logger")]
         {
             let format = |record: &_log::LogRecord| {
-                format!("{:05} {}: {}", record.level(), tn(), record.args())
+                format!(
+                    "{:05} {:10} {:10} {}",
+                    record.level(),
+                    tn(),
+                    record.location().module_path().split("::").last().unwrap(),
+                    record.args()
+                )
             };
 
             let mut builder = env_logger::LogBuilder::new();

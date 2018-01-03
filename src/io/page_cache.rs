@@ -377,6 +377,14 @@ impl<PM, P, R> PageCache<PM, P, R>
                 sa.mark_link(pid, lsn, lid);
                 sa.clean(None)
             });
+
+            // NB complete must happen AFTER calls to SA, because
+            // when the iobuf's n_writers hits 0, we may transition
+            // the segment to inactive, resulting in a race otherwise.
+            // FIXME can result in deadlock if a node that holds SA
+            // is waiting to acquire a new reservation blocked by this?
+            log_reservation.complete();
+
             if let Some(to_clean) = to_clean {
                 match self.get(to_clean, guard) {
                     PageGet::Materialized(page, key) => {
@@ -400,13 +408,6 @@ impl<PM, P, R> PageCache<PM, P, R>
                     PageGet::Unallocated => {}
                 }
             }
-
-            // NB complete must happen AFTER calls to SA, because
-            // when the iobuf's n_writers hits 0, we may transition
-            // the segment to inactive, resulting in a race otherwise.
-            // FIXME can result in deadlock if a node that holds SA
-            // is waiting to acquire a new reservation blocked by this?
-            log_reservation.complete();
 
             let count = self.updates.fetch_add(1, SeqCst) + 1;
             let should_snapshot =
@@ -479,6 +480,12 @@ impl<PM, P, R> PageCache<PM, P, R>
                 sa.mark_replace(pid, lsn, lids, lid);
                 if recursed { None } else { sa.clean(Some(pid)) }
             });
+
+            // NB complete must happen AFTER calls to SA, because
+            // when the iobuf's n_writers hits 0, we may transition
+            // the segment to inactive, resulting in a race otherwise.
+            log_reservation.complete();
+
             if let Some(to_clean) = to_clean {
                 assert_ne!(pid, to_clean);
                 match self.get(to_clean, guard) {
@@ -503,11 +510,6 @@ impl<PM, P, R> PageCache<PM, P, R>
                     PageGet::Unallocated => {}
                 }
             }
-
-            // NB complete must happen AFTER calls to SA, because
-            // when the iobuf's n_writers hits 0, we may transition
-            // the segment to inactive, resulting in a race otherwise.
-            log_reservation.complete();
 
             let count = self.updates.fetch_add(1, SeqCst) + 1;
             let should_snapshot =

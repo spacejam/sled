@@ -104,7 +104,7 @@ impl IoBufs {
             next_lid
         );
 
-        if next_lsn % io_buf_size as Lsn == 0 {
+        if next_lsn == 0 {
             // recovering at segment boundary
             assert_eq!(next_lid, next_lsn as LogID);
             let iobuf = &bufs[current_buf];
