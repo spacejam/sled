@@ -156,6 +156,11 @@ impl Default for SegmentState {
 }
 
 impl Segment {
+    fn len(&self) -> usize {
+        std::cmp::max(self.present.len(), self.removed.len()) -
+            self.removed.len()
+    }
+
     fn _is_free(&self) -> bool {
         match self.state {
             Free => true,
@@ -378,6 +383,10 @@ impl SegmentAccountant {
 
         let io_buf_size = self.config.get_io_buf_size();
 
+        let max_idx = segments.iter().fold(0, |acc, segment| {
+            std::cmp::max(acc, segment.lsn.unwrap_or(acc))
+        }) as usize / io_buf_size;
+
         for (idx, ref mut segment) in segments.iter_mut().enumerate() {
             if segment.lsn.is_none() {
                 continue;
@@ -390,8 +399,24 @@ impl SegmentAccountant {
 
             let lsn = segment.lsn();
 
+            // can we transition these segments?
+            let cleanup_threshold = self.config.get_segment_cleanup_threshold();
+            let min_items = self.config.get_min_items_per_segment();
+
+            let segment_low_pct = segment.live_pct() <= cleanup_threshold;
+
+            let segment_low_count = (segment.len() as f64) <
+                min_items as f64 * cleanup_threshold;
+
+            let can_free = segment.is_empty() && !self.pause_rewriting &&
+                idx != max_idx;
+
+            let can_drain = (segment_low_pct || segment_low_count) &&
+                !self.pause_rewriting &&
+                idx != max_idx;
+
             // populate free and to_clean if the segment has seen
-            if segment.is_empty() && !self.pause_rewriting {
+            if can_free {
                 // can be reused immediately
 
                 if segment.state == Active {
@@ -424,10 +449,7 @@ impl SegmentAccountant {
                     );
                     self.free_segment(segment_start, true);
                 }
-            } else if segment.live_pct() <=
-                       self.config.get_segment_cleanup_threshold() &&
-                       !self.pause_rewriting
-            {
+            } else if can_drain {
                 // hack! we check here for pause_rewriting to work with
                 // raw logs, which are created with this set to true.
 
@@ -571,16 +593,26 @@ impl SegmentAccountant {
 
             self.segments[old_idx].remove_pid(pid, lsn);
 
+            // can we transition these segments?
+            let cleanup_threshold = self.config.get_segment_cleanup_threshold();
+            let min_items = self.config.get_min_items_per_segment();
+
+            let segment_low_pct = self.segments[old_idx].live_pct() <=
+                cleanup_threshold;
+
+            let segment_low_count = (self.segments[old_idx].len() as f64) <
+                min_items as f64 * cleanup_threshold;
+
+            let can_drain = self.segments[old_idx].is_inactive() &&
+                (segment_low_pct || segment_low_count);
+
             if self.segments[old_idx].can_free() {
                 // can be reused immediately
                 self.segments[old_idx].draining_to_free(lsn);
                 self.to_clean.remove(&segment_start);
                 trace!("freed segment {} in replace", segment_start);
                 self.free_segment(segment_start, false);
-            } else if self.segments[old_idx].is_inactive() &&
-                       self.segments[old_idx].live_pct() <=
-                           self.config.get_segment_cleanup_threshold()
-            {
+            } else if can_drain {
                 // can be cleaned
                 trace!(
                     "SA inserting {} into to_clean from mark_replace",

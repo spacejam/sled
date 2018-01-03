@@ -42,7 +42,7 @@ fn pagecache_caching() {
         .cache_bits(0)
         .flush_every_ms(None)
         .snapshot_after_ops(1_000_000)
-        .io_buf_size(5000)
+        .io_buf_size(20000)
         .build();
 
     let pc = PageCache::start(TestMaterializer, conf.clone());
@@ -71,7 +71,7 @@ fn pagecache_strange_crash_1() {
         .cache_bits(0)
         .flush_every_ms(None)
         .snapshot_after_ops(1_000_000)
-        .io_buf_size(5000)
+        .io_buf_size(20000)
         .build();
 
     {
@@ -107,7 +107,7 @@ fn pagecache_strange_crash_2() {
             .cache_bits(0)
             .flush_every_ms(None)
             .snapshot_after_ops(1_000_000)
-            .io_buf_size(5000)
+            .io_buf_size(20000)
             .build();
 
         println!("!!!!!!!!!!!!!!!!!!!!! {} !!!!!!!!!!!!!!!!!!!!!!", x);
@@ -384,7 +384,7 @@ fn quickcheck_pagecache_works() {
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 1))
         .tests(1000)
-        .max_tests(10000)
+        .max_tests(2000)
         .quickcheck(prop_pagecache_works as fn(OpVec, u8) -> bool);
 }
 
@@ -615,6 +615,28 @@ fn pagecache_bug_15() {
                 Restart,
                 Allocate,
                 Replace(0, 8485),
+                Allocate,
+                Restart,
+                Get(0),
+            ],
+        },
+        0,
+    );
+}
+
+#[test]
+fn pagecache_bug_16() {
+    // postmortem:
+    use Op::*;
+    prop_pagecache_works(
+        OpVec {
+            ops: vec![
+                Allocate,
+                Free(0),
+                Free(0),
+                Free(0),
+                Allocate,
+                Link(0, 5622),
                 Allocate,
                 Restart,
                 Get(0),

@@ -28,6 +28,7 @@ use super::*;
 pub struct Config {
     io_bufs: usize,
     io_buf_size: usize,
+    min_items_per_segment: usize,
     blink_fanout: usize,
     page_consolidation_threshold: usize,
     path: String,
@@ -67,6 +68,7 @@ impl Default for Config {
         Config {
             io_bufs: 3,
             io_buf_size: 2 << 22, // 8mb
+            min_items_per_segment: 4, // capacity for >=4 pages/segment
             blink_fanout: 32,
             page_consolidation_threshold: 10,
             path: tmp_path.to_owned(),
@@ -119,6 +121,7 @@ impl Config {
     builder!(
         (io_bufs, get_io_bufs, set_io_bufs, usize, "number of io buffers"),
         (io_buf_size, get_io_buf_size, set_io_buf_size, usize, "size of each io flush buffer. MUST be multiple of 512!"),
+        (min_items_per_segment, get_min_items_per_segment, set_min_items_per_segment, usize, "minimum data chunks/pages in a segment."),
         (blink_fanout, get_blink_fanout, set_blink_fanout, usize, "b-link node fanout, minimum of 2"),
         (page_consolidation_threshold, get_page_consolidation_threshold, set_page_consolidation_threshold, usize, "page consolidation threshold"),
         (path, get_path, set_path, String, "path for the main storage file"),

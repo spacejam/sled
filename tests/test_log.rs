@@ -47,8 +47,11 @@ fn non_contiguous_log_flush() {
         .build();
     let log = conf.log();
 
-    let overhead = MSG_HEADER_LEN + SEG_HEADER_LEN + SEG_TRAILER_LEN;
-    let buf_len = conf.get_io_buf_size() - overhead;
+    let seg_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;
+    let buf_len = ((conf.get_io_buf_size() - seg_overhead) /
+                       conf.get_min_items_per_segment()) -
+        MSG_HEADER_LEN;
+
     let res1 = log.reserve(vec![0; buf_len]);
     let res2 = log.reserve(vec![0; buf_len]);
     let id = res2.lid();
@@ -75,10 +78,15 @@ fn concurrent_logging() {
         let iobs6 = log.clone();
         let log7 = log.clone();
 
+        let seg_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;
+        let buf_len = ((conf.get_io_buf_size() - seg_overhead) /
+                           conf.get_min_items_per_segment()) -
+            MSG_HEADER_LEN;
+
         let t1 = thread::Builder::new()
             .name("c1".to_string())
             .spawn(move || for i in 0..1_000 {
-                let buf = vec![1; i % 896];
+                let buf = vec![1; i % buf_len];
                 log.write(buf);
             })
             .unwrap();
@@ -86,7 +94,7 @@ fn concurrent_logging() {
         let t2 = thread::Builder::new()
             .name("c2".to_string())
             .spawn(move || for i in 0..1_000 {
-                let buf = vec![2; i % 896];
+                let buf = vec![2; i % buf_len];
                 iobs2.write(buf);
             })
             .unwrap();
@@ -94,7 +102,7 @@ fn concurrent_logging() {
         let t3 = thread::Builder::new()
             .name("c3".to_string())
             .spawn(move || for i in 0..1_000 {
-                let buf = vec![3; i % 896];
+                let buf = vec![3; i % buf_len];
                 iobs3.write(buf);
             })
             .unwrap();
@@ -102,14 +110,14 @@ fn concurrent_logging() {
         let t4 = thread::Builder::new()
             .name("c4".to_string())
             .spawn(move || for i in 0..1_000 {
-                let buf = vec![4; i % 896];
+                let buf = vec![4; i % buf_len];
                 iobs4.write(buf);
             })
             .unwrap();
         let t5 = thread::Builder::new()
             .name("c5".to_string())
             .spawn(move || for i in 0..1_000 {
-                let buf = vec![5; i % 896];
+                let buf = vec![5; i % buf_len];
                 iobs5.write(buf);
             })
             .unwrap();
@@ -117,7 +125,7 @@ fn concurrent_logging() {
         let t6 = thread::Builder::new()
             .name("c6".to_string())
             .spawn(move || for i in 0..1_000 {
-                let buf = vec![6; i % 896];
+                let buf = vec![6; i % buf_len];
                 let (lsn, _lid) = iobs6.write(buf);
                 // println!("+");
                 iobs6.make_stable(lsn);
@@ -294,8 +302,12 @@ fn multi_segment_log_iteration() {
         .segment_mode(SegmentMode::Linear)
         .io_buf_size(100)
         .build();
-    let len = conf.get_io_buf_size() - SEG_HEADER_LEN - SEG_TRAILER_LEN -
+
+    let seg_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;
+    let len = ((conf.get_io_buf_size() - seg_overhead) /
+                   conf.get_min_items_per_segment()) -
         MSG_HEADER_LEN;
+
     let log = conf.log();
 
     for i in 0..conf.get_io_bufs() * 2 {

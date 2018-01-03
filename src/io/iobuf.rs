@@ -104,7 +104,7 @@ impl IoBufs {
             next_lid
         );
 
-        if next_lsn % io_buf_size as Lsn == 0 {
+        if next_lsn == 0 {
             // recovering at segment boundary
             assert_eq!(next_lid, next_lsn as LogID);
             let iobuf = &bufs[current_buf];
@@ -240,12 +240,19 @@ impl IoBufs {
 
         let buf = self.encapsulate(raw_buf);
 
+        let segment_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;
+        let max_buf_size = (self.config.get_io_buf_size() - segment_overhead) /
+            self.config.get_min_items_per_segment();
+
         assert!(
-            buf.len() <=
-                self.config.get_io_buf_size() -
-                    (SEG_HEADER_LEN + SEG_TRAILER_LEN),
+            buf.len() <= max_buf_size,
             "trying to write a buffer that is too large \
-            to be stored in the IO buffer."
+            to be stored in the IO buffer. buf len: {} current max: {}. \
+            a future version of sled will implement automatic \
+            fragmentation of large values. feel free to open \
+            an issue if this is a pressing need of yours.",
+            buf.len(),
+            max_buf_size
         );
 
         trace!("reserving buf of len {}", buf.len());
