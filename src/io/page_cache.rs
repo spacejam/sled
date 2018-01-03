@@ -1,3 +1,4 @@
+use std::collections::BinaryHeap;
 use std::sync::{Arc, Mutex};
 
 use epoch::{Guard, Owned, Shared, pin};
@@ -92,11 +93,16 @@ impl<'a, P> PageGet<'a, P>
     }
 }
 
-struct PidDropper(PageID, Arc<Stack<PageID>>);
+struct PidDropper(PageID, Arc<Mutex<BinaryHeap<PageID>>>);
 
 impl Drop for PidDropper {
     fn drop(&mut self) {
-        self.1.push(self.0);
+        let mut free = self.1.lock().unwrap();
+        // panic if we were able to double-free a page
+        for e in free.iter() {
+            assert_ne!(e, &self.0, "page was double-freed");
+        }
+        free.push(self.0);
     }
 }
 
@@ -170,7 +176,7 @@ pub struct PageCache<PM, P, R>
     config: FinalConfig,
     inner: Radix<Stack<CacheEntry<P>>>,
     max_pid: AtomicUsize,
-    free: Arc<Stack<PageID>>,
+    free: Arc<Mutex<BinaryHeap<PageID>>>,
     log: Arc<Log>,
     lru: Lru,
     updates: AtomicUsize,
@@ -236,7 +242,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             config: config.clone(),
             inner: Radix::default(),
             max_pid: AtomicUsize::new(0),
-            free: Arc::new(Stack::default()),
+            free: Arc::new(Mutex::new(BinaryHeap::new())),
             log: Arc::new(Log::start(config, snapshot.clone())),
             lru: lru,
             updates: AtomicUsize::new(0),
@@ -263,9 +269,9 @@ impl<PM, P, R> PageCache<PM, P, R>
     /// Create a new page, trying to reuse old freed pages if possible
     /// to maximize underlying `Radix` pointer density.
     pub fn allocate<'g>(&self, guard: &'g Guard) -> PageID {
-        let pid = self.free.pop().unwrap_or_else(
-            || self.max_pid.fetch_add(1, SeqCst),
-        );
+        let pid = self.free.lock().unwrap().pop().unwrap_or_else(|| {
+            self.max_pid.fetch_add(1, SeqCst)
+        });
         trace!("allocating pid {}", pid);
 
         // set up new stack
@@ -871,12 +877,9 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         self.max_pid.store(snapshot.max_pid, SeqCst);
 
-        let mut free = snapshot.free.clone();
-        free.sort();
-        free.reverse();
-        for &pid in &free {
+        for &pid in &snapshot.free {
             trace!("adding {} to free during load_snapshot", pid);
-            self.free.push(pid);
+            self.free.lock().unwrap().push(pid);
         }
 
         for (pid, lids) in &snapshot.pt {
@@ -887,7 +890,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
             if !lids.is_empty() {
                 let (base_lsn, base_lid) = lids.remove(0);
-                if free.contains(pid) {
+                if snapshot.free.contains(pid) {
                     stack.push(CacheEntry::Free(base_lsn, base_lid));
                     assert!(lids.is_empty());
                 } else {

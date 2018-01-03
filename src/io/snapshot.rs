@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 use std::io::{Read, Seek, Write};
 
@@ -21,7 +22,7 @@ pub struct Snapshot<R> {
     /// the mapping from pages to (lsn, lid)
     pub pt: BTreeMap<PageID, Vec<(Lsn, LogID)>>,
     /// the free pids
-    pub free: Vec<PageID>,
+    pub free: HashSet<PageID>,
     /// the `Materializer`-specific recovered state
     pub recovery: Option<R>,
 }
@@ -33,7 +34,7 @@ impl<R> Default for Snapshot<R> {
             last_lid: 0,
             max_pid: 0,
             pt: BTreeMap::new(),
-            free: vec![],
+            free: HashSet::new(),
             recovery: None,
         }
     }
@@ -98,7 +99,7 @@ impl<R> Snapshot<R> {
 
                     lids.push((lsn, log_id));
                 }
-                self.free.retain(|&p| p != pid);
+                self.free.remove(&pid);
             }
             Update::Compact(partial_page) => {
                 trace!("compact of pid {} at lid {} lsn {}", pid, log_id, lsn);
@@ -109,15 +110,13 @@ impl<R> Snapshot<R> {
                 }
 
                 self.pt.insert(pid, vec![(lsn, log_id)]);
-                self.free.retain(|&p| p != pid);
+                self.free.remove(&pid);
             }
             Update::Free => {
                 trace!("del of pid {} at lid {} lsn {}", pid, log_id, lsn);
                 self.pt.insert(pid, vec![(lsn, log_id)]);
 
-                if !self.free.contains(&pid) {
-                    self.free.push(pid);
-                }
+                self.free.insert(pid);
             }
         }
     }
@@ -180,9 +179,6 @@ pub(super) fn advance_snapshot<P, R>(
             snapshot.apply(materializer, lsn, log_id, &*bytes);
         }
     }
-
-    snapshot.free.sort();
-    snapshot.free.reverse();
 
     write_snapshot(config, &snapshot);
 
