@@ -384,7 +384,7 @@ fn quickcheck_pagecache_works() {
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 1))
         .tests(1000)
-        .max_tests(10000)
+        .max_tests(2000)
         .quickcheck(prop_pagecache_works as fn(OpVec, u8) -> bool);
 }
 

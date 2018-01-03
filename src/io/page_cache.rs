@@ -288,6 +288,14 @@ impl<PM, P, R> PageCache<PM, P, R>
             return;
         }
 
+        match self.get(pid, &guard) {
+            PageGet::Free =>
+                // already freed or never allocated
+                return,
+            PageGet::Unallocated |
+            PageGet::Materialized(_, _) => (),
+        }
+
         let old_stack = old_stack_opt.unwrap();
 
         // serialize log update
