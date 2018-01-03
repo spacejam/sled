@@ -802,7 +802,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 data
             }
             // FIXME 'read invalid data at lid 66244182' in cycle test
-            _ => panic!("read invalid data at lid {}", lid),
+            other => panic!("read invalid data at lid {}: {:?}", lid, other),
         };
 
         let deserialize_start = clock();
