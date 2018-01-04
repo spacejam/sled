@@ -193,7 +193,9 @@ impl IoBufs {
         #[cfg(feature = "zstd")]
         let buf = if self.config.get_use_compression() {
             let start = clock();
-            let res = compress(&*raw_buf, 5).unwrap();
+            let res =
+                compress(&*raw_buf, self.config.get_zstd_compression_factor())
+                    .unwrap();
             M.compress.measure(clock() - start);
             res
         } else {

@@ -228,17 +228,26 @@ fn read_snapshot<R>(config: &FinalConfig) -> Option<Snapshot<R>>
     let path = candidates.pop().unwrap();
 
     let mut f = std::fs::OpenOptions::new().read(true).open(&path).unwrap();
+    if f.metadata().unwrap().len() <= 16 {
+        warn!("empty/corrupt snapshot file found");
+        return None;
+    }
 
     let mut buf = vec![];
     f.read_to_end(&mut buf).unwrap();
     let len = buf.len();
-    buf.split_off(len - 8);
+    buf.split_off(len - 16);
+
+    let mut len_expected_bytes = [0u8; 8];
+    f.seek(std::io::SeekFrom::End(-16)).unwrap();
+    f.read_exact(&mut len_expected_bytes).unwrap();
+    let len_expected: u64 = unsafe { std::mem::transmute(len_expected_bytes) };
 
     let mut crc_expected_bytes = [0u8; 8];
     f.seek(std::io::SeekFrom::End(-8)).unwrap();
     f.read_exact(&mut crc_expected_bytes).unwrap();
-
     let crc_expected: u64 = unsafe { std::mem::transmute(crc_expected_bytes) };
+
     let crc_actual = crc64(&*buf);
 
     if crc_expected != crc_actual {
@@ -247,7 +256,7 @@ fn read_snapshot<R>(config: &FinalConfig) -> Option<Snapshot<R>>
 
     #[cfg(feature = "zstd")]
     let bytes = if config.get_use_compression() {
-        decompress(&*buf, config.get_io_buf_size()).unwrap()
+        decompress(&*buf, len_expected as usize).unwrap()
     } else {
         buf
     };
@@ -264,18 +273,21 @@ pub fn write_snapshot<R>(config: &FinalConfig, snapshot: &Snapshot<R>)
     where R: Debug + Clone + Serialize + DeserializeOwned + Send
 {
     let raw_bytes = serialize(&snapshot, Infinite).unwrap();
+    let decompressed_len = raw_bytes.len();
 
-        #[cfg(feature = "zstd")]
+    #[cfg(feature = "zstd")]
     let bytes = if config.get_use_compression() {
-        compress(&*raw_bytes, 5).unwrap()
+        compress(&*raw_bytes, config.get_zstd_compression_factor()).unwrap()
     } else {
         raw_bytes
     };
 
-        #[cfg(not(feature = "zstd"))]
+    #[cfg(not(feature = "zstd"))]
     let bytes = raw_bytes;
 
     let crc64: [u8; 8] = unsafe { std::mem::transmute(crc64(&*bytes)) };
+    let len_bytes: [u8; 8] =
+        unsafe { std::mem::transmute(decompressed_len as u64) };
 
     let prefix = config.snapshot_prefix();
 
@@ -289,6 +301,7 @@ pub fn write_snapshot<R>(config: &FinalConfig, snapshot: &Snapshot<R>)
 
     // write the snapshot bytes, followed by a crc64 checksum at the end
     f.write_all(&*bytes).unwrap();
+    f.write_all(&len_bytes).unwrap();
     f.write_all(&crc64).unwrap();
     f.sync_all().unwrap();
     drop(f);
