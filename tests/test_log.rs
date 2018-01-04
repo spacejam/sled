@@ -300,7 +300,7 @@ fn multi_segment_log_iteration() {
     // ensure trailers are valid
     let conf = Config::default()
         .segment_mode(SegmentMode::Linear)
-        .io_buf_size(100)
+        .io_buf_size(1000)
         .build();
 
     let seg_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;

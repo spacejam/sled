@@ -200,6 +200,7 @@ impl Config {
 
     /// Finalize the configuration.
     pub fn build(mut self) -> FinalConfig {
+        self.validate();
         // panic if we can't parse the path
         let path = self.get_path();
         let dir = Path::new(&path).parent().expect(
@@ -243,6 +244,25 @@ impl Config {
     pub fn log(mut self) -> Log {
         self.segment_mode = SegmentMode::Linear;
         Log::start_raw_log(self.build())
+    }
+
+    // panics if conf options are outside of advised range
+    fn validate(&self) {
+        assert!(self.io_bufs <= 32, "too many configured io_bufs");
+        assert!(self.io_buf_size >= 1000, "io_buf_size too small");
+        assert!(self.io_buf_size <= 1 << 24, "io_buf_size should be <= 16mb");
+        assert!(self.min_items_per_segment >= 4);
+        assert!(self.min_items_per_segment < 128);
+        assert!(self.blink_fanout >= 2, "tree nodes must have at least 2 children");
+        assert!(self.blink_fanout < 1024, "tree nodes should not have so many children");
+        assert!(self.page_consolidation_threshold >= 1, "must consolidate pages after a non-zero number of updates");
+        assert!(self.page_consolidation_threshold < 1 << 20, "must consolidate pages after fewer than 1 million updates");
+        assert!(self.cache_bits <= 20, "# LRU shards = 2^cache_bits. set this to 20 or less.");
+        assert!(self.min_free_segments <= 32, "min_free_segments need not be higher than the number IO buffers (io_bufs)");
+        assert!(self.min_free_segments >= 1, "min_free_segments must be nonzero or the database will never reclaim storage");
+        assert!(self.cache_fixup_threshold >= 1, "cache_fixup_threshold must be nonzero.");
+        assert!(self.cache_fixup_threshold < 1 << 20, "cache_fixup_threshold must be fewer than 1 million updates.");
+        assert!(self.segment_cleanup_threshold >= 0.01, "segment_cleanup_threshold must be >= 1%");
     }
 }
 

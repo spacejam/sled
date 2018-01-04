@@ -144,7 +144,7 @@ fn pagecache_strange_crash_2() {
 fn basic_pagecache_recovery() {
     let conf = Config::default()
         .flush_every_ms(None)
-        .io_buf_size(200)
+        .io_buf_size(1000)
         .build();
 
     let pc = PageCache::start(TestMaterializer, conf.clone());
@@ -281,7 +281,7 @@ fn verify_snapshot(config: sled::FinalConfig) {
     );
 }
 
-fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
+fn prop_pagecache_works(ops: OpVec) -> bool {
     use self::Op::*;
     let config = Config::default()
         .io_buf_size(1000)
@@ -289,7 +289,7 @@ fn prop_pagecache_works(ops: OpVec, cache_fixup_threshold: u8) -> bool {
         // FIXME uncomment .flush_every_ms(Some(1))
         .cache_bits(0)
         .cache_capacity(40)
-        .cache_fixup_threshold(cache_fixup_threshold as usize)
+        .cache_fixup_threshold(1)
         .build();
 
     let mut pc = PageCache::start(TestMaterializer, config.clone());
@@ -415,7 +415,7 @@ fn quickcheck_pagecache_works() {
         .gen(StdGen::new(rand::thread_rng(), 1))
         .tests(1000)
         .max_tests(1000000)
-        .quickcheck(prop_pagecache_works as fn(OpVec, u8) -> bool);
+        .quickcheck(prop_pagecache_works as fn(OpVec) -> bool);
 }
 
 #[test]
@@ -423,12 +423,9 @@ fn pagecache_bug_01() {
     // postmortem: this happened because `PageCache::page_in` assumed
     // at least one update had been stored for a retrieved page.
     use Op::*;
-    prop_pagecache_works(
-        OpVec {
-            ops: vec![Allocate, Get(0)],
-        },
-        0,
-    );
+    prop_pagecache_works(OpVec {
+        ops: vec![Allocate, Get(0)],
+    });
 }
 
 #[test]
@@ -438,24 +435,18 @@ fn pagecache_bug_2() {
     // to allow a link being the first update to hit a page.
     // portmortem 2:
     use Op::*;
-    prop_pagecache_works(
-        OpVec {
-            ops: vec![Allocate, Restart, Link(0, 1)],
-        },
-        0,
-    );
+    prop_pagecache_works(OpVec {
+        ops: vec![Allocate, Restart, Link(0, 1)],
+    });
 }
 
 #[test]
 fn pagecache_bug_3() {
     // postmortem: this was a mismatch in semantics in the test harness itself
     use Op::*;
-    prop_pagecache_works(
-        OpVec {
-            ops: vec![Allocate, Get(0)],
-        },
-        0,
-    );
+    prop_pagecache_works(OpVec {
+        ops: vec![Allocate, Get(0)],
+    });
 }
 
 #[test]
@@ -463,36 +454,27 @@ fn pagecache_bug_4() {
     // postmortem: previously this caused a panic, we shouldn't break
     // when the user asks us to mutate non-existant pages!
     use Op::*;
-    prop_pagecache_works(
-        OpVec {
-            ops: vec![Link(98, 1)],
-        },
-        0,
-    );
+    prop_pagecache_works(OpVec {
+        ops: vec![Link(98, 1)],
+    });
 }
 
 #[test]
 fn pagecache_bug_5() {
     // postmortem: this was a mismatch in semantics in the test harness itself
     use Op::*;
-    prop_pagecache_works(
-        OpVec {
-            ops: vec![Link(132, 1), Replace(132, 1)],
-        },
-        0,
-    );
+    prop_pagecache_works(OpVec {
+        ops: vec![Link(132, 1), Replace(132, 1)],
+    });
 }
 
 #[test]
 fn pagecache_bug_6() {
     // postmortem: the test wasn't actually recording changes to the reference page...
     use Op::*;
-    prop_pagecache_works(
-        OpVec {
-            ops: vec![Allocate, Replace(0, 53), Replace(0, 54)],
-        },
-        0,
-    );
+    prop_pagecache_works(OpVec {
+        ops: vec![Allocate, Replace(0, 53), Replace(0, 54)],
+    });
 }
 
 #[test]
@@ -500,33 +482,27 @@ fn pagecache_bug_7() {
     // postmortem: the test wasn't correctly recording the replacement effect of a replace
     // in the reference page
     use Op::*;
-    prop_pagecache_works(
-        OpVec {
-            ops: vec![Allocate, Link(0, 201), Replace(0, 208), Get(0)],
-        },
-        0,
-    );
+    prop_pagecache_works(OpVec {
+        ops: vec![Allocate, Link(0, 201), Replace(0, 208), Get(0)],
+    });
 }
 
 #[test]
 fn pagecache_bug_8() {
     // postmortem: page_in messed up the stack ordering when storing a linked stack
     use Op::*;
-    prop_pagecache_works(
-        OpVec {
-            ops: vec![
-                Allocate,
-                Replace(0, 188),
-                Allocate,
-                Link(1, 196),
-                Link(1, 198),
-                Link(1, 200),
-                Link(0, 201),
-                Get(1),
-            ],
-        },
-        0,
-    );
+    prop_pagecache_works(OpVec {
+        ops: vec![
+            Allocate,
+            Replace(0, 188),
+            Allocate,
+            Link(1, 196),
+            Link(1, 198),
+            Link(1, 200),
+            Link(0, 201),
+            Get(1),
+        ],
+    });
 }
 
 #[test]
@@ -534,20 +510,17 @@ fn pagecache_bug_9() {
     // postmortem: this started failing in the giant refactor for log structured storage,
     // and was possibly fixed by properly handling intervals in mark_interval
     use Op::*;
-    prop_pagecache_works(
-        OpVec {
-            ops: vec![
-                Allocate,
-                Allocate,
-                Link(1, 208),
-                Link(1, 211),
-                Link(0, 212),
-                Replace(0, 213),
-                Replace(1, 214),
-            ],
-        },
-        0,
-    );
+    prop_pagecache_works(OpVec {
+        ops: vec![
+            Allocate,
+            Allocate,
+            Link(1, 208),
+            Link(1, 211),
+            Link(0, 212),
+            Replace(0, 213),
+            Replace(1, 214),
+        ],
+    });
 }
 
 #[test]
@@ -556,18 +529,9 @@ fn pagecache_bug_10() {
     // was actually full, because the pids inside were
     // rewritten.
     use Op::*;
-    prop_pagecache_works(
-        OpVec {
-            ops: vec![
-                Allocate,
-                Replace(0, 425),
-                Free(0),
-                Allocate,
-                Link(1, 427),
-            ],
-        },
-        0,
-    );
+    prop_pagecache_works(OpVec {
+        ops: vec![Allocate, Replace(0, 425), Free(0), Allocate, Link(1, 427)],
+    });
 }
 
 #[test]
@@ -575,12 +539,9 @@ fn pagecache_bug_11() {
     // postmortem: failed to completely back-out an experiment
     // to tombstone allocations, which removed a check.
     use Op::*;
-    prop_pagecache_works(
-        OpVec {
-            ops: vec![Free(0)],
-        },
-        0,
-    );
+    prop_pagecache_works(OpVec {
+        ops: vec![Free(0)],
+    });
 }
 
 #[test]
@@ -588,12 +549,9 @@ fn pagecache_bug_12() {
     // postmortem: refactor to add Free tombstones changed
     // the model.
     use Op::*;
-    prop_pagecache_works(
-        OpVec {
-            ops: vec![Allocate, Free(0), Replace(0, 66)],
-        },
-        0,
-    );
+    prop_pagecache_works(OpVec {
+        ops: vec![Allocate, Free(0), Replace(0, 66)],
+    });
 }
 
 #[test]
@@ -601,12 +559,9 @@ fn pagecache_bug_13() {
     // postmortem: Free tombstones mean that the page table may
     // already have an entry for a newly-allocated page.
     use Op::*;
-    prop_pagecache_works(
-        OpVec {
-            ops: vec![Allocate, Free(0), Free(0), Restart, Allocate, Allocate],
-        },
-        0,
-    );
+    prop_pagecache_works(OpVec {
+        ops: vec![Allocate, Free(0), Free(0), Restart, Allocate, Allocate],
+    });
 }
 
 #[test]
@@ -614,21 +569,18 @@ fn pagecache_bug_14() {
     // postmortem: Free tombstones are a little weird with the Lru.
     // Make sure they don't get paged out.
     use Op::*;
-    prop_pagecache_works(
-        OpVec {
-            ops: vec![
-                Allocate,
-                Allocate,
-                Replace(0, 955),
-                Replace(1, 956),
-                Restart,
-                Replace(1, 962),
-                Free(1),
-                Get(0),
-            ],
-        },
-        0,
-    );
+    prop_pagecache_works(OpVec {
+        ops: vec![
+            Allocate,
+            Allocate,
+            Replace(0, 955),
+            Replace(1, 956),
+            Restart,
+            Replace(1, 962),
+            Free(1),
+            Get(0),
+        ],
+    });
 }
 
 #[test]
@@ -636,22 +588,19 @@ fn pagecache_bug_15() {
     // postmortem: non-idempotent PageCache::free.
     // fixed by deduplicating the free list on recovery.
     use Op::*;
-    prop_pagecache_works(
-        OpVec {
-            ops: vec![
-                Allocate,
-                Free(0),
-                Free(0),
-                Restart,
-                Allocate,
-                Replace(0, 8485),
-                Allocate,
-                Restart,
-                Get(0),
-            ],
-        },
-        0,
-    );
+    prop_pagecache_works(OpVec {
+        ops: vec![
+            Allocate,
+            Free(0),
+            Free(0),
+            Restart,
+            Allocate,
+            Replace(0, 8485),
+            Allocate,
+            Restart,
+            Get(0),
+        ],
+    });
 }
 
 #[test]
@@ -660,22 +609,19 @@ fn pagecache_bug_16() {
     // did not check if a Free tombstone was present,
     // just if the stack was present.
     use Op::*;
-    prop_pagecache_works(
-        OpVec {
-            ops: vec![
-                Allocate,
-                Free(0),
-                Free(0),
-                Free(0),
-                Allocate,
-                Link(0, 5622),
-                Allocate,
-                Restart,
-                Get(0),
-            ],
-        },
-        0,
-    );
+    prop_pagecache_works(OpVec {
+        ops: vec![
+            Allocate,
+            Free(0),
+            Free(0),
+            Free(0),
+            Allocate,
+            Link(0, 5622),
+            Allocate,
+            Restart,
+            Get(0),
+        ],
+    });
 }
 
 // FIXME currently breaking in new and exciting ways!
@@ -684,65 +630,59 @@ fn pagecache_bug_16() {
 fn pagecache_bug_17() {
     // postmortem:
     use Op::*;
-    prop_pagecache_works(
-        OpVec {
-            ops: vec![
-                Allocate,
-                Link(0, 205),
-                Allocate,
-                Replace(0, 207),
-                Link(1, 208),
-                Allocate,
-                Allocate,
-                Allocate,
-                Link(2, 213),
-                Replace(3, 215),
-                Replace(2, 216),
-                Replace(3, 218),
-                Free(1),
-                Allocate,
-                Link(4, 220),
-                Restart,
-                Allocate,
-                Allocate,
-                Replace(5, 221),
-                Free(4),
-                Free(3),
-                Link(2, 222),
-                Link(4, 223),
-                Replace(1, 224),
-                Link(0, 226),
-                Restart,
-                Link(0, 227),
-                Allocate,
-                Link(0, 228),
-                Allocate,
-                Replace(4, 229),
-                Free(1),
-                Free(0),
-                Link(3, 230),
-                Link(1, 231),
-                Replace(2, 232),
-                Replace(4, 233),
-                Replace(2, 236),
-                Allocate,
-                Replace(3, 240),
-                Link(3, 241),
-                Replace(1, 242),
-            ],
-        },
-        0,
-    );
+    prop_pagecache_works(OpVec {
+        ops: vec![
+            Allocate,
+            Link(0, 205),
+            Allocate,
+            Replace(0, 207),
+            Link(1, 208),
+            Allocate,
+            Allocate,
+            Allocate,
+            Link(2, 213),
+            Replace(3, 215),
+            Replace(2, 216),
+            Replace(3, 218),
+            Free(1),
+            Allocate,
+            Link(4, 220),
+            Restart,
+            Allocate,
+            Allocate,
+            Replace(5, 221),
+            Free(4),
+            Free(3),
+            Link(2, 222),
+            Link(4, 223),
+            Replace(1, 224),
+            Link(0, 226),
+            Restart,
+            Link(0, 227),
+            Allocate,
+            Link(0, 228),
+            Allocate,
+            Replace(4, 229),
+            Free(1),
+            Free(0),
+            Link(3, 230),
+            Link(1, 231),
+            Replace(2, 232),
+            Replace(4, 233),
+            Replace(2, 236),
+            Allocate,
+            Replace(3, 240),
+            Link(3, 241),
+            Replace(1, 242),
+        ],
+    });
 }
 
 fn _pagecache_bug_() {
     // postmortem: TEMPLATE
     // portmortem 2: ...
     // use Op::*;
-    prop_pagecache_works(
-        OpVec {
-            ops: vec![],
-        },
-        0,
-    );
+    prop_pagecache_works(OpVec {
+        ops: vec![],
+    });
 }
