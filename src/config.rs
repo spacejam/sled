@@ -36,6 +36,7 @@ pub struct Config {
     cache_capacity: usize,
     use_os_cache: bool,
     use_compression: bool,
+    zstd_compression_factor: i32,
     flush_every_ms: Option<u64>,
     snapshot_after_ops: usize,
     snapshot_path: Option<String>,
@@ -76,6 +77,7 @@ impl Default for Config {
             cache_capacity: 1024 * 1024 * 1024, // 1gb
             use_os_cache: true,
             use_compression: true,
+            zstd_compression_factor: 5,
             flush_every_ms: Some(500),
             snapshot_after_ops: 1_000_000,
             snapshot_path: None,
@@ -129,6 +131,7 @@ impl Config {
         (cache_capacity, get_cache_capacity, set_cache_capacity, usize, "maximum size for the system page cache"),
         (use_os_cache, get_use_os_cache, set_use_os_cache, bool, "whether to use the OS page cache"),
         (use_compression, get_use_compression, set_use_compression, bool, "whether to use zstd compression"),
+        (zstd_compression_factor, get_zstd_compression_factor, set_zstd_compression_factor, i32, "the compression factor to use with zstd compression"),
         (flush_every_ms, get_flush_every_ms, set_flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
         (snapshot_after_ops, get_snapshot_after_ops, set_snapshot_after_ops, usize, "number of operations between page table snapshots"),
         (snapshot_path, get_snapshot_path, set_snapshot_path, Option<String>, "snapshot file location"),
@@ -263,6 +266,8 @@ impl Config {
         assert!(self.cache_fixup_threshold >= 1, "cache_fixup_threshold must be nonzero.");
         assert!(self.cache_fixup_threshold < 1 << 20, "cache_fixup_threshold must be fewer than 1 million updates.");
         assert!(self.segment_cleanup_threshold >= 0.01, "segment_cleanup_threshold must be >= 1%");
+        assert!(self.zstd_compression_factor >= 1);
+        assert!(self.zstd_compression_factor <= 22);
     }
 }
 
