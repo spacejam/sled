@@ -241,7 +241,6 @@ fn read_snapshot<R>(config: &FinalConfig) -> Option<Snapshot<R>>
     let mut len_expected_bytes = [0u8; 8];
     f.seek(std::io::SeekFrom::End(-16)).unwrap();
     f.read_exact(&mut len_expected_bytes).unwrap();
-    let len_expected: u64 = unsafe { std::mem::transmute(len_expected_bytes) };
 
     let mut crc_expected_bytes = [0u8; 8];
     f.seek(std::io::SeekFrom::End(-8)).unwrap();
@@ -256,6 +255,8 @@ fn read_snapshot<R>(config: &FinalConfig) -> Option<Snapshot<R>>
 
     #[cfg(feature = "zstd")]
     let bytes = if config.get_use_compression() {
+        let len_expected: u64 =
+            unsafe { std::mem::transmute(len_expected_bytes) };
         decompress(&*buf, len_expected as usize).unwrap()
     } else {
         buf
