@@ -112,7 +112,7 @@ fn pagecache_strange_crash_2() {
             .build();
 
         println!("!!!!!!!!!!!!!!!!!!!!! {} !!!!!!!!!!!!!!!!!!!!!!", x);
-        verify_snapshot(conf.clone());
+        conf.verify_snapshot(Arc::new(TestMaterializer));
 
         let pc = PageCache::start(TestMaterializer, conf.clone());
         pc.recovered_state();
@@ -218,7 +218,7 @@ struct OpVec {
 impl Arbitrary for OpVec {
     fn arbitrary<G: Gen>(g: &mut G) -> OpVec {
         let mut ops = vec![];
-        for _ in 0..g.gen_range(1, 50) {
+        for _ in 0..g.gen_range(1, 100) {
             let op = Op::arbitrary(g);
             ops.push(op);
 
@@ -257,28 +257,6 @@ impl Arbitrary for OpVec {
 
         Box::new(smaller.into_iter())
     }
-}
-
-fn verify_snapshot(config: sled::FinalConfig) {
-    let incremental_snapshot = sled::read_snapshot_or_default(
-        &config,
-        Some(Arc::new(TestMaterializer)),
-    );
-
-    for snapshot_path in config.get_snapshot_files() {
-        std::fs::remove_file(snapshot_path).unwrap();
-    }
-
-    let fully_regenerated_snapshot = sled::read_snapshot_or_default(
-        &config,
-        Some(Arc::new(TestMaterializer)),
-    );
-
-    assert_eq!(
-        incremental_snapshot,
-        fully_regenerated_snapshot,
-        "snapshots have diverged!"
-    );
 }
 
 fn prop_pagecache_works(ops: OpVec) -> bool {
@@ -399,7 +377,7 @@ fn prop_pagecache_works(ops: OpVec) -> bool {
                 }
                 reference.retain(|p, _v| !to_clear.contains(p));
 
-                verify_snapshot(config.clone());
+                config.verify_snapshot(Arc::new(TestMaterializer));
 
                 pc = PageCache::start(TestMaterializer, config.clone());
             }
@@ -678,7 +656,6 @@ fn pagecache_bug_17() {
     });
 }
 
-
 #[test]
 fn pagecache_bug_18() {
     // postmortem: added page replacement information to
@@ -689,6 +666,52 @@ fn pagecache_bug_18() {
     });
 }
 
+#[test]
+fn pagecache_bug_19() {
+    // postmortem: was double-clearing removals when tracking
+    // removed pages in segments, before doing the recovery
+    // check to see if the snapshot already includes updates
+    // for that lsn.
+    use Op::*;
+    prop_pagecache_works(OpVec {
+        ops: vec![
+            Allocate,
+            Allocate,
+            Allocate,
+            Allocate,
+            Allocate,
+            Link(2, 147),
+            Allocate,
+            Allocate,
+            Link(4, 152),
+            Replace(4, 153),
+            Link(4, 154),
+            Link(3, 155),
+            Replace(1, 156),
+            Link(5, 157),
+            Link(0, 158),
+            Link(3, 159),
+            Link(6, 160),
+            Free(4),
+            Free(6),
+            Replace(3, 161),
+            Replace(6, 162),
+            Free(1),
+            Free(2),
+            Replace(0, 163),
+            Link(5, 164),
+            Replace(5, 165),
+            Free(5),
+            Free(0),
+            Link(2, 166),
+            Link(2, 167),
+            Link(2, 168),
+            Replace(3, 169),
+            Restart,
+            Restart,
+        ],
+    });
+}
 
 fn _pagecache_bug_() {
     // postmortem: TEMPLATE

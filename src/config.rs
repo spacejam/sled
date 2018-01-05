@@ -1,7 +1,11 @@
+use std::fmt::Debug;
 use std::fs;
 use std::ops::Deref;
 use std::path::Path;
 use std::sync::Arc;
+
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use super::*;
 
@@ -330,5 +334,36 @@ impl FinalConfig {
         } else {
             unreachable!()
         }
+    }
+
+    #[doc(hidden)]
+    pub fn verify_snapshot<R, P>(
+        &self,
+        materializer: Arc<Materializer<Recovery = R, PageFrag = P>>,
+    )
+        where P: 'static
+                     + Debug
+                     + Clone
+                     + Serialize
+                     + DeserializeOwned
+                     + Send
+                     + Sync,
+              R: Debug + Clone + Serialize + DeserializeOwned + Send + PartialEq
+    {
+        let incremental_snapshot =
+            read_snapshot_or_default(&self, Some(materializer.clone()));
+
+        for snapshot_path in self.get_snapshot_files() {
+            std::fs::remove_file(snapshot_path).unwrap();
+        }
+
+        let fully_regenerated_snapshot =
+            read_snapshot_or_default(&self, Some(materializer));
+
+        assert_eq!(
+            incremental_snapshot,
+            fully_regenerated_snapshot,
+            "snapshots have diverged!"
+        );
     }
 }

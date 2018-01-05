@@ -369,8 +369,13 @@ impl SegmentAccountant {
         }
 
         for (idx, pids) in snapshot.replacements {
-            for pid in pids {
-                if let Some(lsn) = segments[idx].lsn {
+            if segments.len() <= idx {
+                // segment doesn't have pids anyway,
+                // and will be marked as free later
+                continue;
+            }
+            if let Some(_seg_lsn) = segments[idx].lsn {
+                for (pid, lsn) in pids {
                     segments[idx].remove_pid(pid, lsn);
                 }
             }

@@ -22,7 +22,7 @@ pub struct Snapshot<R> {
     /// the mapping from pages to (lsn, lid)
     pub pt: HashMap<PageID, Vec<(Lsn, LogID)>>,
     /// replaced pages per segment index
-    pub replacements: HashMap<usize, HashSet<PageID>>,
+    pub replacements: HashMap<usize, HashSet<(PageID, Lsn)>>,
     /// the free pids
     pub free: HashSet<PageID>,
     /// the `Materializer`-specific recovered state
@@ -84,7 +84,7 @@ impl<R> Snapshot<R> {
             self.max_pid = pid + 1;
         }
 
-        let on_idx = log_id as usize / io_buf_size;
+        let replaced_at_idx = log_id as usize / io_buf_size;
 
         match prepend.update {
             Update::Append(partial_page) => {
@@ -109,7 +109,7 @@ impl<R> Snapshot<R> {
             }
             Update::Compact(partial_page) => {
                 trace!("compact of pid {} at lid {} lsn {}", pid, log_id, lsn);
-                self.replace_pid(pid, on_idx, io_buf_size);
+                self.replace_pid(pid, replaced_at_idx, lsn, io_buf_size);
 
                 if let Some(r) = materializer.recover(&partial_page) {
                     self.recovery = Some(r);
@@ -120,7 +120,7 @@ impl<R> Snapshot<R> {
             }
             Update::Free => {
                 trace!("del of pid {} at lid {} lsn {}", pid, log_id, lsn);
-                self.replace_pid(pid, on_idx, io_buf_size);
+                self.replace_pid(pid, replaced_at_idx, lsn, io_buf_size);
                 self.pt.insert(pid, vec![(lsn, log_id)]);
 
                 self.free.insert(pid);
@@ -128,16 +128,22 @@ impl<R> Snapshot<R> {
         }
     }
 
-    fn replace_pid(&mut self, pid: PageID, on_idx: usize, io_buf_size: usize) {
+    fn replace_pid(
+        &mut self,
+        pid: PageID,
+        replaced_at_idx: usize,
+        replaced_at_lsn: Lsn,
+        io_buf_size: usize,
+    ) {
         if let Some(coords) = self.pt.remove(&pid) {
             for (_lsn, lid) in coords {
                 let idx = lid as usize / io_buf_size;
-                if on_idx == idx {
+                if replaced_at_idx == idx {
                     continue;
                 }
                 let entry =
                     self.replacements.entry(idx).or_insert(HashSet::new());
-                entry.insert(pid);
+                entry.insert((pid, replaced_at_lsn));
             }
         }
     }
@@ -168,9 +174,6 @@ pub(super) fn advance_snapshot<P, R>(
         let segment_idx = lsn as usize / io_buf_size;
         let segment_lsn = (segment_idx * io_buf_size) as Lsn;
 
-        // invalidate any removed pids
-        snapshot.replacements.remove(&segment_idx);
-
         assert_eq!(
             segment_lsn / io_buf_size as Lsn * io_buf_size as Lsn,
             segment_lsn,
@@ -199,6 +202,9 @@ pub(super) fn advance_snapshot<P, R>(
         assert!(lsn > snapshot.max_lsn);
         snapshot.max_lsn = lsn;
         snapshot.last_lid = log_id;
+
+        // invalidate any removed pids
+        snapshot.replacements.remove(&segment_idx);
 
         if let Some(ref materializer) = materializer_opt {
             snapshot.apply(materializer, lsn, log_id, &*bytes, io_buf_size);
