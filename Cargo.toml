@@ -17,6 +17,7 @@ bench = ["clap", "num_cpus", "rand", "chrono", "rayon", "zstd", "env_logger"]
 stress = ["docopt", "chan-signal", "rayon", "rand"]
 o_direct_writer = []
 lock_free_delays = []
+check_snapshot_integrity = []
 
 [profile.release]
 debug = 2

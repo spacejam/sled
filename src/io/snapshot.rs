@@ -296,9 +296,7 @@ fn read_snapshot<R>(config: &FinalConfig) -> Option<Snapshot<R>>
     #[cfg(not(feature = "zstd"))]
     let bytes = buf;
 
-    let snapshot = deserialize::<Snapshot<R>>(&*bytes).unwrap();
-
-    Some(snapshot)
+    deserialize::<Snapshot<R>>(&*bytes).ok()
 }
 
 pub fn write_snapshot<R>(config: &FinalConfig, snapshot: &Snapshot<R>)

@@ -374,7 +374,8 @@ impl SegmentAccountant {
                 // and will be marked as free later
                 continue;
             }
-            if let Some(_seg_lsn) = segments[idx].lsn {
+            if segments[idx].lsn.is_some() {
+                // assert!(
                 for (pid, lsn) in pids {
                     segments[idx].remove_pid(pid, lsn);
                 }
