@@ -1,7 +1,6 @@
 //! This module contains the systems that deal with files
 //! directly.
 use std::cell::UnsafeCell;
-use std::collections::BTreeMap;
 use std::fmt::{self, Debug};
 use std::io;
 use std::sync::Arc;

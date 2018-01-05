@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::io::{Read, Seek, Write};
 
@@ -20,7 +20,9 @@ pub struct Snapshot<R> {
     /// the highest allocated pid
     pub max_pid: PageID,
     /// the mapping from pages to (lsn, lid)
-    pub pt: BTreeMap<PageID, Vec<(Lsn, LogID)>>,
+    pub pt: HashMap<PageID, Vec<(Lsn, LogID)>>,
+    /// replaced pages per segment index
+    pub replacements: HashMap<usize, HashSet<(PageID, Lsn)>>,
     /// the free pids
     pub free: HashSet<PageID>,
     /// the `Materializer`-specific recovered state
@@ -33,7 +35,8 @@ impl<R> Default for Snapshot<R> {
             max_lsn: 0,
             last_lid: 0,
             max_pid: 0,
-            pt: BTreeMap::new(),
+            pt: HashMap::new(),
+            replacements: HashMap::new(),
             free: HashSet::new(),
             recovery: None,
         }
@@ -47,6 +50,7 @@ impl<R> Snapshot<R> {
         lsn: Lsn,
         log_id: LogID,
         bytes: &[u8],
+        io_buf_size: usize,
     )
         where P: 'static
                      + Debug
@@ -80,6 +84,8 @@ impl<R> Snapshot<R> {
             self.max_pid = pid + 1;
         }
 
+        let replaced_at_idx = log_id as usize / io_buf_size;
+
         match prepend.update {
             Update::Append(partial_page) => {
                 // Because we rewrite pages over time, we may have relocated
@@ -103,7 +109,7 @@ impl<R> Snapshot<R> {
             }
             Update::Compact(partial_page) => {
                 trace!("compact of pid {} at lid {} lsn {}", pid, log_id, lsn);
-                self.pt.remove(&pid);
+                self.replace_pid(pid, replaced_at_idx, lsn, io_buf_size);
 
                 if let Some(r) = materializer.recover(&partial_page) {
                     self.recovery = Some(r);
@@ -114,9 +120,30 @@ impl<R> Snapshot<R> {
             }
             Update::Free => {
                 trace!("del of pid {} at lid {} lsn {}", pid, log_id, lsn);
+                self.replace_pid(pid, replaced_at_idx, lsn, io_buf_size);
                 self.pt.insert(pid, vec![(lsn, log_id)]);
 
                 self.free.insert(pid);
+            }
+        }
+    }
+
+    fn replace_pid(
+        &mut self,
+        pid: PageID,
+        replaced_at_idx: usize,
+        replaced_at_lsn: Lsn,
+        io_buf_size: usize,
+    ) {
+        if let Some(coords) = self.pt.remove(&pid) {
+            for (_lsn, lid) in coords {
+                let idx = lid as usize / io_buf_size;
+                if replaced_at_idx == idx {
+                    continue;
+                }
+                let entry =
+                    self.replacements.entry(idx).or_insert(HashSet::new());
+                entry.insert((pid, replaced_at_lsn));
             }
         }
     }
@@ -144,7 +171,8 @@ pub(super) fn advance_snapshot<P, R>(
     let io_buf_size = config.get_io_buf_size();
 
     for (lsn, log_id, bytes) in iter {
-        let segment_lsn = lsn / io_buf_size as Lsn * io_buf_size as Lsn;
+        let segment_idx = lsn as usize / io_buf_size;
+        let segment_lsn = (segment_idx * io_buf_size) as Lsn;
 
         assert_eq!(
             segment_lsn / io_buf_size as Lsn * io_buf_size as Lsn,
@@ -175,8 +203,11 @@ pub(super) fn advance_snapshot<P, R>(
         snapshot.max_lsn = lsn;
         snapshot.last_lid = log_id;
 
+        // invalidate any removed pids
+        snapshot.replacements.remove(&segment_idx);
+
         if let Some(ref materializer) = materializer_opt {
-            snapshot.apply(materializer, lsn, log_id, &*bytes);
+            snapshot.apply(materializer, lsn, log_id, &*bytes, io_buf_size);
         }
     }
 
@@ -265,9 +296,7 @@ fn read_snapshot<R>(config: &FinalConfig) -> Option<Snapshot<R>>
     #[cfg(not(feature = "zstd"))]
     let bytes = buf;
 
-    let snapshot = deserialize::<Snapshot<R>>(&*bytes).unwrap();
-
-    Some(snapshot)
+    deserialize::<Snapshot<R>>(&*bytes).ok()
 }
 
 pub fn write_snapshot<R>(config: &FinalConfig, snapshot: &Snapshot<R>)

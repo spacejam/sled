@@ -44,6 +44,11 @@ unsafe impl Sync for Tree {}
 impl Tree {
     /// Load existing or create a new `Tree`.
     pub fn start(config: FinalConfig) -> Tree {
+        #[cfg(check_snapshot_integrity)]
+        config.verify_snapshot(Arc::new(BLinkMaterializer {
+            roots: Mutex::new(vec![]),
+        }));
+
         let pages = PageCache::start(
             BLinkMaterializer {
                 roots: Mutex::new(vec![]),
