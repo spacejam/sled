@@ -678,6 +678,18 @@ fn pagecache_bug_17() {
     });
 }
 
+
+#[test]
+fn pagecache_bug_18() {
+    // postmortem: added page replacement information to
+    // the segment that a page was being added to.
+    use Op::*;
+    prop_pagecache_works(OpVec {
+        ops: vec![Allocate, Link(0, 273), Free(0), Restart, Restart],
+    });
+}
+
+
 fn _pagecache_bug_() {
     // postmortem: TEMPLATE
     // portmortem 2: ...

@@ -350,6 +350,7 @@ impl SegmentAccountant {
         let mut segments = vec![];
         let io_buf_size = self.config.get_io_buf_size();
         let mut max_lsn = 0;
+
         for (pid, coords) in snapshot.pt {
             for (lsn, lid) in coords {
                 // ensure segments is long enough
@@ -366,6 +367,15 @@ impl SegmentAccountant {
                 segments[idx].insert_pid(pid, segment_lsn);
             }
         }
+
+        for (idx, pids) in snapshot.replacements {
+            for pid in pids {
+                if let Some(lsn) = segments[idx].lsn {
+                    segments[idx].remove_pid(pid, lsn);
+                }
+            }
+        }
+
         self.initialize_from_segments(segments);
     }
 
