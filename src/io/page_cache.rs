@@ -91,6 +91,14 @@ impl<'a, P> PageGet<'a, P>
         }
     }
 
+    /// Returns true if the `PageGet` is `Materialized`.
+    pub fn is_materialized(&self) -> bool {
+        match *self {
+            PageGet::Materialized(_, _) => true,
+            _ => false,
+        }
+    }
+
     /// Returns true if the `PageGet` is `Free`.
     pub fn is_free(&self) -> bool {
         match *self {

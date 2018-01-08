@@ -219,7 +219,7 @@ struct OpVec {
 impl Arbitrary for OpVec {
     fn arbitrary<G: Gen>(g: &mut G) -> OpVec {
         let mut ops = vec![];
-        for _ in 0..g.gen_range(1, 50) {
+        for _ in 0..g.gen_range(1, 100) {
             let op = Op::arbitrary(g);
             ops.push(op);
 
@@ -312,8 +312,8 @@ fn prop_tree_matches_btreemap(
 fn quickcheck_tree_matches_btreemap() {
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 1))
-        .tests(50)
-        .max_tests(100)
+        .tests(1000)
+        .max_tests(10000)
         .quickcheck(prop_tree_matches_btreemap as fn(OpVec, u8, u8) -> bool);
 }
 
