@@ -315,7 +315,7 @@ fn quickcheck_tree_matches_btreemap() {
     let n_tests = 100;
 
     #[cfg(not(target_os = "macos"))]
-    let n_tests = 1000;
+    let n_tests = 500;
 
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 1))
