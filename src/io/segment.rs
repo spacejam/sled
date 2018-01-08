@@ -328,6 +328,7 @@ impl SegmentAccountant {
 
         if let SegmentMode::Linear = ret.config.segment_mode {
             // this is a hack to prevent segments from being overwritten
+            // when operating without a `PageCache`
             ret.pause_rewriting();
         }
         if snapshot.last_lid > ret.tip {
@@ -386,8 +387,7 @@ impl SegmentAccountant {
     }
 
     fn initialize_from_segments(&mut self, mut segments: Vec<Segment>) {
-        // populate ordering from segments
-        //
+        // populate ordering from segments.
         // use last segment as active even if it's full
         let safety_buffer = self.config.get_io_bufs();
         let logical_tail: Vec<LogID> = self.ordering

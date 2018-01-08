@@ -44,14 +44,25 @@ pub(super) enum Update<PageFrag>
     Append(PageFrag),
     Compact(PageFrag),
     Free,
+    Allocate,
 }
 
+/// The result of a `get` call in the `PageCache`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PageGet<'a, PageFrag>
     where PageFrag: 'static + DeserializeOwned + Serialize + Send + Sync
 {
+    /// This page contains data and has been prepared
+    /// for presentation to the caller by the `PageCache`'s
+    /// `Materializer`.
     Materialized(PageFrag, HPtr<'a, PageFrag>),
+    /// This page has been Freed
     Free,
+    /// This page has been allocated, but will become
+    /// Free after restarting the system unless some
+    /// data gets written to it.
+    Allocated,
+    /// This page was never allocated.
     Unallocated,
 }
 
@@ -68,16 +79,19 @@ unsafe impl<'a, P> Sync for PageGet<'a, P>
 impl<'a, P> PageGet<'a, P>
     where P: DeserializeOwned + Serialize + Send + Sync
 {
+    /// unwraps the `PageGet` into its inner `Materialized`
+    /// form.
+    ///
+    /// # Panics
+    /// Panics if it is a variant other than Materialized.
     pub fn unwrap(self) -> (P, HPtr<'a, P>) {
         match self {
             PageGet::Materialized(p, hptr) => (p, hptr),
-            PageGet::Free => panic!("unwrap called on Free"),
-            PageGet::Unallocated => {
-                panic!("unwrap called on PageGet::Unallocated")
-            }
+            _ => panic!("unwrap called on non-Materialized"),
         }
     }
 
+    /// Returns true if the `PageGet` is `Free`.
     pub fn is_free(&self) -> bool {
         match *self {
             PageGet::Free => true,
@@ -85,6 +99,15 @@ impl<'a, P> PageGet<'a, P>
         }
     }
 
+    /// Returns true if the `PageGet` is `Allocated`.
+    pub fn is_allocated(&self) -> bool {
+        match *self {
+            PageGet::Allocated => true,
+            _ => false,
+        }
+    }
+
+    /// Returns true if the `PageGet` is `Unallocated`.
     pub fn is_unallocated(&self) -> bool {
         match *self {
             PageGet::Unallocated => true,
@@ -273,6 +296,19 @@ impl<PM, P, R> PageCache<PM, P, R>
         self.inner.del(pid, guard);
         self.inner.insert(pid, stack).unwrap();
 
+        // serialize log update
+        let prepend: LoggedUpdate<P> = LoggedUpdate {
+            pid: pid,
+            update: Update::Allocate,
+        };
+        let serialize_start = clock();
+        let bytes = serialize(&prepend, Infinite).unwrap();
+        M.serialize.measure(clock() - serialize_start);
+
+        // reserve slot in log
+        // FIXME not threadsafe?
+        self.log.write(bytes);
+
         pid
     }
 
@@ -291,6 +327,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             PageGet::Free =>
                 // already freed or never allocated
                 return,
+            PageGet::Allocated |
             PageGet::Unallocated |
             PageGet::Materialized(_, _) => (),
         }
@@ -412,7 +449,18 @@ impl<PM, P, R> PageCache<PM, P, R>
                             true,
                         );
                     }
-                    PageGet::Unallocated => {}
+                    PageGet::Allocated => {
+                        let _ = self.replace_recurse_once(
+                            to_clean,
+                            Shared::null(),
+                            Update::Allocate,
+                            guard,
+                            true,
+                        );
+                    }
+                    PageGet::Unallocated => {
+                        panic!("get returned Unallocated");
+                    }
                 }
             }
 
@@ -514,7 +562,18 @@ impl<PM, P, R> PageCache<PM, P, R>
                             true,
                         );
                     }
-                    PageGet::Unallocated => {}
+                    PageGet::Allocated => {
+                        let _ = self.replace_recurse_once(
+                            to_clean,
+                            Shared::null(),
+                            Update::Allocate,
+                            guard,
+                            true,
+                        );
+                    }
+                    PageGet::Unallocated => {
+                        panic!("get returned Unallocated");
+                    }
                 }
             }
 
@@ -595,7 +654,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         if lids.is_empty() {
             M.page_in.measure(clock() - start);
-            return PageGet::Free;
+            return PageGet::Allocated;
         }
 
         let mut fetched = Vec::with_capacity(lids.len());
@@ -870,25 +929,36 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         self.max_pid.store(snapshot.max_pid, SeqCst);
 
-        for &pid in &snapshot.free {
-            trace!("adding {} to free during load_snapshot", pid);
-            self.free.lock().unwrap().push(pid);
-        }
+        let mut snapshot_free = snapshot.free.clone();
 
+        // rec logic    has # of coords  | in free list
+        //             .-------------------------------
+        // Unallocated | (never seen)    | no
+        // Allocated   | 0               | no
+        // Free        | 1               | yes
+        // Flush       | >= 1            | no
         for (pid, lids) in &snapshot.pt {
             trace!("loading pid {} in load_snapshot", pid);
 
             let mut lids = lids.clone();
             let stack = Stack::default();
 
-            if !lids.is_empty() {
+            if lids.is_empty() {
+                // Allocated (empty stack added)
+                assert!(!snapshot.free.contains(pid));
+            } else if snapshot.free.contains(pid) {
+                // Free
+                trace!("adding pid {} to free during load_snapshot", pid);
+                assert_eq!(lids.len(), 1);
+                self.free.lock().unwrap().push(*pid);
                 let (base_lsn, base_lid) = lids.remove(0);
-                if snapshot.free.contains(pid) {
-                    stack.push(CacheEntry::Free(base_lsn, base_lid));
-                    assert!(lids.is_empty());
-                } else {
-                    stack.push(CacheEntry::Flush(base_lsn, base_lid));
-                }
+                stack.push(CacheEntry::Free(base_lsn, base_lid));
+                snapshot_free.remove(&pid);
+            } else {
+                // Flush
+                trace!("adding pid {} to page table during load_snapshot", pid);
+                let (base_lsn, base_lid) = lids.remove(0);
+                stack.push(CacheEntry::Flush(base_lsn, base_lid));
 
                 for (lsn, lid) in lids {
                     stack.push(CacheEntry::PartialFlush(lsn, lid));
@@ -897,6 +967,14 @@ impl<PM, P, R> PageCache<PM, P, R>
 
             self.inner.insert(*pid, stack).unwrap();
         }
+
+        assert!(
+            snapshot_free.is_empty(),
+            "pages present in Snapshot free list \
+                ({:?})
+                not found in recovered page table",
+            snapshot_free
+        );
     }
 }
 

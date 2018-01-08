@@ -118,8 +118,18 @@ impl<R> Snapshot<R> {
                 self.pt.insert(pid, vec![(lsn, log_id)]);
                 self.free.remove(&pid);
             }
+            Update::Allocate => {
+                trace!(
+                    "allocate  of pid {} at lid {} lsn {}",
+                    pid,
+                    log_id,
+                    lsn
+                );
+                self.pt.insert(pid, vec![]);
+                self.free.remove(&pid);
+            }
             Update::Free => {
-                trace!("del of pid {} at lid {} lsn {}", pid, log_id, lsn);
+                trace!("free of pid {} at lid {} lsn {}", pid, log_id, lsn);
                 self.replace_pid(pid, replaced_at_idx, lsn, io_buf_size);
                 self.pt.insert(pid, vec![(lsn, log_id)]);
 

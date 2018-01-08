@@ -33,7 +33,7 @@ pub use self::snapshot::{Snapshot, read_snapshot_or_default};
 
 pub use self::log::Log;
 pub use self::materializer::Materializer;
-pub use self::page_cache::{CacheEntry, PageCache};
+pub use self::page_cache::{CacheEntry, PageCache, PageGet};
 pub use self::reservation::Reservation;
 pub use self::segment::SegmentMode;
 
