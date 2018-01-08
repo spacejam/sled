@@ -20,13 +20,34 @@ pub struct Snapshot<R> {
     /// the highest allocated pid
     pub max_pid: PageID,
     /// the mapping from pages to (lsn, lid)
-    pub pt: HashMap<PageID, Vec<(Lsn, LogID)>>,
+    pub pt: HashMap<PageID, PageState>,
     /// replaced pages per segment index
     pub replacements: HashMap<usize, HashSet<(PageID, Lsn)>>,
     /// the free pids
     pub free: HashSet<PageID>,
     /// the `Materializer`-specific recovered state
     pub recovery: Option<R>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum PageState {
+    Present(Vec<(Lsn, LogID)>),
+    Allocated(Lsn, LogID),
+    Free(Lsn, LogID),
+}
+
+impl PageState {
+    fn push(&mut self, item: (Lsn, LogID)) {
+        match self {
+            &mut PageState::Present(ref mut items) => items.push(item),
+            &mut PageState::Allocated(_, _) => {
+                *self = PageState::Present(vec![item])
+            }
+            &mut PageState::Free(_, _) => {
+                panic!("pushed items to a PageState::Free")
+            }
+        }
+    }
 }
 
 impl<R> Default for Snapshot<R> {
@@ -115,7 +136,7 @@ impl<R> Snapshot<R> {
                     self.recovery = Some(r);
                 }
 
-                self.pt.insert(pid, vec![(lsn, log_id)]);
+                self.pt.insert(pid, PageState::Present(vec![(lsn, log_id)]));
                 self.free.remove(&pid);
             }
             Update::Allocate => {
@@ -125,13 +146,13 @@ impl<R> Snapshot<R> {
                     log_id,
                     lsn
                 );
-                self.pt.insert(pid, vec![]);
+                self.pt.insert(pid, PageState::Allocated(lsn, log_id));
                 self.free.remove(&pid);
             }
             Update::Free => {
                 trace!("free of pid {} at lid {} lsn {}", pid, log_id, lsn);
                 self.replace_pid(pid, replaced_at_idx, lsn, io_buf_size);
-                self.pt.insert(pid, vec![(lsn, log_id)]);
+                self.pt.insert(pid, PageState::Free(lsn, log_id));
 
                 self.free.insert(pid);
             }
@@ -145,7 +166,7 @@ impl<R> Snapshot<R> {
         replaced_at_lsn: Lsn,
         io_buf_size: usize,
     ) {
-        if let Some(coords) = self.pt.remove(&pid) {
+        if let Some(PageState::Present(coords)) = self.pt.remove(&pid) {
             for (_lsn, lid) in coords {
                 let idx = lid as usize / io_buf_size;
                 if replaced_at_idx == idx {

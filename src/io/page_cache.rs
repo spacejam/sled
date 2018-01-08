@@ -931,37 +931,34 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         let mut snapshot_free = snapshot.free.clone();
 
-        // rec logic    has # of coords  | in free list
-        //             .-------------------------------
-        // Unallocated | (never seen)    | no
-        // Allocated   | 0               | no
-        // Free        | 1               | yes
-        // Flush       | >= 1            | no
-        for (pid, lids) in &snapshot.pt {
+        for (pid, state) in &snapshot.pt {
             trace!("loading pid {} in load_snapshot", pid);
 
-            let mut lids = lids.clone();
             let stack = Stack::default();
 
-            if lids.is_empty() {
-                // Allocated (empty stack added)
-                assert!(!snapshot.free.contains(pid));
-            } else if snapshot.free.contains(pid) {
-                // Free
-                trace!("adding pid {} to free during load_snapshot", pid);
-                assert_eq!(lids.len(), 1);
-                self.free.lock().unwrap().push(*pid);
-                let (base_lsn, base_lid) = lids.remove(0);
-                stack.push(CacheEntry::Free(base_lsn, base_lid));
-                snapshot_free.remove(&pid);
-            } else {
-                // Flush
-                trace!("adding pid {} to page table during load_snapshot", pid);
-                let (base_lsn, base_lid) = lids.remove(0);
-                stack.push(CacheEntry::Flush(base_lsn, base_lid));
+            match state {
+                &PageState::Present(ref lids) => {
+                    trace!(
+                        "adding pid {} to page table during load_snapshot",
+                        pid
+                    );
+                    let (base_lsn, base_lid) = lids[0];
 
-                for (lsn, lid) in lids {
-                    stack.push(CacheEntry::PartialFlush(lsn, lid));
+                    stack.push(CacheEntry::Flush(base_lsn, base_lid));
+
+                    for &(lsn, lid) in &lids[1..] {
+                        stack.push(CacheEntry::PartialFlush(lsn, lid));
+                    }
+                }
+                &PageState::Free(lsn, lid) => {
+                    trace!("adding pid {} to free during load_snapshot", pid);
+                    self.free.lock().unwrap().push(*pid);
+                    stack.push(CacheEntry::Free(lsn, lid));
+                    snapshot_free.remove(&pid);
+                }
+                &PageState::Allocated(_lsn, _lid) => {
+                    // Allocated (empty stack implies Allocated)
+                    assert!(!snapshot.free.contains(pid));
                 }
             }
 

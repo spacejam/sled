@@ -266,43 +266,6 @@ enum P {
     Present(Vec<usize>),
 }
 
-impl P {
-    fn is_free(&self) -> bool {
-        match *self {
-            P::Free => true,
-            _ => false,
-        }
-    }
-
-    fn is_unallocated(&self) -> bool {
-        match *self {
-            P::Unallocated => true,
-            _ => false,
-        }
-    }
-
-    fn is_allocated(&self) -> bool {
-        match *self {
-            P::Allocated => true,
-            _ => false,
-        }
-    }
-
-    fn is_present(&self) -> bool {
-        match *self {
-            P::Present(_) => true,
-            _ => false,
-        }
-    }
-
-    fn entries(&self) -> &Vec<usize> {
-        match *self {
-            P::Present(ref entries) => entries,
-            _ => panic!("entries called on non-present page"),
-        }
-    }
-}
-
 fn prop_pagecache_works(ops: OpVec) -> bool {
     use self::Op::*;
     let config = Config::default()
@@ -325,7 +288,6 @@ fn prop_pagecache_works(ops: OpVec) -> bool {
         let guard = pin();
         match op {
             Replace(pid, c) => {
-                println!("replacing pid {}", pid);
                 let get = pc.get(pid, &guard);
                 let ref_get = reference.entry(pid).or_insert(P::Unallocated);
 
@@ -415,7 +377,6 @@ fn prop_pagecache_works(ops: OpVec) -> bool {
             }
             Allocate => {
                 let pid = pc.allocate(&guard);
-                println!("allocated pid {}", pid);
                 reference.insert(pid, P::Allocated);
                 let get = pc.get(pid, &guard);
                 assert!(get.is_allocated());

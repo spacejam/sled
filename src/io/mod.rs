@@ -43,4 +43,4 @@ use self::iterator::LogIter;
 use self::page_cache::{LoggedUpdate, Update};
 use self::parallel_io::Pio;
 use self::segment::{SegmentAccountant, raw_segment_iter};
-use self::snapshot::advance_snapshot;
+use self::snapshot::{PageState, advance_snapshot};

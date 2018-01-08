@@ -352,20 +352,32 @@ impl SegmentAccountant {
         let io_buf_size = self.config.get_io_buf_size();
         let mut max_lsn = 0;
 
-        for (pid, coords) in snapshot.pt {
-            for (lsn, lid) in coords {
-                // ensure segments is long enough
-                let idx = lid as usize / io_buf_size;
-                let segment_lsn = lsn / io_buf_size as Lsn * io_buf_size as Lsn;
-                if segment_lsn > max_lsn {
-                    max_lsn = segment_lsn;
+        let mut add = |pid, lsn, lid, segments: &mut Vec<Segment>| {
+            // ensure segments is long enough
+            let idx = lid as usize / io_buf_size;
+            let segment_lsn = lsn / io_buf_size as Lsn * io_buf_size as Lsn;
+            if segment_lsn > max_lsn {
+                max_lsn = segment_lsn;
+            }
+            if segments.len() < idx + 1 {
+                segments.resize(idx + 1, Segment::default());
+            }
+            segments[idx].recovery_ensure_initialized(segment_lsn);
+            // add pid to segment
+            segments[idx].insert_pid(pid, segment_lsn);
+        };
+
+        for (pid, state) in snapshot.pt {
+            match state {
+                PageState::Present(coords) => {
+                    for (lsn, lid) in coords {
+                        add(pid, lsn, lid, &mut segments);
+                    }
                 }
-                if segments.len() < idx + 1 {
-                    segments.resize(idx + 1, Segment::default());
+                PageState::Allocated(lsn, lid) |
+                PageState::Free(lsn, lid) => {
+                    add(pid, lsn, lid, &mut segments);
                 }
-                segments[idx].recovery_ensure_initialized(segment_lsn);
-                // add pid to segment
-                segments[idx].insert_pid(pid, segment_lsn);
             }
         }
 
