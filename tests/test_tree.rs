@@ -219,7 +219,7 @@ struct OpVec {
 impl Arbitrary for OpVec {
     fn arbitrary<G: Gen>(g: &mut G) -> OpVec {
         let mut ops = vec![];
-        for _ in 0..g.gen_range(1, 50) {
+        for _ in 0..g.gen_range(1, 100) {
             let op = Op::arbitrary(g);
             ops.push(op);
 
@@ -310,10 +310,17 @@ fn prop_tree_matches_btreemap(
 
 #[test]
 fn quickcheck_tree_matches_btreemap() {
+    // use fewer tests for travis OSX builds that stall out all the time
+    #[cfg(target_os = "macos")]
+    let n_tests = 100;
+
+    #[cfg(not(target_os = "macos"))]
+    let n_tests = 500;
+
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 1))
-        .tests(50)
-        .max_tests(100)
+        .tests(n_tests)
+        .max_tests(10000)
         .quickcheck(prop_tree_matches_btreemap as fn(OpVec, u8, u8) -> bool);
 }
 

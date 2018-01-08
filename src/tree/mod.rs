@@ -575,7 +575,7 @@ impl Tree {
         let mut not_found_loops = 0;
         loop {
             let get_cursor = self.pages.get(cursor, guard);
-            if get_cursor.is_free() {
+            if get_cursor.is_free() || get_cursor.is_allocated() {
                 // restart search from the tree's root
                 not_found_loops += 1;
                 debug_assert_ne!(
@@ -587,6 +587,10 @@ impl Tree {
                 cursor = self.root.load(SeqCst);
                 continue;
             }
+            if !get_cursor.is_materialized() {
+                error!("unwrapping {:?}", get_cursor);
+            }
+
             let (frag, cas_key) = get_cursor.unwrap();
             let (node, _is_root) = frag.into_base().unwrap();
 

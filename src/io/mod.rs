@@ -33,7 +33,7 @@ pub use self::snapshot::{Snapshot, read_snapshot_or_default};
 
 pub use self::log::Log;
 pub use self::materializer::Materializer;
-pub use self::page_cache::{CacheEntry, PageCache};
+pub use self::page_cache::{CacheEntry, PageCache, PageGet};
 pub use self::reservation::Reservation;
 pub use self::segment::SegmentMode;
 
@@ -43,4 +43,4 @@ use self::iterator::LogIter;
 use self::page_cache::{LoggedUpdate, Update};
 use self::parallel_io::Pio;
 use self::segment::{SegmentAccountant, raw_segment_iter};
-use self::snapshot::advance_snapshot;
+use self::snapshot::{PageState, advance_snapshot};

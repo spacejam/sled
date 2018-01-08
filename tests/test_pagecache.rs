@@ -259,6 +259,13 @@ impl Arbitrary for OpVec {
     }
 }
 
+enum P {
+    Free,
+    Allocated,
+    Unallocated,
+    Present(Vec<usize>),
+}
+
 fn prop_pagecache_works(ops: OpVec) -> bool {
     use self::Op::*;
     let config = Config::default()
@@ -272,110 +279,110 @@ fn prop_pagecache_works(ops: OpVec) -> bool {
 
     let mut pc = PageCache::start(TestMaterializer, config.clone());
 
-    let mut reference: HashMap<PageID, Vec<usize>> = HashMap::new();
-
-    let bad_addr = 1 << std::mem::align_of::<Vec<usize>>().trailing_zeros();
-    let bad_ptr = Shared::from(bad_addr as *const _);
+    let mut reference: HashMap<PageID, P> = HashMap::new();
 
     // TODO use returned pointers, cleared on restart, with caching set to
     // a large amount, to test linkage.
     // println!("{:?}", ops);
     for op in ops.ops.into_iter() {
+        let guard = pin();
         match op {
             Replace(pid, c) => {
-                let present = reference.contains_key(&pid);
+                let get = pc.get(pid, &guard);
+                let ref_get = reference.entry(pid).or_insert(P::Unallocated);
 
-                if present {
-                    let ref mut existing = reference.get_mut(&pid).unwrap();
-                    {
-                        let guard = pin();
-                        let old_key = if existing.is_empty() {
-                            Shared::null().into()
-                        } else {
-                            let (_, old_key) = pc.get(pid, &guard).unwrap();
-                            old_key
-                        };
-
-                        // FIXME called `Result::unwrap()` on an `Err`
-                        // value: Some(Shared { raw: 0x7ff813022680, tag: 0 })
+                match ref_get {
+                    &mut P::Allocated => {
+                        pc.replace(pid, Shared::null(), vec![c], &guard)
+                            .unwrap();
+                        *ref_get = P::Present(vec![c]);
+                    }
+                    &mut P::Present(ref mut existing) => {
+                        let (_, old_key) = get.unwrap();
                         pc.replace(pid, old_key.clone(), vec![c], &guard)
                             .unwrap();
+                        existing.clear();
+                        existing.push(c);
                     }
-                    existing.clear();
-                    existing.push(c);
-                } else {
-                    let guard = pin();
-
-                    // ensure this returns an Err of some kind
-                    let _ = pc.replace(pid, bad_ptr.into(), vec![c], &guard)
-                        .unwrap_err();
+                    &mut P::Free => {
+                        assert_eq!(get, sled::PageGet::Free);
+                    }
+                    &mut P::Unallocated => {
+                        assert_eq!(get, sled::PageGet::Unallocated);
+                    }
                 }
             }
             Link(pid, c) => {
-                let present = reference.contains_key(&pid);
+                let get = pc.get(pid, &guard);
+                let ref_get = reference.entry(pid).or_insert(P::Unallocated);
 
-                if present {
-                    let ref mut existing = reference.get_mut(&pid).unwrap();
-                    {
-                        let guard = pin();
-                        let old_key = if existing.is_empty() {
-                            Shared::null().into()
-                        } else {
-                            let (_, old_key) = pc.get(pid, &guard).unwrap();
-                            old_key
-                        };
-
-                        pc.link(pid, old_key.clone(), vec![c], &guard).unwrap();
+                match ref_get {
+                    &mut P::Allocated => {
+                        pc.link(pid, Shared::null(), vec![c], &guard).unwrap();
+                        *ref_get = P::Present(vec![c]);
                     }
-                    existing.push(c);
-                } else {
-                    let guard = pin();
-
-                    // ensure this returns an Err of some kind
-                    let _ = pc.link(pid, bad_ptr.into(), vec![c], &guard)
-                        .unwrap_err();
+                    &mut P::Present(ref mut existing) => {
+                        let (_, old_key) = get.unwrap();
+                        pc.link(pid, old_key.clone(), vec![c], &guard).unwrap();
+                        existing.push(c);
+                    }
+                    &mut P::Free => {
+                        assert_eq!(get, sled::PageGet::Free);
+                    }
+                    &mut P::Unallocated => {
+                        assert_eq!(get, sled::PageGet::Unallocated);
+                    }
                 }
             }
             Get(pid) => {
-                let guard = pin();
-                let r = reference.get(&pid).cloned();
-                let a = pc.get(pid, &guard);
-                if let Some(ref s) = r {
-                    if s.is_empty() {
-                        assert!(a.is_free() || a.is_unallocated());
-                    } else {
-                        let (a_val, _a_ptr) = a.unwrap();
-                        assert_eq!(s, &a_val);
-                        a_val.iter().fold(0, |acc, cur| {
+                let get = pc.get(pid, &guard);
+
+                match reference.get(&pid) {
+                    Some(&P::Allocated) => {
+                        assert!(get.is_allocated());
+                    }
+                    Some(&P::Present(ref existing)) => {
+                        let (val, _ptr) = get.unwrap();
+                        assert_eq!(existing, &val);
+                        val.iter().fold(0, |acc, cur| {
                             if *cur <= acc {
                                 panic!("out of order page fragments in page!");
                             }
                             *cur
                         });
                     }
-                } else {
-                    assert!(a.is_free() || a.is_unallocated());
+                    Some(&P::Free) => {
+                        assert!(get.is_free());
+                    }
+                    Some(&P::Unallocated) |
+                    None => {
+                        assert_eq!(get, sled::PageGet::Unallocated);
+                    }
                 }
             }
             Free(pid) => {
                 pc.free(pid);
-                reference.remove(&pid);
+                let get = pc.get(pid, &guard);
+
+                match reference.get(&pid) {
+                    Some(&P::Allocated) |
+                    Some(&P::Present(_)) |
+                    Some(&P::Free) => {
+                        reference.insert(pid, P::Free);
+                        assert!(get.is_free())
+                    }
+                    Some(&P::Unallocated) |
+                    None => assert!(get.is_unallocated()),
+                }
             }
             Allocate => {
-                let guard = pin();
                 let pid = pc.allocate(&guard);
-                reference.insert(pid, vec![]);
+                reference.insert(pid, P::Allocated);
+                let get = pc.get(pid, &guard);
+                assert!(get.is_allocated());
             }
             Restart => {
                 drop(pc);
-                // any pages with no updates should be cleared
-                let mut to_clear = vec![];
-                for (pid, items) in &reference {
-                    if items.is_empty() {
-                        to_clear.push(*pid);
-                    }
-                }
-                reference.retain(|p, _v| !to_clear.contains(p));
 
                 config.verify_snapshot(Arc::new(TestMaterializer));
 
@@ -407,7 +414,7 @@ fn pagecache_bug_01() {
 }
 
 #[test]
-fn pagecache_bug_2() {
+fn pagecache_bug_02() {
     // postmortem: historically needed to "seed" a page by writing
     // a compacting base to it. changed the snapshot and page-in code
     // to allow a link being the first update to hit a page.
@@ -602,28 +609,26 @@ fn pagecache_bug_16() {
     });
 }
 
-// FIXME currently breaking in new and exciting ways!
 #[test]
-#[ignore]
 fn pagecache_bug_17() {
     // postmortem:
     use Op::*;
     prop_pagecache_works(OpVec {
         ops: vec![
             Allocate,
-            Link(0, 205),
             Allocate,
+            Allocate,
+            Allocate,
+            Allocate,
+            Allocate,
+            Link(0, 205),
             Replace(0, 207),
             Link(1, 208),
-            Allocate,
-            Allocate,
-            Allocate,
             Link(2, 213),
             Replace(3, 215),
             Replace(2, 216),
             Replace(3, 218),
             Free(1),
-            Allocate,
             Link(4, 220),
             Restart,
             Allocate,
@@ -636,10 +641,10 @@ fn pagecache_bug_17() {
             Replace(1, 224),
             Link(0, 226),
             Restart,
+            Allocate,
+            Allocate,
             Link(0, 227),
-            Allocate,
             Link(0, 228),
-            Allocate,
             Replace(4, 229),
             Free(1),
             Free(0),
@@ -710,6 +715,26 @@ fn pagecache_bug_19() {
             Restart,
             Restart,
         ],
+    });
+}
+
+#[test]
+fn pagecache_bug_20() {
+    // postmortem: failed to handle Unallocated nodes properly
+    // in refactored test model.
+    use Op::*;
+    prop_pagecache_works(OpVec {
+        ops: vec![Free(0), Replace(0, 17)],
+    });
+}
+
+#[test]
+fn pagecache_bug_21() {
+    // postmortem: test model marked unused pids as Unallocated
+    // instead of Free during recovery.
+    use Op::*;
+    prop_pagecache_works(OpVec {
+        ops: vec![Allocate, Free(0), Restart, Allocate, Restart, Get(0)],
     });
 }
 
