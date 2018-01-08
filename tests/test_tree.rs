@@ -310,9 +310,16 @@ fn prop_tree_matches_btreemap(
 
 #[test]
 fn quickcheck_tree_matches_btreemap() {
+    // use fewer tests for travis OSX builds that stall out all the time
+    #[cfg(target_os = "macos")]
+    let n_tests = 100;
+
+    #[cfg(not(target_os = "macos"))]
+    let n_tests = 1000;
+
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 1))
-        .tests(1000)
+        .tests(n_tests)
         .max_tests(10000)
         .quickcheck(prop_tree_matches_btreemap as fn(OpVec, u8, u8) -> bool);
 }
