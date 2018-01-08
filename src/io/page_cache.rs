@@ -516,12 +516,17 @@ impl<PM, P, R> PageCache<PM, P, R>
         let lid = log_reservation.lid();
 
         let cache_entry = match new {
-            Update::Compact(m) => CacheEntry::MergedResident(m, lsn, lid),
-            Update::Free => CacheEntry::Free(lsn, lid),
+            Update::Compact(m) => Some(CacheEntry::MergedResident(m, lsn, lid)),
+            Update::Free => Some(CacheEntry::Free(lsn, lid)),
+            Update::Allocate => None,
             _ => unimplemented!(),
         };
 
-        let node = node_from_frag_vec(vec![cache_entry]).into_shared(guard);
+        let node = cache_entry
+            .map(|cache_entry| {
+                node_from_frag_vec(vec![cache_entry]).into_shared(guard)
+            })
+            .unwrap_or_else(|| Shared::null());
 
         debug_delay();
         let result = unsafe { stack_ptr.deref().cas(old, node, guard) };
