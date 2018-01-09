@@ -350,19 +350,52 @@ impl FinalConfig {
                      + Sync,
               R: Debug + Clone + Serialize + DeserializeOwned + Send + PartialEq
     {
-        let incremental_snapshot =
+        let incremental =
             read_snapshot_or_default(&self, Some(materializer.clone()));
 
         for snapshot_path in self.get_snapshot_files() {
             std::fs::remove_file(snapshot_path).unwrap();
         }
 
-        let fully_regenerated_snapshot =
-            read_snapshot_or_default(&self, Some(materializer));
+        let regenerated = read_snapshot_or_default(&self, Some(materializer));
+
+        for (k, v) in &incremental.pt {
+            if !regenerated.pt.contains_key(&k) {
+                panic!("page only present in incremental pagetable: {}", k);
+            }
+            assert_eq!(Some(v), regenerated.pt.get(&k));
+        }
+
+        for (k, v) in &regenerated.pt {
+            if !incremental.pt.contains_key(&k) {
+                panic!("page only present in incremental pagetable: {}", k);
+            }
+            assert_eq!(Some(v), incremental.pt.get(&k));
+        }
+
+        for (k, v) in &incremental.replacements {
+            if !regenerated.replacements.contains_key(&k) {
+                panic!("page only present in incremental replacement page map: {}", k);
+            }
+            assert_eq!(Some(v), regenerated.replacements.get(&k));
+        }
+
+        for (k, v) in &regenerated.replacements {
+            if !incremental.replacements.contains_key(&k) {
+                panic!("page only present in incremental replacement page map: {}", k);
+            }
+            assert_eq!(Some(v), incremental.replacements.get(&k));
+        }
+
+        assert_eq!(incremental.max_pid, regenerated.max_pid, "snapshot max_pid diverged");
+        assert_eq!(incremental.max_lsn, regenerated.max_lsn, "snapshot max_lsn diverged");
+        assert_eq!(incremental.last_lid, regenerated.last_lid, "snapshot last_lid diverged");
+        assert_eq!(incremental.free, regenerated.free, "snapshot free list diverged");
+        assert_eq!(incremental.recovery, regenerated.recovery, "snapshot recovery diverged");
 
         assert_eq!(
-            incremental_snapshot,
-            fully_regenerated_snapshot,
+            incremental,
+            regenerated,
             "snapshots have diverged!"
         );
     }

@@ -1,5 +1,12 @@
 extern crate sled;
 
+use std::thread;
+use std::time::Duration;
+
+extern "C" {
+    fn raise(signum: i32);
+}
+
 /// Verifies that the keys in the tree are correctly recovered.
 /// Panics if they are incorrect.
 /// Returns the key that should be resumed at, and the current cycle value.
@@ -76,8 +83,8 @@ fn main() {
         .cache_fixup_threshold(1)
         .cache_bits(6)
         .cache_capacity(128 * 1024 * 1024)
-        .flush_every_ms(None)
-        // .io_buf_size(1 << 16)
+        .flush_every_ms(Some(100))
+        .io_buf_size(1 << 16) // 65k
         .path("cycles.db".to_string())
         .snapshot_after_ops(1 << 56)
         .build();
@@ -87,6 +94,14 @@ fn main() {
 
     println!("verifying");
     let (key, highest) = verify(&tree);
+
+    thread::spawn(|| {
+        thread::sleep(Duration::from_secs(1));
+        println!("raising SIGKILL");
+        unsafe {
+            raise(9);
+        }
+    });
 
     println!("verified! running...");
 

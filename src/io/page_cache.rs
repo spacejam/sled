@@ -945,16 +945,12 @@ impl<PM, P, R> PageCache<PM, P, R>
         let mut snapshot_free = snapshot.free.clone();
 
         for (pid, state) in &snapshot.pt {
-            trace!("loading pid {} in load_snapshot", pid);
+            trace!("load_snapshot page {} {:?}", pid, state);
 
             let stack = Stack::default();
 
             match state {
                 &PageState::Present(ref lids) => {
-                    trace!(
-                        "adding pid {} to page table during load_snapshot",
-                        pid
-                    );
                     let (base_lsn, base_lid) = lids[0];
 
                     stack.push(CacheEntry::Flush(base_lsn, base_lid));
@@ -964,14 +960,13 @@ impl<PM, P, R> PageCache<PM, P, R>
                     }
                 }
                 &PageState::Free(lsn, lid) => {
-                    trace!("adding pid {} to free during load_snapshot", pid);
                     self.free.lock().unwrap().push(*pid);
                     stack.push(CacheEntry::Free(lsn, lid));
                     snapshot_free.remove(&pid);
                 }
                 &PageState::Allocated(_lsn, _lid) => {
-                    // Allocated (empty stack implies Allocated)
                     assert!(!snapshot.free.contains(pid));
+                    // empty stack with null ptr head implies Allocated
                 }
             }
 
