@@ -350,15 +350,11 @@ impl SegmentAccountant {
         // generate segments from snapshot lids
         let mut segments = vec![];
         let io_buf_size = self.config.get_io_buf_size();
-        let mut max_lsn = 0;
 
-        let mut add = |pid, lsn, lid, segments: &mut Vec<Segment>| {
+        let add = |pid, lsn, lid, segments: &mut Vec<Segment>| {
             // ensure segments is long enough
             let idx = lid as usize / io_buf_size;
             let segment_lsn = lsn / io_buf_size as Lsn * io_buf_size as Lsn;
-            if segment_lsn > max_lsn {
-                max_lsn = segment_lsn;
-            }
             if segments.len() < idx + 1 {
                 segments.resize(idx + 1, Segment::default());
             }
@@ -387,9 +383,17 @@ impl SegmentAccountant {
                 // and will be marked as free later
                 continue;
             }
-            if segments[idx].lsn.is_some() {
-                // assert!(
+            if let Some(segment_lsn) = segments[idx].lsn {
                 for (pid, lsn) in pids {
+                    if lsn < segment_lsn {
+                        panic!(
+                            "stale removed pid {} with lsn {}, on segment {} with current lsn: {:?}",
+                            pid,
+                            lsn,
+                            idx,
+                            segments[idx].lsn
+                        );
+                    }
                     segments[idx].remove_pid(pid, lsn);
                 }
             }
