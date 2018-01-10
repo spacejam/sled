@@ -27,6 +27,10 @@ pub struct Snapshot<R> {
     pub free: HashSet<PageID>,
     /// the `Materializer`-specific recovered state
     pub recovery: Option<R>,
+
+    #[cfg(feature = "check_snapshot_integrity")]
+    /// all seen lids, to catch bugs
+    pub seen_lsns: HashSet<Lsn>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -60,6 +64,8 @@ impl<R> Default for Snapshot<R> {
             replacements: HashMap::new(),
             free: HashSet::new(),
             recovery: None,
+            #[cfg(feature = "check_snapshot_integrity")]
+            seen_lsns: HashSet::new(),
         }
     }
 }
@@ -67,7 +73,7 @@ impl<R> Default for Snapshot<R> {
 impl<R> Snapshot<R> {
     fn apply<P>(
         &mut self,
-        materializer: &Arc<Materializer<PageFrag = P, Recovery = R>>,
+        materializer: &Materializer<PageFrag = P, Recovery = R>,
         lsn: Lsn,
         log_id: LogID,
         bytes: &[u8],
@@ -180,13 +186,13 @@ impl<R> Snapshot<R> {
     }
 }
 
-pub(super) fn advance_snapshot<P, R>(
+pub(super) fn advance_snapshot<PM, P, R>(
     iter: LogIter,
     mut snapshot: Snapshot<R>,
-    materializer_opt: Option<Arc<Materializer<PageFrag = P, Recovery = R>>>,
     config: &FinalConfig,
 ) -> Snapshot<R>
-    where P: 'static
+    where PM: Materializer<Recovery = R, PageFrag = P>,
+          P: 'static
                  + Debug
                  + Clone
                  + Serialize
@@ -198,6 +204,8 @@ pub(super) fn advance_snapshot<P, R>(
     let start = clock();
 
     trace!("building on top of old snapshot: {:?}", snapshot);
+
+    let materializer = PM::new(&snapshot.recovery);
 
     let io_buf_size = config.get_io_buf_size();
 
@@ -230,6 +238,11 @@ pub(super) fn advance_snapshot<P, R>(
             continue;
         }
 
+        #[cfg(feature = "check_snapshot_integrity")]
+        {
+            snapshot.seen_lsns.insert(lsn);
+        }
+
         assert!(lsn > snapshot.max_lsn);
         snapshot.max_lsn = lsn;
         snapshot.last_lid = log_id;
@@ -237,8 +250,8 @@ pub(super) fn advance_snapshot<P, R>(
         // invalidate any removed pids
         snapshot.replacements.remove(&segment_idx);
 
-        if let Some(ref materializer) = materializer_opt {
-            snapshot.apply(materializer, lsn, log_id, &*bytes, io_buf_size);
+        if !PM::is_null() {
+            snapshot.apply(&materializer, lsn, log_id, &*bytes, io_buf_size);
         }
     }
 
@@ -253,11 +266,9 @@ pub(super) fn advance_snapshot<P, R>(
 
 /// Read a `Snapshot` or generate a default, then advance it to
 /// the tip of the data file, if present.
-pub fn read_snapshot_or_default<P, R>(
-    config: &FinalConfig,
-    pm_opt: Option<Arc<Materializer<PageFrag = P, Recovery = R>>>,
-) -> Snapshot<R>
-    where P: 'static
+pub fn read_snapshot_or_default<PM, P, R>(config: &FinalConfig) -> Snapshot<R>
+    where PM: Materializer<Recovery = R, PageFrag = P>,
+          P: 'static
                  + Debug
                  + Clone
                  + Serialize
@@ -270,7 +281,7 @@ pub fn read_snapshot_or_default<P, R>(
 
     let log_iter = raw_segment_iter(config);
 
-    advance_snapshot::<P, R>(log_iter, last_snap, pm_opt, config)
+    advance_snapshot::<PM, P, R>(log_iter, last_snap, config)
 }
 
 fn read_snapshot<R>(config: &FinalConfig) -> Option<Snapshot<R>>

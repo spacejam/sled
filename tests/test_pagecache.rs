@@ -5,7 +5,6 @@ extern crate quickcheck;
 
 use std::collections::HashMap;
 use std::sync::atomic::{ATOMIC_USIZE_INIT, AtomicUsize, Ordering};
-use std::sync::Arc;
 
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use epoch::{Shared, pin};
@@ -20,6 +19,10 @@ pub struct TestMaterializer;
 impl Materializer for TestMaterializer {
     type PageFrag = Vec<usize>;
     type Recovery = ();
+
+    fn new(_recovery: &Option<()>) -> TestMaterializer {
+        TestMaterializer
+    }
 
     fn merge(&self, frags: &[&Vec<usize>]) -> Vec<usize> {
         let mut consolidated = vec![];
@@ -46,7 +49,7 @@ fn pagecache_caching() {
         .io_buf_size(20000)
         .build();
 
-    let pc = PageCache::start(TestMaterializer, conf.clone());
+    let pc: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone());
 
     let guard = pin();
     let mut keys = HashMap::new();
@@ -76,7 +79,8 @@ fn pagecache_strange_crash_1() {
         .build();
 
     {
-        let pc = PageCache::start(TestMaterializer, conf.clone());
+        let pc: PageCache<TestMaterializer, _, _> =
+            PageCache::start(conf.clone());
 
         let guard = pin();
         let mut keys = HashMap::new();
@@ -94,7 +98,7 @@ fn pagecache_strange_crash_1() {
         }
     }
     println!("!!!!!!!!!!!!!!!!!!!!! recovering !!!!!!!!!!!!!!!!!!!!!!");
-    let _pc = PageCache::start(TestMaterializer, conf.clone());
+    let _pc: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone());
     // TODO test no eaten lsn's on recovery
     // TODO test that we don't skip multiple segments ahead on recovery (confusing Lsn & Lid)
 }
@@ -112,10 +116,10 @@ fn pagecache_strange_crash_2() {
             .build();
 
         println!("!!!!!!!!!!!!!!!!!!!!! {} !!!!!!!!!!!!!!!!!!!!!!", x);
-        conf.verify_snapshot(Arc::new(TestMaterializer));
+        conf.verify_snapshot::<TestMaterializer, _, _>();
 
-        let pc = PageCache::start(TestMaterializer, conf.clone());
-        pc.recovered_state();
+        let pc: PageCache<TestMaterializer, _, _> =
+            PageCache::start(conf.clone());
 
         let mut keys = HashMap::new();
         for _ in 0..2 {
@@ -147,7 +151,7 @@ fn basic_pagecache_recovery() {
         .io_buf_size(1000)
         .build();
 
-    let pc = PageCache::start(TestMaterializer, conf.clone());
+    let pc: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone());
 
     let guard = pin();
     let id = pc.allocate(&guard);
@@ -158,20 +162,20 @@ fn basic_pagecache_recovery() {
     assert_eq!(consolidated, vec![1, 2, 3]);
     drop(pc);
 
-    let pc2 = PageCache::start(TestMaterializer, conf.clone());
+    let pc2: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone());
     let (consolidated2, key) = pc2.get(id, &guard).unwrap();
     assert_eq!(consolidated, consolidated2);
 
     pc2.link(id, key, vec![4], &guard).unwrap();
     drop(pc2);
 
-    let pc3 = PageCache::start(TestMaterializer, conf.clone());
+    let pc3: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone());
     let (consolidated3, _key) = pc3.get(id, &guard).unwrap();
     assert_eq!(consolidated3, vec![1, 2, 3, 4]);
     pc3.free(id);
     drop(pc3);
 
-    let pc4 = PageCache::start(TestMaterializer, conf.clone());
+    let pc4: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone());
     let res = pc4.get(id, &guard);
     assert!(res.is_free());
 }
@@ -277,7 +281,8 @@ fn prop_pagecache_works(ops: OpVec) -> bool {
         .cache_fixup_threshold(1)
         .build();
 
-    let mut pc = PageCache::start(TestMaterializer, config.clone());
+    let mut pc: PageCache<TestMaterializer, _, _> =
+        PageCache::start(config.clone());
 
     let mut reference: HashMap<PageID, P> = HashMap::new();
 
@@ -384,9 +389,9 @@ fn prop_pagecache_works(ops: OpVec) -> bool {
             Restart => {
                 drop(pc);
 
-                config.verify_snapshot(Arc::new(TestMaterializer));
+                config.verify_snapshot::<TestMaterializer, _, _>();
 
-                pc = PageCache::start(TestMaterializer, config.clone());
+                pc = PageCache::start(config.clone());
             }
         }
     }

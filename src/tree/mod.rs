@@ -33,7 +33,7 @@ impl<'a> IntoIterator for &'a Tree {
 /// A flash-sympathetic persistent lock-free B+ tree
 #[derive(Clone)]
 pub struct Tree {
-    pages: Arc<PageCache<BLinkMaterializer, Frag, PageID>>,
+    pages: Arc<PageCache<BLinkMaterializer, Frag, Vec<PageID>>>,
     config: FinalConfig,
     root: Arc<AtomicUsize>,
 }
@@ -45,20 +45,16 @@ impl Tree {
     /// Load existing or create a new `Tree`.
     pub fn start(config: FinalConfig) -> Tree {
         #[cfg(feature = "check_snapshot_integrity")]
-        config.verify_snapshot(Arc::new(BLinkMaterializer {
-            roots: Mutex::new(vec![]),
-        }));
+        config.verify_snapshot::<BLinkMaterializer, Frag, Vec<PageID>>();
 
-        let pages = PageCache::start(
-            BLinkMaterializer {
-                roots: Mutex::new(vec![]),
-            },
-            config.clone(),
-        );
+        let pages = PageCache::start(config.clone());
 
-        let root_opt = pages.recovered_state();
+        let roots_opt =
+            pages.recovered_state().and_then(|roots: Vec<PageID>| {
+                roots.last().cloned()
+            });
 
-        let root_id = if let Some(root_id) = root_opt {
+        let root_id = if let Some(root_id) = roots_opt {
             debug!("recovered root {} while starting tree", root_id);
             root_id
         } else {
