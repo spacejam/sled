@@ -5,7 +5,8 @@ use epoch::pin;
 /// An iterator over keys and values in a `Tree`.
 pub struct Iter<'a> {
     pub(super) id: PageID,
-    pub(super) inner: &'a PageCache<BLinkMaterializer, Frag, Vec<PageID>>,
+    pub(super) inner:
+        &'a PageCache<BLinkMaterializer, Frag, Vec<(PageID, PageID)>>,
     pub(super) last_key: Bound,
     // TODO we have to refactor this in light of pages being deleted
 }

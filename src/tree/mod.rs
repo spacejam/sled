@@ -33,7 +33,7 @@ impl<'a> IntoIterator for &'a Tree {
 /// A flash-sympathetic persistent lock-free B+ tree
 #[derive(Clone)]
 pub struct Tree {
-    pages: Arc<PageCache<BLinkMaterializer, Frag, Vec<PageID>>>,
+    pages: Arc<PageCache<BLinkMaterializer, Frag, Vec<(PageID, PageID)>>>,
     config: FinalConfig,
     root: Arc<AtomicUsize>,
 }
@@ -45,14 +45,36 @@ impl Tree {
     /// Load existing or create a new `Tree`.
     pub fn start(config: FinalConfig) -> Tree {
         #[cfg(feature = "check_snapshot_integrity")]
-        config.verify_snapshot::<BLinkMaterializer, Frag, Vec<PageID>>();
+        config.verify_snapshot::<BLinkMaterializer, Frag, Vec<(PageID, PageID)>>();
 
         let pages = PageCache::start(config.clone());
 
-        let roots_opt =
-            pages.recovered_state().and_then(|roots: Vec<PageID>| {
-                roots.last().cloned()
-            });
+        let roots_opt = pages.recovered_state().clone().and_then(
+            |mut roots: Vec<(PageID, PageID)>| if roots.is_empty() {
+                None
+            } else {
+                let mut last = std::usize::MAX;
+                let mut last_idx = std::usize::MAX;
+                while !roots.is_empty() {
+                    // find the root that links to the last one
+                    for (i, &(root, prev_root)) in roots.iter().enumerate() {
+                        if prev_root == last {
+                            last = root;
+                            last_idx = i;
+                            break;
+                        }
+                        assert_ne!(
+                            i + 1,
+                            roots.len(),
+                            "encountered gap in root chain"
+                        );
+                    }
+                    roots.remove(last_idx);
+                }
+                assert_ne!(last, std::usize::MAX);
+                Some(last)
+            },
+        );
 
         let root_id = if let Some(root_id) = roots_opt {
             debug!("recovered root {} while starting tree", root_id);
@@ -60,6 +82,11 @@ impl Tree {
         } else {
             let guard = pin();
             let root_id = pages.allocate(&guard);
+            assert_eq!(
+                root_id,
+                0,
+                "we expect that this is the first page ever allocated"
+            );
             debug!("allocated pid {} for root of new tree", root_id);
 
             let leaf_id = pages.allocate(&guard);
@@ -73,7 +100,7 @@ impl Tree {
                     lo: Bound::Inc(vec![]),
                     hi: Bound::Inf,
                 },
-                false,
+                None,
             );
 
             let mut root_index_vec = vec![];
@@ -87,7 +114,7 @@ impl Tree {
                     lo: Bound::Inc(vec![]),
                     hi: Bound::Inf,
                 },
-                true,
+                Some(std::usize::MAX),
             );
 
             pages
@@ -429,7 +456,7 @@ impl Tree {
 
         // install the new right side
         self.pages
-            .replace(new_pid, Shared::null(), Frag::Base(rhs, false), guard)
+            .replace(new_pid, Shared::null(), Frag::Base(rhs, None), guard)
             .expect("failed to initialize child split");
 
         // try to install a child split on the left side
@@ -490,7 +517,7 @@ impl Tree {
                 lo: Bound::Inc(vec![]),
                 hi: Bound::Inf,
             },
-            true,
+            Some(from),
         );
         // println!("split is {:?}", parent_split);
         // println!("trying to cas root at {:?} with real value {:?}", path.first().unwrap().pid, self.root.load(SeqCst));
