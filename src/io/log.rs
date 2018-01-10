@@ -99,10 +99,9 @@ impl Log {
     pub fn start_raw_log(config: FinalConfig) -> Log {
         let log_iter = raw_segment_iter(&config);
 
-        let snapshot = advance_snapshot::<(), ()>(
+        let snapshot = advance_snapshot::<NullMaterializer, (), ()>(
             log_iter,
             Snapshot::default(),
-            None,
             &config,
         );
 

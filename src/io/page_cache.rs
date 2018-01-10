@@ -153,10 +153,26 @@ impl Drop for PidDropper {
 /// pub struct TestMaterializer;
 ///
 /// impl Materializer for TestMaterializer {
+///     // The possibly fragmented page, written to log storage sequentially, and
+///     // read in parallel from multiple locations on disk when serving
+///     // a request to read the page. These will be merged to a single version
+///     // at read time, and possibly cached.
 ///     type PageFrag = String;
+///
+///
+///     // The state returned by a call to `PageCache::recover`, as
+///     // described by `Materializer::recover`
 ///     type Recovery = ();
 ///
-///     fn merge(&self, frags: &[&String]) -> String {
+///     // Create a new `Materializer` with the previously recovered
+///     // state if any existed.
+///     fn new(last_recovery: &Option<Self::Recovery>) -> Self {
+///         TestMaterializer
+///     }
+///
+///     // Used to merge chains of partial pages into a form
+///     // that is useful for the `PageCache` owner.
+///     fn merge(&self, frags: &[&Self::PageFrag]) -> Self::PageFrag {
 ///         let mut consolidated = String::new();
 ///         for frag in frags.into_iter() {
 ///             consolidated.push_str(&*frag);
@@ -165,7 +181,10 @@ impl Drop for PidDropper {
 ///         consolidated
 ///     }
 ///
-///     fn recover(&self, _: &String) -> Option<()> {
+///     // Used to feed custom recovery information back to a higher-level abstraction
+///     // during startup. For example, a B-Link tree must know what the current
+///     // root node is before it can start serving requests.
+///     fn recover(&self, _: &Self::PageFrag) -> Option<Self::Recovery> {
 ///         None
 ///     }
 /// }
@@ -173,8 +192,8 @@ impl Drop for PidDropper {
 /// fn main() {
 ///     let path = "test_pagecache_doc.log";
 ///     let conf = sled::Config::default().path(path.to_owned());
-///     let pc = sled::PageCache::start(TestMaterializer,
-///                                     conf.build());
+///     let pc: sled::PageCache<TestMaterializer, _, _> =
+///         sled::PageCache::start(conf.build());
 ///     {
 ///         let guard = pin();
 ///         let id = pc.allocate(&guard);
@@ -248,18 +267,17 @@ impl<PM, P, R> PageCache<PM, P, R>
           R: Debug + Clone + Serialize + DeserializeOwned + Send
 {
     /// Instantiate a new `PageCache`.
-    pub fn start(pm: PM, config: FinalConfig) -> PageCache<PM, P, R> {
+    pub fn start(config: FinalConfig) -> PageCache<PM, P, R> {
         let cache_capacity = config.get_cache_capacity();
         let cache_shard_bits = config.get_cache_bits();
         let lru = Lru::new(cache_capacity, cache_shard_bits);
 
-        let materializer = Arc::new(pm);
-
         // try to pull any existing snapshot off disk, and
         // apply any new data to it to "catch-up" the
         // snapshot before loading it.
-        let snapshot =
-            read_snapshot_or_default(&config, Some(materializer.clone()));
+        let snapshot = read_snapshot_or_default::<PM, P, R>(&config);
+
+        let materializer = Arc::new(PM::new(&snapshot.recovery));
 
         let mut pc = PageCache {
             t: materializer,
@@ -921,12 +939,8 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         let iter = self.log.iter_from(start_lsn);
 
-        let next_snapshot = advance_snapshot(
-            iter,
-            last_snapshot,
-            Some(self.t.clone()),
-            &self.config,
-        );
+        let next_snapshot =
+            advance_snapshot::<PM, P, R>(iter, last_snapshot, &self.config);
 
         self.log.with_sa(|sa| sa.resume_rewriting());
 

@@ -9,11 +9,14 @@ pub struct BLinkMaterializer {
 
 impl Materializer for BLinkMaterializer {
     type PageFrag = Frag;
-    type Recovery = PageID;
+    type Recovery = Vec<PageID>;
 
-    fn initialize_with_previous_recovery(&self, last_root: &PageID) {
-        let mut roots = self.roots.lock().unwrap();
-        roots.push(*last_root);
+    fn new(last_roots: &Option<Self::Recovery>) -> Self {
+        let roots: Vec<PageID> = last_roots.clone().unwrap_or_else(|| vec![]);
+
+        BLinkMaterializer {
+            roots: Mutex::new(roots),
+        }
     }
 
     fn merge(&self, frags: &[&Frag]) -> Frag {
@@ -36,7 +39,7 @@ impl Materializer for BLinkMaterializer {
         Frag::Base(base_node_opt.unwrap(), root)
     }
 
-    fn recover(&self, frag: &Frag) -> Option<PageID> {
+    fn recover(&self, frag: &Frag) -> Option<Vec<PageID>> {
         match *frag {
             Frag::Base(ref node, root) => {
                 if root {
@@ -45,7 +48,7 @@ impl Materializer for BLinkMaterializer {
                         None
                     } else {
                         roots.push(node.id);
-                        Some(node.id)
+                        Some(roots.clone())
                     }
                 } else {
                     None

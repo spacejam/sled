@@ -337,11 +337,9 @@ impl FinalConfig {
     }
 
     #[doc(hidden)]
-    pub fn verify_snapshot<R, P>(
-        &self,
-        materializer: Arc<Materializer<Recovery = R, PageFrag = P>>,
-    )
-        where P: 'static
+    pub fn verify_snapshot<PM, P, R>(&self)
+        where PM: Materializer<Recovery = R, PageFrag = P>,
+              P: 'static
                      + Debug
                      + Clone
                      + Serialize
@@ -350,14 +348,13 @@ impl FinalConfig {
                      + Sync,
               R: Debug + Clone + Serialize + DeserializeOwned + Send + PartialEq
     {
-        let incremental =
-            read_snapshot_or_default(&self, Some(materializer.clone()));
+        let incremental = read_snapshot_or_default::<PM, P, R>(&self);
 
         for snapshot_path in self.get_snapshot_files() {
             std::fs::remove_file(snapshot_path).unwrap();
         }
 
-        let regenerated = read_snapshot_or_default(&self, Some(materializer));
+        let regenerated = read_snapshot_or_default::<PM, P, R>(&self);
 
         for (k, v) in &incremental.pt {
             if !regenerated.pt.contains_key(&k) {
@@ -377,7 +374,13 @@ impl FinalConfig {
             if !regenerated.replacements.contains_key(&k) {
                 panic!("page only present in incremental replacement page map: {}", k);
             }
-            assert_eq!(Some(v), regenerated.replacements.get(&k));
+            assert_eq!(
+                Some(v),
+                regenerated.replacements.get(&k),
+                "replacement map for page {} is inconsistent between \
+                incremental and regenerated snapshots",
+                k
+            );
         }
 
         for (k, v) in &regenerated.replacements {
@@ -385,6 +388,16 @@ impl FinalConfig {
                 panic!("page only present in incremental replacement page map: {}", k);
             }
             assert_eq!(Some(v), incremental.replacements.get(&k));
+        }
+
+        #[cfg(feature = "check_snapshot_integrity")]
+        {
+            let diff: Vec<&Lsn> = incremental
+                .seen_lsns
+                .symmetric_difference(&regenerated.seen_lsns)
+                .collect();
+            assert_eq!(diff, Vec::<&Lsn>::new(), "found lsns NOT present in both snapshots");
+            println!("saw {} lsns in both snapshots", regenerated.seen_lsns.len());
         }
 
         assert_eq!(incremental.max_pid, regenerated.max_pid, "snapshot max_pid diverged");
