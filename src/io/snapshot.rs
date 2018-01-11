@@ -293,10 +293,7 @@ fn read_snapshot<R>(config: &FinalConfig) -> Option<Snapshot<R>>
         return None;
     }
 
-    // TODO use parsed max lsn in filename
-    candidates.sort_by_key(|path| {
-        std::fs::metadata(path).unwrap().created().unwrap()
-    });
+    candidates.sort();
 
     let path = candidates.pop().unwrap();
 
@@ -323,7 +320,8 @@ fn read_snapshot<R>(config: &FinalConfig) -> Option<Snapshot<R>>
     let crc_actual = crc64(&*buf);
 
     if crc_expected != crc_actual {
-        panic!("crc for snapshot file {:?} failed!", path);
+        error!("crc for snapshot file {:?} failed!", path);
+        return None;
     }
 
     #[cfg(feature = "zstd")]
@@ -363,8 +361,9 @@ pub fn write_snapshot<R>(config: &FinalConfig, snapshot: &Snapshot<R>)
 
     let prefix = config.snapshot_prefix();
 
-    let path_1 = format!("{}.{}.in___motion", prefix, snapshot.max_lsn);
-    let path_2 = format!("{}.{}", prefix, snapshot.max_lsn);
+    let path_1 =
+        format!("{}.snap.{:016X}.in___motion", prefix, snapshot.max_lsn);
+    let path_2 = format!("{}.snap.{:016X}", prefix, snapshot.max_lsn);
     let mut f = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
