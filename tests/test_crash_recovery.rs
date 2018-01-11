@@ -36,7 +36,11 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
                 slice_to_u32(&*k),
                 slice_to_u32(&*v)
             );
-            let expected = (highest - 1) % CYCLE as u32;
+            let expected = if highest == 0 {
+                CYCLE as u32 - 1
+            } else {
+                (highest - 1) % CYCLE as u32
+            };
             let actual = slice_to_u32(&*v);
             assert_eq!(expected, actual);
             lowest = actual;
@@ -81,7 +85,7 @@ fn slice_to_u32(b: &[u8]) -> u32 {
     unsafe { std::mem::transmute(buf) }
 }
 
-fn main() {
+fn run() {
     let config = sled::Config::default()
         .io_bufs(2)
         .blink_fanout(15)
@@ -93,18 +97,21 @@ fn main() {
         // drop io_buf_size to 1<<16, then 1<<17 to tease out
         // low hanging fruit more quickly
         .io_buf_size(100_000) // 1<<16 is 65k but might cause stalling
-        .path("cycles.db".to_string())
+        .path("test_crashes.db".to_string())
         .snapshot_after_ops(1 << 56)
         .build();
 
     println!("restoring");
     let tree = config.tree();
 
+    // flush to ensure the initial root is stable.
+    tree.flush();
+
     println!("verifying");
     let (key, highest) = verify(&tree);
 
     thread::spawn(|| {
-        thread::sleep(Duration::from_millis(30));
+        thread::sleep(Duration::from_millis(100));
         println!("raising SIGKILL");
         unsafe {
             libc::raise(9);
@@ -128,5 +135,23 @@ fn main() {
         key.reverse();
         let value = u32_to_vec((hu / CYCLE) as u32);
         tree.set(key, value);
+    }
+}
+
+#[test]
+fn test_crash_recovery() {
+    for _ in 0..100 {
+        let child = unsafe { libc::fork() };
+        if child == 0 {
+            run()
+        } else {
+            let mut status = 0;
+            unsafe {
+                libc::waitpid(child, &mut status as *mut libc::c_int, 0);
+            }
+            if status != 9 {
+                panic!("child exited abnormally");
+            }
+        }
     }
 }

@@ -6,7 +6,6 @@ cache: cargo
 
 rust:
   - stable
-  - beta
 
 matrix:
   allow_failures:
@@ -18,6 +17,8 @@ matrix:
       env: TEST=tsan
     - rust: nightly-2018-01-02
       env: TEST=lsan
+    - rust: nightly-2018-01-02
+      env: TEST=crash
 
 script:
   - bash -c 'case "$TEST" in
@@ -29,6 +30,9 @@ script:
                  ;;
                tsan)
                  ./hack/race_detector
+                 ;;
+               crash)
+                 cargo test test_crash_recovery --features="check_snapshot_integrity"
                  ;;
                *)
                  cargo check;

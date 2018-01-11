@@ -108,9 +108,11 @@ impl Log {
         Log::start::<()>(config, snapshot)
     }
 
-    /// Flush the next io buffer.
+    /// Flushes any pending IO buffers to disk to ensure durability.
     pub fn flush(&self) {
-        self.iobufs.flush();
+        for _ in 0..self.config.get_io_bufs() {
+            self.iobufs.flush();
+        }
     }
 
     /// Reserve space in the log for a pending linearized operation.

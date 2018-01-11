@@ -387,15 +387,18 @@ impl SegmentAccountant {
             if let Some(segment_lsn) = segments[idx].lsn {
                 for (pid, lsn) in pids {
                     if lsn < segment_lsn {
-                        panic!(
+                        // TODO is this avoidable? can punt more
+                        // work to snapshot generation logic.
+                        trace!(
                             "stale removed pid {} with lsn {}, on segment {} with current lsn: {:?}",
                             pid,
                             lsn,
                             idx,
                             segments[idx].lsn
                         );
+                    } else {
+                        segments[idx].remove_pid(pid, lsn);
                     }
-                    segments[idx].remove_pid(pid, lsn);
                 }
             }
         }

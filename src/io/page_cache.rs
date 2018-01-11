@@ -297,6 +297,11 @@ impl<PM, P, R> PageCache<PM, P, R>
         pc
     }
 
+    /// Flushes any pending IO buffers to disk to ensure durability.
+    pub fn flush(&self) {
+        self.log.flush();
+    }
+
     /// Return the recovered state from the snapshot
     pub fn recovered_state(&self) -> Option<R> {
         let mu = &self.last_snapshot.lock().unwrap();
