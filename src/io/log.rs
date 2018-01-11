@@ -355,7 +355,8 @@ impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
         let prev_lid_buf = &buf[10..18];
         let mut prev_lid_arr = [0u8; 8];
         prev_lid_arr.copy_from_slice(&*prev_lid_buf);
-        let prev_lid: LogID = unsafe { std::mem::transmute(prev_lid_arr) };
+        let xor_prev_lid: LogID = unsafe { std::mem::transmute(prev_lid_arr) };
+        let prev_lid = xor_prev_lid ^ 0xFFFF_FFFF_FFFF_FFFF;
 
         let crc16_tested = crc16_arr(&prev_lid_arr);
 
@@ -375,7 +376,9 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
         let lsn_arr: [u8; 8] = unsafe { std::mem::transmute(xor_lsn) };
         buf[2..10].copy_from_slice(&lsn_arr);
 
-        let prev_lid_arr: [u8; 8] = unsafe { std::mem::transmute(self.prev) };
+        let xor_prev_lid = self.prev ^ 0xFFFF_FFFF_FFFF_FFFF;
+        let prev_lid_arr: [u8; 8] =
+            unsafe { std::mem::transmute(xor_prev_lid) };
         buf[10..18].copy_from_slice(&prev_lid_arr);
 
         let crc16 = crc16_arr(&prev_lid_arr);
