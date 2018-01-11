@@ -3,6 +3,8 @@ extern crate sled;
 use std::thread;
 use std::time::Duration;
 
+const CYCLE: usize = 16; // 65536;
+
 extern "C" {
     // used to abruptly kill self with SIGKILL for crash simulation
     fn raise(signum: i32);
@@ -23,7 +25,7 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
 
     let highest_vec = u32_to_vec(highest);
 
-    println!("first key: {}", highest);
+    println!("first value in tree: {}", highest);
 
     // find how far we got
     let mut contiguous: u32 = 0;
@@ -38,7 +40,7 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
                 slice_to_u32(&*k),
                 slice_to_u32(&*v)
             );
-            let expected = highest - 1;
+            let expected = (highest - 1) % CYCLE as u32;
             let actual = slice_to_u32(&*v);
             assert_eq!(expected, actual);
             lowest = actual;
@@ -53,7 +55,6 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
     // ensure nothing changes after this point
     let low_beginning = u32_to_vec(contiguous + 1);
 
-    println!("from {:?} and up expecting {:?}", low_beginning, lowest_vec);
     for (mut k, v) in tree.scan(&*low_beginning) {
         if v != lowest_vec {
             k.reverse();
@@ -95,7 +96,7 @@ fn main() {
         .flush_every_ms(Some(100))
         // drop io_buf_size to 1<<16, then 1<<17 to tease out
         // low hanging fruit more quickly
-        .io_buf_size(1 << 17) // 1<<16 is 65k but might cause stalling
+        .io_buf_size(100_000) // 1<<16 is 65k but might cause stalling
         .path("cycles.db".to_string())
         .snapshot_after_ops(1 << 56)
         .build();
@@ -114,24 +115,22 @@ fn main() {
         }
     });
 
-    println!("verified! running...");
+    println!("writing");
 
-    let cycle: usize = 16; // 65536;
-
-    let mut hu = ((highest as usize) * cycle) + key as usize;
-    assert_eq!(hu % cycle, key as usize);
-    assert_eq!(hu / cycle, highest as usize);
+    let mut hu = ((highest as usize) * CYCLE) + key as usize;
+    assert_eq!(hu % CYCLE, key as usize);
+    assert_eq!(hu / CYCLE, highest as usize);
 
     loop {
         hu += 1;
 
-        if hu / cycle > cycle {
+        if hu / CYCLE >= CYCLE {
             hu = 0;
         }
 
-        let mut key = u32_to_vec((hu % cycle) as u32);
+        let mut key = u32_to_vec((hu % CYCLE) as u32);
         key.reverse();
-        let value = u32_to_vec((hu / cycle) as u32);
+        let value = u32_to_vec((hu / CYCLE) as u32);
         tree.set(key, value);
     }
 }

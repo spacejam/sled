@@ -930,7 +930,7 @@ fn clean_tail_tears(
     for window in logical_tail.windows(2) {
         if window[0] != window[1] + io_buf_size as Lsn {
             error!("detected torn segment somewhere after {}", window[0]);
-            tear_at = Some(window[1]);
+            tear_at = Some(window[0]);
         }
     }
 
@@ -964,7 +964,14 @@ fn clean_tail_tears(
             // trailer's checksum failed, or
             // the lsn is outdated, or
             // the lsn is 0 but the lid isn't 0 (zeroed segment)
-            debug!("tear detected at lsn {} for trailer {:?}", lsn, trailer);
+            debug!(
+                "tear detected at expected lsn {} actual lsn {} \
+                lid {} for trailer {:?}",
+                expected_trailer_lsn,
+                lsn,
+                lid,
+                trailer
+            );
             if let Some(existing_tear) = tear_at {
                 if existing_tear > lsn {
                     tear_at = Some(lsn);

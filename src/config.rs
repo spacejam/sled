@@ -385,14 +385,14 @@ impl FinalConfig {
 
         for (k, v) in &regenerated.pt {
             if !incremental.pt.contains_key(&k) {
-                panic!("page only present in regenerated pagetable: {}", k);
+                panic!("page only present in regenerated pagetable: {} -> {:?}", k, v);
             }
             assert_eq!(incremental.pt.get(&k), Some(v), "page tables differ for pid {}", k);
         }
 
         for (k, v) in &incremental.pt {
             if !regenerated.pt.contains_key(&k) {
-                panic!("page only present in incremental pagetable: {}", k);
+                panic!("page only present in incremental pagetable: {} -> {:?}", k, v);
             }
             assert_eq!(Some(v), regenerated.pt.get(&k), "page tables differ for pid {}", k);
         }
