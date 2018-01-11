@@ -127,7 +127,6 @@ impl Log {
     /// Return an iterator over the log, starting with
     /// a specified offset.
     pub fn iter_from(&self, lsn: Lsn) -> LogIter {
-        // TODO corrected_lsn = max(lsn, SEG_HEADER_LEN) ? (for any segment?)
         trace!("iterating from lsn {}", lsn);
         let io_buf_size = self.config.get_io_buf_size();
         let segment_base_lsn = lsn / io_buf_size as Lsn * io_buf_size as Lsn;

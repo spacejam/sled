@@ -198,6 +198,7 @@ impl Segment {
         assert_eq!(self.state, Free);
         self.present.clear();
         self.removed.clear();
+        self.deferred_remove.clear();
         self.lsn = Some(new_lsn);
         self.state = Active;
     }
@@ -415,18 +416,23 @@ impl SegmentAccountant {
 
         let io_buf_size = self.config.get_io_buf_size();
 
-        let max_idx = segments.iter().fold(0, |acc, segment| {
-            std::cmp::max(acc, segment.lsn.unwrap_or(acc))
-        }) as usize / io_buf_size;
+        let idx_of_highest_lsn =
+            segments.iter().fold(0, |acc, segment| {
+                std::cmp::max(acc, segment.lsn.unwrap_or(acc))
+            }) as usize / io_buf_size;
 
         for (idx, ref mut segment) in segments.iter_mut().enumerate() {
-            if segment.lsn.is_none() {
-                continue;
-            }
             let segment_start = idx as LogID * io_buf_size as LogID;
 
-            if segment_start > self.tip {
+            if segment_start >= self.tip {
                 self.tip = segment_start + io_buf_size as LogID;
+            }
+
+            if segment.lsn.is_none() {
+                assert_eq!(segment.state, Free);
+                assert!(!self.free.lock().unwrap().contains(&segment_start));
+                self.free_segment(segment_start, true);
+                continue;
             }
 
             let lsn = segment.lsn();
@@ -441,16 +447,15 @@ impl SegmentAccountant {
                 min_items as f64 * cleanup_threshold;
 
             let can_free = segment.is_empty() && !self.pause_rewriting &&
-                idx != max_idx;
+                idx != idx_of_highest_lsn;
 
             let can_drain = (segment_low_pct || segment_low_count) &&
                 !self.pause_rewriting &&
-                idx != max_idx;
+                idx != idx_of_highest_lsn;
 
             // populate free and to_clean if the segment has seen
             if can_free {
                 // can be reused immediately
-
                 if segment.state == Active {
                     segment.active_to_inactive(lsn, true);
                 }
@@ -470,17 +475,14 @@ impl SegmentAccountant {
                 }
 
                 segment.draining_to_free(lsn);
-                if self.tip != segment_start &&
-                    !self.free.lock().unwrap().contains(&segment_start)
-                {
-                    // don't give out this segment twice
-                    trace!(
-                        "freeing segment {} from initialize_from_snapshot, tip: {}",
-                        segment_start,
-                        self.tip
-                    );
-                    self.free_segment(segment_start, true);
-                }
+                assert!(!self.free.lock().unwrap().contains(&segment_start));
+                // don't give out this segment twice
+                trace!(
+                    "freeing segment {} from initialize_from_snapshot, tip: {}",
+                    segment_start,
+                    self.tip
+                );
+                self.free_segment(segment_start, true);
             } else if can_drain {
                 // hack! we check here for pause_rewriting to work with
                 // raw logs, which are created with this set to true.
