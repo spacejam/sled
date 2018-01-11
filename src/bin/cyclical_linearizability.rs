@@ -4,6 +4,7 @@ use std::thread;
 use std::time::Duration;
 
 extern "C" {
+    // used to abruptly kill self with SIGKILL for crash simulation
     fn raise(signum: i32);
 }
 
@@ -94,7 +95,7 @@ fn main() {
         .flush_every_ms(Some(100))
         // drop io_buf_size to 1<<16, then 1<<17 to tease out
         // low hanging fruit more quickly
-        .io_buf_size(1 << 17) // 1<<16 is 65k
+        .io_buf_size(1 << 17) // 1<<16 is 65k but might cause stalling
         .path("cycles.db".to_string())
         .snapshot_after_ops(1 << 56)
         .build();
@@ -106,7 +107,7 @@ fn main() {
     let (key, highest) = verify(&tree);
 
     thread::spawn(|| {
-        thread::sleep(Duration::from_secs(3));
+        thread::sleep(Duration::from_millis(30));
         println!("raising SIGKILL");
         unsafe {
             raise(9);
@@ -115,7 +116,7 @@ fn main() {
 
     println!("verified! running...");
 
-    let cycle: usize = 65536;
+    let cycle: usize = 16; // 65536;
 
     let mut hu = ((highest as usize) * cycle) + key as usize;
     assert_eq!(hu % cycle, key as usize);
@@ -125,9 +126,7 @@ fn main() {
         hu += 1;
 
         if hu / cycle > cycle {
-            println!("completed full transit of 16-bit value space.");
-            // TODO start over?
-            break;
+            hu = 0;
         }
 
         let mut key = u32_to_vec((hu % cycle) as u32);
