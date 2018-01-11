@@ -96,13 +96,13 @@ impl LogIter {
     /// read a segment of log messages. Only call after
     /// pausing segment rewriting on the segment accountant!
     fn read_segment(&mut self, lsn: Lsn, offset: LogID) -> std::io::Result<()> {
-        // we add segment_len to this check because we may be getting the
-        // initial segment that is a bit behind where we left off before.
         trace!(
             "LogIter::read_segment lsn: {:?} cur_lsn: {:?}",
             lsn,
             self.cur_lsn
         );
+        // we add segment_len to this check because we may be getting the
+        // initial segment that is a bit behind where we left off before.
         assert!(lsn + self.segment_len as Lsn >= self.cur_lsn);
         let f = self.config.file();
         let segment_header = f.read_segment_header(offset)?;

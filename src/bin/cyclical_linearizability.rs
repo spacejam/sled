@@ -22,8 +22,10 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
 
     let highest_vec = u32_to_vec(highest);
 
+    println!("first key: {}", highest);
+
     // find how far we got
-    let mut contiguous = 1;
+    let mut contiguous: u32 = 0;
     let mut lowest = 0;
     for (mut k, v) in iter {
         if v == highest_vec {
@@ -50,13 +52,20 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
     // ensure nothing changes after this point
     let low_beginning = u32_to_vec(contiguous + 1);
 
-    println!("from {} and up expecting {:?}", contiguous + 1, lowest_vec);
+    println!("from {:?} and up expecting {:?}", low_beginning, lowest_vec);
     for (mut k, v) in tree.scan(&*low_beginning) {
         if v != lowest_vec {
             k.reverse();
             println!("k: {} v: {}", slice_to_u32(&*k), slice_to_u32(&*v));
         }
-        assert_eq!(v, lowest_vec);
+        assert_eq!(
+            v,
+            lowest_vec,
+            "expected key {} to have value {}, instead it had value {}",
+            slice_to_u32(&*k),
+            lowest,
+            slice_to_u32(&*v)
+        );
     }
 
     (contiguous, highest)
@@ -75,7 +84,6 @@ fn slice_to_u32(b: &[u8]) -> u32 {
 }
 
 fn main() {
-    // TODO CAS from multiple threads
     let config = sled::Config::default()
         .io_bufs(2)
         .blink_fanout(15)
@@ -84,7 +92,9 @@ fn main() {
         .cache_bits(6)
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(100))
-        .io_buf_size(1 << 16) // 65k
+        // drop io_buf_size to 1<<16, then 1<<17 to tease out
+        // low hanging fruit more quickly
+        .io_buf_size(1 << 17) // 1<<16 is 65k
         .path("cycles.db".to_string())
         .snapshot_after_ops(1 << 56)
         .build();
@@ -96,7 +106,7 @@ fn main() {
     let (key, highest) = verify(&tree);
 
     thread::spawn(|| {
-        thread::sleep(Duration::from_secs(1));
+        thread::sleep(Duration::from_secs(3));
         println!("raising SIGKILL");
         unsafe {
             raise(9);

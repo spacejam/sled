@@ -356,48 +356,45 @@ impl FinalConfig {
 
         let regenerated = read_snapshot_or_default::<PM, P, R>(&self);
 
-        for (k, v) in &incremental.pt {
-            if !regenerated.pt.contains_key(&k) {
-                panic!("page only present in incremental pagetable: {}", k);
-            }
-            assert_eq!(Some(v), regenerated.pt.get(&k));
-        }
-
-        for (k, v) in &regenerated.pt {
-            if !incremental.pt.contains_key(&k) {
-                panic!("page only present in incremental pagetable: {}", k);
-            }
-            assert_eq!(Some(v), incremental.pt.get(&k));
-        }
-
-        for (k, v) in &incremental.replacements {
-            if !regenerated.replacements.contains_key(&k) {
-                panic!("page only present in incremental replacement page map: {}", k);
-            }
-            assert_eq!(
-                Some(v),
-                regenerated.replacements.get(&k),
-                "replacement map for page {} is inconsistent between \
-                incremental and regenerated snapshots",
-                k
-            );
-        }
-
-        for (k, v) in &regenerated.replacements {
-            if !incremental.replacements.contains_key(&k) {
-                panic!("page only present in incremental replacement page map: {}", k);
-            }
-            assert_eq!(Some(v), incremental.replacements.get(&k));
-        }
-
         #[cfg(feature = "check_snapshot_integrity")]
         {
             let diff: Vec<&Lsn> = incremental
                 .seen_lsns
                 .symmetric_difference(&regenerated.seen_lsns)
                 .collect();
-            assert_eq!(diff, Vec::<&Lsn>::new(), "found lsns NOT present in both snapshots");
-            println!("saw {} lsns in both snapshots", regenerated.seen_lsns.len());
+            if !diff.is_empty() {
+                let only_regen: Vec<_> = regenerated
+                    .seen_lsns
+                    .difference(&incremental.seen_lsns)
+                    .collect();
+                if !only_regen.is_empty() {
+                    panic!("regenerated-only lsns: {:?}", only_regen);
+                }
+
+                let only_incremental: Vec<_> = incremental
+                    .seen_lsns
+                    .difference(&regenerated.seen_lsns)
+                    .collect();
+                if !only_incremental.is_empty() {
+                    // not a panic because it is expected to see lsns
+                    // that were scrubbed from segments.
+                    println!("incremental-only lsns: {:?}", only_incremental.len());
+                }
+            }
+        }
+
+        for (k, v) in &regenerated.pt {
+            if !incremental.pt.contains_key(&k) {
+                panic!("page only present in regenerated pagetable: {}", k);
+            }
+            assert_eq!(incremental.pt.get(&k), Some(v), "page tables differ for pid {}", k);
+        }
+
+        for (k, v) in &incremental.pt {
+            if !regenerated.pt.contains_key(&k) {
+                panic!("page only present in incremental pagetable: {}", k);
+            }
+            assert_eq!(Some(v), regenerated.pt.get(&k), "page tables differ for pid {}", k);
         }
 
         assert_eq!(incremental.max_pid, regenerated.max_pid, "snapshot max_pid diverged");
@@ -406,10 +403,36 @@ impl FinalConfig {
         assert_eq!(incremental.free, regenerated.free, "snapshot free list diverged");
         assert_eq!(incremental.recovery, regenerated.recovery, "snapshot recovery diverged");
 
+        /*
+        for (k, v) in &regenerated.replacements {
+            if !incremental.replacements.contains_key(&k) {
+                panic!("page only present in regenerated replacement map: {}", k);
+            }
+            assert_eq!(
+                Some(v), 
+                incremental.replacements.get(&k),
+                "replacement tables differ for pid {}",
+                k
+            );
+        }
+
+        for (k, v) in &incremental.replacements {
+            if !regenerated.replacements.contains_key(&k) {
+                panic!("page only present in incremental replacement map: {}", k);
+            }
+            assert_eq!(
+                Some(v),
+                regenerated.replacements.get(&k),
+                "replacement tables differ for pid {}", 
+                k,
+            );
+        }
+
         assert_eq!(
             incremental,
             regenerated,
             "snapshots have diverged!"
         );
+        */
     }
 }
