@@ -46,6 +46,7 @@ version = "0.3"
 # features = ["max_level_off"]
 
 [dependencies]
+libc = "0.2"
 crossbeam-epoch = "0.1"
 bincode = "0.8"
 serde = "1.0"
@@ -65,5 +66,4 @@ cpuprofiler = {version = "0.0.3", optional = true}
 
 [dev-dependencies]
 quickcheck = "0.2"
-libc = "0.2"
 rand = "0.3"

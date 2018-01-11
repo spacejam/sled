@@ -108,9 +108,11 @@ impl Log {
         Log::start::<()>(config, snapshot)
     }
 
-    /// Flush the next io buffer.
+    /// Flushes any pending IO buffers to disk to ensure durability.
     pub fn flush(&self) {
-        self.iobufs.flush();
+        for _ in 0..self.config.get_io_bufs() {
+            self.iobufs.flush();
+        }
     }
 
     /// Reserve space in the log for a pending linearized operation.
@@ -291,6 +293,9 @@ impl LogRead {
     }
 }
 
+// NB we use a lot of xors below to differentiate between zeroed out
+// data on disk and an lsn or crc16 of 0
+
 impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
     fn from(buf: [u8; MSG_HEADER_LEN]) -> MessageHeader {
         let valid = buf[0] == 1;
@@ -305,7 +310,7 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
         len_arr.copy_from_slice(&*len_buf);
         let len: u32 = unsafe { std::mem::transmute(len_arr) };
 
-        let crc16 = [buf[13], buf[14]];
+        let crc16 = [buf[13] ^ 0xFF, buf[14] ^ 0xFF];
 
         MessageHeader {
             successful_flush: valid,
@@ -332,8 +337,8 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
         let len_arr: [u8; 4] = unsafe { std::mem::transmute(self.len as u32) };
         buf[9..13].copy_from_slice(&len_arr);
 
-        buf[13] = self.crc16[0];
-        buf[14] = self.crc16[1];
+        buf[13] = self.crc16[0] ^ 0xFF;
+        buf[14] = self.crc16[1] ^ 0xFF;
 
         buf
     }
@@ -341,17 +346,19 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
 
 impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
     fn from(buf: [u8; SEG_HEADER_LEN]) -> SegmentHeader {
-        let crc16 = [buf[0], buf[1]];
+        let crc16 = [buf[0] ^ 0xFF, buf[1] ^ 0xFF];
 
         let lsn_buf = &buf[2..10];
         let mut lsn_arr = [0u8; 8];
         lsn_arr.copy_from_slice(&*lsn_buf);
-        let lsn: Lsn = unsafe { std::mem::transmute(lsn_arr) };
+        let xor_lsn: Lsn = unsafe { std::mem::transmute(lsn_arr) };
+        let lsn = xor_lsn ^ 0xFFFF_FFFF;
 
         let prev_lid_buf = &buf[10..18];
         let mut prev_lid_arr = [0u8; 8];
         prev_lid_arr.copy_from_slice(&*prev_lid_buf);
-        let prev_lid: LogID = unsafe { std::mem::transmute(prev_lid_arr) };
+        let xor_prev_lid: LogID = unsafe { std::mem::transmute(prev_lid_arr) };
+        let prev_lid = xor_prev_lid ^ 0xFFFF_FFFF_FFFF_FFFF;
 
         let crc16_tested = crc16_arr(&prev_lid_arr);
 
@@ -367,15 +374,19 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
     fn into(self) -> [u8; SEG_HEADER_LEN] {
         let mut buf = [0u8; SEG_HEADER_LEN];
 
-        let lsn_arr: [u8; 8] = unsafe { std::mem::transmute(self.lsn) };
+        let xor_lsn = self.lsn ^ 0xFFFF_FFFF;
+        let lsn_arr: [u8; 8] = unsafe { std::mem::transmute(xor_lsn) };
         buf[2..10].copy_from_slice(&lsn_arr);
 
-        let prev_lid_arr: [u8; 8] = unsafe { std::mem::transmute(self.prev) };
+        let xor_prev_lid = self.prev ^ 0xFFFF_FFFF_FFFF_FFFF;
+        let prev_lid_arr: [u8; 8] =
+            unsafe { std::mem::transmute(xor_prev_lid) };
         buf[10..18].copy_from_slice(&prev_lid_arr);
 
         let crc16 = crc16_arr(&prev_lid_arr);
-        buf[0] = crc16[0];
-        buf[1] = crc16[1];
+
+        buf[0] = crc16[0] ^ 0xFF;
+        buf[1] = crc16[1] ^ 0xFF;
 
         buf
     }
@@ -383,12 +394,13 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
 
 impl From<[u8; SEG_TRAILER_LEN]> for SegmentTrailer {
     fn from(buf: [u8; SEG_TRAILER_LEN]) -> SegmentTrailer {
-        let crc16 = [buf[0], buf[1]];
+        let crc16 = [buf[0] ^ 0xFF, buf[1] ^ 0xFF];
 
         let lsn_buf = &buf[2..10];
         let mut lsn_arr = [0u8; 8];
         lsn_arr.copy_from_slice(&*lsn_buf);
-        let lsn: Lsn = unsafe { std::mem::transmute(lsn_arr) };
+        let xor_lsn: Lsn = unsafe { std::mem::transmute(lsn_arr) };
+        let lsn = xor_lsn ^ 0xFFFF_FFFF;
 
         let crc16_tested = crc16_arr(&lsn_arr);
 
@@ -403,12 +415,13 @@ impl Into<[u8; SEG_TRAILER_LEN]> for SegmentTrailer {
     fn into(self) -> [u8; SEG_TRAILER_LEN] {
         let mut buf = [0u8; SEG_TRAILER_LEN];
 
-        let lsn_arr: [u8; 8] = unsafe { std::mem::transmute(self.lsn) };
+        let xor_lsn = self.lsn ^ 0xFFFF_FFFF;
+        let lsn_arr: [u8; 8] = unsafe { std::mem::transmute(xor_lsn) };
         buf[2..10].copy_from_slice(&lsn_arr);
 
         let crc16 = crc16_arr(&lsn_arr);
-        buf[0] = crc16[0];
-        buf[1] = crc16[1];
+        buf[0] = crc16[0] ^ 0xFF;
+        buf[1] = crc16[1] ^ 0xFF;
 
         buf
     }

@@ -619,6 +619,17 @@ impl IoBufs {
         f.pwrite_all(&data[..res_len], lid).unwrap();
         f.sync_all().unwrap();
 
+        if res_len > 0 {
+            debug!(
+                "wrote lsns {}-{} to disk at offsets {}-{}",
+                base_lsn,
+                base_lsn + res_len as Lsn - 1,
+                lid,
+                lid + res_len as LogID - 1
+            );
+            self.mark_interval(base_lsn, res_len);
+        }
+
         // write a trailer if we're maxed
         let maxed = iobuf.linearized(|| iobuf.get_maxed());
         if maxed {
@@ -638,15 +649,15 @@ impl IoBufs {
 
             let trailer_bytes: [u8; SEG_TRAILER_LEN] = trailer.into();
 
-            trace!(
-                "writing trailer at lid {} for lsn {}",
-                trailer_lid,
-                trailer_lsn
-            );
-
             f.pwrite_all(&trailer_bytes, trailer_lid).unwrap();
             f.sync_all().unwrap();
             iobuf.set_maxed(false);
+
+            trace!(
+                "wrote trailer at lid {} for lsn {}",
+                trailer_lid,
+                trailer_lsn
+            );
 
             // transition this segment into deplete-only mode now
             // that n_writers is 0, and all calls to mark_replace/link
@@ -676,17 +687,6 @@ impl IoBufs {
         debug_delay();
         let _written_bufs = self.written_bufs.fetch_add(1, SeqCst);
         trace!("{} written", _written_bufs % self.config.get_io_bufs());
-
-        if res_len > 0 {
-            debug!(
-                "wrote lsns {}-{} to disk at offsets {}-{}",
-                base_lsn,
-                base_lsn + res_len as Lsn - 1,
-                lid,
-                lid + res_len as LogID - 1
-            );
-            self.mark_interval(base_lsn, res_len);
-        }
 
         M.write_to_log.measure(clock() - start);
     }

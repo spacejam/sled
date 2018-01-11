@@ -133,6 +133,11 @@ impl Tree {
         }
     }
 
+    /// Flushes any pending IO buffers to disk to ensure durability.
+    pub fn flush(&self) {
+        self.pages.flush();
+    }
+
     /// Retrieve a value from the `Tree` if it exists.
     pub fn get(&self, key: &[u8]) -> Option<Value> {
         let start = clock();
