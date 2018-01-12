@@ -1057,7 +1057,7 @@ pub trait Manager {
 /// The log may be configured to write data
 /// in several different ways, depending on
 /// the constraints of the system using it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum SegmentMode {
     /// Write to the end of the log, always.
     Linear,

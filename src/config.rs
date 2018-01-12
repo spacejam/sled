@@ -1,11 +1,14 @@
 use std::fmt::Debug;
 use std::fs;
+use std::io::{Read, Seek, Write};
 use std::ops::Deref;
 use std::path::Path;
 use std::sync::Arc;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+
+use bincode::{Infinite, deserialize, serialize};
 
 use super::*;
 
@@ -28,7 +31,7 @@ use super::*;
 ///     .path("/path/to/data".to_owned())
 ///     .read_only(true);
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct Config {
     io_bufs: usize,
     io_buf_size: usize,
@@ -48,7 +51,6 @@ pub struct Config {
     segment_cleanup_threshold: f64,
     min_free_segments: usize,
     zero_copy_storage: bool,
-    file: Option<Arc<fs::File>>,
     tmp_path: String,
     read_only: bool,
     pub(super) segment_mode: SegmentMode,
@@ -89,7 +91,6 @@ impl Default for Config {
             segment_cleanup_threshold: 0.2,
             min_free_segments: 3,
             zero_copy_storage: false,
-            file: None,
             tmp_path: tmp_path.to_owned(),
             segment_mode: SegmentMode::Gc,
         }
@@ -163,7 +164,7 @@ impl Config {
     pub fn get_snapshot_files(&self) -> Vec<String> {
         let mut prefix = self.snapshot_prefix();
 
-        prefix.push_str(".");
+        prefix.push_str(".snap.");
 
         let err_msg = format!("could not read snapshot directory ({})", prefix);
 
@@ -206,7 +207,7 @@ impl Config {
     }
 
     /// Finalize the configuration.
-    pub fn build(mut self) -> FinalConfig {
+    pub fn build(self) -> FinalConfig {
         self.validate();
         // panic if we can't parse the path
         let path = self.get_path();
@@ -229,17 +230,20 @@ impl Config {
             }
         }
 
+        self.verify_conf_changes_ok();
+
         // open the data file
         let mut options = fs::OpenOptions::new();
         options.create(true);
         options.read(true);
         options.write(true);
-        let f = options.open(&path).unwrap();
-
-        self.file = Some(Arc::new(f));
+        let file = options.open(&path).unwrap();
 
         // seal config in a FinalConfig
-        FinalConfig(Arc::new(self))
+        FinalConfig {
+            inner: Arc::new(self),
+            file: Arc::new(file),
+        }
     }
 
     /// Consumes the `Config` and produces a `Tree` from it.
@@ -273,6 +277,61 @@ impl Config {
         assert!(self.zstd_compression_factor >= 1);
         assert!(self.zstd_compression_factor <= 22);
     }
+
+    fn verify_conf_changes_ok(&self) {
+        if let Ok(Some(mut old)) = self.read_config() {
+            old.tmp_path = self.tmp_path.clone();
+            assert_eq!(self, &old, "changing the configuration \
+                       between usages is currently unsupported");
+        } else {
+            self.write_config().expect(
+                "unable to open file for writing",
+            );
+        }
+    }
+
+    fn write_config(&self) -> std::io::Result<()> {
+        let bytes = serialize(&self, Infinite).unwrap();
+        let crc64: [u8; 8] = unsafe { std::mem::transmute(crc64(&*bytes)) };
+
+        let path = format!("{}.conf", self.get_path());
+        let mut f = std::fs::OpenOptions::new().write(true).create(true).open(
+            path,
+        )?;
+
+        f.write_all(&*bytes)?;
+        f.write_all(&crc64)?;
+        f.sync_all()
+    }
+
+    fn read_config(&self) -> std::io::Result<Option<Config>> {
+        let path = format!("{}.conf", self.get_path());
+
+        let mut f = std::fs::OpenOptions::new().read(true).open(&path)?;
+        if f.metadata().unwrap().len() <= 8 {
+            warn!("empty/corrupt configuration file found");
+            return Ok(None);
+        }
+
+        let mut buf = vec![];
+        f.read_to_end(&mut buf).unwrap();
+        let len = buf.len();
+        buf.split_off(len - 8);
+
+        let mut crc_expected_bytes = [0u8; 8];
+        f.seek(std::io::SeekFrom::End(-8)).unwrap();
+        f.read_exact(&mut crc_expected_bytes).unwrap();
+        let crc_expected: u64 =
+            unsafe { std::mem::transmute(crc_expected_bytes) };
+
+        let crc_actual = crc64(&*buf);
+
+        if crc_expected != crc_actual {
+            warn!("crc for settings file {:?} failed! can't verify that config is safe", path);
+        }
+
+        Ok(deserialize::<Config>(&*buf).ok())
+    }
 }
 
 impl Drop for Config {
@@ -299,7 +358,10 @@ impl Drop for Config {
 /// A finalized `Config` that can be use multiple times
 /// to open a `Tree` or `Log`.
 #[derive(Clone, Debug)]
-pub struct FinalConfig(Arc<Config>);
+pub struct FinalConfig {
+    inner: Arc<Config>,
+    file: Arc<fs::File>,
+}
 
 unsafe impl Send for FinalConfig {}
 unsafe impl Sync for FinalConfig {}
@@ -308,7 +370,7 @@ impl Deref for FinalConfig {
     type Target = Config;
 
     fn deref(&self) -> &Self::Target {
-        &*self.0
+        &*self.inner
     }
 }
 
@@ -320,7 +382,7 @@ impl FinalConfig {
 
     /// Start a `Log` using this finalized configuration.
     pub fn log(&self) -> Log {
-        assert_eq!(self.0.segment_mode, SegmentMode::Linear, "must use SegmentMode::Linear with log!");
+        assert_eq!(self.inner.segment_mode, SegmentMode::Linear, "must use SegmentMode::Linear with log!");
         Log::start_raw_log(self.clone())
     }
 
@@ -329,11 +391,7 @@ impl FinalConfig {
     /// or create a new one if this is the first time the
     /// thread is accessing it.
     pub fn file(&self) -> Arc<fs::File> {
-        if let Some(ref f) = self.file {
-            f.clone()
-        } else {
-            unreachable!()
-        }
+        self.file.clone()
     }
 
     #[doc(hidden)]
