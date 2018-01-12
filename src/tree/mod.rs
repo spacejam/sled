@@ -157,7 +157,7 @@ impl Tree {
     ///
     /// ```
     /// use sled::Config;
-    /// let t = Config::default().tree();
+    /// let t = Config::default().temporary(true).tree();
     ///
     /// // unique creation
     /// assert_eq!(t.cas(vec![1], None, Some(vec![1])), Ok(()));
@@ -172,7 +172,7 @@ impl Tree {
     /// assert_eq!(t.get(&*vec![1]), None);
     ///
     /// // read-only tree
-    /// let t = Config::default().read_only(true).tree();
+    /// let t = Config::default().temporary(true).read_only(true).tree();
     /// assert_eq!(t.cas(vec![10], Some(vec![2]), None), Err(None));
     /// ```
     pub fn cas(
@@ -253,7 +253,7 @@ impl Tree {
     ///
     /// ```
     /// use sled::Config;
-    /// let t = Config::default().tree();
+    /// let t = Config::default().temporary(true).tree();
     /// t.set(vec![1], vec![1]);
     /// assert_eq!(t.del(&*vec![1]), Some(vec![1]));
     /// assert_eq!(t.del(&*vec![1]), None);
@@ -305,7 +305,7 @@ impl Tree {
     ///
     /// ```
     /// use sled::Config;
-    /// let t = Config::default().tree();
+    /// let t = Config::default().temporary(true).tree();
     /// t.set(vec![1], vec![10]);
     /// t.set(vec![2], vec![20]);
     /// t.set(vec![3], vec![30]);
@@ -331,7 +331,7 @@ impl Tree {
     ///
     /// ```
     /// use sled::Config;
-    /// let t = Config::default().tree();
+    /// let t = Config::default().temporary(true).tree();
     /// t.set(vec![1], vec![10]);
     /// t.set(vec![2], vec![20]);
     /// t.set(vec![3], vec![30]);

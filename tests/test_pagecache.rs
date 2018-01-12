@@ -42,6 +42,7 @@ impl Materializer for TestMaterializer {
 #[test]
 fn pagecache_caching() {
     let conf = Config::default()
+        .temporary(true)
         .cache_capacity(40)
         .cache_bits(0)
         .flush_every_ms(None)
@@ -71,6 +72,7 @@ fn pagecache_caching() {
 #[test]
 fn pagecache_strange_crash_1() {
     let conf = Config::default()
+        .temporary(true)
         .cache_capacity(40)
         .cache_bits(0)
         .flush_every_ms(None)
@@ -108,6 +110,7 @@ fn pagecache_strange_crash_2() {
     for x in 0..10 {
         let guard = pin();
         let conf = Config::default()
+            .temporary(true)
             .cache_capacity(40)
             .cache_bits(0)
             .flush_every_ms(None)
@@ -147,6 +150,7 @@ fn pagecache_strange_crash_2() {
 #[test]
 fn basic_pagecache_recovery() {
     let conf = Config::default()
+        .temporary(true)
         .flush_every_ms(None)
         .io_buf_size(1000)
         .build();
@@ -273,6 +277,7 @@ enum P {
 fn prop_pagecache_works(ops: OpVec) -> bool {
     use self::Op::*;
     let config = Config::default()
+        .temporary(true)
         .io_buf_size(1000)
         .flush_every_ms(None)
         // FIXME uncomment .flush_every_ms(Some(1))

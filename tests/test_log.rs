@@ -25,7 +25,10 @@ type LogID = u64;
 #[test]
 #[ignore]
 fn more_log_reservations_than_buffers() {
-    let config = Config::default().segment_mode(SegmentMode::Linear).build();
+    let config = Config::default()
+        .temporary(true)
+        .segment_mode(SegmentMode::Linear)
+        .build();
     let log = config.log();
     let mut reservations = vec![];
     for _ in 0..config.get_io_bufs() + 1 {
@@ -42,6 +45,7 @@ fn more_log_reservations_than_buffers() {
 #[test]
 fn non_contiguous_log_flush() {
     let conf = Config::default()
+        .temporary(true)
         .segment_mode(SegmentMode::Linear)
         .io_buf_size(1000)
         .build();
@@ -66,6 +70,7 @@ fn concurrent_logging() {
     // TODO linearize res bufs, verify they are correct
     for i in 0..10 {
         let conf = Config::default()
+            .temporary(true)
             .segment_mode(SegmentMode::Linear)
             .io_buf_size(1000)
             .flush_every_ms(Some(50))
@@ -162,7 +167,7 @@ fn abort(log: &Log) {
 
 #[test]
 fn log_aborts() {
-    let log = Config::default().log();
+    let log = Config::default().temporary(true).log();
     write(&log);
     abort(&log);
     write(&log);
@@ -174,6 +179,7 @@ fn log_aborts() {
 #[test]
 fn log_iterator() {
     let conf = Config::default()
+        .temporary(true)
         .segment_mode(SegmentMode::Linear)
         .io_buf_size(1000)
         .build();
@@ -258,6 +264,7 @@ impl Arbitrary for Op {
 #[ignore]
 fn snapshot_with_out_of_order_buffers() {
     let conf = Config::default()
+        .temporary(true)
         .segment_mode(SegmentMode::Linear)
         .io_buf_size(100)
         .io_bufs(2)
@@ -299,6 +306,7 @@ fn multi_segment_log_iteration() {
     // ensure segments are being linked
     // ensure trailers are valid
     let conf = Config::default()
+        .temporary(true)
         .segment_mode(SegmentMode::Linear)
         .io_buf_size(1000)
         .build();
@@ -384,6 +392,7 @@ impl Arbitrary for OpVec {
 fn prop_log_works(ops: OpVec) -> bool {
     use self::Op::*;
     let config = Config::default()
+        .temporary(true)
         .io_buf_size(1024 * 8)
         .flush_every_ms(Some(1))
         // .flush_every_ms(None) // FIXME rm line
