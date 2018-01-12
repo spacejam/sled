@@ -1,8 +1,9 @@
 use std::fmt::Debug;
 use std::fs;
+use std::ffi::{OsStr, OsString};
 use std::io::{Read, Seek, Write};
 use std::ops::Deref;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -38,7 +39,7 @@ pub struct Config {
     min_items_per_segment: usize,
     blink_fanout: usize,
     page_consolidation_threshold: usize,
-    path: String,
+    path: OsString,
     cache_bits: usize,
     cache_capacity: usize,
     use_os_cache: bool,
@@ -46,12 +47,12 @@ pub struct Config {
     zstd_compression_factor: i32,
     flush_every_ms: Option<u64>,
     snapshot_after_ops: usize,
-    snapshot_path: Option<String>,
+    snapshot_path: Option<OsString>,
     cache_fixup_threshold: usize,
     segment_cleanup_threshold: f64,
     min_free_segments: usize,
     zero_copy_storage: bool,
-    tmp_path: String,
+    tmp_path: OsString,
     temporary: bool,
     read_only: bool,
     pub(super) segment_mode: SegmentMode,
@@ -78,7 +79,7 @@ impl Default for Config {
             min_items_per_segment: 4, // capacity for >=4 pages/segment
             blink_fanout: 32,
             page_consolidation_threshold: 10,
-            path: "sled".to_owned(),
+            path: "sled".to_owned().into(),
             read_only: false,
             cache_bits: 6, // 64 shards
             cache_capacity: 1024 * 1024 * 1024, // 1gb
@@ -92,7 +93,7 @@ impl Default for Config {
             segment_cleanup_threshold: 0.2,
             min_free_segments: 3,
             zero_copy_storage: false,
-            tmp_path: tmp_path.to_owned(),
+            tmp_path: tmp_path.to_owned().into(),
             temporary: false,
             segment_mode: SegmentMode::Gc,
         }
@@ -132,7 +133,6 @@ impl Config {
         (min_items_per_segment, get_min_items_per_segment, set_min_items_per_segment, usize, "minimum data chunks/pages in a segment."),
         (blink_fanout, get_blink_fanout, set_blink_fanout, usize, "b-link node fanout, minimum of 2"),
         (page_consolidation_threshold, get_page_consolidation_threshold, set_page_consolidation_threshold, usize, "page consolidation threshold"),
-        (path, get_path, set_path, String, "path for the main storage file"),
         (temporary, get_temporary, set_temporary, bool, "if this database should be removed after the Config is dropped"),
         (read_only, get_read_only, set_read_only, bool, "whether to run in read-only mode"),
         (cache_bits, get_cache_bits, set_cache_bits, usize, "log base 2 of the number of cache shards"),
@@ -142,57 +142,68 @@ impl Config {
         (zstd_compression_factor, get_zstd_compression_factor, set_zstd_compression_factor, i32, "the compression factor to use with zstd compression"),
         (flush_every_ms, get_flush_every_ms, set_flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
         (snapshot_after_ops, get_snapshot_after_ops, set_snapshot_after_ops, usize, "number of operations between page table snapshots"),
-        (snapshot_path, get_snapshot_path, set_snapshot_path, Option<String>, "snapshot file location"),
         (cache_fixup_threshold, get_cache_fixup_threshold, set_cache_fixup_threshold, usize, "the maximum length of a cached page fragment chain"),
         (segment_cleanup_threshold, get_segment_cleanup_threshold, set_segment_cleanup_threshold, f64, "the proportion of remaining valid pages in the segment"),
         (min_free_segments, get_min_free_segments, set_min_free_segments, usize, "the minimum number of free segments to have on-deck before a compaction occurs"),
         (zero_copy_storage, get_zero_copy_storage, set_zero_copy_storage, bool, "disabling of the log segment copy cleaner"),
-        (segment_mode, get_segment_mode, set_segment_mode, SegmentMode, "the file segment selection mode")
+        (segment_mode, get_segment_mode, set_segment_mode, SegmentMode, "the file segment selection mode"),
+        (snapshot_path, get_snapshot_path, set_snapshot_path, Option<OsString>, "snapshot file location")
     );
 
-    /// Get the temporary path of the database, used as temporary
-    /// storage if none is provided.
-    pub fn get_tmp_path(&self) -> String {
-        self.tmp_path.clone()
+    /// Set the path of the database
+    pub fn path<P: AsRef<Path>>(&mut self, path: P) -> Config {
+        let path_ref: &Path = path.as_ref();
+        let os_str_ref: &OsStr = path_ref.as_ref();
+
+        let mut copy = self.clone();
+        copy.path = os_str_ref.to_os_string();
+        copy
+    }
+
+    /// Get the path of the database
+    pub fn get_path(&self) -> OsString {
+        if self.temporary {
+            self.tmp_path.clone()
+        } else {
+            self.path.clone()
+        }
     }
 
     /// returns the current snapshot file prefix
-    pub fn snapshot_prefix(&self) -> String {
+    pub fn snapshot_prefix(&self) -> OsString {
         let snapshot_path = self.get_snapshot_path();
-        let path = if self.get_temporary() {
-            self.get_tmp_path()
-        } else {
-            self.get_path()
-        };
+        let path = self.get_path().as_os_str().to_os_string();
 
-        snapshot_path.unwrap_or(path)
+        snapshot_path
+            .map(|sp| sp.as_os_str().to_os_string())
+            .unwrap_or(path)
     }
 
     /// returns the snapshot file paths for this system
-    pub fn get_snapshot_files(&self) -> Vec<String> {
+    pub fn get_snapshot_files(&self) -> Vec<PathBuf> {
         let mut prefix = self.snapshot_prefix();
 
-        prefix.push_str(".snap.");
+        prefix.push(".snap.");
 
-        let err_msg = format!("could not read snapshot directory ({})", prefix);
+        let err_msg = format!("could not read snapshot directory ({})", prefix.to_string_lossy());
 
-        let abs_prefix: String = if Path::new(&prefix).is_absolute() {
+        let abs_prefix: OsString = if Path::new(&prefix).is_absolute() {
             prefix
         } else {
             let mut abs_path = std::env::current_dir().expect(&*err_msg);
             abs_path.push(prefix.clone());
-            abs_path.to_str().unwrap().to_owned()
+            abs_path.as_os_str().to_os_string()
         };
 
         let filter = |dir_entry: std::io::Result<std::fs::DirEntry>| {
             if let Ok(de) = dir_entry {
                 let path_buf = de.path();
                 let path = path_buf.as_path();
-                let path_str = path.to_str().unwrap();
-                if path_str.starts_with(&abs_prefix) &&
+                let path_str = &*path.to_string_lossy();
+                if path_str.starts_with(&*abs_prefix.to_string_lossy()) &&
                     !path_str.ends_with(".in___motion")
                 {
-                    Some(path_str.to_owned())
+                    Some(path.to_path_buf())
                 } else {
                     None
                 }
@@ -218,11 +229,7 @@ impl Config {
     pub fn build(self) -> FinalConfig {
         self.validate();
 
-        let path = if self.get_temporary() {
-            format!("{}.db", self.get_tmp_path())
-        } else {
-            format!("{}.db", self.get_path())
-        };
+        let path = self.db_path();
 
         // panic if we can't parse the path
         let dir = Path::new(&path).parent().expect(
@@ -308,11 +315,7 @@ impl Config {
         let bytes = serialize(&self, Infinite).unwrap();
         let crc64: [u8; 8] = unsafe { std::mem::transmute(crc64(&*bytes)) };
 
-        let path = if self.get_temporary() {
-            format!("{}.conf", self.get_tmp_path())
-        } else {
-            format!("{}.conf", self.get_path())
-        };
+        let path = self.conf_path();
 
         let mut f = std::fs::OpenOptions::new().write(true).create(true).open(
             path,
@@ -324,11 +327,7 @@ impl Config {
     }
 
     fn read_config(&self) -> std::io::Result<Option<Config>> {
-        let path = if self.get_temporary() {
-            format!("{}.conf", self.get_tmp_path())
-        } else {
-            format!("{}.conf", self.get_path())
-        };
+        let path = self.conf_path();
 
         let mut f = std::fs::OpenOptions::new().read(true).open(&path)?;
         if f.metadata().unwrap().len() <= 8 {
@@ -355,25 +354,38 @@ impl Config {
 
         Ok(deserialize::<Config>(&*buf).ok())
     }
+
+    fn db_path(&self) -> OsString {
+        let mut path = self.get_path();
+        path.push(".db");
+        path
+    }
+
+    fn conf_path(&self) -> OsString {
+        let mut path = self.get_path();
+        path.push(".conf");
+        path
+    }
 }
 
-impl Drop for Config {
+impl Drop for FinalConfig {
     fn drop(&mut self) {
         if !self.get_temporary() {
             return;
         }
 
         // Our files are temporary, so nuke them.
-        warn!("removing ephemeral storage file {}", self.tmp_path);
-        let db_path = format!("{}.db", self.tmp_path);
-        let conf_path = format!("{}.conf", self.tmp_path);
+        warn!("removing ephemeral storage file {}", self.tmp_path.to_string_lossy());
+
+        let db_path = self.db_path();
+        let conf_path = self.conf_path();
 
         let _res = fs::remove_file(db_path);
         let _res = fs::remove_file(conf_path);
 
         let candidates = self.get_snapshot_files();
         for path in candidates {
-            warn!("removing old snapshot file {}", path);
+            warn!("removing old snapshot file {}", path.to_string_lossy());
             if let Err(_e) = std::fs::remove_file(path) {
                 error!("failed to remove old snapshot file, maybe snapshot race? {}", _e);
             }

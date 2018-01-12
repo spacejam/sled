@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 use std::io::{Read, Seek, Write};
 
 #[cfg(feature = "zstd")]
@@ -359,11 +358,16 @@ pub fn write_snapshot<R>(config: &FinalConfig, snapshot: &Snapshot<R>)
     let len_bytes: [u8; 8] =
         unsafe { std::mem::transmute(decompressed_len as u64) };
 
-    let prefix = config.snapshot_prefix();
+    let path_1_suffix = format!(".snap.{:016X}.in___motion", snapshot.max_lsn);
 
-    let path_1 =
-        format!("{}.snap.{:016X}.in___motion", prefix, snapshot.max_lsn);
-    let path_2 = format!("{}.snap.{:016X}", prefix, snapshot.max_lsn);
+    let mut path_1 = config.snapshot_prefix();
+    path_1.push(path_1_suffix);
+
+    let path_2_suffix = format!(".snap.{:016X}", snapshot.max_lsn);
+
+    let mut path_2 = config.snapshot_prefix();
+    path_2.push(path_2_suffix);
+
     let mut f = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -377,17 +381,17 @@ pub fn write_snapshot<R>(config: &FinalConfig, snapshot: &Snapshot<R>)
     f.sync_all().unwrap();
     drop(f);
 
-    trace!("wrote snapshot to {}", path_1);
+    trace!("wrote snapshot to {}", path_1.to_string_lossy());
 
     std::fs::rename(path_1, &path_2).expect("failed to write snapshot");
 
-    trace!("renamed snapshot to {}", path_2);
+    trace!("renamed snapshot to {}", path_2.to_string_lossy());
 
     // clean up any old snapshots
     let candidates = config.get_snapshot_files();
     for path in candidates {
-        let path_str = Path::new(&path).file_name().unwrap().to_str().unwrap();
-        if !path_2.ends_with(&*path_str) {
+        let path_str = path.file_name().unwrap().to_str().unwrap();
+        if !path_2.to_string_lossy().ends_with(&*path_str) {
             debug!("removing old snapshot file {:?}", path);
 
             if let Err(_e) = std::fs::remove_file(&path) {
