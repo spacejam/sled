@@ -117,10 +117,9 @@ macro_rules! builder {
 
             #[doc="Builder, set "]
             #[doc=$desc]
-            pub fn $name(&self, to: $t) -> Config {
-                let mut ret = self.clone();
-                ret.$name = to;
-                ret
+            pub fn $name(mut self, to: $t) -> Config {
+                self.$name = to;
+                self
             }
         )*
     }
@@ -151,13 +150,12 @@ impl Config {
     );
 
     /// Set the path of the database
-    pub fn path<P: AsRef<Path>>(&mut self, path: P) -> Config {
+    pub fn path<P: AsRef<Path>>(mut self, path: P) -> Config {
         let path_ref: &Path = path.as_ref();
         let os_str_ref: &OsStr = path_ref.as_ref();
 
-        let mut copy = self.clone();
-        copy.path = os_str_ref.to_os_string();
-        copy
+        self.path = os_str_ref.to_os_string();
+        self
     }
 
     /// Get the path of the database
