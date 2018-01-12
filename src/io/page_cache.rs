@@ -190,8 +190,7 @@ impl Drop for PidDropper {
 /// }
 ///
 /// fn main() {
-///     let path = "test_pagecache_doc.log";
-///     let conf = sled::Config::default().path(path.to_owned());
+///     let conf = sled::Config::default().temporary(true);
 ///     let pc: sled::PageCache<TestMaterializer, _, _> =
 ///         sled::PageCache::start(conf.build());
 ///     {
@@ -214,9 +213,6 @@ impl Drop for PidDropper {
 ///
 ///         assert_eq!(consolidated, "abc".to_owned());
 ///     }
-///
-///     drop(pc);
-///     std::fs::remove_file(path).unwrap();
 /// }
 /// ```
 pub struct PageCache<PM, P, R>

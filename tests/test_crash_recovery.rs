@@ -1,6 +1,7 @@
 extern crate sled;
 extern crate libc;
 
+use std::fs;
 use std::thread;
 use std::time::Duration;
 
@@ -21,8 +22,6 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
 
     let highest_vec = u32_to_vec(highest);
 
-    println!("first value in tree: {}", highest);
-
     // find how far we got
     let mut contiguous: u32 = 0;
     let mut lowest = 0;
@@ -31,11 +30,6 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
             contiguous += 1;
         } else {
             k.reverse();
-            println!(
-                "different k: {} v: {}",
-                slice_to_u32(&*k),
-                slice_to_u32(&*v)
-            );
             let expected = if highest == 0 {
                 CYCLE as u32 - 1
             } else {
@@ -48,8 +42,6 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
         }
     }
 
-    println!("0 through {} are {}", contiguous, highest);
-
     let lowest_vec = u32_to_vec(lowest);
 
     // ensure nothing changes after this point
@@ -58,7 +50,6 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
     for (mut k, v) in tree.scan(&*low_beginning) {
         if v != lowest_vec {
             k.reverse();
-            println!("k: {} v: {}", slice_to_u32(&*k), slice_to_u32(&*v));
         }
         assert_eq!(
             v,
@@ -97,28 +88,23 @@ fn run() {
         // drop io_buf_size to 1<<16, then 1<<17 to tease out
         // low hanging fruit more quickly
         .io_buf_size(100_000) // 1<<16 is 65k but might cause stalling
-        .path("test_crashes.db".to_string())
+        .path("test_crashes".to_string())
         .snapshot_after_ops(1 << 56)
         .build();
 
-    println!("restoring");
     let tree = config.tree();
 
     // flush to ensure the initial root is stable.
     tree.flush();
 
-    println!("verifying");
     let (key, highest) = verify(&tree);
 
     thread::spawn(|| {
         thread::sleep(Duration::from_millis(100));
-        println!("raising SIGKILL");
         unsafe {
             libc::raise(9);
         }
     });
-
-    println!("writing");
 
     let mut hu = ((highest as usize) * CYCLE) + key as usize;
     assert_eq!(hu % CYCLE, key as usize);
@@ -150,7 +136,24 @@ fn test_crash_recovery() {
                 libc::waitpid(child, &mut status as *mut libc::c_int, 0);
             }
             if status != 9 {
+                cleanup();
                 panic!("child exited abnormally");
+            }
+        }
+    }
+    cleanup();
+}
+
+fn cleanup() {
+    let _res = fs::remove_file("test_crashes.db");
+    let _res = fs::remove_file("test_crashes.conf");
+    for dir_entry in fs::read_dir(".").unwrap() {
+        if let Ok(de) = dir_entry {
+            let path_buf = de.path();
+            let path = path_buf.as_path();
+            let path_str = path.to_str().unwrap();
+            if path_str.starts_with("./test_crashes.snap.") {
+                let _res = fs::remove_file(path);
             }
         }
     }

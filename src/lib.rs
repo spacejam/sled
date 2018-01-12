@@ -1,7 +1,7 @@
 //! `sled` is a flash-sympathetic persistent lock-free B+ tree, pagecache, and log.
 //!
 //! ```
-//! let t = sled::Config::default().tree();
+//! let t = sled::Config::default().temporary(true).tree();
 //! t.set(b"yo!".to_vec(), b"v1".to_vec());
 //! assert_eq!(t.get(b"yo!"), Some(b"v1".to_vec()));
 //! t.cas(b"yo!".to_vec(), Some(b"v1".to_vec()), Some(b"v2".to_vec())).unwrap();

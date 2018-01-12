@@ -52,6 +52,7 @@ pub struct Config {
     min_free_segments: usize,
     zero_copy_storage: bool,
     tmp_path: String,
+    temporary: bool,
     read_only: bool,
     pub(super) segment_mode: SegmentMode,
 }
@@ -77,7 +78,7 @@ impl Default for Config {
             min_items_per_segment: 4, // capacity for >=4 pages/segment
             blink_fanout: 32,
             page_consolidation_threshold: 10,
-            path: tmp_path.to_owned(),
+            path: "sled".to_owned(),
             read_only: false,
             cache_bits: 6, // 64 shards
             cache_capacity: 1024 * 1024 * 1024, // 1gb
@@ -92,6 +93,7 @@ impl Default for Config {
             min_free_segments: 3,
             zero_copy_storage: false,
             tmp_path: tmp_path.to_owned(),
+            temporary: false,
             segment_mode: SegmentMode::Gc,
         }
     }
@@ -131,6 +133,7 @@ impl Config {
         (blink_fanout, get_blink_fanout, set_blink_fanout, usize, "b-link node fanout, minimum of 2"),
         (page_consolidation_threshold, get_page_consolidation_threshold, set_page_consolidation_threshold, usize, "page consolidation threshold"),
         (path, get_path, set_path, String, "path for the main storage file"),
+        (temporary, get_temporary, set_temporary, bool, "if this database should be removed after the Config is dropped"),
         (read_only, get_read_only, set_read_only, bool, "whether to run in read-only mode"),
         (cache_bits, get_cache_bits, set_cache_bits, usize, "log base 2 of the number of cache shards"),
         (cache_capacity, get_cache_capacity, set_cache_capacity, usize, "maximum size for the system page cache"),
@@ -156,7 +159,12 @@ impl Config {
     /// returns the current snapshot file prefix
     pub fn snapshot_prefix(&self) -> String {
         let snapshot_path = self.get_snapshot_path();
-        let path = self.get_path();
+        let path = if self.get_temporary() {
+            self.get_tmp_path()
+        } else {
+            self.get_path()
+        };
+
         snapshot_path.unwrap_or(path)
     }
 
@@ -209,8 +217,14 @@ impl Config {
     /// Finalize the configuration.
     pub fn build(self) -> FinalConfig {
         self.validate();
+
+        let path = if self.get_temporary() {
+            format!("{}.db", self.get_tmp_path())
+        } else {
+            format!("{}.db", self.get_path())
+        };
+
         // panic if we can't parse the path
-        let path = self.get_path();
         let dir = Path::new(&path).parent().expect(
             "could not parse provided path",
         );
@@ -294,7 +308,12 @@ impl Config {
         let bytes = serialize(&self, Infinite).unwrap();
         let crc64: [u8; 8] = unsafe { std::mem::transmute(crc64(&*bytes)) };
 
-        let path = format!("{}.conf", self.get_path());
+        let path = if self.get_temporary() {
+            format!("{}.conf", self.get_tmp_path())
+        } else {
+            format!("{}.conf", self.get_path())
+        };
+
         let mut f = std::fs::OpenOptions::new().write(true).create(true).open(
             path,
         )?;
@@ -305,7 +324,11 @@ impl Config {
     }
 
     fn read_config(&self) -> std::io::Result<Option<Config>> {
-        let path = format!("{}.conf", self.get_path());
+        let path = if self.get_temporary() {
+            format!("{}.conf", self.get_tmp_path())
+        } else {
+            format!("{}.conf", self.get_path())
+        };
 
         let mut f = std::fs::OpenOptions::new().read(true).open(&path)?;
         if f.metadata().unwrap().len() <= 8 {
@@ -336,14 +359,17 @@ impl Config {
 
 impl Drop for Config {
     fn drop(&mut self) {
-        let ephemeral = self.get_path() == self.get_tmp_path();
-        if !ephemeral {
+        if !self.get_temporary() {
             return;
         }
 
         // Our files are temporary, so nuke them.
         warn!("removing ephemeral storage file {}", self.tmp_path);
-        let _res = fs::remove_file(self.tmp_path.clone());
+        let db_path = format!("{}.db", self.tmp_path);
+        let conf_path = format!("{}.conf", self.tmp_path);
+
+        let _res = fs::remove_file(db_path);
+        let _res = fs::remove_file(conf_path);
 
         let candidates = self.get_snapshot_files();
         for path in candidates {

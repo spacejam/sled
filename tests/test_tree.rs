@@ -48,7 +48,7 @@ fn parallel_tree_ops() {
     }
 
     println!("========== initial sets ==========");
-    let conf = Config::default().blink_fanout(2).build();
+    let conf = Config::default().temporary(true).blink_fanout(2).build();
     let t = Arc::new(conf.tree());
     par!{t, |tree: &Tree, k: Vec<u8>| {
         assert_eq!(tree.get(&*k), None);
@@ -116,6 +116,7 @@ fn tree_subdir() {
 fn tree_iterator() {
     println!("========== iterator ==========");
     let t = Config::default()
+        .temporary(true)
         .blink_fanout(2)
         .flush_every_ms(None)
         .tree();
@@ -155,6 +156,7 @@ fn tree_iterator() {
 fn recover_tree() {
     println!("========== recovery ==========");
     let conf = Config::default()
+        .temporary(true)
         .blink_fanout(2)
         .io_buf_size(5000)
         .flush_every_ms(None)
@@ -248,6 +250,7 @@ fn prop_tree_matches_btreemap(
 ) -> bool {
     use self::Op::*;
     let config = Config::default()
+        .temporary(true)
         .snapshot_after_ops(snapshot_after as usize + 1)
         .flush_every_ms(Some(1))
         .io_buf_size(10000)

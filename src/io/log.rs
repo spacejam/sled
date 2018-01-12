@@ -21,7 +21,7 @@ pub const SEG_TRAILER_LEN: usize = 10;
 /// # Working with `Log`
 ///
 /// ```
-/// let log = sled::Config::default().log();
+/// let log = sled::Config::default().temporary(true).log();
 /// let (first_lsn, _first_offset) = log.write(b"1".to_vec());
 /// log.write(b"22".to_vec());
 /// log.write(b"333".to_vec());
