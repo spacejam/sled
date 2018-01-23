@@ -50,12 +50,13 @@ tree.del(&k);
 
 # plans
 
-* MVCC, transactions, merge operators and snapshots provided via a higher-level `Db` versioned-key interface
 * beat [LSM trees](https://en.wikipedia.org/wiki/Log-structured_merge-tree)
   for reads and [traditional B+ trees](https://en.wikipedia.org/wiki/B%2B_tree) for writes
+* MVCC, transactions, merge operators and snapshots provided via a higher-level `Db` versioned-key interface
+* form the iron core of a [linearizable store](https://github.com/spacejam/rasputin) and a [flexible location-agnostic store](https://github.com/spacejam/icefall)
+* SQLite, MySQL, Postgres back-end plugin support
 * forward-compatible binary format
-* auto-tuning of internal parameters to squeeze out every drop of performance with
-  zero operator effort
+* dynamic learned/probabilistic index support
 * bindings for other languages
 
 # warnings
