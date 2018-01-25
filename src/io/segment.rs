@@ -783,20 +783,41 @@ impl SegmentAccountant {
             "unaligned Lsn provided to next!"
         );
 
+        let f = self.config.file();
+
         // pop free or add to end
         let lid = if self.pause_rewriting {
             self.bump_tip()
         } else {
-            let res = self.free.lock().unwrap().pop_front();
-            if res.is_none() {
-                self.bump_tip()
-            } else {
-                res.unwrap()
+            loop {
+                let res = self.free.lock().unwrap().pop_front();
+                if res.is_none() {
+                    break self.bump_tip();
+                } else {
+                    let next = res.unwrap();
+
+                    // if we just returned the last segment
+                    // in the file, shrink the file.
+                    let io_buf_size = self.config.get_io_buf_size() as LogID;
+                    if next + io_buf_size == self.tip {
+                        self.tip -= io_buf_size;
+
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::io::AsRawFd;
+                            let fd = f.as_raw_fd();
+                            unsafe {
+                                libc::ftruncate(fd, self.tip as libc::off_t);
+                            }
+                        }
+                    } else {
+                        break next;
+                    }
+                }
             }
         };
 
         debug!("zeroing out segment beginning at {}", lid);
-        let f = self.config.file();
         f.pwrite_all(&*vec![0; self.config.get_io_buf_size()], lid)
             .unwrap();
         f.sync_all().unwrap();
