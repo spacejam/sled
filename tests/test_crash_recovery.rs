@@ -76,22 +76,7 @@ fn slice_to_u32(b: &[u8]) -> u32 {
     unsafe { std::mem::transmute(buf) }
 }
 
-fn run() {
-    let config = sled::Config::default()
-        .io_bufs(2)
-        .blink_fanout(15)
-        .page_consolidation_threshold(10)
-        .cache_fixup_threshold(1)
-        .cache_bits(6)
-        .cache_capacity(128 * 1024 * 1024)
-        .flush_every_ms(Some(100))
-        // drop io_buf_size to 1<<16, then 1<<17 to tease out
-        // low hanging fruit more quickly
-        .io_buf_size(100_000) // 1<<16 is 65k but might cause stalling
-        .path("test_crashes".to_string())
-        .snapshot_after_ops(1 << 56)
-        .build();
-
+fn run(config: sled::FinalConfig) {
     let tree = config.tree();
 
     // flush to ensure the initial root is stable.
@@ -124,12 +109,70 @@ fn run() {
     }
 }
 
+fn run_without_snapshot() {
+    let config = sled::Config::default()
+        .io_bufs(2)
+        .blink_fanout(15)
+        .page_consolidation_threshold(10)
+        .cache_fixup_threshold(1)
+        .cache_bits(6)
+        .cache_capacity(128 * 1024 * 1024)
+        .flush_every_ms(Some(100))
+        // drop io_buf_size to 1<<16, then 1<<17 to tease out
+        // low hanging fruit more quickly
+        .io_buf_size(100_000) // 1<<16 is 65k but might cause stalling
+        .path("test_crashes".to_string())
+        .snapshot_after_ops(1 << 56)
+        .build();
+
+    run(config);
+}
+
+fn run_with_snapshot() {
+    let config = sled::Config::default()
+        .io_bufs(2)
+        .blink_fanout(15)
+        .page_consolidation_threshold(10)
+        .cache_fixup_threshold(1)
+        .cache_bits(6)
+        .cache_capacity(128 * 1024 * 1024)
+        .flush_every_ms(Some(100))
+        // drop io_buf_size to 1<<16, then 1<<17 to tease out
+        // low hanging fruit more quickly
+        .io_buf_size(100_000) // 1<<16 is 65k but might cause stalling
+        .path("test_crashes_with_snapshot".to_string())
+        .snapshot_after_ops(1 << 10)
+        .build();
+
+    run(config);
+}
+
 #[test]
-fn test_crash_recovery() {
+fn test_crash_recovery_with_runtime_snapshot() {
     for _ in 0..100 {
         let child = unsafe { libc::fork() };
         if child == 0 {
-            run()
+            run_with_snapshot()
+        } else {
+            let mut status = 0;
+            unsafe {
+                libc::waitpid(child, &mut status as *mut libc::c_int, 0);
+            }
+            if status != 9 {
+                cleanup();
+                panic!("child exited abnormally");
+            }
+        }
+    }
+    cleanup();
+}
+
+#[test]
+fn test_crash_recovery_no_runtime_snapshot() {
+    for _ in 0..100 {
+        let child = unsafe { libc::fork() };
+        if child == 0 {
+            run_without_snapshot()
         } else {
             let mut status = 0;
             unsafe {

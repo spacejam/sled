@@ -458,6 +458,7 @@ impl SegmentAccountant {
 
             // populate free and to_clean if the segment has seen
             if can_free {
+
                 // can be reused immediately
                 if segment.state == Active {
                     segment.active_to_inactive(lsn, true);
@@ -807,7 +808,7 @@ impl SegmentAccountant {
 
         assert_eq!(self.segments[idx].state, Free);
 
-        // remove the ordering from our list
+        // remove the old ordering from our list
         if let Some(old_lsn) = self.segments[idx].lsn {
             self.ordering.remove(&old_lsn);
         }
@@ -840,8 +841,11 @@ impl SegmentAccountant {
         &mut self,
         lsn: Lsn,
     ) -> Box<Iterator<Item = (Lsn, LogID)>> {
-        // assert!( self.pause_rewriting, "must pause rewriting before \
-        // iterating over segments");
+        assert!(
+            self.pause_rewriting,
+            "must pause rewriting before \
+            iterating over segments"
+        );
 
         let segment_len = self.config.get_io_buf_size() as Lsn;
         let normalized_lsn = lsn / segment_len * segment_len;
@@ -1086,11 +1090,14 @@ pub enum SegmentManager {
 }
 */
 
-pub fn raw_segment_iter(config: &FinalConfig) -> LogIter {
+pub fn raw_segment_iter_from(lsn: Lsn, config: &FinalConfig) -> LogIter {
     let mut sa =
         SegmentAccountant::start::<()>(config.clone(), Snapshot::default());
 
-    let segment_iter = sa.segment_snapshot_iter_from(0);
+    // signal safety
+    sa.pause_rewriting();
+
+    let segment_iter = sa.segment_snapshot_iter_from(lsn);
 
     LogIter {
         config: config.clone(),

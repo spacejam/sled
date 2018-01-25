@@ -117,10 +117,9 @@ macro_rules! builder {
 
             #[doc="Builder, set "]
             #[doc=$desc]
-            pub fn $name(&self, to: $t) -> Config {
-                let mut ret = self.clone();
-                ret.$name = to;
-                ret
+            pub fn $name(mut self, to: $t) -> Config {
+                self.$name = to;
+                self
             }
         )*
     }
@@ -150,14 +149,18 @@ impl Config {
         (snapshot_path, get_snapshot_path, set_snapshot_path, Option<OsString>, "snapshot file location")
     );
 
+    /// Returns a default `Config`
+    pub fn new() -> Config {
+        Self::default()
+    }
+
     /// Set the path of the database
-    pub fn path<P: AsRef<Path>>(&mut self, path: P) -> Config {
+    pub fn path<P: AsRef<Path>>(mut self, path: P) -> Config {
         let path_ref: &Path = path.as_ref();
         let os_str_ref: &OsStr = path_ref.as_ref();
 
-        let mut copy = self.clone();
-        copy.path = os_str_ref.to_os_string();
-        copy
+        self.path = os_str_ref.to_os_string();
+        self
     }
 
     /// Get the path of the database
@@ -452,33 +455,6 @@ impl FinalConfig {
 
         let regenerated = read_snapshot_or_default::<PM, P, R>(&self);
 
-        #[cfg(feature = "check_snapshot_integrity")]
-        {
-            let diff: Vec<&Lsn> = incremental
-                .seen_lsns
-                .symmetric_difference(&regenerated.seen_lsns)
-                .collect();
-            if !diff.is_empty() {
-                let only_regen: Vec<_> = regenerated
-                    .seen_lsns
-                    .difference(&incremental.seen_lsns)
-                    .collect();
-                if !only_regen.is_empty() {
-                    panic!("regenerated-only lsns: {:?}", only_regen);
-                }
-
-                let only_incremental: Vec<_> = incremental
-                    .seen_lsns
-                    .difference(&regenerated.seen_lsns)
-                    .collect();
-                if !only_incremental.is_empty() {
-                    // not a panic because it is expected to see lsns
-                    // that were scrubbed from segments.
-                    println!("incremental-only lsns: {:?}", only_incremental.len());
-                }
-            }
-        }
-
         for (k, v) in &regenerated.pt {
             if !incremental.pt.contains_key(&k) {
                 panic!("page only present in regenerated pagetable: {} -> {:?}", k, v);
@@ -493,6 +469,7 @@ impl FinalConfig {
             assert_eq!(Some(v), regenerated.pt.get(&k), "page tables differ for pid {}", k);
         }
 
+        assert_eq!(incremental.pt, regenerated.pt, "snapshot pagetable diverged");
         assert_eq!(incremental.max_pid, regenerated.max_pid, "snapshot max_pid diverged");
         assert_eq!(incremental.max_lsn, regenerated.max_lsn, "snapshot max_lsn diverged");
         assert_eq!(incremental.last_lid, regenerated.last_lid, "snapshot last_lid diverged");

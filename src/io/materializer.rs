@@ -34,6 +34,7 @@ pub trait Materializer {
 
 /// A materializer for things that have nothing to
 /// materialize or recover, like a standalone `Log`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NullMaterializer;
 
 impl Materializer for NullMaterializer {

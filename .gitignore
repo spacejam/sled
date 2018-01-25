@@ -1,6 +1,7 @@
-stress*
+*db
+*conf
+*snap*
 cachegrind*
-*log
 *.bk
 *orig
 tags
@@ -9,11 +10,9 @@ perf*
 *out
 *perf
 *svg
-test*log
 *txt
 experiments
 target
 Cargo.lock
 *swp
 *swo
-sled.tmp.*

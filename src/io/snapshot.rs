@@ -21,15 +21,11 @@ pub struct Snapshot<R> {
     /// the mapping from pages to (lsn, lid)
     pub pt: HashMap<PageID, PageState>,
     /// replaced pages per segment index
-    pub replacements: HashMap<usize, HashSet<(PageID, Lsn)>>,
+    pub replacements: HashMap<SegmentID, HashSet<(PageID, Lsn)>>,
     /// the free pids
     pub free: HashSet<PageID>,
     /// the `Materializer`-specific recovered state
     pub recovery: Option<R>,
-
-    #[cfg(feature = "check_snapshot_integrity")]
-    /// all seen lids, to catch bugs
-    pub seen_lsns: HashSet<Lsn>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -63,8 +59,6 @@ impl<R> Default for Snapshot<R> {
             replacements: HashMap::new(),
             free: HashSet::new(),
             recovery: None,
-            #[cfg(feature = "check_snapshot_integrity")]
-            seen_lsns: HashSet::new(),
         }
     }
 }
@@ -110,7 +104,7 @@ impl<R> Snapshot<R> {
             self.max_pid = pid + 1;
         }
 
-        let replaced_at_idx = log_id as usize / io_buf_size;
+        let replaced_at_idx = log_id as SegmentID / io_buf_size;
 
         match prepend.update {
             Update::Append(partial_page) => {
@@ -135,12 +129,11 @@ impl<R> Snapshot<R> {
             }
             Update::Compact(partial_page) => {
                 trace!("compact of pid {} at lid {} lsn {}", pid, log_id, lsn);
-                self.replace_pid(pid, replaced_at_idx, lsn, io_buf_size);
-
                 if let Some(r) = materializer.recover(&partial_page) {
                     self.recovery = Some(r);
                 }
 
+                self.replace_pid(pid, replaced_at_idx, lsn, io_buf_size);
                 self.pt.insert(pid, PageState::Present(vec![(lsn, log_id)]));
                 self.free.remove(&pid);
             }
@@ -151,6 +144,7 @@ impl<R> Snapshot<R> {
                     log_id,
                     lsn
                 );
+                self.replace_pid(pid, replaced_at_idx, lsn, io_buf_size);
                 self.pt.insert(pid, PageState::Allocated(lsn, log_id));
                 self.free.remove(&pid);
             }
@@ -158,7 +152,6 @@ impl<R> Snapshot<R> {
                 trace!("free of pid {} at lid {} lsn {}", pid, log_id, lsn);
                 self.replace_pid(pid, replaced_at_idx, lsn, io_buf_size);
                 self.pt.insert(pid, PageState::Free(lsn, log_id));
-
                 self.free.insert(pid);
             }
         }
@@ -171,16 +164,30 @@ impl<R> Snapshot<R> {
         replaced_at_lsn: Lsn,
         io_buf_size: usize,
     ) {
-        if let Some(PageState::Present(coords)) = self.pt.remove(&pid) {
-            for (_lsn, lid) in coords {
-                let idx = lid as usize / io_buf_size;
+        match self.pt.remove(&pid) {
+            Some(PageState::Present(coords)) => {
+                for (_lsn, lid) in coords {
+                    let idx = lid as SegmentID / io_buf_size;
+                    if replaced_at_idx == idx {
+                        return;
+                    }
+                    let entry =
+                        self.replacements.entry(idx).or_insert(HashSet::new());
+                    entry.insert((pid, replaced_at_lsn));
+                }
+            }
+            Some(PageState::Allocated(_lsn, lid)) |
+            Some(PageState::Free(_lsn, lid)) => {
+
+                let idx = lid as SegmentID / io_buf_size;
                 if replaced_at_idx == idx {
-                    continue;
+                    return;
                 }
                 let entry =
                     self.replacements.entry(idx).or_insert(HashSet::new());
                 entry.insert((pid, replaced_at_lsn));
             }
+            None => {}
         }
     }
 }
@@ -209,18 +216,10 @@ pub(super) fn advance_snapshot<PM, P, R>(
     let io_buf_size = config.get_io_buf_size();
 
     for (lsn, log_id, bytes) in iter {
-        let segment_idx = lsn as usize / io_buf_size;
-        let segment_lsn = (segment_idx * io_buf_size) as Lsn;
-
-        assert_eq!(
-            segment_lsn / io_buf_size as Lsn * io_buf_size as Lsn,
-            segment_lsn,
-            "segment lsn is unaligned! fix above lsn statement..."
-        );
+        let segment_idx = log_id as SegmentID / io_buf_size;
 
         trace!(
-            "in advance_snapshot looking at item: segment lsn {} lsn {} lid {}",
-            segment_lsn,
+            "in advance_snapshot looking at item with lsn {} lid {}",
             lsn,
             log_id
         );
@@ -235,11 +234,6 @@ pub(super) fn advance_snapshot<PM, P, R>(
                 snapshot.max_lsn
             );
             continue;
-        }
-
-        #[cfg(feature = "check_snapshot_integrity")]
-        {
-            snapshot.seen_lsns.insert(lsn);
         }
 
         assert!(lsn > snapshot.max_lsn);
@@ -278,11 +272,12 @@ pub fn read_snapshot_or_default<PM, P, R>(config: &FinalConfig) -> Snapshot<R>
 {
     let last_snap = read_snapshot(config).unwrap_or_else(Snapshot::default);
 
-    let log_iter = raw_segment_iter(config);
+    let log_iter = raw_segment_iter_from(last_snap.max_lsn, config);
 
     advance_snapshot::<PM, P, R>(log_iter, last_snap, config)
 }
 
+/// Read a `Snapshot` from disk.
 fn read_snapshot<R>(config: &FinalConfig) -> Option<Snapshot<R>>
     where R: Debug + Clone + Serialize + DeserializeOwned + Send
 {
