@@ -226,7 +226,7 @@ struct OpVec {
 impl Arbitrary for OpVec {
     fn arbitrary<G: Gen>(g: &mut G) -> OpVec {
         let mut ops = vec![];
-        for _ in 0..g.gen_range(1, 100) {
+        for _ in 0..g.gen_range(1, 200) {
             let op = Op::arbitrary(g);
             ops.push(op);
 
@@ -408,7 +408,7 @@ fn prop_pagecache_works(ops: OpVec) -> bool {
 fn quickcheck_pagecache_works() {
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 1))
-        .tests(1000)
+        .tests(10000)
         .max_tests(1000000)
         .quickcheck(prop_pagecache_works as fn(OpVec) -> bool);
 }
@@ -812,6 +812,87 @@ fn pagecache_bug_22() {
     });
 }
 
+#[test]
+fn pagecache_bug_23() {
+    // postmortem:
+    use Op::*;
+    prop_pagecache_works(OpVec {
+        ops: vec![
+            Allocate,
+            Allocate,
+            Allocate,
+            Allocate,
+            Allocate,
+            Allocate,
+            Allocate,
+            Allocate,
+            Replace(4, 4461),
+            Replace(1, 4463),
+            Replace(0, 4464),
+            Replace(1, 4465),
+            Link(2, 4466),
+            Replace(2, 4467),
+            Replace(0, 4468),
+            Replace(4, 4469),
+            Link(3, 4470),
+            Free(2),
+            Link(1, 4471),
+            Free(5),
+            Replace(1, 4472),
+            Allocate,
+            Replace(2, 4473),
+            Link(6, 4474),
+            Replace(1, 4476),
+            Restart,
+            Allocate,
+            Free(6),
+            Replace(0, 4478),
+            Replace(2, 4480),
+            Free(3),
+            Replace(5, 4481),
+            Link(5, 4482),
+            Link(5, 4483),
+            Link(5, 4485),
+            Replace(2, 4486),
+            Replace(1, 4487),
+            Allocate,
+            Free(6),
+            Link(0, 4490),
+            Allocate,
+            Allocate,
+            Link(4, 4491),
+            Free(5),
+            Link(0, 4492),
+            Replace(0, 4493),
+            Link(0, 4494),
+            Free(1),
+            Allocate,
+            Free(3),
+            Replace(4, 4501),
+            Restart,
+            Link(0, 4503),
+            Link(4, 4504),
+            Link(0, 4505),
+            Allocate,
+            Replace(6, 4507),
+            Restart,
+            Replace(5, 4512),
+            Link(4, 4513),
+            Allocate,
+            Allocate,
+            Free(2),
+            Replace(4, 4515),
+            Link(0, 4516),
+            Replace(6, 4517),
+            Free(4),
+            Link(0, 4518),
+            Replace(5, 4519),
+            Replace(3, 4520),
+            Restart,
+            Replace(3, 4522),
+        ],
+    });
+}
 
 fn _pagecache_bug_() {
     // postmortem: TEMPLATE
