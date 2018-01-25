@@ -340,8 +340,6 @@ impl SegmentAccountant {
             ret.tip = new_tip;
         }
 
-        ret.ensure_ordering_initialized();
-
         ret.initialize_from_snapshot(snapshot);
 
         ret
@@ -434,6 +432,8 @@ impl SegmentAccountant {
             if lsn != highest_lsn {
                 segment.active_to_inactive(lsn, true);
             }
+
+            self.ordering.insert(lsn, segment_start);
 
             // can we transition these segments?
             let cleanup_threshold = self.config.get_segment_cleanup_threshold();
@@ -845,11 +845,11 @@ impl SegmentAccountant {
             self.free
         );
 
-        self.last_given = lid;
-
         if last_given != 0 {
             assert_ne!(last_given, lid);
         }
+
+        self.last_given = lid;
 
         (lid, last_given)
     }

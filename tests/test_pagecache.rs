@@ -748,6 +748,71 @@ fn pagecache_bug_21() {
     });
 }
 
+#[test]
+fn pagecache_bug_22() {
+    // postmortem: was initializing the SA with segments that were not
+    // necessarily populated beyond the initial header.
+    use Op::*;
+    prop_pagecache_works(OpVec {
+        ops: vec![
+            Allocate,
+            Allocate,
+            Allocate,
+            Link(2, 12879),
+            Allocate,
+            Replace(3, 12881),
+            Allocate,
+            Allocate,
+            Link(2, 12882),
+            Allocate,
+            Link(5, 12883),
+            Link(5, 12884),
+            Replace(2, 12886),
+            Free(0),
+            Link(5, 12888),
+            Link(2, 12889),
+            Replace(4, 12890),
+            Free(1),
+            Restart,
+            Allocate,
+            Allocate,
+            Allocate,
+            Link(1, 12891),
+            Free(2),
+            Free(4),
+            Link(1, 12893),
+            Free(7),
+            Free(0),
+            Replace(3, 12894),
+            Replace(3, 12895),
+            Allocate,
+            Free(1),
+            Link(6, 12897),
+            Restart,
+            Link(6, 12898),
+            Replace(6, 12899),
+            Free(3),
+            Allocate,
+            Allocate,
+            Allocate,
+            Replace(2, 12903),
+            Replace(6, 12904),
+            Free(5),
+            Link(7, 12905),
+            Replace(4, 12906),
+            Link(6, 12907),
+            Allocate,
+            Free(2),
+            Replace(6, 12909),
+            Restart,
+            Replace(1, 12910),
+            Restart,
+            Free(6),
+        ],
+    });
+}
+
+
 fn _pagecache_bug_() {
     // postmortem: TEMPLATE
     // portmortem 2: ...
