@@ -37,6 +37,8 @@ extern crate zstd;
 extern crate cpuprofiler;
 #[cfg(any(test, feature = "lock_free_delays"))]
 extern crate rand;
+#[cfg(unix)]
+extern crate libc;
 
 /// atomic lock-free tree
 pub use tree::{Iter, Tree};

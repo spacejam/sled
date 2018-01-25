@@ -51,9 +51,6 @@ impl IoBufs {
         // open file for writing
         let file = config.file();
 
-        // TODO this should never change, it should be
-        // stored in a persisted conf file and if it
-        // doesn't match, we should panic.
         let io_buf_size = config.get_io_buf_size();
 
         let snapshot_max_lsn = snapshot.max_lsn;

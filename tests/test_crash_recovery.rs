@@ -164,7 +164,7 @@ fn test_crash_recovery_with_runtime_snapshot() {
             }
         }
     }
-    cleanup();
+    cleanup_with_snapshots();
 }
 
 #[test]
@@ -185,6 +185,21 @@ fn test_crash_recovery_no_runtime_snapshot() {
         }
     }
     cleanup();
+}
+
+fn cleanup_with_snapshots() {
+    let _res = fs::remove_file("test_crashes_with_snapshot.db");
+    let _res = fs::remove_file("test_crashes_with_snapshot.conf");
+    for dir_entry in fs::read_dir(".").unwrap() {
+        if let Ok(de) = dir_entry {
+            let path_buf = de.path();
+            let path = path_buf.as_path();
+            let path_str = path.to_str().unwrap();
+            if path_str.starts_with("./test_crashes_with_snapshot.snap.") {
+                let _res = fs::remove_file(path);
+            }
+        }
+    }
 }
 
 fn cleanup() {

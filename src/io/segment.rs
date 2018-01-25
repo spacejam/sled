@@ -340,6 +340,8 @@ impl SegmentAccountant {
             ret.tip = new_tip;
         }
 
+        ret.ensure_ordering_initialized();
+
         ret.initialize_from_snapshot(snapshot);
 
         ret
@@ -407,22 +409,11 @@ impl SegmentAccountant {
     }
 
     fn initialize_from_segments(&mut self, mut segments: Vec<Segment>) {
-        // populate ordering from segments.
-        // use last segment as active even if it's full
-        let safety_buffer = self.config.get_io_bufs();
-        let logical_tail: Vec<LogID> = self.ordering
-            .iter()
-            .rev()
-            .take(safety_buffer)
-            .map(|(_lsn, lid)| *lid)
-            .collect();
-
         let io_buf_size = self.config.get_io_buf_size();
 
-        let idx_of_highest_lsn =
-            segments.iter().fold(0, |acc, segment| {
-                std::cmp::max(acc, segment.lsn.unwrap_or(acc))
-            }) as usize / io_buf_size;
+        let highest_lsn = segments.iter().fold(0, |acc, segment| {
+            std::cmp::max(acc, segment.lsn.unwrap_or(acc))
+        });
 
         for (idx, ref mut segment) in segments.iter_mut().enumerate() {
             let segment_start = idx as LogID * io_buf_size as LogID;
@@ -440,6 +431,10 @@ impl SegmentAccountant {
 
             let lsn = segment.lsn();
 
+            if lsn != highest_lsn {
+                segment.active_to_inactive(lsn, true);
+            }
+
             // can we transition these segments?
             let cleanup_threshold = self.config.get_segment_cleanup_threshold();
             let min_items = self.config.get_min_items_per_segment();
@@ -450,15 +445,14 @@ impl SegmentAccountant {
                 min_items as f64 * cleanup_threshold;
 
             let can_free = segment.is_empty() && !self.pause_rewriting &&
-                idx != idx_of_highest_lsn;
+                lsn != highest_lsn;
 
             let can_drain = (segment_low_pct || segment_low_count) &&
                 !self.pause_rewriting &&
-                idx != idx_of_highest_lsn;
+                lsn != highest_lsn;
 
             // populate free and to_clean if the segment has seen
             if can_free {
-
                 // can be reused immediately
                 if segment.state == Active {
                     segment.active_to_inactive(lsn, true);
@@ -470,13 +464,6 @@ impl SegmentAccountant {
 
                 self.to_clean.remove(&segment_start);
                 trace!("pid {} freed @initialize_from_snapshot", segment_start);
-
-                if logical_tail.contains(&segment_start) {
-                    // we depend on the invariant that the last segments
-                    // always link together, so that we can detect torn
-                    // segments during recovery.
-                    self.ensure_safe_free_distance();
-                }
 
                 segment.draining_to_free(lsn);
                 assert!(!self.free.lock().unwrap().contains(&segment_start));
@@ -519,6 +506,17 @@ impl SegmentAccountant {
             debug!(
                 "recovered no segments so not initializing from any",
             );
+        }
+
+        // we want to sort the free list by tip-first so we free any
+        // free tips initially.
+        let mut free = self.free.lock().unwrap();
+        let mut free_vec: Vec<_> = free.iter().cloned().collect();
+        free_vec.sort();
+        free_vec.reverse();
+        *free = VecDeque::new();
+        for segment in free_vec {
+            free.push_back(segment);
         }
     }
 
@@ -783,20 +781,41 @@ impl SegmentAccountant {
             "unaligned Lsn provided to next!"
         );
 
+        let f = self.config.file();
+
         // pop free or add to end
         let lid = if self.pause_rewriting {
             self.bump_tip()
         } else {
-            let res = self.free.lock().unwrap().pop_front();
-            if res.is_none() {
-                self.bump_tip()
-            } else {
-                res.unwrap()
+            loop {
+                let res = self.free.lock().unwrap().pop_front();
+                if res.is_none() {
+                    break self.bump_tip();
+                } else {
+                    let next = res.unwrap();
+
+                    // if we just returned the last segment
+                    // in the file, shrink the file.
+                    let io_buf_size = self.config.get_io_buf_size() as LogID;
+                    if next + io_buf_size == self.tip {
+                        self.tip -= io_buf_size;
+
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::io::AsRawFd;
+                            let fd = f.as_raw_fd();
+                            unsafe {
+                                libc::ftruncate(fd, self.tip as libc::off_t);
+                            }
+                        }
+                    } else {
+                        break next;
+                    }
+                }
             }
         };
 
         debug!("zeroing out segment beginning at {}", lid);
-        let f = self.config.file();
         f.pwrite_all(&*vec![0; self.config.get_io_buf_size()], lid)
             .unwrap();
         f.sync_all().unwrap();
