@@ -91,7 +91,7 @@ fn main() {
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(None)
         // .io_buf_size(1 << 16)
-        .path("stress2.db".to_string())
+        .path("stress2".to_string())
         .snapshot_after_ops(1 << 16);
 
     println!("recovering");

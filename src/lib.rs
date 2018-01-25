@@ -85,6 +85,7 @@ use metrics::Metrics;
 use ds::*;
 use hash::{crc16_arr, crc64};
 
+type SegmentID = usize;
 type LogID = u64;
 type Lsn = isize;
 type PageID = usize;

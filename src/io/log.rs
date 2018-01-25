@@ -97,7 +97,7 @@ impl Log {
 
     /// Starts a log for use without a materializer.
     pub fn start_raw_log(config: FinalConfig) -> Log {
-        let log_iter = raw_segment_iter(&config);
+        let log_iter = raw_segment_iter_from(0, &config);
 
         let snapshot = advance_snapshot::<NullMaterializer, (), ()>(
             log_iter,
