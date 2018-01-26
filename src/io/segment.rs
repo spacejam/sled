@@ -407,6 +407,16 @@ impl SegmentAccountant {
     }
 
     fn initialize_from_segments(&mut self, mut segments: Vec<Segment>) {
+        // populate ordering from segments.
+        // use last segment as active even if it's full
+        let safety_buffer = self.config.get_io_bufs();
+        let logical_tail: Vec<LogID> = self.ordering
+            .iter()
+            .rev()
+            .take(safety_buffer)
+            .map(|(_lsn, lid)| *lid)
+            .collect();
+
         let io_buf_size = self.config.get_io_buf_size();
 
         let highest_lsn = segments.iter().fold(0, |acc, segment| {
@@ -453,6 +463,7 @@ impl SegmentAccountant {
 
             // populate free and to_clean if the segment has seen
             if can_free {
+
                 // can be reused immediately
                 if segment.state == Active {
                     segment.active_to_inactive(lsn, true);
@@ -464,6 +475,16 @@ impl SegmentAccountant {
 
                 self.to_clean.remove(&segment_start);
                 trace!("pid {} freed @initialize_from_snapshot", segment_start);
+
+                if logical_tail.contains(&segment_start) {
+                    // we depend on the invariant that the last segments
+                    // always link together, so that we can detect torn
+                    // segments during recovery.
+                    // TODO we don't need the full buffer for all of these,
+                    // depending on how far back they are in the safety buffer,
+                    // we may only need to push a single head bump to the tip
+                    self.ensure_safe_free_distance();
+                }
 
                 segment.draining_to_free(lsn);
                 assert!(!self.free.lock().unwrap().contains(&segment_start));
