@@ -463,7 +463,6 @@ impl SegmentAccountant {
 
             // populate free and to_clean if the segment has seen
             if can_free {
-
                 // can be reused immediately
                 if segment.state == Active {
                     segment.active_to_inactive(lsn, true);
@@ -1131,13 +1130,14 @@ pub enum SegmentManager {
 */
 
 pub fn raw_segment_iter_from(lsn: Lsn, config: &FinalConfig) -> LogIter {
-    let mut sa =
-        SegmentAccountant::start::<()>(config.clone(), Snapshot::default());
+    let segment_len = config.get_io_buf_size() as Lsn;
+    let normalized_lsn = lsn / segment_len * segment_len;
 
-    // signal safety
-    sa.pause_rewriting();
+    let ordering = scan_segment_lsns(0, &config);
 
-    let segment_iter = sa.segment_snapshot_iter_from(lsn);
+    let segment_iter = Box::new(ordering.into_iter().filter(
+        move |&(l, _)| l >= normalized_lsn,
+    ));
 
     LogIter {
         config: config.clone(),
