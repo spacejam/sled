@@ -267,6 +267,7 @@ impl Arbitrary for OpVec {
     }
 }
 
+#[derive(Debug)]
 enum P {
     Free,
     Allocated,
@@ -303,12 +304,14 @@ fn prop_pagecache_works(ops: OpVec) -> bool {
 
                 match ref_get {
                     &mut P::Allocated => {
+                        assert_eq!(get, sled::PageGet::Allocated);
                         pc.replace(pid, Shared::null(), vec![c], &guard)
                             .unwrap();
                         *ref_get = P::Present(vec![c]);
                     }
                     &mut P::Present(ref mut existing) => {
-                        let (_, old_key) = get.unwrap();
+                        let (actual, old_key) = get.unwrap();
+                        assert_eq!(actual, *existing);
                         pc.replace(pid, old_key.clone(), vec![c], &guard)
                             .unwrap();
                         existing.clear();
@@ -408,7 +411,7 @@ fn prop_pagecache_works(ops: OpVec) -> bool {
 fn quickcheck_pagecache_works() {
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 1))
-        .tests(10000)
+        .tests(1000)
         .max_tests(1000000)
         .quickcheck(prop_pagecache_works as fn(OpVec) -> bool);
 }
@@ -814,7 +817,16 @@ fn pagecache_bug_22() {
 
 #[test]
 fn pagecache_bug_23() {
-    // postmortem:
+    // postmortem: mishandling of segment safety buffers
+    // by using the wrong index in the check for lsn's of
+    // segments linking together properly. also improperly
+    // handled segments that were pushed to the free list
+    // by ensure_safe_free_distance, which were then removed
+    // because they were the tip, effectively negating
+    // their utility. fix: add bool to everything in the
+    // free list signifying if they were pushed from
+    // ensure_safe_free_distance or not, and only
+    // perform file truncation if not.
     use Op::*;
     prop_pagecache_works(OpVec {
         ops: vec![
@@ -969,6 +981,90 @@ fn pagecache_bug_24() {
             Free(0),
             Restart,
             Replace(0, 4802),
+        ],
+    });
+}
+
+#[test]
+fn pagecache_bug_25() {
+    // postmortem:
+    use Op::*;
+    prop_pagecache_works(OpVec {
+        ops: vec![
+            Allocate,
+            Allocate,
+            Allocate,
+            Allocate,
+            Allocate,
+            Allocate,
+            Link(2, 769),
+            Replace(4, 770),
+            Link(0, 772),
+            Replace(1, 773),
+            Replace(1, 774),
+            Replace(1, 778),
+            Replace(1, 779),
+            Replace(0, 780),
+            Link(5, 781),
+            Link(1, 782),
+            Link(2, 783),
+            Link(5, 784),
+            Replace(5, 786),
+            Link(0, 787),
+            Link(1, 788),
+            Link(0, 789),
+            Allocate,
+            Free(5),
+            Replace(6, 790),
+            Free(6),
+            Allocate,
+            Link(2, 793),
+            Free(0),
+            Replace(2, 795),
+            Free(2),
+            Allocate,
+            Allocate,
+            Link(5, 796),
+            Free(1),
+            Replace(4, 798),
+            Allocate,
+            Replace(5, 800),
+            Allocate,
+            Free(0),
+            Replace(2, 801),
+            Link(7, 802),
+            Allocate,
+            Free(2),
+            Allocate,
+            Link(3, 803),
+            Allocate,
+            Link(6, 805),
+            Restart,
+            Replace(7, 806),
+            Allocate,
+            Replace(7, 807),
+            Allocate,
+            Free(4),
+            Link(6, 808),
+            Allocate,
+            Restart,
+            Allocate,
+            Link(2, 809),
+            Replace(6, 810),
+            Free(1),
+            Link(0, 811),
+            Link(0, 812),
+            Link(6, 813),
+            Free(5),
+            Allocate,
+            Allocate,
+            Allocate,
+            Restart,
+            Link(1, 815),
+            Replace(6, 816),
+            Free(3),
+            Restart,
+            Link(3, 825),
         ],
     });
 }
