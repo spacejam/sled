@@ -87,7 +87,7 @@ pub struct SegmentAccountant {
     // TODO put behind a single mutex
     // NB MUST group pause_rewriting with ordering
     // and free!
-    free: Arc<Mutex<VecDeque<LogID>>>,
+    free: Arc<Mutex<VecDeque<(LogID, bool)>>>,
     tip: LogID,
     to_clean: BTreeSet<LogID>,
     pause_rewriting: bool,
@@ -103,12 +103,12 @@ pub struct SegmentAccountant {
 // copy of a page from being overwritten. This prevents
 // dangling references to segments that were rewritten after
 // the `LogID` was read.
-struct SegmentDropper(LogID, Arc<Mutex<VecDeque<LogID>>>);
+struct SegmentDropper(LogID, Arc<Mutex<VecDeque<(LogID, bool)>>>);
 
 impl Drop for SegmentDropper {
     fn drop(&mut self) {
         let mut deque = self.1.lock().unwrap();
-        deque.push_back(self.0);
+        deque.push_back((self.0, false));
     }
 }
 
@@ -409,14 +409,6 @@ impl SegmentAccountant {
     fn initialize_from_segments(&mut self, mut segments: Vec<Segment>) {
         // populate ordering from segments.
         // use last segment as active even if it's full
-        let safety_buffer = self.config.get_io_bufs();
-        let logical_tail: Vec<LogID> = self.ordering
-            .iter()
-            .rev()
-            .take(safety_buffer)
-            .map(|(_lsn, lid)| *lid)
-            .collect();
-
         let io_buf_size = self.config.get_io_buf_size();
 
         let highest_lsn = segments.iter().fold(0, |acc, segment| {
@@ -431,8 +423,6 @@ impl SegmentAccountant {
             }
 
             if segment.lsn.is_none() {
-                assert_eq!(segment.state, Free);
-                assert!(!self.free.lock().unwrap().contains(&segment_start));
                 self.free_segment(segment_start, true);
                 continue;
             }
@@ -475,18 +465,9 @@ impl SegmentAccountant {
                 self.to_clean.remove(&segment_start);
                 trace!("pid {} freed @initialize_from_snapshot", segment_start);
 
-                if logical_tail.contains(&segment_start) {
-                    // we depend on the invariant that the last segments
-                    // always link together, so that we can detect torn
-                    // segments during recovery.
-                    // TODO we don't need the full buffer for all of these,
-                    // depending on how far back they are in the safety buffer,
-                    // we may only need to push a single head bump to the tip
-                    self.ensure_safe_free_distance();
-                }
-
                 segment.draining_to_free(lsn);
-                assert!(!self.free.lock().unwrap().contains(&segment_start));
+
+                assert!(!self.segment_already_free(segment_start));
                 // don't give out this segment twice
                 trace!(
                     "freeing segment {} from initialize_from_snapshot, tip: {}",
@@ -510,9 +491,13 @@ impl SegmentAccountant {
 
                 segment.inactive_to_draining(lsn);
                 self.to_clean.insert(segment_start);
-                self.free.lock().unwrap().retain(|&s| s != segment_start);
+                self.free.lock().unwrap().retain(
+                    |&(s, _)| s != segment_start,
+                );
             } else {
-                self.free.lock().unwrap().retain(|&s| s != segment_start);
+                self.free.lock().unwrap().retain(
+                    |&(s, _)| s != segment_start,
+                );
             }
         }
 
@@ -526,17 +511,6 @@ impl SegmentAccountant {
             debug!(
                 "recovered no segments so not initializing from any",
             );
-        }
-
-        // we want to sort the free list by tip-first so we free any
-        // free tips initially.
-        let mut free = self.free.lock().unwrap();
-        let mut free_vec: Vec<_> = free.iter().cloned().collect();
-        free_vec.sort();
-        free_vec.reverse();
-        *free = VecDeque::new();
-        for segment in free_vec {
-            free.push_back(segment);
         }
     }
 
@@ -557,12 +531,17 @@ impl SegmentAccountant {
         let idx = self.lid_to_idx(lid);
         assert_eq!(self.segments[idx].state, Free);
         assert!(
-            !self.free.lock().unwrap().contains(&lid),
+            !self.segment_already_free(lid),
             "double-free of a segment occurred"
         );
 
+        // we depend on the invariant that the last segments
+        // always link together, so that we can detect torn
+        // segments during recovery.
+        self.ensure_safe_free_distance();
+
         if in_recovery {
-            self.free.lock().unwrap().push_front(lid);
+            self.free.lock().unwrap().push_back((lid, false));
 
             // We only want to immediately remove the segment
             // mapping if we're in recovery because otherwise
@@ -579,8 +558,6 @@ impl SegmentAccountant {
                 self.ordering.remove(&old_lsn);
             }
         } else {
-            self.ensure_safe_free_distance();
-
             let guard = pin();
             let pd = SegmentDropper(lid, self.free.clone());
             unsafe {
@@ -785,7 +762,7 @@ impl SegmentAccountant {
                 "pushing segment {} to free from ensure_safe_free_distance",
                 new_lid
             );
-            self.free.lock().unwrap().push_front(new_lid);
+            self.free.lock().unwrap().push_front((new_lid, true));
         }
 
     }
@@ -812,7 +789,11 @@ impl SegmentAccountant {
                 if res.is_none() {
                     break self.bump_tip();
                 } else {
-                    let next = res.unwrap();
+                    let (next, truncate_prohibited) = res.unwrap();
+
+                    if truncate_prohibited {
+                        break next;
+                    }
 
                     // if we just returned the last segment
                     // in the file, shrink the file.
@@ -917,6 +898,16 @@ impl SegmentAccountant {
         }
         idx
     }
+
+    fn segment_already_free(&self, lid: LogID) -> bool {
+        let free = self.free.lock().unwrap();
+        for &(seg_lid, _) in &*free {
+            if seg_lid == lid {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 // Scan the log file if we don't know of any Lsn offsets yet,
@@ -975,8 +966,8 @@ fn clean_tail_tears(
     // make sure the last <# io_bufs> segments are contiguous
     for window in logical_tail.windows(2) {
         if window[0] != window[1] + io_buf_size as Lsn {
-            error!("detected torn segment somewhere after {}", window[0]);
-            tear_at = Some(window[0]);
+            error!("detected torn segment somewhere after {}", window[1]);
+            tear_at = Some(window[1]);
         }
     }
 
