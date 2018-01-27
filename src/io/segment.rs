@@ -415,12 +415,14 @@ impl SegmentAccountant {
             std::cmp::max(acc, segment.lsn.unwrap_or(acc))
         });
 
+        // NB set tip BEFORE any calls to free_segment, as when
+        // we ensure the segment safety discipline, it is going to
+        // bump the tip, which hopefully is already the final recovered
+        // tip.
+        self.tip = (io_buf_size * segments.len()) as LogID;
+
         for (idx, ref mut segment) in segments.iter_mut().enumerate() {
             let segment_start = idx as LogID * io_buf_size as LogID;
-
-            if segment_start >= self.tip {
-                self.tip = segment_start + io_buf_size as LogID;
-            }
 
             if segment.lsn.is_none() {
                 self.free_segment(segment_start, true);
@@ -467,8 +469,6 @@ impl SegmentAccountant {
 
                 segment.draining_to_free(lsn);
 
-                assert!(!self.segment_already_free(segment_start));
-                // don't give out this segment twice
                 trace!(
                     "freeing segment {} from initialize_from_snapshot, tip: {}",
                     segment_start,
@@ -525,7 +525,6 @@ impl SegmentAccountant {
         }
     }
 
-    // TODO do we need this at all in recovery once recovery is decoupled?
     fn free_segment(&mut self, lid: LogID, in_recovery: bool) {
         debug!("freeing segment {}", lid);
         let idx = self.lid_to_idx(lid);
