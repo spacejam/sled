@@ -149,6 +149,7 @@ fn run_with_snapshot() {
 
 #[test]
 fn test_crash_recovery_with_runtime_snapshot() {
+    cleanup_with_snapshots();
     for _ in 0..100 {
         let child = unsafe { libc::fork() };
         if child == 0 {
@@ -169,6 +170,7 @@ fn test_crash_recovery_with_runtime_snapshot() {
 
 #[test]
 fn test_crash_recovery_no_runtime_snapshot() {
+    cleanup();
     for _ in 0..100 {
         let child = unsafe { libc::fork() };
         if child == 0 {
