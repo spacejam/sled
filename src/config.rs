@@ -304,9 +304,16 @@ impl Config {
 
     fn verify_conf_changes_ok(&self) {
         if let Ok(Some(mut old)) = self.read_config() {
+            let old_tmp = old.tmp_path;
             old.tmp_path = self.tmp_path.clone();
             assert_eq!(self, &old, "changing the configuration \
                        between usages is currently unsupported");
+            // need to keep the old path so that when old gets
+            // dropped we don't remove our tmp_path (but it
+            // might not matter even if we did, since it just
+            // becomes anonymous as long as we keep a reference
+            // open to it in the FinalConfig)
+            old.tmp_path = old_tmp;
         } else {
             self.write_config().expect(
                 "unable to open file for writing",
