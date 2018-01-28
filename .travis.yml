@@ -32,7 +32,7 @@ script:
                  ./hack/race_detector
                  ;;
                crash)
-                 cargo test test_crash_recovery --release --features="check_snapshot_integrity"
+                 cargo test test_crash_recovery --release --features="check_snapshot_integrity" -- --nocapture
                  ;;
                *)
                  cargo check;
