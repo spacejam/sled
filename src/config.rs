@@ -462,11 +462,16 @@ impl FinalConfig {
 
         let regenerated = read_snapshot_or_default::<PM, P, R>(&self);
 
+        let log = self.log();
+
         for (k, v) in &regenerated.pt {
             if !incremental.pt.contains_key(&k) {
                 panic!("page only present in regenerated pagetable: {} -> {:?}", k, v);
             }
             assert_eq!(incremental.pt.get(&k), Some(v), "page tables differ for pid {}", k);
+            for (lsn, lid) in v.iter() {
+                log.read(lsn, lid).unwrap().expect(&*format!("could not read log data for pid {} at lsn {} lid {}", k, lsn, lid));
+            }
         }
 
         for (k, v) in &incremental.pt {
@@ -474,6 +479,9 @@ impl FinalConfig {
                 panic!("page only present in incremental pagetable: {} -> {:?}", k, v);
             }
             assert_eq!(Some(v), regenerated.pt.get(&k), "page tables differ for pid {}", k);
+            for (lsn, lid) in v.iter() {
+                log.read(lsn, lid).unwrap().expect(&*format!("could not read log data for pid {} at lsn {} lid {}", k, lsn, lid));
+            }
         }
 
         assert_eq!(incremental.pt, regenerated.pt, "snapshot pagetable diverged");
