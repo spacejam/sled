@@ -291,6 +291,19 @@ impl LogRead {
             _ => panic!("called unwrap on a non-flush LogRead"),
         }
     }
+
+    /// Retrieves the read bytes from a successful write, or
+    /// panics with the provided error message.
+    ///
+    /// # Panics
+    ///
+    /// panics if `is_flush()` is false.
+    pub fn expect<'a>(self, msg: &'a str) -> (Lsn, Vec<u8>, usize) {
+        match self {
+            LogRead::Flush(lsn, bytes, len) => (lsn, bytes, len),
+            _ => panic!("{}", msg),
+        }
+    }
 }
 
 // NB we use a lot of xors below to differentiate between zeroed out
