@@ -980,8 +980,6 @@ impl SegmentAccountant {
         let segment_len = self.config.get_io_buf_size() as Lsn;
         let normalized_lsn = lsn / segment_len * segment_len;
 
-        self.ensure_ordering_initialized();
-
         Box::new(self.ordering.clone().into_iter().filter(move |&(l, _)| {
             l >= normalized_lsn
         }))
