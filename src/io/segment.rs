@@ -897,13 +897,6 @@ impl SegmentAccountant {
             }
         };
 
-        /* TODO uncomment!
-        assert!(
-            lsn >= lid,
-            "SA trying to give out a segment with a log id > segment lsn"
-        );
-        */
-
         debug!(
             "zeroing out segment beginning at {} for future lsn {}",
             lid,
