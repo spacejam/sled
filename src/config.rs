@@ -462,7 +462,7 @@ impl FinalConfig {
 
         let regenerated = read_snapshot_or_default::<PM, P, R>(&self);
 
-        let log = self.log();
+        let log = Log::start_raw_log(self.clone());
 
         for (k, v) in &regenerated.pt {
             if !incremental.pt.contains_key(&k) {
