@@ -3,6 +3,8 @@ use super::*;
 mod dll;
 mod lru;
 mod radix;
+
+/// A lock-free stack.
 pub mod stack;
 
 use self::dll::Dll;

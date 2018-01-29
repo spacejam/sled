@@ -195,6 +195,7 @@ impl<T: Send + 'static> Stack<T> {
     }
 }
 
+/// An iterator over nodes in a lock-free stack.
 pub struct StackIter<'a, T>
     where T: 'a + Send + 'static + Sync
 {
@@ -205,6 +206,7 @@ pub struct StackIter<'a, T>
 impl<'a, T> StackIter<'a, T>
     where T: 'a + Send + 'static + Sync
 {
+    /// Creates a StackIter from a pointer to one.
     pub fn from_ptr<'b>(
         ptr: Shared<'b, Node<T>>,
         guard: &'b Guard,
@@ -234,6 +236,8 @@ impl<'a, T> Iterator for StackIter<'a, T>
     }
 }
 
+/// Turns a vector of elements into a lock-free stack
+/// of them, and returns the head of the stack.
 pub fn node_from_frag_vec<T>(from: Vec<T>) -> Owned<Node<T>>
     where T: Send + 'static + Sync
 {

@@ -28,7 +28,6 @@ extern crate rand;
 #[cfg(unix)]
 extern crate libc;
 
-#[doc(hidden)]
 pub use ds::{Radix, Stack};
 
 /// general-purpose configuration
@@ -47,10 +46,11 @@ macro_rules! rep_no_copy {
     };
 }
 
+/// auxilliary data structures
+pub mod ds;
 mod io;
 mod config;
 mod hash;
-mod ds;
 mod metrics;
 
 // use log::{Iter, MessageHeader, SegmentHeader, SegmentTrailer};

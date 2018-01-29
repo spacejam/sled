@@ -3,6 +3,7 @@ use std::sync::Mutex;
 
 use super::*;
 
+/// A simple Lru cache.
 pub struct Lru {
     shards: Vec<Mutex<Shard>>,
 }
