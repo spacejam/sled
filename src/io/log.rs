@@ -213,7 +213,7 @@ impl Log {
 
 /// All log messages are prepended with this header
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub(super) struct MessageHeader {
+pub struct MessageHeader {
     pub successful_flush: bool,
     pub lsn: Lsn,
     pub len: usize,

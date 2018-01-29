@@ -462,7 +462,8 @@ impl FinalConfig {
 
         let regenerated = read_snapshot_or_default::<PM, P, R>(&self);
 
-        let log = Log::start_raw_log(self.clone());
+        use super::LogReader;
+        let f = self.file();
 
         for (k, v) in &regenerated.pt {
             if !incremental.pt.contains_key(&k) {
@@ -470,7 +471,12 @@ impl FinalConfig {
             }
             assert_eq!(incremental.pt.get(&k), Some(v), "page tables differ for pid {}", k);
             for (lsn, lid) in v.iter() {
-                log.read(lsn, lid).unwrap().expect(&*format!("could not read log data for pid {} at lsn {} lid {}", k, lsn, lid));
+                f.read_message(
+                    lid,
+                    self.get_io_buf_size(),
+                    self.get_use_compression()
+                ).unwrap()
+                .expect(&*format!("could not read log data for pid {} at lsn {} lid {}", k, lsn, lid));
             }
         }
 
@@ -480,7 +486,12 @@ impl FinalConfig {
             }
             assert_eq!(Some(v), regenerated.pt.get(&k), "page tables differ for pid {}", k);
             for (lsn, lid) in v.iter() {
-                log.read(lsn, lid).unwrap().expect(&*format!("could not read log data for pid {} at lsn {} lid {}", k, lsn, lid));
+                f.read_message(
+                    lid,
+                    self.get_io_buf_size(),
+                    self.get_use_compression()
+                ).unwrap()
+                .expect(&*format!("could not read log data for pid {} at lsn {} lid {}", k, lsn, lid));
             }
         }
 
@@ -497,7 +508,7 @@ impl FinalConfig {
                 panic!("page only present in regenerated replacement map: {}", k);
             }
             assert_eq!(
-                Some(v), 
+                Some(v),
                 incremental.replacements.get(&k),
                 "replacement tables differ for pid {}",
                 k
@@ -511,7 +522,7 @@ impl FinalConfig {
             assert_eq!(
                 Some(v),
                 regenerated.replacements.get(&k),
-                "replacement tables differ for pid {}", 
+                "replacement tables differ for pid {}",
                 k,
             );
         }
