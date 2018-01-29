@@ -96,7 +96,7 @@ fn uptime() -> std::time::Duration {
 // operations, shaking out more possible interleavings quickly. It gets
 // fully elliminated by the compiler in non-test code.
 #[inline(always)]
-fn debug_delay() {
+pub fn debug_delay() {
     #[cfg(any(test, feature = "lock_free_delays"))]
     {
         use rand::{Rng, thread_rng};
