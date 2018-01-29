@@ -1001,8 +1001,8 @@ impl SegmentAccountant {
         debug!("truncating file to length {}", at);
 
         let f = self.config.file();
-        f.sync_all().unwrap();
         f.set_len(at).unwrap();
+        f.sync_all().unwrap();
     }
 
     fn ensure_ordering_initialized(&mut self) {
