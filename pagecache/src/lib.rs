@@ -92,9 +92,9 @@ fn uptime() -> std::time::Duration {
     START.elapsed()
 }
 
-// This function is useful for inducing random jitter into our atomic
-// operations, shaking out more possible interleavings quickly. It gets
-// fully elliminated by the compiler in non-test code.
+/// This function is useful for inducing random jitter into our atomic
+/// operations, shaking out more possible interleavings quickly. It gets
+/// fully elliminated by the compiler in non-test code.
 #[inline(always)]
 pub fn debug_delay() {
     #[cfg(any(test, feature = "lock_free_delays"))]
