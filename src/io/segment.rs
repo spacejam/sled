@@ -425,6 +425,14 @@ impl SegmentAccountant {
         // tip.
         self.tip = (io_buf_size * segments.len()) as LogID;
 
+        // we need to make sure that we raise the tip over any
+        // segments that are in the safety_buffer. The safety_buffer
+        // may contain segments that are beyond what we have tracked
+        // in self.segments, because they may have been fully replaced
+        // in a later segment, or the next one, but they still need
+        // to be in the safety buffer, in order to prevent us from
+        // zeroing and recycling something in the safety buffer, breaking
+        // the recovery of later segments if a tear is discovered.
         if self.tip != 0 {
             for &lid in &self.safety_buffer {
                 if self.tip <= lid {
@@ -1160,7 +1168,8 @@ fn clean_tail_tears(
         debug!("filtering out segments after detected tear at {}", tear);
         for (&lsn, &lid) in &ordering {
             if lsn > tear {
-                panic!("filtering out segment with lsn {} at lid {}", lsn, lid);
+                // TODO make this a panic during non-truncating tests
+                error!("filtering out segment with lsn {} at lid {}", lsn, lid);
             }
         }
         ordering = ordering
