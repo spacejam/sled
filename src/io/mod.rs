@@ -27,6 +27,8 @@ mod snapshot;
 #[doc(hidden)]
 pub use self::log::{LogRead, MSG_HEADER_LEN, SEG_HEADER_LEN, SEG_TRAILER_LEN};
 
+pub(super) use self::reader::LogReader;
+
 #[doc(hidden)]
 pub use self::snapshot::{Snapshot, read_snapshot_or_default};
 

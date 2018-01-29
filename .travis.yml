@@ -18,7 +18,9 @@ matrix:
     - rust: nightly-2018-01-02
       env: TEST=lsan
     - rust: nightly-2018-01-02
-      env: TEST=crash
+      env:
+        - TEST=crash
+        - RUST_BACKTRACE=1
 
 script:
   - bash -c 'case "$TEST" in
@@ -32,7 +34,7 @@ script:
                  ./hack/race_detector
                  ;;
                crash)
-                 cargo test test_crash_recovery --release --features="check_snapshot_integrity"
+                 cargo test test_crash_recovery --release --features="check_snapshot_integrity" -- --nocapture
                  ;;
                *)
                  cargo check;

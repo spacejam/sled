@@ -213,7 +213,7 @@ impl Log {
 
 /// All log messages are prepended with this header
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub(super) struct MessageHeader {
+pub(crate) struct MessageHeader {
     pub successful_flush: bool,
     pub lsn: Lsn,
     pub len: usize,
@@ -223,7 +223,7 @@ pub(super) struct MessageHeader {
 /// A segment's header contains the new base LSN and a reference
 /// to the previous log segment.
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub struct SegmentHeader {
+pub(crate) struct SegmentHeader {
     pub lsn: Lsn,
     pub prev: LogID,
     pub ok: bool,
@@ -233,7 +233,7 @@ pub struct SegmentHeader {
 /// It is written after the rest of the segment has been fsync'd,
 /// and helps us indicate if a segment has been torn.
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub struct SegmentTrailer {
+pub(crate) struct SegmentTrailer {
     pub lsn: Lsn,
     pub ok: bool,
 }
@@ -289,6 +289,19 @@ impl LogRead {
         match self {
             LogRead::Flush(lsn, bytes, len) => (lsn, bytes, len),
             _ => panic!("called unwrap on a non-flush LogRead"),
+        }
+    }
+
+    /// Retrieves the read bytes from a successful write, or
+    /// panics with the provided error message.
+    ///
+    /// # Panics
+    ///
+    /// panics if `is_flush()` is false.
+    pub fn expect<'a>(self, msg: &'a str) -> (Lsn, Vec<u8>, usize) {
+        match self {
+            LogRead::Flush(lsn, bytes, len) => (lsn, bytes, len),
+            _ => panic!("{}", msg),
         }
     }
 }

@@ -216,13 +216,11 @@ impl Tree {
             return;
         }
         let start = clock();
-        // println!("starting set of {:?} -> {:?}", key, value);
         let frag = Frag::Set(key.clone(), value);
         let guard = pin();
         loop {
             let mut path = self.path_for_key(&*key, &guard);
             let (mut last_node, last_cas_key) = path.pop().unwrap();
-            // println!("last before: {:?}", last);
             if let Ok(new_cas_key) = self.pages.link(
                 last_node.id,
                 last_cas_key,
@@ -231,12 +229,10 @@ impl Tree {
             )
             {
                 last_node.apply(&frag);
-                // println!("last after: {:?}", last);
                 let should_split = last_node.should_split(self.fanout());
                 path.push((last_node.clone(), new_cas_key));
                 // success
                 if should_split {
-                    // println!("need to split {:?}", last_node.id);
                     self.recursive_split(&path, &guard);
                 }
                 M.tree_set.measure(clock() - start);
@@ -244,7 +240,6 @@ impl Tree {
             }
             M.tree_looped();
         }
-        // println!("done set of {:?}", key);
     }
 
     /// Delete a value, returning the last result if it existed.
@@ -381,10 +376,7 @@ impl Tree {
         let mut all_page_views = path.to_vec();
         let mut root_and_key = all_page_views.remove(0);
 
-        // println!("before:\n{:?}\n", self);
-
         while let Some((node, cas_key)) = all_page_views.pop() {
-            // println!("splitting node {:?}", node);
             if node.should_split(self.fanout()) {
                 // try to child split
                 if let Ok(parent_split) = self.child_split(
@@ -419,7 +411,6 @@ impl Tree {
         let (root_node, root_cas_key) = root_and_key;
 
         if root_node.should_split(self.fanout()) {
-            // println!("{}: hoisting root {}", name, root_frag.node.id);
             if let Ok(parent_split) = self.child_split(
                 &root_node,
                 root_cas_key,
@@ -434,7 +425,6 @@ impl Tree {
                 );
             }
         }
-        // println!("after:\n{:?}\n", self);
     }
 
     fn child_split<'g>(
@@ -470,7 +460,6 @@ impl Tree {
             .is_err()
         {
             // if we failed, don't follow through with the parent split
-            // println!("{}: {}|{} @ {:?} -", tn(), node.id, new_pid, parent_split.at);
             self.pages.free(new_pid);
             return Err(());
         }
@@ -492,10 +481,6 @@ impl Tree {
             Frag::ParentSplit(parent_split.clone()),
             guard,
         );
-
-        if res.is_err() {
-            // println!("{}: {} <- {:?}|{} -", tn(), parent_node.id, parent_split.at, parent_split.to);
-        }
 
         res
     }
@@ -524,9 +509,6 @@ impl Tree {
             },
             Some(from),
         );
-        // println!("split is {:?}", parent_split);
-        // println!("trying to cas root at {:?} with real value {:?}", path.first().unwrap().pid, self.root.load(SeqCst));
-        // println!("root_id is {}", root_id);
         debug_delay();
         let cas = self.root.compare_and_swap(from, new_root_pid, SeqCst);
         if cas == from {
@@ -627,7 +609,6 @@ impl Tree {
 
             // half-complete split detect & completion
             if node.hi <= key_bound {
-                // println!("{:?} is hi, looking for {:?}", page_view.node.hi, key);
                 // we have encountered a child split, without
                 // having hit the parent split above.
                 cursor = node.next.unwrap();
@@ -638,7 +619,6 @@ impl Tree {
             } else if let Some(idx) = unsplit_parent.take() {
                 // we have found the proper page for
                 // our split.
-                // println!("before: {:?}", self);
                 let &(ref parent_node, ref parent_cas_key): &(Node, HPtr<'g, Frag>) = &path[idx];
 
                 let ps = Frag::ParentSplit(ParentSplit {
@@ -652,8 +632,6 @@ impl Tree {
                     ps,
                     guard,
                 );
-                // println!("trying to fix incomplete parent split: {:?}", res);
-                // println!("after: {:?}", self);
             }
 
             path.push((node, cas_key));

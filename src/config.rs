@@ -12,6 +12,7 @@ use serde::de::DeserializeOwned;
 use bincode::{Infinite, deserialize, serialize};
 
 use super::*;
+use io::LogReader;
 
 /// Top-level configuration for the system.
 ///
@@ -304,9 +305,16 @@ impl Config {
 
     fn verify_conf_changes_ok(&self) {
         if let Ok(Some(mut old)) = self.read_config() {
+            let old_tmp = old.tmp_path;
             old.tmp_path = self.tmp_path.clone();
             assert_eq!(self, &old, "changing the configuration \
                        between usages is currently unsupported");
+            // need to keep the old path so that when old gets
+            // dropped we don't remove our tmp_path (but it
+            // might not matter even if we did, since it just
+            // becomes anonymous as long as we keep a reference
+            // open to it in the FinalConfig)
+            old.tmp_path = old_tmp;
         } else {
             self.write_config().expect(
                 "unable to open file for writing",
@@ -455,11 +463,21 @@ impl FinalConfig {
 
         let regenerated = read_snapshot_or_default::<PM, P, R>(&self);
 
+        let f = self.file();
+
         for (k, v) in &regenerated.pt {
             if !incremental.pt.contains_key(&k) {
                 panic!("page only present in regenerated pagetable: {} -> {:?}", k, v);
             }
             assert_eq!(incremental.pt.get(&k), Some(v), "page tables differ for pid {}", k);
+            for (lsn, lid) in v.iter() {
+                f.read_message(
+                    lid,
+                    self.get_io_buf_size(),
+                    self.get_use_compression()
+                ).unwrap()
+                .expect(&*format!("could not read log data for pid {} at lsn {} lid {}", k, lsn, lid));
+            }
         }
 
         for (k, v) in &incremental.pt {
@@ -467,6 +485,14 @@ impl FinalConfig {
                 panic!("page only present in incremental pagetable: {} -> {:?}", k, v);
             }
             assert_eq!(Some(v), regenerated.pt.get(&k), "page tables differ for pid {}", k);
+            for (lsn, lid) in v.iter() {
+                f.read_message(
+                    lid,
+                    self.get_io_buf_size(),
+                    self.get_use_compression()
+                ).unwrap()
+                .expect(&*format!("could not read log data for pid {} at lsn {} lid {}", k, lsn, lid));
+            }
         }
 
         assert_eq!(incremental.pt, regenerated.pt, "snapshot pagetable diverged");
@@ -482,7 +508,7 @@ impl FinalConfig {
                 panic!("page only present in regenerated replacement map: {}", k);
             }
             assert_eq!(
-                Some(v), 
+                Some(v),
                 incremental.replacements.get(&k),
                 "replacement tables differ for pid {}",
                 k
@@ -496,7 +522,7 @@ impl FinalConfig {
             assert_eq!(
                 Some(v),
                 regenerated.replacements.get(&k),
-                "replacement tables differ for pid {}", 
+                "replacement tables differ for pid {}",
                 k,
             );
         }

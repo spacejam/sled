@@ -47,6 +47,19 @@ impl PageState {
             }
         }
     }
+
+    /// Iterate over the (lsn, lid) pairs that hold this page's state.
+    pub fn iter(&self) -> Box<Iterator<Item = (Lsn, LogID)>> {
+        match self {
+            &PageState::Present(ref items) => Box::new(
+                items.clone().into_iter(),
+            ),
+            &PageState::Allocated(lsn, lid) |
+            &PageState::Free(lsn, lid) => {
+                Box::new(vec![(lsn, lid)].into_iter())
+            }
+        }
+    }
 }
 
 impl<R> Default for Snapshot<R> {
