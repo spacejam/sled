@@ -356,7 +356,7 @@ impl SegmentAccountant {
         let mut segments = vec![];
 
         let add = |pid, lsn, lid, segments: &mut Vec<Segment>| {
-            // ensure segments is long enough
+            // add pid to segment
             let idx = lid as usize / io_buf_size;
             if segments.len() < idx + 1 {
                 segments.resize(idx + 1, Segment::default());
@@ -364,7 +364,6 @@ impl SegmentAccountant {
 
             let segment_lsn = lsn / io_buf_size as Lsn * io_buf_size as Lsn;
             segments[idx].recovery_ensure_initialized(segment_lsn);
-            // add pid to segment
             segments[idx].insert_pid(pid, segment_lsn);
         };
 
@@ -418,12 +417,12 @@ impl SegmentAccountant {
         let highest_lsn = segments.iter().fold(0, |acc, segment| {
             std::cmp::max(acc, segment.lsn.unwrap_or(acc))
         });
+        debug!("recovered highest_lsn in all segments: {}", highest_lsn);
 
         // NB set tip BEFORE any calls to free_segment, as when
         // we ensure the segment safety discipline, it is going to
         // bump the tip, which hopefully is already the final recovered
         // tip.
-
         self.tip = (io_buf_size * segments.len()) as LogID;
 
         if self.tip != 0 {
@@ -1173,61 +1172,6 @@ fn clean_tail_tears(
     ordering
 }
 
-pub trait Manager {
-    /// Start a new Manager, given a config and snapshot.
-    fn start<R>(config: FinalConfig, snapshot: Snapshot<R>);
-
-    /// Returns the next offset to write a new segment in,
-    /// as well as the offset of the previous segment that
-    /// was allocated, so that we can detect missing
-    /// out-of-order segments during recovery.
-    fn next(&mut self, lsn: Lsn) -> (LogID, LogID);
-
-    /// Called after the trailer of a segment has been written to disk,
-    /// indicating that no more pids will be added to a segment. Moves
-    /// the segment into the Inactive state.
-    ///
-    /// # Panics
-    /// The provided lsn and lid must exactly match the existing segment.
-    fn deactivate_segment(&mut self, lsn: Lsn, lid: LogID);
-
-    /// Causes all new allocations to occur at the end of the file, which
-    /// is necessary to preserve consistency while concurrently iterating through
-    /// the log during snapshot creation.
-    fn pause_rewriting(&mut self);
-
-    /// Re-enables segment rewriting after iteration is complete.
-    fn resume_rewriting(&mut self);
-
-    /// Returns an iterator over a snapshot of current segment
-    /// log sequence numbers and their corresponding file offsets.
-    fn iter_from(&mut self, lsn: Lsn) -> Box<Iterator<Item = (Lsn, LogID)>>;
-
-    /// Called from `PageCache` when some state has been added
-    /// to a logical page at a particular offset. We ensure the
-    /// page is present in the segment's page set.
-    fn mark_link(&mut self, pid: PageID, lsn: Lsn, lid: LogID);
-
-    /// Optionally returns a PageID that the caller should
-    /// relocate to a fresh segment.
-    ///
-    /// Called by the `PageCache` to find useful pages
-    /// it should try to rewrite.
-    fn clean(&mut self, ignore: Option<PageID>) -> Option<PageID>;
-
-    /// Called by the `PageCache` when a page has been rewritten completely.
-    /// We mark all of the old segments that contained the previous state
-    /// from the page, and if the old segments are empty or clear enough to
-    /// begin accelerated cleaning we mark them as so.
-    fn mark_replace(
-        &mut self,
-        pid: PageID,
-        lsn: Lsn,
-        old_lids: Vec<LogID>,
-        new_lid: LogID,
-    );
-}
-
 /// The log may be configured to write data
 /// in several different ways, depending on
 /// the constraints of the system using it.
@@ -1251,20 +1195,17 @@ pub enum SegmentMode {
     Gc,
 }
 
-/*
-pub enum SegmentManager {
-    Linear,
-    PunchedLinear(SegmentAccountant),
-    Reuse(SegmentAccountant),
-    Gc(SegmentAccountant),
-}
-*/
-
 pub fn raw_segment_iter_from(lsn: Lsn, config: &FinalConfig) -> LogIter {
     let segment_len = config.get_io_buf_size() as Lsn;
     let normalized_lsn = lsn / segment_len * segment_len;
 
     let ordering = scan_segment_lsns(0, &config);
+
+    trace!(
+        "generated iterator over segments {:?} with lsn >= {}",
+        ordering,
+        normalized_lsn
+    );
 
     let segment_iter = Box::new(ordering.into_iter().filter(
         move |&(l, _)| l >= normalized_lsn,
