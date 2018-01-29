@@ -8,7 +8,7 @@ use super::Pio;
 
 use super::*;
 
-pub trait LogReader {
+pub(crate) trait LogReader {
     fn read_segment_header(&self, id: LogID) -> std::io::Result<SegmentHeader>;
 
     fn read_segment_trailer(

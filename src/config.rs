@@ -12,6 +12,7 @@ use serde::de::DeserializeOwned;
 use bincode::{Infinite, deserialize, serialize};
 
 use super::*;
+use io::LogReader;
 
 /// Top-level configuration for the system.
 ///
@@ -462,7 +463,6 @@ impl FinalConfig {
 
         let regenerated = read_snapshot_or_default::<PM, P, R>(&self);
 
-        use super::LogReader;
         let f = self.file();
 
         for (k, v) in &regenerated.pt {
