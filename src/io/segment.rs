@@ -340,7 +340,7 @@ impl SegmentAccountant {
             ret.tip = new_tip;
         }
 
-        ret.set_safety_buffer();
+        ret.set_safety_buffer(snapshot.max_lsn);
 
         ret.initialize_from_snapshot(snapshot);
 
@@ -434,6 +434,8 @@ impl SegmentAccountant {
             }
         }
 
+        debug!("set self.tip to {}", self.tip);
+
         for (idx, ref mut segment) in segments.iter_mut().enumerate() {
             let segment_start = idx as LogID * io_buf_size as LogID;
 
@@ -525,8 +527,38 @@ impl SegmentAccountant {
         }
     }
 
-    fn set_safety_buffer(&mut self) {
+    fn set_safety_buffer(&mut self, snapshot_max_lsn: Lsn) {
         self.ensure_ordering_initialized();
+
+        // if our ordering contains anything higher than
+        // what our snapshot logic scanned, it means it's
+        // empty, and we should nuke it to prevent incorrect
+        // recoveries.
+        let mut to_zero = vec![];
+        for (&lsn, &lid) in &self.ordering {
+            if lsn <= snapshot_max_lsn {
+                continue;
+            }
+            warn!(
+                "zeroing out empty segment header at lsn {} lid {}",
+                lsn,
+                lid
+            );
+            to_zero.push(lsn);
+            let f = self.config.file();
+            f.pwrite_all(&*vec![0; SEG_HEADER_LEN], lid).unwrap();
+            f.sync_all().unwrap();
+        }
+
+        for lsn in to_zero.into_iter() {
+            self.ordering.remove(&lsn);
+        }
+
+        self.ordering = self.ordering
+            .clone()
+            .into_iter()
+            .filter(|&(lsn, _)| lsn <= snapshot_max_lsn)
+            .collect();
 
         let safety_buffer_len = self.config.get_io_bufs();
         let mut safety_buffer: Vec<LogID> = self.ordering
@@ -548,6 +580,9 @@ impl SegmentAccountant {
 
     fn free_segment(&mut self, lid: LogID, in_recovery: bool) {
         debug!("freeing segment {}", lid);
+        debug!("safety_buffer before free: {:?}", self.safety_buffer);
+        debug!("free list before free {:?}", self.free);
+
         let idx = self.lid_to_idx(lid);
         assert_eq!(self.segments[idx].state, Free);
         assert!(
@@ -862,7 +897,11 @@ impl SegmentAccountant {
         );
         */
 
-        debug!("zeroing out segment beginning at {}", lid);
+        debug!(
+            "zeroing out segment beginning at {} for future lsn {}",
+            lid,
+            lsn
+        );
         let f = self.config.file();
         f.pwrite_all(&*vec![0; self.config.get_io_buf_size()], lid)
             .unwrap();
@@ -961,6 +1000,8 @@ impl SegmentAccountant {
 
         assert!(!self.segment_in_free(at), "double-free of a segment occurred");
 
+        debug!("truncating file to length {}", at);
+
         let f = self.config.file();
         f.sync_all().unwrap();
         f.set_len(at).unwrap();
@@ -971,9 +1012,9 @@ impl SegmentAccountant {
             return;
         }
 
-        trace!("initializing segment ordering");
-
         self.ordering = scan_segment_lsns(0, &self.config);
+
+        debug!("initialized ordering to {:?}", self.ordering);
     }
 
     fn lid_to_idx(&mut self, lid: LogID) -> usize {
@@ -1020,10 +1061,17 @@ pub fn scan_segment_lsns(
             segment.lsn >= min
         {
             // if lsn is 0, this is free
+            assert!(
+                !ordering.contains_key(&segment.lsn),
+                "duplicate segment LSN detected, one should have \
+                been zeroed out during recovery"
+            );
             ordering.insert(segment.lsn, cursor);
         }
         cursor += segment_len;
     }
+
+    debug!("ordering before clearing tears: {:?}", ordering);
 
     // Check that the last <# io buffers> segments properly
     // link their previous segment pointers.

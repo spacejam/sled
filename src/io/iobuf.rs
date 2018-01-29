@@ -650,7 +650,7 @@ impl IoBufs {
             f.sync_all().unwrap();
             iobuf.set_maxed(false);
 
-            trace!(
+            debug!(
                 "wrote trailer at lid {} for lsn {}",
                 trailer_lid,
                 trailer_lsn
