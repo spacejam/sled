@@ -32,7 +32,7 @@ script:
                  cargo test --features="clippy"
                  ;;
                lsan)
-                 cargo run -p stress2 --release --target x86_64-unknown-linux-gnu
+                 sudo cargo run -p stress2 --release --target x86_64-unknown-linux-gnu
                  ;;
                tsan)
                  cargo run -p stress2 --features=lock_free_delays --release --target x86_64-unknown-linux-gnu
