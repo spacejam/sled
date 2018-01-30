@@ -1,0 +1,12 @@
+[package]
+name = "tests"
+version = "0.1.0"
+authors = ["Tyler Neely <t@jujit.su>"]
+
+[dev-dependencies]
+sled = { path = "../sled" }
+pagecache = { path = "../pagecache" }
+crossbeam-epoch = "0.1"
+quickcheck = "0.2"
+rand = "0.3"
+libc = "0.2"
