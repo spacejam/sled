@@ -24,7 +24,7 @@ struct IoBuf {
 unsafe impl Sync for IoBuf {}
 
 pub(super) struct IoBufs {
-    config: FinalConfig,
+    config: Config,
     bufs: Vec<IoBuf>,
     current_buf: AtomicUsize,
     written_bufs: AtomicUsize,
@@ -44,7 +44,7 @@ pub(super) struct IoBufs {
 /// `IoBufs` is a set of lock-free buffers for coordinating
 /// writes to underlying storage.
 impl IoBufs {
-    pub fn start<R>(config: FinalConfig, mut snapshot: Snapshot<R>) -> IoBufs {
+    pub fn start<R>(config: Config, mut snapshot: Snapshot<R>) -> IoBufs {
         // if configured, start env_logger and/or cpuprofiler
         global_init();
 

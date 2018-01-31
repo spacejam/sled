@@ -9,7 +9,7 @@ use std::sync::atomic::{ATOMIC_USIZE_INIT, AtomicUsize, Ordering};
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use epoch::{Shared, pin};
 
-use pagecache::{Config, Materializer, PageCache, PageGet};
+use pagecache::{ConfigBuilder, Materializer, PageCache, PageGet};
 
 type PageID = usize;
 
@@ -41,7 +41,7 @@ impl Materializer for TestMaterializer {
 
 #[test]
 fn pagecache_caching() {
-    let conf = Config::default()
+    let conf = ConfigBuilder::new()
         .temporary(true)
         .cache_capacity(40)
         .cache_bits(0)
@@ -71,7 +71,7 @@ fn pagecache_caching() {
 
 #[test]
 fn pagecache_strange_crash_1() {
-    let conf = Config::default()
+    let conf = ConfigBuilder::new()
         .temporary(true)
         .cache_capacity(40)
         .cache_bits(0)
@@ -109,7 +109,7 @@ fn pagecache_strange_crash_1() {
 fn pagecache_strange_crash_2() {
     for x in 0..10 {
         let guard = pin();
-        let conf = Config::default()
+        let conf = ConfigBuilder::new()
             .temporary(true)
             .cache_capacity(40)
             .cache_bits(0)
@@ -149,7 +149,7 @@ fn pagecache_strange_crash_2() {
 
 #[test]
 fn basic_pagecache_recovery() {
-    let conf = Config::default()
+    let conf = ConfigBuilder::new()
         .temporary(true)
         .flush_every_ms(None)
         .io_buf_size(1000)
@@ -277,7 +277,7 @@ enum P {
 
 fn prop_pagecache_works(ops: OpVec) -> bool {
     use self::Op::*;
-    let config = Config::default()
+    let config = ConfigBuilder::new()
         .temporary(true)
         .io_buf_size(1000)
         .flush_every_ms(None)

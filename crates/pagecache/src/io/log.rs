@@ -21,7 +21,7 @@ pub const SEG_TRAILER_LEN: usize = 10;
 /// # Working with `Log`
 ///
 /// ```
-/// let log = pagecache::Config::default().temporary(true).log();
+/// let log = pagecache::ConfigBuilder::new().temporary(true).log();
 /// let (first_lsn, _first_offset) = log.write(b"1".to_vec());
 /// log.write(b"22".to_vec());
 /// log.write(b"333".to_vec());
@@ -44,7 +44,7 @@ pub const SEG_TRAILER_LEN: usize = 10;
 pub struct Log {
     /// iobufs is the underlying lock-free IO write buffer.
     iobufs: Arc<IoBufs>,
-    config: FinalConfig,
+    config: Config,
     flusher_shutdown: Arc<AtomicBool>,
     flusher_handle: Option<std::thread::JoinHandle<()>>,
 }
@@ -72,7 +72,7 @@ impl Drop for Log {
 impl Log {
     /// Start the log, open or create the configured file,
     /// and optionally start the periodic buffer flush thread.
-    pub fn start<R>(config: FinalConfig, snapshot: Snapshot<R>) -> Log {
+    pub fn start<R>(config: Config, snapshot: Snapshot<R>) -> Log {
         let iobufs = Arc::new(IoBufs::start(config.clone(), snapshot));
 
         let flusher_shutdown = Arc::new(AtomicBool::new(false));
@@ -96,7 +96,7 @@ impl Log {
     }
 
     /// Starts a log for use without a materializer.
-    pub fn start_raw_log(config: FinalConfig) -> Log {
+    pub fn start_raw_log(config: Config) -> Log {
         let log_iter = raw_segment_iter_from(0, &config);
 
         let snapshot = advance_snapshot::<NullMaterializer, (), ()>(

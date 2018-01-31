@@ -1,15 +1,25 @@
-//! `sled-kv` is a flash-sympathetic persistent lock-free B+ tree.
+//! `sled` is a flash-sympathetic persistent lock-free B+ tree.
 //!
 //! ```
-//! let config = sled::Config::default().temporary(true).build();
+//! let config = sled::ConfigBuilder::new().temporary(true).build();
+//!
 //! let t = sled::Tree::start(config);
+//!
 //! t.set(b"yo!".to_vec(), b"v1".to_vec());
 //! assert_eq!(t.get(b"yo!"), Some(b"v1".to_vec()));
-//! t.cas(b"yo!".to_vec(), Some(b"v1".to_vec()), Some(b"v2".to_vec())).unwrap();
+//!
+//! t.cas(
+//!     b"yo!".to_vec(),       // key
+//!     Some(b"v1".to_vec()),  // old value, None for not present
+//!     Some(b"v2".to_vec()),  // new value, None for delete
+//! ).unwrap();
+//!
 //! let mut iter = t.scan(b"a non-present key before yo!");
 //! assert_eq!(iter.next(), Some((b"yo!".to_vec(), b"v2".to_vec())));
 //! assert_eq!(iter.next(), None);
+//!
 //! t.del(b"yo!");
+//! assert_eq!(t.get(b"yo!"), None);
 //! ```
 
 #![deny(missing_docs)]
@@ -32,7 +42,7 @@ pub use tree::{Iter, Tree};
 
 use pagecache::*;
 
-pub use pagecache::{Config, FinalConfig};
+pub use pagecache::{Config, ConfigBuilder};
 
 mod tree;
 

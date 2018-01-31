@@ -208,7 +208,7 @@ impl<R> Snapshot<R> {
 pub(super) fn advance_snapshot<PM, P, R>(
     iter: LogIter,
     mut snapshot: Snapshot<R>,
-    config: &FinalConfig,
+    config: &Config,
 ) -> Snapshot<R>
     where PM: Materializer<Recovery = R, PageFrag = P>,
           P: 'static
@@ -272,7 +272,7 @@ pub(super) fn advance_snapshot<PM, P, R>(
 
 /// Read a `Snapshot` or generate a default, then advance it to
 /// the tip of the data file, if present.
-pub fn read_snapshot_or_default<PM, P, R>(config: &FinalConfig) -> Snapshot<R>
+pub fn read_snapshot_or_default<PM, P, R>(config: &Config) -> Snapshot<R>
     where PM: Materializer<Recovery = R, PageFrag = P>,
           P: 'static
                  + Debug
@@ -291,7 +291,7 @@ pub fn read_snapshot_or_default<PM, P, R>(config: &FinalConfig) -> Snapshot<R>
 }
 
 /// Read a `Snapshot` from disk.
-fn read_snapshot<R>(config: &FinalConfig) -> Option<Snapshot<R>>
+fn read_snapshot<R>(config: &Config) -> Option<Snapshot<R>>
     where R: Debug + Clone + Serialize + DeserializeOwned + Send
 {
     let mut candidates = config.get_snapshot_files();
@@ -346,7 +346,7 @@ fn read_snapshot<R>(config: &FinalConfig) -> Option<Snapshot<R>>
     deserialize::<Snapshot<R>>(&*bytes).ok()
 }
 
-pub fn write_snapshot<R>(config: &FinalConfig, snapshot: &Snapshot<R>)
+pub fn write_snapshot<R>(config: &Config, snapshot: &Snapshot<R>)
     where R: Debug + Clone + Serialize + DeserializeOwned + Send
 {
     let raw_bytes = serialize(&snapshot, Infinite).unwrap();

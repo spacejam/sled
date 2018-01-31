@@ -34,7 +34,7 @@ impl<'a> IntoIterator for &'a Tree {
 #[derive(Clone)]
 pub struct Tree {
     pages: Arc<PageCache<BLinkMaterializer, Frag, Vec<(PageID, PageID)>>>,
-    config: FinalConfig,
+    config: Config,
     root: Arc<AtomicUsize>,
 }
 
@@ -43,7 +43,7 @@ unsafe impl Sync for Tree {}
 
 impl Tree {
     /// Load existing or create a new `Tree`.
-    pub fn start(config: FinalConfig) -> Tree {
+    pub fn start(config: Config) -> Tree {
         #[cfg(feature = "check_snapshot_integrity")]
         config.verify_snapshot::<BLinkMaterializer, Frag, Vec<(PageID, PageID)>>();
 
@@ -154,8 +154,8 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use sled::Config;
-    /// let config = Config::default().temporary(true).build();
+    /// use sled::ConfigBuilder;
+    /// let config = ConfigBuilder::new().temporary(true).build();
     /// let t = sled::Tree::start(config);
     ///
     /// // unique creation
@@ -171,7 +171,7 @@ impl Tree {
     /// assert_eq!(t.get(&*vec![1]), None);
     ///
     /// // read-only tree
-    /// let ro_config = Config::default().temporary(true).read_only(true).build();
+    /// let ro_config = ConfigBuilder::new().temporary(true).read_only(true).build();
     /// let t = sled::Tree::start(ro_config);
     /// assert_eq!(t.cas(vec![10], Some(vec![2]), None), Err(None));
     /// ```
@@ -242,7 +242,7 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// let config = sled::Config::default().temporary(true).build();
+    /// let config = sled::ConfigBuilder::new().temporary(true).build();
     /// let t = sled::Tree::start(config);
     /// t.set(vec![1], vec![1]);
     /// assert_eq!(t.del(&*vec![1]), Some(vec![1]));
@@ -292,7 +292,7 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// let config = sled::Config::default().temporary(true).build();
+    /// let config = sled::ConfigBuilder::new().temporary(true).build();
     /// let t = sled::Tree::start(config);
     /// t.set(vec![1], vec![10]);
     /// t.set(vec![2], vec![20]);
@@ -318,7 +318,7 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// let config = sled::Config::default().temporary(true).build();
+    /// let config = sled::ConfigBuilder::new().temporary(true).build();
     /// let t = sled::Tree::start(config);
     /// t.set(vec![1], vec![10]);
     /// t.set(vec![2], vec![20]);

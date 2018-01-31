@@ -190,7 +190,7 @@ impl Drop for PidDropper {
 /// }
 ///
 /// fn main() {
-///     let conf = pagecache::Config::default().temporary(true);
+///     let conf = pagecache::ConfigBuilder::new().temporary(true);
 ///     let pc: pagecache::PageCache<TestMaterializer, _, _> =
 ///         pagecache::PageCache::start(conf.build());
 ///     {
@@ -219,7 +219,7 @@ pub struct PageCache<PM, P, R>
     where P: 'static + Send + Sync
 {
     t: Arc<PM>,
-    config: FinalConfig,
+    config: Config,
     inner: Radix<Stack<CacheEntry<P>>>,
     max_pid: AtomicUsize,
     free: Arc<Mutex<BinaryHeap<PageID>>>,
@@ -263,7 +263,7 @@ impl<PM, P, R> PageCache<PM, P, R>
           R: Debug + Clone + Serialize + DeserializeOwned + Send
 {
     /// Instantiate a new `PageCache`.
-    pub fn start(config: FinalConfig) -> PageCache<PM, P, R> {
+    pub fn start(config: Config) -> PageCache<PM, P, R> {
         let cache_capacity = config.get_cache_capacity();
         let cache_shard_bits = config.get_cache_bits();
         let lru = Lru::new(cache_capacity, cache_shard_bits);

@@ -1,10 +1,10 @@
 [package]
 name = "pagecache"
-version = "0.1.2"
+version = "0.1.3"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "lock-free pagecache and log for high-performance databases"
 license = "MIT/Apache-2.0"
-homepage = "https://github.com/spacejam/sled"
+homepage = "https://github.com/spacejam/sled/crates/pagecache"
 repository = "https://github.com/spacejam/sled"
 keywords = ["database", "embedded", "concurrent", "persistent", "lock-free"]
 documentation = "https://docs.rs/pagecache/"

@@ -4,7 +4,7 @@ use self::reader::LogReader;
 use super::*;
 
 pub struct LogIter {
-    pub config: FinalConfig,
+    pub config: Config,
     pub segment_iter: Box<Iterator<Item = (Lsn, LogID)>>,
     pub segment_base: Option<LogID>,
     pub segment_len: usize,

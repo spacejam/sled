@@ -19,7 +19,7 @@ use io::LogReader;
 /// # Examples
 ///
 /// ```
-/// let _config = pagecache::Config::default()
+/// let _config = pagecache::ConfigBuilder::default()
 ///     .path("/path/to/data".to_owned())
 ///     .cache_capacity(10_000_000_000)
 ///     .use_compression(true)
@@ -29,12 +29,12 @@ use io::LogReader;
 ///
 /// Read-only mode
 /// ```
-/// let _config = sled::Config::default()
+/// let _config = sled::ConfigBuilder::default()
 ///     .path("/path/to/data".to_owned())
 ///     .read_only(true);
 /// ```
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub struct Config {
+pub struct ConfigBuilder {
     io_bufs: usize,
     io_buf_size: usize,
     min_items_per_segment: usize,
@@ -59,10 +59,10 @@ pub struct Config {
     pub(super) segment_mode: SegmentMode,
 }
 
-unsafe impl Send for Config {}
+unsafe impl Send for ConfigBuilder {}
 
-impl Default for Config {
-    fn default() -> Config {
+impl Default for ConfigBuilder {
+    fn default() -> ConfigBuilder {
         let now = uptime();
         let nanos = (now.as_secs() * 1_000_000_000) +
             u64::from(now.subsec_nanos());
@@ -74,7 +74,7 @@ impl Default for Config {
         #[cfg(not(target_os = "linux"))]
         let tmp_path = format!("sled.tmp.{}", nanos);
 
-        Config {
+        ConfigBuilder {
             io_bufs: 3,
             io_buf_size: 2 << 22, // 8mb
             min_items_per_segment: 4, // capacity for >=4 pages/segment
@@ -118,7 +118,7 @@ macro_rules! builder {
 
             #[doc="Builder, set "]
             #[doc=$desc]
-            pub fn $name(mut self, to: $t) -> Config {
+            pub fn $name(mut self, to: $t) -> ConfigBuilder {
                 self.$name = to;
                 self
             }
@@ -126,14 +126,14 @@ macro_rules! builder {
     }
 }
 
-impl Config {
+impl ConfigBuilder {
     builder!(
         (io_bufs, get_io_bufs, set_io_bufs, usize, "number of io buffers"),
         (io_buf_size, get_io_buf_size, set_io_buf_size, usize, "size of each io flush buffer. MUST be multiple of 512!"),
         (min_items_per_segment, get_min_items_per_segment, set_min_items_per_segment, usize, "minimum data chunks/pages in a segment."),
         (blink_fanout, get_blink_fanout, set_blink_fanout, usize, "b-link node fanout, minimum of 2"),
         (page_consolidation_threshold, get_page_consolidation_threshold, set_page_consolidation_threshold, usize, "page consolidation threshold"),
-        (temporary, get_temporary, set_temporary, bool, "if this database should be removed after the Config is dropped"),
+        (temporary, get_temporary, set_temporary, bool, "if this database should be removed after the ConfigBuilder is dropped"),
         (read_only, get_read_only, set_read_only, bool, "whether to run in read-only mode"),
         (cache_bits, get_cache_bits, set_cache_bits, usize, "log base 2 of the number of cache shards"),
         (cache_capacity, get_cache_capacity, set_cache_capacity, usize, "maximum size for the system page cache"),
@@ -150,13 +150,13 @@ impl Config {
         (snapshot_path, get_snapshot_path, set_snapshot_path, Option<OsString>, "snapshot file location")
     );
 
-    /// Returns a default `Config`
-    pub fn new() -> Config {
+    /// Returns a default `ConfigBuilder`
+    pub fn new() -> ConfigBuilder {
         Self::default()
     }
 
     /// Set the path of the database (builder).
-    pub fn path<P: AsRef<Path>>(mut self, path: P) -> Config {
+    pub fn path<P: AsRef<Path>>(mut self, path: P) -> ConfigBuilder {
         let path_ref: &Path = path.as_ref();
         let os_str_ref: &OsStr = path_ref.as_ref();
 
@@ -238,7 +238,7 @@ impl Config {
     }
 
     /// Finalize the configuration.
-    pub fn build(self) -> FinalConfig {
+    pub fn build(self) -> Config {
         self.validate();
 
         let path = self.db_path();
@@ -272,14 +272,14 @@ impl Config {
         options.write(true);
         let file = options.open(&path).unwrap();
 
-        // seal config in a FinalConfig
-        FinalConfig {
+        // seal config in a Config
+        Config {
             inner: Arc::new(self),
             file: Arc::new(file),
         }
     }
 
-    /// Consumes the `Config` and produces a `Log` from it.
+    /// Consumes the `ConfigBuilder` and produces a `Log` from it.
     pub fn log(mut self) -> Log {
         self.segment_mode = SegmentMode::Linear;
         Log::start_raw_log(self.build())
@@ -316,7 +316,7 @@ impl Config {
             // dropped we don't remove our tmp_path (but it
             // might not matter even if we did, since it just
             // becomes anonymous as long as we keep a reference
-            // open to it in the FinalConfig)
+            // open to it in the Config)
             old.tmp_path = old_tmp;
         } else {
             self.write_config().expect(
@@ -340,7 +340,7 @@ impl Config {
         f.sync_all()
     }
 
-    fn read_config(&self) -> std::io::Result<Option<Config>> {
+    fn read_config(&self) -> std::io::Result<Option<ConfigBuilder>> {
         let path = self.conf_path();
 
         let mut f = std::fs::OpenOptions::new().read(true).open(&path)?;
@@ -366,7 +366,7 @@ impl Config {
             warn!("crc for settings file {:?} failed! can't verify that config is safe", path);
         }
 
-        Ok(deserialize::<Config>(&*buf).ok())
+        Ok(deserialize::<ConfigBuilder>(&*buf).ok())
     }
 
     fn db_path(&self) -> OsString {
@@ -382,7 +382,7 @@ impl Config {
     }
 }
 
-impl Drop for FinalConfig {
+impl Drop for Config {
     fn drop(&mut self) {
         if !self.get_temporary() {
             return;
@@ -407,26 +407,26 @@ impl Drop for FinalConfig {
     }
 }
 
-/// A finalized `Config` that can be use multiple times
+/// A finalized `ConfigBuilder` that can be use multiple times
 /// to open a `Tree` or `Log`.
 #[derive(Clone, Debug)]
-pub struct FinalConfig {
-    inner: Arc<Config>,
+pub struct Config {
+    inner: Arc<ConfigBuilder>,
     file: Arc<fs::File>,
 }
 
-unsafe impl Send for FinalConfig {}
-unsafe impl Sync for FinalConfig {}
+unsafe impl Send for Config {}
+unsafe impl Sync for Config {}
 
-impl Deref for FinalConfig {
-    type Target = Config;
+impl Deref for Config {
+    type Target = ConfigBuilder;
 
     fn deref(&self) -> &Self::Target {
         &*self.inner
     }
 }
 
-impl FinalConfig {
+impl Config {
     /// Start a `Log` using this finalized configuration.
     pub fn log(&self) -> Log {
         assert_eq!(self.inner.segment_mode, SegmentMode::Linear, "must use SegmentMode::Linear with log!");

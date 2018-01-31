@@ -10,7 +10,7 @@ use std::sync::Arc;
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 
 use sled::*;
-use pagecache::Config;
+use pagecache::ConfigBuilder;
 
 const N_THREADS: usize = 5;
 const N_PER_THREAD: usize = 300;
@@ -50,7 +50,7 @@ fn parallel_tree_ops() {
     }
 
     println!("========== initial sets ==========");
-    let conf = Config::default().temporary(true).blink_fanout(2).build();
+    let conf = ConfigBuilder::new().temporary(true).blink_fanout(2).build();
     let t = Arc::new(sled::Tree::start(conf));
     par!{t, |tree: &Tree, k: Vec<u8>| {
         assert_eq!(tree.get(&*k), None);
@@ -93,7 +93,7 @@ fn parallel_tree_ops() {
 
 #[test]
 fn tree_subdir() {
-    let config = Config::default()
+    let config = ConfigBuilder::new()
         .path("test_tree_subdir/test.db".to_owned())
         .build();
     let t = sled::Tree::start(config);
@@ -102,7 +102,7 @@ fn tree_subdir() {
 
     drop(t);
 
-    let config = Config::default()
+    let config = ConfigBuilder::new()
         .path("test_tree_subdir/test.db".to_owned())
         .build();
     let t = sled::Tree::start(config);
@@ -119,7 +119,7 @@ fn tree_subdir() {
 #[test]
 fn tree_iterator() {
     println!("========== iterator ==========");
-    let config = Config::default()
+    let config = ConfigBuilder::new()
         .temporary(true)
         .blink_fanout(2)
         .flush_every_ms(None)
@@ -160,7 +160,7 @@ fn tree_iterator() {
 #[test]
 fn recover_tree() {
     println!("========== recovery ==========");
-    let conf = Config::default()
+    let conf = ConfigBuilder::new()
         .temporary(true)
         .blink_fanout(2)
         .io_buf_size(5000)
@@ -254,7 +254,7 @@ fn prop_tree_matches_btreemap(
     snapshot_after: u8,
 ) -> bool {
     use self::Op::*;
-    let config = Config::default()
+    let config = ConfigBuilder::new()
         .temporary(true)
         .snapshot_after_ops(snapshot_after as usize + 1)
         .flush_every_ms(Some(1))

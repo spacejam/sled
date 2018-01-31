@@ -31,7 +31,7 @@ extern crate libc;
 pub use ds::{Radix, Stack};
 
 /// general-purpose configuration
-pub use config::{Config, FinalConfig};
+pub use config::{Config, ConfigBuilder};
 pub use io::*;
 
 macro_rules! rep_no_copy {

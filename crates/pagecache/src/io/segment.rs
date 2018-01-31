@@ -78,7 +78,7 @@ use super::*;
 #[derive(Debug)]
 pub struct SegmentAccountant {
     // static or one-time set
-    config: FinalConfig,
+    config: Config,
 
     // TODO these should be sharded to improve performance
     segments: Vec<Segment>,
@@ -312,7 +312,7 @@ impl Segment {
 impl SegmentAccountant {
     /// Create a new SegmentAccountant from previously recovered segments.
     pub fn start<R>(
-        config: FinalConfig,
+        config: Config,
         snapshot: Snapshot<R>,
     ) -> SegmentAccountant {
         let mut ret = SegmentAccountant {
@@ -1040,10 +1040,7 @@ impl SegmentAccountant {
 
 // Scan the log file if we don't know of any Lsn offsets yet,
 // and recover the order of segments, and the highest Lsn.
-pub fn scan_segment_lsns(
-    min: Lsn,
-    config: &FinalConfig,
-) -> BTreeMap<Lsn, LogID> {
+pub fn scan_segment_lsns(min: Lsn, config: &Config) -> BTreeMap<Lsn, LogID> {
     let mut ordering = BTreeMap::new();
 
     let segment_len = config.get_io_buf_size() as LogID;
@@ -1083,7 +1080,7 @@ pub fn scan_segment_lsns(
 // never reuse buffers within this safety range.
 fn clean_tail_tears(
     mut ordering: BTreeMap<Lsn, LogID>,
-    config: &FinalConfig,
+    config: &Config,
     f: &File,
 ) -> BTreeMap<Lsn, LogID> {
     let safety_buffer = config.get_io_bufs();
@@ -1195,7 +1192,7 @@ pub enum SegmentMode {
     Gc,
 }
 
-pub fn raw_segment_iter_from(lsn: Lsn, config: &FinalConfig) -> LogIter {
+pub fn raw_segment_iter_from(lsn: Lsn, config: &Config) -> LogIter {
     let segment_len = config.get_io_buf_size() as Lsn;
     let normalized_lsn = lsn / segment_len * segment_len;
 

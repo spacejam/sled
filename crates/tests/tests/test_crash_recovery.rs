@@ -6,7 +6,7 @@ use std::fs;
 use std::thread;
 use std::time::Duration;
 
-use pagecache::{Config, FinalConfig};
+use pagecache::{Config, ConfigBuilder};
 
 const CYCLE: usize = 16; // 65536;
 
@@ -79,7 +79,7 @@ fn slice_to_u32(b: &[u8]) -> u32 {
     unsafe { std::mem::transmute(buf) }
 }
 
-fn run(config: FinalConfig) {
+fn run(config: Config) {
     let tree = sled::Tree::start(config);
 
     // flush to ensure the initial root is stable.
@@ -113,7 +113,7 @@ fn run(config: FinalConfig) {
 }
 
 fn run_without_snapshot() {
-    let config = Config::default()
+    let config = ConfigBuilder::new()
         .io_bufs(2)
         .blink_fanout(15)
         .page_consolidation_threshold(10)
@@ -132,7 +132,7 @@ fn run_without_snapshot() {
 }
 
 fn run_with_snapshot() {
-    let config = Config::default()
+    let config = ConfigBuilder::new()
         .io_bufs(2)
         .blink_fanout(15)
         .page_consolidation_threshold(10)

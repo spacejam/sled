@@ -88,7 +88,7 @@ fn main() {
     let total = Arc::new(AtomicUsize::new(0));
     let shutdown = Arc::new(AtomicBool::new(false));
 
-    let config = sled::Config::default()
+    let config = sled::ConfigBuilder::new()
         .io_bufs(2)
         .io_buf_size(8_000_000)
         .blink_fanout(32)

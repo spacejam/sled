@@ -16,7 +16,7 @@ use std::sync::atomic::{ATOMIC_USIZE_INIT, AtomicUsize, Ordering};
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::{Rng, thread_rng};
 
-use pagecache::{Config, Log, LogRead, MSG_HEADER_LEN, SEG_HEADER_LEN,
+use pagecache::{ConfigBuilder, Log, LogRead, MSG_HEADER_LEN, SEG_HEADER_LEN,
                 SEG_TRAILER_LEN, SegmentMode};
 
 type Lsn = isize;
@@ -26,7 +26,7 @@ type LogID = u64;
 #[test]
 #[ignore]
 fn more_log_reservations_than_buffers() {
-    let config = Config::default()
+    let config = ConfigBuilder::new()
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
         .build();
@@ -45,7 +45,7 @@ fn more_log_reservations_than_buffers() {
 
 #[test]
 fn non_contiguous_log_flush() {
-    let conf = Config::default()
+    let conf = ConfigBuilder::new()
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
         .io_buf_size(1000)
@@ -70,7 +70,7 @@ fn non_contiguous_log_flush() {
 fn concurrent_logging() {
     // TODO linearize res bufs, verify they are correct
     for i in 0..10 {
-        let conf = Config::default()
+        let conf = ConfigBuilder::new()
             .temporary(true)
             .segment_mode(SegmentMode::Linear)
             .io_buf_size(1000)
@@ -168,7 +168,7 @@ fn abort(log: &Log) {
 
 #[test]
 fn log_aborts() {
-    let log = Config::default().temporary(true).log();
+    let log = ConfigBuilder::new().temporary(true).log();
     write(&log);
     abort(&log);
     write(&log);
@@ -179,7 +179,7 @@ fn log_aborts() {
 
 #[test]
 fn log_iterator() {
-    let conf = Config::default()
+    let conf = ConfigBuilder::new()
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
         .io_buf_size(1000)
@@ -264,7 +264,7 @@ impl Arbitrary for Op {
 #[test]
 #[ignore]
 fn snapshot_with_out_of_order_buffers() {
-    let conf = Config::default()
+    let conf = ConfigBuilder::new()
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
         .io_buf_size(100)
@@ -306,7 +306,7 @@ fn snapshot_with_out_of_order_buffers() {
 fn multi_segment_log_iteration() {
     // ensure segments are being linked
     // ensure trailers are valid
-    let conf = Config::default()
+    let conf = ConfigBuilder::new()
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
         .io_buf_size(1000)
@@ -392,7 +392,7 @@ impl Arbitrary for OpVec {
 
 fn prop_log_works(ops: OpVec) -> bool {
     use self::Op::*;
-    let config = Config::default()
+    let config = ConfigBuilder::new()
         .temporary(true)
         .io_buf_size(1024 * 8)
         .flush_every_ms(Some(1))
