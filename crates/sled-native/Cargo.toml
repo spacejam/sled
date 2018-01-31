@@ -10,7 +10,7 @@ keywords = ["database", "embedded", "concurrent", "persistent", "c"]
 documentation = "https://docs.rs/sled-native/"
 
 [lib]
-name = "sled"
+name = "sled_native"
 crate-type = ["dylib"]
 
 [dependencies]
