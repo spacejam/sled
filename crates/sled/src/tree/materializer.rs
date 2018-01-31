@@ -2,8 +2,6 @@ use super::*;
 
 #[derive(Default, Debug)]
 pub struct BLinkMaterializer {
-    // TODO use interval-based tracking to handle race conditions in
-    // hoists where higher is not later.
     pub(super) roots: Mutex<Vec<(PageID, PageID)>>,
 }
 
