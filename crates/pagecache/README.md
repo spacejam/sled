@@ -1,7 +1,7 @@
 # pagecache
 
 [![Build Status](https://travis-ci.org/spacejam/sled.svg?branch=master)](https://travis-ci.org/spacejam/sled)
-[![crates.io](http://meritbadge.herokuapp.com/pagecache)](https://crates.io/crates/pagecache)
+[![crates.io](https://meritbadge.herokuapp.com/pagecache)](https://crates.io/crates/pagecache)
 [![documentation](https://docs.rs/pagecache/badge.svg)](https://docs.rs/pagecache)
 
 A construction kit for databases. Provides a lock-free log store and pagecache.
