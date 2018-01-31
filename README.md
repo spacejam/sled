@@ -57,6 +57,7 @@ tree.del(&k);
 * beat [LSM trees](https://en.wikipedia.org/wiki/Log-structured_merge-tree)
   for reads and [traditional B+ trees](https://en.wikipedia.org/wiki/B%2B_tree) for writes
 * MVCC, transactions, merge operators and snapshots provided via a higher-level `Db` versioned-key interface
+* custom merge operators a la RocksDB
 * form the iron core of a [linearizable store](https://github.com/spacejam/rasputin) and a [flexible location-agnostic store](https://github.com/spacejam/icefall)
 * SQLite, MySQL, Postgres back-end plugin support
 * forward-compatible binary format
@@ -88,9 +89,6 @@ lock-free tree on a lock-free pagecache on a lock-free log. the pagecache scatte
 partial page fragments across the log, rather than rewriting entire pages at a time
 as B+ trees for spinning disks historically have. on page reads, we concurrently
 scatter-gather reads across the log to materialize the page from its fragments.
-
-the system is largely inspired by the Deuteronomy architecture, and aims to implement
-the best features from RocksDB as well.
 
 # References
 

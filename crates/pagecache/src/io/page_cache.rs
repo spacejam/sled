@@ -159,7 +159,6 @@ impl Drop for PidDropper {
 ///     // at read time, and possibly cached.
 ///     type PageFrag = String;
 ///
-///
 ///     // The state returned by a call to `PageCache::recover`, as
 ///     // described by `Materializer::recover`
 ///     type Recovery = ();
