@@ -38,17 +38,14 @@ impl Materializer for BLinkMaterializer {
             Frag::Base(ref node, prev_root) => {
                 if let Some(prev_root) = prev_root {
                     let mut roots = self.roots.lock().unwrap();
-                    if roots.contains(&(node.id, prev_root)) {
-                        None
-                    } else {
+                    if !roots.contains(&(node.id, prev_root)) {
                         roots.push((node.id, prev_root));
-                        Some(roots.clone())
+                        return Some(roots.clone());
                     }
-                } else {
-                    None
                 }
             }
-            _ => None,
+            _ => (),
         }
+        None
     }
 }
