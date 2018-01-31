@@ -5,7 +5,7 @@
 </p>
 
 [![Build Status](https://travis-ci.org/spacejam/sled.svg?branch=master)](https://travis-ci.org/spacejam/sled)
-[![crates.io](http://meritbadge.herokuapp.com/sled)](https://crates.io/crates/sled)
+[![crates.io](https://meritbadge.herokuapp.com/sled)](https://crates.io/crates/sled)
 [![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled)
 
 A pre-alpha modern embedded database.
