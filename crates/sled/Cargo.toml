@@ -8,7 +8,7 @@ homepage = "https://github.com/spacejam/sled"
 repository = "https://github.com/spacejam/sled"
 keywords = ["database", "embedded", "concurrent", "persistent", "lock-free"]
 documentation = "https://docs.rs/sled/"
-readme = "README.md"
+readme = "../../README.md"
 
 [features]
 default = []
