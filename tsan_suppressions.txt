@@ -1,0 +1,12 @@
+# This suppressions file should really only be used for things
+# that TSAN can not correctly reason about, like raw memory
+# fences or implicit equivalents created by performing atomic
+# operations on variables.
+
+# Read more about how to use this file at:
+# https://github.com/google/sanitizers/wiki/ThreadSanitizerSuppressions
+
+# We ignore this because collect() calls functionality that relies
+# on atomic::fence for correctness, which doesn't get picked up by TSAN
+# as of Feb 1 2018 / rust 1.23.
+race:crossbeam_epoch::internal::Global::collect
