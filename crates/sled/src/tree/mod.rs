@@ -22,11 +22,11 @@ pub use self::iter::Iter;
 pub use self::materializer::BLinkMaterializer;
 
 impl<'a> IntoIterator for &'a Tree {
-    type Item = (Vec<u8>, Vec<u8>);
+    type Item = DbResult<(Vec<u8>, Vec<u8>), ()>;
     type IntoIter = Iter<'a>;
 
     fn into_iter(self) -> Iter<'a> {
-        self.iter().unwrap()
+        self.iter()
     }
 }
 
@@ -234,7 +234,7 @@ impl Tree {
                 path.push((last_node.clone(), new_cas_key));
                 // success
                 if should_split {
-                    self.recursive_split(&path, &guard);
+                    self.recursive_split(&path, &guard)?;
                 }
                 return Ok(());
             }
@@ -307,15 +307,34 @@ impl Tree {
     /// assert_eq!(iter.next(), Some((vec![3], vec![30])));
     /// assert_eq!(iter.next(), None);
     /// ```
-    pub fn scan(&self, key: &[u8]) -> DbResult<Iter, ()> {
+    pub fn scan(&self, key: &[u8]) -> Iter {
         let guard = pin();
-        let (path, _) = self.get_internal(key, &guard)?;
-        let &(ref last_node, ref _last_cas_key) = path.last().unwrap();
-        Ok(Iter {
-            id: last_node.id,
+        let mut broken = None;
+        let id = match self.get_internal(key, &guard) {
+            Ok((path, _)) => {
+                if path.is_empty() {
+                    broken = Some(Error::ReportableBug(
+                        "failed to get path for key".to_owned(),
+                    ));
+                    0
+                } else {
+                    let &(ref last_node, ref _last_cas_key) = path.last()
+                        .unwrap();
+                    last_node.id
+                }
+            }
+            Err(e) => {
+                broken = Some(e.danger_cast());
+                0
+            }
+        };
+        Iter {
+            id: id,
             inner: &self.pages,
             last_key: Bound::Non(key.to_vec()),
-        })
+            broken: broken,
+            done: false,
+        }
     }
 
     /// Iterate over the tuples of keys and values in this tree.
@@ -334,22 +353,15 @@ impl Tree {
     /// assert_eq!(iter.next(), Some((vec![3], vec![30])));
     /// assert_eq!(iter.next(), None);
     /// ```
-    pub fn iter(&self) -> DbResult<Iter, ()> {
-        let guard = pin();
-        let (path, _) = self.get_internal(b"", &guard)?;
-        let &(ref last_node, ref _last_cas_key) = path.last().unwrap();
-        Ok(Iter {
-            id: last_node.id,
-            inner: &self.pages,
-            last_key: Bound::Non(vec![]),
-        })
+    pub fn iter(&self) -> Iter {
+        self.scan(b"")
     }
 
     fn recursive_split<'g>(
         &self,
         path: &[(Node, TreePtr<'g>)],
         guard: &'g Guard,
-    ) {
+    ) -> DbResult<(), ()> {
         // to split, we pop the path, see if it's in need of split, recurse up
         // two-phase: (in prep for lock-free, not necessary for single threaded)
         //  1. half-split: install split on child, P
@@ -415,14 +427,16 @@ impl Tree {
                 guard,
             )
             {
-                self.root_hoist(
+                return self.root_hoist(
                     root_node.id,
                     parent_split.to,
                     parent_split.at.inner().unwrap(),
                     guard,
-                );
+                ).map(|_| ())
+                    .map_err(|e| e.danger_cast());
             }
         }
+        Ok(())
     }
 
     fn child_split<'g>(
@@ -430,7 +444,7 @@ impl Tree {
         node: &Node,
         node_cas_key: TreePtr<'g>,
         guard: &'g Guard,
-    ) -> Result<ParentSplit, ()> {
+    ) -> DbResult<ParentSplit, ()> {
         let new_pid = self.pages.allocate(guard);
         trace!("allocated pid {} in child_split", new_pid);
 
@@ -458,8 +472,8 @@ impl Tree {
             .is_err()
         {
             // if we failed, don't follow through with the parent split
-            self.pages.free(new_pid, guard);
-            return Err(());
+            self.pages.free(new_pid, guard).map_err(|e| e.danger_cast())?;
+            return Err(Error::CasFailed(()));
         }
 
         Ok(parent_split)
@@ -489,7 +503,7 @@ impl Tree {
         to: PageID,
         at: Key,
         guard: &'g Guard,
-    ) {
+    ) -> DbResult<(), ()> {
         // hoist new root, pointing to lhs & rhs
         let new_root_pid = self.pages.allocate(guard);
         debug!("allocated pid {} in root_hoist", new_root_pid);
@@ -511,13 +525,16 @@ impl Tree {
         let cas = self.root.compare_and_swap(from, new_root_pid, SeqCst);
         if cas == from {
             // TODO think about the racyness of this
+            debug!("root hoist from {} to {} successful", from, new_root_pid);
             self.pages
                 .replace(new_root_pid, Shared::null(), new_root, guard)
-                .unwrap();
-            debug!("root hoist from {} to {} successful", from, new_root_pid);
+                .map(|_| ())
+                .map_err(|e| e.danger_cast())
         } else {
             debug!("root hoist from {} to {} failed", from, new_root_pid);
-            self.pages.free(new_root_pid, guard);
+            self.pages.free(new_root_pid, guard).map_err(
+                |e| e.danger_cast(),
+            )
         }
     }
 
