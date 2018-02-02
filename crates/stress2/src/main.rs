@@ -56,25 +56,29 @@ fn run(
 
         match choice {
             0 => {
-                tree.set(byte(), byte());
+                tree.set(byte(), byte()).unwrap();
             }
             1 => {
-                tree.get(&*byte());
+                tree.get(&*byte()).unwrap();
             }
             2 => {
-                tree.del(&*byte());
+                tree.del(&*byte()).unwrap();
             }
             3 => {
-                if let Err(_) = tree.cas(byte(), Some(byte()), Some(byte())) {};
+                match tree.cas(byte(), Some(byte()), Some(byte())) {
+                    Ok(_) |
+                    Err(sled::Error::CasFailed(_)) => {}
+                    other => panic!("operational error: {:?}", other),
+                }
             }
             4 => {
                 tree.scan(&*byte())
+                    .unwrap()
                     .take(rng.gen_range(0, 15))
                     .collect::<Vec<_>>();
             }
             _ => panic!("impossible choice"),
         }
-
     }
 }
 
