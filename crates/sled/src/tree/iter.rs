@@ -17,7 +17,13 @@ impl<'a> Iterator for Iter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let guard = pin();
         loop {
-            let (frag, _cas_key) = self.inner.get(self.id, &guard).unwrap();
+            let res = self.inner.get(self.id, &guard);
+            if res.is_err() {
+                error!("iteration failed: {:?}", res.unwrap_err());
+                return None;
+            }
+
+            let (frag, _cas_key) = res.unwrap().unwrap();
             let (node, _is_root) = frag.base().unwrap();
             // TODO this could be None if the node was removed since the last
             // iteration, and we need to just get the inner node again...

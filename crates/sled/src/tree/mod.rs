@@ -26,7 +26,7 @@ impl<'a> IntoIterator for &'a Tree {
     type IntoIter = Iter<'a>;
 
     fn into_iter(self) -> Iter<'a> {
-        self.iter()
+        self.iter().unwrap()
     }
 }
 
@@ -139,10 +139,10 @@ impl Tree {
     }
 
     /// Retrieve a value from the `Tree` if it exists.
-    pub fn get(&self, key: &[u8]) -> Option<Value> {
+    pub fn get(&self, key: &[u8]) -> DbResult<Option<Value>, ()> {
         let guard = pin();
-        let (_, ret) = self.get_internal(key, &guard);
-        ret
+        let (_, ret) = self.get_internal(key, &guard)?;
+        Ok(ret)
     }
 
     /// Compare and swap. Capable of unique creation, conditional modification,
@@ -180,9 +180,9 @@ impl Tree {
         key: Key,
         old: Option<Value>,
         new: Option<Value>,
-    ) -> Result<(), Option<Value>> {
+    ) -> DbResult<(), Option<Value>> {
         if self.config.get_read_only() {
-            return Err(None);
+            return Err(Error::CasFailed(None));
         }
         // we need to retry caps until old != cur, since just because
         // cap fails it doesn't mean our value was changed.
@@ -191,9 +191,12 @@ impl Tree {
         });
         let guard = pin();
         loop {
-            let (mut path, cur) = self.get_internal(&*key, &guard);
+            let (mut path, cur) =
+                self.get_internal(&*key, &guard).map_err(
+                    |e| e.danger_cast(),
+                )?;
             if old != cur {
-                return Err(cur);
+                return Err(Error::CasFailed(cur));
             }
 
             let &mut (ref node, ref cas_key) = path.last_mut().unwrap();
@@ -208,14 +211,16 @@ impl Tree {
     }
 
     /// Set a key to a new value.
-    pub fn set(&self, key: Key, value: Value) {
+    pub fn set(&self, key: Key, value: Value) -> DbResult<(), ()> {
         if self.config.get_read_only() {
-            return;
+            return Err(Error::Unsupported(
+                "the database is in read-only mode".to_owned(),
+            ));
         }
         let frag = Frag::Set(key.clone(), value);
         let guard = pin();
         loop {
-            let mut path = self.path_for_key(&*key, &guard);
+            let mut path = self.path_for_key(&*key, &guard)?;
             let (mut last_node, last_cas_key) = path.pop().unwrap();
             if let Ok(new_cas_key) = self.pages.link(
                 last_node.id,
@@ -231,7 +236,7 @@ impl Tree {
                 if should_split {
                     self.recursive_split(&path, &guard);
                 }
-                return;
+                return Ok(());
             }
             M.tree_looped();
         }
@@ -248,14 +253,14 @@ impl Tree {
     /// assert_eq!(t.del(&*vec![1]), Some(vec![1]));
     /// assert_eq!(t.del(&*vec![1]), None);
     /// ```
-    pub fn del(&self, key: &[u8]) -> Option<Value> {
+    pub fn del(&self, key: &[u8]) -> DbResult<Option<Value>, ()> {
         if self.config.get_read_only() {
-            return None;
+            return Ok(None);
         }
         let guard = pin();
         let mut ret: Option<Value>;
         loop {
-            let mut path = self.path_for_key(&*key, &guard);
+            let mut path = self.path_for_key(&*key, &guard)?;
             let (leaf_node, leaf_cas_key) = path.pop().unwrap();
             match leaf_node.data {
                 Data::Leaf(ref items) => {
@@ -284,7 +289,7 @@ impl Tree {
             }
             M.tree_looped();
         }
-        ret
+        Ok(ret)
     }
 
     /// Iterate over tuples of keys and values, starting at the provided key.
@@ -302,15 +307,15 @@ impl Tree {
     /// assert_eq!(iter.next(), Some((vec![3], vec![30])));
     /// assert_eq!(iter.next(), None);
     /// ```
-    pub fn scan(&self, key: &[u8]) -> Iter {
+    pub fn scan(&self, key: &[u8]) -> DbResult<Iter, ()> {
         let guard = pin();
-        let (path, _) = self.get_internal(key, &guard);
+        let (path, _) = self.get_internal(key, &guard)?;
         let &(ref last_node, ref _last_cas_key) = path.last().unwrap();
-        Iter {
+        Ok(Iter {
             id: last_node.id,
             inner: &self.pages,
             last_key: Bound::Non(key.to_vec()),
-        }
+        })
     }
 
     /// Iterate over the tuples of keys and values in this tree.
@@ -329,20 +334,20 @@ impl Tree {
     /// assert_eq!(iter.next(), Some((vec![3], vec![30])));
     /// assert_eq!(iter.next(), None);
     /// ```
-    pub fn iter(&self) -> Iter {
+    pub fn iter(&self) -> DbResult<Iter, ()> {
         let guard = pin();
-        let (path, _) = self.get_internal(b"", &guard);
+        let (path, _) = self.get_internal(b"", &guard)?;
         let &(ref last_node, ref _last_cas_key) = path.last().unwrap();
-        Iter {
+        Ok(Iter {
             id: last_node.id,
             inner: &self.pages,
             last_key: Bound::Non(vec![]),
-        }
+        })
     }
 
     fn recursive_split<'g>(
         &self,
-        path: &[(Node, HPtr<'g, Frag>)],
+        path: &[(Node, TreePtr<'g>)],
         guard: &'g Guard,
     ) {
         // to split, we pop the path, see if it's in need of split, recurse up
@@ -423,7 +428,7 @@ impl Tree {
     fn child_split<'g>(
         &self,
         node: &Node,
-        node_cas_key: HPtr<'g, Frag>,
+        node_cas_key: TreePtr<'g>,
         guard: &'g Guard,
     ) -> Result<ParentSplit, ()> {
         let new_pid = self.pages.allocate(guard);
@@ -453,7 +458,7 @@ impl Tree {
             .is_err()
         {
             // if we failed, don't follow through with the parent split
-            self.pages.free(new_pid);
+            self.pages.free(new_pid, guard);
             return Err(());
         }
 
@@ -463,10 +468,10 @@ impl Tree {
     fn parent_split<'g>(
         &self,
         parent_node: Node,
-        parent_cas_key: HPtr<'g, Frag>,
+        parent_cas_key: TreePtr<'g>,
         parent_split: ParentSplit,
         guard: &'g Guard,
-    ) -> Result<HPtr<'g, Frag>, Option<HPtr<'g, Frag>>> {
+    ) -> DbResult<TreePtr<'g>, Option<TreePtr<'g>>> {
         // install parent split
         let res = self.pages.link(
             parent_node.id,
@@ -512,7 +517,7 @@ impl Tree {
             debug!("root hoist from {} to {} successful", from, new_root_pid);
         } else {
             debug!("root hoist from {} to {} failed", from, new_root_pid);
-            self.pages.free(new_root_pid);
+            self.pages.free(new_root_pid, guard);
         }
     }
 
@@ -520,8 +525,8 @@ impl Tree {
         &self,
         key: &[u8],
         guard: &'g Guard,
-    ) -> (Vec<(Node, HPtr<'g, Frag>)>, Option<Value>) {
-        let path = self.path_for_key(&*key, guard);
+    ) -> DbResult<(Vec<(Node, TreePtr<'g>)>, Option<Value>), ()> {
+        let path = self.path_for_key(&*key, guard)?;
 
         let ret = path.last().and_then(|&(ref last_node, ref _last_cas_key)| {
             let data = &last_node.data;
@@ -537,7 +542,7 @@ impl Tree {
             }
         });
 
-        (path, ret)
+        Ok((path, ret))
     }
 
     fn fanout(&self) -> usize {
@@ -547,7 +552,7 @@ impl Tree {
     #[doc(hidden)]
     pub fn key_debug_str(&self, key: &[u8]) -> String {
         let guard = pin();
-        let path = self.path_for_key(key, &guard);
+        let path = self.path_for_key(key, &guard).unwrap();
         let mut ret = String::new();
         for &(ref node, _) in &path {
             ret.push_str(&*format!("\n{:?}", node));
@@ -561,10 +566,10 @@ impl Tree {
         &self,
         key: &[u8],
         guard: &'g Guard,
-    ) -> Vec<(Node, HPtr<'g, Frag>)> {
+    ) -> DbResult<Vec<(Node, TreePtr<'g>)>, ()> {
         let key_bound = Bound::Inc(key.into());
         let mut cursor = self.root.load(SeqCst);
-        let mut path: Vec<(Node, HPtr<'g, Frag>)> = vec![];
+        let mut path: Vec<(Node, TreePtr<'g>)> = vec![];
 
         // unsplit_parent is used for tracking need
         // to complete partial splits.
@@ -572,7 +577,8 @@ impl Tree {
 
         let mut not_found_loops = 0;
         loop {
-            let get_cursor = self.pages.get(cursor, guard);
+            let get_cursor =
+                self.pages.get(cursor, guard).map_err(|e| e.danger_cast())?;
             if get_cursor.is_free() || get_cursor.is_allocated() {
                 // restart search from the tree's root
                 not_found_loops += 1;
@@ -607,7 +613,7 @@ impl Tree {
             } else if let Some(idx) = unsplit_parent.take() {
                 // we have found the proper page for
                 // our split.
-                let &(ref parent_node, ref parent_cas_key): &(Node, HPtr<'g, Frag>) = &path[idx];
+                let &(ref parent_node, ref parent_cas_key): &(Node, TreePtr<'g>) = &path[idx];
 
                 let ps = Frag::ParentSplit(ParentSplit {
                     at: node.lo.clone(),
@@ -644,7 +650,7 @@ impl Tree {
             }
         }
 
-        path
+        Ok(path)
     }
 }
 
@@ -660,7 +666,8 @@ impl Debug for Tree {
 
         let guard = pin();
         loop {
-            let (frag, _cas_key) = self.pages.get(pid, &guard).unwrap();
+            let (frag, _cas_key) =
+                self.pages.get(pid, &guard).unwrap().unwrap();
             let (node, _is_root) = frag.base().unwrap();
 
             f.write_str("\t\t").unwrap();
@@ -672,7 +679,7 @@ impl Debug for Tree {
             } else {
                 // we've traversed our level, time to bump down
                 let (left_frag, _left_cas_key) =
-                    self.pages.get(left_most, &guard).unwrap();
+                    self.pages.get(left_most, &guard).unwrap().unwrap();
                 let (left_node, _is_root) = left_frag.base().unwrap();
 
                 match left_node.data {

@@ -42,7 +42,7 @@ pub use tree::{Iter, Tree};
 
 use pagecache::*;
 
-pub use pagecache::{Config, ConfigBuilder};
+pub use pagecache::{CacheResult as DbResult, Config, ConfigBuilder, Error};
 
 mod tree;
 
@@ -50,5 +50,4 @@ type Key = Vec<u8>;
 type KeyRef<'a> = &'a [u8];
 type Value = Vec<u8>;
 
-type HPtr<'g, P> =
-    epoch::Shared<'g, pagecache::ds::stack::Node<pagecache::CacheEntry<P>>>;
+type TreePtr<'g> = pagecache::PagePtr<'g, tree::Frag>;
