@@ -247,7 +247,7 @@ impl IoBufs {
             buf.len() <= max_buf_size,
             "trying to write a buffer that is too large \
             to be stored in the IO buffer. buf len: {} current max: {}. \
-            a future version of sled will implement automatic \
+            a future version of pagecache will implement automatic \
             fragmentation of large values. feel free to open \
             an issue if this is a pressing need of yours.",
             buf.len(),
