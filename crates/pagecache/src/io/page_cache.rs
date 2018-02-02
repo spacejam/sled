@@ -1,7 +1,7 @@
 use std::collections::BinaryHeap;
 use std::sync::{Arc, Mutex};
 
-use epoch::{Guard, Owned, Shared, pin};
+use epoch::{Guard, Owned, Shared};
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
@@ -55,7 +55,7 @@ pub enum PageGet<'a, PageFrag>
     /// This page contains data and has been prepared
     /// for presentation to the caller by the `PageCache`'s
     /// `Materializer`.
-    Materialized(PageFrag, HPtr<'a, PageFrag>),
+    Materialized(PageFrag, PagePtr<'a, PageFrag>),
     /// This page has been Freed
     Free,
     /// This page has been allocated, but will become
@@ -84,7 +84,7 @@ impl<'a, P> PageGet<'a, P>
     ///
     /// # Panics
     /// Panics if it is a variant other than Materialized.
-    pub fn unwrap(self) -> (P, HPtr<'a, P>) {
+    pub fn unwrap(self) -> (P, PagePtr<'a, P>) {
         match self {
             PageGet::Materialized(p, hptr) => (p, hptr),
             _ => panic!("unwrap called on non-Materialized"),
@@ -339,20 +339,22 @@ impl<PM, P, R> PageCache<PM, P, R>
     }
 
     /// Free a particular page.
-    pub fn free(&self, pid: PageID) {
-        let guard = pin();
-
+    pub fn free<'g>(
+        &self,
+        pid: PageID,
+        guard: &'g Guard,
+    ) -> CacheResult<(), Option<PagePtr<'g, P>>> {
         let old_stack_opt = self.inner.get(pid, &guard);
 
         if old_stack_opt.is_none() {
             // already freed or never allocated
-            return;
+            return Ok(());
         }
 
-        match self.get(pid, &guard) {
+        match self.get(pid, &guard)? {
             PageGet::Free =>
                 // already freed or never allocated
-                return,
+                return Ok(()),
             PageGet::Allocated |
             PageGet::Unallocated |
             PageGet::Materialized(_, _) => (),
@@ -402,6 +404,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             guard.defer(move || pd);
             guard.flush();
         }
+        Ok(())
     }
 
     /// Try to atomically add a `PageFrag` to the page.
@@ -411,13 +414,13 @@ impl<PM, P, R> PageCache<PM, P, R>
     pub fn link<'g>(
         &self,
         pid: PageID,
-        old: HPtr<'g, P>,
+        old: PagePtr<'g, P>,
         new: P,
         guard: &'g Guard,
-    ) -> Result<HPtr<'g, P>, Option<HPtr<'g, P>>> {
+    ) -> CacheResult<PagePtr<'g, P>, Option<PagePtr<'g, P>>> {
         let stack_ptr = self.inner.get(pid, guard);
         if stack_ptr.is_none() {
-            return Err(None);
+            return Err(Error::CasFailed(None));
         }
         let stack_ptr = stack_ptr.unwrap();
 
@@ -456,7 +459,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             log_reservation.complete();
 
             if let Some(to_clean) = to_clean {
-                match self.get(to_clean, guard) {
+                match self.get(to_clean, guard)? {
                     PageGet::Materialized(page, key) => {
                         let _ = self.replace_recurse_once(
                             to_clean,
@@ -498,7 +501,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             }
         }
 
-        result.map_err(Some)
+        result.map_err(|e| Error::CasFailed(Some(e)))
     }
 
     /// Replace an existing page with a different set of `PageFrag`s.
@@ -508,25 +511,25 @@ impl<PM, P, R> PageCache<PM, P, R>
     pub fn replace<'g>(
         &self,
         pid: PageID,
-        old: HPtr<'g, P>,
+        old: PagePtr<'g, P>,
         new: P,
         guard: &'g Guard,
-    ) -> Result<HPtr<'g, P>, Option<HPtr<'g, P>>> {
+    ) -> CacheResult<PagePtr<'g, P>, Option<PagePtr<'g, P>>> {
         self.replace_recurse_once(pid, old, Update::Compact(new), guard, false)
     }
 
     fn replace_recurse_once<'g>(
         &self,
         pid: PageID,
-        old: HPtr<'g, P>,
+        old: PagePtr<'g, P>,
         new: Update<P>,
         guard: &'g Guard,
         recursed: bool,
-    ) -> Result<HPtr<'g, P>, Option<HPtr<'g, P>>> {
+    ) -> CacheResult<PagePtr<'g, P>, Option<PagePtr<'g, P>>> {
         trace!("replacing pid {}", pid);
         let stack_ptr = self.inner.get(pid, guard);
         if stack_ptr.is_none() {
-            return Err(None);
+            return Err(Error::CasFailed(None));
         }
         let stack_ptr = stack_ptr.unwrap();
 
@@ -574,7 +577,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
             if let Some(to_clean) = to_clean {
                 assert_ne!(pid, to_clean);
-                match self.get(to_clean, guard) {
+                match self.get(to_clean, guard)? {
                     PageGet::Materialized(page, key) => {
                         let _ = self.replace_recurse_once(
                             to_clean,
@@ -618,7 +621,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             log_reservation.abort();
         }
 
-        result.map_err(Some)
+        result.map_err(|e| Error::CasFailed(Some(e)))
     }
 
     /// Try to retrieve a page by its logical ID.
@@ -626,10 +629,10 @@ impl<PM, P, R> PageCache<PM, P, R>
         &self,
         pid: PageID,
         guard: &'g Guard,
-    ) -> PageGet<'g, PM::PageFrag> {
+    ) -> CacheResult<PageGet<'g, PM::PageFrag>, Option<PagePtr<'g, P>>> {
         let stack_ptr = self.inner.get(pid, guard);
         if stack_ptr.is_none() {
-            return PageGet::Unallocated;
+            return Ok(PageGet::Unallocated);
         }
 
         let stack_ptr = stack_ptr.unwrap();
@@ -645,7 +648,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         mut head: Shared<'g, ds::stack::Node<CacheEntry<P>>>,
         stack_ptr: Shared<'g, ds::stack::Stack<CacheEntry<P>>>,
         guard: &'g Guard,
-    ) -> PageGet<'g, PM::PageFrag> {
+    ) -> CacheResult<PageGet<'g, PM::PageFrag>, Option<PagePtr<'g, P>>> {
         let start = clock();
         let stack_iter = StackIter::from_ptr(head, guard);
 
@@ -666,7 +669,9 @@ impl<PM, P, R> PageCache<PM, P, R>
                     if lids.is_empty() {
                         // Short circuit merging and fix-up if we only
                         // have one frag.
-                        return PageGet::Materialized(page_frag.clone(), head);
+                        return Ok(
+                            PageGet::Materialized(page_frag.clone(), head),
+                        );
                     }
                     if !merged_resident {
                         to_merge.push(page_frag);
@@ -679,13 +684,13 @@ impl<PM, P, R> PageCache<PM, P, R>
                 CacheEntry::Flush(lsn, lid) => {
                     lids.push((lsn, lid));
                 }
-                CacheEntry::Free(_, _) => return PageGet::Free,
+                CacheEntry::Free(_, _) => return Ok(PageGet::Free),
             }
         }
 
         if lids.is_empty() {
             M.page_in.measure(clock() - start);
-            return PageGet::Allocated;
+            return Ok(PageGet::Allocated);
         }
 
         let mut fetched = Vec::with_capacity(lids.len());
@@ -697,16 +702,18 @@ impl<PM, P, R> PageCache<PM, P, R>
 
             #[cfg(feature = "rayon")]
             {
-                let mut pulled: Vec<P> = to_pull
-                    .par_iter()
-                    .map(|&(lsn, lid)| self.pull(lsn, lid))
-                    .collect();
-                fetched.append(&mut pulled);
+                let pulled_res =
+                    to_pull.par_iter().map(|&(lsn, lid)| self.pull(lsn, lid));
+
+                for res in pulled_res {
+                    let item = res?;
+                    fetched.push(item);
+                }
             }
 
             #[cfg(not(feature = "rayon"))]
             for &(lsn, lid) in to_pull {
-                fetched.push(self.pull(lsn, lid));
+                fetched.push(self.pull(lsn, lid)?);
             }
         }
 
@@ -736,7 +743,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 true,
             ) {
                 Ok(new_head) => head = new_head,
-                Err(None) => return PageGet::Free,
+                Err(Error::CasFailed(None)) => return Ok(PageGet::Free),
                 _ => (),
             }
         } else if !fetched.is_empty() ||
@@ -788,7 +795,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         M.page_in.measure(clock() - start);
 
-        PageGet::Materialized(merged, head)
+        Ok(PageGet::Materialized(merged, head))
     }
 
     fn page_out<'g>(&self, to_evict: Vec<PageID>, guard: &'g Guard) {
@@ -868,7 +875,11 @@ impl<PM, P, R> PageCache<PM, P, R>
         M.page_out.measure(clock() - start);
     }
 
-    fn pull(&self, lsn: Lsn, lid: LogID) -> P {
+    fn pull<'g>(
+        &self,
+        lsn: Lsn,
+        lid: LogID,
+    ) -> CacheResult<P, Option<PagePtr<'g, P>>> {
         trace!("pulling lsn {} lid {} from disk", lsn, lid);
         let start = clock();
         let bytes = match self.log.read(lsn, lid).map_err(|_| ()) {
@@ -882,11 +893,13 @@ impl<PM, P, R> PageCache<PM, P, R>
                     lid,
                     read_lsn
                 );
-                data
+                Ok(data)
             }
             // FIXME 'read invalid data at lid 66244182' in cycle test
-            other => panic!("read invalid data at lid {}: {:?}", lid, other),
-        };
+            _other => Err(Error::Corruption {
+                at: lid,
+            }),
+        }?;
 
         let deserialize_start = clock();
         let logged_update = deserialize::<LoggedUpdate<P>>(&*bytes)
@@ -897,8 +910,12 @@ impl<PM, P, R> PageCache<PM, P, R>
         M.pull.measure(clock() - start);
         match logged_update.update {
             Update::Compact(page_frag) |
-            Update::Append(page_frag) => page_frag,
-            _ => panic!("non-append/compact found in pull"),
+            Update::Append(page_frag) => Ok(page_frag),
+            _ => {
+                return Err(Error::ReportableBug(
+                    "non-append/compact found in pull".to_owned(),
+                ))
+            }
         }
     }
 
@@ -998,7 +1015,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 }
 
 fn lids_from_stack<'g, P: Send + Sync>(
-    head_ptr: HPtr<'g, P>,
+    head_ptr: PagePtr<'g, P>,
     guard: &'g Guard,
 ) -> Vec<LogID> {
     // generate a list of the old log ID's
