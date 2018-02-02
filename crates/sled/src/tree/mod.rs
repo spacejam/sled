@@ -43,11 +43,11 @@ unsafe impl Sync for Tree {}
 
 impl Tree {
     /// Load existing or create a new `Tree`.
-    pub fn start(config: Config) -> Tree {
+    pub fn start(config: Config) -> DbResult<Tree, ()> {
         #[cfg(feature = "check_snapshot_integrity")]
         config.verify_snapshot::<BLinkMaterializer, Frag, Vec<(PageID, PageID)>>();
 
-        let pages = PageCache::start(config.clone());
+        let pages = PageCache::start(config.clone())?;
 
         let roots_opt = pages.recovered_state().clone().and_then(
             |mut roots: Vec<(PageID, PageID)>| if roots.is_empty() {
@@ -81,7 +81,7 @@ impl Tree {
             root_id
         } else {
             let guard = pin();
-            let root_id = pages.allocate(&guard);
+            let root_id = pages.allocate(&guard)?;
             assert_eq!(
                 root_id,
                 0,
@@ -89,7 +89,7 @@ impl Tree {
             );
             debug!("allocated pid {} for root of new tree", root_id);
 
-            let leaf_id = pages.allocate(&guard);
+            let leaf_id = pages.allocate(&guard)?;
             trace!("allocated pid {} for leaf in new", leaf_id);
 
             let leaf = Frag::Base(
@@ -119,23 +119,23 @@ impl Tree {
 
             pages
                 .replace(root_id, Shared::null(), root, &guard)
-                .unwrap();
+                .map_err(|e| e.danger_cast())?;
             pages
                 .replace(leaf_id, Shared::null(), leaf, &guard)
-                .unwrap();
+                .map_err(|e| e.danger_cast())?;
             root_id
         };
 
-        Tree {
+        Ok(Tree {
             pages: Arc::new(pages),
             config: config,
             root: Arc::new(AtomicUsize::new(root_id)),
-        }
+        })
     }
 
     /// Flushes any pending IO buffers to disk to ensure durability.
-    pub fn flush(&self) {
-        self.pages.flush();
+    pub fn flush(&self) -> std::io::Result<()> {
+        self.pages.flush()
     }
 
     /// Retrieve a value from the `Tree` if it exists.
@@ -445,7 +445,7 @@ impl Tree {
         node_cas_key: TreePtr<'g>,
         guard: &'g Guard,
     ) -> DbResult<ParentSplit, ()> {
-        let new_pid = self.pages.allocate(guard);
+        let new_pid = self.pages.allocate(guard)?;
         trace!("allocated pid {} in child_split", new_pid);
 
         // split the node in half
@@ -505,7 +505,7 @@ impl Tree {
         guard: &'g Guard,
     ) -> DbResult<(), ()> {
         // hoist new root, pointing to lhs & rhs
-        let new_root_pid = self.pages.allocate(guard);
+        let new_root_pid = self.pages.allocate(guard)?;
         debug!("allocated pid {} in root_hoist", new_root_pid);
 
         let mut new_root_vec = vec![];

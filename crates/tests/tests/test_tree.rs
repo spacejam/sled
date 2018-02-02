@@ -50,17 +50,21 @@ fn parallel_tree_ops() {
     }
 
     println!("========== initial sets ==========");
-    let conf = ConfigBuilder::new().temporary(true).blink_fanout(2).build();
-    let t = Arc::new(sled::Tree::start(conf));
+    let conf = ConfigBuilder::new()
+        .temporary(true)
+        .blink_fanout(2)
+        .build()
+        .unwrap();
+    let t = Arc::new(sled::Tree::start(conf).unwrap());
     par!{t, |tree: &Tree, k: Vec<u8>| {
-        assert_eq!(tree.get(&*k), None);
-        tree.set(k.clone(), k.clone());
-        assert_eq!(tree.get(&*k), Some(k));
+        assert_eq!(tree.get(&*k), Ok(None));
+        tree.set(k.clone(), k.clone()).unwrap();
+        assert_eq!(tree.get(&*k), Ok(Some(k)));
     }};
 
     println!("========== reading sets ==========");
     par!{t, |tree: &Tree, k: Vec<u8>| {
-        if tree.get(&*k.clone()) != Some(k.clone()) {
+        if tree.get(&*k.clone()) != Ok(Some(k.clone())) {
             println!("{}", tree.key_debug_str(&*k.clone()));
             panic!("expected key {:?} not found", k);
         }
@@ -78,7 +82,7 @@ fn parallel_tree_ops() {
         let k1 = k.clone();
         let mut k2 = k.clone();
         k2.reverse();
-        assert_eq!(tree.get(&*k1), Some(k2));
+        assert_eq!(tree.get(&*k1), Ok(Some(k2)));
     }};
 
     println!("========== deleting ==========");
@@ -87,7 +91,7 @@ fn parallel_tree_ops() {
     }};
 
     par!{t, |tree: &Tree, k: Vec<u8>| {
-        assert_eq!(tree.get(&*k), None);
+        assert_eq!(tree.get(&*k), Ok(None));
     }};
 }
 
@@ -95,17 +99,19 @@ fn parallel_tree_ops() {
 fn tree_subdir() {
     let config = ConfigBuilder::new()
         .path("test_tree_subdir/test.db".to_owned())
-        .build();
-    let t = sled::Tree::start(config);
+        .build()
+        .unwrap();
+    let t = sled::Tree::start(config).unwrap();
 
-    t.set(vec![1], vec![1]);
+    t.set(vec![1], vec![1]).unwrap();
 
     drop(t);
 
     let config = ConfigBuilder::new()
         .path("test_tree_subdir/test.db".to_owned())
-        .build();
-    let t = sled::Tree::start(config);
+        .build()
+        .unwrap();
+    let t = sled::Tree::start(config).unwrap();
 
     let res = t.get(&*vec![1]);
 
@@ -113,7 +119,7 @@ fn tree_subdir() {
 
     std::fs::remove_dir_all("test_tree_subdir").unwrap();
 
-    assert_eq!(res, Some(vec![1]));
+    assert_eq!(res, Ok(Some(vec![1])));
 }
 
 #[test]
@@ -123,20 +129,21 @@ fn tree_iterator() {
         .temporary(true)
         .blink_fanout(2)
         .flush_every_ms(None)
-        .build();
-    let t = sled::Tree::start(config);
+        .build()
+        .unwrap();
+    let t = sled::Tree::start(config).unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
         t.set(k.clone(), k);
     }
 
-    for (i, (k, v)) in t.iter().enumerate() {
+    for (i, (k, v)) in t.iter().map(|res| res.unwrap()).enumerate() {
         let should_be = kv(i);
         assert_eq!(should_be, k);
         assert_eq!(should_be, v);
     }
 
-    for (i, (k, v)) in t.scan(b"").enumerate() {
+    for (i, (k, v)) in t.scan(b"").map(|res| res.unwrap()).enumerate() {
         let should_be = kv(i);
         assert_eq!(should_be, k);
         assert_eq!(should_be, v);
@@ -145,15 +152,15 @@ fn tree_iterator() {
     let half_way = N_PER_THREAD / 2;
     let half_key = kv(half_way);
     let mut tree_scan = t.scan(&*half_key);
-    assert_eq!(tree_scan.next(), Some((half_key.clone(), half_key)));
+    assert_eq!(tree_scan.next(), Some(Ok((half_key.clone(), half_key))));
 
     let first_key = kv(0);
     let mut tree_scan = t.scan(&*first_key);
-    assert_eq!(tree_scan.next(), Some((first_key.clone(), first_key)));
+    assert_eq!(tree_scan.next(), Some(Ok((first_key.clone(), first_key))));
 
     let last_key = kv(N_PER_THREAD - 1);
     let mut tree_scan = t.scan(&*last_key);
-    assert_eq!(tree_scan.next(), Some((last_key.clone(), last_key)));
+    assert_eq!(tree_scan.next(), Some(Ok((last_key.clone(), last_key))));
     assert_eq!(tree_scan.next(), None);
 }
 
@@ -166,26 +173,27 @@ fn recover_tree() {
         .io_buf_size(5000)
         .flush_every_ms(None)
         .snapshot_after_ops(100)
-        .build();
-    let t = sled::Tree::start(conf.clone());
+        .build()
+        .unwrap();
+    let t = sled::Tree::start(conf.clone()).unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
         t.set(k.clone(), k);
     }
     drop(t);
 
-    let t = sled::Tree::start(conf.clone());
+    let t = sled::Tree::start(conf.clone()).unwrap();
     for i in 0..conf.get_blink_fanout() << 1 {
         let k = kv(i);
-        assert_eq!(t.get(&*k), Some(k.clone()));
+        assert_eq!(t.get(&*k), Ok(Some(k.clone())));
         t.del(&*k);
     }
     drop(t);
 
-    let t = sled::Tree::start(conf.clone());
+    let t = sled::Tree::start(conf.clone()).unwrap();
     for i in 0..conf.get_blink_fanout() << 1 {
         let k = kv(i);
-        assert_eq!(t.get(&*k), None);
+        assert_eq!(t.get(&*k), Ok(None));
     }
 }
 
@@ -261,9 +269,10 @@ fn prop_tree_matches_btreemap(
         .io_buf_size(10000)
         .blink_fanout(blink_fanout as usize + 2)
         .cache_capacity(40)
-        .build();
+        .build()
+        .unwrap();
 
-    let mut tree = sled::Tree::start(config.clone());
+    let mut tree = sled::Tree::start(config.clone()).unwrap();
     let mut reference = BTreeMap::new();
 
     for op in ops.ops.into_iter() {
@@ -273,7 +282,7 @@ fn prop_tree_matches_btreemap(
                 reference.insert(k, v);
             }
             Get(k) => {
-                let res1 = tree.get(&*vec![k]).map(|v_vec| v_vec[0]);
+                let res1 = tree.get(&*vec![k]).unwrap().map(|v_vec| v_vec[0]);
                 let res2 = reference.get(&k).cloned();
                 assert_eq!(res1, res2);
             }
@@ -282,7 +291,7 @@ fn prop_tree_matches_btreemap(
                 reference.remove(&k);
             }
             Cas(k, old, new) => {
-                let tree_old = tree.get(&*vec![k]);
+                let tree_old = tree.get(&*vec![k]).unwrap();
                 if tree_old == Some(vec![old]) {
                     tree.set(vec![k], vec![new]);
                 }
@@ -293,8 +302,8 @@ fn prop_tree_matches_btreemap(
                 }
             }
             Scan(k, len) => {
-                let tree_iter = tree.scan(&*vec![k]).take(len).map(|(ref tk,
-                  ref tv)| {
+                let tree_iter = tree.scan(&*vec![k]).take(len).map(|res| {
+                    let (ref tk, ref tv) = res.unwrap();
                     (tk[0], tv[0])
                 });
                 let ref_iter = reference
@@ -308,7 +317,7 @@ fn prop_tree_matches_btreemap(
             }
             Restart => {
                 drop(tree);
-                tree = sled::Tree::start(config.clone());
+                tree = sled::Tree::start(config.clone()).unwrap();
             }
         }
     }

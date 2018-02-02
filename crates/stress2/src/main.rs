@@ -73,8 +73,8 @@ fn run(
             }
             4 => {
                 tree.scan(&*byte())
-                    .unwrap()
                     .take(rng.gen_range(0, 15))
+                    .map(|res| res.unwrap())
                     .collect::<Vec<_>>();
             }
             _ => panic!("impossible choice"),
@@ -101,9 +101,10 @@ fn main() {
         .cache_capacity(1_000_000)
         .flush_every_ms(Some(100))
         .snapshot_after_ops(1000000)
-        .build();
+        .build()
+        .unwrap();
 
-    let tree = Arc::new(sled::Tree::start(config));
+    let tree = Arc::new(sled::Tree::start(config).unwrap());
 
     let mut threads = vec![];
 

@@ -48,22 +48,24 @@ fn pagecache_caching() {
         .flush_every_ms(None)
         .snapshot_after_ops(1_000_000)
         .io_buf_size(20000)
-        .build();
+        .build()
+        .unwrap();
 
-    let pc: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone());
+    let pc: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone())
+        .unwrap();
 
     let guard = pin();
     let mut keys = HashMap::new();
 
     for _ in 0..2 {
-        let id = pc.allocate(&guard);
+        let id = pc.allocate(&guard).unwrap();
         let key = pc.replace(id, Shared::null(), vec![0], &guard).unwrap();
         keys.insert(id, key);
     }
 
     for i in 0..1000 {
         let id = i as usize % 2;
-        let (_, key) = pc.get(id, &guard).unwrap();
+        let (_, key) = pc.get(id, &guard).unwrap().unwrap();
         let key = pc.link(id, key, vec![i], &guard).unwrap();
         keys.insert(id, key);
     }
@@ -78,29 +80,31 @@ fn pagecache_strange_crash_1() {
         .flush_every_ms(None)
         .snapshot_after_ops(1_000_000)
         .io_buf_size(20000)
-        .build();
+        .build()
+        .unwrap();
 
     {
         let pc: PageCache<TestMaterializer, _, _> =
-            PageCache::start(conf.clone());
+            PageCache::start(conf.clone()).unwrap();
 
         let guard = pin();
         let mut keys = HashMap::new();
         for _ in 0..2 {
-            let id = pc.allocate(&guard);
+            let id = pc.allocate(&guard).unwrap();
             let key = pc.replace(id, Shared::null(), vec![0], &guard).unwrap();
             keys.insert(id, key);
         }
 
         for i in 0..1000 {
             let id = i as usize % 2;
-            let (_, key) = pc.get(id, &guard).unwrap();
+            let (_, key) = pc.get(id, &guard).unwrap().unwrap();
             let key = pc.link(id, key, vec![i], &guard).unwrap();
             keys.insert(id, key);
         }
     }
     println!("!!!!!!!!!!!!!!!!!!!!! recovering !!!!!!!!!!!!!!!!!!!!!!");
-    let _pc: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone());
+    let _pc: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone())
+        .unwrap();
     // TODO test no eaten lsn's on recovery
     // TODO test that we don't skip multiple segments ahead on recovery (confusing Lsn & Lid)
 }
@@ -116,17 +120,18 @@ fn pagecache_strange_crash_2() {
             .flush_every_ms(None)
             .snapshot_after_ops(1_000_000)
             .io_buf_size(20000)
-            .build();
+            .build()
+            .unwrap();
 
         println!("!!!!!!!!!!!!!!!!!!!!! {} !!!!!!!!!!!!!!!!!!!!!!", x);
         conf.verify_snapshot::<TestMaterializer, _, _>();
 
         let pc: PageCache<TestMaterializer, _, _> =
-            PageCache::start(conf.clone());
+            PageCache::start(conf.clone()).unwrap();
 
         let mut keys = HashMap::new();
         for _ in 0..2 {
-            let id = pc.allocate(&guard);
+            let id = pc.allocate(&guard).unwrap();
             let key = pc.replace(id, Shared::null(), vec![0], &guard).unwrap();
             keys.insert(id, key);
         }
@@ -134,7 +139,7 @@ fn pagecache_strange_crash_2() {
         for i in 0..1000 {
             let id = i as usize % 2;
             // println!("------ beginning op on pid {} ------", id);
-            let (_, key) = pc.get(id, &guard).unwrap();
+            let (_, key) = pc.get(id, &guard).unwrap().unwrap();
             // println!("got key {:?} for pid {}", key, id);
             assert!(!key.is_null());
             let key_res = pc.link(id, key, vec![i], &guard);
@@ -153,34 +158,39 @@ fn basic_pagecache_recovery() {
         .temporary(true)
         .flush_every_ms(None)
         .io_buf_size(1000)
-        .build();
+        .build()
+        .unwrap();
 
-    let pc: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone());
+    let pc: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone())
+        .unwrap();
 
     let guard = pin();
-    let id = pc.allocate(&guard);
+    let id = pc.allocate(&guard).unwrap();
     let key = pc.replace(id, Shared::null(), vec![1], &guard).unwrap();
     let key = pc.link(id, key, vec![2], &guard).unwrap();
     let _key = pc.link(id, key, vec![3], &guard).unwrap();
-    let (consolidated, _) = pc.get(id, &guard).unwrap();
+    let (consolidated, _) = pc.get(id, &guard).unwrap().unwrap();
     assert_eq!(consolidated, vec![1, 2, 3]);
     drop(pc);
 
-    let pc2: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone());
-    let (consolidated2, key) = pc2.get(id, &guard).unwrap();
+    let pc2: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone())
+        .unwrap();
+    let (consolidated2, key) = pc2.get(id, &guard).unwrap().unwrap();
     assert_eq!(consolidated, consolidated2);
 
     pc2.link(id, key, vec![4], &guard).unwrap();
     drop(pc2);
 
-    let pc3: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone());
-    let (consolidated3, _key) = pc3.get(id, &guard).unwrap();
+    let pc3: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone())
+        .unwrap();
+    let (consolidated3, _key) = pc3.get(id, &guard).unwrap().unwrap();
     assert_eq!(consolidated3, vec![1, 2, 3, 4]);
-    pc3.free(id);
+    pc3.free(id, &guard).unwrap();
     drop(pc3);
 
-    let pc4: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone());
-    let res = pc4.get(id, &guard);
+    let pc4: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone())
+        .unwrap();
+    let res = pc4.get(id, &guard).unwrap();
     assert!(res.is_free());
 }
 
@@ -285,10 +295,10 @@ fn prop_pagecache_works(ops: OpVec) -> bool {
         .cache_bits(0)
         .cache_capacity(40)
         .cache_fixup_threshold(1)
-        .build();
+        .build().unwrap();
 
     let mut pc: PageCache<TestMaterializer, _, _> =
-        PageCache::start(config.clone());
+        PageCache::start(config.clone()).unwrap();
 
     let mut reference: HashMap<PageID, P> = HashMap::new();
 
@@ -299,7 +309,7 @@ fn prop_pagecache_works(ops: OpVec) -> bool {
         let guard = pin();
         match op {
             Replace(pid, c) => {
-                let get = pc.get(pid, &guard);
+                let get = pc.get(pid, &guard).unwrap();
                 let ref_get = reference.entry(pid).or_insert(P::Unallocated);
 
                 match ref_get {
@@ -326,7 +336,7 @@ fn prop_pagecache_works(ops: OpVec) -> bool {
                 }
             }
             Link(pid, c) => {
-                let get = pc.get(pid, &guard);
+                let get = pc.get(pid, &guard).unwrap();
                 let ref_get = reference.entry(pid).or_insert(P::Unallocated);
 
                 match ref_get {
@@ -348,7 +358,7 @@ fn prop_pagecache_works(ops: OpVec) -> bool {
                 }
             }
             Get(pid) => {
-                let get = pc.get(pid, &guard);
+                let get = pc.get(pid, &guard).unwrap();
 
                 match reference.get(&pid) {
                     Some(&P::Allocated) => {
@@ -374,8 +384,8 @@ fn prop_pagecache_works(ops: OpVec) -> bool {
                 }
             }
             Free(pid) => {
-                pc.free(pid);
-                let get = pc.get(pid, &guard);
+                pc.free(pid, &guard).unwrap();
+                let get = pc.get(pid, &guard).unwrap();
 
                 match reference.get(&pid) {
                     Some(&P::Allocated) |
@@ -389,9 +399,9 @@ fn prop_pagecache_works(ops: OpVec) -> bool {
                 }
             }
             Allocate => {
-                let pid = pc.allocate(&guard);
+                let pid = pc.allocate(&guard).unwrap();
                 reference.insert(pid, P::Allocated);
-                let get = pc.get(pid, &guard);
+                let get = pc.get(pid, &guard).unwrap();
                 assert!(get.is_allocated());
             }
             Restart => {
@@ -399,7 +409,7 @@ fn prop_pagecache_works(ops: OpVec) -> bool {
 
                 config.verify_snapshot::<TestMaterializer, _, _>();
 
-                pc = PageCache::start(config.clone());
+                pc = PageCache::start(config.clone()).unwrap();
             }
         }
     }
