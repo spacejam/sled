@@ -262,7 +262,7 @@ impl<PM, P, R> PageCache<PM, P, R>
           R: Debug + Clone + Serialize + DeserializeOwned + Send
 {
     /// Instantiate a new `PageCache`.
-    pub fn start(config: Config) -> PageCache<PM, P, R> {
+    pub fn start(config: Config) -> std::io::Result<PageCache<PM, P, R>> {
         let cache_capacity = config.get_cache_capacity();
         let cache_shard_bits = config.get_cache_bits();
         let lru = Lru::new(cache_capacity, cache_shard_bits);
@@ -270,7 +270,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         // try to pull any existing snapshot off disk, and
         // apply any new data to it to "catch-up" the
         // snapshot before loading it.
-        let snapshot = read_snapshot_or_default::<PM, P, R>(&config);
+        let snapshot = read_snapshot_or_default::<PM, P, R>(&config)?;
 
         let materializer = Arc::new(PM::new(&snapshot.recovery));
 
@@ -280,7 +280,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             inner: Radix::default(),
             max_pid: AtomicUsize::new(0),
             free: Arc::new(Mutex::new(BinaryHeap::new())),
-            log: Log::start(config, snapshot.clone()),
+            log: Log::start(config, snapshot.clone())?,
             lru: lru,
             updates: AtomicUsize::new(0),
             last_snapshot: Arc::new(Mutex::new(Some(snapshot))),
@@ -289,12 +289,12 @@ impl<PM, P, R> PageCache<PM, P, R>
         // now we read it back in
         pc.load_snapshot();
 
-        pc
+        Ok(pc)
     }
 
     /// Flushes any pending IO buffers to disk to ensure durability.
-    pub fn flush(&self) {
-        self.log.flush();
+    pub fn flush(&self) -> std::io::Result<()> {
+        self.log.flush()
     }
 
     /// Return the recovered state from the snapshot
@@ -310,7 +310,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
     /// Create a new page, trying to reuse old freed pages if possible
     /// to maximize underlying `Radix` pointer density.
-    pub fn allocate<'g>(&self, guard: &'g Guard) -> PageID {
+    pub fn allocate<'g>(&self, guard: &'g Guard) -> CacheResult<PageID, ()> {
         let pid = self.free.lock().unwrap().pop().unwrap_or_else(|| {
             self.max_pid.fetch_add(1, SeqCst)
         });
@@ -333,9 +333,9 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         // reserve slot in log
         // FIXME not threadsafe?
-        self.log.write(bytes);
+        self.log.write(bytes)?;
 
-        pid
+        Ok(pid)
     }
 
     /// Free a particular page.
@@ -372,7 +372,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         M.serialize.measure(clock() - serialize_start);
 
         // reserve slot in log
-        let res = self.log.reserve(bytes);
+        let res = self.log.reserve(bytes)?;
         let lsn = res.lsn();
         let lid = res.lid();
 
@@ -397,7 +397,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         // NB complete must happen AFTER calls to SA, because
         // when the iobuf's n_writers hits 0, we may transition
         // the segment to inactive, resulting in a race otherwise.
-        res.complete();
+        res.complete()?;
 
         let pd = PidDropper(pid, Arc::clone(&self.free));
         unsafe {
@@ -435,7 +435,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         let serialize_start = clock();
         let bytes = serialize(&prepend, Infinite).unwrap();
         M.serialize.measure(clock() - serialize_start);
-        let log_reservation = self.log.reserve(bytes);
+        let log_reservation = self.log.reserve(bytes)?;
         let lsn = log_reservation.lsn();
         let lid = log_reservation.lid();
 
@@ -444,7 +444,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         let result = unsafe { stack_ptr.deref().cap(old, cache_entry, guard) };
 
         if result.is_err() {
-            log_reservation.abort();
+            log_reservation.abort()?;
         } else {
             let to_clean = self.log.with_sa(|sa| {
                 sa.mark_link(pid, lsn, lid);
@@ -456,7 +456,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             // the segment to inactive, resulting in a race otherwise.
             // FIXME can result in deadlock if a node that holds SA
             // is waiting to acquire a new reservation blocked by this?
-            log_reservation.complete();
+            log_reservation.complete()?;
 
             if let Some(to_clean) = to_clean {
                 match self.get(to_clean, guard)? {
@@ -497,7 +497,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             let should_snapshot =
                 count % self.config.get_snapshot_after_ops() == 0;
             if should_snapshot {
-                self.advance_snapshot();
+                self.advance_snapshot()?;
             }
         }
 
@@ -540,7 +540,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         let serialize_start = clock();
         let bytes = serialize(&replace, Infinite).unwrap();
         M.serialize.measure(clock() - serialize_start);
-        let log_reservation = self.log.reserve(bytes);
+        let log_reservation = self.log.reserve(bytes)?;
         let lsn = log_reservation.lsn();
         let lid = log_reservation.lid();
 
@@ -573,7 +573,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             // NB complete must happen AFTER calls to SA, because
             // when the iobuf's n_writers hits 0, we may transition
             // the segment to inactive, resulting in a race otherwise.
-            log_reservation.complete();
+            log_reservation.complete()?;
 
             if let Some(to_clean) = to_clean {
                 assert_ne!(pid, to_clean);
@@ -615,10 +615,10 @@ impl<PM, P, R> PageCache<PM, P, R>
             let should_snapshot =
                 count % self.config.get_snapshot_after_ops() == 0;
             if should_snapshot {
-                self.advance_snapshot();
+                self.advance_snapshot()?;
             }
         } else {
-            log_reservation.abort();
+            log_reservation.abort()?;
         }
 
         result.map_err(|e| Error::CasFailed(Some(e)))
@@ -731,7 +731,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         let size = std::mem::size_of_val(&merged);
         let to_evict = self.lru.accessed(pid, size);
         trace!("accessed pid {} -> paging out pid {:?}", pid, to_evict);
-        self.page_out(to_evict, guard);
+        self.page_out(to_evict, guard)?;
 
         if lids.len() > self.config.get_page_consolidation_threshold() {
             trace!("consolidating pid {} with len {}!", pid, lids.len());
@@ -798,7 +798,11 @@ impl<PM, P, R> PageCache<PM, P, R>
         Ok(PageGet::Materialized(merged, head))
     }
 
-    fn page_out<'g>(&self, to_evict: Vec<PageID>, guard: &'g Guard) {
+    fn page_out<'g>(
+        &self,
+        to_evict: Vec<PageID>,
+        guard: &'g Guard,
+    ) -> std::io::Result<()> {
         let start = clock();
         for pid in to_evict {
             let stack_ptr = self.inner.get(pid, guard);
@@ -821,8 +825,8 @@ impl<PM, P, R> PageCache<PM, P, R>
                 CacheEntry::Flush(lsn, lid) => {
                     // NB stabilize the most recent LSN before
                     // paging out! This SHOULD very rarely block...
-                    // TODO measure to make sure
-                    self.log.make_stable(lsn);
+                    // TODO this should be ?
+                    self.log.make_stable(lsn).unwrap();
                     Some(CacheEntry::Flush(lsn, lid))
                 }
                 CacheEntry::PartialFlush(_, _) => {
@@ -839,7 +843,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
             if last.is_none() {
                 M.page_out.measure(clock() - start);
-                return;
+                return Ok(());
             }
 
             let mut new_stack = Vec::with_capacity(cache_entries.len() + 1);
@@ -873,6 +877,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             }
         }
         M.page_out.measure(clock() - start);
+        Ok(())
     }
 
     fn pull<'g>(
@@ -921,7 +926,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
     // caller is expected to have instantiated self.last_snapshot
     // in recovery already.
-    fn advance_snapshot(&self) {
+    fn advance_snapshot(&self) -> std::io::Result<()> {
         let snapshot_opt_res = self.last_snapshot.try_lock();
         if snapshot_opt_res.is_err() {
             // some other thread is snapshotting
@@ -929,7 +934,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 "snapshot skipped because previous attempt \
             appears not to have completed"
             );
-            return;
+            return Ok(());
         }
 
         let mut snapshot_opt = snapshot_opt_res.unwrap();
@@ -937,7 +942,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             "PageCache::advance_snapshot called before recovery",
         );
 
-        self.log.flush();
+        self.log.flush()?;
 
         // we disable rewriting so that our log becomes append-only,
         // allowing us to iterate through it without corrupting ourselves.
@@ -957,7 +962,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         let iter = self.log.iter_from(start_lsn);
 
         let next_snapshot =
-            advance_snapshot::<PM, P, R>(iter, last_snapshot, &self.config);
+            advance_snapshot::<PM, P, R>(iter, last_snapshot, &self.config)?;
 
         self.log.with_sa(|sa| sa.resume_rewriting());
 
@@ -965,6 +970,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         // into the mutex, otherwise we create a race condition where the SA is
         // not actually paused when a snapshot happens.
         *snapshot_opt = Some(next_snapshot);
+        Ok(())
     }
 
     fn load_snapshot(&mut self) {

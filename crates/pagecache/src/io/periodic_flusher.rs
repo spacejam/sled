@@ -18,7 +18,7 @@ pub(super) fn flusher(
     thread::Builder::new().name(name).spawn(move || while
         !shutdown.load(SeqCst)
     {
-        iob.flush();
+        iob.flush().unwrap();
 
         thread::sleep(Duration::from_millis(flush_every_ms));
     })

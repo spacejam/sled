@@ -1,3 +1,4 @@
+use std::cmp::PartialEq;
 use std::io;
 
 use super::*;
@@ -24,6 +25,21 @@ pub enum Error<Actual> {
         at: LogID,
     },
 }
+use Error::*;
+
+impl<A> PartialEq for Error<A> {
+    fn eq(&self, other: &Error<A>) -> bool {
+        match *self {
+            CasFailed(_) |
+            Unsupported(_) |
+            ReportableBug(_) |
+            Corruption {
+                ..
+            } => self == other,
+            Io(_) => false,
+        }
+    }
+}
 
 impl<T> From<io::Error> for Error<T> {
     #[inline]
@@ -40,7 +56,6 @@ impl<T> Error<T> {
     ///
     /// Panics if the Error is of type `Error::CasFailed`
     pub fn danger_cast<Other>(self) -> Error<Other> {
-        use Error::*;
         match self {
             CasFailed(_) => {
                 panic!(
@@ -62,7 +77,6 @@ impl<T> Error<T> {
     pub fn cast<Other>(self) -> Error<Other>
         where Other: From<T>
     {
-        use Error::*;
         match self {
             CasFailed(other) => CasFailed(other.into()),
             Unsupported(s) => Unsupported(s),

@@ -209,7 +209,7 @@ pub(super) fn advance_snapshot<PM, P, R>(
     iter: LogIter,
     mut snapshot: Snapshot<R>,
     config: &Config,
-) -> Snapshot<R>
+) -> std::io::Result<Snapshot<R>>
     where PM: Materializer<Recovery = R, PageFrag = P>,
           P: 'static
                  + Debug
@@ -261,18 +261,20 @@ pub(super) fn advance_snapshot<PM, P, R>(
         }
     }
 
-    write_snapshot(config, &snapshot);
+    write_snapshot(config, &snapshot)?;
 
     trace!("generated new snapshot: {:?}", snapshot);
 
     M.advance_snapshot.measure(clock() - start);
 
-    snapshot
+    Ok(snapshot)
 }
 
 /// Read a `Snapshot` or generate a default, then advance it to
 /// the tip of the data file, if present.
-pub fn read_snapshot_or_default<PM, P, R>(config: &Config) -> Snapshot<R>
+pub fn read_snapshot_or_default<PM, P, R>(
+    config: &Config,
+) -> std::io::Result<Snapshot<R>>
     where PM: Materializer<Recovery = R, PageFrag = P>,
           P: 'static
                  + Debug
@@ -283,7 +285,7 @@ pub fn read_snapshot_or_default<PM, P, R>(config: &Config) -> Snapshot<R>
                  + Sync,
           R: Debug + Clone + Serialize + DeserializeOwned + Send
 {
-    let last_snap = read_snapshot(config).unwrap_or_else(Snapshot::default);
+    let last_snap = read_snapshot(config)?.unwrap_or_else(Snapshot::default);
 
     let log_iter = raw_segment_iter_from(last_snap.max_lsn, config);
 
@@ -291,27 +293,27 @@ pub fn read_snapshot_or_default<PM, P, R>(config: &Config) -> Snapshot<R>
 }
 
 /// Read a `Snapshot` from disk.
-fn read_snapshot<R>(config: &Config) -> Option<Snapshot<R>>
+fn read_snapshot<R>(config: &Config) -> std::io::Result<Option<Snapshot<R>>>
     where R: Debug + Clone + Serialize + DeserializeOwned + Send
 {
-    let mut candidates = config.get_snapshot_files();
+    let mut candidates = config.get_snapshot_files()?;
     if candidates.is_empty() {
         info!("no previous snapshot found");
-        return None;
+        return Ok(None);
     }
 
     candidates.sort();
 
     let path = candidates.pop().unwrap();
 
-    let mut f = std::fs::OpenOptions::new().read(true).open(&path).unwrap();
-    if f.metadata().unwrap().len() <= 16 {
+    let mut f = std::fs::OpenOptions::new().read(true).open(&path)?;
+    if f.metadata()?.len() <= 16 {
         warn!("empty/corrupt snapshot file found");
-        return None;
+        return Ok(None);
     }
 
     let mut buf = vec![];
-    f.read_to_end(&mut buf).unwrap();
+    f.read_to_end(&mut buf)?;
     let len = buf.len();
     buf.split_off(len - 16);
 
@@ -328,7 +330,7 @@ fn read_snapshot<R>(config: &Config) -> Option<Snapshot<R>>
 
     if crc_expected != crc_actual {
         error!("crc for snapshot file {:?} failed!", path);
-        return None;
+        return Ok(None);
     }
 
     #[cfg(feature = "zstd")]
@@ -343,10 +345,13 @@ fn read_snapshot<R>(config: &Config) -> Option<Snapshot<R>>
     #[cfg(not(feature = "zstd"))]
     let bytes = buf;
 
-    deserialize::<Snapshot<R>>(&*bytes).ok()
+    Ok(deserialize::<Snapshot<R>>(&*bytes).ok())
 }
 
-pub fn write_snapshot<R>(config: &Config, snapshot: &Snapshot<R>)
+pub fn write_snapshot<R>(
+    config: &Config,
+    snapshot: &Snapshot<R>,
+) -> std::io::Result<()>
     where R: Debug + Clone + Serialize + DeserializeOwned + Send
 {
     let raw_bytes = serialize(&snapshot, Infinite).unwrap();
@@ -376,33 +381,31 @@ pub fn write_snapshot<R>(config: &Config, snapshot: &Snapshot<R>)
     let mut path_2 = config.snapshot_prefix();
     path_2.push(path_2_suffix);
 
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .open(&path_1)
-        .unwrap();
+    let mut f = std::fs::OpenOptions::new().write(true).create(true).open(
+        &path_1,
+    )?;
 
     // write the snapshot bytes, followed by a crc64 checksum at the end
-    f.write_all(&*bytes).unwrap();
-    f.write_all(&len_bytes).unwrap();
-    f.write_all(&crc64).unwrap();
-    f.sync_all().unwrap();
-    drop(f);
+    f.write_all(&*bytes)?;
+    f.write_all(&len_bytes)?;
+    f.write_all(&crc64)?;
+    f.sync_all()?;
 
     trace!("wrote snapshot to {}", path_1.to_string_lossy());
 
-    std::fs::rename(path_1, &path_2).expect("failed to write snapshot");
+    std::fs::rename(path_1, &path_2)?;
 
     trace!("renamed snapshot to {}", path_2.to_string_lossy());
 
     // clean up any old snapshots
-    let candidates = config.get_snapshot_files();
+    let candidates = config.get_snapshot_files()?;
     for path in candidates {
         let path_str = path.file_name().unwrap().to_str().unwrap();
         if !path_2.to_string_lossy().ends_with(&*path_str) {
             debug!("removing old snapshot file {:?}", path);
 
             if let Err(_e) = std::fs::remove_file(&path) {
+                // TODO should this just be a try return?
                 warn!(
                     "failed to remove old snapshot file, maybe snapshot race? {}",
                     _e
@@ -410,4 +413,5 @@ pub fn write_snapshot<R>(config: &Config, snapshot: &Snapshot<R>)
             }
         }
     }
+    Ok(())
 }

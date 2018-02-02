@@ -192,17 +192,15 @@ impl ConfigBuilder {
     }
 
     /// returns the snapshot file paths for this system
-    pub fn get_snapshot_files(&self) -> Vec<PathBuf> {
+    pub fn get_snapshot_files(&self) -> std::io::Result<Vec<PathBuf>> {
         let mut prefix = self.snapshot_prefix();
 
         prefix.push(".snap.");
 
-        let err_msg = format!("could not read snapshot directory ({})", prefix.to_string_lossy());
-
         let abs_prefix: OsString = if Path::new(&prefix).is_absolute() {
             prefix
         } else {
-            let mut abs_path = std::env::current_dir().expect(&*err_msg);
+            let mut abs_path = std::env::current_dir()?;
             abs_path.push(prefix.clone());
             abs_path.as_os_str().to_os_string()
         };
@@ -224,21 +222,17 @@ impl ConfigBuilder {
             }
         };
 
-        let snap_dir = Path::new(&abs_prefix).parent().expect(&*err_msg);
+        let snap_dir = Path::new(&abs_prefix).parent().unwrap();
 
         if !snap_dir.exists() {
-            std::fs::create_dir_all(snap_dir).unwrap();
+            std::fs::create_dir_all(snap_dir)?;
         }
 
-        snap_dir
-            .read_dir()
-            .expect(&*err_msg)
-            .filter_map(filter)
-            .collect()
+        Ok(snap_dir.read_dir()?.filter_map(filter).collect())
     }
 
     /// Finalize the configuration.
-    pub fn build(self) -> Config {
+    pub fn build(self) -> std::io::Result<Config> {
         self.validate();
 
         let path = self.db_path();
@@ -259,7 +253,7 @@ impl ConfigBuilder {
             }
 
             if !dir.exists() {
-                std::fs::create_dir_all(dir).unwrap();
+                std::fs::create_dir_all(dir)?;
             }
         }
 
@@ -270,19 +264,13 @@ impl ConfigBuilder {
         options.create(true);
         options.read(true);
         options.write(true);
-        let file = options.open(&path).unwrap();
+        let file = options.open(&path)?;
 
         // seal config in a Config
-        Config {
+        Ok(Config {
             inner: Arc::new(self),
             file: Arc::new(file),
-        }
-    }
-
-    /// Consumes the `ConfigBuilder` and produces a `Log` from it.
-    pub fn log(mut self) -> Log {
-        self.segment_mode = SegmentMode::Linear;
-        Log::start_raw_log(self.build())
+        })
     }
 
     // panics if conf options are outside of advised range
@@ -397,7 +385,7 @@ impl Drop for Config {
         let _res = fs::remove_file(db_path);
         let _res = fs::remove_file(conf_path);
 
-        let candidates = self.get_snapshot_files();
+        let candidates = self.get_snapshot_files().unwrap();
         for path in candidates {
             warn!("removing old snapshot file {}", path.to_string_lossy());
             if let Err(_e) = std::fs::remove_file(path) {
@@ -427,12 +415,6 @@ impl Deref for Config {
 }
 
 impl Config {
-    /// Start a `Log` using this finalized configuration.
-    pub fn log(&self) -> Log {
-        assert_eq!(self.inner.segment_mode, SegmentMode::Linear, "must use SegmentMode::Linear with log!");
-        Log::start_raw_log(self.clone())
-    }
-
     /// Retrieve a thread-local file handle to the
     /// configured underlying storage,
     /// or create a new one if this is the first time the
@@ -453,13 +435,13 @@ impl Config {
                      + Sync,
               R: Debug + Clone + Serialize + DeserializeOwned + Send + PartialEq
     {
-        let incremental = read_snapshot_or_default::<PM, P, R>(&self);
+        let incremental = read_snapshot_or_default::<PM, P, R>(&self).unwrap();
 
-        for snapshot_path in self.get_snapshot_files() {
+        for snapshot_path in self.get_snapshot_files().unwrap() {
             std::fs::remove_file(snapshot_path).unwrap();
         }
 
-        let regenerated = read_snapshot_or_default::<PM, P, R>(&self);
+        let regenerated = read_snapshot_or_default::<PM, P, R>(&self).unwrap();
 
         let f = self.file();
 

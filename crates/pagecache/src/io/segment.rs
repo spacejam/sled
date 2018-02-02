@@ -848,7 +848,7 @@ impl SegmentAccountant {
     /// as well as the offset of the previous segment that
     /// was allocated, so that we can detect missing
     /// out-of-order segments during recovery.
-    pub fn next(&mut self, lsn: Lsn) -> (LogID, LogID) {
+    pub fn next(&mut self, lsn: Lsn) -> std::io::Result<(LogID, LogID)> {
         assert_eq!(
             lsn % self.config.get_io_buf_size() as Lsn,
             0,
@@ -903,9 +903,8 @@ impl SegmentAccountant {
             lsn
         );
         let f = self.config.file();
-        f.pwrite_all(&*vec![0; self.config.get_io_buf_size()], lid)
-            .unwrap();
-        f.sync_all().unwrap();
+        f.pwrite_all(&*vec![0; self.config.get_io_buf_size()], lid)?;
+        f.sync_all()?;
 
         let last_given = self.safety_buffer[self.config.get_io_bufs() - 1];
 
@@ -955,7 +954,7 @@ impl SegmentAccountant {
         self.safety_buffer.push(lid);
         self.safety_buffer.remove(0);
 
-        (lid, last_given)
+        Ok((lid, last_given))
     }
 
     /// Returns an iterator over a snapshot of current segment
