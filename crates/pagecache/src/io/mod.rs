@@ -18,7 +18,7 @@ mod log;
 mod materializer;
 mod page_cache;
 mod parallel_io;
-mod periodic_flusher;
+mod periodic;
 mod reader;
 mod reservation;
 mod segment;

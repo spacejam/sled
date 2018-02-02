@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 
 use self::reader::LogReader;
 use super::*;
@@ -49,8 +48,8 @@ pub struct Log {
     /// iobufs is the underlying lock-free IO write buffer.
     iobufs: Arc<IoBufs>,
     config: Config,
-    flusher_shutdown: Arc<AtomicBool>,
-    flusher_handle: Option<std::thread::JoinHandle<()>>,
+    /// Preiodically flushes `iobufs`.
+    _flusher: periodic::Periodic<Arc<IoBufs>>,
 }
 
 unsafe impl Send for Log {}
@@ -58,18 +57,16 @@ unsafe impl Sync for Log {}
 
 impl Drop for Log {
     fn drop(&mut self) {
-        self.flusher_shutdown.store(
-            true,
-            std::sync::atomic::Ordering::SeqCst,
-        );
-        if let Some(join_handle) = self.flusher_handle.take() {
-            join_handle.join().unwrap();
-        }
-
         #[cfg(feature = "cpuprofiler")]
         {
             cpuprofiler::PROFILER.lock().unwrap().stop().unwrap();
         }
+    }
+}
+
+impl periodic::Callback for Arc<IoBufs> {
+    fn call(&self) {
+        self.flush().unwrap();
     }
 }
 
@@ -81,24 +78,16 @@ impl Log {
         snapshot: Snapshot<R>,
     ) -> CacheResult<Log, ()> {
         let iobufs = Arc::new(IoBufs::start(config.clone(), snapshot)?);
-
-        let flusher_shutdown = Arc::new(AtomicBool::new(false));
-
-        let flusher_handle =
-            config.get_flush_every_ms().map(|flush_every_ms| {
-                periodic_flusher::flusher(
-                    "log flusher".to_owned(),
-                    Arc::clone(&iobufs),
-                    Arc::clone(&flusher_shutdown),
-                    flush_every_ms,
-                ).unwrap()
-            });
+        let flusher = periodic::Periodic::new(
+            "log flusher".to_owned(),
+            iobufs.clone(),
+            config.get_flush_every_ms(),
+        );
 
         Ok(Log {
             iobufs: iobufs,
             config: config,
-            flusher_shutdown: flusher_shutdown,
-            flusher_handle: flusher_handle,
+            _flusher: flusher,
         })
     }
 
