@@ -8,7 +8,7 @@ use std::slice;
 
 use libc::*;
 
-use sled::{ConfigBuilder, Iter, Tree};
+use sled::{ConfigBuilder, Error, Iter, Tree};
 
 fn leak_buf(v: Vec<u8>, vallen: *mut size_t) -> *mut c_char {
     unsafe {
@@ -157,8 +157,10 @@ pub unsafe extern "C" fn sled_get(
     let k = slice::from_raw_parts(key as *const u8, keylen);
     let res = (*db).get(k);
     match res {
-        None => ptr::null_mut(),
-        Some(v) => leak_buf(v, vallen),
+        Ok(Some(v)) => leak_buf(v, vallen),
+        Ok(None) => ptr::null_mut(),
+        // TODO proper error propagation
+        Err(e) => panic!("{:?}", e),
     }
 }
 
@@ -214,14 +216,16 @@ pub unsafe extern "C" fn sled_cas(
         Ok(()) => {
             1
         }
-        Err(None) => {
+        Err(Error::CasFailed(None)) => {
             *actual_vallen = 0;
             0
         }
-        Err(Some(v)) => {
+        Err(Error::CasFailed(Some(v))) => {
             *actual_val = leak_buf(v, actual_vallen) as *const u8;
             0
         }
+        // TODO proper error propagation
+        Err(e) => panic!("{:?}", e),
     }
 }
 
@@ -234,8 +238,12 @@ pub unsafe extern "C" fn sled_scan<'a>(
     keylen: size_t,
 ) -> *mut Iter<'a> {
     let k = slice::from_raw_parts(key as *const u8, keylen);
-    let iter = (*db).scan(k);
-    Box::into_raw(Box::new(iter))
+    let res = (*db).scan(k);
+    match res {
+        Ok(iter) => Box::into_raw(Box::new(iter)),
+        // TODO proper error propagation
+        Err(e) => panic!("{:?}", e),
+    }
 }
 
 /// Get they next kv pair from an iterator.
