@@ -48,7 +48,6 @@ impl Tree {
         config.verify_snapshot::<BLinkMaterializer, Frag, Vec<(PageID, PageID)>>();
 
         let pages = PageCache::start(config.clone())?;
-        println!("started pc");
 
         let roots_opt = pages.recovered_state().clone().and_then(
             |mut roots: Vec<(PageID, PageID)>| if roots.is_empty() {
