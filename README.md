@@ -30,7 +30,7 @@ tree.cas(k, Some(v1), Some(v2));
 
 // scan forward
 let mut iter = tree.scan(k);
-assert_eq!(iter.next(), Some((k, v2)));
+assert_eq!(iter.next(), Some(Ok((k, v2))));
 assert_eq!(iter.next(), None);
 
 // deletion
