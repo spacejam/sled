@@ -50,11 +50,7 @@ fn parallel_tree_ops() {
     }
 
     println!("========== initial sets ==========");
-    let conf = ConfigBuilder::new()
-        .temporary(true)
-        .blink_fanout(2)
-        .build()
-        .unwrap();
+    let conf = ConfigBuilder::new().temporary(true).blink_fanout(2).build();
     let t = Arc::new(sled::Tree::start(conf).unwrap());
     par!{t, |tree: &Tree, k: Vec<u8>| {
         assert_eq!(tree.get(&*k), Ok(None));
@@ -99,8 +95,7 @@ fn parallel_tree_ops() {
 fn tree_subdir() {
     let config = ConfigBuilder::new()
         .path("test_tree_subdir/test.db".to_owned())
-        .build()
-        .unwrap();
+        .build();
     let t = sled::Tree::start(config).unwrap();
 
     t.set(vec![1], vec![1]).unwrap();
@@ -109,8 +104,7 @@ fn tree_subdir() {
 
     let config = ConfigBuilder::new()
         .path("test_tree_subdir/test.db".to_owned())
-        .build()
-        .unwrap();
+        .build();
     let t = sled::Tree::start(config).unwrap();
 
     let res = t.get(&*vec![1]);
@@ -129,8 +123,7 @@ fn tree_iterator() {
         .temporary(true)
         .blink_fanout(2)
         .flush_every_ms(None)
-        .build()
-        .unwrap();
+        .build();
     let t = sled::Tree::start(config).unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
@@ -173,8 +166,7 @@ fn recover_tree() {
         .io_buf_size(5000)
         .flush_every_ms(None)
         .snapshot_after_ops(100)
-        .build()
-        .unwrap();
+        .build();
     let t = sled::Tree::start(conf.clone()).unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
@@ -269,8 +261,7 @@ fn prop_tree_matches_btreemap(
         .io_buf_size(10000)
         .blink_fanout(blink_fanout as usize + 2)
         .cache_capacity(40)
-        .build()
-        .unwrap();
+        .build();
 
     let mut tree = sled::Tree::start(config.clone()).unwrap();
     let mut reference = BTreeMap::new();

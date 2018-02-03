@@ -24,8 +24,7 @@ pub const SEG_TRAILER_LEN: usize = 10;
 /// let conf = pagecache::ConfigBuilder::new()
 ///     .temporary(true)
 ///     .segment_mode(pagecache::SegmentMode::Linear)
-///     .build()
-///     .unwrap();
+///     .build();
 /// let log = pagecache::Log::start_raw_log(conf).unwrap();
 /// let (first_lsn, _first_offset) = log.write(b"1".to_vec()).unwrap();
 /// log.write(b"22".to_vec()).unwrap();
@@ -80,7 +79,7 @@ impl Log {
     pub fn start<R>(
         config: Config,
         snapshot: Snapshot<R>,
-    ) -> std::io::Result<Log> {
+    ) -> CacheResult<Log, ()> {
         let iobufs = Arc::new(IoBufs::start(config.clone(), snapshot)?);
 
         let flusher_shutdown = Arc::new(AtomicBool::new(false));
@@ -104,9 +103,9 @@ impl Log {
     }
 
     /// Starts a log for use without a materializer.
-    pub fn start_raw_log(config: Config) -> std::io::Result<Log> {
+    pub fn start_raw_log(config: Config) -> CacheResult<Log, ()> {
         assert_eq!(config.get_segment_mode(), SegmentMode::Linear);
-        let log_iter = raw_segment_iter_from(0, &config);
+        let log_iter = raw_segment_iter_from(0, &config)?;
 
         let snapshot = advance_snapshot::<NullMaterializer, (), ()>(
             log_iter,
@@ -118,7 +117,7 @@ impl Log {
     }
 
     /// Flushes any pending IO buffers to disk to ensure durability.
-    pub fn flush(&self) -> std::io::Result<()> {
+    pub fn flush(&self) -> CacheResult<(), ()> {
         for _ in 0..self.config.get_io_bufs() {
             self.iobufs.flush()?;
         }
@@ -126,13 +125,13 @@ impl Log {
     }
 
     /// Reserve space in the log for a pending linearized operation.
-    pub fn reserve(&self, buf: Vec<u8>) -> std::io::Result<Reservation> {
+    pub fn reserve(&self, buf: Vec<u8>) -> CacheResult<Reservation, ()> {
         self.iobufs.reserve(buf)
     }
 
     /// Write a buffer into the log. Returns the log sequence
     /// number and the file offset of the write.
-    pub fn write(&self, buf: Vec<u8>) -> std::io::Result<(Lsn, LogID)> {
+    pub fn write(&self, buf: Vec<u8>) -> CacheResult<(Lsn, LogID), ()> {
         self.iobufs.reserve(buf).and_then(|res| res.complete())
     }
 
@@ -163,10 +162,10 @@ impl Log {
     }
 
     /// read a buffer from the disk
-    pub fn read(&self, lsn: Lsn, lid: LogID) -> io::Result<LogRead> {
+    pub fn read(&self, lsn: Lsn, lid: LogID) -> CacheResult<LogRead, ()> {
         trace!("reading log lsn {} lid {}", lsn, lid);
         self.make_stable(lsn)?;
-        let f = self.config.file();
+        let f = self.config.file()?;
 
         let read = f.read_message(
             lid,
@@ -180,7 +179,7 @@ impl Log {
                 Ok(log_read)
             }
             _ => Ok(log_read),
-        })
+        }).map_err(|e| e.into())
     }
 
     /// returns the current stable offset written to disk
@@ -190,7 +189,7 @@ impl Log {
 
     /// blocks until the specified log sequence number has
     /// been made stable on disk
-    pub fn make_stable(&self, lsn: Lsn) -> std::io::Result<()> {
+    pub fn make_stable(&self, lsn: Lsn) -> CacheResult<(), ()> {
         let start = clock();
 
         // NB before we write the 0th byte of the file, stable  is -1

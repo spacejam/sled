@@ -130,7 +130,7 @@ fn run_without_snapshot() {
         .io_buf_size(100_000) // 1<<16 is 65k but might cause stalling
         .path("test_crashes".to_string())
         .snapshot_after_ops(1 << 56)
-        .build().unwrap();
+        .build();
 
     run(config);
 }
@@ -149,7 +149,7 @@ fn run_with_snapshot() {
         .io_buf_size(100_000) // 1<<16 is 65k but might cause stalling
         .path("test_crashes_with_snapshot".to_string())
         .snapshot_after_ops(1 << 10)
-        .build().unwrap();
+        .build();
 
     run(config);
 }

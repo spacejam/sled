@@ -102,7 +102,7 @@ pub unsafe extern "C" fn sled_open_tree(
     config: *mut ConfigBuilder,
 ) -> *mut Tree {
     let conf_2 = (*config).clone();
-    let conf_3 = conf_2.build().unwrap();
+    let conf_3 = conf_2.build();
     sled_free_config(config);
     Box::into_raw(Box::new(Tree::start(conf_3).unwrap()))
 }

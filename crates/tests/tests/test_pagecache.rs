@@ -48,8 +48,7 @@ fn pagecache_caching() {
         .flush_every_ms(None)
         .snapshot_after_ops(1_000_000)
         .io_buf_size(20000)
-        .build()
-        .unwrap();
+        .build();
 
     let pc: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone())
         .unwrap();
@@ -80,8 +79,7 @@ fn pagecache_strange_crash_1() {
         .flush_every_ms(None)
         .snapshot_after_ops(1_000_000)
         .io_buf_size(20000)
-        .build()
-        .unwrap();
+        .build();
 
     {
         let pc: PageCache<TestMaterializer, _, _> =
@@ -120,8 +118,7 @@ fn pagecache_strange_crash_2() {
             .flush_every_ms(None)
             .snapshot_after_ops(1_000_000)
             .io_buf_size(20000)
-            .build()
-            .unwrap();
+            .build();
 
         println!("!!!!!!!!!!!!!!!!!!!!! {} !!!!!!!!!!!!!!!!!!!!!!", x);
         conf.verify_snapshot::<TestMaterializer, _, _>();
@@ -158,8 +155,7 @@ fn basic_pagecache_recovery() {
         .temporary(true)
         .flush_every_ms(None)
         .io_buf_size(1000)
-        .build()
-        .unwrap();
+        .build();
 
     let pc: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone())
         .unwrap();
@@ -295,7 +291,7 @@ fn prop_pagecache_works(ops: OpVec) -> bool {
         .cache_bits(0)
         .cache_capacity(40)
         .cache_fixup_threshold(1)
-        .build().unwrap();
+        .build();
 
     let mut pc: PageCache<TestMaterializer, _, _> =
         PageCache::start(config.clone()).unwrap();

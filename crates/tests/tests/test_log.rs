@@ -29,8 +29,7 @@ fn more_log_reservations_than_buffers() {
     let config = ConfigBuilder::new()
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
-        .build()
-        .unwrap();
+        .build();
     let log = Log::start_raw_log(config.clone()).unwrap();
     let mut reservations = vec![];
     for _ in 0..config.get_io_bufs() + 1 {
@@ -52,8 +51,7 @@ fn non_contiguous_log_flush() {
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
         .io_buf_size(1000)
-        .build()
-        .unwrap();
+        .build();
     let log = Log::start_raw_log(conf.clone()).unwrap();
 
     let seg_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;
@@ -79,8 +77,7 @@ fn concurrent_logging() {
             .segment_mode(SegmentMode::Linear)
             .io_buf_size(1000)
             .flush_every_ms(Some(50))
-            .build()
-            .unwrap();
+            .build();
         let log = Arc::new(Log::start_raw_log(conf.clone()).unwrap());
         let iobs2 = log.clone();
         let iobs3 = log.clone();
@@ -176,8 +173,7 @@ fn log_aborts() {
     let conf = ConfigBuilder::new()
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
-        .build()
-        .unwrap();
+        .build();
     let log = Log::start_raw_log(conf).unwrap();
     write(&log);
     abort(&log);
@@ -193,8 +189,7 @@ fn log_iterator() {
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
         .io_buf_size(1000)
-        .build()
-        .unwrap();
+        .build();
     let log = Log::start_raw_log(conf.clone()).unwrap();
     let (first_lsn, _) = log.write(b"".to_vec()).unwrap();
     log.write(b"1".to_vec());
@@ -280,8 +275,7 @@ fn snapshot_with_out_of_order_buffers() {
         .io_buf_size(100)
         .io_bufs(2)
         .snapshot_after_ops(5)
-        .build()
-        .unwrap();
+        .build();
 
     let len = conf.get_io_buf_size() - SEG_HEADER_LEN - SEG_TRAILER_LEN -
         MSG_HEADER_LEN;
@@ -321,8 +315,7 @@ fn multi_segment_log_iteration() {
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
         .io_buf_size(1000)
-        .build()
-        .unwrap();
+        .build();
 
     let seg_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;
     let len = ((conf.get_io_buf_size() - seg_overhead) /
@@ -410,8 +403,7 @@ fn prop_log_works(ops: OpVec) -> bool {
         .flush_every_ms(Some(1))
         // .flush_every_ms(None) // FIXME rm line
         .segment_mode(SegmentMode::Linear)
-        .build().unwrap();
-    // println!("testing {:?}", ops);
+        .build();
 
     let mut tip = 0;
     let mut log = Log::start_raw_log(config.clone()).unwrap();
@@ -502,7 +494,7 @@ fn prop_log_works(ops: OpVec) -> bool {
                     use std::os::unix::io::AsRawFd;
 
                     {
-                        let f = config.file();
+                        let f = config.file().unwrap();
                         use libc::ftruncate;
                         let fd = f.as_raw_fd();
 

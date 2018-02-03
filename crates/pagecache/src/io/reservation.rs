@@ -29,13 +29,13 @@ impl<'a> Drop for Reservation<'a> {
 impl<'a> Reservation<'a> {
     /// Cancel the reservation, placing a failed flush on disk, returning
     /// the (cancelled) log sequence number and file offset.
-    pub fn abort(mut self) -> std::io::Result<(Lsn, LogID)> {
+    pub fn abort(mut self) -> CacheResult<(Lsn, LogID), ()> {
         self.flush(false)
     }
 
     /// Complete the reservation, placing the buffer on disk. returns
     /// the log sequence number of the write, and the file offset.
-    pub fn complete(mut self) -> std::io::Result<(Lsn, LogID)> {
+    pub fn complete(mut self) -> CacheResult<(Lsn, LogID), ()> {
         self.flush(true)
     }
 
@@ -49,7 +49,7 @@ impl<'a> Reservation<'a> {
         self.lsn
     }
 
-    fn flush(&mut self, valid: bool) -> std::io::Result<(Lsn, LogID)> {
+    fn flush(&mut self, valid: bool) -> CacheResult<(Lsn, LogID), ()> {
         if self.flushed {
             panic!("flushing already-flushed reservation!");
         }

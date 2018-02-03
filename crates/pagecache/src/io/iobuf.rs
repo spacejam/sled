@@ -47,12 +47,12 @@ impl IoBufs {
     pub fn start<R>(
         config: Config,
         mut snapshot: Snapshot<R>,
-    ) -> std::io::Result<IoBufs> {
+    ) -> CacheResult<IoBufs, ()> {
         // if configured, start env_logger and/or cpuprofiler
         global_init();
 
         // open file for writing
-        let file = config.file();
+        let file = config.file()?;
 
         let io_buf_size = config.get_io_buf_size();
 
@@ -91,7 +91,7 @@ impl IoBufs {
             };
 
         let mut segment_accountant =
-            SegmentAccountant::start(config.clone(), snapshot);
+            SegmentAccountant::start(config.clone(), snapshot)?;
 
         let bufs = rep_no_copy![IoBuf::new(io_buf_size); config.get_io_bufs()];
 
@@ -235,7 +235,7 @@ impl IoBufs {
     pub(super) fn reserve(
         &self,
         raw_buf: Vec<u8>,
-    ) -> std::io::Result<Reservation> {
+    ) -> CacheResult<Reservation, ()> {
         let start = clock();
 
         let io_bufs = self.config.get_io_bufs();
@@ -398,7 +398,7 @@ impl IoBufs {
     /// Called by Reservation on termination (completion or abort).
     /// Handles departure from shared state, and possibly writing
     /// the buffer to stable storage if necessary.
-    pub(super) fn exit_reservation(&self, idx: usize) -> std::io::Result<()> {
+    pub(super) fn exit_reservation(&self, idx: usize) -> CacheResult<(), ()> {
         let iobuf = &self.bufs[idx];
         let mut header = iobuf.get_header();
 
@@ -440,7 +440,7 @@ impl IoBufs {
     /// be called multiple times. May not do anything
     /// if there is contention on the current IO buffer
     /// or no data to flush.
-    pub(super) fn flush(&self) -> std::io::Result<()> {
+    pub(super) fn flush(&self) -> CacheResult<(), ()> {
         let idx = self.idx();
         let header = self.bufs[idx].get_header();
         if offset(header) == 0 || is_sealed(header) {
@@ -459,7 +459,7 @@ impl IoBufs {
         idx: usize,
         header: Header,
         from_reserve: bool,
-    ) -> std::io::Result<()> {
+    ) -> CacheResult<(), ()> {
         let iobuf = &self.bufs[idx];
 
         if is_sealed(header) {
@@ -597,7 +597,7 @@ impl IoBufs {
 
     // Write an IO buffer's data to stable storage and set up the
     // next IO buffer for writing.
-    fn write_to_log(&self, idx: usize) -> std::io::Result<()> {
+    fn write_to_log(&self, idx: usize) -> CacheResult<(), ()> {
         let start = clock();
         let iobuf = &self.bufs[idx];
         let header = iobuf.get_header();
@@ -621,7 +621,7 @@ impl IoBufs {
 
         let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
 
-        let f = self.config.file();
+        let f = self.config.file()?;
         f.pwrite_all(&data[..res_len], lid)?;
         f.sync_all()?;
 
@@ -776,8 +776,9 @@ impl Drop for IoBufs {
         for _ in 0..self.config.get_io_bufs() {
             self.flush().unwrap();
         }
-        let f = self.config.file();
-        f.sync_all().unwrap();
+        if let Ok(f) = self.config.file() {
+            f.sync_all().unwrap();
+        }
 
         debug!("IoBufs dropped");
     }

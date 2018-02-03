@@ -111,7 +111,8 @@ pub fn debug_delay() {
 }
 
 // initialize env_logger and/or cpuprofiler if configured to do so.
-fn global_init() {
+#[doc(hidden)]
+pub fn global_init() {
     use std::sync::{ONCE_INIT, Once};
 
     static ONCE: Once = ONCE_INIT;

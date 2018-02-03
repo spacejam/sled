@@ -48,6 +48,7 @@ impl Tree {
         config.verify_snapshot::<BLinkMaterializer, Frag, Vec<(PageID, PageID)>>();
 
         let pages = PageCache::start(config.clone())?;
+        println!("started pc");
 
         let roots_opt = pages.recovered_state().clone().and_then(
             |mut roots: Vec<(PageID, PageID)>| if roots.is_empty() {
@@ -134,7 +135,7 @@ impl Tree {
     }
 
     /// Flushes any pending IO buffers to disk to ensure durability.
-    pub fn flush(&self) -> std::io::Result<()> {
+    pub fn flush(&self) -> CacheResult<(), ()> {
         self.pages.flush()
     }
 
@@ -155,7 +156,7 @@ impl Tree {
     ///
     /// ```
     /// use sled::{ConfigBuilder, Error};
-    /// let config = ConfigBuilder::new().temporary(true).build().unwrap();
+    /// let config = ConfigBuilder::new().temporary(true).build();
     /// let t = sled::Tree::start(config).unwrap();
     ///
     /// // unique creation
@@ -248,7 +249,7 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// let config = sled::ConfigBuilder::new().temporary(true).build().unwrap();
+    /// let config = sled::ConfigBuilder::new().temporary(true).build();
     /// let t = sled::Tree::start(config).unwrap();
     /// t.set(vec![1], vec![1]);
     /// assert_eq!(t.del(&*vec![1]), Ok(Some(vec![1])));
@@ -298,7 +299,7 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// let config = sled::ConfigBuilder::new().temporary(true).build().unwrap();
+    /// let config = sled::ConfigBuilder::new().temporary(true).build();
     /// let t = sled::Tree::start(config).unwrap();
     /// t.set(vec![1], vec![10]);
     /// t.set(vec![2], vec![20]);
@@ -343,7 +344,7 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// let config = sled::ConfigBuilder::new().temporary(true).build().unwrap();
+    /// let config = sled::ConfigBuilder::new().temporary(true).build();
     /// let t = sled::Tree::start(config).unwrap();
     /// t.set(vec![1], vec![10]);
     /// t.set(vec![2], vec![20]);

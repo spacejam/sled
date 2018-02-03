@@ -189,7 +189,7 @@ impl Drop for PidDropper {
 /// }
 ///
 /// fn main() {
-///     let conf = pagecache::ConfigBuilder::new().temporary(true).build().unwrap();
+///     let conf = pagecache::ConfigBuilder::new().temporary(true).build();
 ///     let pc: pagecache::PageCache<TestMaterializer, _, _> =
 ///         pagecache::PageCache::start(conf).unwrap();
 ///     {
@@ -262,7 +262,7 @@ impl<PM, P, R> PageCache<PM, P, R>
           R: Debug + Clone + Serialize + DeserializeOwned + Send
 {
     /// Instantiate a new `PageCache`.
-    pub fn start(config: Config) -> std::io::Result<PageCache<PM, P, R>> {
+    pub fn start(config: Config) -> CacheResult<PageCache<PM, P, R>, ()> {
         let cache_capacity = config.get_cache_capacity();
         let cache_shard_bits = config.get_cache_bits();
         let lru = Lru::new(cache_capacity, cache_shard_bits);
@@ -293,7 +293,7 @@ impl<PM, P, R> PageCache<PM, P, R>
     }
 
     /// Flushes any pending IO buffers to disk to ensure durability.
-    pub fn flush(&self) -> std::io::Result<()> {
+    pub fn flush(&self) -> CacheResult<(), ()> {
         self.log.flush()
     }
 
@@ -372,7 +372,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         M.serialize.measure(clock() - serialize_start);
 
         // reserve slot in log
-        let res = self.log.reserve(bytes)?;
+        let res = self.log.reserve(bytes).map_err(|e| e.danger_cast())?;
         let lsn = res.lsn();
         let lid = res.lid();
 
@@ -397,7 +397,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         // NB complete must happen AFTER calls to SA, because
         // when the iobuf's n_writers hits 0, we may transition
         // the segment to inactive, resulting in a race otherwise.
-        res.complete()?;
+        res.complete().map_err(|e| e.danger_cast())?;
 
         let pd = PidDropper(pid, Arc::clone(&self.free));
         unsafe {
@@ -435,7 +435,8 @@ impl<PM, P, R> PageCache<PM, P, R>
         let serialize_start = clock();
         let bytes = serialize(&prepend, Infinite).unwrap();
         M.serialize.measure(clock() - serialize_start);
-        let log_reservation = self.log.reserve(bytes)?;
+        let log_reservation =
+            self.log.reserve(bytes).map_err(|e| e.danger_cast())?;
         let lsn = log_reservation.lsn();
         let lid = log_reservation.lid();
 
@@ -444,7 +445,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         let result = unsafe { stack_ptr.deref().cap(old, cache_entry, guard) };
 
         if result.is_err() {
-            log_reservation.abort()?;
+            log_reservation.abort().map_err(|e| e.danger_cast())?;
         } else {
             let to_clean = self.log.with_sa(|sa| {
                 sa.mark_link(pid, lsn, lid);
@@ -456,7 +457,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             // the segment to inactive, resulting in a race otherwise.
             // FIXME can result in deadlock if a node that holds SA
             // is waiting to acquire a new reservation blocked by this?
-            log_reservation.complete()?;
+            log_reservation.complete().map_err(|e| e.danger_cast())?;
 
             if let Some(to_clean) = to_clean {
                 match self.get(to_clean, guard)? {
@@ -497,7 +498,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             let should_snapshot =
                 count % self.config.get_snapshot_after_ops() == 0;
             if should_snapshot {
-                self.advance_snapshot()?;
+                self.advance_snapshot().map_err(|e| e.danger_cast())?;
             }
         }
 
@@ -540,7 +541,8 @@ impl<PM, P, R> PageCache<PM, P, R>
         let serialize_start = clock();
         let bytes = serialize(&replace, Infinite).unwrap();
         M.serialize.measure(clock() - serialize_start);
-        let log_reservation = self.log.reserve(bytes)?;
+        let log_reservation =
+            self.log.reserve(bytes).map_err(|e| e.danger_cast())?;
         let lsn = log_reservation.lsn();
         let lid = log_reservation.lid();
 
@@ -573,7 +575,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             // NB complete must happen AFTER calls to SA, because
             // when the iobuf's n_writers hits 0, we may transition
             // the segment to inactive, resulting in a race otherwise.
-            log_reservation.complete()?;
+            log_reservation.complete().map_err(|e| e.danger_cast())?;
 
             if let Some(to_clean) = to_clean {
                 assert_ne!(pid, to_clean);
@@ -615,10 +617,10 @@ impl<PM, P, R> PageCache<PM, P, R>
             let should_snapshot =
                 count % self.config.get_snapshot_after_ops() == 0;
             if should_snapshot {
-                self.advance_snapshot()?;
+                self.advance_snapshot().map_err(|e| e.danger_cast())?;
             }
         } else {
-            log_reservation.abort()?;
+            log_reservation.abort().map_err(|e| e.danger_cast())?;
         }
 
         result.map_err(|e| Error::CasFailed(Some(e)))
@@ -926,7 +928,7 @@ impl<PM, P, R> PageCache<PM, P, R>
 
     // caller is expected to have instantiated self.last_snapshot
     // in recovery already.
-    fn advance_snapshot(&self) -> std::io::Result<()> {
+    fn advance_snapshot(&self) -> CacheResult<(), ()> {
         let snapshot_opt_res = self.last_snapshot.try_lock();
         if snapshot_opt_res.is_err() {
             // some other thread is snapshotting

@@ -101,8 +101,7 @@ fn main() {
         .cache_capacity(1_000_000)
         .flush_every_ms(Some(100))
         .snapshot_after_ops(1000000)
-        .build()
-        .unwrap();
+        .build();
 
     let tree = Arc::new(sled::Tree::start(config).unwrap());
 

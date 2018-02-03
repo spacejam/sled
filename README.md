@@ -19,11 +19,11 @@ let config = ConfigBuilder::new()
   .path(path)
   .build();
 
-let tree = Tree::start(config);
+let tree = Tree::start(config).unwrap();
 
 // set and get
 tree.set(k, v1);
-assert_eq!(tree.get(&k), Some(v1));
+assert_eq!(tree.get(&k), Ok(Some(v1)));
 
 // compare and swap
 tree.cas(k, Some(v1), Some(v2));

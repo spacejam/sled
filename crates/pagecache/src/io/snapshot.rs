@@ -209,7 +209,7 @@ pub(super) fn advance_snapshot<PM, P, R>(
     iter: LogIter,
     mut snapshot: Snapshot<R>,
     config: &Config,
-) -> std::io::Result<Snapshot<R>>
+) -> CacheResult<Snapshot<R>, ()>
     where PM: Materializer<Recovery = R, PageFrag = P>,
           P: 'static
                  + Debug
@@ -274,7 +274,7 @@ pub(super) fn advance_snapshot<PM, P, R>(
 /// the tip of the data file, if present.
 pub fn read_snapshot_or_default<PM, P, R>(
     config: &Config,
-) -> std::io::Result<Snapshot<R>>
+) -> CacheResult<Snapshot<R>, ()>
     where PM: Materializer<Recovery = R, PageFrag = P>,
           P: 'static
                  + Debug
@@ -287,7 +287,7 @@ pub fn read_snapshot_or_default<PM, P, R>(
 {
     let last_snap = read_snapshot(config)?.unwrap_or_else(Snapshot::default);
 
-    let log_iter = raw_segment_iter_from(last_snap.max_lsn, config);
+    let log_iter = raw_segment_iter_from(last_snap.max_lsn, config)?;
 
     advance_snapshot::<PM, P, R>(log_iter, last_snap, config)
 }

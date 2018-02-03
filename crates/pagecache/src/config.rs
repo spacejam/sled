@@ -4,7 +4,8 @@ use std::ffi::{OsStr, OsString};
 use std::io::{Read, Seek, Write};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -97,6 +98,13 @@ impl Default for ConfigBuilder {
             tmp_path: tmp_path.to_owned().into(),
             temporary: false,
             segment_mode: SegmentMode::Gc,
+        }
+    }
+}
+macro_rules! supported {
+    ($cond:expr, $msg:expr) => {
+        if !$cond {
+            return Err(Error::Unsupported($msg.to_owned()));
         }
     }
 }
@@ -232,84 +240,55 @@ impl ConfigBuilder {
     }
 
     /// Finalize the configuration.
-    pub fn build(self) -> std::io::Result<Config> {
-        self.validate();
-
-        let path = self.db_path();
-
-        // panic if we can't parse the path
-        let dir = Path::new(&path).parent().expect(
-            "could not parse provided path",
-        );
-
-        // create data directory if it doesn't exist yet
-        if dir != Path::new("") {
-            if dir.is_file() {
-                panic!(
-                    "provided parent directory is a file, \
-                    not a directory: {:?}",
-                    dir
-                );
-            }
-
-            if !dir.exists() {
-                std::fs::create_dir_all(dir)?;
-            }
-        }
-
-        self.verify_conf_changes_ok();
-
-        // open the data file
-        let mut options = fs::OpenOptions::new();
-        options.create(true);
-        options.read(true);
-        options.write(true);
-        let file = options.open(&path)?;
-
+    pub fn build(self) -> Config {
         // seal config in a Config
-        Ok(Config {
+        Config {
             inner: Arc::new(self),
-            file: Arc::new(file),
-        })
+            file: Arc::new(AtomicPtr::default()),
+            build_locker: Arc::new(Mutex::new(())),
+            refs: Arc::new(AtomicUsize::new(0)),
+        }
     }
 
     // panics if conf options are outside of advised range
-    fn validate(&self) {
-        assert!(self.io_bufs <= 32, "too many configured io_bufs");
-        assert!(self.io_buf_size >= 1000, "io_buf_size too small");
-        assert!(self.io_buf_size <= 1 << 24, "io_buf_size should be <= 16mb");
-        assert!(self.min_items_per_segment >= 4);
-        assert!(self.min_items_per_segment < 128);
-        assert!(self.blink_fanout >= 2, "tree nodes must have at least 2 children");
-        assert!(self.blink_fanout < 1024, "tree nodes should not have so many children");
-        assert!(self.page_consolidation_threshold >= 1, "must consolidate pages after a non-zero number of updates");
-        assert!(self.page_consolidation_threshold < 1 << 20, "must consolidate pages after fewer than 1 million updates");
-        assert!(self.cache_bits <= 20, "# LRU shards = 2^cache_bits. set this to 20 or less.");
-        assert!(self.min_free_segments <= 32, "min_free_segments need not be higher than the number IO buffers (io_bufs)");
-        assert!(self.min_free_segments >= 1, "min_free_segments must be nonzero or the database will never reclaim storage");
-        assert!(self.cache_fixup_threshold >= 1, "cache_fixup_threshold must be nonzero.");
-        assert!(self.cache_fixup_threshold < 1 << 20, "cache_fixup_threshold must be fewer than 1 million updates.");
-        assert!(self.segment_cleanup_threshold >= 0.01, "segment_cleanup_threshold must be >= 1%");
-        assert!(self.zstd_compression_factor >= 1);
-        assert!(self.zstd_compression_factor <= 22);
+    fn validate(&self) -> CacheResult<(), ()> {
+        supported!(self.io_bufs <= 32, "too many configured io_bufs");
+        supported!(self.io_buf_size >= 1000, "io_buf_size too small");
+        supported!(self.io_buf_size <= 1 << 24, "io_buf_size should be <= 16mb");
+        supported!(self.min_items_per_segment >= 4, "min_items_per_segment must be >= 4");
+        supported!(self.min_items_per_segment < 128, "min_items_per_segment must be < 128");
+        supported!(self.blink_fanout >= 2, "tree nodes must have at least 2 children");
+        supported!(self.blink_fanout < 1024, "tree nodes should not have so many children");
+        supported!(self.page_consolidation_threshold >= 1, "must consolidate pages after a non-zero number of updates");
+        supported!(self.page_consolidation_threshold < 1 << 20, "must consolidate pages after fewer than 1 million updates");
+        supported!(self.cache_bits <= 20, "# LRU shards = 2^cache_bits. set this to 20 or less.");
+        supported!(self.min_free_segments <= 32, "min_free_segments need not be higher than the number IO buffers (io_bufs)");
+        supported!(self.min_free_segments >= 1, "min_free_segments must be nonzero or the database will never reclaim storage");
+        supported!(self.cache_fixup_threshold >= 1, "cache_fixup_threshold must be nonzero.");
+        supported!(self.cache_fixup_threshold < 1 << 20, "cache_fixup_threshold must be fewer than 1 million updates.");
+        supported!(self.segment_cleanup_threshold >= 0.01, "segment_cleanup_threshold must be >= 1%");
+        supported!(self.zstd_compression_factor >= 1, "compression factor must be >= 0");
+        supported!(self.zstd_compression_factor <= 22, "compression factor must be <= 22");
+        Ok(())
     }
 
-    fn verify_conf_changes_ok(&self) {
-        if let Ok(Some(mut old)) = self.read_config() {
-            let old_tmp = old.tmp_path;
-            old.tmp_path = self.tmp_path.clone();
-            assert_eq!(self, &old, "changing the configuration \
+    fn verify_conf_changes_ok(&self) -> CacheResult<(), ()> {
+        match self.read_config() {
+            Ok(Some(mut old)) => {
+                let old_tmp = old.tmp_path;
+                old.tmp_path = self.tmp_path.clone();
+                supported!(self == &old, "changing the configuration \
                        between usages is currently unsupported");
-            // need to keep the old path so that when old gets
-            // dropped we don't remove our tmp_path (but it
-            // might not matter even if we did, since it just
-            // becomes anonymous as long as we keep a reference
-            // open to it in the Config)
-            old.tmp_path = old_tmp;
-        } else {
-            self.write_config().expect(
-                "unable to open file for writing",
-            );
+                // need to keep the old path so that when old gets
+                // dropped we don't remove our tmp_path (but it
+                // might not matter even if we did, since it just
+                // becomes anonymous as long as we keep a reference
+                // open to it in the Config)
+                old.tmp_path = old_tmp;
+                Ok(())
+            }
+            Ok(None) => self.write_config().map_err(|e| e.into()),
+            Err(e) => Err(e.into()),
         }
     }
 
@@ -331,8 +310,19 @@ impl ConfigBuilder {
     fn read_config(&self) -> std::io::Result<Option<ConfigBuilder>> {
         let path = self.conf_path();
 
-        let mut f = std::fs::OpenOptions::new().read(true).open(&path)?;
-        if f.metadata().unwrap().len() <= 8 {
+        let f_res = std::fs::OpenOptions::new().read(true).open(&path);
+
+        let mut f = match f_res {
+            Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(None);
+            }
+            Err(other) => {
+                return Err(other);
+            }
+            Ok(f) => f,
+        };
+
+        if f.metadata()?.len() <= 8 {
             warn!("empty/corrupt configuration file found");
             return Ok(None);
         }
@@ -370,8 +360,50 @@ impl ConfigBuilder {
     }
 }
 
+/// A finalized `ConfigBuilder` that can be use multiple times
+/// to open a `Tree` or `Log`.
+#[derive(Debug)]
+pub struct Config {
+    inner: Arc<ConfigBuilder>,
+    file: Arc<AtomicPtr<Arc<fs::File>>>,
+    build_locker: Arc<Mutex<()>>,
+    refs: Arc<AtomicUsize>,
+}
+
+unsafe impl Send for Config {}
+unsafe impl Sync for Config {}
+
+impl Deref for Config {
+    type Target = ConfigBuilder;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.inner
+    }
+}
+
+impl Clone for Config {
+    fn clone(&self) -> Config {
+        self.refs.fetch_add(1, Ordering::Relaxed);
+        Config {
+            inner: self.inner.clone(),
+            file: self.file.clone(),
+            build_locker: self.build_locker.clone(),
+            refs: self.refs.clone(),
+        }
+    }
+}
+
 impl Drop for Config {
     fn drop(&mut self) {
+        if self.refs.fetch_sub(1, Ordering::Relaxed) == 0 {
+            let f_ptr: *mut Arc<fs::File> =
+                self.file.swap(std::ptr::null_mut(), Ordering::Relaxed);
+            if !f_ptr.is_null() {
+                let f: Box<Arc<fs::File>> = unsafe { Box::from_raw(f_ptr) };
+                drop(f);
+            }
+        }
+
         if !self.get_temporary() {
             return;
         }
@@ -395,36 +427,78 @@ impl Drop for Config {
     }
 }
 
-/// A finalized `ConfigBuilder` that can be use multiple times
-/// to open a `Tree` or `Log`.
-#[derive(Clone, Debug)]
-pub struct Config {
-    inner: Arc<ConfigBuilder>,
-    file: Arc<fs::File>,
-}
-
-unsafe impl Send for Config {}
-unsafe impl Sync for Config {}
-
-impl Deref for Config {
-    type Target = ConfigBuilder;
-
-    fn deref(&self) -> &Self::Target {
-        &*self.inner
-    }
-}
-
 impl Config {
     /// Retrieve a thread-local file handle to the
     /// configured underlying storage,
     /// or create a new one if this is the first time the
     /// thread is accessing it.
-    pub fn file(&self) -> Arc<fs::File> {
-        self.file.clone()
+    pub fn file(&self) -> CacheResult<Arc<fs::File>, ()> {
+        if self.file.load(Ordering::Relaxed).is_null() {
+            let _lock = self.build_locker.lock().unwrap();
+            if self.file.load(Ordering::Relaxed).is_null() {
+                self.initialize()?;
+            }
+        }
+
+        Ok(unsafe { (*self.file.load(Ordering::Relaxed)).clone() })
+    }
+
+    fn initialize(&self) -> CacheResult<(), ()> {
+        // only validate, setup directory, and open file once
+        self.validate()?;
+
+        let path = self.db_path();
+
+        // panic if we can't parse the path
+        let dir = match Path::new(&path).parent() {
+            None => {
+                return Err(Error::Unsupported(
+                    format!("could not determine parent directory of {:?}", path),
+                ));
+            }
+            Some(dir) => dir,
+        };
+
+        // create data directory if it doesn't exist yet
+        if dir != Path::new("") {
+            if dir.is_file() {
+                return Err(Error::Unsupported(
+                    format!("provided parent directory is a file, \
+                                not a directory: {:?}",
+                        dir),
+                ));
+            }
+
+            if !dir.exists() {
+                let res: std::io::Result<()> = std::fs::create_dir_all(dir);
+                res.map_err(|e: std::io::Error| {
+                    let ret: Error<()> = e.into();
+                    ret
+                })?;
+            }
+        }
+
+        self.verify_conf_changes_ok()?;
+
+        // open the data file
+        let mut options = fs::OpenOptions::new();
+        options.create(true);
+        options.read(true);
+        options.write(true);
+        match options.open(&path) {
+            Ok(file) => {
+                let file_ptr = Box::into_raw(Box::new(Arc::new(file)));
+                self.file.store(file_ptr, Ordering::SeqCst);
+            }
+            Err(e) => {
+                return Err(e.into());
+            }
+        }
+        Ok(())
     }
 
     #[doc(hidden)]
-    pub fn verify_snapshot<PM, P, R>(&self)
+    pub fn verify_snapshot<PM, P, R>(&self) -> CacheResult<(), ()>
         where PM: Materializer<Recovery = R, PageFrag = P>,
               P: 'static
                      + Debug
@@ -435,15 +509,15 @@ impl Config {
                      + Sync,
               R: Debug + Clone + Serialize + DeserializeOwned + Send + PartialEq
     {
-        let incremental = read_snapshot_or_default::<PM, P, R>(&self).unwrap();
+        let incremental = read_snapshot_or_default::<PM, P, R>(&self)?;
 
-        for snapshot_path in self.get_snapshot_files().unwrap() {
-            std::fs::remove_file(snapshot_path).unwrap();
+        for snapshot_path in self.get_snapshot_files()? {
+            std::fs::remove_file(snapshot_path)?;
         }
 
-        let regenerated = read_snapshot_or_default::<PM, P, R>(&self).unwrap();
+        let regenerated = read_snapshot_or_default::<PM, P, R>(&self)?;
 
-        let f = self.file();
+        let f = self.file()?;
 
         for (k, v) in &regenerated.pt {
             if !incremental.pt.contains_key(&k) {
@@ -513,5 +587,6 @@ impl Config {
             "snapshots have diverged!"
         );
         */
+        Ok(())
     }
 }
