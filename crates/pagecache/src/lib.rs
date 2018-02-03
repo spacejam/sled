@@ -76,7 +76,7 @@ pub type PageID = usize;
 pub type PagePtr<'g, P> = epoch::Shared<'g, ds::stack::Node<io::CacheEntry<P>>>;
 
 lazy_static! {
-    /// A metric collector for all sled instances running in this
+    /// A metric collector for all pagecache users running in this
     /// process.
     pub static ref M: Metrics = Metrics::default();
 }
@@ -149,7 +149,7 @@ fn global_init() {
             let key = "CPUPROFILE";
             let path = match env::var(key) {
                 Ok(val) => val,
-                Err(_) => "sled.profile".to_owned(),
+                Err(_) => "pagecache.profile".to_owned(),
             };
             cpuprofiler::PROFILER.lock().unwrap().start(path).expect(
                 "could not start cpu profiler!",

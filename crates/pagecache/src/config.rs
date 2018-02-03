@@ -29,7 +29,7 @@ use io::LogReader;
 ///
 /// Read-only mode
 /// ```
-/// let _config = sled::ConfigBuilder::default()
+/// let _config = pagecache::ConfigBuilder::default()
 ///     .path("/path/to/data".to_owned())
 ///     .read_only(true);
 /// ```
@@ -69,10 +69,10 @@ impl Default for ConfigBuilder {
 
         // use shared memory for temporary linux files
         #[cfg(target_os = "linux")]
-        let tmp_path = format!("/dev/shm/sled.tmp.{}", nanos);
+        let tmp_path = format!("/dev/shm/pagecache.tmp.{}", nanos);
 
         #[cfg(not(target_os = "linux"))]
-        let tmp_path = format!("sled.tmp.{}", nanos);
+        let tmp_path = format!("pagecache.tmp.{}", nanos);
 
         ConfigBuilder {
             io_bufs: 3,
@@ -80,7 +80,7 @@ impl Default for ConfigBuilder {
             min_items_per_segment: 4, // capacity for >=4 pages/segment
             blink_fanout: 32,
             page_consolidation_threshold: 10,
-            path: "sled".to_owned().into(),
+            path: "pagecache".to_owned().into(),
             read_only: false,
             cache_bits: 6, // 64 shards
             cache_capacity: 1024 * 1024 * 1024, // 1gb
