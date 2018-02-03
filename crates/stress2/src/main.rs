@@ -56,25 +56,29 @@ fn run(
 
         match choice {
             0 => {
-                tree.set(byte(), byte());
+                tree.set(byte(), byte()).unwrap();
             }
             1 => {
-                tree.get(&*byte());
+                tree.get(&*byte()).unwrap();
             }
             2 => {
-                tree.del(&*byte());
+                tree.del(&*byte()).unwrap();
             }
             3 => {
-                if let Err(_) = tree.cas(byte(), Some(byte()), Some(byte())) {};
+                match tree.cas(byte(), Some(byte()), Some(byte())) {
+                    Ok(_) |
+                    Err(sled::Error::CasFailed(_)) => {}
+                    other => panic!("operational error: {:?}", other),
+                }
             }
             4 => {
                 tree.scan(&*byte())
                     .take(rng.gen_range(0, 15))
+                    .map(|res| res.unwrap())
                     .collect::<Vec<_>>();
             }
             _ => panic!("impossible choice"),
         }
-
     }
 }
 
@@ -99,7 +103,7 @@ fn main() {
         .snapshot_after_ops(1000000)
         .build();
 
-    let tree = Arc::new(sled::Tree::start(config));
+    let tree = Arc::new(sled::Tree::start(config).unwrap());
 
     let mut threads = vec![];
 

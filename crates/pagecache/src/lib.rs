@@ -33,6 +33,7 @@ pub use ds::{Radix, Stack};
 /// general-purpose configuration
 pub use config::{Config, ConfigBuilder};
 pub use io::*;
+pub use result::{CacheResult, Error};
 
 macro_rules! rep_no_copy {
     ($e:expr; $n:expr) => {
@@ -52,6 +53,7 @@ mod io;
 mod config;
 mod hash;
 mod metrics;
+mod result;
 
 // use log::{Iter, MessageHeader, SegmentHeader, SegmentTrailer};
 use metrics::Metrics;
@@ -70,7 +72,8 @@ pub type Lsn = isize;
 /// A page identifier.
 pub type PageID = usize;
 
-type HPtr<'g, P> = epoch::Shared<'g, ds::stack::Node<io::CacheEntry<P>>>;
+/// A pointer to shared lock-free state bound by a pinned epoch's lifetime.
+pub type PagePtr<'g, P> = epoch::Shared<'g, ds::stack::Node<io::CacheEntry<P>>>;
 
 lazy_static! {
     /// A metric collector for all pagecache users running in this
@@ -108,7 +111,8 @@ pub fn debug_delay() {
 }
 
 // initialize env_logger and/or cpuprofiler if configured to do so.
-fn global_init() {
+#[doc(hidden)]
+pub fn global_init() {
     use std::sync::{ONCE_INIT, Once};
 
     static ONCE: Once = ONCE_INIT;

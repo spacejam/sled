@@ -66,27 +66,34 @@ impl Iterator for LogIter {
                 return None;
             }
 
-            let f = self.config.file();
-            match f.read_message(lid, self.segment_len, self.use_compression) {
-                Ok(LogRead::Flush(lsn, buf, on_disk_len)) => {
-                    trace!("read flush in LogIter::next");
-                    self.cur_lsn += (MSG_HEADER_LEN + on_disk_len) as Lsn;
-                    return Some((lsn, lid, buf));
-                }
-                Ok(LogRead::Zeroed(on_disk_len)) => {
-                    trace!("read zeroed in LogIter::next");
-                    self.cur_lsn += on_disk_len as Lsn;
-                }
-                _ => {
-                    trace!("read failed in LogIter::next");
-                    if self.trailer.is_none() {
-                        // This segment was torn, nothing left to read.
-                        return None;
+            if let Ok(f) = self.config.file() {
+                match f.read_message(
+                    lid,
+                    self.segment_len,
+                    self.use_compression,
+                ) {
+                    Ok(LogRead::Flush(lsn, buf, on_disk_len)) => {
+                        trace!("read flush in LogIter::next");
+                        self.cur_lsn += (MSG_HEADER_LEN + on_disk_len) as Lsn;
+                        return Some((lsn, lid, buf));
                     }
-                    self.segment_base.take();
-                    self.trailer.take();
-                    continue;
+                    Ok(LogRead::Zeroed(on_disk_len)) => {
+                        trace!("read zeroed in LogIter::next");
+                        self.cur_lsn += on_disk_len as Lsn;
+                    }
+                    _ => {
+                        trace!("read failed in LogIter::next");
+                        if self.trailer.is_none() {
+                            // This segment was torn, nothing left to read.
+                            return None;
+                        }
+                        self.segment_base.take();
+                        self.trailer.take();
+                        continue;
+                    }
                 }
+            } else {
+                return None;
             }
         }
     }
@@ -95,7 +102,7 @@ impl Iterator for LogIter {
 impl LogIter {
     /// read a segment of log messages. Only call after
     /// pausing segment rewriting on the segment accountant!
-    fn read_segment(&mut self, lsn: Lsn, offset: LogID) -> std::io::Result<()> {
+    fn read_segment(&mut self, lsn: Lsn, offset: LogID) -> CacheResult<(), ()> {
         trace!(
             "LogIter::read_segment lsn: {:?} cur_lsn: {:?}",
             lsn,
@@ -104,7 +111,7 @@ impl LogIter {
         // we add segment_len to this check because we may be getting the
         // initial segment that is a bit behind where we left off before.
         assert!(lsn + self.segment_len as Lsn >= self.cur_lsn);
-        let f = self.config.file();
+        let f = self.config.file()?;
         let segment_header = f.read_segment_header(offset)?;
         assert_eq!(offset % self.segment_len as LogID, 0);
         assert_eq!(
@@ -124,7 +131,8 @@ impl LogIter {
                 lsn
             );
             return Err(
-                Error::new(ErrorKind::Other, "encountered torn segment"),
+                Error::new(ErrorKind::Other, "encountered torn segment")
+                    .into(),
             );
         }
 

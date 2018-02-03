@@ -30,12 +30,14 @@ fn more_log_reservations_than_buffers() {
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
         .build();
-    let log = config.log();
+    let log = Log::start_raw_log(config.clone()).unwrap();
     let mut reservations = vec![];
     for _ in 0..config.get_io_bufs() + 1 {
-        reservations.push(log.reserve(
-            vec![0; config.get_io_buf_size() - MSG_HEADER_LEN],
-        ))
+        reservations.push(
+            log.reserve(
+                vec![0; config.get_io_buf_size() - MSG_HEADER_LEN],
+            ).unwrap(),
+        )
     }
     for res in reservations.into_iter().rev() {
         // abort in reverse order
@@ -50,15 +52,15 @@ fn non_contiguous_log_flush() {
         .segment_mode(SegmentMode::Linear)
         .io_buf_size(1000)
         .build();
-    let log = conf.log();
+    let log = Log::start_raw_log(conf.clone()).unwrap();
 
     let seg_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;
     let buf_len = ((conf.get_io_buf_size() - seg_overhead) /
                        conf.get_min_items_per_segment()) -
         MSG_HEADER_LEN;
 
-    let res1 = log.reserve(vec![0; buf_len]);
-    let res2 = log.reserve(vec![0; buf_len]);
+    let res1 = log.reserve(vec![0; buf_len]).unwrap();
+    let res2 = log.reserve(vec![0; buf_len]).unwrap();
     let id = res2.lid();
     let lsn = res2.lsn();
     res2.abort();
@@ -76,7 +78,7 @@ fn concurrent_logging() {
             .io_buf_size(1000)
             .flush_every_ms(Some(50))
             .build();
-        let log = Arc::new(conf.log());
+        let log = Arc::new(Log::start_raw_log(conf.clone()).unwrap());
         let iobs2 = log.clone();
         let iobs3 = log.clone();
         let iobs4 = log.clone();
@@ -132,9 +134,9 @@ fn concurrent_logging() {
             .name("c6".to_string())
             .spawn(move || for i in 0..1_000 {
                 let buf = vec![6; i % buf_len];
-                let (lsn, _lid) = iobs6.write(buf);
+                let (lsn, _lid) = iobs6.write(buf).unwrap();
                 // println!("+");
-                iobs6.make_stable(lsn);
+                iobs6.make_stable(lsn).unwrap();
                 // println!("-");
             })
             .unwrap();
@@ -150,14 +152,14 @@ fn concurrent_logging() {
 
 fn write(log: &Log) {
     let data_bytes = b"yoyoyoyo";
-    let (lsn, lid) = log.write(data_bytes.to_vec());
+    let (lsn, lid) = log.write(data_bytes.to_vec()).unwrap();
     let (_, read_buf, _) = log.read(lsn, lid).unwrap().unwrap();
     assert_eq!(read_buf, data_bytes);
 }
 
 fn abort(log: &Log) {
-    let res = log.reserve(vec![0; 5]);
-    let (lsn, lid) = res.abort();
+    let res = log.reserve(vec![0; 5]).unwrap();
+    let (lsn, lid) = res.abort().unwrap();
     match log.read(lsn, lid) {
         Ok(LogRead::Flush(_, _, _)) => {
             panic!("sucessfully read an aborted request! BAD! SAD!")
@@ -168,7 +170,11 @@ fn abort(log: &Log) {
 
 #[test]
 fn log_aborts() {
-    let log = ConfigBuilder::new().temporary(true).log();
+    let conf = ConfigBuilder::new()
+        .temporary(true)
+        .segment_mode(SegmentMode::Linear)
+        .build();
+    let log = Log::start_raw_log(conf).unwrap();
     write(&log);
     abort(&log);
     write(&log);
@@ -184,8 +190,8 @@ fn log_iterator() {
         .segment_mode(SegmentMode::Linear)
         .io_buf_size(1000)
         .build();
-    let log = conf.log();
-    let (first_lsn, _) = log.write(b"".to_vec());
+    let log = Log::start_raw_log(conf.clone()).unwrap();
+    let (first_lsn, _) = log.write(b"".to_vec()).unwrap();
     log.write(b"1".to_vec());
     log.write(b"22".to_vec());
     log.write(b"333".to_vec());
@@ -193,17 +199,17 @@ fn log_iterator() {
     // stick an abort in the middle, which should not be
     // returned
     {
-        let res = log.reserve(b"never_gonna_hit_disk".to_vec());
-        res.abort();
+        let res = log.reserve(b"never_gonna_hit_disk".to_vec()).unwrap();
+        res.abort().unwrap();
     }
 
     log.write(b"4444".to_vec());
-    let (last_lsn, _) = log.write(b"55555".to_vec());
-    log.make_stable(last_lsn);
+    let (last_lsn, _) = log.write(b"55555".to_vec()).unwrap();
+    log.make_stable(last_lsn).unwrap();
 
     drop(log);
 
-    let log = conf.log();
+    let log = Log::start_raw_log(conf).unwrap();
 
     let mut iter = log.iter_from(first_lsn);
     assert_eq!(iter.next().unwrap().2, b"".to_vec());
@@ -218,7 +224,6 @@ fn log_iterator() {
 #[derive(Debug, Clone)]
 enum Op {
     Write(Vec<u8>),
-    WriteReservation(Vec<u8>),
     AbortReservation(Vec<u8>),
     Read(u64),
     Restart,
@@ -253,7 +258,7 @@ impl Arbitrary for Op {
 
         match choice {
             0 => Op::Write(incr()),
-            1 => Op::WriteReservation(incr()),
+            1 => Op::Write(incr()),
             2 => Op::AbortReservation(incr()),
             3 => Op::Read(g.gen_range(0, 15)),
             _ => panic!("impossible choice"),
@@ -275,12 +280,12 @@ fn snapshot_with_out_of_order_buffers() {
     let len = conf.get_io_buf_size() - SEG_HEADER_LEN - SEG_TRAILER_LEN -
         MSG_HEADER_LEN;
 
-    let log = conf.log();
+    let log = Log::start_raw_log(conf.clone()).unwrap();
 
     for i in 0..4 {
         let buf = vec![i as u8; len];
-        let (lsn, _lid) = log.write(buf);
-        log.make_stable(lsn);
+        let (lsn, _lid) = log.write(buf).unwrap();
+        log.make_stable(lsn).unwrap();
     }
 
     {
@@ -290,7 +295,7 @@ fn snapshot_with_out_of_order_buffers() {
 
     drop(log);
 
-    let log = conf.log();
+    let log = Log::start_raw_log(conf.clone()).unwrap();
 
     // start iterating just past the first segment header
     let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
@@ -317,7 +322,7 @@ fn multi_segment_log_iteration() {
                    conf.get_min_items_per_segment()) -
         MSG_HEADER_LEN;
 
-    let log = conf.log();
+    let log = Log::start_raw_log(conf.clone()).unwrap();
 
     for i in 0..conf.get_io_bufs() * 2 {
         let buf = vec![i as u8; len];
@@ -326,7 +331,7 @@ fn multi_segment_log_iteration() {
 
     drop(log);
 
-    let log = conf.log();
+    let log = Log::start_raw_log(conf.clone()).unwrap();
 
     // start iterating just past the first segment header
     let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
@@ -399,10 +404,9 @@ fn prop_log_works(ops: OpVec) -> bool {
         // .flush_every_ms(None) // FIXME rm line
         .segment_mode(SegmentMode::Linear)
         .build();
-    // println!("testing {:?}", ops);
 
     let mut tip = 0;
-    let mut log = config.log();
+    let mut log = Log::start_raw_log(config.clone()).unwrap();
     let mut reference: Vec<(Lsn, LogID, Option<Vec<u8>>, usize)> = vec![];
 
     for op in ops.ops.into_iter() {
@@ -424,22 +428,16 @@ fn prop_log_works(ops: OpVec) -> bool {
             }
             Write(buf) => {
                 let len = buf.len();
-                let (lsn, lid) = log.write(buf.clone());
-                tip = lid as usize + len + MSG_HEADER_LEN;
-                reference.push((lsn, lid, Some(buf), len));
-            }
-            WriteReservation(buf) => {
-                let len = buf.len();
-                let (lsn, lid) = log.write(buf.clone());
+                let (lsn, lid) = log.write(buf.clone()).unwrap();
                 tip = lid as usize + len + MSG_HEADER_LEN;
                 reference.push((lsn, lid, Some(buf), len));
             }
             AbortReservation(buf) => {
                 let len = buf.len();
-                let res = log.reserve(buf.clone());
+                let res = log.reserve(buf.clone()).unwrap();
                 let lsn = res.lsn();
                 let lid = res.lid();
-                res.abort();
+                res.abort().unwrap();
                 tip = lid as usize + len + MSG_HEADER_LEN;
                 reference.push((lsn, lid, None, len));
             }
@@ -459,7 +457,7 @@ fn prop_log_works(ops: OpVec) -> bool {
                         break;
                     }
                 }
-                log = config.log();
+                log = Log::start_raw_log(config.clone()).unwrap();
             }
             Truncate(new_len) => {
                 #[cfg(target_os = "linux")]
@@ -496,7 +494,7 @@ fn prop_log_works(ops: OpVec) -> bool {
                     use std::os::unix::io::AsRawFd;
 
                     {
-                        let f = config.file();
+                        let f = config.file().unwrap();
                         use libc::ftruncate;
                         let fd = f.as_raw_fd();
 
@@ -505,7 +503,7 @@ fn prop_log_works(ops: OpVec) -> bool {
                         }
                     }
 
-                    log = config.log();
+                    log = Log::start_raw_log(config.clone()).unwrap();
                 }
             }
         }
@@ -530,9 +528,9 @@ fn log_bug_01() {
     prop_log_works(OpVec {
         ops: vec![
             AbortReservation(vec![]),
-            WriteReservation(vec![34]),
+            Write(vec![34]),
             Write(vec![35]),
-            WriteReservation(vec![36]),
+            Write(vec![36]),
             Read(3),
         ],
     });
@@ -568,13 +566,13 @@ fn log_bug_7() {
     use Op::*;
     prop_log_works(OpVec {
         ops: vec![
-            WriteReservation(vec![]),
-            WriteReservation(vec![]),
+            Write(vec![]),
+            Write(vec![]),
             AbortReservation(vec![]),
             Write(vec![12]),
             AbortReservation(vec![]),
             Truncate(24),
-            WriteReservation(vec![19]),
+            Write(vec![19]),
             Write(vec![20]),
             Read(4),
         ],
@@ -587,12 +585,7 @@ fn log_bug_9() {
     // should test loss, not extension
     use Op::*;
     prop_log_works(OpVec {
-        ops: vec![
-            Truncate(99),
-            WriteReservation(vec![234]),
-            Truncate(8),
-            Read(0),
-        ],
+        ops: vec![Truncate(99), Write(vec![234]), Truncate(8), Read(0)],
     });
 }
 
@@ -604,19 +597,19 @@ fn log_bug_10() {
         ops: vec![
             Write(vec![231]),
             AbortReservation(vec![232]),
-            WriteReservation(vec![235]),
+            Write(vec![235]),
             AbortReservation(vec![236]),
-            WriteReservation(vec![]),
             Write(vec![]),
-            WriteReservation(vec![]),
+            Write(vec![]),
+            Write(vec![]),
             AbortReservation(vec![240]),
             Truncate(14),
             AbortReservation(vec![242]),
-            WriteReservation(vec![243]),
+            Write(vec![243]),
             Write(vec![245]),
             Write(vec![]),
             Write(vec![249]),
-            WriteReservation(vec![250]),
+            Write(vec![250]),
             Read(7),
         ],
     });
@@ -655,7 +648,7 @@ fn log_bug_13() {
     use Op::*;
     prop_log_works(OpVec {
         ops: vec![
-            WriteReservation(vec![35]),
+            Write(vec![35]),
             Restart,
             AbortReservation(vec![36]),
             Read(0),
@@ -769,12 +762,7 @@ fn log_bug_20() {
     // calculating the starting log offsets.
     use Op::*;
     prop_log_works(OpVec {
-        ops: vec![
-            WriteReservation(vec![]),
-            Restart,
-            WriteReservation(vec![2]),
-            Read(1),
-        ],
+        ops: vec![Write(vec![]), Restart, Write(vec![2]), Read(1)],
     });
 }
 
@@ -784,12 +772,7 @@ fn log_bug_21() {
     // calculating the starting log offsets.
     use Op::*;
     prop_log_works(OpVec {
-        ops: vec![
-            WriteReservation(vec![1]),
-            Restart,
-            WriteReservation(vec![2]),
-            Read(1),
-        ],
+        ops: vec![Write(vec![1]), Restart, Write(vec![2]), Read(1)],
     });
 }
 

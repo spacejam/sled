@@ -21,18 +21,22 @@ pub const SEG_TRAILER_LEN: usize = 10;
 /// # Working with `Log`
 ///
 /// ```
-/// let log = pagecache::ConfigBuilder::new().temporary(true).log();
-/// let (first_lsn, _first_offset) = log.write(b"1".to_vec());
-/// log.write(b"22".to_vec());
-/// log.write(b"333".to_vec());
+/// let conf = pagecache::ConfigBuilder::new()
+///     .temporary(true)
+///     .segment_mode(pagecache::SegmentMode::Linear)
+///     .build();
+/// let log = pagecache::Log::start_raw_log(conf).unwrap();
+/// let (first_lsn, _first_offset) = log.write(b"1".to_vec()).unwrap();
+/// log.write(b"22".to_vec()).unwrap();
+/// log.write(b"333".to_vec()).unwrap();
 ///
 /// // stick an abort in the middle, which should not be returned
-/// let res = log.reserve(b"never_gonna_hit_disk".to_vec());
-/// res.abort();
+/// let res = log.reserve(b"never_gonna_hit_disk".to_vec()).unwrap();
+/// res.abort().unwrap();
 ///
 /// log.write(b"4444".to_vec());
-/// let (last_lsn, _last_offset) = log.write(b"55555".to_vec());
-/// log.make_stable(last_lsn);
+/// let (last_lsn, _last_offset) = log.write(b"55555".to_vec()).unwrap();
+/// log.make_stable(last_lsn).unwrap();
 /// let mut iter = log.iter_from(first_lsn);
 /// assert_eq!(iter.next().unwrap().2, b"1".to_vec());
 /// assert_eq!(iter.next().unwrap().2, b"22".to_vec());
@@ -72,8 +76,11 @@ impl Drop for Log {
 impl Log {
     /// Start the log, open or create the configured file,
     /// and optionally start the periodic buffer flush thread.
-    pub fn start<R>(config: Config, snapshot: Snapshot<R>) -> Log {
-        let iobufs = Arc::new(IoBufs::start(config.clone(), snapshot));
+    pub fn start<R>(
+        config: Config,
+        snapshot: Snapshot<R>,
+    ) -> CacheResult<Log, ()> {
+        let iobufs = Arc::new(IoBufs::start(config.clone(), snapshot)?);
 
         let flusher_shutdown = Arc::new(AtomicBool::new(false));
 
@@ -87,43 +94,45 @@ impl Log {
                 ).unwrap()
             });
 
-        Log {
+        Ok(Log {
             iobufs: iobufs,
             config: config,
             flusher_shutdown: flusher_shutdown,
             flusher_handle: flusher_handle,
-        }
+        })
     }
 
     /// Starts a log for use without a materializer.
-    pub fn start_raw_log(config: Config) -> Log {
-        let log_iter = raw_segment_iter_from(0, &config);
+    pub fn start_raw_log(config: Config) -> CacheResult<Log, ()> {
+        assert_eq!(config.get_segment_mode(), SegmentMode::Linear);
+        let log_iter = raw_segment_iter_from(0, &config)?;
 
         let snapshot = advance_snapshot::<NullMaterializer, (), ()>(
             log_iter,
             Snapshot::default(),
             &config,
-        );
+        )?;
 
         Log::start::<()>(config, snapshot)
     }
 
     /// Flushes any pending IO buffers to disk to ensure durability.
-    pub fn flush(&self) {
+    pub fn flush(&self) -> CacheResult<(), ()> {
         for _ in 0..self.config.get_io_bufs() {
-            self.iobufs.flush();
+            self.iobufs.flush()?;
         }
+        Ok(())
     }
 
     /// Reserve space in the log for a pending linearized operation.
-    pub fn reserve(&self, buf: Vec<u8>) -> Reservation {
+    pub fn reserve(&self, buf: Vec<u8>) -> CacheResult<Reservation, ()> {
         self.iobufs.reserve(buf)
     }
 
     /// Write a buffer into the log. Returns the log sequence
     /// number and the file offset of the write.
-    pub fn write(&self, buf: Vec<u8>) -> (Lsn, LogID) {
-        self.iobufs.reserve(buf).complete()
+    pub fn write(&self, buf: Vec<u8>) -> CacheResult<(Lsn, LogID), ()> {
+        self.iobufs.reserve(buf).and_then(|res| res.complete())
     }
 
     /// Return an iterator over the log, starting with
@@ -153,10 +162,10 @@ impl Log {
     }
 
     /// read a buffer from the disk
-    pub fn read(&self, lsn: Lsn, lid: LogID) -> io::Result<LogRead> {
+    pub fn read(&self, lsn: Lsn, lid: LogID) -> CacheResult<LogRead, ()> {
         trace!("reading log lsn {} lid {}", lsn, lid);
-        self.make_stable(lsn);
-        let f = self.config.file();
+        self.make_stable(lsn)?;
+        let f = self.config.file()?;
 
         let read = f.read_message(
             lid,
@@ -170,7 +179,7 @@ impl Log {
                 Ok(log_read)
             }
             _ => Ok(log_read),
-        })
+        }).map_err(|e| e.into())
     }
 
     /// returns the current stable offset written to disk
@@ -180,12 +189,12 @@ impl Log {
 
     /// blocks until the specified log sequence number has
     /// been made stable on disk
-    pub fn make_stable(&self, lsn: Lsn) {
+    pub fn make_stable(&self, lsn: Lsn) -> CacheResult<(), ()> {
         let start = clock();
 
         // NB before we write the 0th byte of the file, stable  is -1
         while self.iobufs.stable() < lsn {
-            self.iobufs.flush();
+            self.iobufs.flush()?;
 
             // block until another thread updates the stable lsn
             let waiter = self.iobufs.intervals.lock().unwrap();
@@ -201,6 +210,7 @@ impl Log {
         }
 
         M.make_stable.measure(clock() - start);
+        Ok(())
     }
 
     // SegmentAccountant access for coordination with the `PageCache`

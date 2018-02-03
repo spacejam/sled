@@ -22,7 +22,7 @@ pub use self::iter::Iter;
 pub use self::materializer::BLinkMaterializer;
 
 impl<'a> IntoIterator for &'a Tree {
-    type Item = (Vec<u8>, Vec<u8>);
+    type Item = DbResult<(Vec<u8>, Vec<u8>), ()>;
     type IntoIter = Iter<'a>;
 
     fn into_iter(self) -> Iter<'a> {
@@ -43,11 +43,12 @@ unsafe impl Sync for Tree {}
 
 impl Tree {
     /// Load existing or create a new `Tree`.
-    pub fn start(config: Config) -> Tree {
+    pub fn start(config: Config) -> DbResult<Tree, ()> {
         #[cfg(feature = "check_snapshot_integrity")]
         config.verify_snapshot::<BLinkMaterializer, Frag, Vec<(PageID, PageID)>>();
 
-        let pages = PageCache::start(config.clone());
+        let pages = PageCache::start(config.clone())?;
+        println!("started pc");
 
         let roots_opt = pages.recovered_state().clone().and_then(
             |mut roots: Vec<(PageID, PageID)>| if roots.is_empty() {
@@ -81,7 +82,7 @@ impl Tree {
             root_id
         } else {
             let guard = pin();
-            let root_id = pages.allocate(&guard);
+            let root_id = pages.allocate(&guard)?;
             assert_eq!(
                 root_id,
                 0,
@@ -89,7 +90,7 @@ impl Tree {
             );
             debug!("allocated pid {} for root of new tree", root_id);
 
-            let leaf_id = pages.allocate(&guard);
+            let leaf_id = pages.allocate(&guard)?;
             trace!("allocated pid {} for leaf in new", leaf_id);
 
             let leaf = Frag::Base(
@@ -119,30 +120,30 @@ impl Tree {
 
             pages
                 .replace(root_id, Shared::null(), root, &guard)
-                .unwrap();
+                .map_err(|e| e.danger_cast())?;
             pages
                 .replace(leaf_id, Shared::null(), leaf, &guard)
-                .unwrap();
+                .map_err(|e| e.danger_cast())?;
             root_id
         };
 
-        Tree {
+        Ok(Tree {
             pages: Arc::new(pages),
             config: config,
             root: Arc::new(AtomicUsize::new(root_id)),
-        }
+        })
     }
 
     /// Flushes any pending IO buffers to disk to ensure durability.
-    pub fn flush(&self) {
-        self.pages.flush();
+    pub fn flush(&self) -> CacheResult<(), ()> {
+        self.pages.flush()
     }
 
     /// Retrieve a value from the `Tree` if it exists.
-    pub fn get(&self, key: &[u8]) -> Option<Value> {
+    pub fn get(&self, key: &[u8]) -> DbResult<Option<Value>, ()> {
         let guard = pin();
-        let (_, ret) = self.get_internal(key, &guard);
-        ret
+        let (_, ret) = self.get_internal(key, &guard)?;
+        Ok(ret)
     }
 
     /// Compare and swap. Capable of unique creation, conditional modification,
@@ -154,35 +155,30 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use sled::ConfigBuilder;
+    /// use sled::{ConfigBuilder, Error};
     /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Tree::start(config);
+    /// let t = sled::Tree::start(config).unwrap();
     ///
     /// // unique creation
     /// assert_eq!(t.cas(vec![1], None, Some(vec![1])), Ok(()));
-    /// assert_eq!(t.cas(vec![1], None, Some(vec![1])), Err(Some(vec![1])));
+    /// assert_eq!(t.cas(vec![1], None, Some(vec![1])), Err(Error::CasFailed(Some(vec![1]))));
     ///
     /// // conditional modification
     /// assert_eq!(t.cas(vec![1], Some(vec![1]), Some(vec![2])), Ok(()));
-    /// assert_eq!(t.cas(vec![1], Some(vec![1]), Some(vec![2])), Err(Some(vec![2])));
+    /// assert_eq!(t.cas(vec![1], Some(vec![1]), Some(vec![2])), Err(Error::CasFailed(Some(vec![2]))));
     ///
     /// // conditional deletion
     /// assert_eq!(t.cas(vec![1], Some(vec![2]), None), Ok(()));
-    /// assert_eq!(t.get(&*vec![1]), None);
-    ///
-    /// // read-only tree
-    /// let ro_config = ConfigBuilder::new().temporary(true).read_only(true).build();
-    /// let t = sled::Tree::start(ro_config);
-    /// assert_eq!(t.cas(vec![10], Some(vec![2]), None), Err(None));
+    /// assert_eq!(t.get(&*vec![1]), Ok(None));
     /// ```
     pub fn cas(
         &self,
         key: Key,
         old: Option<Value>,
         new: Option<Value>,
-    ) -> Result<(), Option<Value>> {
+    ) -> DbResult<(), Option<Value>> {
         if self.config.get_read_only() {
-            return Err(None);
+            return Err(Error::CasFailed(None));
         }
         // we need to retry caps until old != cur, since just because
         // cap fails it doesn't mean our value was changed.
@@ -191,31 +187,42 @@ impl Tree {
         });
         let guard = pin();
         loop {
-            let (mut path, cur) = self.get_internal(&*key, &guard);
+            let (mut path, cur) =
+                self.get_internal(&*key, &guard).map_err(
+                    |e| e.danger_cast(),
+                )?;
+
             if old != cur {
-                return Err(cur);
+                return Err(Error::CasFailed(cur));
             }
 
             let &mut (ref node, ref cas_key) = path.last_mut().unwrap();
-            if self.pages
-                .link(node.id, cas_key.clone(), frag.clone(), &guard)
-                .is_ok()
-            {
-                return Ok(());
+            let link = self.pages.link(
+                node.id,
+                cas_key.clone(),
+                frag.clone(),
+                &guard,
+            );
+            match link {
+                Ok(_) => return Ok(()),
+                Err(Error::CasFailed(_)) => {}
+                _ => return link.map(|_| ()).map_err(|e| e.danger_cast()),
             }
             M.tree_looped();
         }
     }
 
     /// Set a key to a new value.
-    pub fn set(&self, key: Key, value: Value) {
+    pub fn set(&self, key: Key, value: Value) -> DbResult<(), ()> {
         if self.config.get_read_only() {
-            return;
+            return Err(Error::Unsupported(
+                "the database is in read-only mode".to_owned(),
+            ));
         }
         let frag = Frag::Set(key.clone(), value);
         let guard = pin();
         loop {
-            let mut path = self.path_for_key(&*key, &guard);
+            let mut path = self.path_for_key(&*key, &guard)?;
             let (mut last_node, last_cas_key) = path.pop().unwrap();
             if let Ok(new_cas_key) = self.pages.link(
                 last_node.id,
@@ -229,9 +236,9 @@ impl Tree {
                 path.push((last_node.clone(), new_cas_key));
                 // success
                 if should_split {
-                    self.recursive_split(&path, &guard);
+                    self.recursive_split(&path, &guard)?;
                 }
-                return;
+                return Ok(());
             }
             M.tree_looped();
         }
@@ -243,19 +250,19 @@ impl Tree {
     ///
     /// ```
     /// let config = sled::ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Tree::start(config);
+    /// let t = sled::Tree::start(config).unwrap();
     /// t.set(vec![1], vec![1]);
-    /// assert_eq!(t.del(&*vec![1]), Some(vec![1]));
-    /// assert_eq!(t.del(&*vec![1]), None);
+    /// assert_eq!(t.del(&*vec![1]), Ok(Some(vec![1])));
+    /// assert_eq!(t.del(&*vec![1]), Ok(None));
     /// ```
-    pub fn del(&self, key: &[u8]) -> Option<Value> {
+    pub fn del(&self, key: &[u8]) -> DbResult<Option<Value>, ()> {
         if self.config.get_read_only() {
-            return None;
+            return Ok(None);
         }
         let guard = pin();
         let mut ret: Option<Value>;
         loop {
-            let mut path = self.path_for_key(&*key, &guard);
+            let mut path = self.path_for_key(&*key, &guard)?;
             let (leaf_node, leaf_cas_key) = path.pop().unwrap();
             match leaf_node.data {
                 Data::Leaf(ref items) => {
@@ -284,7 +291,7 @@ impl Tree {
             }
             M.tree_looped();
         }
-        ret
+        Ok(ret)
     }
 
     /// Iterate over tuples of keys and values, starting at the provided key.
@@ -293,23 +300,42 @@ impl Tree {
     ///
     /// ```
     /// let config = sled::ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Tree::start(config);
+    /// let t = sled::Tree::start(config).unwrap();
     /// t.set(vec![1], vec![10]);
     /// t.set(vec![2], vec![20]);
     /// t.set(vec![3], vec![30]);
     /// let mut iter = t.scan(&*vec![2]);
-    /// assert_eq!(iter.next(), Some((vec![2], vec![20])));
-    /// assert_eq!(iter.next(), Some((vec![3], vec![30])));
+    /// assert_eq!(iter.next(), Some(Ok((vec![2], vec![20]))));
+    /// assert_eq!(iter.next(), Some(Ok((vec![3], vec![30]))));
     /// assert_eq!(iter.next(), None);
     /// ```
     pub fn scan(&self, key: &[u8]) -> Iter {
         let guard = pin();
-        let (path, _) = self.get_internal(key, &guard);
-        let &(ref last_node, ref _last_cas_key) = path.last().unwrap();
+        let mut broken = None;
+        let id = match self.get_internal(key, &guard) {
+            Ok((path, _)) => {
+                if path.is_empty() {
+                    broken = Some(Error::ReportableBug(
+                        "failed to get path for key".to_owned(),
+                    ));
+                    0
+                } else {
+                    let &(ref last_node, ref _last_cas_key) = path.last()
+                        .unwrap();
+                    last_node.id
+                }
+            }
+            Err(e) => {
+                broken = Some(e.danger_cast());
+                0
+            }
+        };
         Iter {
-            id: last_node.id,
+            id: id,
             inner: &self.pages,
             last_key: Bound::Non(key.to_vec()),
+            broken: broken,
+            done: false,
         }
     }
 
@@ -319,32 +345,25 @@ impl Tree {
     ///
     /// ```
     /// let config = sled::ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Tree::start(config);
+    /// let t = sled::Tree::start(config).unwrap();
     /// t.set(vec![1], vec![10]);
     /// t.set(vec![2], vec![20]);
     /// t.set(vec![3], vec![30]);
     /// let mut iter = t.iter();
-    /// assert_eq!(iter.next(), Some((vec![1], vec![10])));
-    /// assert_eq!(iter.next(), Some((vec![2], vec![20])));
-    /// assert_eq!(iter.next(), Some((vec![3], vec![30])));
+    /// assert_eq!(iter.next(), Some(Ok((vec![1], vec![10]))));
+    /// assert_eq!(iter.next(), Some(Ok((vec![2], vec![20]))));
+    /// assert_eq!(iter.next(), Some(Ok((vec![3], vec![30]))));
     /// assert_eq!(iter.next(), None);
     /// ```
     pub fn iter(&self) -> Iter {
-        let guard = pin();
-        let (path, _) = self.get_internal(b"", &guard);
-        let &(ref last_node, ref _last_cas_key) = path.last().unwrap();
-        Iter {
-            id: last_node.id,
-            inner: &self.pages,
-            last_key: Bound::Non(vec![]),
-        }
+        self.scan(b"")
     }
 
     fn recursive_split<'g>(
         &self,
-        path: &[(Node, HPtr<'g, Frag>)],
+        path: &[(Node, TreePtr<'g>)],
         guard: &'g Guard,
-    ) {
+    ) -> DbResult<(), ()> {
         // to split, we pop the path, see if it's in need of split, recurse up
         // two-phase: (in prep for lock-free, not necessary for single threaded)
         //  1. half-split: install split on child, P
@@ -410,23 +429,25 @@ impl Tree {
                 guard,
             )
             {
-                self.root_hoist(
+                return self.root_hoist(
                     root_node.id,
                     parent_split.to,
                     parent_split.at.inner().unwrap(),
                     guard,
-                );
+                ).map(|_| ())
+                    .map_err(|e| e.danger_cast());
             }
         }
+        Ok(())
     }
 
     fn child_split<'g>(
         &self,
         node: &Node,
-        node_cas_key: HPtr<'g, Frag>,
+        node_cas_key: TreePtr<'g>,
         guard: &'g Guard,
-    ) -> Result<ParentSplit, ()> {
-        let new_pid = self.pages.allocate(guard);
+    ) -> DbResult<ParentSplit, ()> {
+        let new_pid = self.pages.allocate(guard)?;
         trace!("allocated pid {} in child_split", new_pid);
 
         // split the node in half
@@ -453,8 +474,8 @@ impl Tree {
             .is_err()
         {
             // if we failed, don't follow through with the parent split
-            self.pages.free(new_pid);
-            return Err(());
+            self.pages.free(new_pid, guard).map_err(|e| e.danger_cast())?;
+            return Err(Error::CasFailed(()));
         }
 
         Ok(parent_split)
@@ -463,10 +484,10 @@ impl Tree {
     fn parent_split<'g>(
         &self,
         parent_node: Node,
-        parent_cas_key: HPtr<'g, Frag>,
+        parent_cas_key: TreePtr<'g>,
         parent_split: ParentSplit,
         guard: &'g Guard,
-    ) -> Result<HPtr<'g, Frag>, Option<HPtr<'g, Frag>>> {
+    ) -> DbResult<TreePtr<'g>, Option<TreePtr<'g>>> {
         // install parent split
         let res = self.pages.link(
             parent_node.id,
@@ -484,9 +505,9 @@ impl Tree {
         to: PageID,
         at: Key,
         guard: &'g Guard,
-    ) {
+    ) -> DbResult<(), ()> {
         // hoist new root, pointing to lhs & rhs
-        let new_root_pid = self.pages.allocate(guard);
+        let new_root_pid = self.pages.allocate(guard)?;
         debug!("allocated pid {} in root_hoist", new_root_pid);
 
         let mut new_root_vec = vec![];
@@ -506,13 +527,16 @@ impl Tree {
         let cas = self.root.compare_and_swap(from, new_root_pid, SeqCst);
         if cas == from {
             // TODO think about the racyness of this
+            debug!("root hoist from {} to {} successful", from, new_root_pid);
             self.pages
                 .replace(new_root_pid, Shared::null(), new_root, guard)
-                .unwrap();
-            debug!("root hoist from {} to {} successful", from, new_root_pid);
+                .map(|_| ())
+                .map_err(|e| e.danger_cast())
         } else {
             debug!("root hoist from {} to {} failed", from, new_root_pid);
-            self.pages.free(new_root_pid);
+            self.pages.free(new_root_pid, guard).map_err(
+                |e| e.danger_cast(),
+            )
         }
     }
 
@@ -520,8 +544,8 @@ impl Tree {
         &self,
         key: &[u8],
         guard: &'g Guard,
-    ) -> (Vec<(Node, HPtr<'g, Frag>)>, Option<Value>) {
-        let path = self.path_for_key(&*key, guard);
+    ) -> DbResult<(Vec<(Node, TreePtr<'g>)>, Option<Value>), ()> {
+        let path = self.path_for_key(&*key, guard)?;
 
         let ret = path.last().and_then(|&(ref last_node, ref _last_cas_key)| {
             let data = &last_node.data;
@@ -537,7 +561,7 @@ impl Tree {
             }
         });
 
-        (path, ret)
+        Ok((path, ret))
     }
 
     fn fanout(&self) -> usize {
@@ -547,7 +571,7 @@ impl Tree {
     #[doc(hidden)]
     pub fn key_debug_str(&self, key: &[u8]) -> String {
         let guard = pin();
-        let path = self.path_for_key(key, &guard);
+        let path = self.path_for_key(key, &guard).unwrap();
         let mut ret = String::new();
         for &(ref node, _) in &path {
             ret.push_str(&*format!("\n{:?}", node));
@@ -561,10 +585,10 @@ impl Tree {
         &self,
         key: &[u8],
         guard: &'g Guard,
-    ) -> Vec<(Node, HPtr<'g, Frag>)> {
+    ) -> DbResult<Vec<(Node, TreePtr<'g>)>, ()> {
         let key_bound = Bound::Inc(key.into());
         let mut cursor = self.root.load(SeqCst);
-        let mut path: Vec<(Node, HPtr<'g, Frag>)> = vec![];
+        let mut path: Vec<(Node, TreePtr<'g>)> = vec![];
 
         // unsplit_parent is used for tracking need
         // to complete partial splits.
@@ -572,7 +596,8 @@ impl Tree {
 
         let mut not_found_loops = 0;
         loop {
-            let get_cursor = self.pages.get(cursor, guard);
+            let get_cursor =
+                self.pages.get(cursor, guard).map_err(|e| e.danger_cast())?;
             if get_cursor.is_free() || get_cursor.is_allocated() {
                 // restart search from the tree's root
                 not_found_loops += 1;
@@ -607,7 +632,7 @@ impl Tree {
             } else if let Some(idx) = unsplit_parent.take() {
                 // we have found the proper page for
                 // our split.
-                let &(ref parent_node, ref parent_cas_key): &(Node, HPtr<'g, Frag>) = &path[idx];
+                let &(ref parent_node, ref parent_cas_key): &(Node, TreePtr<'g>) = &path[idx];
 
                 let ps = Frag::ParentSplit(ParentSplit {
                     at: node.lo.clone(),
@@ -644,7 +669,7 @@ impl Tree {
             }
         }
 
-        path
+        Ok(path)
     }
 }
 
@@ -660,7 +685,8 @@ impl Debug for Tree {
 
         let guard = pin();
         loop {
-            let (frag, _cas_key) = self.pages.get(pid, &guard).unwrap();
+            let (frag, _cas_key) =
+                self.pages.get(pid, &guard).unwrap().unwrap();
             let (node, _is_root) = frag.base().unwrap();
 
             f.write_str("\t\t").unwrap();
@@ -672,7 +698,7 @@ impl Debug for Tree {
             } else {
                 // we've traversed our level, time to bump down
                 let (left_frag, _left_cas_key) =
-                    self.pages.get(left_most, &guard).unwrap();
+                    self.pages.get(left_most, &guard).unwrap().unwrap();
                 let (left_node, _is_root) = left_frag.base().unwrap();
 
                 match left_node.data {

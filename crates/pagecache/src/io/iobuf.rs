@@ -44,12 +44,15 @@ pub(super) struct IoBufs {
 /// `IoBufs` is a set of lock-free buffers for coordinating
 /// writes to underlying storage.
 impl IoBufs {
-    pub fn start<R>(config: Config, mut snapshot: Snapshot<R>) -> IoBufs {
+    pub fn start<R>(
+        config: Config,
+        mut snapshot: Snapshot<R>,
+    ) -> CacheResult<IoBufs, ()> {
         // if configured, start env_logger and/or cpuprofiler
         global_init();
 
         // open file for writing
-        let file = config.file();
+        let file = config.file()?;
 
         let io_buf_size = config.get_io_buf_size();
 
@@ -88,7 +91,7 @@ impl IoBufs {
             };
 
         let mut segment_accountant =
-            SegmentAccountant::start(config.clone(), snapshot);
+            SegmentAccountant::start(config.clone(), snapshot)?;
 
         let bufs = rep_no_copy![IoBuf::new(io_buf_size); config.get_io_bufs()];
 
@@ -105,15 +108,14 @@ impl IoBufs {
             // recovering at segment boundary
             assert_eq!(next_lid, next_lsn as LogID);
             let iobuf = &bufs[current_buf];
-            let (lid, last_given) = segment_accountant.next(next_lsn);
+            let (lid, last_given) = segment_accountant.next(next_lsn)?;
 
             iobuf.set_lid(lid);
             iobuf.set_capacity(io_buf_size - SEG_TRAILER_LEN);
             iobuf.store_segment_header(0, next_lsn, last_given);
 
-            file.pwrite_all(&*vec![0; config.get_io_buf_size()], lid)
-                .unwrap();
-            file.sync_all().unwrap();
+            file.pwrite_all(&*vec![0; config.get_io_buf_size()], lid)?;
+            file.sync_all()?;
 
             debug!(
                 "starting log at clean offset {}, recovered lsn {}",
@@ -139,7 +141,7 @@ impl IoBufs {
         // of our file has not yet been written.
         let stable = if next_lsn == 0 { -1 } else { next_lsn - 1 };
 
-        IoBufs {
+        Ok(IoBufs {
             bufs: bufs,
             current_buf: AtomicUsize::new(current_buf),
             written_bufs: AtomicUsize::new(0),
@@ -148,7 +150,7 @@ impl IoBufs {
             stable: AtomicIsize::new(stable),
             config: config,
             segment_accountant: Mutex::new(segment_accountant),
-        }
+        })
     }
 
     /// SegmentAccountant access for coordination with the `PageCache`
@@ -230,7 +232,10 @@ impl IoBufs {
     /// Panics if the desired reservation is greater than the
     /// io buffer size minus the size of a segment header +
     /// a segment footer + a message header.
-    pub(super) fn reserve(&self, raw_buf: Vec<u8>) -> Reservation {
+    pub(super) fn reserve(
+        &self,
+        raw_buf: Vec<u8>,
+    ) -> CacheResult<Reservation, ()> {
         let start = clock();
 
         let io_bufs = self.config.get_io_bufs();
@@ -320,7 +325,7 @@ impl IoBufs {
                 // Try to seal the buffer, and maybe write it if
                 // there are zero writers.
                 trace_once!("io buffer too full, spinning");
-                self.maybe_seal_and_write_iobuf(idx, header, true);
+                self.maybe_seal_and_write_iobuf(idx, header, true)?;
                 M.log_looped();
                 yield_now();
                 continue;
@@ -378,7 +383,7 @@ impl IoBufs {
                 reservation_offset,
             );
 
-            return Reservation {
+            return Ok(Reservation {
                 idx: idx,
                 iobufs: self,
                 data: buf,
@@ -386,14 +391,14 @@ impl IoBufs {
                 flushed: false,
                 lsn: reservation_lsn,
                 lid: reservation_offset,
-            };
+            });
         }
     }
 
     /// Called by Reservation on termination (completion or abort).
     /// Handles departure from shared state, and possibly writing
     /// the buffer to stable storage if necessary.
-    pub(super) fn exit_reservation(&self, idx: usize) {
+    pub(super) fn exit_reservation(&self, idx: usize) -> CacheResult<(), ()> {
         let iobuf = &self.bufs[idx];
         let mut header = iobuf.get_header();
 
@@ -423,7 +428,9 @@ impl IoBufs {
         // to 0 and it's sealed then we should write it to storage.
         if n_writers(header) == 0 && is_sealed(header) {
             trace!("exiting idx {} from res", idx);
-            self.write_to_log(idx);
+            self.write_to_log(idx)
+        } else {
+            Ok(())
         }
     }
 
@@ -433,15 +440,15 @@ impl IoBufs {
     /// be called multiple times. May not do anything
     /// if there is contention on the current IO buffer
     /// or no data to flush.
-    pub(super) fn flush(&self) {
+    pub(super) fn flush(&self) -> CacheResult<(), ()> {
         let idx = self.idx();
         let header = self.bufs[idx].get_header();
         if offset(header) == 0 || is_sealed(header) {
             // nothing to write, don't bother sealing
             // current IO buffer.
-            return;
+            return Ok(());
         }
-        self.maybe_seal_and_write_iobuf(idx, header, false);
+        self.maybe_seal_and_write_iobuf(idx, header, false)
     }
 
     // Attempt to seal the current IO buffer, possibly
@@ -452,12 +459,12 @@ impl IoBufs {
         idx: usize,
         header: Header,
         from_reserve: bool,
-    ) {
+    ) -> CacheResult<(), ()> {
         let iobuf = &self.bufs[idx];
 
         if is_sealed(header) {
             // this buffer is already sealed. nothing to do here.
-            return;
+            return Ok(());
         }
 
         // NB need to do this before CAS because it can get
@@ -492,7 +499,7 @@ impl IoBufs {
             true
         });
         if !worked {
-            return;
+            return Ok(());
         }
 
         let max = std::usize::MAX as LogID;
@@ -527,7 +534,7 @@ impl IoBufs {
             let low_lsn = lsn + res_len as Lsn;
             self.mark_interval(low_lsn, segment_remainder as usize);
 
-            self.with_sa(|sa| sa.next(next_lsn))
+            self.with_sa(|sa| sa.next(next_lsn))?
         } else {
             debug!(
                 "advancing offset within the current segment from {} to {}",
@@ -582,13 +589,15 @@ impl IoBufs {
 
         // if writers is 0, it's our responsibility to write the buffer.
         if n_writers(sealed) == 0 {
-            self.write_to_log(idx);
+            self.write_to_log(idx)
+        } else {
+            Ok(())
         }
     }
 
     // Write an IO buffer's data to stable storage and set up the
     // next IO buffer for writing.
-    fn write_to_log(&self, idx: usize) {
+    fn write_to_log(&self, idx: usize) -> CacheResult<(), ()> {
         let start = clock();
         let iobuf = &self.bufs[idx];
         let header = iobuf.get_header();
@@ -612,9 +621,9 @@ impl IoBufs {
 
         let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
 
-        let f = self.config.file();
-        f.pwrite_all(&data[..res_len], lid).unwrap();
-        f.sync_all().unwrap();
+        let f = self.config.file()?;
+        f.pwrite_all(&data[..res_len], lid)?;
+        f.sync_all()?;
 
         if res_len > 0 {
             debug!(
@@ -646,8 +655,8 @@ impl IoBufs {
 
             let trailer_bytes: [u8; SEG_TRAILER_LEN] = trailer.into();
 
-            f.pwrite_all(&trailer_bytes, trailer_lid).unwrap();
-            f.sync_all().unwrap();
+            f.pwrite_all(&trailer_bytes, trailer_lid)?;
+            f.sync_all()?;
             iobuf.set_maxed(false);
 
             debug!(
@@ -686,6 +695,8 @@ impl IoBufs {
         trace!("{} written", _written_bufs % self.config.get_io_bufs());
 
         M.write_to_log.measure(clock() - start);
+
+        Ok(())
     }
 
     // It's possible that IO buffers are written out of order!
@@ -763,10 +774,11 @@ impl IoBufs {
 impl Drop for IoBufs {
     fn drop(&mut self) {
         for _ in 0..self.config.get_io_bufs() {
-            self.flush();
+            self.flush().unwrap();
         }
-        let f = self.config.file();
-        f.sync_all().unwrap();
+        if let Ok(f) = self.config.file() {
+            f.sync_all().unwrap();
+        }
 
         debug!("IoBufs dropped");
     }

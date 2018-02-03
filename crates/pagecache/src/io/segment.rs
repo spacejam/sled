@@ -314,7 +314,7 @@ impl SegmentAccountant {
     pub fn start<R>(
         config: Config,
         snapshot: Snapshot<R>,
-    ) -> SegmentAccountant {
+    ) -> CacheResult<SegmentAccountant, ()> {
         let mut ret = SegmentAccountant {
             config: config,
             segments: vec![],
@@ -340,11 +340,11 @@ impl SegmentAccountant {
             ret.tip = new_tip;
         }
 
-        ret.set_safety_buffer(snapshot.max_lsn);
+        ret.set_safety_buffer(snapshot.max_lsn)?;
 
         ret.initialize_from_snapshot(snapshot);
 
-        ret
+        Ok(ret)
     }
 
     /// Called from the `PageCache` recovery logic, this initializes the
@@ -534,8 +534,11 @@ impl SegmentAccountant {
         }
     }
 
-    fn set_safety_buffer(&mut self, snapshot_max_lsn: Lsn) {
-        self.ensure_ordering_initialized();
+    fn set_safety_buffer(
+        &mut self,
+        snapshot_max_lsn: Lsn,
+    ) -> CacheResult<(), ()> {
+        self.ensure_ordering_initialized()?;
 
         // if our ordering contains anything higher than
         // what our snapshot logic scanned, it means it's
@@ -552,9 +555,9 @@ impl SegmentAccountant {
                 lid
             );
             to_zero.push(lsn);
-            let f = self.config.file();
-            f.pwrite_all(&*vec![0; SEG_HEADER_LEN], lid).unwrap();
-            f.sync_all().unwrap();
+            let f = self.config.file()?;
+            f.pwrite_all(&*vec![0; SEG_HEADER_LEN], lid)?;
+            f.sync_all()?;
         }
 
         for lsn in to_zero.into_iter() {
@@ -583,6 +586,8 @@ impl SegmentAccountant {
         }
 
         self.safety_buffer = safety_buffer;
+
+        Ok(())
     }
 
     fn free_segment(&mut self, lid: LogID, in_recovery: bool) {
@@ -848,7 +853,7 @@ impl SegmentAccountant {
     /// as well as the offset of the previous segment that
     /// was allocated, so that we can detect missing
     /// out-of-order segments during recovery.
-    pub fn next(&mut self, lsn: Lsn) -> (LogID, LogID) {
+    pub fn next(&mut self, lsn: Lsn) -> CacheResult<(LogID, LogID), ()> {
         assert_eq!(
             lsn % self.config.get_io_buf_size() as Lsn,
             0,
@@ -889,7 +894,7 @@ impl SegmentAccountant {
                     // in the file, shrink the file.
                     let io_buf_size = self.config.get_io_buf_size() as LogID;
                     if next + io_buf_size == self.tip {
-                        self.truncate(next);
+                        self.truncate(next)?;
                     } else {
                         break next;
                     }
@@ -902,10 +907,9 @@ impl SegmentAccountant {
             lid,
             lsn
         );
-        let f = self.config.file();
-        f.pwrite_all(&*vec![0; self.config.get_io_buf_size()], lid)
-            .unwrap();
-        f.sync_all().unwrap();
+        let f = self.config.file()?;
+        f.pwrite_all(&*vec![0; self.config.get_io_buf_size()], lid)?;
+        f.sync_all()?;
 
         let last_given = self.safety_buffer[self.config.get_io_bufs() - 1];
 
@@ -955,7 +959,7 @@ impl SegmentAccountant {
         self.safety_buffer.push(lid);
         self.safety_buffer.remove(0);
 
-        (lid, last_given)
+        Ok((lid, last_given))
     }
 
     /// Returns an iterator over a snapshot of current segment
@@ -979,7 +983,7 @@ impl SegmentAccountant {
     }
 
     // truncate the file to the desired length
-    fn truncate(&mut self, at: LogID) {
+    fn truncate(&mut self, at: LogID) -> CacheResult<(), ()> {
         assert_eq!(
             at % self.config.get_io_buf_size() as LogID,
             0,
@@ -1000,19 +1004,19 @@ impl SegmentAccountant {
 
         debug!("truncating file to length {}", at);
 
-        let f = self.config.file();
-        f.set_len(at).unwrap();
-        f.sync_all().unwrap();
+        let f = self.config.file()?;
+        f.set_len(at)?;
+        f.sync_all().map_err(|e| e.into())
     }
 
-    fn ensure_ordering_initialized(&mut self) {
+    fn ensure_ordering_initialized(&mut self) -> CacheResult<(), ()> {
         if !self.ordering.is_empty() {
-            return;
+            return Ok(());
         }
 
-        self.ordering = scan_segment_lsns(0, &self.config);
-
+        self.ordering = scan_segment_lsns(0, &self.config)?;
         debug!("initialized ordering to {:?}", self.ordering);
+        Ok(())
     }
 
     fn lid_to_idx(&mut self, lid: LogID) -> usize {
@@ -1040,13 +1044,16 @@ impl SegmentAccountant {
 
 // Scan the log file if we don't know of any Lsn offsets yet,
 // and recover the order of segments, and the highest Lsn.
-pub fn scan_segment_lsns(min: Lsn, config: &Config) -> BTreeMap<Lsn, LogID> {
+pub fn scan_segment_lsns(
+    min: Lsn,
+    config: &Config,
+) -> CacheResult<BTreeMap<Lsn, LogID>, ()> {
     let mut ordering = BTreeMap::new();
 
     let segment_len = config.get_io_buf_size() as LogID;
     let mut cursor = 0;
 
-    let f = config.file();
+    let f = config.file()?;
     while let Ok(segment) = f.read_segment_header(cursor) {
         // in the future this can be optimized to just read
         // the initial header at that position... but we need to
@@ -1070,7 +1077,7 @@ pub fn scan_segment_lsns(min: Lsn, config: &Config) -> BTreeMap<Lsn, LogID> {
 
     // Check that the last <# io buffers> segments properly
     // link their previous segment pointers.
-    clean_tail_tears(ordering, config, &f)
+    Ok(clean_tail_tears(ordering, config, &f))
 }
 
 // This ensures that the last <# io buffers> segments on
@@ -1192,11 +1199,14 @@ pub enum SegmentMode {
     Gc,
 }
 
-pub fn raw_segment_iter_from(lsn: Lsn, config: &Config) -> LogIter {
+pub fn raw_segment_iter_from(
+    lsn: Lsn,
+    config: &Config,
+) -> CacheResult<LogIter, ()> {
     let segment_len = config.get_io_buf_size() as Lsn;
     let normalized_lsn = lsn / segment_len * segment_len;
 
-    let ordering = scan_segment_lsns(0, &config);
+    let ordering = scan_segment_lsns(0, &config)?;
 
     trace!(
         "generated iterator over segments {:?} with lsn >= {}",
@@ -1208,7 +1218,7 @@ pub fn raw_segment_iter_from(lsn: Lsn, config: &Config) -> LogIter {
         move |&(l, _)| l >= normalized_lsn,
     ));
 
-    LogIter {
+    Ok(LogIter {
         config: config.clone(),
         max_lsn: std::isize::MAX,
         cur_lsn: SEG_HEADER_LEN as Lsn,
@@ -1217,5 +1227,5 @@ pub fn raw_segment_iter_from(lsn: Lsn, config: &Config) -> LogIter {
         segment_len: config.get_io_buf_size(),
         use_compression: config.get_use_compression(),
         trailer: None,
-    }
+    })
 }

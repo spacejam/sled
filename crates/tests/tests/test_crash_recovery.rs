@@ -19,8 +19,9 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
     // it should never return, or go down again after that
     let mut iter = tree.iter();
     let highest = match iter.next() {
+        Some(Ok((_k, v))) => slice_to_u32(&*v),
+        Some(Err(e)) => panic!("{:?}", e),
         None => return (0, 0),
-        Some((_k, v)) => slice_to_u32(&*v),
     };
 
     let highest_vec = u32_to_vec(highest);
@@ -28,7 +29,8 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
     // find how far we got
     let mut contiguous: u32 = 0;
     let mut lowest = 0;
-    for (mut k, v) in iter {
+    for res in iter {
+        let (mut k, v) = res.unwrap();
         if v == highest_vec {
             contiguous += 1;
         } else {
@@ -50,7 +52,8 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
     // ensure nothing changes after this point
     let low_beginning = u32_to_vec(contiguous + 1);
 
-    for (mut k, v) in tree.scan(&*low_beginning) {
+    for res in tree.scan(&*low_beginning) {
+        let (mut k, v) = res.unwrap();
         if v != lowest_vec {
             k.reverse();
         }
@@ -80,10 +83,11 @@ fn slice_to_u32(b: &[u8]) -> u32 {
 }
 
 fn run(config: Config) {
-    let tree = sled::Tree::start(config);
+    let tree = sled::Tree::start(config).unwrap();
 
     // flush to ensure the initial root is stable.
-    tree.flush();
+    // TODO is this necessary or voodoo?
+    tree.flush().unwrap();
 
     let (key, highest) = verify(&tree);
 

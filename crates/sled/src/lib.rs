@@ -3,10 +3,10 @@
 //! ```
 //! let config = sled::ConfigBuilder::new().temporary(true).build();
 //!
-//! let t = sled::Tree::start(config);
+//! let t = sled::Tree::start(config).unwrap();
 //!
 //! t.set(b"yo!".to_vec(), b"v1".to_vec());
-//! assert_eq!(t.get(b"yo!"), Some(b"v1".to_vec()));
+//! assert_eq!(t.get(b"yo!"), Ok(Some(b"v1".to_vec())));
 //!
 //! t.cas(
 //!     b"yo!".to_vec(),       // key
@@ -15,11 +15,11 @@
 //! ).unwrap();
 //!
 //! let mut iter = t.scan(b"a non-present key before yo!");
-//! assert_eq!(iter.next(), Some((b"yo!".to_vec(), b"v2".to_vec())));
+//! assert_eq!(iter.next(), Some(Ok((b"yo!".to_vec(), b"v2".to_vec()))));
 //! assert_eq!(iter.next(), None);
 //!
 //! t.del(b"yo!");
-//! assert_eq!(t.get(b"yo!"), None);
+//! assert_eq!(t.get(b"yo!"), Ok(None));
 //! ```
 
 #![deny(missing_docs)]
@@ -42,7 +42,7 @@ pub use tree::{Iter, Tree};
 
 use pagecache::*;
 
-pub use pagecache::{Config, ConfigBuilder};
+pub use pagecache::{CacheResult as DbResult, Config, ConfigBuilder, Error};
 
 mod tree;
 
@@ -50,5 +50,4 @@ type Key = Vec<u8>;
 type KeyRef<'a> = &'a [u8];
 type Value = Vec<u8>;
 
-type HPtr<'g, P> =
-    epoch::Shared<'g, pagecache::ds::stack::Node<pagecache::CacheEntry<P>>>;
+type TreePtr<'g> = pagecache::PagePtr<'g, tree::Frag>;
