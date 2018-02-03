@@ -21,18 +21,23 @@ pub const SEG_TRAILER_LEN: usize = 10;
 /// # Working with `Log`
 ///
 /// ```
-/// let log = pagecache::ConfigBuilder::new().temporary(true).log();
-/// let (first_lsn, _first_offset) = log.write(b"1".to_vec());
-/// log.write(b"22".to_vec());
-/// log.write(b"333".to_vec());
+/// let conf = pagecache::ConfigBuilder::new()
+///     .temporary(true)
+///     .segment_mode(pagecache::SegmentMode::Linear)
+///     .build()
+///     .unwrap();
+/// let log = pagecache::Log::start_raw_log(conf).unwrap();
+/// let (first_lsn, _first_offset) = log.write(b"1".to_vec()).unwrap();
+/// log.write(b"22".to_vec()).unwrap();
+/// log.write(b"333".to_vec()).unwrap();
 ///
 /// // stick an abort in the middle, which should not be returned
-/// let res = log.reserve(b"never_gonna_hit_disk".to_vec());
-/// res.abort();
+/// let res = log.reserve(b"never_gonna_hit_disk".to_vec()).unwrap();
+/// res.abort().unwrap();
 ///
 /// log.write(b"4444".to_vec());
-/// let (last_lsn, _last_offset) = log.write(b"55555".to_vec());
-/// log.make_stable(last_lsn);
+/// let (last_lsn, _last_offset) = log.write(b"55555".to_vec()).unwrap();
+/// log.make_stable(last_lsn).unwrap();
 /// let mut iter = log.iter_from(first_lsn);
 /// assert_eq!(iter.next().unwrap().2, b"1".to_vec());
 /// assert_eq!(iter.next().unwrap().2, b"22".to_vec());

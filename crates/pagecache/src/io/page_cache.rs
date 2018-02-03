@@ -189,12 +189,12 @@ impl Drop for PidDropper {
 /// }
 ///
 /// fn main() {
-///     let conf = pagecache::ConfigBuilder::new().temporary(true);
+///     let conf = pagecache::ConfigBuilder::new().temporary(true).build().unwrap();
 ///     let pc: pagecache::PageCache<TestMaterializer, _, _> =
-///         pagecache::PageCache::start(conf.build());
+///         pagecache::PageCache::start(conf).unwrap();
 ///     {
 ///         let guard = pin();
-///         let id = pc.allocate(&guard);
+///         let id = pc.allocate(&guard).unwrap();
 ///
 ///         // The first item in a page should be set using replace,
 ///         // which signals that this is the beginning of a new
@@ -208,7 +208,7 @@ impl Drop for PidDropper {
 ///
 ///         // When getting a page, the provide `Materializer` is
 ///         // used to merge all pages together.
-///         let (consolidated, _key) = pc.get(id, &guard).unwrap();
+///         let (consolidated, _key) = pc.get(id, &guard).unwrap().unwrap();
 ///
 ///         assert_eq!(consolidated, "abc".to_owned());
 ///     }

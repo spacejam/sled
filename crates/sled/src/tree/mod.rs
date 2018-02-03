@@ -154,26 +154,21 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use sled::ConfigBuilder;
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Tree::start(config);
+    /// use sled::{ConfigBuilder, Error};
+    /// let config = ConfigBuilder::new().temporary(true).build().unwrap();
+    /// let t = sled::Tree::start(config).unwrap();
     ///
     /// // unique creation
     /// assert_eq!(t.cas(vec![1], None, Some(vec![1])), Ok(()));
-    /// assert_eq!(t.cas(vec![1], None, Some(vec![1])), Err(Some(vec![1])));
+    /// assert_eq!(t.cas(vec![1], None, Some(vec![1])), Err(Error::CasFailed(Some(vec![1]))));
     ///
     /// // conditional modification
     /// assert_eq!(t.cas(vec![1], Some(vec![1]), Some(vec![2])), Ok(()));
-    /// assert_eq!(t.cas(vec![1], Some(vec![1]), Some(vec![2])), Err(Some(vec![2])));
+    /// assert_eq!(t.cas(vec![1], Some(vec![1]), Some(vec![2])), Err(Error::CasFailed(Some(vec![2]))));
     ///
     /// // conditional deletion
     /// assert_eq!(t.cas(vec![1], Some(vec![2]), None), Ok(()));
-    /// assert_eq!(t.get(&*vec![1]), None);
-    ///
-    /// // read-only tree
-    /// let ro_config = ConfigBuilder::new().temporary(true).read_only(true).build();
-    /// let t = sled::Tree::start(ro_config);
-    /// assert_eq!(t.cas(vec![10], Some(vec![2]), None), Err(None));
+    /// assert_eq!(t.get(&*vec![1]), Ok(None));
     /// ```
     pub fn cas(
         &self,
@@ -195,16 +190,22 @@ impl Tree {
                 self.get_internal(&*key, &guard).map_err(
                     |e| e.danger_cast(),
                 )?;
+
             if old != cur {
                 return Err(Error::CasFailed(cur));
             }
 
             let &mut (ref node, ref cas_key) = path.last_mut().unwrap();
-            if self.pages
-                .link(node.id, cas_key.clone(), frag.clone(), &guard)
-                .is_ok()
-            {
-                return Ok(());
+            let link = self.pages.link(
+                node.id,
+                cas_key.clone(),
+                frag.clone(),
+                &guard,
+            );
+            match link {
+                Ok(_) => return Ok(()),
+                Err(Error::CasFailed(_)) => {}
+                _ => return link.map(|_| ()).map_err(|e| e.danger_cast()),
             }
             M.tree_looped();
         }
@@ -247,11 +248,11 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// let config = sled::ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Tree::start(config);
+    /// let config = sled::ConfigBuilder::new().temporary(true).build().unwrap();
+    /// let t = sled::Tree::start(config).unwrap();
     /// t.set(vec![1], vec![1]);
-    /// assert_eq!(t.del(&*vec![1]), Some(vec![1]));
-    /// assert_eq!(t.del(&*vec![1]), None);
+    /// assert_eq!(t.del(&*vec![1]), Ok(Some(vec![1])));
+    /// assert_eq!(t.del(&*vec![1]), Ok(None));
     /// ```
     pub fn del(&self, key: &[u8]) -> DbResult<Option<Value>, ()> {
         if self.config.get_read_only() {
@@ -297,14 +298,14 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// let config = sled::ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Tree::start(config);
+    /// let config = sled::ConfigBuilder::new().temporary(true).build().unwrap();
+    /// let t = sled::Tree::start(config).unwrap();
     /// t.set(vec![1], vec![10]);
     /// t.set(vec![2], vec![20]);
     /// t.set(vec![3], vec![30]);
     /// let mut iter = t.scan(&*vec![2]);
-    /// assert_eq!(iter.next(), Some((vec![2], vec![20])));
-    /// assert_eq!(iter.next(), Some((vec![3], vec![30])));
+    /// assert_eq!(iter.next(), Some(Ok((vec![2], vec![20]))));
+    /// assert_eq!(iter.next(), Some(Ok((vec![3], vec![30]))));
     /// assert_eq!(iter.next(), None);
     /// ```
     pub fn scan(&self, key: &[u8]) -> Iter {
@@ -342,15 +343,15 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// let config = sled::ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Tree::start(config);
+    /// let config = sled::ConfigBuilder::new().temporary(true).build().unwrap();
+    /// let t = sled::Tree::start(config).unwrap();
     /// t.set(vec![1], vec![10]);
     /// t.set(vec![2], vec![20]);
     /// t.set(vec![3], vec![30]);
     /// let mut iter = t.iter();
-    /// assert_eq!(iter.next(), Some((vec![1], vec![10])));
-    /// assert_eq!(iter.next(), Some((vec![2], vec![20])));
-    /// assert_eq!(iter.next(), Some((vec![3], vec![30])));
+    /// assert_eq!(iter.next(), Some(Ok((vec![1], vec![10]))));
+    /// assert_eq!(iter.next(), Some(Ok((vec![2], vec![20]))));
+    /// assert_eq!(iter.next(), Some(Ok((vec![3], vec![30]))));
     /// assert_eq!(iter.next(), None);
     /// ```
     pub fn iter(&self) -> Iter {

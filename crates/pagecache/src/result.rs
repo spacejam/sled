@@ -27,16 +27,45 @@ pub enum Error<Actual> {
 }
 use Error::*;
 
-impl<A> PartialEq for Error<A> {
+impl<A> PartialEq for Error<A>
+    where A: PartialEq
+{
     fn eq(&self, other: &Error<A>) -> bool {
-        match *self {
-            CasFailed(_) |
-            Unsupported(_) |
-            ReportableBug(_) |
-            Corruption {
-                ..
-            } => self == other,
-            Io(_) => false,
+        match self {
+            &CasFailed(ref l) => {
+                if let &CasFailed(ref r) = other {
+                    l == r
+                } else {
+                    false
+                }
+            }
+            &Unsupported(ref l) => {
+                if let &Unsupported(ref r) = other {
+                    l == r
+                } else {
+                    false
+                }
+            }
+            &ReportableBug(ref l) => {
+                if let &ReportableBug(ref r) = other {
+                    l == r
+                } else {
+                    false
+                }
+            }
+            &Corruption {
+                at: l,
+            } => {
+                if let &Corruption {
+                    at: r,
+                } = other
+                {
+                    l == r
+                } else {
+                    false
+                }
+            }
+            &Io(_) => false,
         }
     }
 }
