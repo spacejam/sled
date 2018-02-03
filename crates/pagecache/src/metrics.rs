@@ -42,7 +42,7 @@ impl Metrics {
 
     pub fn print_profile(&self) {
         println!(
-            "sled profile:\n\
+            "pagecache profile:\n\
             {0: >17} | {1: >10} | {2: >10} | {3: >10} | {4: >10} | {5: >10} | {6: >10} | {7: >10}",
             "op",
             "min (us)",
