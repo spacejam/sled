@@ -60,6 +60,7 @@ mod result;
 use metrics::Metrics;
 use ds::*;
 use hash::{crc16_arr, crc64};
+use historian::Histo;
 
 /// An offset for a storage file segment.
 pub type SegmentID = usize;
@@ -94,6 +95,37 @@ fn uptime() -> std::time::Duration {
     }
 
     START.elapsed()
+}
+
+/// Measure the duration of an event, and call `Histo::measure()`.
+struct Measure<'h> {
+    histo: &'h Histo,
+    start: f64,
+}
+
+impl<'h> Measure<'h> {
+    /// The time delta from ctor to dtor is recorded in `histo`.
+    #[inline(always)]
+    pub fn new(histo: &'h Histo) -> Measure<'h> {
+        Measure {
+            histo,
+            start: clock(),
+        }
+    }
+}
+
+impl<'h> Drop for Measure<'h> {
+    #[inline(always)]
+    fn drop(&mut self) {
+        self.histo.measure(clock() - self.start);
+    }
+}
+
+/// Measure the time spent on calling a given function in a given `Histo`.
+#[inline(always)]
+fn measure<F: FnOnce() -> R, R>(histo: &Histo, f: F) -> R {
+    let _measure = Measure::new(histo);
+    f()
 }
 
 /// This function is useful for inducing random jitter into our atomic

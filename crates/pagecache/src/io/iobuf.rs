@@ -191,12 +191,9 @@ impl IoBufs {
     fn encapsulate(&self, raw_buf: Vec<u8>) -> Vec<u8> {
         #[cfg(feature = "zstd")]
         let buf = if self.config.get_use_compression() {
-            let start = clock();
-            let res =
-                compress(&*raw_buf, self.config.get_zstd_compression_factor())
-                    .unwrap();
-            M.compress.measure(clock() - start);
-            res
+            let _measure = Measure::new(&M.compress);
+            compress(&*raw_buf, self.config.get_zstd_compression_factor())
+                .unwrap()
         } else {
             raw_buf
         };
@@ -236,7 +233,7 @@ impl IoBufs {
         &self,
         raw_buf: Vec<u8>,
     ) -> CacheResult<Reservation, ()> {
-        let start = clock();
+        let _measure = Measure::new(&M.reserve);
 
         let io_bufs = self.config.get_io_bufs();
 
@@ -373,8 +370,6 @@ impl IoBufs {
                 unsafe { std::mem::transmute(reservation_lsn) };
             let mut buf = buf;
             buf[1..9].copy_from_slice(&lsn_bytes);
-
-            M.reserve.measure(clock() - start);
 
             trace!(
                 "reserved {} bytes at lsn {} lid {}",
@@ -598,7 +593,7 @@ impl IoBufs {
     // Write an IO buffer's data to stable storage and set up the
     // next IO buffer for writing.
     fn write_to_log(&self, idx: usize) -> CacheResult<(), ()> {
-        let start = clock();
+        let _measure = Measure::new(&M.write_to_log);
         let iobuf = &self.bufs[idx];
         let header = iobuf.get_header();
         let lid = iobuf.get_lid();
@@ -693,8 +688,6 @@ impl IoBufs {
         debug_delay();
         let _written_bufs = self.written_bufs.fetch_add(1, SeqCst);
         trace!("{} written", _written_bufs % self.config.get_io_bufs());
-
-        M.write_to_log.measure(clock() - start);
 
         Ok(())
     }

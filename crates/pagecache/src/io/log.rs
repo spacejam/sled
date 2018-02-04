@@ -179,7 +179,7 @@ impl Log {
     /// blocks until the specified log sequence number has
     /// been made stable on disk
     pub fn make_stable(&self, lsn: Lsn) -> CacheResult<(), ()> {
-        let start = clock();
+        let _measure = Measure::new(&M.make_stable);
 
         // NB before we write the 0th byte of the file, stable  is -1
         while self.iobufs.stable() < lsn {
@@ -198,7 +198,6 @@ impl Log {
             }
         }
 
-        M.make_stable.measure(clock() - start);
         Ok(())
     }
 
