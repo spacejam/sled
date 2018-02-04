@@ -52,6 +52,7 @@ pub mod ds;
 mod io;
 mod config;
 mod hash;
+mod periodic;
 mod metrics;
 mod result;
 
