@@ -122,7 +122,7 @@ pub struct Segment {
     present: BTreeSet<PageID>,
     removed: HashSet<PageID>,
     deferred_remove: HashSet<PageID>,
-    lsn: Option<Lsn>,
+    lsn: Lsn,
     state: SegmentState,
 }
 
@@ -182,7 +182,7 @@ impl Segment {
         }
     }
 
-    fn is_draining(&self) -> bool {
+    fn _is_draining(&self) -> bool {
         match self.state {
             Draining => true,
             _ => false,
@@ -199,7 +199,7 @@ impl Segment {
         self.present.clear();
         self.removed.clear();
         self.deferred_remove.clear();
-        self.lsn = Some(new_lsn);
+        self.lsn = new_lsn;
         self.state = Active;
     }
 
@@ -211,12 +211,12 @@ impl Segment {
     ///
     /// SegmentAccountant::recover for when
     pub fn active_to_inactive(&mut self, lsn: Lsn, from_recovery: bool) {
-        trace!("setting Segment with lsn {:?} to Inactive", self.lsn());
+        trace!("setting Segment with lsn {:?} to Inactive", self.lsn);
         assert_eq!(self.state, Active);
         if from_recovery {
-            assert!(lsn >= self.lsn());
+            assert!(lsn >= self.lsn);
         } else {
-            assert_eq!(self.lsn.unwrap(), lsn);
+            assert_eq!(lsn, self.lsn);
         }
         self.state = Inactive;
 
@@ -228,43 +228,34 @@ impl Segment {
     }
 
     pub fn inactive_to_draining(&mut self, lsn: Lsn) {
-        trace!("setting Segment with lsn {:?} to Draining", self.lsn());
+        trace!("setting Segment with lsn {:?} to Draining", self.lsn);
         assert_eq!(self.state, Inactive);
-        assert!(lsn >= self.lsn());
+        assert!(lsn >= self.lsn);
         self.state = Draining;
     }
 
     pub fn draining_to_free(&mut self, lsn: Lsn) {
-        trace!("setting Segment with lsn {:?} to Free", self.lsn());
-        assert!(self.is_draining());
-        assert!(lsn >= self.lsn());
+        trace!("setting Segment with lsn {:?} to Free", self.lsn);
+        assert_eq!(self.state, Draining);
+        assert!(lsn >= self.lsn);
         self.present.clear();
         self.removed.clear();
         self.state = Free;
     }
 
     pub fn recovery_ensure_initialized(&mut self, lsn: Lsn) {
-        if let Some(current_lsn) = self.lsn {
-            if current_lsn != lsn {
-                assert!(lsn > current_lsn);
-                trace!("(snapshot) recovering segment with base lsn {}", lsn);
-                self.state = Free;
-                self.free_to_active(lsn);
-            }
-        } else {
+        if lsn != self.lsn {
+            assert!(lsn > self.lsn);
             trace!("(snapshot) recovering segment with base lsn {}", lsn);
+            self.state = Free;
             self.free_to_active(lsn);
         }
-    }
-
-    fn lsn(&self) -> Lsn {
-        self.lsn.unwrap()
     }
 
     /// Add a pid to the Segment. The caller must provide
     /// the Segment's LSN.
     pub fn insert_pid(&mut self, pid: PageID, lsn: Lsn) {
-        assert_eq!(lsn, self.lsn.unwrap());
+        assert_eq!(lsn, self.lsn);
         // if this breaks, we didn't implement the transition
         // logic right in write_to_log, and maybe a thread is
         // using the SA to add pids AFTER their calls to
@@ -279,7 +270,7 @@ impl Segment {
     /// The caller must provide the LSN of the removal.
     pub fn remove_pid(&mut self, pid: PageID, lsn: Lsn) {
         // TODO this could be racy?
-        assert!(lsn >= self.lsn.unwrap());
+        assert!(lsn >= self.lsn);
         match self.state {
             Active => {
                 // we have received a removal before
@@ -387,21 +378,19 @@ impl SegmentAccountant {
                 // and will be marked as free later
                 continue;
             }
-            if let Some(segment_lsn) = segments[idx].lsn {
-                for (pid, lsn) in pids {
-                    if lsn < segment_lsn {
-                        // TODO is this avoidable? can punt more
-                        // work to snapshot generation logic.
-                        trace!(
-                            "stale removed pid {} with lsn {}, on segment {} with current lsn: {:?}",
-                            pid,
-                            lsn,
-                            idx,
-                            segments[idx].lsn
-                        );
-                    } else {
-                        segments[idx].remove_pid(pid, lsn);
-                    }
+            for (pid, lsn) in pids {
+                if lsn < segments[idx].lsn {
+                    // TODO is this avoidable? can punt more
+                    // work to snapshot generation logic.
+                    trace!(
+                        "stale removed pid {} with lsn {}, on segment {} with current lsn: {:?}",
+                        pid,
+                        lsn,
+                        idx,
+                        segments[idx].lsn
+                    );
+                } else {
+                    segments[idx].remove_pid(pid, lsn);
                 }
             }
         }
@@ -415,7 +404,7 @@ impl SegmentAccountant {
         let io_buf_size = self.config.get_io_buf_size();
 
         let highest_lsn = segments.iter().fold(0, |acc, segment| {
-            std::cmp::max(acc, segment.lsn.unwrap_or(acc))
+            std::cmp::max(acc, segment.lsn)
         });
         debug!("recovered highest_lsn in all segments: {}", highest_lsn);
 
@@ -446,12 +435,7 @@ impl SegmentAccountant {
         for (idx, ref mut segment) in segments.iter_mut().enumerate() {
             let segment_start = idx as LogID * io_buf_size as LogID;
 
-            if segment.lsn.is_none() {
-                self.free_segment(segment_start, true);
-                continue;
-            }
-
-            let lsn = segment.lsn();
+            let lsn = segment.lsn;
 
             if lsn != highest_lsn {
                 segment.active_to_inactive(lsn, true);
@@ -616,14 +600,12 @@ impl SegmentAccountant {
             // in IO buffers, before they have been flushed.
             // The latter will be removed from the mapping
             // before being reused, in the next() method.
-            if let Some(old_lsn) = self.segments[idx].lsn {
-                trace!(
-                    "removing segment {} with lsn {} from ordering",
-                    lid,
-                    old_lsn
-                );
-                self.ordering.remove(&old_lsn);
-            }
+            trace!(
+                "removing segment {} with lsn {} from ordering",
+                lid,
+                self.segments[idx].lsn
+            );
+            self.ordering.remove(&self.segments[idx].lsn);
         } else {
             let guard = pin();
             let pd = SegmentDropper(lid, self.free.clone());
@@ -678,7 +660,7 @@ impl SegmentAccountant {
                 continue;
             }
 
-            if self.segments[old_idx].lsn() > lsn {
+            if self.segments[old_idx].lsn > lsn {
                 // has been replaced after this call already,
                 // quite a big race happened
                 // TODO think about how this happens with our segment delay
@@ -777,7 +759,7 @@ impl SegmentAccountant {
 
         let segment = &mut self.segments[idx];
 
-        if segment.lsn() > lsn {
+        if segment.lsn > lsn {
             // a race happened, and our Lsn does not apply anymore
             // TODO think about how this happens with segment delay
             return;
@@ -919,9 +901,7 @@ impl SegmentAccountant {
         assert_eq!(self.segments[idx].state, Free);
 
         // remove the old ordering from our list
-        if let Some(old_lsn) = self.segments[idx].lsn {
-            self.ordering.remove(&old_lsn);
-        }
+        self.ordering.remove(&self.segments[idx].lsn);
 
         self.segments[idx].free_to_active(lsn);
 
