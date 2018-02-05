@@ -69,7 +69,7 @@ impl LogReader for File {
         segment_len: usize,
         _use_compression: bool,
     ) -> std::io::Result<LogRead> {
-        let start = clock();
+        let _measure = Measure::new(&M.read);
         let seg_start = lid / segment_len as LogID * segment_len as LogID;
         trace!("reading message from segment: {} at lid: {}", seg_start, lid);
         assert!(seg_start + MSG_HEADER_LEN as LogID <= lid);
@@ -89,7 +89,6 @@ impl LogReader for File {
                 header.len,
                 max_possible_len
             );
-            M.read.measure(clock() - start);
             trace!("read a corrupted message of len {}", header.len);
             return Ok(LogRead::Corrupted(header.len));
         }
@@ -120,7 +119,6 @@ impl LogReader for File {
         }
 
         if !header.successful_flush {
-            M.read.measure(clock() - start);
             trace!("read zeroes of len {}", len);
             return Ok(LogRead::Zeroed(len));
         }
@@ -133,7 +131,6 @@ impl LogReader for File {
 
         let checksum = crc16_arr(&buf);
         if checksum != header.crc16 {
-            M.read.measure(clock() - start);
             trace!("read a message with a bad checksum of len {}", len);
             return Ok(LogRead::Corrupted(len));
         }
@@ -141,14 +138,12 @@ impl LogReader for File {
         #[cfg(feature = "zstd")]
         let res = {
             if _use_compression {
-                let start = clock();
-                let res = Ok(LogRead::Flush(
+                let _measure = Measure::new(&M.decompress);
+                Ok(LogRead::Flush(
                     header.lsn,
                     decompress(&*buf, segment_len).unwrap(),
                     len,
-                ));
-                M.decompress.measure(clock() - start);
-                res
+                ))
             } else {
                 Ok(LogRead::Flush(header.lsn, buf, len))
             }
@@ -157,7 +152,6 @@ impl LogReader for File {
         #[cfg(not(feature = "zstd"))]
         let res = Ok(LogRead::Flush(header.lsn, buf, len));
 
-        M.read.measure(clock() - start);
         trace!("read a successful flushed message");
         res
     }
