@@ -124,19 +124,6 @@ impl<'a, P> PageGet<'a, P>
     }
 }
 
-struct PidDropper(PageID, Arc<Mutex<BinaryHeap<PageID>>>);
-
-impl Drop for PidDropper {
-    fn drop(&mut self) {
-        let mut free = self.1.lock().unwrap();
-        // panic if we were able to double-free a page
-        for e in free.iter() {
-            assert_ne!(e, &self.0, "page was double-freed");
-        }
-        free.push(self.0);
-    }
-}
-
 /// A lock-free pagecache which supports fragmented pages
 /// for dramatically improving write throughput.
 ///
@@ -399,9 +386,16 @@ impl<PM, P, R> PageCache<PM, P, R>
         // the segment to inactive, resulting in a race otherwise.
         res.complete().map_err(|e| e.danger_cast())?;
 
-        let pd = PidDropper(pid, Arc::clone(&self.free));
+        let free = self.free.clone();
         unsafe {
-            guard.defer(move || pd);
+            guard.defer(move || {
+                let mut free = free.lock().unwrap();
+                // panic if we were able to double-free a page
+                for &e in free.iter() {
+                    assert_ne!(e, pid, "page was double-freed");
+                }
+                free.push(pid);
+            });
             guard.flush();
         }
         Ok(())

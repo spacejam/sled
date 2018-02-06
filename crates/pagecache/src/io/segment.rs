@@ -25,7 +25,7 @@
 //!    stable storage before we overwrite the
 //!    segment that may have contained the previous
 //!    latest stable copy of a page's state.
-//! 2. we use a `SegmentDropper` that guarantees
+//! 2. we use a `epoch::Guard::defer()` that guarantees
 //!    any segment that has been logically freed
 //!    or emptied by the `PageCache` will have its
 //!    addition to the free segment list be delayed
@@ -93,23 +93,6 @@ pub struct SegmentAccountant {
     pause_rewriting: bool,
     safety_buffer: Vec<LogID>,
     ordering: BTreeMap<Lsn, LogID>,
-}
-
-// We use a `SegmentDropper` to ensure that we never
-// add a segment's LogID to the free deque while any
-// active thread could be acting on it. This is necessary
-// despite the "safe buffer" in the free queue because
-// the safe buffer only prevents the sole remaining
-// copy of a page from being overwritten. This prevents
-// dangling references to segments that were rewritten after
-// the `LogID` was read.
-struct SegmentDropper(LogID, Arc<Mutex<VecDeque<(LogID, bool)>>>);
-
-impl Drop for SegmentDropper {
-    fn drop(&mut self) {
-        let mut deque = self.1.lock().unwrap();
-        deque.push_back((self.0, false));
-    }
 }
 
 /// A `Segment` holds the bookkeeping information for
@@ -625,10 +608,20 @@ impl SegmentAccountant {
                 self.ordering.remove(&old_lsn);
             }
         } else {
+            let free = self.free.clone();
             let guard = pin();
-            let pd = SegmentDropper(lid, self.free.clone());
             unsafe {
-                guard.defer(move || pd);
+                // We use a `epoch::Guard::defer()` to ensure that we never
+                // add a segment's LogID to the free deque while any
+                // active thread could be acting on it. This is necessary
+                // despite the "safe buffer" in the free queue because
+                // the safe buffer only prevents the sole remaining
+                // copy of a page from being overwritten. This prevents
+                // dangling references to segments that were rewritten after
+                // the `LogID` was read.
+                guard.defer(move || {
+                    free.lock().unwrap().push_back((lid, false));
+                });
                 guard.flush();
             }
         }
