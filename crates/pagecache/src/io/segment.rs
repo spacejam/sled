@@ -547,7 +547,8 @@ impl SegmentAccountant {
             self.ordering.remove(&lsn);
         }
 
-        self.ordering = mem::replace(&mut self.ordering, BTreeMap::new())
+        self.ordering = self.ordering
+            .clone()
             .into_iter()
             .filter(|&(lsn, _)| lsn <= snapshot_max_lsn)
             .collect();
