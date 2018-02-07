@@ -48,9 +48,6 @@ impl IoBufs {
         config: Config,
         mut snapshot: Snapshot<R>,
     ) -> CacheResult<IoBufs, ()> {
-        // if configured, start env_logger and/or cpuprofiler
-        global_init();
-
         // open file for writing
         let file = config.file()?;
 

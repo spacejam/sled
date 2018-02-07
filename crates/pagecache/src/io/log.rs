@@ -55,15 +55,6 @@ pub struct Log {
 unsafe impl Send for Log {}
 unsafe impl Sync for Log {}
 
-impl Drop for Log {
-    fn drop(&mut self) {
-        #[cfg(feature = "cpuprofiler")]
-        {
-            cpuprofiler::PROFILER.lock().unwrap().stop().unwrap();
-        }
-    }
-}
-
 impl periodic::Callback for Arc<IoBufs> {
     fn call(&self) {
         self.flush().unwrap();
