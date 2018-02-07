@@ -11,6 +11,8 @@
 //! But this isn't measured, so maybe it happens all the time!
 //! Computers, right?
 
+#![allow(dead_code)]
+
 extern crate sled;
 
 mod crc16;
@@ -203,8 +205,7 @@ impl<'a> Tx<'a> {
         get_hashes.sort();
         get_hashes.dedup();
 
-        let (get_locks, _set_locks) =
-            self.db.lock_keys(&*get_hashes, &*set_hashes);
+        let _locks = self.db.lock_keys(&*get_hashes, &*set_hashes);
 
         // perform predicate matches
         for &Predicate(ref k, ref p) in &self.predicates {
@@ -245,8 +246,8 @@ fn it_works() {
     assert_eq!(tx.execute(), Ok(TxRet::Committed(vec![])));
 
     let mut tx = txdb.tx();
-    tx.predicate(b"cats".to_vec(), |k, v| *v == Some(b"meow".to_vec()));
-    tx.predicate(b"dogs".to_vec(), |k, v| *v == Some(b"woof".to_vec()));
+    tx.predicate(b"cats".to_vec(), |_k, v| *v == Some(b"meow".to_vec()));
+    tx.predicate(b"dogs".to_vec(), |_k, v| *v == Some(b"woof".to_vec()));
     tx.set(b"cats".to_vec(), b"woof".to_vec());
     tx.set(b"dogs".to_vec(), b"meow".to_vec());
     tx.get(b"dogs".to_vec());
@@ -256,6 +257,6 @@ fn it_works() {
     );
 
     let mut tx = txdb.tx();
-    tx.predicate(b"cats".to_vec(), |k, v| *v == Some(b"meow".to_vec()));
+    tx.predicate(b"cats".to_vec(), |_k, v| *v == Some(b"meow".to_vec()));
     assert_eq!(tx.execute(), Ok(TxRet::PredicateFailure));
 }
