@@ -1,0 +1,7 @@
+where_style = "Legacy"
+struct_lit_multiline_style = "ForceMulti"
+reorder_imports_in_group = true
+reorder_imported_names = true
+max_width = 80
+ideal_width = 60
+fn_call_width = 70

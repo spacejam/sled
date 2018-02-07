@@ -1,0 +1,7 @@
+[package]
+name = "pessimistic_transactions"
+version = "0.1.0"
+authors = ["Tyler Neely <t@jujit.su>"]
+
+[dependencies]
+sled = { path = "../../crates/sled", version = "0.15"}
