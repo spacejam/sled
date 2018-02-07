@@ -83,7 +83,7 @@ fn parallel_tree_ops() {
 
     println!("========== deleting ==========");
     par!{t, |tree: &Tree, k: Vec<u8>| {
-        tree.del(&*k);
+        tree.del(&*k).unwrap();
     }};
 
     par!{t, |tree: &Tree, k: Vec<u8>| {
@@ -127,7 +127,7 @@ fn tree_iterator() {
     let t = sled::Tree::start(config).unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
-        t.set(k.clone(), k);
+        t.set(k.clone(), k).unwrap();
     }
 
     for (i, (k, v)) in t.iter().map(|res| res.unwrap()).enumerate() {
@@ -170,7 +170,7 @@ fn recover_tree() {
     let t = sled::Tree::start(conf.clone()).unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
-        t.set(k.clone(), k);
+        t.set(k.clone(), k).unwrap();
     }
     drop(t);
 
@@ -178,7 +178,7 @@ fn recover_tree() {
     for i in 0..conf.get_blink_fanout() << 1 {
         let k = kv(i);
         assert_eq!(t.get(&*k), Ok(Some(k.clone())));
-        t.del(&*k);
+        t.del(&*k).unwrap();
     }
     drop(t);
 
@@ -269,7 +269,7 @@ fn prop_tree_matches_btreemap(
     for op in ops.ops.into_iter() {
         match op {
             Set(k, v) => {
-                tree.set(vec![k], vec![v]);
+                tree.set(vec![k], vec![v]).unwrap();
                 reference.insert(k, v);
             }
             Get(k) => {
@@ -278,13 +278,13 @@ fn prop_tree_matches_btreemap(
                 assert_eq!(res1, res2);
             }
             Del(k) => {
-                tree.del(&*vec![k]);
+                tree.del(&*vec![k]).unwrap();
                 reference.remove(&k);
             }
             Cas(k, old, new) => {
                 let tree_old = tree.get(&*vec![k]).unwrap();
                 if tree_old == Some(vec![old]) {
-                    tree.set(vec![k], vec![new]);
+                    tree.set(vec![k], vec![new]).unwrap();
                 }
 
                 let ref_old = reference.get(&k).cloned();
