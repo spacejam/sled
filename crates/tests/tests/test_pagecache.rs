@@ -121,7 +121,7 @@ fn pagecache_strange_crash_2() {
             .build();
 
         println!("!!!!!!!!!!!!!!!!!!!!! {} !!!!!!!!!!!!!!!!!!!!!!", x);
-        conf.verify_snapshot::<TestMaterializer, _, _>();
+        conf.verify_snapshot::<TestMaterializer, _, _>().unwrap();
 
         let pc: PageCache<TestMaterializer, _, _> =
             PageCache::start(conf.clone()).unwrap();
@@ -403,7 +403,7 @@ fn prop_pagecache_works(ops: OpVec) -> bool {
             Restart => {
                 drop(pc);
 
-                config.verify_snapshot::<TestMaterializer, _, _>();
+                config.verify_snapshot::<TestMaterializer, _, _>().unwrap();
 
                 pc = PageCache::start(config.clone()).unwrap();
             }

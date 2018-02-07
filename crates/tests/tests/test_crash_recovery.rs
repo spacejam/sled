@@ -112,7 +112,7 @@ fn run(config: Config) {
         let mut key = u32_to_vec((hu % CYCLE) as u32);
         key.reverse();
         let value = u32_to_vec((hu / CYCLE) as u32);
-        tree.set(key, value);
+        tree.set(key, value).unwrap();
     }
 }
 
