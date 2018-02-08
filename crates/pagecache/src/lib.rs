@@ -13,16 +13,12 @@ extern crate bincode;
 extern crate historian;
 #[macro_use]
 extern crate lazy_static;
-#[cfg(feature = "env_logger")]
-extern crate env_logger;
 #[macro_use]
 extern crate log as _log;
 #[cfg(feature = "rayon")]
 extern crate rayon;
 #[cfg(feature = "zstd")]
 extern crate zstd;
-#[cfg(feature = "cpuprofiler")]
-extern crate cpuprofiler;
 #[cfg(any(test, feature = "lock_free_delays"))]
 extern crate rand;
 #[cfg(unix)]
@@ -141,53 +137,4 @@ pub fn debug_delay() {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
-}
-
-// initialize env_logger and/or cpuprofiler if configured to do so.
-#[doc(hidden)]
-pub fn global_init() {
-    use std::sync::{ONCE_INIT, Once};
-
-    static ONCE: Once = ONCE_INIT;
-
-    ONCE.call_once(|| {
-        #[cfg(feature = "env_logger")]
-        {
-            let format = |record: &_log::LogRecord| {
-                format!(
-                    "{:05} {:10} {:10} {}",
-                    record.level(),
-                    tn(),
-                    record.location().module_path().split("::").last().unwrap(),
-                    record.args()
-                )
-            };
-
-            let mut builder = env_logger::LogBuilder::new();
-            builder.format(format).filter(
-                None,
-                _log::LogLevelFilter::Info,
-            );
-
-            if std::env::var("RUST_LOG").is_ok() {
-                builder.parse(&std::env::var("RUST_LOG").unwrap());
-            }
-
-            let _r = builder.init();
-        }
-
-        #[cfg(feature = "cpuprofiler")]
-        {
-            use std::env;
-
-            let key = "CPUPROFILE";
-            let path = match env::var(key) {
-                Ok(val) => val,
-                Err(_) => "pagecache.profile".to_owned(),
-            };
-            cpuprofiler::PROFILER.lock().unwrap().start(path).expect(
-                "could not start cpu profiler!",
-            );
-        }
-    });
 }
