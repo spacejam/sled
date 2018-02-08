@@ -1,4 +1,5 @@
 use std::cmp::PartialEq;
+use std::fmt::{self, Display};
 use std::io;
 
 use super::*;
@@ -74,6 +75,30 @@ impl<T> From<io::Error> for Error<T> {
     #[inline]
     fn from(io_error: io::Error) -> Error<T> {
         Error::Io(io_error)
+    }
+}
+
+impl<A> Display for Error<A>
+    where A: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        match *self {
+            CasFailed(ref e) => {
+                write!(f, "Atomic operation has failed: {:?}", e)
+            }
+            Unsupported(ref e) => {
+                write!(f, "Unsupported: {}", e)
+            }
+            ReportableBug(ref e) => {
+                write!(f, "Unexpected bug has happened: {}", e)
+            }
+            Io(ref e) => {
+                write!(f, "IO error: {}", e)
+            }
+            Corruption { at } => {
+                write!(f, "Corruption at: {}", at)
+            }     
+        }
     }
 }
 
