@@ -94,11 +94,7 @@ impl Arbitrary for OpVec {
     }
 }
 
-fn prop_tree_crashes_nicely(
-    ops: OpVec,
-    blink_fanout: u8,
-    snapshot_after: u8,
-) -> bool {
+fn prop_tree_crashes_nicely(ops: OpVec) -> bool {
     lazy_static! {
         // forces quickcheck to run one thread at a time
         static ref M: Mutex<()> = Mutex::new(());
@@ -112,10 +108,9 @@ fn prop_tree_crashes_nicely(
 
     let config = ConfigBuilder::new()
         .temporary(true)
-        .snapshot_after_ops(snapshot_after as usize + 1)
+        .snapshot_after_ops(1)
         .flush_every_ms(Some(1))
         .io_buf_size(10000)
-        .blink_fanout(blink_fanout as usize + 2)
         .cache_capacity(40)
         .build();
 
@@ -127,7 +122,15 @@ fn prop_tree_crashes_nicely(
         () => {
             println!("restarting");
             drop(tree);
-            tree = sled::Tree::start(config.clone()).unwrap();
+            let tree_res = sled::Tree::start(config.clone());
+            if tree_res.is_err() {
+                println!("failed to open tree: {:?}", tree_res.unwrap_err());
+                clear_fps!();
+                fail::teardown();
+                return false;
+            }
+
+            tree = tree_res.unwrap();
 
             let tree_iter = tree.iter().map(|res| {
                 let (ref tk, ref tv) = res.unwrap();
@@ -136,7 +139,12 @@ fn prop_tree_crashes_nicely(
             let ref_iter =
                 reference.iter().map(|(ref rk, ref rv)| (**rk, **rv));
             for (t, r) in tree_iter.zip(ref_iter) {
-                assert_eq!(t, r);
+                if t != r {
+                    println!("tree value {:?} failed to match expected reference {:?}", t, r);
+                    clear_fps!();
+                    fail::teardown();
+                    return false;
+                }
             }
         }
     }
@@ -161,7 +169,9 @@ fn prop_tree_crashes_nicely(
                 }
                 _ => {
                     println!("about to unwrap a weirdo {:?}", $e);
-                    $e.unwrap()
+                    clear_fps!();
+                    fail::teardown();
+                    return false;
                 },
             }
         }
@@ -206,5 +216,5 @@ fn quickcheck_tree_with_failpoints() {
         .gen(StdGen::new(rand::thread_rng(), 1))
         .tests(n_tests)
         .max_tests(10000)
-        .quickcheck(prop_tree_crashes_nicely as fn(OpVec, u8, u8) -> bool);
+        .quickcheck(prop_tree_crashes_nicely as fn(OpVec) -> bool);
 }
