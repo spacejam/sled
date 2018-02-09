@@ -205,7 +205,7 @@ impl Tree {
             match link {
                 Ok(_) => return Ok(()),
                 Err(Error::CasFailed(_)) => {}
-                _ => return link.map(|_| ()).map_err(|e| e.danger_cast()),
+                Err(other) => return Err(other.danger_cast()),
             }
             M.tree_looped();
         }
@@ -223,22 +223,26 @@ impl Tree {
         loop {
             let mut path = self.path_for_key(&*key, &guard)?;
             let (mut last_node, last_cas_key) = path.pop().unwrap();
-            if let Ok(new_cas_key) = self.pages.link(
+            let link = self.pages.link(
                 last_node.id,
                 last_cas_key,
                 frag.clone(),
                 &guard,
-            )
-            {
-                last_node.apply(&frag);
-                let should_split =
-                    last_node.should_split(self.config.blink_fanout);
-                path.push((last_node.clone(), new_cas_key));
-                // success
-                if should_split {
-                    self.recursive_split(&path, &guard)?;
+            );
+            match link {
+                Ok(new_cas_key) => {
+                    last_node.apply(&frag);
+                    let should_split =
+                        last_node.should_split(self.config.blink_fanout);
+                    path.push((last_node.clone(), new_cas_key));
+                    // success
+                    if should_split {
+                        self.recursive_split(&path, &guard)?;
+                    }
+                    return Ok(());
                 }
-                return Ok(());
+                Err(Error::CasFailed(_)) => {}
+                Err(other) => return Err(other.danger_cast()),
             }
             M.tree_looped();
         }
@@ -280,16 +284,20 @@ impl Tree {
             }
 
             let frag = Frag::Del(key.to_vec());
-            if self.pages
-                .link(leaf_node.id, leaf_cas_key, frag, &guard)
-                .is_ok()
-            {
-                // success
-                break;
-            } else {
-                // failure, retry
+            let link =
+                self.pages.link(leaf_node.id, leaf_cas_key, frag, &guard);
+
+            match link {
+                Ok(_) => {
+                    // success
+                    break;
+                }
+                Err(Error::CasFailed(_)) => {
+                    M.tree_looped();
+                    continue;
+                }
+                Err(other) => return Err(other.danger_cast()),
             }
-            M.tree_looped();
         }
         Ok(ret)
     }
@@ -408,14 +416,18 @@ impl Tree {
                         guard,
                     );
 
-                    if let Ok(res) = res {
-                        parent_node.apply(&Frag::ParentSplit(parent_split));
-                        *parent_cas_key = res;
-                    } else {
-                        continue;
+                    match res {
+                        Ok(res) => {
+                            parent_node.apply(&Frag::ParentSplit(parent_split));
+                            *parent_cas_key = res;
+                        }
+                        Err(Error::CasFailed(_)) => continue,
+                        other => {
+                            return other.map(|_| ()).map_err(
+                                |e| e.danger_cast(),
+                            )
+                        }
                     }
-                } else {
-                    continue;
                 }
             }
         }
@@ -466,16 +478,19 @@ impl Tree {
         // install the new right side
         self.pages
             .replace(new_pid, Shared::null(), Frag::Base(rhs, None), guard)
-            .expect("failed to initialize child split");
+            .map_err(|e| e.danger_cast())?;
 
         // try to install a child split on the left side
-        if self.pages
-            .link(node.id, node_cas_key, child_split, guard)
-            .is_err()
-        {
-            // if we failed, don't follow through with the parent split
-            self.pages.free(new_pid, guard).map_err(|e| e.danger_cast())?;
-            return Err(Error::CasFailed(()));
+        let link = self.pages.link(node.id, node_cas_key, child_split, guard);
+
+        match link {
+            Ok(_) => {}
+            Err(Error::CasFailed(_)) => {
+                // if we failed, don't follow through with the parent split
+                self.pages.free(new_pid, guard).map_err(|e| e.danger_cast())?;
+                return Err(Error::CasFailed(()));
+            }
+            Err(other) => return Err(other.danger_cast()),
         }
 
         Ok(parent_split)
@@ -489,14 +504,12 @@ impl Tree {
         guard: &'g Guard,
     ) -> DbResult<TreePtr<'g>, Option<TreePtr<'g>>> {
         // install parent split
-        let res = self.pages.link(
+        self.pages.link(
             parent_node.id,
             parent_cas_key,
             Frag::ParentSplit(parent_split.clone()),
             guard,
-        );
-
-        res
+        )
     }
 
     fn root_hoist<'g>(
@@ -635,12 +648,17 @@ impl Tree {
                     to: node.id,
                 });
 
-                let _res = self.pages.link(
+                let link = self.pages.link(
                     parent_node.id,
                     parent_cas_key.clone(),
                     ps,
                     guard,
                 );
+                match link {
+                    Ok(_) => {}
+                    Err(Error::CasFailed(_)) => {}
+                    Err(other) => return Err(other.danger_cast()),
+                }
             }
 
             path.push((node, cas_key));
