@@ -26,6 +26,5 @@ crossbeam-epoch = "0.1"
 bincode = "0.8"
 serde = "1.0"
 serde_derive = "1.0"
-lazy_static = "0.2"
 clippy = {version = "0.0", optional = true}
 pagecache = { path = "../pagecache", version = "0.2" }

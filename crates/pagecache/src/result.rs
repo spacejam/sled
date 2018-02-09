@@ -25,6 +25,9 @@ pub enum Error<Actual> {
         /// The file location that corrupted data was found at.
         at: LogID,
     },
+    // a failpoint has been triggered for testing purposes
+    #[doc(hidden)]
+    FailPoint,
 }
 use Error::*;
 
@@ -54,6 +57,7 @@ impl<A> PartialEq for Error<A>
                     false
                 }
             }
+            &FailPoint => if let &FailPoint = other { true } else { false },
             &Corruption {
                 at: l,
             } => {
@@ -79,25 +83,22 @@ impl<T> From<io::Error> for Error<T> {
 }
 
 impl<A> Display for Error<A>
-    where A: fmt::Debug,
+    where A: fmt::Debug
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match *self {
             CasFailed(ref e) => {
                 write!(f, "Atomic operation has failed: {:?}", e)
             }
-            Unsupported(ref e) => {
-                write!(f, "Unsupported: {}", e)
-            }
+            Unsupported(ref e) => write!(f, "Unsupported: {}", e),
             ReportableBug(ref e) => {
                 write!(f, "Unexpected bug has happened: {}", e)
             }
-            Io(ref e) => {
-                write!(f, "IO error: {}", e)
-            }
-            Corruption { at } => {
-                write!(f, "Corruption at: {}", at)
-            }     
+            FailPoint => write!(f, "Fail point has been triggered."),
+            Io(ref e) => write!(f, "IO error: {}", e),
+            Corruption {
+                at,
+            } => write!(f, "Corruption at: {}", at),     
         }
     }
 }
@@ -118,6 +119,7 @@ impl<T> Error<T> {
             }
             Unsupported(s) => Unsupported(s),
             ReportableBug(s) => ReportableBug(s),
+            FailPoint => FailPoint,
             Io(e) => Io(e),
             Corruption {
                 at,
@@ -135,6 +137,7 @@ impl<T> Error<T> {
             CasFailed(other) => CasFailed(other.into()),
             Unsupported(s) => Unsupported(s),
             ReportableBug(s) => ReportableBug(s),
+            FailPoint => FailPoint,
             Io(e) => Io(e),
             Corruption {
                 at,

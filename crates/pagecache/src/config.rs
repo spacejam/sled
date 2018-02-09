@@ -393,8 +393,10 @@ impl Config {
         options.create(true);
         options.read(true);
         options.write(true);
+
         match options.open(&path) {
             Ok(file) => {
+                // turn file into a raw pointer for future use
                 let file_ptr = Box::into_raw(Box::new(Arc::new(file)));
                 self.file.store(file_ptr, Ordering::SeqCst);
             }
@@ -447,7 +449,7 @@ impl Config {
         }
     }
 
-    fn write_config(&self) -> std::io::Result<()> {
+    fn write_config(&self) -> CacheResult<(), ()> {
         let bytes = serialize(&*self.inner, Infinite).unwrap();
         let crc64: [u8; 8] = unsafe { std::mem::transmute(crc64(&*bytes)) };
 
@@ -457,9 +459,13 @@ impl Config {
             path,
         )?;
 
+        fail_point!("write_config bytes", |_| Err(Error::FailPoint));
         f.write_all(&*bytes)?;
+        fail_point!("write_config crc", |_| Err(Error::FailPoint));
         f.write_all(&crc64)?;
-        f.sync_all()
+        f.sync_all()?;
+        fail_point!("write_config post", |_| Err(Error::FailPoint));
+        Ok(())
     }
 
     fn read_config(&self) -> std::io::Result<Option<ConfigBuilder>> {
