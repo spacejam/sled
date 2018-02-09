@@ -250,8 +250,8 @@ impl<PM, P, R> PageCache<PM, P, R>
 {
     /// Instantiate a new `PageCache`.
     pub fn start(config: Config) -> CacheResult<PageCache<PM, P, R>, ()> {
-        let cache_capacity = config.get_cache_capacity();
-        let cache_shard_bits = config.get_cache_bits();
+        let cache_capacity = config.cache_capacity;
+        let cache_shard_bits = config.cache_bits;
         let lru = Lru::new(cache_capacity, cache_shard_bits);
 
         // try to pull any existing snapshot off disk, and
@@ -314,9 +314,8 @@ impl<PM, P, R> PageCache<PM, P, R>
             pid: pid,
             update: Update::Allocate,
         };
-        let bytes = measure(&M.serialize, || {
-            serialize(&prepend, Infinite).unwrap()
-        });
+        let bytes =
+            measure(&M.serialize, || serialize(&prepend, Infinite).unwrap());
 
         // reserve slot in log
         // FIXME not threadsafe?
@@ -354,9 +353,8 @@ impl<PM, P, R> PageCache<PM, P, R>
             pid: pid,
             update: Update::Free,
         };
-        let bytes = measure(&M.serialize, || {
-            serialize(&prepend, Infinite).unwrap()
-        });
+        let bytes =
+            measure(&M.serialize, || serialize(&prepend, Infinite).unwrap());
 
         // reserve slot in log
         let res = self.log.reserve(bytes).map_err(|e| e.danger_cast())?;
@@ -426,9 +424,8 @@ impl<PM, P, R> PageCache<PM, P, R>
                 Update::Append(new.clone())
             },
         };
-        let bytes = measure(&M.serialize, || {
-            serialize(&prepend, Infinite).unwrap()
-        });
+        let bytes =
+            measure(&M.serialize, || serialize(&prepend, Infinite).unwrap());
         let log_reservation =
             self.log.reserve(bytes).map_err(|e| e.danger_cast())?;
         let lsn = log_reservation.lsn();
@@ -489,8 +486,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             }
 
             let count = self.updates.fetch_add(1, SeqCst) + 1;
-            let should_snapshot =
-                count % self.config.get_snapshot_after_ops() == 0;
+            let should_snapshot = count % self.config.snapshot_after_ops == 0;
             if should_snapshot {
                 self.advance_snapshot().map_err(|e| e.danger_cast())?;
             }
@@ -532,9 +528,8 @@ impl<PM, P, R> PageCache<PM, P, R>
             pid: pid,
             update: new.clone(),
         };
-        let bytes = measure(&M.serialize, || {
-            serialize(&replace, Infinite).unwrap()
-        });
+        let bytes =
+            measure(&M.serialize, || serialize(&replace, Infinite).unwrap());
         let log_reservation =
             self.log.reserve(bytes).map_err(|e| e.danger_cast())?;
         let lsn = log_reservation.lsn();
@@ -608,8 +603,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             }
 
             let count = self.updates.fetch_add(1, SeqCst) + 1;
-            let should_snapshot =
-                count % self.config.get_snapshot_after_ops() == 0;
+            let should_snapshot = count % self.config.snapshot_after_ops == 0;
             if should_snapshot {
                 self.advance_snapshot().map_err(|e| e.danger_cast())?;
             }
@@ -719,16 +713,14 @@ impl<PM, P, R> PageCache<PM, P, R>
             .rev()
             .collect();
 
-        let merged = measure(&M.merge_page, || {
-            self.t.merge(&*combined)
-        });
+        let merged = measure(&M.merge_page, || self.t.merge(&*combined));
 
         let size = std::mem::size_of_val(&merged);
         let to_evict = self.lru.accessed(pid, size);
         trace!("accessed pid {} -> paging out pid {:?}", pid, to_evict);
         self.page_out(to_evict, guard)?;
 
-        if lids.len() > self.config.get_page_consolidation_threshold() {
+        if lids.len() > self.config.page_consolidation_threshold {
             trace!("consolidating pid {} with len {}!", pid, lids.len());
             match self.replace_recurse_once(
                 pid,
@@ -742,7 +734,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 _ => (),
             }
         } else if !fetched.is_empty() ||
-                   fix_up_length >= self.config.get_cache_fixup_threshold()
+                   fix_up_length >= self.config.cache_fixup_threshold
         {
             trace!(
                 "fixing up pid {} with {} traversed frags",
@@ -940,8 +932,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         self.log.with_sa(|sa| sa.pause_rewriting());
 
         let max_lsn = last_snapshot.max_lsn;
-        let start_lsn = max_lsn -
-            (max_lsn % self.config.get_io_buf_size() as Lsn);
+        let start_lsn = max_lsn - (max_lsn % self.config.io_buf_size as Lsn);
 
         debug!(
             "snapshot starting from offset {} to the segment containing ~{}",

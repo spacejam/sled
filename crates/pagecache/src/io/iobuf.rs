@@ -54,7 +54,7 @@ impl IoBufs {
         // open file for writing
         let file = config.file()?;
 
-        let io_buf_size = config.get_io_buf_size();
+        let io_buf_size = config.io_buf_size;
 
         let snapshot_max_lsn = snapshot.max_lsn;
         let snapshot_last_lid = snapshot.last_lid;
@@ -68,7 +68,7 @@ impl IoBufs {
                 match file.read_message(
                     snapshot_last_lid,
                     io_buf_size,
-                    config.get_use_compression(),
+                    config.use_compression,
                 ) {
                     Ok(LogRead::Flush(_lsn, _buf, len)) => (
                         snapshot_max_lsn + len as Lsn +
@@ -93,7 +93,7 @@ impl IoBufs {
         let mut segment_accountant =
             SegmentAccountant::start(config.clone(), snapshot)?;
 
-        let bufs = rep_no_copy![IoBuf::new(io_buf_size); config.get_io_bufs()];
+        let bufs = rep_no_copy![IoBuf::new(io_buf_size); config.io_bufs];
 
         let current_buf = 0;
 
@@ -114,7 +114,7 @@ impl IoBufs {
             iobuf.set_capacity(io_buf_size - SEG_TRAILER_LEN);
             iobuf.store_segment_header(0, next_lsn, last_given);
 
-            file.pwrite_all(&*vec![0; config.get_io_buf_size()], lid)?;
+            file.pwrite_all(&*vec![0; config.io_buf_size], lid)?;
             file.sync_all()?;
 
             debug!(
@@ -175,7 +175,7 @@ impl IoBufs {
     fn idx(&self) -> usize {
         debug_delay();
         let current_buf = self.current_buf.load(SeqCst);
-        current_buf % self.config.get_io_bufs()
+        current_buf % self.config.io_bufs
     }
 
     /// Returns the last stable offset in storage.
@@ -190,7 +190,7 @@ impl IoBufs {
     // bytes after a reservation has been acquired.
     fn encapsulate(&self, raw_buf: Vec<u8>) -> Vec<u8> {
         #[cfg(feature = "zstd")]
-        let buf = if self.config.get_use_compression() {
+        let buf = if self.config.use_compression {
             let _measure = Measure::new(&M.compress);
             compress(&*raw_buf, self.config.get_zstd_compression_factor())
                 .unwrap()
@@ -235,15 +235,15 @@ impl IoBufs {
     ) -> CacheResult<Reservation, ()> {
         let _measure = Measure::new(&M.reserve);
 
-        let io_bufs = self.config.get_io_bufs();
+        let io_bufs = self.config.io_bufs;
 
         assert_eq!((raw_buf.len() + MSG_HEADER_LEN) >> 32, 0);
 
         let buf = self.encapsulate(raw_buf);
 
         let segment_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;
-        let max_buf_size = (self.config.get_io_buf_size() - segment_overhead) /
-            self.config.get_min_items_per_segment();
+        let max_buf_size = (self.config.io_buf_size - segment_overhead) /
+            self.config.min_items_per_segment;
 
         assert!(
             buf.len() <= max_buf_size,
@@ -467,7 +467,7 @@ impl IoBufs {
         let lid = iobuf.get_lid();
         let lsn = iobuf.get_lsn();
         let capacity = iobuf.get_capacity();
-        let io_buf_size = self.config.get_io_buf_size();
+        let io_buf_size = self.config.io_buf_size;
 
         let sealed = mk_sealed(header);
 
@@ -542,7 +542,7 @@ impl IoBufs {
             (next_offset, 0)
         };
 
-        let next_idx = (idx + 1) % self.config.get_io_bufs();
+        let next_idx = (idx + 1) % self.config.io_bufs;
         let next_iobuf = &self.bufs[next_idx];
 
         // NB we spin on this CAS because the next iobuf may not actually
@@ -580,7 +580,7 @@ impl IoBufs {
 
         debug_delay();
         let _current_buf = self.current_buf.fetch_add(1, SeqCst) + 1;
-        trace!("{} current_buf", _current_buf % self.config.get_io_bufs());
+        trace!("{} current_buf", _current_buf % self.config.io_bufs);
 
         // if writers is 0, it's our responsibility to write the buffer.
         if n_writers(sealed) == 0 {
@@ -599,7 +599,7 @@ impl IoBufs {
         let lid = iobuf.get_lid();
         let base_lsn = iobuf.get_lsn();
 
-        let io_buf_size = self.config.get_io_buf_size();
+        let io_buf_size = self.config.io_buf_size;
 
         assert_eq!(
             (lid % io_buf_size as LogID) as Lsn,
@@ -687,7 +687,7 @@ impl IoBufs {
         // communicate to other threads that we have written an IO buffer.
         debug_delay();
         let _written_bufs = self.written_bufs.fetch_add(1, SeqCst);
-        trace!("{} written", _written_bufs % self.config.get_io_bufs());
+        trace!("{} written", _written_bufs % self.config.io_bufs);
 
         Ok(())
     }
@@ -766,7 +766,7 @@ impl IoBufs {
 
 impl Drop for IoBufs {
     fn drop(&mut self) {
-        for _ in 0..self.config.get_io_bufs() {
+        for _ in 0..self.config.io_bufs {
             self.flush().unwrap();
         }
         if let Ok(f) = self.config.file() {

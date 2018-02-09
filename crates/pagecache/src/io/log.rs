@@ -81,7 +81,7 @@ impl Log {
         let flusher = periodic::Periodic::new(
             "log flusher".to_owned(),
             iobufs.clone(),
-            config.get_flush_every_ms(),
+            config.flush_every_ms,
         );
 
         Ok(Log {
@@ -93,7 +93,7 @@ impl Log {
 
     /// Starts a log for use without a materializer.
     pub fn start_raw_log(config: Config) -> CacheResult<Log, ()> {
-        assert_eq!(config.get_segment_mode(), SegmentMode::Linear);
+        assert_eq!(config.segment_mode, SegmentMode::Linear);
         let log_iter = raw_segment_iter_from(0, &config)?;
 
         let snapshot = advance_snapshot::<NullMaterializer, (), ()>(
@@ -107,7 +107,7 @@ impl Log {
 
     /// Flushes any pending IO buffers to disk to ensure durability.
     pub fn flush(&self) -> CacheResult<(), ()> {
-        for _ in 0..self.config.get_io_bufs() {
+        for _ in 0..self.config.io_bufs {
             self.iobufs.flush()?;
         }
         Ok(())
@@ -128,7 +128,7 @@ impl Log {
     /// a specified offset.
     pub fn iter_from(&self, lsn: Lsn) -> LogIter {
         trace!("iterating from lsn {}", lsn);
-        let io_buf_size = self.config.get_io_buf_size();
+        let io_buf_size = self.config.io_buf_size;
         let segment_base_lsn = lsn / io_buf_size as Lsn * io_buf_size as Lsn;
         let min_lsn = segment_base_lsn + SEG_HEADER_LEN as Lsn;
 
@@ -145,7 +145,7 @@ impl Log {
             segment_base: None,
             segment_iter: segment_iter,
             segment_len: io_buf_size,
-            use_compression: self.config.get_use_compression(),
+            use_compression: self.config.use_compression,
             trailer: None,
         }
     }
@@ -158,8 +158,8 @@ impl Log {
 
         let read = f.read_message(
             lid,
-            self.config.get_io_buf_size(),
-            self.config.get_use_compression(),
+            self.config.io_buf_size,
+            self.config.use_compression,
         );
 
         read.and_then(|log_read| match log_read {

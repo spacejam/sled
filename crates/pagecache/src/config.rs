@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 use std::fs;
+use std::ops::Deref;
 use std::ffi::{OsStr, OsString};
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
@@ -13,6 +14,13 @@ use bincode::{Infinite, deserialize, serialize};
 
 use super::*;
 use io::LogReader;
+
+impl Deref for Config {
+    type Target = ConfigBuilder;
+    fn deref(&self) -> &Self::Target {
+        &*self.inner
+    }
+}
 
 /// Top-level configuration for the system.
 ///
@@ -35,28 +43,50 @@ use io::LogReader;
 /// ```
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct ConfigBuilder {
-    blink_fanout: usize,
-    cache_bits: usize,
-    cache_capacity: usize,
-    cache_fixup_threshold: usize,
-    flush_every_ms: Option<u64>,
-    io_bufs: usize,
-    io_buf_size: usize,
-    min_free_segments: usize,
-    min_items_per_segment: usize,
-    page_consolidation_threshold: usize,
-    path: OsString,
-    read_only: bool,
-    segment_cleanup_threshold: f64,
-    segment_mode: SegmentMode,
-    snapshot_after_ops: usize,
-    snapshot_path: Option<OsString>,
-    temporary: bool,
-    tmp_path: OsString,
-    use_compression: bool,
-    use_os_cache: bool,
-    zero_copy_storage: bool,
-    zstd_compression_factor: i32,
+    #[doc(hidden)]
+    pub blink_fanout: usize,
+    #[doc(hidden)]
+    pub cache_bits: usize,
+    #[doc(hidden)]
+    pub cache_capacity: usize,
+    #[doc(hidden)]
+    pub cache_fixup_threshold: usize,
+    #[doc(hidden)]
+    pub flush_every_ms: Option<u64>,
+    #[doc(hidden)]
+    pub io_bufs: usize,
+    #[doc(hidden)]
+    pub io_buf_size: usize,
+    #[doc(hidden)]
+    pub min_free_segments: usize,
+    #[doc(hidden)]
+    pub min_items_per_segment: usize,
+    #[doc(hidden)]
+    pub page_consolidation_threshold: usize,
+    #[doc(hidden)]
+    pub path: OsString,
+    #[doc(hidden)]
+    pub read_only: bool,
+    #[doc(hidden)]
+    pub segment_cleanup_threshold: f64,
+    #[doc(hidden)]
+    pub segment_mode: SegmentMode,
+    #[doc(hidden)]
+    pub snapshot_after_ops: usize,
+    #[doc(hidden)]
+    pub snapshot_path: Option<OsString>,
+    #[doc(hidden)]
+    pub temporary: bool,
+    #[doc(hidden)]
+    pub tmp_path: OsString,
+    #[doc(hidden)]
+    pub use_compression: bool,
+    #[doc(hidden)]
+    pub use_os_cache: bool,
+    #[doc(hidden)]
+    pub zero_copy_storage: bool,
+    #[doc(hidden)]
+    pub zstd_compression_factor: i32,
 }
 
 unsafe impl Send for ConfigBuilder {}
@@ -111,54 +141,21 @@ macro_rules! supported {
 macro_rules! builder {
     ($(($name:ident, $get:ident, $set:ident, $t:ty, $desc:expr)),*) => {
         $(
-            impl Config {
-                #[doc="Get "]
-                #[doc=$desc]
-                pub fn $get(&self) -> $t {
-                    self.inner.$name.clone()
-                }
+            #[doc="Set "]
+            #[doc=$desc]
+            pub fn $set(&mut self, to: $t) {
+                self.$name = to;
             }
 
-            impl ConfigBuilder {
-                #[doc="Set "]
-                #[doc=$desc]
-                pub fn $set(&mut self, to: $t) {
-                    self.$name = to;
-                }
-
-                #[doc="Builder, set "]
-                #[doc=$desc]
-                pub fn $name(mut self, to: $t) -> ConfigBuilder {
-                    self.$name = to;
-                    self
-                }
+            #[doc="Builder, set "]
+            #[doc=$desc]
+            pub fn $name(mut self, to: $t) -> ConfigBuilder {
+                self.$name = to;
+                self
             }
         )*
     }
 }
-
-builder!(
-    (io_bufs, get_io_bufs, set_io_bufs, usize, "number of io buffers"),
-    (io_buf_size, get_io_buf_size, set_io_buf_size, usize, "size of each io flush buffer. MUST be multiple of 512!"),
-    (min_items_per_segment, get_min_items_per_segment, set_min_items_per_segment, usize, "minimum data chunks/pages in a segment."),
-    (blink_fanout, get_blink_fanout, set_blink_fanout, usize, "b-link node fanout, minimum of 2"),
-    (page_consolidation_threshold, get_page_consolidation_threshold, set_page_consolidation_threshold, usize, "page consolidation threshold"),
-    (temporary, get_temporary, set_temporary, bool, "if this database should be removed after the ConfigBuilder is dropped"),
-    (read_only, get_read_only, set_read_only, bool, "whether to run in read-only mode"),
-    (cache_bits, get_cache_bits, set_cache_bits, usize, "log base 2 of the number of cache shards"),
-    (cache_capacity, get_cache_capacity, set_cache_capacity, usize, "maximum size for the system page cache"),
-    (use_os_cache, get_use_os_cache, set_use_os_cache, bool, "whether to use the OS page cache"),
-    (use_compression, get_use_compression, set_use_compression, bool, "whether to use zstd compression"),
-    (zstd_compression_factor, get_zstd_compression_factor, set_zstd_compression_factor, i32, "the compression factor to use with zstd compression"),
-    (flush_every_ms, get_flush_every_ms, set_flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
-    (snapshot_after_ops, get_snapshot_after_ops, set_snapshot_after_ops, usize, "number of operations between page table snapshots"),
-    (cache_fixup_threshold, get_cache_fixup_threshold, set_cache_fixup_threshold, usize, "the maximum length of a cached page fragment chain"),
-    (segment_cleanup_threshold, get_segment_cleanup_threshold, set_segment_cleanup_threshold, f64, "the proportion of remaining valid pages in the segment"),
-    (min_free_segments, get_min_free_segments, set_min_free_segments, usize, "the minimum number of free segments to have on-deck before a compaction occurs"),
-    (zero_copy_storage, get_zero_copy_storage, set_zero_copy_storage, bool, "disabling of the log segment copy cleaner"),
-    (segment_mode, get_segment_mode, set_segment_mode, SegmentMode, "the file segment selection mode"),
-    (snapshot_path, get_snapshot_path, set_snapshot_path, Option<OsString>, "snapshot file location")
-);
 
 impl ConfigBuilder {
     /// Returns a default `ConfigBuilder`
@@ -193,6 +190,29 @@ impl ConfigBuilder {
             refs: Arc::new(AtomicUsize::new(0)),
         }
     }
+
+    builder!(
+        (io_bufs, get_io_bufs, set_io_bufs, usize, "number of io buffers"),
+        (io_buf_size, get_io_buf_size, set_io_buf_size, usize, "size of each io flush buffer. MUST be multiple of 512!"),
+        (min_items_per_segment, get_min_items_per_segment, set_min_items_per_segment, usize, "minimum data chunks/pages in a segment."),
+        (blink_fanout, get_blink_fanout, set_blink_fanout, usize, "b-link node fanout, minimum of 2"),
+        (page_consolidation_threshold, get_page_consolidation_threshold, set_page_consolidation_threshold, usize, "page consolidation threshold"),
+        (temporary, get_temporary, set_temporary, bool, "if this database should be removed after the ConfigBuilder is dropped"),
+        (read_only, get_read_only, set_read_only, bool, "whether to run in read-only mode"),
+        (cache_bits, get_cache_bits, set_cache_bits, usize, "log base 2 of the number of cache shards"),
+        (cache_capacity, get_cache_capacity, set_cache_capacity, usize, "maximum size for the system page cache"),
+        (use_os_cache, get_use_os_cache, set_use_os_cache, bool, "whether to use the OS page cache"),
+        (use_compression, get_use_compression, set_use_compression, bool, "whether to use zstd compression"),
+        (zstd_compression_factor, get_zstd_compression_factor, set_zstd_compression_factor, i32, "the compression factor to use with zstd compression"),
+        (flush_every_ms, get_flush_every_ms, set_flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
+        (snapshot_after_ops, get_snapshot_after_ops, set_snapshot_after_ops, usize, "number of operations between page table snapshots"),
+        (cache_fixup_threshold, get_cache_fixup_threshold, set_cache_fixup_threshold, usize, "the maximum length of a cached page fragment chain"),
+        (segment_cleanup_threshold, get_segment_cleanup_threshold, set_segment_cleanup_threshold, f64, "the proportion of remaining valid pages in the segment"),
+        (min_free_segments, get_min_free_segments, set_min_free_segments, usize, "the minimum number of free segments to have on-deck before a compaction occurs"),
+        (zero_copy_storage, get_zero_copy_storage, set_zero_copy_storage, bool, "disabling of the log segment copy cleaner"),
+        (segment_mode, get_segment_mode, set_segment_mode, SegmentMode, "the file segment selection mode"),
+        (snapshot_path, get_snapshot_path, set_snapshot_path, Option<OsString>, "snapshot file location")
+    );
 }
 
 /// A finalized `ConfigBuilder` that can be use multiple times
@@ -231,7 +251,7 @@ impl Drop for Config {
             }
         }
 
-        if !self.get_temporary() {
+        if !self.temporary {
             return;
         }
 
@@ -255,10 +275,11 @@ impl Drop for Config {
 }
 
 impl Config {
-    /// Retrieve a thread-local file handle to the
-    /// configured underlying storage,
-    /// or create a new one if this is the first time the
-    /// thread is accessing it.
+    // Retrieve a thread-local file handle to the
+    // configured underlying storage,
+    // or create a new one if this is the first time the
+    // thread is accessing it.
+    #[doc(hidden)]
     pub fn file(&self) -> CacheResult<Arc<fs::File>, ()> {
         if self.file.load(Ordering::Relaxed).is_null() {
             let _lock = self.build_locker.lock().unwrap();
@@ -268,6 +289,68 @@ impl Config {
         }
 
         Ok(unsafe { (*self.file.load(Ordering::Relaxed)).clone() })
+    }
+
+    // Get the path of the database
+    #[doc(hidden)]
+    pub fn get_path(&self) -> OsString {
+        if self.inner.temporary {
+            self.inner.tmp_path.clone()
+        } else {
+            self.inner.path.clone()
+        }
+    }
+
+    // returns the current snapshot file prefix
+    #[doc(hidden)]
+    pub fn snapshot_prefix(&self) -> OsString {
+        let snapshot_path = self.snapshot_path.clone();
+        let path = self.get_path().as_os_str().to_os_string();
+
+        snapshot_path
+            .map(|sp| sp.as_os_str().to_os_string())
+            .unwrap_or(path)
+    }
+
+    // returns the snapshot file paths for this system
+    #[doc(hidden)]
+    pub fn get_snapshot_files(&self) -> std::io::Result<Vec<PathBuf>> {
+        let mut prefix = self.snapshot_prefix();
+
+        prefix.push(".snap.");
+
+        let abs_prefix: OsString = if Path::new(&prefix).is_absolute() {
+            prefix
+        } else {
+            let mut abs_path = std::env::current_dir()?;
+            abs_path.push(prefix.clone());
+            abs_path.as_os_str().to_os_string()
+        };
+
+        let filter = |dir_entry: std::io::Result<std::fs::DirEntry>| {
+            if let Ok(de) = dir_entry {
+                let path_buf = de.path();
+                let path = path_buf.as_path();
+                let path_str = &*path.to_string_lossy();
+                if path_str.starts_with(&*abs_prefix.to_string_lossy()) &&
+                    !path_str.ends_with(".in___motion")
+                {
+                    Some(path.to_path_buf())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
+        let snap_dir = Path::new(&abs_prefix).parent().unwrap();
+
+        if !snap_dir.exists() {
+            std::fs::create_dir_all(snap_dir)?;
+        }
+
+        Ok(snap_dir.read_dir()?.filter_map(filter).collect())
     }
 
     fn initialize(&self) -> CacheResult<(), ()> {
@@ -433,65 +516,6 @@ impl Config {
         path
     }
 
-    /// Get the path of the database
-    pub fn get_path(&self) -> OsString {
-        if self.inner.temporary {
-            self.inner.tmp_path.clone()
-        } else {
-            self.inner.path.clone()
-        }
-    }
-
-    /// returns the current snapshot file prefix
-    pub fn snapshot_prefix(&self) -> OsString {
-        let snapshot_path = self.get_snapshot_path();
-        let path = self.get_path().as_os_str().to_os_string();
-
-        snapshot_path
-            .map(|sp| sp.as_os_str().to_os_string())
-            .unwrap_or(path)
-    }
-
-    /// returns the snapshot file paths for this system
-    pub fn get_snapshot_files(&self) -> std::io::Result<Vec<PathBuf>> {
-        let mut prefix = self.snapshot_prefix();
-
-        prefix.push(".snap.");
-
-        let abs_prefix: OsString = if Path::new(&prefix).is_absolute() {
-            prefix
-        } else {
-            let mut abs_path = std::env::current_dir()?;
-            abs_path.push(prefix.clone());
-            abs_path.as_os_str().to_os_string()
-        };
-
-        let filter = |dir_entry: std::io::Result<std::fs::DirEntry>| {
-            if let Ok(de) = dir_entry {
-                let path_buf = de.path();
-                let path = path_buf.as_path();
-                let path_str = &*path.to_string_lossy();
-                if path_str.starts_with(&*abs_prefix.to_string_lossy()) &&
-                    !path_str.ends_with(".in___motion")
-                {
-                    Some(path.to_path_buf())
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        };
-
-        let snap_dir = Path::new(&abs_prefix).parent().unwrap();
-
-        if !snap_dir.exists() {
-            std::fs::create_dir_all(snap_dir)?;
-        }
-
-        Ok(snap_dir.read_dir()?.filter_map(filter).collect())
-    }
-
     #[doc(hidden)]
     pub fn verify_snapshot<PM, P, R>(&self) -> CacheResult<(), ()>
         where PM: Materializer<Recovery = R, PageFrag = P>,
@@ -522,8 +546,8 @@ impl Config {
             for (lsn, lid) in v.iter() {
                 f.read_message(
                     lid,
-                    self.get_io_buf_size(),
-                    self.get_use_compression()
+                    self.io_buf_size,
+                    self.use_compression
                 ).unwrap()
                 .expect(&*format!("could not read log data for pid {} at lsn {} lid {}", k, lsn, lid));
             }
@@ -537,8 +561,8 @@ impl Config {
             for (lsn, lid) in v.iter() {
                 f.read_message(
                     lid,
-                    self.get_io_buf_size(),
-                    self.get_use_compression()
+                    self.io_buf_size,
+                    self.use_compression
                 ).unwrap()
                 .expect(&*format!("could not read log data for pid {} at lsn {} lid {}", k, lsn, lid));
             }
