@@ -1,5 +1,7 @@
 //! `sled` is a flash-sympathetic persistent lock-free B+ tree.
 //!
+//! # Examples
+//!
 //! ```
 //! let config = sled::ConfigBuilder::new().temporary(true).build();
 //!
