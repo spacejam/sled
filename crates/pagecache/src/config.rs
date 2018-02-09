@@ -1,8 +1,8 @@
 use std::fmt::Debug;
 use std::fs;
+use std::ops::Deref;
 use std::ffi::{OsStr, OsString};
 use std::io::{Read, Seek, Write};
-use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
@@ -14,6 +14,13 @@ use bincode::{Infinite, deserialize, serialize};
 
 use super::*;
 use io::LogReader;
+
+impl Deref for Config {
+    type Target = ConfigBuilder;
+    fn deref(&self) -> &Self::Target {
+        &*self.inner
+    }
+}
 
 /// Top-level configuration for the system.
 ///
@@ -36,28 +43,50 @@ use io::LogReader;
 /// ```
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct ConfigBuilder {
-    io_bufs: usize,
-    io_buf_size: usize,
-    min_items_per_segment: usize,
-    blink_fanout: usize,
-    page_consolidation_threshold: usize,
-    path: OsString,
-    cache_bits: usize,
-    cache_capacity: usize,
-    use_os_cache: bool,
-    use_compression: bool,
-    zstd_compression_factor: i32,
-    flush_every_ms: Option<u64>,
-    snapshot_after_ops: usize,
-    snapshot_path: Option<OsString>,
-    cache_fixup_threshold: usize,
-    segment_cleanup_threshold: f64,
-    min_free_segments: usize,
-    zero_copy_storage: bool,
-    tmp_path: OsString,
-    temporary: bool,
-    read_only: bool,
-    pub(super) segment_mode: SegmentMode,
+    #[doc(hidden)]
+    pub blink_fanout: usize,
+    #[doc(hidden)]
+    pub cache_bits: usize,
+    #[doc(hidden)]
+    pub cache_capacity: usize,
+    #[doc(hidden)]
+    pub cache_fixup_threshold: usize,
+    #[doc(hidden)]
+    pub flush_every_ms: Option<u64>,
+    #[doc(hidden)]
+    pub io_bufs: usize,
+    #[doc(hidden)]
+    pub io_buf_size: usize,
+    #[doc(hidden)]
+    pub min_free_segments: usize,
+    #[doc(hidden)]
+    pub min_items_per_segment: usize,
+    #[doc(hidden)]
+    pub page_consolidation_threshold: usize,
+    #[doc(hidden)]
+    pub path: OsString,
+    #[doc(hidden)]
+    pub read_only: bool,
+    #[doc(hidden)]
+    pub segment_cleanup_threshold: f64,
+    #[doc(hidden)]
+    pub segment_mode: SegmentMode,
+    #[doc(hidden)]
+    pub snapshot_after_ops: usize,
+    #[doc(hidden)]
+    pub snapshot_path: Option<OsString>,
+    #[doc(hidden)]
+    pub temporary: bool,
+    #[doc(hidden)]
+    pub tmp_path: OsString,
+    #[doc(hidden)]
+    pub use_compression: bool,
+    #[doc(hidden)]
+    pub use_os_cache: bool,
+    #[doc(hidden)]
+    pub zero_copy_storage: bool,
+    #[doc(hidden)]
+    pub zstd_compression_factor: i32,
 }
 
 unsafe impl Send for ConfigBuilder {}
@@ -112,19 +141,11 @@ macro_rules! supported {
 macro_rules! builder {
     ($(($name:ident, $get:ident, $set:ident, $t:ty, $desc:expr)),*) => {
         $(
-            #[doc="Get "]
-            #[doc=$desc]
-            pub fn $get(&self) -> $t {
-                self.$name.clone()
-            }
-
-            #[doc="Set "]
             #[doc=$desc]
             pub fn $set(&mut self, to: $t) {
                 self.$name = to;
             }
 
-            #[doc="Builder, set "]
             #[doc=$desc]
             pub fn $name(mut self, to: $t) -> ConfigBuilder {
                 self.$name = to;
@@ -135,29 +156,6 @@ macro_rules! builder {
 }
 
 impl ConfigBuilder {
-    builder!(
-        (io_bufs, get_io_bufs, set_io_bufs, usize, "number of io buffers"),
-        (io_buf_size, get_io_buf_size, set_io_buf_size, usize, "size of each io flush buffer. MUST be multiple of 512!"),
-        (min_items_per_segment, get_min_items_per_segment, set_min_items_per_segment, usize, "minimum data chunks/pages in a segment."),
-        (blink_fanout, get_blink_fanout, set_blink_fanout, usize, "b-link node fanout, minimum of 2"),
-        (page_consolidation_threshold, get_page_consolidation_threshold, set_page_consolidation_threshold, usize, "page consolidation threshold"),
-        (temporary, get_temporary, set_temporary, bool, "if this database should be removed after the ConfigBuilder is dropped"),
-        (read_only, get_read_only, set_read_only, bool, "whether to run in read-only mode"),
-        (cache_bits, get_cache_bits, set_cache_bits, usize, "log base 2 of the number of cache shards"),
-        (cache_capacity, get_cache_capacity, set_cache_capacity, usize, "maximum size for the system page cache"),
-        (use_os_cache, get_use_os_cache, set_use_os_cache, bool, "whether to use the OS page cache"),
-        (use_compression, get_use_compression, set_use_compression, bool, "whether to use zstd compression"),
-        (zstd_compression_factor, get_zstd_compression_factor, set_zstd_compression_factor, i32, "the compression factor to use with zstd compression"),
-        (flush_every_ms, get_flush_every_ms, set_flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
-        (snapshot_after_ops, get_snapshot_after_ops, set_snapshot_after_ops, usize, "number of operations between page table snapshots"),
-        (cache_fixup_threshold, get_cache_fixup_threshold, set_cache_fixup_threshold, usize, "the maximum length of a cached page fragment chain"),
-        (segment_cleanup_threshold, get_segment_cleanup_threshold, set_segment_cleanup_threshold, f64, "the proportion of remaining valid pages in the segment"),
-        (min_free_segments, get_min_free_segments, set_min_free_segments, usize, "the minimum number of free segments to have on-deck before a compaction occurs"),
-        (zero_copy_storage, get_zero_copy_storage, set_zero_copy_storage, bool, "disabling of the log segment copy cleaner"),
-        (segment_mode, get_segment_mode, set_segment_mode, SegmentMode, "the file segment selection mode"),
-        (snapshot_path, get_snapshot_path, set_snapshot_path, Option<OsString>, "snapshot file location")
-    );
-
     /// Returns a default `ConfigBuilder`
     pub fn new() -> ConfigBuilder {
         Self::default()
@@ -180,18 +178,131 @@ impl ConfigBuilder {
         self.path = os_str_ref.to_os_string();
     }
 
-    /// Get the path of the database
-    pub fn get_path(&self) -> OsString {
-        if self.temporary {
-            self.tmp_path.clone()
-        } else {
-            self.path.clone()
+    /// Finalize the configuration.
+    pub fn build(self) -> Config {
+        // seal config in a Config
+        Config {
+            inner: Arc::new(self),
+            file: Arc::new(AtomicPtr::default()),
+            build_locker: Arc::new(Mutex::new(())),
+            refs: Arc::new(AtomicUsize::new(0)),
         }
     }
 
-    /// returns the current snapshot file prefix
+    builder!(
+        (io_bufs, get_io_bufs, set_io_bufs, usize, "number of io buffers"),
+        (io_buf_size, get_io_buf_size, set_io_buf_size, usize, "size of each io flush buffer. MUST be multiple of 512!"),
+        (min_items_per_segment, get_min_items_per_segment, set_min_items_per_segment, usize, "minimum data chunks/pages in a segment."),
+        (blink_fanout, get_blink_fanout, set_blink_fanout, usize, "b-link node fanout, minimum of 2"),
+        (page_consolidation_threshold, get_page_consolidation_threshold, set_page_consolidation_threshold, usize, "page consolidation threshold"),
+        (temporary, get_temporary, set_temporary, bool, "if this database should be removed after the ConfigBuilder is dropped"),
+        (read_only, get_read_only, set_read_only, bool, "whether to run in read-only mode"),
+        (cache_bits, get_cache_bits, set_cache_bits, usize, "log base 2 of the number of cache shards"),
+        (cache_capacity, get_cache_capacity, set_cache_capacity, usize, "maximum size for the system page cache"),
+        (use_os_cache, get_use_os_cache, set_use_os_cache, bool, "whether to use the OS page cache"),
+        (use_compression, get_use_compression, set_use_compression, bool, "whether to use zstd compression"),
+        (zstd_compression_factor, get_zstd_compression_factor, set_zstd_compression_factor, i32, "the compression factor to use with zstd compression"),
+        (flush_every_ms, get_flush_every_ms, set_flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
+        (snapshot_after_ops, get_snapshot_after_ops, set_snapshot_after_ops, usize, "number of operations between page table snapshots"),
+        (cache_fixup_threshold, get_cache_fixup_threshold, set_cache_fixup_threshold, usize, "the maximum length of a cached page fragment chain"),
+        (segment_cleanup_threshold, get_segment_cleanup_threshold, set_segment_cleanup_threshold, f64, "the proportion of remaining valid pages in the segment"),
+        (min_free_segments, get_min_free_segments, set_min_free_segments, usize, "the minimum number of free segments to have on-deck before a compaction occurs"),
+        (zero_copy_storage, get_zero_copy_storage, set_zero_copy_storage, bool, "disabling of the log segment copy cleaner"),
+        (segment_mode, get_segment_mode, set_segment_mode, SegmentMode, "the file segment selection mode"),
+        (snapshot_path, get_snapshot_path, set_snapshot_path, Option<OsString>, "snapshot file location")
+    );
+}
+
+/// A finalized `ConfigBuilder` that can be use multiple times
+/// to open a `Tree` or `Log`.
+#[derive(Debug)]
+pub struct Config {
+    inner: Arc<ConfigBuilder>,
+    file: Arc<AtomicPtr<Arc<fs::File>>>,
+    build_locker: Arc<Mutex<()>>,
+    refs: Arc<AtomicUsize>,
+}
+
+unsafe impl Send for Config {}
+unsafe impl Sync for Config {}
+
+impl Clone for Config {
+    fn clone(&self) -> Config {
+        self.refs.fetch_add(1, Ordering::Relaxed);
+        Config {
+            inner: self.inner.clone(),
+            file: self.file.clone(),
+            build_locker: self.build_locker.clone(),
+            refs: self.refs.clone(),
+        }
+    }
+}
+
+impl Drop for Config {
+    fn drop(&mut self) {
+        if self.refs.fetch_sub(1, Ordering::Relaxed) == 0 {
+            let f_ptr: *mut Arc<fs::File> =
+                self.file.swap(std::ptr::null_mut(), Ordering::Relaxed);
+            if !f_ptr.is_null() {
+                let f: Box<Arc<fs::File>> = unsafe { Box::from_raw(f_ptr) };
+                drop(f);
+            }
+        }
+
+        if !self.temporary {
+            return;
+        }
+
+        // Our files are temporary, so nuke them.
+        warn!("removing ephemeral storage file {}", self.inner.tmp_path.to_string_lossy());
+
+        let db_path = self.db_path();
+        let conf_path = self.conf_path();
+
+        let _res = fs::remove_file(db_path);
+        let _res = fs::remove_file(conf_path);
+
+        let candidates = self.get_snapshot_files().unwrap();
+        for path in candidates {
+            warn!("removing old snapshot file {}", path.to_string_lossy());
+            if let Err(_e) = std::fs::remove_file(path) {
+                error!("failed to remove old snapshot file, maybe snapshot race? {}", _e);
+            }
+        }
+    }
+}
+
+impl Config {
+    // Retrieve a thread-local file handle to the
+    // configured underlying storage,
+    // or create a new one if this is the first time the
+    // thread is accessing it.
+    #[doc(hidden)]
+    pub fn file(&self) -> CacheResult<Arc<fs::File>, ()> {
+        if self.file.load(Ordering::Relaxed).is_null() {
+            let _lock = self.build_locker.lock().unwrap();
+            if self.file.load(Ordering::Relaxed).is_null() {
+                self.initialize()?;
+            }
+        }
+
+        Ok(unsafe { (*self.file.load(Ordering::Relaxed)).clone() })
+    }
+
+    // Get the path of the database
+    #[doc(hidden)]
+    pub fn get_path(&self) -> OsString {
+        if self.inner.temporary {
+            self.inner.tmp_path.clone()
+        } else {
+            self.inner.path.clone()
+        }
+    }
+
+    // returns the current snapshot file prefix
+    #[doc(hidden)]
     pub fn snapshot_prefix(&self) -> OsString {
-        let snapshot_path = self.get_snapshot_path();
+        let snapshot_path = self.snapshot_path.clone();
         let path = self.get_path().as_os_str().to_os_string();
 
         snapshot_path
@@ -199,7 +310,8 @@ impl ConfigBuilder {
             .unwrap_or(path)
     }
 
-    /// returns the snapshot file paths for this system
+    // returns the snapshot file paths for this system
+    #[doc(hidden)]
     pub fn get_snapshot_files(&self) -> std::io::Result<Vec<PathBuf>> {
         let mut prefix = self.snapshot_prefix();
 
@@ -239,36 +351,79 @@ impl ConfigBuilder {
         Ok(snap_dir.read_dir()?.filter_map(filter).collect())
     }
 
-    /// Finalize the configuration.
-    pub fn build(self) -> Config {
-        // seal config in a Config
-        Config {
-            inner: Arc::new(self),
-            file: Arc::new(AtomicPtr::default()),
-            build_locker: Arc::new(Mutex::new(())),
-            refs: Arc::new(AtomicUsize::new(0)),
+    fn initialize(&self) -> CacheResult<(), ()> {
+        // only validate, setup directory, and open file once
+        self.validate()?;
+
+        let path = self.db_path();
+
+        // panic if we can't parse the path
+        let dir = match Path::new(&path).parent() {
+            None => {
+                return Err(Error::Unsupported(
+                    format!("could not determine parent directory of {:?}", path),
+                ));
+            }
+            Some(dir) => dir,
+        };
+
+        // create data directory if it doesn't exist yet
+        if dir != Path::new("") {
+            if dir.is_file() {
+                return Err(Error::Unsupported(
+                    format!("provided parent directory is a file, \
+                                not a directory: {:?}",
+                        dir),
+                ));
+            }
+
+            if !dir.exists() {
+                let res: std::io::Result<()> = std::fs::create_dir_all(dir);
+                res.map_err(|e: std::io::Error| {
+                    let ret: Error<()> = e.into();
+                    ret
+                })?;
+            }
         }
+
+        self.verify_conf_changes_ok()?;
+
+        // open the data file
+        let mut options = fs::OpenOptions::new();
+        options.create(true);
+        options.read(true);
+        options.write(true);
+        match options.open(&path) {
+            Ok(file) => {
+                let file_ptr = Box::into_raw(Box::new(Arc::new(file)));
+                self.file.store(file_ptr, Ordering::SeqCst);
+            }
+            Err(e) => {
+                return Err(e.into());
+            }
+        }
+        Ok(())
     }
 
     // panics if conf options are outside of advised range
     fn validate(&self) -> CacheResult<(), ()> {
-        supported!(self.io_bufs <= 32, "too many configured io_bufs");
-        supported!(self.io_buf_size >= 1000, "io_buf_size too small");
-        supported!(self.io_buf_size <= 1 << 24, "io_buf_size should be <= 16mb");
-        supported!(self.min_items_per_segment >= 4, "min_items_per_segment must be >= 4");
-        supported!(self.min_items_per_segment < 128, "min_items_per_segment must be < 128");
-        supported!(self.blink_fanout >= 2, "tree nodes must have at least 2 children");
-        supported!(self.blink_fanout < 1024, "tree nodes should not have so many children");
-        supported!(self.page_consolidation_threshold >= 1, "must consolidate pages after a non-zero number of updates");
-        supported!(self.page_consolidation_threshold < 1 << 20, "must consolidate pages after fewer than 1 million updates");
-        supported!(self.cache_bits <= 20, "# LRU shards = 2^cache_bits. set this to 20 or less.");
-        supported!(self.min_free_segments <= 32, "min_free_segments need not be higher than the number IO buffers (io_bufs)");
-        supported!(self.min_free_segments >= 1, "min_free_segments must be nonzero or the database will never reclaim storage");
-        supported!(self.cache_fixup_threshold >= 1, "cache_fixup_threshold must be nonzero.");
-        supported!(self.cache_fixup_threshold < 1 << 20, "cache_fixup_threshold must be fewer than 1 million updates.");
-        supported!(self.segment_cleanup_threshold >= 0.01, "segment_cleanup_threshold must be >= 1%");
-        supported!(self.zstd_compression_factor >= 1, "compression factor must be >= 0");
-        supported!(self.zstd_compression_factor <= 22, "compression factor must be <= 22");
+        supported!(self.inner.io_bufs <= 32, "too many configured io_bufs");
+        supported!(self.inner.io_buf_size >= 1000, "io_buf_size too small");
+        supported!(self.inner.io_buf_size <= 1 << 24, "io_buf_size should be <= 16mb");
+        supported!(self.inner.min_items_per_segment >= 4, "min_items_per_segment must be >= 4");
+        supported!(self.inner.min_items_per_segment < 128, "min_items_per_segment must be < 128");
+        supported!(self.inner.blink_fanout >= 2, "tree nodes must have at least 2 children");
+        supported!(self.inner.blink_fanout < 1024, "tree nodes should not have so many children");
+        supported!(self.inner.page_consolidation_threshold >= 1, "must consolidate pages after a non-zero number of updates");
+        supported!(self.inner.page_consolidation_threshold < 1 << 20, "must consolidate pages after fewer than 1 million updates");
+        supported!(self.inner.cache_bits <= 20, "# LRU shards = 2^cache_bits. set this to 20 or less.");
+        supported!(self.inner.min_free_segments <= 32, "min_free_segments need not be higher than the number IO buffers (io_bufs)");
+        supported!(self.inner.min_free_segments >= 1, "min_free_segments must be nonzero or the database will never reclaim storage");
+        supported!(self.inner.cache_fixup_threshold >= 1, "cache_fixup_threshold must be nonzero.");
+        supported!(self.inner.cache_fixup_threshold < 1 << 20, "cache_fixup_threshold must be fewer than 1 million updates.");
+        supported!(self.inner.segment_cleanup_threshold >= 0.01, "segment_cleanup_threshold must be >= 1%");
+        supported!(self.inner.zstd_compression_factor >= 1, "compression factor must be >= 0");
+        supported!(self.inner.zstd_compression_factor <= 22, "compression factor must be <= 22");
         Ok(())
     }
 
@@ -276,8 +431,8 @@ impl ConfigBuilder {
         match self.read_config() {
             Ok(Some(mut old)) => {
                 let old_tmp = old.tmp_path;
-                old.tmp_path = self.tmp_path.clone();
-                supported!(self == &old, "changing the configuration \
+                old.tmp_path = self.inner.tmp_path.clone();
+                supported!(&*self.inner == &old, "changing the configuration \
                        between usages is currently unsupported");
                 // need to keep the old path so that when old gets
                 // dropped we don't remove our tmp_path (but it
@@ -293,7 +448,7 @@ impl ConfigBuilder {
     }
 
     fn write_config(&self) -> std::io::Result<()> {
-        let bytes = serialize(&self, Infinite).unwrap();
+        let bytes = serialize(&*self.inner, Infinite).unwrap();
         let crc64: [u8; 8] = unsafe { std::mem::transmute(crc64(&*bytes)) };
 
         let path = self.conf_path();
@@ -358,144 +513,6 @@ impl ConfigBuilder {
         path.push(".conf");
         path
     }
-}
-
-/// A finalized `ConfigBuilder` that can be use multiple times
-/// to open a `Tree` or `Log`.
-#[derive(Debug)]
-pub struct Config {
-    inner: Arc<ConfigBuilder>,
-    file: Arc<AtomicPtr<Arc<fs::File>>>,
-    build_locker: Arc<Mutex<()>>,
-    refs: Arc<AtomicUsize>,
-}
-
-unsafe impl Send for Config {}
-unsafe impl Sync for Config {}
-
-impl Deref for Config {
-    type Target = ConfigBuilder;
-
-    fn deref(&self) -> &Self::Target {
-        &*self.inner
-    }
-}
-
-impl Clone for Config {
-    fn clone(&self) -> Config {
-        self.refs.fetch_add(1, Ordering::Relaxed);
-        Config {
-            inner: self.inner.clone(),
-            file: self.file.clone(),
-            build_locker: self.build_locker.clone(),
-            refs: self.refs.clone(),
-        }
-    }
-}
-
-impl Drop for Config {
-    fn drop(&mut self) {
-        if self.refs.fetch_sub(1, Ordering::Relaxed) == 0 {
-            let f_ptr: *mut Arc<fs::File> =
-                self.file.swap(std::ptr::null_mut(), Ordering::Relaxed);
-            if !f_ptr.is_null() {
-                let f: Box<Arc<fs::File>> = unsafe { Box::from_raw(f_ptr) };
-                drop(f);
-            }
-        }
-
-        if !self.get_temporary() {
-            return;
-        }
-
-        // Our files are temporary, so nuke them.
-        warn!("removing ephemeral storage file {}", self.tmp_path.to_string_lossy());
-
-        let db_path = self.db_path();
-        let conf_path = self.conf_path();
-
-        let _res = fs::remove_file(db_path);
-        let _res = fs::remove_file(conf_path);
-
-        let candidates = self.get_snapshot_files().unwrap();
-        for path in candidates {
-            warn!("removing old snapshot file {}", path.to_string_lossy());
-            if let Err(_e) = std::fs::remove_file(path) {
-                error!("failed to remove old snapshot file, maybe snapshot race? {}", _e);
-            }
-        }
-    }
-}
-
-impl Config {
-    /// Retrieve a thread-local file handle to the
-    /// configured underlying storage,
-    /// or create a new one if this is the first time the
-    /// thread is accessing it.
-    pub fn file(&self) -> CacheResult<Arc<fs::File>, ()> {
-        if self.file.load(Ordering::Relaxed).is_null() {
-            let _lock = self.build_locker.lock().unwrap();
-            if self.file.load(Ordering::Relaxed).is_null() {
-                self.initialize()?;
-            }
-        }
-
-        Ok(unsafe { (*self.file.load(Ordering::Relaxed)).clone() })
-    }
-
-    fn initialize(&self) -> CacheResult<(), ()> {
-        // only validate, setup directory, and open file once
-        self.validate()?;
-
-        let path = self.db_path();
-
-        // panic if we can't parse the path
-        let dir = match Path::new(&path).parent() {
-            None => {
-                return Err(Error::Unsupported(
-                    format!("could not determine parent directory of {:?}", path),
-                ));
-            }
-            Some(dir) => dir,
-        };
-
-        // create data directory if it doesn't exist yet
-        if dir != Path::new("") {
-            if dir.is_file() {
-                return Err(Error::Unsupported(
-                    format!("provided parent directory is a file, \
-                                not a directory: {:?}",
-                        dir),
-                ));
-            }
-
-            if !dir.exists() {
-                let res: std::io::Result<()> = std::fs::create_dir_all(dir);
-                res.map_err(|e: std::io::Error| {
-                    let ret: Error<()> = e.into();
-                    ret
-                })?;
-            }
-        }
-
-        self.verify_conf_changes_ok()?;
-
-        // open the data file
-        let mut options = fs::OpenOptions::new();
-        options.create(true);
-        options.read(true);
-        options.write(true);
-        match options.open(&path) {
-            Ok(file) => {
-                let file_ptr = Box::into_raw(Box::new(Arc::new(file)));
-                self.file.store(file_ptr, Ordering::SeqCst);
-            }
-            Err(e) => {
-                return Err(e.into());
-            }
-        }
-        Ok(())
-    }
 
     #[doc(hidden)]
     pub fn verify_snapshot<PM, P, R>(&self) -> CacheResult<(), ()>
@@ -527,8 +544,8 @@ impl Config {
             for (lsn, lid) in v.iter() {
                 f.read_message(
                     lid,
-                    self.get_io_buf_size(),
-                    self.get_use_compression()
+                    self.io_buf_size,
+                    self.use_compression
                 ).unwrap()
                 .expect(&*format!("could not read log data for pid {} at lsn {} lid {}", k, lsn, lid));
             }
@@ -542,8 +559,8 @@ impl Config {
             for (lsn, lid) in v.iter() {
                 f.read_message(
                     lid,
-                    self.get_io_buf_size(),
-                    self.get_use_compression()
+                    self.io_buf_size,
+                    self.use_compression
                 ).unwrap()
                 .expect(&*format!("could not read log data for pid {} at lsn {} lid {}", k, lsn, lid));
             }

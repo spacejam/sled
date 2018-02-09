@@ -226,7 +226,7 @@ pub(super) fn advance_snapshot<PM, P, R>(
 
     let materializer = PM::new(&snapshot.recovery);
 
-    let io_buf_size = config.get_io_buf_size();
+    let io_buf_size = config.io_buf_size;
 
     for (lsn, log_id, bytes) in iter {
         let segment_idx = log_id as SegmentID / io_buf_size;
@@ -334,7 +334,7 @@ fn read_snapshot<R>(config: &Config) -> std::io::Result<Option<Snapshot<R>>>
     }
 
     #[cfg(feature = "zstd")]
-    let bytes = if config.get_use_compression() {
+    let bytes = if config.use_compression {
         let len_expected: u64 =
             unsafe { std::mem::transmute(len_expected_bytes) };
         decompress(&*buf, len_expected as usize).unwrap()
@@ -358,8 +358,8 @@ pub fn write_snapshot<R>(
     let decompressed_len = raw_bytes.len();
 
     #[cfg(feature = "zstd")]
-    let bytes = if config.get_use_compression() {
-        compress(&*raw_bytes, config.get_zstd_compression_factor()).unwrap()
+    let bytes = if config.use_compression {
+        compress(&*raw_bytes, config.zstd_compression_factor).unwrap()
     } else {
         raw_bytes
     };

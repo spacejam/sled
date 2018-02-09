@@ -175,7 +175,7 @@ fn recover_tree() {
     drop(t);
 
     let t = sled::Tree::start(conf.clone()).unwrap();
-    for i in 0..conf.get_blink_fanout() << 1 {
+    for i in 0..conf.blink_fanout << 1 {
         let k = kv(i);
         assert_eq!(t.get(&*k), Ok(Some(k.clone())));
         t.del(&*k).unwrap();
@@ -183,7 +183,7 @@ fn recover_tree() {
     drop(t);
 
     let t = sled::Tree::start(conf.clone()).unwrap();
-    for i in 0..conf.get_blink_fanout() << 1 {
+    for i in 0..conf.blink_fanout << 1 {
         let k = kv(i);
         assert_eq!(t.get(&*k), Ok(None));
     }

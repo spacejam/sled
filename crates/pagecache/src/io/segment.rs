@@ -316,7 +316,7 @@ impl SegmentAccountant {
             ret.pause_rewriting();
         }
         if snapshot.last_lid > ret.tip {
-            let io_buf_size = ret.config.get_io_buf_size();
+            let io_buf_size = ret.config.io_buf_size;
             let last_idx = snapshot.last_lid / io_buf_size as LogID;
             let new_idx = last_idx + 1;
             let new_tip = new_idx * io_buf_size as LogID;
@@ -333,7 +333,7 @@ impl SegmentAccountant {
     /// Called from the `PageCache` recovery logic, this initializes the
     /// `SegmentAccountant` based on recovered segment information.
     fn initialize_from_snapshot<R>(&mut self, snapshot: Snapshot<R>) {
-        let io_buf_size = self.config.get_io_buf_size();
+        let io_buf_size = self.config.io_buf_size;
 
         // generate segments from snapshot lids
         let mut segments = vec![];
@@ -395,7 +395,7 @@ impl SegmentAccountant {
     fn initialize_from_segments(&mut self, mut segments: Vec<Segment>) {
         // populate ordering from segments.
         // use last segment as active even if it's full
-        let io_buf_size = self.config.get_io_buf_size();
+        let io_buf_size = self.config.io_buf_size;
 
         let highest_lsn = segments.iter().fold(0, |acc, segment| {
             std::cmp::max(acc, segment.lsn.unwrap_or(acc))
@@ -443,8 +443,8 @@ impl SegmentAccountant {
             self.ordering.insert(lsn, segment_start);
 
             // can we transition these segments?
-            let cleanup_threshold = self.config.get_segment_cleanup_threshold();
-            let min_items = self.config.get_min_items_per_segment();
+            let cleanup_threshold = self.config.segment_cleanup_threshold;
+            let min_items = self.config.min_items_per_segment;
 
             let segment_low_pct = segment.live_pct() <= cleanup_threshold;
 
@@ -553,7 +553,7 @@ impl SegmentAccountant {
             .filter(|&(lsn, _)| lsn <= snapshot_max_lsn)
             .collect();
 
-        let safety_buffer_len = self.config.get_io_bufs();
+        let safety_buffer_len = self.config.io_bufs;
         let mut safety_buffer: Vec<LogID> = self.ordering
             .iter()
             .rev()
@@ -619,9 +619,9 @@ impl SegmentAccountant {
                 // copy of a page from being overwritten. This prevents
                 // dangling references to segments that were rewritten after
                 // the `LogID` was read.
-                guard.defer(move || {
-                    free.lock().unwrap().push_back((lid, false));
-                });
+                guard.defer(
+                    move || { free.lock().unwrap().push_back((lid, false)); },
+                );
                 guard.flush();
             }
         }
@@ -653,17 +653,16 @@ impl SegmentAccountant {
         trace!("mark_replace pid {} at lid {} with lsn {}", pid, new_lid, lsn);
         self.pending_clean.remove(&pid);
 
-        let new_idx = new_lid as usize / self.config.get_io_buf_size();
+        let new_idx = new_lid as usize / self.config.io_buf_size;
 
         // make sure we're not actively trying to replace the destination
         let new_segment_start = new_idx as LogID *
-            self.config.get_io_buf_size() as LogID;
+            self.config.io_buf_size as LogID;
         self.to_clean.remove(&new_segment_start);
 
         for old_lid in old_lids {
             let old_idx = self.lid_to_idx(old_lid);
-            let segment_start = (old_idx * self.config.get_io_buf_size()) as
-                LogID;
+            let segment_start = (old_idx * self.config.io_buf_size) as LogID;
 
             if new_idx == old_idx {
                 // we probably haven't flushed this segment yet, so don't
@@ -687,8 +686,8 @@ impl SegmentAccountant {
             self.segments[old_idx].remove_pid(pid, lsn);
 
             // can we transition these segments?
-            let cleanup_threshold = self.config.get_segment_cleanup_threshold();
-            let min_items = self.config.get_min_items_per_segment();
+            let cleanup_threshold = self.config.segment_cleanup_threshold;
+            let min_items = self.config.min_items_per_segment;
 
             let segment_low_pct = self.segments[old_idx].live_pct() <=
                 cleanup_threshold;
@@ -725,7 +724,7 @@ impl SegmentAccountant {
         // try to maintain about twice the number of necessary
         // on-deck segments, to reduce the amount of log growth.
         if self.free.lock().unwrap().len() >=
-            self.config.get_min_free_segments() * 2
+            self.config.min_free_segments * 2
         {
             return None;
         }
@@ -763,8 +762,7 @@ impl SegmentAccountant {
         let idx = self.lid_to_idx(lid);
 
         // make sure we're not actively trying to replace the destination
-        let new_segment_start = idx as LogID *
-            self.config.get_io_buf_size() as LogID;
+        let new_segment_start = idx as LogID * self.config.io_buf_size as LogID;
 
         self.to_clean.remove(&new_segment_start);
 
@@ -776,8 +774,8 @@ impl SegmentAccountant {
             return;
         }
 
-        let segment_lsn = lsn / self.config.get_io_buf_size() as Lsn *
-            self.config.get_io_buf_size() as Lsn;
+        let segment_lsn = lsn / self.config.io_buf_size as Lsn *
+            self.config.io_buf_size as Lsn;
 
         segment.insert_pid(pid, segment_lsn);
     }
@@ -796,7 +794,7 @@ impl SegmentAccountant {
     fn bump_tip(&mut self) -> LogID {
         let lid = self.tip;
 
-        self.tip += self.config.get_io_buf_size() as LogID;
+        self.tip += self.config.io_buf_size as LogID;
 
         trace!("advancing file tip from {} to {}", lid, self.tip);
 
@@ -848,7 +846,7 @@ impl SegmentAccountant {
     /// out-of-order segments during recovery.
     pub fn next(&mut self, lsn: Lsn) -> CacheResult<(LogID, LogID), ()> {
         assert_eq!(
-            lsn % self.config.get_io_buf_size() as Lsn,
+            lsn % self.config.io_buf_size as Lsn,
             0,
             "unaligned Lsn provided to next!"
         );
@@ -885,7 +883,7 @@ impl SegmentAccountant {
 
                     // if we just returned the last segment
                     // in the file, shrink the file.
-                    let io_buf_size = self.config.get_io_buf_size() as LogID;
+                    let io_buf_size = self.config.io_buf_size as LogID;
                     if next + io_buf_size == self.tip {
                         self.truncate(next)?;
                     } else {
@@ -901,10 +899,10 @@ impl SegmentAccountant {
             lsn
         );
         let f = self.config.file()?;
-        f.pwrite_all(&*vec![0; self.config.get_io_buf_size()], lid)?;
+        f.pwrite_all(&*vec![0; self.config.io_buf_size], lid)?;
         f.sync_all()?;
 
-        let last_given = self.safety_buffer[self.config.get_io_bufs() - 1];
+        let last_given = self.safety_buffer[self.config.io_bufs - 1];
 
         // pin lsn to this segment
         let idx = self.lid_to_idx(lid);
@@ -930,8 +928,7 @@ impl SegmentAccountant {
         );
 
         if lid == 0 {
-            let all_zeroes = self.safety_buffer ==
-                vec![0; self.config.get_io_bufs()];
+            let all_zeroes = self.safety_buffer == vec![0; self.config.io_bufs];
             let no_zeroes = !self.safety_buffer.contains(&0);
             assert!(
                 all_zeroes || no_zeroes,
@@ -967,7 +964,7 @@ impl SegmentAccountant {
             iterating over segments"
         );
 
-        let segment_len = self.config.get_io_buf_size() as Lsn;
+        let segment_len = self.config.io_buf_size as Lsn;
         let normalized_lsn = lsn / segment_len * segment_len;
 
         Box::new(self.ordering.clone().into_iter().filter(move |&(l, _)| {
@@ -978,7 +975,7 @@ impl SegmentAccountant {
     // truncate the file to the desired length
     fn truncate(&mut self, at: LogID) -> CacheResult<(), ()> {
         assert_eq!(
-            at % self.config.get_io_buf_size() as LogID,
+            at % self.config.io_buf_size as LogID,
             0,
             "new length must be io-buf-len aligned"
         );
@@ -1013,7 +1010,7 @@ impl SegmentAccountant {
     }
 
     fn lid_to_idx(&mut self, lid: LogID) -> usize {
-        let idx = lid as usize / self.config.get_io_buf_size();
+        let idx = lid as usize / self.config.io_buf_size;
 
         // TODO never resize like this, make it a single
         // responsibility when the tip is bumped / truncated.
@@ -1043,7 +1040,7 @@ pub fn scan_segment_lsns(
 ) -> CacheResult<BTreeMap<Lsn, LogID>, ()> {
     let mut ordering = BTreeMap::new();
 
-    let segment_len = config.get_io_buf_size() as LogID;
+    let segment_len = config.io_buf_size as LogID;
     let mut cursor = 0;
 
     let f = config.file()?;
@@ -1083,7 +1080,7 @@ fn clean_tail_tears(
     config: &Config,
     f: &File,
 ) -> BTreeMap<Lsn, LogID> {
-    let safety_buffer = config.get_io_bufs();
+    let safety_buffer = config.io_bufs;
     let logical_tail: Vec<Lsn> = ordering
         .iter()
         .rev()
@@ -1091,7 +1088,7 @@ fn clean_tail_tears(
         .map(|(lsn, _lid)| *lsn)
         .collect();
 
-    let io_buf_size = config.get_io_buf_size();
+    let io_buf_size = config.io_buf_size;
 
     let mut tear_at = None;
 
@@ -1196,7 +1193,7 @@ pub fn raw_segment_iter_from(
     lsn: Lsn,
     config: &Config,
 ) -> CacheResult<LogIter, ()> {
-    let segment_len = config.get_io_buf_size() as Lsn;
+    let segment_len = config.io_buf_size as Lsn;
     let normalized_lsn = lsn / segment_len * segment_len;
 
     let ordering = scan_segment_lsns(0, &config)?;
@@ -1217,8 +1214,8 @@ pub fn raw_segment_iter_from(
         cur_lsn: SEG_HEADER_LEN as Lsn,
         segment_base: None,
         segment_iter: segment_iter,
-        segment_len: config.get_io_buf_size(),
-        use_compression: config.get_use_compression(),
+        segment_len: config.io_buf_size,
+        use_compression: config.use_compression,
         trailer: None,
     })
 }

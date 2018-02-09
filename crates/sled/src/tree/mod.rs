@@ -176,7 +176,7 @@ impl Tree {
         old: Option<Value>,
         new: Option<Value>,
     ) -> DbResult<(), Option<Value>> {
-        if self.config.get_read_only() {
+        if self.config.read_only {
             return Err(Error::CasFailed(None));
         }
         // we need to retry caps until old != cur, since just because
@@ -213,7 +213,7 @@ impl Tree {
 
     /// Set a key to a new value.
     pub fn set(&self, key: Key, value: Value) -> DbResult<(), ()> {
-        if self.config.get_read_only() {
+        if self.config.read_only {
             return Err(Error::Unsupported(
                 "the database is in read-only mode".to_owned(),
             ));
@@ -231,7 +231,8 @@ impl Tree {
             )
             {
                 last_node.apply(&frag);
-                let should_split = last_node.should_split(self.fanout());
+                let should_split =
+                    last_node.should_split(self.config.blink_fanout);
                 path.push((last_node.clone(), new_cas_key));
                 // success
                 if should_split {
@@ -255,7 +256,7 @@ impl Tree {
     /// assert_eq!(t.del(&*vec![1]), Ok(None));
     /// ```
     pub fn del(&self, key: &[u8]) -> DbResult<Option<Value>, ()> {
-        if self.config.get_read_only() {
+        if self.config.read_only {
             return Ok(None);
         }
         let guard = pin();
@@ -388,7 +389,7 @@ impl Tree {
         let mut root_and_key = all_page_views.remove(0);
 
         while let Some((node, cas_key)) = all_page_views.pop() {
-            if node.should_split(self.fanout()) {
+            if node.should_split(self.config.blink_fanout) {
                 // try to child split
                 if let Ok(parent_split) = self.child_split(
                     &node,
@@ -421,7 +422,7 @@ impl Tree {
 
         let (root_node, root_cas_key) = root_and_key;
 
-        if root_node.should_split(self.fanout()) {
+        if root_node.should_split(self.config.blink_fanout) {
             if let Ok(parent_split) = self.child_split(
                 &root_node,
                 root_cas_key,
@@ -561,10 +562,6 @@ impl Tree {
         });
 
         Ok((path, ret))
-    }
-
-    fn fanout(&self) -> usize {
-        self.config.get_blink_fanout()
     }
 
     #[doc(hidden)]
