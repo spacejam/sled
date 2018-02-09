@@ -141,13 +141,11 @@ macro_rules! supported {
 macro_rules! builder {
     ($(($name:ident, $get:ident, $set:ident, $t:ty, $desc:expr)),*) => {
         $(
-            #[doc="Set "]
             #[doc=$desc]
             pub fn $set(&mut self, to: $t) {
                 self.$name = to;
             }
 
-            #[doc="Builder, set "]
             #[doc=$desc]
             pub fn $name(mut self, to: $t) -> ConfigBuilder {
                 self.$name = to;
