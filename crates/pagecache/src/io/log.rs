@@ -57,7 +57,9 @@ unsafe impl Sync for Log {}
 
 impl periodic::Callback for Arc<IoBufs> {
     fn call(&self) {
-        self.flush().unwrap();
+        if let Err(e) = self.flush() {
+            error!("failed to flush from periodic flush thread: {}", e);
+        }
     }
 }
 

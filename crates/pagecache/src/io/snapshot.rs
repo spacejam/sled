@@ -351,7 +351,7 @@ fn read_snapshot<R>(config: &Config) -> std::io::Result<Option<Snapshot<R>>>
 pub fn write_snapshot<R>(
     config: &Config,
     snapshot: &Snapshot<R>,
-) -> std::io::Result<()>
+) -> CacheResult<(), ()>
     where R: Debug + Clone + Serialize + DeserializeOwned + Send
 {
     let raw_bytes = serialize(&snapshot, Infinite).unwrap();
@@ -386,14 +386,20 @@ pub fn write_snapshot<R>(
     )?;
 
     // write the snapshot bytes, followed by a crc64 checksum at the end
+    fail_point!("snap write", |_| Err(Error::FailPoint));
     f.write_all(&*bytes)?;
+    fail_point!("snap write len", |_| Err(Error::FailPoint));
     f.write_all(&len_bytes)?;
+    fail_point!("snap write crc", |_| Err(Error::FailPoint));
     f.write_all(&crc64)?;
     f.sync_all()?;
+    fail_point!("snap write post", |_| Err(Error::FailPoint));
 
     trace!("wrote snapshot to {}", path_1.to_string_lossy());
 
+    fail_point!("snap write mv", |_| Err(Error::FailPoint));
     std::fs::rename(path_1, &path_2)?;
+    fail_point!("snap write mv post", |_| Err(Error::FailPoint));
 
     trace!("renamed snapshot to {}", path_2.to_string_lossy());
 
@@ -403,6 +409,8 @@ pub fn write_snapshot<R>(
         let path_str = path.file_name().unwrap().to_str().unwrap();
         if !path_2.to_string_lossy().ends_with(&*path_str) {
             debug!("removing old snapshot file {:?}", path);
+
+            fail_point!("snap write rm old", |_| Err(Error::FailPoint));
 
             if let Err(_e) = std::fs::remove_file(&path) {
                 // TODO should this just be a try return?
