@@ -791,7 +791,9 @@ impl Drop for IoBufs {
             return;
         }
 
-        self.flush().unwrap();
+        if let Err(e) = self.flush() {
+            error!("failed to flush from IoBufs::drop: {}", e);
+        }
 
         if let Ok(f) = self.config.file() {
             f.sync_all().unwrap();
