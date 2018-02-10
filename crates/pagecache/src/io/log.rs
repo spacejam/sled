@@ -7,7 +7,7 @@ use super::*;
 pub const MSG_HEADER_LEN: usize = 15;
 
 #[doc(hidden)]
-pub const SEG_HEADER_LEN: usize = 18;
+pub const SEG_HEADER_LEN: usize = 10;
 
 #[doc(hidden)]
 pub const SEG_TRAILER_LEN: usize = 10;
@@ -216,7 +216,6 @@ pub(crate) struct MessageHeader {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) struct SegmentHeader {
     pub lsn: Lsn,
-    pub prev: LogID,
     pub ok: bool,
 }
 
@@ -358,17 +357,10 @@ impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
         let xor_lsn: Lsn = unsafe { std::mem::transmute(lsn_arr) };
         let lsn = xor_lsn ^ 0xFFFF_FFFF;
 
-        let prev_lid_buf = &buf[10..18];
-        let mut prev_lid_arr = [0u8; 8];
-        prev_lid_arr.copy_from_slice(&*prev_lid_buf);
-        let xor_prev_lid: LogID = unsafe { std::mem::transmute(prev_lid_arr) };
-        let prev_lid = xor_prev_lid ^ 0xFFFF_FFFF_FFFF_FFFF;
-
-        let crc16_tested = crc16_arr(&prev_lid_arr);
+        let crc16_tested = crc16_arr(&lsn_arr);
 
         SegmentHeader {
             lsn: lsn,
-            prev: prev_lid,
             ok: crc16_tested == crc16,
         }
     }
@@ -382,12 +374,7 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
         let lsn_arr: [u8; 8] = unsafe { std::mem::transmute(xor_lsn) };
         buf[2..10].copy_from_slice(&lsn_arr);
 
-        let xor_prev_lid = self.prev ^ 0xFFFF_FFFF_FFFF_FFFF;
-        let prev_lid_arr: [u8; 8] =
-            unsafe { std::mem::transmute(xor_prev_lid) };
-        buf[10..18].copy_from_slice(&prev_lid_arr);
-
-        let crc16 = crc16_arr(&prev_lid_arr);
+        let crc16 = crc16_arr(&lsn_arr);
 
         buf[0] = crc16[0] ^ 0xFF;
         buf[1] = crc16[1] ^ 0xFF;

@@ -117,11 +117,11 @@ impl IoBufs {
             // recovering at segment boundary
             assert_eq!(next_lid, next_lsn as LogID);
             let iobuf = &bufs[current_buf];
-            let (lid, last_given) = segment_accountant.next(next_lsn)?;
+            let lid = segment_accountant.next(next_lsn)?;
 
             iobuf.set_lid(lid);
             iobuf.set_capacity(io_buf_size - SEG_TRAILER_LEN);
-            iobuf.store_segment_header(0, next_lsn, last_given);
+            iobuf.store_segment_header(0, next_lsn);
 
             fail_point!("initial allocation", |_| Err(Error::FailPoint));
             file.pwrite_all(&*vec![0; config.io_buf_size], lid)?;
@@ -523,7 +523,7 @@ impl IoBufs {
         // open new slot
         let mut next_lsn = lsn;
 
-        let (next_offset, last_given) = if from_reserve || maxed {
+        let next_offset = if from_reserve || maxed {
             // roll lsn to the next offset
             let lsn_idx = lsn / io_buf_size as Lsn;
             next_lsn = (lsn_idx + 1) * io_buf_size as Lsn;
@@ -555,7 +555,7 @@ impl IoBufs {
             next_lsn += res_len as Lsn;
 
             let next_offset = lid + res_len as LogID;
-            (next_offset, 0)
+            next_offset
         };
 
         let next_idx = (idx + 1) % self.config.io_bufs;
@@ -581,7 +581,7 @@ impl IoBufs {
         // its entire lifecycle as soon as we do that.
         if from_reserve || maxed {
             next_iobuf.set_capacity(io_buf_size - SEG_TRAILER_LEN);
-            next_iobuf.store_segment_header(sealed, next_lsn, last_given);
+            next_iobuf.store_segment_header(sealed, next_lsn);
         } else {
             let new_cap = capacity - res_len;
             assert_ne!(new_cap, 0);
@@ -859,7 +859,7 @@ impl IoBuf {
     // We write a new segment header to the beginning of the buffer
     // for assistance during recovery. The caller is responsible
     // for ensuring that the IoBuf's capacity has been set properly.
-    fn store_segment_header(&self, last: Header, lsn: Lsn, prev: LogID) {
+    fn store_segment_header(&self, last: Header, lsn: Lsn) {
         debug!("storing lsn {} in beginning of buffer", lsn);
         assert!(self.get_capacity() >= SEG_HEADER_LEN + SEG_TRAILER_LEN);
 
@@ -867,7 +867,6 @@ impl IoBuf {
 
         let header = SegmentHeader {
             lsn: lsn,
-            prev: prev,
             ok: true,
         };
         let header_bytes: [u8; SEG_HEADER_LEN] = header.into();
