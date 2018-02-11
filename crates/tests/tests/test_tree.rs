@@ -218,38 +218,8 @@ impl Arbitrary for Op {
     }
 }
 
-#[derive(Debug, Clone)]
-struct OpVec {
-    ops: Vec<Op>,
-}
-
-impl Arbitrary for OpVec {
-    fn arbitrary<G: Gen>(g: &mut G) -> OpVec {
-        let mut ops = vec![];
-        for _ in 0..g.gen_range(1, 100) {
-            let op = Op::arbitrary(g);
-            ops.push(op);
-
-        }
-        OpVec {
-            ops: ops,
-        }
-    }
-
-    fn shrink(&self) -> Box<Iterator<Item = OpVec>> {
-        let mut smaller = vec![];
-        for i in 0..self.ops.len() {
-            let mut clone = self.clone();
-            clone.ops.remove(i);
-            smaller.push(clone);
-        }
-
-        Box::new(smaller.into_iter())
-    }
-}
-
 fn prop_tree_matches_btreemap(
-    ops: OpVec,
+    ops: Vec<Op>,
     blink_fanout: u8,
     snapshot_after: u8,
 ) -> bool {
@@ -266,7 +236,7 @@ fn prop_tree_matches_btreemap(
     let mut tree = sled::Tree::start(config.clone()).unwrap();
     let mut reference = BTreeMap::new();
 
-    for op in ops.ops.into_iter() {
+    for op in ops.into_iter() {
         match op {
             Set(k, v) => {
                 tree.set(vec![k], vec![v]).unwrap();
@@ -329,7 +299,7 @@ fn quickcheck_tree_matches_btreemap() {
         .gen(StdGen::new(rand::thread_rng(), 1))
         .tests(n_tests)
         .max_tests(10000)
-        .quickcheck(prop_tree_matches_btreemap as fn(OpVec, u8, u8) -> bool);
+        .quickcheck(prop_tree_matches_btreemap as fn(Vec<Op>, u8, u8) -> bool);
 }
 
 #[test]
@@ -345,9 +315,8 @@ fn tree_bug_01() {
     // the provided one, to deal with 0.
     use Op::*;
     prop_tree_matches_btreemap(
-        OpVec {
-            ops: vec![Set(32, 9), Set(195, 13), Restart, Set(164, 147)],
-        },
+        vec![Set(32, 9), Set(195, 13), Restart, Set(164, 147)],
+
         0,
         0,
     );
@@ -366,15 +335,8 @@ fn tree_bug_2() {
     // the new root set.
     use Op::*;
     prop_tree_matches_btreemap(
-        OpVec {
-            ops: vec![
-                Restart,
-                Set(215, 121),
-                Restart,
-                Set(216, 203),
-                Scan(210, 4),
-            ],
-        },
+        vec![Restart, Set(215, 121), Restart, Set(216, 203), Scan(210, 4)],
+
         0,
         0,
     );
@@ -387,19 +349,18 @@ fn tree_bug_3() {
     // log writing in the proper location.
     use Op::*;
     prop_tree_matches_btreemap(
-        OpVec {
-            ops: vec![
-                Set(113, 204),
-                Set(119, 205),
-                Set(166, 88),
-                Set(23, 44),
-                Restart,
-                Set(226, 192),
-                Set(189, 186),
-                Restart,
-                Scan(198, 11),
-            ],
-        },
+        vec![
+            Set(113, 204),
+            Set(119, 205),
+            Set(166, 88),
+            Set(23, 44),
+            Restart,
+            Set(226, 192),
+            Set(189, 186),
+            Restart,
+            Scan(198, 11),
+        ],
+
         0,
         0,
     );
@@ -414,19 +375,17 @@ fn tree_bug_4() {
     // after a restart.
     use Op::*;
     prop_tree_matches_btreemap(
-        OpVec {
-            ops: vec![
-                Set(158, 31),
-                Set(111, 134),
-                Set(230, 187),
-                Set(169, 58),
-                Set(131, 10),
-                Set(108, 246),
-                Set(127, 155),
-                Restart,
-                Set(59, 119),
-            ],
-        },
+        vec![
+            Set(158, 31),
+            Set(111, 134),
+            Set(230, 187),
+            Set(169, 58),
+            Set(131, 10),
+            Set(108, 246),
+            Set(127, 155),
+            Restart,
+            Set(59, 119),
+        ],
         0,
         0,
     );
@@ -438,18 +397,16 @@ fn tree_bug_5() {
     // tip.
     use Op::*;
     prop_tree_matches_btreemap(
-        OpVec {
-            ops: vec![
-                Set(231, 107),
-                Set(251, 42),
-                Set(80, 81),
-                Set(178, 130),
-                Set(150, 232),
-                Restart,
-                Set(98, 78),
-                Set(0, 45),
-            ],
-        },
+        vec![
+            Set(231, 107),
+            Set(251, 42),
+            Set(80, 81),
+            Set(178, 130),
+            Set(150, 232),
+            Restart,
+            Set(98, 78),
+            Set(0, 45),
+        ],
         0,
         0,
     );
@@ -462,18 +419,16 @@ fn tree_bug_6() {
     // crc that's there for catching torn writes with high probability, AND zero out buffers.
     use Op::*;
     prop_tree_matches_btreemap(
-        OpVec {
-            ops: vec![
-                Set(162, 8),
-                Set(59, 192),
-                Set(238, 83),
-                Set(151, 231),
-                Restart,
-                Set(30, 206),
-                Set(150, 146),
-                Set(18, 34),
-            ],
-        },
+        vec![
+            Set(162, 8),
+            Set(59, 192),
+            Set(238, 83),
+            Set(151, 231),
+            Restart,
+            Set(30, 206),
+            Set(150, 146),
+            Set(18, 34),
+        ],
         0,
         0,
     );
@@ -485,19 +440,17 @@ fn tree_bug_7() {
     // reuse a particular segment that wasn't actually empty yet.
     use Op::*;
     prop_tree_matches_btreemap(
-        OpVec {
-            ops: vec![
-                Set(135, 22),
-                Set(41, 36),
-                Set(101, 31),
-                Set(111, 35),
-                Restart,
-                Set(47, 36),
-                Set(79, 114),
-                Set(64, 9),
-                Scan(196, 25),
-            ],
-        },
+        vec![
+            Set(135, 22),
+            Set(41, 36),
+            Set(101, 31),
+            Set(111, 35),
+            Restart,
+            Set(47, 36),
+            Set(79, 114),
+            Set(64, 9),
+            Scan(196, 25),
+        ],
         0,
         0,
     );
@@ -509,19 +462,17 @@ fn tree_bug_8() {
     // that tracked the previously issued segment.
     use Op::*;
     prop_tree_matches_btreemap(
-        OpVec {
-            ops: vec![
-                Set(145, 151),
-                Set(155, 148),
-                Set(131, 170),
-                Set(163, 60),
-                Set(225, 126),
-                Restart,
-                Set(64, 237),
-                Set(102, 205),
-                Restart,
-            ],
-        },
+        vec![
+            Set(145, 151),
+            Set(155, 148),
+            Set(131, 170),
+            Set(163, 60),
+            Set(225, 126),
+            Restart,
+            Set(64, 237),
+            Set(102, 205),
+            Restart,
+        ],
         0,
         0,
     );
@@ -535,20 +486,18 @@ fn tree_bug_9() {
     // important updates.
     use Op::*;
     prop_tree_matches_btreemap(
-        OpVec {
-            ops: vec![
-                Set(189, 36),
-                Set(254, 194),
-                Set(132, 50),
-                Set(91, 221),
-                Set(126, 6),
-                Set(199, 183),
-                Set(71, 125),
-                Scan(67, 16),
-                Set(190, 16),
-                Restart,
-            ],
-        },
+        vec![
+            Set(189, 36),
+            Set(254, 194),
+            Set(132, 50),
+            Set(91, 221),
+            Set(126, 6),
+            Set(199, 183),
+            Set(71, 125),
+            Scan(67, 16),
+            Set(190, 16),
+            Restart,
+        ],
         0,
         0,
     );
@@ -560,34 +509,33 @@ fn tree_bug_10() {
     // we were hitting an old LSN and violating an assert, rather than just ending.
     use Op::*;
     prop_tree_matches_btreemap(
-        OpVec {
-            ops: vec![
-                Set(152, 163),
-                Set(105, 191),
-                Set(207, 217),
-                Set(128, 19),
-                Set(106, 22),
-                Scan(20, 24),
-                Set(14, 150),
-                Set(80, 43),
-                Set(174, 134),
-                Set(20, 150),
-                Set(13, 171),
-                Restart,
-                Scan(240, 25),
-                Scan(77, 37),
-                Set(153, 232),
-                Del(2),
-                Set(227, 169),
-                Get(232),
-                Cas(247, 151, 70),
-                Set(78, 52),
-                Get(16),
-                Del(78),
-                Cas(201, 93, 196),
-                Set(172, 84),
-            ],
-        },
+        vec![
+            Set(152, 163),
+            Set(105, 191),
+            Set(207, 217),
+            Set(128, 19),
+            Set(106, 22),
+            Scan(20, 24),
+            Set(14, 150),
+            Set(80, 43),
+            Set(174, 134),
+            Set(20, 150),
+            Set(13, 171),
+            Restart,
+            Scan(240, 25),
+            Scan(77, 37),
+            Set(153, 232),
+            Del(2),
+            Set(227, 169),
+            Get(232),
+            Cas(247, 151, 70),
+            Set(78, 52),
+            Get(16),
+            Del(78),
+            Cas(201, 93, 196),
+            Set(172, 84),
+        ],
+
         0,
         0,
     );
@@ -600,21 +548,19 @@ fn tree_bug_11() {
     // being created, then passed in.
     use Op::*;
     prop_tree_matches_btreemap(
-        OpVec {
-            ops: vec![
-                Set(38, 148),
-                Set(176, 175),
-                Set(82, 88),
-                Set(164, 85),
-                Set(139, 74),
-                Set(73, 23),
-                Cas(34, 67, 151),
-                Set(115, 133),
-                Set(249, 138),
-                Restart,
-                Set(243, 6),
-            ],
-        },
+        vec![
+            Set(38, 148),
+            Set(176, 175),
+            Set(82, 88),
+            Set(164, 85),
+            Set(139, 74),
+            Set(73, 23),
+            Cas(34, 67, 151),
+            Set(115, 133),
+            Set(249, 138),
+            Restart,
+            Set(243, 6),
+        ],
         0,
         0,
     );
@@ -626,47 +572,45 @@ fn tree_bug_12() {
     // part of detecting tears / partial rewrites.
     use Op::*;
     prop_tree_matches_btreemap(
-        OpVec {
-            ops: vec![
-                Set(118, 156),
-                Set(8, 63),
-                Set(165, 110),
-                Set(219, 108),
-                Set(91, 61),
-                Set(18, 98),
-                Scan(73, 6),
-                Set(240, 108),
-                Cas(71, 28, 189),
-                Del(199),
-                Restart,
-                Set(30, 140),
-                Scan(118, 13),
-                Get(180),
-                Cas(115, 151, 116),
-                Restart,
-                Set(31, 95),
-                Cas(79, 153, 225),
-                Set(34, 161),
-                Get(213),
-                Set(237, 215),
-                Del(52),
-                Set(56, 78),
-                Scan(141, 2),
-                Cas(228, 114, 170),
-                Get(231),
-                Get(223),
-                Del(167),
-                Restart,
-                Scan(240, 31),
-                Del(54),
-                Del(2),
-                Set(117, 165),
-                Set(223, 50),
-                Scan(69, 4),
-                Get(156),
-                Set(214, 72),
-            ],
-        },
+        vec![
+            Set(118, 156),
+            Set(8, 63),
+            Set(165, 110),
+            Set(219, 108),
+            Set(91, 61),
+            Set(18, 98),
+            Scan(73, 6),
+            Set(240, 108),
+            Cas(71, 28, 189),
+            Del(199),
+            Restart,
+            Set(30, 140),
+            Scan(118, 13),
+            Get(180),
+            Cas(115, 151, 116),
+            Restart,
+            Set(31, 95),
+            Cas(79, 153, 225),
+            Set(34, 161),
+            Get(213),
+            Set(237, 215),
+            Del(52),
+            Set(56, 78),
+            Scan(141, 2),
+            Cas(228, 114, 170),
+            Get(231),
+            Get(223),
+            Del(167),
+            Restart,
+            Scan(240, 31),
+            Del(54),
+            Del(2),
+            Set(117, 165),
+            Set(223, 50),
+            Scan(69, 4),
+            Get(156),
+            Set(214, 72),
+        ],
         0,
         0,
     );
@@ -679,26 +623,24 @@ fn tree_bug_13() {
     // if it were a successful completed root hoist.
     use Op::*;
     prop_tree_matches_btreemap(
-        OpVec {
-            ops: vec![
-                Set(42, 10),
-                Set(137, 220),
-                Set(183, 129),
-                Set(91, 145),
-                Set(126, 26),
-                Set(255, 67),
-                Set(69, 18),
-                Restart,
-                Set(24, 92),
-                Set(193, 17),
-                Set(3, 143),
-                Cas(50, 13, 84),
-                Restart,
-                Set(191, 116),
-                Restart,
-                Del(165),
-            ],
-        },
+        vec![
+            Set(42, 10),
+            Set(137, 220),
+            Set(183, 129),
+            Set(91, 145),
+            Set(126, 26),
+            Set(255, 67),
+            Set(69, 18),
+            Restart,
+            Set(24, 92),
+            Set(193, 17),
+            Set(3, 143),
+            Cas(50, 13, 84),
+            Restart,
+            Set(191, 116),
+            Restart,
+            Del(165),
+        ],
         0,
         0,
     );
