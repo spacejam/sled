@@ -170,7 +170,7 @@ fn quickcheck_tree_with_failpoints() {
     let n_tests = 100;
 
     QuickCheck::new()
-        .gen(StdGen::new(rand::thread_rng(), 1))
+        .gen(StdGen::new(rand::thread_rng(), 100))
         .tests(n_tests)
         .max_tests(10000)
         .quickcheck(prop_tree_crashes_nicely as fn(Vec<Op>) -> bool);

@@ -387,7 +387,7 @@ fn prop_pagecache_works(ops: Vec<Op>) -> bool {
 #[test]
 fn quickcheck_pagecache_works() {
     QuickCheck::new()
-        .gen(StdGen::new(rand::thread_rng(), 1))
+        .gen(StdGen::new(rand::thread_rng(), 100))
         .tests(1000)
         .max_tests(1000000)
         .quickcheck(prop_pagecache_works as fn(Vec<Op>) -> bool);
