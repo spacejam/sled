@@ -6,7 +6,7 @@ authors = ["Tyler Neely <t@jujit.su>"]
 [dev-dependencies]
 sled = { path = "../sled" }
 pagecache = { path = "../pagecache" }
-crossbeam-epoch = "0.1"
+crossbeam-epoch = "0.4"
 quickcheck = "0.6"
 rand = "0.4"
 libc = "0.2"
