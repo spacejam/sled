@@ -548,12 +548,6 @@ impl SegmentAccountant {
             self.ordering.remove(&lsn);
         }
 
-        self.ordering = self.ordering
-            .clone()
-            .into_iter()
-            .filter(|&(lsn, _)| lsn <= snapshot_max_lsn)
-            .collect();
-
         let safety_buffer_len = self.config.io_bufs;
         let mut safety_buffer: Vec<LogID> = self.ordering
             .iter()
