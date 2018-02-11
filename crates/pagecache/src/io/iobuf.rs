@@ -11,6 +11,15 @@ use super::*;
 
 type Header = u64;
 
+macro_rules! fail {
+    ($self:expr, $e:expr) => {
+        fail_point!($e, |_| {
+            $self._crashing.store(true, SeqCst);
+            Err(Error::FailPoint)
+        });
+    }
+}
+
 struct IoBuf {
     buf: UnsafeCell<Vec<u8>>,
     header: AtomicUsize,
@@ -39,6 +48,9 @@ pub(super) struct IoBufs {
     // to stable storage due to interesting thread interleavings.
     stable: AtomicIsize,
     segment_accountant: Mutex<SegmentAccountant>,
+
+    // used for signifying that we're simulating a crash
+    _crashing: AtomicBool,
 }
 
 /// `IoBufs` is a set of lock-free buffers for coordinating
@@ -105,14 +117,16 @@ impl IoBufs {
             // recovering at segment boundary
             assert_eq!(next_lid, next_lsn as LogID);
             let iobuf = &bufs[current_buf];
-            let (lid, last_given) = segment_accountant.next(next_lsn)?;
+            let lid = segment_accountant.next(next_lsn)?;
 
             iobuf.set_lid(lid);
             iobuf.set_capacity(io_buf_size - SEG_TRAILER_LEN);
-            iobuf.store_segment_header(0, next_lsn, last_given);
+            iobuf.store_segment_header(0, next_lsn);
 
+            fail_point!("initial allocation", |_| Err(Error::FailPoint));
             file.pwrite_all(&*vec![0; config.io_buf_size], lid)?;
             file.sync_all()?;
+            fail_point!("initial allocation post", |_| Err(Error::FailPoint));
 
             debug!(
                 "starting log at clean offset {}, recovered lsn {}",
@@ -147,6 +161,7 @@ impl IoBufs {
             stable: AtomicIsize::new(stable),
             config: config,
             segment_accountant: Mutex::new(segment_accountant),
+            _crashing: AtomicBool::new(false),
         })
     }
 
@@ -508,7 +523,7 @@ impl IoBufs {
         // open new slot
         let mut next_lsn = lsn;
 
-        let (next_offset, last_given) = if from_reserve || maxed {
+        let next_offset = if from_reserve || maxed {
             // roll lsn to the next offset
             let lsn_idx = lsn / io_buf_size as Lsn;
             next_lsn = (lsn_idx + 1) * io_buf_size as Lsn;
@@ -526,7 +541,11 @@ impl IoBufs {
             let low_lsn = lsn + res_len as Lsn;
             self.mark_interval(low_lsn, segment_remainder as usize);
 
-            self.with_sa(|sa| sa.next(next_lsn))?
+            let ret = self.with_sa(|sa| sa.next(next_lsn));
+            if let Err(Error::FailPoint) = ret {
+                self._crashing.store(true, SeqCst);
+            }
+            ret?
         } else {
             debug!(
                 "advancing offset within the current segment from {} to {}",
@@ -536,7 +555,7 @@ impl IoBufs {
             next_lsn += res_len as Lsn;
 
             let next_offset = lid + res_len as LogID;
-            (next_offset, 0)
+            next_offset
         };
 
         let next_idx = (idx + 1) % self.config.io_bufs;
@@ -562,7 +581,7 @@ impl IoBufs {
         // its entire lifecycle as soon as we do that.
         if from_reserve || maxed {
             next_iobuf.set_capacity(io_buf_size - SEG_TRAILER_LEN);
-            next_iobuf.store_segment_header(sealed, next_lsn, last_given);
+            next_iobuf.store_segment_header(sealed, next_lsn);
         } else {
             let new_cap = capacity - res_len;
             assert_ne!(new_cap, 0);
@@ -614,8 +633,10 @@ impl IoBufs {
         let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
 
         let f = self.config.file()?;
+        fail!(self, "buffer write");
         f.pwrite_all(&data[..res_len], lid)?;
         f.sync_all()?;
+        fail!(self, "buffer write post");
 
         if res_len > 0 {
             debug!(
@@ -647,8 +668,10 @@ impl IoBufs {
 
             let trailer_bytes: [u8; SEG_TRAILER_LEN] = trailer.into();
 
+            fail!(self, "trailer write");
             f.pwrite_all(&trailer_bytes, trailer_lid)?;
             f.sync_all()?;
+            fail!(self, "trailer write post");
             iobuf.set_maxed(false);
 
             debug!(
@@ -763,9 +786,15 @@ impl IoBufs {
 
 impl Drop for IoBufs {
     fn drop(&mut self) {
-        for _ in 0..self.config.io_bufs {
-            self.flush().unwrap();
+        // don't do any more IO if we're simulating a crash
+        if self._crashing.load(SeqCst) {
+            return;
         }
+
+        if let Err(e) = self.flush() {
+            error!("failed to flush from IoBufs::drop: {}", e);
+        }
+
         if let Ok(f) = self.config.file() {
             f.sync_all().unwrap();
         }
@@ -830,7 +859,7 @@ impl IoBuf {
     // We write a new segment header to the beginning of the buffer
     // for assistance during recovery. The caller is responsible
     // for ensuring that the IoBuf's capacity has been set properly.
-    fn store_segment_header(&self, last: Header, lsn: Lsn, prev: LogID) {
+    fn store_segment_header(&self, last: Header, lsn: Lsn) {
         debug!("storing lsn {} in beginning of buffer", lsn);
         assert!(self.get_capacity() >= SEG_HEADER_LEN + SEG_TRAILER_LEN);
 
@@ -838,7 +867,6 @@ impl IoBuf {
 
         let header = SegmentHeader {
             lsn: lsn,
-            prev: prev,
             ok: true,
         };
         let header_bytes: [u8; SEG_HEADER_LEN] = header.into();

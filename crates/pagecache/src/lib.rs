@@ -6,6 +6,8 @@
 #![cfg_attr(feature="clippy", allow(inline_always))]
 
 #[macro_use]
+extern crate fail;
+#[macro_use]
 extern crate serde_derive;
 extern crate serde;
 extern crate crossbeam_epoch as epoch;

@@ -1,6 +1,6 @@
 [package]
 name = "pagecache"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "lock-free pagecache and log for high-performance databases"
 license = "MIT/Apache-2.0"
@@ -29,11 +29,12 @@ crossbeam-epoch = "0.1"
 bincode = "0.8"
 serde = "1.0"
 serde_derive = "1.0"
-lazy_static = "0.2"
+lazy_static = "1.0"
 rayon = {version = "0.8", optional = true}
 num_cpus = {version = "1.6", optional = true}
 zstd = {version = "0.4", optional = true}
 clippy = {version = "0.0", optional = true}
+fail = "0.2"
 
 [dev-dependencies]
 rand = "0.4"

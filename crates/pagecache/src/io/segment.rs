@@ -56,11 +56,10 @@
 //! 3. This case is solved again by having used
 //!    <# io buffers> segments before reuse. We guarantee
 //!    that the last <# io buffers> segments will be
-//!    present, which means we can write a "previous
-//!    log sequence number pointer" to the header of
-//!    each segment. During recovery, if these previous
-//!    segment Lsn pointers don't match up, we know we
-//!    have encountered a lost segment, and we will not
+//!    present, from which can deduce the "previous log
+//!    sequence number pointer". During recovery, if these
+//!    previous segment Lsn pointers don't match up, we know
+//!    we have encountered a lost segment, and we will not
 //!    continue the recovery past the detected gap.
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::fs::File;
@@ -539,8 +538,10 @@ impl SegmentAccountant {
             );
             to_zero.push(lsn);
             let f = self.config.file()?;
+            fail_point!("zero garbage segment", |_| Err(Error::FailPoint));
             f.pwrite_all(&*vec![0; SEG_HEADER_LEN], lid)?;
             f.sync_all()?;
+            fail_point!("zero garbage segment post", |_| Err(Error::FailPoint));
         }
 
         for lsn in to_zero.into_iter() {
@@ -834,11 +835,8 @@ impl SegmentAccountant {
         }
     }
 
-    /// Returns the next offset to write a new segment in,
-    /// as well as the offset of the previous segment that
-    /// was allocated, so that we can detect missing
-    /// out-of-order segments during recovery.
-    pub fn next(&mut self, lsn: Lsn) -> CacheResult<(LogID, LogID), ()> {
+    /// Returns the next offset to write a new segment in.
+    pub fn next(&mut self, lsn: Lsn) -> CacheResult<LogID, ()> {
         assert_eq!(
             lsn % self.config.io_buf_size as Lsn,
             0,
@@ -893,8 +891,10 @@ impl SegmentAccountant {
             lsn
         );
         let f = self.config.file()?;
+        fail_point!("zero segment", |_| Err(Error::FailPoint));
         f.pwrite_all(&*vec![0; self.config.io_buf_size], lid)?;
         f.sync_all()?;
+        fail_point!("zero segment post", |_| Err(Error::FailPoint));
 
         let last_given = self.safety_buffer[self.config.io_bufs - 1];
 
@@ -943,7 +943,7 @@ impl SegmentAccountant {
         self.safety_buffer.push(lid);
         self.safety_buffer.remove(0);
 
-        Ok((lid, last_given))
+        Ok(lid)
     }
 
     /// Returns an iterator over a snapshot of current segment
