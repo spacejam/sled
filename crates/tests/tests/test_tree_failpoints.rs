@@ -66,37 +66,7 @@ impl Arbitrary for Op {
     }
 }
 
-#[derive(Debug, Clone)]
-struct OpVec {
-    ops: Vec<Op>,
-}
-
-impl Arbitrary for OpVec {
-    fn arbitrary<G: Gen>(g: &mut G) -> OpVec {
-        let mut ops = vec![];
-        // FIXME set this to 0..500 and debug stalls
-        for _ in 0..100 {
-            let op = Op::arbitrary(g);
-            ops.push(op);
-        }
-        OpVec {
-            ops: ops,
-        }
-    }
-
-    fn shrink(&self) -> Box<Iterator<Item = OpVec>> {
-        let mut smaller = vec![];
-        for i in 0..self.ops.len() {
-            let mut clone = self.clone();
-            clone.ops.remove(i);
-            smaller.push(clone);
-        }
-
-        Box::new(smaller.into_iter())
-    }
-}
-
-fn prop_tree_crashes_nicely(ops: OpVec) -> bool {
+fn prop_tree_crashes_nicely(ops: Vec<Op>) -> bool {
     lazy_static! {
         // forces quickcheck to run one thread at a time
         static ref M: Mutex<()> = Mutex::new(());
@@ -165,7 +135,7 @@ fn prop_tree_crashes_nicely(ops: OpVec) -> bool {
         }
     }
 
-    for op in ops.ops.into_iter() {
+    for op in ops.into_iter() {
         match op {
             Set(k, v) => {
                 fp_crash!(tree.set(vec![k], vec![v]));
@@ -203,16 +173,14 @@ fn quickcheck_tree_with_failpoints() {
         .gen(StdGen::new(rand::thread_rng(), 1))
         .tests(n_tests)
         .max_tests(10000)
-        .quickcheck(prop_tree_crashes_nicely as fn(OpVec) -> bool);
+        .quickcheck(prop_tree_crashes_nicely as fn(Vec<Op>) -> bool);
 }
 
 #[test]
 fn failpoints_bug_1() {
     // postmortem 1: model did not account for proper reasons to fail to start
     assert_eq!(
-        prop_tree_crashes_nicely(OpVec {
-            ops: vec![FailPoint("snap write"), Restart],
-        }),
+        prop_tree_crashes_nicely(vec![FailPoint("snap write"), Restart]),
         true
     )
 }
@@ -222,14 +190,12 @@ fn failpoints_bug_1() {
 fn failpoints_bug_2() {
     // postmortem 1:
     assert_eq!(
-        prop_tree_crashes_nicely(OpVec {
-            ops: vec![
-                FailPoint("buffer write post"),
-                Set(143, 67),
-                Set(229, 66),
-                Restart,
-            ],
-        }),
+        prop_tree_crashes_nicely(vec![
+            FailPoint("buffer write post"),
+            Set(143, 67),
+            Set(229, 66),
+            Restart,
+        ]),
         true
     )
 }
