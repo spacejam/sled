@@ -116,9 +116,7 @@ impl LogReader for File {
                     break;
                 }
             }
-        }
 
-        if !header.successful_flush {
             trace!("read zeroes of len {}", len);
             return Ok(LogRead::Zeroed(len));
         }
