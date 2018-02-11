@@ -13,15 +13,11 @@ use std::os::windows::fs::FileExt;
 pub trait Pio {
     /// Read from a specific offset without changing
     /// the underlying file offset.
-    fn pread_exact(
-        &self,
-        mut buf: &mut [u8],
-        mut offset: LogID,
-    ) -> io::Result<()>;
+    fn pread_exact(&self, to_buf: &mut [u8], offset: LogID) -> io::Result<()>;
 
     /// Write to a specific offset without changing
     /// the underlying file offset.
-    fn pwrite_all(&self, mut buf: &[u8], mut offset: LogID) -> io::Result<()>;
+    fn pwrite_all(&self, from_buf: &[u8], offset: LogID) -> io::Result<()>;
 }
 
 // On systems that support pread/pwrite, use them underneath.
