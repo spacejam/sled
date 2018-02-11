@@ -1,6 +1,6 @@
 use std::sync::{Condvar, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize};
-use std::sync::atomic::Ordering::SeqCst;
+use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 
 #[cfg(feature = "zstd")]
 use zstd::block::compress;
@@ -14,7 +14,7 @@ type Header = u64;
 macro_rules! fail {
     ($self:expr, $e:expr) => {
         fail_point!($e, |_| {
-            $self._crashing.store(true, SeqCst);
+            $self._failpoint_crashing.store(true, SeqCst);
             Err(Error::FailPoint)
         });
     }
@@ -50,7 +50,7 @@ pub(super) struct IoBufs {
     segment_accountant: Mutex<SegmentAccountant>,
 
     // used for signifying that we're simulating a crash
-    _crashing: AtomicBool,
+    _failpoint_crashing: AtomicBool,
 }
 
 /// `IoBufs` is a set of lock-free buffers for coordinating
@@ -161,7 +161,7 @@ impl IoBufs {
             stable: AtomicIsize::new(stable),
             config: config,
             segment_accountant: Mutex::new(segment_accountant),
-            _crashing: AtomicBool::new(false),
+            _failpoint_crashing: AtomicBool::new(false),
         })
     }
 
@@ -253,9 +253,10 @@ impl IoBufs {
 
         let buf = self.encapsulate(raw_buf);
 
-        let segment_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;
-        let max_buf_size = (self.config.io_buf_size - segment_overhead) /
-            self.config.min_items_per_segment;
+        let max_overhead = std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN);
+        let max_buf_size = (self.config.io_buf_size /
+                                self.config.min_items_per_segment) -
+            max_overhead;
 
         assert!(
             buf.len() <= max_buf_size,
@@ -288,7 +289,11 @@ impl IoBufs {
 
             spins += 1;
             if spins > 1_000_000 {
-                debug!("stalling in reserve, idx {}", idx);
+                debug!(
+                    "stalling in reserve, idx {}, buf len {}",
+                    idx,
+                    buf.len()
+                );
                 spins = 0;
             }
 
@@ -298,6 +303,9 @@ impl IoBufs {
                 // current_buf.
                 trace_once!("written ahead of sealed, spinning");
                 M.log_looped();
+                if self._failpoint_crashing.load(Relaxed) {
+                    return Err(Error::FailPoint);
+                }
                 yield_now();
                 continue;
             }
@@ -307,6 +315,9 @@ impl IoBufs {
                 // spin while it catches up to avoid overlap
                 trace_once!("old io buffer not written yet, spinning");
                 M.log_looped();
+                if self._failpoint_crashing.load(Relaxed) {
+                    return Err(Error::FailPoint);
+                }
                 yield_now();
                 continue;
             }
@@ -321,6 +332,9 @@ impl IoBufs {
                 // has already been bumped by sealer.
                 trace_once!("io buffer already sealed, spinning");
                 M.log_looped();
+                if self._failpoint_crashing.load(Relaxed) {
+                    return Err(Error::FailPoint);
+                }
                 yield_now();
                 continue;
             }
@@ -336,6 +350,9 @@ impl IoBufs {
                 trace_once!("io buffer too full, spinning");
                 self.maybe_seal_and_write_iobuf(idx, header, true)?;
                 M.log_looped();
+                if self._failpoint_crashing.load(Relaxed) {
+                    return Err(Error::FailPoint);
+                }
                 yield_now();
                 continue;
             }
@@ -349,6 +366,9 @@ impl IoBufs {
                 // CAS failed, start over
                 trace_once!("CAS failed while claiming buffer slot, spinning");
                 M.log_looped();
+                if self._failpoint_crashing.load(Relaxed) {
+                    return Err(Error::FailPoint);
+                }
                 yield_now();
                 continue;
             }
@@ -543,7 +563,7 @@ impl IoBufs {
 
             let ret = self.with_sa(|sa| sa.next(next_lsn));
             if let Err(Error::FailPoint) = ret {
-                self._crashing.store(true, SeqCst);
+                self._failpoint_crashing.store(true, SeqCst);
             }
             ret?
         } else {
@@ -570,6 +590,9 @@ impl IoBufs {
             if spins > 1_000_000 {
                 debug!("have spun >1,000,000x in seal of buf {}", idx);
                 spins = 0;
+            }
+            if self._failpoint_crashing.load(Relaxed) {
+                return Err(Error::FailPoint);
             }
             yield_now();
         }
@@ -787,7 +810,7 @@ impl IoBufs {
 impl Drop for IoBufs {
     fn drop(&mut self) {
         // don't do any more IO if we're simulating a crash
-        if self._crashing.load(SeqCst) {
+        if self._failpoint_crashing.load(SeqCst) {
             return;
         }
 
