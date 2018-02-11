@@ -72,7 +72,7 @@ impl LogReader for File {
         let _measure = Measure::new(&M.read);
         let seg_start = lid / segment_len as LogID * segment_len as LogID;
         trace!("reading message from segment: {} at lid: {}", seg_start, lid);
-        assert!(seg_start + MSG_HEADER_LEN as LogID <= lid);
+        assert!(seg_start + SEG_HEADER_LEN as LogID <= lid);
 
         let ceiling = seg_start + segment_len as LogID -
             SEG_TRAILER_LEN as LogID;
