@@ -32,8 +32,8 @@ impl Arbitrary for Op {
             "zero segment post",
             "zero garbage segment",
             "zero garbage segment post",
-            //B"buffer write",
-            //B"buffer write post",
+            "buffer write",
+            "buffer write post",
             "write_config bytes",
             "write_config crc",
             "write_config post",
@@ -48,7 +48,7 @@ impl Arbitrary for Op {
             "snap write rm old",
         ];
 
-        if g.gen_weighted_bool(100) {
+        if g.gen_weighted_bool(30) {
             return FailPoint((*g.choose(&fail_points).unwrap()));
         }
 
@@ -62,6 +62,15 @@ impl Arbitrary for Op {
             0 => Set,
             1 => Del(g.gen::<u8>()),
             _ => panic!("impossible choice"),
+        }
+    }
+
+    fn shrink(&self) -> Box<Iterator<Item = Op>> {
+        match *self {
+            Op::Del(ref lid) if *lid > 0 => Box::new(
+                vec![Op::Del(*lid - 1)].into_iter(),
+            ),
+            _ => Box::new(vec![].into_iter()),
         }
     }
 }
@@ -112,14 +121,37 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>) -> bool {
             tree = tree_res.unwrap();
 
             let tree_iter = tree.iter().map(|res| {
-                let (ref tk, ref tv) = res.unwrap();
-                (v(tk), v(tv))
+                let (ref tk, _) = res.unwrap();
+                v(tk)
             });
-            let ref_iter = reference.iter().map(|(ref rk, ref rv)| (**rk, **rv));
-            for (t, r) in tree_iter.zip(ref_iter) {
-                if t != r {
-                    println!("tree verification failed: expected {:?} got {:?}", r, t);
-                    return false;
+            let mut ref_iter = reference.iter().map(|(ref rk, ref rv)| (**rk, **rv));
+            for t in tree_iter {
+                // make sure the tree value is in there
+                while let Some((r, (_rv, certainty))) = ref_iter.next() {
+                    if certainty {
+                        // tree MUST match reference if we have a certain reference
+                        if t != r {
+                            return false;
+                        }
+                        break;
+                    } else {
+                        // we have an uncertain reference, so we iterate through
+                        // it and guarantee the reference is never higher than
+                        // the tree value.
+                        if t == r {
+                            // we can move on to the next tree item
+                            break;
+                        }
+
+                        if r > t {
+                            // we have a bug, the reference iterator should always be <= tree
+                            println!("tree verification failed: expected {:?} got {:?}", r, t);
+                            return false;
+                        }
+
+                        // we are iterating through the reference until we have a certain
+                        // item or an item that matches the tree's real item anyway
+                    }
                 }
             }
         }
@@ -150,14 +182,32 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>) -> bool {
             Set => {
                 let hi = (set_counter >> 8) as u8;
                 let lo = set_counter as u8;
+
+                // insert false certainty until it fully completes
+                reference.insert(set_counter, (set_counter, false));
+
                 fp_crash!(tree.set(vec![hi, lo], vec![hi, lo]));
-                tree.flush().unwrap();
-                reference.insert(set_counter, set_counter);
+
+                // make sure we keep the disk and reference in-sync
+                // maybe in the future put pending things in their own
+                // reference and have a Flush op that syncs them.
+                // just because the set above didn't hit a failpoint,
+                // it doesn't mean this flush won't hit one, so we
+                // also use the fp_crash macro here for handling it.
+                fp_crash!(tree.flush());
+
+                // now we should be certain the thing is in there, set certainty to true
+                reference.insert(set_counter, (set_counter, true));
+
                 set_counter += 1;
             }
             Del(k) => {
+                // insert false certainty before completes
+                reference.insert(k as u16, (k as u16, false));
+
                 fp_crash!(tree.del(&*vec![0, k]));
                 tree.flush().unwrap();
+
                 reference.remove(&(k as u16));
             }
             Restart => {
@@ -219,6 +269,36 @@ fn failpoints_bug_3() {
         Set,
         FailPoint("trailer write"),
         Set,
+        Set,
+        Set,
+        Set,
+        Restart,
+    ]))
+}
+
+#[test]
+fn failpoints_bug_4() {
+    // postmortem 1: the test model was not properly accounting for
+    // writes that may-or-may-not be present due to an error.
+    assert!(prop_tree_crashes_nicely(
+        vec![Set, FailPoint("snap write"), Del(0), Set, Restart],
+    ))
+}
+
+#[test]
+#[ignore]
+fn failpoints_bug_5() {
+    // postmortem 1:
+    assert!(prop_tree_crashes_nicely(vec![
+        Set,
+        FailPoint("snap write mv post"),
+        Set,
+        FailPoint("snap write"),
+        Set,
+        Set,
+        Set,
+        Restart,
+        FailPoint("zero segment"),
         Set,
         Set,
         Set,
