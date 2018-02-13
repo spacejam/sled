@@ -1,6 +1,9 @@
 use std::sync::{Condvar, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize};
-use std::sync::atomic::Ordering::{Relaxed, SeqCst};
+use std::sync::atomic::Ordering::SeqCst;
+
+#[cfg(feature = "failpoints")]
+use std::sync::atomic::Ordering::Relaxed;
 
 #[cfg(feature = "zstd")]
 use zstd::block::compress;
@@ -11,8 +14,9 @@ use super::*;
 
 type Header = u64;
 
-macro_rules! fail {
+macro_rules! io_fail {
     ($self:expr, $e:expr) => {
+        #[cfg(feature = "failpoints")]
         fail_point!($e, |_| {
             $self._failpoint_crashing.store(true, SeqCst);
             Err(Error::FailPoint)
@@ -50,6 +54,7 @@ pub(super) struct IoBufs {
     segment_accountant: Mutex<SegmentAccountant>,
 
     // used for signifying that we're simulating a crash
+    #[cfg(feature = "failpoints")]
     _failpoint_crashing: AtomicBool,
 }
 
@@ -123,10 +128,10 @@ impl IoBufs {
             iobuf.set_capacity(io_buf_size - SEG_TRAILER_LEN);
             iobuf.store_segment_header(0, next_lsn);
 
-            fail_point!("initial allocation", |_| Err(Error::FailPoint));
+            maybe_fail!("initial allocation");
             file.pwrite_all(&*vec![0; config.io_buf_size], lid)?;
             file.sync_all()?;
-            fail_point!("initial allocation post", |_| Err(Error::FailPoint));
+            maybe_fail!("initial allocation post");
 
             debug!(
                 "starting log at clean offset {}, recovered lsn {}",
@@ -161,6 +166,7 @@ impl IoBufs {
             stable: AtomicIsize::new(stable),
             config: config,
             segment_accountant: Mutex::new(segment_accountant),
+            #[cfg(feature = "failpoints")]
             _failpoint_crashing: AtomicBool::new(false),
         })
     }
@@ -303,8 +309,11 @@ impl IoBufs {
                 // current_buf.
                 trace_once!("written ahead of sealed, spinning");
                 M.log_looped();
-                if self._failpoint_crashing.load(Relaxed) {
-                    return Err(Error::FailPoint);
+                #[cfg(feature = "failpoints")]
+                {
+                    if self._failpoint_crashing.load(Relaxed) {
+                        return Err(Error::FailPoint);
+                    }
                 }
                 yield_now();
                 continue;
@@ -315,8 +324,11 @@ impl IoBufs {
                 // spin while it catches up to avoid overlap
                 trace_once!("old io buffer not written yet, spinning");
                 M.log_looped();
-                if self._failpoint_crashing.load(Relaxed) {
-                    return Err(Error::FailPoint);
+                #[cfg(feature = "failpoints")]
+                {
+                    if self._failpoint_crashing.load(Relaxed) {
+                        return Err(Error::FailPoint);
+                    }
                 }
                 yield_now();
                 continue;
@@ -332,8 +344,11 @@ impl IoBufs {
                 // has already been bumped by sealer.
                 trace_once!("io buffer already sealed, spinning");
                 M.log_looped();
-                if self._failpoint_crashing.load(Relaxed) {
-                    return Err(Error::FailPoint);
+                #[cfg(feature = "failpoints")]
+                {
+                    if self._failpoint_crashing.load(Relaxed) {
+                        return Err(Error::FailPoint);
+                    }
                 }
                 yield_now();
                 continue;
@@ -350,8 +365,11 @@ impl IoBufs {
                 trace_once!("io buffer too full, spinning");
                 self.maybe_seal_and_write_iobuf(idx, header, true)?;
                 M.log_looped();
-                if self._failpoint_crashing.load(Relaxed) {
-                    return Err(Error::FailPoint);
+                #[cfg(feature = "failpoints")]
+                {
+                    if self._failpoint_crashing.load(Relaxed) {
+                        return Err(Error::FailPoint);
+                    }
                 }
                 yield_now();
                 continue;
@@ -366,8 +384,11 @@ impl IoBufs {
                 // CAS failed, start over
                 trace_once!("CAS failed while claiming buffer slot, spinning");
                 M.log_looped();
-                if self._failpoint_crashing.load(Relaxed) {
-                    return Err(Error::FailPoint);
+                #[cfg(feature = "failpoints")]
+                {
+                    if self._failpoint_crashing.load(Relaxed) {
+                        return Err(Error::FailPoint);
+                    }
                 }
                 yield_now();
                 continue;
@@ -562,8 +583,11 @@ impl IoBufs {
             self.mark_interval(low_lsn, segment_remainder as usize);
 
             let ret = self.with_sa(|sa| sa.next(next_lsn));
-            if let Err(Error::FailPoint) = ret {
-                self._failpoint_crashing.store(true, SeqCst);
+            #[cfg(feature = "failpoints")]
+            {
+                if let Err(Error::FailPoint) = ret {
+                    self._failpoint_crashing.store(true, SeqCst);
+                }
             }
             ret?
         } else {
@@ -591,8 +615,12 @@ impl IoBufs {
                 debug!("have spun >1,000,000x in seal of buf {}", idx);
                 spins = 0;
             }
-            if self._failpoint_crashing.load(Relaxed) {
-                return Err(Error::FailPoint);
+            #[cfg(feature = "failpoints")]
+            {
+                if self._failpoint_crashing.load(Relaxed) {
+                    // panic!("propagating failpoint");
+                    return Err(Error::FailPoint);
+                }
             }
             yield_now();
         }
@@ -656,10 +684,10 @@ impl IoBufs {
         let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
 
         let f = self.config.file()?;
-        fail!(self, "buffer write");
+        io_fail!(self, "buffer write");
         f.pwrite_all(&data[..res_len], lid)?;
         f.sync_all()?;
-        fail!(self, "buffer write post");
+        io_fail!(self, "buffer write post");
 
         if res_len > 0 {
             debug!(
@@ -691,10 +719,10 @@ impl IoBufs {
 
             let trailer_bytes: [u8; SEG_TRAILER_LEN] = trailer.into();
 
-            fail!(self, "trailer write");
+            io_fail!(self, "trailer write");
             f.pwrite_all(&trailer_bytes, trailer_lid)?;
             f.sync_all()?;
-            fail!(self, "trailer write post");
+            io_fail!(self, "trailer write post");
             iobuf.set_maxed(false);
 
             debug!(
@@ -810,8 +838,11 @@ impl IoBufs {
 impl Drop for IoBufs {
     fn drop(&mut self) {
         // don't do any more IO if we're simulating a crash
-        if self._failpoint_crashing.load(SeqCst) {
-            return;
+        #[cfg(feature = "failpoints")]
+        {
+            if self._failpoint_crashing.load(SeqCst) {
+                return;
+            }
         }
 
         if let Err(e) = self.flush() {

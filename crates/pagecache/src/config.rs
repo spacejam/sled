@@ -459,12 +459,12 @@ impl Config {
             path,
         )?;
 
-        fail_point!("write_config bytes", |_| Err(Error::FailPoint));
+        maybe_fail!("write_config bytes");
         f.write_all(&*bytes)?;
-        fail_point!("write_config crc", |_| Err(Error::FailPoint));
+        maybe_fail!("write_config crc");
         f.write_all(&crc64)?;
         f.sync_all()?;
-        fail_point!("write_config post", |_| Err(Error::FailPoint));
+        maybe_fail!("write_config post");
         Ok(())
     }
 

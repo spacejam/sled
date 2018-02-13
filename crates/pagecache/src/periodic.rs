@@ -28,16 +28,21 @@ impl<C: Callback> Periodic<C> {
 
         let join_handle = flush_every_ms.map(|flush_every_ms| {
             let shutdown = shutdown.clone();
-            thread::Builder::new().name(name).spawn(move || {
-                while !shutdown.load(Acquire) {
+            thread::Builder::new()
+                .name(name)
+                .spawn(move || while !shutdown.load(Acquire) {
                     callback.call();
 
                     thread::sleep(Duration::from_millis(flush_every_ms));
-                }
-            }).unwrap()
+                })
+                .unwrap()
         });
 
-        Periodic { shutdown, join_handle, _marker: PhantomData }
+        Periodic {
+            shutdown,
+            join_handle,
+            _marker: PhantomData,
+        }
     }
 }
 

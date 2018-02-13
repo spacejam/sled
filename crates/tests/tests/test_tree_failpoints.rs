@@ -110,10 +110,8 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>) -> bool {
             }
 
             tree = tree_res.unwrap();
-            println!("ref: {:?}", reference);
 
             let tree_iter = tree.iter().map(|res| {
-                println!("t: {:?}", res);
                 let (ref tk, ref tv) = res.unwrap();
                 (v(tk), v(tv))
             });
@@ -209,7 +207,11 @@ fn failpoints_bug_2() {
 
 #[test]
 fn failpoints_bug_3() {
-    // postmortem 1:
+    // postmortem 1: this was a regression that happened because we
+    // chose to eat errors about advancing snapshots, which trigger
+    // log flushes. We should not trigger flushes from snapshots,
+    // but first we need to make sure we are better about detecting
+    // tears, by not also using 0 as a failed flush signifier.
     assert!(prop_tree_crashes_nicely(vec![
         Set,
         Set,

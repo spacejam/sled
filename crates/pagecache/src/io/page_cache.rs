@@ -424,6 +424,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 Update::Append(new.clone())
             },
         };
+
         let bytes =
             measure(&M.serialize, || serialize(&prepend, Infinite).unwrap());
         let log_reservation =
@@ -488,9 +489,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             let count = self.updates.fetch_add(1, SeqCst) + 1;
             let should_snapshot = count % self.config.snapshot_after_ops == 0;
             if should_snapshot {
-                if let Err(e) = self.advance_snapshot() {
-                    error!("failed to advance snapshot: {}", e);
-                }
+                self.advance_snapshot().map_err(|e| e.danger_cast())?;
             }
         }
 
@@ -607,9 +606,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             let count = self.updates.fetch_add(1, SeqCst) + 1;
             let should_snapshot = count % self.config.snapshot_after_ops == 0;
             if should_snapshot {
-                if let Err(e) = self.advance_snapshot() {
-                    error!("failed to advance snapshot: {}", e);
-                }
+                self.advance_snapshot().map_err(|e| e.danger_cast())?;
             }
         } else {
             log_reservation.abort().map_err(|e| e.danger_cast())?;

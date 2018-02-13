@@ -386,20 +386,20 @@ pub fn write_snapshot<R>(
     )?;
 
     // write the snapshot bytes, followed by a crc64 checksum at the end
-    fail_point!("snap write", |_| Err(Error::FailPoint));
+    maybe_fail!("snap write");
     f.write_all(&*bytes)?;
-    fail_point!("snap write len", |_| Err(Error::FailPoint));
+    maybe_fail!("snap write len");
     f.write_all(&len_bytes)?;
-    fail_point!("snap write crc", |_| Err(Error::FailPoint));
+    maybe_fail!("snap write crc");
     f.write_all(&crc64)?;
     f.sync_all()?;
-    fail_point!("snap write post", |_| Err(Error::FailPoint));
+    maybe_fail!("snap write post");
 
     trace!("wrote snapshot to {}", path_1.to_string_lossy());
 
-    fail_point!("snap write mv", |_| Err(Error::FailPoint));
+    maybe_fail!("snap write mv");
     std::fs::rename(path_1, &path_2)?;
-    fail_point!("snap write mv post", |_| Err(Error::FailPoint));
+    maybe_fail!("snap write mv post");
 
     trace!("renamed snapshot to {}", path_2.to_string_lossy());
 
@@ -410,7 +410,7 @@ pub fn write_snapshot<R>(
         if !path_2.to_string_lossy().ends_with(&*path_str) {
             debug!("removing old snapshot file {:?}", path);
 
-            fail_point!("snap write rm old", |_| Err(Error::FailPoint));
+            maybe_fail!("snap write rm old");
 
             if let Err(_e) = std::fs::remove_file(&path) {
                 // TODO should this just be a try return?

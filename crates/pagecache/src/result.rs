@@ -27,6 +27,7 @@ pub enum Error<Actual> {
     },
     // a failpoint has been triggered for testing purposes
     #[doc(hidden)]
+    #[cfg(feature = "failpoints")]
     FailPoint,
 }
 use Error::*;
@@ -57,6 +58,7 @@ impl<A> PartialEq for Error<A>
                     false
                 }
             }
+            #[cfg(feature = "failpoints")]
             &FailPoint => if let &FailPoint = other { true } else { false },
             &Corruption {
                 at: l,
@@ -94,6 +96,7 @@ impl<A> Display for Error<A>
             ReportableBug(ref e) => {
                 write!(f, "Unexpected bug has happened: {}", e)
             }
+            #[cfg(feature = "failpoints")]
             FailPoint => write!(f, "Fail point has been triggered."),
             Io(ref e) => write!(f, "IO error: {}", e),
             Corruption {
@@ -119,6 +122,7 @@ impl<T> Error<T> {
             }
             Unsupported(s) => Unsupported(s),
             ReportableBug(s) => ReportableBug(s),
+            #[cfg(feature = "failpoints")]
             FailPoint => FailPoint,
             Io(e) => Io(e),
             Corruption {
@@ -137,6 +141,7 @@ impl<T> Error<T> {
             CasFailed(other) => CasFailed(other.into()),
             Unsupported(s) => Unsupported(s),
             ReportableBug(s) => ReportableBug(s),
+            #[cfg(feature = "failpoints")]
             FailPoint => FailPoint,
             Io(e) => Io(e),
             Corruption {
