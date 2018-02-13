@@ -50,8 +50,8 @@ fn parallel_tree_ops() {
     }
 
     println!("========== initial sets ==========");
-    let conf = ConfigBuilder::new().temporary(true).blink_fanout(2).build();
-    let t = Arc::new(sled::Tree::start(conf).unwrap());
+    let config = ConfigBuilder::new().temporary(true).blink_fanout(2).build();
+    let t = Arc::new(sled::Tree::start(config).unwrap());
     par!{t, |tree: &Tree, k: Vec<u8>| {
         assert_eq!(tree.get(&*k), Ok(None));
         tree.set(k.clone(), k.clone()).unwrap();
@@ -160,30 +160,30 @@ fn tree_iterator() {
 #[test]
 fn recover_tree() {
     println!("========== recovery ==========");
-    let conf = ConfigBuilder::new()
+    let config = ConfigBuilder::new()
         .temporary(true)
         .blink_fanout(2)
         .io_buf_size(5000)
         .flush_every_ms(None)
         .snapshot_after_ops(100)
         .build();
-    let t = sled::Tree::start(conf.clone()).unwrap();
+    let t = sled::Tree::start(config.clone()).unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
         t.set(k.clone(), k).unwrap();
     }
     drop(t);
 
-    let t = sled::Tree::start(conf.clone()).unwrap();
-    for i in 0..conf.blink_fanout << 1 {
+    let t = sled::Tree::start(config.clone()).unwrap();
+    for i in 0..config.blink_fanout << 1 {
         let k = kv(i);
         assert_eq!(t.get(&*k), Ok(Some(k.clone())));
         t.del(&*k).unwrap();
     }
     drop(t);
 
-    let t = sled::Tree::start(conf.clone()).unwrap();
-    for i in 0..conf.blink_fanout << 1 {
+    let t = sled::Tree::start(config.clone()).unwrap();
+    for i in 0..config.blink_fanout << 1 {
         let k = kv(i);
         assert_eq!(t.get(&*k), Ok(None));
     }

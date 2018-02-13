@@ -410,9 +410,9 @@ impl Config {
     // panics if conf options are outside of advised range
     fn validate(&self) -> CacheResult<(), ()> {
         supported!(self.inner.io_bufs <= 32, "too many configured io_bufs");
-        supported!(self.inner.io_buf_size >= 1000, "io_buf_size too small");
+        supported!(self.inner.io_buf_size >= 100, "io_buf_size should be hundreds of kb at minimum");
         supported!(self.inner.io_buf_size <= 1 << 24, "io_buf_size should be <= 16mb");
-        supported!(self.inner.min_items_per_segment >= 4, "min_items_per_segment must be >= 4");
+        supported!(self.inner.min_items_per_segment >= 1, "min_items_per_segment must be >= 4");
         supported!(self.inner.min_items_per_segment < 128, "min_items_per_segment must be < 128");
         supported!(self.inner.blink_fanout >= 2, "tree nodes must have at least 2 children");
         supported!(self.inner.blink_fanout < 1024, "tree nodes should not have so many children");
@@ -459,12 +459,12 @@ impl Config {
             path,
         )?;
 
-        fail_point!("write_config bytes", |_| Err(Error::FailPoint));
+        maybe_fail!("write_config bytes");
         f.write_all(&*bytes)?;
-        fail_point!("write_config crc", |_| Err(Error::FailPoint));
+        maybe_fail!("write_config crc");
         f.write_all(&crc64)?;
         f.sync_all()?;
-        fail_point!("write_config post", |_| Err(Error::FailPoint));
+        maybe_fail!("write_config post");
         Ok(())
     }
 

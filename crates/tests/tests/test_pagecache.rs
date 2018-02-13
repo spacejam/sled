@@ -41,7 +41,7 @@ impl Materializer for TestMaterializer {
 
 #[test]
 fn pagecache_caching() {
-    let conf = ConfigBuilder::new()
+    let config = ConfigBuilder::new()
         .temporary(true)
         .cache_capacity(40)
         .cache_bits(0)
@@ -50,8 +50,8 @@ fn pagecache_caching() {
         .io_buf_size(20000)
         .build();
 
-    let pc: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone())
-        .unwrap();
+    let pc: PageCache<TestMaterializer, _, _> =
+        PageCache::start(config.clone()).unwrap();
 
     let guard = pin();
     let mut keys = HashMap::new();
@@ -72,7 +72,7 @@ fn pagecache_caching() {
 
 #[test]
 fn pagecache_strange_crash_1() {
-    let conf = ConfigBuilder::new()
+    let config = ConfigBuilder::new()
         .temporary(true)
         .cache_capacity(40)
         .cache_bits(0)
@@ -83,7 +83,7 @@ fn pagecache_strange_crash_1() {
 
     {
         let pc: PageCache<TestMaterializer, _, _> =
-            PageCache::start(conf.clone()).unwrap();
+            PageCache::start(config.clone()).unwrap();
 
         let guard = pin();
         let mut keys = HashMap::new();
@@ -101,8 +101,8 @@ fn pagecache_strange_crash_1() {
         }
     }
     println!("!!!!!!!!!!!!!!!!!!!!! recovering !!!!!!!!!!!!!!!!!!!!!!");
-    let _pc: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone())
-        .unwrap();
+    let _pc: PageCache<TestMaterializer, _, _> =
+        PageCache::start(config.clone()).unwrap();
     // TODO test no eaten lsn's on recovery
     // TODO test that we don't skip multiple segments ahead on recovery (confusing Lsn & Lid)
 }
@@ -111,7 +111,7 @@ fn pagecache_strange_crash_1() {
 fn pagecache_strange_crash_2() {
     for x in 0..10 {
         let guard = pin();
-        let conf = ConfigBuilder::new()
+        let config = ConfigBuilder::new()
             .temporary(true)
             .cache_capacity(40)
             .cache_bits(0)
@@ -121,10 +121,10 @@ fn pagecache_strange_crash_2() {
             .build();
 
         println!("!!!!!!!!!!!!!!!!!!!!! {} !!!!!!!!!!!!!!!!!!!!!!", x);
-        conf.verify_snapshot::<TestMaterializer, _, _>().unwrap();
+        config.verify_snapshot::<TestMaterializer, _, _>().unwrap();
 
         let pc: PageCache<TestMaterializer, _, _> =
-            PageCache::start(conf.clone()).unwrap();
+            PageCache::start(config.clone()).unwrap();
 
         let mut keys = HashMap::new();
         for _ in 0..2 {
@@ -151,14 +151,14 @@ fn pagecache_strange_crash_2() {
 
 #[test]
 fn basic_pagecache_recovery() {
-    let conf = ConfigBuilder::new()
+    let config = ConfigBuilder::new()
         .temporary(true)
         .flush_every_ms(None)
         .io_buf_size(1000)
         .build();
 
-    let pc: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone())
-        .unwrap();
+    let pc: PageCache<TestMaterializer, _, _> =
+        PageCache::start(config.clone()).unwrap();
 
     let guard = pin();
     let id = pc.allocate(&guard).unwrap();
@@ -169,23 +169,23 @@ fn basic_pagecache_recovery() {
     assert_eq!(consolidated, vec![1, 2, 3]);
     drop(pc);
 
-    let pc2: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone())
-        .unwrap();
+    let pc2: PageCache<TestMaterializer, _, _> =
+        PageCache::start(config.clone()).unwrap();
     let (consolidated2, key) = pc2.get(id, &guard).unwrap().unwrap();
     assert_eq!(consolidated, consolidated2);
 
     pc2.link(id, key, vec![4], &guard).unwrap();
     drop(pc2);
 
-    let pc3: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone())
-        .unwrap();
+    let pc3: PageCache<TestMaterializer, _, _> =
+        PageCache::start(config.clone()).unwrap();
     let (consolidated3, _key) = pc3.get(id, &guard).unwrap().unwrap();
     assert_eq!(consolidated3, vec![1, 2, 3, 4]);
     pc3.free(id, &guard).unwrap();
     drop(pc3);
 
-    let pc4: PageCache<TestMaterializer, _, _> = PageCache::start(conf.clone())
-        .unwrap();
+    let pc4: PageCache<TestMaterializer, _, _> =
+        PageCache::start(config.clone()).unwrap();
     let res = pc4.get(id, &guard).unwrap();
     assert!(res.is_free());
 }

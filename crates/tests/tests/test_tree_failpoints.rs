@@ -15,7 +15,7 @@ use sled::*;
 
 #[derive(Debug, Clone)]
 enum Op {
-    Set(u8, u8),
+    Set,
     Del(u8),
     Restart,
     FailPoint(&'static str),
@@ -39,12 +39,12 @@ impl Arbitrary for Op {
             "write_config post",
             "trailer write",
             "trailer write post",
-            //B"snap write",
-            //B"snap write len",
-            //B"snap write crc",
-            //B"snap write post",
-            //B"snap write mv",
-            //B"snap write mv post",
+            "snap write",
+            "snap write len",
+            "snap write crc",
+            "snap write post",
+            "snap write mv",
+            "snap write mv post",
             "snap write rm old",
         ];
 
@@ -59,11 +59,16 @@ impl Arbitrary for Op {
         let choice = g.gen_range(0, 2);
 
         match choice {
-            0 => Set(g.gen::<u8>(), g.gen::<u8>()),
+            0 => Set,
             1 => Del(g.gen::<u8>()),
             _ => panic!("impossible choice"),
         }
     }
+}
+
+fn v(b: &Vec<u8>) -> u16 {
+    assert_eq!(b.len(), 2);
+    ((b[0] as u16) << 8) + b[1] as u16
 }
 
 fn prop_tree_crashes_nicely(ops: Vec<Op>) -> bool {
@@ -80,8 +85,10 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>) -> bool {
     let config = ConfigBuilder::new()
         .temporary(true)
         .snapshot_after_ops(1)
-        .flush_every_ms(Some(1))
-        .io_buf_size(10000)
+        .flush_every_ms(None) // FIXME also do this with Some(1)
+        .io_buf_size(300)
+        .min_items_per_segment(1)
+        .blink_fanout(2) // smol pages for smol buffers
         .cache_capacity(40)
         .build();
 
@@ -98,6 +105,7 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>) -> bool {
                     return true;
                 }
 
+                println!("could not start database: {}", e);
                 return false;
             }
 
@@ -105,13 +113,12 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>) -> bool {
 
             let tree_iter = tree.iter().map(|res| {
                 let (ref tk, ref tv) = res.unwrap();
-                (tk[0], tv[0])
+                (v(tk), v(tv))
             });
-            let ref_iter =
-                reference.iter().map(|(ref rk, ref rv)| (**rk, **rv));
+            let ref_iter = reference.iter().map(|(ref rk, ref rv)| (**rk, **rv));
             for (t, r) in tree_iter.zip(ref_iter) {
                 if t != r {
-                    println!("tree value {:?} failed to match expected reference {:?}", t, r);
+                    println!("tree verification failed: expected {:?} got {:?}", r, t);
                     return false;
                 }
             }
@@ -127,23 +134,31 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>) -> bool {
                     restart!();
                     continue;
                 }
-                _ => {
-                    println!("about to unwrap an unexpected result: {:?}", $e);
+                other => {
+                    println!("got non-failpoint err: {:?}", other);
                     return false;
                 },
             }
         }
     }
 
+    // we always increase set_counter because
+    let mut set_counter = 0u16;
+
     for op in ops.into_iter() {
         match op {
-            Set(k, v) => {
-                fp_crash!(tree.set(vec![k], vec![v]));
-                reference.insert(k, v);
+            Set => {
+                let hi = (set_counter >> 8) as u8;
+                let lo = set_counter as u8;
+                fp_crash!(tree.set(vec![hi, lo], vec![hi, lo]));
+                tree.flush().unwrap();
+                reference.insert(set_counter, set_counter);
+                set_counter += 1;
             }
             Del(k) => {
-                fp_crash!(tree.del(&*vec![k]));
-                reference.remove(&k);
+                fp_crash!(tree.del(&*vec![0, k]));
+                tree.flush().unwrap();
+                reference.remove(&(k as u16));
             }
             Restart => {
                 restart!();
@@ -179,23 +194,34 @@ fn quickcheck_tree_with_failpoints() {
 #[test]
 fn failpoints_bug_1() {
     // postmortem 1: model did not account for proper reasons to fail to start
-    assert_eq!(
-        prop_tree_crashes_nicely(vec![FailPoint("snap write"), Restart]),
-        true
-    )
+    assert!(prop_tree_crashes_nicely(vec![FailPoint("snap write"), Restart]));
 }
 
 #[test]
-#[ignore]
 fn failpoints_bug_2() {
-    // postmortem 1:
-    assert_eq!(
-        prop_tree_crashes_nicely(vec![
-            FailPoint("buffer write post"),
-            Set(143, 67),
-            Set(229, 66),
-            Restart,
-        ]),
-        true
-    )
+    // postmortem 1: the system was assuming the happy path across failpoints
+    assert!(prop_tree_crashes_nicely(
+        vec![FailPoint("buffer write post"), Set, Set, Restart],
+    ))
+}
+
+#[test]
+fn failpoints_bug_3() {
+    // postmortem 1: this was a regression that happened because we
+    // chose to eat errors about advancing snapshots, which trigger
+    // log flushes. We should not trigger flushes from snapshots,
+    // but first we need to make sure we are better about detecting
+    // tears, by not also using 0 as a failed flush signifier.
+    assert!(prop_tree_crashes_nicely(vec![
+        Set,
+        Set,
+        Set,
+        Set,
+        FailPoint("trailer write"),
+        Set,
+        Set,
+        Set,
+        Set,
+        Restart,
+    ]))
 }

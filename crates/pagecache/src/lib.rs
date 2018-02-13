@@ -6,8 +6,6 @@
 #![cfg_attr(feature="clippy", allow(inline_always))]
 
 #[macro_use]
-extern crate fail;
-#[macro_use]
 extern crate serde_derive;
 extern crate serde;
 extern crate crossbeam_epoch as epoch;
@@ -21,10 +19,13 @@ extern crate log as _log;
 extern crate rayon;
 #[cfg(feature = "zstd")]
 extern crate zstd;
-#[cfg(any(test, feature = "lock_free_delays"))]
+#[cfg(any(test, feature = "failpoints", feature = "lock_free_delays"))]
 extern crate rand;
 #[cfg(unix)]
 extern crate libc;
+#[cfg(feature = "failpoints")]
+#[macro_use]
+extern crate fail;
 
 pub use ds::{Radix, Stack};
 
@@ -32,6 +33,13 @@ pub use ds::{Radix, Stack};
 pub use config::{Config, ConfigBuilder};
 pub use io::*;
 pub use result::{CacheResult, Error};
+
+macro_rules! maybe_fail {
+    ($e:expr) => {
+        #[cfg(feature = "failpoints")]
+        fail_point!($e, |_| Err(Error::FailPoint));
+    }
+}
 
 macro_rules! rep_no_copy {
     ($e:expr; $n:expr) => {

@@ -32,11 +32,13 @@ fn more_log_reservations_than_buffers() {
         .build();
     let log = Log::start_raw_log(config.clone()).unwrap();
     let mut reservations = vec![];
+
+    let total_seg_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;
+    let big_msg_overhead = MSG_HEADER_LEN + total_seg_overhead;
+    let big_msg_sz = config.io_buf_size - big_msg_overhead;
+
     for _ in 0..config.io_bufs + 1 {
-        reservations.push(
-            log.reserve(vec![0; config.io_buf_size - MSG_HEADER_LEN])
-                .unwrap(),
-        )
+        reservations.push(log.reserve(vec![0; big_msg_sz]).unwrap())
     }
     for res in reservations.into_iter().rev() {
         // abort in reverse order
@@ -46,17 +48,16 @@ fn more_log_reservations_than_buffers() {
 
 #[test]
 fn non_contiguous_log_flush() {
-    let conf = ConfigBuilder::new()
+    let config = ConfigBuilder::new()
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
         .io_buf_size(1000)
         .build();
-    let log = Log::start_raw_log(conf.clone()).unwrap();
+    let log = Log::start_raw_log(config.clone()).unwrap();
 
-    let seg_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;
-    let buf_len = ((conf.io_buf_size - seg_overhead) /
-                       conf.min_items_per_segment) -
-        MSG_HEADER_LEN;
+    let seg_overhead = std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN);
+    let buf_len = (config.io_buf_size / config.min_items_per_segment) -
+        (MSG_HEADER_LEN + seg_overhead);
 
     let res1 = log.reserve(vec![0; buf_len]).unwrap();
     let res2 = log.reserve(vec![0; buf_len]).unwrap();
@@ -71,13 +72,13 @@ fn non_contiguous_log_flush() {
 fn concurrent_logging() {
     // TODO linearize res bufs, verify they are correct
     for i in 0..10 {
-        let conf = ConfigBuilder::new()
+        let config = ConfigBuilder::new()
             .temporary(true)
             .segment_mode(SegmentMode::Linear)
             .io_buf_size(1000)
             .flush_every_ms(Some(50))
             .build();
-        let log = Arc::new(Log::start_raw_log(conf.clone()).unwrap());
+        let log = Arc::new(Log::start_raw_log(config.clone()).unwrap());
         let iobs2 = log.clone();
         let iobs3 = log.clone();
         let iobs4 = log.clone();
@@ -85,10 +86,9 @@ fn concurrent_logging() {
         let iobs6 = log.clone();
         let log7 = log.clone();
 
-        let seg_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;
-        let buf_len = ((conf.io_buf_size - seg_overhead) /
-                           conf.min_items_per_segment) -
-            MSG_HEADER_LEN;
+        let seg_overhead = std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN);
+        let buf_len = (config.io_buf_size / config.min_items_per_segment) -
+            (MSG_HEADER_LEN + seg_overhead);
 
         let t1 = thread::Builder::new()
             .name("c1".to_string())
@@ -169,11 +169,11 @@ fn abort(log: &Log) {
 
 #[test]
 fn log_aborts() {
-    let conf = ConfigBuilder::new()
+    let config = ConfigBuilder::new()
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
         .build();
-    let log = Log::start_raw_log(conf).unwrap();
+    let log = Log::start_raw_log(config).unwrap();
     write(&log);
     abort(&log);
     write(&log);
@@ -184,12 +184,12 @@ fn log_aborts() {
 
 #[test]
 fn log_iterator() {
-    let conf = ConfigBuilder::new()
+    let config = ConfigBuilder::new()
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
         .io_buf_size(1000)
         .build();
-    let log = Log::start_raw_log(conf.clone()).unwrap();
+    let log = Log::start_raw_log(config.clone()).unwrap();
     let (first_lsn, _) = log.write(b"".to_vec()).unwrap();
     log.write(b"1".to_vec());
     log.write(b"22".to_vec());
@@ -208,7 +208,7 @@ fn log_iterator() {
 
     drop(log);
 
-    let log = Log::start_raw_log(conf).unwrap();
+    let log = Log::start_raw_log(config).unwrap();
 
     let mut iter = log.iter_from(first_lsn);
     assert_eq!(iter.next().unwrap().2, b"".to_vec());
@@ -289,7 +289,7 @@ impl Arbitrary for Op {
 #[test]
 #[ignore]
 fn snapshot_with_out_of_order_buffers() {
-    let conf = ConfigBuilder::new()
+    let config = ConfigBuilder::new()
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
         .io_buf_size(100)
@@ -297,10 +297,10 @@ fn snapshot_with_out_of_order_buffers() {
         .snapshot_after_ops(5)
         .build();
 
-    let len = conf.io_buf_size - SEG_HEADER_LEN - SEG_TRAILER_LEN -
+    let len = config.io_buf_size - SEG_HEADER_LEN - SEG_TRAILER_LEN -
         MSG_HEADER_LEN;
 
-    let log = Log::start_raw_log(conf.clone()).unwrap();
+    let log = Log::start_raw_log(config.clone()).unwrap();
 
     for i in 0..4 {
         let buf = vec![i as u8; len];
@@ -315,12 +315,12 @@ fn snapshot_with_out_of_order_buffers() {
 
     drop(log);
 
-    let log = Log::start_raw_log(conf.clone()).unwrap();
+    let log = Log::start_raw_log(config.clone()).unwrap();
 
     // start iterating just past the first segment header
     let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
 
-    for i in 0..conf.io_bufs * 2 {
+    for i in 0..config.io_bufs * 2 {
         let expected = vec![i as u8; len];
         let (_lsn, _lid, buf) = iter.next().unwrap();
         assert_eq!(expected, buf);
@@ -331,32 +331,33 @@ fn snapshot_with_out_of_order_buffers() {
 fn multi_segment_log_iteration() {
     // ensure segments are being linked
     // ensure trailers are valid
-    let conf = ConfigBuilder::new()
+    let config = ConfigBuilder::new()
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
         .io_buf_size(1000)
+        .min_items_per_segment(1)
         .build();
 
-    let seg_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;
-    let len = ((conf.io_buf_size - seg_overhead) /
-                   conf.min_items_per_segment) - MSG_HEADER_LEN;
+    let total_seg_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;
+    let big_msg_overhead = MSG_HEADER_LEN + total_seg_overhead;
+    let big_msg_sz = config.io_buf_size - big_msg_overhead;
 
-    let log = Log::start_raw_log(conf.clone()).unwrap();
+    let log = Log::start_raw_log(config.clone()).unwrap();
 
-    for i in 0..conf.io_bufs * 2 {
-        let buf = vec![i as u8; len];
+    for i in 0..config.io_bufs * 2 {
+        let buf = vec![i as u8; big_msg_sz];
         log.write(buf);
     }
 
     drop(log);
 
-    let log = Log::start_raw_log(conf.clone()).unwrap();
+    let log = Log::start_raw_log(config.clone()).unwrap();
 
     // start iterating just past the first segment header
     let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
 
-    for i in 0..conf.io_bufs * 2 {
-        let expected = vec![i as u8; len];
+    for i in 0..config.io_bufs * 2 {
+        let expected = vec![i as u8; big_msg_sz];
         let (_lsn, _lid, buf) = iter.next().unwrap();
         assert_eq!(expected, buf);
     }

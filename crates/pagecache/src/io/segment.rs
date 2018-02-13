@@ -538,10 +538,10 @@ impl SegmentAccountant {
             );
             to_zero.push(lsn);
             let f = self.config.file()?;
-            fail_point!("zero garbage segment", |_| Err(Error::FailPoint));
+            maybe_fail!("zero garbage segment");
             f.pwrite_all(&*vec![0; SEG_HEADER_LEN], lid)?;
             f.sync_all()?;
-            fail_point!("zero garbage segment post", |_| Err(Error::FailPoint));
+            maybe_fail!("zero garbage segment post");
         }
 
         for lsn in to_zero.into_iter() {
@@ -891,10 +891,10 @@ impl SegmentAccountant {
             lsn
         );
         let f = self.config.file()?;
-        fail_point!("zero segment", |_| Err(Error::FailPoint));
+        maybe_fail!("zero segment");
         f.pwrite_all(&*vec![0; self.config.io_buf_size], lid)?;
         f.sync_all()?;
-        fail_point!("zero segment post", |_| Err(Error::FailPoint));
+        maybe_fail!("zero segment post");
 
         let last_given = self.safety_buffer[self.config.io_bufs - 1];
 

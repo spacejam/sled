@@ -44,8 +44,13 @@ unsafe impl Sync for Tree {}
 impl Tree {
     /// Load existing or create a new `Tree`.
     pub fn start(config: Config) -> DbResult<Tree, ()> {
-        #[cfg(feature = "check_snapshot_integrity")]
-        config.verify_snapshot::<BLinkMaterializer, Frag, Vec<(PageID, PageID)>>();
+        #[cfg(any(test, feature = "check_snapshot_integrity"))]
+        match config
+            .verify_snapshot::<BLinkMaterializer, Frag, Vec<(PageID, PageID)>>() {
+                Ok(_) |
+                Err(Error::FailPoint) => {},
+                other => panic!("failed to verify snapshot: {:?}", other),
+        }
 
         let pages = PageCache::start(config.clone())?;
 

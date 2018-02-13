@@ -424,6 +424,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 Update::Append(new.clone())
             },
         };
+
         let bytes =
             measure(&M.serialize, || serialize(&prepend, Infinite).unwrap());
         let log_reservation =
@@ -924,7 +925,12 @@ impl<PM, P, R> PageCache<PM, P, R>
             "PageCache::advance_snapshot called before recovery",
         );
 
-        self.log.flush()?;
+        if let Err(e) = self.log.flush() {
+            error!("failed to flush log during advance_snapshot: {}", e);
+            self.log.with_sa(|sa| sa.resume_rewriting());
+            *snapshot_opt = Some(last_snapshot);
+            return Err(e);
+        }
 
         // we disable rewriting so that our log becomes append-only,
         // allowing us to iterate through it without corrupting ourselves.
@@ -942,16 +948,24 @@ impl<PM, P, R> PageCache<PM, P, R>
 
         let iter = self.log.iter_from(start_lsn);
 
-        let next_snapshot =
-            advance_snapshot::<PM, P, R>(iter, last_snapshot, &self.config)?;
-
-        self.log.with_sa(|sa| sa.resume_rewriting());
+        let res =
+            advance_snapshot::<PM, P, R>(iter, last_snapshot, &self.config);
 
         // NB it's important to resume writing before replacing the snapshot
         // into the mutex, otherwise we create a race condition where the SA is
         // not actually paused when a snapshot happens.
-        *snapshot_opt = Some(next_snapshot);
-        Ok(())
+        self.log.with_sa(|sa| sa.resume_rewriting());
+
+        match res {
+            Err(e) => {
+                *snapshot_opt = Some(Snapshot::default());
+                Err(e)
+            }
+            Ok(next_snapshot) => {
+                *snapshot_opt = Some(next_snapshot);
+                Ok(())
+            }
+        }
     }
 
     fn load_snapshot(&mut self) {

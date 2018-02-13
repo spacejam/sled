@@ -2,10 +2,17 @@
 name = "tests"
 version = "0.1.0"
 authors = ["Tyler Neely <t@jujit.su>"]
+publish = false
+
+[dev-dependencies.pagecache]
+features = ["failpoints", "lock_free_delays"]
+path = "../pagecache"
+
+[dev-dependencies.sled]
+features = ["failpoints", "lock_free_delays", "check_snapshot_integrity"]
+path = "../sled"
 
 [dev-dependencies]
-sled = { path = "../sled" }
-pagecache = { path = "../pagecache" }
 crossbeam-epoch = "0.4"
 quickcheck = "0.6"
 rand = "0.4"
