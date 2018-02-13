@@ -2,6 +2,7 @@
 name = "stress2"
 version = "0.1.0"
 authors = ["Tyler Neely <t@jujit.su>"]
+publish = false
 
 [profile.release]
 debug = 2

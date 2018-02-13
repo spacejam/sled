@@ -12,14 +12,16 @@ readme = "../../README.md"
 
 [features]
 default = []
-lock_free_delays = []
+lock_free_delays = ["pagecache/lock_free_delays"]
+failpoints = ["pagecache/failpoints"]
+check_snapshot_integrity = []
+no_logs = ["log/max_level_off", "pagecache/no_logs"]
 
 [profile.release]
 debug = 2
 
 [dependencies.log]
 version = "0.4"
-# features = ["max_level_off"]
 
 [dependencies]
 crossbeam-epoch = "0.4"
