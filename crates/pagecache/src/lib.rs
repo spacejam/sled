@@ -83,6 +83,26 @@ pub type PageID = usize;
 /// A pointer to shared lock-free state bound by a pinned epoch's lifetime.
 pub type PagePtr<'g, P> = epoch::Shared<'g, ds::stack::Node<io::CacheEntry<P>>>;
 
+// This type exists to communicate that the underlying raw pointer in epoch::Shared
+// is Send in the restricted context of pulling data from disk in a parallel
+// way by rayon.
+#[derive(Debug, Clone, PartialEq)]
+struct RayonPagePtr<'g, P>(epoch::Shared<'g, ds::stack::Node<io::CacheEntry<P>>>)
+    where P: Send + 'static;
+
+use std::ops::Deref;
+
+impl<'g, P> Deref for RayonPagePtr<'g, P>
+    where P: Send
+{
+    type Target = PagePtr<'g, P>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+unsafe impl<'g, P> Send for RayonPagePtr<'g, P> where P: Send {}
+
 lazy_static! {
     /// A metric collector for all pagecache users running in this
     /// process.
