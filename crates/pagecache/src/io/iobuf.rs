@@ -523,8 +523,8 @@ impl IoBufs {
         let io_buf_size = self.config.io_buf_size;
 
         let sealed = mk_sealed(header);
-
         let res_len = offset(sealed) as usize;
+
         let maxed = res_len == capacity;
 
         let worked = iobuf.linearized(|| {
@@ -549,6 +549,13 @@ impl IoBufs {
         if !worked {
             return Ok(());
         }
+
+        assert!(
+            capacity + SEG_HEADER_LEN >= res_len,
+            "res_len of {} higher than buffer capacity {}",
+            res_len,
+            capacity
+        );
 
         let max = std::usize::MAX as LogID;
 
