@@ -10,6 +10,9 @@
 //! mutexes in a non-blocking way, so it shouldn't get hit all that often.
 //! But this isn't measured, so maybe it happens all the time!
 //! Computers, right?
+//!
+//! This is half-sketched-out and doesn't currently provide atomicity
+//! during crashes LOLOLOLLOLOLOLOL
 
 #![allow(dead_code)]
 
