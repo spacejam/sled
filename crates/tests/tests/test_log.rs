@@ -2,11 +2,12 @@
 
 extern crate quickcheck;
 extern crate rand;
-extern crate sled;
-extern crate pagecache;
-
 #[cfg(target_os = "linux")]
 extern crate libc;
+
+extern crate sled;
+extern crate pagecache;
+extern crate tests;
 
 use std::fs;
 use std::thread;
@@ -21,7 +22,6 @@ use pagecache::{ConfigBuilder, Log, LogRead, MSG_HEADER_LEN, SEG_HEADER_LEN,
 
 type Lsn = isize;
 type LogID = u64;
-
 
 #[test]
 #[ignore]
