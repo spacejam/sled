@@ -46,7 +46,7 @@ script:
                  cargo check;
                  cargo check --features=zstd;
                  cargo check --features=rayon;
-                 cargo check --features=zstd,rayon;
+                 cargo check --features=all;
                  cargo test
                  ;;
              esac'

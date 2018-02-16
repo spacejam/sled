@@ -692,11 +692,13 @@ impl<PM, P, R> PageCache<PM, P, R>
 
             #[cfg(feature = "rayon")]
             {
-                let pulled_res =
-                    to_pull.par_iter().map(|&(lsn, lid)| self.pull(lsn, lid));
+                let pulled_res: Vec<_> = to_pull
+                    .par_iter()
+                    .map(|&(lsn, lid)| self.rayon_pull(lsn, lid))
+                    .collect();
 
                 for res in pulled_res {
-                    let item = res?;
+                    let item = res.map_err(|e| e.danger_cast())?;
                     fetched.push(item);
                 }
             }
@@ -862,6 +864,16 @@ impl<PM, P, R> PageCache<PM, P, R>
             }
         }
         Ok(())
+    }
+
+
+    #[cfg(feature = "rayon")]
+    fn rayon_pull<'g>(
+        &self,
+        lsn: Lsn,
+        lid: LogID,
+    ) -> CacheResult<P, Option<RayonPagePtr<'g, P>>> {
+        self.pull(lsn, lid).map_err(|e1| e1.danger_cast())
     }
 
     fn pull<'g>(
