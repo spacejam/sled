@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use super::*;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -14,7 +16,7 @@ impl Data {
         }
     }
 
-    pub fn split(&self) -> (Key, Data) {
+    pub fn split(&self, _prefix: &[u8]) -> (Key, Data) {
         fn split_inner<T>(xs: &[(Key, T)]) -> (Key, Vec<(Key, T)>)
             where T: Clone + Debug
         {

@@ -86,7 +86,7 @@ impl Node {
     }
 
     pub fn split(&self, id: PageID) -> Node {
-        let (split, right_data) = self.data.split();
+        let (split, right_data) = self.data.split(&*self.lo.inner().unwrap());
         Node {
             id: id,
             data: right_data,
