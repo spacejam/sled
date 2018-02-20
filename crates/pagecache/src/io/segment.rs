@@ -71,6 +71,10 @@ use epoch::pin;
 use self::reader::LogReader;
 use super::*;
 
+// The EVIL_BYTE is written to force detection of
+// a corruption when dealing with unused segment space.
+const EVIL_BYTE: u8 = 6;
+
 /// The segment accountant keeps track of the logical blocks
 /// of storage. It scans through all segments quickly during
 /// recovery and attempts to locate torn segments.
@@ -539,7 +543,7 @@ impl SegmentAccountant {
             to_zero.push(lsn);
             let f = self.config.file()?;
             maybe_fail!("zero garbage segment");
-            f.pwrite_all(&*vec![0; SEG_HEADER_LEN], lid)?;
+            f.pwrite_all(&*vec![EVIL_BYTE; SEG_HEADER_LEN], lid)?;
             f.sync_all()?;
             maybe_fail!("zero garbage segment post");
         }
@@ -892,7 +896,10 @@ impl SegmentAccountant {
         );
         let f = self.config.file()?;
         maybe_fail!("zero segment");
-        f.pwrite_all(&*vec![0; self.config.io_buf_size], lid)?;
+        f.pwrite_all(
+            &*vec![EVIL_BYTE; self.config.io_buf_size],
+            lid,
+        )?;
         f.sync_all()?;
         maybe_fail!("zero segment post");
 

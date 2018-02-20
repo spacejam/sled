@@ -84,11 +84,6 @@ impl LogReader for File {
         let max_possible_len = (ceiling - lid - MSG_HEADER_LEN as LogID) as
             usize;
         if header.len > max_possible_len {
-            error!(
-                "log read invalid message length, {} should be <= {}",
-                header.len,
-                max_possible_len
-            );
             trace!("read a corrupted message of len {}", header.len);
             return Ok(LogRead::Corrupted(header.len));
         }
