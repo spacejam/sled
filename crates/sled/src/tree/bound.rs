@@ -8,10 +8,10 @@ pub enum Bound {
 }
 
 impl Bound {
-    pub fn inner(&self) -> Option<Vec<u8>> {
+    pub fn inner(&self) -> Option<&[u8]> {
         match *self {
             Bound::Inc(ref v) |
-            Bound::Non(ref v) => Some(v.clone()),
+            Bound::Non(ref v) => Some(&*v),
             _ => None,
         }
     }

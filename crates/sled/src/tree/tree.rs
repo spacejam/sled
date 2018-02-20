@@ -94,8 +94,8 @@ impl Tree {
                 None,
             );
 
-            let mut root_index_vec = vec![];
-            root_index_vec.push((vec![], leaf_id));
+            // vec![0] represents a prefix-encoded empty prefix
+            let root_index_vec = vec![(vec![0], leaf_id)];
 
             let root = Frag::Base(
                 Node {
@@ -172,9 +172,6 @@ impl Tree {
         }
         // we need to retry caps until old != cur, since just because
         // cap fails it doesn't mean our value was changed.
-        let frag = new.map(|n| Frag::Set(key.clone(), n)).unwrap_or_else(|| {
-            Frag::Del(key.clone())
-        });
         let guard = pin();
         loop {
             let (mut path, cur) =
@@ -187,6 +184,12 @@ impl Tree {
             }
 
             let &mut (ref node, ref cas_key) = path.last_mut().unwrap();
+            let encoded_key = prefix_encode(node.lo.inner().unwrap(), &*key);
+            let frag = if let Some(ref n) = new {
+                Frag::Set(encoded_key, n.clone())
+            } else {
+                Frag::Del(encoded_key)
+            };
             let link = self.pages.link(
                 node.id,
                 cas_key.clone(),
@@ -209,11 +212,13 @@ impl Tree {
                 "the database is in read-only mode".to_owned(),
             ));
         }
-        let frag = Frag::Set(key.clone(), value);
         let guard = pin();
         loop {
             let mut path = self.path_for_key(&*key, &guard)?;
             let (mut last_node, last_cas_key) = path.pop().unwrap();
+            let encoded_key =
+                prefix_encode(last_node.lo.inner().unwrap(), &*key);
+            let frag = Frag::Set(encoded_key, value.clone());
             let link = self.pages.link(
                 last_node.id,
                 last_cas_key,
@@ -259,11 +264,12 @@ impl Tree {
         loop {
             let mut path = self.path_for_key(&*key, &guard)?;
             let (leaf_node, leaf_cas_key) = path.pop().unwrap();
+            let encoded_key = prefix_encode(leaf_node.lo.inner().unwrap(), key);
             match leaf_node.data {
                 Data::Leaf(ref items) => {
-                    let search = items.binary_search_by(
-                        |&(ref k, ref _v)| (**k).cmp(key),
-                    );
+                    let search = items.binary_search_by(|&(ref k, ref _v)| {
+                        prefix_cmp(k, &*encoded_key)
+                    });
                     if let Ok(idx) = search {
                         ret = Some(items[idx].1.clone());
                     } else {
@@ -274,7 +280,7 @@ impl Tree {
                 _ => panic!("last node in path is not leaf"),
             }
 
-            let frag = Frag::Del(key.to_vec());
+            let frag = Frag::Del(encoded_key);
             let link =
                 self.pages.link(leaf_node.id, leaf_cas_key, frag, &guard);
 
@@ -435,7 +441,7 @@ impl Tree {
                 return self.root_hoist(
                     root_node.id,
                     parent_split.to,
-                    parent_split.at.inner().unwrap(),
+                    parent_split.at.inner().unwrap().to_vec(),
                     guard,
                 ).map(|_| ())
                     .map_err(|e| e.danger_cast());
@@ -514,9 +520,12 @@ impl Tree {
         let new_root_pid = self.pages.allocate(guard)?;
         debug!("allocated pid {} in root_hoist", new_root_pid);
 
+        let root_lo = b"";
         let mut new_root_vec = vec![];
-        new_root_vec.push((vec![], from));
-        new_root_vec.push((at, to));
+        new_root_vec.push((vec![0], from));
+
+        let encoded_at = prefix_encode(root_lo, &*at);
+        new_root_vec.push((encoded_at, to));
         let new_root = Frag::Base(
             Node {
                 id: new_root_pid,
@@ -554,8 +563,10 @@ impl Tree {
         let ret = path.last().and_then(|&(ref last_node, ref _last_cas_key)| {
             let data = &last_node.data;
             let items = data.leaf_ref().unwrap();
-            let search =
-                items.binary_search_by(|&(ref k, ref _v)| (**k).cmp(key));
+            let encoded_key = prefix_encode(last_node.lo.inner().unwrap(), key);
+            let search = items.binary_search_by(
+                |&(ref k, ref _v)| prefix_cmp(k, &*encoded_key),
+            );
             if let Ok(idx) = search {
                 // cap a del frag below
                 Some(items[idx].1.clone())
@@ -586,7 +597,6 @@ impl Tree {
         key: &[u8],
         guard: &'g Guard,
     ) -> DbResult<Vec<(Node, TreePtr<'g>)>, ()> {
-        let key_bound = Bound::Inc(key.into());
         let mut cursor = self.root.load(SeqCst);
         let mut path: Vec<(Node, TreePtr<'g>)> = vec![];
 
@@ -618,10 +628,10 @@ impl Tree {
             let (node, _is_root) = frag.into_base().unwrap();
 
             // TODO this may need to change when handling (half) merges
-            assert!(node.lo <= key_bound, "overshot key somehow");
+            assert!(node.lo.inner().unwrap() <= key, "overshot key somehow");
 
             // half-complete split detect & completion
-            if node.hi <= key_bound {
+            if node.hi <= Bound::Inc(key.to_vec()) {
                 // we have encountered a child split, without
                 // having hit the parent split above.
                 cursor = node.next.unwrap();
@@ -652,13 +662,15 @@ impl Tree {
                 }
             }
 
+            let prefix = node.lo.inner().map(|i| i.to_vec()).unwrap();
             path.push((node, cas_key));
 
             match path.last().unwrap().0.data {
                 Data::Index(ref ptrs) => {
                     let old_cursor = cursor;
                     for &(ref sep_k, ref ptr) in ptrs {
-                        if &**sep_k <= key {
+                        let decoded_sep_k = prefix_decode(&*prefix, sep_k);
+                        if &*decoded_sep_k <= &*key {
                             cursor = *ptr;
                         } else {
                             break; // we've found our next cursor
