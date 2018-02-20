@@ -37,10 +37,12 @@ impl<'a> Iterator for Iter<'a> {
 
             let (frag, _cas_key) = res.unwrap().unwrap();
             let (node, _is_root) = frag.base().unwrap();
+            let prefix = node.lo.inner();
             for (ref k, ref v) in node.data.leaf().unwrap() {
-                if Bound::Inc(k.clone()) > self.last_key {
-                    self.last_key = Bound::Inc(k.to_vec());
-                    let ret = Ok((k.clone(), v.clone()));
+                let decoded_k = prefix_decode(prefix, k);
+                if Bound::Inclusive(decoded_k.clone()) > self.last_key {
+                    self.last_key = Bound::Inclusive(decoded_k.to_vec());
+                    let ret = Ok((decoded_k, v.clone()));
                     return Some(ret);
                 }
             }

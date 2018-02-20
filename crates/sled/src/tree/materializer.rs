@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use super::*;
 
 #[derive(Default, Debug)]

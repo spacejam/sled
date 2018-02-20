@@ -15,7 +15,8 @@ impl Node {
 
         match *frag {
             Set(ref k, ref v) => {
-                if Bound::Inc(k.clone()) < self.hi {
+                let decoded_k = prefix_decode(self.lo.inner(), k);
+                if Bound::Inclusive(decoded_k) < self.hi {
                     self.set_leaf(k.clone(), v.clone());
                 } else {
                     panic!("tried to consolidate set at key <= hi")
@@ -28,7 +29,8 @@ impl Node {
                 self.parent_split(parent_split);
             }
             Del(ref k) => {
-                if Bound::Inc(k.clone()) < self.hi {
+                let decoded_k = prefix_decode(self.lo.inner(), k);
+                if Bound::Inclusive(decoded_k) < self.hi {
                     self.del_leaf(k);
                 } else {
                     panic!("tried to consolidate del at key <= hi")
@@ -40,14 +42,15 @@ impl Node {
 
     pub fn set_leaf(&mut self, key: Key, val: Value) {
         if let Data::Leaf(ref mut records) = self.data {
-            let search =
-                records.binary_search_by(|&(ref k, ref _v)| (**k).cmp(&*key));
+            let search = records.binary_search_by(
+                |&(ref k, ref _v)| prefix_cmp(k, &*key),
+            );
             if let Ok(idx) = search {
                 records.push((key, val));
                 records.swap_remove(idx);
             } else {
                 records.push((key, val));
-                records.sort();
+                records.sort_unstable_by(|a, b| prefix_cmp(&*a.0, &*b.0));
             }
         } else {
             panic!("tried to Set a value to an index");
@@ -55,15 +58,16 @@ impl Node {
     }
 
     pub fn child_split(&mut self, cs: &ChildSplit) {
-        self.data.drop_gte(&cs.at);
-        self.hi = Bound::Non(cs.at.inner().unwrap());
+        self.data.drop_gte(&cs.at, self.lo.inner());
+        self.hi = Bound::Exclusive(cs.at.inner().to_vec());
         self.next = Some(cs.to);
     }
 
     pub fn parent_split(&mut self, ps: &ParentSplit) {
         if let Data::Index(ref mut ptrs) = self.data {
-            ptrs.push((ps.at.inner().unwrap(), ps.to));
-            ptrs.sort_by(|a, b| a.0.cmp(&b.0));
+            let encoded_sep = prefix_encode(self.lo.inner(), ps.at.inner());
+            ptrs.push((encoded_sep, ps.to));
+            ptrs.sort_unstable_by(|a, b| prefix_cmp(&*a.0, &*b.0));
         } else {
             panic!("tried to attach a ParentSplit to a Leaf chain");
         }
@@ -71,8 +75,9 @@ impl Node {
 
     pub fn del_leaf(&mut self, key: KeyRef) {
         if let Data::Leaf(ref mut records) = self.data {
-            let search =
-                records.binary_search_by(|&(ref k, ref _v)| (**k).cmp(key));
+            let search = records.binary_search_by(
+                |&(ref k, ref _v)| prefix_cmp(k, &*key),
+            );
             if let Ok(idx) = search {
                 records.remove(idx);
             }
@@ -86,12 +91,12 @@ impl Node {
     }
 
     pub fn split(&self, id: PageID) -> Node {
-        let (split, right_data) = self.data.split();
+        let (split, right_data) = self.data.split(self.lo.inner());
         Node {
             id: id,
             data: right_data,
             next: self.next,
-            lo: Bound::Inc(split),
+            lo: Bound::Inclusive(split),
             hi: self.hi.clone(),
         }
     }
