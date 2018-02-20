@@ -37,7 +37,7 @@ impl<'a> Iterator for Iter<'a> {
 
             let (frag, _cas_key) = res.unwrap().unwrap();
             let (node, _is_root) = frag.base().unwrap();
-            let prefix = node.lo.inner().unwrap();
+            let prefix = node.lo.inner();
             for (ref k, ref v) in node.data.leaf().unwrap() {
                 let decoded_k = prefix_decode(prefix, k);
                 if Bound::Inc(decoded_k.clone()) > self.last_key {

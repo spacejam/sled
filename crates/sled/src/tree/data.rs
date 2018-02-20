@@ -56,7 +56,7 @@ impl Data {
     }
 
     pub fn drop_gte(&mut self, at: &Bound, prefix: &[u8]) {
-        let bound = at.inner().unwrap();
+        let bound = at.inner();
         match *self {
             Data::Index(ref mut ptrs) => {
                 ptrs.retain(|&(ref k, _)| {

@@ -8,11 +8,11 @@ pub enum Bound {
 }
 
 impl Bound {
-    pub fn inner(&self) -> Option<&[u8]> {
+    pub fn inner(&self) -> &[u8] {
         match *self {
             Bound::Inc(ref v) |
-            Bound::Non(ref v) => Some(&*v),
-            _ => None,
+            Bound::Non(ref v) => &*v,
+            Bound::Inf => panic!("inner() called on Bound::Inf"),
         }
     }
 }

@@ -184,7 +184,7 @@ impl Tree {
             }
 
             let &mut (ref node, ref cas_key) = path.last_mut().unwrap();
-            let encoded_key = prefix_encode(node.lo.inner().unwrap(), &*key);
+            let encoded_key = prefix_encode(node.lo.inner(), &*key);
             let frag = if let Some(ref n) = new {
                 Frag::Set(encoded_key, n.clone())
             } else {
@@ -216,8 +216,7 @@ impl Tree {
         loop {
             let mut path = self.path_for_key(&*key, &guard)?;
             let (mut last_node, last_cas_key) = path.pop().unwrap();
-            let encoded_key =
-                prefix_encode(last_node.lo.inner().unwrap(), &*key);
+            let encoded_key = prefix_encode(last_node.lo.inner(), &*key);
             let frag = Frag::Set(encoded_key, value.clone());
             let link = self.pages.link(
                 last_node.id,
@@ -264,7 +263,7 @@ impl Tree {
         loop {
             let mut path = self.path_for_key(&*key, &guard)?;
             let (leaf_node, leaf_cas_key) = path.pop().unwrap();
-            let encoded_key = prefix_encode(leaf_node.lo.inner().unwrap(), key);
+            let encoded_key = prefix_encode(leaf_node.lo.inner(), key);
             match leaf_node.data {
                 Data::Leaf(ref items) => {
                     let search = items.binary_search_by(|&(ref k, ref _v)| {
@@ -441,7 +440,7 @@ impl Tree {
                 return self.root_hoist(
                     root_node.id,
                     parent_split.to,
-                    parent_split.at.inner().unwrap().to_vec(),
+                    parent_split.at.inner().to_vec(),
                     guard,
                 ).map(|_| ())
                     .map_err(|e| e.danger_cast());
@@ -563,7 +562,7 @@ impl Tree {
         let ret = path.last().and_then(|&(ref last_node, ref _last_cas_key)| {
             let data = &last_node.data;
             let items = data.leaf_ref().unwrap();
-            let encoded_key = prefix_encode(last_node.lo.inner().unwrap(), key);
+            let encoded_key = prefix_encode(last_node.lo.inner(), key);
             let search = items.binary_search_by(
                 |&(ref k, ref _v)| prefix_cmp(k, &*encoded_key),
             );
@@ -628,7 +627,7 @@ impl Tree {
             let (node, _is_root) = frag.into_base().unwrap();
 
             // TODO this may need to change when handling (half) merges
-            assert!(node.lo.inner().unwrap() <= key, "overshot key somehow");
+            assert!(node.lo.inner() <= key, "overshot key somehow");
 
             // half-complete split detect & completion
             if node.hi <= Bound::Inc(key.to_vec()) {
@@ -662,7 +661,7 @@ impl Tree {
                 }
             }
 
-            let prefix = node.lo.inner().map(|i| i.to_vec()).unwrap();
+            let prefix = node.lo.inner().to_vec();
             path.push((node, cas_key));
 
             match path.last().unwrap().0.data {

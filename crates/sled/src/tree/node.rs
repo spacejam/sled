@@ -15,7 +15,7 @@ impl Node {
 
         match *frag {
             Set(ref k, ref v) => {
-                let decoded_k = prefix_decode(self.lo.inner().unwrap(), k);
+                let decoded_k = prefix_decode(self.lo.inner(), k);
                 if Bound::Inc(decoded_k) < self.hi {
                     self.set_leaf(k.clone(), v.clone());
                 } else {
@@ -29,7 +29,7 @@ impl Node {
                 self.parent_split(parent_split);
             }
             Del(ref k) => {
-                let decoded_k = prefix_decode(self.lo.inner().unwrap(), k);
+                let decoded_k = prefix_decode(self.lo.inner(), k);
                 if Bound::Inc(decoded_k) < self.hi {
                     self.del_leaf(k);
                 } else {
@@ -58,15 +58,14 @@ impl Node {
     }
 
     pub fn child_split(&mut self, cs: &ChildSplit) {
-        self.data.drop_gte(&cs.at, self.lo.inner().unwrap());
-        self.hi = Bound::Non(cs.at.inner().unwrap().to_vec());
+        self.data.drop_gte(&cs.at, self.lo.inner());
+        self.hi = Bound::Non(cs.at.inner().to_vec());
         self.next = Some(cs.to);
     }
 
     pub fn parent_split(&mut self, ps: &ParentSplit) {
         if let Data::Index(ref mut ptrs) = self.data {
-            let encoded_sep =
-                prefix_encode(self.lo.inner().unwrap(), ps.at.inner().unwrap());
+            let encoded_sep = prefix_encode(self.lo.inner(), ps.at.inner());
             ptrs.push((encoded_sep, ps.to));
             ptrs.sort_unstable_by(|a, b| prefix_cmp(&*a.0, &*b.0));
         } else {
@@ -92,7 +91,7 @@ impl Node {
     }
 
     pub fn split(&self, id: PageID) -> Node {
-        let (split, right_data) = self.data.split(self.lo.inner().unwrap());
+        let (split, right_data) = self.data.split(self.lo.inner());
         Node {
             id: id,
             data: right_data,
