@@ -88,7 +88,7 @@ impl Tree {
                     id: leaf_id,
                     data: Data::Leaf(vec![]),
                     next: None,
-                    lo: Bound::Inc(vec![]),
+                    lo: Bound::Inclusive(vec![]),
                     hi: Bound::Inf,
                 },
                 None,
@@ -102,7 +102,7 @@ impl Tree {
                     id: root_id,
                     data: Data::Index(root_index_vec),
                     next: None,
-                    lo: Bound::Inc(vec![]),
+                    lo: Bound::Inclusive(vec![]),
                     hi: Bound::Inf,
                 },
                 Some(std::usize::MAX),
@@ -337,7 +337,7 @@ impl Tree {
         Iter {
             id: id,
             inner: &self.pages,
-            last_key: Bound::Non(key.to_vec()),
+            last_key: Bound::Exclusive(key.to_vec()),
             broken: broken,
             done: false,
         }
@@ -530,7 +530,7 @@ impl Tree {
                 id: new_root_pid,
                 data: Data::Index(new_root_vec),
                 next: None,
-                lo: Bound::Inc(vec![]),
+                lo: Bound::Inclusive(vec![]),
                 hi: Bound::Inf,
             },
             Some(from),
@@ -630,7 +630,7 @@ impl Tree {
             assert!(node.lo.inner() <= key, "overshot key somehow");
 
             // half-complete split detect & completion
-            if node.hi <= Bound::Inc(key.to_vec()) {
+            if node.hi <= Bound::Inclusive(key.to_vec()) {
                 // we have encountered a child split, without
                 // having hit the parent split above.
                 cursor = node.next.unwrap();

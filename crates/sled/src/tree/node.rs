@@ -16,7 +16,7 @@ impl Node {
         match *frag {
             Set(ref k, ref v) => {
                 let decoded_k = prefix_decode(self.lo.inner(), k);
-                if Bound::Inc(decoded_k) < self.hi {
+                if Bound::Inclusive(decoded_k) < self.hi {
                     self.set_leaf(k.clone(), v.clone());
                 } else {
                     panic!("tried to consolidate set at key <= hi")
@@ -30,7 +30,7 @@ impl Node {
             }
             Del(ref k) => {
                 let decoded_k = prefix_decode(self.lo.inner(), k);
-                if Bound::Inc(decoded_k) < self.hi {
+                if Bound::Inclusive(decoded_k) < self.hi {
                     self.del_leaf(k);
                 } else {
                     panic!("tried to consolidate del at key <= hi")
@@ -59,7 +59,7 @@ impl Node {
 
     pub fn child_split(&mut self, cs: &ChildSplit) {
         self.data.drop_gte(&cs.at, self.lo.inner());
-        self.hi = Bound::Non(cs.at.inner().to_vec());
+        self.hi = Bound::Exclusive(cs.at.inner().to_vec());
         self.next = Some(cs.to);
     }
 
@@ -96,7 +96,7 @@ impl Node {
             id: id,
             data: right_data,
             next: self.next,
-            lo: Bound::Inc(split),
+            lo: Bound::Inclusive(split),
             hi: self.hi.clone(),
         }
     }

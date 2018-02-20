@@ -40,8 +40,8 @@ impl<'a> Iterator for Iter<'a> {
             let prefix = node.lo.inner();
             for (ref k, ref v) in node.data.leaf().unwrap() {
                 let decoded_k = prefix_decode(prefix, k);
-                if Bound::Inc(decoded_k.clone()) > self.last_key {
-                    self.last_key = Bound::Inc(decoded_k.to_vec());
+                if Bound::Inclusive(decoded_k.clone()) > self.last_key {
+                    self.last_key = Bound::Inclusive(decoded_k.to_vec());
                     let ret = Ok((decoded_k, v.clone()));
                     return Some(ret);
                 }
