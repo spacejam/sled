@@ -232,7 +232,7 @@ pub(crate) struct SegmentTrailer {
 #[derive(Debug)]
 pub enum LogRead {
     Flush(Lsn, Vec<u8>, usize),
-    Zeroed(usize),
+    Failed(usize),
     Corrupted(usize),
 }
 
@@ -255,9 +255,9 @@ impl LogRead {
     }
 
     /// Return true if we read an aborted flush.
-    pub fn is_zeroed(&self) -> bool {
+    pub fn is_failed(&self) -> bool {
         match *self {
-            LogRead::Zeroed(_) => true,
+            LogRead::Failed(_) => true,
             _ => false,
         }
     }
@@ -328,7 +328,7 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
     fn into(self) -> [u8; MSG_HEADER_LEN] {
         let mut buf = [0u8; MSG_HEADER_LEN];
         if self.successful_flush {
-            buf[0] = 1;
+            buf[0] = SUCCESSFUL_FLUSH;
         }
 
         // NB LSN actually gets written after the reservation

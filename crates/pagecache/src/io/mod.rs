@@ -44,3 +44,13 @@ use self::page_cache::{LoggedUpdate, Update};
 use self::parallel_io::Pio;
 use self::segment::{SegmentAccountant, raw_segment_iter_from};
 use self::snapshot::{PageState, advance_snapshot};
+
+// The EVIL_BYTE is written to force detection of
+// a corruption when dealing with unused segment space.
+const EVIL_BYTE: u8 = 6;
+
+// This message represents valid data.
+const SUCCESSFUL_FLUSH: u8 = 1;
+
+// This message should be skipped to preserve linearizability.
+const FAILED_FLUSH: u8 = 0;

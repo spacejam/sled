@@ -71,10 +71,6 @@ use epoch::pin;
 use self::reader::LogReader;
 use super::*;
 
-// The EVIL_BYTE is written to force detection of
-// a corruption when dealing with unused segment space.
-const EVIL_BYTE: u8 = 6;
-
 /// The segment accountant keeps track of the logical blocks
 /// of storage. It scans through all segments quickly during
 /// recovery and attempts to locate torn segments.
