@@ -50,7 +50,8 @@ pub(super) struct IoBufs {
     // stable storage. This may be lower than the length of the underlying
     // file, and there may be buffers that have been written out-of-order
     // to stable storage due to interesting thread interleavings.
-    stable: AtomicIsize,
+    stable_lsn: AtomicIsize,
+    max_reserved_lsn: AtomicIsize,
     segment_accountant: Mutex<SegmentAccountant>,
 
     // used for signifying that we're simulating a crash
@@ -163,7 +164,8 @@ impl IoBufs {
             written_bufs: AtomicUsize::new(0),
             intervals: Mutex::new(vec![]),
             interval_updated: Condvar::new(),
-            stable: AtomicIsize::new(stable),
+            stable_lsn: AtomicIsize::new(stable),
+            max_reserved_lsn: AtomicIsize::new(stable),
             config: config,
             segment_accountant: Mutex::new(segment_accountant),
             #[cfg(feature = "failpoints")]
@@ -199,7 +201,7 @@ impl IoBufs {
     /// Returns the last stable offset in storage.
     pub(super) fn stable(&self) -> Lsn {
         debug_delay();
-        self.stable.load(SeqCst) as Lsn
+        self.stable_lsn.load(SeqCst) as Lsn
     }
 
     // Adds a header to the buffer, and optionally compresses
@@ -431,6 +433,8 @@ impl IoBufs {
                 reservation_offset,
             );
 
+            self.bump_max_reserved_lsn(reservation_lsn);
+
             return Ok(Reservation {
                 idx: idx,
                 iobufs: self,
@@ -497,6 +501,27 @@ impl IoBufs {
             return Ok(());
         }
         self.maybe_seal_and_write_iobuf(idx, header, false)
+    }
+
+    // ensure self.max_reserved_lsn is set to this Lsn
+    // or greater, for use in correct calls to flush.
+    fn bump_max_reserved_lsn(&self, lsn: Lsn) {
+        let mut current = self.max_reserved_lsn.load(Relaxed);
+        loop {
+            if current >= lsn {
+                return;
+            }
+            let last = self.max_reserved_lsn.compare_and_swap(
+                current,
+                lsn,
+                Relaxed,
+            );
+            if last == current {
+                // we succeeded.
+                return;
+            }
+            current = last;
+        }
     }
 
     // Attempt to seal the current IO buffer, possibly
@@ -806,7 +831,7 @@ impl IoBufs {
 
         while let Some(&(low, high)) = intervals.last() {
             assert_ne!(low, high);
-            let cur_stable = self.stable.load(SeqCst);
+            let cur_stable = self.stable_lsn.load(SeqCst);
             // FIXME somehow, we marked offset 2233715 stable while interval 2231715-2231999 had
             // not yet been applied!
             assert!(
@@ -818,7 +843,7 @@ impl IoBufs {
                 high
             );
             if cur_stable + 1 == low {
-                let old = self.stable.swap(high, SeqCst);
+                let old = self.stable_lsn.swap(high, SeqCst);
                 assert_eq!(
                     old,
                     cur_stable,
