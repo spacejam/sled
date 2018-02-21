@@ -1,4 +1,4 @@
-use std::io::{Error, ErrorKind};
+use std::io;
 
 use self::reader::LogReader;
 use super::*;
@@ -113,15 +113,23 @@ impl LogIter {
         assert!(lsn + self.segment_len as Lsn >= self.cur_lsn);
         let f = self.config.file()?;
         let segment_header = f.read_segment_header(offset)?;
-        assert_eq!(offset % self.segment_len as LogID, 0);
-        assert_eq!(
-            segment_header.lsn % self.segment_len as Lsn,
-            0,
-            "expected a segment header lsn that is divisible \
+        if offset % self.segment_len as LogID != 0 {
+            debug!("segment offset not divisible by segment length");
+            return Err(Error::Corruption {
+                at: offset,
+            });
+        }
+        if segment_header.lsn % self.segment_len as Lsn != 0 {
+            debug!(
+                "expected a segment header lsn that is divisible \
             by the io_buf_size ({}) instead it was {}",
-            self.segment_len,
-            segment_header.lsn
-        );
+                self.segment_len,
+                segment_header.lsn
+            );
+            return Err(Error::Corruption {
+                at: offset,
+            });
+        }
 
         if segment_header.lsn != lsn {
             // this page was torn, nothing to read
@@ -131,8 +139,10 @@ impl LogIter {
                 lsn
             );
             return Err(
-                Error::new(ErrorKind::Other, "encountered torn segment")
-                    .into(),
+                io::Error::new(
+                    io::ErrorKind::Other,
+                    "encountered torn segment",
+                ).into(),
             );
         }
 
