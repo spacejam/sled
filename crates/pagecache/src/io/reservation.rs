@@ -1,5 +1,3 @@
-use std::ptr;
-
 use super::*;
 
 /// A pending log reservation which can be aborted or completed.
@@ -56,18 +54,13 @@ impl<'a> Reservation<'a> {
 
         self.flushed = true;
 
-        if valid {
-            self.destination.copy_from_slice(&*self.data);
-        } else {
-            // zero the bytes, as aborted reservations skip writing
-            unsafe {
-                ptr::write_bytes(
-                    self.destination.as_ptr() as *mut u8,
-                    0,
-                    self.data.len(),
-                );
-            }
+        if !valid {
+            self.data[0] = FAILED_FLUSH;
+            // don't actually zero the message, still check its hash
+            // on recovery to find corruption.
         }
+
+        self.destination.copy_from_slice(&*self.data);
 
         self.iobufs.exit_reservation(self.idx)?;
 

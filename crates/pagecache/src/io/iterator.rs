@@ -77,9 +77,9 @@ impl Iterator for LogIter {
                         self.cur_lsn += (MSG_HEADER_LEN + on_disk_len) as Lsn;
                         return Some((lsn, lid, buf));
                     }
-                    Ok(LogRead::Zeroed(on_disk_len)) => {
+                    Ok(LogRead::Failed(on_disk_len)) => {
                         trace!("read zeroed in LogIter::next");
-                        self.cur_lsn += on_disk_len as Lsn;
+                        self.cur_lsn += (MSG_HEADER_LEN + on_disk_len) as Lsn;
                     }
                     _ => {
                         trace!("read failed in LogIter::next");

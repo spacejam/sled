@@ -131,6 +131,7 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>) -> bool {
                     if certainty {
                         // tree MUST match reference if we have a certain reference
                         if t != r {
+                            println!("expected to iterate over {:?} but got {:?} instead", r, t);
                             return false;
                         }
                         break;
@@ -299,6 +300,25 @@ fn failpoints_bug_5() {
         Set,
         Restart,
         FailPoint("zero segment"),
+        Set,
+        Set,
+        Set,
+        Restart,
+    ]))
+}
+
+#[test]
+#[ignore]
+fn failpoints_bug_6() {
+    // postmortem 1:
+    assert!(prop_tree_crashes_nicely(vec![
+        Set,
+        Del(0),
+        Set,
+        Set,
+        Set,
+        Restart,
+        FailPoint("zero segment post"),
         Set,
         Set,
         Set,

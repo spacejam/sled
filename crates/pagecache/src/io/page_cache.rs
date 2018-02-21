@@ -927,7 +927,7 @@ impl<PM, P, R> PageCache<PM, P, R>
             // some other thread is snapshotting
             warn!(
                 "snapshot skipped because previous attempt \
-            appears not to have completed"
+                appears not to have completed"
             );
             return Ok(());
         }
