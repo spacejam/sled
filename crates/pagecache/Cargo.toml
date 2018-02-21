@@ -1,6 +1,6 @@
 [package]
 name = "pagecache"
-version = "0.2.3"
+version = "0.2.4"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "lock-free pagecache and log for high-performance databases"
 license = "MIT/Apache-2.0"
