@@ -80,7 +80,7 @@ fn v(b: &Vec<u8>) -> u16 {
     ((b[0] as u16) << 8) + b[1] as u16
 }
 
-fn prop_tree_crashes_nicely(ops: Vec<Op>) -> bool {
+fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
     lazy_static! {
         // forces quickcheck to run one thread at a time
         static ref M: Mutex<()> = Mutex::new(());
@@ -94,7 +94,7 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>) -> bool {
     let config = ConfigBuilder::new()
         .temporary(true)
         .snapshot_after_ops(1)
-        .flush_every_ms(None) // FIXME also do this with Some(1)
+        .flush_every_ms(if flusher { Some(1) } else {None})
         .io_buf_size(300)
         .min_items_per_segment(1)
         .blink_fanout(2) // smol pages for smol buffers
@@ -239,13 +239,16 @@ fn quickcheck_tree_with_failpoints() {
         .gen(StdGen::new(rand::thread_rng(), 100))
         .tests(n_tests)
         .max_tests(10000)
-        .quickcheck(prop_tree_crashes_nicely as fn(Vec<Op>) -> bool);
+        .quickcheck(prop_tree_crashes_nicely as fn(Vec<Op>, bool) -> bool);
 }
 
 #[test]
 fn failpoints_bug_1() {
     // postmortem 1: model did not account for proper reasons to fail to start
-    assert!(prop_tree_crashes_nicely(vec![FailPoint("snap write"), Restart]));
+    assert!(prop_tree_crashes_nicely(
+        vec![FailPoint("snap write"), Restart],
+        false,
+    ));
 }
 
 #[test]
@@ -253,6 +256,7 @@ fn failpoints_bug_2() {
     // postmortem 1: the system was assuming the happy path across failpoints
     assert!(prop_tree_crashes_nicely(
         vec![FailPoint("buffer write post"), Set, Set, Restart],
+        false,
     ))
 }
 
@@ -263,18 +267,21 @@ fn failpoints_bug_3() {
     // log flushes. We should not trigger flushes from snapshots,
     // but first we need to make sure we are better about detecting
     // tears, by not also using 0 as a failed flush signifier.
-    assert!(prop_tree_crashes_nicely(vec![
-        Set,
-        Set,
-        Set,
-        Set,
-        FailPoint("trailer write"),
-        Set,
-        Set,
-        Set,
-        Set,
-        Restart,
-    ]))
+    assert!(prop_tree_crashes_nicely(
+        vec![
+            Set,
+            Set,
+            Set,
+            Set,
+            FailPoint("trailer write"),
+            Set,
+            Set,
+            Set,
+            Set,
+            Restart,
+        ],
+        false,
+    ))
 }
 
 #[test]
@@ -283,6 +290,7 @@ fn failpoints_bug_4() {
     // writes that may-or-may-not be present due to an error.
     assert!(prop_tree_crashes_nicely(
         vec![Set, FailPoint("snap write"), Del(0), Set, Restart],
+        false,
     ))
 }
 
@@ -290,38 +298,44 @@ fn failpoints_bug_4() {
 #[ignore]
 fn failpoints_bug_5() {
     // postmortem 1:
-    assert!(prop_tree_crashes_nicely(vec![
-        Set,
-        FailPoint("snap write mv post"),
-        Set,
-        FailPoint("snap write"),
-        Set,
-        Set,
-        Set,
-        Restart,
-        FailPoint("zero segment"),
-        Set,
-        Set,
-        Set,
-        Restart,
-    ]))
+    assert!(prop_tree_crashes_nicely(
+        vec![
+            Set,
+            FailPoint("snap write mv post"),
+            Set,
+            FailPoint("snap write"),
+            Set,
+            Set,
+            Set,
+            Restart,
+            FailPoint("zero segment"),
+            Set,
+            Set,
+            Set,
+            Restart,
+        ],
+        false,
+    ))
 }
 
 #[test]
 #[ignore]
 fn failpoints_bug_6() {
     // postmortem 1:
-    assert!(prop_tree_crashes_nicely(vec![
-        Set,
-        Del(0),
-        Set,
-        Set,
-        Set,
-        Restart,
-        FailPoint("zero segment post"),
-        Set,
-        Set,
-        Set,
-        Restart,
-    ]))
+    assert!(prop_tree_crashes_nicely(
+        vec![
+            Set,
+            Del(0),
+            Set,
+            Set,
+            Set,
+            Restart,
+            FailPoint("zero segment post"),
+            Set,
+            Set,
+            Set,
+            Restart,
+        ],
+        false,
+    ))
 }
