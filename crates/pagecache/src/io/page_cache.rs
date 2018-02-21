@@ -721,7 +721,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         let size = std::mem::size_of_val(&merged);
         let to_evict = self.lru.accessed(pid, size);
         trace!("accessed pid {} -> paging out pid {:?}", pid, to_evict);
-        self.page_out(to_evict, guard)?;
+        self.page_out(to_evict, guard).map_err(|e| e.danger_cast())?;
 
         if lids.len() > self.config.page_consolidation_threshold {
             trace!("consolidating pid {} with len {}!", pid, lids.len());
@@ -790,7 +790,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         &self,
         to_evict: Vec<PageID>,
         guard: &'g Guard,
-    ) -> std::io::Result<()> {
+    ) -> CacheResult<(), ()> {
         let _measure = Measure::new(&M.page_out);
         for pid in to_evict {
             let stack_ptr = self.inner.get(pid, guard);
@@ -813,7 +813,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 CacheEntry::Flush(lsn, lid) => {
                     // NB stabilize the most recent LSN before
                     // paging out! This SHOULD very rarely block...
-                    // TODO this should be ?
+                    // TODO should propagate error instead of unwrap
                     self.log.make_stable(lsn).unwrap();
                     Some(CacheEntry::Flush(lsn, lid))
                 }
