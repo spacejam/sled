@@ -50,7 +50,9 @@ impl<C: Callback> Drop for Periodic<C> {
     fn drop(&mut self) {
         if let Some(join_handle) = self.join_handle.take() {
             self.shutdown.store(true, Release);
-            join_handle.join().unwrap();
+            if let Err(e) = join_handle.join() {
+                error!("error joining Periodic thread: {:?}", e);
+            }
         }
     }
 }
