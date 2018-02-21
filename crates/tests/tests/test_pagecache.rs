@@ -1004,6 +1004,27 @@ fn pagecache_bug_25() {
     ]);
 }
 
+#[test]
+fn pagecache_bug_26() {
+    // postmortem:
+    use Op::*;
+    for _ in 0..100 {
+        prop_pagecache_works(vec![
+            Allocate,
+            Allocate,
+            Allocate,
+            Allocate,
+            Link(3, 9261),
+            Replace(2, 9263),
+            Restart,
+            Link(3, 9266),
+            Link(3, 9268),
+            Get(2),
+            Free(3),
+        ]);
+    }
+}
+
 fn _pagecache_bug_() {
     // postmortem: TEMPLATE
     // portmortem 2: ...
