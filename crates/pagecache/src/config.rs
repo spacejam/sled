@@ -240,6 +240,7 @@ impl Clone for Config {
 
 impl Drop for Config {
     fn drop(&mut self) {
+        // if our ref count is 0 we can drop and close our file properly.
         if self.refs.fetch_sub(1, Ordering::Relaxed) == 0 {
             let f_ptr: *mut Arc<fs::File> =
                 self.file.swap(std::ptr::null_mut(), Ordering::Relaxed);
