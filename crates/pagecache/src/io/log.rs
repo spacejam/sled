@@ -55,14 +55,6 @@ pub struct Log {
 unsafe impl Send for Log {}
 unsafe impl Sync for Log {}
 
-impl periodic::Callback for Arc<IoBufs> {
-    fn call(&self) {
-        if let Err(e) = self.flush() {
-            error!("failed to flush from periodic flush thread: {}", e);
-        }
-    }
-}
-
 impl Log {
     /// Start the log, open or create the configured file,
     /// and optionally start the periodic buffer flush thread.
@@ -100,10 +92,7 @@ impl Log {
 
     /// Flushes any pending IO buffers to disk to ensure durability.
     pub fn flush(&self) -> CacheResult<(), ()> {
-        for _ in 0..self.config.io_bufs {
-            self.iobufs.flush()?;
-        }
-        Ok(())
+        self.iobufs.flush()
     }
 
     /// Reserve space in the log for a pending linearized operation.
@@ -172,26 +161,7 @@ impl Log {
     /// blocks until the specified log sequence number has
     /// been made stable on disk
     pub fn make_stable(&self, lsn: Lsn) -> CacheResult<(), ()> {
-        let _measure = Measure::new(&M.make_stable);
-
-        // NB before we write the 0th byte of the file, stable  is -1
-        while self.iobufs.stable() < lsn {
-            self.iobufs.flush()?;
-
-            // block until another thread updates the stable lsn
-            let waiter = self.iobufs.intervals.lock().unwrap();
-
-            if self.iobufs.stable() < lsn {
-                trace!("waiting on cond var for make_stable({})", lsn);
-                let _waiter =
-                    self.iobufs.interval_updated.wait(waiter).unwrap();
-            } else {
-                trace!("make_stable({}) returning", lsn);
-                break;
-            }
-        }
-
-        Ok(())
+        self.iobufs.make_stable(lsn)
     }
 
     // SegmentAccountant access for coordination with the `PageCache`

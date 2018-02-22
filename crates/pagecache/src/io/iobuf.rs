@@ -19,6 +19,8 @@ macro_rules! io_fail {
         #[cfg(feature = "failpoints")]
         fail_point!($e, |_| {
             $self._failpoint_crashing.store(true, SeqCst);
+            // wake up any waiting threads so they don't stall forever
+            $self.interval_updated.notify_all();
             Err(Error::FailPoint)
         });
     }
@@ -50,7 +52,8 @@ pub(super) struct IoBufs {
     // stable storage. This may be lower than the length of the underlying
     // file, and there may be buffers that have been written out-of-order
     // to stable storage due to interesting thread interleavings.
-    stable: AtomicIsize,
+    stable_lsn: AtomicIsize,
+    max_reserved_lsn: AtomicIsize,
     segment_accountant: Mutex<SegmentAccountant>,
 
     // used for signifying that we're simulating a crash
@@ -163,7 +166,8 @@ impl IoBufs {
             written_bufs: AtomicUsize::new(0),
             intervals: Mutex::new(vec![]),
             interval_updated: Condvar::new(),
-            stable: AtomicIsize::new(stable),
+            stable_lsn: AtomicIsize::new(stable),
+            max_reserved_lsn: AtomicIsize::new(stable),
             config: config,
             segment_accountant: Mutex::new(segment_accountant),
             #[cfg(feature = "failpoints")]
@@ -199,7 +203,7 @@ impl IoBufs {
     /// Returns the last stable offset in storage.
     pub(super) fn stable(&self) -> Lsn {
         debug_delay();
-        self.stable.load(SeqCst) as Lsn
+        self.stable_lsn.load(SeqCst) as Lsn
     }
 
     // Adds a header to the buffer, and optionally compresses
@@ -431,6 +435,8 @@ impl IoBufs {
                 reservation_offset,
             );
 
+            self.bump_max_reserved_lsn(reservation_lsn);
+
             return Ok(Reservation {
                 idx: idx,
                 iobufs: self,
@@ -482,21 +488,67 @@ impl IoBufs {
         }
     }
 
-    /// Called by users who wish to force the current buffer
-    /// to flush some pending writes. Useful when blocking on
-    /// a particular offset to become stable. May need to
-    /// be called multiple times. May not do anything
-    /// if there is contention on the current IO buffer
-    /// or no data to flush.
-    pub(super) fn flush(&self) -> CacheResult<(), ()> {
-        let idx = self.idx();
-        let header = self.bufs[idx].get_header();
-        if offset(header) == 0 || is_sealed(header) {
-            // nothing to write, don't bother sealing
-            // current IO buffer.
-            return Ok(());
+    /// blocks until the specified log sequence number has
+    /// been made stable on disk
+    pub fn make_stable(&self, lsn: Lsn) -> CacheResult<(), ()> {
+        let _measure = Measure::new(&M.make_stable);
+
+        // NB before we write the 0th byte of the file, stable  is -1
+        while self.stable() < lsn {
+            let idx = self.idx();
+            let header = self.bufs[idx].get_header();
+            if offset(header) == 0 || is_sealed(header) {
+                // nothing to write, don't bother sealing
+                // current IO buffer.
+            } else {
+                self.maybe_seal_and_write_iobuf(idx, header, false)?;
+                continue;
+            }
+
+            // block until another thread updates the stable lsn
+            let waiter = self.intervals.lock().unwrap();
+
+            if self.stable() < lsn {
+                #[cfg(feature = "failpoints")]
+                {
+                    if self._failpoint_crashing.load(SeqCst) {
+                        return Err(Error::FailPoint);
+                    }
+                }
+                trace!("waiting on cond var for make_stable({})", lsn);
+                let _waiter = self.interval_updated.wait(waiter).unwrap();
+            } else {
+                trace!("make_stable({}) returning", lsn);
+                break;
+            }
         }
-        self.maybe_seal_and_write_iobuf(idx, header, false)
+
+        Ok(())
+    }
+
+    /// Called by users who wish to force the current buffer
+    /// to flush some pending writes.
+    pub(super) fn flush(&self) -> CacheResult<(), ()> {
+        let max_reserved_lsn = self.max_reserved_lsn.load(SeqCst);
+        self.make_stable(max_reserved_lsn)
+    }
+
+    // ensure self.max_reserved_lsn is set to this Lsn
+    // or greater, for use in correct calls to flush.
+    fn bump_max_reserved_lsn(&self, lsn: Lsn) {
+        let mut current = self.max_reserved_lsn.load(SeqCst);
+        loop {
+            if current >= lsn {
+                return;
+            }
+            let last =
+                self.max_reserved_lsn.compare_and_swap(current, lsn, SeqCst);
+            if last == current {
+                // we succeeded.
+                return;
+            }
+            current = last;
+        }
     }
 
     // Attempt to seal the current IO buffer, possibly
@@ -594,6 +646,8 @@ impl IoBufs {
             {
                 if let Err(Error::FailPoint) = ret {
                     self._failpoint_crashing.store(true, SeqCst);
+                    // wake up any waiting threads so they don't stall forever
+                    self.interval_updated.notify_all();
                 }
             }
             ret?
@@ -806,7 +860,7 @@ impl IoBufs {
 
         while let Some(&(low, high)) = intervals.last() {
             assert_ne!(low, high);
-            let cur_stable = self.stable.load(SeqCst);
+            let cur_stable = self.stable_lsn.load(SeqCst);
             // FIXME somehow, we marked offset 2233715 stable while interval 2231715-2231999 had
             // not yet been applied!
             assert!(
@@ -818,7 +872,7 @@ impl IoBufs {
                 high
             );
             if cur_stable + 1 == low {
-                let old = self.stable.swap(high, SeqCst);
+                let old = self.stable_lsn.swap(high, SeqCst);
                 assert_eq!(
                     old,
                     cur_stable,
@@ -861,6 +915,23 @@ impl Drop for IoBufs {
         }
 
         debug!("IoBufs dropped");
+    }
+}
+
+impl periodic::Callback for std::sync::Arc<IoBufs> {
+    fn call(&self) {
+        if let Err(e) = self.flush() {
+            #[cfg(feature = "failpoints")]
+            {
+                if let Error::FailPoint = e {
+                    self._failpoint_crashing.store(true, SeqCst);
+                    // wake up any waiting threads so they don't stall forever
+                    self.interval_updated.notify_all();
+                }
+            }
+
+            error!("failed to flush from periodic flush thread: {}", e);
+        }
     }
 }
 

@@ -222,12 +222,13 @@ fn prop_tree_matches_btreemap(
     ops: Vec<Op>,
     blink_fanout: u8,
     snapshot_after: u8,
+    flusher: bool,
 ) -> bool {
     use self::Op::*;
     let config = ConfigBuilder::new()
         .temporary(true)
         .snapshot_after_ops(snapshot_after as usize + 1)
-        .flush_every_ms(Some(1))
+        .flush_every_ms(if flusher { Some(1) } else { None })
         .io_buf_size(10000)
         .blink_fanout(blink_fanout as usize + 2)
         .cache_capacity(40)
@@ -299,7 +300,9 @@ fn quickcheck_tree_matches_btreemap() {
         .gen(StdGen::new(rand::thread_rng(), 100))
         .tests(n_tests)
         .max_tests(10000)
-        .quickcheck(prop_tree_matches_btreemap as fn(Vec<Op>, u8, u8) -> bool);
+        .quickcheck(
+            prop_tree_matches_btreemap as fn(Vec<Op>, u8, u8, bool) -> bool,
+        );
 }
 
 #[test]
@@ -319,6 +322,7 @@ fn tree_bug_01() {
 
         0,
         0,
+        true,
     );
 
 }
@@ -339,6 +343,7 @@ fn tree_bug_2() {
 
         0,
         0,
+        true,
     );
 }
 
@@ -362,6 +367,7 @@ fn tree_bug_3() {
         ],
         0,
         0,
+        true,
     );
 }
 
@@ -387,6 +393,7 @@ fn tree_bug_4() {
         ],
         0,
         0,
+        true,
     );
 }
 
@@ -408,6 +415,7 @@ fn tree_bug_5() {
         ],
         0,
         0,
+        true,
     );
 }
 
@@ -430,6 +438,7 @@ fn tree_bug_6() {
         ],
         0,
         0,
+        true,
     );
 }
 
@@ -452,6 +461,7 @@ fn tree_bug_7() {
         ],
         0,
         0,
+        true,
     );
 }
 
@@ -474,6 +484,7 @@ fn tree_bug_8() {
         ],
         0,
         0,
+        true,
     );
 }
 
@@ -499,6 +510,7 @@ fn tree_bug_9() {
         ],
         0,
         0,
+        true,
     );
 }
 
@@ -537,6 +549,7 @@ fn tree_bug_10() {
 
         0,
         0,
+        true,
     );
 }
 
@@ -562,6 +575,7 @@ fn tree_bug_11() {
         ],
         0,
         0,
+        true,
     );
 }
 
@@ -612,6 +626,7 @@ fn tree_bug_12() {
         ],
         0,
         0,
+        true,
     );
 }
 
@@ -642,6 +657,7 @@ fn tree_bug_13() {
         ],
         0,
         0,
+        true,
     );
 }
 
@@ -662,6 +678,7 @@ fn tree_bug_14() {
         ],
         1,
         0,
+        true,
     );
 }
 
@@ -680,5 +697,6 @@ fn tree_bug_15() {
         ],
         0,
         0,
+        true,
     );
 }
