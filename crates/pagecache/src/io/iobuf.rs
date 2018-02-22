@@ -19,6 +19,8 @@ macro_rules! io_fail {
         #[cfg(feature = "failpoints")]
         fail_point!($e, |_| {
             $self._failpoint_crashing.store(true, SeqCst);
+            // wake up any waiting threads so they don't stall forever
+            $self.interval_updated.notify_all();
             Err(Error::FailPoint)
         });
     }
@@ -644,6 +646,8 @@ impl IoBufs {
             {
                 if let Err(Error::FailPoint) = ret {
                     self._failpoint_crashing.store(true, SeqCst);
+                    // wake up any waiting threads so they don't stall forever
+                    self.interval_updated.notify_all();
                 }
             }
             ret?
@@ -921,6 +925,8 @@ impl periodic::Callback for std::sync::Arc<IoBufs> {
             {
                 if let Error::FailPoint = e {
                     self._failpoint_crashing.store(true, SeqCst);
+                    // wake up any waiting threads so they don't stall forever
+                    self.interval_updated.notify_all();
                 }
             }
 
