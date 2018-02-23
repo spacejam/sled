@@ -239,16 +239,14 @@ fn log_chunky_iterator() {
             let max_valid_size = config.io_buf_size -
                 (MSG_HEADER_LEN + SEG_HEADER_LEN + SEG_TRAILER_LEN);
 
-            for i in 0..100 {
+            for i in 0..10000 {
                 let len = thread_rng().gen_range(0, max_valid_size * 2);
                 let item = thread_rng().gen::<u8>();
                 let buf = vec![item; len];
                 let abort = thread_rng().gen::<bool>();
-                println!("{}, {}", len, abort);
 
                 if abort {
                     if let Ok(res) = log.reserve(buf) {
-                        println!("reserved");
                         res.abort().unwrap();
                     } else {
                         assert!(len > max_valid_size);
@@ -269,9 +267,8 @@ fn log_chunky_iterator() {
             }
 
             let mut log_iter = log.iter_from(SEG_HEADER_LEN as Lsn);
-            let mut ref_iter = reference.clone().into_iter();
-            for (l, r) in log_iter.zip(ref_iter) {
-                assert_eq!(l, r);
+            for r in reference.clone().into_iter() {
+                assert_eq!(Some(r), log_iter.next());
             }
 
             // recover and restart
@@ -279,9 +276,8 @@ fn log_chunky_iterator() {
             let log = Log::start_raw_log(config).unwrap();
 
             let mut log_iter = log.iter_from(SEG_HEADER_LEN as Lsn);
-            let mut ref_iter = reference.clone().into_iter();
-            for (l, r) in log_iter.zip(ref_iter) {
-                assert_eq!(l, r);
+            for r in reference.clone().into_iter() {
+                assert_eq!(Some(r), log_iter.next());
             }
         });
         threads.push(thread);

@@ -1,10 +1,13 @@
 extern crate pagecache;
 extern crate sled;
 extern crate libc;
+extern crate rand;
 
 use std::fs;
 use std::thread;
 use std::time::Duration;
+
+use rand::Rng;
 
 use pagecache::{Config, ConfigBuilder};
 
@@ -92,7 +95,8 @@ fn run(config: Config) {
     let (key, highest) = verify(&tree);
 
     thread::spawn(|| {
-        thread::sleep(Duration::from_millis(100));
+        let runtime = rand::thread_rng().gen_range(0, 200);
+        thread::sleep(Duration::from_millis(runtime));
         unsafe {
             libc::raise(9);
         }
