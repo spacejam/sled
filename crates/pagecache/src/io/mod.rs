@@ -37,7 +37,7 @@ pub use self::page_cache::{CacheEntry, PageCache, PageGet};
 pub use self::reservation::Reservation;
 pub use self::segment::SegmentMode;
 
-use self::log::{MessageHeader, SegmentHeader, SegmentTrailer};
+use self::log::{MessageHeader, MessageKind, SegmentHeader, SegmentTrailer};
 use self::iobuf::IoBufs;
 use self::iterator::LogIter;
 use self::page_cache::{LoggedUpdate, Update};
@@ -54,3 +54,6 @@ const SUCCESSFUL_FLUSH: u8 = 1;
 
 // This message should be skipped to preserve linearizability.
 const FAILED_FLUSH: u8 = 0;
+
+// This message represents a pad.
+const SEGMENT_PAD: u8 = 2;

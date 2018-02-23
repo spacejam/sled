@@ -57,11 +57,6 @@ impl LogReader for File {
     ) -> CacheResult<MessageHeader, ()> {
         let mut msg_header_buf = [0u8; MSG_HEADER_LEN];
         self.pread_exact(&mut msg_header_buf, lid)?;
-        if msg_header_buf[0] == EVIL_BYTE {
-            return Err(Error::Corruption {
-                at: lid,
-            });
-        }
 
         Ok(msg_header_buf.into())
     }
@@ -85,12 +80,24 @@ impl LogReader for File {
 
         let header = self.read_message_header(lid)?;
 
+        if header.lsn as usize % segment_len != lid as usize % segment_len {
+            // our message lsn was not aligned to our segment offset
+            return Ok(LogRead::Corrupted(header.len));
+        }
+
         let max_possible_len = (ceiling - lid - MSG_HEADER_LEN as LogID) as
             usize;
         if header.len > max_possible_len {
             trace!("read a corrupted message of len {}", header.len);
             return Ok(LogRead::Corrupted(header.len));
         }
+
+        if header.kind == MessageKind::Corrupted {
+            trace!("read a corrupted message of len {}", header.len);
+            return Ok(LogRead::Corrupted(header.len));
+        }
+
+        // perform crc check on everything that isn't Corrupted
 
         let mut buf = Vec::with_capacity(header.len);
         unsafe {
@@ -100,13 +107,23 @@ impl LogReader for File {
 
         let checksum = crc16_arr(&buf);
         if checksum != header.crc16 {
-            trace!("read a message with a bad checksum of len {}", header.len);
+            trace!(
+                "read a message with a bad checksum with header {:?}",
+                header
+            );
             return Ok(LogRead::Corrupted(header.len));
         }
 
-        if !header.successful_flush {
-            trace!("read zeroes of len {}", header.len);
-            return Ok(LogRead::Failed(header.len));
+        match header.kind {
+            MessageKind::Failed => {
+                trace!("read failed of len {}", header.len);
+                return Ok(LogRead::Failed(header.lsn, header.len));
+            }
+            MessageKind::Pad => {
+                trace!("read pad at lsn {}", header.lsn);
+                return Ok(LogRead::Pad(header.lsn));
+            }
+            _ => {}
         }
 
         #[cfg(feature = "zstd")]
