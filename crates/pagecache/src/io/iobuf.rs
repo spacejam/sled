@@ -263,21 +263,22 @@ impl IoBufs {
 
         let buf = self.encapsulate(raw_buf);
 
-        let max_overhead = std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN);
+        let max_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;
         let max_buf_size = (self.config.io_buf_size /
                                 self.config.min_items_per_segment) -
             max_overhead;
 
-        assert!(
-            buf.len() <= max_buf_size,
-            "trying to write a buffer that is too large \
-            to be stored in the IO buffer. buf len: {} current max: {}. \
-            a future version of pagecache will implement automatic \
-            fragmentation of large values. feel free to open \
-            an issue if this is a pressing need of yours.",
-            buf.len(),
-            max_buf_size
-        );
+        if buf.len() > max_buf_size {
+            return Err(Error::Unsupported(format!(
+                "trying to write a buffer that is too large \
+                to be stored in the IO buffer. buf len: {} current max: {}. \
+                a future version of pagecache will implement automatic \
+                fragmentation of large values. feel free to open \
+                an issue if this is a pressing need of yours.",
+                buf.len(),
+                max_buf_size
+            )));
+        }
 
         trace!("reserving buf of len {}", buf.len());
 
