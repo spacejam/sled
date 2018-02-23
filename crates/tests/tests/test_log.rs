@@ -220,6 +220,73 @@ fn log_iterator() {
     assert_eq!(iter.next(), None);
 }
 
+#[test]
+fn log_chunky_iterator() {
+    let mut threads = vec![];
+    for _ in 0..100 {
+        let thread = thread::spawn(|| {
+            let config = ConfigBuilder::new()
+                .temporary(true)
+                .segment_mode(SegmentMode::Linear)
+                .io_buf_size(100)
+                .min_items_per_segment(1)
+                .build();
+
+            let log = Log::start_raw_log(config.clone()).unwrap();
+
+            let mut reference = vec![];
+
+            let max_valid_size = config.io_buf_size -
+                (MSG_HEADER_LEN + SEG_HEADER_LEN + SEG_TRAILER_LEN);
+
+            for i in 0..1000 {
+                let len = thread_rng().gen_range(0, max_valid_size * 2);
+                let item = thread_rng().gen::<u8>();
+                let buf = vec![item; len];
+                let abort = thread_rng().gen::<bool>();
+
+                if abort {
+                    if let Ok(res) = log.reserve(buf) {
+                        res.abort().unwrap();
+                    } else {
+                        assert!(len > max_valid_size);
+                    }
+                } else {
+                    if let Ok((lsn, lid)) = log.write(buf.clone()) {
+                        if len > max_valid_size {
+                            panic!(
+                                "successfully wrote something that was bigger
+                                than we thought should be possible"
+                            );
+                        }
+                        reference.push((lsn, lid, buf));
+                    } else {
+                        assert!(len > max_valid_size);
+                    }
+                }
+            }
+
+            let mut ref_iter = reference.clone().into_iter();
+            for t in log.iter_from(SEG_HEADER_LEN as Lsn) {
+                assert_eq!(ref_iter.next(), Some(t));
+            }
+
+            // recover and restart
+            drop(log);
+            let log = Log::start_raw_log(config).unwrap();
+
+            let mut log_iter = log.iter_from(SEG_HEADER_LEN as Lsn);
+            for r in reference.clone().into_iter() {
+                assert_eq!(Some(r), log_iter.next());
+            }
+        });
+        threads.push(thread);
+    }
+    for thread in threads.into_iter() {
+        thread.join().unwrap();
+    }
+}
+
 #[derive(Debug, Clone)]
 enum Op {
     Write(Vec<u8>),

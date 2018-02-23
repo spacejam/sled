@@ -22,13 +22,15 @@ impl Iterator for LogIter {
         // if we can't read something we expect to be able to,
         // return None if there are no more remaining segments.
         loop {
-            let invalid =
+            let remaining_seg_too_small_for_msg =
                 !valid_entry_offset(self.cur_lsn as LogID, self.segment_len);
-            if self.trailer.is_none() && invalid {
+            if self.trailer.is_none() && remaining_seg_too_small_for_msg {
                 // We've read to the end of a torn
                 // segment and should stop now.
                 return None;
-            } else if self.segment_base.is_none() || invalid {
+            } else if self.segment_base.is_none() ||
+                       remaining_seg_too_small_for_msg
+            {
                 if let Some((next_lsn, next_lid)) = self.segment_iter.next() {
                     assert!(
                         next_lsn + (self.segment_len as Lsn) >= self.cur_lsn,
@@ -73,23 +75,47 @@ impl Iterator for LogIter {
                     self.use_compression,
                 ) {
                     Ok(LogRead::Flush(lsn, buf, on_disk_len)) => {
+                        if lsn != self.cur_lsn {
+                            error!("read Flush with bad lsn");
+                            return None;
+                        }
                         trace!("read flush in LogIter::next");
                         self.cur_lsn += (MSG_HEADER_LEN + on_disk_len) as Lsn;
                         return Some((lsn, lid, buf));
                     }
-                    Ok(LogRead::Failed(on_disk_len)) => {
+                    Ok(LogRead::Failed(lsn, on_disk_len)) => {
+                        if lsn != self.cur_lsn {
+                            error!("read Failed with bad lsn");
+                            return None;
+                        }
                         trace!("read zeroed in LogIter::next");
                         self.cur_lsn += (MSG_HEADER_LEN + on_disk_len) as Lsn;
                     }
-                    _ => {
-                        trace!("read failed in LogIter::next");
+                    Ok(LogRead::Corrupted(_len)) => {
+                        trace!("read corrupted end in LogIter::next");
+                        return None;
+                    }
+                    Ok(LogRead::Pad(lsn)) => {
+                        if lsn != self.cur_lsn {
+                            error!("read Pad with bad lsn");
+                            return None;
+                        }
+
                         if self.trailer.is_none() {
                             // This segment was torn, nothing left to read.
                             return None;
                         }
+
                         self.segment_base.take();
                         self.trailer.take();
                         continue;
+                    }
+                    Err(e) => {
+                        error!(
+                            "failed to read log message during iteration: {}",
+                            e
+                        );
+                        return None;
                     }
                 }
             } else {

@@ -226,7 +226,7 @@ impl IoBufs {
         let crc16 = crc16_arr(&buf);
 
         let header = MessageHeader {
-            successful_flush: true,
+            kind: MessageKind::Success,
             lsn: 0,
             len: buf.len(),
             crc16: crc16,
@@ -263,21 +263,27 @@ impl IoBufs {
 
         let buf = self.encapsulate(raw_buf);
 
-        let max_overhead = std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN);
+        let max_overhead = if self.config.min_items_per_segment == 1 {
+            SEG_HEADER_LEN + SEG_TRAILER_LEN
+        } else {
+            std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN)
+        };
+
         let max_buf_size = (self.config.io_buf_size /
                                 self.config.min_items_per_segment) -
             max_overhead;
 
-        assert!(
-            buf.len() <= max_buf_size,
-            "trying to write a buffer that is too large \
-            to be stored in the IO buffer. buf len: {} current max: {}. \
-            a future version of pagecache will implement automatic \
-            fragmentation of large values. feel free to open \
-            an issue if this is a pressing need of yours.",
-            buf.len(),
-            max_buf_size
-        );
+        if buf.len() > max_buf_size {
+            return Err(Error::Unsupported(format!(
+                "trying to write a buffer that is too large \
+                to be stored in the IO buffer. buf len: {} current max: {}. \
+                a future version of pagecache will implement automatic \
+                fragmentation of large values. feel free to open \
+                an issue if this is a pressing need of yours.",
+                buf.len(),
+                max_buf_size
+            )));
+        }
 
         trace!("reserving buf of len {}", buf.len());
 
@@ -574,7 +580,19 @@ impl IoBufs {
         let capacity = iobuf.get_capacity();
         let io_buf_size = self.config.io_buf_size;
 
-        let sealed = mk_sealed(header);
+        if offset(header) as usize > capacity {
+            // a race happened, nothing we can do
+            return Ok(());
+        }
+
+        let should_pad = from_reserve &&
+            capacity - offset(header) as usize >= MSG_HEADER_LEN;
+
+        let sealed = if should_pad {
+            mk_sealed(bump_offset(header, capacity as LogID - offset(header)))
+        } else {
+            mk_sealed(header)
+        };
         let res_len = offset(sealed) as usize;
 
         let maxed = res_len == capacity;
@@ -600,6 +618,33 @@ impl IoBufs {
         });
         if !worked {
             return Ok(());
+        }
+
+        if should_pad {
+            let offset = offset(header) as usize;
+            let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
+            let len = capacity - offset - MSG_HEADER_LEN;
+
+            // take the crc of the random bytes already after where we
+            // would place our header.
+            let padding_bytes = vec![EVIL_BYTE; len];
+            let crc16 = crc16_arr(&*padding_bytes);
+
+            let header = MessageHeader {
+                kind: MessageKind::Pad,
+                lsn: lsn + offset as Lsn,
+                len: len,
+                crc16: crc16,
+            };
+
+            let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
+
+            data[offset..offset + MSG_HEADER_LEN].copy_from_slice(
+                &header_bytes,
+            );
+            data[offset + MSG_HEADER_LEN..capacity].copy_from_slice(
+                &*padding_bytes,
+            );
         }
 
         assert!(

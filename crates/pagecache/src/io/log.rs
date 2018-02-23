@@ -172,10 +172,19 @@ impl Log {
     }
 }
 
+/// Represents the kind of message written to the log
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub(crate) enum MessageKind {
+    Success,
+    Failed,
+    Pad,
+    Corrupted,
+}
+
 /// All log messages are prepended with this header
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) struct MessageHeader {
-    pub successful_flush: bool,
+    pub kind: MessageKind,
     pub lsn: Lsn,
     pub len: usize,
     pub crc16: [u8; 2],
@@ -202,7 +211,8 @@ pub(crate) struct SegmentTrailer {
 #[derive(Debug)]
 pub enum LogRead {
     Flush(Lsn, Vec<u8>, usize),
-    Failed(usize),
+    Failed(Lsn, usize),
+    Pad(Lsn),
     Corrupted(usize),
 }
 
@@ -227,7 +237,15 @@ impl LogRead {
     /// Return true if we read an aborted flush.
     pub fn is_failed(&self) -> bool {
         match *self {
-            LogRead::Failed(_) => true,
+            LogRead::Failed(_, _) => true,
+            _ => false,
+        }
+    }
+
+    /// Return true if we read a segment pad.
+    pub fn is_pad(&self) -> bool {
+        match *self {
+            LogRead::Pad(_) => true,
             _ => false,
         }
     }
@@ -271,7 +289,12 @@ impl LogRead {
 
 impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
     fn from(buf: [u8; MSG_HEADER_LEN]) -> MessageHeader {
-        let valid = buf[0] == 1;
+        let kind = match buf[0] {
+            SUCCESSFUL_FLUSH => MessageKind::Success,
+            FAILED_FLUSH => MessageKind::Failed,
+            SEGMENT_PAD => MessageKind::Pad,
+            _ => MessageKind::Corrupted,
+        };
 
         let lsn_buf = &buf[1..9];
         let mut lsn_arr = [0u8; 8];
@@ -286,7 +309,7 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
         let crc16 = [buf[13] ^ 0xFF, buf[14] ^ 0xFF];
 
         MessageHeader {
-            successful_flush: valid,
+            kind: kind,
             lsn: lsn,
             len: len as usize,
             crc16: crc16,
@@ -297,9 +320,12 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
 impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
     fn into(self) -> [u8; MSG_HEADER_LEN] {
         let mut buf = [0u8; MSG_HEADER_LEN];
-        if self.successful_flush {
-            buf[0] = SUCCESSFUL_FLUSH;
-        }
+        buf[0] = match self.kind {
+            MessageKind::Success => SUCCESSFUL_FLUSH,
+            MessageKind::Failed => FAILED_FLUSH,
+            MessageKind::Pad => SEGMENT_PAD,
+            MessageKind::Corrupted => EVIL_BYTE,
+        };
 
         // NB LSN actually gets written after the reservation
         // for the item is claimed, when we actually know the lsn,

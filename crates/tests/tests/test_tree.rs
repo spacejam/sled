@@ -264,7 +264,7 @@ fn prop_tree_matches_btreemap(
                 }
             }
             Scan(k, len) => {
-                let tree_iter = tree.scan(&*vec![k]).take(len).map(|res| {
+                let mut tree_iter = tree.scan(&*vec![k]).take(len).map(|res| {
                     let (ref tk, ref tv) = res.unwrap();
                     (tk[0], tv[0])
                 });
@@ -273,8 +273,8 @@ fn prop_tree_matches_btreemap(
                     .filter(|&(ref rk, _rv)| **rk >= k)
                     .take(len)
                     .map(|(ref rk, ref rv)| (**rk, **rv));
-                for (t, r) in tree_iter.zip(ref_iter) {
-                    assert_eq!(t, r);
+                for r in ref_iter {
+                    assert_eq!(Some(r), tree_iter.next());
                 }
             }
             Restart => {
