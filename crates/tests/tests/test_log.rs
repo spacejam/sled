@@ -239,7 +239,7 @@ fn log_chunky_iterator() {
             let max_valid_size = config.io_buf_size -
                 (MSG_HEADER_LEN + SEG_HEADER_LEN + SEG_TRAILER_LEN);
 
-            for i in 0..10000 {
+            for i in 0..1000 {
                 let len = thread_rng().gen_range(0, max_valid_size * 2);
                 let item = thread_rng().gen::<u8>();
                 let buf = vec![item; len];
@@ -256,7 +256,7 @@ fn log_chunky_iterator() {
                         if len > max_valid_size {
                             panic!(
                                 "successfully wrote something that was bigger
-                        than we thought should be possible"
+                                than we thought should be possible"
                             );
                         }
                         reference.push((lsn, lid, buf));
@@ -266,9 +266,9 @@ fn log_chunky_iterator() {
                 }
             }
 
-            let mut log_iter = log.iter_from(SEG_HEADER_LEN as Lsn);
-            for r in reference.clone().into_iter() {
-                assert_eq!(Some(r), log_iter.next());
+            let mut ref_iter = reference.clone().into_iter();
+            for t in log.iter_from(SEG_HEADER_LEN as Lsn) {
+                assert_eq!(ref_iter.next(), Some(t));
             }
 
             // recover and restart
@@ -283,7 +283,7 @@ fn log_chunky_iterator() {
         threads.push(thread);
     }
     for thread in threads.into_iter() {
-        thread.join();
+        thread.join().unwrap();
     }
 }
 
