@@ -81,7 +81,7 @@ pub struct SegmentAccountant {
 
     // TODO these should be sharded to improve performance
     segments: Vec<Segment>,
-    pending_clean: HashSet<PageID>,
+    clean_counter: usize,
 
     // TODO put behind a single mutex
     // NB MUST group pause_rewriting with ordering
@@ -300,7 +300,7 @@ impl SegmentAccountant {
         let mut ret = SegmentAccountant {
             config: config,
             segments: vec![],
-            pending_clean: HashSet::default(),
+            clean_counter: 0,
             free: Arc::new(Mutex::new(VecDeque::new())),
             tip: 0,
             to_clean: BTreeSet::new(),
@@ -646,8 +646,6 @@ impl SegmentAccountant {
         new_lid: LogID,
     ) {
         trace!("mark_replace pid {} at lid {} with lsn {}", pid, new_lid, lsn);
-        self.pending_clean.remove(&pid);
-
         let new_idx = new_lid as usize / self.config.io_buf_size;
 
         // make sure we're not actively trying to replace the destination
@@ -657,8 +655,6 @@ impl SegmentAccountant {
 
         for old_lid in old_lids {
             let old_idx = self.lid_to_idx(old_lid);
-            let segment_start = (old_idx * self.config.io_buf_size) as LogID;
-
             if new_idx == old_idx {
                 // we probably haven't flushed this segment yet, so don't
                 // mark the pid as being removed from it
@@ -681,67 +677,73 @@ impl SegmentAccountant {
             self.segments[old_idx].remove_pid(pid, lsn);
 
             // can we transition these segments?
-            let cleanup_threshold = self.config.segment_cleanup_threshold;
-            let min_items = self.config.min_items_per_segment;
-
-            let segment_low_pct = self.segments[old_idx].live_pct() <=
-                cleanup_threshold;
-
-            let segment_low_count = (self.segments[old_idx].len() as f64) <
-                min_items as f64 * cleanup_threshold;
-
-            let can_drain = self.segments[old_idx].is_inactive() &&
-                (segment_low_pct || segment_low_count);
-
-            if self.segments[old_idx].can_free() {
-                // can be reused immediately
-                self.segments[old_idx].draining_to_free(lsn);
-                self.to_clean.remove(&segment_start);
-                trace!("freed segment {} in replace", segment_start);
-                self.free_segment(segment_start, false);
-            } else if can_drain {
-                // can be cleaned
-                trace!(
-                    "SA inserting {} into to_clean from mark_replace",
-                    segment_start
-                );
-                self.segments[old_idx].inactive_to_draining(lsn);
-                self.to_clean.insert(segment_start);
-            }
+            self.possibly_clean_or_free_segment(old_idx, lsn);
         }
 
         self.mark_link(pid, lsn, new_lid);
     }
 
-    /// Called by the `PageCache` to find useful pages
-    /// it should try to rewrite.
-    pub fn clean(&mut self, ignore: Option<PageID>) -> Option<PageID> {
-        // try to maintain about twice the number of necessary
-        // on-deck segments, to reduce the amount of log growth.
-        if self.free.lock().unwrap().len() >=
-            self.config.min_free_segments * 2
-        {
-            return None;
+    fn possibly_clean_or_free_segment(&mut self, idx: usize, lsn: Lsn) {
+        let cleanup_threshold = self.config.segment_cleanup_threshold;
+        let min_items = self.config.min_items_per_segment;
+
+        let segment_start = (idx * self.config.io_buf_size) as LogID;
+
+        let segment_low_pct = self.segments[idx].live_pct() <=
+            cleanup_threshold;
+
+        let segment_low_count = (self.segments[idx].len() as f64) <
+            min_items as f64 * cleanup_threshold;
+
+        let can_drain = self.segments[idx].is_inactive() &&
+            (segment_low_pct || segment_low_count);
+
+        if self.segments[idx].can_free() {
+            // can be reused immediately
+            self.segments[idx].draining_to_free(lsn);
+            self.to_clean.remove(&segment_start);
+            trace!("freed segment {} in replace", segment_start);
+            self.free_segment(segment_start, false);
+        } else if can_drain {
+            // can be cleaned
+            trace!(
+                "SA inserting {} into to_clean from mark_replace",
+                segment_start
+            );
+            self.segments[idx].inactive_to_draining(lsn);
+            self.to_clean.insert(segment_start);
         }
+    }
 
-        let to_clean = self.to_clean.clone();
-
-        for lid in to_clean {
+    /// Called by the `PageCache` to find pages that are in
+    /// segments elligible for cleaning that it should
+    /// try to rewrite elsewhere.
+    pub fn clean(&mut self, ignore_pid: Option<PageID>) -> Option<PageID> {
+        let item = self.to_clean.iter().nth(0).cloned();
+        if let Some(lid) = item {
             let idx = self.lid_to_idx(lid);
             let segment = &self.segments[idx];
             assert_eq!(segment.state, Draining);
-            for pid in &segment.present {
-                if self.pending_clean.contains(pid) || ignore == Some(*pid) {
-                    continue;
-                }
-                self.pending_clean.insert(*pid);
-                trace!(
+
+            if segment.present.is_empty() {
+                // FIXME should we panic here or return None?
+                panic!("cleanable segment.present.is_empty()");
+                // return None
+            }
+
+            self.clean_counter += 1;
+            let offset = self.clean_counter % segment.present.len();
+            let pid = segment.present.iter().nth(offset).unwrap();
+            if Some(*pid) == ignore_pid {
+                return None;
+            }
+            trace!(
                     "telling caller to clean {} from segment at {}",
                     pid,
                     lid,
                 );
-                return Some(*pid);
-            }
+
+            return Some(*pid);
         }
 
         None
@@ -752,8 +754,6 @@ impl SegmentAccountant {
     /// page is present in the segment's page set.
     pub fn mark_link(&mut self, pid: PageID, lsn: Lsn, lid: LogID) {
         trace!("mark_link pid {} at lid {}", pid, lid);
-        self.pending_clean.remove(&pid);
-
         let idx = self.lid_to_idx(lid);
 
         // make sure we're not actively trying to replace the destination
@@ -784,6 +784,7 @@ impl SegmentAccountant {
     pub(super) fn deactivate_segment(&mut self, lsn: Lsn, lid: LogID) {
         let idx = self.lid_to_idx(lid);
         self.segments[idx].active_to_inactive(lsn, false);
+        self.possibly_clean_or_free_segment(idx, lsn);
     }
 
     fn bump_tip(&mut self) -> LogID {

@@ -294,7 +294,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                         existing.push(c);
                     }
                     &mut P::Free => {
-                        assert_eq!(get, PageGet::Free);
+                        assert!(get.is_free());
                     }
                     &mut P::Unallocated => {
                         assert_eq!(get, PageGet::Unallocated);
@@ -316,7 +316,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                         existing.push(c);
                     }
                     &mut P::Free => {
-                        assert_eq!(get, PageGet::Free);
+                        assert!(get.is_free());
                     }
                     &mut P::Unallocated => {
                         assert_eq!(get, PageGet::Unallocated);

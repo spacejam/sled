@@ -57,7 +57,7 @@ pub enum PageGet<'a, PageFrag>
     /// `Materializer`.
     Materialized(PageFrag, PagePtr<'a, PageFrag>),
     /// This page has been Freed
-    Free,
+    Free(PagePtr<'a, PageFrag>),
     /// This page has been allocated, but will become
     /// Free after restarting the system unless some
     /// data gets written to it.
@@ -102,7 +102,7 @@ impl<'a, P> PageGet<'a, P>
     /// Returns true if the `PageGet` is `Free`.
     pub fn is_free(&self) -> bool {
         match *self {
-            PageGet::Free => true,
+            PageGet::Free(_) => true,
             _ => false,
         }
     }
@@ -338,7 +338,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         }
 
         match self.get(pid, &guard)? {
-            PageGet::Free =>
+            PageGet::Free(_) =>
                 // already freed or never allocated
                 return Ok(()),
             PageGet::Allocated |
@@ -462,10 +462,10 @@ impl<PM, P, R> PageCache<PM, P, R>
                             true,
                         );
                     }
-                    PageGet::Free => {
+                    PageGet::Free(key) => {
                         let _ = self.replace_recurse_once(
                             to_clean,
-                            Shared::null(),
+                            key,
                             Update::Free,
                             guard,
                             true,
@@ -579,10 +579,10 @@ impl<PM, P, R> PageCache<PM, P, R>
                             true,
                         );
                     }
-                    PageGet::Free => {
+                    PageGet::Free(key) => {
                         let _ = self.replace_recurse_once(
                             to_clean,
-                            Shared::null(),
+                            key,
                             Update::Free,
                             guard,
                             true,
@@ -675,7 +675,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 CacheEntry::Flush(lsn, lid) => {
                     lids.push((lsn, lid));
                 }
-                CacheEntry::Free(_, _) => return Ok(PageGet::Free),
+                CacheEntry::Free(_, _) => return Ok(PageGet::Free(head)),
             }
         }
 
@@ -733,7 +733,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                 true,
             ) {
                 Ok(new_head) => head = new_head,
-                Err(Error::CasFailed(None)) => return Ok(PageGet::Free),
+                Err(Error::CasFailed(None)) => return Ok(PageGet::Unallocated),
                 _ => (),
             }
         } else if !fetched.is_empty() ||
