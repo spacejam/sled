@@ -59,9 +59,7 @@ tree.del(&k);
 * MVCC, transactions, merge operators and snapshots provided via a higher-level `Db` versioned-key interface
 * custom merge operators a la RocksDB
 * form the iron core of a [linearizable store](https://github.com/spacejam/rasputin) and a [flexible location-agnostic store](https://github.com/spacejam/icefall)
-* SQLite, MySQL, Postgres back-end plugin support
 * forward-compatible binary format
-* dynamic learned/probabilistic index support
 * bindings for other languages
 
 # warnings
