@@ -8,11 +8,7 @@ rust:
   - stable
 
 matrix:
-  allow_failures:
-    - rust: nightly
   include:
-    - rust: nightly
-      env: TEST=clippy
     - rust: nightly-2018-01-02
       env:
         - TEST=tsan
@@ -44,10 +40,8 @@ script:
                  ;;
                *)
                  cargo check;
-                 cargo check --features=zstd;
-                 cargo check --features=rayon;
                  cargo check --features=all;
-                 cargo test
+                 cargo test --release
                  ;;
              esac'
 
