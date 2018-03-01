@@ -1,6 +1,7 @@
 use std::cmp::PartialEq;
-use std::fmt::{self, Display};
+use std::fmt::{self, Debug, Display};
 use std::io;
+use std::error::Error as StdError;
 
 use super::*;
 
@@ -30,6 +31,7 @@ pub enum Error<Actual> {
     #[cfg(feature = "failpoints")]
     FailPoint,
 }
+
 use Error::*;
 
 impl<A> PartialEq for Error<A>
@@ -84,24 +86,52 @@ impl<T> From<io::Error> for Error<T> {
     }
 }
 
+impl<T> StdError for Error<T>
+    where T: Debug
+{
+    fn description(&self) -> &str {
+        match *self {
+            CasFailed(_) => "Compare and swap failed to successfully compare.",
+            Unsupported(ref e) => &*e,
+            ReportableBug(ref e) => &*e,
+            #[cfg(feature = "failpoints")]
+            FailPoint => "Fail point has been triggered.",
+            Io(ref e) => e.description(),
+            Corruption {
+                ..
+            } => "Read corrupted data.",
+        }
+    }
+}
+
 impl<A> Display for Error<A>
-    where A: fmt::Debug
+    where A: Debug
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match *self {
             CasFailed(ref e) => {
-                write!(f, "Atomic operation has failed: {:?}", e)
+                write!(
+                    f,
+                    "Compare and swap failed to successfully compare \
+                    with actual value {:?}",
+                    e
+                )
             }
             Unsupported(ref e) => write!(f, "Unsupported: {}", e),
             ReportableBug(ref e) => {
-                write!(f, "Unexpected bug has happened: {}", e)
+                write!(
+                    f,
+                    "Unexpected bug has happened: {}. \
+                    PLEASE REPORT THIS BUG!",
+                    e
+                )
             }
             #[cfg(feature = "failpoints")]
             FailPoint => write!(f, "Fail point has been triggered."),
             Io(ref e) => write!(f, "IO error: {}", e),
             Corruption {
                 at,
-            } => write!(f, "Corruption at: {}", at),     
+            } => write!(f, "Read corrupted data at file offset {}", at),
         }
     }
 }
