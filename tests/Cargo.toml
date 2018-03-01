@@ -13,11 +13,11 @@ env_logger = "0.5"
 
 [dev-dependencies.pagecache]
 features = ["failpoints", "lock_free_delays", "rayon"]
-path = "../pagecache"
+path = "../crates/pagecache"
 
 [dev-dependencies.sled]
 features = ["failpoints", "lock_free_delays", "check_snapshot_integrity"]
-path = "../sled"
+path = "../crates/sled"
 
 [dev-dependencies]
 crossbeam-epoch = "0.4"

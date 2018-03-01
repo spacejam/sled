@@ -33,7 +33,8 @@ impl Tree {
         #[cfg(any(test, feature = "check_snapshot_integrity"))]
         match config
             .verify_snapshot::<BLinkMaterializer, Frag, Vec<(PageID, PageID)>>() {
-                Ok(_) |
+                Ok(_) => {}
+                #[cfg(feature = "failpoints")]
                 Err(Error::FailPoint) => {},
                 other => panic!("failed to verify snapshot: {:?}", other),
         }

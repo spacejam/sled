@@ -15,4 +15,4 @@ crate-type = ["dylib"]
 
 [dependencies]
 libc = "0.2"
-sled = {version = "0.15.4", path = "../sled"}
+sled = {version = "0.15.4", path = "../../crates/sled"}

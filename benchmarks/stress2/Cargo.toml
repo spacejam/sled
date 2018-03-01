@@ -13,4 +13,4 @@ serde_derive = "1.0"
 docopt = "0.8"
 chan-signal = "0.3"
 rand = "0.4"
-sled = { path = "../sled" }
+sled = { path = "../../crates/sled" }

@@ -54,7 +54,7 @@ macro_rules! rep_no_copy {
 }
 
 /// auxilliary data structures
-pub mod ds;
+mod ds;
 mod io;
 mod config;
 mod hash;
