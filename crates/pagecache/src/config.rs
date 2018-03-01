@@ -5,7 +5,7 @@ use std::ffi::{OsStr, OsString};
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use std::sync::atomic::{ATOMIC_USIZE_INIT, AtomicPtr, AtomicUsize, Ordering};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -93,16 +93,27 @@ unsafe impl Send for ConfigBuilder {}
 
 impl Default for ConfigBuilder {
     fn default() -> ConfigBuilder {
-        let now = uptime();
-        let nanos = (now.as_secs() * 1_000_000_000) +
-            u64::from(now.subsec_nanos());
+        static SALT_COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
+
+        #[cfg(unix)]
+        let salt = {
+            let pid = unsafe { libc::getpid() };
+            ((pid as u64) << 32) +
+                SALT_COUNTER.fetch_add(1, Ordering::SeqCst) as u64
+        };
+
+        #[cfg(not(unix))]
+        let salt = {
+            let now = uptime();
+            (now.as_secs() * 1_000_000_000) + u64::from(now.subsec_nanos())
+        };
 
         // use shared memory for temporary linux files
         #[cfg(target_os = "linux")]
-        let tmp_path = format!("/dev/shm/pagecache.tmp.{}", nanos);
+        let tmp_path = format!("/dev/shm/pagecache.tmp.{}", salt);
 
         #[cfg(not(target_os = "linux"))]
-        let tmp_path = format!("pagecache.tmp.{}", nanos);
+        let tmp_path = format!("pagecache.tmp.{}", salt);
 
         ConfigBuilder {
             io_bufs: 3,
