@@ -39,7 +39,7 @@ impl Iterator for LogIter {
                             that contain the initial cur_lsn value or higher"
                     );
 
-                    self.fadvise_willneed(next_lid);
+                    #[cfg(target_os = "linux")] self.fadvise_willneed(next_lid);
 
                     if let Err(e) = self.read_segment(next_lsn, next_lid) {
                         debug!(
@@ -203,26 +203,24 @@ impl LogIter {
         Ok(())
     }
 
+    #[cfg(target_os = "linux")]
     fn fadvise_willneed(&self, lid: LogID) {
-        #[cfg(target_os = "linux")]
-        {
-            use std::os::unix::io::AsRawFd;
+        use std::os::unix::io::AsRawFd;
 
-            if let Ok(f) = self.config.file() {
-                let ret = unsafe {
-                    libc::posix_fadvise(
-                        f.as_raw_fd(),
-                        lid as libc::off_t,
-                        self.config.io_buf_size as libc::off_t,
-                        libc::POSIX_FADV_WILLNEED,
-                    )
-                };
-                if ret != 0 {
-                    panic!(
-                        "failed to call fadvise: {}",
-                        std::io::Error::from_raw_os_error(ret)
-                    );
-                }
+        if let Ok(f) = self.config.file() {
+            let ret = unsafe {
+                libc::posix_fadvise(
+                    f.as_raw_fd(),
+                    lid as libc::off_t,
+                    self.config.io_buf_size as libc::off_t,
+                    libc::POSIX_FADV_WILLNEED,
+                )
+            };
+            if ret != 0 {
+                panic!(
+                    "failed to call fadvise: {}",
+                    std::io::Error::from_raw_os_error(ret)
+                );
             }
         }
     }
