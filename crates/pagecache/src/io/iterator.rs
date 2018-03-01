@@ -24,6 +24,7 @@ impl Iterator for LogIter {
         loop {
             let remaining_seg_too_small_for_msg =
                 !valid_entry_offset(self.cur_lsn as LogID, self.segment_len);
+
             if self.trailer.is_none() && remaining_seg_too_small_for_msg {
                 // We've read to the end of a torn
                 // segment and should stop now.
@@ -37,6 +38,9 @@ impl Iterator for LogIter {
                         "caller is responsible for providing segments \
                             that contain the initial cur_lsn value or higher"
                     );
+
+                    #[cfg(target_os = "linux")] self.fadvise_willneed(next_lid);
+
                     if let Err(e) = self.read_segment(next_lsn, next_lid) {
                         debug!(
                             "hit snap while reading segments in \
@@ -107,6 +111,7 @@ impl Iterator for LogIter {
                         }
 
                         self.segment_base.take();
+
                         self.trailer.take();
                         continue;
                     }
@@ -196,6 +201,28 @@ impl LogIter {
         self.segment_base = Some(offset);
 
         Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn fadvise_willneed(&self, lid: LogID) {
+        use std::os::unix::io::AsRawFd;
+
+        if let Ok(f) = self.config.file() {
+            let ret = unsafe {
+                libc::posix_fadvise(
+                    f.as_raw_fd(),
+                    lid as libc::off_t,
+                    self.config.io_buf_size as libc::off_t,
+                    libc::POSIX_FADV_WILLNEED,
+                )
+            };
+            if ret != 0 {
+                panic!(
+                    "failed to call fadvise: {}",
+                    std::io::Error::from_raw_os_error(ret)
+                );
+            }
+        }
     }
 }
 
