@@ -2,9 +2,10 @@ use std::sync::Mutex;
 
 use super::*;
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct BLinkMaterializer {
     pub(super) roots: Mutex<Vec<(PageID, PageID)>>,
+    config: Config,
 }
 
 impl Materializer for BLinkMaterializer {
@@ -13,12 +14,13 @@ impl Materializer for BLinkMaterializer {
     // a vector of (root, prev root) for deterministic recovery
     type Recovery = Vec<(PageID, PageID)>;
 
-    fn new(last_roots: &Option<Self::Recovery>) -> Self {
+    fn new(config: Config, last_roots: &Option<Self::Recovery>) -> Self {
         let roots: Vec<(PageID, PageID)> =
             last_roots.clone().unwrap_or_else(|| vec![]);
 
         BLinkMaterializer {
             roots: Mutex::new(roots),
+            config: config,
         }
     }
 
@@ -29,7 +31,7 @@ impl Materializer for BLinkMaterializer {
         };
 
         for &frag in &frags[1..] {
-            base_node.apply(frag);
+            base_node.apply(frag, self.config.merge_operator);
         }
 
         Frag::Base(base_node, is_root)

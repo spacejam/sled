@@ -168,3 +168,9 @@ pub fn debug_delay() {
         }
     }
 }
+
+/// Allows arbitrary logic to be injected into mere operations of the `PageCache`.
+pub type MergeOperator = fn(key: &[u8],
+                            last_value: Option<&[u8]>,
+                            new_merge: &[u8])
+                            -> Option<Vec<u8>>;

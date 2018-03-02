@@ -224,7 +224,7 @@ pub(super) fn advance_snapshot<PM, P, R>(
 
     trace!("building on top of old snapshot: {:?}", snapshot);
 
-    let materializer = PM::new(&snapshot.recovery);
+    let materializer = PM::new(config.clone(), &snapshot.recovery);
 
     let io_buf_size = config.io_buf_size;
 

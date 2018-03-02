@@ -12,6 +12,7 @@ use super::*;
 pub enum Frag {
     Set(Key, Value),
     Del(Key),
+    Merge(Key, Value),
     /// The optional page in Base means this node has replaced
     /// the specified page as a new root.
     Base(Node, Option<PageID>),

@@ -20,7 +20,10 @@ impl Materializer for TestMaterializer {
     type PageFrag = Vec<usize>;
     type Recovery = ();
 
-    fn new(_recovery: &Option<()>) -> TestMaterializer {
+    fn new(
+        _config: pagecache::Config,
+        _recovery: &Option<()>,
+    ) -> TestMaterializer {
         TestMaterializer
     }
 

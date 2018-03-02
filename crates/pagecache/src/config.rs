@@ -87,6 +87,8 @@ pub struct ConfigBuilder {
     pub zero_copy_storage: bool,
     #[doc(hidden)]
     pub zstd_compression_factor: i32,
+    #[doc(hidden)]
+    pub merge_operator: Option<usize>,
 }
 
 unsafe impl Send for ConfigBuilder {}
@@ -138,6 +140,7 @@ impl Default for ConfigBuilder {
             tmp_path: tmp_path.to_owned().into(),
             temporary: false,
             segment_mode: SegmentMode::Gc,
+            merge_operator: None,
         }
     }
 }
@@ -187,6 +190,13 @@ impl ConfigBuilder {
         let os_str_ref: &OsStr = path_ref.as_ref();
 
         self.path = os_str_ref.to_os_string();
+    }
+
+    /// Set the merge operator that can be relied on during merges in
+    /// the `PageCache`.
+    pub fn merge_operator(mut self, mo: MergeOperator) -> ConfigBuilder {
+        self.merge_operator = Some(mo as usize);
+        self
     }
 
     /// Finalize the configuration.
@@ -446,6 +456,15 @@ impl Config {
             Ok(Some(mut old)) => {
                 let old_tmp = old.tmp_path;
                 old.tmp_path = self.inner.tmp_path.clone();
+                if old.merge_operator.is_some() {
+                    supported!(self.inner.merge_operator.is_some(),
+                        "this system was previously opened with a \
+                        merge operator. must supply one FOREVER after \
+                        choosing to do so once, BWAHAHAHAHAHAHA!!!!");
+                }
+
+                old.merge_operator = self.inner.merge_operator;
+
                 supported!(&*self.inner == &old, "changing the configuration \
                        between usages is currently unsupported");
                 // need to keep the old path so that when old gets
