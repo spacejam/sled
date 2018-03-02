@@ -152,7 +152,7 @@ impl<'a, P> PageGet<'a, P>
 ///
 ///     // Create a new `Materializer` with the previously recovered
 ///     // state if any existed.
-///     fn new(last_recovery: &Option<Self::Recovery>) -> Self {
+///     fn new(config: pagecache::Config, last_recovery: &Option<Self::Recovery>) -> Self {
 ///         TestMaterializer
 ///     }
 ///
@@ -259,7 +259,8 @@ impl<PM, P, R> PageCache<PM, P, R>
         // snapshot before loading it.
         let snapshot = read_snapshot_or_default::<PM, P, R>(&config)?;
 
-        let materializer = Arc::new(PM::new(&snapshot.recovery));
+        let materializer =
+            Arc::new(PM::new(config.clone(), &snapshot.recovery));
 
         let mut pc = PageCache {
             t: materializer,

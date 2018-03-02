@@ -1,3 +1,5 @@
+use super::*;
+
 /// A user of a `PageCache` needs to provide a `Materializer` which
 /// handles the merging of page fragments.
 pub trait Materializer {
@@ -20,7 +22,7 @@ pub trait Materializer {
 
     /// Create a new `Materializer` with the previously recovered
     /// state if any existed.
-    fn new(&Option<Self::Recovery>) -> Self where Self: Sized;
+    fn new(Config, &Option<Self::Recovery>) -> Self where Self: Sized;
 
     /// Used to merge chains of partial pages into a form
     /// that is useful for the `PageCache` owner.
@@ -46,7 +48,7 @@ impl Materializer for NullMaterializer {
         true
     }
 
-    fn new(_: &Option<Self::Recovery>) -> Self {
+    fn new(_: Config, _: &Option<Self::Recovery>) -> Self {
         NullMaterializer
     }
 

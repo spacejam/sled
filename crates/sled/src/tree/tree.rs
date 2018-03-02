@@ -22,6 +22,7 @@ pub struct Tree {
     pages: Arc<PageCache<BLinkMaterializer, Frag, Vec<(PageID, PageID)>>>,
     config: Config,
     root: Arc<AtomicUsize>,
+    merge_operator: Option<MergeOperator>,
 }
 
 unsafe impl Send for Tree {}
@@ -122,6 +123,7 @@ impl Tree {
             pages: Arc::new(pages),
             config: config,
             root: Arc::new(AtomicUsize::new(root_id)),
+            merge_operator: None,
         })
     }
 
@@ -227,7 +229,7 @@ impl Tree {
             );
             match link {
                 Ok(new_cas_key) => {
-                    last_node.apply(&frag);
+                    last_node.apply(&frag, self.config.merge_operator);
                     let should_split =
                         last_node.should_split(self.config.blink_fanout);
                     path.push((last_node.clone(), new_cas_key));
@@ -243,6 +245,89 @@ impl Tree {
             M.tree_looped();
         }
     }
+
+    /// Merge a new value into the total state for a key.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// fn concatenate_merge(
+    ///   _key: &[u8],               // the key being merged
+    ///   old_value: Option<&[u8]>,  // the previous value, if one existed
+    ///   merged_bytes: &[u8]        // the new bytes being merged in
+    /// ) -> Option<Vec<u8>> {       // set the new value, return None to delete
+    ///   let mut ret = old_value
+    ///     .map(|ov| ov.to_vec())
+    ///     .unwrap_or_else(|| vec![]);
+    ///
+    ///   ret.extend_from_slice(merged_bytes);
+    ///
+    ///   Some(ret)
+    /// }
+    ///
+    /// let config = sled::ConfigBuilder::new()
+    ///   .temporary(true)
+    ///   .merge_operator(concatenate_merge)
+    ///   .build();
+    ///
+    /// let tree = sled::Tree::start(config).unwrap();
+    ///
+    /// let k = b"k1".to_vec();
+    ///
+    /// tree.set(k.clone(), vec![0]);
+    /// tree.merge(k.clone(), vec![1]);
+    /// tree.merge(k.clone(), vec![2]);
+    /// assert_eq!(tree.get(&k), Ok(Some(vec![0, 1, 2])));
+    ///
+    /// // sets replace previously merged data,
+    /// // bypassing the merge function.
+    /// tree.set(k.clone(), vec![3]);
+    /// assert_eq!(tree.get(&k), Ok(Some(vec![3])));
+    ///
+    /// // merges on non-present values will add them
+    /// tree.del(&k);
+    /// tree.merge(k.clone(), vec![4]);
+    /// assert_eq!(tree.get(&k), Ok(Some(vec![4])));
+    /// ```
+    pub fn merge(&self, key: Key, value: Value) -> DbResult<(), ()> {
+        if self.config.read_only {
+            return Err(Error::Unsupported(
+                "the database is in read-only mode".to_owned(),
+            ));
+        }
+        let guard = pin();
+        loop {
+            let mut path = self.path_for_key(&*key, &guard)?;
+            let (mut last_node, last_cas_key) = path.pop().unwrap();
+
+            let encoded_key = prefix_encode(last_node.lo.inner(), &*key);
+            let frag = Frag::Merge(encoded_key, value.clone());
+
+            let link = self.pages.link(
+                last_node.id,
+                last_cas_key,
+                frag.clone(),
+                &guard,
+            );
+            match link {
+                Ok(new_cas_key) => {
+                    last_node.apply(&frag, self.config.merge_operator);
+                    let should_split =
+                        last_node.should_split(self.config.blink_fanout);
+                    path.push((last_node.clone(), new_cas_key));
+                    // success
+                    if should_split {
+                        self.recursive_split(&path, &guard)?;
+                    }
+                    return Ok(());
+                }
+                Err(Error::CasFailed(_)) => {}
+                Err(other) => return Err(other.danger_cast()),
+            }
+            M.tree_looped();
+        }
+    }
+
 
     /// Delete a value, returning the last result if it existed.
     ///
@@ -415,7 +500,10 @@ impl Tree {
 
                     match res {
                         Ok(res) => {
-                            parent_node.apply(&Frag::ParentSplit(parent_split));
+                            parent_node.apply(
+                                &Frag::ParentSplit(parent_split),
+                                self.config.merge_operator,
+                            );
                             *parent_cas_key = res;
                         }
                         Err(Error::CasFailed(_)) => continue,

@@ -1,4 +1,4 @@
-# sled likes eating data! it's pre-alpha
+# sled likes eating data! it's alpha
 
 <p>
   <img src="https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face.png" width="20%" height="auto" />
@@ -8,7 +8,7 @@
 [![crates.io](https://meritbadge.herokuapp.com/sled)](https://crates.io/crates/sled)
 [![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled)
 
-A pre-alpha modern embedded database.
+An alpha modern embedded database.
 
 ```rust
 extern crate sled;
@@ -37,6 +37,46 @@ assert_eq!(iter.next(), None);
 tree.del(&k);
 ```
 
+We also support merge operators.
+
+```rust
+fn concatenate_merge(
+  _key: &[u8],               // the key being merged
+  old_value: Option<&[u8]>,  // the previous value, if one existed
+  merged_bytes: &[u8]        // the new bytes being merged in
+) -> Option<Vec<u8>> {       // set the new value, return None to delete
+  let mut ret = old_value
+    .map(|ov| ov.to_vec())
+    .unwrap_or_else(|| vec![]); 
+
+  ret.extend_from_slice(merged_bytes);
+
+  Some(ret)
+}
+
+let config = ConfigBuilder::new()
+  .temporary(true)
+  .merge_operator(concatenate_merge)
+  .build();
+
+let tree = Tree::start(config).unwrap();
+
+tree.set(k, vec![0]);
+tree.merge(k, vec![1]);
+tree.merge(k, vec![2]);
+assert_eq!(tree.get(&k), Ok(Some(vec![0, 1, 2])));
+
+// sets replace previously merged data,
+// bypassing the merge function.
+tree.set(k, vec![3]);
+assert_eq!(tree.get(&k), Ok(Some(vec![3])));
+
+// merges on non-present values will add them
+tree.del(&k);
+tree.merge(k, vec![4]);
+assert_eq!(tree.get(&k), Ok(Some(vec![4])));
+```
+
 # features
 
 * ordered map API
@@ -56,7 +96,7 @@ tree.del(&k);
 
 * beat [LSM trees](https://en.wikipedia.org/wiki/Log-structured_merge-tree)
   for reads and [traditional B+ trees](https://en.wikipedia.org/wiki/B%2B_tree) for writes
-* MVCC, transactions, merge operators and snapshots provided via a higher-level `Db` versioned-key interface
+* MVCC, transactions, and snapshots provided via a higher-level `Db` versioned-key interface
 * custom merge operators a la RocksDB
 * form the iron core of a [linearizable store](https://github.com/spacejam/rasputin) and a [flexible location-agnostic store](https://github.com/spacejam/icefall)
 * forward-compatible binary format

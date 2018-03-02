@@ -192,6 +192,7 @@ fn recover_tree() {
 #[derive(Debug, Clone)]
 enum Op {
     Set(u8, u8),
+    Merge(u8, u8),
     Get(u8),
     Del(u8),
     Cas(u8, u8, u8),
@@ -205,17 +206,40 @@ impl Arbitrary for Op {
             return Op::Restart;
         }
 
-        let choice = g.gen_range(0, 5);
+        let choice = g.gen_range(0, 6);
 
         match choice {
             0 => Op::Set(g.gen::<u8>(), g.gen::<u8>()),
-            1 => Op::Get(g.gen::<u8>()),
-            2 => Op::Del(g.gen::<u8>()),
-            3 => Op::Cas(g.gen::<u8>(), g.gen::<u8>(), g.gen::<u8>()),
-            4 => Op::Scan(g.gen::<u8>(), g.gen_range::<usize>(0, 40)),
+            1 => Op::Merge(g.gen::<u8>(), g.gen::<u8>()),
+            2 => Op::Get(g.gen::<u8>()),
+            3 => Op::Del(g.gen::<u8>()),
+            4 => Op::Cas(g.gen::<u8>(), g.gen::<u8>(), g.gen::<u8>()),
+            5 => Op::Scan(g.gen::<u8>(), g.gen_range::<usize>(0, 40)),
             _ => panic!("impossible choice"),
         }
     }
+}
+
+fn bytes_to_u16(v: &[u8]) -> u16 {
+    assert_eq!(v.len(), 2);
+    ((v[0] as u16) << 8) + v[1] as u16
+}
+
+fn u16_to_bytes(u: u16) -> Vec<u8> {
+    vec![(u >> 8) as u8, u as u8]
+}
+
+// just adds up values as if they were u16's
+fn test_merge_operator(
+    _k: &[u8],
+    old: Option<&[u8]>,
+    to_merge: &[u8],
+) -> Option<Vec<u8>> {
+    let base = old.unwrap_or(&[0, 0]);
+    let base_n = bytes_to_u16(base);
+    let new_n = base_n + to_merge[0] as u16;
+    let ret = u16_to_bytes(new_n);
+    Some(u16_to_bytes(new_n))
 }
 
 fn prop_tree_matches_btreemap(
@@ -224,6 +248,7 @@ fn prop_tree_matches_btreemap(
     snapshot_after: u8,
     flusher: bool,
 ) -> bool {
+
     use self::Op::*;
     let config = ConfigBuilder::new()
         .temporary(true)
@@ -232,6 +257,7 @@ fn prop_tree_matches_btreemap(
         .io_buf_size(10000)
         .blink_fanout(blink_fanout as usize + 2)
         .cache_capacity(40)
+        .merge_operator(test_merge_operator)
         .build();
 
     let mut tree = sled::Tree::start(config.clone()).unwrap();
@@ -240,11 +266,17 @@ fn prop_tree_matches_btreemap(
     for op in ops.into_iter() {
         match op {
             Set(k, v) => {
-                tree.set(vec![k], vec![v]).unwrap();
-                reference.insert(k, v);
+                tree.set(vec![k], vec![0, v]).unwrap();
+                reference.insert(k, v as u16);
+            }
+            Merge(k, v) => {
+                tree.merge(vec![k], vec![v]).unwrap();
+                let mut entry = reference.entry(k).or_insert(0u16);
+                *entry += v as u16;
             }
             Get(k) => {
-                let res1 = tree.get(&*vec![k]).unwrap().map(|v_vec| v_vec[0]);
+                let res1 =
+                    tree.get(&*vec![k]).unwrap().map(|v| bytes_to_u16(&*v));
                 let res2 = reference.get(&k).cloned();
                 assert_eq!(res1, res2);
             }
@@ -254,19 +286,19 @@ fn prop_tree_matches_btreemap(
             }
             Cas(k, old, new) => {
                 let tree_old = tree.get(&*vec![k]).unwrap();
-                if tree_old == Some(vec![old]) {
-                    tree.set(vec![k], vec![new]).unwrap();
+                if tree_old == Some(vec![0, old]) {
+                    tree.set(vec![k], vec![0, new]).unwrap();
                 }
 
                 let ref_old = reference.get(&k).cloned();
-                if ref_old == Some(old) {
-                    reference.insert(k, new);
+                if ref_old == Some(old as u16) {
+                    reference.insert(k, new as u16);
                 }
             }
             Scan(k, len) => {
                 let mut tree_iter = tree.scan(&*vec![k]).take(len).map(|res| {
                     let (ref tk, ref tv) = res.unwrap();
-                    (tk[0], tv[0])
+                    (tk[0], tv.clone())
                 });
                 let ref_iter = reference
                     .iter()
@@ -274,7 +306,10 @@ fn prop_tree_matches_btreemap(
                     .take(len)
                     .map(|(ref rk, ref rv)| (**rk, **rv));
                 for r in ref_iter {
-                    assert_eq!(Some(r), tree_iter.next());
+                    assert_eq!(
+                        Some((r.0, u16_to_bytes(r.1))),
+                        tree_iter.next()
+                    );
                 }
             }
             Restart => {
@@ -698,5 +733,17 @@ fn tree_bug_15() {
         0,
         0,
         true,
+    );
+}
+
+#[test]
+fn tree_bug_16() {
+    // postmortem: the test merge function was not properly adding numbers.
+    use Op::*;
+    prop_tree_matches_btreemap(
+        vec![Merge(247, 162), Scan(209, 31)],
+        0,
+        0,
+        false,
     );
 }
