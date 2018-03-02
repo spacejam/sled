@@ -81,6 +81,7 @@ assert_eq!(tree.get(&k), Ok(Some(vec![4])));
 
 * ordered map API
 * fully atomic single-key operations, supports CAS
+* merge operators
 * [zstd](https://github.com/facebook/zstd) compression (use the zstd build feature)
 * cpu-scalable lock-free implementation
 * SSD-optimized log-structured storage
@@ -97,7 +98,6 @@ assert_eq!(tree.get(&k), Ok(Some(vec![4])));
 * beat [LSM trees](https://en.wikipedia.org/wiki/Log-structured_merge-tree)
   for reads and [traditional B+ trees](https://en.wikipedia.org/wiki/B%2B_tree) for writes
 * MVCC, transactions, and snapshots provided via a higher-level `Db` versioned-key interface
-* custom merge operators a la RocksDB
 * form the iron core of a [linearizable store](https://github.com/spacejam/rasputin) and a [flexible location-agnostic store](https://github.com/spacejam/icefall)
 * forward-compatible binary format
 * bindings for other languages
