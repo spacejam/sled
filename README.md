@@ -102,8 +102,10 @@ assert_eq!(tree.get(&k), Ok(Some(vec![4])));
 * forward-compatible binary format
 * bindings for other languages
 
-# warnings
+# known issues, warnings
 
+* keys and values must fit into `io_buf_size` divided by
+  `min_items_per_segment`. 
 * quite young, should be considered unstable for the time being
 * the C API is likely to change rapidly
 * the on-disk format is going to change in non-forward compatible ways
@@ -132,5 +134,5 @@ scatter-gather reads across the log to materialize the page from its fragments.
 
 * [The Bw-Tree: A B-tree for New Hardware Platforms](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/bw-tree-icde2013-final.pdf)
 * [LLAMA: A Cache/Storage Subsystem for Modern Hardware](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/llama-vldb2013.pdf)
-* [Deuteronomy: Transaction Support for Cloud Data](https://www.microsoft.com/en-us/research/publication/deuteronomy-transaction-support-for-cloud-data/)
+* [Cicada: Dependably Fast Multi-Core In-Memory Transactions](http://15721.courses.cs.cmu.edu/spring2018/papers/06-mvcc2/lim-sigmod2017.pdf)
 * [The Design and Implementation of a Log-Structured File System](https://people.eecs.berkeley.edu/~brewer/cs262/LFS.pdf)
