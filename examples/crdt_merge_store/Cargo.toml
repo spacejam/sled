@@ -1,0 +1,12 @@
+[package]
+name = "crdt_merge_store"
+version = "0.1.0"
+authors = ["Tyler Neely <t@jujit.su>"]
+publish = false
+
+[dependencies]
+sled = { path = "../../crates/sled", version = "0.15"}
+crdts = "1.3"
+bincode = "0.9"
+serde = "1.0"
+serde_derive = "1.0"

@@ -5,5 +5,6 @@ members = [
   "bindings/sled-native",
   "benchmarks/stress2",
   "examples/pessimistic_transactions",
+  "examples/crdt_merge_store",
   "tests"
 ]
