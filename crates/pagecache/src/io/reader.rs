@@ -25,7 +25,6 @@ pub(crate) trait LogReader {
     ) -> CacheResult<LogRead, ()>;
 }
 
-#[cfg(unix)]
 impl LogReader for File {
     fn read_segment_header(
         &self,
