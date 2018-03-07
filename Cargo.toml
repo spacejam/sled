@@ -2,6 +2,7 @@
 members = [
   "crates/pagecache",
   "crates/sled",
+  "crates/paxos",
   "bindings/sled-native",
   "benchmarks/stress2",
   "examples/pessimistic_transactions",
