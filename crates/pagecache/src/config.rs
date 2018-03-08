@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use std::fs;
 use std::ops::Deref;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -52,6 +52,8 @@ pub struct ConfigBuilder {
     #[doc(hidden)]
     pub cache_fixup_threshold: usize,
     #[doc(hidden)]
+    pub data_dir: PathBuf,
+    #[doc(hidden)]
     pub flush_every_ms: Option<u64>,
     #[doc(hidden)]
     pub io_bufs: usize,
@@ -64,7 +66,7 @@ pub struct ConfigBuilder {
     #[doc(hidden)]
     pub page_consolidation_threshold: usize,
     #[doc(hidden)]
-    pub path: OsString,
+    pub path: PathBuf,
     #[doc(hidden)]
     pub read_only: bool,
     #[doc(hidden)]
@@ -74,11 +76,11 @@ pub struct ConfigBuilder {
     #[doc(hidden)]
     pub snapshot_after_ops: usize,
     #[doc(hidden)]
-    pub snapshot_path: Option<OsString>,
+    pub snapshot_path: Option<PathBuf>,
     #[doc(hidden)]
     pub temporary: bool,
     #[doc(hidden)]
-    pub tmp_path: OsString,
+    pub tmp_path: PathBuf,
     #[doc(hidden)]
     pub use_compression: bool,
     #[doc(hidden)]
@@ -123,7 +125,7 @@ impl Default for ConfigBuilder {
             min_items_per_segment: 4, // capacity for >=4 pages/segment
             blink_fanout: 32,
             page_consolidation_threshold: 10,
-            path: "pagecache".to_owned().into(),
+            path: PathBuf::from("pagecache"),
             read_only: false,
             cache_bits: 6, // 64 shards
             cache_capacity: 1024 * 1024 * 1024, // 1gb
@@ -137,10 +139,11 @@ impl Default for ConfigBuilder {
             segment_cleanup_threshold: 0.2,
             min_free_segments: 3,
             zero_copy_storage: false,
-            tmp_path: tmp_path.to_owned().into(),
+            tmp_path: PathBuf::from(tmp_path),
             temporary: false,
             segment_mode: SegmentMode::Gc,
             merge_operator: None,
+            data_dir: PathBuf::from("data"),
         }
     }
 }
@@ -177,19 +180,17 @@ impl ConfigBuilder {
 
     /// Set the path of the database (builder).
     pub fn path<P: AsRef<Path>>(mut self, path: P) -> ConfigBuilder {
-        let path_ref: &Path = path.as_ref();
-        let os_str_ref: &OsStr = path_ref.as_ref();
-
-        self.path = os_str_ref.to_os_string();
+        let mut dir = self.data_dir.clone();
+        dir.push(path);
+        self.path = dir;
         self
     }
 
     /// Set the path of the database
     pub fn set_path<P: AsRef<Path>>(&mut self, path: P) {
-        let path_ref: &Path = path.as_ref();
-        let os_str_ref: &OsStr = path_ref.as_ref();
-
-        self.path = os_str_ref.to_os_string();
+        let mut dir = self.data_dir.clone();
+        dir.push(path);
+        self.path = dir;
     }
 
     /// Set the merge operator that can be relied on during merges in
@@ -230,7 +231,7 @@ impl ConfigBuilder {
         (min_free_segments, get_min_free_segments, set_min_free_segments, usize, "the minimum number of free segments to have on-deck before a compaction occurs"),
         (zero_copy_storage, get_zero_copy_storage, set_zero_copy_storage, bool, "disabling of the log segment copy cleaner"),
         (segment_mode, get_segment_mode, set_segment_mode, SegmentMode, "the file segment selection mode"),
-        (snapshot_path, get_snapshot_path, set_snapshot_path, Option<OsString>, "snapshot file location")
+        (snapshot_path, get_snapshot_path, set_snapshot_path, Option<PathBuf>, "snapshot file location")
     );
 }
 
@@ -291,6 +292,8 @@ impl Drop for Config {
                 error!("failed to remove old snapshot file, maybe snapshot race? {}", _e);
             }
         }
+
+        let _res = fs::remove_dir(&self.data_dir);
     }
 }
 
@@ -313,7 +316,7 @@ impl Config {
 
     // Get the path of the database
     #[doc(hidden)]
-    pub fn get_path(&self) -> OsString {
+    pub fn get_path(&self) -> PathBuf {
         if self.inner.temporary {
             self.inner.tmp_path.clone()
         } else {
@@ -539,15 +542,19 @@ impl Config {
         Ok(deserialize::<ConfigBuilder>(&*buf).ok())
     }
 
-    fn db_path(&self) -> OsString {
+    fn db_path(&self) -> PathBuf {
         let mut path = self.get_path();
-        path.push(".db");
+        let mut file = path.file_name().unwrap().to_os_string();
+        file.push(".db");
+        path.set_file_name(file);
         path
     }
 
-    fn conf_path(&self) -> OsString {
+    fn conf_path(&self) -> PathBuf {
         let mut path = self.get_path();
-        path.push(".conf");
+        let mut file = path.file_name().unwrap().to_os_string();
+        file.push(".conf");
+        path.set_file_name(file);
         path
     }
 

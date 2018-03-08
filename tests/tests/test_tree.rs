@@ -111,7 +111,7 @@ fn tree_subdir() {
 
     drop(t);
 
-    std::fs::remove_dir_all("test_tree_subdir").unwrap();
+    std::fs::remove_dir_all("data/test_tree_subdir").unwrap();
 
     assert_eq!(res, Ok(Some(vec![1])));
 }
@@ -239,7 +239,7 @@ fn test_merge_operator(
     let base_n = bytes_to_u16(base);
     let new_n = base_n + to_merge[0] as u16;
     let ret = u16_to_bytes(new_n);
-    Some(u16_to_bytes(new_n))
+    Some(ret)
 }
 
 fn prop_tree_matches_btreemap(
