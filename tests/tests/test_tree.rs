@@ -94,7 +94,7 @@ fn parallel_tree_ops() {
 #[test]
 fn tree_subdir() {
     let config = ConfigBuilder::new()
-        .path("test_tree_subdir/test.db".to_owned())
+        .path("test_tree_subdir/test_subdir".to_owned())
         .build();
     let t = sled::Tree::start(config).unwrap();
 
@@ -103,7 +103,7 @@ fn tree_subdir() {
     drop(t);
 
     let config = ConfigBuilder::new()
-        .path("test_tree_subdir/test.db".to_owned())
+        .path("test_tree_subdir/test_subdir".to_owned())
         .build();
     let t = sled::Tree::start(config).unwrap();
 
@@ -111,7 +111,7 @@ fn tree_subdir() {
 
     drop(t);
 
-    std::fs::remove_dir_all("data/test_tree_subdir").unwrap();
+    std::fs::remove_dir_all("test_tree_subdir").unwrap();
 
     assert_eq!(res, Ok(Some(vec![1])));
 }

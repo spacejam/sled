@@ -1,7 +1,6 @@
 use std::fmt::Debug;
 use std::fs;
 use std::ops::Deref;
-use std::ffi::OsString;
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -51,8 +50,6 @@ pub struct ConfigBuilder {
     pub cache_capacity: usize,
     #[doc(hidden)]
     pub cache_fixup_threshold: usize,
-    #[doc(hidden)]
-    pub data_dir: PathBuf,
     #[doc(hidden)]
     pub flush_every_ms: Option<u64>,
     #[doc(hidden)]
@@ -143,7 +140,6 @@ impl Default for ConfigBuilder {
             temporary: false,
             segment_mode: SegmentMode::Gc,
             merge_operator: None,
-            data_dir: PathBuf::from("data"),
         }
     }
 }
@@ -180,17 +176,13 @@ impl ConfigBuilder {
 
     /// Set the path of the database (builder).
     pub fn path<P: AsRef<Path>>(mut self, path: P) -> ConfigBuilder {
-        let mut dir = self.data_dir.clone();
-        dir.push(path);
-        self.path = dir;
+        self.path = path.as_ref().to_path_buf();
         self
     }
 
     /// Set the path of the database
     pub fn set_path<P: AsRef<Path>>(&mut self, path: P) {
-        let mut dir = self.data_dir.clone();
-        dir.push(path);
-        self.path = dir;
+        self.path = path.as_ref().to_path_buf();
     }
 
     /// Set the merge operator that can be relied on during merges in
@@ -293,7 +285,7 @@ impl Drop for Config {
             }
         }
 
-        let _res = fs::remove_dir(&self.data_dir);
+        let _res = fs::remove_dir(&self.tmp_path);
     }
 }
 
@@ -326,13 +318,11 @@ impl Config {
 
     // returns the current snapshot file prefix
     #[doc(hidden)]
-    pub fn snapshot_prefix(&self) -> OsString {
+    pub fn snapshot_prefix(&self) -> PathBuf {
         let snapshot_path = self.snapshot_path.clone();
-        let path = self.get_path().as_os_str().to_os_string();
+        let path = self.get_path();
 
-        snapshot_path
-            .map(|sp| sp.as_os_str().to_os_string())
-            .unwrap_or(path)
+        snapshot_path.unwrap_or(path)
     }
 
     // returns the snapshot file paths for this system
@@ -340,14 +330,14 @@ impl Config {
     pub fn get_snapshot_files(&self) -> std::io::Result<Vec<PathBuf>> {
         let mut prefix = self.snapshot_prefix();
 
-        prefix.push(".snap.");
+        prefix.push("snap.");
 
-        let abs_prefix: OsString = if Path::new(&prefix).is_absolute() {
+        let abs_prefix: PathBuf = if Path::new(&prefix).is_absolute() {
             prefix
         } else {
             let mut abs_path = std::env::current_dir()?;
             abs_path.push(prefix.clone());
-            abs_path.as_os_str().to_os_string()
+            abs_path
         };
 
         let filter = |dir_entry: std::io::Result<std::fs::DirEntry>| {
@@ -544,17 +534,13 @@ impl Config {
 
     fn db_path(&self) -> PathBuf {
         let mut path = self.get_path();
-        let mut file = path.file_name().unwrap().to_os_string();
-        file.push(".db");
-        path.set_file_name(file);
+        path.push("db");
         path
     }
 
     fn conf_path(&self) -> PathBuf {
         let mut path = self.get_path();
-        let mut file = path.file_name().unwrap().to_os_string();
-        file.push(".conf");
-        path.set_file_name(file);
+        path.push("conf");
         path
     }
 
