@@ -371,16 +371,17 @@ pub fn write_snapshot<R>(
     let len_bytes: [u8; 8] =
         unsafe { std::mem::transmute(decompressed_len as u64) };
 
-    let path_1_suffix = format!(".snap.{:016X}.in___motion", snapshot.max_lsn);
+    let path_1_suffix = format!("snap.{:016X}.in___motion", snapshot.max_lsn);
 
     let mut path_1 = config.snapshot_prefix();
     path_1.push(path_1_suffix);
 
-    let path_2_suffix = format!(".snap.{:016X}", snapshot.max_lsn);
+    let path_2_suffix = format!("snap.{:016X}", snapshot.max_lsn);
 
     let mut path_2 = config.snapshot_prefix();
     path_2.push(path_2_suffix);
 
+    let _res = std::fs::create_dir_all(path_1.parent().unwrap());
     let mut f = std::fs::OpenOptions::new().write(true).create(true).open(
         &path_1,
     )?;

@@ -94,7 +94,7 @@ fn parallel_tree_ops() {
 #[test]
 fn tree_subdir() {
     let config = ConfigBuilder::new()
-        .path("test_tree_subdir/test.db".to_owned())
+        .path("test_tree_subdir/test_subdir".to_owned())
         .build();
     let t = sled::Tree::start(config).unwrap();
 
@@ -103,7 +103,7 @@ fn tree_subdir() {
     drop(t);
 
     let config = ConfigBuilder::new()
-        .path("test_tree_subdir/test.db".to_owned())
+        .path("test_tree_subdir/test_subdir".to_owned())
         .build();
     let t = sled::Tree::start(config).unwrap();
 
@@ -239,7 +239,7 @@ fn test_merge_operator(
     let base_n = bytes_to_u16(base);
     let new_n = base_n + to_merge[0] as u16;
     let ret = u16_to_bytes(new_n);
-    Some(u16_to_bytes(new_n))
+    Some(ret)
 }
 
 fn prop_tree_matches_btreemap(

@@ -4,6 +4,7 @@ extern crate libc;
 extern crate rand;
 
 use std::fs;
+use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
@@ -201,31 +202,43 @@ fn test_crash_recovery_no_runtime_snapshot() {
 }
 
 fn cleanup_with_snapshots() {
-    let _res = fs::remove_file("test_crashes_with_snapshot.db");
-    let _res = fs::remove_file("test_crashes_with_snapshot.conf");
-    for dir_entry in fs::read_dir(".").unwrap() {
-        if let Ok(de) = dir_entry {
-            let path_buf = de.path();
-            let path = path_buf.as_path();
-            let path_str = path.to_str().unwrap();
-            if path_str.starts_with("./test_crashes_with_snapshot.snap.") {
-                let _res = fs::remove_file(path);
+    let dir = Path::new("test_crashes_with_snapshot");
+    if dir.exists() {
+        let _res = fs::remove_file("test_crashes_with_snapshot/db");
+        let _res = fs::remove_file("test_crashes_with_snapshot/conf");
+
+        for dir_entry in fs::read_dir(dir).unwrap() {
+            if let Ok(de) = dir_entry {
+                let path_buf = de.path();
+                let path = path_buf.as_path();
+                let path_str = path.to_str().unwrap();
+                if path_str.starts_with("test_crashes_with_snapshot/snap.") {
+                    let _res = fs::remove_file(path);
+                }
             }
         }
+
+        fs::remove_dir_all("test_crashes_with_snapshot").unwrap();
     }
 }
 
 fn cleanup() {
-    let _res = fs::remove_file("test_crashes.db");
-    let _res = fs::remove_file("test_crashes.conf");
-    for dir_entry in fs::read_dir(".").unwrap() {
-        if let Ok(de) = dir_entry {
-            let path_buf = de.path();
-            let path = path_buf.as_path();
-            let path_str = path.to_str().unwrap();
-            if path_str.starts_with("./test_crashes.snap.") {
-                let _res = fs::remove_file(path);
+    let dir = Path::new("test_crashes");
+    if dir.exists() {
+        let _res = fs::remove_file("test_crashes/db");
+        let _res = fs::remove_file("test_crashes/conf");
+
+        for dir_entry in fs::read_dir(dir).unwrap() {
+            if let Ok(de) = dir_entry {
+                let path_buf = de.path();
+                let path = path_buf.as_path();
+                let path_str = path.to_str().unwrap();
+                if path_str.starts_with("test_crashes/snap.") {
+                    let _res = fs::remove_file(path);
+                }
             }
         }
+
+        fs::remove_dir_all("test_crashes").unwrap();
     }
 }
