@@ -122,7 +122,7 @@ impl Default for ConfigBuilder {
             min_items_per_segment: 4, // capacity for >=4 pages/segment
             blink_fanout: 32,
             page_consolidation_threshold: 10,
-            path: PathBuf::from("pagecache"),
+            path: PathBuf::from("default.sled"),
             read_only: false,
             cache_bits: 6, // 64 shards
             cache_capacity: 1024 * 1024 * 1024, // 1gb
@@ -270,22 +270,7 @@ impl Drop for Config {
 
         // Our files are temporary, so nuke them.
         warn!("removing ephemeral storage file {}", self.inner.tmp_path.to_string_lossy());
-
-        let db_path = self.db_path();
-        let conf_path = self.conf_path();
-
-        let _res = fs::remove_file(db_path);
-        let _res = fs::remove_file(conf_path);
-
-        let candidates = self.get_snapshot_files().unwrap();
-        for path in candidates {
-            warn!("removing old snapshot file {}", path.to_string_lossy());
-            if let Err(_e) = std::fs::remove_file(path) {
-                error!("failed to remove old snapshot file, maybe snapshot race? {}", _e);
-            }
-        }
-
-        let _res = fs::remove_dir(&self.tmp_path);
+        let _res = fs::remove_dir_all(&self.tmp_path);
     }
 }
 
