@@ -143,6 +143,9 @@ impl Reactor for Proposer {
 
                 if pending.acks_from.len() >= required_acks {
                     // transition to ACCEPT phase
+                    // NB assumption: we use CURRENT acceptor list,
+                    // rather than the acceptor list when we received
+                    // the client request. need to think on this more.
                     pending.phase = Phase::Accept;
                     pending.waiting_for = self.accept_acceptors.clone();
                     pending.acks_from = vec![];
