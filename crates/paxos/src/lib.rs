@@ -22,8 +22,9 @@ pub trait Reactor {
     }
 }
 
-#[derive(Default, Clone, Debug, PartialOrd, PartialEq)]
+#[derive(Default, Clone, Debug, PartialOrd, PartialEq, Eq, Hash)]
 pub struct Ballot(u64);
+
 type Key = Vec<u8>;
 type Value = Vec<u8>;
 
@@ -32,12 +33,17 @@ pub enum Rpc {
     Get,
     Del,
     Set(Value),
-    Cas(Value, Value),
+    Cas(Option<Value>, Option<Value>),
     ClientResponse(Result<Option<Value>, Error>),
     SetAcceptAcceptors(Vec<SocketAddr>),
     SetProposeAcceptors(Vec<SocketAddr>),
     ProposeReq(Ballot),
-    ProposeRes(Ballot, Result<Option<Value>, Error>),
+    ProposeRes {
+        req_ballot: Ballot,
+        last_accepted_ballot: Ballot,
+        last_accepted_value: Option<Value>,
+        res: Result<(), Error>,
+    },
     AcceptReq(Ballot, Option<Value>),
     AcceptRes(Ballot, Result<(), Error>),
 }
