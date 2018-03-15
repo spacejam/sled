@@ -1,12 +1,16 @@
+use std::fmt::Debug;
 use std::time::SystemTime;
-use std::net::SocketAddr;
 
 mod acceptor;
 mod proposer;
 mod client;
 
+pub use acceptor::Acceptor;
+pub use proposer::Proposer;
+pub use client::Client;
+
 // Reactor is a trait for building simulable systems.
-pub trait Reactor {
+pub trait Reactor: Debug + Clone {
     type Peer;
     type Message;
 
@@ -17,26 +21,25 @@ pub trait Reactor {
         msg: Self::Message,
     ) -> Vec<(Self::Peer, Self::Message)>;
 
-    fn tick(&mut self, at: SystemTime) -> Vec<(Self::Peer, Self::Message)> {
+    fn tick(&mut self, _at: SystemTime) -> Vec<(Self::Peer, Self::Message)> {
         vec![]
     }
 }
 
-#[derive(Default, Clone, Debug, PartialOrd, PartialEq, Eq, Hash)]
+#[derive(Default, Clone, Debug, PartialOrd, PartialEq, Eq, Hash, Ord)]
 pub struct Ballot(u64);
 
-type Key = Vec<u8>;
 type Value = Vec<u8>;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Clone)]
 pub enum Rpc {
-    Get,
-    Del,
-    Set(Value),
-    Cas(Option<Value>, Option<Value>),
-    ClientResponse(Result<Option<Value>, Error>),
-    SetAcceptAcceptors(Vec<SocketAddr>),
-    SetProposeAcceptors(Vec<SocketAddr>),
+    Get(u64),
+    Del(u64),
+    Set(u64, Value),
+    Cas(u64, Option<Value>, Option<Value>),
+    ClientResponse(u64, Result<Option<Value>, Error>),
+    SetAcceptAcceptors(Vec<String>),
+    SetProposeAcceptors(Vec<String>),
     ProposeReq(Ballot),
     ProposeRes {
         req_ballot: Ballot,
@@ -49,9 +52,9 @@ pub enum Rpc {
 }
 use Rpc::*;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Clone)]
 pub enum Error {
-    Io(std::io::Error),
+    // TODO Io(std::io::Error),
     ProposalRejected { last: Ballot },
     AcceptRejected { last: Ballot },
     CasFailed(Value),

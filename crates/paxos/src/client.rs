@@ -1,47 +1,50 @@
 use super::*;
 
-#[derive(Debug)]
+use std::collections::HashMap;
+
+#[derive(Debug, Default, Clone)]
 pub struct Client {
-    proposers: Vec<SocketAddr>,
+    pub proposers: Vec<String>,
+    req_counter: u64,
+    in_flight: HashMap<u64, ()>,
 }
 
 impl Client {
-    pub fn get(&self, key: Key) -> Result<Option<Value>, Error> {
+    pub fn get(&self) -> Result<Option<Value>, Error> {
         unimplemented!()
     }
 
-    pub fn del(&self, key: Key) -> Result<Option<Value>, Error> {
+    pub fn del(&self) -> Result<Option<Value>, Error> {
         unimplemented!()
     }
 
-    pub fn set(&self, key: Key, value: Value) -> Result<Option<Value>, Error> {
+    pub fn set(&self, _value: Value) -> Result<Option<Value>, Error> {
         unimplemented!()
     }
 
     pub fn cas(
         &self,
-        key: Key,
-        old_value: Value,
-        new_value: Value,
+        _old_value: Value,
+        _new_value: Value,
     ) -> Result<Option<Value>, Error> {
         unimplemented!()
     }
 }
 
 impl Reactor for Client {
-    type Peer = SocketAddr;
+    type Peer = String;
     type Message = Rpc;
 
     fn receive(
         &mut self,
-        at: SystemTime,
-        from: Self::Peer,
-        msg: Self::Message,
+        _at: SystemTime,
+        _from: Self::Peer,
+        _msg: Self::Message,
     ) -> Vec<(Self::Peer, Self::Message)> {
         unimplemented!()
     }
 
-    fn tick(&mut self, at: SystemTime) -> Vec<(Self::Peer, Self::Message)> {
+    fn tick(&mut self, _at: SystemTime) -> Vec<(Self::Peer, Self::Message)> {
         unimplemented!()
     }
 }

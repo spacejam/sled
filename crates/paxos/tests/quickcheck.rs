@@ -3,130 +3,138 @@ extern crate quickcheck;
 extern crate rand;
 extern crate paxos;
 
+use std::collections::{BinaryHeap, HashMap};
+use std::ops::Add;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
 use self::paxos::*;
 use self::quickcheck::{Arbitrary, Gen};
 
-#[derive(Clone, Debug)]
-struct Partition {
-    from: u8,
-    to: u8,
-    starts_at: u64,
-    duration: u64,
+#[derive(PartialOrd, Ord, Eq, PartialEq, Debug, Clone)]
+struct ScheduledMessage {
+    at: SystemTime,
+    from: String,
+    to: String,
+    msg: Rpc,
 }
 
-impl Arbitrary for Partition {
-    fn arbitrary<G: Gen>(g: &mut G) -> Partition {
-        Partition {
-            from: g.gen(),
-            to: g.gen(),
-            starts_at: g.gen_range(0, 1000),
-            duration: g.gen_range(0, 1000),
+#[derive(Debug, Clone)]
+enum Node {
+    Acceptor(Acceptor),
+    Proposer(Proposer),
+}
+
+impl Reactor for Node {
+    type Peer = String;
+    type Message = Rpc;
+
+    fn receive(
+        &mut self,
+        at: SystemTime,
+        from: Self::Peer,
+        msg: Self::Message,
+    ) -> Vec<(Self::Peer, Self::Message)> {
+        match *self {
+            Node::Proposer(ref mut proposer) => proposer.receive(at, from, msg),
+            Node::Acceptor(ref mut acceptor) => acceptor.receive(at, from, msg),
         }
     }
 }
 
+#[derive(Debug, Clone)]
 struct Cluster {
-    peers: Vec<ElectionPeer<u8>>,
+    peers: HashMap<String, Node>,
+    omniscient_time: u64,
+    in_flight: BinaryHeap<ScheduledMessage>,
 }
 
 impl Cluster {
-    fn new(n_peers: u8) -> Cluster {
-        let mut peers = vec![];
-
-        for i in 0..n_peers {
-            let mut peer_ids: Vec<u8> = (0..n_peers).collect();
-            peer_ids.remove(i as usize);
-
-            peers.push(ElectionPeer {
-                state: PeerState::Init {
-                    since: 0,
-                },
-                peers: peer_ids,
-                epoch: 0,
-                clock: Box::new(0),
-                transport: Box::new(vec![]),
-            });
+    fn step(&mut self) -> Option<Result<(), ()>> {
+        let pop = self.in_flight.pop();
+        if let Some(sm) = pop {
+            // println!("trying to get peer {:?} from {:?}", sm.to, self.peers);
+            if sm.to == "BIG_GOD_DADDY" {
+                // TODO handle god stuff
+                println!("god got {:?}", sm.msg);
+                return Some(Ok(()));
+            }
+            let node = self.peers.get_mut(&sm.to).unwrap();
+            let at = sm.at.clone();
+            for (to, msg) in node.receive(sm.at, sm.from, sm.msg) {
+                // TODO partitions
+                // TODO clock messin'
+                let new_sm = ScheduledMessage {
+                    at: at.add(Duration::new(0, 1)),
+                    from: sm.to.clone(),
+                    to: to,
+                    msg: msg,
+                };
+                self.in_flight.push(new_sm);
+            }
+            Some(Ok(()))
+        } else {
+            None
         }
+    }
+}
+
+unsafe impl Send for Cluster {}
+
+impl Arbitrary for Cluster {
+    fn arbitrary<G: Gen>(g: &mut G) -> Self {
+        let god_addr_1 = "BIG_GOD_DADDY".to_owned();
+        let proposer_addr = "1.1.1.1:1".to_owned();
+        let acceptor_addr = "2.2.2.2:2".to_owned();
+
+        let proposer = Proposer::new(vec![acceptor_addr.clone()]);
+
+        let acceptor = Acceptor::default();
+
+        let initial_messages = vec![
+            ScheduledMessage {
+                at: UNIX_EPOCH.add(Duration::new(0, 1_000_000_001)),
+                from: god_addr_1.clone(),
+                to: proposer_addr.clone(),
+                msg: Rpc::Set(1, b"yo".to_vec()),
+            },
+            ScheduledMessage {
+                at: UNIX_EPOCH.add(Duration::new(0, 9_000_000)),
+                from: god_addr_1.clone(),
+                to: proposer_addr.clone(),
+                msg: Rpc::Cas(1, Some(b"yo".to_vec()), Some(b"boo".to_vec())),
+            },
+            ScheduledMessage {
+                at: UNIX_EPOCH.add(Duration::new(0, 8_000_000)),
+                from: god_addr_1.clone(),
+                to: proposer_addr.clone(),
+                msg: Rpc::Get(1),
+            },
+        ].into_iter()
+            .collect();
+
+        let peers = vec![
+            (proposer_addr, Node::Proposer(proposer)),
+            (acceptor_addr, Node::Acceptor(acceptor)),
+        ].into_iter()
+            .collect();
 
         Cluster {
             peers: peers,
+            omniscient_time: 1_000_000_000,
+            in_flight: initial_messages,
         }
     }
-
-    fn idx(&self, peer: u8) -> usize {
-        peer as usize % self.peers.len()
-    }
-
-    fn tick_node(
-        &mut self,
-        at: u64,
-        node_id: u8,
-    ) -> Vec<(u8, ElectionMessage)> {
-        let idx = self.idx(node_id);
-        self.peers[idx].clock = Box::new(at);
-        self.peers[idx].tick();
-        self.peers[idx].transport.drain(0..).collect();
-    }
-
-    fn receive_node(
-        &mut self,
-        at: u64,
-        to: u8,
-        from: u8,
-        msg: ElectionMessage,
-    ) -> Vec<(u8, ElectionMessage)> {
-        let idx = self.idx(to);
-        self.peers[idx].clock = Box::new(at);
-        self.peers[idx].receive(from, msg);
-        self.peers[idx].transport.drain(0..).collect();
-    }
-}
-
-fn partitioned(partitions: &Vec<Partition>, at: u64, from: u8, to: u8) -> bool {
-    for partition in partitions {
-        if partitioned.from == from && partitioned.to == to &&
-            partitioned.starts_at <= at &&
-            partitioned.duration + partitioned.starts_at > at
-        {
-            return true;
-        }
-    }
-    false
 }
 
 quickcheck! {
-    fn election_maintains_invariants(
-        partitions: Vec<Partition>, 
-        ticks: Vec<(u8, u64)>, 
-        n_peers: u8
+    fn check_cluster(
+        cluster: Cluster
     ) -> bool {
-        let mut cluster = Cluster::new(n_peers);
-        let mut time = 0;
-        let mut deliveries = std::collections::BinaryHeap::new();
-        
-        for (to, after) in ticks {
-            loop {
-                if let Some((delivery_time, _, _, _)) = deliveries.peek() {
-                    if delivery_time >= time + after {
-                        break
-                    }
-                } else {
-                    break
-                }
+        let mut cluster = cluster;
 
-                let (delivery_time, from, to, msg) = deliveries.pop();
-                if !partitioned(partitions, delivery_time, from, to) {
-                    let outgoing = cluster.receive_node(time, to, from, msg);
-                    // TODO add each thing in outgoing to deliveries
-                }
-                cluster.verify_invariants();
-            }
-
-            time += after;
-            let outgoing = cluster.tick_node(time, to % n_peers);
-            // TODO add each thing in outgoing to deliveries
-            cluster.verify_invariants();
-        }
+        while let Some(r) = cluster.step() {
+            r.unwrap()
+        } 
 
         true
     }

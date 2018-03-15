@@ -1,5 +1,6 @@
 use super::*;
 
+#[derive(Default, Debug, Clone)]
 pub struct Acceptor {
     highest_seen: Ballot,
     last_accepted_ballot: Ballot,
@@ -7,12 +8,12 @@ pub struct Acceptor {
 }
 
 impl Reactor for Acceptor {
-    type Peer = SocketAddr;
+    type Peer = String;
     type Message = Rpc;
 
     fn receive(
         &mut self,
-        at: SystemTime,
+        _at: SystemTime,
         from: Self::Peer,
         msg: Self::Message,
     ) -> Vec<(Self::Peer, Self::Message)> {
