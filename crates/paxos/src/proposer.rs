@@ -17,6 +17,7 @@ struct Pending {
     phase: Phase,
     waiting_for: Vec<SocketAddr>,
     acks_from: Vec<SocketAddr>,
+    nacks_from: Vec<SocketAddr>,
     highest_promise_ballot: Ballot,
     highest_promise_value: Option<Value>,
 }
@@ -45,6 +46,7 @@ impl Proposer {
                 phase: Phase::Propose,
                 waiting_for: self.propose_acceptors.clone(),
                 acks_from: vec![],
+                nacks_from: vec![],
                 highest_promise_ballot: Ballot(0),
                 highest_promise_value: None,
             },
@@ -98,14 +100,12 @@ impl Reactor for Proposer {
                 last_accepted_value,
                 res,
             } => {
-                if !self.in_flight.contains_key(&req_ballot) || res.is_err() {
-                    // we've already moved on, or some nerd
-                    // didn't like our request...
+                if !self.in_flight.contains_key(&req_ballot) {
+                    // we've already moved on
                     return vec![];
                 }
 
                 let mut pending = self.in_flight.get_mut(&req_ballot).unwrap();
-                let response = res.unwrap();
 
                 if pending.phase != Phase::Propose {
                     // we've already moved on
@@ -113,7 +113,8 @@ impl Reactor for Proposer {
                 }
 
                 assert!(
-                    !pending.acks_from.contains(&from),
+                    !pending.acks_from.contains(&from) &&
+                        !pending.nacks_from.contains(&from),
                     "somehow got a response from this peer already... \
                     we don't do retries in this game yet!"
                 );
@@ -126,6 +127,25 @@ impl Reactor for Proposer {
                     than their network address."
                 );
 
+                if res.is_err() {
+                    // some nerd didn't like our request...
+                    pending.nacks_from.push(from);
+
+                    let majority = (pending.waiting_for.len() / 2) + 1;
+
+                    return if pending.nacks_from.len() >= majority {
+                        vec![
+                            (
+                                pending.backref,
+                                ClientResponse(Err(res.unwrap_err()))
+                            ),
+                        ]
+                    } else {
+                        vec![]
+                    };
+                }
+
+                let response = res.unwrap();
                 assert!(
                     req_ballot.0 > pending.highest_promise_ballot.0,
                     "somehow the acceptor promised us a vote even though \
@@ -149,6 +169,7 @@ impl Reactor for Proposer {
                     pending.phase = Phase::Accept;
                     pending.waiting_for = self.accept_acceptors.clone();
                     pending.acks_from = vec![];
+                    pending.nacks_from = vec![];
                     pending.new_v =
                         (pending.op)(pending.highest_promise_value.clone());
 
@@ -177,7 +198,6 @@ impl Reactor for Proposer {
                 }
 
                 let mut pending = self.in_flight.get_mut(&ballot).unwrap();
-                let response = res.unwrap();
 
                 assert_eq!(
                     pending.phase,
@@ -186,7 +206,8 @@ impl Reactor for Proposer {
                 );
 
                 assert!(
-                    !pending.acks_from.contains(&from),
+                    !pending.acks_from.contains(&from) &&
+                        !pending.nacks_from.contains(&from),
                     "somehow got a response from this peer already... \
                     we don't do retries in this game yet!"
                 );
@@ -198,6 +219,26 @@ impl Reactor for Proposer {
                     should use a higher level identifier to identify them \
                     than their network address."
                 );
+
+                if res.is_err() {
+                    // some nerd didn't like our request...
+                    pending.nacks_from.push(from);
+
+                    let majority = (pending.waiting_for.len() / 2) + 1;
+
+                    return if pending.nacks_from.len() >= majority {
+                        vec![
+                            (
+                                pending.backref,
+                                ClientResponse(Err(res.unwrap_err()))
+                            ),
+                        ]
+                    } else {
+                        vec![]
+                    };
+                }
+
+                let response = res.unwrap();
 
                 pending.acks_from.push(from);
 
