@@ -210,12 +210,29 @@ impl Arbitrary for Cluster {
             client_responses: vec![],
         }
     }
+
+    fn shrink(&self) -> Box<Iterator<Item = Cluster>> {
+        let mut ret = vec![];
+
+        for i in 0..self.in_flight.len() {
+            let mut in_flight: Vec<_> =
+                self.in_flight.clone().into_iter().collect();
+            in_flight.remove(i);
+            let mut c = self.clone();
+            c.in_flight = in_flight.into_iter().collect();
+            ret.push(c);
+        }
+
+        Box::new(ret.into_iter())
+    }
 }
 
 fn check_linearizability(
     requests: Vec<ScheduledMessage>,
     responses: Vec<ScheduledMessage>,
 ) -> bool {
+    // println!("req {:#?}", requests);
+    // println!("res {:#?}", responses);
 
     true
 }
