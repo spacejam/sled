@@ -4,12 +4,20 @@ use std::collections::HashMap;
 
 #[derive(Debug, Default, Clone)]
 pub struct Client {
-    pub proposers: Vec<String>,
+    proposers: Vec<String>,
     req_counter: u64,
     in_flight: HashMap<u64, ()>,
 }
 
 impl Client {
+    pub fn new(proposers: Vec<String>) -> Client {
+        Client {
+            proposers: proposers,
+            req_counter: 0,
+            in_flight: HashMap::new(),
+        }
+    }
+
     pub fn get(&self) -> Result<Option<Value>, Error> {
         unimplemented!()
     }
