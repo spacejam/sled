@@ -1,4 +1,3 @@
-#[macro_use]
 extern crate quickcheck;
 extern crate rand;
 extern crate paxos;
@@ -9,7 +8,52 @@ use std::ops::Add;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use self::paxos::*;
-use self::quickcheck::{Arbitrary, Gen};
+use self::quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
+
+#[derive(PartialOrd, Ord, Eq, PartialEq, Debug, Clone)]
+struct Partition {
+    at: SystemTime,
+    duration: Duration,
+    from: String,
+    to: String,
+}
+
+impl Partition {
+    fn generate<G: Gen>(
+        g: &mut G,
+        clients: usize,
+        proposers: usize,
+        acceptors: usize,
+    ) -> Self {
+        static NAMES: [&'static str; 3] = ["client:", "proposer:", "acceptor:"];
+
+        let from_choice = g.gen_range(0, 3);
+        let mut to_choice = g.gen_range(0, 3);
+
+        while to_choice == from_choice {
+            to_choice = g.gen_range(0, 3);
+        }
+
+        let at = UNIX_EPOCH.add(Duration::new(0, g.gen_range(0, 100)));
+        let duration = Duration::new(0, g.gen_range(0, 100));
+
+        let mut n = |choice| match choice {
+            0 => g.gen_range(0, clients),
+            1 => g.gen_range(0, proposers),
+            2 => g.gen_range(0, acceptors),
+            _ => panic!("too high"),
+        };
+
+        let from = format!("{}{}", NAMES[from_choice], n(from_choice));
+        let to = format!("{}{}", NAMES[to_choice], n(to_choice));
+        Partition {
+            at: at,
+            duration: duration,
+            to: to,
+            from: from,
+        }
+    }
+}
 
 #[derive(PartialOrd, Ord, Eq, PartialEq, Debug, Clone)]
 enum ClientRequest {
@@ -41,7 +85,7 @@ impl Arbitrary for ClientRequest {
                 )
             }
             3 => ClientRequest::Del,
-            _ => panic!("somehow generated 3+..."),
+            _ => panic!("somehow generated 4+..."),
         }
     }
 }
@@ -97,7 +141,7 @@ impl Reactor for Node {
 #[derive(Debug, Clone)]
 struct Cluster {
     peers: HashMap<String, Node>,
-    omniscient_time: u64,
+    partitions: Vec<Partition>,
     in_flight: BinaryHeap<ScheduledMessage>,
     client_responses: Vec<ScheduledMessage>,
 }
@@ -112,10 +156,14 @@ impl Cluster {
                 self.client_responses.push(sm);
                 return Some(());
             }
-            let node = self.peers.get_mut(&sm.to).unwrap();
+            let mut node = self.peers.remove(&sm.to).unwrap();
             let at = sm.at.clone();
             for (to, msg) in node.receive(sm.at, sm.from, sm.msg) {
-                // TODO partitions
+                let from = &*sm.to;
+                if self.is_partitioned(sm.at, &*to, from) {
+                    // don't push this message on the priority queue
+                    continue;
+                }
                 // TODO clock messin'
                 let new_sm = ScheduledMessage {
                     at: at.add(Duration::new(0, 1)),
@@ -125,10 +173,46 @@ impl Cluster {
                 };
                 self.in_flight.push(new_sm);
             }
+            self.peers.insert(sm.to, node);
             Some(())
         } else {
             None
         }
+    }
+
+    fn is_partitioned(&mut self, at: SystemTime, to: &str, from: &str) -> bool {
+        let mut to_clear = vec![];
+        let mut ret = false;
+        for (i, partition) in self.partitions.iter().enumerate() {
+            if partition.at > at {
+                break;
+            }
+
+            if partition.at <= at && partition.at.add(partition.duration) < at {
+                to_clear.push(i);
+                continue;
+            }
+
+            // the partition is in effect at this time
+            if &*partition.to == to && &*partition.from == from {
+                ret = true;
+                println!(
+                    "partition {:?} effects message from {} to {} at {:?}",
+                    partition,
+                    from,
+                    to,
+                    at
+                );
+                break;
+            }
+        }
+
+        // clear partitions that are no longer relevant
+        for i in to_clear.into_iter().rev() {
+            self.partitions.remove(i);
+        }
+
+        ret
     }
 }
 
@@ -163,9 +247,12 @@ impl Arbitrary for Cluster {
         let proposers: Vec<(String, Node)> = proposer_addrs
             .iter()
             .map(|addr| {
+                let timeout_ms = g.gen_range(0, 10);
                 (
                     addr.clone(),
-                    Node::Proposer(Proposer::new(acceptor_addrs.clone())),
+                    Node::Proposer(
+                        Proposer::new(timeout_ms, acceptor_addrs.clone()),
+                    ),
                 )
             })
             .collect();
@@ -199,13 +286,25 @@ impl Arbitrary for Cluster {
             }
         }
 
+        let n_partitions = g.gen_range(0, 10);
+        let mut partitions = vec![];
+        for _ in 0..n_partitions {
+            partitions.push(Partition::generate(
+                g,
+                n_clients,
+                n_proposers,
+                n_acceptors,
+            ));
+        }
+        partitions.sort();
+
         Cluster {
             peers: clients
                 .into_iter()
                 .chain(proposers.into_iter())
                 .chain(acceptors.into_iter())
                 .collect(),
-            omniscient_time: 0,
+            partitions: partitions,
             in_flight: requests.clone().into_iter().collect(),
             client_responses: vec![],
         }
@@ -227,26 +326,72 @@ impl Arbitrary for Cluster {
     }
 }
 
+#[derive(PartialOrd, Ord, Eq, PartialEq, Debug, Clone)]
+struct Interval {
+    start: SystemTime,
+    end: SystemTime,
+    value: Option<Vec<u8>>,
+}
+
 fn check_linearizability(
-    requests: Vec<ScheduledMessage>,
-    responses: Vec<ScheduledMessage>,
+    request_rpcs: Vec<ScheduledMessage>,
+    response_rpcs: Vec<ScheduledMessage>,
 ) -> bool {
-    // println!("req {:#?}", requests);
-    // println!("res {:#?}", responses);
+    // only look at successful completed responses
+    let mut responses: HashMap<_, _> = response_rpcs
+        .into_iter()
+        .filter_map(|r| if let Rpc::ClientResponse(id, Ok(value)) = r.msg {
+            Some((id, (r.at, value)))
+        } else {
+            None
+        })
+        .collect();
+
+    // filter out requests that were not successful & completed
+    let mut intervals: Vec<_> = request_rpcs
+        .into_iter()
+        .filter_map(|r| match r.msg {
+            Rpc::Get(id) |
+            Rpc::Del(id) |
+            Rpc::Set(id, _) |
+            Rpc::Cas(id, _, _) if responses.contains_key(&id) => {
+                let (end, value) = responses.remove(&id).unwrap();
+                Some(Interval {
+                    start: r.at,
+                    end: end,
+                    value: value,
+                })
+            }
+            _ => None,
+        })
+        .collect();
+
+    intervals.sort();
+
+    assert!(
+        responses.is_empty(),
+        "failed to match responses to initial requests"
+    );
+
+    // ensure that requests are
 
     true
 }
 
-quickcheck! {
-    fn cluster_linearizability(cluster: Cluster) -> bool {
-        let mut cluster = cluster;
-        let client_requests: Vec<_> = cluster.in_flight
-            .clone()
-            .into_iter()
-            .collect();
+fn prop_cluster_linearizability(mut cluster: Cluster) -> bool {
+    let client_requests: Vec<_> =
+        cluster.in_flight.clone().into_iter().collect();
 
-        while let Some(_) = cluster.step() {} 
+    while let Some(_) = cluster.step() {}
 
-        check_linearizability(client_requests, cluster.client_responses)
-    }
+    check_linearizability(client_requests, cluster.client_responses)
+}
+
+#[test]
+fn test_quickcheck_pagecache_works() {
+    QuickCheck::new()
+        .gen(StdGen::new(rand::thread_rng(), 100))
+        .tests(1000)
+        .max_tests(1000000)
+        .quickcheck(prop_cluster_linearizability as fn(Cluster) -> bool);
 }
