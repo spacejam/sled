@@ -31,6 +31,7 @@ pub struct Pending {
     nacks_from: Vec<String>,
     highest_promise_ballot: Ballot,
     highest_promise_value: Option<Value>,
+    received_at: SystemTime,
 }
 
 impl fmt::Debug for Pending {
@@ -63,17 +64,19 @@ impl fmt::Debug for Pending {
 
 #[derive(Default, Debug, Clone)]
 pub struct Proposer {
-    pub accept_acceptors: Vec<String>,
-    pub propose_acceptors: Vec<String>,
-    pub ballot_counter: u64,
-    pub in_flight: HashMap<Ballot, Pending>,
+    accept_acceptors: Vec<String>,
+    propose_acceptors: Vec<String>,
+    ballot_counter: u64,
+    in_flight: HashMap<Ballot, Pending>,
+    timeout: Duration,
 }
 
 impl Proposer {
-    pub fn new(proposers: Vec<String>) -> Proposer {
+    pub fn new(timeout_ms: u64, proposers: Vec<String>) -> Proposer {
         let mut ret = Proposer::default();
         ret.accept_acceptors = proposers.clone();
         ret.propose_acceptors = proposers;
+        ret.timeout = Duration::from_millis(timeout_ms);
         ret
     }
 
@@ -82,7 +85,13 @@ impl Proposer {
         Ballot(self.ballot_counter)
     }
 
-    fn propose(&mut self, from: String, id: u64, op: Op) -> Vec<(String, Rpc)> {
+    fn propose(
+        &mut self,
+        at: SystemTime,
+        from: String,
+        id: u64,
+        op: Op,
+    ) -> Vec<(String, Rpc)> {
         let ballot = self.bump_ballot();
         self.in_flight.insert(
             ballot.clone(),
@@ -97,6 +106,7 @@ impl Proposer {
                 nacks_from: vec![],
                 highest_promise_ballot: Ballot(0),
                 highest_promise_value: None,
+                received_at: at,
             },
         );
 
@@ -113,129 +123,125 @@ impl Reactor for Proposer {
 
     fn receive(
         &mut self,
-        _at: SystemTime,
+        at: SystemTime,
         from: Self::Peer,
         msg: Self::Message,
     ) -> Vec<(Self::Peer, Self::Message)> {
         let mut clear_ballot = None;
-        let res =
-            match msg {
-                Get(id) => self.propose(from, id, Op(Box::new(|x| x))),
-                Del(id) => self.propose(from, id, Op(Box::new(|_| None))),
-                Set(id, value) => {
-                    self.propose(
-                        from,
-                        id,
-                        Op(Box::new(move |_| Some(value.clone()))),
-                    )
+        let res = match msg {
+            Get(id) => self.propose(at, from, id, Op(Box::new(|x| x))),
+            Del(id) => self.propose(at, from, id, Op(Box::new(|_| None))),
+            Set(id, value) => {
+                self.propose(
+                    at,
+                    from,
+                    id,
+                    Op(Box::new(move |_| Some(value.clone()))),
+                )
+            }
+            Cas(id, old_value, new_value) => {
+                self.propose(
+                    at,
+                    from,
+                    id,
+                    Op(Box::new(move |old| if old == old_value {
+                        new_value.clone()
+                    } else {
+                        old
+                    })),
+                )
+            }
+            SetAcceptAcceptors(sas) => {
+                self.accept_acceptors = sas;
+                vec![]
+            }
+            SetProposeAcceptors(sas) => {
+                self.propose_acceptors = sas;
+                vec![]
+            }
+            ProposeRes {
+                req_ballot,
+                last_accepted_ballot,
+                last_accepted_value,
+                res,
+            } => {
+                if self.ballot_counter < last_accepted_ballot.0 {
+                    self.ballot_counter = last_accepted_ballot.0;
                 }
-                Cas(id, old_value, new_value) => {
-                    self.propose(
-                        from,
-                        id,
-                        Op(Box::new(move |old| if old == old_value {
-                            new_value.clone()
-                        } else {
-                            old
-                        })),
-                    )
+
+                if !self.in_flight.contains_key(&req_ballot) {
+                    // we've already moved on
+                    return vec![];
                 }
-                SetAcceptAcceptors(sas) => {
-                    self.accept_acceptors = sas;
-                    vec![]
+
+                let mut pending = self.in_flight.get_mut(&req_ballot).unwrap();
+
+                if pending.phase != Phase::Propose {
+                    // we've already moved on
+                    return vec![];
                 }
-                SetProposeAcceptors(sas) => {
-                    self.propose_acceptors = sas;
-                    vec![]
-                }
-                ProposeRes {
-                    req_ballot,
-                    last_accepted_ballot,
-                    last_accepted_value,
-                    res,
-                } => {
-                    if self.ballot_counter < last_accepted_ballot.0 {
-                        self.ballot_counter = last_accepted_ballot.0;
-                    }
 
-                    if !self.in_flight.contains_key(&req_ballot) {
-                        // we've already moved on
-                        return vec![];
-                    }
-
-                    let mut pending =
-                        self.in_flight.get_mut(&req_ballot).unwrap();
-
-                    if pending.phase != Phase::Propose {
-                        // we've already moved on
-                        return vec![];
-                    }
-
-                    assert!(
-                        !pending.acks_from.contains(&from) &&
-                            !pending.nacks_from.contains(&from),
-                        "somehow got a response from this peer already... \
+                assert!(
+                    !pending.acks_from.contains(&from) &&
+                        !pending.nacks_from.contains(&from),
+                    "somehow got a response from this peer already... \
                     we don't do retries in this game yet!"
-                    );
+                );
 
-                    assert!(
-                        pending.waiting_for.contains(&from),
-                        "somehow got a response from someone we didn't send \
+                assert!(
+                    pending.waiting_for.contains(&from),
+                    "somehow got a response from someone we didn't send \
                     a request to... maybe the network is funky and we \
                     should use a higher level identifier to identify them \
                     than their network address."
-                    );
+                );
 
-                    if res.is_err() {
-                        // some nerd didn't like our request...
-                        pending.nacks_from.push(from);
+                if res.is_err() {
+                    // some nerd didn't like our request...
+                    pending.nacks_from.push(from);
 
-                        let majority = (pending.waiting_for.len() / 2) + 1;
+                    let majority = (pending.waiting_for.len() / 2) + 1;
 
-                        return if pending.nacks_from.len() >= majority {
-                            vec![
-                                (
-                                    pending.client_addr.clone(),
-                                    ClientResponse(
-                                        pending.id,
-                                        Err(res.unwrap_err()),
-                                    )
-                                ),
-                            ]
-                        } else {
-                            vec![]
-                        };
-                    }
+                    return if pending.nacks_from.len() >= majority {
+                        vec![
+                            (
+                                pending.client_addr.clone(),
+                                ClientResponse(pending.id, Err(res.unwrap_err()))
+                            ),
+                        ]
+                    } else {
+                        vec![]
+                    };
+                }
 
-                    assert!(
-                        req_ballot.0 > pending.highest_promise_ballot.0,
-                        "somehow the acceptor promised us a vote even though \
-                    their highest promise ballot is higher than our request..."
-                    );
+                assert!(
+                    req_ballot.0 > pending.highest_promise_ballot.0,
+                    "somehow the acceptor promised us a vote even though \
+                        their highest promise ballot is higher than our request..."
+                );
 
-                    pending.acks_from.push(from);
+                pending.acks_from.push(from);
 
-                    if last_accepted_ballot > pending.highest_promise_ballot {
-                        pending.highest_promise_ballot = last_accepted_ballot;
-                        pending.highest_promise_value = last_accepted_value;
-                    }
+                if last_accepted_ballot > pending.highest_promise_ballot {
+                    pending.highest_promise_ballot = last_accepted_ballot;
+                    pending.highest_promise_value = last_accepted_value;
+                }
 
-                    let required_acks = (pending.waiting_for.len() / 2) + 1;
+                let required_acks = (pending.waiting_for.len() / 2) + 1;
 
-                    if pending.acks_from.len() >= required_acks {
-                        // transition to ACCEPT phase
-                        // NB assumption: we use CURRENT acceptor list,
-                        // rather than the acceptor list when we received
-                        // the client request. need to think on this more.
-                        pending.phase = Phase::Accept;
-                        pending.waiting_for = self.accept_acceptors.clone();
-                        pending.acks_from = vec![];
-                        pending.nacks_from = vec![];
-                        pending.new_v = (pending.op.0)(
-                            pending.highest_promise_value.clone(),
-                        );
+                if pending.acks_from.len() >= required_acks {
+                    // transition to ACCEPT phase
+                    // NB assumption: we use CURRENT acceptor list,
+                    // rather than the acceptor list when we received
+                    // the client request. need to think on this more.
+                    pending.phase = Phase::Accept;
+                    pending.waiting_for = self.accept_acceptors.clone();
+                    pending.acks_from = vec![];
+                    pending.nacks_from = vec![];
+                    pending.new_v =
+                        (pending.op.0)(pending.highest_promise_value.clone());
 
-                        self.accept_acceptors
+                    self.accept_acceptors
                             .iter()
                             .map(|a| {
                                 (
@@ -247,85 +253,78 @@ impl Reactor for Proposer {
                                 )
                             })
                             .collect()
-                    } else {
-                        // still waiting for promises
-                        vec![]
-                    }
+                } else {
+                    // still waiting for promises
+                    vec![]
                 }
-                AcceptRes(ballot, res) => {
-                    if !self.in_flight.contains_key(&ballot) || res.is_err() {
-                        // we've already moved on, or some nerd
-                        // didn't like our request...
-                        return vec![];
-                    }
+            }
+            AcceptRes(ballot, res) => {
+                if !self.in_flight.contains_key(&ballot) {
+                    // we've already moved on
+                    return vec![];
+                }
 
-                    let mut pending = self.in_flight.get_mut(&ballot).unwrap();
+                let mut pending = self.in_flight.get_mut(&ballot).unwrap();
 
-                    assert_eq!(
-                        pending.phase,
-                        Phase::Accept,
-                        "somehow we went back in time and became a proposal..."
-                    );
+                assert_eq!(
+                    pending.phase,
+                    Phase::Accept,
+                    "somehow we went back in time and became a proposal..."
+                );
 
-                    assert!(
-                        !pending.acks_from.contains(&from) &&
-                            !pending.nacks_from.contains(&from),
-                        "somehow got a response from this peer already... \
+                assert!(
+                    !pending.acks_from.contains(&from) &&
+                        !pending.nacks_from.contains(&from),
+                    "somehow got a response from this peer already... \
                     we don't do retries in this game yet!"
-                    );
+                );
 
-                    assert!(
-                        pending.waiting_for.contains(&from),
-                        "somehow got a response from someone we didn't send \
+                assert!(
+                    pending.waiting_for.contains(&from),
+                    "somehow got a response from someone we didn't send \
                     a request to... maybe the network is funky and we \
                     should use a higher level identifier to identify them \
                     than their network address."
-                    );
+                );
 
-                    if res.is_err() {
-                        // some nerd didn't like our request...
-                        pending.nacks_from.push(from);
+                if res.is_err() {
+                    // some nerd didn't like our request...
+                    pending.nacks_from.push(from);
 
-                        let majority = (pending.waiting_for.len() / 2) + 1;
+                    let majority = (pending.waiting_for.len() / 2) + 1;
 
-                        return if pending.nacks_from.len() >= majority {
-                            vec![
-                                (
-                                    pending.client_addr.clone(),
-                                    ClientResponse(
-                                        pending.id,
-                                        Err(res.unwrap_err()),
-                                    )
-                                ),
-                            ]
-                        } else {
-                            vec![]
-                        };
-                    }
-
-                    pending.acks_from.push(from);
-
-                    let required_acks = (pending.waiting_for.len() / 2) + 1;
-
-                    if pending.acks_from.len() >= required_acks {
-                        // respond favorably to the client and nuke pending
+                    return if pending.nacks_from.len() >= majority {
                         vec![
                             (
                                 pending.client_addr.clone(),
-                                ClientResponse(
-                                    pending.id,
-                                    Ok(pending.new_v.clone()),
-                                )
+                                ClientResponse(pending.id, Err(res.unwrap_err()))
                             ),
                         ]
                     } else {
-                        // still waiting for acceptances
                         vec![]
-                    }
-
+                    };
                 }
-                other => panic!("proposer got unhandled rpc: {:?}", other),
-            };
+
+                pending.acks_from.push(from);
+
+                let required_acks = (pending.waiting_for.len() / 2) + 1;
+
+                if pending.acks_from.len() >= required_acks {
+                    // respond favorably to the client and nuke pending
+                    vec![
+                        (
+                            pending.client_addr.clone(),
+                            ClientResponse(pending.id, Ok(pending.new_v.clone()))
+                        ),
+                    ]
+                } else {
+                    // still waiting for acceptances
+                    vec![]
+                }
+
+            }
+            other => panic!("proposer got unhandled rpc: {:?}", other),
+        };
 
         if let Some(ballot) = clear_ballot.take() {
             self.in_flight.remove(&ballot);
@@ -334,8 +333,26 @@ impl Reactor for Proposer {
         res
     }
 
-    // TODO we use tick to handle timeouts
-    fn tick(&mut self, _at: SystemTime) -> Vec<(Self::Peer, Self::Message)> {
-        vec![]
+    // we use tick to handle timeouts
+    fn tick(&mut self, at: SystemTime) -> Vec<(Self::Peer, Self::Message)> {
+        let ret = {
+            let late = self.in_flight.values().filter(|i| {
+                at.duration_since(i.received_at).unwrap() > self.timeout
+            });
+
+            late.map(|pending| {
+                (
+                    pending.client_addr.clone(),
+                    ClientResponse(pending.id, Err(Error::Timeout)),
+                )
+            }).collect()
+        };
+
+        let timeout = self.timeout.clone();
+        self.in_flight.retain(|_, i| {
+            at.duration_since(i.received_at).unwrap() <= timeout
+        });
+
+        ret
     }
 }

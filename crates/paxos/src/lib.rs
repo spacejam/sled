@@ -1,5 +1,5 @@
 use std::fmt::Debug;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 mod acceptor;
 mod proposer;
@@ -54,8 +54,8 @@ use Rpc::*;
 
 #[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Clone)]
 pub enum Error {
-    // TODO Io(std::io::Error),
     ProposalRejected { last: Ballot },
     AcceptRejected { last: Ballot },
     CasFailed(Value),
+    Timeout,
 }
