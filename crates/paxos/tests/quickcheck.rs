@@ -157,7 +157,6 @@ impl Cluster {
                 return Some(());
             }
             let mut node = self.peers.remove(&sm.to).unwrap();
-            let at = sm.at.clone();
             for (to, msg) in node.receive(sm.at, sm.from, sm.msg) {
                 let from = &*sm.to;
                 if self.is_partitioned(sm.at, &*to, from) {
@@ -166,7 +165,7 @@ impl Cluster {
                 }
                 // TODO clock messin'
                 let new_sm = ScheduledMessage {
-                    at: at.add(Duration::new(0, 1)),
+                    at: sm.at.add(Duration::new(0, 1)),
                     from: sm.to.clone(),
                     to: to,
                     msg: msg,
@@ -196,13 +195,6 @@ impl Cluster {
             // the partition is in effect at this time
             if &*partition.to == to && &*partition.from == from {
                 ret = true;
-                println!(
-                    "partition {:?} effects message from {} to {} at {:?}",
-                    partition,
-                    from,
-                    to,
-                    at
-                );
                 break;
             }
         }
@@ -263,16 +255,18 @@ impl Arbitrary for Cluster {
             .collect();
 
         let mut requests = vec![];
+        let mut req_counter = 0;
 
         for client_addr in client_addrs {
             let n_requests = g.gen_range(1, 10);
 
-            for r in 0..n_requests {
+            for _ in 0..n_requests {
+                req_counter += 1;
                 let msg = match ClientRequest::arbitrary(g) {
-                    ClientRequest::Get => Rpc::Get(r),
-                    ClientRequest::Set(v) => Rpc::Set(r, v),
-                    ClientRequest::Cas(ov, nv) => Rpc::Cas(r, ov, nv),
-                    ClientRequest::Del => Rpc::Del(r),
+                    ClientRequest::Get => Rpc::Get(req_counter),
+                    ClientRequest::Set(v) => Rpc::Set(req_counter, v),
+                    ClientRequest::Cas(ov, nv) => Rpc::Cas(req_counter, ov, nv),
+                    ClientRequest::Del => Rpc::Del(req_counter),
                 };
 
                 let at = g.gen_range(0, 100);
@@ -330,7 +324,28 @@ impl Arbitrary for Cluster {
 struct Interval {
     start: SystemTime,
     end: SystemTime,
-    value: Option<Vec<u8>>,
+    req: Req,
+    res: Option<Vec<u8>>,
+}
+
+#[derive(PartialOrd, Ord, Eq, PartialEq, Debug, Clone)]
+enum Req {
+    Get,
+    Del,
+    Set(Vec<u8>),
+    Cas(Option<Vec<u8>>, Option<Vec<u8>>),
+}
+
+impl From<Rpc> for Req {
+    fn from(f: Rpc) -> Req {
+        match f {
+            Rpc::Get(_) => Req::Get,
+            Rpc::Del(_) => Req::Del,
+            Rpc::Set(_, value) => Req::Set(value),
+            Rpc::Cas(_, from_value, to_value) => Req::Cas(from_value, to_value),
+            _ => panic!("tried to convert non-client Rpc into Req"),
+        }
+    }
 }
 
 fn check_linearizability(
@@ -347,26 +362,30 @@ fn check_linearizability(
         })
         .collect();
 
-    // filter out requests that were not successful & completed
-    let mut intervals: Vec<_> = request_rpcs
+    let mut requests: Vec<_> = request_rpcs
         .into_iter()
-        .filter_map(|r| match r.msg {
-            Rpc::Get(id) |
-            Rpc::Del(id) |
-            Rpc::Set(id, _) |
-            Rpc::Cas(id, _, _) if responses.contains_key(&id) => {
+        .filter_map(|r| {
+            let id = r.msg.client_req_id().unwrap();
+            if responses.contains_key(&id) {
                 let (end, value) = responses.remove(&id).unwrap();
+                let req = r.msg.into();
+                assert!(
+                    end > r.at,
+                    "response must have happened after request"
+                );
                 Some(Interval {
                     start: r.at,
                     end: end,
-                    value: value,
+                    req: req,
+                    res: value,
                 })
+            } else {
+                None
             }
-            _ => None,
         })
         .collect();
 
-    intervals.sort();
+    requests.sort();
 
     assert!(
         responses.is_empty(),
@@ -374,6 +393,8 @@ fn check_linearizability(
     );
 
     // ensure that requests are
+    //
+    println!("requests: {:#?}", requests);
 
     true
 }
