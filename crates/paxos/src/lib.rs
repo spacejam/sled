@@ -52,6 +52,19 @@ pub enum Rpc {
 }
 use Rpc::*;
 
+impl Rpc {
+    pub fn client_req_id(&self) -> Option<u64> {
+        match *self {
+            ClientResponse(id, _) |
+            Get(id) |
+            Del(id) |
+            Set(id, _) |
+            Cas(id, _, _) => Some(id),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Clone)]
 pub enum Error {
     ProposalRejected { last: Ballot },
