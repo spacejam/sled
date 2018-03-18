@@ -180,15 +180,6 @@ impl Reactor for Proposer {
                 last_accepted_value,
                 res,
             } => {
-                if let Err(Error::ProposalRejected {
-                               ref last,
-                           }) = res
-                {
-                    if self.ballot_counter < last.0 {
-                        self.ballot_counter = last.0;
-                    }
-                }
-
                 if !self.in_flight.contains_key(&req_ballot) {
                     // we've already moved on
                     return vec![];
@@ -216,90 +207,92 @@ impl Reactor for Proposer {
                     than their network address."
                 );
 
-                if let Err(e) = res {
-                    // some nerd didn't like our request...
-                    pending.nacks_from.push(from);
+                let majority = (pending.waiting_for.len() / 2) + 1;
 
-                    let majority = (pending.waiting_for.len() / 2) + 1;
-
-                    if pending.nacks_from.len() >= majority {
-                        clear_ballot = Some(req_ballot.clone());
-
-                        if e.is_rejected_proposal() &&
-                            !pending.has_retried_once
-                        {
-                            retry = Some((
-                                pending.received_at,
-                                pending.client_addr.clone(),
-                                pending.id,
-                                pending.req.clone(),
-                            ));
-                            vec![]
-                        } else {
-                            vec![
-                                (
-                                    pending.client_addr.clone(),
-                                    ClientResponse(pending.id, Err(e))
-                                ),
-                            ]
+                match res {
+                    Err(Error::ProposalRejected {
+                            ref last,
+                        }) => {
+                        // some nerd didn't like our request...
+                        if self.ballot_counter < last.0 {
+                            self.ballot_counter = last.0;
                         }
-                    } else {
-                        vec![]
-                    }
-                } else {
-                    assert!(
-                        req_ballot.0 > pending.highest_promise_ballot.0,
-                        "somehow the acceptor promised us a vote even though \
-                        their highest promise ballot is higher than our request..."
-                    );
 
-                    pending.acks_from.push(from);
+                        pending.nacks_from.push(from);
 
-                    if last_accepted_ballot > pending.highest_promise_ballot {
-                        pending.highest_promise_ballot = last_accepted_ballot;
-                        pending.highest_promise_value = last_accepted_value;
-                    }
+                        if pending.nacks_from.len() >= majority {
+                            clear_ballot = Some(req_ballot.clone());
 
-                    let required_acks = (pending.waiting_for.len() / 2) + 1;
-
-                    if pending.acks_from.len() >= required_acks {
-                        // transition to ACCEPT phase
-                        // NB assumption: we use CURRENT acceptor list,
-                        // rather than the acceptor list when we received
-                        // the client request. need to think on this more.
-                        pending.transition_to_accept(
-                            self.accept_acceptors.clone(),
-                        );
-
-                        pending
-                            .waiting_for
-                            .iter()
-                            .map(|a| {
-                                (
-                                    a.clone(),
-                                    AcceptReq(
-                                        req_ballot.clone(),
-                                        pending.new_v.clone(),
+                            if !pending.has_retried_once {
+                                retry = Some((
+                                    pending.received_at,
+                                    pending.client_addr.clone(),
+                                    pending.id,
+                                    pending.req.clone(),
+                                ));
+                                vec![]
+                            } else {
+                                vec![
+                                    (
+                                        pending.client_addr.clone(),
+                                        ClientResponse(
+                                            pending.id,
+                                            Err(Error::ProposalRejected {
+                                                last: last.clone(),
+                                            }),
+                                        )
                                     ),
-                                )
-                            })
-                            .collect()
-                    } else {
-                        // still waiting for promises
-                        vec![]
+                                ]
+                            }
+                        } else {
+                            // still waiting for a majority of positive responses
+                            vec![]
+                        }
                     }
+                    Ok(()) => {
+                        assert!(
+                            req_ballot.0 > pending.highest_promise_ballot.0,
+                            "somehow the acceptor promised us a vote even though \
+                            their highest promise ballot is higher than our request..."
+                        );
+                        pending.acks_from.push(from);
+
+                        if last_accepted_ballot > pending.highest_promise_ballot {
+                            pending.highest_promise_ballot = last_accepted_ballot;
+                            pending.highest_promise_value = last_accepted_value;
+                        }
+
+                        if pending.acks_from.len() >= majority {
+                            // transition to ACCEPT phase
+                            // NB assumption: we use CURRENT acceptor list,
+                            // rather than the acceptor list when we received
+                            // the client request. need to think on this more.
+                            pending.transition_to_accept(
+                                self.accept_acceptors.clone(),
+                            );
+
+                            pending
+                                .waiting_for
+                                .iter()
+                                .map(|a| {
+                                    (
+                                        a.clone(),
+                                        AcceptReq(
+                                            req_ballot.clone(),
+                                            pending.new_v.clone(),
+                                        ),
+                                    )
+                                })
+                                .collect()
+                        } else {
+                            // still waiting for promises
+                            vec![]
+                        }
+                    }
+                    other => panic!("got unhandled ProposeRes: {:?}", other),
                 }
             }
             AcceptRes(ballot, res) => {
-                if let Err(Error::AcceptRejected {
-                               ref last,
-                           }) = res
-                {
-                    if self.ballot_counter < last.0 {
-                        self.ballot_counter = last.0;
-                    }
-                }
-
                 if !self.in_flight.contains_key(&ballot) {
                     // we've already moved on
                     return vec![];
@@ -328,46 +321,59 @@ impl Reactor for Proposer {
                     than their network address."
                 );
 
-                if res.is_err() {
-                    // some nerd didn't like our request...
-                    pending.nacks_from.push(from);
+                let majority = (pending.waiting_for.len() / 2) + 1;
 
-                    let majority = (pending.waiting_for.len() / 2) + 1;
+                match res {
+                    Err(Error::AcceptRejected {
+                            ref last,
+                        }) => {
+                        // some nerd didn't like our request...
+                        if self.ballot_counter < last.0 {
+                            self.ballot_counter = last.0;
+                        }
 
-                    if pending.nacks_from.len() >= majority {
-                        clear_ballot = Some(ballot);
-                        vec![
-                            (
-                                pending.client_addr.clone(),
-                                ClientResponse(pending.id, Err(res.unwrap_err()))
-                            ),
-                        ]
-                    } else {
-                        vec![]
+                        pending.nacks_from.push(from);
+
+                        if pending.nacks_from.len() >= majority {
+                            clear_ballot = Some(ballot);
+                            vec![
+                                (
+                                    pending.client_addr.clone(),
+                                    ClientResponse(
+                                        pending.id,
+                                        Err(Error::AcceptRejected {
+                                            last: last.clone(),
+                                        }),
+                                    )
+                                ),
+                            ]
+                        } else {
+                            vec![]
+                        }
                     }
-                } else {
-                    pending.acks_from.push(from);
+                    Ok(()) => {
+                        pending.acks_from.push(from);
 
-                    let required_acks = (pending.waiting_for.len() / 2) + 1;
-
-                    if pending.acks_from.len() >= required_acks {
-                        // respond favorably to the client and nuke pending
-                        vec![
-                            (
-                                pending.client_addr.clone(),
-                                ClientResponse(
-                                    pending.id,
-                                    pending.cas_failed.clone().map(
-                                        |_| pending.new_v.clone(),
-                                    ),
-                                )
-                            ),
-                        ]
-                    } else {
-                        // still waiting for acceptances
-                        vec![]
+                        if pending.acks_from.len() >= majority {
+                            // respond favorably to the client and nuke pending
+                            clear_ballot = Some(ballot);
+                            vec![
+                                (
+                                    pending.client_addr.clone(),
+                                    ClientResponse(
+                                        pending.id,
+                                        pending.cas_failed.clone().map(
+                                            |_| pending.new_v.clone(),
+                                        ),
+                                    )
+                                ),
+                            ]
+                        } else {
+                            // still waiting for acceptances
+                            vec![]
+                        }
                     }
-
+                    other => panic!("got unhandled AcceptRes: {:?}", other),
                 }
             }
             other => panic!("proposer got unhandled rpc: {:?}", other),
@@ -400,6 +406,7 @@ impl Reactor for Proposer {
         };
 
         let timeout = self.timeout.clone();
+
         self.in_flight.retain(|_, i| {
             at.duration_since(i.received_at).unwrap() <= timeout
         });

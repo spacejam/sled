@@ -83,11 +83,34 @@ pub enum Error {
 }
 
 impl Error {
+    pub fn is_rejected_accept(&self) -> bool {
+        match *self {
+            Error::AcceptRejected {
+                ..
+            } => true,
+            _ => false,
+        }
+    }
+
     pub fn is_rejected_proposal(&self) -> bool {
         match *self {
             Error::ProposalRejected {
                 ..
             } => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_timeout(&self) -> bool {
+        match *self {
+            Error::Timeout => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_failed_cas(&self) -> bool {
+        match *self {
+            Error::CasFailed(_) => true,
             _ => false,
         }
     }
