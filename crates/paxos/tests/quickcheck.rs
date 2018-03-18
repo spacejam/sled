@@ -65,7 +65,7 @@ enum ClientRequest {
 
 impl Arbitrary for ClientRequest {
     fn arbitrary<G: Gen>(g: &mut G) -> Self {
-        let choice = g.gen_range(0, 4);
+        let choice = g.gen_range(2, 4);
 
         match choice {
             0 => ClientRequest::Get,
@@ -262,12 +262,14 @@ impl Arbitrary for Cluster {
 
             for _ in 0..n_requests {
                 req_counter += 1;
-                let msg = match ClientRequest::arbitrary(g) {
-                    ClientRequest::Get => Rpc::Get(req_counter),
-                    ClientRequest::Set(v) => Rpc::Set(req_counter, v),
-                    ClientRequest::Cas(ov, nv) => Rpc::Cas(req_counter, ov, nv),
-                    ClientRequest::Del => Rpc::Del(req_counter),
+                let req = match ClientRequest::arbitrary(g) {
+                    ClientRequest::Get => Req::Get,
+                    ClientRequest::Set(v) => Req::Set(v),
+                    ClientRequest::Cas(ov, nv) => Req::Cas(ov, nv),
+                    ClientRequest::Del => Req::Del,
                 };
+
+                let msg = Rpc::ClientRequest(req_counter, req);
 
                 let at = g.gen_range(0, 100);
 
@@ -325,27 +327,7 @@ struct Interval {
     start: SystemTime,
     end: SystemTime,
     req: Req,
-    res: Option<Vec<u8>>,
-}
-
-#[derive(PartialOrd, Ord, Eq, PartialEq, Debug, Clone)]
-enum Req {
-    Get,
-    Del,
-    Set(Vec<u8>),
-    Cas(Option<Vec<u8>>, Option<Vec<u8>>),
-}
-
-impl From<Rpc> for Req {
-    fn from(f: Rpc) -> Req {
-        match f {
-            Rpc::Get(_) => Req::Get,
-            Rpc::Del(_) => Req::Del,
-            Rpc::Set(_, value) => Req::Set(value),
-            Rpc::Cas(_, from_value, to_value) => Req::Cas(from_value, to_value),
-            _ => panic!("tried to convert non-client Rpc into Req"),
-        }
-    }
+    res: Result<Option<Vec<u8>>, Error>,
 }
 
 fn check_linearizability(
@@ -355,8 +337,8 @@ fn check_linearizability(
     // only look at successful completed responses
     let mut responses: HashMap<_, _> = response_rpcs
         .into_iter()
-        .filter_map(|r| if let Rpc::ClientResponse(id, Ok(value)) = r.msg {
-            Some((id, (r.at, value)))
+        .filter_map(|r| if let Rpc::ClientResponse(id, res) = r.msg {
+            Some((id, (r.at, res)))
         } else {
             None
         })
@@ -367,8 +349,8 @@ fn check_linearizability(
         .filter_map(|r| {
             let id = r.msg.client_req_id().unwrap();
             if responses.contains_key(&id) {
-                let (end, value) = responses.remove(&id).unwrap();
-                let req = r.msg.into();
+                let (end, res) = responses.remove(&id).unwrap();
+                let req = r.msg.client_req().unwrap();
                 assert!(
                     end > r.at,
                     "response must have happened after request"
@@ -377,7 +359,7 @@ fn check_linearizability(
                     start: r.at,
                     end: end,
                     req: req,
-                    res: value,
+                    res: res,
                 })
             } else {
                 None
@@ -393,8 +375,16 @@ fn check_linearizability(
     );
 
     // ensure that requests are
-    //
-    println!("requests: {:#?}", requests);
+    println!("requests:");
+    for r in requests {
+        println!(
+            "{}-{} req: {:?} res: {:?}",
+            r.start.duration_since(UNIX_EPOCH).unwrap().subsec_nanos(),
+            r.end.duration_since(UNIX_EPOCH).unwrap().subsec_nanos(),
+            r.req,
+            r.res
+        );
+    }
 
     true
 }

@@ -31,12 +31,17 @@ pub struct Ballot(u64);
 
 type Value = Vec<u8>;
 
+#[derive(PartialOrd, Ord, Eq, PartialEq, Debug, Clone)]
+pub enum Req {
+    Get,
+    Del,
+    Set(Vec<u8>),
+    Cas(Option<Vec<u8>>, Option<Vec<u8>>),
+}
+
 #[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Clone)]
 pub enum Rpc {
-    Get(u64),
-    Del(u64),
-    Set(u64, Value),
-    Cas(u64, Option<Value>, Option<Value>),
+    ClientRequest(u64, Req),
     ClientResponse(u64, Result<Option<Value>, Error>),
     SetAcceptAcceptors(Vec<String>),
     SetProposeAcceptors(Vec<String>),
@@ -56,10 +61,14 @@ impl Rpc {
     pub fn client_req_id(&self) -> Option<u64> {
         match *self {
             ClientResponse(id, _) |
-            Get(id) |
-            Del(id) |
-            Set(id, _) |
-            Cas(id, _, _) => Some(id),
+            ClientRequest(id, _) => Some(id),
+            _ => None,
+        }
+    }
+
+    pub fn client_req(self) -> Option<Req> {
+        match self {
+            ClientRequest(_, req) => Some(req),
             _ => None,
         }
     }
@@ -69,6 +78,6 @@ impl Rpc {
 pub enum Error {
     ProposalRejected { last: Ballot },
     AcceptRejected { last: Ballot },
-    CasFailed(Value),
+    CasFailed(Option<Value>),
     Timeout,
 }

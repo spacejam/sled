@@ -2,16 +2,6 @@ use super::*;
 
 use std::collections::HashMap;
 use std::fmt;
-use std::rc::Rc;
-
-struct Op(Box<Fn(Option<Value>) -> Option<Value>>);
-
-impl fmt::Debug for Op {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "Op(f(Option<Value>)->Option<Value>)")
-    }
-}
-
 
 #[derive(Eq, PartialEq, Debug, Clone)]
 enum Phase {
@@ -23,7 +13,7 @@ enum Phase {
 pub struct Pending {
     client_addr: String,
     id: u64,
-    op: Rc<Op>,
+    req: Req,
     new_v: Option<Value>,
     phase: Phase,
     waiting_for: Vec<String>,
@@ -32,6 +22,32 @@ pub struct Pending {
     highest_promise_ballot: Ballot,
     highest_promise_value: Option<Value>,
     received_at: SystemTime,
+    cas_failed: Result<(), Error>,
+    has_retried_once: bool,
+}
+
+impl Pending {
+    fn apply_op(&mut self) {
+        match self.req {
+            Req::Get => {
+                self.new_v = self.highest_promise_value.clone();
+            }
+            Req::Del => {
+                self.new_v = None;
+            }
+            Req::Set(ref new_v) => {
+                self.new_v = Some(new_v.clone());
+            }
+            Req::Cas(ref old_v, ref new_v) => {
+                if *old_v == self.highest_promise_value {
+                    self.new_v = new_v.clone();
+                } else {
+                    self.new_v = self.highest_promise_value.clone();
+                    self.cas_failed = Err(Error::CasFailed(old_v.clone()));
+                }
+            }
+        }
+    }
 }
 
 impl fmt::Debug for Pending {
@@ -48,6 +64,9 @@ impl fmt::Debug for Pending {
                 nacks_from: {:?},
                 highest_promise_ballot: {:?},
                 highest_promise_value: {:?},
+                received_at: {:?},
+                cas_failed: {:?},
+                has_retried_once: {},
             }}",
             self.client_addr,
             self.id,
@@ -58,6 +77,9 @@ impl fmt::Debug for Pending {
             self.nacks_from,
             self.highest_promise_ballot,
             self.highest_promise_value,
+            self.received_at,
+            self.cas_failed,
+            self.has_retried_once,
         )
     }
 }
@@ -90,7 +112,7 @@ impl Proposer {
         at: SystemTime,
         from: String,
         id: u64,
-        op: Op,
+        req: Req,
     ) -> Vec<(String, Rpc)> {
         let ballot = self.bump_ballot();
         self.in_flight.insert(
@@ -98,7 +120,7 @@ impl Proposer {
             Pending {
                 client_addr: from,
                 id: id,
-                op: Rc::new(op),
+                req: req,
                 new_v: None,
                 phase: Phase::Propose,
                 waiting_for: self.propose_acceptors.clone(),
@@ -107,6 +129,8 @@ impl Proposer {
                 highest_promise_ballot: Ballot(0),
                 highest_promise_value: None,
                 received_at: at,
+                cas_failed: Ok(()),
+                has_retried_once: false,
             },
         );
 
@@ -129,28 +153,7 @@ impl Reactor for Proposer {
     ) -> Vec<(Self::Peer, Self::Message)> {
         let mut clear_ballot = None;
         let res = match msg {
-            Get(id) => self.propose(at, from, id, Op(Box::new(|x| x))),
-            Del(id) => self.propose(at, from, id, Op(Box::new(|_| None))),
-            Set(id, value) => {
-                self.propose(
-                    at,
-                    from,
-                    id,
-                    Op(Box::new(move |_| Some(value.clone()))),
-                )
-            }
-            Cas(id, old_value, new_value) => {
-                self.propose(
-                    at,
-                    from,
-                    id,
-                    Op(Box::new(move |old| if old == old_value {
-                        new_value.clone()
-                    } else {
-                        old
-                    })),
-                )
-            }
+            ClientRequest(id, r) => self.propose(at, from, id, r),
             SetAcceptAcceptors(sas) => {
                 self.accept_acceptors = sas;
                 vec![]
@@ -165,8 +168,13 @@ impl Reactor for Proposer {
                 last_accepted_value,
                 res,
             } => {
-                if self.ballot_counter < last_accepted_ballot.0 {
-                    self.ballot_counter = last_accepted_ballot.0;
+                if let Err(Error::ProposalRejected {
+                               ref last,
+                           }) = res
+                {
+                    if self.ballot_counter < last.0 {
+                        self.ballot_counter = last.0;
+                    }
                 }
 
                 if !self.in_flight.contains_key(&req_ballot) {
@@ -196,7 +204,7 @@ impl Reactor for Proposer {
                     than their network address."
                 );
 
-                if res.is_err() {
+                if let Err(e) = res {
                     // some nerd didn't like our request...
                     pending.nacks_from.push(from);
 
@@ -206,7 +214,7 @@ impl Reactor for Proposer {
                         vec![
                             (
                                 pending.client_addr.clone(),
-                                ClientResponse(pending.id, Err(res.unwrap_err()))
+                                ClientResponse(pending.id, Err(e))
                             ),
                         ]
                     } else {
@@ -238,8 +246,7 @@ impl Reactor for Proposer {
                     pending.waiting_for = self.accept_acceptors.clone();
                     pending.acks_from = vec![];
                     pending.nacks_from = vec![];
-                    pending.new_v =
-                        (pending.op.0)(pending.highest_promise_value.clone());
+                    pending.apply_op();
 
                     self.accept_acceptors
                             .iter()
@@ -259,6 +266,15 @@ impl Reactor for Proposer {
                 }
             }
             AcceptRes(ballot, res) => {
+                if let Err(Error::AcceptRejected {
+                               ref last,
+                           }) = res
+                {
+                    if self.ballot_counter < last.0 {
+                        self.ballot_counter = last.0;
+                    }
+                }
+
                 if !self.in_flight.contains_key(&ballot) {
                     // we've already moved on
                     return vec![];
@@ -314,7 +330,12 @@ impl Reactor for Proposer {
                     vec![
                         (
                             pending.client_addr.clone(),
-                            ClientResponse(pending.id, Ok(pending.new_v.clone()))
+                            ClientResponse(
+                                pending.id,
+                                pending.cas_failed.clone().map(
+                                    |_| pending.new_v.clone(),
+                                ),
+                            )
                         ),
                     ]
                 } else {
