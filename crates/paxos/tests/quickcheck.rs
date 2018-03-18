@@ -321,16 +321,17 @@ impl Arbitrary for Cluster {
 }
 
 #[derive(PartialOrd, Ord, Eq, PartialEq, Debug, Clone)]
-struct Interval {
-    start: SystemTime,
-    end: SystemTime,
-    req: Req,
-    res: Result<Option<Vec<u8>>, Error>,
-    witnessed: Option<Vec<u8>>,
+enum Act {
+    Publish(Option<Vec<u8>>),
+    Observe(Option<Vec<u8>>),
+    Consume(Option<Vec<u8>>),
 }
 
-fn st_to_nanos(st: SystemTime) -> u32 {
-    st.duration_since(UNIX_EPOCH).unwrap().subsec_nanos()
+#[derive(PartialOrd, Ord, Eq, PartialEq, Debug, Clone)]
+struct Event {
+    at: SystemTime,
+    act: Act,
+    client_req_id: u64,
 }
 
 // simple (simplistic, not exhaustive) linearizability checker:
@@ -364,7 +365,7 @@ fn check_linearizability(
     use Req::*;
     // publishes "happen" as soon as a not-explicitly-failed
     // request begins
-    let mut publishes = vec![(std::u32::MAX, None, 0)];
+    let mut publishes = vec![];
     // observes "happen" at the end of a succesful response or
     // cas failure
     let mut observes = vec![];
@@ -387,7 +388,7 @@ fn check_linearizability(
             panic!("Cluster started with non-ClientRequest")
         };
 
-        let begin = st_to_nanos(r.at);
+        let begin = r.at;
 
         //  reasoning about effects:
         //
@@ -421,10 +422,8 @@ fn check_linearizability(
                         publishes.push((begin, new, id));
                     }
                     Get => observes.push((end, v.clone(), id)),
-                    Del => publishes.push((st_to_nanos(end), None, id)),
-                    Set(value) => {
-                        publishes.push((st_to_nanos(end), Some(value), id))
-                    }
+                    Del => publishes.push((end, None, id)),
+                    Set(value) => publishes.push((end, Some(value), id)),
                 }
             }
             Some(&(end, Err(Error::CasFailed(ref witnessed)))) => {
@@ -441,7 +440,57 @@ fn check_linearizability(
         }
     }
 
-    if publishes.is_empty() {}
+    let mut events = vec![];
+
+    for (time, value, id) in publishes {
+        events.push(Event {
+            at: time,
+            act: Act::Publish(value),
+            client_req_id: id,
+        });
+    }
+
+    for (time, value, id) in consumes {
+        events.push(Event {
+            at: time,
+            act: Act::Consume(value),
+            client_req_id: id,
+        });
+    }
+
+    for (time, value, id) in observes {
+        events.push(Event {
+            at: time,
+            act: Act::Observe(value),
+            client_req_id: id,
+        });
+    }
+
+    let mut value_pool = HashMap::new();
+    value_pool.insert(None, 1);
+
+    for event in events {
+        match event.act {
+            Act::Publish(v) => {
+                let mut entry = value_pool.entry(v).or_insert(0);
+                *entry += 1;
+            }
+            Act::Observe(v) => {
+                let count = value_pool.get(&v).unwrap();
+                assert!(
+                    *count > 0,
+                    "expect to be able to witness {:?} at time {:?}",
+                    v,
+                    event.at
+                )
+            }
+            Act::Consume(v) => {
+                let mut count = value_pool.get_mut(&v).unwrap();
+                assert!(*count > 0);
+                *count -= 1;
+            }
+        }
+    }
 
     true
 }
