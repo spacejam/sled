@@ -81,3 +81,14 @@ pub enum Error {
     CasFailed(Option<Value>),
     Timeout,
 }
+
+impl Error {
+    pub fn is_rejected_proposal(&self) -> bool {
+        match *self {
+            Error::ProposalRejected {
+                ..
+            } => true,
+            _ => false,
+        }
+    }
+}

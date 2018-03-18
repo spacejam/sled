@@ -48,6 +48,14 @@ impl Pending {
             }
         }
     }
+
+    fn transition_to_accept(&mut self, acceptors: Vec<String>) {
+        self.phase = Phase::Accept;
+        self.acks_from = vec![];
+        self.nacks_from = vec![];
+        self.waiting_for = acceptors;
+        self.apply_op();
+    }
 }
 
 impl fmt::Debug for Pending {
@@ -113,6 +121,7 @@ impl Proposer {
         from: String,
         id: u64,
         req: Req,
+        retry: bool,
     ) -> Vec<(String, Rpc)> {
         let ballot = self.bump_ballot();
         self.in_flight.insert(
@@ -130,7 +139,7 @@ impl Proposer {
                 highest_promise_value: None,
                 received_at: at,
                 cas_failed: Ok(()),
-                has_retried_once: false,
+                has_retried_once: retry,
             },
         );
 
@@ -152,8 +161,9 @@ impl Reactor for Proposer {
         msg: Self::Message,
     ) -> Vec<(Self::Peer, Self::Message)> {
         let mut clear_ballot = None;
+        let mut retry = None;
         let res = match msg {
-            ClientRequest(id, r) => self.propose(at, from, id, r),
+            ClientRequest(id, r) => self.propose(at, from, id, r, false),
             SetAcceptAcceptors(sas) => {
                 self.accept_acceptors = sas;
                 vec![]
@@ -210,45 +220,57 @@ impl Reactor for Proposer {
 
                     let majority = (pending.waiting_for.len() / 2) + 1;
 
-                    return if pending.nacks_from.len() >= majority {
-                        vec![
-                            (
+                    if pending.nacks_from.len() >= majority {
+                        clear_ballot = Some(req_ballot.clone());
+
+                        if e.is_rejected_proposal() &&
+                            !pending.has_retried_once
+                        {
+                            retry = Some((
+                                pending.received_at,
                                 pending.client_addr.clone(),
-                                ClientResponse(pending.id, Err(e))
-                            ),
-                        ]
+                                pending.id,
+                                pending.req.clone(),
+                            ));
+                            vec![]
+                        } else {
+                            vec![
+                                (
+                                    pending.client_addr.clone(),
+                                    ClientResponse(pending.id, Err(e))
+                                ),
+                            ]
+                        }
                     } else {
                         vec![]
-                    };
-                }
-
-                assert!(
-                    req_ballot.0 > pending.highest_promise_ballot.0,
-                    "somehow the acceptor promised us a vote even though \
+                    }
+                } else {
+                    assert!(
+                        req_ballot.0 > pending.highest_promise_ballot.0,
+                        "somehow the acceptor promised us a vote even though \
                         their highest promise ballot is higher than our request..."
-                );
+                    );
 
-                pending.acks_from.push(from);
+                    pending.acks_from.push(from);
 
-                if last_accepted_ballot > pending.highest_promise_ballot {
-                    pending.highest_promise_ballot = last_accepted_ballot;
-                    pending.highest_promise_value = last_accepted_value;
-                }
+                    if last_accepted_ballot > pending.highest_promise_ballot {
+                        pending.highest_promise_ballot = last_accepted_ballot;
+                        pending.highest_promise_value = last_accepted_value;
+                    }
 
-                let required_acks = (pending.waiting_for.len() / 2) + 1;
+                    let required_acks = (pending.waiting_for.len() / 2) + 1;
 
-                if pending.acks_from.len() >= required_acks {
-                    // transition to ACCEPT phase
-                    // NB assumption: we use CURRENT acceptor list,
-                    // rather than the acceptor list when we received
-                    // the client request. need to think on this more.
-                    pending.phase = Phase::Accept;
-                    pending.waiting_for = self.accept_acceptors.clone();
-                    pending.acks_from = vec![];
-                    pending.nacks_from = vec![];
-                    pending.apply_op();
+                    if pending.acks_from.len() >= required_acks {
+                        // transition to ACCEPT phase
+                        // NB assumption: we use CURRENT acceptor list,
+                        // rather than the acceptor list when we received
+                        // the client request. need to think on this more.
+                        pending.transition_to_accept(
+                            self.accept_acceptors.clone(),
+                        );
 
-                    self.accept_acceptors
+                        pending
+                            .waiting_for
                             .iter()
                             .map(|a| {
                                 (
@@ -260,9 +282,10 @@ impl Reactor for Proposer {
                                 )
                             })
                             .collect()
-                } else {
-                    // still waiting for promises
-                    vec![]
+                    } else {
+                        // still waiting for promises
+                        vec![]
+                    }
                 }
             }
             AcceptRes(ballot, res) => {
@@ -309,7 +332,8 @@ impl Reactor for Proposer {
 
                     let majority = (pending.waiting_for.len() / 2) + 1;
 
-                    return if pending.nacks_from.len() >= majority {
+                    if pending.nacks_from.len() >= majority {
+                        clear_ballot = Some(ballot);
                         vec![
                             (
                                 pending.client_addr.clone(),
@@ -318,31 +342,31 @@ impl Reactor for Proposer {
                         ]
                     } else {
                         vec![]
-                    };
-                }
-
-                pending.acks_from.push(from);
-
-                let required_acks = (pending.waiting_for.len() / 2) + 1;
-
-                if pending.acks_from.len() >= required_acks {
-                    // respond favorably to the client and nuke pending
-                    vec![
-                        (
-                            pending.client_addr.clone(),
-                            ClientResponse(
-                                pending.id,
-                                pending.cas_failed.clone().map(
-                                    |_| pending.new_v.clone(),
-                                ),
-                            )
-                        ),
-                    ]
+                    }
                 } else {
-                    // still waiting for acceptances
-                    vec![]
-                }
+                    pending.acks_from.push(from);
 
+                    let required_acks = (pending.waiting_for.len() / 2) + 1;
+
+                    if pending.acks_from.len() >= required_acks {
+                        // respond favorably to the client and nuke pending
+                        vec![
+                            (
+                                pending.client_addr.clone(),
+                                ClientResponse(
+                                    pending.id,
+                                    pending.cas_failed.clone().map(
+                                        |_| pending.new_v.clone(),
+                                    ),
+                                )
+                            ),
+                        ]
+                    } else {
+                        // still waiting for acceptances
+                        vec![]
+                    }
+
+                }
             }
             other => panic!("proposer got unhandled rpc: {:?}", other),
         };
@@ -351,7 +375,11 @@ impl Reactor for Proposer {
             self.in_flight.remove(&ballot);
         }
 
-        res
+        if let Some((received_at, client_addr, id, req)) = retry {
+            self.propose(received_at, client_addr, id, req, true)
+        } else {
+            res
+        }
     }
 
     // we use tick to handle timeouts
