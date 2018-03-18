@@ -43,7 +43,9 @@ impl Pending {
                     self.new_v = new_v.clone();
                 } else {
                     self.new_v = self.highest_promise_value.clone();
-                    self.cas_failed = Err(Error::CasFailed(old_v.clone()));
+                    self.cas_failed = Err(Error::CasFailed(
+                        self.highest_promise_value.clone(),
+                    ));
                 }
             }
         }
