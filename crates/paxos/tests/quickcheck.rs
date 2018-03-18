@@ -65,27 +65,25 @@ enum ClientRequest {
 
 impl Arbitrary for ClientRequest {
     fn arbitrary<G: Gen>(g: &mut G) -> Self {
-        let choice = g.gen_range(2, 4);
+        // NB ONLY GENERATE CAS
+        // the linearizability checker can't handle
+        // anything else!
+        let choice = g.gen_range(3, 10);
 
         match choice {
             0 => ClientRequest::Get,
-            1 => ClientRequest::Set(vec![g.gen_range(0, 5)]),
-            2 => {
+            1 => ClientRequest::Del,
+            2 => ClientRequest::Set(vec![g.gen_range(0, 2)]),
+            _ => {
                 ClientRequest::Cas(
-                    if g.gen() {
-                        Some(vec![g.gen_range(0, 5)])
-                    } else {
+                    if g.gen_weighted_bool(3) {
                         None
-                    },
-                    if g.gen() {
-                        Some(vec![g.gen_range(0, 5)])
                     } else {
-                        None
+                        Some(vec![g.gen_range(0, 2)])
                     },
+                    Some(vec![g.gen_range(0, 2)]),
                 )
             }
-            3 => ClientRequest::Del,
-            _ => panic!("somehow generated 4+..."),
         }
     }
 }
@@ -328,63 +326,122 @@ struct Interval {
     end: SystemTime,
     req: Req,
     res: Result<Option<Vec<u8>>, Error>,
+    witnessed: Option<Vec<u8>>,
 }
 
+fn st_to_nanos(st: SystemTime) -> u32 {
+    st.duration_since(UNIX_EPOCH).unwrap().subsec_nanos()
+}
+
+// simple (simplistic, not exhaustive) linearizability checker:
+// main properties:
+//   1. an effect must NOT be observed before
+//      its causal operation starts
+//   2. after its causal operation ends,
+//      an effect MUST be observed
+//
+//  only comparing CAS for now.
+//
+// for each successful operation end time
+//   * populate a pending set for possibly
+//     successful operations that start before
+//     then (one pass ever, iterate along-side
+//     the end times by start times)
+//   * for each successful operation that reads
+//     a previous write, ensure that it is present
+//     in the write set.
+//   * for each successful operation that "consumes"
+//     a previous write (CAS, Del) we try to pop
+//     its consumed value out of our pending set
+//     after filling the pending set with any write
+//     that could have happened before then.
+//     if its not there, we failed linearizability.
+//
 fn check_linearizability(
     request_rpcs: Vec<ScheduledMessage>,
     response_rpcs: Vec<ScheduledMessage>,
 ) -> bool {
-    // only look at successful completed responses
-    let mut responses: HashMap<_, _> = response_rpcs
+    use Req::*;
+    // publishes "happen" as soon as a not-explicitly-failed
+    // request begins
+    let mut publishes = vec![(std::u32::MAX, None, 0)];
+    // observes "happen" at the end of a succesful response or
+    // cas failure
+    let mut observes = vec![];
+    // consumes "happen" at the end of a successful response
+    let mut consumes = vec![];
+
+    let responses: HashMap<_, _> = response_rpcs
         .into_iter()
         .filter_map(|r| if let Rpc::ClientResponse(id, res) = r.msg {
             Some((id, (r.at, res)))
         } else {
-            None
+            panic!("non-ClientResponse sent to client")
         })
         .collect();
 
-    let mut requests: Vec<_> = request_rpcs
-        .into_iter()
-        .filter_map(|r| {
-            let id = r.msg.client_req_id().unwrap();
-            if responses.contains_key(&id) {
-                let (end, res) = responses.remove(&id).unwrap();
-                let req = r.msg.client_req().unwrap();
-                assert!(
-                    end > r.at,
-                    "response must have happened after request"
-                );
-                Some(Interval {
-                    start: r.at,
-                    end: end,
-                    req: req,
-                    res: res,
-                })
-            } else {
-                None
+    for r in request_rpcs {
+        let (id, req) = if let Rpc::ClientRequest(id, req) = r.msg {
+            (id, req)
+        } else {
+            panic!("Cluster started with non-ClientRequest")
+        };
+
+        let begin = st_to_nanos(r.at);
+
+        //  reasoning about effects:
+        //
+        //  OP  | res  | consumes | publishes | observes
+        // -----------------------------------------
+        //  CAS | ok   | old      | new       | old
+        //  CAS | casf | -        | -         | actual
+        //  CAS | ?    | ?        | ?         | ?
+        //  DEL | ok   | ?        | None      | -
+        //  DEL | ?    | ?        | None?     | -
+        //  SET | ok   | ?        | value     | -
+        //  SET | ?    | ?        | value?    | -
+        //  GET | ok   | -        | -         | value
+        //  GET | ?    | -        | -         | value?
+        match responses.get(&id) {
+            None |
+            Some(&(_, Err(Error::Timeout))) => {
+                // not sure if this actually took effect or not
+                match req {
+                    Cas(_old, new) => publishes.push((begin, new, id)),
+                    Del => publishes.push((begin, None, id)),
+                    Set(value) => publishes.push((begin, Some(value), id)),
+                    Get => {}
+                }
             }
-        })
-        .collect();
-
-    requests.sort();
-
-    assert!(
-        responses.is_empty(),
-        "failed to match responses to initial requests"
-    );
-
-    // ensure that requests are
-    println!("requests:");
-    for r in requests {
-        println!(
-            "{}-{} req: {:?} res: {:?}",
-            r.start.duration_since(UNIX_EPOCH).unwrap().subsec_nanos(),
-            r.end.duration_since(UNIX_EPOCH).unwrap().subsec_nanos(),
-            r.req,
-            r.res
-        );
+            Some(&(end, Ok(ref v))) => {
+                match req {
+                    Cas(old, new) => {
+                        consumes.push((end, old.clone(), id));
+                        observes.push((end, old, id));
+                        publishes.push((begin, new, id));
+                    }
+                    Get => observes.push((end, v.clone(), id)),
+                    Del => publishes.push((st_to_nanos(end), None, id)),
+                    Set(value) => {
+                        publishes.push((st_to_nanos(end), Some(value), id))
+                    }
+                }
+            }
+            Some(&(end, Err(Error::CasFailed(ref witnessed)))) => {
+                match req {
+                    Cas(_old, _new) => {
+                        observes.push((end, witnessed.clone(), id));
+                    }
+                    _ => panic!("non-cas request found for CasFailed response"),
+                }
+            }
+            _ => {
+                // propose/accept failure, no actionable info can be derived
+            }
+        }
     }
+
+    if publishes.is_empty() {}
 
     true
 }
