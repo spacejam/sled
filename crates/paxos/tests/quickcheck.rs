@@ -1,3 +1,4 @@
+/// Essentially a way-faster Jepsen with a fuzzier linearizability test.
 extern crate quickcheck;
 extern crate rand;
 extern crate paxos;
@@ -115,7 +116,6 @@ impl PartialOrd for ScheduledMessage {
 enum Node {
     Acceptor(Acceptor),
     Proposer(Proposer),
-    Client(Client),
 }
 
 impl Reactor for Node {
@@ -131,7 +131,6 @@ impl Reactor for Node {
         match *self {
             Node::Proposer(ref mut inner) => inner.receive(at, from, msg),
             Node::Acceptor(ref mut inner) => inner.receive(at, from, msg),
-            Node::Client(ref mut inner) => inner.receive(at, from, msg),
         }
     }
 }
@@ -224,16 +223,6 @@ impl Arbitrary for Cluster {
             .map(|i| format!("acceptor:{}", i))
             .collect();
 
-        let clients: Vec<(String, Node)> = client_addrs
-            .iter()
-            .map(|addr| {
-                (
-                    addr.clone(),
-                    Node::Client(Client::new(proposer_addrs.clone())),
-                )
-            })
-            .collect();
-
         let proposers: Vec<(String, Node)> = proposer_addrs
             .iter()
             .map(|addr| {
@@ -293,11 +282,7 @@ impl Arbitrary for Cluster {
         partitions.sort();
 
         Cluster {
-            peers: clients
-                .into_iter()
-                .chain(proposers.into_iter())
-                .chain(acceptors.into_iter())
-                .collect(),
+            peers: proposers.into_iter().chain(acceptors.into_iter()).collect(),
             partitions: partitions,
             in_flight: requests.clone().into_iter().collect(),
             client_responses: vec![],
@@ -341,8 +326,6 @@ struct Event {
 //   2. after its causal operation ends,
 //      an effect MUST be observed
 //
-//  only comparing CAS for now.
-//
 // for each successful operation end time
 //   * populate a pending set for possibly
 //     successful operations that start before
@@ -372,7 +355,7 @@ fn check_linearizability(
     // consumes "happen" at the end of a successful response
     let mut consumes = vec![];
 
-    let responses: HashMap<_, _> = response_rpcs
+    let responses: std::collections::BTreeMap<_, _> = response_rpcs
         .into_iter()
         .filter_map(|r| if let Rpc::ClientResponse(id, res) = r.msg {
             Some((id, (r.at, res)))
@@ -405,8 +388,16 @@ fn check_linearizability(
         //  GET | ?    | -        | -         | value?
         match responses.get(&id) {
             None |
-            Some(&(_, Err(Error::Timeout))) => {
-                // not sure if this actually took effect or not
+            Some(&(_, Err(Error::Timeout))) |
+            Some(&(_,
+                   Err(Error::AcceptRejected {
+                           ..
+                       }))) => {
+                // not sure if this actually took effect or not.
+                // NB this is sort of weird, because even if an accept was
+                // rejected by a majority, it may be used as a later message.
+                // so as a client we have to treat it as being in a weird pending
+                // state.
                 match req {
                     Cas(_old, new) => publishes.push((begin, new, id)),
                     Del => publishes.push((begin, None, id)),
@@ -466,25 +457,46 @@ fn check_linearizability(
         });
     }
 
+    events.sort();
+
     let mut value_pool = HashMap::new();
     value_pool.insert(None, 1);
 
     for event in events {
         match event.act {
             Act::Publish(v) => {
+                println!(
+                    "publishing {:?} at {:?} for req {}",
+                    v,
+                    event.at,
+                    event.client_req_id
+                );
                 let mut entry = value_pool.entry(v).or_insert(0);
                 *entry += 1;
             }
             Act::Observe(v) => {
+                println!(
+                    "observing {:?} at {:?} for req {}",
+                    v,
+                    event.at,
+                    event.client_req_id
+                );
                 let count = value_pool.get(&v).unwrap();
                 assert!(
                     *count > 0,
-                    "expect to be able to witness {:?} at time {:?}",
+                    "expect to be able to witness {:?} at time {:?} for req {}",
                     v,
-                    event.at
+                    event.at,
+                    event.client_req_id
                 )
             }
             Act::Consume(v) => {
+                println!(
+                    "consuming {:?} at {:?} for req {}",
+                    v,
+                    event.at,
+                    event.client_req_id
+                );
                 let mut count = value_pool.get_mut(&v).unwrap();
                 assert!(*count > 0);
                 *count -= 1;
@@ -511,4 +523,163 @@ fn test_quickcheck_pagecache_works() {
         .tests(1000)
         .max_tests(1000000)
         .quickcheck(prop_cluster_linearizability as fn(Cluster) -> bool);
+}
+
+#[test]
+fn linearizability_bug_01() {
+    // postmortem: was not considering that requests that received
+    // explicit AcceptRejected messages from a quorum could actually
+    // be used as the input to a later round, as long as they landed
+    // a single ACCEPT on any node.
+    prop_cluster_linearizability(Cluster {
+        peers: vec![
+            (
+                "acceptor:0".to_owned(),
+                Node::Acceptor(Acceptor::default())
+            ),
+            (
+                "acceptor:1".to_owned(),
+                Node::Acceptor(Acceptor::default())
+            ),
+            (
+                "acceptor:2".to_owned(),
+                Node::Acceptor(Acceptor::default())
+            ),
+            (
+                "proposer:0".to_owned(),
+                Node::Proposer(Proposer::new(
+                    8,
+                    vec![
+                        "acceptor:0".to_owned(),
+                        "acceptor:1".to_owned(),
+                        "acceptor:2".to_owned(),
+                    ],
+                ))
+            ),
+            (
+                "proposer:1".to_owned(),
+                Node::Proposer(Proposer::new(
+                    8,
+                    vec![
+                        "acceptor:0".to_owned(),
+                        "acceptor:1".to_owned(),
+                        "acceptor:2".to_owned(),
+                    ],
+                ))
+            ),
+            (
+                "proposer:2".to_owned(),
+                Node::Proposer(Proposer::new(
+                    8,
+                    vec![
+                        "acceptor:0".to_owned(),
+                        "acceptor:1".to_owned(),
+                        "acceptor:2".to_owned(),
+                    ],
+                ))
+            ),
+        ].into_iter()
+            .collect(),
+        partitions: vec![],
+        in_flight: vec![
+            ScheduledMessage {
+                at: UNIX_EPOCH.add(Duration::new(0, 6)),
+                from: "client:1".to_owned(),
+                to: "proposer:1".to_owned(),
+                msg: Rpc::ClientRequest(
+                    9,
+                    Req::Cas(Some(vec![1]), Some(vec![1]))
+                ),
+            },
+            ScheduledMessage {
+                at: UNIX_EPOCH.add(Duration::new(0, 20)),
+                from: "client:0".to_owned(),
+                to: "proposer:2".to_owned(),
+                msg: Rpc::ClientRequest(1, Req::Cas(None, Some(vec![1]))),
+            },
+            ScheduledMessage {
+                at: UNIX_EPOCH.add(Duration::new(0, 22)),
+                from: "client:1".to_owned(),
+                to: "proposer:1".to_owned(),
+                msg: Rpc::ClientRequest(
+                    11,
+                    Req::Cas(Some(vec![1]), Some(vec![1]))
+                ),
+            },
+            ScheduledMessage {
+                at: UNIX_EPOCH.add(Duration::new(0, 28)),
+                from: "client:0".to_owned(),
+                to: "proposer:0".to_owned(),
+                msg: Rpc::ClientRequest(
+                    6,
+                    Req::Cas(Some(vec![0]), Some(vec![1]))
+                ),
+            },
+            ScheduledMessage {
+                at: UNIX_EPOCH.add(Duration::new(0, 30)),
+                from: "client:0".to_owned(),
+                to: "proposer:2".to_owned(),
+                msg: Rpc::ClientRequest(
+                    3,
+                    Req::Cas(Some(vec![0]), Some(vec![1]))
+                ),
+            },
+            ScheduledMessage {
+                at: UNIX_EPOCH.add(Duration::new(0, 45)),
+                from: "client:0".to_owned(),
+                to: "proposer:2".to_owned(),
+                msg: Rpc::ClientRequest(
+                    4,
+                    Req::Cas(Some(vec![0]), Some(vec![0]))
+                ),
+            },
+            ScheduledMessage {
+                at: UNIX_EPOCH.add(Duration::new(0, 45)),
+                from: "client:0".to_owned(),
+                to: "proposer:2".to_owned(),
+                msg: Rpc::ClientRequest(
+                    7,
+                    Req::Cas(Some(vec![0]), Some(vec![1]))
+                ),
+            },
+            ScheduledMessage {
+                at: UNIX_EPOCH.add(Duration::new(0, 51)),
+                from: "client:0".to_owned(),
+                to: "proposer:2".to_owned(),
+                msg: Rpc::ClientRequest(
+                    8,
+                    Req::Cas(Some(vec![1]), Some(vec![1]))
+                ),
+            },
+            ScheduledMessage {
+                at: UNIX_EPOCH.add(Duration::new(0, 66)),
+                from: "client:0".to_owned(),
+                to: "proposer:0".to_owned(),
+                msg: Rpc::ClientRequest(
+                    2,
+                    Req::Cas(Some(vec![0]), Some(vec![1]))
+                ),
+            },
+            ScheduledMessage {
+                at: UNIX_EPOCH.add(Duration::new(0, 84)),
+                from: "client:1".to_owned(),
+                to: "proposer:1".to_owned(),
+                msg: Rpc::ClientRequest(
+                    10,
+                    Req::Cas(Some(vec![0]), Some(vec![0]))
+                ),
+            },
+            ScheduledMessage {
+                at: UNIX_EPOCH.add(Duration::new(0, 87)),
+                from: "client:0".to_owned(),
+                to: "proposer:1".to_owned(),
+                msg: Rpc::ClientRequest(
+                    5,
+                    Req::Cas(Some(vec![0]), Some(vec![1]))
+                ),
+            },
+        ].into_iter()
+            .collect(),
+        client_responses: vec![],
+    });
 }
