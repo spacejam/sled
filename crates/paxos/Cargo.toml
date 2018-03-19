@@ -1,6 +1,6 @@
 [package]
 name = "paxos"
-version = "0.0.1"
+version = "0.0.2"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "a well-tested implementation of the CASPaxos protocol for the sled lightweight database kit"
 license = "MIT/Apache-2.0"

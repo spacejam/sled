@@ -1,4 +1,4 @@
-/// Essentially a way-faster Jepsen with a fuzzier linearizability test.
+/// Simulation for network partitions. Like Jepsen but thousands of times faster.
 extern crate quickcheck;
 extern crate rand;
 extern crate paxos;
@@ -465,22 +465,10 @@ fn check_linearizability(
     for event in events {
         match event.act {
             Act::Publish(v) => {
-                println!(
-                    "publishing {:?} at {:?} for req {}",
-                    v,
-                    event.at,
-                    event.client_req_id
-                );
                 let mut entry = value_pool.entry(v).or_insert(0);
                 *entry += 1;
             }
             Act::Observe(v) => {
-                println!(
-                    "observing {:?} at {:?} for req {}",
-                    v,
-                    event.at,
-                    event.client_req_id
-                );
                 let count = value_pool.get(&v).unwrap();
                 assert!(
                     *count > 0,
@@ -491,12 +479,6 @@ fn check_linearizability(
                 )
             }
             Act::Consume(v) => {
-                println!(
-                    "consuming {:?} at {:?} for req {}",
-                    v,
-                    event.at,
-                    event.client_req_id
-                );
                 let mut count = value_pool.get_mut(&v).unwrap();
                 assert!(*count > 0);
                 *count -= 1;
@@ -520,7 +502,7 @@ fn prop_cluster_linearizability(mut cluster: Cluster) -> bool {
 fn test_quickcheck_pagecache_works() {
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 100))
-        .tests(1000)
+        .tests(10000)
         .max_tests(1000000)
         .quickcheck(prop_cluster_linearizability as fn(Cluster) -> bool);
 }
