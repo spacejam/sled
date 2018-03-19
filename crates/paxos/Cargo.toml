@@ -2,16 +2,18 @@
 name = "paxos"
 version = "0.0.1"
 authors = ["Tyler Neely <t@jujit.su>"]
-description = "an easy to operate implementation of the CASPaxos protocol, built on sled"
+description = "a well-tested implementation of the CASPaxos protocol for the sled lightweight database kit"
 license = "MIT/Apache-2.0"
 homepage = "https://github.com/spacejam/sled"
 repository = "https://github.com/spacejam/sled"
-keywords = ["database", "embedded", "concurrent", "persistent", "lock-free"]
+keywords = ["database", "embedded", "consensus", "distributed", "paxos"]
 documentation = "https://docs.rs/paxos/"
 readme = "README.md"
 
 [dependencies]
 sled = { path = "../sled", version = "0.15"}
+serde = "1.0"
+serde_derive = "1.0"
 
 [dev-dependencies]
 quickcheck = "0.6"

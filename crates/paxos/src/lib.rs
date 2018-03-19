@@ -1,5 +1,12 @@
+#[macro_use]
+extern crate serde_derive;
+extern crate serde;
+
 use std::fmt::Debug;
 use std::time::{Duration, SystemTime};
+
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 mod acceptor;
 mod proposer;
@@ -11,8 +18,8 @@ pub use client::Client;
 
 // Reactor is a trait for building simulable systems.
 pub trait Reactor: Debug + Clone {
-    type Peer;
-    type Message;
+    type Peer: std::net::ToSocketAddrs;
+    type Message: Serialize + DeserializeOwned;
 
     fn receive(
         &mut self,
@@ -26,12 +33,13 @@ pub trait Reactor: Debug + Clone {
     }
 }
 
-#[derive(Default, Clone, Debug, PartialOrd, PartialEq, Eq, Hash, Ord)]
+#[derive(Default, Clone, Debug, PartialOrd, PartialEq, Eq, Hash, Ord,
+         Serialize, Deserialize)]
 pub struct Ballot(u64);
 
 type Value = Vec<u8>;
 
-#[derive(PartialOrd, Ord, Eq, PartialEq, Debug, Clone)]
+#[derive(PartialOrd, Ord, Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub enum Req {
     Get,
     Del,
@@ -39,7 +47,7 @@ pub enum Req {
     Cas(Option<Vec<u8>>, Option<Vec<u8>>),
 }
 
-#[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Clone)]
+#[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Clone, Serialize, Deserialize)]
 pub enum Rpc {
     ClientRequest(u64, Req),
     ClientResponse(u64, Result<Option<Value>, Error>),
@@ -74,7 +82,7 @@ impl Rpc {
     }
 }
 
-#[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Clone)]
+#[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Clone, Serialize, Deserialize)]
 pub enum Error {
     ProposalRejected { last: Ballot },
     AcceptRejected { last: Ballot },
