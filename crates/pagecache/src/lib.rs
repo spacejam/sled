@@ -4,6 +4,7 @@
 #![cfg_attr(feature="clippy", feature(plugin))]
 #![cfg_attr(feature="clippy", plugin(clippy))]
 #![cfg_attr(feature="clippy", allow(inline_always))]
+#![cfg_attr(feature="nightly", feature(integer_atomics))]
 
 #[macro_use]
 extern crate serde_derive;
@@ -75,6 +76,10 @@ pub type SegmentID = usize;
 pub type LogID = u64;
 
 /// A logical sequence number.
+#[cfg(feature = "nightly")]
+pub type Lsn = i64;
+/// A logical sequence number.
+#[cfg(not(feature = "nightly"))]
 pub type Lsn = isize;
 
 /// A page identifier.

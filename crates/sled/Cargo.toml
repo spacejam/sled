@@ -18,6 +18,7 @@ check_snapshot_integrity = []
 no_logs = ["log/max_level_off", "pagecache/no_logs"]
 rayon = ["pagecache/rayon"]
 zstd = ["pagecache/zstd"]
+nightly = ["pagecache/nightly"]
 
 [profile.release]
 debug = 2

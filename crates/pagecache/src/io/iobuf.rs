@@ -1,5 +1,9 @@
 use std::sync::{Condvar, Mutex};
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize};
+use std::sync::atomic::{AtomicBool, AtomicUsize};
+#[cfg(feature = "nightly")]
+use std::sync::atomic::AtomicI64;
+#[cfg(not(feature = "nightly"))]
+use std::sync::atomic::AtomicIsize;
 use std::sync::atomic::Ordering::SeqCst;
 
 #[cfg(feature = "failpoints")]
@@ -13,6 +17,10 @@ use self::reader::LogReader;
 use super::*;
 
 type Header = u64;
+#[cfg(not(feature = "nightly"))]
+type AtomicLsn = AtomicIsize;
+#[cfg(feature = "nightly")]
+type AtomicLsn = AtomicI64;
 
 macro_rules! io_fail {
     ($self:expr, $e:expr) => {
@@ -52,8 +60,8 @@ pub(super) struct IoBufs {
     // stable storage. This may be lower than the length of the underlying
     // file, and there may be buffers that have been written out-of-order
     // to stable storage due to interesting thread interleavings.
-    stable_lsn: AtomicIsize,
-    max_reserved_lsn: AtomicIsize,
+    stable_lsn: AtomicLsn,
+    max_reserved_lsn: AtomicLsn,
     segment_accountant: Mutex<SegmentAccountant>,
 
     // used for signifying that we're simulating a crash
@@ -166,8 +174,8 @@ impl IoBufs {
             written_bufs: AtomicUsize::new(0),
             intervals: Mutex::new(vec![]),
             interval_updated: Condvar::new(),
-            stable_lsn: AtomicIsize::new(stable),
-            max_reserved_lsn: AtomicIsize::new(stable),
+            stable_lsn: AtomicLsn::new(stable),
+            max_reserved_lsn: AtomicLsn::new(stable),
             config: config,
             segment_accountant: Mutex::new(segment_accountant),
             #[cfg(feature = "failpoints")]
@@ -259,6 +267,8 @@ impl IoBufs {
 
         let io_bufs = self.config.io_bufs;
 
+        // right shift 32 on 32-bit pointer systems panics
+        #[cfg(target_pointer_width = "64")]
         assert_eq!((raw_buf.len() + MSG_HEADER_LEN) >> 32, 0);
 
         let buf = self.encapsulate(raw_buf);
