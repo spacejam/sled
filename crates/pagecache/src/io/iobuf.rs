@@ -1,8 +1,8 @@
 use std::sync::{Condvar, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
-#[cfg(feature = "nightly")]
+#[cfg(target_pointer_width = "32")]
 use std::sync::atomic::AtomicI64;
-#[cfg(not(feature = "nightly"))]
+#[cfg(target_pointer_width = "64")]
 use std::sync::atomic::AtomicIsize;
 use std::sync::atomic::Ordering::SeqCst;
 
@@ -17,9 +17,9 @@ use self::reader::LogReader;
 use super::*;
 
 type Header = u64;
-#[cfg(not(feature = "nightly"))]
+#[cfg(target_pointer_width = "64")]
 type AtomicLsn = AtomicIsize;
-#[cfg(feature = "nightly")]
+#[cfg(target_pointer_width = "32")]
 type AtomicLsn = AtomicI64;
 
 macro_rules! io_fail {
