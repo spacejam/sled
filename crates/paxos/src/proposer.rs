@@ -29,16 +29,16 @@ pub struct Pending {
 impl Pending {
     fn apply_op(&mut self) {
         match self.req {
-            Req::Get => {
+            Req::Get(_) => {
                 self.new_v = self.highest_promise_value.clone();
             }
-            Req::Del => {
+            Req::Del(_) => {
                 self.new_v = None;
             }
-            Req::Set(ref new_v) => {
+            Req::Set(_, ref new_v) => {
                 self.new_v = Some(new_v.clone());
             }
-            Req::Cas(ref old_v, ref new_v) => {
+            Req::Cas(_, ref old_v, ref new_v) => {
                 if *old_v == self.highest_promise_value {
                     self.new_v = new_v.clone();
                 } else {
@@ -64,11 +64,11 @@ impl fmt::Debug for Pending {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "Pending {{ 
+            "Pending {{
                 client_addr: {},
-                id: {}, 
-                new_v: {:?}, 
-                phase: {:?}, 
+                id: {},
+                new_v: {:?},
+                phase: {:?},
                 waiting_for: {:?},
                 acks_from: {:?},
                 nacks_from: {:?},
@@ -131,7 +131,7 @@ impl Proposer {
             Pending {
                 client_addr: from,
                 id: id,
-                req: req,
+                req: req.clone(),
                 new_v: None,
                 phase: Phase::Propose,
                 waiting_for: self.propose_acceptors.clone(),
@@ -147,7 +147,7 @@ impl Proposer {
 
         self.propose_acceptors
             .iter()
-            .map(|a| (a.clone(), ProposeReq(ballot.clone())))
+            .map(|a| (a.clone(), ProposeReq(ballot.clone(), req.key())))
             .collect()
     }
 }
@@ -252,8 +252,11 @@ impl Reactor for Proposer {
                     Ok(()) => {
                         assert!(
                             req_ballot.0 > pending.highest_promise_ballot.0,
-                            "somehow the acceptor promised us a vote even though \
-                            their highest promise ballot is higher than our request..."
+                            "somehow the acceptor promised us a vote for our ballot {:?} \
+                            even though their highest promise ballot of {:?} \
+                            is higher than our request...",
+                            req_ballot.0,
+                            pending.highest_promise_ballot.0
                         );
                         pending.acks_from.push(from);
 
@@ -279,6 +282,7 @@ impl Reactor for Proposer {
                                         a.clone(),
                                         AcceptReq(
                                             req_ballot.clone(),
+                                            pending.req.key(),
                                             pending.new_v.clone(),
                                         ),
                                     )

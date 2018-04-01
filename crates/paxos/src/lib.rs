@@ -1,6 +1,8 @@
 #[macro_use]
 extern crate serde_derive;
 extern crate serde;
+extern crate bincode;
+extern crate sled;
 
 use std::fmt::Debug;
 use std::time::{Duration, SystemTime};
@@ -8,10 +10,12 @@ use std::time::{Duration, SystemTime};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+mod storage;
 mod acceptor;
 mod proposer;
 mod client;
 
+pub use storage::{MemStorage, SledStorage};
 pub use acceptor::Acceptor;
 pub use proposer::Proposer;
 pub use client::Client;
@@ -37,14 +41,26 @@ pub trait Reactor: Debug + Clone {
          Serialize, Deserialize)]
 pub struct Ballot(u64);
 
+type Key = Vec<u8>;
 type Value = Vec<u8>;
 
 #[derive(PartialOrd, Ord, Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub enum Req {
-    Get,
-    Del,
-    Set(Vec<u8>),
-    Cas(Option<Vec<u8>>, Option<Vec<u8>>),
+    Get(Key),
+    Del(Key),
+    Set(Key, Value),
+    Cas(Key, Option<Value>, Option<Value>),
+}
+
+impl Req {
+    fn key(&self) -> Key {
+        match *self {
+            Req::Get(ref k) |
+            Req::Del(ref k) |
+            Req::Set(ref k, _) |
+            Req::Cas(ref k, _, _) => k.clone(),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Clone, Serialize, Deserialize)]
@@ -53,14 +69,14 @@ pub enum Rpc {
     ClientResponse(u64, Result<Option<Value>, Error>),
     SetAcceptAcceptors(Vec<String>),
     SetProposeAcceptors(Vec<String>),
-    ProposeReq(Ballot),
+    ProposeReq(Ballot, Key),
     ProposeRes {
         req_ballot: Ballot,
         last_accepted_ballot: Ballot,
         last_accepted_value: Option<Value>,
         res: Result<(), Error>,
     },
-    AcceptReq(Ballot, Option<Value>),
+    AcceptReq(Ballot, Key, Option<Value>),
     AcceptRes(Ballot, Result<(), Error>),
 }
 use Rpc::*;

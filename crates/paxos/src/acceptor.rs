@@ -1,13 +1,38 @@
+use std::fmt;
+
 use super::*;
 
-#[derive(Default, Debug, Clone)]
-pub struct Acceptor {
-    highest_seen: Ballot,
-    last_accepted_ballot: Ballot,
-    last_accepted_value: Option<Value>,
+#[derive(Clone)]
+pub struct Acceptor<S>
+    where S: Clone
+{
+    store: S,
 }
 
-impl Reactor for Acceptor {
+impl<S> fmt::Debug for Acceptor<S>
+    where S: Clone
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "Acceptor {{}}",
+        )
+    }
+}
+
+impl<S> Default for Acceptor<S>
+    where S: Clone + Default
+{
+    fn default() -> Acceptor<S> {
+        Acceptor {
+            store: S::default(),
+        }
+    }
+}
+
+impl<S> Reactor for Acceptor<S>
+    where S: storage::Storage + Clone + Sized
+{
     type Peer = String;
     type Message = Rpc;
 
@@ -18,18 +43,20 @@ impl Reactor for Acceptor {
         msg: Self::Message,
     ) -> Vec<(Self::Peer, Self::Message)> {
         match msg {
-            ProposeReq(ballot) => {
-                if ballot > self.highest_seen {
-                    self.highest_seen = ballot.clone();
+            ProposeReq(ballot, key) => {
+                let current_ballot = self.store.get_highest_seen(key.clone());
+
+                if ballot > current_ballot {
+                    self.store.set_highest_seen(key.clone(), ballot.clone());
                     vec![
                         (
                             from,
                             ProposeRes {
                                 req_ballot: ballot,
-                                last_accepted_ballot: self.last_accepted_ballot
-                                    .clone(),
-                                last_accepted_value: self.last_accepted_value
-                                    .clone(),
+                                last_accepted_ballot:
+                                    self.store.get_accepted_ballot(key.clone()),
+                                last_accepted_value:
+                                    self.store.get_accepted_value(key.clone()),
                                 res: Ok(()),
                             }
                         ),
@@ -40,23 +67,24 @@ impl Reactor for Acceptor {
                             from,
                             ProposeRes {
                                 req_ballot: ballot,
-                                last_accepted_ballot: self.last_accepted_ballot
-                                    .clone(),
-                                last_accepted_value: self.last_accepted_value
-                                    .clone(),
+                                last_accepted_ballot:
+                                    self.store.get_accepted_ballot(key.clone()),
+                                last_accepted_value:
+                                    self.store.get_accepted_value(key.clone()),
                                 res: Err(Error::ProposalRejected {
-                                    last: self.highest_seen.clone(),
+                                    last: current_ballot,
                                 }),
                             }
                         ),
                     ]
                 }
             }
-            AcceptReq(ballot, to) => {
-                if ballot >= self.highest_seen {
-                    self.highest_seen = ballot.clone();
-                    self.last_accepted_ballot = ballot.clone();
-                    self.last_accepted_value = to;
+            AcceptReq(ballot, key, to) => {
+                let current_ballot = self.store.get_highest_seen(key.clone());
+                if ballot >= current_ballot {
+                    self.store.set_highest_seen(key.clone(), ballot.clone());
+                    self.store.set_accepted_ballot(key.clone(), ballot.clone());
+                    self.store.set_accepted_value(key.clone(), to);
                     vec![(from, AcceptRes(ballot, Ok(())))]
                 } else {
                     vec![
@@ -65,7 +93,7 @@ impl Reactor for Acceptor {
                             AcceptRes(
                                 ballot,
                                 Err(Error::AcceptRejected {
-                                    last: self.highest_seen.clone(),
+                                    last: current_ballot,
                                 }),
                             )
                         ),
