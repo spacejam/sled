@@ -117,6 +117,7 @@ assert_eq!(tree.get(&k), Ok(Some(vec![4])));
   operations per second with mixed workloads, and 7 million/s
   for read-only workloads on tiny keys. this will be improving 
   dramatically soon!
+* 32 bit architectures [require Rust nightly with the `nightly` feature enabled](https://github.com/spacejam/sled/issues/145).
 
 # contribution welcome!
 
