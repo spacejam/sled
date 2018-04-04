@@ -16,6 +16,7 @@ lock_free_delays = ["rand"]
 failpoints = ["fail"]
 no_metrics = ["historian/bypass"]
 no_logs = ["log/max_level_off"]
+nightly = []
 
 [dependencies.historian]
 version = "3.0"
