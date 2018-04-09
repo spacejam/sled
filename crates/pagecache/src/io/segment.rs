@@ -1208,9 +1208,9 @@ pub fn raw_segment_iter_from(
 
     Ok(LogIter {
         config: config.clone(),
-        #[cfg(feature = "nightly")]
+        #[cfg(target_pointer_width = "32")]
         max_lsn: std::i64::MAX,
-        #[cfg(not(feature = "nightly"))]
+        #[cfg(target_pointer_width = "64")]
         max_lsn: std::isize::MAX,
         cur_lsn: SEG_HEADER_LEN as Lsn,
         segment_base: None,
