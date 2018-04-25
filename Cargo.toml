@@ -3,8 +3,10 @@ members = [
   "crates/pagecache",
   "crates/sled",
   "bindings/sled-native",
+  "tests"
+]
+exclude = [
   "benchmarks/stress2",
   "examples/pessimistic_transactions",
   "examples/crdt_merge_store",
-  "tests"
 ]

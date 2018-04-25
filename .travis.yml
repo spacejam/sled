@@ -41,11 +41,13 @@ script:
                  cargo test --features="clippy"
                  ;;
                lsan)
-                 cargo build -p stress2 --target x86_64-unknown-linux-gnu;
+                 cd benchmarks/sled2;
+                 cargo build --target x86_64-unknown-linux-gnu;
                  sudo target/x86_64-unknown-linux-gnu/debug/stress2
                  ;;
                tsan)
-                 cargo run -p stress2 --features=lock_free_delays --target x86_64-unknown-linux-gnu
+                 cd benchmarks/sled2;
+                 cargo run --features=lock_free_delays --target x86_64-unknown-linux-gnu
                  ;;
                crash)
                  cargo test test_crash_recovery --release --features="check_snapshot_integrity" -- --nocapture
