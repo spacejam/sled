@@ -7,6 +7,13 @@ publish = false
 [profile.release]
 debug = 2
 
+[features]
+lock_free_delays = ["sled/lock_free_delays"]
+check_snapshot_integrity = ["sled/lock_free_delays"]
+rayon = ["sled/rayon"]
+zstd = ["sled/zstd"]
+no_logs = ["sled/no_logs"]
+
 [dependencies]
 serde = "1.0"
 serde_derive = "1.0"
