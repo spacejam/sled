@@ -13,7 +13,7 @@ matrix:
       env:
         - TEST=tsan
         - RUSTFLAGS="-Z sanitizer=thread"
-        - TSAN_OPTIONS=suppressions=tsan_suppressions.txt
+        - TSAN_OPTIONS=suppressions=/home/travis/build/spacejam/sled/tsan_suppressions.txt
     - rust: nightly-2018-01-02
       env:
         - TEST=lsan
