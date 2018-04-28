@@ -32,7 +32,10 @@ impl Data {
             decoded_xs.sort();
 
             let (_lhs, rhs) = decoded_xs.split_at(decoded_xs.len() / 2 + 1);
-            let split = rhs.first().unwrap().0.clone();
+            let split = rhs.first()
+                .expect("rhs should contain at least one element")
+                .0
+                .clone();
             let rhs_data: Vec<_> = rhs.iter()
                 .map(|&(ref k, ref v)| {
                     let new_k = prefix_encode(&*split, k);

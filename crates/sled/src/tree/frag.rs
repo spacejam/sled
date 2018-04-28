@@ -20,22 +20,6 @@ pub enum Frag {
     ParentSplit(ParentSplit),
 }
 
-impl Frag {
-    pub fn base(&self) -> Option<(Node, Option<PageID>)> {
-        match *self {
-            Frag::Base(ref base, ref root) => Some((base.clone(), *root)),
-            _ => None,
-        }
-    }
-
-    pub fn into_base(self) -> Option<(Node, Option<PageID>)> {
-        match self {
-            Frag::Base(base, root) => Some((base, root)),
-            _ => None,
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ParentSplit {
     pub at: Bound,

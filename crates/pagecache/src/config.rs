@@ -34,8 +34,8 @@ impl Deref for Config {
 ///     .snapshot_after_ops(100_000);
 /// ```
 ///
-/// Read-only mode
 /// ```
+/// // Read-only mode
 /// let _config = pagecache::ConfigBuilder::default()
 ///     .path("/path/to/data".to_owned())
 ///     .read_only(true);
@@ -43,7 +43,7 @@ impl Deref for Config {
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct ConfigBuilder {
     #[doc(hidden)]
-    pub blink_fanout: usize,
+    pub blink_fanout: u8,
     #[doc(hidden)]
     pub cache_bits: usize,
     #[doc(hidden)]
@@ -207,7 +207,7 @@ impl ConfigBuilder {
         (io_bufs, get_io_bufs, set_io_bufs, usize, "number of io buffers"),
         (io_buf_size, get_io_buf_size, set_io_buf_size, usize, "size of each io flush buffer. MUST be multiple of 512!"),
         (min_items_per_segment, get_min_items_per_segment, set_min_items_per_segment, usize, "minimum data chunks/pages in a segment."),
-        (blink_fanout, get_blink_fanout, set_blink_fanout, usize, "b-link node fanout, minimum of 2"),
+        (blink_fanout, get_blink_fanout, set_blink_fanout, u8, "b-link node fanout, minimum of 2"),
         (page_consolidation_threshold, get_page_consolidation_threshold, set_page_consolidation_threshold, usize, "page consolidation threshold"),
         (temporary, get_temporary, set_temporary, bool, "if this database should be removed after the ConfigBuilder is dropped"),
         (read_only, get_read_only, set_read_only, bool, "whether to run in read-only mode"),
@@ -415,7 +415,6 @@ impl Config {
         supported!(self.inner.min_items_per_segment >= 1, "min_items_per_segment must be >= 4");
         supported!(self.inner.min_items_per_segment < 128, "min_items_per_segment must be < 128");
         supported!(self.inner.blink_fanout >= 2, "tree nodes must have at least 2 children");
-        supported!(self.inner.blink_fanout < 1024, "tree nodes should not have so many children");
         supported!(self.inner.page_consolidation_threshold >= 1, "must consolidate pages after a non-zero number of updates");
         supported!(self.inner.page_consolidation_threshold < 1 << 20, "must consolidate pages after fewer than 1 million updates");
         supported!(self.inner.cache_bits <= 20, "# LRU shards = 2^cache_bits. set this to 20 or less.");

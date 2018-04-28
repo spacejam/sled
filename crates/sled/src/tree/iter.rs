@@ -1,5 +1,6 @@
 use super::*;
 
+use pagecache::PageGet;
 use epoch::pin;
 
 /// An iterator over keys and values in a `Tree`.
@@ -27,18 +28,32 @@ impl<'a> Iterator for Iter<'a> {
         let guard = pin();
         loop {
             let res = self.inner.get(self.id, &guard);
-            if res.is_err() {
-                // TODO this could be None if the node was removed since the last
-                // iteration, and we need to just get the inner node again...
-                error!("iteration failed: {:?}", res);
-                self.done = true;
-                return Some(Err(res.unwrap_err().danger_cast()));
-            }
 
-            let (frag, _cas_key) = res.unwrap().unwrap();
-            let (node, _is_root) = frag.base().unwrap();
+            let node = match res {
+                Ok(PageGet::Materialized(Frag::Base(base, _), _)) => base,
+                Err(e) => {
+                    // TODO(when implementing merge support) this could
+                    // be None if the node was removed since the last
+                    // iteration, and we need to just get the inner
+                    // node again...
+                    error!("iteration failed: {:?}", e);
+                    self.done = true;
+                    return Some(Err(e.danger_cast()));
+                }
+                other => {
+                    panic!(
+                        "the pagecache returned an unexpected value \
+                        to the Tree iterator: {:?}",
+                        other
+                    )
+                }
+            };
+
             let prefix = node.lo.inner();
-            for (ref k, ref v) in node.data.leaf().unwrap() {
+            for (ref k, ref v) in node.data.leaf().expect(
+                "node should be a leaf",
+            )
+            {
                 let decoded_k = prefix_decode(prefix, k);
                 if Bound::Inclusive(decoded_k.clone()) > self.last_key {
                     self.last_key = Bound::Inclusive(decoded_k.to_vec());
@@ -46,10 +61,10 @@ impl<'a> Iterator for Iter<'a> {
                     return Some(ret);
                 }
             }
-            if node.next.is_none() {
-                return None;
+            match node.next {
+                Some(id) => self.id = id,
+                None => return None,
             }
-            self.id = node.next.unwrap();
         }
     }
 }

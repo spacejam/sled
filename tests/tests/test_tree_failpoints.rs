@@ -49,7 +49,7 @@ impl Arbitrary for Op {
         ];
 
         if g.gen_weighted_bool(30) {
-            return FailPoint((*g.choose(&fail_points).unwrap()));
+            return FailPoint(*g.choose(&fail_points).unwrap());
         }
 
         if g.gen_weighted_bool(10) {
@@ -295,7 +295,6 @@ fn failpoints_bug_4() {
 }
 
 #[test]
-#[ignore]
 fn failpoints_bug_5() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
@@ -319,7 +318,6 @@ fn failpoints_bug_5() {
 }
 
 #[test]
-#[ignore]
 fn failpoints_bug_6() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(

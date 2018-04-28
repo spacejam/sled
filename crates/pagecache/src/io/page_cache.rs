@@ -311,8 +311,9 @@ impl<PM, P, R> PageCache<PM, P, R>
         let stack = Stack::default();
 
         self.inner.del(pid, guard);
-        self.inner.insert(pid, stack)
-            .map_err(|_| Error::ReportableBug("insertion failed".to_owned()))?;
+        self.inner.insert(pid, stack).map_err(|_| {
+            Error::ReportableBug("insertion failed".to_owned())
+        })?;
 
         // serialize log update
         let prepend: LoggedUpdate<P> = LoggedUpdate {
@@ -794,7 +795,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         for pid in to_evict {
             let stack_ptr = match self.inner.get(pid, guard) {
                 None => continue,
-                Some(s) => s
+                Some(s) => s,
             };
 
             let head = unsafe { stack_ptr.deref().head(guard) };
