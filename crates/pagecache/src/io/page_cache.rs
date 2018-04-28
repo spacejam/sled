@@ -287,9 +287,12 @@ impl<PM, P, R> PageCache<PM, P, R>
 
     /// Return the recovered state from the snapshot
     pub fn recovered_state(&self) -> Option<R> {
-        let mu = &self.last_snapshot.lock().unwrap();
+        let mu = match self.last_snapshot.lock() {
+            Ok(mu) => mu,
+            Err(_) => return None,
+        };
 
-        if let Some(ref snapshot) = **mu {
+        if let Some(ref snapshot) = *mu {
             snapshot.recovery.clone()
         } else {
             None
@@ -308,7 +311,8 @@ impl<PM, P, R> PageCache<PM, P, R>
         let stack = Stack::default();
 
         self.inner.del(pid, guard);
-        self.inner.insert(pid, stack).unwrap();
+        self.inner.insert(pid, stack)
+            .map_err(|_| Error::ReportableBug("insertion failed".to_owned()))?;
 
         // serialize log update
         let prepend: LoggedUpdate<P> = LoggedUpdate {
@@ -331,12 +335,11 @@ impl<PM, P, R> PageCache<PM, P, R>
         pid: PageID,
         guard: &'g Guard,
     ) -> CacheResult<(), Option<PagePtr<'g, P>>> {
-        let old_stack_opt = self.inner.get(pid, &guard);
-
-        if old_stack_opt.is_none() {
+        let old_stack = match self.inner.get(pid, &guard) {
             // already freed or never allocated
-            return Ok(());
-        }
+            None => return Ok(()),
+            Some(s) => s,
+        };
 
         match self.get(pid, &guard)? {
             PageGet::Free(_) =>
@@ -347,7 +350,6 @@ impl<PM, P, R> PageCache<PM, P, R>
             PageGet::Materialized(_, _) => (),
         }
 
-        let old_stack = old_stack_opt.unwrap();
 
         // serialize log update
         let prepend: LoggedUpdate<P> = LoggedUpdate {
@@ -411,11 +413,10 @@ impl<PM, P, R> PageCache<PM, P, R>
         new: P,
         guard: &'g Guard,
     ) -> CacheResult<PagePtr<'g, P>, Option<PagePtr<'g, P>>> {
-        let stack_ptr = self.inner.get(pid, guard);
-        if stack_ptr.is_none() {
-            return Err(Error::CasFailed(None));
-        }
-        let stack_ptr = stack_ptr.unwrap();
+        let stack_ptr = match self.inner.get(pid, guard) {
+            None => return Err(Error::CasFailed(None)),
+            Some(s) => s,
+        };
 
         let prepend: LoggedUpdate<P> = LoggedUpdate {
             pid: pid,
@@ -520,11 +521,10 @@ impl<PM, P, R> PageCache<PM, P, R>
         recursed: bool,
     ) -> CacheResult<PagePtr<'g, P>, Option<PagePtr<'g, P>>> {
         trace!("replacing pid {}", pid);
-        let stack_ptr = self.inner.get(pid, guard);
-        if stack_ptr.is_none() {
-            return Err(Error::CasFailed(None));
-        }
-        let stack_ptr = stack_ptr.unwrap();
+        let stack_ptr = match self.inner.get(pid, guard) {
+            None => return Err(Error::CasFailed(None)),
+            Some(s) => s,
+        };
 
         let replace: LoggedUpdate<P> = LoggedUpdate {
             pid: pid,
@@ -622,12 +622,10 @@ impl<PM, P, R> PageCache<PM, P, R>
         pid: PageID,
         guard: &'g Guard,
     ) -> CacheResult<PageGet<'g, PM::PageFrag>, Option<PagePtr<'g, P>>> {
-        let stack_ptr = self.inner.get(pid, guard);
-        if stack_ptr.is_none() {
-            return Ok(PageGet::Unallocated);
-        }
-
-        let stack_ptr = stack_ptr.unwrap();
+        let stack_ptr = match self.inner.get(pid, guard) {
+            None => return Ok(PageGet::Unallocated),
+            Some(s) => s,
+        };
 
         let head = unsafe { stack_ptr.deref().head(guard) };
 
@@ -794,12 +792,10 @@ impl<PM, P, R> PageCache<PM, P, R>
     ) -> CacheResult<(), ()> {
         let _measure = Measure::new(&M.page_out);
         for pid in to_evict {
-            let stack_ptr = self.inner.get(pid, guard);
-            if stack_ptr.is_none() {
-                continue;
-            }
-
-            let stack_ptr = stack_ptr.unwrap();
+            let stack_ptr = match self.inner.get(pid, guard) {
+                None => continue,
+                Some(s) => s
+            };
 
             let head = unsafe { stack_ptr.deref().head(guard) };
             let stack_iter = StackIter::from_ptr(head, guard);
@@ -808,15 +804,19 @@ impl<PM, P, R> PageCache<PM, P, R>
                 stack_iter.map(|ptr| (*ptr).clone()).collect();
 
             // ensure the last entry is a Flush
-            let last = cache_entries.pop().and_then(|last_ce| match last_ce {
+            let last_ce = match cache_entries.pop() {
+                None => return Ok(()),
+                Some(c) => c,
+            };
+
+            let last = match last_ce {
                 CacheEntry::MergedResident(_, lsn, lid) |
                 CacheEntry::Resident(_, lsn, lid) |
                 CacheEntry::Flush(lsn, lid) => {
                     // NB stabilize the most recent LSN before
                     // paging out! This SHOULD very rarely block...
-                    // TODO should propagate error instead of unwrap
-                    self.log.make_stable(lsn).unwrap();
-                    Some(CacheEntry::Flush(lsn, lid))
+                    self.log.make_stable(lsn)?;
+                    CacheEntry::Flush(lsn, lid)
                 }
                 CacheEntry::PartialFlush(_, _) => {
                     panic!("got PartialFlush at end of stack...")
@@ -826,13 +826,9 @@ impl<PM, P, R> PageCache<PM, P, R>
                     // a discrepency in the Lru perceived size
                     // and the real size, but this should be
                     // minimal in anticipated workloads.
-                    None
+                    return Ok(());
                 }
-            });
-
-            if last.is_none() {
-                return Ok(());
-            }
+            };
 
             let mut new_stack = Vec::with_capacity(cache_entries.len() + 1);
             for entry in cache_entries {
@@ -852,7 +848,7 @@ impl<PM, P, R> PageCache<PM, P, R>
                     }
                 }
             }
-            new_stack.push(last.unwrap());
+            new_stack.push(last);
             let node = node_from_frag_vec(new_stack);
 
             debug_delay();
