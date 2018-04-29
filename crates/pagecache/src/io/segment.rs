@@ -727,7 +727,11 @@ impl SegmentAccountant {
 
             if segment.present.is_empty() {
                 // FIXME should we panic here or return None?
-                panic!("cleanable segment.present.is_empty()");
+                panic!(
+                    "cleanable segment.present.is_empty(), despite \
+                    being in the to_clean structure!  segment: {:?}",
+                    segment
+                );
                 // return None
             }
 
