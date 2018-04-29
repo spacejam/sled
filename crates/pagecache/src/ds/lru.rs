@@ -32,7 +32,11 @@ impl Lru {
         let shard_idx = pid % self.shards.len();
         let rel_idx = pid / self.shards.len();
         let shard_mu = &self.shards[shard_idx];
-        let mut shard = shard_mu.lock().unwrap();
+        let mut shard = shard_mu.lock().expect(
+            "Lru was poisoned by a \
+            thread that panicked \
+            inside a critical section",
+        );
         let mut rel_ids = shard.accessed(rel_idx, sz);
 
         for rel_id in &mut rel_ids {
@@ -68,6 +72,8 @@ struct Shard {
 
 impl Shard {
     fn new(capacity: usize) -> Shard {
+        assert!(capacity > 0, "shard capacity must be non-zero");
+
         Shard {
             list: Dll::default(),
             entries: vec![],
