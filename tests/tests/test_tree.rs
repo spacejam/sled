@@ -257,6 +257,7 @@ fn prop_tree_matches_btreemap(
         .io_buf_size(10000)
         .blink_fanout(blink_fanout + 2)
         .cache_capacity(40)
+        .cache_bits(0)
         .merge_operator(test_merge_operator)
         .build();
 

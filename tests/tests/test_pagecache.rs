@@ -261,8 +261,8 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
         .temporary(true)
         .io_buf_size(1000)
         .flush_every_ms(if flusher { Some(1) } else { None })
-        .cache_bits(0)
         .cache_capacity(40)
+        .cache_bits(0)
         .cache_fixup_threshold(1)
         .build();
 
