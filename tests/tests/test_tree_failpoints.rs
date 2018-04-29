@@ -86,11 +86,37 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
         static ref M: Mutex<()> = Mutex::new(());
     }
 
-    let _lock = M.lock().unwrap();
+    let _lock = M.lock().expect("our test lock should not be poisoned");
 
     // clear all failpoints that may be left over from the last run
     fail::teardown();
 
+    let res = std::panic::catch_unwind(
+        || run_tree_crashes_nicely(ops.clone(), flusher),
+    );
+
+    fail::teardown();
+
+    match res {
+        Err(e) => {
+            println!(
+                "failed with {:?} on ops {:?} flusher {}",
+                e,
+                ops,
+                flusher
+            );
+            false
+        }
+        Ok(res) => {
+            if !res {
+                println!("failed with ops {:?} flusher: {}", ops, flusher);
+            }
+            res
+        }
+    }
+}
+
+fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
     let config = ConfigBuilder::new()
         .temporary(true)
         .snapshot_after_ops(1)
@@ -99,6 +125,7 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
         .min_items_per_segment(1)
         .blink_fanout(2) // smol pages for smol buffers
         .cache_capacity(40)
+        .cache_bits(2)
         .build();
 
     let mut tree = sled::Tree::start(config.clone()).unwrap();
@@ -221,8 +248,6 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
         }
     }
 
-    fail::teardown();
-
     true
 }
 
@@ -333,6 +358,38 @@ fn failpoints_bug_6() {
             Set,
             Set,
             Restart,
+        ],
+        false,
+    ))
+}
+
+#[test]
+fn failpoints_bug_7() {
+    // postmortem 1:
+    assert!(prop_tree_crashes_nicely(
+        vec![
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Del(17),
+            Del(29),
+            Del(246),
+            Del(248),
+            Set,
         ],
         false,
     ))
