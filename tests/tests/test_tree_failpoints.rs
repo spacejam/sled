@@ -443,3 +443,57 @@ fn failpoints_bug_8() {
         false,
     ))
 }
+
+#[test]
+fn failpoints_bug_9() {
+    // postmortem 1: recovery was not properly accounting for
+    // ordering issues around allocation and freeing of pages.
+    assert!(run_tree_crashes_nicely(
+        vec![
+            Set,
+            Restart,
+            Del(110),
+            Del(0),
+            Set,
+            Restart,
+            Set,
+            Del(255),
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Del(38),
+            Set,
+            Set,
+            Del(253),
+            Set,
+            Restart,
+            Set,
+            Del(19),
+            Set,
+            Del(118),
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Del(151),
+            Set,
+            Set,
+            Del(201),
+            Set,
+            Restart,
+            Set,
+            Set,
+            Del(17),
+            Set,
+            Set,
+            Set,
+            Del(230),
+            Set,
+            Restart,
+        ],
+        true,
+    ))
+}
