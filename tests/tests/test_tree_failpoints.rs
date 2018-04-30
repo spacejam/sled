@@ -129,7 +129,8 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
         .cache_bits(2)
         .build();
 
-    let mut tree = sled::Tree::start(config.clone()).unwrap();
+    let mut tree =
+        sled::Tree::start(config.clone()).expect("tree should start");
     let mut reference = BTreeMap::new();
     let mut fail_points = HashSet::new();
 
@@ -146,10 +147,10 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 return false;
             }
 
-            tree = tree_res.unwrap();
+            tree = tree_res.expect("tree should restart");
 
             let tree_iter = tree.iter().map(|res| {
-                let (ref tk, _) = res.unwrap();
+                let (ref tk, _) = res.expect("should be able to iterate over items in tree");
                 v(tk)
             });
             let mut ref_iter = reference.iter().map(|(ref rk, ref rv)| (**rk, **rv));
@@ -234,8 +235,18 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 // insert false certainty before completes
                 reference.insert(k as u16, (k as u16, false));
 
-                fp_crash!(tree.del(&*vec![0, k]));
-                tree.flush().unwrap();
+                let res = fp_crash!(tree.del(&*vec![0, k]));
+                match res {
+                    Some(_) => {
+                        // we definitely caused a file write
+                        tree.flush().expect("should be able to flush after del")
+                    }
+                    None => {
+                        // we might not have actually written anything
+                        // because the key wasn't there.
+                        let _ = tree.flush();
+                    }
+                }
 
                 reference.remove(&(k as u16));
             }
@@ -244,7 +255,9 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
             }
             FailPoint(fp) => {
                 fail_points.insert(fp.clone());
-                fail::cfg(&*fp, "return").unwrap();
+                fail::cfg(&*fp, "return").expect(
+                    "should be able to configure failpoint",
+                );
             }
         }
     }
@@ -394,6 +407,38 @@ fn failpoints_bug_7() {
             Del(246),
             Del(248),
             Set,
+        ],
+        false,
+    ))
+}
+
+#[test]
+fn failpoints_bug_8() {
+    // postmortem 1: we were assuming that deletes would fail if buffer writes
+    // are disabled, but that's not true, because deletes might not cause any
+    // writes if the value was not present.
+    assert!(prop_tree_crashes_nicely(
+        vec![
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Del(0),
+            FailPoint("buffer write post"),
+            Del(179),
         ],
         false,
     ))
