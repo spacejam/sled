@@ -287,6 +287,85 @@ fn log_chunky_iterator() {
     }
 }
 
+#[test]
+#[ignore]
+fn snapshot_with_out_of_order_buffers() {
+    let config = ConfigBuilder::new()
+        .temporary(true)
+        .segment_mode(SegmentMode::Linear)
+        .io_buf_size(100)
+        .io_bufs(2)
+        .snapshot_after_ops(5)
+        .build();
+
+    let len = config.io_buf_size - SEG_HEADER_LEN - SEG_TRAILER_LEN -
+        MSG_HEADER_LEN;
+
+    let log = Log::start_raw_log(config.clone()).unwrap();
+
+    for i in 0..4 {
+        let buf = vec![i as u8; len];
+        let (lsn, _lid) = log.write(buf).unwrap();
+        log.make_stable(lsn).unwrap();
+    }
+
+    {
+        // erase the third segment trailer to represent
+        // an out-of-order segment write before
+    }
+
+    drop(log);
+
+    let log = Log::start_raw_log(config.clone()).unwrap();
+
+    // start iterating just past the first segment header
+    let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
+
+    for i in 0..config.io_bufs * 2 {
+        let expected = vec![i as u8; len];
+        let (_lsn, _lid, buf) = iter.next().unwrap();
+        assert_eq!(expected, buf);
+    }
+}
+
+#[test]
+fn multi_segment_log_iteration() {
+    tests::setup_logger();
+    // ensure segments are being linked
+    // ensure trailers are valid
+    let config = ConfigBuilder::new()
+        .temporary(true)
+        .segment_mode(SegmentMode::Linear)
+        .io_buf_size(1000)
+        .min_items_per_segment(1)
+        .build();
+
+    let total_seg_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;
+    let big_msg_overhead = MSG_HEADER_LEN + total_seg_overhead;
+    let big_msg_sz = config.io_buf_size - big_msg_overhead;
+
+    let log = Log::start_raw_log(config.clone()).unwrap();
+
+    for i in 0..config.io_bufs * 2 {
+        let buf = vec![i as u8; big_msg_sz];
+        log.write(buf);
+    }
+    log.flush();
+
+    drop(log);
+
+    let log = Log::start_raw_log(config.clone()).unwrap();
+
+    // start iterating just past the first segment header
+    let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
+
+    for i in 0..config.io_bufs * 2 {
+        let expected = vec![i as u8; big_msg_sz];
+        let (_lsn, _lid, buf) = iter.next().unwrap();
+        assert_eq!(expected, buf);
+    }
+}
+
 #[derive(Debug, Clone)]
 enum Op {
     Write(Vec<u8>),
@@ -350,83 +429,6 @@ impl Arbitrary for Op {
         } else {
             Box::new(vec![].into_iter())
         }
-    }
-}
-
-#[test]
-#[ignore]
-fn snapshot_with_out_of_order_buffers() {
-    let config = ConfigBuilder::new()
-        .temporary(true)
-        .segment_mode(SegmentMode::Linear)
-        .io_buf_size(100)
-        .io_bufs(2)
-        .snapshot_after_ops(5)
-        .build();
-
-    let len = config.io_buf_size - SEG_HEADER_LEN - SEG_TRAILER_LEN -
-        MSG_HEADER_LEN;
-
-    let log = Log::start_raw_log(config.clone()).unwrap();
-
-    for i in 0..4 {
-        let buf = vec![i as u8; len];
-        let (lsn, _lid) = log.write(buf).unwrap();
-        log.make_stable(lsn).unwrap();
-    }
-
-    {
-        // erase the third segment trailer to represent
-        // an out-of-order segment write before
-    }
-
-    drop(log);
-
-    let log = Log::start_raw_log(config.clone()).unwrap();
-
-    // start iterating just past the first segment header
-    let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
-
-    for i in 0..config.io_bufs * 2 {
-        let expected = vec![i as u8; len];
-        let (_lsn, _lid, buf) = iter.next().unwrap();
-        assert_eq!(expected, buf);
-    }
-}
-
-#[test]
-fn multi_segment_log_iteration() {
-    // ensure segments are being linked
-    // ensure trailers are valid
-    let config = ConfigBuilder::new()
-        .temporary(true)
-        .segment_mode(SegmentMode::Linear)
-        .io_buf_size(1000)
-        .min_items_per_segment(1)
-        .build();
-
-    let total_seg_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;
-    let big_msg_overhead = MSG_HEADER_LEN + total_seg_overhead;
-    let big_msg_sz = config.io_buf_size - big_msg_overhead;
-
-    let log = Log::start_raw_log(config.clone()).unwrap();
-
-    for i in 0..config.io_bufs * 2 {
-        let buf = vec![i as u8; big_msg_sz];
-        log.write(buf);
-    }
-
-    drop(log);
-
-    let log = Log::start_raw_log(config.clone()).unwrap();
-
-    // start iterating just past the first segment header
-    let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
-
-    for i in 0..config.io_bufs * 2 {
-        let expected = vec![i as u8; big_msg_sz];
-        let (_lsn, _lid, buf) = iter.next().unwrap();
-        assert_eq!(expected, buf);
     }
 }
 
