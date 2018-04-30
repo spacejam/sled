@@ -16,7 +16,7 @@ pub fn setup_logger() {
         .format(|buf, record| {
             write!(
                 buf,
-                "{:05} {:10} {:10} {}\n",
+                "{:05} {:20} {:10} {}\n",
                 record.level(),
                 tn(),
                 record.module_path().unwrap().split("::").last().unwrap(),
@@ -29,5 +29,5 @@ pub fn setup_logger() {
         builder.parse(&std::env::var("RUST_LOG").unwrap());
     }
 
-    let _r = builder.init();
+    let _r = builder.try_init();
 }

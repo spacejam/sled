@@ -5,6 +5,7 @@ extern crate fail;
 extern crate rand;
 extern crate sled;
 extern crate pagecache;
+extern crate tests;
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Mutex;
@@ -365,7 +366,10 @@ fn failpoints_bug_6() {
 
 #[test]
 fn failpoints_bug_7() {
-    // postmortem 1:
+    // postmortem 1: We were crashing because a Segment was
+    // in the SegmentAccountant's to_clean Vec, but it had
+    // no present pages. This can legitimately happen when
+    // a Segment only contains failed log flushes.
     assert!(prop_tree_crashes_nicely(
         vec![
             Set,
