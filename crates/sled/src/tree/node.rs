@@ -132,8 +132,8 @@ impl Node {
         }
     }
 
-    pub fn should_split(&self, fanout: usize) -> bool {
-        self.data.len() > fanout
+    pub fn should_split(&self, fanout: u8) -> bool {
+        self.data.len() > fanout as usize
     }
 
     pub fn split(&self, id: PageID) -> Node {

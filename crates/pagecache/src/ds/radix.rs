@@ -194,13 +194,17 @@ fn traverse<'g, T: 'static + Send>(
             SeqCst,
             guard,
         );
-        if ret.is_ok() {
-            // CAS worked
-            next_ptr = next_child;
-        } else {
-            // another thread beat us, drop unused created
-            // child and use what is already set
-            next_ptr = ret.unwrap_err().current;
+
+        match ret {
+            Ok(_) => {
+                // CAS worked
+                next_ptr = next_child;
+            }
+            Err(e) => {
+                // another thread beat us, drop unused created
+                // child and use what is already set
+                next_ptr = e.current;
+            }
         }
     }
 

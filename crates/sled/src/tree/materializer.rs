@@ -41,7 +41,10 @@ impl Materializer for BLinkMaterializer {
         match *frag {
             Frag::Base(ref node, prev_root) => {
                 if let Some(prev_root) = prev_root {
-                    let mut roots = self.roots.lock().unwrap();
+                    let mut roots = self.roots.lock().expect(
+                        "a thread panicked and poisoned the BLinkMaterializer's
+                        roots mutex.",
+                    );
                     if !roots.contains(&(node.id, prev_root)) {
                         roots.push((node.id, prev_root));
                         return Some(roots.clone());

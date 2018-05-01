@@ -645,7 +645,13 @@ impl SegmentAccountant {
         old_lids: Vec<LogID>,
         new_lid: LogID,
     ) {
-        trace!("mark_replace pid {} at lid {} with lsn {}", pid, new_lid, lsn);
+        trace!(
+            "mark_replace pid {} from lids {:?} to lid {} with lsn {}",
+            pid,
+            old_lids,
+            new_lid,
+            lsn
+        );
         let new_idx = new_lid as usize / self.config.io_buf_size;
 
         // make sure we're not actively trying to replace the destination
@@ -698,20 +704,22 @@ impl SegmentAccountant {
         let can_drain = self.segments[idx].is_inactive() &&
             (segment_low_pct || segment_low_count);
 
+        if can_drain {
+            // can be cleaned
+            trace!(
+                "SA inserting {} into to_clean from possibly_clean_or_free_segment",
+                segment_start
+            );
+            self.segments[idx].inactive_to_draining(lsn);
+            self.to_clean.insert(segment_start);
+        }
+
         if self.segments[idx].can_free() {
             // can be reused immediately
             self.segments[idx].draining_to_free(lsn);
             self.to_clean.remove(&segment_start);
             trace!("freed segment {} in replace", segment_start);
             self.free_segment(segment_start, false);
-        } else if can_drain {
-            // can be cleaned
-            trace!(
-                "SA inserting {} into to_clean from mark_replace",
-                segment_start
-            );
-            self.segments[idx].inactive_to_draining(lsn);
-            self.to_clean.insert(segment_start);
         }
     }
 
@@ -726,9 +734,9 @@ impl SegmentAccountant {
             assert_eq!(segment.state, Draining);
 
             if segment.present.is_empty() {
-                // FIXME should we panic here or return None?
-                panic!("cleanable segment.present.is_empty()");
-                // return None
+                // This could legitimately be empty if it's completely
+                // filled with failed flushes.
+                return None;
             }
 
             self.clean_counter += 1;

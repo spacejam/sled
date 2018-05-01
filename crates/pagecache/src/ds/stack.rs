@@ -151,14 +151,16 @@ impl<T: Send + 'static> Stack<T> {
         let node = node.into_shared(guard);
 
         let res = self.head.compare_and_set(old, node, SeqCst, guard);
-        if res.is_err() {
-            unsafe {
-                node.deref().next.store(Shared::null(), SeqCst);
-                guard.defer(move || node.into_owned());
+
+        match res {
+            Err(e) => {
+                unsafe {
+                    node.deref().next.store(Shared::null(), SeqCst);
+                    guard.defer(move || node.into_owned());
+                }
+                Err(e.current)
             }
-            Err(res.unwrap_err().current)
-        } else {
-            Ok(node)
+            Ok(_) => Ok(node),
         }
     }
 
@@ -171,17 +173,21 @@ impl<T: Send + 'static> Stack<T> {
     ) -> Result<Shared<'g, Node<T>>, Shared<'g, Node<T>>> {
         debug_delay();
         let res = self.head.compare_and_set(old, new, SeqCst, guard);
-        if res.is_ok() {
-            if !old.is_null() {
-                unsafe { guard.defer(move || old.into_owned()) };
-            }
-            Ok(new)
-        } else {
-            if !new.is_null() {
-                unsafe { guard.defer(move || new.into_owned()) };
-            }
 
-            Err(res.unwrap_err().current)
+        match res {
+            Ok(_) => {
+                if !old.is_null() {
+                    unsafe { guard.defer(move || old.into_owned()) };
+                }
+                Ok(new)
+            }
+            Err(e) => {
+                if !new.is_null() {
+                    unsafe { guard.defer(move || new.into_owned()) };
+                }
+
+                Err(e.current)
+            }
         }
     }
 
@@ -253,7 +259,7 @@ pub fn node_from_frag_vec<T>(from: Vec<T>) -> Owned<Node<T>>
         last = Some(node);
     }
 
-    last.unwrap()
+    last.expect("at least one frag was provided in the from Vec")
 }
 
 #[test]

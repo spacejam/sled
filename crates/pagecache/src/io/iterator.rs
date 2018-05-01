@@ -62,16 +62,6 @@ impl Iterator for LogIter {
             let lid = self.segment_base.unwrap() +
                 (self.cur_lsn % self.segment_len as Lsn) as LogID;
 
-            if self.max_lsn < lid as Lsn {
-                // we've hit the end of the log.
-                trace!(
-                    "in LogIter::next self.max_lsn {} < lid {}",
-                    self.max_lsn,
-                    lid
-                );
-                return None;
-            }
-
             if let Ok(f) = self.config.file() {
                 match f.read_message(
                     lid,

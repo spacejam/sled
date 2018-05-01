@@ -186,7 +186,9 @@ impl Tree {
                 return Err(Error::CasFailed(cur));
             }
 
-            let &mut (ref node, ref cas_key) = path.last_mut().unwrap();
+            let &mut (ref node, ref cas_key) = path.last_mut().expect(
+                "get_internal somehow returned a path of length zero",
+            );
             let encoded_key = prefix_encode(node.lo.inner(), &*key);
             let frag = if let Some(ref n) = new {
                 Frag::Set(encoded_key, n.clone())
@@ -218,7 +220,10 @@ impl Tree {
         let guard = pin();
         loop {
             let mut path = self.path_for_key(&*key, &guard)?;
-            let (mut last_node, last_cas_key) = path.pop().unwrap();
+            let (mut last_node, last_cas_key) = path.pop().expect(
+                "path_for_key should always return a path \
+                of length >= 2 (root + leaf)",
+            );
             let encoded_key = prefix_encode(last_node.lo.inner(), &*key);
             let frag = Frag::Set(encoded_key, value.clone());
             let link = self.pages.link(
@@ -298,7 +303,10 @@ impl Tree {
         let guard = pin();
         loop {
             let mut path = self.path_for_key(&*key, &guard)?;
-            let (mut last_node, last_cas_key) = path.pop().unwrap();
+            let (mut last_node, last_cas_key) = path.pop().expect(
+                "path_for_key should always return a path \
+                of length >= 2 (root + leaf)",
+            );
 
             let encoded_key = prefix_encode(last_node.lo.inner(), &*key);
             let frag = Frag::Merge(encoded_key, value.clone());
@@ -348,7 +356,10 @@ impl Tree {
         let mut ret: Option<Value>;
         loop {
             let mut path = self.path_for_key(&*key, &guard)?;
-            let (leaf_node, leaf_cas_key) = path.pop().unwrap();
+            let (leaf_node, leaf_cas_key) = path.pop().expect(
+                "path_for_key should always return a path \
+                of length >= 2 (root + leaf)",
+            );
             let encoded_key = prefix_encode(leaf_node.lo.inner(), key);
             match leaf_node.data {
                 Data::Leaf(ref items) => {
@@ -403,17 +414,16 @@ impl Tree {
         let guard = pin();
         let mut broken = None;
         let id = match self.get_internal(key, &guard) {
-            Ok((path, _)) => {
-                if path.is_empty() {
-                    broken = Some(Error::ReportableBug(
-                        "failed to get path for key".to_owned(),
-                    ));
-                    0
-                } else {
-                    let &(ref last_node, ref _last_cas_key) = path.last()
-                        .unwrap();
-                    last_node.id
-                }
+            Ok((ref path, _)) if !path.is_empty() => {
+                let &(ref last_node, ref _last_cas_key) =
+                    path.last().expect("path is not empty");
+                last_node.id
+            }
+            Ok(_) => {
+                broken = Some(Error::ReportableBug(
+                    "failed to get path for key".to_owned(),
+                ));
+                0
             }
             Err(e) => {
                 broken = Some(e.danger_cast());
@@ -650,7 +660,7 @@ impl Tree {
 
         let ret = path.last().and_then(|&(ref last_node, ref _last_cas_key)| {
             let data = &last_node.data;
-            let items = data.leaf_ref().unwrap();
+            let items = data.leaf_ref().expect("last_node should be a leaf");
             let encoded_key = prefix_encode(last_node.lo.inner(), key);
             let search = items.binary_search_by(
                 |&(ref k, ref _v)| prefix_cmp(k, &*encoded_key),
@@ -670,7 +680,10 @@ impl Tree {
     #[doc(hidden)]
     pub fn key_debug_str(&self, key: &[u8]) -> String {
         let guard = pin();
-        let path = self.path_for_key(key, &guard).unwrap();
+        let path = self.path_for_key(key, &guard).expect(
+            "path_for_key should always return at least 2 nodes, \
+            even if the key being searched for is not present",
+        );
         let mut ret = String::new();
         for &(ref node, _) in &path {
             ret.push_str(&*format!("\n{:?}", node));
@@ -708,12 +721,19 @@ impl Tree {
                 cursor = self.root.load(SeqCst);
                 continue;
             }
-            if !get_cursor.is_materialized() {
-                error!("unwrapping {:?}", get_cursor);
-            }
 
-            let (frag, cas_key) = get_cursor.unwrap();
-            let (node, _is_root) = frag.into_base().unwrap();
+            let (node, cas_key) = match get_cursor {
+                PageGet::Materialized(Frag::Base(base, _), cas_key) => (
+                    base,
+                    cas_key,
+                ),
+                broken => {
+                    return Err(Error::ReportableBug(format!(
+                        "got non-base node while traversing tree: {:?}",
+                        broken
+                    )))
+                }
+            };
 
             // TODO this may need to change when handling (half) merges
             assert!(node.lo.inner() <= key, "overshot key somehow");
@@ -722,7 +742,10 @@ impl Tree {
             if node.hi <= Bound::Inclusive(key.to_vec()) {
                 // we have encountered a child split, without
                 // having hit the parent split above.
-                cursor = node.next.unwrap();
+                cursor = node.next.expect(
+                    "if our hi bound is not Inf (inity), \
+                    we should have a right sibling",
+                );
                 if unsplit_parent.is_none() && !path.is_empty() {
                     unsplit_parent = Some(path.len() - 1);
                 }
@@ -753,7 +776,10 @@ impl Tree {
             let prefix = node.lo.inner().to_vec();
             path.push((node, cas_key));
 
-            match path.last().unwrap().0.data {
+            match path.last()
+                .expect("we just pushed to path, so it's not empty")
+                .0
+                .data {
                 Data::Index(ref ptrs) => {
                     let old_cursor = cursor;
                     for &(ref sep_k, ref ptr) in ptrs {
@@ -784,27 +810,35 @@ impl Debug for Tree {
         let mut left_most = pid;
         let mut level = 0;
 
-        f.write_str("Tree: \n\t").unwrap();
-        self.pages.fmt(f).unwrap();
-        f.write_str("\tlevel 0:\n").unwrap();
+        f.write_str("Tree: \n\t")?;
+        self.pages.fmt(f)?;
+        f.write_str("\tlevel 0:\n")?;
 
         let guard = pin();
         loop {
-            let (frag, _cas_key) =
-                self.pages.get(pid, &guard).unwrap().unwrap();
-            let (node, _is_root) = frag.base().unwrap();
+            let get_res = self.pages.get(pid, &guard);
+            let node = match get_res {
+                Ok(PageGet::Materialized(Frag::Base(base, _), _)) => base,
+                broken => {
+                    panic!("pagecache returned non-base node: {:?}", broken)
+                }
+            };
 
-            f.write_str("\t\t").unwrap();
-            node.fmt(f).unwrap();
-            f.write_str("\n").unwrap();
+            f.write_str("\t\t")?;
+            node.fmt(f)?;
+            f.write_str("\n")?;
 
             if let Some(next_pid) = node.next {
                 pid = next_pid;
             } else {
                 // we've traversed our level, time to bump down
-                let (left_frag, _left_cas_key) =
-                    self.pages.get(left_most, &guard).unwrap().unwrap();
-                let (left_node, _is_root) = left_frag.base().unwrap();
+                let left_get_res = self.pages.get(left_most, &guard);
+                let left_node = match left_get_res {
+                    Ok(PageGet::Materialized(Frag::Base(base, _), _)) => base,
+                    broken => {
+                        panic!("pagecache returned non-base node: {:?}", broken)
+                    }
+                };
 
                 match left_node.data {
                     Data::Index(ptrs) => {
@@ -812,8 +846,7 @@ impl Debug for Tree {
                             pid = *next_pid;
                             left_most = *next_pid;
                             level += 1;
-                            f.write_str(&*format!("\n\tlevel {}:\n", level))
-                                .unwrap();
+                            f.write_str(&*format!("\n\tlevel {}:\n", level))?;
                         } else {
                             panic!("trying to debug print empty index node");
                         }

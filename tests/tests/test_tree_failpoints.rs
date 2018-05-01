@@ -5,6 +5,7 @@ extern crate fail;
 extern crate rand;
 extern crate sled;
 extern crate pagecache;
+extern crate tests;
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Mutex;
@@ -49,7 +50,7 @@ impl Arbitrary for Op {
         ];
 
         if g.gen_weighted_bool(30) {
-            return FailPoint((*g.choose(&fail_points).unwrap()));
+            return FailPoint(*g.choose(&fail_points).unwrap());
         }
 
         if g.gen_weighted_bool(10) {
@@ -86,11 +87,37 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
         static ref M: Mutex<()> = Mutex::new(());
     }
 
-    let _lock = M.lock().unwrap();
+    let _lock = M.lock().expect("our test lock should not be poisoned");
 
     // clear all failpoints that may be left over from the last run
     fail::teardown();
 
+    let res = std::panic::catch_unwind(
+        || run_tree_crashes_nicely(ops.clone(), flusher),
+    );
+
+    fail::teardown();
+
+    match res {
+        Err(e) => {
+            println!(
+                "failed with {:?} on ops {:?} flusher {}",
+                e,
+                ops,
+                flusher
+            );
+            false
+        }
+        Ok(res) => {
+            if !res {
+                println!("failed with ops {:?} flusher: {}", ops, flusher);
+            }
+            res
+        }
+    }
+}
+
+fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
     let config = ConfigBuilder::new()
         .temporary(true)
         .snapshot_after_ops(1)
@@ -99,9 +126,11 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
         .min_items_per_segment(1)
         .blink_fanout(2) // smol pages for smol buffers
         .cache_capacity(40)
+        .cache_bits(2)
         .build();
 
-    let mut tree = sled::Tree::start(config.clone()).unwrap();
+    let mut tree =
+        sled::Tree::start(config.clone()).expect("tree should start");
     let mut reference = BTreeMap::new();
     let mut fail_points = HashSet::new();
 
@@ -118,10 +147,10 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 return false;
             }
 
-            tree = tree_res.unwrap();
+            tree = tree_res.expect("tree should restart");
 
             let tree_iter = tree.iter().map(|res| {
-                let (ref tk, _) = res.unwrap();
+                let (ref tk, _) = res.expect("should be able to iterate over items in tree");
                 v(tk)
             });
             let mut ref_iter = reference.iter().map(|(ref rk, ref rv)| (**rk, **rv));
@@ -206,8 +235,18 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 // insert false certainty before completes
                 reference.insert(k as u16, (k as u16, false));
 
-                fp_crash!(tree.del(&*vec![0, k]));
-                tree.flush().unwrap();
+                let res = fp_crash!(tree.del(&*vec![0, k]));
+                match res {
+                    Some(_) => {
+                        // we definitely caused a file write
+                        tree.flush().expect("should be able to flush after del")
+                    }
+                    None => {
+                        // we might not have actually written anything
+                        // because the key wasn't there.
+                        let _ = tree.flush();
+                    }
+                }
 
                 reference.remove(&(k as u16));
             }
@@ -216,12 +255,12 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
             }
             FailPoint(fp) => {
                 fail_points.insert(fp.clone());
-                fail::cfg(&*fp, "return").unwrap();
+                fail::cfg(&*fp, "return").expect(
+                    "should be able to configure failpoint",
+                );
             }
         }
     }
-
-    fail::teardown();
 
     true
 }
@@ -295,7 +334,6 @@ fn failpoints_bug_4() {
 }
 
 #[test]
-#[ignore]
 fn failpoints_bug_5() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
@@ -319,7 +357,6 @@ fn failpoints_bug_5() {
 }
 
 #[test]
-#[ignore]
 fn failpoints_bug_6() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
@@ -337,5 +374,126 @@ fn failpoints_bug_6() {
             Restart,
         ],
         false,
+    ))
+}
+
+#[test]
+fn failpoints_bug_7() {
+    // postmortem 1: We were crashing because a Segment was
+    // in the SegmentAccountant's to_clean Vec, but it had
+    // no present pages. This can legitimately happen when
+    // a Segment only contains failed log flushes.
+    assert!(prop_tree_crashes_nicely(
+        vec![
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Del(17),
+            Del(29),
+            Del(246),
+            Del(248),
+            Set,
+        ],
+        false,
+    ))
+}
+
+#[test]
+fn failpoints_bug_8() {
+    // postmortem 1: we were assuming that deletes would fail if buffer writes
+    // are disabled, but that's not true, because deletes might not cause any
+    // writes if the value was not present.
+    assert!(prop_tree_crashes_nicely(
+        vec![
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Del(0),
+            FailPoint("buffer write post"),
+            Del(179),
+        ],
+        false,
+    ))
+}
+
+#[test]
+fn failpoints_bug_9() {
+    // postmortem 1: recovery was not properly accounting for
+    // ordering issues around allocation and freeing of pages.
+    assert!(run_tree_crashes_nicely(
+        vec![
+            Set,
+            Restart,
+            Del(110),
+            Del(0),
+            Set,
+            Restart,
+            Set,
+            Del(255),
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Del(38),
+            Set,
+            Set,
+            Del(253),
+            Set,
+            Restart,
+            Set,
+            Del(19),
+            Set,
+            Del(118),
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Del(151),
+            Set,
+            Set,
+            Del(201),
+            Set,
+            Restart,
+            Set,
+            Set,
+            Del(17),
+            Set,
+            Set,
+            Set,
+            Del(230),
+            Set,
+            Restart,
+        ],
+        true,
     ))
 }

@@ -176,7 +176,7 @@ fn recover_tree() {
 
     let t = sled::Tree::start(config.clone()).unwrap();
     for i in 0..config.blink_fanout << 1 {
-        let k = kv(i);
+        let k = kv(i as usize);
         assert_eq!(t.get(&*k), Ok(Some(k.clone())));
         t.del(&*k).unwrap();
     }
@@ -184,7 +184,7 @@ fn recover_tree() {
 
     let t = sled::Tree::start(config.clone()).unwrap();
     for i in 0..config.blink_fanout << 1 {
-        let k = kv(i);
+        let k = kv(i as usize);
         assert_eq!(t.get(&*k), Ok(None));
     }
 }
@@ -255,8 +255,9 @@ fn prop_tree_matches_btreemap(
         .snapshot_after_ops(snapshot_after as usize + 1)
         .flush_every_ms(if flusher { Some(1) } else { None })
         .io_buf_size(10000)
-        .blink_fanout(blink_fanout as usize + 2)
+        .blink_fanout(blink_fanout + 2)
         .cache_capacity(40)
+        .cache_bits(0)
         .merge_operator(test_merge_operator)
         .build();
 

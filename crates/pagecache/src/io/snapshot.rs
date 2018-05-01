@@ -60,6 +60,13 @@ impl PageState {
             }
         }
     }
+
+    fn is_free(&self) -> bool {
+        match *self {
+            PageState::Free(_, _) => true,
+            _ => false,
+        }
+    }
 }
 
 impl<R> Default for Snapshot<R> {
@@ -131,6 +138,14 @@ impl<R> Snapshot<R> {
                         log_id,
                         lsn
                     );
+
+                    if lids.is_free() {
+                        trace!(
+                            "we have not yet encountered an \
+                            allocation of this page, skipping push"
+                        );
+                        return;
+                    }
 
                     if let Some(r) = materializer.recover(&partial_page) {
                         self.recovery = Some(r);
