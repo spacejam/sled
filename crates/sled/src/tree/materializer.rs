@@ -47,6 +47,7 @@ impl Materializer for BLinkMaterializer {
                     );
                     if !roots.contains(&(node.id, prev_root)) {
                         roots.push((node.id, prev_root));
+                        roots.sort();
                         return Some(roots.clone());
                     }
                 }
