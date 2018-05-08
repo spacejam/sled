@@ -504,6 +504,7 @@ fn failpoints_bug_9() {
 }
 
 #[test]
+#[ignore]
 fn failpoints_bug_10() {
     // expected to iterate over 50 but got 49 instead
     // postmortem 1:
