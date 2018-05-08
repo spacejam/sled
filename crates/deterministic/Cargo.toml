@@ -1,6 +1,6 @@
 [package]
 name = "deterministic"
-version = "0.0.4"
+version = "0.0.5"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "deterministic building blocks for testable systems"
 license = "MIT/Apache-2.0"
