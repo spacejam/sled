@@ -118,6 +118,7 @@ fn ensure_context_is_inherited() {
 }
 
 #[test]
+#[ignore]
 fn gogogo() {
     fn f1() {
         for _ in 0..10 {
