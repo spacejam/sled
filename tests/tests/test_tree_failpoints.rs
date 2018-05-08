@@ -737,6 +737,7 @@ fn failpoints_bug_10() {
 }
 
 #[test]
+#[ignore]
 fn failpoints_bug_11() {
     // dupe lsn detected
     // postmortem 1:
