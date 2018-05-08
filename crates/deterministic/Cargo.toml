@@ -1,0 +1,18 @@
+[package]
+name = "deterministic"
+version = "0.0.5"
+authors = ["Tyler Neely <t@jujit.su>"]
+description = "deterministic building blocks for testable systems"
+license = "MIT/Apache-2.0"
+homepage = "https://github.com/spacejam/sled/tree/master/crates/deterministic"
+repository = "https://github.com/spacejam/sled"
+keywords = ["testing", "realtime-scheduler"]
+documentation = "https://docs.rs/deterministic/"
+
+[dependencies]
+rand = "0.4"
+libc = "0.2"
+bincode = "1.0"
+serde = "1.0"
+serde_derive = "1.0"
+lazy_static = "1.0"

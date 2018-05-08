@@ -200,22 +200,68 @@ enum Op {
     Restart,
 }
 
+use Op::*;
+
 impl Arbitrary for Op {
     fn arbitrary<G: Gen>(g: &mut G) -> Op {
         if g.gen_weighted_bool(10) {
-            return Op::Restart;
+            return Restart;
         }
 
         let choice = g.gen_range(0, 6);
 
         match choice {
-            0 => Op::Set(g.gen::<u8>(), g.gen::<u8>()),
-            1 => Op::Merge(g.gen::<u8>(), g.gen::<u8>()),
-            2 => Op::Get(g.gen::<u8>()),
-            3 => Op::Del(g.gen::<u8>()),
-            4 => Op::Cas(g.gen::<u8>(), g.gen::<u8>(), g.gen::<u8>()),
-            5 => Op::Scan(g.gen::<u8>(), g.gen_range::<usize>(0, 40)),
+            0 => Set(g.gen::<u8>(), g.gen::<u8>()),
+            1 => Merge(g.gen::<u8>(), g.gen::<u8>()),
+            2 => Get(g.gen::<u8>()),
+            3 => Del(g.gen::<u8>()),
+            4 => Cas(g.gen::<u8>(), g.gen::<u8>(), g.gen::<u8>()),
+            5 => Scan(g.gen::<u8>(), g.gen_range::<usize>(0, 40)),
             _ => panic!("impossible choice"),
+        }
+    }
+
+    fn shrink(&self) -> Box<Iterator<Item = Op>> {
+        match *self {
+            Set(ref k, ref v) if *k > 0 => Box::new(
+                vec![
+                    Set(*k / 2, v.clone()),
+                    Set(*k - 1, v.clone()),
+                ].into_iter(),
+            ),
+            Merge(ref k, ref v) if *k > 0 => Box::new(
+                vec![
+                    Merge(*k / 2, v.clone()),
+                    Merge(*k - 1, v.clone()),
+                ].into_iter(),
+            ),
+            Get(ref k) if *k > 0 => Box::new(
+                vec![Get(*k / 2), Get(*k - 1)].into_iter(),
+            ),
+            Cas(ref k, ref old, ref new) if *k > 0 => Box::new(
+                vec![
+                    Cas(
+                        *k / 2,
+                        old.clone(),
+                        new.clone()
+                    ),
+                    Cas(
+                        *k - 1,
+                        old.clone(),
+                        new.clone()
+                    ),
+                ].into_iter(),
+            ),
+            Scan(ref k, ref len) if *k > 0 => Box::new(
+                vec![
+                    Scan(*k / 2, *len),
+                    Scan(*k - 1, *len),
+                ].into_iter(),
+            ),
+            Del(ref k) if *k > 0 => Box::new(
+                vec![Del(*k / 2), Del(*k - 1)].into_iter(),
+            ),
+            _ => Box::new(vec![].into_iter()),
         }
     }
 }
@@ -249,7 +295,7 @@ fn prop_tree_matches_btreemap(
     flusher: bool,
 ) -> bool {
 
-    use self::Op::*;
+    use self::*;
     let config = ConfigBuilder::new()
         .temporary(true)
         .snapshot_after_ops(snapshot_after as usize + 1)
@@ -352,7 +398,6 @@ fn tree_bug_01() {
     // snapshot (snapshot every 1 set in Config), we iterated up until
     // that offset. make_stable requires our stable offset to be >=
     // the provided one, to deal with 0.
-    use Op::*;
     prop_tree_matches_btreemap(
         vec![Set(32, 9), Set(195, 13), Restart, Set(164, 147)],
 
@@ -373,7 +418,6 @@ fn tree_bug_2() {
     // then the second time (triggered by a snapshot)
     // would not pick up on the importance of seeing
     // the new root set.
-    use Op::*;
     prop_tree_matches_btreemap(
         vec![Restart, Set(215, 121), Restart, Set(216, 203), Scan(210, 4)],
 
@@ -388,7 +432,6 @@ fn tree_bug_3() {
     // postmortem: the tree was not persisting and recovering root hoists
     // postmortem 2: when refactoring the log storage, we failed to restart
     // log writing in the proper location.
-    use Op::*;
     prop_tree_matches_btreemap(
         vec![
             Set(113, 204),
@@ -414,7 +457,6 @@ fn tree_bug_4() {
     // postmortem 2: after refactoring log storage, we were not properly
     // setting the log tip, and the beginning got clobbered after writing
     // after a restart.
-    use Op::*;
     prop_tree_matches_btreemap(
         vec![
             Set(158, 31),
@@ -437,7 +479,6 @@ fn tree_bug_4() {
 fn tree_bug_5() {
     // postmortem: during recovery, the segment accountant was failing to properly set the file's
     // tip.
-    use Op::*;
     prop_tree_matches_btreemap(
         vec![
             Set(231, 107),
@@ -460,7 +501,6 @@ fn tree_bug_6() {
     // postmortem: after reusing segments, we were failing to checksum reads performed while
     // iterating over rewritten segment buffers, and using former garbage data. fix: use the
     // crc that's there for catching torn writes with high probability, AND zero out buffers.
-    use Op::*;
     prop_tree_matches_btreemap(
         vec![
             Set(162, 8),
@@ -482,7 +522,6 @@ fn tree_bug_6() {
 fn tree_bug_7() {
     // postmortem: the segment accountant was not fully recovered, and thought that it could
     // reuse a particular segment that wasn't actually empty yet.
-    use Op::*;
     prop_tree_matches_btreemap(
         vec![
             Set(135, 22),
@@ -505,7 +544,6 @@ fn tree_bug_7() {
 fn tree_bug_8() {
     // postmortem: failed to properly recover the state in the segment accountant
     // that tracked the previously issued segment.
-    use Op::*;
     prop_tree_matches_btreemap(
         vec![
             Set(145, 151),
@@ -530,7 +568,6 @@ fn tree_bug_9() {
     // encounter uninitialized segments at the log tip and overwrite the first segment
     // (indexed by LSN of 0) in the segment accountant ordering, skipping over
     // important updates.
-    use Op::*;
     prop_tree_matches_btreemap(
         vec![
             Set(189, 36),
@@ -554,7 +591,6 @@ fn tree_bug_9() {
 fn tree_bug_10() {
     // postmortem: after reusing a segment, but not completely writing a segment,
     // we were hitting an old LSN and violating an assert, rather than just ending.
-    use Op::*;
     prop_tree_matches_btreemap(
         vec![
             Set(152, 163),
@@ -594,7 +630,6 @@ fn tree_bug_11() {
     // postmortem: a stall was happening because LSNs and LogIDs were being
     // conflated in calls to make_stable. A higher LogID than any LSN was
     // being created, then passed in.
-    use Op::*;
     prop_tree_matches_btreemap(
         vec![
             Set(38, 148),
@@ -619,7 +654,6 @@ fn tree_bug_11() {
 fn tree_bug_12() {
     // postmortem: was not checking that a log entry's LSN matches its position as
     // part of detecting tears / partial rewrites.
-    use Op::*;
     prop_tree_matches_btreemap(
         vec![
             Set(118, 156),
@@ -671,7 +705,6 @@ fn tree_bug_13() {
     // postmortem: failed root hoists were being improperly recovered before the
     // following free was done on their page, but we treated the written node as
     // if it were a successful completed root hoist.
-    use Op::*;
     prop_tree_matches_btreemap(
         vec![
             Set(42, 10),
@@ -701,7 +734,6 @@ fn tree_bug_13() {
 fn tree_bug_14() {
     // postmortem: after adding prefix compression, we were not
     // handling re-inserts and deletions properly
-    use Op::*;
     prop_tree_matches_btreemap(
         vec![
             Set(107, 234),
@@ -721,7 +753,6 @@ fn tree_bug_14() {
 #[test]
 fn tree_bug_15() {
     // postmortem: was not sorting keys properly when binary searching for them
-    use Op::*;
     prop_tree_matches_btreemap(
         vec![
             Set(102, 165),
@@ -740,7 +771,6 @@ fn tree_bug_15() {
 #[test]
 fn tree_bug_16() {
     // postmortem: the test merge function was not properly adding numbers.
-    use Op::*;
     prop_tree_matches_btreemap(
         vec![Merge(247, 162), Scan(209, 31)],
         0,

@@ -262,15 +262,15 @@ impl Drop for Config {
                 let f: Box<Arc<fs::File>> = unsafe { Box::from_raw(f_ptr) };
                 drop(f);
             }
-        }
 
-        if !self.temporary {
-            return;
-        }
+            if !self.temporary {
+                return;
+            }
 
-        // Our files are temporary, so nuke them.
-        warn!("removing ephemeral storage file {}", self.inner.tmp_path.to_string_lossy());
-        let _res = fs::remove_dir_all(&self.tmp_path);
+            // Our files are temporary, so nuke them.
+            warn!("removing ephemeral storage file {}", self.inner.tmp_path.to_string_lossy());
+            let _res = fs::remove_dir_all(&self.tmp_path);
+        }
     }
 }
 

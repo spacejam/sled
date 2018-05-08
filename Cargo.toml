@@ -3,6 +3,7 @@ members = [
   "crates/pagecache",
   "crates/sled",
   "bindings/sled-native",
+  "crates/deterministic",
   "tests"
 ]
 exclude = [
