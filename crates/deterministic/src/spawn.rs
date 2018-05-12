@@ -1,4 +1,3 @@
-use std::{io, mem};
 use std::thread::{self, JoinHandle};
 
 #[cfg(target_os = "linux")]
@@ -27,7 +26,7 @@ pub fn prioritize(prio: c_int) {
         0,
         "setscheduler is expected to return zero, was {}: {:?}",
         ret,
-        io::Error::last_os_error()
+        std::io::Error::last_os_error()
     );
 
     thread::yield_now();
@@ -36,7 +35,7 @@ pub fn prioritize(prio: c_int) {
 #[cfg(target_os = "linux")]
 fn pin_cpu() {
     unsafe {
-        let mut cpu_set: cpu_set_t = mem::zeroed();
+        let mut cpu_set: cpu_set_t = std::mem::zeroed();
         CPU_ZERO(&mut cpu_set);
         CPU_SET(0, &mut cpu_set);
         let ret = sched_setaffinity(0, 1, &cpu_set as *const cpu_set_t);
@@ -45,7 +44,7 @@ fn pin_cpu() {
             0,
             "sched_setaffinity is expected to return 0, was {}: {:?}",
             ret,
-            io::Error::last_os_error()
+            std::io::Error::last_os_error()
         );
     }
 }
@@ -126,6 +125,7 @@ fn ensure_context_is_inherited() {
 
 #[test]
 #[ignore]
+#[cfg(target_os = "linux")]
 fn gogogo() {
     fn f1() {
         for _ in 0..10 {
