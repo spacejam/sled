@@ -1,7 +1,7 @@
-use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::collections::HashMap;
 
 use rand::{Rng, SeedableRng, StdRng};
-use bincode::serialize;
 
 use super::*;
 
@@ -13,8 +13,12 @@ struct ContextInner {
     seed: Option<usize>,
     rng: StdRng,
     clock: SystemTime,
-    filesystem: file::Filesystem,
-    scheduler: Option<SyncSender<Call>>,
+    filesystem: Filesystem,
+}
+
+#[derive(Default, Debug)]
+pub struct Filesystem {
+    files: HashMap<PathBuf, file::File>,
 }
 
 fn with_context<B, F>(f: F) -> B
@@ -25,30 +29,9 @@ fn with_context<B, F>(f: F) -> B
     f(&mut context)
 }
 
+/// set the time for this thread and its `spawn`ed descendents
 pub fn set_time(now: SystemTime) {
     with_context(|c| c.clock = now);
-}
-
-pub fn sleep(duration: Duration) {
-    with_context(|c| match c.scheduler {
-        Some(ref sender) => {
-            sender.send(Call::Sleep(duration)).expect(
-                "scheduler should not be poisoned",
-            );
-        }
-        _ => {
-            println!("not sleeping, no scheduler registered");
-        }
-    })
-}
-
-pub fn send<M: Serialize>(to: SocketAddr, msg: M) {
-    with_context(|c| match c.scheduler {
-        Some(ref sender) => {
-            sender.send(Call::SendMsg(to, serialize(&msg).unwrap()));
-        }
-        _ => println!("dropped message to {}", to),
-    })
 }
 
 pub fn seed() -> usize {
@@ -76,10 +59,6 @@ pub fn now() -> SystemTime {
     with_context(|c| c.clock)
 }
 
-pub fn register_scheduler(sender: SyncSender<Call>) {
-    with_context(move |c| c.scheduler = Some(sender));
-}
-
 pub struct Rand;
 
 impl Rng for Rand {
@@ -99,8 +78,7 @@ impl Default for ContextInner {
             seed: None,
             clock: UNIX_EPOCH,
             rng: SeedableRng::from_seed(seed),
-            filesystem: file::Filesystem::default(),
-            scheduler: None,
+            filesystem: Filesystem::default(),
         }
     }
 }

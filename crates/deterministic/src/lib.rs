@@ -1,16 +1,15 @@
-#[macro_use]
-extern crate lazy_static;
-#[macro_use]
-extern crate serde_derive;
+//! A collection of simple utilities for building
+//! flake-free testable systems.
+// #![deny(missing_docs)]
+#![cfg_attr(test, deny(warnings))]
+
 extern crate serde;
-extern crate bincode;
 extern crate libc;
 extern crate rand;
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::sync::{Arc, mpsc::SyncSender, Mutex, MutexGuard};
+use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex};
 use std::cell::RefCell;
-use std::net::SocketAddr;
 use std::fmt::Debug;
 
 use serde::de::DeserializeOwned;
@@ -19,8 +18,8 @@ use serde::Serialize;
 /// Spawn threads with linux realtime priorities, and
 /// inherit the spawner's shared seeded random number
 /// generator and clock.
-#[cfg(target_os = "linux")]
-pub mod spawn;
+mod spawn;
+pub use spawn::{prioritize, spawn, spawn_with_prio, spawn_with_random_prio};
 
 /// Files that can simulate power failures by losing
 /// data written after the last sync.
@@ -50,32 +49,15 @@ thread_local! {
 }
 
 fn context<'a>() -> Arc<Context> {
-    CONTEXT.with(|c| {
-        c.borrow().clone()
-    })
+    CONTEXT.with(|c| c.borrow().clone())
 }
 
 fn set_context(context: Arc<Context>) {
     CONTEXT.with(|c| *c.borrow_mut() = context);
 }
 
-/// An inheritable context for children of a thread,
-/// containing a clock, rng, filesystem, and network
-/// transport handle.
-pub mod context;
+mod context;
 
 use context::Context;
 
-pub enum Call {
-    Sleep(Duration),
-    AtomicOp,
-    RwWriteLock(usize),
-    RwWriteUnlock(usize),
-    RwReadLock(usize),
-    RwReadUnlock(usize),
-    MutexLock(usize),
-    MutexUnlock(usize),
-    SyncFile,
-    SyncFileMetadata,
-    SendMsg(SocketAddr, Vec<u8>),
-}
+pub use context::{Rand, now, seed, set_seed, set_time, thread_rng};
