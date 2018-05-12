@@ -10,7 +10,7 @@ keywords = ["testing", "simulation", "deterministic", "model-checking"]
 documentation = "https://docs.rs/simulator/"
 
 [dependencies]
-deterministic = {version = "0.0.5", path = "../deterministic"}
+deterministic = {version = "0.0.6", path = "../deterministic"}
 rand = "0.4"
 quickcheck = "0.6"
 proptest = "0.7"
