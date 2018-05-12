@@ -1,0 +1,17 @@
+[package]
+name = "model"
+version = "0.0.1"
+authors = ["Tyler Neely <t@jujit.su>"]
+description = "model-based and linearizability testing for data structures and clusters"
+license = "MIT/Apache-2.0"
+homepage = "https://github.com/spacejam/sled/tree/master/crates/model"
+repository = "https://github.com/spacejam/sled"
+keywords = ["testing", "simulation", "deterministic", "model-checking"]
+documentation = "https://docs.rs/simulator/"
+
+[dependencies]
+deterministic = {version = "0.0.5", path = "../deterministic"}
+rand = "0.4"
+quickcheck = "0.6"
+proptest = "0.7"
+permutohedron = "0.2"
