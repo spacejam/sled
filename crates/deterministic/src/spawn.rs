@@ -4,6 +4,8 @@ use std::thread::{self, JoinHandle};
 use libc::{CPU_SET, CPU_ZERO, SCHED_FIFO, c_int, cpu_set_t,
            sched_get_priority_max, sched_get_priority_min, sched_param,
            sched_setaffinity, sched_setscheduler};
+
+#[cfg(target_os = "linux")]
 use rand::Rng;
 
 use super::*;
