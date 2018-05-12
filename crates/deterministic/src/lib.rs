@@ -18,8 +18,7 @@ use serde::Serialize;
 /// Spawn threads with linux realtime priorities, and
 /// inherit the spawner's shared seeded random number
 /// generator and clock.
-mod spawn;
-pub use spawn::{prioritize, spawn, spawn_with_prio, spawn_with_random_prio};
+pub mod spawn;
 
 /// Files that can simulate power failures by losing
 /// data written after the last sync.
