@@ -1,6 +1,6 @@
 [package]
 name = "model"
-version = "0.0.2"
+version = "0.0.3"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "model-based testing for data structures, with linearizability checking"
 license = "MIT/Apache-2.0"
@@ -10,7 +10,7 @@ keywords = ["testing", "simulation", "deterministic", "model-checking"]
 documentation = "https://docs.rs/model/"
 
 [dependencies]
-deterministic = {version = "0.0.6", path = "../deterministic"}
+deterministic = {version = "0.0", path = "../deterministic"}
 rand = "0.4"
 quickcheck = "0.6"
 proptest = "0.7"
