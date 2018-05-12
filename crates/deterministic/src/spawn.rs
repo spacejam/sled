@@ -1,16 +1,20 @@
-use std::{io, mem};
 use std::thread::{self, JoinHandle};
 
+#[cfg(target_os = "linux")]
 use libc::{CPU_SET, CPU_ZERO, SCHED_FIFO, c_int, cpu_set_t,
            sched_get_priority_max, sched_get_priority_min, sched_param,
            sched_setaffinity, sched_setscheduler};
+
+#[cfg(target_os = "linux")]
 use rand::Rng;
 
 use super::*;
 
+#[cfg(target_os = "linux")]
 const POLICY: c_int = SCHED_FIFO;
 
-fn prioritize(prio: c_int) {
+#[cfg(target_os = "linux")]
+pub fn prioritize(prio: c_int) {
     pin_cpu();
 
     let param = sched_param {
@@ -24,15 +28,16 @@ fn prioritize(prio: c_int) {
         0,
         "setscheduler is expected to return zero, was {}: {:?}",
         ret,
-        io::Error::last_os_error()
+        std::io::Error::last_os_error()
     );
 
     thread::yield_now();
 }
 
+#[cfg(target_os = "linux")]
 fn pin_cpu() {
     unsafe {
-        let mut cpu_set: cpu_set_t = mem::zeroed();
+        let mut cpu_set: cpu_set_t = std::mem::zeroed();
         CPU_ZERO(&mut cpu_set);
         CPU_SET(0, &mut cpu_set);
         let ret = sched_setaffinity(0, 1, &cpu_set as *const cpu_set_t);
@@ -41,14 +46,15 @@ fn pin_cpu() {
             0,
             "sched_setaffinity is expected to return 0, was {}: {:?}",
             ret,
-            io::Error::last_os_error()
+            std::io::Error::last_os_error()
         );
     }
 }
 
 /// Spawn a thread with a thread priority determined by a
 /// (possibly pre-seeded) `rand::Rng`.
-pub fn spawn_with_random_prio<R: Rng, F, T>(rng: &mut R, f: F) -> JoinHandle<T>
+#[cfg(target_os = "linux")]
+pub fn spawn_with_random_prio<F, T>(f: F) -> JoinHandle<T>
     where F: FnOnce() -> T,
           F: Send + 'static,
           T: Send + 'static
@@ -56,9 +62,9 @@ pub fn spawn_with_random_prio<R: Rng, F, T>(rng: &mut R, f: F) -> JoinHandle<T>
     let min = unsafe { sched_get_priority_min(POLICY) };
     let max = unsafe { sched_get_priority_max(POLICY) };
 
-    prioritize(rng.gen_range(min, max));
+    prioritize(thread_rng().gen_range(min, max));
 
-    let prio = rng.gen_range(min, max);
+    let prio = thread_rng().gen_range(min, max);
 
     let context = context();
 
@@ -72,6 +78,7 @@ pub fn spawn_with_random_prio<R: Rng, F, T>(rng: &mut R, f: F) -> JoinHandle<T>
 }
 
 /// Spawn a thread with a specific realtime priority.
+#[cfg(target_os = "linux")]
 pub fn spawn_with_prio<F, T>(prio: c_int, f: F) -> JoinHandle<T>
     where F: FnOnce() -> T,
           F: Send + 'static,
@@ -106,6 +113,7 @@ pub fn spawn<F, T>(f: F) -> JoinHandle<T>
 #[test]
 fn ensure_context_is_inherited() {
     use std::ops::Add;
+    use std::time::Duration;
 
     let time = UNIX_EPOCH.add(Duration::from_millis(55));
     context::set_time(time.clone());
@@ -119,6 +127,7 @@ fn ensure_context_is_inherited() {
 
 #[test]
 #[ignore]
+#[cfg(target_os = "linux")]
 fn gogogo() {
     fn f1() {
         for _ in 0..10 {

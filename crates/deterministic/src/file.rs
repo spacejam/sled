@@ -1,9 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::io::{Error, ErrorKind, Read, Result, Seek, SeekFrom, Write};
 use std::fs::{self, Metadata};
-use std::cmp;
-use std::mem;
-use std::collections::HashMap;
 
 #[cfg(unix)]
 use std::os::unix::fs::{FileExt, OpenOptionsExt};
@@ -11,10 +8,54 @@ use std::os::unix::fs::{FileExt, OpenOptionsExt};
 #[cfg(windows)]
 use std::os::windows::fs::{FileExt, OpenOptionsExt};
 
-use rand::{Rng, SeedableRng, StdRng};
+use rand::Rng;
 
 use super::*;
 
+/// Options and flags which can be used to configure how a file is opened.
+///
+/// This builder exposes the ability to configure how a [`File`] is opened and
+/// what operations are permitted on the open file. The [`File::open`] and
+/// [`File::create`] methods are aliases for commonly used options using this
+/// builder.
+///
+/// [`File`]: struct.File.html
+/// [`File::open`]: struct.File.html#method.open
+/// [`File::create`]: struct.File.html#method.create
+///
+/// Generally speaking, when using `OpenOptions`, you'll first call [`new`],
+/// then chain calls to methods to set each option, then call [`open`],
+/// passing the path of the file you're trying to open. This will give you a
+/// [`io::Result`][result] with a [`File`][file] inside that you can further
+/// operate on.
+///
+/// [`new`]: struct.OpenOptions.html#method.new
+/// [`open`]: struct.OpenOptions.html#method.open
+/// [result]: ../io/type.Result.html
+/// [file]: struct.File.html
+///
+/// # Examples
+///
+/// Opening a file to read:
+///
+/// ```no_run
+/// use std::fs::OpenOptions;
+///
+/// let file = OpenOptions::new().read(true).open("foo.txt");
+/// ```
+///
+/// Opening a file for both reading and writing, as well as creating it if it
+/// doesn't exist:
+///
+/// ```no_run
+/// use std::fs::OpenOptions;
+///
+/// let file = OpenOptions::new()
+///             .read(true)
+///             .write(true)
+///             .create(true)
+///             .open("foo.txt");
+/// ```
 #[derive(Clone, Debug)]
 pub struct OpenOptions {
     inner: fs::OpenOptions,
@@ -58,48 +99,153 @@ impl OpenOptionsExt for OpenOptions {
 }
 
 impl OpenOptions {
+    /// Creates a blank new set of options ready for configuration.
+    ///
+    /// All options are initially set to `false`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::OpenOptions;
+    ///
+    /// let mut options = OpenOptions::new();
+    /// let file = options.read(true).open("foo.txt");
+    /// ```
     pub fn new() -> OpenOptions {
         OpenOptions {
             inner: fs::OpenOptions::new(),
         }
     }
+
+    /// Sets the option for read access.
+    ///
+    /// This option, when true, will indicate that the file should be
+    /// `read`-able if opened.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::OpenOptions;
+    ///
+    /// let file = OpenOptions::new().read(true).open("foo.txt");
+    /// ```
     pub fn read(&mut self, read: bool) -> &mut OpenOptions {
         self.inner.read(read);
         self
     }
+
+    /// Sets the option for write access.
+    ///
+    /// This option, when true, will indicate that the file should be
+    /// `write`-able if opened.
+    ///
+    /// If the file already exists, any write calls on it will overwrite its
+    /// contents, without truncating it.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::OpenOptions;
+    ///
+    /// let file = OpenOptions::new().write(true).open("foo.txt");
+    /// ```
     pub fn write(&mut self, write: bool) -> &mut OpenOptions {
         self.inner.write(write);
         self
     }
-    pub fn append(&mut self, append: bool) -> &mut OpenOptions {
-        self.inner.append(append);
-        self
-    }
-    pub fn truncate(&mut self, truncate: bool) -> &mut OpenOptions {
-        self.inner.truncate(truncate);
-        self
-    }
+
+    /// Sets the option for creating a new file.
+    ///
+    /// This option indicates whether a new file will be created if the file
+    /// does not yet already exist.
+    ///
+    /// In order for the file to be created, [`write`] or [`append`] access must
+    /// be used.
+    ///
+    /// [`write`]: #method.write
+    /// [`append`]: #method.append
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::OpenOptions;
+    ///
+    /// let file = OpenOptions::new().write(true).create(true).open("foo.txt");
+    /// ```
     pub fn create(&mut self, create: bool) -> &mut OpenOptions {
         self.inner.create(create);
         self
     }
-    pub fn create_new(&mut self, create_new: bool) -> &mut OpenOptions {
-        self.inner.create_new(create_new);
+
+    /// Sets the option for truncating a previous file.
+    ///
+    /// If a file is successfully opened with this option set it will truncate
+    /// the file to 0 length if it already exists.
+    ///
+    /// The file must be opened with write access for truncate to work.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::OpenOptions;
+    ///
+    /// let file = OpenOptions::new().write(true).truncate(true).open("foo.txt");
+    /// ```
+    pub fn truncate(&mut self, truncate: bool) -> &mut OpenOptions {
+        self.inner.truncate(truncate);
         self
     }
+
+    /// Opens a file at `path` with the options specified by `self`.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error under a number of different
+    /// circumstances. Some of these error conditions are listed here, together
+    /// with their [`ErrorKind`]. The mapping to [`ErrorKind`]s is not part of
+    /// the compatibility contract of the function, especially the `Other` kind
+    /// might change to more specific kinds in the future.
+    ///
+    /// * [`NotFound`]: The specified file does not exist and neither `create`
+    ///   or `create_new` is set.
+    /// * [`NotFound`]: One of the directory components of the file path does
+    ///   not exist.
+    /// * [`PermissionDenied`]: The user lacks permission to get the specified
+    ///   access rights for the file.
+    /// * [`PermissionDenied`]: The user lacks permission to open one of the
+    ///   directory components of the specified path.
+    /// * [`AlreadyExists`]: `create_new` was specified and the file already
+    ///   exists.
+    /// * [`InvalidInput`]: Invalid combinations of open options (truncate
+    ///   without write access, no access mode set, etc.).
+    /// * [`Other`]: One of the directory components of the specified file path
+    ///   was not, in fact, a directory.
+    /// * [`Other`]: Filesystem-level errors: full disk, write permission
+    ///   requested on a read-only file system, exceeded disk quota, too many
+    ///   open files, too long filename, too many symbolic links in the
+    ///   specified path (Unix-like systems only), etc.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::OpenOptions;
+    ///
+    /// let file = OpenOptions::new().open("foo.txt");
+    /// ```
     pub fn open<P: AsRef<Path>>(&self, path: P) -> Result<File> {
-        Ok(File(Mutex::new(FileInner {
+        Ok(File(Arc::new(Mutex::new(FileInner {
             path: path.as_ref().to_path_buf(),
             inner: self.inner.open(path)?,
             stable: vec![],
             updates: vec![],
             is_crashing: false,
-        })))
+        }))))
     }
 }
 
-#[derive(Debug)]
-pub struct File(Mutex<FileInner>);
+/// A file with the ability to be "crashed" during test mode.
+#[derive(Clone, Debug)]
+pub struct File(Arc<Mutex<FileInner>>);
 
 
 #[cfg(unix)]
@@ -184,7 +330,7 @@ impl Read for File {
         self.with_inner(|f| f.read(buf))
     }
 
-    fn read_exact(&mut self, mut buf: &mut [u8]) -> Result<()> {
+    fn read_exact(&mut self, buf: &mut [u8]) -> Result<()> {
         self.with_inner(|f| f.read_exact(buf))
     }
 }
@@ -379,9 +525,4 @@ impl Write for FileInner {
 
         self.inner.flush()
     }
-}
-
-#[derive(Default, Debug)]
-pub struct Filesystem {
-    files: HashMap<PathBuf, File>,
 }
