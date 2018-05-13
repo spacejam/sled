@@ -43,7 +43,9 @@ pub trait Reactor: Debug + Clone {
         msg: Self::Message,
     ) -> Vec<(Self::Peer, Self::Message)>;
 
-    fn periodic(&mut self) -> Vec<(Self::Peer, Self::Message)>;
+    fn periodic(&mut self) -> Vec<(Self::Peer, Self::Message)> {
+        unimplemented!()
+    }
 }
 
 thread_local! {
