@@ -84,7 +84,6 @@
 //!     }
 //! }
 //! ```
-extern crate deterministic;
 extern crate permutohedron;
 
 use std::ops::Deref;
@@ -193,29 +192,24 @@ macro_rules! linearizable {
         }
 
         fn arb() -> BoxedStrategy<(usize, Vec<Op>)> {
-            (any::<usize>(), prop_vec(
+            prop_vec(
                 prop_oneof![
                     $(
                         $strategy.prop_map(Op::$op)
                     ),*
                 ],
-                0..4,
-            )).boxed()
+                1..4,
+            )
+                .prop_flat_map(|ops| (0..ops.len(), Just(ops)))
+                .boxed()
         }
 
         let config = Config::with_cases(10000).clone_with_source_file(file!());
         let mut runner = TestRunner::new(config);
 
-        match runner.run(&arb(), |&(seed, ref ops)| {
+        match runner.run(&arb(), |&(split_point, ref ops)| {
             $implementation;
 
-            if ops.is_empty() {
-                return Ok(())
-            }
-
-            model::deterministic_set_seed(seed);
-            let mut rng = model::thread_rng();
-            let split_point = rng.gen_range(0, ops.len());
             let ops1 = ops[0..split_point].to_vec();
             let ops2 = ops[split_point..].to_vec();
 
@@ -294,14 +288,6 @@ macro_rules! linearizable {
             Err(e) =>  panic!("{}\n{}", e, runner),
         }
     }
-}
-
-pub fn deterministic_set_seed(seed: usize) {
-    deterministic::set_seed(seed)
-}
-
-pub fn thread_rng() -> deterministic::Rand {
-    deterministic::thread_rng()
 }
 
 pub fn permutohedron_heap<'a, Data, T>(
