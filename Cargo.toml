@@ -5,6 +5,7 @@ members = [
   "bindings/sled-native",
   "crates/deterministic",
   "crates/model",
+  "crates/simulator",
   "tests"
 ]
 exclude = [
