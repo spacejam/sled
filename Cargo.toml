@@ -2,13 +2,13 @@
 members = [
   "crates/pagecache",
   "crates/sled",
-  "bindings/sled-native",
-  "crates/deterministic",
-  "crates/model",
   "tests"
 ]
 exclude = [
+  "crates/deterministic",
+  "crates/model",
   "benchmarks/stress2",
-  "examples/pessimistic_transactions",
+  "bindings/sled-native",
   "examples/crdt_merge_store",
+  "examples/pessimistic_transactions",
 ]
