@@ -27,7 +27,7 @@ pub mod file;
 /// A trait for building networked systems
 /// that can be plugged into simulated networks
 /// and partition tested in accelerated time.
-pub trait Reactor: Debug + Clone {
+pub trait Reactor: Sized {
     type Peer: std::net::ToSocketAddrs;
     type Message: Serialize + DeserializeOwned;
     type Config;

@@ -1,0 +1,14 @@
+[package]
+name = "fortress"
+version = "0.0.1"
+authors = ["Tyler Neely <t@jujit.su>"]
+description = "dwarf-fortress style visualizable simulation of faulty programs"
+license = "MIT/Apache-2.0"
+homepage = "https://github.com/spacejam/sled/tree/master/crates/fortress"
+repository = "https://github.com/spacejam/sled"
+keywords = ["testing", "realtime-scheduler", "visualization"]
+documentation = "https://docs.rs/fortress/"
+
+[dependencies]
+deterministic = {version = "0.0.5", path = "../deterministic"}
+simulator = {version = "0.0.1", path = "../simulator"}

@@ -1,6 +1,9 @@
+#[macro_use]
+extern crate proptest;
 extern crate deterministic;
 
 use deterministic::{Reactor, now, set_time};
+use proptest::prelude::*;
 
 #[macro_export]
 macro_rules! simulate {
@@ -34,45 +37,20 @@ impl Arbitrary for Cluster {
 }
 
 #[derive(Debug, Clone)]
-struct Cluster {
-    peers: HashMap<String, impl Reactor>,
+struct Cluster<R>
+    where R: Reactor
+{
+    peers: HashMap<String, R>,
     partitions: Vec<Partition>,
     in_flight: BinaryHeap<Event>,
 }
 
-unsafe impl Send for Cluster {}
+unsafe impl<R> Send for Cluster<R> {}
 
 impl Cluster {
     fn step(&mut self) -> Option<()> {
         let pop = self.in_flight.pop();
-        if let Some(sm) = pop {
-            if sm.to.starts_with("client:") {
-                // We'll check linearizability later
-                // for client responses.
-                self.client_responses.push(sm);
-                return Some(());
-            }
-            let mut node = self.peers.remove(&sm.to).unwrap();
-            for (to, msg) in node.receive(sm.at, sm.from, sm.msg) {
-                let from = &*sm.to;
-                if self.is_partitioned(sm.at, &*to, from) {
-                    // don't push this message on the priority queue
-                    continue;
-                }
-                // TODO clock messin'
-                let new_sm = ScheduledMessage {
-                    at: sm.at.add(Duration::new(0, 1)),
-                    from: sm.to.clone(),
-                    to: to,
-                    msg: msg,
-                };
-                self.in_flight.push(new_sm);
-            }
-            self.peers.insert(sm.to, node);
-            Some(())
-        } else {
-            None
-        }
+        None
     }
 
     fn is_partitioned(&mut self, at: SystemTime, to: &str, from: &str) -> bool {
@@ -102,18 +80,4 @@ impl Cluster {
 
         ret
     }
-}
-
-fn arb<R>() -> BoxedStrategy<Cluster>
-    where R: Reactor
-{
-    prop_vec(
-        prop_oneof![
-            $(
-                $strategy.prop_map(Op::$op)
-            ),*
-        ],
-        1..4,
-    ).prop_flat_map(|ops| (0..ops.len(), Just(ops)))
-        .boxed()
 }
