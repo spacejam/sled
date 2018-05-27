@@ -94,7 +94,7 @@ fn parallel_tree_ops() {
 #[test]
 fn tree_subdir() {
     let config = ConfigBuilder::new()
-        .path("test_tree_subdir/test_subdir".to_owned())
+        .path("/tmp/test_tree_subdir/test_subdir".to_owned())
         .build();
     let t = sled::Tree::start(config).unwrap();
 
@@ -103,7 +103,7 @@ fn tree_subdir() {
     drop(t);
 
     let config = ConfigBuilder::new()
-        .path("test_tree_subdir/test_subdir".to_owned())
+        .path("/tmp/test_tree_subdir/test_subdir".to_owned())
         .build();
     let t = sled::Tree::start(config).unwrap();
 
@@ -111,7 +111,7 @@ fn tree_subdir() {
 
     drop(t);
 
-    std::fs::remove_dir_all("test_tree_subdir").unwrap();
+    std::fs::remove_dir_all("/tmp/test_tree_subdir").unwrap();
 
     assert_eq!(res, Ok(Some(vec![1])));
 }
@@ -370,6 +370,7 @@ fn prop_tree_matches_btreemap(
 }
 
 #[test]
+#[ignore]
 fn quickcheck_tree_matches_btreemap() {
     // use fewer tests for travis OSX builds that stall out all the time
     #[cfg(target_os = "macos")]
