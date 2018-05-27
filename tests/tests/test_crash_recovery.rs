@@ -1,4 +1,4 @@
-#![cfg(all(not(target_os = "fuschia"), not(target_os = "android")))]
+#![cfg(all(not(target_os = "fuchsia"), not(target_os = "android")))]
 
 extern crate pagecache;
 extern crate sled;
