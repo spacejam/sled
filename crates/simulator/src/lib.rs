@@ -1,26 +1,32 @@
-#[macro_use]
-extern crate proptest;
 extern crate deterministic;
+extern crate quickcheck;
 
-use deterministic::{Reactor, now, set_time};
-use proptest::prelude::*;
+use std::collections::{BinaryHeap, HashMap};
+use std::fmt::Debug;
+use std::time::{Duration, SystemTime};
+use std::ops::Add;
+
+use deterministic::Reactor;
+use quickcheck::{Arbitrary, Gen};
 
 #[macro_export]
 macro_rules! simulate {
     () => {}
 }
 
-impl Arbitrary for Cluster {
-    fn arbitrary<G: Gen>(g: &mut G) -> Self {
+impl<R> Arbitrary for Cluster<R>
+    where R: 'static + Reactor + Clone,
+          R::Peer: Debug + Clone
+{
+    fn arbitrary<G: Gen>(_g: &mut G) -> Self {
         Cluster {
-            peers: vec![],
+            peers: HashMap::new(),
             partitions: vec![],
             in_flight: vec![].into_iter().collect(),
-            client_responses: vec![],
         }
     }
 
-    fn shrink(&self) -> Box<Iterator<Item = Cluster>> {
+    fn shrink(&self) -> Box<Iterator<Item = Cluster<R>>> {
         let mut ret = vec![];
 
         for i in 0..self.in_flight.len() {
@@ -37,23 +43,49 @@ impl Arbitrary for Cluster {
 }
 
 #[derive(Debug, Clone)]
-struct Cluster<R>
+struct Partition<R>
     where R: Reactor
 {
+    at: SystemTime,
+    duration: Duration,
+    from: R::Peer,
+    to: R::Peer,
+}
+
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone)]
+struct Event;
+
+#[derive(Debug, Clone)]
+struct Cluster<R>
+    where R: Reactor + Clone,
+          R::Peer: Debug + Clone
+{
     peers: HashMap<String, R>,
-    partitions: Vec<Partition>,
+    partitions: Vec<Partition<R>>,
     in_flight: BinaryHeap<Event>,
 }
 
-unsafe impl<R> Send for Cluster<R> {}
+unsafe impl<R> Send for Cluster<R>
+    where R: Reactor + Clone,
+          R::Peer: Debug + Clone
+{
+}
 
-impl Cluster {
-    fn step(&mut self) -> Option<()> {
-        let pop = self.in_flight.pop();
+impl<R> Cluster<R>
+    where R: Reactor + Clone,
+          R::Peer: Eq + Clone + Debug
+{
+    fn _step(&mut self) -> Option<()> {
+        let _pop = self.in_flight.pop();
         None
     }
 
-    fn is_partitioned(&mut self, at: SystemTime, to: &str, from: &str) -> bool {
+    fn _is_partitioned(
+        &mut self,
+        at: SystemTime,
+        to: R::Peer,
+        from: R::Peer,
+    ) -> bool {
         let mut to_clear = vec![];
         let mut ret = false;
         for (i, partition) in self.partitions.iter().enumerate() {
@@ -67,7 +99,7 @@ impl Cluster {
             }
 
             // the partition is in effect at this time
-            if &*partition.to == to && &*partition.from == from {
+            if partition.to == to && partition.from == from {
                 ret = true;
                 break;
             }

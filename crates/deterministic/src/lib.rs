@@ -10,7 +10,6 @@ extern crate rand;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::sync::{Arc, Mutex};
 use std::cell::RefCell;
-use std::fmt::Debug;
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
