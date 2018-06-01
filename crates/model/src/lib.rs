@@ -12,7 +12,7 @@
 //!
 //! model-based testing:
 //!
-//! ```noexecute
+//! ```rust,noexecute
 //! #[macro_use]
 //! extern crate model;
 //! #[macro_use]
@@ -53,7 +53,7 @@
 //!
 //! linearizability testing:
 //!
-//! ```noexecute
+//! ```rust,noexecute
 //! #[macro_use]
 //! extern crate model;
 //! #[macro_use]
