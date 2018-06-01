@@ -1,4 +1,3 @@
-#[macro_use]
 extern crate simulator;
 extern crate deterministic;
 extern crate bincode;
@@ -7,9 +6,8 @@ extern crate serde;
 extern crate serde_derive;
 
 use std::collections::HashMap;
-use std::time::SystemTime;
 
-use deterministic::{Reactor, now, set_time};
+use deterministic::Reactor;
 
 type ReqId = usize;
 
@@ -28,7 +26,6 @@ struct Pending {
     rejected: usize,
     from: String,
     their_req_id: usize,
-    arrived: SystemTime,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -57,7 +54,6 @@ impl IdGen {
                 rejected: 0,
                 from: from,
                 their_req_id: their_req_id,
-                arrived: now(),
             },
         );
         self.peers
@@ -177,10 +173,6 @@ impl Reactor for IdGen {
 
 #[test]
 fn idgen_is_linearizable() {
-    use std::sync::atomic::{ATOMIC_USIZE_INIT, AtomicUsize, Ordering::SeqCst};
-
-    static REQ_COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
-
     /*
     simulate! {
         IdGen 1..3,
