@@ -7,10 +7,9 @@ extern crate serde;
 extern crate libc;
 extern crate rand;
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::sync::{Arc, Mutex};
 use std::cell::RefCell;
-use std::fmt::Debug;
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -27,19 +26,24 @@ pub mod file;
 /// A trait for building networked systems
 /// that can be plugged into simulated networks
 /// and partition tested in accelerated time.
-pub trait Reactor: Debug + Clone {
+pub trait Reactor: Sized {
     type Peer: std::net::ToSocketAddrs;
     type Message: Serialize + DeserializeOwned;
+    type Config;
+    type Error;
+
+    const PERIODIC_INTERVAL: Option<Duration> = None;
+
+    fn start(config: Self::Config) -> Result<Self, Self::Error>;
 
     fn receive(
         &mut self,
-        at: SystemTime,
         from: Self::Peer,
         msg: Self::Message,
     ) -> Vec<(Self::Peer, Self::Message)>;
 
-    fn tick(&mut self, _at: SystemTime) -> Vec<(Self::Peer, Self::Message)> {
-        vec![]
+    fn periodic(&mut self) -> Vec<(Self::Peer, Self::Message)> {
+        unimplemented!()
     }
 }
 
@@ -59,4 +63,4 @@ mod context;
 
 use context::Context;
 
-pub use context::{Rand, now, seed, set_seed, set_time, thread_rng};
+pub use context::{Rand, now, seed, set_seed, set_time, sleep, thread_rng};

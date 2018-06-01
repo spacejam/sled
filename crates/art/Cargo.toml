@@ -1,0 +1,22 @@
+[package]
+name = "art"
+version = "0.0.1"
+authors = ["Tyler Neely <t@jujit.su>"]
+description = "concurrent adaptive radix tree"
+license = "MIT/Apache-2.0"
+homepage = "https://github.com/spacejam/sled/tree/master/crates/art"
+repository = "https://github.com/spacejam/sled"
+keywords = ["database", "embedded", "concurrent", "lock-free"]
+documentation = "https://docs.rs/art/"
+
+[features]
+default = []
+lock_free_delays = ["rand"]
+
+[dependencies]
+rand = {version = "0.4", optional = true}
+crossbeam-epoch = "0.4"
+
+[dev-dependencies]
+quickcheck = "0.6"
+rand = "0.4"
