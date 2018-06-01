@@ -2,14 +2,14 @@
 members = [
   "crates/pagecache",
   "crates/sled",
-  "bindings/sled-native",
   "tests"
 ]
 exclude = [
+  "benchmarks/stress2",
+  "bindings/sled-native",
   "crates/deterministic",
   "crates/model",
   "crates/simulator",
-  "benchmarks/stress2",
-  "examples/pessimistic_transactions",
   "examples/crdt_merge_store",
+  "examples/pessimistic_transactions",
 ]
