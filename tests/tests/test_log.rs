@@ -221,6 +221,7 @@ fn log_iterator() {
 }
 
 #[test]
+#[cfg(not(target_os = "fuchsia"))]
 fn log_chunky_iterator() {
     let mut threads = vec![];
     for _ in 0..100 {

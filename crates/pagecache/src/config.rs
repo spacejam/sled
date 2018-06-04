@@ -114,7 +114,7 @@ impl Default for ConfigBuilder {
         let tmp_path = format!("/dev/shm/pagecache.tmp.{}", salt);
 
         #[cfg(not(target_os = "linux"))]
-        let tmp_path = format!("pagecache.tmp.{}", salt);
+        let tmp_path = format!("/tmp/pagecache.tmp.{}", salt);
 
         ConfigBuilder {
             io_bufs: 3,
