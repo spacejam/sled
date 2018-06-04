@@ -12,7 +12,7 @@
 //!
 //! model-based testing:
 //!
-//! ```noexecute
+//! ```rust,noexecute
 //! #[macro_use]
 //! extern crate model;
 //! #[macro_use]
@@ -53,7 +53,7 @@
 //!
 //! linearizability testing:
 //!
-//! ```noexecute
+//! ```rust,noexecute
 //! #[macro_use]
 //! extern crate model;
 //! #[macro_use]
@@ -123,6 +123,19 @@ macro_rules! model {
         Implementation => $implementation:stmt,
         $($op:ident ($($type:ty),*) ($parm:pat in $strategy:expr) => $body:expr),*
     ) => {
+        model! {
+            Config => Config::with_cases(1000).clone_with_source_file(file!()),
+            Model => $model,
+            Implementation => $implementation,
+            $($op ($($type),*) ($parm in $strategy) => $body),*
+        }
+    };
+    (
+        Config => $config:expr,
+        Model => $model:stmt,
+        Implementation => $implementation:stmt,
+        $($op:ident ($($type:ty),*) ($parm:pat in $strategy:expr) => $body:expr),*
+    ) => {
         use proptest::collection::vec as prop_vec;
         use proptest::prelude::*;
         use proptest::test_runner::{Config, TestRunner};
@@ -145,7 +158,7 @@ macro_rules! model {
             ).boxed()
         }
 
-        let config = Config::with_cases(1000).clone_with_source_file(file!());
+        let config = $config;
         let mut runner = TestRunner::new(config);
 
         match runner.run(&arb(), |ops| {

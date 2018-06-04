@@ -1,5 +1,6 @@
-use std::path::PathBuf;
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Condvar;
 
 use rand::{Rng, SeedableRng, StdRng};
 
@@ -13,6 +14,7 @@ struct ContextInner {
     seed: Option<usize>,
     rng: StdRng,
     clock: SystemTime,
+    time_updated: Arc<Condvar>,
     filesystem: Filesystem,
 }
 
@@ -31,7 +33,23 @@ fn with_context<B, F>(f: F) -> B
 
 /// set the time for this thread and its `spawn`ed descendents
 pub fn set_time(now: SystemTime) {
-    with_context(|c| c.clock = now);
+    with_context(|c| {
+        c.clock = now;
+        c.time_updated.notify_all();
+    });
+}
+
+pub fn sleep(dur: Duration) {
+    let context_mu = context();
+    let mut context =
+        context_mu.0.lock().expect("context should not be poisoned");
+    let time_updated = context.time_updated.clone();
+    let wakeup = context.clock + dur;
+    while context.clock < wakeup {
+        context = time_updated.wait(context).expect(
+            "context should not be poisoned",
+        );
+    }
 }
 
 pub fn seed() -> usize {
@@ -77,6 +95,7 @@ impl Default for ContextInner {
         ContextInner {
             seed: None,
             clock: UNIX_EPOCH,
+            time_updated: Arc::new(Condvar::new()),
             rng: SeedableRng::from_seed(seed),
             filesystem: Filesystem::default(),
         }

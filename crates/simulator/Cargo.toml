@@ -1,0 +1,18 @@
+[package]
+name = "simulator"
+version = "0.0.1"
+authors = ["Tyler Neely <t@jujit.su>"]
+description = "network partition, file fault, and power failure simulator"
+license = "MIT/Apache-2.0"
+homepage = "https://github.com/spacejam/sled/tree/master/crates/simulator"
+repository = "https://github.com/spacejam/sled"
+keywords = ["testing", "realtime-scheduler", "simulation", "model-checking"]
+documentation = "https://docs.rs/simulator/"
+
+[dependencies]
+deterministic = {version = "0.0.10", path = "../deterministic"}
+bincode = "1.0"
+serde = "1.0"
+serde_derive = "1.0"
+quickcheck = "0.6"
+proptest = "0.7"

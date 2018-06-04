@@ -5,10 +5,11 @@ members = [
   "tests"
 ]
 exclude = [
-  "crates/deterministic",
-  "crates/model",
   "benchmarks/stress2",
   "bindings/sled-native",
+  "crates/deterministic",
+  "crates/model",
+  "crates/simulator",
   "examples/crdt_merge_store",
   "examples/pessimistic_transactions",
 ]

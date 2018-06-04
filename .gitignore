@@ -16,3 +16,4 @@ target
 Cargo.lock
 *swp
 *swo
+*.proptest-regressions
