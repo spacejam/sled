@@ -206,7 +206,7 @@ pub struct PageCache<PM, P, R>
 {
     t: Arc<PM>,
     config: Config,
-    inner: Radix<Stack<CacheEntry<P>>>,
+    inner: PageTable<Stack<CacheEntry<P>>>,
     max_pid: AtomicUsize,
     free: Arc<Mutex<BinaryHeap<PageID>>>,
     log: Log,
@@ -265,7 +265,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         let mut pc = PageCache {
             t: materializer,
             config: config.clone(),
-            inner: Radix::default(),
+            inner: PageTable::default(),
             max_pid: AtomicUsize::new(0),
             free: Arc::new(Mutex::new(BinaryHeap::new())),
             log: Log::start(config, snapshot.clone())?,

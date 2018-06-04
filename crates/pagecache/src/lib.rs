@@ -5,9 +5,11 @@
 #![cfg_attr(feature="clippy", plugin(clippy))]
 #![cfg_attr(feature="clippy", allow(inline_always))]
 #![cfg_attr(feature="nightly", feature(integer_atomics))]
-#[cfg(all(not(feature="nightly"), target_pointer_width = "32"))]
-compile_error!("32 bit architectures require a nightly compiler for now.
-               See https://github.com/spacejam/sled/issues/145");
+#[cfg(all(not(feature = "nightly"), target_pointer_width = "32"))]
+compile_error!(
+    "32 bit architectures require a nightly compiler for now.
+               See https://github.com/spacejam/sled/issues/145"
+);
 
 #[macro_use]
 extern crate serde_derive;
@@ -30,7 +32,9 @@ extern crate libc;
 #[cfg(feature = "failpoints")]
 #[macro_use]
 extern crate fail;
+extern crate pagetable;
 
+use pagetable::PageTable;
 pub use ds::{Radix, Stack};
 
 /// general-purpose configuration
