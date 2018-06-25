@@ -165,7 +165,7 @@ impl<T> Error<T> {
 
     /// Turns an `Error<A>` into an `Error<B>`.
     pub fn cast<Other>(self) -> Error<Other>
-        where Other: From<T>
+        where T: Into<Other>
     {
         match self {
             CasFailed(other) => CasFailed(other.into()),
