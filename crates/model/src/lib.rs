@@ -10,6 +10,13 @@
 //! trying to find a sequential ordering that results
 //! in the same return values.
 //!
+//! **important**: the crate makes use of
+//! [proptest](https://crates.io/crates/proptest) via
+//! macros. ensure that you are using the same version
+//! of `proptest` that `model` lists in `Cargo.toml`,
+//! otherwise mismatched API change will manifest as
+//! strange compile-time errors hidden in macros.
+//!
 //! model-based testing:
 //!
 //! ```rust,noexecute
