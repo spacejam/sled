@@ -65,7 +65,7 @@
 //!
 //!# fn main() {
 //! linearizable! {
-//!     Implementation => let i = Shared::new(AtomicUsize::new(0)),
+//!     Implementation => let i = model::Shared::new(AtomicUsize::new(0)),
 //!     BuggyAdd(usize)(v in 0usize..4) -> usize {
 //!         let current = i.load(Ordering::SeqCst);
 //!         thread::yield_now();
