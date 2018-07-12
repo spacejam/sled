@@ -12,7 +12,7 @@
 //!
 //! model-based testing:
 //!
-//! ```rust,noexecute
+//! ```no_run
 //! #[macro_use]
 //! extern crate model;
 //! #[macro_use]
@@ -20,6 +20,7 @@
 //!
 //! use std::sync::atomic::{AtomicUsize, Ordering};
 //!
+//!# fn main() {
 //! model! {
 //!     Model => let m = AtomicUsize::new(0),
 //!     Implementation => let mut i: usize = 0,
@@ -49,11 +50,12 @@
 //!         assert_eq!(expected, actual);
 //!     }
 //! }
+//!# }
 //! ```
 //!
 //! linearizability testing:
 //!
-//! ```rust,noexecute
+//! ```no_run
 //! #[macro_use]
 //! extern crate model;
 //! #[macro_use]
@@ -61,8 +63,9 @@
 //!
 //! use std::sync::atomic::{AtomicUsize, Ordering};
 //!
+//!# fn main() {
 //! linearizable! {
-//!     Implementation => let i = Shared::new(AtomicUsize::new(0)),
+//!     Implementation => let i = model::Shared::new(AtomicUsize::new(0)),
 //!     BuggyAdd(usize)(v in 0usize..4) -> usize {
 //!         let current = i.load(Ordering::SeqCst);
 //!         thread::yield_now();
@@ -83,6 +86,7 @@
 //!         }
 //!     }
 //! }
+//!# }
 //! ```
 extern crate permutohedron;
 
