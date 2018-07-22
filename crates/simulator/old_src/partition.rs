@@ -15,7 +15,8 @@ impl Partition {
         proposers: usize,
         acceptors: usize,
     ) -> Self {
-        static NAMES: [&'static str; 3] = ["client:", "proposer:", "acceptor:"];
+        static NAMES: [&'static str; 3] =
+            ["client:", "proposer:", "acceptor:"];
 
         let from_choice = g.gen_range(0, 3);
         let mut to_choice = g.gen_range(0, 3);
@@ -24,7 +25,8 @@ impl Partition {
             to_choice = g.gen_range(0, 3);
         }
 
-        let at = UNIX_EPOCH.add(Duration::new(0, g.gen_range(0, 100)));
+        let at =
+            UNIX_EPOCH.add(Duration::new(0, g.gen_range(0, 100)));
         let duration = Duration::new(0, g.gen_range(0, 100));
 
         let mut n = |choice| match choice {
@@ -34,7 +36,8 @@ impl Partition {
             _ => panic!("too high"),
         };
 
-        let from = format!("{}{}", NAMES[from_choice], n(from_choice));
+        let from =
+            format!("{}{}", NAMES[from_choice], n(from_choice));
         let to = format!("{}{}", NAMES[to_choice], n(to_choice));
         Partition {
             at: at,

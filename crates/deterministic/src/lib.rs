@@ -3,13 +3,13 @@
 // #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
 
-extern crate serde;
 extern crate libc;
 extern crate rand;
+extern crate serde;
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::sync::{Arc, Mutex};
 use std::cell::RefCell;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -63,4 +63,6 @@ mod context;
 
 use context::Context;
 
-pub use context::{Rand, now, seed, set_seed, set_time, sleep, thread_rng};
+pub use context::{
+    now, seed, set_seed, set_time, sleep, thread_rng, Rand,
+};

@@ -14,7 +14,10 @@ impl Materializer for BLinkMaterializer {
     // a vector of (root, prev root) for deterministic recovery
     type Recovery = Vec<(PageID, PageID)>;
 
-    fn new(config: Config, last_roots: &Option<Self::Recovery>) -> Self {
+    fn new(
+        config: Config,
+        last_roots: &Option<Self::Recovery>,
+    ) -> Self {
         let roots: Vec<(PageID, PageID)> =
             last_roots.clone().unwrap_or_else(|| vec![]);
 

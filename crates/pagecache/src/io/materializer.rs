@@ -15,14 +15,17 @@ pub trait Materializer {
 
     #[doc(hidden)]
     fn is_null() -> bool
-        where Self: Sized
+    where
+        Self: Sized,
     {
         false
     }
 
     /// Create a new `Materializer` with the previously recovered
     /// state if any existed.
-    fn new(Config, &Option<Self::Recovery>) -> Self where Self: Sized;
+    fn new(Config, &Option<Self::Recovery>) -> Self
+    where
+        Self: Sized;
 
     /// Used to merge chains of partial pages into a form
     /// that is useful for the `PageCache` owner.

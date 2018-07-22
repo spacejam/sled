@@ -8,14 +8,20 @@ use super::Pio;
 use super::*;
 
 pub(crate) trait LogReader {
-    fn read_segment_header(&self, id: LogID) -> CacheResult<SegmentHeader, ()>;
+    fn read_segment_header(
+        &self,
+        id: LogID,
+    ) -> CacheResult<SegmentHeader, ()>;
 
     fn read_segment_trailer(
         &self,
         id: LogID,
     ) -> CacheResult<SegmentTrailer, ()>;
 
-    fn read_message_header(&self, id: LogID) -> CacheResult<MessageHeader, ()>;
+    fn read_message_header(
+        &self,
+        id: LogID,
+    ) -> CacheResult<MessageHeader, ()>;
 
     fn read_message(
         &self,
@@ -68,24 +74,31 @@ impl LogReader for File {
         _use_compression: bool,
     ) -> CacheResult<LogRead, ()> {
         let _measure = Measure::new(&M.read);
-        let seg_start = lid / segment_len as LogID * segment_len as LogID;
-        trace!("reading message from segment: {} at lid: {}", seg_start, lid);
+        let seg_start =
+            lid / segment_len as LogID * segment_len as LogID;
+        trace!(
+            "reading message from segment: {} at lid: {}",
+            seg_start,
+            lid
+        );
         assert!(seg_start + SEG_HEADER_LEN as LogID <= lid);
 
-        let ceiling = seg_start + segment_len as LogID -
-            SEG_TRAILER_LEN as LogID;
+        let ceiling = seg_start + segment_len as LogID
+            - SEG_TRAILER_LEN as LogID;
 
         assert!(lid + MSG_HEADER_LEN as LogID <= ceiling);
 
         let header = self.read_message_header(lid)?;
 
-        if header.lsn as usize % segment_len != lid as usize % segment_len {
+        if header.lsn as usize % segment_len
+            != lid as usize % segment_len
+        {
             // our message lsn was not aligned to our segment offset
             return Ok(LogRead::Corrupted(header.len));
         }
 
-        let max_possible_len = (ceiling - lid - MSG_HEADER_LEN as LogID) as
-            usize;
+        let max_possible_len =
+            (ceiling - lid - MSG_HEADER_LEN as LogID) as usize;
         if header.len > max_possible_len {
             trace!("read a corrupted message of len {}", header.len);
             return Ok(LogRead::Corrupted(header.len));

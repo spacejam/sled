@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate quickcheck;
-extern crate rand;
 extern crate art;
+extern crate rand;
 
 use self::quickcheck::{Arbitrary, Gen};
 

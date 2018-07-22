@@ -1,14 +1,15 @@
+extern crate deterministic;
 /// Simulation for network partitions. Like Jepsen but thousands of times faster.
 extern crate quickcheck;
 extern crate rand;
-extern crate deterministic;
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::time::{Duration, SystemTime};
 
 struct Event<S>
-    where S: Simulable
+where
+    S: Simulable,
 {
     at: SystemTime,
     action: Action<S>,
@@ -18,8 +19,9 @@ struct Event<S>
 // act like a min-heap on time, rather than the default
 // max-heap, so time progresses forwards.
 impl<A> Ord for Event<A>
-    where Event<A>: Eq,
-          A: Simulable
+where
+    Event<A>: Eq,
+    A: Simulable,
 {
     fn cmp(&self, other: &Event<A>) -> Ordering {
         other.at.cmp(&self.at)
@@ -27,8 +29,9 @@ impl<A> Ord for Event<A>
 }
 
 impl<A> PartialOrd for Event<A>
-    where Event<A>: PartialEq + Ord,
-          A: Simulable
+where
+    Event<A>: PartialEq + Ord,
+    A: Simulable,
 {
     fn partial_cmp(&self, other: &Event<A>) -> Option<Ordering> {
         Some(self.cmp(other))
@@ -36,7 +39,8 @@ impl<A> PartialOrd for Event<A>
 }
 
 enum Action<S>
-    where S: Simulable
+where
+    S: Simulable,
 {
     Invocation(S::Invocation),
     Response(S::Response),
@@ -51,7 +55,8 @@ enum Action<S>
 }
 
 struct Simulator<S>
-    where S: Simulable
+where
+    S: Simulable,
 {
     actors: HashMap<S::Addr, S>,
     queue: BinaryHeap<Event<S>>,

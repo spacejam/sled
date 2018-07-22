@@ -1,10 +1,10 @@
 // lock-free stack
 use std::fmt::{self, Debug};
-use std::ptr;
 use std::ops::Deref;
+use std::ptr;
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 
-use epoch::{Atomic, Guard, Owned, Shared, pin, unprotected};
+use epoch::{pin, unprotected, Atomic, Guard, Owned, Shared};
 
 use debug_delay;
 
@@ -18,7 +18,8 @@ pub struct Node<T: Send + 'static> {
 impl<T: Send + 'static> Drop for Node<T> {
     fn drop(&mut self) {
         unsafe {
-            let next = self.next.load(Relaxed, unprotected()).as_raw();
+            let next =
+                self.next.load(Relaxed, unprotected()).as_raw();
             if !next.is_null() {
                 drop(Box::from_raw(next as *mut Node<T>));
             }
@@ -43,7 +44,8 @@ impl<T: Send + 'static> Default for Stack<T> {
 impl<T: Send + 'static> Drop for Stack<T> {
     fn drop(&mut self) {
         unsafe {
-            let curr = self.head.load(Relaxed, unprotected()).as_raw();
+            let curr =
+                self.head.load(Relaxed, unprotected()).as_raw();
             if !curr.is_null() {
                 drop(Box::from_raw(curr as *mut Node<T>));
             }
@@ -52,9 +54,13 @@ impl<T: Send + 'static> Drop for Stack<T> {
 }
 
 impl<T> Debug for Stack<T>
-    where T: Debug + Send + 'static + Sync
+where
+    T: Debug + Send + 'static + Sync,
 {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+    fn fmt(
+        &self,
+        formatter: &mut fmt::Formatter,
+    ) -> Result<(), fmt::Error> {
         let guard = pin();
         let head = self.head(&guard);
         let iter = StackIter::from_ptr(head, &guard);
@@ -65,7 +71,8 @@ impl<T> Debug for Stack<T>
             if written {
                 formatter.write_str(", ")?;
             }
-            formatter.write_str(&*format!("({:?}) ", &node as *const _))?;
+            formatter
+                .write_str(&*format!("({:?}) ", &node as *const _))?;
             node.fmt(formatter)?;
             written = true;
         }
@@ -97,7 +104,12 @@ impl<T: Send + 'static> Stack<T> {
                 let head = self.head(unprotected());
                 node.deref().next.store(head, SeqCst);
                 if self.head
-                    .compare_and_set(head, node, SeqCst, unprotected())
+                    .compare_and_set(
+                        head,
+                        node,
+                        SeqCst,
+                        unprotected(),
+                    )
                     .is_ok()
                 {
                     return;
@@ -115,14 +127,13 @@ impl<T: Send + 'static> Stack<T> {
             match unsafe { head.as_ref() } {
                 Some(h) => {
                     let next = h.next.load(SeqCst, &guard);
-                    match self.head.compare_and_set(
-                        head,
-                        next,
-                        SeqCst,
-                        &guard,
-                    ) {
+                    match self.head
+                        .compare_and_set(head, next, SeqCst, &guard)
+                    {
                         Ok(_) => unsafe {
-                            guard.defer(move || { head.into_owned(); });
+                            guard.defer(move || {
+                                head.into_owned();
+                            });
                             return Some(ptr::read(&h.inner));
                         },
                         Err(h) => head = h.current,
@@ -200,14 +211,16 @@ impl<T: Send + 'static> Stack<T> {
 
 /// An iterator over nodes in a lock-free stack.
 pub struct StackIter<'a, T>
-    where T: 'a + Send + 'static + Sync
+where
+    T: 'a + Send + 'static + Sync,
 {
     inner: Shared<'a, Node<T>>,
     guard: &'a Guard,
 }
 
 impl<'a, T> StackIter<'a, T>
-    where T: 'a + Send + 'static + Sync
+where
+    T: 'a + Send + 'static + Sync,
 {
     /// Creates a StackIter from a pointer to one.
     pub fn from_ptr<'b>(
@@ -222,7 +235,8 @@ impl<'a, T> StackIter<'a, T>
 }
 
 impl<'a, T> Iterator for StackIter<'a, T>
-    where T: Send + 'static + Sync
+where
+    T: Send + 'static + Sync,
 {
     type Item = &'a T;
     fn next(&mut self) -> Option<Self::Item> {
@@ -232,7 +246,8 @@ impl<'a, T> Iterator for StackIter<'a, T>
         } else {
             unsafe {
                 let ret = &self.inner.deref().inner;
-                self.inner = self.inner.deref().next.load(SeqCst, self.guard);
+                self.inner =
+                    self.inner.deref().next.load(SeqCst, self.guard);
                 Some(ret)
             }
         }
@@ -242,7 +257,8 @@ impl<'a, T> Iterator for StackIter<'a, T>
 /// Turns a vector of elements into a lock-free stack
 /// of them, and returns the head of the stack.
 pub fn node_from_frag_vec<T>(from: Vec<T>) -> Owned<Node<T>>
-    where T: Send + 'static + Sync
+where
+    T: Send + 'static + Sync,
 {
     let mut last = None;
 
@@ -264,8 +280,8 @@ pub fn node_from_frag_vec<T>(from: Vec<T>) -> Owned<Node<T>>
 
 #[test]
 fn basic_functionality() {
-    use std::thread;
     use std::sync::Arc;
+    use std::thread;
 
     let ll = Arc::new(Stack::default());
     assert_eq!(ll.pop(), None);
