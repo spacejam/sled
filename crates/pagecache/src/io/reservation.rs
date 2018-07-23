@@ -47,7 +47,10 @@ impl<'a> Reservation<'a> {
         self.lsn
     }
 
-    fn flush(&mut self, valid: bool) -> CacheResult<(Lsn, LogID), ()> {
+    fn flush(
+        &mut self,
+        valid: bool,
+    ) -> CacheResult<(Lsn, LogID), ()> {
         if self.flushed {
             panic!("flushing already-flushed reservation!");
         }

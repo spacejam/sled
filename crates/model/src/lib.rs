@@ -317,8 +317,9 @@ macro_rules! linearizable {
 pub fn permutohedron_heap<'a, Data, T>(
     orig: &'a mut Data,
 ) -> permutohedron::Heap<'a, Data, T>
-    where Data: 'a + Sized + AsMut<[T]>,
-          T: 'a
+where
+    Data: 'a + Sized + AsMut<[T]>,
+    T: 'a,
 {
     permutohedron::Heap::new(orig)
 }

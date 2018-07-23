@@ -1,32 +1,36 @@
 //! `pagecache` is a lock-free pagecache and log for building high-performance databases.
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
-#![cfg_attr(feature="clippy", feature(plugin))]
-#![cfg_attr(feature="clippy", plugin(clippy))]
-#![cfg_attr(feature="clippy", allow(inline_always))]
-#![cfg_attr(feature="nightly", feature(integer_atomics))]
-#[cfg(all(not(feature="nightly"), target_pointer_width = "32"))]
-compile_error!("32 bit architectures require a nightly compiler for now.
-               See https://github.com/spacejam/sled/issues/145");
+#![cfg_attr(feature = "clippy", feature(plugin))]
+#![cfg_attr(feature = "clippy", plugin(clippy))]
+#![cfg_attr(feature = "clippy", allow(inline_always))]
+#![cfg_attr(feature = "nightly", feature(integer_atomics))]
+#[cfg(all(not(feature = "nightly"), target_pointer_width = "32"))]
+compile_error!(
+    "32 bit architectures require a nightly compiler for now.
+               See https://github.com/spacejam/sled/issues/145"
+);
 
 #[macro_use]
 extern crate serde_derive;
-extern crate serde;
-extern crate crossbeam_epoch as epoch;
 extern crate bincode;
+extern crate crossbeam_epoch as epoch;
 extern crate historian;
+extern crate serde;
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
 extern crate log as _log;
+#[cfg(unix)]
+extern crate libc;
+#[cfg(
+    any(test, feature = "failpoints", feature = "lock_free_delays")
+)]
+extern crate rand;
 #[cfg(feature = "rayon")]
 extern crate rayon;
 #[cfg(feature = "zstd")]
 extern crate zstd;
-#[cfg(any(test, feature = "failpoints", feature = "lock_free_delays"))]
-extern crate rand;
-#[cfg(unix)]
-extern crate libc;
 #[cfg(feature = "failpoints")]
 #[macro_use]
 extern crate fail;
@@ -42,35 +46,33 @@ macro_rules! maybe_fail {
     ($e:expr) => {
         #[cfg(feature = "failpoints")]
         fail_point!($e, |_| Err(Error::FailPoint));
-    }
-}
-
-macro_rules! rep_no_copy {
-    ($e:expr; $n:expr) => {
-        {
-            let mut v = Vec::with_capacity($n);
-            for _ in 0..$n {
-                v.push($e);
-            }
-            v
-        }
     };
 }
 
+macro_rules! rep_no_copy {
+    ($e:expr; $n:expr) => {{
+        let mut v = Vec::with_capacity($n);
+        for _ in 0..$n {
+            v.push($e);
+        }
+        v
+    }};
+}
+
+mod config;
 /// auxilliary data structures
 mod ds;
-mod io;
-mod config;
 mod hash;
-mod periodic;
+mod io;
 mod metrics;
+mod periodic;
 mod result;
 
 // use log::{Iter, MessageHeader, SegmentHeader, SegmentTrailer};
-use metrics::Metrics;
 use ds::*;
 use hash::{crc16_arr, crc64};
 use historian::Histo;
+use metrics::Metrics;
 
 /// An offset for a storage file segment.
 pub type SegmentID = usize;
@@ -89,19 +91,24 @@ pub type Lsn = isize;
 pub type PageID = usize;
 
 /// A pointer to shared lock-free state bound by a pinned epoch's lifetime.
-pub type PagePtr<'g, P> = epoch::Shared<'g, ds::stack::Node<io::CacheEntry<P>>>;
+pub type PagePtr<'g, P> =
+    epoch::Shared<'g, ds::stack::Node<io::CacheEntry<P>>>;
 
 // This type exists to communicate that the underlying raw pointer in epoch::Shared
 // is Send in the restricted context of pulling data from disk in a parallel
 // way by rayon.
 #[derive(Debug, Clone, PartialEq)]
-struct RayonPagePtr<'g, P>(epoch::Shared<'g, ds::stack::Node<io::CacheEntry<P>>>)
-    where P: Send + 'static;
+struct RayonPagePtr<'g, P>(
+    epoch::Shared<'g, ds::stack::Node<io::CacheEntry<P>>>,
+)
+where
+    P: Send + 'static;
 
 use std::ops::Deref;
 
 impl<'g, P> Deref for RayonPagePtr<'g, P>
-    where P: Send
+where
+    P: Send,
 {
     type Target = PagePtr<'g, P>;
     fn deref(&self) -> &Self::Target {
@@ -109,7 +116,11 @@ impl<'g, P> Deref for RayonPagePtr<'g, P>
     }
 }
 
-unsafe impl<'g, P> Send for RayonPagePtr<'g, P> where P: Send {}
+unsafe impl<'g, P> Send for RayonPagePtr<'g, P>
+where
+    P: Send,
+{
+}
 
 lazy_static! {
     /// A metric collector for all pagecache users running in this
@@ -125,7 +136,8 @@ fn clock() -> f64 {
 // not correct, since it starts counting at the first observance...
 fn uptime() -> std::time::Duration {
     lazy_static! {
-        static ref START: std::time::Instant = std::time::Instant::now();
+        static ref START: std::time::Instant =
+            std::time::Instant::now();
     }
 
     START.elapsed()
@@ -169,7 +181,7 @@ fn measure<F: FnOnce() -> R, R>(histo: &Histo, f: F) -> R {
 pub fn debug_delay() {
     #[cfg(any(test, feature = "lock_free_delays"))]
     {
-        use rand::{Rng, thread_rng};
+        use rand::{thread_rng, Rng};
 
         if thread_rng().gen_weighted_bool(1000) {
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -178,7 +190,6 @@ pub fn debug_delay() {
 }
 
 /// Allows arbitrary logic to be injected into mere operations of the `PageCache`.
-pub type MergeOperator = fn(key: &[u8],
-                            last_value: Option<&[u8]>,
-                            new_merge: &[u8])
-                            -> Option<Vec<u8>>;
+pub type MergeOperator =
+    fn(key: &[u8], last_value: Option<&[u8]>, new_merge: &[u8])
+        -> Option<Vec<u8>>;

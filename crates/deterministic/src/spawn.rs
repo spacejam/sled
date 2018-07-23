@@ -1,9 +1,11 @@
 use std::thread::{self, JoinHandle};
 
 #[cfg(target_os = "linux")]
-use libc::{CPU_SET, CPU_ZERO, SCHED_FIFO, c_int, cpu_set_t,
-           sched_get_priority_max, sched_get_priority_min, sched_param,
-           sched_setaffinity, sched_setscheduler};
+use libc::{
+    c_int, cpu_set_t, sched_get_priority_max, sched_get_priority_min,
+    sched_param, sched_setaffinity, sched_setscheduler, CPU_SET,
+    CPU_ZERO, SCHED_FIFO,
+};
 
 #[cfg(target_os = "linux")]
 use rand::Rng;
@@ -20,8 +22,9 @@ pub fn prioritize(prio: c_int) {
     let param = sched_param {
         sched_priority: prio,
     };
-    let ret =
-        unsafe { sched_setscheduler(0, POLICY, &param as *const sched_param) };
+    let ret = unsafe {
+        sched_setscheduler(0, POLICY, &param as *const sched_param)
+    };
 
     assert_eq!(
         ret,
@@ -40,7 +43,8 @@ fn pin_cpu() {
         let mut cpu_set: cpu_set_t = std::mem::zeroed();
         CPU_ZERO(&mut cpu_set);
         CPU_SET(0, &mut cpu_set);
-        let ret = sched_setaffinity(0, 1, &cpu_set as *const cpu_set_t);
+        let ret =
+            sched_setaffinity(0, 1, &cpu_set as *const cpu_set_t);
         assert_eq!(
             ret,
             0,
@@ -55,9 +59,10 @@ fn pin_cpu() {
 /// (possibly pre-seeded) `rand::Rng`.
 #[cfg(target_os = "linux")]
 pub fn spawn_with_random_prio<F, T>(f: F) -> JoinHandle<T>
-    where F: FnOnce() -> T,
-          F: Send + 'static,
-          T: Send + 'static
+where
+    F: FnOnce() -> T,
+    F: Send + 'static,
+    T: Send + 'static,
 {
     let min = unsafe { sched_get_priority_min(POLICY) };
     let max = unsafe { sched_get_priority_max(POLICY) };
@@ -80,9 +85,10 @@ pub fn spawn_with_random_prio<F, T>(f: F) -> JoinHandle<T>
 /// Spawn a thread with a specific realtime priority.
 #[cfg(target_os = "linux")]
 pub fn spawn_with_prio<F, T>(prio: c_int, f: F) -> JoinHandle<T>
-    where F: FnOnce() -> T,
-          F: Send + 'static,
-          T: Send + 'static
+where
+    F: FnOnce() -> T,
+    F: Send + 'static,
+    T: Send + 'static,
 {
     let context = context();
 
@@ -97,9 +103,10 @@ pub fn spawn_with_prio<F, T>(prio: c_int, f: F) -> JoinHandle<T>
 
 /// Spawn a thread and transfer the deterministic Context.
 pub fn spawn<F, T>(f: F) -> JoinHandle<T>
-    where F: FnOnce() -> T,
-          F: Send + 'static,
-          T: Send + 'static
+where
+    F: FnOnce() -> T,
+    F: Send + 'static,
+    T: Send + 'static,
 {
     let context = context();
 
@@ -118,9 +125,9 @@ fn ensure_context_is_inherited() {
     let time = UNIX_EPOCH.add(Duration::from_millis(55));
     context::set_time(time.clone());
 
-    let child_time = spawn(|| context::now()).join().expect(
-        "child should not crash",
-    );
+    let child_time = spawn(|| context::now())
+        .join()
+        .expect("child should not crash");
 
     assert_eq!(time, child_time);
 }

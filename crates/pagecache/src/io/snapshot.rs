@@ -38,7 +38,9 @@ pub enum PageState {
 impl PageState {
     fn push(&mut self, item: (Lsn, LogID)) {
         match self {
-            &mut PageState::Present(ref mut items) => items.push(item),
+            &mut PageState::Present(ref mut items) => {
+                items.push(item)
+            }
             &mut PageState::Allocated(_, _) => {
                 *self = PageState::Present(vec![item])
             }
@@ -51,11 +53,11 @@ impl PageState {
     /// Iterate over the (lsn, lid) pairs that hold this page's state.
     pub fn iter(&self) -> Box<Iterator<Item = (Lsn, LogID)>> {
         match self {
-            &PageState::Present(ref items) => Box::new(
-                items.clone().into_iter(),
-            ),
-            &PageState::Allocated(lsn, lid) |
-            &PageState::Free(lsn, lid) => {
+            &PageState::Present(ref items) => {
+                Box::new(items.clone().into_iter())
+            }
+            &PageState::Allocated(lsn, lid)
+            | &PageState::Free(lsn, lid) => {
                 Box::new(vec![(lsn, lid)].into_iter())
             }
         }
@@ -91,19 +93,23 @@ impl<R> Snapshot<R> {
         log_id: LogID,
         bytes: &[u8],
         io_buf_size: usize,
-    )
-        where P: 'static
-                     + Debug
-                     + Clone
-                     + Serialize
-                     + DeserializeOwned
-                     + Send
-                     + Sync,
-              R: Debug + Clone + Serialize + DeserializeOwned + Send
+    ) where
+        P: 'static
+            + Debug
+            + Clone
+            + Serialize
+            + DeserializeOwned
+            + Send
+            + Sync,
+        R: Debug + Clone + Serialize + DeserializeOwned + Send,
     {
         // unwrapping this because it's already passed the crc check
         // in the log iterator
-        trace!("trying to deserialize buf for lid {} lsn {}", log_id, lsn);
+        trace!(
+            "trying to deserialize buf for lid {} lsn {}",
+            log_id,
+            lsn
+        );
         let deserialization = deserialize::<LoggedUpdate<P>>(&*bytes);
 
         if let Err(e) = deserialization {
@@ -142,12 +148,14 @@ impl<R> Snapshot<R> {
                     if lids.is_free() {
                         trace!(
                             "we have not yet encountered an \
-                            allocation of this page, skipping push"
+                             allocation of this page, skipping push"
                         );
                         return;
                     }
 
-                    if let Some(r) = materializer.recover(&partial_page) {
+                    if let Some(r) =
+                        materializer.recover(&partial_page)
+                    {
                         self.recovery = Some(r);
                     }
 
@@ -156,13 +164,26 @@ impl<R> Snapshot<R> {
                 self.free.remove(&pid);
             }
             Update::Compact(partial_page) => {
-                trace!("compact of pid {} at lid {} lsn {}", pid, log_id, lsn);
+                trace!(
+                    "compact of pid {} at lid {} lsn {}",
+                    pid,
+                    log_id,
+                    lsn
+                );
                 if let Some(r) = materializer.recover(&partial_page) {
                     self.recovery = Some(r);
                 }
 
-                self.replace_pid(pid, replaced_at_idx, lsn, io_buf_size);
-                self.pt.insert(pid, PageState::Present(vec![(lsn, log_id)]));
+                self.replace_pid(
+                    pid,
+                    replaced_at_idx,
+                    lsn,
+                    io_buf_size,
+                );
+                self.pt.insert(
+                    pid,
+                    PageState::Present(vec![(lsn, log_id)]),
+                );
                 self.free.remove(&pid);
             }
             Update::Allocate => {
@@ -172,13 +193,29 @@ impl<R> Snapshot<R> {
                     log_id,
                     lsn
                 );
-                self.replace_pid(pid, replaced_at_idx, lsn, io_buf_size);
-                self.pt.insert(pid, PageState::Allocated(lsn, log_id));
+                self.replace_pid(
+                    pid,
+                    replaced_at_idx,
+                    lsn,
+                    io_buf_size,
+                );
+                self.pt
+                    .insert(pid, PageState::Allocated(lsn, log_id));
                 self.free.remove(&pid);
             }
             Update::Free => {
-                trace!("free of pid {} at lid {} lsn {}", pid, log_id, lsn);
-                self.replace_pid(pid, replaced_at_idx, lsn, io_buf_size);
+                trace!(
+                    "free of pid {} at lid {} lsn {}",
+                    pid,
+                    log_id,
+                    lsn
+                );
+                self.replace_pid(
+                    pid,
+                    replaced_at_idx,
+                    lsn,
+                    io_buf_size,
+                );
                 self.pt.insert(pid, PageState::Free(lsn, log_id));
                 self.free.insert(pid);
             }
@@ -199,20 +236,21 @@ impl<R> Snapshot<R> {
                     if replaced_at_idx == idx {
                         return;
                     }
-                    let entry =
-                        self.replacements.entry(idx).or_insert(HashSet::new());
+                    let entry = self.replacements
+                        .entry(idx)
+                        .or_insert(HashSet::new());
                     entry.insert((pid, replaced_at_lsn));
                 }
             }
-            Some(PageState::Allocated(_lsn, lid)) |
-            Some(PageState::Free(_lsn, lid)) => {
-
+            Some(PageState::Allocated(_lsn, lid))
+            | Some(PageState::Free(_lsn, lid)) => {
                 let idx = lid as SegmentID / io_buf_size;
                 if replaced_at_idx == idx {
                     return;
                 }
-                let entry =
-                    self.replacements.entry(idx).or_insert(HashSet::new());
+                let entry = self.replacements
+                    .entry(idx)
+                    .or_insert(HashSet::new());
                 entry.insert((pid, replaced_at_lsn));
             }
             None => {}
@@ -225,15 +263,16 @@ pub(super) fn advance_snapshot<PM, P, R>(
     mut snapshot: Snapshot<R>,
     config: &Config,
 ) -> CacheResult<Snapshot<R>, ()>
-    where PM: Materializer<Recovery = R, PageFrag = P>,
-          P: 'static
-                 + Debug
-                 + Clone
-                 + Serialize
-                 + DeserializeOwned
-                 + Send
-                 + Sync,
-          R: Debug + Clone + Serialize + DeserializeOwned + Send
+where
+    PM: Materializer<Recovery = R, PageFrag = P>,
+    P: 'static
+        + Debug
+        + Clone
+        + Serialize
+        + DeserializeOwned
+        + Send
+        + Sync,
+    R: Debug + Clone + Serialize + DeserializeOwned + Send,
 {
     let start = clock();
 
@@ -272,7 +311,13 @@ pub(super) fn advance_snapshot<PM, P, R>(
         snapshot.replacements.remove(&segment_idx);
 
         if !PM::is_null() {
-            snapshot.apply(&materializer, lsn, log_id, &*bytes, io_buf_size);
+            snapshot.apply(
+                &materializer,
+                lsn,
+                log_id,
+                &*bytes,
+                io_buf_size,
+            );
         }
     }
 
@@ -290,17 +335,19 @@ pub(super) fn advance_snapshot<PM, P, R>(
 pub fn read_snapshot_or_default<PM, P, R>(
     config: &Config,
 ) -> CacheResult<Snapshot<R>, ()>
-    where PM: Materializer<Recovery = R, PageFrag = P>,
-          P: 'static
-                 + Debug
-                 + Clone
-                 + Serialize
-                 + DeserializeOwned
-                 + Send
-                 + Sync,
-          R: Debug + Clone + Serialize + DeserializeOwned + Send
+where
+    PM: Materializer<Recovery = R, PageFrag = P>,
+    P: 'static
+        + Debug
+        + Clone
+        + Serialize
+        + DeserializeOwned
+        + Send
+        + Sync,
+    R: Debug + Clone + Serialize + DeserializeOwned + Send,
 {
-    let last_snap = read_snapshot(config)?.unwrap_or_else(Snapshot::default);
+    let last_snap =
+        read_snapshot(config)?.unwrap_or_else(Snapshot::default);
 
     let log_iter = raw_segment_iter_from(last_snap.max_lsn, config)?;
 
@@ -308,8 +355,11 @@ pub fn read_snapshot_or_default<PM, P, R>(
 }
 
 /// Read a `Snapshot` from disk.
-fn read_snapshot<R>(config: &Config) -> std::io::Result<Option<Snapshot<R>>>
-    where R: Debug + Clone + Serialize + DeserializeOwned + Send
+fn read_snapshot<R>(
+    config: &Config,
+) -> std::io::Result<Option<Snapshot<R>>>
+where
+    R: Debug + Clone + Serialize + DeserializeOwned + Send,
 {
     let mut candidates = config.get_snapshot_files()?;
     if candidates.is_empty() {
@@ -339,7 +389,8 @@ fn read_snapshot<R>(config: &Config) -> std::io::Result<Option<Snapshot<R>>>
     let mut crc_expected_bytes = [0u8; 8];
     f.seek(std::io::SeekFrom::End(-8)).unwrap();
     f.read_exact(&mut crc_expected_bytes).unwrap();
-    let crc_expected: u64 = unsafe { std::mem::transmute(crc_expected_bytes) };
+    let crc_expected: u64 =
+        unsafe { std::mem::transmute(crc_expected_bytes) };
 
     let crc_actual = crc64(&*buf);
 
@@ -367,7 +418,8 @@ pub fn write_snapshot<R>(
     config: &Config,
     snapshot: &Snapshot<R>,
 ) -> CacheResult<(), ()>
-    where R: Debug + Clone + Serialize + DeserializeOwned + Send
+where
+    R: Debug + Clone + Serialize + DeserializeOwned + Send,
 {
     let raw_bytes = serialize(&snapshot, Infinite).unwrap();
     let decompressed_len = raw_bytes.len();
@@ -382,11 +434,13 @@ pub fn write_snapshot<R>(
     #[cfg(not(feature = "zstd"))]
     let bytes = raw_bytes;
 
-    let crc64: [u8; 8] = unsafe { std::mem::transmute(crc64(&*bytes)) };
+    let crc64: [u8; 8] =
+        unsafe { std::mem::transmute(crc64(&*bytes)) };
     let len_bytes: [u8; 8] =
         unsafe { std::mem::transmute(decompressed_len as u64) };
 
-    let path_1_suffix = format!("snap.{:016X}.in___motion", snapshot.max_lsn);
+    let path_1_suffix =
+        format!("snap.{:016X}.in___motion", snapshot.max_lsn);
 
     let mut path_1 = config.snapshot_prefix();
     path_1.push(path_1_suffix);
@@ -397,9 +451,10 @@ pub fn write_snapshot<R>(
     path_2.push(path_2_suffix);
 
     let _res = std::fs::create_dir_all(path_1.parent().unwrap());
-    let mut f = std::fs::OpenOptions::new().write(true).create(true).open(
-        &path_1,
-    )?;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open(&path_1)?;
 
     // write the snapshot bytes, followed by a crc64 checksum at the end
     maybe_fail!("snap write");

@@ -28,7 +28,6 @@ pub struct Node<T> {
     data: NodeData<T>,
 }
 
-
 #[derive(Clone, Debug)]
 pub enum NodeData<T> {
     Node4 {

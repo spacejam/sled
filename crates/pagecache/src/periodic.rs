@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::{Acquire, Release};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -30,10 +30,14 @@ impl<C: Callback> Periodic<C> {
             let shutdown = shutdown.clone();
             thread::Builder::new()
                 .name(name)
-                .spawn(move || while !shutdown.load(Acquire) {
-                    callback.call();
+                .spawn(move || {
+                    while !shutdown.load(Acquire) {
+                        callback.call();
 
-                    thread::sleep(Duration::from_millis(flush_every_ms));
+                        thread::sleep(Duration::from_millis(
+                            flush_every_ms,
+                        ));
+                    }
                 })
                 .unwrap()
         });

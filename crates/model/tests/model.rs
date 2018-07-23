@@ -41,8 +41,8 @@ fn test_model() {
 #[test]
 #[should_panic]
 fn test_linearizability_of_bad_impl() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use model::Shared;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     linearizable! {
         Implementation => let i = Shared::new(AtomicUsize::new(0)),
@@ -70,8 +70,8 @@ fn test_linearizability_of_bad_impl() {
 
 #[test]
 fn test_linearizability_of_good_impl() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use model::Shared;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     linearizable! {
         Implementation => let i = Shared::new(AtomicUsize::new(0)),

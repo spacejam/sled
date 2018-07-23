@@ -22,29 +22,38 @@ impl Iterator for LogIter {
         // if we can't read something we expect to be able to,
         // return None if there are no more remaining segments.
         loop {
-            let remaining_seg_too_small_for_msg =
-                !valid_entry_offset(self.cur_lsn as LogID, self.segment_len);
+            let remaining_seg_too_small_for_msg = !valid_entry_offset(
+                self.cur_lsn as LogID,
+                self.segment_len,
+            );
 
-            if self.trailer.is_none() && remaining_seg_too_small_for_msg {
+            if self.trailer.is_none()
+                && remaining_seg_too_small_for_msg
+            {
                 // We've read to the end of a torn
                 // segment and should stop now.
                 return None;
-            } else if self.segment_base.is_none() ||
-                       remaining_seg_too_small_for_msg
+            } else if self.segment_base.is_none()
+                || remaining_seg_too_small_for_msg
             {
-                if let Some((next_lsn, next_lid)) = self.segment_iter.next() {
+                if let Some((next_lsn, next_lid)) =
+                    self.segment_iter.next()
+                {
                     assert!(
                         next_lsn + (self.segment_len as Lsn) >= self.cur_lsn,
                         "caller is responsible for providing segments \
                             that contain the initial cur_lsn value or higher"
                     );
 
-                    #[cfg(target_os = "linux")] self.fadvise_willneed(next_lid);
+                    #[cfg(target_os = "linux")]
+                    self.fadvise_willneed(next_lid);
 
-                    if let Err(e) = self.read_segment(next_lsn, next_lid) {
+                    if let Err(e) =
+                        self.read_segment(next_lsn, next_lid)
+                    {
                         debug!(
                             "hit snap while reading segments in \
-                            iterator: {:?}",
+                             iterator: {:?}",
                             e
                         );
                         return None;
@@ -59,8 +68,8 @@ impl Iterator for LogIter {
                 return None;
             }
 
-            let lid = self.segment_base.unwrap() +
-                (self.cur_lsn % self.segment_len as Lsn) as LogID;
+            let lid = self.segment_base.unwrap()
+                + (self.cur_lsn % self.segment_len as Lsn) as LogID;
 
             if let Ok(f) = self.config.file() {
                 match f.read_message(
@@ -74,7 +83,8 @@ impl Iterator for LogIter {
                             return None;
                         }
                         trace!("read flush in LogIter::next");
-                        self.cur_lsn += (MSG_HEADER_LEN + on_disk_len) as Lsn;
+                        self.cur_lsn +=
+                            (MSG_HEADER_LEN + on_disk_len) as Lsn;
                         return Some((lsn, lid, buf));
                     }
                     Ok(LogRead::Failed(lsn, on_disk_len)) => {
@@ -83,7 +93,8 @@ impl Iterator for LogIter {
                             return None;
                         }
                         trace!("read zeroed in LogIter::next");
-                        self.cur_lsn += (MSG_HEADER_LEN + on_disk_len) as Lsn;
+                        self.cur_lsn +=
+                            (MSG_HEADER_LEN + on_disk_len) as Lsn;
                     }
                     Ok(LogRead::Corrupted(_len)) => {
                         trace!("read corrupted end in LogIter::next");
@@ -123,7 +134,11 @@ impl Iterator for LogIter {
 impl LogIter {
     /// read a segment of log messages. Only call after
     /// pausing segment rewriting on the segment accountant!
-    fn read_segment(&mut self, lsn: Lsn, offset: LogID) -> CacheResult<(), ()> {
+    fn read_segment(
+        &mut self,
+        lsn: Lsn,
+        offset: LogID,
+    ) -> CacheResult<(), ()> {
         trace!(
             "LogIter::read_segment lsn: {:?} cur_lsn: {:?}",
             lsn,
@@ -136,41 +151,33 @@ impl LogIter {
         let segment_header = f.read_segment_header(offset)?;
         if offset % self.segment_len as LogID != 0 {
             debug!("segment offset not divisible by segment length");
-            return Err(Error::Corruption {
-                at: offset,
-            });
+            return Err(Error::Corruption { at: offset });
         }
         if segment_header.lsn % self.segment_len as Lsn != 0 {
             debug!(
                 "expected a segment header lsn that is divisible \
-            by the io_buf_size ({}) instead it was {}",
-                self.segment_len,
-                segment_header.lsn
+                 by the io_buf_size ({}) instead it was {}",
+                self.segment_len, segment_header.lsn
             );
-            return Err(Error::Corruption {
-                at: offset,
-            });
+            return Err(Error::Corruption { at: offset });
         }
 
         if segment_header.lsn != lsn {
             // this page was torn, nothing to read
             error!(
                 "segment header lsn ({}) != expected lsn ({})",
-                segment_header.lsn,
-                lsn
+                segment_header.lsn, lsn
             );
-            return Err(
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    "encountered torn segment",
-                ).into(),
-            );
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "encountered torn segment",
+            ).into());
         }
 
-        let trailer_offset = offset + self.segment_len as LogID -
-            SEG_TRAILER_LEN as LogID;
-        let trailer_lsn = segment_header.lsn + self.segment_len as Lsn -
-            SEG_TRAILER_LEN as Lsn;
+        let trailer_offset = offset + self.segment_len as LogID
+            - SEG_TRAILER_LEN as LogID;
+        let trailer_lsn = segment_header.lsn + self.segment_len as Lsn
+            - SEG_TRAILER_LEN as Lsn;
 
         trace!("trying to read trailer from {}", trailer_offset);
         let segment_trailer = f.read_segment_trailer(trailer_offset);
@@ -178,12 +185,12 @@ impl LogIter {
         trace!("read segment header {:?}", segment_header);
         trace!("read segment trailer {:?}", segment_trailer);
 
-        let trailer_lsn = segment_trailer.ok().and_then(|st| if st.ok &&
-            st.lsn == trailer_lsn
-        {
-            Some(st.lsn)
-        } else {
-            None
+        let trailer_lsn = segment_trailer.ok().and_then(|st| {
+            if st.ok && st.lsn == trailer_lsn {
+                Some(st.lsn)
+            } else {
+                None
+            }
         });
 
         self.trailer = trailer_lsn;
@@ -219,8 +226,9 @@ impl LogIter {
 fn valid_entry_offset(lid: LogID, segment_len: usize) -> bool {
     let seg_start = lid / segment_len as LogID * segment_len as LogID;
 
-    let max_lid = seg_start + segment_len as LogID -
-        SEG_TRAILER_LEN as LogID - MSG_HEADER_LEN as LogID;
+    let max_lid = seg_start + segment_len as LogID
+        - SEG_TRAILER_LEN as LogID
+        - MSG_HEADER_LEN as LogID;
 
     let min_lid = seg_start + SEG_HEADER_LEN as LogID;
 

@@ -62,7 +62,8 @@ impl Log {
         config: Config,
         snapshot: Snapshot<R>,
     ) -> CacheResult<Log, ()> {
-        let iobufs = Arc::new(IoBufs::start(config.clone(), snapshot)?);
+        let iobufs =
+            Arc::new(IoBufs::start(config.clone(), snapshot)?);
         let flusher = periodic::Periodic::new(
             "log flusher".to_owned(),
             iobufs.clone(),
@@ -96,13 +97,19 @@ impl Log {
     }
 
     /// Reserve space in the log for a pending linearized operation.
-    pub fn reserve(&self, buf: Vec<u8>) -> CacheResult<Reservation, ()> {
+    pub fn reserve(
+        &self,
+        buf: Vec<u8>,
+    ) -> CacheResult<Reservation, ()> {
         self.iobufs.reserve(buf)
     }
 
     /// Write a buffer into the log. Returns the log sequence
     /// number and the file offset of the write.
-    pub fn write(&self, buf: Vec<u8>) -> CacheResult<(Lsn, LogID), ()> {
+    pub fn write(
+        &self,
+        buf: Vec<u8>,
+    ) -> CacheResult<(Lsn, LogID), ()> {
         self.iobufs.reserve(buf).and_then(|res| res.complete())
     }
 
@@ -111,14 +118,16 @@ impl Log {
     pub fn iter_from(&self, lsn: Lsn) -> LogIter {
         trace!("iterating from lsn {}", lsn);
         let io_buf_size = self.config.io_buf_size;
-        let segment_base_lsn = lsn / io_buf_size as Lsn * io_buf_size as Lsn;
+        let segment_base_lsn =
+            lsn / io_buf_size as Lsn * io_buf_size as Lsn;
         let min_lsn = segment_base_lsn + SEG_HEADER_LEN as Lsn;
 
         // corrected_lsn accounts for the segment header length
         let corrected_lsn = std::cmp::max(lsn, min_lsn);
 
-        let segment_iter =
-            self.with_sa(|sa| sa.segment_snapshot_iter_from(corrected_lsn));
+        let segment_iter = self.with_sa(|sa| {
+            sa.segment_snapshot_iter_from(corrected_lsn)
+        });
 
         LogIter {
             config: self.config.clone(),
@@ -133,7 +142,11 @@ impl Log {
     }
 
     /// read a buffer from the disk
-    pub fn read(&self, lsn: Lsn, lid: LogID) -> CacheResult<LogRead, ()> {
+    pub fn read(
+        &self,
+        lsn: Lsn,
+        lid: LogID,
+    ) -> CacheResult<LogRead, ()> {
         trace!("reading log lsn {} lid {}", lsn, lid);
         self.make_stable(lsn)?;
         let f = self.config.file()?;
@@ -166,7 +179,8 @@ impl Log {
 
     // SegmentAccountant access for coordination with the `PageCache`
     pub(in io) fn with_sa<B, F>(&self, f: F) -> B
-        where F: FnOnce(&mut SegmentAccountant) -> B
+    where
+        F: FnOnce(&mut SegmentAccountant) -> B,
     {
         self.iobufs.with_sa(f)
     }
@@ -221,7 +235,9 @@ impl LogRead {
     /// the data was corrupt or this log entry was aborted.
     pub fn flush(self) -> Option<(Lsn, Vec<u8>, usize)> {
         match self {
-            LogRead::Flush(lsn, bytes, len) => Some((lsn, bytes, len)),
+            LogRead::Flush(lsn, bytes, len) => {
+                Some((lsn, bytes, len))
+            }
             _ => None,
         }
     }
@@ -330,10 +346,12 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
         // NB LSN actually gets written after the reservation
         // for the item is claimed, when we actually know the lsn,
         // in PageCache::reserve.
-        let lsn_arr: [u8; 8] = unsafe { std::mem::transmute(self.lsn) };
+        let lsn_arr: [u8; 8] =
+            unsafe { std::mem::transmute(self.lsn) };
         buf[1..9].copy_from_slice(&lsn_arr);
 
-        let len_arr: [u8; 4] = unsafe { std::mem::transmute(self.len as u32) };
+        let len_arr: [u8; 4] =
+            unsafe { std::mem::transmute(self.len as u32) };
         buf[9..13].copy_from_slice(&len_arr);
 
         buf[13] = self.crc16[0] ^ 0xFF;
@@ -367,7 +385,8 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
         let mut buf = [0u8; SEG_HEADER_LEN];
 
         let xor_lsn = self.lsn ^ 0xFFFF_FFFF;
-        let lsn_arr: [u8; 8] = unsafe { std::mem::transmute(xor_lsn) };
+        let lsn_arr: [u8; 8] =
+            unsafe { std::mem::transmute(xor_lsn) };
         buf[2..10].copy_from_slice(&lsn_arr);
 
         let crc16 = crc16_arr(&lsn_arr);
@@ -403,7 +422,8 @@ impl Into<[u8; SEG_TRAILER_LEN]> for SegmentTrailer {
         let mut buf = [0u8; SEG_TRAILER_LEN];
 
         let xor_lsn = self.lsn ^ 0xFFFF_FFFF;
-        let lsn_arr: [u8; 8] = unsafe { std::mem::transmute(xor_lsn) };
+        let lsn_arr: [u8; 8] =
+            unsafe { std::mem::transmute(xor_lsn) };
         buf[2..10].copy_from_slice(&lsn_arr);
 
         let crc16 = crc16_arr(&lsn_arr);

@@ -26,16 +26,16 @@
 
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
-#![cfg_attr(feature="clippy", feature(plugin))]
-#![cfg_attr(feature="clippy", plugin(clippy))]
-#![cfg_attr(feature="clippy", allow(inline_always))]
+#![cfg_attr(feature = "clippy", feature(plugin))]
+#![cfg_attr(feature = "clippy", plugin(clippy))]
+#![cfg_attr(feature = "clippy", allow(inline_always))]
 
 extern crate pagecache;
 #[macro_use]
 extern crate serde_derive;
-extern crate serde;
-extern crate crossbeam_epoch as epoch;
 extern crate bincode;
+extern crate crossbeam_epoch as epoch;
+extern crate serde;
 #[macro_use]
 extern crate log as _log;
 
@@ -44,7 +44,9 @@ pub use tree::{Iter, Tree};
 
 use pagecache::*;
 
-pub use pagecache::{CacheResult as DbResult, Config, ConfigBuilder, Error};
+pub use pagecache::{
+    CacheResult as DbResult, Config, ConfigBuilder, Error,
+};
 
 mod tree;
 

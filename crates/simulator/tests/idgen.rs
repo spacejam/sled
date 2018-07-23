@@ -1,7 +1,7 @@
-extern crate simulator;
-extern crate deterministic;
 extern crate bincode;
+extern crate deterministic;
 extern crate serde;
+extern crate simulator;
 #[macro_use]
 extern crate serde_derive;
 
@@ -58,16 +58,8 @@ impl IdGen {
         );
         self.peers
             .iter()
-            .map(|p| {
-                (
-                    p.clone(),
-                    ProposeId {
-                        req_id,
-                    },
-                )
-            })
+            .map(|p| (p.clone(), ProposeId { req_id }))
             .collect()
-
     }
 }
 
@@ -91,53 +83,36 @@ impl Reactor for IdGen {
         msg: Self::Message,
     ) -> Vec<(Self::Peer, Self::Message)> {
         match msg {
-            ClientReq {
-                req_id,
-            } => self.propose(from, req_id),
-            ClientRes {
-                ..
-            } => panic!("somehow received a ClientRes: {:?}", msg),
-            ProposeId {
-                req_id,
-            } => {
+            ClientReq { req_id } => self.propose(from, req_id),
+            ClientRes { .. } => {
+                panic!("somehow received a ClientRes: {:?}", msg)
+            }
+            ProposeId { req_id } => {
                 if req_id > self.req_counter {
                     self.req_counter = req_id;
-                    vec![
-                        (
-                            from,
-                            AcceptId {
-                                req_id,
-                            }
-                        ),
-                    ]
+                    vec![(from, AcceptId { req_id })]
                 } else {
-                    vec![
-                        (
-                            from,
-                            RejectId {
-                                req_id: req_id,
-                                highest: self.req_counter,
-                            }
-                        ),
-                    ]
+                    vec![(
+                        from,
+                        RejectId {
+                            req_id: req_id,
+                            highest: self.req_counter,
+                        },
+                    )]
                 }
             }
-            AcceptId {
-                req_id,
-            } => {
+            AcceptId { req_id } => {
                 let mut pending = self.in_flight.remove(&req_id);
                 if let Some(mut pending) = pending {
                     pending.accepted += 1;
                     if pending.accepted > self.peers.len() / 2 {
-                        vec![
-                            (
-                                pending.from,
-                                ClientRes {
-                                    req_id: pending.their_req_id,
-                                    new_id: req_id,
-                                }
-                            ),
-                        ]
+                        vec![(
+                            pending.from,
+                            ClientRes {
+                                req_id: pending.their_req_id,
+                                new_id: req_id,
+                            },
+                        )]
                     } else {
                         self.in_flight.insert(req_id, pending);
                         vec![]
@@ -146,10 +121,7 @@ impl Reactor for IdGen {
                     vec![]
                 }
             }
-            RejectId {
-                req_id,
-                highest,
-            } => {
+            RejectId { req_id, highest } => {
                 if highest > self.req_counter {
                     self.req_counter = highest;
                 }
@@ -158,7 +130,10 @@ impl Reactor for IdGen {
                     pending.rejected += 1;
                     if pending.rejected > self.peers.len() / 2 {
                         // retry
-                        self.propose(pending.from, pending.their_req_id)
+                        self.propose(
+                            pending.from,
+                            pending.their_req_id,
+                        )
                     } else {
                         self.in_flight.insert(req_id, pending);
                         vec![]

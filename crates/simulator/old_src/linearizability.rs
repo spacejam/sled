@@ -52,10 +52,12 @@ fn check_linearizability(
 
     let responses: std::collections::BTreeMap<_, _> = response_rpcs
         .into_iter()
-        .filter_map(|r| if let Rpc::ClientResponse(id, res) = r.msg {
-            Some((id, (r.at, res)))
-        } else {
-            panic!("non-ClientResponse sent to client")
+        .filter_map(|r| {
+            if let Rpc::ClientResponse(id, res) = r.msg {
+                Some((id, (r.at, res)))
+            } else {
+                panic!("non-ClientResponse sent to client")
+            }
         })
         .collect();
 

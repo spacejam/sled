@@ -24,7 +24,8 @@ pub struct Filesystem {
 }
 
 fn with_context<B, F>(f: F) -> B
-    where F: FnOnce(&mut ContextInner) -> B
+where
+    F: FnOnce(&mut ContextInner) -> B,
 {
     let context_mu = context();
     let mut context = context_mu.0.lock().unwrap();
@@ -46,9 +47,9 @@ pub fn sleep(dur: Duration) {
     let time_updated = context.time_updated.clone();
     let wakeup = context.clock + dur;
     while context.clock < wakeup {
-        context = time_updated.wait(context).expect(
-            "context should not be poisoned",
-        );
+        context = time_updated
+            .wait(context)
+            .expect("context should not be poisoned");
     }
 }
 

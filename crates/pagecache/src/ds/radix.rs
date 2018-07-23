@@ -1,10 +1,9 @@
 /// A simple wait-free, grow-only radix tree, assumes a dense keyspace.
-
 use std::sync::atomic::Ordering::SeqCst;
 
-use epoch::{Atomic, Guard, Owned, Shared, pin, unprotected};
+use epoch::{pin, unprotected, Atomic, Guard, Owned, Shared};
 
-use {PageID, debug_delay};
+use {debug_delay, PageID};
 
 const FANFACTOR: usize = 6;
 const FANOUT: usize = 1 << FANFACTOR;
@@ -56,13 +55,15 @@ impl<T: Send + 'static> Drop for Node<T> {
 
 /// A simple lock-free radix tree.
 pub struct Radix<T>
-    where T: 'static + Send + Sync
+where
+    T: 'static + Send + Sync,
 {
     head: Atomic<Node<T>>,
 }
 
 impl<T> Default for Radix<T>
-    where T: 'static + Send + Sync
+where
+    T: 'static + Send + Sync,
 {
     fn default() -> Radix<T> {
         let head = Owned::new(Node::default());
@@ -73,7 +74,8 @@ impl<T> Default for Radix<T>
 }
 
 impl<T> Drop for Radix<T>
-    where T: 'static + Send + Sync
+where
+    T: 'static + Send + Sync,
 {
     fn drop(&mut self) {
         unsafe {
@@ -84,7 +86,8 @@ impl<T> Drop for Radix<T>
 }
 
 impl<T> Radix<T>
-    where T: 'static + Send + Sync
+where
+    T: 'static + Send + Sync,
 {
     /// Try to create a new item in the tree.
     pub fn insert(&self, pid: PageID, item: T) -> Result<(), ()> {
@@ -104,7 +107,8 @@ impl<T> Radix<T>
         guard: &'g Guard,
     ) -> Shared<'g, T> {
         debug_delay();
-        let tip = traverse(self.head.load(SeqCst, guard), pid, true, guard);
+        let tip =
+            traverse(self.head.load(SeqCst, guard), pid, true, guard);
         unsafe { tip.deref().inner.swap(new, SeqCst, guard) }
     }
 
@@ -117,10 +121,14 @@ impl<T> Radix<T>
         guard: &'g Guard,
     ) -> Result<Shared<'g, T>, Shared<'g, T>> {
         debug_delay();
-        let tip = traverse(self.head.load(SeqCst, guard), pid, true, guard);
+        let tip =
+            traverse(self.head.load(SeqCst, guard), pid, true, guard);
 
         unsafe {
-            match tip.deref().inner.compare_and_set(old, new, SeqCst, guard) {
+            match tip.deref()
+                .inner
+                .compare_and_set(old, new, SeqCst, guard)
+            {
                 Ok(_) => {
                     if !old.is_null() {
                         guard.defer(move || old.into_owned());
@@ -139,12 +147,21 @@ impl<T> Radix<T>
         guard: &'g Guard,
     ) -> Option<Shared<'g, T>> {
         debug_delay();
-        let tip = traverse(self.head.load(SeqCst, guard), pid, false, guard);
+        let tip = traverse(
+            self.head.load(SeqCst, guard),
+            pid,
+            false,
+            guard,
+        );
         if tip.is_null() {
             return None;
         }
         let res = unsafe { tip.deref().inner.load(SeqCst, guard) };
-        if res.is_null() { None } else { Some(res) }
+        if res.is_null() {
+            None
+        } else {
+            Some(res)
+        }
     }
 
     /// Delete a value from the tree, returning the old value if it was set.
@@ -187,13 +204,10 @@ fn traverse<'g, T: 'static + Send>(
             return Shared::null();
         }
 
-        let next_child = Owned::new(Node::default()).into_shared(guard);
-        let ret = children[child_index].compare_and_set(
-            next_ptr,
-            next_child,
-            SeqCst,
-            guard,
-        );
+        let next_child =
+            Owned::new(Node::default()).into_shared(guard);
+        let ret = children[child_index]
+            .compare_and_set(next_ptr, next_child, SeqCst, guard);
 
         match ret {
             Ok(_) => {

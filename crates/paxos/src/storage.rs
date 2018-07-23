@@ -54,7 +54,11 @@ impl Storage for MemStorage {
         let v = serialize(&ballot).unwrap();
         self.inner.insert(k, v);
     }
-    fn set_accepted_value(&mut self, mut k: Key, value: Option<Value>) {
+    fn set_accepted_value(
+        &mut self,
+        mut k: Key,
+        value: Option<Value>,
+    ) {
         k.push(LAST_VALUE_SUFFIX);
         if let Some(v) = value {
             self.inner.insert(k, v);
@@ -71,9 +75,7 @@ pub struct SledStorage {
 
 impl SledStorage {
     pub fn new(tree: sled::Tree) -> SledStorage {
-        SledStorage {
-            inner: tree,
-        }
+        SledStorage { inner: tree }
     }
 }
 
@@ -108,7 +110,11 @@ impl Storage for SledStorage {
         let v = serialize(&ballot).unwrap();
         self.inner.set(k, v).unwrap();
     }
-    fn set_accepted_value(&mut self, mut k: Key, value: Option<Value>) {
+    fn set_accepted_value(
+        &mut self,
+        mut k: Key,
+        value: Option<Value>,
+    ) {
         k.push(LAST_VALUE_SUFFIX);
         if let Some(v) = value {
             self.inner.set(k, v).unwrap();

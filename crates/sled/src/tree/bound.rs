@@ -10,8 +10,7 @@ pub enum Bound {
 impl Bound {
     pub fn inner(&self) -> &[u8] {
         match *self {
-            Bound::Inclusive(ref v) |
-            Bound::Exclusive(ref v) => &*v,
+            Bound::Inclusive(ref v) | Bound::Exclusive(ref v) => &*v,
             Bound::Inf => panic!("inner() called on Bound::Inf"),
         }
     }
@@ -21,38 +20,32 @@ impl PartialOrd for Bound {
     fn partial_cmp(&self, other: &Bound) -> Option<Ordering> {
         use self::Bound::*;
         match *self {
-            Inclusive(ref lhs) => {
-                match *other {
-                    Inf => Some(Ordering::Less),
-                    Inclusive(ref rhs) => Some(lhs.cmp(rhs)),
-                    Exclusive(ref rhs) => {
-                        if lhs < rhs {
-                            Some(Ordering::Less)
-                        } else {
-                            Some(Ordering::Greater)
-                        }
+            Inclusive(ref lhs) => match *other {
+                Inf => Some(Ordering::Less),
+                Inclusive(ref rhs) => Some(lhs.cmp(rhs)),
+                Exclusive(ref rhs) => {
+                    if lhs < rhs {
+                        Some(Ordering::Less)
+                    } else {
+                        Some(Ordering::Greater)
                     }
                 }
-            }
-            Exclusive(ref lhs) => {
-                match *other {
-                    Inf => Some(Ordering::Less),
-                    Inclusive(ref rhs) => {
-                        if lhs <= rhs {
-                            Some(Ordering::Less)
-                        } else {
-                            Some(Ordering::Greater)
-                        }
+            },
+            Exclusive(ref lhs) => match *other {
+                Inf => Some(Ordering::Less),
+                Inclusive(ref rhs) => {
+                    if lhs <= rhs {
+                        Some(Ordering::Less)
+                    } else {
+                        Some(Ordering::Greater)
                     }
-                    Exclusive(ref rhs) => Some(lhs.cmp(rhs)),
                 }
-            }
-            Inf => {
-                match *other {
-                    Inf => Some(Ordering::Equal),
-                    _ => Some(Ordering::Greater),
-                }
-            }
+                Exclusive(ref rhs) => Some(lhs.cmp(rhs)),
+            },
+            Inf => match *other {
+                Inf => Some(Ordering::Equal),
+                _ => Some(Ordering::Greater),
+            },
         }
     }
 }
