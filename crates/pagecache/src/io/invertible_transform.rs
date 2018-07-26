@@ -21,16 +21,18 @@ use super::*;
 /// The trait has `InvertibleTransform::test_inverse_law` which can be used in
 /// tests to help test this property.
 pub trait InvertibleTransform {
+    type Error: std::error::Error;
+
     /// This is where we apply our transformation to raw message data.
     /// e.g. In a compression transform, this is where we compress.
-    fn forward(&self, &[u8]) -> CacheResult<Vec<u8>, ()>;
+    fn forward(&self, &[u8]) -> Result<Vec<u8>, Self::Error>;
 
     /// This is where we undo the transformation done in ::forward.
     /// e.g. In a compression transform, this is where we decompress.
-    fn backward(&self, &[u8]) -> CacheResult<Vec<u8>, ()>;
+    fn backward(&self, &[u8]) -> Result<Vec<u8>, Self::Error>;
 
     #[cfg(test)]
-    fn test_inverse_law(&self, buf: &[u8]) -> CacheResult<(), ()> {
+    fn test_inverse_law(&self, buf: &[u8]) -> Result<(), Self::Error> {
         assert_eq!(buf, &*self.backward(&self.forward(&buf)?)?);
         Ok(())
     }

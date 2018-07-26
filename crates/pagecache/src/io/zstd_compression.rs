@@ -8,15 +8,17 @@ pub struct ZStdCompression {
 }
 
 impl InvertibleTransform for ZStdCompression {
-    fn forward(&self, buf: &[u8]) -> CacheResult<Vec<u8>, ()> {
+    type Error = Error<std::io::Error>;
+
+    fn forward(&self, buf: &[u8]) -> Result<Vec<u8>, Self::Error> {
         let _measure = Measure::new(&M.compress);
-        let deflated = compress(&buf, self.compression_factor).unwrap();
+        let deflated = compress(&buf, self.compression_factor)?;
         Ok(deflated)
     }
 
-    fn backward(&self, buf: &[u8]) -> CacheResult<Vec<u8>, ()> {
+    fn backward(&self, buf: &[u8]) -> Result<Vec<u8>, Self::Error> {
         let _measure = Measure::new(&M.decompress);
-        let inflated = decompress(&buf, self.segment_len).unwrap();
+        let inflated = decompress(&buf, self.segment_len)?;
         Ok(inflated)
     }
 }
