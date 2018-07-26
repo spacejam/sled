@@ -9,8 +9,6 @@ use std::sync::{Condvar, Mutex};
 #[cfg(feature = "failpoints")]
 use std::sync::atomic::Ordering::Relaxed;
 
-#[cfg(feature = "zstd")]
-use zstd::block::compress;
 
 use self::reader::LogReader;
 
@@ -224,11 +222,11 @@ impl IoBufs {
     fn encapsulate(&self, raw_buf: Vec<u8>) -> Vec<u8> {
         #[cfg(feature = "zstd")]
         let buf = if self.config.use_compression {
-            let _measure = Measure::new(&M.compress);
-            compress(
-                &*raw_buf,
-                self.config.get_zstd_compression_factor(),
-            ).unwrap()
+            let transform = ZStdCompression {
+                compression_factor: self.config.zstd_compression_factor,
+                segment_len: 0
+            };
+            transform.forward(&raw_buf).unwrap()
         } else {
             raw_buf
         };

@@ -1,8 +1,5 @@
 use std::fs::File;
 
-#[cfg(feature = "zstd")]
-use zstd::block::decompress;
-
 use super::Pio;
 
 use super::*;
@@ -141,14 +138,18 @@ impl LogReader for File {
         #[cfg(feature = "zstd")]
         let res = {
             if _use_compression {
-                let _measure = Measure::new(&M.decompress);
+                let transform = ZStdCompression {
+                    compression_factor: 0,
+                    segment_len: segment_len
+                };
+
                 Ok(LogRead::Flush(
                     header.lsn,
-                    decompress(&*buf, segment_len).unwrap(),
-                    len,
+                    transform.backward(&buf).unwrap(),
+                    header.len
                 ))
             } else {
-                Ok(LogRead::Flush(header.lsn, buf, len))
+                Ok(LogRead::Flush(header.lsn, buf, header.len))
             }
         };
 

@@ -22,6 +22,10 @@ mod reader;
 mod reservation;
 mod segment;
 mod snapshot;
+mod invertible_transform;
+
+#[cfg(feature = "zstd")]
+mod zstd_compression;
 
 #[doc(hidden)]
 pub use self::log::{
@@ -48,6 +52,10 @@ use self::page_cache::{LoggedUpdate, Update};
 use self::parallel_io::Pio;
 use self::segment::{raw_segment_iter_from, SegmentAccountant};
 use self::snapshot::{advance_snapshot, PageState};
+use self::invertible_transform::InvertibleTransform;
+
+#[cfg(feature = "zstd")]
+use self::zstd_compression::ZStdCompression;
 
 // The EVIL_BYTE is written to force detection of
 // a corruption when dealing with unused segment space.
