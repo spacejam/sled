@@ -34,8 +34,8 @@ impl Lru {
         let shard_mu = &self.shards[shard_idx];
         let mut shard = shard_mu.lock().expect(
             "Lru was poisoned by a \
-            thread that panicked \
-            inside a critical section",
+             thread that panicked \
+             inside a critical section",
         );
         let mut rel_ids = shard.accessed(rel_idx, sz);
 
@@ -82,7 +82,11 @@ impl Shard {
         }
     }
 
-    fn accessed(&mut self, rel_idx: PageID, sz: usize) -> Vec<PageID> {
+    fn accessed(
+        &mut self,
+        rel_idx: PageID,
+        sz: usize,
+    ) -> Vec<PageID> {
         if self.entries.len() <= rel_idx {
             self.entries.resize(rel_idx + 1, Entry::default());
         }

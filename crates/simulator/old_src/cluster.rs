@@ -42,7 +42,12 @@ impl Cluster {
         }
     }
 
-    fn is_partitioned(&mut self, at: SystemTime, to: &str, from: &str) -> bool {
+    fn is_partitioned(
+        &mut self,
+        at: SystemTime,
+        to: &str,
+        from: &str,
+    ) -> bool {
         let mut to_clear = vec![];
         let mut ret = false;
         for (i, partition) in self.partitions.iter().enumerate() {
@@ -50,7 +55,9 @@ impl Cluster {
                 break;
             }
 
-            if partition.at <= at && partition.at.add(partition.duration) < at {
+            if partition.at <= at
+                && partition.at.add(partition.duration) < at
+            {
                 to_clear.push(i);
                 continue;
             }

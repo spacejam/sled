@@ -13,11 +13,19 @@ use std::os::windows::fs::FileExt;
 pub trait Pio {
     /// Read from a specific offset without changing
     /// the underlying file offset.
-    fn pread_exact(&self, to_buf: &mut [u8], offset: LogID) -> io::Result<()>;
+    fn pread_exact(
+        &self,
+        to_buf: &mut [u8],
+        offset: LogID,
+    ) -> io::Result<()>;
 
     /// Write to a specific offset without changing
     /// the underlying file offset.
-    fn pwrite_all(&self, from_buf: &[u8], offset: LogID) -> io::Result<()>;
+    fn pwrite_all(
+        &self,
+        from_buf: &[u8],
+        offset: LogID,
+    ) -> io::Result<()>;
 }
 
 // On systems that support pread/pwrite, use them underneath.
@@ -36,7 +44,8 @@ impl Pio for std::fs::File {
                     let tmp = buf;
                     buf = &mut tmp[n..];
                 }
-                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(ref e)
+                    if e.kind() == io::ErrorKind::Interrupted => {}
                 Err(e) => return Err(e),
             }
         }
@@ -50,7 +59,11 @@ impl Pio for std::fs::File {
         }
     }
 
-    fn pwrite_all(&self, mut buf: &[u8], mut offset: LogID) -> io::Result<()> {
+    fn pwrite_all(
+        &self,
+        mut buf: &[u8],
+        mut offset: LogID,
+    ) -> io::Result<()> {
         while !buf.is_empty() {
             match self.write_at(buf, offset) {
                 Ok(0) => {
@@ -63,7 +76,8 @@ impl Pio for std::fs::File {
                     offset += n as LogID;
                     buf = &buf[n..]
                 }
-                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(ref e)
+                    if e.kind() == io::ErrorKind::Interrupted => {}
                 Err(e) => return Err(e),
             }
         }
@@ -95,7 +109,8 @@ impl Pio for std::fs::File {
                     let tmp = buf;
                     buf = &mut tmp[n..];
                 }
-                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(ref e)
+                    if e.kind() == io::ErrorKind::Interrupted => {}
                 Err(e) => return Err(e),
             }
         }
@@ -109,7 +124,11 @@ impl Pio for std::fs::File {
         }
     }
 
-    fn pwrite_all(&self, mut buf: &[u8], mut offset: LogID) -> io::Result<()> {
+    fn pwrite_all(
+        &self,
+        mut buf: &[u8],
+        mut offset: LogID,
+    ) -> io::Result<()> {
         // HACK HACK HACK get this working with real parallel IO
         let _lock = GLOBAL_FILE_LOCK.lock().unwrap();
 
@@ -125,7 +144,8 @@ impl Pio for std::fs::File {
                     offset += n as LogID;
                     buf = &buf[n..]
                 }
-                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(ref e)
+                    if e.kind() == io::ErrorKind::Interrupted => {}
                 Err(e) => return Err(e),
             }
         }

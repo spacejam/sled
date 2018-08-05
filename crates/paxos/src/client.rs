@@ -52,7 +52,10 @@ impl Reactor for Client {
         unimplemented!()
     }
 
-    fn tick(&mut self, _at: SystemTime) -> Vec<(Self::Peer, Self::Message)> {
+    fn tick(
+        &mut self,
+        _at: SystemTime,
+    ) -> Vec<(Self::Peer, Self::Message)> {
         unimplemented!()
     }
 }

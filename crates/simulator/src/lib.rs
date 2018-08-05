@@ -3,20 +3,21 @@ extern crate quickcheck;
 
 use std::collections::{BinaryHeap, HashMap};
 use std::fmt::Debug;
-use std::time::{Duration, SystemTime};
 use std::ops::Add;
+use std::time::{Duration, SystemTime};
 
 use deterministic::Reactor;
 use quickcheck::{Arbitrary, Gen};
 
 #[macro_export]
 macro_rules! simulate {
-    () => {}
+    () => {};
 }
 
 impl<R> Arbitrary for Cluster<R>
-    where R: 'static + Reactor + Clone,
-          R::Peer: Debug + Clone
+where
+    R: 'static + Reactor + Clone,
+    R::Peer: Debug + Clone,
 {
     fn arbitrary<G: Gen>(_g: &mut G) -> Self {
         Cluster {
@@ -44,7 +45,8 @@ impl<R> Arbitrary for Cluster<R>
 
 #[derive(Debug, Clone)]
 struct Partition<R>
-    where R: Reactor
+where
+    R: Reactor,
 {
     at: SystemTime,
     duration: Duration,
@@ -57,8 +59,9 @@ struct Event;
 
 #[derive(Debug, Clone)]
 struct Cluster<R>
-    where R: Reactor + Clone,
-          R::Peer: Debug + Clone
+where
+    R: Reactor + Clone,
+    R::Peer: Debug + Clone,
 {
     peers: HashMap<String, R>,
     partitions: Vec<Partition<R>>,
@@ -66,14 +69,16 @@ struct Cluster<R>
 }
 
 unsafe impl<R> Send for Cluster<R>
-    where R: Reactor + Clone,
-          R::Peer: Debug + Clone
+where
+    R: Reactor + Clone,
+    R::Peer: Debug + Clone,
 {
 }
 
 impl<R> Cluster<R>
-    where R: Reactor + Clone,
-          R::Peer: Eq + Clone + Debug
+where
+    R: Reactor + Clone,
+    R::Peer: Eq + Clone + Debug,
 {
     fn _step(&mut self) -> Option<()> {
         let _pop = self.in_flight.pop();
@@ -93,7 +98,9 @@ impl<R> Cluster<R>
                 break;
             }
 
-            if partition.at <= at && partition.at.add(partition.duration) < at {
+            if partition.at <= at
+                && partition.at.add(partition.duration) < at
+            {
                 to_clear.push(i);
                 continue;
             }

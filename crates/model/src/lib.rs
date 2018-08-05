@@ -10,9 +10,16 @@
 //! trying to find a sequential ordering that results
 //! in the same return values.
 //!
+//! **important**: the crate makes use of
+//! [proptest](https://crates.io/crates/proptest) via
+//! macros. ensure that you are using the same version
+//! of `proptest` that `model` lists in `Cargo.toml`,
+//! otherwise mismatched API change will manifest as
+//! strange compile-time errors hidden in macros.
+//!
 //! model-based testing:
 //!
-//! ```rust,noexecute
+//! ```no_run
 //! #[macro_use]
 //! extern crate model;
 //! #[macro_use]
@@ -20,6 +27,7 @@
 //!
 //! use std::sync::atomic::{AtomicUsize, Ordering};
 //!
+//!# fn main() {
 //! model! {
 //!     Model => let m = AtomicUsize::new(0),
 //!     Implementation => let mut i: usize = 0,
@@ -49,11 +57,12 @@
 //!         assert_eq!(expected, actual);
 //!     }
 //! }
+//!# }
 //! ```
 //!
 //! linearizability testing:
 //!
-//! ```rust,noexecute
+//! ```no_run
 //! #[macro_use]
 //! extern crate model;
 //! #[macro_use]
@@ -61,8 +70,9 @@
 //!
 //! use std::sync::atomic::{AtomicUsize, Ordering};
 //!
+//!# fn main() {
 //! linearizable! {
-//!     Implementation => let i = Shared::new(AtomicUsize::new(0)),
+//!     Implementation => let i = model::Shared::new(AtomicUsize::new(0)),
 //!     BuggyAdd(usize)(v in 0usize..4) -> usize {
 //!         let current = i.load(Ordering::SeqCst);
 //!         thread::yield_now();
@@ -83,6 +93,7 @@
 //!         }
 //!     }
 //! }
+//!# }
 //! ```
 extern crate permutohedron;
 
@@ -306,8 +317,9 @@ macro_rules! linearizable {
 pub fn permutohedron_heap<'a, Data, T>(
     orig: &'a mut Data,
 ) -> permutohedron::Heap<'a, Data, T>
-    where Data: 'a + Sized + AsMut<[T]>,
-          T: 'a
+where
+    Data: 'a + Sized + AsMut<[T]>,
+    T: 'a,
 {
     permutohedron::Heap::new(orig)
 }

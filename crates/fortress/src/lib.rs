@@ -1,5 +1,5 @@
-extern crate simulator;
 extern crate deterministic;
+extern crate simulator;
 
 pub struct Fortress;
 

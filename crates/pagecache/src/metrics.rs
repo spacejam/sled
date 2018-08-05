@@ -1,6 +1,6 @@
+use std::iter::repeat;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::{Acquire, Relaxed};
-use std::iter::repeat;
 
 use historian::Histo;
 
@@ -94,7 +94,10 @@ impl Metrics {
             f("cas", &self.tree_cas),
             f("scan", &self.tree_scan),
         ]);
-        println!("tree contention loops: {}", self.tree_loops.load(Acquire));
+        println!(
+            "tree contention loops: {}",
+            self.tree_loops.load(Acquire)
+        );
 
         println!("{}", repeat("-").take(103).collect::<String>());
         println!("pagecache:");
@@ -124,7 +127,10 @@ impl Metrics {
             f("written bytes", &self.written_bytes),
             f("reserve", &self.reserve),
         ]);
-        println!("log contention loops: {}", self.log_loops.load(Acquire));
+        println!(
+            "log contention loops: {}",
+            self.log_loops.load(Acquire)
+        );
 
         println!("{}", repeat("-").take(103).collect::<String>());
         println!("segment accountant:");

@@ -1,5 +1,4 @@
 /// A simple doubly-linked list for use in the `Lru`
-
 use std::ptr;
 
 use super::*;

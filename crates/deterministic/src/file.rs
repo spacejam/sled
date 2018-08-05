@@ -1,6 +1,8 @@
-use std::path::{Path, PathBuf};
-use std::io::{Error, ErrorKind, Read, Result, Seek, SeekFrom, Write};
 use std::fs::{self, Metadata};
+use std::io::{
+    Error, ErrorKind, Read, Result, Seek, SeekFrom, Write,
+};
+use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
 use std::os::unix::fs::{FileExt, OpenOptionsExt};
@@ -247,7 +249,6 @@ impl OpenOptions {
 #[derive(Clone, Debug)]
 pub struct File(Arc<Mutex<FileInner>>);
 
-
 #[cfg(unix)]
 impl FileExt for File {
     fn read_at(&self, buf: &mut [u8], offset: u64) -> Result<usize> {
@@ -261,7 +262,11 @@ impl FileExt for File {
 
 #[cfg(windows)]
 impl FileExt for File {
-    fn seek_read(&self, buf: &mut [u8], offset: u64) -> Result<usize> {
+    fn seek_read(
+        &self,
+        buf: &mut [u8],
+        offset: u64,
+    ) -> Result<usize> {
         self.with_inner(|f| f.read_at(buf, offset))
     }
 
@@ -284,7 +289,8 @@ impl File {
     }
 
     fn with_inner<B, F>(&self, f: F) -> B
-        where F: FnOnce(&mut FileInner) -> B
+    where
+        F: FnOnce(&mut FileInner) -> B,
     {
         let mut file = self.0.lock().unwrap();
         f(&mut file)
@@ -356,7 +362,11 @@ struct FileInner {
 
 impl FileInner {
     #[cfg(unix)]
-    pub fn read_at(&mut self, buf: &mut [u8], offset: u64) -> Result<usize> {
+    pub fn read_at(
+        &mut self,
+        buf: &mut [u8],
+        offset: u64,
+    ) -> Result<usize> {
         if self.is_crashing {
             return Err(Error::new(ErrorKind::BrokenPipe, "oh no!"));
         }
@@ -365,7 +375,11 @@ impl FileInner {
     }
 
     #[cfg(unix)]
-    pub fn write_at(&mut self, buf: &[u8], offset: u64) -> Result<usize> {
+    pub fn write_at(
+        &mut self,
+        buf: &[u8],
+        offset: u64,
+    ) -> Result<usize> {
         if self.is_crashing {
             return Err(Error::new(ErrorKind::BrokenPipe, "oh no!"));
         }
@@ -377,7 +391,11 @@ impl FileInner {
     }
 
     #[cfg(windows)]
-    fn seek_read(&self, buf: &mut [u8], offset: u64) -> Result<usize> {
+    fn seek_read(
+        &self,
+        buf: &mut [u8],
+        offset: u64,
+    ) -> Result<usize> {
         if self.is_crashing {
             return Err(Error::new(ErrorKind::BrokenPipe, "oh no!"));
         }
@@ -459,15 +477,17 @@ impl FileInner {
             return Ok(());
         }
 
-        let stabilize = context::thread_rng().gen_range(0, self.updates.len());
+        let stabilize =
+            context::thread_rng().gen_range(0, self.updates.len());
 
         self.inner.set_len(0)?;
         self.inner.write_all(&*self.stable)?;
 
-        for &(offset, ref buf) in self.updates.iter().take(stabilize) {
-            self.inner.write_at(&*buf, offset as u64).expect(
-                "replayed write should work",
-            );
+        for &(offset, ref buf) in self.updates.iter().take(stabilize)
+        {
+            self.inner
+                .write_at(&*buf, offset as u64)
+                .expect("replayed write should work");
         }
 
         self.updates = vec![];

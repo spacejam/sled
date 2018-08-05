@@ -1,15 +1,17 @@
 use std::fmt::Debug;
 use std::fs;
-use std::ops::Deref;
 use std::io::{Read, Seek, Write};
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{
+    AtomicPtr, AtomicUsize, Ordering, ATOMIC_USIZE_INIT,
+};
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{ATOMIC_USIZE_INIT, AtomicPtr, AtomicUsize, Ordering};
 
-use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::Serialize;
 
-use bincode::{Infinite, deserialize, serialize};
+use bincode::{deserialize, serialize, Infinite};
 
 use super::*;
 use io::LogReader;
@@ -99,14 +101,15 @@ impl Default for ConfigBuilder {
         #[cfg(unix)]
         let salt = {
             let pid = unsafe { libc::getpid() };
-            ((pid as u64) << 32) +
-                SALT_COUNTER.fetch_add(1, Ordering::SeqCst) as u64
+            ((pid as u64) << 32)
+                + SALT_COUNTER.fetch_add(1, Ordering::SeqCst) as u64
         };
 
         #[cfg(not(unix))]
         let salt = {
             let now = uptime();
-            (now.as_secs() * 1_000_000_000) + u64::from(now.subsec_nanos())
+            (now.as_secs() * 1_000_000_000)
+                + u64::from(now.subsec_nanos())
         };
 
         // use shared memory for temporary linux files
@@ -114,11 +117,11 @@ impl Default for ConfigBuilder {
         let tmp_path = format!("/dev/shm/pagecache.tmp.{}", salt);
 
         #[cfg(not(target_os = "linux"))]
-        let tmp_path = format!("pagecache.tmp.{}", salt);
+        let tmp_path = format!("/tmp/pagecache.tmp.{}", salt);
 
         ConfigBuilder {
             io_bufs: 3,
-            io_buf_size: 2 << 22, // 8mb
+            io_buf_size: 2 << 22,     // 8mb
             min_items_per_segment: 4, // capacity for >=4 pages/segment
             blink_fanout: 32,
             page_consolidation_threshold: 10,
@@ -148,7 +151,7 @@ macro_rules! supported {
         if !$cond {
             return Err(Error::Unsupported($msg.to_owned()));
         }
-    }
+    };
 }
 
 macro_rules! builder {
@@ -187,7 +190,10 @@ impl ConfigBuilder {
 
     /// Set the merge operator that can be relied on during merges in
     /// the `PageCache`.
-    pub fn merge_operator(mut self, mo: MergeOperator) -> ConfigBuilder {
+    pub fn merge_operator(
+        mut self,
+        mo: MergeOperator,
+    ) -> ConfigBuilder {
         self.merge_operator = Some(mo as usize);
         self
     }
@@ -256,10 +262,11 @@ impl Drop for Config {
     fn drop(&mut self) {
         // if our ref count is 0 we can drop and close our file properly.
         if self.refs.fetch_sub(1, Ordering::Relaxed) == 0 {
-            let f_ptr: *mut Arc<fs::File> =
-                self.file.swap(std::ptr::null_mut(), Ordering::Relaxed);
+            let f_ptr: *mut Arc<fs::File> = self.file
+                .swap(std::ptr::null_mut(), Ordering::Relaxed);
             if !f_ptr.is_null() {
-                let f: Box<Arc<fs::File>> = unsafe { Box::from_raw(f_ptr) };
+                let f: Box<Arc<fs::File>> =
+                    unsafe { Box::from_raw(f_ptr) };
                 drop(f);
             }
 
@@ -268,7 +275,10 @@ impl Drop for Config {
             }
 
             // Our files are temporary, so nuke them.
-            warn!("removing ephemeral storage file {}", self.inner.tmp_path.to_string_lossy());
+            warn!(
+                "removing ephemeral storage file {}",
+                self.inner.tmp_path.to_string_lossy()
+            );
             let _res = fs::remove_dir_all(&self.tmp_path);
         }
     }
@@ -312,12 +322,15 @@ impl Config {
 
     // returns the snapshot file paths for this system
     #[doc(hidden)]
-    pub fn get_snapshot_files(&self) -> std::io::Result<Vec<PathBuf>> {
+    pub fn get_snapshot_files(
+        &self,
+    ) -> std::io::Result<Vec<PathBuf>> {
         let mut prefix = self.snapshot_prefix();
 
         prefix.push("snap.");
 
-        let abs_prefix: PathBuf = if Path::new(&prefix).is_absolute() {
+        let abs_prefix: PathBuf = if Path::new(&prefix).is_absolute()
+        {
             prefix
         } else {
             let mut abs_path = std::env::current_dir()?;
@@ -325,22 +338,24 @@ impl Config {
             abs_path
         };
 
-        let filter = |dir_entry: std::io::Result<std::fs::DirEntry>| {
-            if let Ok(de) = dir_entry {
-                let path_buf = de.path();
-                let path = path_buf.as_path();
-                let path_str = &*path.to_string_lossy();
-                if path_str.starts_with(&*abs_prefix.to_string_lossy()) &&
-                    !path_str.ends_with(".in___motion")
-                {
-                    Some(path.to_path_buf())
+        let filter =
+            |dir_entry: std::io::Result<std::fs::DirEntry>| {
+                if let Ok(de) = dir_entry {
+                    let path_buf = de.path();
+                    let path = path_buf.as_path();
+                    let path_str = &*path.to_string_lossy();
+                    if path_str
+                        .starts_with(&*abs_prefix.to_string_lossy())
+                        && !path_str.ends_with(".in___motion")
+                    {
+                        Some(path.to_path_buf())
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
-            } else {
-                None
-            }
-        };
+            };
 
         let snap_dir = Path::new(&abs_prefix).parent().unwrap();
 
@@ -360,9 +375,10 @@ impl Config {
         // panic if we can't parse the path
         let dir = match Path::new(&path).parent() {
             None => {
-                return Err(Error::Unsupported(
-                    format!("could not determine parent directory of {:?}", path),
-                ));
+                return Err(Error::Unsupported(format!(
+                    "could not determine parent directory of {:?}",
+                    path
+                )));
             }
             Some(dir) => dir,
         };
@@ -370,15 +386,16 @@ impl Config {
         // create data directory if it doesn't exist yet
         if dir != Path::new("") {
             if dir.is_file() {
-                return Err(Error::Unsupported(
-                    format!("provided parent directory is a file, \
-                                not a directory: {:?}",
-                        dir),
-                ));
+                return Err(Error::Unsupported(format!(
+                    "provided parent directory is a file, \
+                     not a directory: {:?}",
+                    dir
+                )));
             }
 
             if !dir.exists() {
-                let res: std::io::Result<()> = std::fs::create_dir_all(dir);
+                let res: std::io::Result<()> =
+                    std::fs::create_dir_all(dir);
                 res.map_err(|e: std::io::Error| {
                     let ret: Error<()> = e.into();
                     ret
@@ -397,7 +414,8 @@ impl Config {
         match options.open(&path) {
             Ok(file) => {
                 // turn file into a raw pointer for future use
-                let file_ptr = Box::into_raw(Box::new(Arc::new(file)));
+                let file_ptr =
+                    Box::into_raw(Box::new(Arc::new(file)));
                 self.file.store(file_ptr, Ordering::SeqCst);
             }
             Err(e) => {
@@ -409,22 +427,55 @@ impl Config {
 
     // panics if conf options are outside of advised range
     fn validate(&self) -> CacheResult<(), ()> {
-        supported!(self.inner.io_bufs <= 32, "too many configured io_bufs");
-        supported!(self.inner.io_buf_size >= 100, "io_buf_size should be hundreds of kb at minimum");
-        supported!(self.inner.io_buf_size <= 1 << 24, "io_buf_size should be <= 16mb");
-        supported!(self.inner.min_items_per_segment >= 1, "min_items_per_segment must be >= 4");
-        supported!(self.inner.min_items_per_segment < 128, "min_items_per_segment must be < 128");
-        supported!(self.inner.blink_fanout >= 2, "tree nodes must have at least 2 children");
+        supported!(
+            self.inner.io_bufs <= 32,
+            "too many configured io_bufs"
+        );
+        supported!(
+            self.inner.io_buf_size >= 100,
+            "io_buf_size should be hundreds of kb at minimum"
+        );
+        supported!(
+            self.inner.io_buf_size <= 1 << 24,
+            "io_buf_size should be <= 16mb"
+        );
+        supported!(
+            self.inner.min_items_per_segment >= 1,
+            "min_items_per_segment must be >= 4"
+        );
+        supported!(
+            self.inner.min_items_per_segment < 128,
+            "min_items_per_segment must be < 128"
+        );
+        supported!(
+            self.inner.blink_fanout >= 2,
+            "tree nodes must have at least 2 children"
+        );
         supported!(self.inner.page_consolidation_threshold >= 1, "must consolidate pages after a non-zero number of updates");
         supported!(self.inner.page_consolidation_threshold < 1 << 20, "must consolidate pages after fewer than 1 million updates");
-        supported!(self.inner.cache_bits <= 20, "# LRU shards = 2^cache_bits. set this to 20 or less.");
+        supported!(
+            self.inner.cache_bits <= 20,
+            "# LRU shards = 2^cache_bits. set this to 20 or less."
+        );
         supported!(self.inner.min_free_segments <= 32, "min_free_segments need not be higher than the number IO buffers (io_bufs)");
         supported!(self.inner.min_free_segments >= 1, "min_free_segments must be nonzero or the database will never reclaim storage");
-        supported!(self.inner.cache_fixup_threshold >= 1, "cache_fixup_threshold must be nonzero.");
+        supported!(
+            self.inner.cache_fixup_threshold >= 1,
+            "cache_fixup_threshold must be nonzero."
+        );
         supported!(self.inner.cache_fixup_threshold < 1 << 20, "cache_fixup_threshold must be fewer than 1 million updates.");
-        supported!(self.inner.segment_cleanup_threshold >= 0.01, "segment_cleanup_threshold must be >= 1%");
-        supported!(self.inner.zstd_compression_factor >= 1, "compression factor must be >= 0");
-        supported!(self.inner.zstd_compression_factor <= 22, "compression factor must be <= 22");
+        supported!(
+            self.inner.segment_cleanup_threshold >= 0.01,
+            "segment_cleanup_threshold must be >= 1%"
+        );
+        supported!(
+            self.inner.zstd_compression_factor >= 1,
+            "compression factor must be >= 0"
+        );
+        supported!(
+            self.inner.zstd_compression_factor <= 22,
+            "compression factor must be <= 22"
+        );
         Ok(())
     }
 
@@ -442,8 +493,11 @@ impl Config {
 
                 old.merge_operator = self.inner.merge_operator;
 
-                supported!(&*self.inner == &old, "changing the configuration \
-                       between usages is currently unsupported");
+                supported!(
+                    &*self.inner == &old,
+                    "changing the configuration \
+                     between usages is currently unsupported"
+                );
                 // need to keep the old path so that when old gets
                 // dropped we don't remove our tmp_path (but it
                 // might not matter even if we did, since it just
@@ -459,13 +513,15 @@ impl Config {
 
     fn write_config(&self) -> CacheResult<(), ()> {
         let bytes = serialize(&*self.inner, Infinite).unwrap();
-        let crc64: [u8; 8] = unsafe { std::mem::transmute(crc64(&*bytes)) };
+        let crc64: [u8; 8] =
+            unsafe { std::mem::transmute(crc64(&*bytes)) };
 
         let path = self.conf_path();
 
-        let mut f = std::fs::OpenOptions::new().write(true).create(true).open(
-            path,
-        )?;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(path)?;
 
         maybe_fail!("write_config bytes");
         f.write_all(&*bytes)?;
@@ -479,10 +535,13 @@ impl Config {
     fn read_config(&self) -> std::io::Result<Option<ConfigBuilder>> {
         let path = self.conf_path();
 
-        let f_res = std::fs::OpenOptions::new().read(true).open(&path);
+        let f_res =
+            std::fs::OpenOptions::new().read(true).open(&path);
 
         let mut f = match f_res {
-            Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(ref e)
+                if e.kind() == std::io::ErrorKind::NotFound =>
+            {
                 return Ok(None);
             }
             Err(other) => {
@@ -530,23 +589,31 @@ impl Config {
 
     #[doc(hidden)]
     pub fn verify_snapshot<PM, P, R>(&self) -> CacheResult<(), ()>
-        where PM: Materializer<Recovery = R, PageFrag = P>,
-              P: 'static
-                     + Debug
-                     + Clone
-                     + Serialize
-                     + DeserializeOwned
-                     + Send
-                     + Sync,
-              R: Debug + Clone + Serialize + DeserializeOwned + Send + PartialEq
+    where
+        PM: Materializer<Recovery = R, PageFrag = P>,
+        P: 'static
+            + Debug
+            + Clone
+            + Serialize
+            + DeserializeOwned
+            + Send
+            + Sync,
+        R: Debug
+            + Clone
+            + Serialize
+            + DeserializeOwned
+            + Send
+            + PartialEq,
     {
-        let incremental = read_snapshot_or_default::<PM, P, R>(&self)?;
+        let incremental =
+            read_snapshot_or_default::<PM, P, R>(&self)?;
 
         for snapshot_path in self.get_snapshot_files()? {
             std::fs::remove_file(snapshot_path)?;
         }
 
-        let regenerated = read_snapshot_or_default::<PM, P, R>(&self)?;
+        let regenerated =
+            read_snapshot_or_default::<PM, P, R>(&self)?;
 
         let f = self.file()?;
 
@@ -554,7 +621,12 @@ impl Config {
             if !incremental.pt.contains_key(&k) {
                 panic!("page only present in regenerated pagetable: {} -> {:?}", k, v);
             }
-            assert_eq!(incremental.pt.get(&k), Some(v), "page tables differ for pid {}", k);
+            assert_eq!(
+                incremental.pt.get(&k),
+                Some(v),
+                "page tables differ for pid {}",
+                k
+            );
             for (lsn, lid) in v.iter() {
                 f.read_message(
                     lid,
@@ -569,7 +641,12 @@ impl Config {
             if !regenerated.pt.contains_key(&k) {
                 panic!("page only present in incremental pagetable: {} -> {:?}", k, v);
             }
-            assert_eq!(Some(v), regenerated.pt.get(&k), "page tables differ for pid {}", k);
+            assert_eq!(
+                Some(v),
+                regenerated.pt.get(&k),
+                "page tables differ for pid {}",
+                k
+            );
             for (lsn, lid) in v.iter() {
                 f.read_message(
                     lid,
@@ -580,12 +657,30 @@ impl Config {
             }
         }
 
-        assert_eq!(incremental.pt, regenerated.pt, "snapshot pagetable diverged");
-        assert_eq!(incremental.max_pid, regenerated.max_pid, "snapshot max_pid diverged");
-        assert_eq!(incremental.max_lsn, regenerated.max_lsn, "snapshot max_lsn diverged");
-        assert_eq!(incremental.last_lid, regenerated.last_lid, "snapshot last_lid diverged");
-        assert_eq!(incremental.free, regenerated.free, "snapshot free list diverged");
-        assert_eq!(incremental.recovery, regenerated.recovery, "snapshot recovery diverged");
+        assert_eq!(
+            incremental.pt, regenerated.pt,
+            "snapshot pagetable diverged"
+        );
+        assert_eq!(
+            incremental.max_pid, regenerated.max_pid,
+            "snapshot max_pid diverged"
+        );
+        assert_eq!(
+            incremental.max_lsn, regenerated.max_lsn,
+            "snapshot max_lsn diverged"
+        );
+        assert_eq!(
+            incremental.last_lid, regenerated.last_lid,
+            "snapshot last_lid diverged"
+        );
+        assert_eq!(
+            incremental.free, regenerated.free,
+            "snapshot free list diverged"
+        );
+        assert_eq!(
+            incremental.recovery, regenerated.recovery,
+            "snapshot recovery diverged"
+        );
 
         /*
         for (k, v) in &regenerated.replacements {

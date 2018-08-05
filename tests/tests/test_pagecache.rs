@@ -387,6 +387,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
 }
 
 #[test]
+#[cfg(not(target_os = "fuchsia"))]
 fn quickcheck_pagecache_works() {
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 100))

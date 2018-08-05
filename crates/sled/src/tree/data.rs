@@ -21,7 +21,8 @@ impl Data {
             xs: &[(Key, T)],
             lhs_prefix: &[u8],
         ) -> (Key, Vec<(Key, T)>)
-            where T: Clone + Debug + Ord
+        where
+            T: Clone + Debug + Ord,
         {
             let mut decoded_xs: Vec<_> = xs.iter()
                 .map(|&(ref k, ref v)| {
@@ -31,7 +32,8 @@ impl Data {
                 .collect();
             decoded_xs.sort();
 
-            let (_lhs, rhs) = decoded_xs.split_at(decoded_xs.len() / 2 + 1);
+            let (_lhs, rhs) =
+                decoded_xs.split_at(decoded_xs.len() / 2 + 1);
             let split = rhs.first()
                 .expect("rhs should contain at least one element")
                 .0

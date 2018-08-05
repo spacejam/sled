@@ -12,7 +12,10 @@ pub trait Reactor: Debug + Clone {
         msg: Self::Message,
     ) -> Vec<(Self::Peer, Self::Message)>;
 
-    fn tick(&mut self, _at: SystemTime) -> Vec<(Self::Peer, Self::Message)> {
+    fn tick(
+        &mut self,
+        _at: SystemTime,
+    ) -> Vec<(Self::Peer, Self::Message)> {
         vec![]
     }
 }
