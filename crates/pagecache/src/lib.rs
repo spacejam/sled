@@ -34,6 +34,7 @@ extern crate zstd;
 #[cfg(feature = "failpoints")]
 #[macro_use]
 extern crate fail;
+extern crate pagetable;
 
 pub use ds::{Radix, Stack};
 

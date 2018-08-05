@@ -1,16 +1,16 @@
+extern crate pagecache;
 extern crate quickcheck;
 extern crate rand;
 extern crate sled;
-extern crate pagecache;
 
 use std::collections::BTreeMap;
-use std::thread;
 use std::sync::Arc;
+use std::thread;
 
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 
-use sled::*;
 use pagecache::ConfigBuilder;
+use sled::*;
 
 const N_THREADS: usize = 5;
 const N_PER_THREAD: usize = 300;
@@ -50,7 +50,8 @@ fn parallel_tree_ops() {
     }
 
     println!("========== initial sets ==========");
-    let config = ConfigBuilder::new().temporary(true).blink_fanout(2).build();
+    let config =
+        ConfigBuilder::new().temporary(true).blink_fanout(2).build();
     let t = Arc::new(sled::Tree::start(config).unwrap());
     par!{t, |tree: &Tree, k: Vec<u8>| {
         assert_eq!(tree.get(&*k), Ok(None));
@@ -136,7 +137,8 @@ fn tree_iterator() {
         assert_eq!(should_be, v);
     }
 
-    for (i, (k, v)) in t.scan(b"").map(|res| res.unwrap()).enumerate() {
+    for (i, (k, v)) in t.scan(b"").map(|res| res.unwrap()).enumerate()
+    {
         let should_be = kv(i);
         assert_eq!(should_be, k);
         assert_eq!(should_be, v);
@@ -145,15 +147,24 @@ fn tree_iterator() {
     let half_way = N_PER_THREAD / 2;
     let half_key = kv(half_way);
     let mut tree_scan = t.scan(&*half_key);
-    assert_eq!(tree_scan.next(), Some(Ok((half_key.clone(), half_key))));
+    assert_eq!(
+        tree_scan.next(),
+        Some(Ok((half_key.clone(), half_key)))
+    );
 
     let first_key = kv(0);
     let mut tree_scan = t.scan(&*first_key);
-    assert_eq!(tree_scan.next(), Some(Ok((first_key.clone(), first_key))));
+    assert_eq!(
+        tree_scan.next(),
+        Some(Ok((first_key.clone(), first_key)))
+    );
 
     let last_key = kv(N_PER_THREAD - 1);
     let mut tree_scan = t.scan(&*last_key);
-    assert_eq!(tree_scan.next(), Some(Ok((last_key.clone(), last_key))));
+    assert_eq!(
+        tree_scan.next(),
+        Some(Ok((last_key.clone(), last_key)))
+    );
     assert_eq!(tree_scan.next(), None);
 }
 
@@ -224,10 +235,8 @@ impl Arbitrary for Op {
     fn shrink(&self) -> Box<Iterator<Item = Op>> {
         match *self {
             Set(ref k, ref v) if *k > 0 => Box::new(
-                vec![
-                    Set(*k / 2, v.clone()),
-                    Set(*k - 1, v.clone()),
-                ].into_iter(),
+                vec![Set(*k / 2, v.clone()), Set(*k - 1, v.clone())]
+                    .into_iter(),
             ),
             Merge(ref k, ref v) if *k > 0 => Box::new(
                 vec![
@@ -235,32 +244,22 @@ impl Arbitrary for Op {
                     Merge(*k - 1, v.clone()),
                 ].into_iter(),
             ),
-            Get(ref k) if *k > 0 => Box::new(
-                vec![Get(*k / 2), Get(*k - 1)].into_iter(),
-            ),
+            Get(ref k) if *k > 0 => {
+                Box::new(vec![Get(*k / 2), Get(*k - 1)].into_iter())
+            }
             Cas(ref k, ref old, ref new) if *k > 0 => Box::new(
                 vec![
-                    Cas(
-                        *k / 2,
-                        old.clone(),
-                        new.clone()
-                    ),
-                    Cas(
-                        *k - 1,
-                        old.clone(),
-                        new.clone()
-                    ),
+                    Cas(*k / 2, old.clone(), new.clone()),
+                    Cas(*k - 1, old.clone(), new.clone()),
                 ].into_iter(),
             ),
             Scan(ref k, ref len) if *k > 0 => Box::new(
-                vec![
-                    Scan(*k / 2, *len),
-                    Scan(*k - 1, *len),
-                ].into_iter(),
+                vec![Scan(*k / 2, *len), Scan(*k - 1, *len)]
+                    .into_iter(),
             ),
-            Del(ref k) if *k > 0 => Box::new(
-                vec![Del(*k / 2), Del(*k - 1)].into_iter(),
-            ),
+            Del(ref k) if *k > 0 => {
+                Box::new(vec![Del(*k / 2), Del(*k - 1)].into_iter())
+            }
             _ => Box::new(vec![].into_iter()),
         }
     }
@@ -294,7 +293,6 @@ fn prop_tree_matches_btreemap(
     snapshot_after: u8,
     flusher: bool,
 ) -> bool {
-
     use self::*;
     let config = ConfigBuilder::new()
         .temporary(true)
@@ -322,8 +320,9 @@ fn prop_tree_matches_btreemap(
                 *entry += v as u16;
             }
             Get(k) => {
-                let res1 =
-                    tree.get(&*vec![k]).unwrap().map(|v| bytes_to_u16(&*v));
+                let res1 = tree.get(&*vec![k])
+                    .unwrap()
+                    .map(|v| bytes_to_u16(&*v));
                 let res2 = reference.get(&k).cloned();
                 assert_eq!(res1, res2);
             }
@@ -343,10 +342,11 @@ fn prop_tree_matches_btreemap(
                 }
             }
             Scan(k, len) => {
-                let mut tree_iter = tree.scan(&*vec![k]).take(len).map(|res| {
-                    let (ref tk, ref tv) = res.unwrap();
-                    (tk[0], tv.clone())
-                });
+                let mut tree_iter =
+                    tree.scan(&*vec![k]).take(len).map(|res| {
+                        let (ref tk, ref tv) = res.unwrap();
+                        (tk[0], tv.clone())
+                    });
                 let ref_iter = reference
                     .iter()
                     .filter(|&(ref rk, _rv)| **rk >= k)
@@ -384,7 +384,8 @@ fn quickcheck_tree_matches_btreemap() {
         .tests(n_tests)
         .max_tests(10000)
         .quickcheck(
-            prop_tree_matches_btreemap as fn(Vec<Op>, u8, u8, bool) -> bool,
+            prop_tree_matches_btreemap
+                as fn(Vec<Op>, u8, u8, bool) -> bool,
         );
 }
 
@@ -401,12 +402,10 @@ fn tree_bug_01() {
     // the provided one, to deal with 0.
     prop_tree_matches_btreemap(
         vec![Set(32, 9), Set(195, 13), Restart, Set(164, 147)],
-
         0,
         0,
         true,
     );
-
 }
 
 #[test]
@@ -420,8 +419,13 @@ fn tree_bug_2() {
     // would not pick up on the importance of seeing
     // the new root set.
     prop_tree_matches_btreemap(
-        vec![Restart, Set(215, 121), Restart, Set(216, 203), Scan(210, 4)],
-
+        vec![
+            Restart,
+            Set(215, 121),
+            Restart,
+            Set(216, 203),
+            Scan(210, 4),
+        ],
         0,
         0,
         true,
@@ -619,7 +623,6 @@ fn tree_bug_10() {
             Cas(201, 93, 196),
             Set(172, 84),
         ],
-
         0,
         0,
         true,

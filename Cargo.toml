@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/pagecache",
+  "crates/pagetable",
   "crates/sled",
   "tests"
 ]
