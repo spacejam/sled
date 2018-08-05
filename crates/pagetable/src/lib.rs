@@ -4,10 +4,9 @@ extern crate crossbeam_epoch as epoch;
 #[cfg(any(test, feature = "lock_free_delays"))]
 extern crate rand;
 
-
 use std::sync::atomic::Ordering::SeqCst;
 
-use epoch::{Atomic, Guard, Owned, Shared, pin, unprotected};
+use epoch::{pin, unprotected, Atomic, Guard, Owned, Shared};
 
 const FANFACTOR: usize = 18;
 const FANOUT: usize = 1 << FANFACTOR;
@@ -16,15 +15,15 @@ const FAN_MASK: usize = FANOUT - 1;
 pub type PageID = usize;
 
 macro_rules! rep_no_copy {
-    ($e:expr; $n:expr) => {
-        {
-            let mut v = Vec::with_capacity($n);
-            for _ in 0..$n {
-                v.push($e);
-            }
-            v
+    ($e:expr; $n:expr) => {{
+        let mut v = Vec::with_capacity($n);
+
+        for _ in 0..$n {
+            v.push($e);
         }
-    };
+
+        v
+    }};
 }
 
 /// This function is useful for inducing random jitter into our atomic
@@ -34,7 +33,7 @@ macro_rules! rep_no_copy {
 pub fn debug_delay() {
     #[cfg(any(test, feature = "lock_free_delays"))]
     {
-        use rand::{Rng, thread_rng};
+        use rand::{thread_rng, Rng};
 
         if thread_rng().gen_weighted_bool(1000) {
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -47,9 +46,9 @@ pub fn debug_delay() {
 #[inline(always)]
 fn split_fanout(i: usize) -> (usize, usize) {
     assert!(i <= 1 << (FANFACTOR * 2));
-    let pgd = i >> FANFACTOR;
-    let pte = i & FAN_MASK;
-    (pgd, pte)
+    let left = i >> FANFACTOR;
+    let right = i & FAN_MASK;
+    (left, right)
 }
 
 struct Node1<T: Send + 'static> {
@@ -63,30 +62,28 @@ struct Node2<T: Send + 'static> {
 impl<T: Send + 'static> Default for Node1<T> {
     fn default() -> Node1<T> {
         let children = rep_no_copy!(Atomic::null(); FANOUT);
-        Node1 {
-            children: children,
-        }
+        Node1 { children: children }
     }
 }
 
 impl<T: Send + 'static> Default for Node2<T> {
     fn default() -> Node2<T> {
         let children = rep_no_copy!(Atomic::null(); FANOUT);
-        Node2 {
-            children: children,
-        }
+        Node2 { children: children }
     }
 }
 
 /// A simple lock-free radix tree.
 pub struct PageTable<T>
-    where T: 'static + Send + Sync
+where
+    T: 'static + Send + Sync,
 {
     head: Atomic<Node1<T>>,
 }
 
 impl<T> Default for PageTable<T>
-    where T: 'static + Send + Sync
+where
+    T: 'static + Send + Sync,
 {
     fn default() -> PageTable<T> {
         let head = Owned::new(Node1::default());
@@ -97,7 +94,8 @@ impl<T> Default for PageTable<T>
 }
 
 impl<T> PageTable<T>
-    where T: 'static + Send + Sync
+where
+    T: 'static + Send + Sync,
 {
     /// Try to create a new item in the tree.
     pub fn insert(&self, pid: PageID, item: T) -> Result<(), ()> {
@@ -158,7 +156,11 @@ impl<T> PageTable<T>
             return None;
         }
         let res = tip.load(SeqCst, guard);
-        if res.is_null() { None } else { Some(res) }
+        if res.is_null() {
+            None
+        } else {
+            Some(res)
+        }
     }
 
     /// Delete a value from the tree, returning the old value if it was set.
@@ -194,10 +196,12 @@ fn traverse<'g, T: 'static + Send>(
     let mut l2_ptr = l1[l1k].load(SeqCst, guard);
 
     if l2_ptr.is_null() {
-        let next_child = Owned::new(Node2::default()).into_shared(guard);
+        let next_child =
+            Owned::new(Node2::default()).into_shared(guard);
 
         debug_delay();
-        let ret = l1[l1k].compare_and_set(l2_ptr, next_child, SeqCst, guard);
+        let ret = l1[l1k]
+            .compare_and_set(l2_ptr, next_child, SeqCst, guard);
 
         match ret {
             Ok(_) => {
@@ -219,7 +223,8 @@ fn traverse<'g, T: 'static + Send>(
 }
 
 impl<T> Drop for PageTable<T>
-    where T: 'static + Send + Sync
+where
+    T: 'static + Send + Sync,
 {
     fn drop(&mut self) {
         unsafe {

@@ -37,7 +37,6 @@ extern crate fail;
 extern crate pagetable;
 
 pub use ds::{Radix, Stack};
-use pagetable::PageTable;
 
 /// general-purpose configuration
 pub use config::{Config, ConfigBuilder};

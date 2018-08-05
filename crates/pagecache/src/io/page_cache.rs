@@ -6,6 +6,8 @@ use epoch::{Guard, Owned, Shared};
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 
+use pagetable::PageTable;
+
 use super::*;
 
 /// Points to either a memory location or a disk location to page-in data from.
@@ -213,7 +215,7 @@ where
 {
     t: Arc<PM>,
     config: Config,
-    inner: PageTable<Stack<CacheEntry<P>>>,
+    inner: Arc<PageTable<Stack<CacheEntry<P>>>>,
     max_pid: AtomicUsize,
     free: Arc<Mutex<BinaryHeap<PageID>>>,
     log: Log,
@@ -277,7 +279,7 @@ where
         let mut pc = PageCache {
             t: materializer,
             config: config.clone(),
-            inner: PageTable::default(),
+            inner: Arc::new(PageTable::default()),
             max_pid: AtomicUsize::new(0),
             free: Arc::new(Mutex::new(BinaryHeap::new())),
             log: Log::start(config, snapshot.clone())?,
