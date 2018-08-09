@@ -190,6 +190,7 @@ impl Log {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) enum MessageKind {
     Success,
+    SuccessBlob,
     Failed,
     Pad,
     Corrupted,
@@ -222,9 +223,16 @@ pub(crate) struct SegmentTrailer {
 }
 
 #[doc(hidden)]
+#[derive(Debug, Clone, PartialEq)]
+pub enum InlineOrExternalValue {
+    InlineValue(Vec<u8>),
+    ExternalValue(Lsn),
+}
+
+#[doc(hidden)]
 #[derive(Debug)]
 pub enum LogRead {
-    Flush(Lsn, Vec<u8>, usize),
+    Flush(Lsn, InlineOrExternalValue, usize),
     Failed(Lsn, usize),
     Pad(Lsn),
     Corrupted(usize),
@@ -233,7 +241,9 @@ pub enum LogRead {
 impl LogRead {
     /// Optionally return successfully read bytes, or None if
     /// the data was corrupt or this log entry was aborted.
-    pub fn flush(self) -> Option<(Lsn, Vec<u8>, usize)> {
+    pub fn flush(
+        self,
+    ) -> Option<(Lsn, InlineOrExternalValue, usize)> {
         match self {
             LogRead::Flush(lsn, bytes, len) => {
                 Some((lsn, bytes, len))
@@ -279,7 +289,7 @@ impl LogRead {
     /// # Panics
     ///
     /// panics if `is_flush()` is false.
-    pub fn unwrap(self) -> (Lsn, Vec<u8>, usize) {
+    pub fn unwrap(self) -> (Lsn, InlineOrExternalValue, usize) {
         match self {
             LogRead::Flush(lsn, bytes, len) => (lsn, bytes, len),
             _ => panic!("called unwrap on a non-flush LogRead"),
@@ -292,7 +302,10 @@ impl LogRead {
     /// # Panics
     ///
     /// panics if `is_flush()` is false.
-    pub fn expect<'a>(self, msg: &'a str) -> (Lsn, Vec<u8>, usize) {
+    pub fn expect<'a>(
+        self,
+        msg: &'a str,
+    ) -> (Lsn, InlineOrExternalValue, usize) {
         match self {
             LogRead::Flush(lsn, bytes, len) => (lsn, bytes, len),
             _ => panic!("{}", msg),
@@ -307,6 +320,7 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
     fn from(buf: [u8; MSG_HEADER_LEN]) -> MessageHeader {
         let kind = match buf[0] {
             SUCCESSFUL_FLUSH => MessageKind::Success,
+            SUCCESSFUL_EXTERNAL_FLUSH => MessageKind::SuccessBlob,
             FAILED_FLUSH => MessageKind::Failed,
             SEGMENT_PAD => MessageKind::Pad,
             _ => MessageKind::Corrupted,
@@ -338,6 +352,7 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
         let mut buf = [0u8; MSG_HEADER_LEN];
         buf[0] = match self.kind {
             MessageKind::Success => SUCCESSFUL_FLUSH,
+            MessageKind::SuccessBlob => SUCCESSFUL_EXTERNAL_FLUSH,
             MessageKind::Failed => FAILED_FLUSH,
             MessageKind::Pad => SEGMENT_PAD,
             MessageKind::Corrupted => EVIL_BYTE,

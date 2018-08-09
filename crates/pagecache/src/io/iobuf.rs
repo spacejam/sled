@@ -1,3 +1,4 @@
+use std::mem::{size_of, transmute};
 #[cfg(target_pointer_width = "32")]
 use std::sync::atomic::AtomicI64;
 #[cfg(target_pointer_width = "64")]
@@ -47,7 +48,7 @@ struct IoBuf {
 unsafe impl Sync for IoBuf {}
 
 pub(super) struct IoBufs {
-    config: Config,
+    pub(super) config: Config,
     bufs: Vec<IoBuf>,
     current_buf: AtomicUsize,
     written_bufs: AtomicUsize,
@@ -170,6 +171,9 @@ impl IoBufs {
         // of our file has not yet been written.
         let stable = if next_lsn == 0 { -1 } else { next_lsn - 1 };
 
+        // remove all blob files larger than our stable offset
+        config.gc_blobs(stable)?;
+
         Ok(IoBufs {
             bufs: bufs,
             current_buf: AtomicUsize::new(current_buf),
@@ -217,30 +221,34 @@ impl IoBufs {
         self.stable_lsn.load(SeqCst) as Lsn
     }
 
-    // Adds a header to the buffer, and optionally compresses
-    // the buffer.
-    // NB the caller is responsible for later setting the Lsn
-    // bytes after a reservation has been acquired.
-    fn encapsulate(&self, raw_buf: Vec<u8>) -> Vec<u8> {
-        #[cfg(feature = "zstd")]
-        let buf = if self.config.use_compression {
-            let _measure = Measure::new(&M.compress);
-            compress(
-                &*raw_buf,
-                self.config.get_zstd_compression_factor(),
-            ).unwrap()
+    // Adds a header to the front of the buffer
+    fn encapsulate(
+        &self,
+        raw_buf: Vec<u8>,
+        lsn: Lsn,
+        over_blob_threshold: bool,
+    ) -> CacheResult<Vec<u8>, ()> {
+        let buf = if over_blob_threshold {
+            // write blob to file
+            self.config.write_blob(lsn, raw_buf)?;
+
+            let lsn_buf: [u8; size_of::<Lsn>()] =
+                unsafe { transmute(lsn) };
+
+            lsn_buf.to_vec()
         } else {
             raw_buf
         };
 
-        #[cfg(not(feature = "zstd"))]
-        let buf = raw_buf;
-
         let crc16 = crc16_arr(&buf);
 
         let header = MessageHeader {
-            kind: MessageKind::Success,
-            lsn: 0,
+            kind: if over_blob_threshold {
+                MessageKind::SuccessBlob
+            } else {
+                MessageKind::Success
+            },
+            lsn: lsn,
             len: buf.len(),
             crc16: crc16,
         };
@@ -250,7 +258,7 @@ impl IoBufs {
         let mut out = vec![0; MSG_HEADER_LEN + buf.len()];
         out[0..MSG_HEADER_LEN].copy_from_slice(&header_bytes);
         out[MSG_HEADER_LEN..].copy_from_slice(&*buf);
-        out
+        Ok(out)
     }
 
     /// Tries to claim a reservation for writing a buffer to a
@@ -276,7 +284,21 @@ impl IoBufs {
         #[cfg(target_pointer_width = "64")]
         assert_eq!((raw_buf.len() + MSG_HEADER_LEN) >> 32, 0);
 
-        let buf = self.encapsulate(raw_buf);
+        #[cfg(feature = "zstd")]
+        let buf = if self.config.use_compression {
+            let _measure = Measure::new(&M.compress);
+            compress(
+                &*raw_buf,
+                self.config.get_zstd_compression_factor(),
+            ).unwrap()
+        } else {
+            raw_buf
+        };
+
+        #[cfg(not(feature = "zstd"))]
+        let buf = raw_buf;
+
+        let total_buf_len = MSG_HEADER_LEN + buf.len();
 
         let max_overhead = if self.config.min_items_per_segment == 1 {
             SEG_HEADER_LEN + SEG_TRAILER_LEN
@@ -288,19 +310,15 @@ impl IoBufs {
             / self.config.min_items_per_segment)
             - max_overhead;
 
-        if buf.len() > max_buf_size {
-            return Err(Error::Unsupported(format!(
-                "trying to write a buffer that is too large \
-                to be stored in the IO buffer. buf len: {} current max: {}. \
-                a future version of pagecache will implement automatic \
-                fragmentation of large values. feel free to open \
-                an issue if this is a pressing need of yours.",
-                buf.len(),
-                max_buf_size
-            )));
-        }
+        let over_blob_threshold = total_buf_len > max_buf_size;
 
-        trace!("reserving buf of len {}", buf.len());
+        let inline_buf_len = if over_blob_threshold {
+            MSG_HEADER_LEN + size_of::<Lsn>()
+        } else {
+            total_buf_len
+        };
+
+        trace!("reserving buf of len {}", inline_buf_len);
 
         let mut printed = false;
         macro_rules! trace_once {
@@ -322,8 +340,7 @@ impl IoBufs {
             if spins > 1_000_000 {
                 debug!(
                     "stalling in reserve, idx {}, buf len {}",
-                    idx,
-                    buf.len()
+                    idx, inline_buf_len,
                 );
                 spins = 0;
             }
@@ -383,7 +400,8 @@ impl IoBufs {
 
             // try to claim space
             let buf_offset = offset(header);
-            let prospective_size = buf_offset as usize + buf.len();
+            let prospective_size =
+                buf_offset as usize + inline_buf_len;
             let would_overflow =
                 prospective_size > iobuf.get_capacity();
             if would_overflow {
@@ -405,7 +423,7 @@ impl IoBufs {
 
             // attempt to claim by incrementing an unsealed header
             let bumped_offset =
-                bump_offset(header, buf.len() as Header);
+                bump_offset(header, inline_buf_len as Header);
             let claimed = incr_writers(bumped_offset);
             assert!(!is_sealed(claimed));
 
@@ -442,37 +460,37 @@ impl IoBufs {
                 unsafe { (*iobuf.buf.get()).as_mut_slice() };
 
             let res_start = buf_offset as usize;
-            let res_end = res_start + buf.len();
+            let res_end = res_start + inline_buf_len;
             let destination = &mut (out_buf)[res_start..res_end];
 
             let reservation_offset = lid + u64::from(buf_offset);
             let reservation_lsn =
                 iobuf.get_lsn() + u64::from(buf_offset) as Lsn;
 
-            // we assign the LSN now that we know what it is
-            assert_eq!(&buf[1..9], &[0u8; 8]);
-            let lsn_bytes: [u8; 8] =
-                unsafe { std::mem::transmute(reservation_lsn) };
-            let mut buf = buf;
-            buf[1..9].copy_from_slice(&lsn_bytes);
-
             trace!(
                 "reserved {} bytes at lsn {} lid {}",
-                buf.len(),
+                inline_buf_len,
                 reservation_lsn,
                 reservation_offset,
             );
 
             self.bump_max_reserved_lsn(reservation_lsn);
 
+            let encapsulated_buf = self.encapsulate(
+                buf,
+                reservation_lsn,
+                over_blob_threshold,
+            )?;
+
             return Ok(Reservation {
                 idx: idx,
                 iobufs: self,
-                data: buf,
+                data: encapsulated_buf,
                 destination: destination,
                 flushed: false,
                 lsn: reservation_lsn,
                 lid: reservation_offset,
+                blob: over_blob_threshold,
             });
         }
     }

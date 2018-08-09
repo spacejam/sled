@@ -956,13 +956,27 @@ where
         trace!("pulling lsn {} lid {} from disk", lsn, lid);
         let _measure = Measure::new(&M.pull);
         let bytes = match self.log.read(lsn, lid).map_err(|_| ()) {
-            Ok(LogRead::Flush(read_lsn, data, _len)) => {
+            Ok(LogRead::Flush(read_lsn, InlineValue(data), _len)) => {
                 assert_eq!(
                     read_lsn, lsn,
                     "expected lsn {} on pull of lid {}, \
                      but got lsn {} instead",
                     lsn, lid, read_lsn
                 );
+                Ok(data)
+            }
+            Ok(LogRead::Flush(read_lsn, ExternalValue(id), _len)) => {
+                assert_eq!(
+                    read_lsn, lsn,
+                    "expected lsn {} on pull of lid {}, \
+                     but got lsn {} instead",
+                    lsn, lid, read_lsn
+                );
+
+                let data = self.config
+                    .read_blob(id)
+                    .map_err(|e| e.danger_cast())?;
+
                 Ok(data)
             }
             // FIXME 'read invalid data at lid 66244182' in cycle test

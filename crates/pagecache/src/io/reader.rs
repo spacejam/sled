@@ -126,7 +126,7 @@ impl LogReader for File {
             return Ok(LogRead::Corrupted(header.len));
         }
 
-        match header.kind {
+        let value = match header.kind {
             MessageKind::Failed => {
                 trace!("read failed of len {}", header.len);
                 return Ok(LogRead::Failed(header.lsn, header.len));
@@ -135,27 +135,38 @@ impl LogReader for File {
                 trace!("read pad at lsn {}", header.lsn);
                 return Ok(LogRead::Pad(header.lsn));
             }
-            _ => {}
-        }
+            MessageKind::SuccessBlob => {
+                let mut id_bytes = [0u8; 8];
+                id_bytes.copy_from_slice(&*buf);
+                let id: Lsn =
+                    unsafe { std::mem::transmute(id_bytes) };
 
-        #[cfg(feature = "zstd")]
-        let res = {
-            if _use_compression {
-                let _measure = Measure::new(&M.decompress);
-                Ok(LogRead::Flush(
-                    header.lsn,
-                    decompress(&*buf, segment_len).unwrap(),
-                    len,
-                ))
-            } else {
-                Ok(LogRead::Flush(header.lsn, buf, len))
+                ExternalValue(id)
             }
+            MessageKind::Success => {
+                #[cfg(feature = "zstd")]
+                {
+                    if _use_compression {
+                        let _measure = Measure::new(&M.decompress);
+                        InlineValue(
+                            decompress(&*buf, segment_len).unwrap(),
+                        )
+                    } else {
+                        InlineValue(buf)
+                    }
+                }
+
+                #[cfg(not(feature = "zstd"))]
+                InlineValue(buf)
+            }
+            MessageKind::Corrupted => unimplemented!(
+                "corrupted should have been handled \
+                 before reading message length above"
+            ),
         };
 
-        #[cfg(not(feature = "zstd"))]
-        let res = Ok(LogRead::Flush(header.lsn, buf, header.len));
-
         trace!("read a successful flushed message");
-        res
+
+        Ok(LogRead::Flush(header.lsn, value, header.len))
     }
 }

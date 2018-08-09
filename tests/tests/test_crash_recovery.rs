@@ -1,11 +1,12 @@
 #![cfg(all(not(target_os = "fuchsia"), not(target_os = "android")))]
 
-extern crate pagecache;
-extern crate sled;
 extern crate libc;
+extern crate pagecache;
 extern crate rand;
+extern crate sled;
 
 use std::fs;
+use std::mem::size_of;
 use std::path::Path;
 use std::thread;
 use std::time::Duration;
@@ -37,7 +38,7 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
     let mut lowest = 0;
     for res in iter {
         let (mut k, v) = res.unwrap();
-        if v == highest_vec {
+        if &v[..4] == &highest_vec[..4] {
             contiguous += 1;
         } else {
             k.reverse();
@@ -77,13 +78,14 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
 }
 
 fn u32_to_vec(u: u32) -> Vec<u8> {
-    let buf: [u8; 4] = unsafe { std::mem::transmute(u) };
+    let buf: [u8; size_of::<u32>()] =
+        unsafe { std::mem::transmute(u) };
     buf.to_vec()
 }
 
 fn slice_to_u32(b: &[u8]) -> u32 {
-    let mut buf = [0u8; 4];
-    buf.copy_from_slice(b);
+    let mut buf = [0u8; size_of::<u32>()];
+    buf.copy_from_slice(&b[..size_of::<u32>()]);
 
     unsafe { std::mem::transmute(buf) }
 }
@@ -95,8 +97,6 @@ fn run(config: Config) {
     // TODO is this necessary or voodoo?
     tree.flush().unwrap();
 
-    let (key, highest) = verify(&tree);
-
     thread::spawn(|| {
         let runtime = rand::thread_rng().gen_range(0, 200);
         thread::sleep(Duration::from_millis(runtime));
@@ -104,6 +104,8 @@ fn run(config: Config) {
             libc::raise(9);
         }
     });
+
+    let (key, highest) = verify(&tree);
 
     let mut hu = ((highest as usize) * CYCLE) + key as usize;
     assert_eq!(hu % CYCLE, key as usize);
@@ -118,7 +120,11 @@ fn run(config: Config) {
 
         let mut key = u32_to_vec((hu % CYCLE) as u32);
         key.reverse();
-        let value = u32_to_vec((hu / CYCLE) as u32);
+
+        let mut value = u32_to_vec((hu / CYCLE) as u32);
+        let additional_len = rand::thread_rng().gen_range(0, 100_000);
+        value.append(&mut vec![0u8; additional_len]);
+
         tree.set(key, value).unwrap();
     }
 }
@@ -139,7 +145,13 @@ fn run_without_snapshot() {
         .snapshot_after_ops(1 << 56)
         .build();
 
-    run(config);
+    match thread::spawn(|| run(config)).join() {
+        Err(e) => {
+            println!("worker thread failed: {:?}", e);
+            std::process::exit(15);
+        }
+        _ => {}
+    }
 }
 
 fn run_with_snapshot() {
@@ -158,7 +170,13 @@ fn run_with_snapshot() {
         .snapshot_after_ops(1 << 10)
         .build();
 
-    run(config);
+    match thread::spawn(|| run(config)).join() {
+        Err(e) => {
+            println!("worker thread failed: {:?}", e);
+            std::process::exit(15);
+        }
+        _ => {}
+    }
 }
 
 #[test]
@@ -171,7 +189,11 @@ fn test_crash_recovery_with_runtime_snapshot() {
         } else {
             let mut status = 0;
             unsafe {
-                libc::waitpid(child, &mut status as *mut libc::c_int, 0);
+                libc::waitpid(
+                    child,
+                    &mut status as *mut libc::c_int,
+                    0,
+                );
             }
             if status != 9 {
                 cleanup();
@@ -192,7 +214,11 @@ fn test_crash_recovery_no_runtime_snapshot() {
         } else {
             let mut status = 0;
             unsafe {
-                libc::waitpid(child, &mut status as *mut libc::c_int, 0);
+                libc::waitpid(
+                    child,
+                    &mut status as *mut libc::c_int,
+                    0,
+                );
             }
             if status != 9 {
                 cleanup();
@@ -214,7 +240,9 @@ fn cleanup_with_snapshots() {
                 let path_buf = de.path();
                 let path = path_buf.as_path();
                 let path_str = path.to_str().unwrap();
-                if path_str.starts_with("test_crashes_with_snapshot/snap.") {
+                if path_str
+                    .starts_with("test_crashes_with_snapshot/snap.")
+                {
                     let _res = fs::remove_file(path);
                 }
             }

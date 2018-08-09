@@ -1,24 +1,26 @@
 #![cfg_attr(test, allow(unused))]
 
-extern crate quickcheck;
-extern crate rand;
 #[cfg(target_os = "linux")]
 extern crate libc;
+extern crate quickcheck;
+extern crate rand;
 
-extern crate sled;
 extern crate pagecache;
+extern crate sled;
 extern crate tests;
 
 use std::fs;
-use std::thread;
+use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
 use std::sync::Arc;
-use std::sync::atomic::{ATOMIC_USIZE_INIT, AtomicUsize, Ordering};
+use std::thread;
 
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
-use rand::{Rng, thread_rng};
+use rand::{thread_rng, Rng};
 
-use pagecache::{ConfigBuilder, Log, LogRead, MSG_HEADER_LEN, SEG_HEADER_LEN,
-                SEG_TRAILER_LEN, SegmentMode};
+use pagecache::{
+    ConfigBuilder, ExternalValue, InlineValue, Log, LogRead,
+    SegmentMode, MSG_HEADER_LEN, SEG_HEADER_LEN, SEG_TRAILER_LEN,
+};
 
 type Lsn = isize;
 type LogID = u64;
@@ -56,8 +58,8 @@ fn non_contiguous_log_flush() {
     let log = Log::start_raw_log(config.clone()).unwrap();
 
     let seg_overhead = std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN);
-    let buf_len = (config.io_buf_size / config.min_items_per_segment) -
-        (MSG_HEADER_LEN + seg_overhead);
+    let buf_len = (config.io_buf_size / config.min_items_per_segment)
+        - (MSG_HEADER_LEN + seg_overhead);
 
     let res1 = log.reserve(vec![0; buf_len]).unwrap();
     let res2 = log.reserve(vec![0; buf_len]).unwrap();
@@ -78,7 +80,8 @@ fn concurrent_logging() {
             .io_buf_size(1000)
             .flush_every_ms(Some(50))
             .build();
-        let log = Arc::new(Log::start_raw_log(config.clone()).unwrap());
+        let log =
+            Arc::new(Log::start_raw_log(config.clone()).unwrap());
         let iobs2 = log.clone();
         let iobs3 = log.clone();
         let iobs4 = log.clone();
@@ -86,57 +89,71 @@ fn concurrent_logging() {
         let iobs6 = log.clone();
         let log7 = log.clone();
 
-        let seg_overhead = std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN);
-        let buf_len = (config.io_buf_size / config.min_items_per_segment) -
-            (MSG_HEADER_LEN + seg_overhead);
+        let seg_overhead =
+            std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN);
+        let buf_len = (config.io_buf_size
+            / config.min_items_per_segment)
+            - (MSG_HEADER_LEN + seg_overhead);
 
         let t1 = thread::Builder::new()
             .name("c1".to_string())
-            .spawn(move || for i in 0..1_000 {
-                let buf = vec![1; i % buf_len];
-                log.write(buf);
+            .spawn(move || {
+                for i in 0..1_000 {
+                    let buf = vec![1; i % buf_len];
+                    log.write(buf);
+                }
             })
             .unwrap();
 
         let t2 = thread::Builder::new()
             .name("c2".to_string())
-            .spawn(move || for i in 0..1_000 {
-                let buf = vec![2; i % buf_len];
-                iobs2.write(buf);
+            .spawn(move || {
+                for i in 0..1_000 {
+                    let buf = vec![2; i % buf_len];
+                    iobs2.write(buf);
+                }
             })
             .unwrap();
 
         let t3 = thread::Builder::new()
             .name("c3".to_string())
-            .spawn(move || for i in 0..1_000 {
-                let buf = vec![3; i % buf_len];
-                iobs3.write(buf);
+            .spawn(move || {
+                for i in 0..1_000 {
+                    let buf = vec![3; i % buf_len];
+                    iobs3.write(buf);
+                }
             })
             .unwrap();
 
         let t4 = thread::Builder::new()
             .name("c4".to_string())
-            .spawn(move || for i in 0..1_000 {
-                let buf = vec![4; i % buf_len];
-                iobs4.write(buf);
+            .spawn(move || {
+                for i in 0..1_000 {
+                    let buf = vec![4; i % buf_len];
+                    iobs4.write(buf);
+                }
             })
             .unwrap();
         let t5 = thread::Builder::new()
             .name("c5".to_string())
-            .spawn(move || for i in 0..1_000 {
-                let buf = vec![5; i % buf_len];
-                iobs5.write(buf);
+            .spawn(move || {
+                for i in 0..1_000 {
+                    let buf = vec![5; i % buf_len];
+                    iobs5.write(buf);
+                }
             })
             .unwrap();
 
         let t6 = thread::Builder::new()
             .name("c6".to_string())
-            .spawn(move || for i in 0..1_000 {
-                let buf = vec![6; i % buf_len];
-                let (lsn, _lid) = iobs6.write(buf).unwrap();
-                // println!("+");
-                iobs6.make_stable(lsn).unwrap();
-                // println!("-");
+            .spawn(move || {
+                for i in 0..1_000 {
+                    let buf = vec![6; i % buf_len];
+                    let (lsn, _lid) = iobs6.write(buf).unwrap();
+                    // println!("+");
+                    iobs6.make_stable(lsn).unwrap();
+                    // println!("-");
+                }
             })
             .unwrap();
 
@@ -153,7 +170,7 @@ fn write(log: &Log) {
     let data_bytes = b"yoyoyoyo";
     let (lsn, lid) = log.write(data_bytes.to_vec()).unwrap();
     let (_, read_buf, _) = log.read(lsn, lid).unwrap().unwrap();
-    assert_eq!(read_buf, data_bytes);
+    assert_eq!(read_buf, InlineValue(data_bytes.to_vec()));
 }
 
 fn abort(log: &Log) {
@@ -198,7 +215,8 @@ fn log_iterator() {
     // stick an abort in the middle, which should not be
     // returned
     {
-        let res = log.reserve(b"never_gonna_hit_disk".to_vec()).unwrap();
+        let res =
+            log.reserve(b"never_gonna_hit_disk".to_vec()).unwrap();
         res.abort().unwrap();
     }
 
@@ -237,33 +255,23 @@ fn log_chunky_iterator() {
 
             let mut reference = vec![];
 
-            let max_valid_size = config.io_buf_size -
-                (MSG_HEADER_LEN + SEG_HEADER_LEN + SEG_TRAILER_LEN);
+            let max_inline_size = config.io_buf_size
+                - (MSG_HEADER_LEN + SEG_HEADER_LEN + SEG_TRAILER_LEN);
 
             for i in 0..1000 {
-                let len = thread_rng().gen_range(0, max_valid_size * 2);
+                let len =
+                    thread_rng().gen_range(0, max_inline_size * 2);
                 let item = thread_rng().gen::<u8>();
                 let buf = vec![item; len];
                 let abort = thread_rng().gen::<bool>();
 
                 if abort {
-                    if let Ok(res) = log.reserve(buf) {
-                        res.abort().unwrap();
-                    } else {
-                        assert!(len > max_valid_size);
-                    }
+                    let res = log.reserve(buf)
+                        .expect("should reserve buffer");
+                    res.abort().unwrap();
                 } else {
-                    if let Ok((lsn, lid)) = log.write(buf.clone()) {
-                        if len > max_valid_size {
-                            panic!(
-                                "successfully wrote something that was bigger
-                                than we thought should be possible"
-                            );
-                        }
-                        reference.push((lsn, lid, buf));
-                    } else {
-                        assert!(len > max_valid_size);
-                    }
+                    let (lsn, lid) = log.write(buf.clone()).unwrap();
+                    reference.push((lsn, lid, buf));
                 }
             }
 
@@ -299,8 +307,10 @@ fn snapshot_with_out_of_order_buffers() {
         .snapshot_after_ops(5)
         .build();
 
-    let len = config.io_buf_size - SEG_HEADER_LEN - SEG_TRAILER_LEN -
-        MSG_HEADER_LEN;
+    let len = config.io_buf_size
+        - SEG_HEADER_LEN
+        - SEG_TRAILER_LEN
+        - MSG_HEADER_LEN;
 
     let log = Log::start_raw_log(config.clone()).unwrap();
 
@@ -397,7 +407,9 @@ impl Arbitrary for Op {
 
         if g.gen_weighted_bool(50) {
             let len = LEN.load(Ordering::Relaxed);
-            return Op::Truncate(thread_rng().gen_range(0, len as u64));
+            return Op::Truncate(
+                thread_rng().gen_range(0, len as u64),
+            );
         }
 
         let choice = g.gen_range(0, 4);
@@ -444,7 +456,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
 
     let mut tip = 0;
     let mut log = Log::start_raw_log(config.clone()).unwrap();
-    let mut reference: Vec<(Lsn, LogID, Option<Vec<u8>>, usize)> = vec![];
+    let mut reference: Vec<(Lsn, LogID, Option<_>, usize)> = vec![];
 
     for op in ops.into_iter() {
         match op {
@@ -452,14 +464,19 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
                 if reference.len() <= lid as usize {
                     continue;
                 }
-                let (lsn, lid, ref expected, _len) = reference[lid as usize];
+                let (lsn, lid, ref expected, _len) =
+                    reference[lid as usize];
                 // log.make_stable(lid);
                 let read_res = log.read(lsn, lid);
                 // println!( "expected {:?} read_res {:?} tip {} lid {}", expected, read_res, tip, lid);
                 if expected.is_none() || tip as u64 <= lid {
-                    assert!(read_res.is_err() || !read_res.unwrap().is_flush());
+                    assert!(
+                        read_res.is_err()
+                            || !read_res.unwrap().is_flush()
+                    );
                 } else {
-                    let flush = read_res.unwrap().flush().map(|f| f.1);
+                    let flush =
+                        read_res.unwrap().flush().map(|f| f.1);
                     assert_eq!(flush, *expected);
                 }
             }
@@ -467,7 +484,12 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
                 let len = buf.len();
                 let (lsn, lid) = log.write(buf.clone()).unwrap();
                 tip = lid as usize + len + MSG_HEADER_LEN;
-                reference.push((lsn, lid, Some(buf), len));
+                reference.push((
+                    lsn,
+                    lid,
+                    Some(InlineValue(buf)),
+                    len,
+                ));
             }
             AbortReservation(buf) => {
                 let len = buf.len();
@@ -483,11 +505,12 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
 
                 // on recovery, we will rewind over any aborted tip entries
                 while !reference.is_empty() {
-                    let should_pop = if reference.last().unwrap().2.is_none() {
-                        true
-                    } else {
-                        false
-                    };
+                    let should_pop =
+                        if reference.last().unwrap().2.is_none() {
+                            true
+                        } else {
+                            false
+                        };
                     if should_pop {
                         reference.pop();
                     } else {
@@ -700,7 +723,12 @@ fn log_bug_14a() {
     // postmortem 2:
     use Op::*;
     prop_log_works(
-        vec![AbortReservation(vec![12]), Restart, Write(vec![]), Read(0)],
+        vec![
+            AbortReservation(vec![12]),
+            Restart,
+            Write(vec![]),
+            Read(0),
+        ],
         true,
     );
 }
@@ -799,7 +827,10 @@ fn log_bug_20() {
     // postmortem: message header length was not being included when
     // calculating the starting log offsets.
     use Op::*;
-    prop_log_works(vec![Write(vec![]), Restart, Write(vec![2]), Read(1)], true);
+    prop_log_works(
+        vec![Write(vec![]), Restart, Write(vec![2]), Read(1)],
+        true,
+    );
 }
 
 #[test]
@@ -818,7 +849,12 @@ fn log_bug_22() {
     // postmortem:
     use Op::*;
     prop_log_works(
-        vec![Read(10), Write(vec![75]), Write(vec![]), Write(vec![77])],
+        vec![
+            Read(10),
+            Write(vec![75]),
+            Write(vec![]),
+            Write(vec![77]),
+        ],
         true,
     );
 }

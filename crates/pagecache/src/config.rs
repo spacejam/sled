@@ -380,27 +380,25 @@ impl Config {
                     path
                 )));
             }
-            Some(dir) => dir,
+            Some(dir) => dir.join("blobs"),
         };
 
         // create data directory if it doesn't exist yet
-        if dir != Path::new("") {
-            if dir.is_file() {
-                return Err(Error::Unsupported(format!(
-                    "provided parent directory is a file, \
-                     not a directory: {:?}",
-                    dir
-                )));
-            }
+        if dir.is_file() {
+            return Err(Error::Unsupported(format!(
+                "provided parent directory is a file, \
+                 not a directory: {:?}",
+                dir
+            )));
+        }
 
-            if !dir.exists() {
-                let res: std::io::Result<()> =
-                    std::fs::create_dir_all(dir);
-                res.map_err(|e: std::io::Error| {
-                    let ret: Error<()> = e.into();
-                    ret
-                })?;
-            }
+        if !dir.exists() {
+            let res: std::io::Result<()> =
+                std::fs::create_dir_all(dir);
+            res.map_err(|e: std::io::Error| {
+                let ret: Error<()> = e.into();
+                ret
+            })?;
         }
 
         self.verify_conf_changes_ok()?;
@@ -575,6 +573,13 @@ impl Config {
         Ok(deserialize::<ConfigBuilder>(&*buf).ok())
     }
 
+    fn blob_path(&self, id: Lsn) -> PathBuf {
+        let mut path = self.get_path();
+        path.push("blobs");
+        path.push(format!("{}", id));
+        path
+    }
+
     fn db_path(&self) -> PathBuf {
         let mut path = self.get_path();
         path.push("db");
@@ -585,6 +590,92 @@ impl Config {
         let mut path = self.get_path();
         path.push("conf");
         path
+    }
+
+    pub(crate) fn read_blob(
+        &self,
+        id: Lsn,
+    ) -> CacheResult<Vec<u8>, ()> {
+        let path = self.blob_path(id);
+        let mut f =
+            std::fs::OpenOptions::new().read(true).open(&path)?;
+
+        let mut crc_expected_bytes = [0u8; 8];
+        f.read_exact(&mut crc_expected_bytes).unwrap();
+        let crc_expected: u64 =
+            unsafe { std::mem::transmute(crc_expected_bytes) };
+
+        let mut buf = vec![];
+        f.read_to_end(&mut buf)?;
+
+        let crc_actual = crc64(&*buf);
+
+        if crc_expected != crc_actual {
+            warn!("blob {} failed crc check!", id);
+            Err(Error::Corruption { at: id as u64 })
+        } else {
+            Ok(buf)
+        }
+    }
+
+    pub(crate) fn write_blob(
+        &self,
+        id: Lsn,
+        mut data: Vec<u8>,
+    ) -> CacheResult<(), ()> {
+        let path = self.blob_path(id);
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
+
+        let mut crc: [u8; 8] =
+            unsafe { std::mem::transmute(crc64(&*data)) };
+
+        f.write_all(&mut crc)
+            .and_then(|_| f.write_all(&mut data))
+            .map_err(|e| e.into())
+    }
+
+    pub(crate) fn gc_blobs(
+        &self,
+        stable_lsn: Lsn,
+    ) -> CacheResult<(), ()> {
+        let stable = self.blob_path(stable_lsn);
+        let blob_dir = stable.parent().unwrap();
+        let blobs = std::fs::read_dir(blob_dir)?;
+
+        for blob in blobs {
+            let path = blob?.path();
+            let lsn_str = path.file_name().unwrap().to_str().unwrap();
+            let lsn_res: Result<Lsn, _> = lsn_str.parse();
+
+            if let Err(e) = lsn_res {
+                return Err(Error::Unsupported(format!(
+                    "blobs directory contains \
+                     unparsable path ({:?}): {}",
+                    path, e
+                )));
+            }
+
+            let lsn = lsn_res.unwrap();
+
+            if lsn > stable_lsn {
+                warn!(
+                    "removing blob {:?} that has \
+                     a higher lsn than our stable log: {:?}",
+                    path, stable
+                );
+                std::fs::remove_file(&path)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn remove_blob(&self, id: Lsn) -> CacheResult<(), ()> {
+        let path = self.blob_path(id);
+        std::fs::remove_file(&path).map_err(|e| e.into())
     }
 
     #[doc(hidden)]

@@ -77,12 +77,36 @@ impl Iterator for LogIter {
                     self.segment_len,
                     self.use_compression,
                 ) {
-                    Ok(LogRead::Flush(lsn, buf, on_disk_len)) => {
+                    Ok(LogRead::Flush(
+                        lsn,
+                        ExternalValue(id),
+                        on_disk_len,
+                    )) => {
                         if lsn != self.cur_lsn {
                             error!("read Flush with bad lsn");
                             return None;
                         }
-                        trace!("read flush in LogIter::next");
+                        trace!("read blob flush in LogIter::next");
+                        self.cur_lsn +=
+                            (MSG_HEADER_LEN + on_disk_len) as Lsn;
+                        match self.config.read_blob(id) {
+                            Ok(buf) => return Some((lsn, lid, buf)),
+                            Err(e) => {
+                                error!("read Flush pointing to unreadable blob: {}", e);
+                                return None;
+                            }
+                        }
+                    }
+                    Ok(LogRead::Flush(
+                        lsn,
+                        InlineValue(buf),
+                        on_disk_len,
+                    )) => {
+                        if lsn != self.cur_lsn {
+                            error!("read Flush with bad lsn");
+                            return None;
+                        }
+                        trace!("read inline flush in LogIter::next");
                         self.cur_lsn +=
                             (MSG_HEADER_LEN + on_disk_len) as Lsn;
                         return Some((lsn, lid, buf));

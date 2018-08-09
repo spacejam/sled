@@ -12,6 +12,7 @@ pub struct Reservation<'a> {
     pub(super) flushed: bool,
     pub(super) lsn: Lsn,
     pub(super) lid: LogID,
+    pub(super) blob: bool,
 }
 
 impl<'a> Drop for Reservation<'a> {
@@ -28,6 +29,19 @@ impl<'a> Reservation<'a> {
     /// Cancel the reservation, placing a failed flush on disk, returning
     /// the (cancelled) log sequence number and file offset.
     pub fn abort(mut self) -> CacheResult<(Lsn, LogID), ()> {
+        if self.blob {
+            let mut blob_ptr_bytes =
+                [0u8; std::mem::size_of::<Lsn>()];
+            blob_ptr_bytes
+                .copy_from_slice(&self.data[MSG_HEADER_LEN..]);
+            let blob_ptr: Lsn =
+                unsafe { std::mem::transmute(blob_ptr_bytes) };
+
+            assert_eq!(self.lsn, blob_ptr);
+
+            self.iobufs.config.remove_blob(blob_ptr)?;
+        }
+
         self.flush(false)
     }
 

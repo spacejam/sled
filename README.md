@@ -47,7 +47,7 @@ fn concatenate_merge(
 ) -> Option<Vec<u8>> {       // set the new value, return None to delete
   let mut ret = old_value
     .map(|ov| ov.to_vec())
-    .unwrap_or_else(|| vec![]); 
+    .unwrap_or_else(|| vec![]);
 
   ret.extend_from_slice(merged_bytes);
 
@@ -104,8 +104,6 @@ assert_eq!(tree.get(&k), Ok(Some(vec![4])));
 
 # known issues, warnings
 
-* keys and values must fit into `io_buf_size` divided by
-  `min_items_per_segment`. 
 * quite young, should be considered unstable for the time being
 * the C API is likely to change rapidly
 * the on-disk format is going to change in non-forward compatible ways
@@ -115,7 +113,7 @@ assert_eq!(tree.get(&k), Ok(Some(vec![4])));
   it has an extremely high theoretical performance but there
   is a bit of tuning to get there. currently only around 200k
   operations per second with mixed workloads, and 7 million/s
-  for read-only workloads on tiny keys. this will be improving 
+  for read-only workloads on tiny keys. this will be improving
   dramatically soon!
 * 32 bit architectures [require Rust nightly with the `nightly` feature enabled](https://github.com/spacejam/sled/issues/145).
 
