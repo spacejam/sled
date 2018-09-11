@@ -25,9 +25,8 @@ pub(crate) trait LogReader {
 
     fn read_message(
         &self,
-        id: LogID,
-        segment_len: usize,
-        use_compression: bool,
+        lid: LogID,
+        config: &Config,
     ) -> CacheResult<LogRead, ()>;
 }
 
@@ -70,10 +69,10 @@ impl LogReader for File {
     fn read_message(
         &self,
         lid: LogID,
-        segment_len: usize,
-        _use_compression: bool,
+        config: &Config,
     ) -> CacheResult<LogRead, ()> {
         let _measure = Measure::new(&M.read);
+        let segment_len = config.io_buf_size;
         let seg_start =
             lid / segment_len as LogID * segment_len as LogID;
         trace!(
@@ -126,47 +125,51 @@ impl LogReader for File {
             return Ok(LogRead::Corrupted(header.len));
         }
 
-        let value = match header.kind {
+        match header.kind {
             MessageKind::Failed => {
                 trace!("read failed of len {}", header.len);
-                return Ok(LogRead::Failed(header.lsn, header.len));
+                Ok(LogRead::Failed(header.lsn, header.len))
             }
             MessageKind::Pad => {
                 trace!("read pad at lsn {}", header.lsn);
-                return Ok(LogRead::Pad(header.lsn));
+                Ok(LogRead::Pad(header.lsn))
             }
             MessageKind::SuccessBlob => {
+                trace!("read a successful flushed message");
+
                 let mut id_bytes = [0u8; 8];
                 id_bytes.copy_from_slice(&*buf);
                 let id: Lsn =
                     unsafe { std::mem::transmute(id_bytes) };
 
-                ExternalValue(id)
+                let buf = read_blob(id, config)?;
+
+                Ok(LogRead::External(header.lsn, buf, id))
             }
             MessageKind::Success => {
-                #[cfg(feature = "zstd")]
-                {
-                    if _use_compression {
-                        let _measure = Measure::new(&M.decompress);
-                        InlineValue(
-                            decompress(&*buf, segment_len).unwrap(),
-                        )
-                    } else {
-                        InlineValue(buf)
+                trace!("read a successful flushed message");
+                let buf = {
+                    #[cfg(feature = "zstd")]
+                    {
+                        if config.use_compression {
+                            let _measure =
+                                Measure::new(&M.decompress);
+                            decompress(&*buf, segment_len).unwrap()
+                        } else {
+                            buf
+                        }
                     }
-                }
 
-                #[cfg(not(feature = "zstd"))]
-                InlineValue(buf)
+                    #[cfg(not(feature = "zstd"))]
+                    buf
+                };
+
+                Ok(LogRead::Inline(header.lsn, buf, header.len))
             }
-            MessageKind::Corrupted => unimplemented!(
+            MessageKind::Corrupted => panic!(
                 "corrupted should have been handled \
                  before reading message length above"
             ),
-        };
-
-        trace!("read a successful flushed message");
-
-        Ok(LogRead::Flush(header.lsn, value, header.len))
+        }
     }
 }

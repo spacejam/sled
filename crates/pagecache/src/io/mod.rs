@@ -12,6 +12,7 @@ use serde::Serialize;
 
 use super::*;
 
+mod blob_io;
 mod iobuf;
 mod iterator;
 mod log;
@@ -25,7 +26,12 @@ mod snapshot;
 
 #[doc(hidden)]
 pub use self::log::{
-    LogRead, MSG_HEADER_LEN, SEG_HEADER_LEN, SEG_TRAILER_LEN,
+    LogRead, EXTERNAL_VALUE_LEN, MSG_HEADER_LEN, SEG_HEADER_LEN,
+    SEG_TRAILER_LEN,
+};
+
+pub(crate) use self::blob_io::{
+    gc_blobs, read_blob, remove_blob, write_blob,
 };
 
 pub(super) use self::reader::LogReader;
@@ -33,9 +39,7 @@ pub(super) use self::reader::LogReader;
 #[doc(hidden)]
 pub use self::snapshot::{read_snapshot_or_default, Snapshot};
 
-pub use self::log::{
-    InlineOrExternalValue::{ExternalValue, InlineValue}, Log,
-};
+pub use self::log::Log;
 pub use self::materializer::{Materializer, NullMaterializer};
 pub use self::page_cache::{CacheEntry, PageCache, PageGet};
 pub use self::reservation::Reservation;

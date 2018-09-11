@@ -30,13 +30,13 @@ pub struct Snapshot<R> {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum PageState {
-    Present(Vec<(Lsn, LogID)>),
-    Allocated(Lsn, LogID),
-    Free(Lsn, LogID),
+    Present(Vec<(Lsn, DiskPtr)>),
+    Allocated(Lsn, DiskPtr),
+    Free(Lsn, DiskPtr),
 }
 
 impl PageState {
-    fn push(&mut self, item: (Lsn, LogID)) {
+    fn push(&mut self, item: (Lsn, DiskPtr)) {
         match self {
             &mut PageState::Present(ref mut items) => {
                 items.push(item)
@@ -51,14 +51,14 @@ impl PageState {
     }
 
     /// Iterate over the (lsn, lid) pairs that hold this page's state.
-    pub fn iter(&self) -> Box<Iterator<Item = (Lsn, LogID)>> {
+    pub fn iter(&self) -> Box<Iterator<Item = (Lsn, DiskPtr)>> {
         match self {
             &PageState::Present(ref items) => {
                 Box::new(items.clone().into_iter())
             }
-            &PageState::Allocated(lsn, lid)
-            | &PageState::Free(lsn, lid) => {
-                Box::new(vec![(lsn, lid)].into_iter())
+            &PageState::Allocated(lsn, ptr)
+            | &PageState::Free(lsn, ptr) => {
+                Box::new(vec![(lsn, ptr)].into_iter())
             }
         }
     }
@@ -90,9 +90,9 @@ impl<R> Snapshot<R> {
         &mut self,
         materializer: &Materializer<PageFrag = P, Recovery = R>,
         lsn: Lsn,
-        log_id: LogID,
+        disk_ptr: DiskPtr,
         bytes: &[u8],
-        io_buf_size: usize,
+        config: &Config,
     ) where
         P: 'static
             + Debug
@@ -106,8 +106,8 @@ impl<R> Snapshot<R> {
         // unwrapping this because it's already passed the crc check
         // in the log iterator
         trace!(
-            "trying to deserialize buf for lid {} lsn {}",
-            log_id,
+            "trying to deserialize buf for ptr {} lsn {}",
+            disk_ptr,
             lsn
         );
         let deserialization = deserialize::<LoggedUpdate<P>>(&*bytes);
@@ -115,9 +115,9 @@ impl<R> Snapshot<R> {
         if let Err(e) = deserialization {
             error!(
                 "failed to deserialize buffer for item in log: lsn {} \
-                    lid {}: {:?}",
+                    ptr {}: {:?}",
                 lsn,
-                log_id,
+                disk_ptr,
                 e
             );
             return;
@@ -130,7 +130,10 @@ impl<R> Snapshot<R> {
             self.max_pid = pid + 1;
         }
 
-        let replaced_at_idx = log_id as SegmentID / io_buf_size;
+        let io_buf_size = config.io_buf_size;
+
+        let replaced_at_idx =
+            disk_ptr.lid() as SegmentID / io_buf_size;
 
         match prepend.update {
             Update::Append(partial_page) => {
@@ -141,7 +144,7 @@ impl<R> Snapshot<R> {
                     trace!(
                         "append of pid {} at lid {} lsn {}",
                         pid,
-                        log_id,
+                        disk_ptr,
                         lsn
                     );
 
@@ -159,15 +162,15 @@ impl<R> Snapshot<R> {
                         self.recovery = Some(r);
                     }
 
-                    lids.push((lsn, log_id));
+                    lids.push((lsn, disk_ptr));
                 }
                 self.free.remove(&pid);
             }
             Update::Compact(partial_page) => {
                 trace!(
-                    "compact of pid {} at lid {} lsn {}",
+                    "compact of pid {} at ptr {} lsn {}",
                     pid,
-                    log_id,
+                    disk_ptr,
                     lsn
                 );
                 if let Some(r) = materializer.recover(&partial_page) {
@@ -179,18 +182,19 @@ impl<R> Snapshot<R> {
                     replaced_at_idx,
                     lsn,
                     io_buf_size,
+                    config,
                 );
                 self.pt.insert(
                     pid,
-                    PageState::Present(vec![(lsn, log_id)]),
+                    PageState::Present(vec![(lsn, disk_ptr)]),
                 );
                 self.free.remove(&pid);
             }
             Update::Allocate => {
                 trace!(
-                    "allocate  of pid {} at lid {} lsn {}",
+                    "allocate  of pid {} at ptr {} lsn {}",
                     pid,
-                    log_id,
+                    disk_ptr,
                     lsn
                 );
                 self.replace_pid(
@@ -198,16 +202,17 @@ impl<R> Snapshot<R> {
                     replaced_at_idx,
                     lsn,
                     io_buf_size,
+                    config,
                 );
                 self.pt
-                    .insert(pid, PageState::Allocated(lsn, log_id));
+                    .insert(pid, PageState::Allocated(lsn, disk_ptr));
                 self.free.remove(&pid);
             }
             Update::Free => {
                 trace!(
-                    "free of pid {} at lid {} lsn {}",
+                    "free of pid {} at ptr {} lsn {}",
                     pid,
-                    log_id,
+                    disk_ptr,
                     lsn
                 );
                 self.replace_pid(
@@ -215,8 +220,9 @@ impl<R> Snapshot<R> {
                     replaced_at_idx,
                     lsn,
                     io_buf_size,
+                    config,
                 );
-                self.pt.insert(pid, PageState::Free(lsn, log_id));
+                self.pt.insert(pid, PageState::Free(lsn, disk_ptr));
                 self.free.insert(pid);
             }
         }
@@ -228,32 +234,54 @@ impl<R> Snapshot<R> {
         replaced_at_idx: usize,
         replaced_at_lsn: Lsn,
         io_buf_size: usize,
+        config: &Config,
     ) {
         match self.pt.remove(&pid) {
             Some(PageState::Present(coords)) => {
-                for (_lsn, lid) in coords {
-                    let idx = lid as SegmentID / io_buf_size;
+                for (_lsn, ptr) in &coords {
+                    let idx = ptr.lid() as SegmentID / io_buf_size;
                     if replaced_at_idx == idx {
                         return;
                     }
-                    let entry = self.replacements
+                    let entry = self
+                        .replacements
                         .entry(idx)
                         .or_insert(HashSet::new());
                     entry.insert((pid, replaced_at_lsn));
                 }
+
+                // re-run any external removals in case
+                // they were not completed.
+                if coords.len() > 1 {
+                    let external_ptrs = coords
+                        .iter()
+                        .filter(|(_, ptr)| ptr.is_external())
+                        .map(|(_, ptr)| ptr.external().1);
+
+                    for external_ptr in external_ptrs {
+                        remove_blob(external_ptr, config).expect("should be able to clean up orphaned external writes");
+                    }
+                }
             }
-            Some(PageState::Allocated(_lsn, lid))
-            | Some(PageState::Free(_lsn, lid)) => {
-                let idx = lid as SegmentID / io_buf_size;
+            Some(PageState::Allocated(_lsn, ptr))
+            | Some(PageState::Free(_lsn, ptr)) => {
+                let idx = ptr.lid() as SegmentID / io_buf_size;
                 if replaced_at_idx == idx {
                     return;
                 }
-                let entry = self.replacements
+                let entry = self
+                    .replacements
                     .entry(idx)
                     .or_insert(HashSet::new());
                 entry.insert((pid, replaced_at_lsn));
             }
-            None => {}
+            None => {
+                // we just encountered a replace without it
+                // existing in the pt. this means we've
+                // relocated it to a later segment than
+                // the one we're currently at during recovery.
+                // so we can skip it here.
+            }
         }
     }
 }
@@ -282,22 +310,22 @@ where
 
     let io_buf_size = config.io_buf_size;
 
-    for (lsn, log_id, bytes) in iter {
-        let segment_idx = log_id as SegmentID / io_buf_size;
+    for (lsn, ptr, bytes) in iter {
+        let segment_idx = ptr.lid() as SegmentID / io_buf_size;
 
         trace!(
-            "in advance_snapshot looking at item with lsn {} lid {}",
+            "in advance_snapshot looking at item with lsn {} ptr {}",
             lsn,
-            log_id
+            ptr
         );
 
         if lsn <= snapshot.max_lsn {
             // don't process already-processed Lsn's. max_lsn is for the last
             // item ALREADY INCLUDED lsn in the snapshot.
             trace!(
-                "continuing in advance_snapshot, lsn {} log_id {} max_lsn {}",
+                "continuing in advance_snapshot, lsn {} ptr {} max_lsn {}",
                 lsn,
-                log_id,
+                ptr,
                 snapshot.max_lsn
             );
             continue;
@@ -305,19 +333,13 @@ where
 
         assert!(lsn > snapshot.max_lsn);
         snapshot.max_lsn = lsn;
-        snapshot.last_lid = log_id;
+        snapshot.last_lid = ptr.lid();
 
         // invalidate any removed pids
         snapshot.replacements.remove(&segment_idx);
 
         if !PM::is_null() {
-            snapshot.apply(
-                &materializer,
-                lsn,
-                log_id,
-                &*bytes,
-                io_buf_size,
-            );
+            snapshot.apply(&materializer, lsn, ptr, &*bytes, config);
         }
     }
 

@@ -354,29 +354,31 @@ impl SegmentAccountant {
         // generate segments from snapshot lids
         let mut segments = vec![];
 
-        let add = |pid, lsn, lid, segments: &mut Vec<Segment>| {
-            // add pid to segment
-            let idx = lid as usize / io_buf_size;
-            if segments.len() < idx + 1 {
-                segments.resize(idx + 1, Segment::default());
-            }
+        let add =
+            |pid, lsn, lid: LogID, segments: &mut Vec<Segment>| {
+                // add pid to segment
+                let idx = lid as usize / io_buf_size;
+                if segments.len() < idx + 1 {
+                    segments.resize(idx + 1, Segment::default());
+                }
 
-            let segment_lsn =
-                lsn / io_buf_size as Lsn * io_buf_size as Lsn;
-            segments[idx].recovery_ensure_initialized(segment_lsn);
-            segments[idx].insert_pid(pid, segment_lsn);
-        };
+                let segment_lsn =
+                    lsn / io_buf_size as Lsn * io_buf_size as Lsn;
+                segments[idx]
+                    .recovery_ensure_initialized(segment_lsn);
+                segments[idx].insert_pid(pid, segment_lsn);
+            };
 
         for (pid, state) in snapshot.pt {
             match state {
                 PageState::Present(coords) => {
-                    for (lsn, lid) in coords {
-                        add(pid, lsn, lid, &mut segments);
+                    for (lsn, ptr) in coords {
+                        add(pid, lsn, ptr.lid(), &mut segments);
                     }
                 }
-                PageState::Allocated(lsn, lid)
-                | PageState::Free(lsn, lid) => {
-                    add(pid, lsn, lid, &mut segments);
+                PageState::Allocated(lsn, ptr)
+                | PageState::Free(lsn, ptr) => {
+                    add(pid, lsn, ptr.lid(), &mut segments);
                 }
             }
         }
@@ -581,7 +583,8 @@ impl SegmentAccountant {
         }
 
         let safety_buffer_len = self.config.io_bufs;
-        let mut safety_buffer: Vec<LogID> = self.ordering
+        let mut safety_buffer: Vec<LogID> = self
+            .ordering
             .iter()
             .rev()
             .take(safety_buffer_len)
@@ -861,7 +864,8 @@ impl SegmentAccountant {
         // IO buffer during a PageCache replace, but whose
         // replacing updates have not actually landed on disk
         // yet.
-        let position = self.safety_buffer
+        let position = self
+            .safety_buffer
             .iter()
             .position(|&previous_lid| previous_lid == lid);
         if let Some(position) = position {
@@ -908,7 +912,8 @@ impl SegmentAccountant {
                     let (next, pushed_by_ensure_safe_free_distance) =
                         res.unwrap();
 
-                    let next_next_in_safety_buffer = self.free
+                    let next_next_in_safety_buffer = self
+                        .free
                         .lock()
                         .unwrap()
                         .get(0)
@@ -1280,10 +1285,7 @@ pub fn raw_segment_iter_from(
 
     Ok(LogIter {
         config: config.clone(),
-        #[cfg(target_pointer_width = "32")]
         max_lsn: std::i64::MAX,
-        #[cfg(target_pointer_width = "64")]
-        max_lsn: std::isize::MAX,
         cur_lsn: SEG_HEADER_LEN as Lsn,
         segment_base: None,
         segment_iter: segment_iter,

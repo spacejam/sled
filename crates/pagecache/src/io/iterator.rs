@@ -15,7 +15,7 @@ pub struct LogIter {
 }
 
 impl Iterator for LogIter {
-    type Item = (Lsn, LogID, Vec<u8>);
+    type Item = (Lsn, DiskPtr, Vec<u8>);
 
     fn next(&mut self) -> Option<Self::Item> {
         // If segment is None, get next on segment_iter, panic
@@ -72,36 +72,23 @@ impl Iterator for LogIter {
                 + (self.cur_lsn % self.segment_len as Lsn) as LogID;
 
             if let Ok(f) = self.config.file() {
-                match f.read_message(
-                    lid,
-                    self.segment_len,
-                    self.use_compression,
-                ) {
-                    Ok(LogRead::Flush(
-                        lsn,
-                        ExternalValue(id),
-                        on_disk_len,
-                    )) => {
+                match f.read_message(lid, &self.config) {
+                    Ok(LogRead::External(lsn, buf, external_ptr)) => {
                         if lsn != self.cur_lsn {
                             error!("read Flush with bad lsn");
                             return None;
                         }
                         trace!("read blob flush in LogIter::next");
-                        self.cur_lsn +=
-                            (MSG_HEADER_LEN + on_disk_len) as Lsn;
-                        match self.config.read_blob(id) {
-                            Ok(buf) => return Some((lsn, lid, buf)),
-                            Err(e) => {
-                                error!("read Flush pointing to unreadable blob: {}", e);
-                                return None;
-                            }
-                        }
+                        self.cur_lsn += (MSG_HEADER_LEN
+                            + EXTERNAL_VALUE_LEN)
+                            as Lsn;
+                        return Some((
+                            lsn,
+                            DiskPtr::External(lid, external_ptr),
+                            buf,
+                        ));
                     }
-                    Ok(LogRead::Flush(
-                        lsn,
-                        InlineValue(buf),
-                        on_disk_len,
-                    )) => {
+                    Ok(LogRead::Inline(lsn, buf, on_disk_len)) => {
                         if lsn != self.cur_lsn {
                             error!("read Flush with bad lsn");
                             return None;
@@ -109,7 +96,7 @@ impl Iterator for LogIter {
                         trace!("read inline flush in LogIter::next");
                         self.cur_lsn +=
                             (MSG_HEADER_LEN + on_disk_len) as Lsn;
-                        return Some((lsn, lid, buf));
+                        return Some((lsn, DiskPtr::Inline(lid), buf));
                     }
                     Ok(LogRead::Failed(lsn, on_disk_len)) => {
                         if lsn != self.cur_lsn {
@@ -175,7 +162,9 @@ impl LogIter {
         let segment_header = f.read_segment_header(offset)?;
         if offset % self.segment_len as LogID != 0 {
             debug!("segment offset not divisible by segment length");
-            return Err(Error::Corruption { at: offset });
+            return Err(Error::Corruption {
+                at: DiskPtr::Inline(offset),
+            });
         }
         if segment_header.lsn % self.segment_len as Lsn != 0 {
             debug!(
@@ -183,7 +172,9 @@ impl LogIter {
                  by the io_buf_size ({}) instead it was {}",
                 self.segment_len, segment_header.lsn
             );
-            return Err(Error::Corruption { at: offset });
+            return Err(Error::Corruption {
+                at: DiskPtr::Inline(offset),
+            });
         }
 
         if segment_header.lsn != lsn {

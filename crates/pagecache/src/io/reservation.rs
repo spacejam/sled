@@ -12,7 +12,7 @@ pub struct Reservation<'a> {
     pub(super) flushed: bool,
     pub(super) lsn: Lsn,
     pub(super) lid: LogID,
-    pub(super) blob: bool,
+    pub(super) is_external: bool,
 }
 
 impl<'a> Drop for Reservation<'a> {
@@ -29,17 +29,12 @@ impl<'a> Reservation<'a> {
     /// Cancel the reservation, placing a failed flush on disk, returning
     /// the (cancelled) log sequence number and file offset.
     pub fn abort(mut self) -> CacheResult<(Lsn, LogID), ()> {
-        if self.blob {
-            let mut blob_ptr_bytes =
-                [0u8; std::mem::size_of::<Lsn>()];
-            blob_ptr_bytes
-                .copy_from_slice(&self.data[MSG_HEADER_LEN..]);
-            let blob_ptr: Lsn =
-                unsafe { std::mem::transmute(blob_ptr_bytes) };
+        if self.is_external {
+            let blob_ptr = self.external_ptr().unwrap();
 
             assert_eq!(self.lsn, blob_ptr);
 
-            self.iobufs.config.remove_blob(blob_ptr)?;
+            remove_blob(blob_ptr, &self.iobufs.config)?;
         }
 
         self.flush(false)
@@ -59,6 +54,32 @@ impl<'a> Reservation<'a> {
     /// Get the log sequence number for this update.
     pub fn lsn(&self) -> Lsn {
         self.lsn
+    }
+
+    /// Get the underlying storage location for the written value.
+    /// Note that an external write still has a pointer in the
+    /// log at the provided lid location.
+    pub fn ptr(&self) -> DiskPtr {
+        if let Some(external_ptr) = self.external_ptr() {
+            DiskPtr::new_external(self.lid, external_ptr)
+        } else {
+            DiskPtr::new_inline(self.lid)
+        }
+    }
+
+    fn external_ptr(&self) -> Option<ExternalPointer> {
+        if self.is_external {
+            let mut blob_ptr_bytes =
+                [0u8; std::mem::size_of::<Lsn>()];
+            blob_ptr_bytes
+                .copy_from_slice(&self.data[MSG_HEADER_LEN..]);
+            let blob_ptr: ExternalPointer =
+                unsafe { std::mem::transmute(blob_ptr_bytes) };
+
+            Some(blob_ptr)
+        } else {
+            None
+        }
     }
 
     fn flush(

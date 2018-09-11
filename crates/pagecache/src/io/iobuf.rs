@@ -18,10 +18,17 @@ use self::reader::LogReader;
 use super::*;
 
 type Header = u64;
+
 #[cfg(target_pointer_width = "64")]
 type AtomicLsn = AtomicIsize;
 #[cfg(target_pointer_width = "32")]
 type AtomicLsn = AtomicI64;
+
+/// A logical sequence number.
+#[cfg(target_pointer_width = "64")]
+type InnerLsn = isize;
+#[cfg(target_pointer_width = "32")]
+type InnerLsn = i64;
 
 macro_rules! io_fail {
     ($self:expr, $e:expr) => {
@@ -92,17 +99,21 @@ impl IoBufs {
             snapshot.last_lid = 0;
             (0, 0)
         } else {
-            match file.read_message(
-                snapshot_last_lid,
-                io_buf_size,
-                config.use_compression,
-            ) {
-                Ok(LogRead::Flush(_lsn, _buf, len)) => (
+            match file.read_message(snapshot_last_lid, &config) {
+                Ok(LogRead::Inline(_lsn, _buf, len)) => (
                     snapshot_max_lsn
                         + len as Lsn
                         + MSG_HEADER_LEN as Lsn,
                     snapshot_last_lid
                         + len as LogID
+                        + MSG_HEADER_LEN as LogID,
+                ),
+                Ok(LogRead::External(_lsn, _buf, _external_ptr)) => (
+                    snapshot_max_lsn
+                        + EXTERNAL_VALUE_LEN as Lsn
+                        + MSG_HEADER_LEN as Lsn,
+                    snapshot_last_lid
+                        + EXTERNAL_VALUE_LEN as LogID
                         + MSG_HEADER_LEN as LogID,
                 ),
                 other => {
@@ -172,7 +183,7 @@ impl IoBufs {
         let stable = if next_lsn == 0 { -1 } else { next_lsn - 1 };
 
         // remove all blob files larger than our stable offset
-        config.gc_blobs(stable)?;
+        gc_blobs(&config, stable)?;
 
         Ok(IoBufs {
             bufs: bufs,
@@ -180,8 +191,8 @@ impl IoBufs {
             written_bufs: AtomicUsize::new(0),
             intervals: Mutex::new(vec![]),
             interval_updated: Condvar::new(),
-            stable_lsn: AtomicLsn::new(stable),
-            max_reserved_lsn: AtomicLsn::new(stable),
+            stable_lsn: AtomicLsn::new(stable as InnerLsn),
+            max_reserved_lsn: AtomicLsn::new(stable as InnerLsn),
             config: config,
             segment_accountant: Mutex::new(segment_accountant),
             #[cfg(feature = "failpoints")]
@@ -196,6 +207,7 @@ impl IoBufs {
     {
         let start = clock();
 
+        debug_delay();
         let mut sa = self.segment_accountant.lock().unwrap();
 
         let locked_at = clock();
@@ -230,9 +242,10 @@ impl IoBufs {
     ) -> CacheResult<Vec<u8>, ()> {
         let buf = if over_blob_threshold {
             // write blob to file
-            self.config.write_blob(lsn, raw_buf)?;
+            write_blob(&self.config, lsn, raw_buf)?;
 
-            let lsn_buf: [u8; size_of::<Lsn>()] =
+            let lsn_buf: [u8;
+                             size_of::<ExternalPointer>()] =
                 unsafe { transmute(lsn) };
 
             lsn_buf.to_vec()
@@ -275,6 +288,27 @@ impl IoBufs {
     pub(super) fn reserve(
         &self,
         raw_buf: Vec<u8>,
+    ) -> CacheResult<Reservation, ()> {
+        self.reserve_inner(raw_buf, false)
+    }
+
+    /// Reserve a replacement buffer for a previously written
+    /// external write. This ensures the message header has the
+    /// proper external flag set.
+    pub(super) fn reserve_external(
+        &self,
+        external_ptr: ExternalPointer,
+    ) -> CacheResult<Reservation, ()> {
+        let lsn_buf: [u8; size_of::<ExternalPointer>()] =
+            unsafe { transmute(external_ptr) };
+
+        self.reserve_inner(lsn_buf.to_vec(), true)
+    }
+
+    fn reserve_inner(
+        &self,
+        raw_buf: Vec<u8>,
+        is_external: bool,
     ) -> CacheResult<Reservation, ()> {
         let _measure = Measure::new(&M.reserve);
 
@@ -479,7 +513,7 @@ impl IoBufs {
             let encapsulated_buf = self.encapsulate(
                 buf,
                 reservation_lsn,
-                over_blob_threshold,
+                over_blob_threshold || is_external,
             )?;
 
             return Ok(Reservation {
@@ -490,7 +524,7 @@ impl IoBufs {
                 flushed: false,
                 lsn: reservation_lsn,
                 lid: reservation_offset,
-                blob: over_blob_threshold,
+                is_external: over_blob_threshold || is_external,
             });
         }
     }
@@ -582,20 +616,25 @@ impl IoBufs {
     /// Called by users who wish to force the current buffer
     /// to flush some pending writes.
     pub(super) fn flush(&self) -> CacheResult<(), ()> {
-        let max_reserved_lsn = self.max_reserved_lsn.load(SeqCst);
+        let max_reserved_lsn =
+            self.max_reserved_lsn.load(SeqCst) as Lsn;
         self.make_stable(max_reserved_lsn)
     }
 
     // ensure self.max_reserved_lsn is set to this Lsn
     // or greater, for use in correct calls to flush.
     fn bump_max_reserved_lsn(&self, lsn: Lsn) {
-        let mut current = self.max_reserved_lsn.load(SeqCst);
+        let mut current =
+            self.max_reserved_lsn.load(SeqCst) as InnerLsn;
         loop {
-            if current >= lsn {
+            if current >= lsn as InnerLsn {
                 return;
             }
-            let last = self.max_reserved_lsn
-                .compare_and_swap(current, lsn, SeqCst);
+            let last = self.max_reserved_lsn.compare_and_swap(
+                current,
+                lsn as InnerLsn,
+                SeqCst,
+            );
             if last == current {
                 // we succeeded.
                 return;
@@ -957,7 +996,7 @@ impl IoBufs {
 
         while let Some(&(low, high)) = intervals.last() {
             assert_ne!(low, high);
-            let cur_stable = self.stable_lsn.load(SeqCst);
+            let cur_stable = self.stable_lsn.load(SeqCst) as Lsn;
             // FIXME somehow, we marked offset 2233715 stable while interval 2231715-2231999 had
             // not yet been applied!
             assert!(
@@ -969,7 +1008,9 @@ impl IoBufs {
                 high
             );
             if cur_stable + 1 == low {
-                let old = self.stable_lsn.swap(high, SeqCst);
+                let old =
+                    self.stable_lsn.swap(high as InnerLsn, SeqCst)
+                        as Lsn;
                 assert_eq!(
                     old, cur_stable,
                     "concurrent stable offset modification detected"

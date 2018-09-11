@@ -184,14 +184,16 @@ impl Tree {
         // cap fails it doesn't mean our value was changed.
         let guard = pin();
         loop {
-            let (mut path, cur) = self.get_internal(&*key, &guard)
+            let (mut path, cur) = self
+                .get_internal(&*key, &guard)
                 .map_err(|e| e.danger_cast())?;
 
             if old != cur {
                 return Err(Error::CasFailed(cur));
             }
 
-            let &mut (ref node, ref cas_key) = path.last_mut()
+            let &mut (ref node, ref cas_key) = path
+                .last_mut()
                 .expect(
                 "get_internal somehow returned a path of length zero",
             );
@@ -549,12 +551,14 @@ impl Tree {
             if let Ok(parent_split) =
                 self.child_split(&root_node, root_cas_key, guard)
             {
-                return self.root_hoist(
-                    root_node.id,
-                    parent_split.to,
-                    parent_split.at.inner().to_vec(),
-                    guard,
-                ).map(|_| ())
+                return self
+                    .root_hoist(
+                        root_node.id,
+                        parent_split.to,
+                        parent_split.at.inner().to_vec(),
+                        guard,
+                    )
+                    .map(|_| ())
                     .map_err(|e| e.danger_cast());
             }
         }
@@ -584,7 +588,8 @@ impl Tree {
         };
 
         // install the new right side
-        self.pages
+        let new_ptr = self
+            .pages
             .replace(
                 new_pid,
                 Shared::null(),
@@ -606,7 +611,7 @@ impl Tree {
             Err(Error::CasFailed(_)) => {
                 // if we failed, don't follow through with the parent split
                 self.pages
-                    .free(new_pid, guard)
+                    .free(new_pid, new_ptr, guard)
                     .map_err(|e| e.danger_cast())?;
                 return Err(Error::CasFailed(()));
             }
@@ -660,30 +665,30 @@ impl Tree {
             Some(from),
         );
         pagecache::debug_delay();
+        let new_root_ptr = self
+            .pages
+            .replace(new_root_pid, Shared::null(), new_root, guard)
+            .expect(
+                "we should be able to replace a newly \
+                 allocated page without issue",
+            );
+
+        pagecache::debug_delay();
         let cas =
             self.root.compare_and_swap(from, new_root_pid, SeqCst);
         if cas == from {
-            // TODO think about the racyness of this
             debug!(
                 "root hoist from {} to {} successful",
                 from, new_root_pid
             );
-            self.pages
-                .replace(
-                    new_root_pid,
-                    Shared::null(),
-                    new_root,
-                    guard,
-                )
-                .map(|_| ())
-                .map_err(|e| e.danger_cast())
+            Ok(())
         } else {
             debug!(
                 "root hoist from {} to {} failed",
                 from, new_root_pid
             );
             self.pages
-                .free(new_root_pid, guard)
+                .free(new_root_pid, new_root_ptr, guard)
                 .map_err(|e| e.danger_cast())
         }
     }
@@ -698,7 +703,8 @@ impl Tree {
         let ret = path.last().and_then(
             |&(ref last_node, ref _last_cas_key)| {
                 let data = &last_node.data;
-                let items = data.leaf_ref()
+                let items = data
+                    .leaf_ref()
                     .expect("last_node should be a leaf");
                 let encoded_key =
                     prefix_encode(last_node.lo.inner(), key);
@@ -748,7 +754,8 @@ impl Tree {
 
         let mut not_found_loops = 0;
         loop {
-            let get_cursor = self.pages
+            let get_cursor = self
+                .pages
                 .get(cursor, guard)
                 .map_err(|e| e.danger_cast())?;
             if get_cursor.is_free() || get_cursor.is_allocated() {
@@ -817,7 +824,8 @@ impl Tree {
             let prefix = node.lo.inner().to_vec();
             path.push((node, cas_key));
 
-            match path.last()
+            match path
+                .last()
                 .expect("we just pushed to path, so it's not empty")
                 .0
                 .data

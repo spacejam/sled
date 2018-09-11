@@ -14,7 +14,6 @@ use serde::Serialize;
 use bincode::{deserialize, serialize, Infinite};
 
 use super::*;
-use io::LogReader;
 
 impl Deref for Config {
     type Target = ConfigBuilder;
@@ -262,7 +261,8 @@ impl Drop for Config {
     fn drop(&mut self) {
         // if our ref count is 0 we can drop and close our file properly.
         if self.refs.fetch_sub(1, Ordering::Relaxed) == 0 {
-            let f_ptr: *mut Arc<fs::File> = self.file
+            let f_ptr: *mut Arc<fs::File> = self
+                .file
                 .swap(std::ptr::null_mut(), Ordering::Relaxed);
             if !f_ptr.is_null() {
                 let f: Box<Arc<fs::File>> =
@@ -567,13 +567,17 @@ impl Config {
         let crc_actual = crc64(&*buf);
 
         if crc_expected != crc_actual {
-            warn!("crc for settings file {:?} failed! can't verify that config is safe", path);
+            warn!(
+                "crc for settings file {:?} failed! \
+                 can't verify that config is safe",
+                path
+            );
         }
 
         Ok(deserialize::<ConfigBuilder>(&*buf).ok())
     }
 
-    fn blob_path(&self, id: Lsn) -> PathBuf {
+    pub(crate) fn blob_path(&self, id: Lsn) -> PathBuf {
         let mut path = self.get_path();
         path.push("blobs");
         path.push(format!("{}", id));
@@ -590,92 +594,6 @@ impl Config {
         let mut path = self.get_path();
         path.push("conf");
         path
-    }
-
-    pub(crate) fn read_blob(
-        &self,
-        id: Lsn,
-    ) -> CacheResult<Vec<u8>, ()> {
-        let path = self.blob_path(id);
-        let mut f =
-            std::fs::OpenOptions::new().read(true).open(&path)?;
-
-        let mut crc_expected_bytes = [0u8; 8];
-        f.read_exact(&mut crc_expected_bytes).unwrap();
-        let crc_expected: u64 =
-            unsafe { std::mem::transmute(crc_expected_bytes) };
-
-        let mut buf = vec![];
-        f.read_to_end(&mut buf)?;
-
-        let crc_actual = crc64(&*buf);
-
-        if crc_expected != crc_actual {
-            warn!("blob {} failed crc check!", id);
-            Err(Error::Corruption { at: id as u64 })
-        } else {
-            Ok(buf)
-        }
-    }
-
-    pub(crate) fn write_blob(
-        &self,
-        id: Lsn,
-        mut data: Vec<u8>,
-    ) -> CacheResult<(), ()> {
-        let path = self.blob_path(id);
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)?;
-
-        let mut crc: [u8; 8] =
-            unsafe { std::mem::transmute(crc64(&*data)) };
-
-        f.write_all(&mut crc)
-            .and_then(|_| f.write_all(&mut data))
-            .map_err(|e| e.into())
-    }
-
-    pub(crate) fn gc_blobs(
-        &self,
-        stable_lsn: Lsn,
-    ) -> CacheResult<(), ()> {
-        let stable = self.blob_path(stable_lsn);
-        let blob_dir = stable.parent().unwrap();
-        let blobs = std::fs::read_dir(blob_dir)?;
-
-        for blob in blobs {
-            let path = blob?.path();
-            let lsn_str = path.file_name().unwrap().to_str().unwrap();
-            let lsn_res: Result<Lsn, _> = lsn_str.parse();
-
-            if let Err(e) = lsn_res {
-                return Err(Error::Unsupported(format!(
-                    "blobs directory contains \
-                     unparsable path ({:?}): {}",
-                    path, e
-                )));
-            }
-
-            let lsn = lsn_res.unwrap();
-
-            if lsn > stable_lsn {
-                warn!(
-                    "removing blob {:?} that has \
-                     a higher lsn than our stable log: {:?}",
-                    path, stable
-                );
-                std::fs::remove_file(&path)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    pub(crate) fn remove_blob(&self, id: Lsn) -> CacheResult<(), ()> {
-        let path = self.blob_path(id);
-        std::fs::remove_file(&path).map_err(|e| e.into())
     }
 
     #[doc(hidden)]
@@ -706,11 +624,13 @@ impl Config {
         let regenerated =
             read_snapshot_or_default::<PM, P, R>(&self)?;
 
-        let f = self.file()?;
-
         for (k, v) in &regenerated.pt {
             if !incremental.pt.contains_key(&k) {
-                panic!("page only present in regenerated pagetable: {} -> {:?}", k, v);
+                panic!(
+                    "page only present in regenerated \
+                     pagetable: {} -> {:?}",
+                    k, v
+                );
             }
             assert_eq!(
                 incremental.pt.get(&k),
@@ -718,19 +638,25 @@ impl Config {
                 "page tables differ for pid {}",
                 k
             );
-            for (lsn, lid) in v.iter() {
-                f.read_message(
-                    lid,
-                    self.io_buf_size,
-                    self.use_compression
-                ).unwrap()
-                .expect(&*format!("could not read log data for pid {} at lsn {} lid {}", k, lsn, lid));
+            for (lsn, ptr) in v.iter() {
+                let read = ptr.read(&self);
+                if let Err(e) = read {
+                    panic!(
+                        "could not read log data for \
+                         pid {} at lsn {} ptr {}: {}",
+                        k, lsn, ptr, e
+                    );
+                }
             }
         }
 
         for (k, v) in &incremental.pt {
             if !regenerated.pt.contains_key(&k) {
-                panic!("page only present in incremental pagetable: {} -> {:?}", k, v);
+                panic!(
+                    "page only present in incremental \
+                     pagetable: {} -> {:?}",
+                    k, v
+                );
             }
             assert_eq!(
                 Some(v),
@@ -738,13 +664,15 @@ impl Config {
                 "page tables differ for pid {}",
                 k
             );
-            for (lsn, lid) in v.iter() {
-                f.read_message(
-                    lid,
-                    self.io_buf_size,
-                    self.use_compression
-                ).unwrap()
-                .expect(&*format!("could not read log data for pid {} at lsn {} lid {}", k, lsn, lid));
+            for (lsn, ptr) in v.iter() {
+                let read = ptr.read(&self);
+                if let Err(e) = read {
+                    panic!(
+                        "could not read log data for \
+                         pid {} at lsn {} ptr {}: {}",
+                        k, lsn, ptr, e
+                    );
+                }
             }
         }
 
