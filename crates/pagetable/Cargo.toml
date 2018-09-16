@@ -1,6 +1,6 @@
 [package]
 name = "pagetable"
-version = "0.0.1"
+version = "0.0.2"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "simple wait-free two-level pagetable with 2mb pages"
 license = "MIT/Apache-2.0"
@@ -8,6 +8,9 @@ homepage = "https://github.com/spacejam/sled/tree/master/crates/pagetable"
 repository = "https://github.com/spacejam/sled"
 keywords = ["paging", "page-table", "table", "data-structure", "lookup"]
 documentation = "https://docs.rs/pagetable/"
+
+[profile.dev]
+opt-level = 1
 
 [dependencies]
 crossbeam-epoch = "0.4"
