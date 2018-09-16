@@ -18,11 +18,11 @@ use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::{thread_rng, Rng};
 
 use pagecache::{
-    ConfigBuilder, ExternalValue, InlineValue, Log, LogRead,
-    SegmentMode, MSG_HEADER_LEN, SEG_HEADER_LEN, SEG_TRAILER_LEN,
+    ConfigBuilder, DiskPtr, Log, LogRead, SegmentMode,
+    MSG_HEADER_LEN, SEG_HEADER_LEN, SEG_TRAILER_LEN,
 };
 
-type Lsn = isize;
+type Lsn = i64;
 type LogID = u64;
 
 #[test]
@@ -168,17 +168,25 @@ fn concurrent_logging() {
 
 fn write(log: &Log) {
     let data_bytes = b"yoyoyoyo";
-    let (lsn, lid) = log.write(data_bytes.to_vec()).unwrap();
-    let (_, read_buf, _) = log.read(lsn, lid).unwrap().unwrap();
-    assert_eq!(read_buf, InlineValue(data_bytes.to_vec()));
+    let (lsn, ptr) = log.write(data_bytes.to_vec()).unwrap();
+    let read_buf = log.read(lsn, ptr).unwrap().into_data().unwrap();
+    assert_eq!(
+        read_buf, data_bytes,
+        "after writing data, it should be readable"
+    );
 }
 
 fn abort(log: &Log) {
     let res = log.reserve(vec![0; 5]).unwrap();
-    let (lsn, lid) = res.abort().unwrap();
-    match log.read(lsn, lid) {
-        Ok(LogRead::Flush(_, _, _)) => {
-            panic!("sucessfully read an aborted request! BAD! SAD!")
+    let (lsn, ptr) = res.abort().unwrap();
+    match log.read(lsn, ptr) {
+        Ok(LogRead::Failed(_, _)) => {}
+        other => {
+            panic!(
+                "expected to successfully read \
+                 aborted log message, instead read {:?}",
+                other
+            );
         }
         _ => (), // good
     }
@@ -255,22 +263,26 @@ fn log_chunky_iterator() {
 
             let mut reference = vec![];
 
-            let max_inline_size = config.io_buf_size
+            let max_valid_size = config.io_buf_size
                 - (MSG_HEADER_LEN + SEG_HEADER_LEN + SEG_TRAILER_LEN);
 
             for i in 0..1000 {
                 let len =
-                    thread_rng().gen_range(0, max_inline_size * 2);
+                    thread_rng().gen_range(0, max_valid_size * 2);
                 let item = thread_rng().gen::<u8>();
                 let buf = vec![item; len];
                 let abort = thread_rng().gen::<bool>();
 
                 if abort {
-                    let res = log.reserve(buf)
-                        .expect("should reserve buffer");
-                    res.abort().unwrap();
+                    if let Ok(res) = log.reserve(buf) {
+                        res.abort().unwrap();
+                    } else {
+                        assert!(len > max_valid_size);
+                    }
                 } else {
-                    let (lsn, lid) = log.write(buf.clone()).unwrap();
+                    let (lsn, lid) = log.write(buf.clone()).expect(
+                        "should be able to write reservation",
+                    );
                     reference.push((lsn, lid, buf));
                 }
             }
@@ -456,7 +468,12 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
 
     let mut tip = 0;
     let mut log = Log::start_raw_log(config.clone()).unwrap();
-    let mut reference: Vec<(Lsn, LogID, Option<_>, usize)> = vec![];
+    let mut reference: Vec<(
+        Lsn,
+        DiskPtr,
+        Option<Vec<u8>>,
+        usize,
+    )> = vec![];
 
     for op in ops.into_iter() {
         match op {
@@ -464,41 +481,36 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
                 if reference.len() <= lid as usize {
                     continue;
                 }
-                let (lsn, lid, ref expected, _len) =
+                let (lsn, ptr, ref expected, _len) =
                     reference[lid as usize];
                 // log.make_stable(lid);
-                let read_res = log.read(lsn, lid);
+                let read_res = log.read(lsn, ptr);
                 // println!( "expected {:?} read_res {:?} tip {} lid {}", expected, read_res, tip, lid);
-                if expected.is_none() || tip as u64 <= lid {
+                if expected.is_none() || tip as u64 <= ptr.lid() {
                     assert!(
                         read_res.is_err()
-                            || !read_res.unwrap().is_flush()
+                            || !read_res.unwrap().is_successful()
                     );
                 } else {
-                    let flush =
-                        read_res.unwrap().flush().map(|f| f.1);
+                    let flush = read_res.unwrap().into_data();
                     assert_eq!(flush, *expected);
                 }
             }
             Write(buf) => {
                 let len = buf.len();
-                let (lsn, lid) = log.write(buf.clone()).unwrap();
-                tip = lid as usize + len + MSG_HEADER_LEN;
-                reference.push((
-                    lsn,
-                    lid,
-                    Some(InlineValue(buf)),
-                    len,
-                ));
+                let (lsn, ptr) = log.write(buf.clone()).unwrap();
+                tip = ptr.lid() as usize + len + MSG_HEADER_LEN;
+                reference.push((lsn, ptr, Some(buf), len));
             }
             AbortReservation(buf) => {
                 let len = buf.len();
                 let res = log.reserve(buf.clone()).unwrap();
                 let lsn = res.lsn();
                 let lid = res.lid();
+                let ptr = res.ptr();
                 res.abort().unwrap();
                 tip = lid as usize + len + MSG_HEADER_LEN;
-                reference.push((lsn, lid, None, len));
+                reference.push((lsn, ptr, None, len));
             }
             Restart => {
                 drop(log);
@@ -534,10 +546,11 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
                     let path = config.get_path();
 
                     let mut sz_total = 0;
-                    for &mut (lsn, lid, ref mut expected, sz) in
+                    for &mut (lsn, ptr, ref mut expected, sz) in
                         &mut reference
                     {
-                        let tip = lid as usize + sz + MSG_HEADER_LEN;
+                        let tip =
+                            ptr.lid() as usize + sz + MSG_HEADER_LEN;
                         if new_len < tip as u64 {
                             *expected = None;
                         }

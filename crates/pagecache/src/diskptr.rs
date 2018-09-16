@@ -55,7 +55,8 @@ impl DiskPtr {
         }
     }
 
-    pub(crate) fn lid(&self) -> LogID {
+    #[doc(hidden)]
+    pub fn lid(&self) -> LogID {
         match self {
             DiskPtr::External(lid, _) | DiskPtr::Inline(lid) => *lid,
         }

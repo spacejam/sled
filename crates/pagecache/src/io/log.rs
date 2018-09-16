@@ -122,7 +122,7 @@ impl Log {
     pub fn write(
         &self,
         buf: Vec<u8>,
-    ) -> CacheResult<(Lsn, LogID), ()> {
+    ) -> CacheResult<(Lsn, DiskPtr), ()> {
         self.iobufs.reserve(buf).and_then(|res| res.complete())
     }
 
@@ -296,6 +296,16 @@ impl LogRead {
     pub fn is_failed(&self) -> bool {
         match *self {
             LogRead::Failed(_, _) => true,
+            _ => false,
+        }
+    }
+
+    /// Return true if we read a successful Inline or External value.
+    pub fn is_successful(&self) -> bool {
+        match *self {
+            LogRead::Inline(_, _, _) | LogRead::External(_, _, _) => {
+                true
+            }
             _ => false,
         }
     }

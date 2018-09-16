@@ -28,7 +28,7 @@ impl<'a> Drop for Reservation<'a> {
 impl<'a> Reservation<'a> {
     /// Cancel the reservation, placing a failed flush on disk, returning
     /// the (cancelled) log sequence number and file offset.
-    pub fn abort(mut self) -> CacheResult<(Lsn, LogID), ()> {
+    pub fn abort(mut self) -> CacheResult<(Lsn, DiskPtr), ()> {
         if self.is_external {
             let blob_ptr = self.external_ptr().unwrap();
 
@@ -42,7 +42,7 @@ impl<'a> Reservation<'a> {
 
     /// Complete the reservation, placing the buffer on disk. returns
     /// the log sequence number of the write, and the file offset.
-    pub fn complete(mut self) -> CacheResult<(Lsn, LogID), ()> {
+    pub fn complete(mut self) -> CacheResult<(Lsn, DiskPtr), ()> {
         self.flush(true)
     }
 
@@ -85,7 +85,7 @@ impl<'a> Reservation<'a> {
     fn flush(
         &mut self,
         valid: bool,
-    ) -> CacheResult<(Lsn, LogID), ()> {
+    ) -> CacheResult<(Lsn, DiskPtr), ()> {
         if self.flushed {
             panic!("flushing already-flushed reservation!");
         }
@@ -102,6 +102,6 @@ impl<'a> Reservation<'a> {
 
         self.iobufs.exit_reservation(self.idx)?;
 
-        Ok((self.lsn(), self.lid()))
+        Ok((self.lsn(), self.ptr()))
     }
 }
