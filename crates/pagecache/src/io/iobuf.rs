@@ -242,6 +242,7 @@ impl IoBufs {
     ) -> CacheResult<Vec<u8>, ()> {
         let buf = if over_blob_threshold {
             // write blob to file
+            io_fail!(self, "external blob write");
             write_blob(&self.config, lsn, raw_buf)?;
 
             let lsn_buf: [u8;
