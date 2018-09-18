@@ -568,7 +568,6 @@ where
             self.cas_page(pid, key, update, guard).map(|_| ())?;
 
             // drop all previous external pointers
-
             let external_ptrs = cache_entries
                 .iter()
                 .filter(|ce| ce.ptr().is_external())

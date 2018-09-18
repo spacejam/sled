@@ -1095,7 +1095,7 @@ impl SegmentAccountant {
 
 // Scan the log file if we don't know of any Lsn offsets yet,
 // and recover the order of segments, and the highest Lsn.
-pub fn scan_segment_lsns(
+fn scan_segment_lsns(
     min: Lsn,
     config: &Config,
 ) -> CacheResult<BTreeMap<Lsn, LogID>, ()> {
@@ -1109,7 +1109,11 @@ pub fn scan_segment_lsns(
         // in the future this can be optimized to just read
         // the initial header at that position... but we need to
         // make sure the segment is not torn
-        trace!("SA scanned header during startup {:?}", segment);
+        trace!(
+            "SA scanned header at lid {} during startup: {:?}",
+            cursor,
+            segment
+        );
         if segment.ok
             && (segment.lsn != 0 || cursor == 0)
             && segment.lsn >= min
@@ -1117,8 +1121,11 @@ pub fn scan_segment_lsns(
             // if lsn is 0, this is free
             assert!(
                 !ordering.contains_key(&segment.lsn),
-                "duplicate segment LSN detected, one should have \
-                 been zeroed out during recovery"
+                "duplicate segment LSN {} detected at both {} and {}, \
+                one should have been zeroed out during recovery",
+                segment.lsn,
+                ordering[&segment.lsn],
+                cursor
             );
             ordering.insert(segment.lsn, cursor);
         }
@@ -1201,7 +1208,7 @@ fn clean_tail_tears(
             // the lsn is outdated, or
             // the lsn is 0 but the lid isn't 0 (zeroed segment)
             debug!(
-                "tear detected at expected lsn {} actual lsn {} \
+                "tear detected at expected trailer lsn {} header lsn {} \
                  lid {} for trailer {:?}",
                 expected_trailer_lsn, lsn, lid, trailer
             );
@@ -1223,10 +1230,19 @@ fn clean_tail_tears(
         );
         for (&lsn, &lid) in &ordering {
             if lsn > tear {
-                // TODO make this a panic during non-truncating tests
                 error!(
                     "filtering out segment with lsn {} at lid {}",
                     lsn, lid
+                );
+
+                f.pwrite_all(&*vec![EVIL_BYTE; SEG_HEADER_LEN], lid)
+                    .expect(
+                        "should be able to mark a linear-orphan \
+                         segment as invalid",
+                    );
+                f.sync_all().expect(
+                    "should be able to sync data \
+                     file after purging linear-orphan",
                 );
             }
         }
@@ -1246,23 +1262,15 @@ fn clean_tail_tears(
 pub enum SegmentMode {
     /// Write to the end of the log, always.
     Linear,
-    /// Like linear, but also keep track of
-    /// utilization, and try to use filesystem
-    /// hole punching on empty segments.
-    /// This is only supported on linux with
-    /// filesystems that support hole punching.
-    PunchedLinear,
     /// Keep track of segment utilization, and
     /// reuse segments when their contents are
     /// fully relocated elsewhere.
-    Reuse,
-    /// Like Reuse, but also will try to copy
-    /// data out of segments once they reach a
-    /// configurable threshold.
+    /// Will try to copy data out of segments
+    /// once they reach a configurable threshold.
     Gc,
 }
 
-pub fn raw_segment_iter_from(
+pub(super) fn raw_segment_iter_from(
     lsn: Lsn,
     config: &Config,
 ) -> CacheResult<LogIter, ()> {
