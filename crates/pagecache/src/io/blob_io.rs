@@ -2,8 +2,6 @@ use std::io::{Read, Write};
 
 use super::*;
 
-use epoch::pin;
-
 pub(crate) fn read_blob(
     external_ptr: Lsn,
     config: &Config,
@@ -60,6 +58,11 @@ pub(crate) fn gc_blobs(
     let blob_dir = stable.parent().unwrap();
     let blobs = std::fs::read_dir(blob_dir)?;
 
+    debug!(
+        "gc_blobs removing any blob with an lsn above {}",
+        stable_lsn
+    );
+
     for blob in blobs {
         let path = blob?.path();
         let lsn_str = path.file_name().unwrap().to_str().unwrap();
@@ -94,14 +97,10 @@ pub(crate) fn remove_blob(
 ) -> CacheResult<(), ()> {
     let path = config.blob_path(id);
 
-    let guard = pin();
-
-    unsafe {
-        guard.defer(move || {
-            if let Err(e) = std::fs::remove_file(&path) {
-                warn!("removing blob at {:?} failed: {}", path, e);
-            }
-        });
+    if let Err(e) = std::fs::remove_file(&path) {
+        warn!("removing blob at {:?} failed: {}", path, e);
+    } else {
+        trace!("successfully removed blob at {:?}", path);
     }
 
     // TODO return a future

@@ -368,6 +368,8 @@ where
         old: PagePtr<'g, P>,
         guard: &'g Guard,
     ) -> CacheResult<(), Option<PagePtr<'g, P>>> {
+        trace!("attempting to free pid {}", pid);
+
         self.cas_page(pid, old, Update::Free, guard)?;
 
         let free = self.free.clone();
@@ -416,7 +418,6 @@ where
         let log_reservation =
             self.log.reserve(bytes).map_err(|e| e.danger_cast())?;
         let lsn = log_reservation.lsn();
-        let lid = log_reservation.lid();
         let ptr = log_reservation.ptr();
 
         let cache_entry = CacheEntry::Resident(new, lsn, ptr);
@@ -428,7 +429,7 @@ where
             log_reservation.abort().map_err(|e| e.danger_cast())?;
         } else {
             let to_clean = self.log.with_sa(|sa| {
-                sa.mark_link(pid, lsn, lid);
+                sa.mark_link(pid, lsn, ptr);
                 sa.clean(None)
             });
 
@@ -437,7 +438,9 @@ where
             // the segment to inactive, resulting in a race otherwise.
             // FIXME can result in deadlock if a node that holds SA
             // is waiting to acquire a new reservation blocked by this?
-            log_reservation.complete().map_err(|e| e.danger_cast())?;
+            log_reservation
+                .complete()
+                .map_err(|e| e.danger_cast())?;
 
             if let Some(to_clean) = to_clean {
                 let _ = self.rewrite_page(to_clean, guard);
@@ -447,7 +450,8 @@ where
             let should_snapshot =
                 count % self.config.snapshot_after_ops == 0;
             if should_snapshot {
-                self.advance_snapshot().map_err(|e| e.danger_cast())?;
+                self.advance_snapshot()
+                    .map_err(|e| e.danger_cast())?;
             }
         }
 
@@ -482,7 +486,8 @@ where
             let should_snapshot =
                 count % self.config.snapshot_after_ops == 0;
             if should_snapshot {
-                self.advance_snapshot().map_err(|e| e.danger_cast())?;
+                self.advance_snapshot()
+                    .map_err(|e| e.danger_cast())?;
             }
         }
 
@@ -520,22 +525,23 @@ where
                 .reserve_external(external_ptr)
                 .map_err(|e| e.danger_cast())?;
 
-            let node = node_from_frag_vec(vec![
-                cache_entries[0].clone(),
-            ]).into_shared(guard);
+            let node =
+                node_from_frag_vec(vec![cache_entries[0].clone()])
+                    .into_shared(guard);
 
             debug_delay();
             let result =
                 unsafe { stack_ptr.deref().cas(head, node, guard) };
 
             if result.is_ok() {
-                let ptrs = lids_from_stack(head, guard);
-                let lid = log_reservation.lid();
+                let ptrs = ptrs_from_stack(head, guard);
                 let lsn = log_reservation.lsn();
+                let new_ptr = log_reservation.ptr();
 
-                self.log.with_sa(|sa| {
-                    sa.mark_replace(pid, lsn, ptrs, lid);
-                });
+                self.log
+                    .with_sa(|sa| {
+                        sa.mark_replace(pid, lsn, ptrs, new_ptr)
+                    }).map_err(|e| e.danger_cast())?;
 
                 // NB complete must happen AFTER calls to SA, because
                 // when the iobuf's n_writers hits 0, we may transition
@@ -544,7 +550,9 @@ where
                     .complete()
                     .map_err(|e| e.danger_cast())?;
             } else {
-                log_reservation.abort().map_err(|e| e.danger_cast())?;
+                log_reservation
+                    .abort()
+                    .map_err(|e| e.danger_cast())?;
             }
 
             result.map(|_| ()).map_err(|e| Error::CasFailed(Some(e)))
@@ -566,17 +574,6 @@ where
             };
 
             self.cas_page(pid, key, update, guard).map(|_| ())?;
-
-            // drop all previous external pointers
-            let external_ptrs = cache_entries
-                .iter()
-                .filter(|ce| ce.ptr().is_external())
-                .map(|ce| ce.ptr().external().1);
-
-            for external_ptr in external_ptrs {
-                remove_blob(external_ptr, &self.config)
-                    .map_err(|e| e.danger_cast())?;
-            }
 
             Ok(())
         }
@@ -604,14 +601,13 @@ where
         let log_reservation =
             self.log.reserve(bytes).map_err(|e| e.danger_cast())?;
         let lsn = log_reservation.lsn();
-        let lid = log_reservation.lid();
-        let ptr = log_reservation.ptr();
+        let new_ptr = log_reservation.ptr();
 
         let cache_entry = match new {
             Update::Compact(m) => {
-                Some(CacheEntry::MergedResident(m, lsn, ptr))
+                Some(CacheEntry::MergedResident(m, lsn, new_ptr))
             }
-            Update::Free => Some(CacheEntry::Free(lsn, ptr)),
+            Update::Free => Some(CacheEntry::Free(lsn, new_ptr)),
             Update::Allocate => None,
             Update::Append(_) => {
                 panic!("tried to cas a page using an Append")
@@ -622,24 +618,26 @@ where
             .map(|cache_entry| {
                 node_from_frag_vec(vec![cache_entry])
                     .into_shared(guard)
-            })
-            .unwrap_or_else(|| Shared::null());
+            }).unwrap_or_else(|| Shared::null());
 
         debug_delay();
         let result =
             unsafe { stack_ptr.deref().cas(old, node, guard) };
 
         if result.is_ok() {
-            let ptrs = lids_from_stack(old, guard);
+            let ptrs = ptrs_from_stack(old, guard);
 
-            self.log.with_sa(|sa| {
-                sa.mark_replace(pid, lsn, ptrs, lid);
-            });
+            self.log
+                .with_sa(|sa| {
+                    sa.mark_replace(pid, lsn, ptrs, new_ptr)
+                }).map_err(|e| e.danger_cast())?;
 
             // NB complete must happen AFTER calls to SA, because
             // when the iobuf's n_writers hits 0, we may transition
             // the segment to inactive, resulting in a race otherwise.
-            log_reservation.complete().map_err(|e| e.danger_cast())?;
+            log_reservation
+                .complete()
+                .map_err(|e| e.danger_cast())?;
         } else {
             log_reservation.abort().map_err(|e| e.danger_cast())?;
         }
@@ -761,11 +759,12 @@ where
         let size = std::mem::size_of_val(&merged);
         let to_evict = self.lru.accessed(pid, size);
         trace!(
-            "accessed pid {} -> paging out pid {:?}",
+            "accessed pid {} -> paging out pids {:?}",
             pid,
             to_evict
         );
-        self.page_out(to_evict, guard).map_err(|e| e.danger_cast())?;
+        self.page_out(to_evict, guard)
+            .map_err(|e| e.danger_cast())?;
 
         if ptrs.len() > self.config.page_consolidation_threshold {
             trace!(
@@ -1101,14 +1100,14 @@ where
     }
 }
 
-fn lids_from_stack<'g, P: Send + Sync>(
+fn ptrs_from_stack<'g, P: Send + Sync>(
     head_ptr: PagePtr<'g, P>,
     guard: &'g Guard,
-) -> Vec<LogID> {
+) -> Vec<DiskPtr> {
     // generate a list of the old log ID's
     let stack_iter = StackIter::from_ptr(head_ptr, guard);
 
-    let mut lids = vec![];
+    let mut ptrs = vec![];
     for cache_entry_ptr in stack_iter {
         match *cache_entry_ptr {
             CacheEntry::Resident(_, _, ref ptr)
@@ -1116,9 +1115,9 @@ fn lids_from_stack<'g, P: Send + Sync>(
             | CacheEntry::PartialFlush(_, ref ptr)
             | CacheEntry::Free(_, ref ptr)
             | CacheEntry::Flush(_, ref ptr) => {
-                lids.push(ptr.lid());
+                ptrs.push(*ptr);
             }
         }
     }
-    lids
+    ptrs
 }

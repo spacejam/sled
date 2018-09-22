@@ -614,6 +614,8 @@ impl Config {
             + Send
             + PartialEq,
     {
+        debug!("generating incremental snapshot");
+
         let incremental =
             read_snapshot_or_default::<PM, P, R>(&self)?;
 
@@ -621,6 +623,7 @@ impl Config {
             std::fs::remove_file(snapshot_path)?;
         }
 
+        debug!("generating snapshot without the previous one");
         let regenerated =
             read_snapshot_or_default::<PM, P, R>(&self)?;
 

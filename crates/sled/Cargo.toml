@@ -20,9 +20,6 @@ rayon = ["pagecache/rayon"]
 zstd = ["pagecache/zstd"]
 nightly = ["pagecache/nightly"]
 
-[profile.release]
-debug = 2
-
 [dependencies.log]
 version = "0.4"
 

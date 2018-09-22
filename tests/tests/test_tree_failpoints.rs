@@ -256,20 +256,8 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 // insert false certainty before completes
                 reference.insert(k as u16, (k as u16, false));
 
-                let res = fp_crash!(tree.del(&*vec![0, k]));
-                match res {
-                    Some(_) => {
-                        // we definitely caused a file write
-                        tree.flush().expect(
-                            "should be able to flush after del",
-                        )
-                    }
-                    None => {
-                        // we might not have actually written anything
-                        // because the key wasn't there.
-                        let _ = tree.flush();
-                    }
-                }
+                fp_crash!(tree.del(&*vec![0, k]));
+                fp_crash!(tree.flush());
 
                 reference.remove(&(k as u16));
             }
@@ -526,7 +514,6 @@ fn failpoints_bug_9() {
 }
 
 #[test]
-#[ignore]
 fn failpoints_bug_10() {
     // expected to iterate over 50 but got 49 instead
     // postmortem 1:
@@ -660,7 +647,6 @@ fn failpoints_bug_10() {
             Del(0),
             Set,
             Del(146),
-            Restart,
             Del(83),
             Restart,
             Del(0),
@@ -735,36 +721,15 @@ fn failpoints_bug_10() {
             Set,
             Del(49),
             Set,
-            Set,
-            Restart,
-            Set,
-            Set,
-            Set,
-            Set,
-            Del(197),
-            Restart,
-            Restart,
-            Del(192),
-            Set,
-            Del(10),
-            Set,
-            Set,
-            Set,
-            Set,
-            Set,
-            Set,
-            Set,
         ],
-        true,
+        false,
     ))
 }
 
 #[test]
-#[ignore]
 fn failpoints_bug_11() {
     // dupe lsn detected
     // postmortem 1:
-    tests::setup_logger();
     assert!(prop_tree_crashes_nicely(
         vec![
             Set,
@@ -805,7 +770,6 @@ fn failpoints_bug_11() {
 fn failpoints_bug_12() {
     // postmortem 1: we were not sorting the recovery state, which
     // led to divergent state across recoveries. TODO wut
-    tests::setup_logger();
     assert!(prop_tree_crashes_nicely(
         vec![
             Set,
@@ -829,7 +793,6 @@ fn failpoints_bug_12() {
 #[test]
 fn failpoints_bug_13() {
     // postmortem 1:
-    tests::setup_logger();
     assert!(prop_tree_crashes_nicely(
         vec![
             Set,

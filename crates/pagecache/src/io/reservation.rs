@@ -34,6 +34,10 @@ impl<'a> Reservation<'a> {
 
             assert_eq!(self.lsn, blob_ptr);
 
+            trace!(
+                "removing blob for aborted reservation at lsn {}",
+                blob_ptr
+            );
             remove_blob(blob_ptr, &self.iobufs.config)?;
         }
 

@@ -19,11 +19,9 @@
 //!
 //! model-based testing:
 //!
-//! ```no_run
+//! ```
 //! #[macro_use]
 //! extern crate model;
-//! #[macro_use]
-//! extern crate proptest;
 //!
 //! use std::sync::atomic::{AtomicUsize, Ordering};
 //!
@@ -96,6 +94,7 @@
 //!# }
 //! ```
 extern crate permutohedron;
+extern crate proptest;
 
 use std::ops::Deref;
 

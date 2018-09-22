@@ -603,6 +603,7 @@ impl IoBufs {
                     "waiting on cond var for make_stable({})",
                     lsn
                 );
+
                 let _waiter =
                     self.interval_updated.wait(waiter).unwrap();
             } else {
@@ -758,7 +759,6 @@ impl IoBufs {
             // roll lsn to the next offset
             let lsn_idx = lsn / io_buf_size as Lsn;
             next_lsn = (lsn_idx + 1) * io_buf_size as Lsn;
-            let segment_remainder = next_lsn - (lsn + res_len as Lsn);
 
             // mark unused as clear
             debug!(
@@ -766,11 +766,6 @@ impl IoBufs {
                 lid,
                 lid + res_len as LogID,
             );
-
-            // we want to just mark the part that won't get marked in
-            // write_to_log, which is basically just the wasted tip here.
-            let low_lsn = lsn + res_len as Lsn;
-            self.mark_interval(low_lsn, segment_remainder as usize);
 
             let ret = self.with_sa(|sa| sa.next(next_lsn));
             #[cfg(feature = "failpoints")]
@@ -846,6 +841,7 @@ impl IoBufs {
 
         // if writers is 0, it's our responsibility to write the buffer.
         if n_writers(sealed) == 0 {
+            trace!("writing to log from maybe_seal");
             self.write_to_log(idx)
         } else {
             Ok(())
@@ -884,17 +880,6 @@ impl IoBufs {
         f.sync_all()?;
         io_fail!(self, "buffer write post");
 
-        if res_len > 0 {
-            debug!(
-                "wrote lsns {}-{} to disk at offsets {}-{}",
-                base_lsn,
-                base_lsn + res_len as Lsn - 1,
-                lid,
-                lid + res_len as LogID - 1
-            );
-            self.mark_interval(base_lsn, res_len);
-        }
-
         // write a trailer if we're maxed
         let maxed = iobuf.linearized(|| iobuf.get_maxed());
         if maxed {
@@ -920,6 +905,7 @@ impl IoBufs {
             f.pwrite_all(&trailer_bytes, trailer_lid)?;
             f.sync_all()?;
             io_fail!(self, "trailer write post");
+
             iobuf.set_maxed(false);
 
             debug!(
@@ -938,12 +924,32 @@ impl IoBufs {
             );
             self.with_sa(|sa| {
                 sa.deactivate_segment(segment_lsn, segment_lid)
-            });
+            })?;
         } else {
             trace!(
                 "not deactivating segment with lsn {}",
                 base_lsn / io_buf_size as Lsn * io_buf_size as Lsn
             );
+        }
+
+        if res_len > 0 || maxed {
+            let complete_len = if maxed {
+                let lsn_idx = base_lsn as usize / io_buf_size;
+                let next_seg_beginning = (lsn_idx + 1) * io_buf_size;
+                next_seg_beginning - base_lsn as usize
+            } else {
+                res_len
+            };
+
+            debug!(
+                "wrote lsns {}-{} to disk at offsets {}-{} in buffer {}",
+                base_lsn,
+                base_lsn + res_len as Lsn - 1,
+                lid,
+                lid + res_len as LogID - 1,
+                idx
+            );
+            self.mark_interval(base_lsn, complete_len);
         }
 
         M.written_bytes.measure(res_len as f64);
@@ -998,8 +1004,6 @@ impl IoBufs {
         while let Some(&(low, high)) = intervals.last() {
             assert_ne!(low, high);
             let cur_stable = self.stable_lsn.load(SeqCst) as Lsn;
-            // FIXME somehow, we marked offset 2233715 stable while interval 2231715-2231999 had
-            // not yet been applied!
             assert!(
                 low > cur_stable,
                 "somehow, we marked offset {} stable while \

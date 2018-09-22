@@ -252,6 +252,7 @@ pub enum LogRead {
     Failed(Lsn, usize),
     Pad(Lsn),
     Corrupted(usize),
+    DanglingExternal(Lsn, ExternalPointer),
 }
 
 impl LogRead {

@@ -259,7 +259,17 @@ impl<R> Snapshot<R> {
                         .map(|(_, ptr)| ptr.external().1);
 
                     for external_ptr in external_ptrs {
-                        remove_blob(external_ptr, config).expect("should be able to clean up orphaned external writes");
+                        trace!(
+                            "removing blob while advancing \
+                             snapshot: {}",
+                            external_ptr,
+                        );
+
+                        // we don't care if this actually works
+                        // because it's possible that a previous
+                        // snapshot has run over this log and
+                        // removed the blob already.
+                        let _ = remove_blob(external_ptr, config);
                     }
                 }
             }

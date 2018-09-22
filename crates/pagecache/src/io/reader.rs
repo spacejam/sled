@@ -135,19 +135,28 @@ impl LogReader for File {
                 Ok(LogRead::Pad(header.lsn))
             }
             MessageKind::SuccessBlob => {
-                trace!("read a successful flushed message");
-
                 let mut id_bytes = [0u8; 8];
                 id_bytes.copy_from_slice(&*buf);
                 let id: Lsn =
                     unsafe { std::mem::transmute(id_bytes) };
 
-                let buf = read_blob(id, config)?;
+                match read_blob(id, config) {
+                    Ok(buf) => {
+                        trace!("read a successful external message");
 
-                Ok(LogRead::External(header.lsn, buf, id))
+                        Ok(LogRead::External(header.lsn, buf, id))
+                    }
+                    Err(Error::Io(ref e))
+                        if e.kind()
+                            == std::io::ErrorKind::NotFound =>
+                    {
+                        Ok(LogRead::DanglingExternal(header.lsn, id))
+                    }
+                    Err(other_e) => Err(other_e),
+                }
             }
             MessageKind::Success => {
-                trace!("read a successful flushed message");
+                trace!("read a successful inline message");
                 let buf = {
                     #[cfg(feature = "zstd")]
                     {

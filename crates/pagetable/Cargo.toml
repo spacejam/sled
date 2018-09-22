@@ -9,9 +9,6 @@ repository = "https://github.com/spacejam/sled"
 keywords = ["paging", "page-table", "table", "data-structure", "lookup"]
 documentation = "https://docs.rs/pagetable/"
 
-[profile.dev]
-opt-level = 1
-
 [dependencies]
 crossbeam-epoch = "0.4"
 

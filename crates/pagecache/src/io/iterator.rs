@@ -127,9 +127,26 @@ impl Iterator for LogIter {
                         self.trailer.take();
                         continue;
                     }
+                    Ok(LogRead::DanglingExternal(
+                        lsn,
+                        external_ptr,
+                    )) => {
+                        debug!(
+                            "encountered dangling external \
+                             pointer at lsn {} ptr {}",
+                            lsn, external_ptr
+                        );
+                        self.cur_lsn += (MSG_HEADER_LEN
+                            + EXTERNAL_VALUE_LEN)
+                            as Lsn;
+                        continue;
+                    }
                     Err(e) => {
                         error!(
-                            "failed to read log message during iteration: {}",
+                            "failed to read log message at lid {} \
+                            with expected lsn {} during iteration: {}",
+                            lid,
+                            self.cur_lsn,
                             e
                         );
                         return None;
@@ -191,7 +208,8 @@ impl LogIter {
 
         let trailer_offset = offset + self.segment_len as LogID
             - SEG_TRAILER_LEN as LogID;
-        let trailer_lsn = segment_header.lsn + self.segment_len as Lsn
+        let trailer_lsn = segment_header.lsn
+            + self.segment_len as Lsn
             - SEG_TRAILER_LEN as Lsn;
 
         trace!("trying to read trailer from {}", trailer_offset);
