@@ -9,7 +9,7 @@ rust:
 
 matrix:
   include:
-   - rust: nightly-2018-09-13
+    - rust: nightly-2018-09-13
       env:
         - TEST=tsan
         - RUSTFLAGS="-Z sanitizer=thread"
