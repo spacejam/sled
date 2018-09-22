@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::fmt::{self, Debug};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
@@ -895,10 +896,10 @@ impl Tree {
             {
                 Data::Index(ref ptrs) => {
                     let old_cursor = cursor;
+
+                    let encoded_key = prefix_encode(&*prefix, key);
                     for &(ref sep_k, ref ptr) in ptrs {
-                        let decoded_sep_k =
-                            prefix_decode(&*prefix, sep_k);
-                        if &*decoded_sep_k <= &*key {
+                        if prefix_cmp(sep_k, &*encoded_key) != Ordering::Greater {
                             cursor = *ptr;
                         } else {
                             break; // we've found our next cursor
