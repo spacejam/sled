@@ -69,8 +69,8 @@ fn test_prefix() {
         vec![prefix.len() as u8]
     );
     assert_eq!(prefix_encode(prefix, b"catt"), vec![3, b't']);
-    assert_eq!(prefix_encode(prefix, b"ca"), vec![2]);
-    assert_eq!(prefix_encode(prefix, b"cab"), vec![2, b'b']);
+    assert_eq!(prefix_encode(prefix, b"cb"), vec![1, b'b']);
+    assert_eq!(prefix_encode(prefix, b"caz"), vec![2, b'z']);
     assert_eq!(
         prefix_encode(prefix, b"cvar"),
         vec![1, b'v', b'a', b'r']
