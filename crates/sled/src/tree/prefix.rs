@@ -3,6 +3,12 @@ use std::cmp::Ordering;
 use super::*;
 
 pub(crate) fn prefix_encode(prefix: &[u8], buf: &[u8]) -> Vec<u8> {
+    assert!(
+        prefix <= buf,
+        "prefix {:?} must be lexicographically <= to the encoded buf {:?}",
+        prefix,
+        buf
+    );
     let limit = std::cmp::min(std::u8::MAX as usize, buf.len());
     let mut prefix_len = 0usize;
     for (i, c) in prefix.iter().take(limit).enumerate() {
