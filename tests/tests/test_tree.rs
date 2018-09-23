@@ -215,8 +215,6 @@ impl Arbitrary for Key {
         } else {
             v as usize
         };
-        println!("generated len: {}", len);
-        assert!(len < 10000);
 
         let space = g.gen_range(0, std::u8::MAX as usize) + 1;
 
