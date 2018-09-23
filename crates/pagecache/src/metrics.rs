@@ -13,6 +13,7 @@ pub struct Metrics {
     pub tree_cas: Histo,
     pub tree_scan: Histo,
     pub page_in: Histo,
+    pub rewrite_page: Histo,
     pub merge_page: Histo,
     pub page_out: Histo,
     pub pull: Histo,

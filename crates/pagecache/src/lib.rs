@@ -40,6 +40,7 @@ pub use ds::{Radix, Stack};
 
 /// general-purpose configuration
 pub use config::{Config, ConfigBuilder};
+pub use diskptr::DiskPtr;
 pub use io::*;
 pub use result::{CacheResult, Error};
 
@@ -61,7 +62,7 @@ macro_rules! rep_no_copy {
 }
 
 mod config;
-/// auxilliary data structures
+mod diskptr;
 mod ds;
 mod hash;
 mod io;
@@ -69,7 +70,6 @@ mod metrics;
 mod periodic;
 mod result;
 
-// use log::{Iter, MessageHeader, SegmentHeader, SegmentTrailer};
 use ds::*;
 use hash::{crc16_arr, crc64};
 use historian::Histo;
@@ -81,12 +81,11 @@ pub type SegmentID = usize;
 /// A log file offset.
 pub type LogID = u64;
 
+/// A pointer to an external blob.
+pub type ExternalPointer = Lsn;
+
 /// A logical sequence number.
-#[cfg(target_pointer_width = "32")]
 pub type Lsn = i64;
-/// A logical sequence number.
-#[cfg(target_pointer_width = "64")]
-pub type Lsn = isize;
 
 /// A page identifier.
 pub type PageID = usize;
@@ -117,11 +116,7 @@ where
     }
 }
 
-unsafe impl<'g, P> Send for RayonPagePtr<'g, P>
-where
-    P: Send,
-{
-}
+unsafe impl<'g, P> Send for RayonPagePtr<'g, P> where P: Send {}
 
 lazy_static! {
     /// A metric collector for all pagecache users running in this

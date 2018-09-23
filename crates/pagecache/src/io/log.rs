@@ -12,6 +12,9 @@ pub const SEG_HEADER_LEN: usize = 10;
 #[doc(hidden)]
 pub const SEG_TRAILER_LEN: usize = 10;
 
+#[doc(hidden)]
+pub const EXTERNAL_VALUE_LEN: usize = std::mem::size_of::<Lsn>();
+
 /// A sequential store which allows users to create
 /// reservations placed at known log offsets, used
 /// for writing persistent data structures that need
@@ -104,12 +107,22 @@ impl Log {
         self.iobufs.reserve(buf)
     }
 
+    /// Reserve a replacement buffer for a previously written
+    /// external write. This ensures the message header has the
+    /// proper external flag set.
+    pub(super) fn reserve_external(
+        &self,
+        external_ptr: ExternalPointer,
+    ) -> CacheResult<Reservation, ()> {
+        self.iobufs.reserve_external(external_ptr)
+    }
+
     /// Write a buffer into the log. Returns the log sequence
     /// number and the file offset of the write.
     pub fn write(
         &self,
         buf: Vec<u8>,
-    ) -> CacheResult<(Lsn, LogID), ()> {
+    ) -> CacheResult<(Lsn, DiskPtr), ()> {
         self.iobufs.reserve(buf).and_then(|res| res.complete())
     }
 
@@ -145,25 +158,34 @@ impl Log {
     pub fn read(
         &self,
         lsn: Lsn,
-        lid: LogID,
+        ptr: DiskPtr,
     ) -> CacheResult<LogRead, ()> {
-        trace!("reading log lsn {} lid {}", lsn, lid);
+        trace!("reading log lsn {} ptr {}", lsn, ptr);
+
         self.make_stable(lsn)?;
-        let f = self.config.file()?;
 
-        let read = f.read_message(
-            lid,
-            self.config.io_buf_size,
-            self.config.use_compression,
-        );
+        if ptr.is_inline() {
+            let lid = ptr.inline();
+            let f = self.config.file()?;
 
-        read.and_then(|log_read| match log_read {
-            LogRead::Flush(read_lsn, _, _) => {
-                assert_eq!(lsn, read_lsn);
-                Ok(log_read)
-            }
-            _ => Ok(log_read),
-        }).map_err(|e| e.into())
+            let read = f.read_message(lid, &self.config);
+
+            read.and_then(|log_read| match log_read {
+                LogRead::Inline(read_lsn, _, _)
+                | LogRead::External(read_lsn, _, _) => {
+                    if lsn != read_lsn {
+                        Err(Error::Corruption { at: ptr })
+                    } else {
+                        Ok(log_read)
+                    }
+                }
+                _ => Ok(log_read),
+            }).map_err(|e| e.into())
+        } else {
+            let (_lid, external_ptr) = ptr.external();
+            read_blob(external_ptr, &self.config)
+                .map(|buf| LogRead::External(lsn, buf, external_ptr))
+        }
     }
 
     /// returns the current stable offset written to disk
@@ -190,6 +212,7 @@ impl Log {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) enum MessageKind {
     Success,
+    SuccessBlob,
     Failed,
     Pad,
     Corrupted,
@@ -224,28 +247,48 @@ pub(crate) struct SegmentTrailer {
 #[doc(hidden)]
 #[derive(Debug)]
 pub enum LogRead {
-    Flush(Lsn, Vec<u8>, usize),
+    Inline(Lsn, Vec<u8>, usize),
+    External(Lsn, Vec<u8>, ExternalPointer),
     Failed(Lsn, usize),
     Pad(Lsn),
     Corrupted(usize),
+    DanglingExternal(Lsn, ExternalPointer),
 }
 
 impl LogRead {
-    /// Optionally return successfully read bytes, or None if
-    /// the data was corrupt or this log entry was aborted.
-    pub fn flush(self) -> Option<(Lsn, Vec<u8>, usize)> {
+    /// Optionally return successfully read inline bytes, or
+    /// None if the data was corrupt or this log entry was aborted.
+    pub fn inline(self) -> Option<(Lsn, Vec<u8>, usize)> {
         match self {
-            LogRead::Flush(lsn, bytes, len) => {
+            LogRead::Inline(lsn, bytes, len) => {
                 Some((lsn, bytes, len))
             }
             _ => None,
         }
     }
 
-    /// Return true if we read a completed write successfully.
-    pub fn is_flush(&self) -> bool {
+    /// Return true if this is an Inline value..
+    pub fn is_inline(&self) -> bool {
         match *self {
-            LogRead::Flush(_, _, _) => true,
+            LogRead::Inline(_, _, _) => true,
+            _ => false,
+        }
+    }
+
+    /// Optionally return a successfully read pointer to an
+    /// external value, or None if the data was corrupt or
+    /// this log entry was aborted.
+    pub fn external(self) -> Option<(Lsn, Vec<u8>, ExternalPointer)> {
+        match self {
+            LogRead::External(lsn, buf, ptr) => Some((lsn, buf, ptr)),
+            _ => None,
+        }
+    }
+
+    /// Return true if we read a completed external write successfully.
+    pub fn is_external(&self) -> bool {
+        match self {
+            LogRead::External(..) => true,
             _ => false,
         }
     }
@@ -254,6 +297,16 @@ impl LogRead {
     pub fn is_failed(&self) -> bool {
         match *self {
             LogRead::Failed(_, _) => true,
+            _ => false,
+        }
+    }
+
+    /// Return true if we read a successful Inline or External value.
+    pub fn is_successful(&self) -> bool {
+        match *self {
+            LogRead::Inline(_, _, _) | LogRead::External(_, _, _) => {
+                true
+            }
             _ => false,
         }
     }
@@ -274,28 +327,12 @@ impl LogRead {
         }
     }
 
-    /// Retrieve the read bytes from a completed, successful write.
-    ///
-    /// # Panics
-    ///
-    /// panics if `is_flush()` is false.
-    pub fn unwrap(self) -> (Lsn, Vec<u8>, usize) {
+    /// Return the underlying data read from a log read, if successful.
+    pub fn into_data(self) -> Option<Vec<u8>> {
         match self {
-            LogRead::Flush(lsn, bytes, len) => (lsn, bytes, len),
-            _ => panic!("called unwrap on a non-flush LogRead"),
-        }
-    }
-
-    /// Retrieves the read bytes from a successful write, or
-    /// panics with the provided error message.
-    ///
-    /// # Panics
-    ///
-    /// panics if `is_flush()` is false.
-    pub fn expect<'a>(self, msg: &'a str) -> (Lsn, Vec<u8>, usize) {
-        match self {
-            LogRead::Flush(lsn, bytes, len) => (lsn, bytes, len),
-            _ => panic!("{}", msg),
+            LogRead::External(_, buf, _)
+            | LogRead::Inline(_, buf, _) => Some(buf),
+            _ => None,
         }
     }
 }
@@ -307,6 +344,7 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
     fn from(buf: [u8; MSG_HEADER_LEN]) -> MessageHeader {
         let kind = match buf[0] {
             SUCCESSFUL_FLUSH => MessageKind::Success,
+            SUCCESSFUL_EXTERNAL_FLUSH => MessageKind::SuccessBlob,
             FAILED_FLUSH => MessageKind::Failed,
             SEGMENT_PAD => MessageKind::Pad,
             _ => MessageKind::Corrupted,
@@ -338,6 +376,7 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
         let mut buf = [0u8; MSG_HEADER_LEN];
         buf[0] = match self.kind {
             MessageKind::Success => SUCCESSFUL_FLUSH,
+            MessageKind::SuccessBlob => SUCCESSFUL_EXTERNAL_FLUSH,
             MessageKind::Failed => FAILED_FLUSH,
             MessageKind::Pad => SEGMENT_PAD,
             MessageKind::Corrupted => EVIL_BYTE,

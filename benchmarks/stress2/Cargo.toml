@@ -18,7 +18,7 @@ no_logs = ["sled/no_logs"]
 [dependencies]
 serde = "1.0"
 serde_derive = "1.0"
-docopt = "0.8"
+docopt = "1.0"
 chan-signal = "0.3"
 rand = "0.4"
 sled = { path = "../../crates/sled" }

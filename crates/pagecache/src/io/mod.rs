@@ -12,6 +12,7 @@ use serde::Serialize;
 
 use super::*;
 
+mod blob_io;
 mod iobuf;
 mod iterator;
 mod log;
@@ -25,7 +26,12 @@ mod snapshot;
 
 #[doc(hidden)]
 pub use self::log::{
-    LogRead, MSG_HEADER_LEN, SEG_HEADER_LEN, SEG_TRAILER_LEN,
+    LogRead, EXTERNAL_VALUE_LEN, MSG_HEADER_LEN, SEG_HEADER_LEN,
+    SEG_TRAILER_LEN,
+};
+
+pub(crate) use self::blob_io::{
+    gc_blobs, read_blob, remove_blob, write_blob,
 };
 
 pub(super) use self::reader::LogReader;
@@ -49,15 +55,18 @@ use self::parallel_io::Pio;
 use self::segment::{raw_segment_iter_from, SegmentAccountant};
 use self::snapshot::{advance_snapshot, PageState};
 
-// The EVIL_BYTE is written to force detection of
-// a corruption when dealing with unused segment space.
-const EVIL_BYTE: u8 = 6;
-
-// This message represents valid data.
-const SUCCESSFUL_FLUSH: u8 = 1;
-
 // This message should be skipped to preserve linearizability.
 const FAILED_FLUSH: u8 = 0;
 
+// This message represents valid data, stored inline.
+const SUCCESSFUL_FLUSH: u8 = 1;
+
+// This message represents valid data, stored externally.
+const SUCCESSFUL_EXTERNAL_FLUSH: u8 = 2;
+
 // This message represents a pad.
-const SEGMENT_PAD: u8 = 2;
+const SEGMENT_PAD: u8 = 3;
+
+// The EVIL_BYTE is written to force detection of
+// a corruption when dealing with unused segment space.
+const EVIL_BYTE: u8 = 6;

@@ -24,7 +24,7 @@ pub enum Error<Actual> {
     /// Corruption has been detected in the storage file.
     Corruption {
         /// The file location that corrupted data was found at.
-        at: LogID,
+        at: DiskPtr,
     },
     // a failpoint has been triggered for testing purposes
     #[doc(hidden)]

@@ -14,7 +14,6 @@ use serde::Serialize;
 use bincode::{deserialize, serialize, Infinite};
 
 use super::*;
-use io::LogReader;
 
 impl Deref for Config {
     type Target = ConfigBuilder;
@@ -262,7 +261,8 @@ impl Drop for Config {
     fn drop(&mut self) {
         // if our ref count is 0 we can drop and close our file properly.
         if self.refs.fetch_sub(1, Ordering::Relaxed) == 0 {
-            let f_ptr: *mut Arc<fs::File> = self.file
+            let f_ptr: *mut Arc<fs::File> = self
+                .file
                 .swap(std::ptr::null_mut(), Ordering::Relaxed);
             if !f_ptr.is_null() {
                 let f: Box<Arc<fs::File>> =
@@ -380,27 +380,25 @@ impl Config {
                     path
                 )));
             }
-            Some(dir) => dir,
+            Some(dir) => dir.join("blobs"),
         };
 
         // create data directory if it doesn't exist yet
-        if dir != Path::new("") {
-            if dir.is_file() {
-                return Err(Error::Unsupported(format!(
-                    "provided parent directory is a file, \
-                     not a directory: {:?}",
-                    dir
-                )));
-            }
+        if dir.is_file() {
+            return Err(Error::Unsupported(format!(
+                "provided parent directory is a file, \
+                 not a directory: {:?}",
+                dir
+            )));
+        }
 
-            if !dir.exists() {
-                let res: std::io::Result<()> =
-                    std::fs::create_dir_all(dir);
-                res.map_err(|e: std::io::Error| {
-                    let ret: Error<()> = e.into();
-                    ret
-                })?;
-            }
+        if !dir.exists() {
+            let res: std::io::Result<()> =
+                std::fs::create_dir_all(dir);
+            res.map_err(|e: std::io::Error| {
+                let ret: Error<()> = e.into();
+                ret
+            })?;
         }
 
         self.verify_conf_changes_ok()?;
@@ -569,10 +567,21 @@ impl Config {
         let crc_actual = crc64(&*buf);
 
         if crc_expected != crc_actual {
-            warn!("crc for settings file {:?} failed! can't verify that config is safe", path);
+            warn!(
+                "crc for settings file {:?} failed! \
+                 can't verify that config is safe",
+                path
+            );
         }
 
         Ok(deserialize::<ConfigBuilder>(&*buf).ok())
+    }
+
+    pub(crate) fn blob_path(&self, id: Lsn) -> PathBuf {
+        let mut path = self.get_path();
+        path.push("blobs");
+        path.push(format!("{}", id));
+        path
     }
 
     fn db_path(&self) -> PathBuf {
@@ -605,6 +614,8 @@ impl Config {
             + Send
             + PartialEq,
     {
+        debug!("generating incremental snapshot");
+
         let incremental =
             read_snapshot_or_default::<PM, P, R>(&self)?;
 
@@ -612,14 +623,17 @@ impl Config {
             std::fs::remove_file(snapshot_path)?;
         }
 
+        debug!("generating snapshot without the previous one");
         let regenerated =
             read_snapshot_or_default::<PM, P, R>(&self)?;
 
-        let f = self.file()?;
-
         for (k, v) in &regenerated.pt {
             if !incremental.pt.contains_key(&k) {
-                panic!("page only present in regenerated pagetable: {} -> {:?}", k, v);
+                panic!(
+                    "page only present in regenerated \
+                     pagetable: {} -> {:?}",
+                    k, v
+                );
             }
             assert_eq!(
                 incremental.pt.get(&k),
@@ -627,19 +641,25 @@ impl Config {
                 "page tables differ for pid {}",
                 k
             );
-            for (lsn, lid) in v.iter() {
-                f.read_message(
-                    lid,
-                    self.io_buf_size,
-                    self.use_compression
-                ).unwrap()
-                .expect(&*format!("could not read log data for pid {} at lsn {} lid {}", k, lsn, lid));
+            for (lsn, ptr) in v.iter() {
+                let read = ptr.read(&self);
+                if let Err(e) = read {
+                    panic!(
+                        "could not read log data for \
+                         pid {} at lsn {} ptr {}: {}",
+                        k, lsn, ptr, e
+                    );
+                }
             }
         }
 
         for (k, v) in &incremental.pt {
             if !regenerated.pt.contains_key(&k) {
-                panic!("page only present in incremental pagetable: {} -> {:?}", k, v);
+                panic!(
+                    "page only present in incremental \
+                     pagetable: {} -> {:?}",
+                    k, v
+                );
             }
             assert_eq!(
                 Some(v),
@@ -647,13 +667,15 @@ impl Config {
                 "page tables differ for pid {}",
                 k
             );
-            for (lsn, lid) in v.iter() {
-                f.read_message(
-                    lid,
-                    self.io_buf_size,
-                    self.use_compression
-                ).unwrap()
-                .expect(&*format!("could not read log data for pid {} at lsn {} lid {}", k, lsn, lid));
+            for (lsn, ptr) in v.iter() {
+                let read = ptr.read(&self);
+                if let Err(e) = read {
+                    panic!(
+                        "could not read log data for \
+                         pid {} at lsn {} ptr {}: {}",
+                        k, lsn, ptr, e
+                    );
+                }
             }
         }
 

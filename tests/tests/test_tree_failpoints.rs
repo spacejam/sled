@@ -1,10 +1,10 @@
 #[macro_use]
 extern crate lazy_static;
-extern crate quickcheck;
 extern crate fail;
+extern crate pagecache;
+extern crate quickcheck;
 extern crate rand;
 extern crate sled;
-extern crate pagecache;
 extern crate tests;
 
 use std::collections::{BTreeMap, HashSet};
@@ -47,6 +47,7 @@ impl Arbitrary for Op {
             "snap write mv",
             "snap write mv post",
             "snap write rm old",
+            "external blob write",
         ];
 
         if g.gen_weighted_bool(30) {
@@ -69,10 +70,8 @@ impl Arbitrary for Op {
     fn shrink(&self) -> Box<Iterator<Item = Op>> {
         match *self {
             Op::Del(ref lid) if *lid > 0 => Box::new(
-                vec![
-                    Op::Del(*lid / 2),
-                    Op::Del(*lid - 1),
-                ].into_iter(),
+                vec![Op::Del(*lid / 2), Op::Del(*lid - 1)]
+                    .into_iter(),
             ),
             _ => Box::new(vec![].into_iter()),
         }
@@ -80,7 +79,9 @@ impl Arbitrary for Op {
 }
 
 fn v(b: &Vec<u8>) -> u16 {
-    assert_eq!(b.len(), 2);
+    if b[0] % 4 != 0 {
+        assert_eq!(b.len(), 2);
+    }
     ((b[0] as u16) << 8) + b[1] as u16
 }
 
@@ -90,14 +91,15 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
         static ref M: Mutex<()> = Mutex::new(());
     }
 
-    let _lock = M.lock().expect("our test lock should not be poisoned");
+    let _lock =
+        M.lock().expect("our test lock should not be poisoned");
 
     // clear all failpoints that may be left over from the last run
     fail::teardown();
 
-    let res = std::panic::catch_unwind(
-        || run_tree_crashes_nicely(ops.clone(), flusher),
-    );
+    let res = std::panic::catch_unwind(|| {
+        run_tree_crashes_nicely(ops.clone(), flusher)
+    });
 
     fail::teardown();
 
@@ -105,15 +107,16 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
         Err(e) => {
             println!(
                 "failed with {:?} on ops {:?} flusher {}",
-                e,
-                ops,
-                flusher
+                e, ops, flusher
             );
             false
         }
         Ok(res) => {
             if !res {
-                println!("failed with ops {:?} flusher: {}", ops, flusher);
+                println!(
+                    "failed with ops {:?} flusher: {}",
+                    ops, flusher
+                );
             }
             res
         }
@@ -121,11 +124,13 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 }
 
 fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
+    let io_buf_size = 300;
+
     let config = ConfigBuilder::new()
         .temporary(true)
         .snapshot_after_ops(1)
         .flush_every_ms(if flusher { Some(1) } else {None})
-        .io_buf_size(300)
+        .io_buf_size(io_buf_size)
         .min_items_per_segment(1)
         .blink_fanout(2) // smol pages for smol buffers
         .cache_capacity(40)
@@ -200,14 +205,16 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                     continue;
                 }
                 other => {
-                    println!("got non-failpoint err: {:?}", other);
+                    println!(
+                        "got non-failpoint err: {:?}",
+                        other
+                    );
                     return false;
-                },
+                }
             }
-        }
+        };
     }
 
-    // we always increase set_counter because
     let mut set_counter = 0u16;
 
     for op in ops.into_iter() {
@@ -215,11 +222,22 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
             Set => {
                 let hi = (set_counter >> 8) as u8;
                 let lo = set_counter as u8;
+                let val = if hi % 4 == 0 {
+                    let mut val = vec![hi, lo];
+                    val.extend(vec![
+                        lo;
+                        hi as usize * io_buf_size / 4
+                            * set_counter as usize
+                    ]);
+                    val
+                } else {
+                    vec![hi, lo]
+                };
 
                 // insert false certainty until it fully completes
                 reference.insert(set_counter, (set_counter, false));
 
-                fp_crash!(tree.set(vec![hi, lo], vec![hi, lo]));
+                fp_crash!(tree.set(vec![hi, lo], val));
 
                 // make sure we keep the disk and reference in-sync
                 // maybe in the future put pending things in their own
@@ -238,18 +256,8 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 // insert false certainty before completes
                 reference.insert(k as u16, (k as u16, false));
 
-                let res = fp_crash!(tree.del(&*vec![0, k]));
-                match res {
-                    Some(_) => {
-                        // we definitely caused a file write
-                        tree.flush().expect("should be able to flush after del")
-                    }
-                    None => {
-                        // we might not have actually written anything
-                        // because the key wasn't there.
-                        let _ = tree.flush();
-                    }
-                }
+                fp_crash!(tree.del(&*vec![0, k]));
+                fp_crash!(tree.flush());
 
                 reference.remove(&(k as u16));
             }
@@ -258,9 +266,8 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
             }
             FailPoint(fp) => {
                 fail_points.insert(fp.clone());
-                fail::cfg(&*fp, "return").expect(
-                    "should be able to configure failpoint",
-                );
+                fail::cfg(&*fp, "return")
+                    .expect("should be able to configure failpoint");
             }
         }
     }
@@ -284,7 +291,9 @@ fn quickcheck_tree_with_failpoints() {
         .gen(StdGen::new(rand::thread_rng(), generator_sz))
         .tests(n_tests)
         .max_tests(10000)
-        .quickcheck(prop_tree_crashes_nicely as fn(Vec<Op>, bool) -> bool);
+        .quickcheck(
+            prop_tree_crashes_nicely as fn(Vec<Op>, bool) -> bool,
+        );
 }
 
 #[test]
@@ -505,7 +514,6 @@ fn failpoints_bug_9() {
 }
 
 #[test]
-#[ignore]
 fn failpoints_bug_10() {
     // expected to iterate over 50 but got 49 instead
     // postmortem 1:
@@ -639,7 +647,6 @@ fn failpoints_bug_10() {
             Del(0),
             Set,
             Del(146),
-            Restart,
             Del(83),
             Restart,
             Del(0),
@@ -714,36 +721,15 @@ fn failpoints_bug_10() {
             Set,
             Del(49),
             Set,
-            Set,
-            Restart,
-            Set,
-            Set,
-            Set,
-            Set,
-            Del(197),
-            Restart,
-            Restart,
-            Del(192),
-            Set,
-            Del(10),
-            Set,
-            Set,
-            Set,
-            Set,
-            Set,
-            Set,
-            Set,
         ],
-        true,
+        false,
     ))
 }
 
 #[test]
-#[ignore]
 fn failpoints_bug_11() {
     // dupe lsn detected
     // postmortem 1:
-    tests::setup_logger();
     assert!(prop_tree_crashes_nicely(
         vec![
             Set,
@@ -784,7 +770,6 @@ fn failpoints_bug_11() {
 fn failpoints_bug_12() {
     // postmortem 1: we were not sorting the recovery state, which
     // led to divergent state across recoveries. TODO wut
-    tests::setup_logger();
     assert!(prop_tree_crashes_nicely(
         vec![
             Set,
@@ -800,6 +785,50 @@ fn failpoints_bug_12() {
             Set,
             Set,
             Restart,
+        ],
+        false,
+    ))
+}
+
+#[test]
+fn failpoints_bug_13() {
+    // postmortem 1:
+    assert!(prop_tree_crashes_nicely(
+        vec![
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Del(0),
+            Set,
+            Set,
+            Set,
+            Del(2),
+            Set,
+            Set,
+            Set,
+            Set,
+            Del(1),
+            Del(3),
+            Del(18),
+            Set,
+            Set,
+            Set,
+            Restart,
+            Set,
+            Set,
+            Set,
+            FailPoint("trailer write"),
+            Set,
+            FailPoint("snap write"),
+            Del(4),
         ],
         false,
     ))

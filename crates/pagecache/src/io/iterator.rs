@@ -15,7 +15,7 @@ pub struct LogIter {
 }
 
 impl Iterator for LogIter {
-    type Item = (Lsn, LogID, Vec<u8>);
+    type Item = (Lsn, DiskPtr, Vec<u8>);
 
     fn next(&mut self) -> Option<Self::Item> {
         // If segment is None, get next on segment_iter, panic
@@ -72,20 +72,31 @@ impl Iterator for LogIter {
                 + (self.cur_lsn % self.segment_len as Lsn) as LogID;
 
             if let Ok(f) = self.config.file() {
-                match f.read_message(
-                    lid,
-                    self.segment_len,
-                    self.use_compression,
-                ) {
-                    Ok(LogRead::Flush(lsn, buf, on_disk_len)) => {
+                match f.read_message(lid, &self.config) {
+                    Ok(LogRead::External(lsn, buf, external_ptr)) => {
                         if lsn != self.cur_lsn {
                             error!("read Flush with bad lsn");
                             return None;
                         }
-                        trace!("read flush in LogIter::next");
+                        trace!("read blob flush in LogIter::next");
+                        self.cur_lsn += (MSG_HEADER_LEN
+                            + EXTERNAL_VALUE_LEN)
+                            as Lsn;
+                        return Some((
+                            lsn,
+                            DiskPtr::External(lid, external_ptr),
+                            buf,
+                        ));
+                    }
+                    Ok(LogRead::Inline(lsn, buf, on_disk_len)) => {
+                        if lsn != self.cur_lsn {
+                            error!("read Flush with bad lsn");
+                            return None;
+                        }
+                        trace!("read inline flush in LogIter::next");
                         self.cur_lsn +=
                             (MSG_HEADER_LEN + on_disk_len) as Lsn;
-                        return Some((lsn, lid, buf));
+                        return Some((lsn, DiskPtr::Inline(lid), buf));
                     }
                     Ok(LogRead::Failed(lsn, on_disk_len)) => {
                         if lsn != self.cur_lsn {
@@ -116,9 +127,26 @@ impl Iterator for LogIter {
                         self.trailer.take();
                         continue;
                     }
+                    Ok(LogRead::DanglingExternal(
+                        lsn,
+                        external_ptr,
+                    )) => {
+                        debug!(
+                            "encountered dangling external \
+                             pointer at lsn {} ptr {}",
+                            lsn, external_ptr
+                        );
+                        self.cur_lsn += (MSG_HEADER_LEN
+                            + EXTERNAL_VALUE_LEN)
+                            as Lsn;
+                        continue;
+                    }
                     Err(e) => {
                         error!(
-                            "failed to read log message during iteration: {}",
+                            "failed to read log message at lid {} \
+                            with expected lsn {} during iteration: {}",
+                            lid,
+                            self.cur_lsn,
                             e
                         );
                         return None;
@@ -151,7 +179,9 @@ impl LogIter {
         let segment_header = f.read_segment_header(offset)?;
         if offset % self.segment_len as LogID != 0 {
             debug!("segment offset not divisible by segment length");
-            return Err(Error::Corruption { at: offset });
+            return Err(Error::Corruption {
+                at: DiskPtr::Inline(offset),
+            });
         }
         if segment_header.lsn % self.segment_len as Lsn != 0 {
             debug!(
@@ -159,7 +189,9 @@ impl LogIter {
                  by the io_buf_size ({}) instead it was {}",
                 self.segment_len, segment_header.lsn
             );
-            return Err(Error::Corruption { at: offset });
+            return Err(Error::Corruption {
+                at: DiskPtr::Inline(offset),
+            });
         }
 
         if segment_header.lsn != lsn {
@@ -176,7 +208,8 @@ impl LogIter {
 
         let trailer_offset = offset + self.segment_len as LogID
             - SEG_TRAILER_LEN as LogID;
-        let trailer_lsn = segment_header.lsn + self.segment_len as Lsn
+        let trailer_lsn = segment_header.lsn
+            + self.segment_len as Lsn
             - SEG_TRAILER_LEN as Lsn;
 
         trace!("trying to read trailer from {}", trailer_offset);

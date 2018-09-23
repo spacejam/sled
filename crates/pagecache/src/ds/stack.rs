@@ -103,7 +103,8 @@ impl<T: Send + 'static> Stack<T> {
             loop {
                 let head = self.head(unprotected());
                 node.deref().next.store(head, SeqCst);
-                if self.head
+                if self
+                    .head
                     .compare_and_set(
                         head,
                         node,
@@ -127,7 +128,8 @@ impl<T: Send + 'static> Stack<T> {
             match unsafe { head.as_ref() } {
                 Some(h) => {
                     let next = h.next.load(SeqCst, &guard);
-                    match self.head
+                    match self
+                        .head
                         .compare_and_set(head, next, SeqCst, &guard)
                     {
                         Ok(_) => unsafe {

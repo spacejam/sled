@@ -93,7 +93,8 @@ fn pagecache_strange_crash_1() {
         let mut keys = HashMap::new();
         for _ in 0..2 {
             let id = pc.allocate(&guard).unwrap();
-            let key = pc.replace(id, Shared::null(), vec![0], &guard)
+            let key = pc
+                .replace(id, Shared::null(), vec![0], &guard)
                 .unwrap();
             keys.insert(id, key);
         }
@@ -139,7 +140,8 @@ fn pagecache_strange_crash_2() {
         let mut keys = HashMap::new();
         for _ in 0..2 {
             let id = pc.allocate(&guard).unwrap();
-            let key = pc.replace(id, Shared::null(), vec![0], &guard)
+            let key = pc
+                .replace(id, Shared::null(), vec![0], &guard)
                 .unwrap();
             keys.insert(id, key);
         }
@@ -191,9 +193,9 @@ fn basic_pagecache_recovery() {
 
     let pc3: PageCache<TestMaterializer, _, _> =
         PageCache::start(config.clone()).unwrap();
-    let (consolidated3, _key) = pc3.get(id, &guard).unwrap().unwrap();
+    let (consolidated3, key) = pc3.get(id, &guard).unwrap().unwrap();
     assert_eq!(consolidated3, vec![1, 2, 3, 4]);
-    pc3.free(id, &guard).unwrap();
+    pc3.free(id, key, &guard).unwrap();
     drop(pc3);
 
     let pc4: PageCache<TestMaterializer, _, _> =
@@ -383,7 +385,18 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                 }
             }
             Free(pid) => {
-                pc.free(pid, &guard).unwrap();
+                let pre_get = pc.get(pid, &guard).unwrap();
+
+                match pre_get {
+                    PageGet::Materialized(_, ptr) => {
+                        pc.free(pid, ptr, &guard).unwrap()
+                    }
+                    PageGet::Allocated => {
+                        pc.free(pid, Shared::null(), &guard).unwrap()
+                    }
+                    _ => {}
+                }
+
                 let get = pc.get(pid, &guard).unwrap();
 
                 match reference.get(&pid) {

@@ -1,3 +1,4 @@
+use std::mem::{size_of, transmute};
 #[cfg(target_pointer_width = "32")]
 use std::sync::atomic::AtomicI64;
 #[cfg(target_pointer_width = "64")]
@@ -17,10 +18,17 @@ use self::reader::LogReader;
 use super::*;
 
 type Header = u64;
+
 #[cfg(target_pointer_width = "64")]
 type AtomicLsn = AtomicIsize;
 #[cfg(target_pointer_width = "32")]
 type AtomicLsn = AtomicI64;
+
+/// A logical sequence number.
+#[cfg(target_pointer_width = "64")]
+type InnerLsn = isize;
+#[cfg(target_pointer_width = "32")]
+type InnerLsn = i64;
 
 macro_rules! io_fail {
     ($self:expr, $e:expr) => {
@@ -47,7 +55,7 @@ struct IoBuf {
 unsafe impl Sync for IoBuf {}
 
 pub(super) struct IoBufs {
-    config: Config,
+    pub(super) config: Config,
     bufs: Vec<IoBuf>,
     current_buf: AtomicUsize,
     written_bufs: AtomicUsize,
@@ -91,17 +99,21 @@ impl IoBufs {
             snapshot.last_lid = 0;
             (0, 0)
         } else {
-            match file.read_message(
-                snapshot_last_lid,
-                io_buf_size,
-                config.use_compression,
-            ) {
-                Ok(LogRead::Flush(_lsn, _buf, len)) => (
+            match file.read_message(snapshot_last_lid, &config) {
+                Ok(LogRead::Inline(_lsn, _buf, len)) => (
                     snapshot_max_lsn
                         + len as Lsn
                         + MSG_HEADER_LEN as Lsn,
                     snapshot_last_lid
                         + len as LogID
+                        + MSG_HEADER_LEN as LogID,
+                ),
+                Ok(LogRead::External(_lsn, _buf, _external_ptr)) => (
+                    snapshot_max_lsn
+                        + EXTERNAL_VALUE_LEN as Lsn
+                        + MSG_HEADER_LEN as Lsn,
+                    snapshot_last_lid
+                        + EXTERNAL_VALUE_LEN as LogID
                         + MSG_HEADER_LEN as LogID,
                 ),
                 other => {
@@ -170,14 +182,17 @@ impl IoBufs {
         // of our file has not yet been written.
         let stable = if next_lsn == 0 { -1 } else { next_lsn - 1 };
 
+        // remove all blob files larger than our stable offset
+        gc_blobs(&config, stable)?;
+
         Ok(IoBufs {
             bufs: bufs,
             current_buf: AtomicUsize::new(current_buf),
             written_bufs: AtomicUsize::new(0),
             intervals: Mutex::new(vec![]),
             interval_updated: Condvar::new(),
-            stable_lsn: AtomicLsn::new(stable),
-            max_reserved_lsn: AtomicLsn::new(stable),
+            stable_lsn: AtomicLsn::new(stable as InnerLsn),
+            max_reserved_lsn: AtomicLsn::new(stable as InnerLsn),
             config: config,
             segment_accountant: Mutex::new(segment_accountant),
             #[cfg(feature = "failpoints")]
@@ -192,6 +207,7 @@ impl IoBufs {
     {
         let start = clock();
 
+        debug_delay();
         let mut sa = self.segment_accountant.lock().unwrap();
 
         let locked_at = clock();
@@ -217,30 +233,36 @@ impl IoBufs {
         self.stable_lsn.load(SeqCst) as Lsn
     }
 
-    // Adds a header to the buffer, and optionally compresses
-    // the buffer.
-    // NB the caller is responsible for later setting the Lsn
-    // bytes after a reservation has been acquired.
-    fn encapsulate(&self, raw_buf: Vec<u8>) -> Vec<u8> {
-        #[cfg(feature = "zstd")]
-        let buf = if self.config.use_compression {
-            let _measure = Measure::new(&M.compress);
-            compress(
-                &*raw_buf,
-                self.config.get_zstd_compression_factor(),
-            ).unwrap()
+    // Adds a header to the front of the buffer
+    fn encapsulate(
+        &self,
+        raw_buf: Vec<u8>,
+        lsn: Lsn,
+        over_blob_threshold: bool,
+    ) -> CacheResult<Vec<u8>, ()> {
+        let buf = if over_blob_threshold {
+            // write blob to file
+            io_fail!(self, "external blob write");
+            write_blob(&self.config, lsn, raw_buf)?;
+
+            let lsn_buf: [u8;
+                             size_of::<ExternalPointer>()] =
+                unsafe { transmute(lsn) };
+
+            lsn_buf.to_vec()
         } else {
             raw_buf
         };
 
-        #[cfg(not(feature = "zstd"))]
-        let buf = raw_buf;
-
         let crc16 = crc16_arr(&buf);
 
         let header = MessageHeader {
-            kind: MessageKind::Success,
-            lsn: 0,
+            kind: if over_blob_threshold {
+                MessageKind::SuccessBlob
+            } else {
+                MessageKind::Success
+            },
+            lsn: lsn,
             len: buf.len(),
             crc16: crc16,
         };
@@ -250,7 +272,7 @@ impl IoBufs {
         let mut out = vec![0; MSG_HEADER_LEN + buf.len()];
         out[0..MSG_HEADER_LEN].copy_from_slice(&header_bytes);
         out[MSG_HEADER_LEN..].copy_from_slice(&*buf);
-        out
+        Ok(out)
     }
 
     /// Tries to claim a reservation for writing a buffer to a
@@ -268,6 +290,27 @@ impl IoBufs {
         &self,
         raw_buf: Vec<u8>,
     ) -> CacheResult<Reservation, ()> {
+        self.reserve_inner(raw_buf, false)
+    }
+
+    /// Reserve a replacement buffer for a previously written
+    /// external write. This ensures the message header has the
+    /// proper external flag set.
+    pub(super) fn reserve_external(
+        &self,
+        external_ptr: ExternalPointer,
+    ) -> CacheResult<Reservation, ()> {
+        let lsn_buf: [u8; size_of::<ExternalPointer>()] =
+            unsafe { transmute(external_ptr) };
+
+        self.reserve_inner(lsn_buf.to_vec(), true)
+    }
+
+    fn reserve_inner(
+        &self,
+        raw_buf: Vec<u8>,
+        is_external: bool,
+    ) -> CacheResult<Reservation, ()> {
         let _measure = Measure::new(&M.reserve);
 
         let io_bufs = self.config.io_bufs;
@@ -276,7 +319,21 @@ impl IoBufs {
         #[cfg(target_pointer_width = "64")]
         assert_eq!((raw_buf.len() + MSG_HEADER_LEN) >> 32, 0);
 
-        let buf = self.encapsulate(raw_buf);
+        #[cfg(feature = "zstd")]
+        let buf = if self.config.use_compression {
+            let _measure = Measure::new(&M.compress);
+            compress(
+                &*raw_buf,
+                self.config.get_zstd_compression_factor(),
+            ).unwrap()
+        } else {
+            raw_buf
+        };
+
+        #[cfg(not(feature = "zstd"))]
+        let buf = raw_buf;
+
+        let total_buf_len = MSG_HEADER_LEN + buf.len();
 
         let max_overhead = if self.config.min_items_per_segment == 1 {
             SEG_HEADER_LEN + SEG_TRAILER_LEN
@@ -288,19 +345,15 @@ impl IoBufs {
             / self.config.min_items_per_segment)
             - max_overhead;
 
-        if buf.len() > max_buf_size {
-            return Err(Error::Unsupported(format!(
-                "trying to write a buffer that is too large \
-                to be stored in the IO buffer. buf len: {} current max: {}. \
-                a future version of pagecache will implement automatic \
-                fragmentation of large values. feel free to open \
-                an issue if this is a pressing need of yours.",
-                buf.len(),
-                max_buf_size
-            )));
-        }
+        let over_blob_threshold = total_buf_len > max_buf_size;
 
-        trace!("reserving buf of len {}", buf.len());
+        let inline_buf_len = if over_blob_threshold {
+            MSG_HEADER_LEN + size_of::<Lsn>()
+        } else {
+            total_buf_len
+        };
+
+        trace!("reserving buf of len {}", inline_buf_len);
 
         let mut printed = false;
         macro_rules! trace_once {
@@ -322,8 +375,7 @@ impl IoBufs {
             if spins > 1_000_000 {
                 debug!(
                     "stalling in reserve, idx {}, buf len {}",
-                    idx,
-                    buf.len()
+                    idx, inline_buf_len,
                 );
                 spins = 0;
             }
@@ -383,7 +435,8 @@ impl IoBufs {
 
             // try to claim space
             let buf_offset = offset(header);
-            let prospective_size = buf_offset as usize + buf.len();
+            let prospective_size =
+                buf_offset as usize + inline_buf_len;
             let would_overflow =
                 prospective_size > iobuf.get_capacity();
             if would_overflow {
@@ -405,7 +458,7 @@ impl IoBufs {
 
             // attempt to claim by incrementing an unsealed header
             let bumped_offset =
-                bump_offset(header, buf.len() as Header);
+                bump_offset(header, inline_buf_len as Header);
             let claimed = incr_writers(bumped_offset);
             assert!(!is_sealed(claimed));
 
@@ -442,37 +495,37 @@ impl IoBufs {
                 unsafe { (*iobuf.buf.get()).as_mut_slice() };
 
             let res_start = buf_offset as usize;
-            let res_end = res_start + buf.len();
+            let res_end = res_start + inline_buf_len;
             let destination = &mut (out_buf)[res_start..res_end];
 
             let reservation_offset = lid + u64::from(buf_offset);
             let reservation_lsn =
                 iobuf.get_lsn() + u64::from(buf_offset) as Lsn;
 
-            // we assign the LSN now that we know what it is
-            assert_eq!(&buf[1..9], &[0u8; 8]);
-            let lsn_bytes: [u8; 8] =
-                unsafe { std::mem::transmute(reservation_lsn) };
-            let mut buf = buf;
-            buf[1..9].copy_from_slice(&lsn_bytes);
-
             trace!(
                 "reserved {} bytes at lsn {} lid {}",
-                buf.len(),
+                inline_buf_len,
                 reservation_lsn,
                 reservation_offset,
             );
 
             self.bump_max_reserved_lsn(reservation_lsn);
 
+            let encapsulated_buf = self.encapsulate(
+                buf,
+                reservation_lsn,
+                over_blob_threshold || is_external,
+            )?;
+
             return Ok(Reservation {
                 idx: idx,
                 iobufs: self,
-                data: buf,
+                data: encapsulated_buf,
                 destination: destination,
                 flushed: false,
                 lsn: reservation_lsn,
                 lid: reservation_offset,
+                is_external: over_blob_threshold || is_external,
             });
         }
     }
@@ -550,6 +603,7 @@ impl IoBufs {
                     "waiting on cond var for make_stable({})",
                     lsn
                 );
+
                 let _waiter =
                     self.interval_updated.wait(waiter).unwrap();
             } else {
@@ -564,20 +618,25 @@ impl IoBufs {
     /// Called by users who wish to force the current buffer
     /// to flush some pending writes.
     pub(super) fn flush(&self) -> CacheResult<(), ()> {
-        let max_reserved_lsn = self.max_reserved_lsn.load(SeqCst);
+        let max_reserved_lsn =
+            self.max_reserved_lsn.load(SeqCst) as Lsn;
         self.make_stable(max_reserved_lsn)
     }
 
     // ensure self.max_reserved_lsn is set to this Lsn
     // or greater, for use in correct calls to flush.
     fn bump_max_reserved_lsn(&self, lsn: Lsn) {
-        let mut current = self.max_reserved_lsn.load(SeqCst);
+        let mut current =
+            self.max_reserved_lsn.load(SeqCst) as InnerLsn;
         loop {
-            if current >= lsn {
+            if current >= lsn as InnerLsn {
                 return;
             }
-            let last = self.max_reserved_lsn
-                .compare_and_swap(current, lsn, SeqCst);
+            let last = self.max_reserved_lsn.compare_and_swap(
+                current,
+                lsn as InnerLsn,
+                SeqCst,
+            );
             if last == current {
                 // we succeeded.
                 return;
@@ -700,7 +759,6 @@ impl IoBufs {
             // roll lsn to the next offset
             let lsn_idx = lsn / io_buf_size as Lsn;
             next_lsn = (lsn_idx + 1) * io_buf_size as Lsn;
-            let segment_remainder = next_lsn - (lsn + res_len as Lsn);
 
             // mark unused as clear
             debug!(
@@ -708,11 +766,6 @@ impl IoBufs {
                 lid,
                 lid + res_len as LogID,
             );
-
-            // we want to just mark the part that won't get marked in
-            // write_to_log, which is basically just the wasted tip here.
-            let low_lsn = lsn + res_len as Lsn;
-            self.mark_interval(low_lsn, segment_remainder as usize);
 
             let ret = self.with_sa(|sa| sa.next(next_lsn));
             #[cfg(feature = "failpoints")]
@@ -788,6 +841,7 @@ impl IoBufs {
 
         // if writers is 0, it's our responsibility to write the buffer.
         if n_writers(sealed) == 0 {
+            trace!("writing to log from maybe_seal");
             self.write_to_log(idx)
         } else {
             Ok(())
@@ -826,17 +880,6 @@ impl IoBufs {
         f.sync_all()?;
         io_fail!(self, "buffer write post");
 
-        if res_len > 0 {
-            debug!(
-                "wrote lsns {}-{} to disk at offsets {}-{}",
-                base_lsn,
-                base_lsn + res_len as Lsn - 1,
-                lid,
-                lid + res_len as LogID - 1
-            );
-            self.mark_interval(base_lsn, res_len);
-        }
-
         // write a trailer if we're maxed
         let maxed = iobuf.linearized(|| iobuf.get_maxed());
         if maxed {
@@ -862,6 +905,7 @@ impl IoBufs {
             f.pwrite_all(&trailer_bytes, trailer_lid)?;
             f.sync_all()?;
             io_fail!(self, "trailer write post");
+
             iobuf.set_maxed(false);
 
             debug!(
@@ -880,12 +924,32 @@ impl IoBufs {
             );
             self.with_sa(|sa| {
                 sa.deactivate_segment(segment_lsn, segment_lid)
-            });
+            })?;
         } else {
             trace!(
                 "not deactivating segment with lsn {}",
                 base_lsn / io_buf_size as Lsn * io_buf_size as Lsn
             );
+        }
+
+        if res_len > 0 || maxed {
+            let complete_len = if maxed {
+                let lsn_idx = base_lsn as usize / io_buf_size;
+                let next_seg_beginning = (lsn_idx + 1) * io_buf_size;
+                next_seg_beginning - base_lsn as usize
+            } else {
+                res_len
+            };
+
+            debug!(
+                "wrote lsns {}-{} to disk at offsets {}-{} in buffer {}",
+                base_lsn,
+                base_lsn + res_len as Lsn - 1,
+                lid,
+                lid + res_len as LogID - 1,
+                idx
+            );
+            self.mark_interval(base_lsn, complete_len);
         }
 
         M.written_bytes.measure(res_len as f64);
@@ -939,9 +1003,7 @@ impl IoBufs {
 
         while let Some(&(low, high)) = intervals.last() {
             assert_ne!(low, high);
-            let cur_stable = self.stable_lsn.load(SeqCst);
-            // FIXME somehow, we marked offset 2233715 stable while interval 2231715-2231999 had
-            // not yet been applied!
+            let cur_stable = self.stable_lsn.load(SeqCst) as Lsn;
             assert!(
                 low > cur_stable,
                 "somehow, we marked offset {} stable while \
@@ -951,7 +1013,9 @@ impl IoBufs {
                 high
             );
             if cur_stable + 1 == low {
-                let old = self.stable_lsn.swap(high, SeqCst);
+                let old =
+                    self.stable_lsn.swap(high as InnerLsn, SeqCst)
+                        as Lsn;
                 assert_eq!(
                     old, cur_stable,
                     "concurrent stable offset modification detected"
