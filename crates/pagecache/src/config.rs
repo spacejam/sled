@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use bincode::{deserialize, serialize, Infinite};
+use bincode::{deserialize, serialize};
 
 use super::*;
 
@@ -510,7 +510,7 @@ impl Config {
     }
 
     fn write_config(&self) -> CacheResult<(), ()> {
-        let bytes = serialize(&*self.inner, Infinite).unwrap();
+        let bytes = serialize(&*self.inner).unwrap();
         let crc64: [u8; 8] =
             unsafe { std::mem::transmute(crc64(&*bytes)) };
 

@@ -252,7 +252,7 @@ use Op::*;
 
 impl Arbitrary for Op {
     fn arbitrary<G: Gen>(g: &mut G) -> Op {
-        if g.gen_range(0, 10) >= 9 {
+        if g.gen_bool(1. / 10.) {
             return Restart;
         }
 

@@ -40,7 +40,8 @@ impl<T: Send + 'static> Drop for Node<T> {
                 drop(Box::from_raw(inner as *mut T));
             }
 
-            let children: Vec<*const Node<T>> = self.children
+            let children: Vec<*const Node<T>> = self
+                .children
                 .iter()
                 .map(|c| c.load(SeqCst, &guard).as_raw())
                 .filter(|c| !c.is_null())
@@ -125,13 +126,15 @@ where
             traverse(self.head.load(SeqCst, guard), pid, true, guard);
 
         unsafe {
-            match tip.deref()
+            match tip
+                .deref()
                 .inner
                 .compare_and_set(old, new, SeqCst, guard)
             {
                 Ok(_) => {
                     if !old.is_null() {
-                        guard.defer(move || old.into_owned());
+                        let old_owned = old.into_owned();
+                        guard.defer(move || old_owned);
                     }
                     Ok(new)
                 }
@@ -174,7 +177,8 @@ where
         let old = self.swap(pid, Shared::null(), guard);
         if !old.is_null() {
             unsafe {
-                guard.defer(move || old.into_owned());
+                let old_owned = old.into_owned();
+                guard.defer(move || old_owned);
             }
             Some(old)
         } else {

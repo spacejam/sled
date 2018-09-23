@@ -1,6 +1,6 @@
 [package]
 name = "pagetable"
-version = "0.0.2"
+version = "0.0.3"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "simple wait-free two-level pagetable with 2mb pages"
 license = "MIT/Apache-2.0"
@@ -10,9 +10,9 @@ keywords = ["paging", "page-table", "table", "data-structure", "lookup"]
 documentation = "https://docs.rs/pagetable/"
 
 [dependencies]
-crossbeam-epoch = "0.4"
+crossbeam-epoch = "0.6"
 
 [dev-dependencies]
 model = {version = "0.0", path = "../model"}
 proptest = "0.7"
-rand = "0.4"
+rand = "0.5"

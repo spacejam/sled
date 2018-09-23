@@ -453,7 +453,7 @@ pub fn write_snapshot<R>(
 where
     R: Debug + Clone + Serialize + DeserializeOwned + Send,
 {
-    let raw_bytes = serialize(&snapshot, Infinite).unwrap();
+    let raw_bytes = serialize(&snapshot).unwrap();
     let decompressed_len = raw_bytes.len();
 
     #[cfg(feature = "zstd")]

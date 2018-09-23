@@ -706,20 +706,18 @@ impl SegmentAccountant {
         } else {
             let free = self.free.clone();
             let guard = pin();
-            unsafe {
-                // We use a `epoch::Guard::defer()` to ensure that we never
-                // add a segment's LogID to the free deque while any
-                // active thread could be acting on it. This is necessary
-                // despite the "safe buffer" in the free queue because
-                // the safe buffer only prevents the sole remaining
-                // copy of a page from being overwritten. This prevents
-                // dangling references to segments that were rewritten after
-                // the `LogID` was read.
-                guard.defer(move || {
-                    free.lock().unwrap().push_back((lid, false));
-                });
-                guard.flush();
-            }
+            // We use a `epoch::Guard::defer()` to ensure that we never
+            // add a segment's LogID to the free deque while any
+            // active thread could be acting on it. This is necessary
+            // despite the "safe buffer" in the free queue because
+            // the safe buffer only prevents the sole remaining
+            // copy of a page from being overwritten. This prevents
+            // dangling references to segments that were rewritten after
+            // the `LogID` was read.
+            guard.defer(move || {
+                free.lock().unwrap().push_back((lid, false));
+            });
+            guard.flush();
         }
     }
 

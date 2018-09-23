@@ -1,6 +1,6 @@
 [package]
 name = "pagecache"
-version = "0.5.0"
+version = "0.5.1"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "lock-free pagecache and log for high-performance databases"
 license = "MIT/Apache-2.0"
@@ -26,17 +26,17 @@ version = "0.4"
 
 [dependencies]
 libc = "0.2"
-crossbeam-epoch = "0.4"
-bincode = "0.9"
+crossbeam-epoch = "0.6"
+bincode = "1.0"
 serde = "1.0"
 serde_derive = "1.0"
-lazy_static = "1.0"
+lazy_static = "1.1"
 fail = {version = "0.2", optional = true}
 rayon = {version = "1.0", optional = true}
 zstd = {version = "0.4", optional = true}
 clippy = {version = "0.0", optional = true}
-rand = {version = "0.4", optional = true}
+rand = {version = "0.5", optional = true}
 pagetable = {version = "0.0", path = "../pagetable"}
 
 [dev-dependencies]
-rand = "0.4"
+rand = "0.5"

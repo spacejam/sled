@@ -35,7 +35,7 @@ pub fn debug_delay() {
     {
         use rand::{thread_rng, Rng};
 
-        if thread_rng().gen_weighted_bool(1000) {
+        if thread_rng().gen_bool(1. / 1000.) {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
@@ -135,7 +135,8 @@ where
             Ok(_) => {
                 if !old.is_null() {
                     unsafe {
-                        guard.defer(move || old.into_owned());
+                        let old_owned = old.into_owned();
+                        guard.defer(move || old_owned);
                     }
                 }
                 Ok(new)
@@ -173,7 +174,8 @@ where
         let old = self.swap(pid, Shared::null(), guard);
         if !old.is_null() {
             unsafe {
-                guard.defer(move || old.into_owned());
+                let old_owned = old.into_owned();
+                guard.defer(move || old_owned);
             }
             Some(old)
         } else {
@@ -238,7 +240,8 @@ impl<T: Send + 'static> Drop for Node1<T> {
     fn drop(&mut self) {
         unsafe {
             let guard = pin();
-            let children: Vec<*const Node2<T>> = self.children
+            let children: Vec<*const Node2<T>> = self
+                .children
                 .iter()
                 .map(|c| c.load(SeqCst, &guard).as_raw())
                 .filter(|c| !c.is_null())
@@ -256,7 +259,8 @@ impl<T: Send + 'static> Drop for Node2<T> {
         unsafe {
             let guard = pin();
 
-            let children: Vec<*const T> = self.children
+            let children: Vec<*const T> = self
+                .children
                 .iter()
                 .map(|c| c.load(SeqCst, &guard).as_raw())
                 .filter(|c| !c.is_null())

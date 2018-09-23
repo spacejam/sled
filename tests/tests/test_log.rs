@@ -407,11 +407,11 @@ impl Arbitrary for Op {
             vec![COUNTER.fetch_add(1, Ordering::Relaxed) as u8; len]
         };
 
-        if g.gen_range(0, 7) >= 6 {
+        if g.gen_bool(1. / 7.) {
             return Op::Restart;
         }
 
-        if g.gen_range(0, 50) >= 49 {
+        if g.gen_bool(1. / 50.) {
             let len = LEN.load(Ordering::Relaxed);
             return Op::Truncate(
                 thread_rng().gen_range(0, len as u64),

@@ -350,9 +350,8 @@ where
             pid: pid,
             update: Update::Allocate,
         };
-        let bytes = measure(&M.serialize, || {
-            serialize(&prepend, Infinite).unwrap()
-        });
+        let bytes =
+            measure(&M.serialize, || serialize(&prepend).unwrap());
 
         // reserve slot in log
         // FIXME not threadsafe?
@@ -373,17 +372,15 @@ where
         self.cas_page(pid, old, Update::Free, guard)?;
 
         let free = self.free.clone();
-        unsafe {
-            guard.defer(move || {
-                let mut free = free.lock().unwrap();
-                // panic if we were able to double-free a page
-                for &e in free.iter() {
-                    assert_ne!(e, pid, "page was double-freed");
-                }
-                free.push(pid);
-            });
-            guard.flush();
-        }
+        guard.defer(move || {
+            let mut free = free.lock().unwrap();
+            // panic if we were able to double-free a page
+            for &e in free.iter() {
+                assert_ne!(e, pid, "page was double-freed");
+            }
+            free.push(pid);
+        });
+        guard.flush();
         Ok(())
     }
 
@@ -412,9 +409,8 @@ where
             },
         };
 
-        let bytes = measure(&M.serialize, || {
-            serialize(&prepend, Infinite).unwrap()
-        });
+        let bytes =
+            measure(&M.serialize, || serialize(&prepend).unwrap());
         let log_reservation =
             self.log.reserve(bytes).map_err(|e| e.danger_cast())?;
         let lsn = log_reservation.lsn();
@@ -595,9 +591,8 @@ where
             pid: pid,
             update: new.clone(),
         };
-        let bytes = measure(&M.serialize, || {
-            serialize(&replace, Infinite).unwrap()
-        });
+        let bytes =
+            measure(&M.serialize, || serialize(&replace).unwrap());
         let log_reservation =
             self.log.reserve(bytes).map_err(|e| e.danger_cast())?;
         let lsn = log_reservation.lsn();

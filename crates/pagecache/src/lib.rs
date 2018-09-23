@@ -179,7 +179,7 @@ pub fn debug_delay() {
     {
         use rand::{thread_rng, Rng};
 
-        if thread_rng().gen_weighted_bool(1000) {
+        if thread_rng().gen_bool(1. / 1000.) {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
