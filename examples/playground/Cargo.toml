@@ -1,0 +1,10 @@
+[package]
+name = "playground"
+description = "just a default project that includes sled and the pagecache for quick experiments"
+version = "0.1.0"
+authors = ["Tyler Neely <t@jujit.su>"]
+publish = false
+
+[dependencies]
+sled = { path = "../../crates/sled" }
+pagecache = { path = "../../crates/pagecache" }
