@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
 
 use epoch::{pin, Shared};
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
+use rand::Rng;
 
 use pagecache::{ConfigBuilder, Materializer, PageCache, PageGet};
 
@@ -216,7 +217,7 @@ enum Op {
 
 impl Arbitrary for Op {
     fn arbitrary<G: Gen>(g: &mut G) -> Op {
-        if g.gen_weighted_bool(10) {
+        if g.gen_range(0, 10) >= 9 {
             return Op::Restart;
         }
 
@@ -249,7 +250,8 @@ impl Arbitrary for Op {
             Op::Replace(ref mut pid, _)
             | Op::Link(ref mut pid, _)
             | Op::Get(ref mut pid)
-            | Op::Free(ref mut pid) if *pid > 0 =>
+            | Op::Free(ref mut pid)
+                if *pid > 0 =>
             {
                 *pid -= 1;
                 shrunk = true;

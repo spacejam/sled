@@ -102,8 +102,7 @@ fn concurrent_logging() {
                     let buf = vec![1; i % buf_len];
                     log.write(buf);
                 }
-            })
-            .unwrap();
+            }).unwrap();
 
         let t2 = thread::Builder::new()
             .name("c2".to_string())
@@ -112,8 +111,7 @@ fn concurrent_logging() {
                     let buf = vec![2; i % buf_len];
                     iobs2.write(buf);
                 }
-            })
-            .unwrap();
+            }).unwrap();
 
         let t3 = thread::Builder::new()
             .name("c3".to_string())
@@ -122,8 +120,7 @@ fn concurrent_logging() {
                     let buf = vec![3; i % buf_len];
                     iobs3.write(buf);
                 }
-            })
-            .unwrap();
+            }).unwrap();
 
         let t4 = thread::Builder::new()
             .name("c4".to_string())
@@ -132,8 +129,7 @@ fn concurrent_logging() {
                     let buf = vec![4; i % buf_len];
                     iobs4.write(buf);
                 }
-            })
-            .unwrap();
+            }).unwrap();
         let t5 = thread::Builder::new()
             .name("c5".to_string())
             .spawn(move || {
@@ -141,8 +137,7 @@ fn concurrent_logging() {
                     let buf = vec![5; i % buf_len];
                     iobs5.write(buf);
                 }
-            })
-            .unwrap();
+            }).unwrap();
 
         let t6 = thread::Builder::new()
             .name("c6".to_string())
@@ -154,8 +149,7 @@ fn concurrent_logging() {
                     iobs6.make_stable(lsn).unwrap();
                     // println!("-");
                 }
-            })
-            .unwrap();
+            }).unwrap();
 
         t1.join().unwrap();
         t2.join().unwrap();
@@ -413,11 +407,11 @@ impl Arbitrary for Op {
             vec![COUNTER.fetch_add(1, Ordering::Relaxed) as u8; len]
         };
 
-        if g.gen_weighted_bool(7) {
+        if g.gen_range(0, 7) >= 6 {
             return Op::Restart;
         }
 
-        if g.gen_weighted_bool(50) {
+        if g.gen_range(0, 50) >= 49 {
             let len = LEN.load(Ordering::Relaxed);
             return Op::Truncate(
                 thread_rng().gen_range(0, len as u64),

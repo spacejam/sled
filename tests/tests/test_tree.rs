@@ -8,6 +8,8 @@ use std::sync::Arc;
 use std::thread;
 
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
+use rand::distributions::{Distribution, Gamma};
+use rand::Rng;
 
 use pagecache::ConfigBuilder;
 use sled::*;
@@ -39,8 +41,7 @@ fn parallel_tree_ops() {
                             let k = kv(i);
                             $f(&*tree, k);
                         }
-                    })
-                    .unwrap();
+                    }).unwrap();
                 threads.push(thread);
             }
             while let Some(thread) = threads.pop() {
@@ -200,14 +201,50 @@ fn recover_tree() {
     }
 }
 
+#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq)]
+struct Key(Vec<u8>);
+
+impl Arbitrary for Key {
+    fn arbitrary<G: Gen>(g: &mut G) -> Key {
+        let gamma = Gamma::new(0.3, 100.0);
+        let v = gamma.sample(&mut rand::thread_rng());
+        let len = if v > 30000.0 {
+            30000
+        } else if v < 1. && v > 0.0001 {
+            1
+        } else {
+            v as usize
+        };
+
+        let space = g.gen_range(0, std::u8::MAX as usize) + 1;
+
+        let inner =
+            (0..len).map(|_| g.gen_range(0, space) as u8).collect();
+
+        Key(inner)
+    }
+
+    fn shrink(&self) -> Box<Iterator<Item = Key>> {
+        let mut out = vec![];
+        for len in 0..self.0.len() {
+            out.push(Key(self.0[..len]
+                .iter()
+                .map(|e| e / 2)
+                .collect()));
+            out.push(Key(self.0[..len].to_vec()));
+        }
+        Box::new(out.into_iter())
+    }
+}
+
 #[derive(Debug, Clone)]
 enum Op {
-    Set(u8, u8),
-    Merge(u8, u8),
-    Get(u8),
-    Del(u8),
-    Cas(u8, u8, u8),
-    Scan(u8, usize),
+    Set(Key, u8),
+    Merge(Key, u8),
+    Get(Key),
+    Del(Key),
+    Cas(Key, u8, u8),
+    Scan(Key, usize),
     Restart,
 }
 
@@ -215,52 +252,41 @@ use Op::*;
 
 impl Arbitrary for Op {
     fn arbitrary<G: Gen>(g: &mut G) -> Op {
-        if g.gen_weighted_bool(10) {
+        if g.gen_range(0, 10) >= 9 {
             return Restart;
         }
 
         let choice = g.gen_range(0, 6);
 
         match choice {
-            0 => Set(g.gen::<u8>(), g.gen::<u8>()),
-            1 => Merge(g.gen::<u8>(), g.gen::<u8>()),
-            2 => Get(g.gen::<u8>()),
-            3 => Del(g.gen::<u8>()),
-            4 => Cas(g.gen::<u8>(), g.gen::<u8>(), g.gen::<u8>()),
-            5 => Scan(g.gen::<u8>(), g.gen_range::<usize>(0, 40)),
+            0 => Set(Key::arbitrary(g), g.gen::<u8>()),
+            1 => Merge(Key::arbitrary(g), g.gen::<u8>()),
+            2 => Get(Key::arbitrary(g)),
+            3 => Del(Key::arbitrary(g)),
+            4 => Cas(Key::arbitrary(g), g.gen::<u8>(), g.gen::<u8>()),
+            5 => Scan(Key::arbitrary(g), g.gen_range::<usize>(0, 40)),
             _ => panic!("impossible choice"),
         }
     }
 
     fn shrink(&self) -> Box<Iterator<Item = Op>> {
         match *self {
-            Set(ref k, ref v) if *k > 0 => Box::new(
-                vec![Set(*k / 2, v.clone()), Set(*k - 1, v.clone())]
-                    .into_iter(),
-            ),
-            Merge(ref k, ref v) if *k > 0 => Box::new(
-                vec![
-                    Merge(*k / 2, v.clone()),
-                    Merge(*k - 1, v.clone()),
-                ].into_iter(),
-            ),
-            Get(ref k) if *k > 0 => {
-                Box::new(vec![Get(*k / 2), Get(*k - 1)].into_iter())
+            Set(ref k, v) => {
+                Box::new(k.shrink().map(move |sk| Set(sk, v.clone())))
             }
-            Cas(ref k, ref old, ref new) if *k > 0 => Box::new(
-                vec![
-                    Cas(*k / 2, old.clone(), new.clone()),
-                    Cas(*k - 1, old.clone(), new.clone()),
-                ].into_iter(),
-            ),
-            Scan(ref k, ref len) if *k > 0 => Box::new(
-                vec![Scan(*k / 2, *len), Scan(*k - 1, *len)]
-                    .into_iter(),
-            ),
-            Del(ref k) if *k > 0 => {
-                Box::new(vec![Del(*k / 2), Del(*k - 1)].into_iter())
+            Merge(ref k, v) => {
+                Box::new(k.shrink().map(move |k| Merge(k, v.clone())))
             }
-            _ => Box::new(vec![].into_iter()),
+            Get(ref k) => Box::new(k.shrink().map(move |k| Get(k))),
+            Cas(ref k, old, new) => Box::new(Box::new(
+                k.shrink()
+                    .map(move |k| Cas(k, old.clone(), new.clone())),
+            )),
+            Scan(ref k, len) => {
+                Box::new(k.shrink().map(move |k| Scan(k, len)))
+            }
+            Del(ref k) => Box::new(k.shrink().map(|k| Del(k))),
+            Restart => Box::new(vec![].into_iter()),
         }
     }
 }
@@ -311,29 +337,30 @@ fn prop_tree_matches_btreemap(
     for op in ops.into_iter() {
         match op {
             Set(k, v) => {
-                tree.set(vec![k], vec![0, v]).unwrap();
+                tree.set(k.0.clone(), vec![0, v]).unwrap();
                 reference.insert(k, v as u16);
             }
             Merge(k, v) => {
-                tree.merge(vec![k], vec![v]).unwrap();
+                tree.merge(k.0.clone(), vec![v]).unwrap();
                 let mut entry = reference.entry(k).or_insert(0u16);
                 *entry += v as u16;
             }
             Get(k) => {
-                let res1 = tree.get(&*vec![k])
+                let res1 = tree
+                    .get(&*k.0)
                     .unwrap()
                     .map(|v| bytes_to_u16(&*v));
                 let res2 = reference.get(&k).cloned();
                 assert_eq!(res1, res2);
             }
             Del(k) => {
-                tree.del(&*vec![k]).unwrap();
+                tree.del(&*k.0).unwrap();
                 reference.remove(&k);
             }
             Cas(k, old, new) => {
-                let tree_old = tree.get(&*vec![k]).unwrap();
+                let tree_old = tree.get(&*k.0).unwrap();
                 if tree_old == Some(vec![0, old]) {
-                    tree.set(vec![k], vec![0, new]).unwrap();
+                    tree.set(k.0.clone(), vec![0, new]).unwrap();
                 }
 
                 let ref_old = reference.get(&k).cloned();
@@ -342,20 +369,22 @@ fn prop_tree_matches_btreemap(
                 }
             }
             Scan(k, len) => {
-                let mut tree_iter =
-                    tree.scan(&*vec![k]).take(len).map(|res| {
-                        let (ref tk, ref tv) = res.unwrap();
-                        (tk[0], tv.clone())
-                    });
+                let mut tree_iter = tree
+                    .scan(&*k.0)
+                    .take(len)
+                    .map(|res| res.unwrap());
                 let ref_iter = reference
                     .iter()
                     .filter(|&(ref rk, _rv)| **rk >= k)
                     .take(len)
-                    .map(|(ref rk, ref rv)| (**rk, **rv));
+                    .map(|(ref rk, ref rv)| (rk.0.clone(), **rv));
                 for r in ref_iter {
+                    let tree_next = tree_iter.next();
                     assert_eq!(
-                        Some((r.0, u16_to_bytes(r.1))),
-                        tree_iter.next()
+                        Some((r.0.clone(), u16_to_bytes(r.1))),
+                        tree_next,
+                        "expected iteration over the Tree \
+                         to match our BTreeMap model"
                     );
                 }
             }
@@ -377,12 +406,12 @@ fn quickcheck_tree_matches_btreemap() {
     let n_tests = 100;
 
     #[cfg(not(target_os = "macos"))]
-    let n_tests = 500;
+    let n_tests = 5;
 
     QuickCheck::new()
-        .gen(StdGen::new(rand::thread_rng(), 100))
+        .gen(StdGen::new(rand::thread_rng(), 1000))
         .tests(n_tests)
-        .max_tests(10000)
+        .max_tests(100000)
         .quickcheck(
             prop_tree_matches_btreemap
                 as fn(Vec<Op>, u8, u8, bool) -> bool,
@@ -401,7 +430,12 @@ fn tree_bug_01() {
     // that offset. make_stable requires our stable offset to be >=
     // the provided one, to deal with 0.
     prop_tree_matches_btreemap(
-        vec![Set(32, 9), Set(195, 13), Restart, Set(164, 147)],
+        vec![
+            Set(Key(vec![32]), 9),
+            Set(Key(vec![195]), 13),
+            Restart,
+            Set(Key(vec![164]), 147),
+        ],
         0,
         0,
         true,
@@ -421,10 +455,10 @@ fn tree_bug_2() {
     prop_tree_matches_btreemap(
         vec![
             Restart,
-            Set(215, 121),
+            Set(Key(vec![215]), 121),
             Restart,
-            Set(216, 203),
-            Scan(210, 4),
+            Set(Key(vec![216]), 203),
+            Scan(Key(vec![210]), 4),
         ],
         0,
         0,
@@ -439,15 +473,15 @@ fn tree_bug_3() {
     // log writing in the proper location.
     prop_tree_matches_btreemap(
         vec![
-            Set(113, 204),
-            Set(119, 205),
-            Set(166, 88),
-            Set(23, 44),
+            Set(Key(vec![113]), 204),
+            Set(Key(vec![119]), 205),
+            Set(Key(vec![166]), 88),
+            Set(Key(vec![23]), 44),
             Restart,
-            Set(226, 192),
-            Set(189, 186),
+            Set(Key(vec![226]), 192),
+            Set(Key(vec![189]), 186),
             Restart,
-            Scan(198, 11),
+            Scan(Key(vec![198]), 11),
         ],
         0,
         0,
@@ -464,15 +498,15 @@ fn tree_bug_4() {
     // after a restart.
     prop_tree_matches_btreemap(
         vec![
-            Set(158, 31),
-            Set(111, 134),
-            Set(230, 187),
-            Set(169, 58),
-            Set(131, 10),
-            Set(108, 246),
-            Set(127, 155),
+            Set(Key(vec![158]), 31),
+            Set(Key(vec![111]), 134),
+            Set(Key(vec![230]), 187),
+            Set(Key(vec![169]), 58),
+            Set(Key(vec![131]), 10),
+            Set(Key(vec![108]), 246),
+            Set(Key(vec![127]), 155),
             Restart,
-            Set(59, 119),
+            Set(Key(vec![59]), 119),
         ],
         0,
         0,
@@ -486,14 +520,14 @@ fn tree_bug_5() {
     // tip.
     prop_tree_matches_btreemap(
         vec![
-            Set(231, 107),
-            Set(251, 42),
-            Set(80, 81),
-            Set(178, 130),
-            Set(150, 232),
+            Set(Key(vec![231]), 107),
+            Set(Key(vec![251]), 42),
+            Set(Key(vec![80]), 81),
+            Set(Key(vec![178]), 130),
+            Set(Key(vec![150]), 232),
             Restart,
-            Set(98, 78),
-            Set(0, 45),
+            Set(Key(vec![98]), 78),
+            Set(Key(vec![0]), 45),
         ],
         0,
         0,
@@ -508,14 +542,14 @@ fn tree_bug_6() {
     // crc that's there for catching torn writes with high probability, AND zero out buffers.
     prop_tree_matches_btreemap(
         vec![
-            Set(162, 8),
-            Set(59, 192),
-            Set(238, 83),
-            Set(151, 231),
+            Set(Key(vec![162]), 8),
+            Set(Key(vec![59]), 192),
+            Set(Key(vec![238]), 83),
+            Set(Key(vec![151]), 231),
             Restart,
-            Set(30, 206),
-            Set(150, 146),
-            Set(18, 34),
+            Set(Key(vec![30]), 206),
+            Set(Key(vec![150]), 146),
+            Set(Key(vec![18]), 34),
         ],
         0,
         0,
@@ -529,15 +563,15 @@ fn tree_bug_7() {
     // reuse a particular segment that wasn't actually empty yet.
     prop_tree_matches_btreemap(
         vec![
-            Set(135, 22),
-            Set(41, 36),
-            Set(101, 31),
-            Set(111, 35),
+            Set(Key(vec![135]), 22),
+            Set(Key(vec![41]), 36),
+            Set(Key(vec![101]), 31),
+            Set(Key(vec![111]), 35),
             Restart,
-            Set(47, 36),
-            Set(79, 114),
-            Set(64, 9),
-            Scan(196, 25),
+            Set(Key(vec![47]), 36),
+            Set(Key(vec![79]), 114),
+            Set(Key(vec![64]), 9),
+            Scan(Key(vec![196]), 25),
         ],
         0,
         0,
@@ -551,14 +585,14 @@ fn tree_bug_8() {
     // that tracked the previously issued segment.
     prop_tree_matches_btreemap(
         vec![
-            Set(145, 151),
-            Set(155, 148),
-            Set(131, 170),
-            Set(163, 60),
-            Set(225, 126),
+            Set(Key(vec![145]), 151),
+            Set(Key(vec![155]), 148),
+            Set(Key(vec![131]), 170),
+            Set(Key(vec![163]), 60),
+            Set(Key(vec![225]), 126),
             Restart,
-            Set(64, 237),
-            Set(102, 205),
+            Set(Key(vec![64]), 237),
+            Set(Key(vec![102]), 205),
             Restart,
         ],
         0,
@@ -575,15 +609,15 @@ fn tree_bug_9() {
     // important updates.
     prop_tree_matches_btreemap(
         vec![
-            Set(189, 36),
-            Set(254, 194),
-            Set(132, 50),
-            Set(91, 221),
-            Set(126, 6),
-            Set(199, 183),
-            Set(71, 125),
-            Scan(67, 16),
-            Set(190, 16),
+            Set(Key(vec![189]), 36),
+            Set(Key(vec![254]), 194),
+            Set(Key(vec![132]), 50),
+            Set(Key(vec![91]), 221),
+            Set(Key(vec![126]), 6),
+            Set(Key(vec![199]), 183),
+            Set(Key(vec![71]), 125),
+            Scan(Key(vec![67]), 16),
+            Set(Key(vec![190]), 16),
             Restart,
         ],
         0,
@@ -598,30 +632,30 @@ fn tree_bug_10() {
     // we were hitting an old LSN and violating an assert, rather than just ending.
     prop_tree_matches_btreemap(
         vec![
-            Set(152, 163),
-            Set(105, 191),
-            Set(207, 217),
-            Set(128, 19),
-            Set(106, 22),
-            Scan(20, 24),
-            Set(14, 150),
-            Set(80, 43),
-            Set(174, 134),
-            Set(20, 150),
-            Set(13, 171),
+            Set(Key(vec![152]), 163),
+            Set(Key(vec![105]), 191),
+            Set(Key(vec![207]), 217),
+            Set(Key(vec![128]), 19),
+            Set(Key(vec![106]), 22),
+            Scan(Key(vec![20]), 24),
+            Set(Key(vec![14]), 150),
+            Set(Key(vec![80]), 43),
+            Set(Key(vec![174]), 134),
+            Set(Key(vec![20]), 150),
+            Set(Key(vec![13]), 171),
             Restart,
-            Scan(240, 25),
-            Scan(77, 37),
-            Set(153, 232),
-            Del(2),
-            Set(227, 169),
-            Get(232),
-            Cas(247, 151, 70),
-            Set(78, 52),
-            Get(16),
-            Del(78),
-            Cas(201, 93, 196),
-            Set(172, 84),
+            Scan(Key(vec![240]), 25),
+            Scan(Key(vec![77]), 37),
+            Set(Key(vec![153]), 232),
+            Del(Key(vec![2])),
+            Set(Key(vec![227]), 169),
+            Get(Key(vec![232])),
+            Cas(Key(vec![247]), 151, 70),
+            Set(Key(vec![78]), 52),
+            Get(Key(vec![16])),
+            Del(Key(vec![78])),
+            Cas(Key(vec![201]), 93, 196),
+            Set(Key(vec![172]), 84),
         ],
         0,
         0,
@@ -636,17 +670,17 @@ fn tree_bug_11() {
     // being created, then passed in.
     prop_tree_matches_btreemap(
         vec![
-            Set(38, 148),
-            Set(176, 175),
-            Set(82, 88),
-            Set(164, 85),
-            Set(139, 74),
-            Set(73, 23),
-            Cas(34, 67, 151),
-            Set(115, 133),
-            Set(249, 138),
+            Set(Key(vec![38]), 148),
+            Set(Key(vec![176]), 175),
+            Set(Key(vec![82]), 88),
+            Set(Key(vec![164]), 85),
+            Set(Key(vec![139]), 74),
+            Set(Key(vec![73]), 23),
+            Cas(Key(vec![34]), 67, 151),
+            Set(Key(vec![115]), 133),
+            Set(Key(vec![249]), 138),
             Restart,
-            Set(243, 6),
+            Set(Key(vec![243]), 6),
         ],
         0,
         0,
@@ -660,43 +694,43 @@ fn tree_bug_12() {
     // part of detecting tears / partial rewrites.
     prop_tree_matches_btreemap(
         vec![
-            Set(118, 156),
-            Set(8, 63),
-            Set(165, 110),
-            Set(219, 108),
-            Set(91, 61),
-            Set(18, 98),
-            Scan(73, 6),
-            Set(240, 108),
-            Cas(71, 28, 189),
-            Del(199),
+            Set(Key(vec![118]), 156),
+            Set(Key(vec![8]), 63),
+            Set(Key(vec![165]), 110),
+            Set(Key(vec![219]), 108),
+            Set(Key(vec![91]), 61),
+            Set(Key(vec![18]), 98),
+            Scan(Key(vec![73]), 6),
+            Set(Key(vec![240]), 108),
+            Cas(Key(vec![71]), 28, 189),
+            Del(Key(vec![199])),
             Restart,
-            Set(30, 140),
-            Scan(118, 13),
-            Get(180),
-            Cas(115, 151, 116),
+            Set(Key(vec![30]), 140),
+            Scan(Key(vec![118]), 13),
+            Get(Key(vec![180])),
+            Cas(Key(vec![115]), 151, 116),
             Restart,
-            Set(31, 95),
-            Cas(79, 153, 225),
-            Set(34, 161),
-            Get(213),
-            Set(237, 215),
-            Del(52),
-            Set(56, 78),
-            Scan(141, 2),
-            Cas(228, 114, 170),
-            Get(231),
-            Get(223),
-            Del(167),
+            Set(Key(vec![31]), 95),
+            Cas(Key(vec![79]), 153, 225),
+            Set(Key(vec![34]), 161),
+            Get(Key(vec![213])),
+            Set(Key(vec![237]), 215),
+            Del(Key(vec![52])),
+            Set(Key(vec![56]), 78),
+            Scan(Key(vec![141]), 2),
+            Cas(Key(vec![228]), 114, 170),
+            Get(Key(vec![231])),
+            Get(Key(vec![223])),
+            Del(Key(vec![167])),
             Restart,
-            Scan(240, 31),
-            Del(54),
-            Del(2),
-            Set(117, 165),
-            Set(223, 50),
-            Scan(69, 4),
-            Get(156),
-            Set(214, 72),
+            Scan(Key(vec![240]), 31),
+            Del(Key(vec![54])),
+            Del(Key(vec![2])),
+            Set(Key(vec![117]), 165),
+            Set(Key(vec![223]), 50),
+            Scan(Key(vec![69]), 4),
+            Get(Key(vec![156])),
+            Set(Key(vec![214]), 72),
         ],
         0,
         0,
@@ -711,22 +745,22 @@ fn tree_bug_13() {
     // if it were a successful completed root hoist.
     prop_tree_matches_btreemap(
         vec![
-            Set(42, 10),
-            Set(137, 220),
-            Set(183, 129),
-            Set(91, 145),
-            Set(126, 26),
-            Set(255, 67),
-            Set(69, 18),
+            Set(Key(vec![42]), 10),
+            Set(Key(vec![137]), 220),
+            Set(Key(vec![183]), 129),
+            Set(Key(vec![91]), 145),
+            Set(Key(vec![126]), 26),
+            Set(Key(vec![255]), 67),
+            Set(Key(vec![69]), 18),
             Restart,
-            Set(24, 92),
-            Set(193, 17),
-            Set(3, 143),
-            Cas(50, 13, 84),
+            Set(Key(vec![24]), 92),
+            Set(Key(vec![193]), 17),
+            Set(Key(vec![3]), 143),
+            Cas(Key(vec![50]), 13, 84),
             Restart,
-            Set(191, 116),
+            Set(Key(vec![191]), 116),
             Restart,
-            Del(165),
+            Del(Key(vec![165])),
         ],
         0,
         0,
@@ -740,13 +774,13 @@ fn tree_bug_14() {
     // handling re-inserts and deletions properly
     prop_tree_matches_btreemap(
         vec![
-            Set(107, 234),
-            Set(7, 245),
-            Set(40, 77),
-            Set(171, 244),
-            Set(173, 16),
-            Set(171, 176),
-            Scan(93, 33),
+            Set(Key(vec![107]), 234),
+            Set(Key(vec![7]), 245),
+            Set(Key(vec![40]), 77),
+            Set(Key(vec![171]), 244),
+            Set(Key(vec![173]), 16),
+            Set(Key(vec![171]), 176),
+            Scan(Key(vec![93]), 33),
         ],
         1,
         0,
@@ -759,12 +793,12 @@ fn tree_bug_15() {
     // postmortem: was not sorting keys properly when binary searching for them
     prop_tree_matches_btreemap(
         vec![
-            Set(102, 165),
-            Set(91, 191),
-            Set(141, 228),
-            Set(188, 124),
-            Del(141),
-            Scan(101, 26),
+            Set(Key(vec![102]), 165),
+            Set(Key(vec![91]), 191),
+            Set(Key(vec![141]), 228),
+            Set(Key(vec![188]), 124),
+            Del(Key(vec![141])),
+            Scan(Key(vec![101]), 26),
         ],
         0,
         0,
@@ -776,7 +810,7 @@ fn tree_bug_15() {
 fn tree_bug_16() {
     // postmortem: the test merge function was not properly adding numbers.
     prop_tree_matches_btreemap(
-        vec![Merge(247, 162), Scan(209, 31)],
+        vec![Merge(Key(vec![247]), 162), Scan(Key(vec![209]), 31)],
         0,
         0,
         false,

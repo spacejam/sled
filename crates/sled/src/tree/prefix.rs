@@ -2,7 +2,13 @@ use std::cmp::Ordering;
 
 use super::*;
 
-pub fn prefix_encode(prefix: &[u8], buf: &[u8]) -> Vec<u8> {
+pub(crate) fn prefix_encode(prefix: &[u8], buf: &[u8]) -> Vec<u8> {
+    assert!(
+        prefix <= buf,
+        "prefix {:?} must be lexicographically <= to the encoded buf {:?}",
+        prefix,
+        buf
+    );
     let limit = std::cmp::min(std::u8::MAX as usize, buf.len());
     let mut prefix_len = 0usize;
     for (i, c) in prefix.iter().take(limit).enumerate() {
@@ -21,7 +27,7 @@ pub fn prefix_encode(prefix: &[u8], buf: &[u8]) -> Vec<u8> {
     ret
 }
 
-pub fn prefix_decode(prefix: &[u8], buf: &[u8]) -> Vec<u8> {
+pub(crate) fn prefix_decode(prefix: &[u8], buf: &[u8]) -> Vec<u8> {
     assert!(buf.len() >= 1);
     let prefix_len = buf[0] as usize;
     let mut ret = Vec::with_capacity(prefix_len + buf.len() - 1);
@@ -33,7 +39,11 @@ pub fn prefix_decode(prefix: &[u8], buf: &[u8]) -> Vec<u8> {
     ret
 }
 
-pub fn prefix_cmp(a: &[u8], b: &[u8]) -> Ordering {
+// NB: the correctness of this function depends on
+// the invariant that the prefix is ALWAYS lexicographically
+// Less than or Equal to the keys that have been encoded
+// using it. Otherwise this comparison would make no sense.
+pub(crate) fn prefix_cmp(a: &[u8], b: &[u8]) -> Ordering {
     if a.is_empty() && b.is_empty() {
         return Ordering::Equal;
     } else if a.is_empty() && !b.is_empty() {
@@ -59,8 +69,8 @@ fn test_prefix() {
         vec![prefix.len() as u8]
     );
     assert_eq!(prefix_encode(prefix, b"catt"), vec![3, b't']);
-    assert_eq!(prefix_encode(prefix, b"ca"), vec![2]);
-    assert_eq!(prefix_encode(prefix, b"cab"), vec![2, b'b']);
+    assert_eq!(prefix_encode(prefix, b"cb"), vec![1, b'b']);
+    assert_eq!(prefix_encode(prefix, b"caz"), vec![2, b'z']);
     assert_eq!(
         prefix_encode(prefix, b"cvar"),
         vec![1, b'v', b'a', b'r']
