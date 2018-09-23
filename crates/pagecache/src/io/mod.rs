@@ -6,7 +6,7 @@ use std::io;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 
-use bincode::{deserialize, serialize, Infinite};
+use bincode::{deserialize, serialize};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 

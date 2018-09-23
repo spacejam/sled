@@ -1304,13 +1304,5 @@ fn salt(v: Header) -> Header {
 
 #[inline(always)]
 fn yield_now() {
-    #[cfg(nightly)]
-    {
-        std::sync::atomic::hint_core_should_pause();
-    }
-
-    #[cfg(not(nightly))]
-    {
-        std::thread::yield_now();
-    }
+    std::sync::atomic::spin_loop_hint()
 }

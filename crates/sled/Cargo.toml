@@ -1,6 +1,6 @@
 [package]
 name = "sled"
-version = "0.15.19"
+version = "0.15.20"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "a flash-sympathetic persistent lock-free B+ tree"
 license = "MIT/Apache-2.0"
@@ -24,8 +24,8 @@ nightly = ["pagecache/nightly"]
 version = "0.4"
 
 [dependencies]
-crossbeam-epoch = "0.4"
-bincode = "0.9"
+crossbeam-epoch = "0.6"
+bincode = "1.0"
 serde = "1.0"
 serde_derive = "1.0"
 clippy = {version = "0.0", optional = true}

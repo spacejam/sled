@@ -88,7 +88,7 @@ impl<T: Send + 'static> Deref for Node<T> {
     }
 }
 
-impl<T: Send + 'static> Stack<T> {
+impl<T: Send + Sync + 'static> Stack<T> {
     /// Add an item to the stack, spinning until successful.
     pub fn push(&self, inner: T) {
         debug_delay();
@@ -110,8 +110,7 @@ impl<T: Send + 'static> Stack<T> {
                         node,
                         SeqCst,
                         unprotected(),
-                    )
-                    .is_ok()
+                    ).is_ok()
                 {
                     return;
                 }
@@ -133,9 +132,8 @@ impl<T: Send + 'static> Stack<T> {
                         .compare_and_set(head, next, SeqCst, &guard)
                     {
                         Ok(_) => unsafe {
-                            guard.defer(move || {
-                                head.into_owned();
-                            });
+                            let head_owned = head.into_owned();
+                            guard.defer(move || head_owned);
                             return Some(ptr::read(&h.inner));
                         },
                         Err(h) => head = h.current,
@@ -156,10 +154,8 @@ impl<T: Send + 'static> Stack<T> {
         debug_delay();
         let node = Owned::new(Node {
             inner: new,
-            next: Atomic::null(),
+            next: Atomic::from(old),
         });
-
-        node.next.store(old, SeqCst);
 
         let node = node.into_shared(guard);
 
@@ -168,8 +164,12 @@ impl<T: Send + 'static> Stack<T> {
         match res {
             Err(e) => {
                 unsafe {
+                    // we want to set next to null to prevent
+                    // the current shared head from being
+                    // dropped when we drop this node.
                     node.deref().next.store(Shared::null(), SeqCst);
-                    guard.defer(move || node.into_owned());
+                    let node_owned = node.into_owned();
+                    guard.defer(move || node_owned);
                 }
                 Err(e.current)
             }
@@ -190,13 +190,19 @@ impl<T: Send + 'static> Stack<T> {
         match res {
             Ok(_) => {
                 if !old.is_null() {
-                    unsafe { guard.defer(move || old.into_owned()) };
+                    unsafe {
+                        let old_owned = old.into_owned();
+                        guard.defer(move || old_owned)
+                    };
                 }
                 Ok(new)
             }
             Err(e) => {
                 if !new.is_null() {
-                    unsafe { guard.defer(move || new.into_owned()) };
+                    unsafe {
+                        let new_owned = new.into_owned();
+                        guard.defer(move || new_owned)
+                    };
                 }
 
                 Err(e.current)
@@ -265,16 +271,17 @@ where
     let mut last = None;
 
     for item in from.into_iter().rev() {
-        let node = Owned::new(Node {
-            inner: item,
-            next: Atomic::null(),
-        });
-
-        if let Some(last) = last {
-            node.next.store(last, SeqCst);
+        last = if let Some(last) = last {
+            Some(Owned::new(Node {
+                inner: item,
+                next: Atomic::from(last),
+            }))
+        } else {
+            Some(Owned::new(Node {
+                inner: item,
+                next: Atomic::null(),
+            }))
         }
-
-        last = Some(node);
     }
 
     last.expect("at least one frag was provided in the from Vec")

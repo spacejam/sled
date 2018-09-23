@@ -51,11 +51,11 @@ impl Arbitrary for Op {
             "external blob write",
         ];
 
-        if g.gen_range(0, 30) >= 29 {
+        if g.gen_bool(1. / 30.) {
             return FailPoint(*g.choose(&fail_points).unwrap());
         }
 
-        if g.gen_range(0, 10) >= 9 {
+        if g.gen_bool(1. / 10.) {
             return Restart;
         }
 

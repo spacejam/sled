@@ -20,7 +20,7 @@ features = ["failpoints", "lock_free_delays", "check_snapshot_integrity"]
 path = "../crates/sled"
 
 [dev-dependencies]
-crossbeam-epoch = "0.4"
+crossbeam-epoch = "0.6"
 quickcheck = "0.7"
 rand = "0.5"
 libc = "0.2"
