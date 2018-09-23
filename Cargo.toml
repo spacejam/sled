@@ -20,4 +20,4 @@ exclude = [
 debug = 2
 
 [profile.dev]
-opt-level = 1
+opt-level = 0

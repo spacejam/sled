@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::Mutex;
 
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
+use rand::Rng;
 
 use sled::*;
 
@@ -50,11 +51,11 @@ impl Arbitrary for Op {
             "external blob write",
         ];
 
-        if g.gen_weighted_bool(30) {
+        if g.gen_range(0, 30) >= 29 {
             return FailPoint(*g.choose(&fail_points).unwrap());
         }
 
-        if g.gen_weighted_bool(10) {
+        if g.gen_range(0, 10) >= 9 {
             return Restart;
         }
 
