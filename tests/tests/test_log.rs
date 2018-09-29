@@ -562,12 +562,8 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
 
                     {
                         let f = config.file().unwrap();
-                        use libc::ftruncate;
-                        let fd = f.as_raw_fd();
-
-                        unsafe {
-                            ftruncate(fd, new_len as i64);
-                        }
+                        f.set_len(new_len)
+                            .expect("should be able to truncate");
                     }
 
                     log = Log::start_raw_log(config.clone()).unwrap();

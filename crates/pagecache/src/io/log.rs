@@ -353,12 +353,12 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
         let lsn_buf = &buf[1..9];
         let mut lsn_arr = [0u8; 8];
         lsn_arr.copy_from_slice(&*lsn_buf);
-        let lsn: Lsn = unsafe { std::mem::transmute(lsn_arr) };
+        let lsn = arr_to_u64(lsn_arr) as Lsn;
 
         let len_buf = &buf[9..13];
         let mut len_arr = [0u8; 4];
         len_arr.copy_from_slice(&*len_buf);
-        let len: u32 = unsafe { std::mem::transmute(len_arr) };
+        let len = arr_to_u32(len_arr);
 
         let crc16 = [buf[13] ^ 0xFF, buf[14] ^ 0xFF];
 
@@ -385,12 +385,11 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
         // NB LSN actually gets written after the reservation
         // for the item is claimed, when we actually know the lsn,
         // in PageCache::reserve.
-        let lsn_arr: [u8; 8] =
-            unsafe { std::mem::transmute(self.lsn) };
+        let lsn_arr = u64_to_arr(self.lsn as u64);
         buf[1..9].copy_from_slice(&lsn_arr);
 
-        let len_arr: [u8; 4] =
-            unsafe { std::mem::transmute(self.len as u32) };
+        assert!(self.len <= std::u32::MAX as usize);
+        let len_arr = u32_to_arr(self.len as u32);
         buf[9..13].copy_from_slice(&len_arr);
 
         buf[13] = self.crc16[0] ^ 0xFF;
@@ -407,7 +406,7 @@ impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
         let lsn_buf = &buf[2..10];
         let mut lsn_arr = [0u8; 8];
         lsn_arr.copy_from_slice(&*lsn_buf);
-        let xor_lsn: Lsn = unsafe { std::mem::transmute(lsn_arr) };
+        let xor_lsn = arr_to_u64(lsn_arr) as Lsn;
         let lsn = xor_lsn ^ 0xFFFF_FFFF;
 
         let crc16_tested = crc16_arr(&lsn_arr);
@@ -424,8 +423,7 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
         let mut buf = [0u8; SEG_HEADER_LEN];
 
         let xor_lsn = self.lsn ^ 0xFFFF_FFFF;
-        let lsn_arr: [u8; 8] =
-            unsafe { std::mem::transmute(xor_lsn) };
+        let lsn_arr = u64_to_arr(xor_lsn as u64);
         buf[2..10].copy_from_slice(&lsn_arr);
 
         let crc16 = crc16_arr(&lsn_arr);
@@ -444,7 +442,7 @@ impl From<[u8; SEG_TRAILER_LEN]> for SegmentTrailer {
         let lsn_buf = &buf[2..10];
         let mut lsn_arr = [0u8; 8];
         lsn_arr.copy_from_slice(&*lsn_buf);
-        let xor_lsn: Lsn = unsafe { std::mem::transmute(lsn_arr) };
+        let xor_lsn = arr_to_u64(lsn_arr) as Lsn;
         let lsn = xor_lsn ^ 0xFFFF_FFFF;
 
         let crc16_tested = crc16_arr(&lsn_arr);
@@ -461,8 +459,7 @@ impl Into<[u8; SEG_TRAILER_LEN]> for SegmentTrailer {
         let mut buf = [0u8; SEG_TRAILER_LEN];
 
         let xor_lsn = self.lsn ^ 0xFFFF_FFFF;
-        let lsn_arr: [u8; 8] =
-            unsafe { std::mem::transmute(xor_lsn) };
+        let lsn_arr = u64_to_arr(xor_lsn as u64);
         buf[2..10].copy_from_slice(&lsn_arr);
 
         let crc16 = crc16_arr(&lsn_arr);

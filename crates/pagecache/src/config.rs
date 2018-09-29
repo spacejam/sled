@@ -247,7 +247,7 @@ unsafe impl Sync for Config {}
 
 impl Clone for Config {
     fn clone(&self) -> Config {
-        self.refs.fetch_add(1, Ordering::Relaxed);
+        self.refs.fetch_add(1, Ordering::SeqCst);
         Config {
             inner: self.inner.clone(),
             file: self.file.clone(),
@@ -260,7 +260,7 @@ impl Clone for Config {
 impl Drop for Config {
     fn drop(&mut self) {
         // if our ref count is 0 we can drop and close our file properly.
-        if self.refs.fetch_sub(1, Ordering::Relaxed) == 0 {
+        if self.refs.fetch_sub(1, Ordering::SeqCst) == 0 {
             let f_ptr: *mut Arc<fs::File> = self
                 .file
                 .swap(std::ptr::null_mut(), Ordering::Relaxed);
@@ -291,14 +291,17 @@ impl Config {
     // thread is accessing it.
     #[doc(hidden)]
     pub fn file(&self) -> CacheResult<Arc<fs::File>, ()> {
-        if self.file.load(Ordering::Relaxed).is_null() {
+        let loaded = self.file.load(Ordering::Relaxed);
+
+        if loaded.is_null() {
             let _lock = self.build_locker.lock().unwrap();
-            if self.file.load(Ordering::Relaxed).is_null() {
+            if self.file.load(Ordering::SeqCst).is_null() {
                 self.initialize()?;
             }
+            Ok(unsafe { (*self.file.load(Ordering::SeqCst)).clone() })
+        } else {
+            Ok(unsafe { (*loaded).clone() })
         }
-
-        Ok(unsafe { (*self.file.load(Ordering::Relaxed)).clone() })
     }
 
     // Get the path of the database
@@ -511,8 +514,8 @@ impl Config {
 
     fn write_config(&self) -> CacheResult<(), ()> {
         let bytes = serialize(&*self.inner).unwrap();
-        let crc64: [u8; 8] =
-            unsafe { std::mem::transmute(crc64(&*bytes)) };
+        let crc: u64 = crc64(&*bytes);
+        let crc_arr = u64_to_arr(crc);
 
         let path = self.conf_path();
 
@@ -524,7 +527,7 @@ impl Config {
         maybe_fail!("write_config bytes");
         f.write_all(&*bytes)?;
         maybe_fail!("write_config crc");
-        f.write_all(&crc64)?;
+        f.write_all(&crc_arr)?;
         f.sync_all()?;
         maybe_fail!("write_config post");
         Ok(())
@@ -558,11 +561,10 @@ impl Config {
         let len = buf.len();
         buf.split_off(len - 8);
 
-        let mut crc_expected_bytes = [0u8; 8];
+        let mut crc_arr = [0u8; 8];
         f.seek(std::io::SeekFrom::End(-8)).unwrap();
-        f.read_exact(&mut crc_expected_bytes).unwrap();
-        let crc_expected: u64 =
-            unsafe { std::mem::transmute(crc_expected_bytes) };
+        f.read_exact(&mut crc_arr).unwrap();
+        let crc_expected = arr_to_u64(crc_arr);
 
         let crc_actual = crc64(&*buf);
 

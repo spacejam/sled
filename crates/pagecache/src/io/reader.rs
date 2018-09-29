@@ -137,8 +137,7 @@ impl LogReader for File {
             MessageKind::SuccessBlob => {
                 let mut id_bytes = [0u8; 8];
                 id_bytes.copy_from_slice(&*buf);
-                let id: Lsn =
-                    unsafe { std::mem::transmute(id_bytes) };
+                let id = arr_to_u64(id_bytes) as Lsn;
 
                 match read_blob(id, config) {
                     Ok(buf) => {

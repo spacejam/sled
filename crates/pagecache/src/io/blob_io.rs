@@ -11,8 +11,7 @@ pub(crate) fn read_blob(
 
     let mut crc_expected_bytes = [0u8; EXTERNAL_VALUE_LEN];
     f.read_exact(&mut crc_expected_bytes).unwrap();
-    let crc_expected: u64 =
-        unsafe { std::mem::transmute(crc_expected_bytes) };
+    let crc_expected = arr_to_u64(crc_expected_bytes);
 
     let mut buf = vec![];
     f.read_to_end(&mut buf)?;
@@ -34,7 +33,7 @@ pub(crate) fn read_blob(
 pub(crate) fn write_blob(
     config: &Config,
     id: Lsn,
-    mut data: Vec<u8>,
+    data: Vec<u8>,
 ) -> CacheResult<(), ()> {
     let path = config.blob_path(id);
     let mut f = std::fs::OpenOptions::new()
@@ -42,11 +41,10 @@ pub(crate) fn write_blob(
         .create_new(true)
         .open(&path)?;
 
-    let mut crc: [u8; EXTERNAL_VALUE_LEN] =
-        unsafe { std::mem::transmute(crc64(&*data)) };
+    let crc = u64_to_arr(crc64(&*data));
 
-    f.write_all(&mut crc)
-        .and_then(|_| f.write_all(&mut data))
+    f.write_all(&crc)
+        .and_then(|_| f.write_all(&data))
         .map_err(|e| e.into())
 }
 

@@ -237,14 +237,21 @@ unsafe impl<PM, P, R> Send for PageCache<PM, P, R>
 where
     PM: Send + Sync,
     P: 'static + Send + Sync,
-    R: Send,
+    R: Send + Sync,
+{}
+
+unsafe impl<PM, P, R> Sync for PageCache<PM, P, R>
+where
+    PM: Send + Sync,
+    P: 'static + Send + Sync,
+    R: Send + Sync,
 {}
 
 impl<PM, P, R> Debug for PageCache<PM, P, R>
 where
     PM: Send + Sync,
     P: Debug + Send + Sync,
-    R: Debug + Send,
+    R: Debug + Send + Sync,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         f.write_str(&*format!(
@@ -266,7 +273,7 @@ where
         + DeserializeOwned
         + Send
         + Sync,
-    R: Debug + Clone + Serialize + DeserializeOwned + Send,
+    R: Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
 {
     /// Instantiate a new `PageCache`.
     pub fn start(
@@ -418,6 +425,7 @@ where
 
         let cache_entry = CacheEntry::Resident(new, lsn, ptr);
 
+        debug_delay();
         let result =
             unsafe { stack_ptr.deref().cap(old, cache_entry, guard) };
 
@@ -506,6 +514,7 @@ where
             Some(s) => s,
         };
 
+        debug_delay();
         let head = unsafe { stack_ptr.deref().head(guard) };
         let stack_iter = StackIter::from_ptr(head, guard);
         let cache_entries: Vec<_> = stack_iter.collect();
@@ -652,6 +661,7 @@ where
             Some(s) => s,
         };
 
+        debug_delay();
         let head = unsafe { stack_ptr.deref().head(guard) };
 
         self.page_in(pid, head, stack_ptr, guard)
@@ -850,6 +860,7 @@ where
                 Some(s) => s,
             };
 
+            debug_delay();
             let head = unsafe { stack_ptr.deref().head(guard) };
             let stack_iter = StackIter::from_ptr(head, guard);
 

@@ -18,9 +18,11 @@ pub(crate) fn prefix_encode(prefix: &[u8], buf: &[u8]) -> Vec<u8> {
             break;
         }
     }
-    let mut ret = Vec::with_capacity(1 + buf.len() - prefix_len);
+
+    let encoded_len = 1 + buf.len() - prefix_len;
+    let mut ret = Vec::with_capacity(encoded_len);
     unsafe {
-        ret.set_len(1 + buf.len() - prefix_len);
+        ret.set_len(encoded_len);
     }
     ret[1..].copy_from_slice(&buf[prefix_len..]);
     ret[0] = prefix_len as u8;

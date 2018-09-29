@@ -24,7 +24,6 @@ pub struct Tree {
     >,
     config: Config,
     root: Arc<AtomicUsize>,
-    merge_operator: Option<MergeOperator>,
 }
 
 unsafe impl Send for Tree {}
@@ -130,7 +129,6 @@ impl Tree {
             pages: Arc::new(pages),
             config: config,
             root: Arc::new(AtomicUsize::new(root_id)),
-            merge_operator: None,
         })
     }
 
@@ -557,8 +555,7 @@ impl Tree {
                         parent_split.to,
                         parent_split.at.inner().to_vec(),
                         guard,
-                    )
-                    .map(|_| ())
+                    ).map(|_| ())
                     .map_err(|e| e.danger_cast());
             }
         }
@@ -595,8 +592,7 @@ impl Tree {
                 Shared::null(),
                 Frag::Base(rhs, None),
                 guard,
-            )
-            .map_err(|e| e.danger_cast())?;
+            ).map_err(|e| e.danger_cast())?;
 
         // try to install a child split on the left side
         let link = self.pages.link(
@@ -708,9 +704,10 @@ impl Tree {
                     .expect("last_node should be a leaf");
                 let encoded_key =
                     prefix_encode(last_node.lo.inner(), key);
-                let search = items.binary_search_by(
-                    |&(ref k, ref _v)| prefix_cmp(k, &*encoded_key),
-                );
+                let search =
+                    items.binary_search_by(|&(ref k, ref _v)| {
+                        prefix_cmp(k, &*encoded_key)
+                    });
                 if let Ok(idx) = search {
                     // cap a del frag below
                     Some(items[idx].1.clone())
