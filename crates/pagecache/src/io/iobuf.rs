@@ -1,4 +1,4 @@
-use std::mem::{size_of, transmute};
+use std::mem::size_of;
 #[cfg(target_pointer_width = "32")]
 use std::sync::atomic::AtomicI64;
 #[cfg(target_pointer_width = "64")]
@@ -247,7 +247,7 @@ impl IoBufs {
 
             let lsn_buf: [u8;
                              size_of::<ExternalPointer>()] =
-                unsafe { transmute(lsn) };
+                u64_to_arr(lsn as u64);
 
             lsn_buf.to_vec()
         } else {
@@ -301,7 +301,7 @@ impl IoBufs {
         external_ptr: ExternalPointer,
     ) -> CacheResult<Reservation, ()> {
         let lsn_buf: [u8; size_of::<ExternalPointer>()] =
-            unsafe { transmute(external_ptr) };
+            u64_to_arr(external_ptr as u64);
 
         self.reserve_inner(lsn_buf.to_vec(), true)
     }

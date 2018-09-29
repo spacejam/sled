@@ -66,9 +66,10 @@ impl Node {
 
     pub fn set_leaf(&mut self, key: Key, val: Value) {
         if let Data::Leaf(ref mut records) = self.data {
-            let search = records.binary_search_by(
-                |&(ref k, ref _v)| prefix_cmp(k, &*key),
-            );
+            let search =
+                records.binary_search_by(|&(ref k, ref _v)| {
+                    prefix_cmp(k, &*key)
+                });
             if let Ok(idx) = search {
                 records.push((key, val));
                 records.swap_remove(idx);
@@ -90,9 +91,10 @@ impl Node {
         merge_fn: MergeOperator,
     ) {
         if let Data::Leaf(ref mut records) = self.data {
-            let search = records.binary_search_by(
-                |&(ref k, ref _v)| prefix_cmp(k, &*key),
-            );
+            let search =
+                records.binary_search_by(|&(ref k, ref _v)| {
+                    prefix_cmp(k, &*key)
+                });
 
             let decoded_k = prefix_decode(self.lo.inner(), &key);
             if let Ok(idx) = search {
@@ -140,9 +142,10 @@ impl Node {
 
     pub fn del_leaf(&mut self, key: KeyRef) {
         if let Data::Leaf(ref mut records) = self.data {
-            let search = records.binary_search_by(
-                |&(ref k, ref _v)| prefix_cmp(k, &*key),
-            );
+            let search =
+                records.binary_search_by(|&(ref k, ref _v)| {
+                    prefix_cmp(k, &*key)
+                });
             if let Ok(idx) = search {
                 records.remove(idx);
             }

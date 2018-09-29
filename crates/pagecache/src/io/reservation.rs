@@ -78,7 +78,7 @@ impl<'a> Reservation<'a> {
             blob_ptr_bytes
                 .copy_from_slice(&self.data[MSG_HEADER_LEN..]);
             let blob_ptr: ExternalPointer =
-                unsafe { std::mem::transmute(blob_ptr_bytes) };
+                arr_to_u64(blob_ptr_bytes) as ExternalPointer;
 
             Some(blob_ptr)
         } else {
