@@ -77,7 +77,7 @@ impl<'a> Reservation<'a> {
                 [0u8; std::mem::size_of::<Lsn>()];
             blob_ptr_bytes
                 .copy_from_slice(&self.data[MSG_HEADER_LEN..]);
-            let blob_ptr: ExternalPointer =
+            let blob_ptr =
                 arr_to_u64(blob_ptr_bytes) as ExternalPointer;
 
             Some(blob_ptr)
