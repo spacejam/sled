@@ -170,7 +170,7 @@ const CRC64TAB: [u64; 256] = [
     0x536f_a08f_dfd9_0e51, 0x29b7_d047_efec_8728,
 ];
 
-pub fn crc64(s: &[u8]) -> u64 {
+pub(crate) fn crc64(s: &[u8]) -> u64 {
     let mut crc = 0;
     for byte in s {
         crc = CRC64TAB[((crc as u8) ^ byte) as usize] ^ (crc >> 8);

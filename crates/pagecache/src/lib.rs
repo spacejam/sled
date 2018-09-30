@@ -5,7 +5,8 @@
 #![cfg_attr(test, deny(future_incompatible))]
 #![cfg_attr(test, deny(nonstandard_style))]
 #![cfg_attr(test, deny(rust_2018_compatibility))]
-#![cfg_attr(test, deny(rust_2018_idioms))]
+// TODO turn this on closer to the migration.
+// #![cfg_attr(test, deny(rust_2018_idioms))]
 #![cfg_attr(test, deny(unused))]
 #![cfg_attr(feature = "clippy", feature(plugin))]
 #![cfg_attr(feature = "clippy", plugin(clippy))]
@@ -42,13 +43,23 @@ extern crate zstd;
 extern crate fail;
 extern crate pagetable;
 
-pub use ds::{Radix, Stack};
+use ds::Stack;
 
 /// general-purpose configuration
 pub use config::{Config, ConfigBuilder};
 pub use diskptr::DiskPtr;
-pub use io::*;
-pub use result::{CacheResult, Error};
+pub use io::{
+    read_snapshot_or_default, CacheEntry, Log, LogRead, Materializer,
+    NullMaterializer, PageCache, PageGet, SegmentMode,
+};
+
+#[doc(hidden)]
+pub use self::io::log::{
+    MSG_HEADER_LEN, SEG_HEADER_LEN, SEG_TRAILER_LEN,
+};
+
+pub use result::{Error, Result};
+pub use tx::Tx;
 
 macro_rules! maybe_fail {
     ($e:expr) => {
@@ -75,6 +86,7 @@ mod io;
 mod metrics;
 mod periodic;
 mod result;
+mod tx;
 
 use ds::*;
 use hash::{crc16_arr, crc64};
@@ -96,33 +108,31 @@ pub type Lsn = i64;
 /// A page identifier.
 pub type PageID = usize;
 
+type PagePtrInner<'g, P> = epoch::Shared<'g, Node<io::CacheEntry<P>>>;
+
 /// A pointer to shared lock-free state bound by a pinned epoch's lifetime.
-pub type PagePtr<'g, P> =
-    epoch::Shared<'g, ds::stack::Node<io::CacheEntry<P>>>;
-
-// This type exists to communicate that the underlying raw pointer in epoch::Shared
-// is Send in the restricted context of pulling data from disk in a parallel
-// way by rayon.
 #[derive(Debug, Clone, PartialEq)]
-struct RayonPagePtr<'g, P>(
-    epoch::Shared<'g, ds::stack::Node<io::CacheEntry<P>>>,
-)
+pub struct PagePtr<'g, P>(PagePtrInner<'g, P>)
 where
-    P: Send + 'static;
+    P: 'static + Send;
 
-use std::ops::Deref;
-
-impl<'g, P> Deref for RayonPagePtr<'g, P>
+impl<'g, P> PagePtr<'g, P>
 where
-    P: Send,
+    P: 'static + Send,
 {
-    type Target = PagePtr<'g, P>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
+    /// Create a null `PagePtr`
+    pub fn allocated() -> PagePtr<'g, P> {
+        PagePtr(epoch::Shared::null())
+    }
+
+    /// Whether this pointer is Allocated
+    pub fn is_allocated(&self) -> bool {
+        self.0.is_null()
     }
 }
 
-unsafe impl<'g, P> Send for RayonPagePtr<'g, P> where P: Send {}
+unsafe impl<'g, P> Send for PagePtr<'g, P> where P: Send {}
+unsafe impl<'g, P> Sync for PagePtr<'g, P> where P: Send + Sync {}
 
 lazy_static! {
     /// A metric collector for all pagecache users running in this

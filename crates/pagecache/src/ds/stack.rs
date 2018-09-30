@@ -10,7 +10,7 @@ use debug_delay;
 
 /// A node in the lock-free `Stack`.
 #[derive(Debug)]
-pub struct Node<T: Send + 'static> {
+pub(crate) struct Node<T: Send + 'static> {
     inner: T,
     next: Atomic<Node<T>>,
 }
@@ -29,7 +29,7 @@ impl<T: Send + 'static> Drop for Node<T> {
 
 /// A simple lock-free stack, with the ability to atomically
 /// append or entirely swap-out entries.
-pub struct Stack<T: Send + 'static> {
+pub(crate) struct Stack<T: Send + 'static> {
     head: Atomic<Node<T>>,
 }
 
@@ -59,7 +59,7 @@ where
 {
     fn fmt(
         &self,
-        formatter: &mut fmt::Formatter,
+        formatter: &mut fmt::Formatter<'_>,
     ) -> Result<(), fmt::Error> {
         let guard = pin();
         let head = self.head(&guard);
@@ -90,7 +90,7 @@ impl<T: Send + 'static> Deref for Node<T> {
 
 impl<T: Send + Sync + 'static> Stack<T> {
     /// Add an item to the stack, spinning until successful.
-    pub fn push(&self, inner: T) {
+    pub(crate) fn push(&self, inner: T) {
         debug_delay();
         let node = Owned::new(Node {
             inner: inner,
@@ -119,7 +119,7 @@ impl<T: Send + Sync + 'static> Stack<T> {
     }
 
     /// Pop the next item off the stack. Returns None if nothing is there.
-    pub fn pop(&self) -> Option<T> {
+    fn _pop(&self) -> Option<T> {
         debug_delay();
         let guard = pin();
         let mut head = self.head(&guard);
@@ -145,9 +145,9 @@ impl<T: Send + Sync + 'static> Stack<T> {
     }
 
     /// compare and push
-    pub fn cap<'g>(
+    pub(crate) fn cap<'g>(
         &self,
-        old: Shared<Node<T>>,
+        old: Shared<'_, Node<T>>,
         new: T,
         guard: &'g Guard,
     ) -> Result<Shared<'g, Node<T>>, Shared<'g, Node<T>>> {
@@ -178,7 +178,7 @@ impl<T: Send + Sync + 'static> Stack<T> {
     }
 
     /// attempt consolidation
-    pub fn cas<'g>(
+    pub(crate) fn cas<'g>(
         &self,
         old: Shared<'g, Node<T>>,
         new: Shared<'g, Node<T>>,
@@ -212,13 +212,16 @@ impl<T: Send + Sync + 'static> Stack<T> {
 
     /// Returns the current head pointer of the stack, which can
     /// later be used as the key for cas and cap operations.
-    pub fn head<'g>(&self, guard: &'g Guard) -> Shared<'g, Node<T>> {
+    pub(crate) fn head<'g>(
+        &self,
+        guard: &'g Guard,
+    ) -> Shared<'g, Node<T>> {
         self.head.load(SeqCst, guard)
     }
 }
 
 /// An iterator over nodes in a lock-free stack.
-pub struct StackIter<'a, T>
+pub(crate) struct StackIter<'a, T>
 where
     T: 'a + Send + 'static + Sync,
 {
@@ -231,7 +234,7 @@ where
     T: 'a + Send + 'static + Sync,
 {
     /// Creates a StackIter from a pointer to one.
-    pub fn from_ptr<'b>(
+    pub(crate) fn from_ptr<'b>(
         ptr: Shared<'b, Node<T>>,
         guard: &'b Guard,
     ) -> StackIter<'b, T> {
@@ -264,7 +267,7 @@ where
 
 /// Turns a vector of elements into a lock-free stack
 /// of them, and returns the head of the stack.
-pub fn node_from_frag_vec<T>(from: Vec<T>) -> Owned<Node<T>>
+pub(crate) fn node_from_frag_vec<T>(from: Vec<T>) -> Owned<Node<T>>
 where
     T: Send + 'static + Sync,
 {
@@ -293,7 +296,7 @@ fn basic_functionality() {
     use std::thread;
 
     let ll = Arc::new(Stack::default());
-    assert_eq!(ll.pop(), None);
+    assert_eq!(ll._pop(), None);
     ll.push(1);
     let ll2 = Arc::clone(&ll);
     let t = thread::spawn(move || {
@@ -303,18 +306,18 @@ fn basic_functionality() {
     });
     t.join().unwrap();
     ll.push(5);
-    assert_eq!(ll.pop(), Some(5));
-    assert_eq!(ll.pop(), Some(4));
+    assert_eq!(ll._pop(), Some(5));
+    assert_eq!(ll._pop(), Some(4));
     let ll3 = Arc::clone(&ll);
     let t = thread::spawn(move || {
-        assert_eq!(ll3.pop(), Some(3));
-        assert_eq!(ll3.pop(), Some(2));
+        assert_eq!(ll3._pop(), Some(3));
+        assert_eq!(ll3._pop(), Some(2));
     });
     t.join().unwrap();
-    assert_eq!(ll.pop(), Some(1));
+    assert_eq!(ll._pop(), Some(1));
     let ll4 = Arc::clone(&ll);
     let t = thread::spawn(move || {
-        assert_eq!(ll4.pop(), None);
+        assert_eq!(ll4._pop(), None);
     });
     t.join().unwrap();
 }

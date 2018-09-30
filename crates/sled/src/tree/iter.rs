@@ -15,7 +15,7 @@ pub struct Iter<'a> {
 }
 
 impl<'a> Iterator for Iter<'a> {
-    type Item = DbResult<(Vec<u8>, Vec<u8>), ()>;
+    type Item = Result<(Vec<u8>, Vec<u8>), ()>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.done {

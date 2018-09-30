@@ -2,12 +2,10 @@ use super::*;
 
 mod dll;
 mod lru;
-mod radix;
+mod stack;
 
-/// A lock-free stack.
-pub mod stack;
-
-use self::dll::Dll;
-pub use self::lru::Lru;
-pub use self::radix::Radix;
-pub use self::stack::{node_from_frag_vec, Stack, StackIter};
+pub(crate) use self::dll::Dll;
+pub(crate) use self::lru::Lru;
+pub(crate) use self::stack::{
+    node_from_frag_vec, Node, Stack, StackIter,
+};

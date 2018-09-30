@@ -75,7 +75,7 @@ use super::*;
 /// of storage. It scans through all segments quickly during
 /// recovery and attempts to locate torn segments.
 #[derive(Debug)]
-pub struct SegmentAccountant {
+pub(crate) struct SegmentAccountant {
     // static or one-time set
     config: Config,
 
@@ -100,7 +100,7 @@ pub struct SegmentAccountant {
 /// when segments become reusable and allow them to be
 /// overwritten for new data.
 #[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub struct Segment {
+pub(crate) struct Segment {
     present: BTreeSet<PageID>,
     removed: HashSet<PageID>,
     deferred_remove: HashSet<PageID>,
@@ -110,7 +110,7 @@ pub struct Segment {
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub enum SegmentState {
+pub(crate) enum SegmentState {
     /// the segment is marked for reuse, should never receive
     /// new pids,
     /// TODO consider: but may receive removals for pids that were
@@ -194,12 +194,12 @@ impl Segment {
     /// segment has been completely read
     ///
     /// SegmentAccountant::recover for when
-    pub fn active_to_inactive(
+    pub(crate) fn active_to_inactive(
         &mut self,
         lsn: Lsn,
         from_recovery: bool,
         config: &Config,
-    ) -> CacheResult<(), ()> {
+    ) -> Result<(), ()> {
         trace!(
             "setting Segment with lsn {:?} to Inactive",
             self.lsn()
@@ -236,7 +236,7 @@ impl Segment {
         Ok(())
     }
 
-    pub fn inactive_to_draining(&mut self, lsn: Lsn) {
+    pub(crate) fn inactive_to_draining(&mut self, lsn: Lsn) {
         trace!(
             "setting Segment with lsn {:?} to Draining",
             self.lsn()
@@ -246,7 +246,7 @@ impl Segment {
         self.state = Draining;
     }
 
-    pub fn draining_to_free(&mut self, lsn: Lsn) {
+    pub(crate) fn draining_to_free(&mut self, lsn: Lsn) {
         trace!("setting Segment with lsn {:?} to Free", self.lsn());
         assert!(self.is_draining());
         assert!(lsn >= self.lsn());
@@ -255,7 +255,7 @@ impl Segment {
         self.state = Free;
     }
 
-    pub fn recovery_ensure_initialized(&mut self, lsn: Lsn) {
+    pub(crate) fn recovery_ensure_initialized(&mut self, lsn: Lsn) {
         if let Some(current_lsn) = self.lsn {
             if current_lsn != lsn {
                 assert!(lsn > current_lsn);
@@ -281,7 +281,7 @@ impl Segment {
 
     /// Add a pid to the Segment. The caller must provide
     /// the Segment's LSN.
-    pub fn insert_pid(&mut self, pid: PageID, lsn: Lsn) {
+    pub(crate) fn insert_pid(&mut self, pid: PageID, lsn: Lsn) {
         assert_eq!(lsn, self.lsn.unwrap());
         // if this breaks, we didn't implement the transition
         // logic right in write_to_log, and maybe a thread is
@@ -295,7 +295,7 @@ impl Segment {
 
     /// Mark that a pid in this Segment has been relocated.
     /// The caller must provide the LSN of the removal.
-    pub fn remove_pid(&mut self, pid: PageID, lsn: Lsn) {
+    pub(crate) fn remove_pid(&mut self, pid: PageID, lsn: Lsn) {
         // TODO this could be racy?
         assert!(lsn >= self.lsn.unwrap());
         match self.state {
@@ -317,7 +317,7 @@ impl Segment {
         &mut self,
         external_ptr: ExternalPointer,
         config: &Config,
-    ) -> CacheResult<(), ()> {
+    ) -> Result<(), ()> {
         match self.state {
             Active => {
                 // we have received a removal before
@@ -352,17 +352,17 @@ impl Segment {
         self.state == Draining && self.is_empty()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.present.is_empty()
     }
 }
 
 impl SegmentAccountant {
     /// Create a new SegmentAccountant from previously recovered segments.
-    pub fn start<R>(
+    pub(crate) fn start<R>(
         config: Config,
         snapshot: Snapshot<R>,
-    ) -> CacheResult<SegmentAccountant, ()> {
+    ) -> Result<SegmentAccountant, ()> {
         let mut ret = SegmentAccountant {
             config: config,
             segments: vec![],
@@ -400,7 +400,7 @@ impl SegmentAccountant {
     fn initialize_from_snapshot<R>(
         &mut self,
         snapshot: Snapshot<R>,
-    ) -> CacheResult<(), ()> {
+    ) -> Result<(), ()> {
         let io_buf_size = self.config.io_buf_size;
 
         // generate segments from snapshot lids
@@ -466,7 +466,7 @@ impl SegmentAccountant {
     fn initialize_from_segments(
         &mut self,
         mut segments: Vec<Segment>,
-    ) -> CacheResult<(), ()> {
+    ) -> Result<(), ()> {
         // populate ordering from segments.
         // use last segment as active even if it's full
         let io_buf_size = self.config.io_buf_size;
@@ -620,7 +620,7 @@ impl SegmentAccountant {
     fn set_safety_buffer(
         &mut self,
         snapshot_max_lsn: Lsn,
-    ) -> CacheResult<(), ()> {
+    ) -> Result<(), ()> {
         self.ensure_ordering_initialized()?;
 
         // if our ordering contains anything higher than
@@ -724,12 +724,12 @@ impl SegmentAccountant {
     /// Causes all new allocations to occur at the end of the file, which
     /// is necessary to preserve consistency while concurrently iterating through
     /// the log during snapshot creation.
-    pub fn pause_rewriting(&mut self) {
+    pub(crate) fn pause_rewriting(&mut self) {
         self.pause_rewriting = true;
     }
 
     /// Re-enables segment rewriting after iteration is complete.
-    pub fn resume_rewriting(&mut self) {
+    pub(crate) fn resume_rewriting(&mut self) {
         self.pause_rewriting = false;
     }
 
@@ -737,13 +737,13 @@ impl SegmentAccountant {
     /// We mark all of the old segments that contained the previous state
     /// from the page, and if the old segments are empty or clear enough to
     /// begin accelerated cleaning we mark them as so.
-    pub fn mark_replace(
+    pub(crate) fn mark_replace(
         &mut self,
         pid: PageID,
         lsn: Lsn,
         old_ptrs: Vec<DiskPtr>,
         new_ptr: DiskPtr,
-    ) -> CacheResult<(), ()> {
+    ) -> Result<(), ()> {
         trace!(
             "mark_replace pid {} from ptrs {:?} to ptr {} with lsn {}",
             pid,
@@ -857,7 +857,7 @@ impl SegmentAccountant {
     /// Called by the `PageCache` to find pages that are in
     /// segments elligible for cleaning that it should
     /// try to rewrite elsewhere.
-    pub fn clean(
+    pub(crate) fn clean(
         &mut self,
         ignore_pid: Option<PageID>,
     ) -> Option<PageID> {
@@ -894,7 +894,12 @@ impl SegmentAccountant {
     /// Called from `PageCache` when some state has been added
     /// to a logical page at a particular offset. We ensure the
     /// page is present in the segment's page set.
-    pub fn mark_link(&mut self, pid: PageID, lsn: Lsn, ptr: DiskPtr) {
+    pub(crate) fn mark_link(
+        &mut self,
+        pid: PageID,
+        lsn: Lsn,
+        ptr: DiskPtr,
+    ) {
         trace!("mark_link pid {} at ptr {}", pid, ptr);
         let idx = self.lid_to_idx(ptr.lid());
 
@@ -928,7 +933,7 @@ impl SegmentAccountant {
         &mut self,
         lsn: Lsn,
         lid: LogID,
-    ) -> CacheResult<(), ()> {
+    ) -> Result<(), ()> {
         let idx = self.lid_to_idx(lid);
 
         self.segments[idx].active_to_inactive(
@@ -993,7 +998,7 @@ impl SegmentAccountant {
     }
 
     /// Returns the next offset to write a new segment in.
-    pub fn next(&mut self, lsn: Lsn) -> CacheResult<LogID, ()> {
+    pub(crate) fn next(&mut self, lsn: Lsn) -> Result<LogID, ()> {
         assert_eq!(
             lsn % self.config.io_buf_size as Lsn,
             0,
@@ -1108,10 +1113,10 @@ impl SegmentAccountant {
 
     /// Returns an iterator over a snapshot of current segment
     /// log sequence numbers and their corresponding file offsets.
-    pub fn segment_snapshot_iter_from(
+    pub(crate) fn segment_snapshot_iter_from(
         &mut self,
         lsn: Lsn,
-    ) -> Box<Iterator<Item = (Lsn, LogID)>> {
+    ) -> Box<dyn Iterator<Item = (Lsn, LogID)>> {
         assert!(
             self.pause_rewriting,
             "must pause rewriting before \
@@ -1130,7 +1135,7 @@ impl SegmentAccountant {
     }
 
     // truncate the file to the desired length
-    fn truncate(&mut self, at: LogID) -> CacheResult<(), ()> {
+    fn truncate(&mut self, at: LogID) -> Result<(), ()> {
         assert_eq!(
             at % self.config.io_buf_size as LogID,
             0,
@@ -1159,7 +1164,7 @@ impl SegmentAccountant {
         f.sync_all().map_err(|e| e.into())
     }
 
-    fn ensure_ordering_initialized(&mut self) -> CacheResult<(), ()> {
+    fn ensure_ordering_initialized(&mut self) -> Result<(), ()> {
         if !self.ordering.is_empty() {
             return Ok(());
         }
@@ -1197,7 +1202,7 @@ impl SegmentAccountant {
 fn scan_segment_lsns(
     min: Lsn,
     config: &Config,
-) -> CacheResult<BTreeMap<Lsn, LogID>, ()> {
+) -> Result<BTreeMap<Lsn, LogID>, ()> {
     let mut ordering = BTreeMap::new();
 
     let segment_len = config.io_buf_size as LogID;
@@ -1372,7 +1377,7 @@ pub enum SegmentMode {
 pub(super) fn raw_segment_iter_from(
     lsn: Lsn,
     config: &Config,
-) -> CacheResult<LogIter, ()> {
+) -> Result<LogIter, ()> {
     let segment_len = config.io_buf_size as Lsn;
     let normalized_lsn = lsn / segment_len * segment_len;
 

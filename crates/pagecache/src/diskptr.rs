@@ -1,6 +1,6 @@
 use super::*;
 
-use io::LogReader;
+use io::{read_blob, LogReader};
 
 /// A pointer to a location on disk or an off-log blob.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -65,7 +65,7 @@ impl DiskPtr {
     pub(crate) fn read(
         &self,
         config: &Config,
-    ) -> CacheResult<Vec<u8>, ()> {
+    ) -> Result<Vec<u8>, ()> {
         match self {
             DiskPtr::External(_lid, ptr) => read_blob(*ptr, &config),
             DiskPtr::Inline(lid) => {
@@ -80,8 +80,7 @@ impl DiskPtr {
                              in a valid Inline read. It's \
                              possible the DiskPtr outlived \
                              an outer guard.",
-                        )
-                        .1
+                        ).1
                 })
             }
         }
@@ -91,8 +90,8 @@ impl DiskPtr {
 impl std::fmt::Display for DiskPtr {
     fn fmt(
         &self,
-        f: &mut std::fmt::Formatter,
-    ) -> Result<(), std::fmt::Error> {
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::result::Result<(), std::fmt::Error> {
         write!(f, "{:?}", self)
     }
 }

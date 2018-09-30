@@ -152,7 +152,7 @@ where
 ///
 /// use pagecache::Materializer;
 ///
-/// use epoch::{Shared, pin};
+/// use epoch::pin;
 ///
 /// pub struct TestMaterializer;
 ///
@@ -199,20 +199,21 @@ where
 ///     {
 ///         let guard = pin();
 ///         let id = pc.allocate(&guard).unwrap();
+///         let mut key = pagecache::PagePtr::allocated();
 ///
 ///         // The first item in a page should be set using replace,
 ///         // which signals that this is the beginning of a new
 ///         // page history, and that any previous items associated
 ///         // with this page should be forgotten.
-///         let key = pc.replace(id, Shared::null(), "a".to_owned(), &guard).unwrap();
+///         key = pc.replace(id, key, "a".to_owned(), &guard).unwrap();
 ///
 ///         // Subsequent atomic updates should be added with link.
-///         let key = pc.link(id, key, "b".to_owned(), &guard).unwrap();
-///         let _key = pc.link(id, key, "c".to_owned(), &guard).unwrap();
+///         key = pc.link(id, key, "b".to_owned(), &guard).unwrap();
+///         key = pc.link(id, key, "c".to_owned(), &guard).unwrap();
 ///
-///         // When getting a page, the provide `Materializer` is
+///         // When getting a page, the provided `Materializer` is
 ///         // used to merge all pages together.
-///         let (consolidated, _key) = pc.get(id, &guard).unwrap().unwrap();
+///         let (consolidated, key) = pc.get(id, &guard).unwrap().unwrap();
 ///
 ///         assert_eq!(consolidated, "abc".to_owned());
 ///     }
@@ -253,7 +254,10 @@ where
     P: Debug + Send + Sync,
     R: Debug + Send + Sync,
 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> std::result::Result<(), fmt::Error> {
         f.write_str(&*format!(
             "PageCache {{ max: {:?} free: {:?} }}\n",
             self.max_pid.load(SeqCst),
@@ -276,9 +280,7 @@ where
     R: Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
 {
     /// Instantiate a new `PageCache`.
-    pub fn start(
-        config: Config,
-    ) -> CacheResult<PageCache<PM, P, R>, ()> {
+    pub fn start(config: Config) -> Result<PageCache<PM, P, R>, ()> {
         let cache_capacity = config.cache_capacity;
         let cache_shard_bits = config.cache_bits;
         let lru = Lru::new(cache_capacity, cache_shard_bits);
@@ -310,7 +312,7 @@ where
     }
 
     /// Flushes any pending IO buffers to disk to ensure durability.
-    pub fn flush(&self) -> CacheResult<(), ()> {
+    pub fn flush(&self) -> Result<(), ()> {
         self.log.flush()
     }
 
@@ -333,7 +335,7 @@ where
     pub fn allocate<'g>(
         &self,
         guard: &'g Guard,
-    ) -> CacheResult<PageID, ()> {
+    ) -> Result<PageID, ()> {
         let pid = self
             .free
             .lock()
@@ -373,10 +375,10 @@ where
         pid: PageID,
         old: PagePtr<'g, P>,
         guard: &'g Guard,
-    ) -> CacheResult<(), Option<PagePtr<'g, P>>> {
+    ) -> Result<(), Option<PagePtr<'g, P>>> {
         trace!("attempting to free pid {}", pid);
 
-        self.cas_page(pid, old, Update::Free, guard)?;
+        self.cas_page(pid, old.0, Update::Free, guard)?;
 
         let free = self.free.clone();
         guard.defer(move || {
@@ -401,7 +403,7 @@ where
         old: PagePtr<'g, P>,
         new: P,
         guard: &'g Guard,
-    ) -> CacheResult<PagePtr<'g, P>, Option<PagePtr<'g, P>>> {
+    ) -> Result<PagePtr<'g, P>, Option<PagePtr<'g, P>>> {
         let stack_ptr = match self.inner.get(pid, guard) {
             None => return Err(Error::CasFailed(None)),
             Some(s) => s,
@@ -409,7 +411,7 @@ where
 
         let prepend: LoggedUpdate<P> = LoggedUpdate {
             pid: pid,
-            update: if old.is_null() {
+            update: if old.0.is_null() {
                 Update::Compact(new.clone())
             } else {
                 Update::Append(new.clone())
@@ -426,8 +428,9 @@ where
         let cache_entry = CacheEntry::Resident(new, lsn, ptr);
 
         debug_delay();
-        let result =
-            unsafe { stack_ptr.deref().cap(old, cache_entry, guard) };
+        let result = unsafe {
+            stack_ptr.deref().cap(old.0, cache_entry, guard)
+        };
 
         if result.is_err() {
             log_reservation.abort().map_err(|e| e.danger_cast())?;
@@ -459,7 +462,9 @@ where
             }
         }
 
-        result.map_err(|e| Error::CasFailed(Some(e)))
+        result
+            .map(|p| PagePtr(p))
+            .map_err(|e| Error::CasFailed(Some(PagePtr(e))))
     }
 
     /// Replace an existing page with a different set of `PageFrag`s.
@@ -472,11 +477,11 @@ where
         old: PagePtr<'g, P>,
         new: P,
         guard: &'g Guard,
-    ) -> CacheResult<PagePtr<'g, P>, Option<PagePtr<'g, P>>> {
+    ) -> Result<PagePtr<'g, P>, Option<PagePtr<'g, P>>> {
         trace!("replacing pid {}", pid);
 
         let result =
-            self.cas_page(pid, old, Update::Compact(new), guard);
+            self.cas_page(pid, old.0, Update::Compact(new), guard);
 
         if result.is_ok() {
             let to_clean = self.log.with_sa(|sa| sa.clean(Some(pid)));
@@ -495,7 +500,7 @@ where
             }
         }
 
-        result
+        result.map(|p| PagePtr(p))
     }
 
     // rewrite a page so we can reuse the segment that it is
@@ -506,7 +511,7 @@ where
         &self,
         pid: PageID,
         guard: &'g Guard,
-    ) -> CacheResult<(), Option<PagePtr<'g, P>>> {
+    ) -> Result<(), Option<PagePtr<'g, P>>> {
         let _measure = Measure::new(&M.rewrite_page);
 
         let stack_ptr = match self.inner.get(pid, guard) {
@@ -560,7 +565,9 @@ where
                     .map_err(|e| e.danger_cast())?;
             }
 
-            result.map(|_| ()).map_err(|e| Error::CasFailed(Some(e)))
+            result
+                .map(|_| ())
+                .map_err(|e| Error::CasFailed(Some(PagePtr(e))))
         } else {
             // page-in whole page with a get,
             let (key, update) = match self.get(pid, guard)? {
@@ -569,7 +576,7 @@ where
                 }
                 PageGet::Free(key) => (key, Update::Free),
                 PageGet::Allocated => {
-                    (Shared::null(), Update::Allocate)
+                    (PagePtr(Shared::null()), Update::Allocate)
                 }
                 PageGet::Unallocated => {
                     // TODO when merge functionality is added,
@@ -578,7 +585,7 @@ where
                 }
             };
 
-            self.cas_page(pid, key, update, guard).map(|_| ())?;
+            self.cas_page(pid, key.0, update, guard).map(|_| ())?;
 
             Ok(())
         }
@@ -587,10 +594,10 @@ where
     fn cas_page<'g>(
         &self,
         pid: PageID,
-        old: PagePtr<'g, P>,
+        old: PagePtrInner<'g, P>,
         new: Update<P>,
         guard: &'g Guard,
-    ) -> CacheResult<PagePtr<'g, P>, Option<PagePtr<'g, P>>> {
+    ) -> Result<PagePtrInner<'g, P>, Option<PagePtr<'g, P>>> {
         let stack_ptr = match self.inner.get(pid, guard) {
             None => return Err(Error::CasFailed(None)),
             Some(s) => s,
@@ -646,7 +653,7 @@ where
             log_reservation.abort().map_err(|e| e.danger_cast())?;
         }
 
-        result.map_err(|e| Error::CasFailed(Some(e)))
+        result.map_err(|e| Error::CasFailed(Some(PagePtr(e))))
     }
 
     /// Try to retrieve a page by its logical ID.
@@ -654,7 +661,7 @@ where
         &self,
         pid: PageID,
         guard: &'g Guard,
-    ) -> CacheResult<PageGet<'g, PM::PageFrag>, Option<PagePtr<'g, P>>>
+    ) -> Result<PageGet<'g, PM::PageFrag>, Option<PagePtr<'g, P>>>
     {
         let stack_ptr = match self.inner.get(pid, guard) {
             None => return Ok(PageGet::Unallocated),
@@ -670,10 +677,10 @@ where
     fn page_in<'g>(
         &self,
         pid: PageID,
-        mut head: Shared<'g, ds::stack::Node<CacheEntry<P>>>,
-        stack_ptr: Shared<'g, ds::stack::Stack<CacheEntry<P>>>,
+        mut head: PagePtrInner<'g, P>,
+        stack_ptr: Shared<'g, Stack<CacheEntry<P>>>,
         guard: &'g Guard,
-    ) -> CacheResult<PageGet<'g, PM::PageFrag>, Option<PagePtr<'g, P>>>
+    ) -> Result<PageGet<'g, PM::PageFrag>, Option<PagePtr<'g, P>>>
     {
         let _measure = Measure::new(&M.page_in);
         let stack_iter = StackIter::from_ptr(head, guard);
@@ -701,7 +708,7 @@ where
                         // have one frag.
                         return Ok(PageGet::Materialized(
                             page_frag.clone(),
-                            head,
+                            PagePtr(head),
                         ));
                     }
                     if !merged_resident {
@@ -716,7 +723,7 @@ where
                     ptrs.push((lsn, ptr));
                 }
                 CacheEntry::Free(_, _) => {
-                    return Ok(PageGet::Free(head))
+                    return Ok(PageGet::Free(PagePtr(head)))
                 }
             }
         }
@@ -845,14 +852,14 @@ where
             }
         }
 
-        Ok(PageGet::Materialized(merged, head))
+        Ok(PageGet::Materialized(merged, PagePtr(head)))
     }
 
     fn page_out<'g>(
         &self,
         to_evict: Vec<PageID>,
         guard: &'g Guard,
-    ) -> CacheResult<(), ()> {
+    ) -> Result<(), ()> {
         let _measure = Measure::new(&M.page_out);
         for pid in to_evict {
             let stack_ptr = match self.inner.get(pid, guard) {
@@ -933,7 +940,7 @@ where
         &self,
         lsn: Lsn,
         ptr: DiskPtr,
-    ) -> CacheResult<P, Option<RayonPagePtr<'g, P>>> {
+    ) -> Result<P, Option<PagePtr<'g, P>>> {
         self.pull(lsn, ptr).map_err(|e1| e1.danger_cast())
     }
 
@@ -941,7 +948,7 @@ where
         &self,
         lsn: Lsn,
         ptr: DiskPtr,
-    ) -> CacheResult<P, Option<PagePtr<'g, P>>> {
+    ) -> Result<P, Option<PagePtr<'g, P>>> {
         trace!("pulling lsn {} ptr {} from disk", lsn, ptr);
         let _measure = Measure::new(&M.pull);
         let bytes = match self.log.read(lsn, ptr).map_err(|_| ()) {
@@ -991,7 +998,7 @@ where
 
     // caller is expected to have instantiated self.last_snapshot
     // in recovery already.
-    fn advance_snapshot(&self) -> CacheResult<(), ()> {
+    fn advance_snapshot(&self) -> Result<(), ()> {
         let snapshot_opt_res = self.last_snapshot.try_lock();
         if snapshot_opt_res.is_err() {
             // some other thread is snapshotting
@@ -1107,7 +1114,7 @@ where
 }
 
 fn ptrs_from_stack<'g, P: Send + Sync>(
-    head_ptr: PagePtr<'g, P>,
+    head_ptr: PagePtrInner<'g, P>,
     guard: &'g Guard,
 ) -> Vec<DiskPtr> {
     // generate a list of the old log ID's

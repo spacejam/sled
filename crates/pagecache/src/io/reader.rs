@@ -11,30 +11,30 @@ pub(crate) trait LogReader {
     fn read_segment_header(
         &self,
         id: LogID,
-    ) -> CacheResult<SegmentHeader, ()>;
+    ) -> Result<SegmentHeader, ()>;
 
     fn read_segment_trailer(
         &self,
         id: LogID,
-    ) -> CacheResult<SegmentTrailer, ()>;
+    ) -> Result<SegmentTrailer, ()>;
 
     fn read_message_header(
         &self,
         id: LogID,
-    ) -> CacheResult<MessageHeader, ()>;
+    ) -> Result<MessageHeader, ()>;
 
     fn read_message(
         &self,
         lid: LogID,
         config: &Config,
-    ) -> CacheResult<LogRead, ()>;
+    ) -> Result<LogRead, ()>;
 }
 
 impl LogReader for File {
     fn read_segment_header(
         &self,
         lid: LogID,
-    ) -> CacheResult<SegmentHeader, ()> {
+    ) -> Result<SegmentHeader, ()> {
         trace!("reading segment header at {}", lid);
 
         let mut seg_header_buf = [0u8; SEG_HEADER_LEN];
@@ -46,7 +46,7 @@ impl LogReader for File {
     fn read_segment_trailer(
         &self,
         lid: LogID,
-    ) -> CacheResult<SegmentTrailer, ()> {
+    ) -> Result<SegmentTrailer, ()> {
         trace!("reading segment trailer at {}", lid);
 
         let mut seg_trailer_buf = [0u8; SEG_TRAILER_LEN];
@@ -58,7 +58,7 @@ impl LogReader for File {
     fn read_message_header(
         &self,
         lid: LogID,
-    ) -> CacheResult<MessageHeader, ()> {
+    ) -> Result<MessageHeader, ()> {
         let mut msg_header_buf = [0u8; MSG_HEADER_LEN];
         self.pread_exact(&mut msg_header_buf, lid)?;
 
@@ -70,7 +70,7 @@ impl LogReader for File {
         &self,
         lid: LogID,
         config: &Config,
-    ) -> CacheResult<LogRead, ()> {
+    ) -> Result<LogRead, ()> {
         let _measure = Measure::new(&M.read);
         let segment_len = config.io_buf_size;
         let seg_start =

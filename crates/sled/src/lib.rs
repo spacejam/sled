@@ -26,6 +26,12 @@
 
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
+#![cfg_attr(test, deny(bad_style))]
+#![cfg_attr(test, deny(future_incompatible))]
+#![cfg_attr(test, deny(nonstandard_style))]
+#![cfg_attr(test, deny(rust_2018_compatibility))]
+// TODO turn this on closer to the migration.
+// #![cfg_attr(test, deny(rust_2018_idioms))]
 #![cfg_attr(feature = "clippy", feature(plugin))]
 #![cfg_attr(feature = "clippy", plugin(clippy))]
 #![cfg_attr(feature = "clippy", allow(inline_always))]
@@ -44,9 +50,7 @@ pub use tree::{Iter, Tree};
 
 use pagecache::*;
 
-pub use pagecache::{
-    CacheResult as DbResult, Config, ConfigBuilder, Error,
-};
+pub use pagecache::{Config, ConfigBuilder, Error, Result};
 
 mod tree;
 

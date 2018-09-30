@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use self::reader::LogReader;
 use super::*;
 
 #[doc(hidden)]
@@ -13,7 +12,8 @@ pub const SEG_HEADER_LEN: usize = 10;
 pub const SEG_TRAILER_LEN: usize = 10;
 
 #[doc(hidden)]
-pub const EXTERNAL_VALUE_LEN: usize = std::mem::size_of::<Lsn>();
+pub(crate) const EXTERNAL_VALUE_LEN: usize =
+    std::mem::size_of::<Lsn>();
 
 /// A sequential store which allows users to create
 /// reservations placed at known log offsets, used
@@ -64,7 +64,7 @@ impl Log {
     pub fn start<R>(
         config: Config,
         snapshot: Snapshot<R>,
-    ) -> CacheResult<Log, ()> {
+    ) -> Result<Log, ()> {
         let iobufs =
             Arc::new(IoBufs::start(config.clone(), snapshot)?);
         let flusher = periodic::Periodic::new(
@@ -81,7 +81,7 @@ impl Log {
     }
 
     /// Starts a log for use without a materializer.
-    pub fn start_raw_log(config: Config) -> CacheResult<Log, ()> {
+    pub fn start_raw_log(config: Config) -> Result<Log, ()> {
         assert_eq!(config.segment_mode, SegmentMode::Linear);
         let log_iter = raw_segment_iter_from(0, &config)?;
 
@@ -95,7 +95,7 @@ impl Log {
     }
 
     /// Flushes any pending IO buffers to disk to ensure durability.
-    pub fn flush(&self) -> CacheResult<(), ()> {
+    pub fn flush(&self) -> Result<(), ()> {
         self.iobufs.flush()
     }
 
@@ -103,7 +103,7 @@ impl Log {
     pub fn reserve(
         &self,
         buf: Vec<u8>,
-    ) -> CacheResult<Reservation, ()> {
+    ) -> Result<Reservation<'_>, ()> {
         self.iobufs.reserve(buf)
     }
 
@@ -113,16 +113,13 @@ impl Log {
     pub(super) fn reserve_external(
         &self,
         external_ptr: ExternalPointer,
-    ) -> CacheResult<Reservation, ()> {
+    ) -> Result<Reservation<'_>, ()> {
         self.iobufs.reserve_external(external_ptr)
     }
 
     /// Write a buffer into the log. Returns the log sequence
     /// number and the file offset of the write.
-    pub fn write(
-        &self,
-        buf: Vec<u8>,
-    ) -> CacheResult<(Lsn, DiskPtr), ()> {
+    pub fn write(&self, buf: Vec<u8>) -> Result<(Lsn, DiskPtr), ()> {
         self.iobufs.reserve(buf).and_then(|res| res.complete())
     }
 
@@ -159,7 +156,7 @@ impl Log {
         &self,
         lsn: Lsn,
         ptr: DiskPtr,
-    ) -> CacheResult<LogRead, ()> {
+    ) -> Result<LogRead, ()> {
         trace!("reading log lsn {} ptr {}", lsn, ptr);
 
         self.make_stable(lsn)?;
@@ -195,7 +192,7 @@ impl Log {
 
     /// blocks until the specified log sequence number has
     /// been made stable on disk
-    pub fn make_stable(&self, lsn: Lsn) -> CacheResult<(), ()> {
+    pub fn make_stable(&self, lsn: Lsn) -> Result<(), ()> {
         self.iobufs.make_stable(lsn)
     }
 
@@ -221,18 +218,18 @@ pub(crate) enum MessageKind {
 /// All log messages are prepended with this header
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) struct MessageHeader {
-    pub kind: MessageKind,
-    pub lsn: Lsn,
-    pub len: usize,
-    pub crc16: [u8; 2],
+    pub(crate) kind: MessageKind,
+    pub(crate) lsn: Lsn,
+    pub(crate) len: usize,
+    pub(crate) crc16: [u8; 2],
 }
 
 /// A segment's header contains the new base LSN and a reference
 /// to the previous log segment.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) struct SegmentHeader {
-    pub lsn: Lsn,
-    pub ok: bool,
+    pub(crate) lsn: Lsn,
+    pub(crate) ok: bool,
 }
 
 /// A segment's trailer contains the base Lsn for the segment.
@@ -240,8 +237,8 @@ pub(crate) struct SegmentHeader {
 /// and helps us indicate if a segment has been torn.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) struct SegmentTrailer {
-    pub lsn: Lsn,
-    pub ok: bool,
+    pub(crate) lsn: Lsn,
+    pub(crate) ok: bool,
 }
 
 #[doc(hidden)]

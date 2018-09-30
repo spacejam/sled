@@ -7,11 +7,11 @@ use std::time::Duration;
 
 use super::*;
 
-pub trait Callback: Send + 'static {
+pub(crate) trait Callback: Send + 'static {
     fn call(&self);
 }
 
-pub struct Periodic<C: Callback> {
+pub(crate) struct Periodic<C: Callback> {
     shutdown: Arc<AtomicBool>,
     join_handle: Option<std::thread::JoinHandle<()>>,
     _marker: PhantomData<C>,
@@ -38,8 +38,7 @@ impl<C: Callback> Periodic<C> {
                             flush_every_ms,
                         ));
                     }
-                })
-                .unwrap()
+                }).unwrap()
         });
 
         Periodic {

@@ -51,7 +51,7 @@ impl PageState {
     }
 
     /// Iterate over the (lsn, lid) pairs that hold this page's state.
-    pub fn iter(&self) -> Box<Iterator<Item = (Lsn, DiskPtr)>> {
+    pub fn iter(&self) -> Box<dyn Iterator<Item = (Lsn, DiskPtr)>> {
         match self {
             &PageState::Present(ref items) => {
                 Box::new(items.clone().into_iter())
@@ -88,7 +88,7 @@ impl<R> Default for Snapshot<R> {
 impl<R> Snapshot<R> {
     fn apply<P>(
         &mut self,
-        materializer: &Materializer<PageFrag = P, Recovery = R>,
+        materializer: &dyn Materializer<PageFrag = P, Recovery = R>,
         lsn: Lsn,
         disk_ptr: DiskPtr,
         bytes: &[u8],
@@ -300,7 +300,7 @@ pub(super) fn advance_snapshot<PM, P, R>(
     iter: LogIter,
     mut snapshot: Snapshot<R>,
     config: &Config,
-) -> CacheResult<Snapshot<R>, ()>
+) -> Result<Snapshot<R>, ()>
 where
     PM: Materializer<Recovery = R, PageFrag = P>,
     P: 'static
@@ -366,7 +366,7 @@ where
 /// the tip of the data file, if present.
 pub fn read_snapshot_or_default<PM, P, R>(
     config: &Config,
-) -> CacheResult<Snapshot<R>, ()>
+) -> Result<Snapshot<R>, ()>
 where
     PM: Materializer<Recovery = R, PageFrag = P>,
     P: 'static
@@ -446,10 +446,10 @@ where
     Ok(deserialize::<Snapshot<R>>(&*bytes).ok())
 }
 
-pub fn write_snapshot<R>(
+pub(crate) fn write_snapshot<R>(
     config: &Config,
     snapshot: &Snapshot<R>,
-) -> CacheResult<(), ()>
+) -> Result<(), ()>
 where
     R: Debug + Clone + Serialize + DeserializeOwned + Send,
 {

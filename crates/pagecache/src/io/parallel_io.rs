@@ -10,7 +10,7 @@ use std::os::unix::fs::FileExt;
 use std::os::windows::fs::FileExt;
 
 /// Multithreaded IO support for Files
-pub trait Pio {
+pub(crate) trait Pio {
     /// Read from a specific offset without changing
     /// the underlying file offset.
     fn pread_exact(
@@ -88,7 +88,8 @@ impl Pio for std::fs::File {
 // HACK HACK HACK get this working with real parallel IO
 #[cfg(windows)]
 lazy_static! {
-    pub static ref GLOBAL_FILE_LOCK: Mutex<()> = Mutex::new(());
+    pub(crate) static ref GLOBAL_FILE_LOCK: Mutex<()> =
+        Mutex::new(());
 }
 
 #[cfg(windows)]

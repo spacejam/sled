@@ -5,7 +5,7 @@ use super::*;
 pub(crate) fn read_blob(
     external_ptr: Lsn,
     config: &Config,
-) -> CacheResult<Vec<u8>, ()> {
+) -> Result<Vec<u8>, ()> {
     let path = config.blob_path(external_ptr);
     let mut f = std::fs::OpenOptions::new().read(true).open(&path)?;
 
@@ -34,7 +34,7 @@ pub(crate) fn write_blob(
     config: &Config,
     id: Lsn,
     data: Vec<u8>,
-) -> CacheResult<(), ()> {
+) -> Result<(), ()> {
     let path = config.blob_path(id);
     let mut f = std::fs::OpenOptions::new()
         .write(true)
@@ -51,7 +51,7 @@ pub(crate) fn write_blob(
 pub(crate) fn gc_blobs(
     config: &Config,
     stable_lsn: Lsn,
-) -> CacheResult<(), ()> {
+) -> Result<(), ()> {
     let stable = config.blob_path(stable_lsn);
     let blob_dir = stable.parent().unwrap();
     let blobs = std::fs::read_dir(blob_dir)?;
@@ -64,7 +64,7 @@ pub(crate) fn gc_blobs(
     for blob in blobs {
         let path = blob?.path();
         let lsn_str = path.file_name().unwrap().to_str().unwrap();
-        let lsn_res: Result<Lsn, _> = lsn_str.parse();
+        let lsn_res: std::result::Result<Lsn, _> = lsn_str.parse();
 
         if let Err(e) = lsn_res {
             return Err(Error::Unsupported(format!(
@@ -92,7 +92,7 @@ pub(crate) fn gc_blobs(
 pub(crate) fn remove_blob(
     id: Lsn,
     config: &Config,
-) -> CacheResult<(), ()> {
+) -> Result<(), ()> {
     let path = config.blob_path(id);
 
     if let Err(e) = std::fs::remove_file(&path) {

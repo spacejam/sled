@@ -5,7 +5,7 @@ use super::*;
 
 pub struct LogIter {
     pub config: Config,
-    pub segment_iter: Box<Iterator<Item = (Lsn, LogID)>>,
+    pub segment_iter: Box<dyn Iterator<Item = (Lsn, LogID)>>,
     pub segment_base: Option<LogID>,
     pub segment_len: usize,
     pub use_compression: bool,
@@ -166,7 +166,7 @@ impl LogIter {
         &mut self,
         lsn: Lsn,
         offset: LogID,
-    ) -> CacheResult<(), ()> {
+    ) -> Result<(), ()> {
         trace!(
             "LogIter::read_segment lsn: {:?} cur_lsn: {:?}",
             lsn,

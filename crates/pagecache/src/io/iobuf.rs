@@ -80,10 +80,10 @@ pub(super) struct IoBufs {
 /// `IoBufs` is a set of lock-free buffers for coordinating
 /// writes to underlying storage.
 impl IoBufs {
-    pub fn start<R>(
+    pub(crate) fn start<R>(
         config: Config,
         mut snapshot: Snapshot<R>,
-    ) -> CacheResult<IoBufs, ()> {
+    ) -> Result<IoBufs, ()> {
         // open file for writing
         let file = config.file()?;
 
@@ -239,7 +239,7 @@ impl IoBufs {
         raw_buf: Vec<u8>,
         lsn: Lsn,
         over_blob_threshold: bool,
-    ) -> CacheResult<Vec<u8>, ()> {
+    ) -> Result<Vec<u8>, ()> {
         let buf = if over_blob_threshold {
             // write blob to file
             io_fail!(self, "external blob write");
@@ -289,7 +289,7 @@ impl IoBufs {
     pub(super) fn reserve(
         &self,
         raw_buf: Vec<u8>,
-    ) -> CacheResult<Reservation, ()> {
+    ) -> Result<Reservation<'_>, ()> {
         self.reserve_inner(raw_buf, false)
     }
 
@@ -299,7 +299,7 @@ impl IoBufs {
     pub(super) fn reserve_external(
         &self,
         external_ptr: ExternalPointer,
-    ) -> CacheResult<Reservation, ()> {
+    ) -> Result<Reservation<'_>, ()> {
         let lsn_buf: [u8; size_of::<ExternalPointer>()] =
             u64_to_arr(external_ptr as u64);
 
@@ -310,7 +310,7 @@ impl IoBufs {
         &self,
         raw_buf: Vec<u8>,
         is_external: bool,
-    ) -> CacheResult<Reservation, ()> {
+    ) -> Result<Reservation<'_>, ()> {
         let _measure = Measure::new(&M.reserve);
 
         let io_bufs = self.config.io_bufs;
@@ -536,7 +536,7 @@ impl IoBufs {
     pub(super) fn exit_reservation(
         &self,
         idx: usize,
-    ) -> CacheResult<(), ()> {
+    ) -> Result<(), ()> {
         let iobuf = &self.bufs[idx];
         let mut header = iobuf.get_header();
 
@@ -574,7 +574,7 @@ impl IoBufs {
 
     /// blocks until the specified log sequence number has
     /// been made stable on disk
-    pub fn make_stable(&self, lsn: Lsn) -> CacheResult<(), ()> {
+    pub(crate) fn make_stable(&self, lsn: Lsn) -> Result<(), ()> {
         let _measure = Measure::new(&M.make_stable);
 
         // NB before we write the 0th byte of the file, stable  is -1
@@ -617,7 +617,7 @@ impl IoBufs {
 
     /// Called by users who wish to force the current buffer
     /// to flush some pending writes.
-    pub(super) fn flush(&self) -> CacheResult<(), ()> {
+    pub(super) fn flush(&self) -> Result<(), ()> {
         let max_reserved_lsn =
             self.max_reserved_lsn.load(SeqCst) as Lsn;
         self.make_stable(max_reserved_lsn)
@@ -653,7 +653,7 @@ impl IoBufs {
         idx: usize,
         header: Header,
         from_reserve: bool,
-    ) -> CacheResult<(), ()> {
+    ) -> Result<(), ()> {
         let iobuf = &self.bufs[idx];
 
         if is_sealed(header) {
@@ -850,7 +850,7 @@ impl IoBufs {
 
     // Write an IO buffer's data to stable storage and set up the
     // next IO buffer for writing.
-    fn write_to_log(&self, idx: usize) -> CacheResult<(), ()> {
+    fn write_to_log(&self, idx: usize) -> Result<(), ()> {
         let _measure = Measure::new(&M.write_to_log);
         let iobuf = &self.bufs[idx];
         let header = iobuf.get_header();
@@ -1086,8 +1086,8 @@ impl periodic::Callback for std::sync::Arc<IoBufs> {
 impl Debug for IoBufs {
     fn fmt(
         &self,
-        formatter: &mut fmt::Formatter,
-    ) -> Result<(), fmt::Error> {
+        formatter: &mut fmt::Formatter<'_>,
+    ) -> std::result::Result<(), fmt::Error> {
         debug_delay();
         let current_buf = self.current_buf.load(SeqCst);
         debug_delay();
@@ -1103,8 +1103,8 @@ impl Debug for IoBufs {
 impl Debug for IoBuf {
     fn fmt(
         &self,
-        formatter: &mut fmt::Formatter,
-    ) -> Result<(), fmt::Error> {
+        formatter: &mut fmt::Formatter<'_>,
+    ) -> std::result::Result<(), fmt::Error> {
         let header = self.get_header();
         formatter.write_fmt(format_args!(
             "\n\tIoBuf {{ lid: {}, n_writers: {}, offset: \
@@ -1221,7 +1221,7 @@ impl IoBuf {
         &self,
         old: Header,
         new: Header,
-    ) -> Result<Header, Header> {
+    ) -> std::result::Result<Header, Header> {
         debug_delay();
         let res = self.header.compare_and_swap(
             old as usize,
@@ -1239,7 +1239,7 @@ impl IoBuf {
         &self,
         old: LogID,
         new: LogID,
-    ) -> Result<LogID, LogID> {
+    ) -> std::result::Result<LogID, LogID> {
         debug_delay();
         let res = self.lid.compare_and_swap(
             old as usize,

@@ -15,7 +15,6 @@ use super::*;
 mod blob_io;
 mod iobuf;
 mod iterator;
-mod log;
 mod materializer;
 mod page_cache;
 mod parallel_io;
@@ -24,20 +23,25 @@ mod reservation;
 mod segment;
 mod snapshot;
 
-#[doc(hidden)]
-pub use self::log::{
-    LogRead, EXTERNAL_VALUE_LEN, MSG_HEADER_LEN, SEG_HEADER_LEN,
-    SEG_TRAILER_LEN,
-};
+pub mod log;
+
+pub(crate) use self::log::EXTERNAL_VALUE_LEN;
+
+pub use self::log::LogRead;
 
 pub(crate) use self::blob_io::{
     gc_blobs, read_blob, remove_blob, write_blob,
 };
 
-pub(super) use self::reader::LogReader;
+pub(crate) use self::reader::LogReader;
 
 #[doc(hidden)]
 pub use self::snapshot::{read_snapshot_or_default, Snapshot};
+
+#[doc(hidden)]
+use self::log::{
+    MessageHeader, MessageKind, SegmentHeader, SegmentTrailer,
+};
 
 pub use self::log::Log;
 pub use self::materializer::{Materializer, NullMaterializer};
@@ -47,9 +51,6 @@ pub use self::segment::SegmentMode;
 
 use self::iobuf::IoBufs;
 use self::iterator::LogIter;
-use self::log::{
-    MessageHeader, MessageKind, SegmentHeader, SegmentTrailer,
-};
 use self::page_cache::{LoggedUpdate, Update};
 use self::parallel_io::Pio;
 use self::segment::{raw_segment_iter_from, SegmentAccountant};
