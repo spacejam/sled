@@ -1,3 +1,30 @@
+//! # Working with `Log`
+//!
+//! ```
+//! let config = pagecache::ConfigBuilder::new()
+//!     .temporary(true)
+//!     .segment_mode(pagecache::SegmentMode::Linear)
+//!     .build();
+//! let log = pagecache::Log::start_raw_log(config).unwrap();
+//! let (first_lsn, _first_offset) = log.write(b"1".to_vec()).unwrap();
+//! log.write(b"22".to_vec()).unwrap();
+//! log.write(b"333".to_vec()).unwrap();
+//!
+//! // stick an abort in the middle, which should not be returned
+//! let res = log.reserve(b"never_gonna_hit_disk".to_vec()).unwrap();
+//! res.abort().unwrap();
+//!
+//! log.write(b"4444".to_vec());
+//! let (last_lsn, _last_offset) = log.write(b"55555".to_vec()).unwrap();
+//! log.make_stable(last_lsn).unwrap();
+//! let mut iter = log.iter_from(first_lsn);
+//! assert_eq!(iter.next().unwrap().2, b"1".to_vec());
+//! assert_eq!(iter.next().unwrap().2, b"22".to_vec());
+//! assert_eq!(iter.next().unwrap().2, b"333".to_vec());
+//! assert_eq!(iter.next().unwrap().2, b"4444".to_vec());
+//! assert_eq!(iter.next().unwrap().2, b"55555".to_vec());
+//! assert_eq!(iter.next(), None);
+//! ```
 use std::sync::Arc;
 
 use super::*;
@@ -19,34 +46,6 @@ pub(crate) const EXTERNAL_VALUE_LEN: usize =
 /// reservations placed at known log offsets, used
 /// for writing persistent data structures that need
 /// to know where to find persisted bits in the future.
-///
-/// # Working with `Log`
-///
-/// ```
-/// let conf = pagecache::ConfigBuilder::new()
-///     .temporary(true)
-///     .segment_mode(pagecache::SegmentMode::Linear)
-///     .build();
-/// let log = pagecache::Log::start_raw_log(conf).unwrap();
-/// let (first_lsn, _first_offset) = log.write(b"1".to_vec()).unwrap();
-/// log.write(b"22".to_vec()).unwrap();
-/// log.write(b"333".to_vec()).unwrap();
-///
-/// // stick an abort in the middle, which should not be returned
-/// let res = log.reserve(b"never_gonna_hit_disk".to_vec()).unwrap();
-/// res.abort().unwrap();
-///
-/// log.write(b"4444".to_vec());
-/// let (last_lsn, _last_offset) = log.write(b"55555".to_vec()).unwrap();
-/// log.make_stable(last_lsn).unwrap();
-/// let mut iter = log.iter_from(first_lsn);
-/// assert_eq!(iter.next().unwrap().2, b"1".to_vec());
-/// assert_eq!(iter.next().unwrap().2, b"22".to_vec());
-/// assert_eq!(iter.next().unwrap().2, b"333".to_vec());
-/// assert_eq!(iter.next().unwrap().2, b"4444".to_vec());
-/// assert_eq!(iter.next().unwrap().2, b"55555".to_vec());
-/// assert_eq!(iter.next(), None);
-/// ```
 pub struct Log {
     /// iobufs is the underlying lock-free IO write buffer.
     iobufs: Arc<IoBufs>,
@@ -197,7 +196,7 @@ impl Log {
     }
 
     // SegmentAccountant access for coordination with the `PageCache`
-    pub(in io) fn with_sa<B, F>(&self, f: F) -> B
+    pub(crate) fn with_sa<B, F>(&self, f: F) -> B
     where
         F: FnOnce(&mut SegmentAccountant) -> B,
     {

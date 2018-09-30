@@ -69,9 +69,9 @@ impl Reactor for IdGen {
     type Peer = String;
     type Message = Msg;
 
-    fn start(conf: IdGenConf) -> Result<IdGen, ()> {
+    fn start(config: IdGenConf) -> Result<IdGen, ()> {
         Ok(IdGen {
-            peers: conf.peers,
+            peers: config.peers,
             in_flight: HashMap::new(),
             req_counter: 0,
         })

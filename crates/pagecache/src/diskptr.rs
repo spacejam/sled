@@ -1,6 +1,7 @@
 use super::*;
 
-use io::{read_blob, LogReader};
+// explicitly
+use super::LogReader;
 
 /// A pointer to a location on disk or an off-log blob.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

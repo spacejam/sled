@@ -1,3 +1,9 @@
+Warning: Unknown configuration option `fn_call_width`
+Warning: Unknown configuration option `ideal_width`
+Warning: Unknown configuration option `reorder_imported_names`
+Warning: Unknown configuration option `reorder_imports_in_group`
+Warning: Unknown configuration option `struct_lit_multiline_style`
+Warning: Unknown configuration option `where_style`
 //! An example of how to build multi-key transactions on top of
 //! sled's single-key atomicity guarantees.
 //!
@@ -25,15 +31,13 @@ use std::sync::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use sled::{Config, DbResult, Error, Tree};
 
 macro_rules! rep_no_copy {
-    ($e:expr; $n:expr) => {
-        {
-            let mut v = Vec::with_capacity($n);
-            for _ in 0..$n {
-                v.push($e);
-            }
-            v
+    ($e:expr; $n:expr) => {{
+        let mut v = Vec::with_capacity($n);
+        for _ in 0..$n {
+            v.push($e);
         }
-    };
+        v
+    }};
 }
 
 type TxId = u64;
@@ -240,8 +244,8 @@ impl<'a> Tx<'a> {
 
 #[test]
 fn it_works() {
-    let conf = sled::ConfigBuilder::new().temporary(true).build();
-    let txdb = TxDb::start(conf).unwrap();
+    let config = sled::ConfigBuilder::new().temporary(true).build();
+    let txdb = TxDb::start(config).unwrap();
 
     let mut tx = txdb.tx();
     tx.set(b"cats".to_vec(), b"meow".to_vec());
@@ -256,7 +260,10 @@ fn it_works() {
     tx.get(b"dogs".to_vec());
     assert_eq!(
         tx.execute(),
-        Ok(TxRet::Committed(vec![(b"dogs".to_vec(), Some(b"meow".to_vec()))]))
+        Ok(TxRet::Committed(vec![(
+            b"dogs".to_vec(),
+            Some(b"meow".to_vec())
+        )]))
     );
 
     let mut tx = txdb.tx();

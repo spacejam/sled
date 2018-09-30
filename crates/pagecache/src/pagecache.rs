@@ -193,9 +193,9 @@ where
 /// }
 ///
 /// fn main() {
-///     let conf = pagecache::ConfigBuilder::new().temporary(true).build();
+///     let config = pagecache::ConfigBuilder::new().temporary(true).build();
 ///     let pc: pagecache::PageCache<TestMaterializer, _, _> =
-///         pagecache::PageCache::start(conf).unwrap();
+///         pagecache::PageCache::start(config).unwrap();
 ///     {
 ///         let guard = pin();
 ///         let id = pc.allocate(&guard).unwrap();

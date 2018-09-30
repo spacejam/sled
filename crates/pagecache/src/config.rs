@@ -404,7 +404,7 @@ impl Config {
             })?;
         }
 
-        self.verify_conf_changes_ok()?;
+        self.verify_config_changes_ok()?;
 
         // open the data file
         let mut options = fs::OpenOptions::new();
@@ -426,7 +426,7 @@ impl Config {
         Ok(())
     }
 
-    // panics if conf options are outside of advised range
+    // panics if config options are outside of advised range
     fn validate(&self) -> Result<(), ()> {
         supported!(
             self.inner.io_bufs <= 32,
@@ -480,7 +480,7 @@ impl Config {
         Ok(())
     }
 
-    fn verify_conf_changes_ok(&self) -> Result<(), ()> {
+    fn verify_config_changes_ok(&self) -> Result<(), ()> {
         match self.read_config() {
             Ok(Some(mut old)) => {
                 let old_tmp = old.tmp_path;
@@ -517,7 +517,7 @@ impl Config {
         let crc: u64 = crc64(&*bytes);
         let crc_arr = u64_to_arr(crc);
 
-        let path = self.conf_path();
+        let path = self.config_path();
 
         let mut f = std::fs::OpenOptions::new()
             .write(true)
@@ -534,7 +534,7 @@ impl Config {
     }
 
     fn read_config(&self) -> std::io::Result<Option<ConfigBuilder>> {
-        let path = self.conf_path();
+        let path = self.config_path();
 
         let f_res =
             std::fs::OpenOptions::new().read(true).open(&path);
@@ -592,7 +592,7 @@ impl Config {
         path
     }
 
-    fn conf_path(&self) -> PathBuf {
+    fn config_path(&self) -> PathBuf {
         let mut path = self.get_path();
         path.push("conf");
         path

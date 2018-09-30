@@ -62,9 +62,9 @@ impl Materializer for TestMaterializer {
 }
 
 fn main() {
-    let conf = pagecache::ConfigBuilder::new().temporary(true);
+    let config = pagecache::ConfigBuilder::new().temporary(true);
     let pc: pagecache::PageCache<TestMaterializer, _, _> =
-        pagecache::PageCache::start(conf.build());
+        pagecache::PageCache::start(config.build());
     {
         let guard = pin();
         let id = pc.allocate(&guard);
@@ -87,4 +87,3 @@ fn main() {
     }
 }
 ```
-

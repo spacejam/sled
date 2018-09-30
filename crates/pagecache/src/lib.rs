@@ -48,13 +48,9 @@ use ds::Stack;
 /// general-purpose configuration
 pub use config::{Config, ConfigBuilder};
 pub use diskptr::DiskPtr;
-pub use io::{
-    read_snapshot_or_default, CacheEntry, Log, LogRead, Materializer,
-    NullMaterializer, PageCache, PageGet, SegmentMode,
-};
 
 #[doc(hidden)]
-pub use self::io::log::{
+pub use self::log::{
     MSG_HEADER_LEN, SEG_HEADER_LEN, SEG_TRAILER_LEN,
 };
 
@@ -78,21 +74,41 @@ macro_rules! rep_no_copy {
     }};
 }
 
+mod blob_io;
 mod config;
 mod diskptr;
 mod ds;
 mod hash;
-mod io;
+mod iobuf;
+mod iterator;
+mod materializer;
 mod metrics;
+mod pagecache;
+mod parallel_io;
 mod periodic;
+mod reader;
+mod reservation;
 mod result;
+mod segment;
+mod snapshot;
 mod tx;
+
+pub mod log;
 
 use ds::*;
 use hash::{crc16_arr, crc64};
 use historian::Histo;
 use metrics::Metrics;
 
+use std::cell::UnsafeCell;
+use std::fmt::{self, Debug};
+use std::io;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::SeqCst;
+
+use bincode::{deserialize, serialize};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 /// An offset for a storage file segment.
 pub type SegmentID = usize;
 
@@ -108,7 +124,7 @@ pub type Lsn = i64;
 /// A page identifier.
 pub type PageID = usize;
 
-type PagePtrInner<'g, P> = epoch::Shared<'g, Node<io::CacheEntry<P>>>;
+type PagePtrInner<'g, P> = epoch::Shared<'g, Node<CacheEntry<P>>>;
 
 /// A pointer to shared lock-free state bound by a pinned epoch's lifetime.
 #[derive(Debug, Clone, PartialEq)]
@@ -240,3 +256,48 @@ fn arr_to_u32(arr: [u8; 4]) -> u32 {
 fn u32_to_arr(u: u32) -> [u8; 4] {
     [u as u8, (u >> 8) as u8, (u >> 16) as u8, (u >> 24) as u8]
 }
+
+use self::log::EXTERNAL_VALUE_LEN;
+
+pub use self::log::LogRead;
+
+use self::blob_io::{gc_blobs, read_blob, remove_blob, write_blob};
+
+use self::reader::LogReader;
+
+#[doc(hidden)]
+pub use self::snapshot::{read_snapshot_or_default, Snapshot};
+
+#[doc(hidden)]
+use self::log::{
+    MessageHeader, MessageKind, SegmentHeader, SegmentTrailer,
+};
+
+pub use self::log::Log;
+pub use self::materializer::{Materializer, NullMaterializer};
+pub use self::pagecache::{CacheEntry, PageCache, PageGet};
+pub use self::reservation::Reservation;
+pub use self::segment::SegmentMode;
+
+use self::iobuf::IoBufs;
+use self::iterator::LogIter;
+use self::pagecache::{LoggedUpdate, Update};
+use self::parallel_io::Pio;
+use self::segment::{raw_segment_iter_from, SegmentAccountant};
+use self::snapshot::{advance_snapshot, PageState};
+
+// This message should be skipped to preserve linearizability.
+const FAILED_FLUSH: u8 = 0;
+
+// This message represents valid data, stored inline.
+const SUCCESSFUL_FLUSH: u8 = 1;
+
+// This message represents valid data, stored externally.
+const SUCCESSFUL_EXTERNAL_FLUSH: u8 = 2;
+
+// This message represents a pad.
+const SEGMENT_PAD: u8 = 3;
+
+// The EVIL_BYTE is written to force detection of
+// a corruption when dealing with unused segment space.
+const EVIL_BYTE: u8 = 6;
