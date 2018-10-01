@@ -9,7 +9,7 @@ use super::*;
 // TxAbort(TxID), // in-mem
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum Frag {
+pub(crate) enum Frag {
     Set(Key, Value),
     Del(Key),
     Merge(Key, Value),
@@ -21,13 +21,13 @@ pub enum Frag {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ParentSplit {
-    pub at: Bound,
-    pub to: PageId,
+pub(crate) struct ParentSplit {
+    pub(crate) at: Bound,
+    pub(crate) to: PageId,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ChildSplit {
-    pub at: Bound,
-    pub to: PageId,
+pub(crate) struct ChildSplit {
+    pub(crate) at: Bound,
+    pub(crate) to: PageId,
 }

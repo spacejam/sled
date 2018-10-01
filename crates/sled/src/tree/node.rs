@@ -1,7 +1,7 @@
 use super::*;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Node {
+pub struct Node {
     pub(crate) id: PageId,
     pub(crate) data: Data,
     pub(crate) next: Option<PageId>,

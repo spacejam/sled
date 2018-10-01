@@ -1,14 +1,14 @@
 use std::cmp::Ordering;
 
 #[derive(Clone, Debug, Ord, Eq, PartialEq, Serialize, Deserialize)]
-pub enum Bound {
+pub(crate) enum Bound {
     Inclusive(Vec<u8>),
     Exclusive(Vec<u8>),
     Inf,
 }
 
 impl Bound {
-    pub fn inner(&self) -> &[u8] {
+    pub(crate) fn inner(&self) -> &[u8] {
         match *self {
             Bound::Inclusive(ref v) | Bound::Exclusive(ref v) => &*v,
             Bound::Inf => panic!("inner() called on Bound::Inf"),

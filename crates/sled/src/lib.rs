@@ -41,23 +41,6 @@ extern crate serde_derive;
 #[macro_use]
 extern crate log as _log;
 
-/// atomic lock-free tree
-pub use tree::{Iter, Tree};
-
-use pagecache::*;
-
-pub use pagecache::{Config, ConfigBuilder, Error, Result};
-
-mod tree;
-
-type Key = Vec<u8>;
-type KeyRef<'a> = &'a [u8];
-type Value = Vec<u8>;
-
-type TreePtr<'g> = pagecache::PagePtr<'g, tree::Frag>;
-
-use super::*;
-
 mod bound;
 mod data;
 mod frag;
@@ -66,6 +49,14 @@ mod materializer;
 mod node;
 mod prefix;
 mod tree;
+
+pub use self::iter::Iter;
+/// atomic lock-free tree
+pub use self::tree::Tree;
+
+use pagecache::*;
+
+pub use pagecache::{Config, ConfigBuilder, Error, Result};
 
 use self::bound::Bound;
 use self::data::Data;
@@ -76,5 +67,8 @@ use self::prefix::{prefix_cmp, prefix_decode, prefix_encode};
 pub(crate) use self::frag::Frag;
 pub(crate) use self::materializer::BLinkMaterializer;
 
-pub use self::iter::Iter;
-pub use self::tree::Tree;
+type Key = Vec<u8>;
+type KeyRef<'a> = &'a [u8];
+type Value = Vec<u8>;
+
+type TreePtr<'g> = pagecache::PagePtr<'g, Frag>;

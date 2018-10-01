@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use super::*;
 
 #[derive(Debug)]
-pub struct BLinkMaterializer {
+pub(crate) struct BLinkMaterializer {
     pub(super) roots: Mutex<Vec<(PageId, PageId)>>,
     config: Config,
 }

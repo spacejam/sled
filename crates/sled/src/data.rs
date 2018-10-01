@@ -3,20 +3,20 @@ use std::fmt::Debug;
 use super::*;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum Data {
+pub(crate) enum Data {
     Index(Vec<(Key, PageId)>),
     Leaf(Vec<(Key, Value)>),
 }
 
 impl Data {
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match *self {
             Data::Index(ref ptrs) => ptrs.len(),
             Data::Leaf(ref items) => items.len(),
         }
     }
 
-    pub fn split(&self, lhs_prefix: &[u8]) -> (Key, Data) {
+    pub(crate) fn split(&self, lhs_prefix: &[u8]) -> (Key, Data) {
         fn split_inner<T>(
             xs: &[(Key, T)],
             lhs_prefix: &[u8],
@@ -24,26 +24,27 @@ impl Data {
         where
             T: Clone + Debug + Ord,
         {
-            let mut decoded_xs: Vec<_> = xs.iter()
+            let mut decoded_xs: Vec<_> = xs
+                .iter()
                 .map(|&(ref k, ref v)| {
                     let decoded_k = prefix_decode(lhs_prefix, &*k);
                     (decoded_k, v.clone())
-                })
-                .collect();
+                }).collect();
             decoded_xs.sort();
 
             let (_lhs, rhs) =
                 decoded_xs.split_at(decoded_xs.len() / 2 + 1);
-            let split = rhs.first()
+            let split = rhs
+                .first()
                 .expect("rhs should contain at least one element")
                 .0
                 .clone();
-            let rhs_data: Vec<_> = rhs.iter()
+            let rhs_data: Vec<_> = rhs
+                .iter()
                 .map(|&(ref k, ref v)| {
                     let new_k = prefix_encode(&*split, k);
                     (new_k, v.clone())
-                })
-                .collect();
+                }).collect();
 
             (split, rhs_data)
         }
@@ -60,7 +61,7 @@ impl Data {
         }
     }
 
-    pub fn drop_gte(&mut self, at: &Bound, prefix: &[u8]) {
+    pub(crate) fn drop_gte(&mut self, at: &Bound, prefix: &[u8]) {
         let bound = at.inner();
         match *self {
             Data::Index(ref mut ptrs) => {
@@ -78,14 +79,14 @@ impl Data {
         }
     }
 
-    pub fn leaf(&self) -> Option<Vec<(Key, Value)>> {
+    pub(crate) fn leaf(&self) -> Option<Vec<(Key, Value)>> {
         match *self {
             Data::Index(_) => None,
             Data::Leaf(ref items) => Some(items.clone()),
         }
     }
 
-    pub fn leaf_ref(&self) -> Option<&Vec<(Key, Value)>> {
+    pub(crate) fn leaf_ref(&self) -> Option<&Vec<(Key, Value)>> {
         match *self {
             Data::Index(_) => None,
             Data::Leaf(ref items) => Some(items),
