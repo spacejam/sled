@@ -10,31 +10,31 @@ use super::*;
 pub(crate) trait LogReader {
     fn read_segment_header(
         &self,
-        id: LogID,
-    ) -> CacheResult<SegmentHeader, ()>;
+        id: LogId,
+    ) -> Result<SegmentHeader, ()>;
 
     fn read_segment_trailer(
         &self,
-        id: LogID,
-    ) -> CacheResult<SegmentTrailer, ()>;
+        id: LogId,
+    ) -> Result<SegmentTrailer, ()>;
 
     fn read_message_header(
         &self,
-        id: LogID,
-    ) -> CacheResult<MessageHeader, ()>;
+        id: LogId,
+    ) -> Result<MessageHeader, ()>;
 
     fn read_message(
         &self,
-        lid: LogID,
+        lid: LogId,
         config: &Config,
-    ) -> CacheResult<LogRead, ()>;
+    ) -> Result<LogRead, ()>;
 }
 
 impl LogReader for File {
     fn read_segment_header(
         &self,
-        lid: LogID,
-    ) -> CacheResult<SegmentHeader, ()> {
+        lid: LogId,
+    ) -> Result<SegmentHeader, ()> {
         trace!("reading segment header at {}", lid);
 
         let mut seg_header_buf = [0u8; SEG_HEADER_LEN];
@@ -45,8 +45,8 @@ impl LogReader for File {
 
     fn read_segment_trailer(
         &self,
-        lid: LogID,
-    ) -> CacheResult<SegmentTrailer, ()> {
+        lid: LogId,
+    ) -> Result<SegmentTrailer, ()> {
         trace!("reading segment trailer at {}", lid);
 
         let mut seg_trailer_buf = [0u8; SEG_TRAILER_LEN];
@@ -57,8 +57,8 @@ impl LogReader for File {
 
     fn read_message_header(
         &self,
-        lid: LogID,
-    ) -> CacheResult<MessageHeader, ()> {
+        lid: LogId,
+    ) -> Result<MessageHeader, ()> {
         let mut msg_header_buf = [0u8; MSG_HEADER_LEN];
         self.pread_exact(&mut msg_header_buf, lid)?;
 
@@ -68,24 +68,24 @@ impl LogReader for File {
     /// read a buffer from the disk
     fn read_message(
         &self,
-        lid: LogID,
+        lid: LogId,
         config: &Config,
-    ) -> CacheResult<LogRead, ()> {
+    ) -> Result<LogRead, ()> {
         let _measure = Measure::new(&M.read);
         let segment_len = config.io_buf_size;
         let seg_start =
-            lid / segment_len as LogID * segment_len as LogID;
+            lid / segment_len as LogId * segment_len as LogId;
         trace!(
             "reading message from segment: {} at lid: {}",
             seg_start,
             lid
         );
-        assert!(seg_start + SEG_HEADER_LEN as LogID <= lid);
+        assert!(seg_start + SEG_HEADER_LEN as LogId <= lid);
 
-        let ceiling = seg_start + segment_len as LogID
-            - SEG_TRAILER_LEN as LogID;
+        let ceiling = seg_start + segment_len as LogId
+            - SEG_TRAILER_LEN as LogId;
 
-        assert!(lid + MSG_HEADER_LEN as LogID <= ceiling);
+        assert!(lid + MSG_HEADER_LEN as LogId <= ceiling);
 
         let header = self.read_message_header(lid)?;
 
@@ -97,7 +97,7 @@ impl LogReader for File {
         }
 
         let max_possible_len =
-            (ceiling - lid - MSG_HEADER_LEN as LogID) as usize;
+            (ceiling - lid - MSG_HEADER_LEN as LogId) as usize;
         if header.len > max_possible_len {
             trace!("read a corrupted message of len {}", header.len);
             return Ok(LogRead::Corrupted(header.len));
@@ -114,7 +114,7 @@ impl LogReader for File {
         unsafe {
             buf.set_len(header.len);
         }
-        self.pread_exact(&mut buf, lid + MSG_HEADER_LEN as LogID)?;
+        self.pread_exact(&mut buf, lid + MSG_HEADER_LEN as LogId)?;
 
         let checksum = crc16_arr(&buf);
         if checksum != header.crc16 {
@@ -134,27 +134,27 @@ impl LogReader for File {
                 trace!("read pad at lsn {}", header.lsn);
                 Ok(LogRead::Pad(header.lsn))
             }
-            MessageKind::SuccessBlob => {
+            MessageKind::Blob => {
                 let mut id_bytes = [0u8; 8];
                 id_bytes.copy_from_slice(&*buf);
                 let id = arr_to_u64(id_bytes) as Lsn;
 
                 match read_blob(id, config) {
                     Ok(buf) => {
-                        trace!("read a successful external message");
+                        trace!("read a successful blob message");
 
-                        Ok(LogRead::External(header.lsn, buf, id))
+                        Ok(LogRead::Blob(header.lsn, buf, id))
                     }
                     Err(Error::Io(ref e))
                         if e.kind()
                             == std::io::ErrorKind::NotFound =>
                     {
-                        Ok(LogRead::DanglingExternal(header.lsn, id))
+                        Ok(LogRead::DanglingBlob(header.lsn, id))
                     }
                     Err(other_e) => Err(other_e),
                 }
             }
-            MessageKind::Success => {
+            MessageKind::Inline => {
                 trace!("read a successful inline message");
                 let buf = {
                     #[cfg(feature = "zstd")]

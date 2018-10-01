@@ -15,15 +15,15 @@ pub struct Snapshot<R> {
     /// the last lsn included in the `Snapshot`
     pub max_lsn: Lsn,
     /// the last lid included in the `Snapshot`
-    pub last_lid: LogID,
+    pub last_lid: LogId,
     /// the highest allocated pid
-    pub max_pid: PageID,
+    pub max_pid: PageId,
     /// the mapping from pages to (lsn, lid)
-    pub pt: HashMap<PageID, PageState>,
+    pub pt: HashMap<PageId, PageState>,
     /// replaced pages per segment index
-    pub replacements: HashMap<SegmentID, HashSet<(PageID, Lsn)>>,
+    pub replacements: HashMap<SegmentId, HashSet<(PageId, Lsn)>>,
     /// the free pids
-    pub free: HashSet<PageID>,
+    pub free: HashSet<PageId>,
     /// the `Materializer`-specific recovered state
     pub recovery: Option<R>,
 }
@@ -51,7 +51,7 @@ impl PageState {
     }
 
     /// Iterate over the (lsn, lid) pairs that hold this page's state.
-    pub fn iter(&self) -> Box<Iterator<Item = (Lsn, DiskPtr)>> {
+    pub fn iter(&self) -> Box<dyn Iterator<Item = (Lsn, DiskPtr)>> {
         match self {
             &PageState::Present(ref items) => {
                 Box::new(items.clone().into_iter())
@@ -88,7 +88,7 @@ impl<R> Default for Snapshot<R> {
 impl<R> Snapshot<R> {
     fn apply<P>(
         &mut self,
-        materializer: &Materializer<PageFrag = P, Recovery = R>,
+        materializer: &dyn Materializer<PageFrag = P, Recovery = R>,
         lsn: Lsn,
         disk_ptr: DiskPtr,
         bytes: &[u8],
@@ -133,7 +133,7 @@ impl<R> Snapshot<R> {
         let io_buf_size = config.io_buf_size;
 
         let replaced_at_idx =
-            disk_ptr.lid() as SegmentID / io_buf_size;
+            disk_ptr.lid() as SegmentId / io_buf_size;
 
         match prepend.update {
             Update::Append(partial_page) => {
@@ -230,7 +230,7 @@ impl<R> Snapshot<R> {
 
     fn replace_pid(
         &mut self,
-        pid: PageID,
+        pid: PageId,
         replaced_at_idx: usize,
         replaced_at_lsn: Lsn,
         io_buf_size: usize,
@@ -239,7 +239,7 @@ impl<R> Snapshot<R> {
         match self.pt.remove(&pid) {
             Some(PageState::Present(coords)) => {
                 for (_lsn, ptr) in &coords {
-                    let idx = ptr.lid() as SegmentID / io_buf_size;
+                    let idx = ptr.lid() as SegmentId / io_buf_size;
                     if replaced_at_idx == idx {
                         return;
                     }
@@ -250,32 +250,32 @@ impl<R> Snapshot<R> {
                     entry.insert((pid, replaced_at_lsn));
                 }
 
-                // re-run any external removals in case
+                // re-run any blob removals in case
                 // they were not completed.
                 if coords.len() > 1 {
-                    let external_ptrs = coords
+                    let blob_ptrs = coords
                         .iter()
-                        .filter(|(_, ptr)| ptr.is_external())
-                        .map(|(_, ptr)| ptr.external().1);
+                        .filter(|(_, ptr)| ptr.is_blob())
+                        .map(|(_, ptr)| ptr.blob().1);
 
-                    for external_ptr in external_ptrs {
+                    for blob_ptr in blob_ptrs {
                         trace!(
                             "removing blob while advancing \
                              snapshot: {}",
-                            external_ptr,
+                            blob_ptr,
                         );
 
                         // we don't care if this actually works
                         // because it's possible that a previous
                         // snapshot has run over this log and
                         // removed the blob already.
-                        let _ = remove_blob(external_ptr, config);
+                        let _ = remove_blob(blob_ptr, config);
                     }
                 }
             }
             Some(PageState::Allocated(_lsn, ptr))
             | Some(PageState::Free(_lsn, ptr)) => {
-                let idx = ptr.lid() as SegmentID / io_buf_size;
+                let idx = ptr.lid() as SegmentId / io_buf_size;
                 if replaced_at_idx == idx {
                     return;
                 }
@@ -300,7 +300,7 @@ pub(super) fn advance_snapshot<PM, P, R>(
     iter: LogIter,
     mut snapshot: Snapshot<R>,
     config: &Config,
-) -> CacheResult<Snapshot<R>, ()>
+) -> Result<Snapshot<R>, ()>
 where
     PM: Materializer<Recovery = R, PageFrag = P>,
     P: 'static
@@ -321,7 +321,7 @@ where
     let io_buf_size = config.io_buf_size;
 
     for (lsn, ptr, bytes) in iter {
-        let segment_idx = ptr.lid() as SegmentID / io_buf_size;
+        let segment_idx = ptr.lid() as SegmentId / io_buf_size;
 
         trace!(
             "in advance_snapshot looking at item with lsn {} ptr {}",
@@ -366,7 +366,7 @@ where
 /// the tip of the data file, if present.
 pub fn read_snapshot_or_default<PM, P, R>(
     config: &Config,
-) -> CacheResult<Snapshot<R>, ()>
+) -> Result<Snapshot<R>, ()>
 where
     PM: Materializer<Recovery = R, PageFrag = P>,
     P: 'static
@@ -446,10 +446,10 @@ where
     Ok(deserialize::<Snapshot<R>>(&*bytes).ok())
 }
 
-pub fn write_snapshot<R>(
+pub(crate) fn write_snapshot<R>(
     config: &Config,
     snapshot: &Snapshot<R>,
-) -> CacheResult<(), ()>
+) -> Result<(), ()>
 where
     R: Debug + Clone + Serialize + DeserializeOwned + Send,
 {

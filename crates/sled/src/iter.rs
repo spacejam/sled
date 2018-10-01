@@ -1,13 +1,12 @@
 use super::*;
 
-use epoch::pin;
-use pagecache::PageGet;
+use pagecache::{pin, PageGet};
 
 /// An iterator over keys and values in a `Tree`.
 pub struct Iter<'a> {
-    pub(super) id: PageID,
+    pub(super) id: PageId,
     pub(super) inner:
-        &'a PageCache<BLinkMaterializer, Frag, Vec<(PageID, PageID)>>,
+        &'a PageCache<BLinkMaterializer, Frag, Vec<(PageId, PageId)>>,
     pub(super) last_key: Bound,
     pub(super) broken: Option<Error<()>>,
     pub(super) done: bool,
@@ -15,7 +14,7 @@ pub struct Iter<'a> {
 }
 
 impl<'a> Iterator for Iter<'a> {
-    type Item = DbResult<(Vec<u8>, Vec<u8>), ()>;
+    type Item = Result<(Vec<u8>, Vec<u8>), ()>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.done {

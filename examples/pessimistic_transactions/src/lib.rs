@@ -22,18 +22,16 @@ mod crc16;
 
 use std::sync::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use sled::{Config, DbResult, Error, Tree};
+use sled::{Config, Error, Result, Tree};
 
 macro_rules! rep_no_copy {
-    ($e:expr; $n:expr) => {
-        {
-            let mut v = Vec::with_capacity($n);
-            for _ in 0..$n {
-                v.push($e);
-            }
-            v
+    ($e:expr; $n:expr) => {{
+        let mut v = Vec::with_capacity($n);
+        for _ in 0..$n {
+            v.push($e);
         }
-    };
+        v
+    }};
 }
 
 type TxId = u64;
@@ -73,7 +71,7 @@ struct Write(Key, Value);
 struct Read(Key);
 struct Delete(Key);
 
-fn split_txid_from_v(v: Value) -> DbResult<(TxId, Value), ()> {
+fn split_txid_from_v(v: Value) -> Result<(TxId, Value), ()> {
     if v.len() < 8 {
         return Err(Error::ReportableBug("get bad txid".to_owned()));
     }
@@ -84,7 +82,7 @@ fn split_txid_from_v(v: Value) -> DbResult<(TxId, Value), ()> {
 }
 
 impl TxDb {
-    fn start(config: Config) -> DbResult<TxDb, ()> {
+    fn start(config: Config) -> Result<TxDb, ()> {
         Ok(TxDb {
             // pluggable
             tree: Tree::start(config)?,
@@ -111,21 +109,27 @@ impl TxDb {
     ) -> (Vec<RwLockReadGuard<()>>, Vec<RwLockWriteGuard<()>>) {
         let mut get_locks = vec![];
         for get_idx in get_hashes {
-            if let Ok(get_guard) = self.locks[*get_idx as usize].try_read() {
+            if let Ok(get_guard) =
+                self.locks[*get_idx as usize].try_read()
+            {
                 get_locks.push(get_guard);
             } else {
                 drop(get_locks);
-                return self.pessimistic_lock_keys(get_hashes, set_hashes);
+                return self
+                    .pessimistic_lock_keys(get_hashes, set_hashes);
             }
         }
 
         let mut set_locks = vec![];
         for set_idx in set_hashes {
-            if let Ok(set_guard) = self.locks[*set_idx as usize].try_write() {
+            if let Ok(set_guard) =
+                self.locks[*set_idx as usize].try_write()
+            {
                 set_locks.push(set_guard);
             } else {
                 drop(set_locks);
-                let (_r, w) = self.pessimistic_lock_keys(&[], set_hashes);
+                let (_r, w) =
+                    self.pessimistic_lock_keys(&[], set_hashes);
                 set_locks = w;
                 break;
             }
@@ -143,13 +147,15 @@ impl TxDb {
 
         let mut get_locks = vec![];
         for get_idx in get_hashes {
-            let get_guard = self.locks[*get_idx as usize].read().unwrap();
+            let get_guard =
+                self.locks[*get_idx as usize].read().unwrap();
             get_locks.push(get_guard);
         }
 
         let mut set_locks = vec![];
         for set_idx in set_hashes {
-            let set_guard = self.locks[*set_idx as usize].write().unwrap();
+            let set_guard =
+                self.locks[*set_idx as usize].write().unwrap();
             set_locks.push(set_guard);
         }
 
@@ -174,7 +180,7 @@ impl<'a> Tx<'a> {
         self.deletes.push(Delete(k));
     }
 
-    fn execute(self) -> DbResult<TxRet, ()> {
+    fn execute(self) -> Result<TxRet, ()> {
         // claim locks
         let mut get_keys = vec![];
         let mut set_keys = vec![];
@@ -240,8 +246,8 @@ impl<'a> Tx<'a> {
 
 #[test]
 fn it_works() {
-    let conf = sled::ConfigBuilder::new().temporary(true).build();
-    let txdb = TxDb::start(conf).unwrap();
+    let config = sled::ConfigBuilder::new().temporary(true).build();
+    let txdb = TxDb::start(config).unwrap();
 
     let mut tx = txdb.tx();
     tx.set(b"cats".to_vec(), b"meow".to_vec());
@@ -249,17 +255,26 @@ fn it_works() {
     assert_eq!(tx.execute(), Ok(TxRet::Committed(vec![])));
 
     let mut tx = txdb.tx();
-    tx.predicate(b"cats".to_vec(), |_k, v| *v == Some(b"meow".to_vec()));
-    tx.predicate(b"dogs".to_vec(), |_k, v| *v == Some(b"woof".to_vec()));
+    tx.predicate(b"cats".to_vec(), |_k, v| {
+        *v == Some(b"meow".to_vec())
+    });
+    tx.predicate(b"dogs".to_vec(), |_k, v| {
+        *v == Some(b"woof".to_vec())
+    });
     tx.set(b"cats".to_vec(), b"woof".to_vec());
     tx.set(b"dogs".to_vec(), b"meow".to_vec());
     tx.get(b"dogs".to_vec());
     assert_eq!(
         tx.execute(),
-        Ok(TxRet::Committed(vec![(b"dogs".to_vec(), Some(b"meow".to_vec()))]))
+        Ok(TxRet::Committed(vec![(
+            b"dogs".to_vec(),
+            Some(b"meow".to_vec())
+        )]))
     );
 
     let mut tx = txdb.tx();
-    tx.predicate(b"cats".to_vec(), |_k, v| *v == Some(b"meow".to_vec()));
+    tx.predicate(b"cats".to_vec(), |_k, v| {
+        *v == Some(b"meow".to_vec())
+    });
     assert_eq!(tx.execute(), Ok(TxRet::PredicateFailure));
 }

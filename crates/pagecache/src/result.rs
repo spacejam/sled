@@ -7,7 +7,7 @@ use super::*;
 
 /// The top-level result type for dealing with
 /// the PageCache.
-pub type CacheResult<T, Actual> = Result<T, Error<Actual>>;
+pub type Result<T, Actual> = std::result::Result<T, Error<Actual>>;
 
 /// An Error type encapsulating various issues that may come up
 /// in both the expected and unexpected operation of a PageCache.
@@ -109,7 +109,10 @@ impl<A> Display for Error<A>
 where
     A: Debug,
 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> std::result::Result<(), fmt::Error> {
         match *self {
             CasFailed(ref e) => write!(
                 f,

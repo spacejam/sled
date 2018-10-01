@@ -5,8 +5,8 @@ use super::*;
 
 pub struct LogIter {
     pub config: Config,
-    pub segment_iter: Box<Iterator<Item = (Lsn, LogID)>>,
-    pub segment_base: Option<LogID>,
+    pub segment_iter: Box<dyn Iterator<Item = (Lsn, LogId)>>,
+    pub segment_base: Option<LogId>,
     pub segment_len: usize,
     pub use_compression: bool,
     pub max_lsn: Lsn,
@@ -23,7 +23,7 @@ impl Iterator for LogIter {
         // return None if there are no more remaining segments.
         loop {
             let remaining_seg_too_small_for_msg = !valid_entry_offset(
-                self.cur_lsn as LogID,
+                self.cur_lsn as LogId,
                 self.segment_len,
             );
 
@@ -69,22 +69,21 @@ impl Iterator for LogIter {
             }
 
             let lid = self.segment_base.unwrap()
-                + (self.cur_lsn % self.segment_len as Lsn) as LogID;
+                + (self.cur_lsn % self.segment_len as Lsn) as LogId;
 
             if let Ok(f) = self.config.file() {
                 match f.read_message(lid, &self.config) {
-                    Ok(LogRead::External(lsn, buf, external_ptr)) => {
+                    Ok(LogRead::Blob(lsn, buf, blob_ptr)) => {
                         if lsn != self.cur_lsn {
                             error!("read Flush with bad lsn");
                             return None;
                         }
                         trace!("read blob flush in LogIter::next");
-                        self.cur_lsn += (MSG_HEADER_LEN
-                            + EXTERNAL_VALUE_LEN)
-                            as Lsn;
+                        self.cur_lsn +=
+                            (MSG_HEADER_LEN + BLOB_INLINE_LEN) as Lsn;
                         return Some((
                             lsn,
-                            DiskPtr::External(lid, external_ptr),
+                            DiskPtr::Blob(lid, blob_ptr),
                             buf,
                         ));
                     }
@@ -127,18 +126,14 @@ impl Iterator for LogIter {
                         self.trailer.take();
                         continue;
                     }
-                    Ok(LogRead::DanglingExternal(
-                        lsn,
-                        external_ptr,
-                    )) => {
+                    Ok(LogRead::DanglingBlob(lsn, blob_ptr)) => {
                         debug!(
-                            "encountered dangling external \
+                            "encountered dangling blob \
                              pointer at lsn {} ptr {}",
-                            lsn, external_ptr
+                            lsn, blob_ptr
                         );
-                        self.cur_lsn += (MSG_HEADER_LEN
-                            + EXTERNAL_VALUE_LEN)
-                            as Lsn;
+                        self.cur_lsn +=
+                            (MSG_HEADER_LEN + BLOB_INLINE_LEN) as Lsn;
                         continue;
                     }
                     Err(e) => {
@@ -165,8 +160,8 @@ impl LogIter {
     fn read_segment(
         &mut self,
         lsn: Lsn,
-        offset: LogID,
-    ) -> CacheResult<(), ()> {
+        offset: LogId,
+    ) -> Result<(), ()> {
         trace!(
             "LogIter::read_segment lsn: {:?} cur_lsn: {:?}",
             lsn,
@@ -177,7 +172,7 @@ impl LogIter {
         assert!(lsn + self.segment_len as Lsn >= self.cur_lsn);
         let f = self.config.file()?;
         let segment_header = f.read_segment_header(offset)?;
-        if offset % self.segment_len as LogID != 0 {
+        if offset % self.segment_len as LogId != 0 {
             debug!("segment offset not divisible by segment length");
             return Err(Error::Corruption {
                 at: DiskPtr::Inline(offset),
@@ -206,8 +201,8 @@ impl LogIter {
             ).into());
         }
 
-        let trailer_offset = offset + self.segment_len as LogID
-            - SEG_TRAILER_LEN as LogID;
+        let trailer_offset = offset + self.segment_len as LogId
+            - SEG_TRAILER_LEN as LogId;
         let trailer_lsn = segment_header.lsn
             + self.segment_len as Lsn
             - SEG_TRAILER_LEN as Lsn;
@@ -234,7 +229,7 @@ impl LogIter {
     }
 
     #[cfg(target_os = "linux")]
-    fn fadvise_willneed(&self, lid: LogID) {
+    fn fadvise_willneed(&self, lid: LogId) {
         use std::os::unix::io::AsRawFd;
 
         if let Ok(f) = self.config.file() {
@@ -256,14 +251,14 @@ impl LogIter {
     }
 }
 
-fn valid_entry_offset(lid: LogID, segment_len: usize) -> bool {
-    let seg_start = lid / segment_len as LogID * segment_len as LogID;
+fn valid_entry_offset(lid: LogId, segment_len: usize) -> bool {
+    let seg_start = lid / segment_len as LogId * segment_len as LogId;
 
-    let max_lid = seg_start + segment_len as LogID
-        - SEG_TRAILER_LEN as LogID
-        - MSG_HEADER_LEN as LogID;
+    let max_lid = seg_start + segment_len as LogId
+        - SEG_TRAILER_LEN as LogId
+        - MSG_HEADER_LEN as LogId;
 
-    let min_lid = seg_start + SEG_HEADER_LEN as LogID;
+    let min_lid = seg_start + SEG_HEADER_LEN as LogId;
 
     lid >= min_lid && lid <= max_lid
 }

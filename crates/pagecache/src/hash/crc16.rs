@@ -69,7 +69,7 @@ const CRC16TAB: [u16; 256] =
      0x3eb2, 0x0ed1, 0x1ef0];
 
 #[inline(always)]
-pub fn crc16(buf: &[u8]) -> u16 {
+fn crc16(buf: &[u8]) -> u16 {
     let mut crc = 0u16;
     for &b in &*buf {
         let idx = ((crc >> 8) ^ u16::from(b)) & 0x00FF;
@@ -80,7 +80,7 @@ pub fn crc16(buf: &[u8]) -> u16 {
 }
 
 #[inline(always)]
-pub fn crc16_arr(buf: &[u8]) -> [u8; 2] {
+pub(crate) fn crc16_arr(buf: &[u8]) -> [u8; 2] {
     let crc16 = crc16(buf);
     [(crc16 >> 8) as u8, crc16 as u8]
 }

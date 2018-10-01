@@ -1,8 +1,60 @@
 use std::iter::repeat;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::{Acquire, Relaxed};
+use std::time::{Duration, Instant};
 
 use historian::Histo;
+
+lazy_static! {
+    /// A metric collector for all pagecache users running in this
+    /// process.
+    pub static ref M: Metrics = Metrics::default();
+}
+
+pub(crate) fn clock() -> f64 {
+    let u = uptime();
+    (u.as_secs() * 1_000_000_000) as f64 + f64::from(u.subsec_nanos())
+}
+
+// not correct, since it starts counting at the first observance...
+fn uptime() -> Duration {
+    lazy_static! {
+        static ref START: Instant = Instant::now();
+    }
+
+    START.elapsed()
+}
+
+/// Measure the duration of an event, and call `Histo::measure()`.
+pub(crate) struct Measure<'h> {
+    histo: &'h Histo,
+    start: f64,
+}
+
+impl<'h> Measure<'h> {
+    /// The time delta from ctor to dtor is recorded in `histo`.
+    #[inline(always)]
+    pub(crate) fn new(histo: &'h Histo) -> Measure<'h> {
+        Measure {
+            histo,
+            start: clock(),
+        }
+    }
+}
+
+impl<'h> Drop for Measure<'h> {
+    #[inline(always)]
+    fn drop(&mut self) {
+        self.histo.measure(clock() - self.start);
+    }
+}
+
+/// Measure the time spent on calling a given function in a given `Histo`.
+#[inline(always)]
+pub(crate) fn measure<F: FnOnce() -> R, R>(histo: &Histo, f: F) -> R {
+    let _measure = Measure::new(histo);
+    f()
+}
 
 #[derive(Default, Debug)]
 pub struct Metrics {

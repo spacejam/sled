@@ -3,12 +3,12 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::Arc;
 
-use epoch::{pin, Guard, Shared};
+use pagecache::{pin, Guard, PagePtr};
 
 use super::*;
 
 impl<'a> IntoIterator for &'a Tree {
-    type Item = DbResult<(Vec<u8>, Vec<u8>), ()>;
+    type Item = Result<(Vec<u8>, Vec<u8>), ()>;
     type IntoIter = Iter<'a>;
 
     fn into_iter(self) -> Iter<'a> {
@@ -20,7 +20,7 @@ impl<'a> IntoIterator for &'a Tree {
 #[derive(Clone)]
 pub struct Tree {
     pages: Arc<
-        PageCache<BLinkMaterializer, Frag, Vec<(PageID, PageID)>>,
+        PageCache<BLinkMaterializer, Frag, Vec<(PageId, PageId)>>,
     >,
     config: Config,
     root: Arc<AtomicUsize>,
@@ -31,10 +31,10 @@ unsafe impl Sync for Tree {}
 
 impl Tree {
     /// Load existing or create a new `Tree`.
-    pub fn start(config: Config) -> DbResult<Tree, ()> {
+    pub fn start(config: Config) -> Result<Tree, ()> {
         #[cfg(any(test, feature = "check_snapshot_integrity"))]
         match config
-            .verify_snapshot::<BLinkMaterializer, Frag, Vec<(PageID, PageID)>>(
+            .verify_snapshot::<BLinkMaterializer, Frag, Vec<(PageId, PageId)>>(
             ) {
             Ok(_) => {}
             #[cfg(feature = "failpoints")]
@@ -45,7 +45,7 @@ impl Tree {
         let pages = PageCache::start(config.clone())?;
 
         let roots_opt = pages.recovered_state().clone().and_then(
-            |mut roots: Vec<(PageID, PageID)>| {
+            |mut roots: Vec<(PageId, PageId)>| {
                 if roots.is_empty() {
                     None
                 } else {
@@ -117,10 +117,10 @@ impl Tree {
             );
 
             pages
-                .replace(root_id, Shared::null(), root, &guard)
+                .replace(root_id, PagePtr::allocated(), root, &guard)
                 .map_err(|e| e.danger_cast())?;
             pages
-                .replace(leaf_id, Shared::null(), leaf, &guard)
+                .replace(leaf_id, PagePtr::allocated(), leaf, &guard)
                 .map_err(|e| e.danger_cast())?;
             root_id
         };
@@ -133,12 +133,12 @@ impl Tree {
     }
 
     /// Flushes any pending IO buffers to disk to ensure durability.
-    pub fn flush(&self) -> CacheResult<(), ()> {
+    pub fn flush(&self) -> Result<(), ()> {
         self.pages.flush()
     }
 
     /// Retrieve a value from the `Tree` if it exists.
-    pub fn get(&self, key: &[u8]) -> DbResult<Option<Value>, ()> {
+    pub fn get(&self, key: &[u8]) -> Result<Option<Value>, ()> {
         let guard = pin();
         let (_, ret) = self.get_internal(key, &guard)?;
         Ok(ret)
@@ -174,7 +174,7 @@ impl Tree {
         key: Key,
         old: Option<Value>,
         new: Option<Value>,
-    ) -> DbResult<(), Option<Value>> {
+    ) -> Result<(), Option<Value>> {
         if self.config.read_only {
             return Err(Error::CasFailed(None));
         }
@@ -217,7 +217,7 @@ impl Tree {
     }
 
     /// Set a key to a new value.
-    pub fn set(&self, key: Key, value: Value) -> DbResult<(), ()> {
+    pub fn set(&self, key: Key, value: Value) -> Result<(), ()> {
         if self.config.read_only {
             return Err(Error::Unsupported(
                 "the database is in read-only mode".to_owned(),
@@ -302,7 +302,7 @@ impl Tree {
     /// tree.merge(k.clone(), vec![4]);
     /// assert_eq!(tree.get(&k), Ok(Some(vec![4])));
     /// ```
-    pub fn merge(&self, key: Key, value: Value) -> DbResult<(), ()> {
+    pub fn merge(&self, key: Key, value: Value) -> Result<(), ()> {
         if self.config.read_only {
             return Err(Error::Unsupported(
                 "the database is in read-only mode".to_owned(),
@@ -357,7 +357,7 @@ impl Tree {
     /// assert_eq!(t.del(&*vec![1]), Ok(Some(vec![1])));
     /// assert_eq!(t.del(&*vec![1]), Ok(None));
     /// ```
-    pub fn del(&self, key: &[u8]) -> DbResult<Option<Value>, ()> {
+    pub fn del(&self, key: &[u8]) -> Result<Option<Value>, ()> {
         if self.config.read_only {
             return Ok(None);
         }
@@ -425,7 +425,7 @@ impl Tree {
     /// assert_eq!(iter.next(), Some(Ok((vec![3], vec![30]))));
     /// assert_eq!(iter.next(), None);
     /// ```
-    pub fn scan(&self, key: &[u8]) -> Iter {
+    pub fn scan(&self, key: &[u8]) -> Iter<'_> {
         let guard = pin();
         let mut broken = None;
         let id = match self.get_internal(key, &guard) {
@@ -470,7 +470,7 @@ impl Tree {
     /// assert_eq!(iter.next(), Some(Ok((vec![3], vec![30]))));
     /// assert_eq!(iter.next(), None);
     /// ```
-    pub fn iter(&self) -> Iter {
+    pub fn iter(&self) -> Iter<'_> {
         self.scan(b"")
     }
 
@@ -478,7 +478,7 @@ impl Tree {
         &self,
         path: &[(Node, TreePtr<'g>)],
         guard: &'g Guard,
-    ) -> DbResult<(), ()> {
+    ) -> Result<(), ()> {
         // to split, we pop the path, see if it's in need of split, recurse up
         // two-phase: (in prep for lock-free, not necessary for single threaded)
         //  1. half-split: install split on child, P
@@ -567,7 +567,7 @@ impl Tree {
         node: &Node,
         node_cas_key: TreePtr<'g>,
         guard: &'g Guard,
-    ) -> DbResult<ParentSplit, ()> {
+    ) -> Result<ParentSplit, ()> {
         let new_pid = self.pages.allocate(guard)?;
         trace!("allocated pid {} in child_split", new_pid);
 
@@ -589,7 +589,7 @@ impl Tree {
             .pages
             .replace(
                 new_pid,
-                Shared::null(),
+                PagePtr::allocated(),
                 Frag::Base(rhs, None),
                 guard,
             ).map_err(|e| e.danger_cast())?;
@@ -623,7 +623,7 @@ impl Tree {
         parent_cas_key: TreePtr<'g>,
         parent_split: ParentSplit,
         guard: &'g Guard,
-    ) -> DbResult<TreePtr<'g>, Option<TreePtr<'g>>> {
+    ) -> Result<TreePtr<'g>, Option<TreePtr<'g>>> {
         // install parent split
         self.pages.link(
             parent_node.id,
@@ -635,11 +635,11 @@ impl Tree {
 
     fn root_hoist<'g>(
         &self,
-        from: PageID,
-        to: PageID,
+        from: PageId,
+        to: PageId,
         at: Key,
         guard: &'g Guard,
-    ) -> DbResult<(), ()> {
+    ) -> Result<(), ()> {
         // hoist new root, pointing to lhs & rhs
         let new_root_pid = self.pages.allocate(guard)?;
         debug!("allocated pid {} in root_hoist", new_root_pid);
@@ -663,8 +663,12 @@ impl Tree {
         pagecache::debug_delay();
         let new_root_ptr = self
             .pages
-            .replace(new_root_pid, Shared::null(), new_root, guard)
-            .expect(
+            .replace(
+                new_root_pid,
+                PagePtr::allocated(),
+                new_root,
+                guard,
+            ).expect(
                 "we should be able to replace a newly \
                  allocated page without issue",
             );
@@ -693,7 +697,7 @@ impl Tree {
         &self,
         key: &[u8],
         guard: &'g Guard,
-    ) -> DbResult<(Vec<(Node, TreePtr<'g>)>, Option<Value>), ()> {
+    ) -> Result<(Vec<(Node, TreePtr<'g>)>, Option<Value>), ()> {
         let path = self.path_for_key(&*key, guard)?;
 
         let ret = path.last().and_then(
@@ -741,7 +745,7 @@ impl Tree {
         &self,
         key: &[u8],
         guard: &'g Guard,
-    ) -> DbResult<Vec<(Node, TreePtr<'g>)>, ()> {
+    ) -> Result<Vec<(Node, TreePtr<'g>)>, ()> {
         let mut cursor = self.root.load(SeqCst);
         let mut path: Vec<(Node, TreePtr<'g>)> = vec![];
 
@@ -853,7 +857,10 @@ impl Tree {
 }
 
 impl Debug for Tree {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> std::result::Result<(), fmt::Error> {
         let mut pid = self.root.load(SeqCst);
         let mut left_most = pid;
         let mut level = 0;

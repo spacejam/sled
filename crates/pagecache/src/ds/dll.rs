@@ -4,8 +4,8 @@ use std::ptr;
 use super::*;
 
 #[derive(Debug)]
-pub struct Node {
-    inner: PageID,
+pub(crate) struct Node {
+    inner: PageId,
     next: *mut Node,
     prev: *mut Node,
 }
@@ -37,7 +37,7 @@ impl Node {
     }
 }
 
-pub struct Dll {
+pub(crate) struct Dll {
     head: *mut Node,
     tail: *mut Node,
     len: usize,
@@ -64,11 +64,11 @@ impl Default for Dll {
 }
 
 impl Dll {
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.len
     }
 
-    pub fn push_head(&mut self, item: PageID) -> *mut Node {
+    pub(crate) fn push_head(&mut self, item: PageId) -> *mut Node {
         self.len += 1;
 
         let node = Node {
@@ -95,7 +95,7 @@ impl Dll {
     }
 
     #[cfg(test)]
-    pub fn push_tail(&mut self, item: PageID) {
+    pub(crate) fn push_tail(&mut self, item: PageId) {
         self.len += 1;
 
         let node = Node {
@@ -119,7 +119,7 @@ impl Dll {
         self.tail = ptr;
     }
 
-    pub fn promote(&mut self, ptr: *mut Node) -> *mut Node {
+    pub(crate) fn promote(&mut self, ptr: *mut Node) -> *mut Node {
         if self.head == ptr {
             return ptr;
         }
@@ -132,7 +132,7 @@ impl Dll {
     }
 
     #[cfg(test)]
-    pub fn pop_head(&mut self) -> Option<PageID> {
+    pub(crate) fn pop_head(&mut self) -> Option<PageId> {
         if self.head.is_null() {
             return None;
         }
@@ -154,7 +154,7 @@ impl Dll {
         }
     }
 
-    pub fn pop_tail(&mut self) -> Option<PageID> {
+    pub(crate) fn pop_tail(&mut self) -> Option<PageId> {
         if self.tail.is_null() {
             return None;
         }
@@ -176,7 +176,10 @@ impl Dll {
         }
     }
 
-    pub unsafe fn pop_ptr(&mut self, ptr: *mut Node) -> PageID {
+    pub(crate) unsafe fn pop_ptr(
+        &mut self,
+        ptr: *mut Node,
+    ) -> PageId {
         self.len -= 1;
 
         let mut node = Box::from_raw(ptr);
@@ -195,7 +198,7 @@ impl Dll {
     }
 
     #[cfg(test)]
-    pub fn into_vec(mut self) -> Vec<PageID> {
+    pub(crate) fn into_vec(mut self) -> Vec<PageId> {
         let mut res = vec![];
         while let Some(val) = self.pop_head() {
             res.push(val);

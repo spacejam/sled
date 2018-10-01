@@ -23,7 +23,7 @@ use pagecache::{
 };
 
 type Lsn = i64;
-type LogID = u64;
+type LogId = u64;
 
 #[test]
 #[ignore]
@@ -347,7 +347,6 @@ fn snapshot_with_out_of_order_buffers() {
 
 #[test]
 fn multi_segment_log_iteration() {
-    tests::setup_logger();
     // ensure segments are being linked
     // ensure trailers are valid
     let config = ConfigBuilder::new()

@@ -1,4 +1,3 @@
-extern crate crossbeam_epoch as epoch;
 extern crate pagecache;
 extern crate quickcheck;
 extern crate rand;
@@ -6,13 +5,14 @@ extern crate rand;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
 
-use epoch::{pin, Shared};
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::Rng;
 
-use pagecache::{ConfigBuilder, Materializer, PageCache, PageGet};
+use pagecache::{
+    pin, ConfigBuilder, Materializer, PageCache, PageGet, PagePtr,
+};
 
-type PageID = usize;
+type PageId = usize;
 
 #[derive(Clone)]
 pub struct TestMaterializer;
@@ -62,8 +62,9 @@ fn pagecache_caching() {
 
     for _ in 0..2 {
         let id = pc.allocate(&guard).unwrap();
-        let key =
-            pc.replace(id, Shared::null(), vec![0], &guard).unwrap();
+        let key = pc
+            .replace(id, PagePtr::allocated(), vec![0], &guard)
+            .unwrap();
         keys.insert(id, key);
     }
 
@@ -95,7 +96,7 @@ fn pagecache_strange_crash_1() {
         for _ in 0..2 {
             let id = pc.allocate(&guard).unwrap();
             let key = pc
-                .replace(id, Shared::null(), vec![0], &guard)
+                .replace(id, PagePtr::allocated(), vec![0], &guard)
                 .unwrap();
             keys.insert(id, key);
         }
@@ -142,7 +143,7 @@ fn pagecache_strange_crash_2() {
         for _ in 0..2 {
             let id = pc.allocate(&guard).unwrap();
             let key = pc
-                .replace(id, Shared::null(), vec![0], &guard)
+                .replace(id, PagePtr::allocated(), vec![0], &guard)
                 .unwrap();
             keys.insert(id, key);
         }
@@ -152,7 +153,7 @@ fn pagecache_strange_crash_2() {
             // println!("------ beginning op on pid {} ------", id);
             let (_, key) = pc.get(id, &guard).unwrap().unwrap();
             // println!("got key {:?} for pid {}", key, id);
-            assert!(!key.is_null());
+            assert!(!key.is_allocated());
             let key_res = pc.link(id, key, vec![i], &guard);
             if key_res.is_err() {
                 println!("failed linking pid {}", id);
@@ -176,8 +177,9 @@ fn basic_pagecache_recovery() {
 
     let guard = pin();
     let id = pc.allocate(&guard).unwrap();
-    let key =
-        pc.replace(id, Shared::null(), vec![1], &guard).unwrap();
+    let key = pc
+        .replace(id, PagePtr::allocated(), vec![1], &guard)
+        .unwrap();
     let key = pc.link(id, key, vec![2], &guard).unwrap();
     let _key = pc.link(id, key, vec![3], &guard).unwrap();
     let (consolidated, _) = pc.get(id, &guard).unwrap().unwrap();
@@ -207,10 +209,10 @@ fn basic_pagecache_recovery() {
 
 #[derive(Debug, Clone)]
 enum Op {
-    Replace(PageID, usize),
-    Link(PageID, usize),
-    Get(PageID),
-    Free(PageID),
+    Replace(PageId, usize),
+    Link(PageId, usize),
+    Get(PageId),
+    Free(PageId),
     Allocate,
     Restart,
 }
@@ -226,7 +228,7 @@ impl Arbitrary for Op {
         static COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
         COUNTER.compare_and_swap(0, 1, Ordering::SeqCst);
 
-        let pid = (g.gen::<u8>() % 8) as PageID;
+        let pid = (g.gen::<u8>() % 8) as PageId;
 
         match choice {
             0 => Op::Replace(
@@ -288,7 +290,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
     let mut pc: PageCache<TestMaterializer, _, _> =
         PageCache::start(config.clone()).unwrap();
 
-    let mut reference: HashMap<PageID, P> = HashMap::new();
+    let mut reference: HashMap<PageId, P> = HashMap::new();
 
     // TODO use returned pointers, cleared on restart, with caching set to
     // a large amount, to test linkage.
@@ -306,7 +308,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                         assert_eq!(get, PageGet::Allocated);
                         pc.replace(
                             pid,
-                            Shared::null(),
+                            PagePtr::allocated(),
                             vec![c],
                             &guard,
                         ).unwrap();
@@ -339,8 +341,12 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
 
                 match ref_get {
                     &mut P::Allocated => {
-                        pc.link(pid, Shared::null(), vec![c], &guard)
-                            .unwrap();
+                        pc.link(
+                            pid,
+                            PagePtr::allocated(),
+                            vec![c],
+                            &guard,
+                        ).unwrap();
                         *ref_get = P::Present(vec![c]);
                     }
                     &mut P::Present(ref mut existing) => {
@@ -393,9 +399,9 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                     PageGet::Materialized(_, ptr) => {
                         pc.free(pid, ptr, &guard).unwrap()
                     }
-                    PageGet::Allocated => {
-                        pc.free(pid, Shared::null(), &guard).unwrap()
-                    }
+                    PageGet::Allocated => pc
+                        .free(pid, PagePtr::allocated(), &guard)
+                        .unwrap(),
                     _ => {}
                 }
 

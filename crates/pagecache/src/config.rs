@@ -290,7 +290,7 @@ impl Config {
     // or create a new one if this is the first time the
     // thread is accessing it.
     #[doc(hidden)]
-    pub fn file(&self) -> CacheResult<Arc<fs::File>, ()> {
+    pub fn file(&self) -> Result<Arc<fs::File>, ()> {
         let loaded = self.file.load(Ordering::Relaxed);
 
         if loaded.is_null() {
@@ -369,7 +369,7 @@ impl Config {
         Ok(snap_dir.read_dir()?.filter_map(filter).collect())
     }
 
-    fn initialize(&self) -> CacheResult<(), ()> {
+    fn initialize(&self) -> Result<(), ()> {
         // only validate, setup directory, and open file once
         self.validate()?;
 
@@ -404,7 +404,7 @@ impl Config {
             })?;
         }
 
-        self.verify_conf_changes_ok()?;
+        self.verify_config_changes_ok()?;
 
         // open the data file
         let mut options = fs::OpenOptions::new();
@@ -426,8 +426,8 @@ impl Config {
         Ok(())
     }
 
-    // panics if conf options are outside of advised range
-    fn validate(&self) -> CacheResult<(), ()> {
+    // panics if config options are outside of advised range
+    fn validate(&self) -> Result<(), ()> {
         supported!(
             self.inner.io_bufs <= 32,
             "too many configured io_bufs"
@@ -480,7 +480,7 @@ impl Config {
         Ok(())
     }
 
-    fn verify_conf_changes_ok(&self) -> CacheResult<(), ()> {
+    fn verify_config_changes_ok(&self) -> Result<(), ()> {
         match self.read_config() {
             Ok(Some(mut old)) => {
                 let old_tmp = old.tmp_path;
@@ -512,12 +512,12 @@ impl Config {
         }
     }
 
-    fn write_config(&self) -> CacheResult<(), ()> {
+    fn write_config(&self) -> Result<(), ()> {
         let bytes = serialize(&*self.inner).unwrap();
         let crc: u64 = crc64(&*bytes);
         let crc_arr = u64_to_arr(crc);
 
-        let path = self.conf_path();
+        let path = self.config_path();
 
         let mut f = std::fs::OpenOptions::new()
             .write(true)
@@ -534,7 +534,7 @@ impl Config {
     }
 
     fn read_config(&self) -> std::io::Result<Option<ConfigBuilder>> {
-        let path = self.conf_path();
+        let path = self.config_path();
 
         let f_res =
             std::fs::OpenOptions::new().read(true).open(&path);
@@ -592,14 +592,14 @@ impl Config {
         path
     }
 
-    fn conf_path(&self) -> PathBuf {
+    fn config_path(&self) -> PathBuf {
         let mut path = self.get_path();
         path.push("conf");
         path
     }
 
     #[doc(hidden)]
-    pub fn verify_snapshot<PM, P, R>(&self) -> CacheResult<(), ()>
+    pub fn verify_snapshot<PM, P, R>(&self) -> Result<(), ()>
     where
         PM: Materializer<Recovery = R, PageFrag = P>,
         P: 'static

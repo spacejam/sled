@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use super::*;
 
 /// A simple Lru cache.
-pub struct Lru {
+pub(crate) struct Lru {
     shards: Vec<Mutex<Shard>>,
 }
 
@@ -12,7 +12,10 @@ unsafe impl Sync for Lru {}
 
 impl Lru {
     /// Instantiates a new `Lru` cache.
-    pub fn new(cache_capacity: usize, cache_bits: usize) -> Lru {
+    pub(crate) fn new(
+        cache_capacity: usize,
+        cache_bits: usize,
+    ) -> Lru {
         assert!(
             cache_bits <= 20,
             "way too many shards. use a smaller number of cache_bits"
@@ -28,7 +31,11 @@ impl Lru {
     /// Called when a page is accessed. Returns a Vec of pages to
     /// try to page-out. For each one of these, the caller is expected
     /// to call `page_out_succeeded` if the page-out succeeded.
-    pub fn accessed(&self, pid: PageID, sz: usize) -> Vec<PageID> {
+    pub(crate) fn accessed(
+        &self,
+        pid: PageId,
+        sz: usize,
+    ) -> Vec<PageId> {
         let shard_idx = pid % self.shards.len();
         let rel_idx = pid / self.shards.len();
         let shard_mu = &self.shards[shard_idx];
@@ -84,9 +91,9 @@ impl Shard {
 
     fn accessed(
         &mut self,
-        rel_idx: PageID,
+        rel_idx: PageId,
         sz: usize,
-    ) -> Vec<PageID> {
+    ) -> Vec<PageId> {
         if self.entries.len() <= rel_idx {
             self.entries.resize(rel_idx + 1, Entry::default());
         }
