@@ -105,16 +105,16 @@ impl IoBufs {
                         + len as Lsn
                         + MSG_HEADER_LEN as Lsn,
                     snapshot_last_lid
-                        + len as LogID
-                        + MSG_HEADER_LEN as LogID,
+                        + len as LogId
+                        + MSG_HEADER_LEN as LogId,
                 ),
-                Ok(LogRead::External(_lsn, _buf, _external_ptr)) => (
+                Ok(LogRead::Blob(_lsn, _buf, _blob_ptr)) => (
                     snapshot_max_lsn
                         + EXTERNAL_VALUE_LEN as Lsn
                         + MSG_HEADER_LEN as Lsn,
                     snapshot_last_lid
-                        + EXTERNAL_VALUE_LEN as LogID
-                        + MSG_HEADER_LEN as LogID,
+                        + EXTERNAL_VALUE_LEN as LogId
+                        + MSG_HEADER_LEN as LogId,
                 ),
                 other => {
                     // we can overwrite this non-flush
@@ -145,7 +145,7 @@ impl IoBufs {
 
         if next_lsn == 0 {
             // recovering at segment boundary
-            assert_eq!(next_lid, next_lsn as LogID);
+            assert_eq!(next_lid, next_lsn as LogId);
             let iobuf = &bufs[current_buf];
             let lid = segment_accountant.next(next_lsn)?;
 
@@ -165,7 +165,7 @@ impl IoBufs {
         } else {
             // the tip offset is not completely full yet, reuse it
             let iobuf = &bufs[current_buf];
-            let offset = next_lid % io_buf_size as LogID;
+            let offset = next_lid % io_buf_size as LogId;
             iobuf.set_lid(next_lid);
             iobuf.set_capacity(
                 io_buf_size - offset as usize - SEG_TRAILER_LEN,
@@ -242,11 +242,11 @@ impl IoBufs {
     ) -> Result<Vec<u8>, ()> {
         let buf = if over_blob_threshold {
             // write blob to file
-            io_fail!(self, "external blob write");
+            io_fail!(self, "blob blob write");
             write_blob(&self.config, lsn, raw_buf)?;
 
             let lsn_buf: [u8;
-                             size_of::<ExternalPointer>()] =
+                             size_of::<BlobPointer>()] =
                 u64_to_arr(lsn as u64);
 
             lsn_buf.to_vec()
@@ -294,14 +294,14 @@ impl IoBufs {
     }
 
     /// Reserve a replacement buffer for a previously written
-    /// external write. This ensures the message header has the
-    /// proper external flag set.
-    pub(super) fn reserve_external(
+    /// blob write. This ensures the message header has the
+    /// proper blob flag set.
+    pub(super) fn reserve_blob(
         &self,
-        external_ptr: ExternalPointer,
+        blob_ptr: BlobPointer,
     ) -> Result<Reservation<'_>, ()> {
-        let lsn_buf: [u8; size_of::<ExternalPointer>()] =
-            u64_to_arr(external_ptr as u64);
+        let lsn_buf: [u8; size_of::<BlobPointer>()] =
+            u64_to_arr(blob_ptr as u64);
 
         self.reserve_inner(lsn_buf.to_vec(), true)
     }
@@ -309,7 +309,7 @@ impl IoBufs {
     fn reserve_inner(
         &self,
         raw_buf: Vec<u8>,
-        is_external: bool,
+        is_blob: bool,
     ) -> Result<Reservation<'_>, ()> {
         let _measure = Measure::new(&M.reserve);
 
@@ -514,7 +514,7 @@ impl IoBufs {
             let encapsulated_buf = self.encapsulate(
                 buf,
                 reservation_lsn,
-                over_blob_threshold || is_external,
+                over_blob_threshold || is_blob,
             )?;
 
             return Ok(Reservation {
@@ -525,7 +525,7 @@ impl IoBufs {
                 flushed: false,
                 lsn: reservation_lsn,
                 lid: reservation_offset,
-                is_external: over_blob_threshold || is_external,
+                is_blob: over_blob_threshold || is_blob,
             });
         }
     }
@@ -679,7 +679,7 @@ impl IoBufs {
         let sealed = if should_pad {
             mk_sealed(bump_offset(
                 header,
-                capacity as LogID - offset(header),
+                capacity as LogId - offset(header),
             ))
         } else {
             mk_sealed(header)
@@ -743,7 +743,7 @@ impl IoBufs {
             capacity
         );
 
-        let max = std::usize::MAX as LogID;
+        let max = std::usize::MAX as LogId;
 
         assert_ne!(
             lid, max,
@@ -764,7 +764,7 @@ impl IoBufs {
             debug!(
                 "rolling to new segment after clearing {}-{}",
                 lid,
-                lid + res_len as LogID,
+                lid + res_len as LogId,
             );
 
             let ret = self.with_sa(|sa| sa.next(next_lsn));
@@ -781,11 +781,11 @@ impl IoBufs {
             debug!(
                 "advancing offset within the current segment from {} to {}",
                 lid,
-                lid + res_len as LogID
+                lid + res_len as LogId
             );
             next_lsn += res_len as Lsn;
 
-            let next_offset = lid + res_len as LogID;
+            let next_offset = lid + res_len as LogId;
             next_offset
         };
 
@@ -860,7 +860,7 @@ impl IoBufs {
         let io_buf_size = self.config.io_buf_size;
 
         assert_eq!(
-            (lid % io_buf_size as LogID) as Lsn,
+            (lid % io_buf_size as LogId) as Lsn,
             base_lsn % io_buf_size as Lsn
         );
 
@@ -886,12 +886,12 @@ impl IoBufs {
             let segment_lsn =
                 base_lsn / io_buf_size as Lsn * io_buf_size as Lsn;
             let segment_lid =
-                lid / io_buf_size as LogID * io_buf_size as LogID;
+                lid / io_buf_size as LogId * io_buf_size as LogId;
 
             let trailer_overhang =
                 io_buf_size as Lsn - SEG_TRAILER_LEN as Lsn;
 
-            let trailer_lid = segment_lid + trailer_overhang as LogID;
+            let trailer_lid = segment_lid + trailer_overhang as LogId;
             let trailer_lsn = segment_lsn + trailer_overhang;
 
             let trailer = SegmentTrailer {
@@ -946,7 +946,7 @@ impl IoBufs {
                 base_lsn,
                 base_lsn + res_len as Lsn - 1,
                 lid,
-                lid + res_len as LogID - 1,
+                lid + res_len as LogId - 1,
                 idx
             );
             self.mark_interval(base_lsn, complete_len);
@@ -955,7 +955,7 @@ impl IoBufs {
         M.written_bytes.measure(res_len as f64);
 
         // signal that this IO buffer is now uninitialized
-        let max = std::usize::MAX as LogID;
+        let max = std::usize::MAX as LogId;
         iobuf.set_lid(max);
         trace!("{} log <- MAX", idx);
 
@@ -1197,14 +1197,14 @@ impl IoBuf {
         self.lsn.load(SeqCst) as Lsn
     }
 
-    fn set_lid(&self, offset: LogID) {
+    fn set_lid(&self, offset: LogId) {
         debug_delay();
         self.lid.store(offset as usize, SeqCst);
     }
 
-    fn get_lid(&self) -> LogID {
+    fn get_lid(&self) -> LogId {
         debug_delay();
-        self.lid.load(SeqCst) as LogID
+        self.lid.load(SeqCst) as LogId
     }
 
     fn get_header(&self) -> Header {
@@ -1237,15 +1237,15 @@ impl IoBuf {
 
     fn cas_lid(
         &self,
-        old: LogID,
-        new: LogID,
-    ) -> std::result::Result<LogID, LogID> {
+        old: LogId,
+        new: LogId,
+    ) -> std::result::Result<LogId, LogId> {
         debug_delay();
         let res = self.lid.compare_and_swap(
             old as usize,
             new as usize,
             SeqCst,
-        ) as LogID;
+        ) as LogId;
         if res == old {
             Ok(new)
         } else {

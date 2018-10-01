@@ -48,7 +48,7 @@ impl Arbitrary for Op {
             "snap write mv",
             "snap write mv post",
             "snap write rm old",
-            "external blob write",
+            "blob blob write",
         ];
 
         if g.gen_bool(1. / 30.) {

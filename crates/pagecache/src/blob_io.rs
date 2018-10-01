@@ -3,10 +3,10 @@ use std::io::{Read, Write};
 use super::*;
 
 pub(crate) fn read_blob(
-    external_ptr: Lsn,
+    blob_ptr: Lsn,
     config: &Config,
 ) -> Result<Vec<u8>, ()> {
-    let path = config.blob_path(external_ptr);
+    let path = config.blob_path(blob_ptr);
     let mut f = std::fs::OpenOptions::new().read(true).open(&path)?;
 
     let mut crc_expected_bytes = [0u8; EXTERNAL_VALUE_LEN];
@@ -19,11 +19,11 @@ pub(crate) fn read_blob(
     let crc_actual = crc64(&*buf);
 
     if crc_expected != crc_actual {
-        warn!("blob {} failed crc check!", external_ptr);
+        warn!("blob {} failed crc check!", blob_ptr);
 
         Err(Error::Corruption {
-            // FIXME Corruption pointer below should not have 0 as its LogID
-            at: DiskPtr::External(0, external_ptr),
+            // FIXME Corruption pointer below should not have 0 as its LogId
+            at: DiskPtr::Blob(0, blob_ptr),
         })
     } else {
         Ok(buf)

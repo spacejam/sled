@@ -7,59 +7,59 @@ use super::LogReader;
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum DiskPtr {
     /// Points to a value stored in the single-file log.
-    Inline(LogID),
+    Inline(LogId),
     /// Points to a value stored off-log in the blob directory.
-    External(LogID, ExternalPointer),
+    Blob(LogId, BlobPointer),
 }
 
 impl DiskPtr {
-    pub(crate) fn new_inline(l: LogID) -> DiskPtr {
+    pub(crate) fn new_inline(l: LogId) -> DiskPtr {
         DiskPtr::Inline(l)
     }
 
-    pub(crate) fn new_external(
-        lid: LogID,
-        ptr: ExternalPointer,
+    pub(crate) fn new_blob(
+        lid: LogId,
+        ptr: BlobPointer,
     ) -> DiskPtr {
-        DiskPtr::External(lid, ptr)
+        DiskPtr::Blob(lid, ptr)
     }
 
     pub(crate) fn is_inline(&self) -> bool {
         match self {
             DiskPtr::Inline(_) => true,
-            DiskPtr::External(_, _) => false,
+            DiskPtr::Blob(_, _) => false,
         }
     }
 
-    pub(crate) fn is_external(&self) -> bool {
+    pub(crate) fn is_blob(&self) -> bool {
         match self {
-            DiskPtr::External(_, _) => true,
+            DiskPtr::Blob(_, _) => true,
             DiskPtr::Inline(_) => false,
         }
     }
 
-    pub(crate) fn inline(&self) -> LogID {
+    pub(crate) fn inline(&self) -> LogId {
         match self {
             DiskPtr::Inline(l) => *l,
-            DiskPtr::External(_, _) => {
-                panic!("inline called on External disk pointer")
+            DiskPtr::Blob(_, _) => {
+                panic!("inline called on Blob disk pointer")
             }
         }
     }
 
-    pub(crate) fn external(&self) -> (LogID, ExternalPointer) {
+    pub(crate) fn blob(&self) -> (LogId, BlobPointer) {
         match self {
-            DiskPtr::External(lid, ptr) => (*lid, *ptr),
+            DiskPtr::Blob(lid, ptr) => (*lid, *ptr),
             DiskPtr::Inline(_) => {
-                panic!("external called on Internal disk pointer")
+                panic!("blob called on Internal disk pointer")
             }
         }
     }
 
     #[doc(hidden)]
-    pub fn lid(&self) -> LogID {
+    pub fn lid(&self) -> LogId {
         match self {
-            DiskPtr::External(lid, _) | DiskPtr::Inline(lid) => *lid,
+            DiskPtr::Blob(lid, _) | DiskPtr::Inline(lid) => *lid,
         }
     }
 
@@ -68,7 +68,7 @@ impl DiskPtr {
         config: &Config,
     ) -> Result<Vec<u8>, ()> {
         match self {
-            DiskPtr::External(_lid, ptr) => read_blob(*ptr, &config),
+            DiskPtr::Blob(_lid, ptr) => read_blob(*ptr, &config),
             DiskPtr::Inline(lid) => {
                 let mut f = config.file()?;
 

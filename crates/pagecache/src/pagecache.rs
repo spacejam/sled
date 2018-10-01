@@ -524,15 +524,15 @@ where
         let stack_iter = StackIter::from_ptr(head, guard);
         let cache_entries: Vec<_> = stack_iter.collect();
 
-        // if the page is just a single external pointer, rewrite it.
+        // if the page is just a single blob pointer, rewrite it.
         if cache_entries.len() == 1
-            && cache_entries[0].ptr().is_external()
+            && cache_entries[0].ptr().is_blob()
         {
-            let external_ptr = cache_entries[0].ptr().external().1;
+            let blob_ptr = cache_entries[0].ptr().blob().1;
 
             let log_reservation = self
                 .log
-                .reserve_external(external_ptr)
+                .reserve_blob(blob_ptr)
                 .map_err(|e| e.danger_cast())?;
 
             let node =
@@ -961,10 +961,10 @@ where
                 );
                 Ok(buf)
             }
-            Ok(LogRead::External(
+            Ok(LogRead::Blob(
                 read_lsn,
                 buf,
-                _external_pointer,
+                _blob_pointer,
             )) => {
                 assert_eq!(
                     read_lsn, lsn,

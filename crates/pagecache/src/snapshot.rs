@@ -15,7 +15,7 @@ pub struct Snapshot<R> {
     /// the last lsn included in the `Snapshot`
     pub max_lsn: Lsn,
     /// the last lid included in the `Snapshot`
-    pub last_lid: LogID,
+    pub last_lid: LogId,
     /// the highest allocated pid
     pub max_pid: PageID,
     /// the mapping from pages to (lsn, lid)
@@ -250,26 +250,26 @@ impl<R> Snapshot<R> {
                     entry.insert((pid, replaced_at_lsn));
                 }
 
-                // re-run any external removals in case
+                // re-run any blob removals in case
                 // they were not completed.
                 if coords.len() > 1 {
-                    let external_ptrs = coords
+                    let blob_ptrs = coords
                         .iter()
-                        .filter(|(_, ptr)| ptr.is_external())
-                        .map(|(_, ptr)| ptr.external().1);
+                        .filter(|(_, ptr)| ptr.is_blob())
+                        .map(|(_, ptr)| ptr.blob().1);
 
-                    for external_ptr in external_ptrs {
+                    for blob_ptr in blob_ptrs {
                         trace!(
                             "removing blob while advancing \
                              snapshot: {}",
-                            external_ptr,
+                            blob_ptr,
                         );
 
                         // we don't care if this actually works
                         // because it's possible that a previous
                         // snapshot has run over this log and
                         // removed the blob already.
-                        let _ = remove_blob(external_ptr, config);
+                        let _ = remove_blob(blob_ptr, config);
                     }
                 }
             }

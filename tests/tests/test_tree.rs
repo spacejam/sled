@@ -491,7 +491,7 @@ fn tree_bug_3() {
 
 #[test]
 fn tree_bug_4() {
-    // postmortem: pagecache was failing to replace the LogID list
+    // postmortem: pagecache was failing to replace the LogId list
     // when it encountered a new Update::Compact.
     // postmortem 2: after refactoring log storage, we were not properly
     // setting the log tip, and the beginning got clobbered after writing
@@ -665,8 +665,8 @@ fn tree_bug_10() {
 
 #[test]
 fn tree_bug_11() {
-    // postmortem: a stall was happening because LSNs and LogIDs were being
-    // conflated in calls to make_stable. A higher LogID than any LSN was
+    // postmortem: a stall was happening because LSNs and LogIds were being
+    // conflated in calls to make_stable. A higher LogId than any LSN was
     // being created, then passed in.
     prop_tree_matches_btreemap(
         vec![

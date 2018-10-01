@@ -16,7 +16,7 @@ pub(crate) trait Pio {
     fn pread_exact(
         &self,
         to_buf: &mut [u8],
-        offset: LogID,
+        offset: LogId,
     ) -> io::Result<()>;
 
     /// Write to a specific offset without changing
@@ -24,7 +24,7 @@ pub(crate) trait Pio {
     fn pwrite_all(
         &self,
         from_buf: &[u8],
-        offset: LogID,
+        offset: LogId,
     ) -> io::Result<()>;
 }
 
@@ -34,13 +34,13 @@ impl Pio for std::fs::File {
     fn pread_exact(
         &self,
         mut buf: &mut [u8],
-        mut offset: LogID,
+        mut offset: LogId,
     ) -> io::Result<()> {
         while !buf.is_empty() {
             match self.read_at(buf, offset) {
                 Ok(0) => break,
                 Ok(n) => {
-                    offset += n as LogID;
+                    offset += n as LogId;
                     let tmp = buf;
                     buf = &mut tmp[n..];
                 }
@@ -62,7 +62,7 @@ impl Pio for std::fs::File {
     fn pwrite_all(
         &self,
         mut buf: &[u8],
-        mut offset: LogID,
+        mut offset: LogId,
     ) -> io::Result<()> {
         while !buf.is_empty() {
             match self.write_at(buf, offset) {
@@ -73,7 +73,7 @@ impl Pio for std::fs::File {
                     ))
                 }
                 Ok(n) => {
-                    offset += n as LogID;
+                    offset += n as LogId;
                     buf = &buf[n..]
                 }
                 Err(ref e)
@@ -97,7 +97,7 @@ impl Pio for std::fs::File {
     fn pread_exact(
         &self,
         mut buf: &mut [u8],
-        mut offset: LogID,
+        mut offset: LogId,
     ) -> io::Result<()> {
         // HACK HACK HACK get this working with real parallel IO
         let _lock = GLOBAL_FILE_LOCK.lock().unwrap();
@@ -106,7 +106,7 @@ impl Pio for std::fs::File {
             match self.seek_read(buf, offset) {
                 Ok(0) => break,
                 Ok(n) => {
-                    offset += n as LogID;
+                    offset += n as LogId;
                     let tmp = buf;
                     buf = &mut tmp[n..];
                 }
@@ -128,7 +128,7 @@ impl Pio for std::fs::File {
     fn pwrite_all(
         &self,
         mut buf: &[u8],
-        mut offset: LogID,
+        mut offset: LogId,
     ) -> io::Result<()> {
         // HACK HACK HACK get this working with real parallel IO
         let _lock = GLOBAL_FILE_LOCK.lock().unwrap();
@@ -142,7 +142,7 @@ impl Pio for std::fs::File {
                     ))
                 }
                 Ok(n) => {
-                    offset += n as LogID;
+                    offset += n as LogId;
                     buf = &buf[n..]
                 }
                 Err(ref e)

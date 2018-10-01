@@ -107,13 +107,13 @@ impl Log {
     }
 
     /// Reserve a replacement buffer for a previously written
-    /// external write. This ensures the message header has the
-    /// proper external flag set.
-    pub(super) fn reserve_external(
+    /// blob write. This ensures the message header has the
+    /// proper blob flag set.
+    pub(super) fn reserve_blob(
         &self,
-        external_ptr: ExternalPointer,
+        blob_ptr: BlobPointer,
     ) -> Result<Reservation<'_>, ()> {
-        self.iobufs.reserve_external(external_ptr)
+        self.iobufs.reserve_blob(blob_ptr)
     }
 
     /// Write a buffer into the log. Returns the log sequence
@@ -168,7 +168,7 @@ impl Log {
 
             read.and_then(|log_read| match log_read {
                 LogRead::Inline(read_lsn, _, _)
-                | LogRead::External(read_lsn, _, _) => {
+                | LogRead::Blob(read_lsn, _, _) => {
                     if lsn != read_lsn {
                         Err(Error::Corruption { at: ptr })
                     } else {
@@ -178,9 +178,9 @@ impl Log {
                 _ => Ok(log_read),
             }).map_err(|e| e.into())
         } else {
-            let (_lid, external_ptr) = ptr.external();
-            read_blob(external_ptr, &self.config)
-                .map(|buf| LogRead::External(lsn, buf, external_ptr))
+            let (_lid, blob_ptr) = ptr.blob();
+            read_blob(blob_ptr, &self.config)
+                .map(|buf| LogRead::Blob(lsn, buf, blob_ptr))
         }
     }
 
@@ -244,11 +244,11 @@ pub(crate) struct SegmentTrailer {
 #[derive(Debug)]
 pub enum LogRead {
     Inline(Lsn, Vec<u8>, usize),
-    External(Lsn, Vec<u8>, ExternalPointer),
+    Blob(Lsn, Vec<u8>, BlobPointer),
     Failed(Lsn, usize),
     Pad(Lsn),
     Corrupted(usize),
-    DanglingExternal(Lsn, ExternalPointer),
+    DanglingBlob(Lsn, BlobPointer),
 }
 
 impl LogRead {
@@ -272,19 +272,19 @@ impl LogRead {
     }
 
     /// Optionally return a successfully read pointer to an
-    /// external value, or None if the data was corrupt or
+    /// blob value, or None if the data was corrupt or
     /// this log entry was aborted.
-    pub fn external(self) -> Option<(Lsn, Vec<u8>, ExternalPointer)> {
+    pub fn blob(self) -> Option<(Lsn, Vec<u8>, BlobPointer)> {
         match self {
-            LogRead::External(lsn, buf, ptr) => Some((lsn, buf, ptr)),
+            LogRead::Blob(lsn, buf, ptr) => Some((lsn, buf, ptr)),
             _ => None,
         }
     }
 
-    /// Return true if we read a completed external write successfully.
-    pub fn is_external(&self) -> bool {
+    /// Return true if we read a completed blob write successfully.
+    pub fn is_blob(&self) -> bool {
         match self {
-            LogRead::External(..) => true,
+            LogRead::Blob(..) => true,
             _ => false,
         }
     }
@@ -297,10 +297,10 @@ impl LogRead {
         }
     }
 
-    /// Return true if we read a successful Inline or External value.
+    /// Return true if we read a successful Inline or Blob value.
     pub fn is_successful(&self) -> bool {
         match *self {
-            LogRead::Inline(_, _, _) | LogRead::External(_, _, _) => {
+            LogRead::Inline(_, _, _) | LogRead::Blob(_, _, _) => {
                 true
             }
             _ => false,
@@ -326,7 +326,7 @@ impl LogRead {
     /// Return the underlying data read from a log read, if successful.
     pub fn into_data(self) -> Option<Vec<u8>> {
         match self {
-            LogRead::External(_, buf, _)
+            LogRead::Blob(_, buf, _)
             | LogRead::Inline(_, buf, _) => Some(buf),
             _ => None,
         }

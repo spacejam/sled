@@ -113,10 +113,10 @@ use serde::Serialize;
 pub type SegmentID = usize;
 
 /// A log file offset.
-pub type LogID = u64;
+pub type LogId = u64;
 
-/// A pointer to an external blob.
-pub type ExternalPointer = Lsn;
+/// A pointer to an blob blob.
+pub type BlobPointer = Lsn;
 
 /// A logical sequence number.
 pub type Lsn = i64;
@@ -292,7 +292,7 @@ const FAILED_FLUSH: u8 = 0;
 // This message represents valid data, stored inline.
 const SUCCESSFUL_FLUSH: u8 = 1;
 
-// This message represents valid data, stored externally.
+// This message represents valid data, stored blobly.
 const SUCCESSFUL_EXTERNAL_FLUSH: u8 = 2;
 
 // This message represents a pad.
