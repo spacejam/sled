@@ -3,8 +3,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::Arc;
 
-use epoch::{pin, Guard};
-use pagecache::PagePtr;
+use pagecache::{pin, Guard, PagePtr};
 
 use super::*;
 

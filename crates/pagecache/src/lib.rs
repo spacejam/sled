@@ -301,3 +301,14 @@ const SEGMENT_PAD: u8 = 3;
 // The EVIL_BYTE is written to force detection of
 // a corruption when dealing with unused segment space.
 const EVIL_BYTE: u8 = 6;
+
+/// A guard used with epoch-based reclamation (EBR)
+/// to track threads accessing shared lock-free
+/// data structures, and safely drop data
+/// after any thread may have accessed it.
+pub type Guard = epoch::Guard;
+
+/// Enter an epoch which allows us to safely
+/// access shared data structures without
+/// using mutexes.
+pub use epoch::pin;

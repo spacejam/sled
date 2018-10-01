@@ -13,11 +13,8 @@ A construction kit for databases. Provides a lock-free log store and pagecache.
 
 ```
 extern crate pagecache;
-extern crate crossbeam_epoch as epoch;
 
-use pagecache::Materializer;
-
-use epoch::{Shared, pin};
+use pagecache::{PagePtr, pin, Materializer};
 
 pub struct TestMaterializer;
 
@@ -73,7 +70,7 @@ fn main() {
         // which signals that this is the beginning of a new
         // page history, and that any previous items associated
         // with this page should be forgotten.
-        let key = pc.replace(id, Shared::null(), "a".to_owned(), &guard).unwrap();
+        let key = pc.replace(id, PagePtr::null(), "a".to_owned(), &guard).unwrap();
 
         // Subsequent atomic updates should be added with link.
         let key = pc.link(id, key, "b".to_owned(), &guard).unwrap();

@@ -1,7 +1,7 @@
 use std::collections::BinaryHeap;
 use std::sync::{Arc, Mutex};
 
-use epoch::{Guard, Shared};
+use epoch::Shared;
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;

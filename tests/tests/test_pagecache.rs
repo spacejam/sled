@@ -1,4 +1,3 @@
-extern crate crossbeam_epoch as epoch;
 extern crate pagecache;
 extern crate quickcheck;
 extern crate rand;
@@ -6,12 +5,11 @@ extern crate rand;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
 
-use epoch::pin;
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::Rng;
 
 use pagecache::{
-    ConfigBuilder, Materializer, PageCache, PageGet, PagePtr,
+    pin, ConfigBuilder, Materializer, PageCache, PageGet, PagePtr,
 };
 
 type PageID = usize;

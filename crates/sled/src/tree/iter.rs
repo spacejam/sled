@@ -1,7 +1,6 @@
 use super::*;
 
-use epoch::pin;
-use pagecache::PageGet;
+use pagecache::{pin, PageGet};
 
 /// An iterator over keys and values in a `Tree`.
 pub struct Iter<'a> {

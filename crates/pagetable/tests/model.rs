@@ -2,13 +2,14 @@
 extern crate model;
 #[macro_use]
 extern crate proptest;
-extern crate pagetable;
 extern crate crossbeam_epoch as epoch;
+extern crate pagetable;
 
 use std::collections::HashMap;
 
-use pagetable::PageTable;
+use epoch::pin;
 use model::Shared;
+use pagetable::PageTable;
 
 #[test]
 fn test_model() {
@@ -22,13 +23,13 @@ fn test_model() {
             }
         },
         Get(usize)(k in 0usize..4) => {
-            let guard = epoch::pin();
+            let guard = pin();
             let expected = m.get(&k);
             let actual = i.get(k, &guard).map(|s| unsafe { s.deref() });
             assert_eq!(expected, actual);
         },
         Cas((usize, usize, usize))((k, old, new) in (0usize..4, 0usize..4, 0usize..4)) => {
-            let guard = epoch::pin();
+            let guard = pin();
             let expected_current = m.get(&k).cloned();
             let actual_current = i.get(k, &guard);
             assert_eq!(expected_current, actual_current.map(|s| unsafe { *s.deref() }));
@@ -53,7 +54,7 @@ fn test_linearizability() {
     linearizable! {
         Implementation => let i = Shared::new(PageTable::default()),
         Get(usize)(k in any::<usize>()) -> Option<usize> {
-            let guard = epoch::pin();
+            let guard = pin();
             unsafe {
                 i.get(k, &guard).map(|s| *s.deref())
             }
@@ -64,7 +65,7 @@ fn test_linearizability() {
         Cas((usize, usize, usize))((k, old, new)
             in (0usize..4, 0usize..4, 0usize..4))
             -> Result<(), usize> {
-            let guard = epoch::pin();
+            let guard = pin();
             i.cas(k, epoch::Owned::new(old).into_shared(&guard), epoch::Owned::new(new).into_shared(&guard), &guard)
                 .map(|_| ())
                 .map_err(|s| unsafe { *s.deref() })

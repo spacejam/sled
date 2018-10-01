@@ -66,8 +66,6 @@ use std::fs::File;
 use std::mem;
 use std::sync::{Arc, Mutex};
 
-use epoch::pin;
-
 use self::reader::LogReader;
 use super::*;
 
