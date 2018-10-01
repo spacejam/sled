@@ -1,6 +1,6 @@
 use super::*;
 
-// explicitly
+// Explicitly use this so its use is tool-friendly.
 use super::LogReader;
 
 /// A pointer to a location on disk or an off-log blob.
@@ -17,10 +17,7 @@ impl DiskPtr {
         DiskPtr::Inline(l)
     }
 
-    pub(crate) fn new_blob(
-        lid: LogId,
-        ptr: BlobPointer,
-    ) -> DiskPtr {
+    pub(crate) fn new_blob(lid: LogId, ptr: BlobPointer) -> DiskPtr {
         DiskPtr::Blob(lid, ptr)
     }
 
