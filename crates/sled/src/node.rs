@@ -2,15 +2,15 @@ use super::*;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Node {
-    pub id: PageID,
-    pub data: Data,
-    pub next: Option<PageID>,
-    pub lo: Bound,
-    pub hi: Bound,
+    pub(crate) id: PageId,
+    pub(crate) data: Data,
+    pub(crate) next: Option<PageId>,
+    pub(crate) lo: Bound,
+    pub(crate) hi: Bound,
 }
 
 impl Node {
-    pub fn apply(
+    pub(crate) fn apply(
         &mut self,
         frag: &Frag,
         merge_operator: Option<usize>,
@@ -64,7 +64,7 @@ impl Node {
         }
     }
 
-    pub fn set_leaf(&mut self, key: Key, val: Value) {
+    pub(crate) fn set_leaf(&mut self, key: Key, val: Value) {
         if let Data::Leaf(ref mut records) = self.data {
             let search =
                 records.binary_search_by(|&(ref k, ref _v)| {
@@ -84,7 +84,7 @@ impl Node {
         }
     }
 
-    pub fn merge_leaf(
+    pub(crate) fn merge_leaf(
         &mut self,
         key: Key,
         val: Value,
@@ -123,13 +123,13 @@ impl Node {
         }
     }
 
-    pub fn child_split(&mut self, cs: &ChildSplit) {
+    pub(crate) fn child_split(&mut self, cs: &ChildSplit) {
         self.data.drop_gte(&cs.at, self.lo.inner());
         self.hi = Bound::Exclusive(cs.at.inner().to_vec());
         self.next = Some(cs.to);
     }
 
-    pub fn parent_split(&mut self, ps: &ParentSplit) {
+    pub(crate) fn parent_split(&mut self, ps: &ParentSplit) {
         if let Data::Index(ref mut ptrs) = self.data {
             let encoded_sep =
                 prefix_encode(self.lo.inner(), ps.at.inner());
@@ -140,7 +140,7 @@ impl Node {
         }
     }
 
-    pub fn del_leaf(&mut self, key: KeyRef) {
+    pub(crate) fn del_leaf(&mut self, key: KeyRef<'_>) {
         if let Data::Leaf(ref mut records) = self.data {
             let search =
                 records.binary_search_by(|&(ref k, ref _v)| {
@@ -154,11 +154,11 @@ impl Node {
         }
     }
 
-    pub fn should_split(&self, fanout: u8) -> bool {
+    pub(crate) fn should_split(&self, fanout: u8) -> bool {
         self.data.len() > fanout as usize
     }
 
-    pub fn split(&self, id: PageID) -> Node {
+    pub(crate) fn split(&self, id: PageId) -> Node {
         let (split, right_data) = self.data.split(self.lo.inner());
         Node {
             id: id,

@@ -30,8 +30,7 @@
 #![cfg_attr(test, deny(future_incompatible))]
 #![cfg_attr(test, deny(nonstandard_style))]
 #![cfg_attr(test, deny(rust_2018_compatibility))]
-// TODO turn this on closer to the migration.
-// #![cfg_attr(test, deny(rust_2018_idioms))]
+#![cfg_attr(test, deny(rust_2018_idioms))]
 #![cfg_attr(feature = "clippy", feature(plugin))]
 #![cfg_attr(feature = "clippy", plugin(clippy))]
 #![cfg_attr(feature = "clippy", allow(inline_always))]
@@ -39,9 +38,6 @@
 extern crate pagecache;
 #[macro_use]
 extern crate serde_derive;
-extern crate bincode;
-extern crate crossbeam_epoch as epoch;
-extern crate serde;
 #[macro_use]
 extern crate log as _log;
 
@@ -59,3 +55,26 @@ type KeyRef<'a> = &'a [u8];
 type Value = Vec<u8>;
 
 type TreePtr<'g> = pagecache::PagePtr<'g, tree::Frag>;
+
+use super::*;
+
+mod bound;
+mod data;
+mod frag;
+mod iter;
+mod materializer;
+mod node;
+mod prefix;
+mod tree;
+
+use self::bound::Bound;
+use self::data::Data;
+use self::frag::{ChildSplit, ParentSplit};
+use self::node::Node;
+use self::prefix::{prefix_cmp, prefix_decode, prefix_encode};
+
+pub(crate) use self::frag::Frag;
+pub(crate) use self::materializer::BLinkMaterializer;
+
+pub use self::iter::Iter;
+pub use self::tree::Tree;

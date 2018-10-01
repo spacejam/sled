@@ -12,7 +12,7 @@ const FANFACTOR: usize = 18;
 const FANOUT: usize = 1 << FANFACTOR;
 const FAN_MASK: usize = FANOUT - 1;
 
-pub type PageID = usize;
+pub type PageId = usize;
 
 macro_rules! rep_no_copy {
     ($e:expr; $n:expr) => {{
@@ -98,7 +98,7 @@ where
     T: 'static + Send + Sync,
 {
     /// Try to create a new item in the tree.
-    pub fn insert(&self, pid: PageID, item: T) -> Result<(), ()> {
+    pub fn insert(&self, pid: PageId, item: T) -> Result<(), ()> {
         let guard = pin();
         let new = Owned::new(item).into_shared(&guard);
         self.cas(pid, Shared::null(), new, &guard)
@@ -109,7 +109,7 @@ where
     /// Atomically swap the previous value in a tree with a new one.
     pub fn swap<'g>(
         &self,
-        pid: PageID,
+        pid: PageId,
         new: Shared<'g, T>,
         guard: &'g Guard,
     ) -> Shared<'g, T> {
@@ -121,7 +121,7 @@ where
     /// Compare and swap an old value to a new one.
     pub fn cas<'g>(
         &self,
-        pid: PageID,
+        pid: PageId,
         old: Shared<'g, T>,
         new: Shared<'g, T>,
         guard: &'g Guard,
@@ -148,7 +148,7 @@ where
     /// Try to get a value from the tree.
     pub fn get<'g>(
         &self,
-        pid: PageID,
+        pid: PageId,
         guard: &'g Guard,
     ) -> Option<Shared<'g, T>> {
         debug_delay();
@@ -167,7 +167,7 @@ where
     /// Delete a value from the tree, returning the old value if it was set.
     pub fn del<'g>(
         &self,
-        pid: PageID,
+        pid: PageId,
         guard: &'g Guard,
     ) -> Option<Shared<'g, T>> {
         debug_delay();
@@ -186,7 +186,7 @@ where
 
 fn traverse<'g, T: 'static + Send>(
     head: Shared<'g, Node1<T>>,
-    k: PageID,
+    k: PageId,
     guard: &'g Guard,
 ) -> &'g Atomic<T> {
     let (l1k, l2k) = split_fanout(k);

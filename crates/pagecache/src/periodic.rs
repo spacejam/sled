@@ -19,7 +19,7 @@ pub(crate) struct Periodic<C: Callback> {
 
 impl<C: Callback> Periodic<C> {
     /// Spawns a thread that periodically calls `callback` until dropped.
-    pub fn new(
+    pub(crate) fn new(
         name: String,
         callback: C,
         flush_every_ms: Option<u64>,

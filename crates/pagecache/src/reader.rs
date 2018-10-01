@@ -134,7 +134,7 @@ impl LogReader for File {
                 trace!("read pad at lsn {}", header.lsn);
                 Ok(LogRead::Pad(header.lsn))
             }
-            MessageKind::SuccessBlob => {
+            MessageKind::Blob => {
                 let mut id_bytes = [0u8; 8];
                 id_bytes.copy_from_slice(&*buf);
                 let id = arr_to_u64(id_bytes) as Lsn;
@@ -154,7 +154,7 @@ impl LogReader for File {
                     Err(other_e) => Err(other_e),
                 }
             }
-            MessageKind::Success => {
+            MessageKind::Inline => {
                 trace!("read a successful inline message");
                 let buf = {
                     #[cfg(feature = "zstd")]

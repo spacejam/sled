@@ -5,7 +5,7 @@ use super::*;
 
 #[derive(Debug)]
 pub(crate) struct Node {
-    inner: PageID,
+    inner: PageId,
     next: *mut Node,
     prev: *mut Node,
 }
@@ -68,7 +68,7 @@ impl Dll {
         self.len
     }
 
-    pub(crate) fn push_head(&mut self, item: PageID) -> *mut Node {
+    pub(crate) fn push_head(&mut self, item: PageId) -> *mut Node {
         self.len += 1;
 
         let node = Node {
@@ -95,7 +95,7 @@ impl Dll {
     }
 
     #[cfg(test)]
-    pub(crate) fn push_tail(&mut self, item: PageID) {
+    pub(crate) fn push_tail(&mut self, item: PageId) {
         self.len += 1;
 
         let node = Node {
@@ -132,7 +132,7 @@ impl Dll {
     }
 
     #[cfg(test)]
-    pub(crate) fn pop_head(&mut self) -> Option<PageID> {
+    pub(crate) fn pop_head(&mut self) -> Option<PageId> {
         if self.head.is_null() {
             return None;
         }
@@ -154,7 +154,7 @@ impl Dll {
         }
     }
 
-    pub(crate) fn pop_tail(&mut self) -> Option<PageID> {
+    pub(crate) fn pop_tail(&mut self) -> Option<PageId> {
         if self.tail.is_null() {
             return None;
         }
@@ -179,7 +179,7 @@ impl Dll {
     pub(crate) unsafe fn pop_ptr(
         &mut self,
         ptr: *mut Node,
-    ) -> PageID {
+    ) -> PageId {
         self.len -= 1;
 
         let mut node = Box::from_raw(ptr);
@@ -198,7 +198,7 @@ impl Dll {
     }
 
     #[cfg(test)]
-    pub(crate) fn into_vec(mut self) -> Vec<PageID> {
+    pub(crate) fn into_vec(mut self) -> Vec<PageId> {
         let mut res = vec![];
         while let Some(val) = self.pop_head() {
             res.push(val);

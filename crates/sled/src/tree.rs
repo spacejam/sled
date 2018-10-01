@@ -20,7 +20,7 @@ impl<'a> IntoIterator for &'a Tree {
 #[derive(Clone)]
 pub struct Tree {
     pages: Arc<
-        PageCache<BLinkMaterializer, Frag, Vec<(PageID, PageID)>>,
+        PageCache<BLinkMaterializer, Frag, Vec<(PageId, PageId)>>,
     >,
     config: Config,
     root: Arc<AtomicUsize>,
@@ -34,7 +34,7 @@ impl Tree {
     pub fn start(config: Config) -> Result<Tree, ()> {
         #[cfg(any(test, feature = "check_snapshot_integrity"))]
         match config
-            .verify_snapshot::<BLinkMaterializer, Frag, Vec<(PageID, PageID)>>(
+            .verify_snapshot::<BLinkMaterializer, Frag, Vec<(PageId, PageId)>>(
             ) {
             Ok(_) => {}
             #[cfg(feature = "failpoints")]
@@ -45,7 +45,7 @@ impl Tree {
         let pages = PageCache::start(config.clone())?;
 
         let roots_opt = pages.recovered_state().clone().and_then(
-            |mut roots: Vec<(PageID, PageID)>| {
+            |mut roots: Vec<(PageId, PageId)>| {
                 if roots.is_empty() {
                     None
                 } else {
@@ -425,7 +425,7 @@ impl Tree {
     /// assert_eq!(iter.next(), Some(Ok((vec![3], vec![30]))));
     /// assert_eq!(iter.next(), None);
     /// ```
-    pub fn scan(&self, key: &[u8]) -> Iter {
+    pub fn scan(&self, key: &[u8]) -> Iter<'_> {
         let guard = pin();
         let mut broken = None;
         let id = match self.get_internal(key, &guard) {
@@ -470,7 +470,7 @@ impl Tree {
     /// assert_eq!(iter.next(), Some(Ok((vec![3], vec![30]))));
     /// assert_eq!(iter.next(), None);
     /// ```
-    pub fn iter(&self) -> Iter {
+    pub fn iter(&self) -> Iter<'_> {
         self.scan(b"")
     }
 
@@ -635,8 +635,8 @@ impl Tree {
 
     fn root_hoist<'g>(
         &self,
-        from: PageID,
-        to: PageID,
+        from: PageId,
+        to: PageId,
         at: Key,
         guard: &'g Guard,
     ) -> Result<(), ()> {
@@ -859,7 +859,7 @@ impl Tree {
 impl Debug for Tree {
     fn fmt(
         &self,
-        f: &mut fmt::Formatter,
+        f: &mut fmt::Formatter<'_>,
     ) -> std::result::Result<(), fmt::Error> {
         let mut pid = self.root.load(SeqCst);
         let mut left_most = pid;

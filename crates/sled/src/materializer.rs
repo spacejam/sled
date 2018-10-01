@@ -4,7 +4,7 @@ use super::*;
 
 #[derive(Debug)]
 pub struct BLinkMaterializer {
-    pub(super) roots: Mutex<Vec<(PageID, PageID)>>,
+    pub(super) roots: Mutex<Vec<(PageId, PageId)>>,
     config: Config,
 }
 
@@ -12,13 +12,13 @@ impl Materializer for BLinkMaterializer {
     type PageFrag = Frag;
 
     // a vector of (root, prev root) for deterministic recovery
-    type Recovery = Vec<(PageID, PageID)>;
+    type Recovery = Vec<(PageId, PageId)>;
 
     fn new(
         config: Config,
         last_roots: &Option<Self::Recovery>,
     ) -> Self {
-        let roots: Vec<(PageID, PageID)> =
+        let roots: Vec<(PageId, PageId)> =
             last_roots.clone().unwrap_or_else(|| vec![]);
 
         BLinkMaterializer {
@@ -40,7 +40,7 @@ impl Materializer for BLinkMaterializer {
         Frag::Base(base_node, is_root)
     }
 
-    fn recover(&self, frag: &Frag) -> Option<Vec<(PageID, PageID)>> {
+    fn recover(&self, frag: &Frag) -> Option<Vec<(PageId, PageId)>> {
         match *frag {
             Frag::Base(ref node, prev_root) => {
                 if let Some(prev_root) = prev_root {

@@ -29,19 +29,6 @@ use std::sync::Arc;
 
 use super::*;
 
-#[doc(hidden)]
-pub const MSG_HEADER_LEN: usize = 15;
-
-#[doc(hidden)]
-pub const SEG_HEADER_LEN: usize = 10;
-
-#[doc(hidden)]
-pub const SEG_TRAILER_LEN: usize = 10;
-
-#[doc(hidden)]
-pub(crate) const EXTERNAL_VALUE_LEN: usize =
-    std::mem::size_of::<Lsn>();
-
 /// A sequential store which allows users to create
 /// reservations placed at known log offsets, used
 /// for writing persistent data structures that need
@@ -207,8 +194,8 @@ impl Log {
 /// Represents the kind of message written to the log
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) enum MessageKind {
-    Success,
-    SuccessBlob,
+    Inline,
+    Blob,
     Failed,
     Pad,
     Corrupted,
@@ -300,9 +287,7 @@ impl LogRead {
     /// Return true if we read a successful Inline or Blob value.
     pub fn is_successful(&self) -> bool {
         match *self {
-            LogRead::Inline(_, _, _) | LogRead::Blob(_, _, _) => {
-                true
-            }
+            LogRead::Inline(_, _, _) | LogRead::Blob(_, _, _) => true,
             _ => false,
         }
     }
@@ -326,8 +311,9 @@ impl LogRead {
     /// Return the underlying data read from a log read, if successful.
     pub fn into_data(self) -> Option<Vec<u8>> {
         match self {
-            LogRead::Blob(_, buf, _)
-            | LogRead::Inline(_, buf, _) => Some(buf),
+            LogRead::Blob(_, buf, _) | LogRead::Inline(_, buf, _) => {
+                Some(buf)
+            }
             _ => None,
         }
     }
@@ -339,8 +325,8 @@ impl LogRead {
 impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
     fn from(buf: [u8; MSG_HEADER_LEN]) -> MessageHeader {
         let kind = match buf[0] {
-            SUCCESSFUL_FLUSH => MessageKind::Success,
-            SUCCESSFUL_EXTERNAL_FLUSH => MessageKind::SuccessBlob,
+            INLINE_FLUSH => MessageKind::Inline,
+            BLOB_FLUSH => MessageKind::Blob,
             FAILED_FLUSH => MessageKind::Failed,
             SEGMENT_PAD => MessageKind::Pad,
             _ => MessageKind::Corrupted,
@@ -371,8 +357,8 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
     fn into(self) -> [u8; MSG_HEADER_LEN] {
         let mut buf = [0u8; MSG_HEADER_LEN];
         buf[0] = match self.kind {
-            MessageKind::Success => SUCCESSFUL_FLUSH,
-            MessageKind::SuccessBlob => SUCCESSFUL_EXTERNAL_FLUSH,
+            MessageKind::Inline => INLINE_FLUSH,
+            MessageKind::Blob => BLOB_FLUSH,
             MessageKind::Failed => FAILED_FLUSH,
             MessageKind::Pad => SEGMENT_PAD,
             MessageKind::Corrupted => EVIL_BYTE,

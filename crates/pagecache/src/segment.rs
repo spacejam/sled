@@ -99,9 +99,9 @@ pub(crate) struct SegmentAccountant {
 /// overwritten for new data.
 #[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub(crate) struct Segment {
-    present: BTreeSet<PageID>,
-    removed: HashSet<PageID>,
-    deferred_remove: HashSet<PageID>,
+    present: BTreeSet<PageId>,
+    removed: HashSet<PageId>,
+    deferred_remove: HashSet<PageId>,
     deferred_rm_blob: HashSet<BlobPointer>,
     lsn: Option<Lsn>,
     state: SegmentState,
@@ -279,7 +279,7 @@ impl Segment {
 
     /// Add a pid to the Segment. The caller must provide
     /// the Segment's LSN.
-    pub(crate) fn insert_pid(&mut self, pid: PageID, lsn: Lsn) {
+    pub(crate) fn insert_pid(&mut self, pid: PageId, lsn: Lsn) {
         assert_eq!(lsn, self.lsn.unwrap());
         // if this breaks, we didn't implement the transition
         // logic right in write_to_log, and maybe a thread is
@@ -293,7 +293,7 @@ impl Segment {
 
     /// Mark that a pid in this Segment has been relocated.
     /// The caller must provide the LSN of the removal.
-    pub(crate) fn remove_pid(&mut self, pid: PageID, lsn: Lsn) {
+    pub(crate) fn remove_pid(&mut self, pid: PageId, lsn: Lsn) {
         // TODO this could be racy?
         assert!(lsn >= self.lsn.unwrap());
         match self.state {
@@ -737,7 +737,7 @@ impl SegmentAccountant {
     /// begin accelerated cleaning we mark them as so.
     pub(crate) fn mark_replace(
         &mut self,
-        pid: PageID,
+        pid: PageId,
         lsn: Lsn,
         old_ptrs: Vec<DiskPtr>,
         new_ptr: DiskPtr,
@@ -857,8 +857,8 @@ impl SegmentAccountant {
     /// try to rewrite elsewhere.
     pub(crate) fn clean(
         &mut self,
-        ignore_pid: Option<PageID>,
-    ) -> Option<PageID> {
+        ignore_pid: Option<PageId>,
+    ) -> Option<PageId> {
         let item = self.to_clean.iter().nth(0).cloned();
         if let Some(lid) = item {
             let idx = self.lid_to_idx(lid);
@@ -894,7 +894,7 @@ impl SegmentAccountant {
     /// page is present in the segment's page set.
     pub(crate) fn mark_link(
         &mut self,
-        pid: PageID,
+        pid: PageId,
         lsn: Lsn,
         ptr: DiskPtr,
     ) {

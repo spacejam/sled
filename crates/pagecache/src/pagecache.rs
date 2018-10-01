@@ -10,6 +10,32 @@ use pagetable::PageTable;
 
 use super::*;
 
+type PagePtrInner<'g, P> = epoch::Shared<'g, Node<CacheEntry<P>>>;
+
+/// A pointer to shared lock-free state bound by a pinned epoch's lifetime.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PagePtr<'g, P>(PagePtrInner<'g, P>)
+where
+    P: 'static + Send;
+
+impl<'g, P> PagePtr<'g, P>
+where
+    P: 'static + Send,
+{
+    /// Create a null `PagePtr`
+    pub fn allocated() -> PagePtr<'g, P> {
+        PagePtr(epoch::Shared::null())
+    }
+
+    /// Whether this pointer is Allocated
+    pub fn is_allocated(&self) -> bool {
+        self.0.is_null()
+    }
+}
+
+unsafe impl<'g, P> Send for PagePtr<'g, P> where P: Send {}
+unsafe impl<'g, P> Sync for PagePtr<'g, P> where P: Send + Sync {}
+
 /// Points to either a memory location or a disk location to page-in data from.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CacheEntry<M: Send> {
@@ -48,7 +74,7 @@ pub(super) struct LoggedUpdate<PageFrag>
 where
     PageFrag: Serialize + DeserializeOwned,
 {
-    pub(super) pid: PageID,
+    pub(super) pid: PageId,
     pub(super) update: Update<PageFrag>,
 }
 
@@ -227,7 +253,7 @@ where
     config: Config,
     inner: Arc<PageTable<Stack<CacheEntry<P>>>>,
     max_pid: AtomicUsize,
-    free: Arc<Mutex<BinaryHeap<PageID>>>,
+    free: Arc<Mutex<BinaryHeap<PageId>>>,
     log: Log,
     lru: Lru,
     updates: AtomicUsize,
@@ -335,7 +361,7 @@ where
     pub fn allocate<'g>(
         &self,
         guard: &'g Guard,
-    ) -> Result<PageID, ()> {
+    ) -> Result<PageId, ()> {
         let pid = self
             .free
             .lock()
@@ -372,7 +398,7 @@ where
     /// Free a particular page.
     pub fn free<'g>(
         &self,
-        pid: PageID,
+        pid: PageId,
         old: PagePtr<'g, P>,
         guard: &'g Guard,
     ) -> Result<(), Option<PagePtr<'g, P>>> {
@@ -399,7 +425,7 @@ where
     /// if the atomic append fails.
     pub fn link<'g>(
         &self,
-        pid: PageID,
+        pid: PageId,
         old: PagePtr<'g, P>,
         new: P,
         guard: &'g Guard,
@@ -473,7 +499,7 @@ where
     /// if the atomic swap fails.
     pub fn replace<'g>(
         &self,
-        pid: PageID,
+        pid: PageId,
         old: PagePtr<'g, P>,
         new: P,
         guard: &'g Guard,
@@ -509,7 +535,7 @@ where
     // away to trigger the `segment_cleanup_threshold`.
     fn rewrite_page<'g>(
         &self,
-        pid: PageID,
+        pid: PageId,
         guard: &'g Guard,
     ) -> Result<(), Option<PagePtr<'g, P>>> {
         let _measure = Measure::new(&M.rewrite_page);
@@ -593,7 +619,7 @@ where
 
     fn cas_page<'g>(
         &self,
-        pid: PageID,
+        pid: PageId,
         old: PagePtrInner<'g, P>,
         new: Update<P>,
         guard: &'g Guard,
@@ -659,7 +685,7 @@ where
     /// Try to retrieve a page by its logical ID.
     pub fn get<'g>(
         &self,
-        pid: PageID,
+        pid: PageId,
         guard: &'g Guard,
     ) -> Result<PageGet<'g, PM::PageFrag>, Option<PagePtr<'g, P>>>
     {
@@ -676,7 +702,7 @@ where
 
     fn page_in<'g>(
         &self,
-        pid: PageID,
+        pid: PageId,
         mut head: PagePtrInner<'g, P>,
         stack_ptr: Shared<'g, Stack<CacheEntry<P>>>,
         guard: &'g Guard,
@@ -857,7 +883,7 @@ where
 
     fn page_out<'g>(
         &self,
-        to_evict: Vec<PageID>,
+        to_evict: Vec<PageId>,
         guard: &'g Guard,
     ) -> Result<(), ()> {
         let _measure = Measure::new(&M.page_out);
@@ -961,11 +987,7 @@ where
                 );
                 Ok(buf)
             }
-            Ok(LogRead::Blob(
-                read_lsn,
-                buf,
-                _blob_pointer,
-            )) => {
+            Ok(LogRead::Blob(read_lsn, buf, _blob_pointer)) => {
                 assert_eq!(
                     read_lsn, lsn,
                     "expected lsn {} on pull of ptr {}, \

@@ -33,9 +33,9 @@ impl Lru {
     /// to call `page_out_succeeded` if the page-out succeeded.
     pub(crate) fn accessed(
         &self,
-        pid: PageID,
+        pid: PageId,
         sz: usize,
-    ) -> Vec<PageID> {
+    ) -> Vec<PageId> {
         let shard_idx = pid % self.shards.len();
         let rel_idx = pid / self.shards.len();
         let shard_mu = &self.shards[shard_idx];
@@ -91,9 +91,9 @@ impl Shard {
 
     fn accessed(
         &mut self,
-        rel_idx: PageID,
+        rel_idx: PageId,
         sz: usize,
-    ) -> Vec<PageID> {
+    ) -> Vec<PageId> {
         if self.entries.len() <= rel_idx {
             self.entries.resize(rel_idx + 1, Entry::default());
         }

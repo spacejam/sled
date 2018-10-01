@@ -110,10 +110,10 @@ impl IoBufs {
                 ),
                 Ok(LogRead::Blob(_lsn, _buf, _blob_ptr)) => (
                     snapshot_max_lsn
-                        + EXTERNAL_VALUE_LEN as Lsn
+                        + BLOB_INLINE_LEN as Lsn
                         + MSG_HEADER_LEN as Lsn,
                     snapshot_last_lid
-                        + EXTERNAL_VALUE_LEN as LogId
+                        + BLOB_INLINE_LEN as LogId
                         + MSG_HEADER_LEN as LogId,
                 ),
                 other => {
@@ -245,8 +245,7 @@ impl IoBufs {
             io_fail!(self, "blob blob write");
             write_blob(&self.config, lsn, raw_buf)?;
 
-            let lsn_buf: [u8;
-                             size_of::<BlobPointer>()] =
+            let lsn_buf: [u8; size_of::<BlobPointer>()] =
                 u64_to_arr(lsn as u64);
 
             lsn_buf.to_vec()
@@ -258,9 +257,9 @@ impl IoBufs {
 
         let header = MessageHeader {
             kind: if over_blob_threshold {
-                MessageKind::SuccessBlob
+                MessageKind::Blob
             } else {
-                MessageKind::Success
+                MessageKind::Inline
             },
             lsn: lsn,
             len: buf.len(),

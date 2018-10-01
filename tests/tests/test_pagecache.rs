@@ -12,7 +12,7 @@ use pagecache::{
     pin, ConfigBuilder, Materializer, PageCache, PageGet, PagePtr,
 };
 
-type PageID = usize;
+type PageId = usize;
 
 #[derive(Clone)]
 pub struct TestMaterializer;
@@ -209,10 +209,10 @@ fn basic_pagecache_recovery() {
 
 #[derive(Debug, Clone)]
 enum Op {
-    Replace(PageID, usize),
-    Link(PageID, usize),
-    Get(PageID),
-    Free(PageID),
+    Replace(PageId, usize),
+    Link(PageId, usize),
+    Get(PageId),
+    Free(PageId),
     Allocate,
     Restart,
 }
@@ -228,7 +228,7 @@ impl Arbitrary for Op {
         static COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
         COUNTER.compare_and_swap(0, 1, Ordering::SeqCst);
 
-        let pid = (g.gen::<u8>() % 8) as PageID;
+        let pid = (g.gen::<u8>() % 8) as PageId;
 
         match choice {
             0 => Op::Replace(
@@ -290,7 +290,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
     let mut pc: PageCache<TestMaterializer, _, _> =
         PageCache::start(config.clone()).unwrap();
 
-    let mut reference: HashMap<PageID, P> = HashMap::new();
+    let mut reference: HashMap<PageId, P> = HashMap::new();
 
     // TODO use returned pointers, cleared on restart, with caching set to
     // a large amount, to test linkage.

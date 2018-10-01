@@ -17,13 +17,13 @@ pub struct Snapshot<R> {
     /// the last lid included in the `Snapshot`
     pub last_lid: LogId,
     /// the highest allocated pid
-    pub max_pid: PageID,
+    pub max_pid: PageId,
     /// the mapping from pages to (lsn, lid)
-    pub pt: HashMap<PageID, PageState>,
+    pub pt: HashMap<PageId, PageState>,
     /// replaced pages per segment index
-    pub replacements: HashMap<SegmentID, HashSet<(PageID, Lsn)>>,
+    pub replacements: HashMap<SegmentId, HashSet<(PageId, Lsn)>>,
     /// the free pids
-    pub free: HashSet<PageID>,
+    pub free: HashSet<PageId>,
     /// the `Materializer`-specific recovered state
     pub recovery: Option<R>,
 }
@@ -133,7 +133,7 @@ impl<R> Snapshot<R> {
         let io_buf_size = config.io_buf_size;
 
         let replaced_at_idx =
-            disk_ptr.lid() as SegmentID / io_buf_size;
+            disk_ptr.lid() as SegmentId / io_buf_size;
 
         match prepend.update {
             Update::Append(partial_page) => {
@@ -230,7 +230,7 @@ impl<R> Snapshot<R> {
 
     fn replace_pid(
         &mut self,
-        pid: PageID,
+        pid: PageId,
         replaced_at_idx: usize,
         replaced_at_lsn: Lsn,
         io_buf_size: usize,
@@ -239,7 +239,7 @@ impl<R> Snapshot<R> {
         match self.pt.remove(&pid) {
             Some(PageState::Present(coords)) => {
                 for (_lsn, ptr) in &coords {
-                    let idx = ptr.lid() as SegmentID / io_buf_size;
+                    let idx = ptr.lid() as SegmentId / io_buf_size;
                     if replaced_at_idx == idx {
                         return;
                     }
@@ -275,7 +275,7 @@ impl<R> Snapshot<R> {
             }
             Some(PageState::Allocated(_lsn, ptr))
             | Some(PageState::Free(_lsn, ptr)) => {
-                let idx = ptr.lid() as SegmentID / io_buf_size;
+                let idx = ptr.lid() as SegmentId / io_buf_size;
                 if replaced_at_idx == idx {
                     return;
                 }
@@ -321,7 +321,7 @@ where
     let io_buf_size = config.io_buf_size;
 
     for (lsn, ptr, bytes) in iter {
-        let segment_idx = ptr.lid() as SegmentID / io_buf_size;
+        let segment_idx = ptr.lid() as SegmentId / io_buf_size;
 
         trace!(
             "in advance_snapshot looking at item with lsn {} ptr {}",

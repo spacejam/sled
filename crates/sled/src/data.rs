@@ -4,7 +4,7 @@ use super::*;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Data {
-    Index(Vec<(Key, PageID)>),
+    Index(Vec<(Key, PageId)>),
     Leaf(Vec<(Key, Value)>),
 }
 

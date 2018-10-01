@@ -79,9 +79,8 @@ impl Iterator for LogIter {
                             return None;
                         }
                         trace!("read blob flush in LogIter::next");
-                        self.cur_lsn += (MSG_HEADER_LEN
-                            + EXTERNAL_VALUE_LEN)
-                            as Lsn;
+                        self.cur_lsn +=
+                            (MSG_HEADER_LEN + BLOB_INLINE_LEN) as Lsn;
                         return Some((
                             lsn,
                             DiskPtr::Blob(lid, blob_ptr),
@@ -127,18 +126,14 @@ impl Iterator for LogIter {
                         self.trailer.take();
                         continue;
                     }
-                    Ok(LogRead::DanglingBlob(
-                        lsn,
-                        blob_ptr,
-                    )) => {
+                    Ok(LogRead::DanglingBlob(lsn, blob_ptr)) => {
                         debug!(
                             "encountered dangling blob \
                              pointer at lsn {} ptr {}",
                             lsn, blob_ptr
                         );
-                        self.cur_lsn += (MSG_HEADER_LEN
-                            + EXTERNAL_VALUE_LEN)
-                            as Lsn;
+                        self.cur_lsn +=
+                            (MSG_HEADER_LEN + BLOB_INLINE_LEN) as Lsn;
                         continue;
                     }
                     Err(e) => {
