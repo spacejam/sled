@@ -438,7 +438,7 @@ impl Tree {
                 Data::Leaf(ref items) => {
                     let search =
                         items.binary_search_by(|&(ref k, ref _v)| {
-                            prefix_cmp(k, &*encoded_key)
+                            prefix_cmp(k, &encoded_key)
                         });
                     if let Ok(idx) = search {
                         ret = Some(items[idx].1.clone());
@@ -766,11 +766,9 @@ impl Tree {
             let data = &last_node.data;
             let items =
                 data.leaf_ref().expect("last_node should be a leaf");
-            let encoded_key =
-                prefix_encode(last_node.lo.inner(), key);
             let search =
                 items.binary_search_by(|&(ref k, ref _v)| {
-                    prefix_cmp(k, &*encoded_key)
+                    prefix_cmp_encoded(k, &key, last_node.lo.inner())
                 });
             if let Ok(idx) = search {
                 Some(&*items[idx].1)
@@ -897,9 +895,8 @@ impl Tree {
                 Data::Index(ref ptrs) => {
                     let old_cursor = cursor;
 
-                    let encoded_key = prefix_encode(&*prefix, key);
                     for &(ref sep_k, ref ptr) in ptrs {
-                        if prefix_cmp(sep_k, &*encoded_key) != Ordering::Greater {
+                        if prefix_cmp_encoded(sep_k, key, &prefix) != Ordering::Greater {
                             cursor = *ptr;
                         } else {
                             break; // we've found our next cursor
