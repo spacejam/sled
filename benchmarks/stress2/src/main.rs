@@ -1,17 +1,17 @@
 #[macro_use]
 extern crate serde_derive;
-extern crate docopt;
 extern crate chan_signal;
+extern crate docopt;
 extern crate rand;
 extern crate sled;
 
-use std::thread;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::thread;
 
 use chan_signal::Signal;
 use docopt::Docopt;
-use rand::{Rng, thread_rng};
+use rand::{thread_rng, Rng};
 
 const USAGE: &'static str = "
 Usage: stress [--threads=<#>] [--burn-in] [--duration=<s>]
@@ -64,15 +64,13 @@ fn run(
             2 => {
                 tree.del(&*byte()).unwrap();
             }
-            3 => {
-                match tree.cas(byte(), Some(byte()), Some(byte())) {
-                    Ok(_) |
-                    Err(sled::Error::CasFailed(_)) => {}
-                    other => panic!("operational error: {:?}", other),
-                }
-            }
+            3 => match tree.cas(byte(), Some(byte()), Some(byte())) {
+                Ok(_) | Err(sled::Error::CasFailed(_)) => {}
+                other => panic!("operational error: {:?}", other),
+            },
             4 => {
-                tree.scan(&*byte())
+                let _ = tree
+                    .scan(&*byte())
                     .take(rng.gen_range(0, 15))
                     .map(|res| res.unwrap())
                     .collect::<Vec<_>>();
@@ -86,8 +84,9 @@ fn main() {
     let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
 
     let args: Args = Docopt::new(USAGE)
-        .and_then(|d| d.argv(std::env::args().into_iter()).deserialize())
-        .unwrap_or_else(|e| e.exit());
+        .and_then(|d| {
+            d.argv(std::env::args().into_iter()).deserialize()
+        }).unwrap_or_else(|e| e.exit());
 
     let total = Arc::new(AtomicUsize::new(0));
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -101,6 +100,7 @@ fn main() {
         .cache_capacity(1_000_000)
         .flush_every_ms(Some(100))
         .snapshot_after_ops(1000000)
+        .print_profile_on_drop(true)
         .build();
 
     let tree = Arc::new(sled::Tree::start(config).unwrap());
@@ -130,7 +130,9 @@ fn main() {
         signal.recv();
         println!("got shutdown signal, cleaning up...");
     } else {
-        thread::sleep(std::time::Duration::from_secs(args.flag_duration));
+        thread::sleep(std::time::Duration::from_secs(
+            args.flag_duration,
+        ));
     }
 
     shutdown.store(true, Ordering::SeqCst);
