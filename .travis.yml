@@ -7,8 +7,6 @@ cache: cargo
 rust:
   - stable
 
-env: # important hack for allow_failures below. this also enables the default build!
-
 matrix:
   include:
     - os: linux
@@ -35,6 +33,9 @@ matrix:
     - os: osx
       env:
         - TEST=osx
+    - os: linux
+      env:
+        - TEST=standard
     - os: linux
       env:
         - TEST=clippy
@@ -80,7 +81,7 @@ script:
                  pushd crates/sled; cargo build --target $TARGET --features=nightly; popd;
                  pushd crates/pagecache; cargo build --target $TARGET --features=nightly; popd
                  ;;
-               *)
+               standard)
                  cargo check;
                  cargo check --features=all;
                  cargo test --release
