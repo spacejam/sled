@@ -43,7 +43,7 @@ matrix:
 
 install:
   - curl https://sh.rustup.rs -sSf |
-    sh -s -- -y --default-toolchain $TRAVIS_RUST_VERSION
+    sh -s -- -y --default-toolchain $TRAVIS_RUST_VERSION;
     rustup component add clippy-preview
   - if [ -n "$TARGET" ]; then
         rustup target add $TARGET;
