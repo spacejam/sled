@@ -7,13 +7,10 @@ cache: cargo
 rust:
   - stable
 
-env: # important hack for allow_failures below
+env: # important hack for allow_failures below. this also enables the default build!
 
 matrix:
   include:
-    - os: linux
-      env:
-        - TEST=standard
     - os: linux
       rust: nightly-2018-09-13
       env:
@@ -57,11 +54,6 @@ install:
 
 script:
   - bash -c 'case "$TEST" in
-               standard)
-                 cargo check;
-                 cargo check --features=all;
-                 cargo test --release
-                 ;;
                osx)
                  cargo check;
                  cargo check --features=all
@@ -85,5 +77,10 @@ script:
                  echo "https://github.com/rust-lang/cargo/issues/4753";
                  pushd crates/sled; cargo build --target $TARGET --features=nightly; popd;
                  pushd crates/pagecache; cargo build --target $TARGET --features=nightly; popd
+                 ;;
+               *)
+                 cargo check;
+                 cargo check --features=all;
+                 cargo test --release
                  ;;
              esac'
