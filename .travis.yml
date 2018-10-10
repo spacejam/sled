@@ -35,13 +35,11 @@ matrix:
     - os: osx
       env:
         - TEST=osx
+  allow_failures:
     - os: linux
       env:
         - TEST=clippy
         - RUSTFLAGS=-Dwarnings
-        - CAN_FAIL=yes
-  allow_failures:
-    - env: CAN_FAIL=yes
 
 install:
   - curl https://sh.rustup.rs -sSf |
