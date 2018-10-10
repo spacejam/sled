@@ -10,6 +10,9 @@ rust:
 matrix:
   include:
     - os: linux
+      env:
+        - TEST=standard
+    - os: linux
       rust: nightly-2018-09-13
       env:
         - TEST=tsan
@@ -33,10 +36,15 @@ matrix:
     - os: osx
       env:
         - TEST=osx
+    - os: linux
+      env:
+        - TEST=clippy
+        - RUSTFLAGS=-Dwarnings
 
 install:
   - curl https://sh.rustup.rs -sSf |
     sh -s -- -y --default-toolchain $TRAVIS_RUST_VERSION
+    rustup component add clippy-preview
   - if [ -n "$TARGET" ]; then
         rustup target add $TARGET;
     fi
@@ -44,8 +52,17 @@ install:
 
 script:
   - bash -c 'case "$TEST" in
+               standard)
+                 cargo check;
+                 cargo check --features=all;
+                 cargo test --release
+                 ;;
+               osx)
+                 cargo check;
+                 cargo check --features=all
+                 ;;
                clippy)
-                 cargo test --features="clippy"
+                 cargo clippy
                  ;;
                lsan)
                  cd benchmarks/stress2;
@@ -63,14 +80,5 @@ script:
                  echo "https://github.com/rust-lang/cargo/issues/4753";
                  pushd crates/sled; cargo build --target $TARGET --features=nightly; popd;
                  pushd crates/pagecache; cargo build --target $TARGET --features=nightly; popd
-                 ;;
-               osx)
-                 cargo check;
-                 cargo check --features=all
-                 ;;
-               *)
-                 cargo check;
-                 cargo check --features=all;
-                 cargo test --release
                  ;;
              esac'
