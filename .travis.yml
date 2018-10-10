@@ -79,8 +79,7 @@ script:
                  ;;
                cross-build)
                  echo "https://github.com/rust-lang/cargo/issues/4753";
-                 pushd crates/sled; cargo build --target $TARGET --features=nightly; popd;
-                 pushd crates/pagecache; cargo build --target $TARGET --features=nightly; popd
+                 cargo build --target $TARGET --features=nightly
                  ;;
                standard)
                  cargo check;
