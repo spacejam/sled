@@ -73,7 +73,7 @@ use super::*;
 /// of storage. It scans through all segments quickly during
 /// recovery and attempts to locate torn segments.
 #[derive(Debug)]
-pub(crate) struct SegmentAccountant {
+pub(super) struct SegmentAccountant {
     // static or one-time set
     config: Config,
 
@@ -98,7 +98,7 @@ pub(crate) struct SegmentAccountant {
 /// when segments become reusable and allow them to be
 /// overwritten for new data.
 #[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub(crate) struct Segment {
+struct Segment {
     present: BTreeSet<PageId>,
     removed: HashSet<PageId>,
     deferred_remove: HashSet<PageId>,
@@ -108,7 +108,7 @@ pub(crate) struct Segment {
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub(crate) enum SegmentState {
+enum SegmentState {
     /// the segment is marked for reuse, should never receive
     /// new pids,
     /// TODO consider: but may receive removals for pids that were
@@ -186,13 +186,7 @@ impl Segment {
     }
 
     /// Transitions a segment to being in the Inactive state.
-    /// Called in:
-    ///
-    /// PageCache::advance_snapshot for marking when a
-    /// segment has been completely read
-    ///
-    /// SegmentAccountant::recover for when
-    pub(crate) fn active_to_inactive(
+    fn active_to_inactive(
         &mut self,
         lsn: Lsn,
         from_recovery: bool,
@@ -217,10 +211,8 @@ impl Segment {
             self.remove_pid(pid, lsn);
         }
 
-        let deferred_rm_blob = mem::replace(
-            &mut self.deferred_rm_blob,
-            HashSet::new(),
-        );
+        let deferred_rm_blob =
+            mem::replace(&mut self.deferred_rm_blob, HashSet::new());
         for ptr in deferred_rm_blob {
             trace!(
                 "removing blob {} while transitioning \
@@ -234,7 +226,7 @@ impl Segment {
         Ok(())
     }
 
-    pub(crate) fn inactive_to_draining(&mut self, lsn: Lsn) {
+    fn inactive_to_draining(&mut self, lsn: Lsn) {
         trace!(
             "setting Segment with lsn {:?} to Draining",
             self.lsn()
@@ -244,7 +236,7 @@ impl Segment {
         self.state = Draining;
     }
 
-    pub(crate) fn draining_to_free(&mut self, lsn: Lsn) {
+    fn draining_to_free(&mut self, lsn: Lsn) {
         trace!("setting Segment with lsn {:?} to Free", self.lsn());
         assert!(self.is_draining());
         assert!(lsn >= self.lsn());
@@ -253,7 +245,7 @@ impl Segment {
         self.state = Free;
     }
 
-    pub(crate) fn recovery_ensure_initialized(&mut self, lsn: Lsn) {
+    fn recovery_ensure_initialized(&mut self, lsn: Lsn) {
         if let Some(current_lsn) = self.lsn {
             if current_lsn != lsn {
                 assert!(lsn > current_lsn);
@@ -279,13 +271,16 @@ impl Segment {
 
     /// Add a pid to the Segment. The caller must provide
     /// the Segment's LSN.
-    pub(crate) fn insert_pid(&mut self, pid: PageId, lsn: Lsn) {
+    fn insert_pid(&mut self, pid: PageId, lsn: Lsn) {
         assert_eq!(lsn, self.lsn.unwrap());
         // if this breaks, we didn't implement the transition
         // logic right in write_to_log, and maybe a thread is
         // using the SA to add pids AFTER their calls to
         // res.complete() worked.
         // FIXME Free, called from Tree::new -> replace -> mark_replace -> mark_link
+        // FIXME Inactive, called from Tree::del -> path_for_key -> pc::get -> pc::page_in ->
+        // pc::cas_page -> sa::free_segment -> sa::possibly_clean_or_free_segment ->
+        // Segment::draining_to_free
         assert_eq!(self.state, Active);
         assert!(!self.removed.contains(&pid));
         self.present.insert(pid);
@@ -293,7 +288,7 @@ impl Segment {
 
     /// Mark that a pid in this Segment has been relocated.
     /// The caller must provide the LSN of the removal.
-    pub(crate) fn remove_pid(&mut self, pid: PageId, lsn: Lsn) {
+    fn remove_pid(&mut self, pid: PageId, lsn: Lsn) {
         // TODO this could be racy?
         assert!(lsn >= self.lsn.unwrap());
         match self.state {
@@ -333,9 +328,7 @@ impl Segment {
                 remove_blob(blob_ptr, config)
                     .map_err(|e| e.danger_cast())?;
             }
-            Free => {
-                panic!("remove_blob called on a Free Segment")
-            }
+            Free => panic!("remove_blob called on a Free Segment"),
         }
 
         Ok(())
@@ -350,14 +343,14 @@ impl Segment {
         self.state == Draining && self.is_empty()
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.present.is_empty()
     }
 }
 
 impl SegmentAccountant {
     /// Create a new SegmentAccountant from previously recovered segments.
-    pub(crate) fn start<R>(
+    pub(super) fn start<R>(
         config: Config,
         snapshot: Snapshot<R>,
     ) -> Result<SegmentAccountant, ()> {
@@ -393,8 +386,6 @@ impl SegmentAccountant {
         Ok(ret)
     }
 
-    /// Called from the `PageCache` recovery logic, this initializes the
-    /// `SegmentAccountant` based on recovered segment information.
     fn initialize_from_snapshot<R>(
         &mut self,
         snapshot: Snapshot<R>,
@@ -722,12 +713,12 @@ impl SegmentAccountant {
     /// Causes all new allocations to occur at the end of the file, which
     /// is necessary to preserve consistency while concurrently iterating through
     /// the log during snapshot creation.
-    pub(crate) fn pause_rewriting(&mut self) {
+    pub(super) fn pause_rewriting(&mut self) {
         self.pause_rewriting = true;
     }
 
     /// Re-enables segment rewriting after iteration is complete.
-    pub(crate) fn resume_rewriting(&mut self) {
+    pub(super) fn resume_rewriting(&mut self) {
         self.pause_rewriting = false;
     }
 
@@ -735,7 +726,7 @@ impl SegmentAccountant {
     /// We mark all of the old segments that contained the previous state
     /// from the page, and if the old segments are empty or clear enough to
     /// begin accelerated cleaning we mark them as so.
-    pub(crate) fn mark_replace(
+    pub(super) fn mark_replace(
         &mut self,
         pid: PageId,
         lsn: Lsn,
@@ -770,10 +761,8 @@ impl SegmentAccountant {
                     "queueing blob removal for {} in our own segment",
                     old_ptr
                 );
-                self.segments[new_idx].remove_blob(
-                    old_ptr.blob().1,
-                    &self.config,
-                )?;
+                self.segments[new_idx]
+                    .remove_blob(old_ptr.blob().1, &self.config)?;
             }
 
             let old_lid = old_ptr.lid();
@@ -855,7 +844,7 @@ impl SegmentAccountant {
     /// Called by the `PageCache` to find pages that are in
     /// segments elligible for cleaning that it should
     /// try to rewrite elsewhere.
-    pub(crate) fn clean(
+    pub(super) fn clean(
         &mut self,
         ignore_pid: Option<PageId>,
     ) -> Option<PageId> {
@@ -892,7 +881,7 @@ impl SegmentAccountant {
     /// Called from `PageCache` when some state has been added
     /// to a logical page at a particular offset. We ensure the
     /// page is present in the segment's page set.
-    pub(crate) fn mark_link(
+    pub(super) fn mark_link(
         &mut self,
         pid: PageId,
         lsn: Lsn,
@@ -996,7 +985,7 @@ impl SegmentAccountant {
     }
 
     /// Returns the next offset to write a new segment in.
-    pub(crate) fn next(&mut self, lsn: Lsn) -> Result<LogId, ()> {
+    pub(super) fn next(&mut self, lsn: Lsn) -> Result<LogId, ()> {
         assert_eq!(
             lsn % self.config.io_buf_size as Lsn,
             0,
@@ -1111,7 +1100,7 @@ impl SegmentAccountant {
 
     /// Returns an iterator over a snapshot of current segment
     /// log sequence numbers and their corresponding file offsets.
-    pub(crate) fn segment_snapshot_iter_from(
+    pub(super) fn segment_snapshot_iter_from(
         &mut self,
         lsn: Lsn,
     ) -> Box<dyn Iterator<Item = (Lsn, LogId)>> {
