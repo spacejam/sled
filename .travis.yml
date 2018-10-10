@@ -35,6 +35,10 @@ matrix:
     - os: osx
       env:
         - TEST=osx
+    - os: linux
+      env:
+        - TEST=clippy
+        - RUSTFLAGS=-Dwarnings
   allow_failures:
     - os: linux
       env:
