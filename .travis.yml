@@ -7,6 +7,8 @@ cache: cargo
 rust:
   - stable
 
+env: # important hack for allow_failures below
+
 matrix:
   include:
     - os: linux
@@ -40,6 +42,9 @@ matrix:
       env:
         - TEST=clippy
         - RUSTFLAGS=-Dwarnings
+        - CAN_FAIL=yes
+  allow_failures:
+    - env: CAN_FAIL=yes
 
 install:
   - curl https://sh.rustup.rs -sSf |
