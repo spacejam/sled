@@ -23,10 +23,19 @@ pub fn debug_delay() {
         use std::thread;
         use std::time::Duration;
 
-        use rand::{thread_rng, Rng};
+        use rand::{
+            distributions::{Distribution, Gamma},
+            thread_rng, Rng,
+        };
 
         if thread_rng().gen_bool(1. / 1000.) {
-            thread::sleep(Duration::from_millis(10));
+            let gamma = Gamma::new(0.3, 100000.0);
+            let duration = gamma.sample(&mut thread_rng());
+            thread::sleep(Duration::from_micros(duration as u64));
+        }
+
+        if thread_rng().gen::<bool>() {
+            thread::yield_now();
         }
     }
 }

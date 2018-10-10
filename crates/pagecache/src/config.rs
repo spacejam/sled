@@ -89,6 +89,8 @@ pub struct ConfigBuilder {
     pub zstd_compression_factor: i32,
     #[doc(hidden)]
     pub merge_operator: Option<usize>,
+    #[doc(hidden)]
+    pub print_profile_on_drop: bool,
 }
 
 unsafe impl Send for ConfigBuilder {}
@@ -142,6 +144,7 @@ impl Default for ConfigBuilder {
             temporary: false,
             segment_mode: SegmentMode::Gc,
             merge_operator: None,
+            print_profile_on_drop: false,
         }
     }
 }
@@ -228,7 +231,8 @@ impl ConfigBuilder {
         (min_free_segments, get_min_free_segments, set_min_free_segments, usize, "the minimum number of free segments to have on-deck before a compaction occurs"),
         (zero_copy_storage, get_zero_copy_storage, set_zero_copy_storage, bool, "disabling of the log segment copy cleaner"),
         (segment_mode, get_segment_mode, set_segment_mode, SegmentMode, "the file segment selection mode"),
-        (snapshot_path, get_snapshot_path, set_snapshot_path, Option<PathBuf>, "snapshot file location")
+        (snapshot_path, get_snapshot_path, set_snapshot_path, Option<PathBuf>, "snapshot file location"),
+        (print_profile_on_drop, get_print_profile_on_drop, set_print_profile_on_drop, bool, "print a performance profile when the Config is dropped")
     );
 }
 
@@ -268,6 +272,10 @@ impl Drop for Config {
                 let f: Box<Arc<fs::File>> =
                     unsafe { Box::from_raw(f_ptr) };
                 drop(f);
+            }
+
+            if self.print_profile_on_drop {
+                M.print_profile();
             }
 
             if !self.temporary {
