@@ -20,6 +20,7 @@ Options:
     --threads=<#>      Number of threads [default: 4].
     --burn-in          Don't halt until we receive a signal.
     --duration=<s>     Seconds to run for [default: 10].
+    --kv-len=<l>       The length of both keys and values [default: 2].
 ";
 
 #[derive(Deserialize)]
@@ -27,6 +28,7 @@ struct Args {
     flag_threads: usize,
     flag_burn_in: bool,
     flag_duration: u64,
+    flag_kv_len: usize,
 }
 
 fn report(shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
@@ -45,9 +47,14 @@ fn run(
     tree: Arc<sled::Tree>,
     shutdown: Arc<AtomicBool>,
     total: Arc<AtomicUsize>,
+    kv_len: usize,
 ) {
-    let mut rng = thread_rng();
-    let mut byte = || vec![rng.gen::<u8>()];
+    let byte = || {
+        thread_rng()
+            .gen_iter::<u8>()
+            .take(kv_len)
+            .collect::<Vec<_>>()
+    };
     let mut rng = thread_rng();
 
     while !shutdown.load(Ordering::Relaxed) {
@@ -110,6 +117,7 @@ fn main() {
     let now = std::time::Instant::now();
 
     let n_threads = args.flag_threads;
+    let kv_len = args.flag_kv_len;
 
     for i in 0..n_threads + 1 {
         let tree = tree.clone();
@@ -119,7 +127,7 @@ fn main() {
         let t = if i == 0 {
             thread::spawn(move || report(shutdown, total))
         } else {
-            thread::spawn(move || run(tree, shutdown, total))
+            thread::spawn(move || run(tree, shutdown, total, kv_len))
         };
 
         threads.push(t);
