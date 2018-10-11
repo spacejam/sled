@@ -60,7 +60,8 @@ script:
   - bash -c 'case "$TEST" in
                osx)
                  cargo check;
-                 cargo check --features=all
+                 cargo check --features=all;
+                 cargo test test_crash_recovery --release
                  ;;
                clippy)
                  cargo clippy
