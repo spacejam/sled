@@ -20,7 +20,7 @@ pub fn pin() -> Guard {
 pub fn debug_delay() {
     #[cfg(any(test, feature = "lock_free_delays"))]
     {
-        use std::sync::atomic::{spin_loop_hint, Ordering::SeqCst};
+        use std::sync::atomic::spin_loop_hint;
         use std::thread;
         use std::time::Duration;
 
