@@ -45,7 +45,10 @@ pub fn debug_delay() {
 
 #[inline(always)]
 fn split_fanout(i: usize) -> (usize, usize) {
+    // right shift 32 on 32-bit pointer systems panics
+    #[cfg(target_pointer_width = "64")]
     assert!(i <= 1 << (FANFACTOR * 2));
+
     let left = i >> FANFACTOR;
     let right = i & FAN_MASK;
     (left, right)

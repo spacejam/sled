@@ -2,43 +2,73 @@ language: rust
 
 sudo: required
 
-cache: cargo
-
-rust:
-  - stable
-
-matrix:
-  include:
-    - rust: nightly-2018-09-13
-      env:
-        - TEST=tsan
-        - RUSTFLAGS="-Z sanitizer=thread"
-        - TSAN_OPTIONS=suppressions=/home/travis/build/spacejam/sled/tsan_suppressions.txt
-    - rust: nightly-2018-09-13
-      env:
-        - TEST=lsan
-        - RUSTFLAGS="-Z sanitizer=leak"
-    - rust: nightly-2018-09-13
-      env:
-        - TEST=crash
-        - RUST_BACKTRACE=1
-    - rust: nightly-2018-09-13
-      env:
-        - TEST=cross-build
-        - TARGET=i686-unknown-linux-gnu
+cache:
+  cargo: true
+  directories:
+    - ~/.rustup
 
 install:
   - curl https://sh.rustup.rs -sSf |
-    sh -s -- -y --default-toolchain $TRAVIS_RUST_VERSION
+    sh -s -- -y --default-toolchain $TRAVIS_RUST_VERSION &&
+    rustup component add clippy-preview
   - if [ -n "$TARGET" ]; then
         rustup target add $TARGET;
     fi
   - source ~/.cargo/env
 
+matrix:
+  include:
+    - os: linux
+      rust: nightly-2018-09-13
+      env:
+        - TEST=tsan
+        - RUSTFLAGS="-Z sanitizer=thread"
+        - TSAN_OPTIONS=suppressions=/home/travis/build/spacejam/sled/tsan_suppressions.txt
+    - os: linux
+      rust: nightly-2018-09-13
+      env:
+        - TEST=lsan
+        - RUSTFLAGS="-Z sanitizer=leak"
+    - os: linux
+      rust: nightly-2018-09-13
+      env:
+        - TEST=crash
+        - RUST_BACKTRACE=1
+    - os: linux
+      rust: nightly-2018-09-13
+      env:
+        - TEST=cross-build
+        - TARGET=i686-unknown-linux-gnu
+    - os: osx
+      rust: stable
+      env:
+        - TEST=osx
+    - os: linux
+      rust: stable
+      env:
+        - TEST=standard
+    - os: linux
+      rust: stable
+      env:
+        - TEST=clippy
+        - RUSTFLAGS=-Dwarnings
+  allow_failures:
+    - os: linux
+      rust: stable
+      env:
+        - TEST=clippy
+        - RUSTFLAGS=-Dwarnings
+
 script:
   - bash -c 'case "$TEST" in
+               osx)
+                 cargo check;
+                 cargo check --features=all;
+                 cargo test test_crash_recovery --release &&
+                 cargo test tree --release
+                 ;;
                clippy)
-                 cargo test --features="clippy"
+                 cargo clippy
                  ;;
                lsan)
                  cd benchmarks/stress2;
@@ -54,16 +84,12 @@ script:
                  ;;
                cross-build)
                  echo "https://github.com/rust-lang/cargo/issues/4753";
-                 pushd crates/sled; cargo build --target $TARGET --features=nightly; popd;
-                 pushd crates/pagecache; cargo build --target $TARGET --features=nightly; popd
+                 pushd crates/sled; cargo build --target $TARGET --features=nightly && popd &&
+                 pushd crates/pagecache && cargo build --target $TARGET --features=nightly && popd
                  ;;
-               *)
+               standard)
                  cargo check;
                  cargo check --features=all;
                  cargo test --release
                  ;;
              esac'
-
-os:
-  - linux
-  - osx
