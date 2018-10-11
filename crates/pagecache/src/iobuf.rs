@@ -17,6 +17,11 @@ use self::reader::LogReader;
 
 use super::*;
 
+// This is the most writers in a single IO buffer
+// that we have space to accomodate in the counter
+// for writers in the IO buffer header.
+const MAX_WRITERS: Header = 127;
+
 type Header = u64;
 
 #[cfg(target_pointer_width = "64")]
@@ -458,6 +463,18 @@ impl IoBufs {
             // attempt to claim by incrementing an unsealed header
             let bumped_offset =
                 bump_offset(header, inline_buf_len as Header);
+
+            // check for maxed out IO buffer writers
+            if n_writers(bumped_offset) == MAX_WRITERS {
+                trace_once!(
+                    "spinning because our buffer has {} writers already",
+                    MAX_WRITERS
+                );
+                M.log_looped();
+                yield_now();
+                continue;
+            }
+
             let claimed = incr_writers(bumped_offset);
             assert!(!is_sealed(claimed));
 
@@ -1270,7 +1287,7 @@ fn n_writers(v: Header) -> Header {
 
 #[inline(always)]
 fn incr_writers(v: Header) -> Header {
-    assert_ne!(n_writers(v), 127);
+    assert_ne!(n_writers(v), MAX_WRITERS);
     v + (1 << 24)
 }
 
