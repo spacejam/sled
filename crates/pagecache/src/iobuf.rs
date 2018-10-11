@@ -4,7 +4,7 @@ use std::sync::atomic::AtomicI64;
 #[cfg(target_pointer_width = "64")]
 use std::sync::atomic::AtomicIsize;
 use std::sync::atomic::Ordering::SeqCst;
-use std::sync::atomic::{AtomicBool, AtomicUsize};
+use std::sync::atomic::{spin_loop_hint, AtomicBool, AtomicUsize};
 use std::sync::{Condvar, Mutex};
 
 #[cfg(feature = "failpoints")]
@@ -326,10 +326,8 @@ impl IoBufs {
         #[cfg(feature = "zstd")]
         let buf = if self.config.use_compression {
             let _measure = Measure::new(&M.compress);
-            compress(
-                &*raw_buf,
-                self.config.get_zstd_compression_factor(),
-            ).unwrap()
+            compress(&*raw_buf, self.config.zstd_compression_factor)
+                .unwrap()
         } else {
             raw_buf
         };
@@ -396,7 +394,7 @@ impl IoBufs {
                         return Err(Error::FailPoint);
                     }
                 }
-                yield_now();
+                spin_loop_hint();
                 continue;
             }
 
@@ -413,7 +411,7 @@ impl IoBufs {
                         return Err(Error::FailPoint);
                     }
                 }
-                yield_now();
+                spin_loop_hint();
                 continue;
             }
 
@@ -433,7 +431,7 @@ impl IoBufs {
                         return Err(Error::FailPoint);
                     }
                 }
-                yield_now();
+                spin_loop_hint();
                 continue;
             }
 
@@ -456,7 +454,7 @@ impl IoBufs {
                         return Err(Error::FailPoint);
                     }
                 }
-                yield_now();
+                spin_loop_hint();
                 continue;
             }
 
@@ -471,7 +469,7 @@ impl IoBufs {
                     MAX_WRITERS
                 );
                 M.log_looped();
-                yield_now();
+                spin_loop_hint();
                 continue;
             }
 
@@ -490,7 +488,7 @@ impl IoBufs {
                         return Err(Error::FailPoint);
                     }
                 }
-                yield_now();
+                spin_loop_hint();
                 continue;
             }
 
@@ -828,7 +826,7 @@ impl IoBufs {
                     return Err(Error::FailPoint);
                 }
             }
-            yield_now();
+            spin_loop_hint();
         }
         trace!("{} log set to {}", next_idx, next_offset);
 
@@ -1316,9 +1314,4 @@ fn bump_salt(v: Header) -> Header {
 #[inline(always)]
 fn salt(v: Header) -> Header {
     v >> 32 << 32
-}
-
-#[inline(always)]
-fn yield_now() {
-    std::sync::atomic::spin_loop_hint()
 }

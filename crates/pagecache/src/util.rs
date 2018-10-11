@@ -20,6 +20,7 @@ pub fn pin() -> Guard {
 pub fn debug_delay() {
     #[cfg(any(test, feature = "lock_free_delays"))]
     {
+        use std::sync::atomic::spin_loop_hint;
         use std::thread;
         use std::time::Duration;
 
@@ -33,6 +34,8 @@ pub fn debug_delay() {
             let duration = gamma.sample(&mut thread_rng());
             thread::sleep(Duration::from_micros(duration as u64));
         }
+
+        spin_loop_hint();
 
         if thread_rng().gen::<bool>() {
             thread::yield_now();

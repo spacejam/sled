@@ -694,21 +694,21 @@ where
             Some(s) => s,
         };
 
-        debug_delay();
-        let head = unsafe { stack_ptr.deref().head(guard) };
-
-        self.page_in(pid, head, stack_ptr, guard)
+        self.page_in(pid, stack_ptr, guard)
     }
 
     fn page_in<'g>(
         &self,
         pid: PageId,
-        mut head: PagePtrInner<'g, P>,
         stack_ptr: Shared<'g, Stack<CacheEntry<P>>>,
         guard: &'g Guard,
     ) -> Result<PageGet<'g, PM::PageFrag>, Option<PagePtr<'g, P>>>
     {
         let _measure = Measure::new(&M.page_in);
+
+        debug_delay();
+        let mut head = unsafe { stack_ptr.deref().head(guard) };
+
         let stack_iter = StackIter::from_ptr(head, guard);
 
         let mut to_merge = vec![];
