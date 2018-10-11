@@ -2,7 +2,10 @@ language: rust
 
 sudo: required
 
-cache: cargo
+cache:
+  cargo: true
+  directories:
+    - ~/.rustup
 
 install:
   - curl https://sh.rustup.rs -sSf |
@@ -61,7 +64,7 @@ script:
                osx)
                  cargo check;
                  cargo check --features=all;
-                 cargo test test_crash_recovery --release
+                 cargo test test_crash_recovery tree --release
                  ;;
                clippy)
                  cargo clippy
