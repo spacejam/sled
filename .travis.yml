@@ -64,7 +64,8 @@ script:
                osx)
                  cargo check;
                  cargo check --features=all;
-                 cargo test test_crash_recovery tree --release
+                 cargo test test_crash_recovery --release &&
+                 cargo test tree --release
                  ;;
                clippy)
                  cargo clippy
