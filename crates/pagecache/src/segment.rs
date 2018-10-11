@@ -281,7 +281,11 @@ impl Segment {
         // FIXME Inactive, called from Tree::del -> path_for_key -> pc::get -> pc::page_in ->
         // pc::cas_page -> sa::free_segment -> sa::possibly_clean_or_free_segment ->
         // Segment::draining_to_free
-        assert_eq!(self.state, Active);
+        assert_eq!(
+            self.state, Active,
+            "expected segment with lsn {} to be Active",
+            lsn
+        );
         assert!(!self.removed.contains(&pid));
         self.present.insert(pid);
     }
@@ -898,14 +902,18 @@ impl SegmentAccountant {
 
         let segment = &mut self.segments[idx];
 
-        if segment.lsn() > lsn {
-            // a race happened, and our Lsn does not apply anymore
-            // TODO think about how this happens with segment delay
-            return;
-        }
-
         let segment_lsn = lsn / self.config.io_buf_size as Lsn
             * self.config.io_buf_size as Lsn;
+
+        // a race happened, and our Lsn does not apply anymore
+        assert_eq!(
+            segment.lsn(),
+            segment_lsn,
+            "segment somehow got reused by the time a link was \
+             marked on it. expected lsn: {} actual: {}",
+            segment_lsn,
+            segment.lsn()
+        );
 
         segment.insert_pid(pid, segment_lsn);
     }
