@@ -4,6 +4,9 @@ version = "0.1.0"
 authors = ["Tyler Neely <t@jujit.su>"]
 publish = false
 
+[profile.release]
+debug = true
+
 [features]
 default = []
 lock_free_delays = ["sled/lock_free_delays"]

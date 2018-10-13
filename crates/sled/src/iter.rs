@@ -29,8 +29,12 @@ impl<'a> Iterator for Iter<'a> {
             let res = self.inner.get(self.id, &guard);
 
             let node = match res {
-                Ok(PageGet::Materialized(Frag::Base(base, _), _)) => {
-                    base
+                Ok(PageGet::Materialized(ptr)) => {
+                    if let Frag::Base(base, _) = *ptr {
+                        base
+                    } else {
+                        panic!("Expected to get a Base page");
+                    }
                 }
                 Err(e) => {
                     // TODO(when implementing merge support) this could
