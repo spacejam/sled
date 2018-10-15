@@ -87,6 +87,7 @@ fn v(b: &Vec<u8>) -> u16 {
 }
 
 fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
+    println!("ops: {:?}, flusher: {}", ops, flusher);
     lazy_static! {
         // forces quickcheck to run one thread at a time
         static ref M: Mutex<()> = Mutex::new(());
@@ -830,6 +831,37 @@ fn failpoints_bug_13() {
             Set,
             FailPoint("snap write"),
             Del(4),
+        ],
+        false,
+    ))
+}
+
+#[test]
+fn failpoints_bug_14() {
+    // postmortem 1:
+    assert!(prop_tree_crashes_nicely(
+        vec![
+            FailPoint("blob blob write"),
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
         ],
         false,
     ))

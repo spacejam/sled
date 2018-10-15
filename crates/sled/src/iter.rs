@@ -41,8 +41,8 @@ impl<'a> Iterator for Iter<'a> {
             // be None if the node was removed since the last
             // iteration, and we need to just get the inner
             // node again...
-            let ptr = res.unwrap();
-            let node: &Node = ptr.unwrap().unwrap_base();
+            let (frag, _ptr) = res.unwrap();
+            let node = frag.unwrap_base();
 
             let prefix = node.lo.inner();
             for (ref k, ref v) in

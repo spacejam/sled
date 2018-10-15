@@ -190,12 +190,12 @@ impl Tree {
                 return Err(Error::CasFailed(cur));
             }
 
-            let leaf_ptr = path.pop().expect(
+            let (leaf_frag, leaf_ptr) = path.pop().expect(
                 "get_internal somehow returned a path of length zero",
             );
 
             let (node_id, encoded_key) = {
-                let node: &Node = leaf_ptr.unwrap().unwrap_base();
+                let node: &Node = leaf_frag.unwrap_base();
                 (node.id, prefix_encode(node.lo.inner(), &*key))
             };
             let frag = if let Some(ref n) = new {
@@ -228,11 +228,11 @@ impl Tree {
         let guard = pin();
         loop {
             let mut path = self.path_for_key(&*key, &guard)?;
-            let leaf_ptr = path.pop().expect(
+            let (leaf_frag, leaf_ptr) = path.pop().expect(
                 "path_for_key should always return a path \
                  of length >= 2 (root + leaf)",
             );
-            let node: &Node = leaf_ptr.unwrap().unwrap_base();
+            let node: &Node = leaf_frag.unwrap_base();
             let encoded_key = prefix_encode(node.lo.inner(), &*key);
             let frag = Frag::Set(encoded_key, value.clone());
             let link = self.pages.link(
@@ -246,8 +246,14 @@ impl Tree {
                     // success
                     if node.len() >= self.config.blink_fanout as usize
                     {
-                        path.push(new_cas_key);
-                        self.recursive_split(node.id, &path, &guard)?;
+                        if let Ok(PageGet::Materialized(page, ptr)) =
+                            self.pages.get(node.id, &guard)
+                        {
+                            if new_cas_key == ptr {
+                                path.push((page, ptr));
+                                self.recursive_split(&*path, &guard)?;
+                            }
+                        }
                     }
                     return Ok(());
                 }
@@ -310,11 +316,11 @@ impl Tree {
         let guard = pin();
         loop {
             let mut path = self.path_for_key(&*key, &guard)?;
-            let leaf_ptr = path.pop().expect(
+            let (leaf_frag, leaf_ptr) = path.pop().expect(
                 "path_for_key should always return a path \
                  of length >= 2 (root + leaf)",
             );
-            let node: &Node = leaf_ptr.unwrap().unwrap_base();
+            let node: &Node = leaf_frag.unwrap_base();
 
             let encoded_key = prefix_encode(node.lo.inner(), &*key);
             let frag = Frag::Merge(encoded_key, value.clone());
@@ -330,8 +336,14 @@ impl Tree {
                     // success
                     if node.len() >= self.config.blink_fanout as usize
                     {
-                        path.push(new_cas_key);
-                        self.recursive_split(node.id, &path, &guard)?;
+                        if let Ok(PageGet::Materialized(page, ptr)) =
+                            self.pages.get(node.id, &guard)
+                        {
+                            if new_cas_key == ptr {
+                                path.push((page, ptr));
+                                self.recursive_split(&*path, &guard)?;
+                            }
+                        }
                     }
                     return Ok(());
                 }
@@ -361,11 +373,11 @@ impl Tree {
         let mut ret: Option<Value>;
         loop {
             let mut path = self.path_for_key(&*key, &guard)?;
-            let leaf_ptr = path.pop().expect(
+            let (leaf_frag, leaf_ptr) = path.pop().expect(
                 "path_for_key should always return a path \
                  of length >= 2 (root + leaf)",
             );
-            let node: &Node = leaf_ptr.unwrap().unwrap_base();
+            let node: &Node = leaf_frag.unwrap_base();
             let encoded_key = prefix_encode(node.lo.inner(), key);
             match node.data {
                 Data::Leaf(ref items) => {
@@ -426,11 +438,11 @@ impl Tree {
         let mut broken = None;
         let id = match self.get_internal(key, &guard) {
             Ok((ref mut path, _)) if !path.is_empty() => {
-                let leaf_ptr = path.pop().expect(
+                let (leaf_frag, _leaf_ptr) = path.pop().expect(
                     "path_for_key should always return a path \
                      of length >= 2 (root + leaf)",
                 );
-                let node: &Node = leaf_ptr.unwrap().unwrap_base();
+                let node: &Node = leaf_frag.unwrap_base();
                 node.id
             }
             Ok(_) => {
@@ -475,8 +487,7 @@ impl Tree {
 
     fn recursive_split<'g>(
         &self,
-        leaf_id: usize,
-        path: &[TreePtr<'g>],
+        path: &[(&Frag, TreePtr<'g>)],
         guard: &'g Guard,
     ) -> Result<(), ()> {
         // to split, we pop the path, see if it's in need of split, recurse up
@@ -500,28 +511,17 @@ impl Tree {
         //
         //  root is special case, where we need to hoist a new root
 
-        let leaf_base_ptr = match self.pages.get(leaf_id, guard) {
-            Ok(lb) => lb.unwrap(),
-            Err(Error::CasFailed(_)) => return Ok(()),
-            other => {
-                return other.map(|_| ()).map_err(|e| e.danger_cast())
-            }
-        };
-        let leaf_base = (*leaf_base_ptr).unwrap().unwrap_base();;
-
         for window in path.windows(2).rev() {
-            let parent_ptr = window[0].clone();
-            let node_ptr = window[1].clone();
-            let node: &Node =
-                node_ptr.unwrap().base().unwrap_or(leaf_base);
+            let (parent_frag, parent_ptr) = window[0].clone();
+            let (node_frag, node_ptr) = window[1].clone();
+            let node: &Node = node_frag.unwrap_base();
             if node.len() >= self.config.blink_fanout as usize {
                 // try to child split
                 if let Ok(parent_split) =
                     self.child_split(node, node_ptr.clone(), guard)
                 {
                     // now try to parent split
-                    let parent_node =
-                        parent_ptr.unwrap().unwrap_base();
+                    let parent_node = parent_frag.unwrap_base();
 
                     let res = self.parent_split(
                         parent_node.id,
@@ -543,8 +543,8 @@ impl Tree {
             }
         }
 
-        let ref root_ptr = path[0];
-        let root_node: &Node = root_ptr.unwrap().unwrap_base();
+        let (ref root_frag, ref root_ptr) = path[0];
+        let root_node: &Node = root_frag.unwrap_base();
 
         if root_node.len() >= self.config.blink_fanout as usize {
             if let Ok(parent_split) =
@@ -698,11 +698,12 @@ impl Tree {
         &self,
         key: &[u8],
         guard: &'g Guard,
-    ) -> Result<(Vec<TreePtr<'g>>, Option<Value>), ()> {
+    ) -> Result<(Vec<(&'g Frag, TreePtr<'g>)>, Option<Value>), ()>
+    {
         let path = self.path_for_key(&*key, guard)?;
 
-        let ret = path.last().and_then(|tree_ptr| {
-            let last_node = tree_ptr.unwrap().unwrap_base();
+        let ret = path.last().and_then(|(last_frag, _tree_ptr)| {
+            let last_node = last_frag.unwrap_base();
             let data = &last_node.data;
             let items =
                 data.leaf_ref().expect("last_node should be a leaf");
@@ -713,7 +714,6 @@ impl Tree {
                     prefix_cmp(k, &*encoded_key)
                 });
             if let Ok(idx) = search {
-                // cap a del frag below
                 Some(items[idx].1.clone())
             } else {
                 // key does not exist
@@ -732,8 +732,7 @@ impl Tree {
              even if the key being searched for is not present",
         );
         let mut ret = String::new();
-        for ptr in &path {
-            let node = ptr.unwrap().unwrap_base();
+        for (node, _ptr) in &path {
             ret.push_str(&*format!("\n{:?}", node));
         }
         ret
@@ -745,9 +744,9 @@ impl Tree {
         &self,
         key: &[u8],
         guard: &'g Guard,
-    ) -> Result<Vec<TreePtr<'g>>, ()> {
+    ) -> Result<Vec<(&'g Frag, TreePtr<'g>)>, ()> {
         let mut cursor = self.root.load(SeqCst);
-        let mut path: Vec<TreePtr<'g>> = vec![];
+        let mut path: Vec<(&'g Frag, TreePtr<'g>)> = vec![];
 
         // unsplit_parent is used for tracking need
         // to complete partial splits.
@@ -771,8 +770,10 @@ impl Tree {
                 continue;
             }
 
-            let cas_key = match get_cursor {
-                PageGet::Materialized(ptr) => ptr,
+            let (frag, cas_key) = match get_cursor {
+                PageGet::Materialized(node, cas_key) => {
+                    (node, cas_key)
+                }
                 broken => {
                     return Err(Error::ReportableBug(format!(
                     "got non-base node while traversing tree: {:?}",
@@ -781,7 +782,7 @@ impl Tree {
                 }
             };
 
-            let node = cas_key.unwrap().unwrap_base();
+            let node = frag.unwrap_base();
 
             // TODO this may need to change when handling (half) merges
             assert!(node.lo.inner() <= key, "overshot key somehow");
@@ -801,8 +802,8 @@ impl Tree {
             } else if let Some(idx) = unsplit_parent.take() {
                 // we have found the proper page for
                 // our split.
-                let parent_ptr = &path[idx];
-                let parent_node = parent_ptr.unwrap().unwrap_base();
+                let (parent_frag, parent_ptr) = &path[idx];
+                let parent_node = parent_frag.unwrap_base();
 
                 let ps = Frag::ParentSplit(ParentSplit {
                     at: node.lo.clone(),
@@ -823,12 +824,12 @@ impl Tree {
             }
 
             let prefix = node.lo.inner().to_vec();
-            path.push(cas_key.clone());
+            path.push((frag, cas_key.clone()));
 
             match path
                 .last()
                 .expect("we just pushed to path, so it's not empty")
-                .unwrap()
+                .0
                 .unwrap_base()
                 .data
             {
@@ -874,8 +875,8 @@ impl Debug for Tree {
         loop {
             let get_res = self.pages.get(pid, &guard);
             let node = match get_res {
-                Ok(PageGet::Materialized(ref ptr)) => {
-                    ptr.unwrap().unwrap_base()
+                Ok(PageGet::Materialized(ref frag, ref _ptr)) => {
+                    frag.unwrap_base()
                 }
                 broken => panic!(
                     "pagecache returned non-base node: {:?}",
@@ -893,8 +894,8 @@ impl Debug for Tree {
                 // we've traversed our level, time to bump down
                 let left_get_res = self.pages.get(left_most, &guard);
                 let left_node = match left_get_res {
-                    Ok(PageGet::Materialized(ref ptr)) => {
-                        ptr.unwrap().unwrap_base()
+                    Ok(PageGet::Materialized(mf, ..)) => {
+                        mf.unwrap_base()
                     }
                     broken => panic!(
                         "pagecache returned non-base node: {:?}",

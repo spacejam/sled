@@ -36,16 +36,17 @@ where
     fn is_null(&self) -> bool {
         self.0.is_null()
     }
-}
 
-impl<'g, P> Deref for PagePtr<'g, P>
-where
-    P: 'static + Send,
-{
-    type Target = CacheEntry<P>;
-
-    fn deref(&self) -> &CacheEntry<P> {
-        unsafe { self.0.deref().deref() }
+    unsafe fn deref_merged_resident(&self) -> &'g P
+    where
+        P: Debug,
+    {
+        match self.0.deref().deref() {
+            CacheEntry::MergedResident(m, ..) => m,
+            other => {
+                panic!("called deref_merged_resident on {:?}", other);
+            }
+        }
     }
 }
 
@@ -78,27 +79,6 @@ impl<M: Send> CacheEntry<M> {
             | PartialFlush(_, ptr)
             | Flush(_, ptr)
             | Free(_, ptr) => *ptr,
-        }
-    }
-
-    /// Deref a CacheEntry::MergedResident or panic.
-    ///
-    /// # Panics
-    ///
-    /// Panics if this is not a MergedResident.
-    pub fn unwrap(&self) -> &M {
-        if let CacheEntry::MergedResident(m, ..) = self {
-            m
-        } else {
-            panic!("called unwrap on non-MergedResident");
-        }
-    }
-
-    fn is_merged_resident(&self) -> bool {
-        if let CacheEntry::MergedResident(..) = self {
-            true
-        } else {
-            false
         }
     }
 }
@@ -136,7 +116,7 @@ where
     /// This page contains data and has been prepared
     /// for presentation to the caller by the `PageCache`'s
     /// `Materializer`.
-    Materialized(PagePtr<'a, PageFrag>),
+    Materialized(&'a PageFrag, PagePtr<'a, PageFrag>),
     /// This page has been Freed
     Free(PagePtr<'a, PageFrag>),
     /// This page has been allocated, but will become
@@ -164,9 +144,9 @@ where
     ///
     /// # Panics
     /// Panics if it is a variant other than Materialized.
-    pub fn unwrap(self) -> PagePtr<'a, P> {
+    pub fn unwrap(self) -> (&'a P, PagePtr<'a, P>) {
         match self {
-            PageGet::Materialized(hptr) => hptr,
+            PageGet::Materialized(pr, hptr) => (pr, hptr),
             _ => panic!("unwrap called on non-Materialized"),
         }
     }
@@ -174,7 +154,7 @@ where
     /// Returns true if the `PageGet` is `Materialized`.
     pub fn is_materialized(&self) -> bool {
         match *self {
-            PageGet::Materialized(_) => true,
+            PageGet::Materialized(..) => true,
             _ => false,
         }
     }
@@ -638,9 +618,8 @@ where
         } else {
             // page-in whole page with a get,
             let (key, update) = match self.get(pid, guard)? {
-                PageGet::Materialized(key) => {
-                    let p: P = key.unwrap().clone();
-                    (key, Update::Compact(p))
+                PageGet::Materialized(data, key) => {
+                    (key, Update::Compact(data.clone()))
                 }
                 PageGet::Free(key) => (key, Update::Free),
                 PageGet::Allocated => {
@@ -787,7 +766,9 @@ where
         {
             // Short circuit merging and fix-up if we only
             // have one frag.
-            return Ok(Some(PageGet::Materialized(PagePtr(head))));
+            let ptr = PagePtr(head);
+            let mr = unsafe { ptr.deref_merged_resident() };
+            return Ok(Some(PageGet::Materialized(mr, ptr)));
         }
 
         let mut to_merge = vec![];
@@ -947,9 +928,9 @@ where
         }
 
         let ret_ptr = PagePtr(head);
-        assert!(ret_ptr.is_merged_resident());
+        let mr = unsafe { ret_ptr.deref_merged_resident() };
 
-        Ok(Some(PageGet::Materialized(PagePtr(head))))
+        Ok(Some(PageGet::Materialized(mr, ret_ptr)))
     }
 
     fn page_out<'g>(
