@@ -42,7 +42,7 @@ impl<'a> Iterator for Iter<'a> {
             // iteration, and we need to just get the inner
             // node again...
             let ptr = res.unwrap();
-            let node: &Node = ptr.unwrap_base_ptr();
+            let node: &Node = ptr.unwrap().unwrap_base();
 
             let prefix = node.lo.inner();
             for (ref k, ref v) in

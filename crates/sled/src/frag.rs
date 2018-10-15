@@ -21,11 +21,19 @@ pub(crate) enum Frag {
 }
 
 impl Frag {
-    pub(super) fn unwrap_base_ptr(&self) -> &Node {
+    pub(super) fn unwrap_base(&self) -> &Node {
         if let Frag::Base(base, ..) = self {
             base
         } else {
             panic!("called unwrap_base_ptr on non-Base Frag!")
+        }
+    }
+
+    pub(super) fn base(&self) -> Option<&Node> {
+        if let Frag::Base(base, ..) = self {
+            Some(base)
+        } else {
+            None
         }
     }
 }

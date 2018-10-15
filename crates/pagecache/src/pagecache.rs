@@ -32,16 +32,20 @@ where
     pub fn is_allocated(&self) -> bool {
         self.0.is_null()
     }
+
+    fn is_null(&self) -> bool {
+        self.0.is_null()
+    }
 }
 
 impl<'g, P> Deref for PagePtr<'g, P>
 where
     P: 'static + Send,
 {
-    type Target = P;
+    type Target = CacheEntry<P>;
 
-    fn deref(&self) -> &P {
-        unsafe { self.0.deref().deref().unwrap_merged_ptr() }
+    fn deref(&self) -> &CacheEntry<P> {
+        unsafe { self.0.deref().deref() }
     }
 }
 
@@ -77,11 +81,24 @@ impl<M: Send> CacheEntry<M> {
         }
     }
 
-    fn unwrap_merged_ptr(&self) -> &M {
+    /// Deref a CacheEntry::MergedResident or panic.
+    ///
+    /// # Panics
+    ///
+    /// Panics if this is not a MergedResident.
+    pub fn unwrap(&self) -> &M {
         if let CacheEntry::MergedResident(m, ..) = self {
             m
         } else {
-            panic!("called unwrap_merged_ptr on non-MergedResident");
+            panic!("called unwrap on non-MergedResident");
+        }
+    }
+
+    fn is_merged_resident(&self) -> bool {
+        if let CacheEntry::MergedResident(..) = self {
+            true
+        } else {
+            false
         }
     }
 }
@@ -259,9 +276,9 @@ where
 ///
 ///         // When getting a page, the provided `Materializer` is
 ///         // used to merge all pages together.
-///         let (consolidated, key) = pc.get(id, &guard).unwrap().unwrap();
+///         let key = pc.get(id, &guard).unwrap().unwrap();
 ///
-///         assert_eq!(consolidated, "abc".to_owned());
+///         assert_eq!(key.unwrap(), &"abc".to_owned());
 ///     }
 /// }
 /// ```
@@ -431,7 +448,7 @@ where
             let mut free = free.lock().unwrap();
             // panic if we were able to double-free a page
             for &e in free.iter() {
-                assert_ne!(e, pid, "page was double-freed");
+                assert_ne!(e, pid, "page {} was double-freed", pid);
             }
             free.push(pid);
         });
@@ -471,7 +488,11 @@ where
         let lsn = log_reservation.lsn();
         let ptr = log_reservation.ptr();
 
-        let cache_entry = CacheEntry::Resident(new, lsn, ptr);
+        let cache_entry = if old.is_null() {
+            CacheEntry::MergedResident(new, lsn, ptr)
+        } else {
+            CacheEntry::Resident(new, lsn, ptr)
+        };
 
         debug_delay();
         let result = unsafe {
@@ -618,7 +639,7 @@ where
             // page-in whole page with a get,
             let (key, update) = match self.get(pid, guard)? {
                 PageGet::Materialized(key) => {
-                    let p: P = key.deref().clone();
+                    let p: P = key.unwrap().clone();
                     (key, Update::Compact(p))
                 }
                 PageGet::Free(key) => (key, Update::Free),
@@ -729,6 +750,15 @@ where
             let inner_res =
                 self.page_in_inner(pid, stack_ptr, guard)?;
             if let Some(res) = inner_res {
+                /*
+                let ptr = res.clone();
+                assert!(
+                    ptr.is_merged_resident(),
+                    "page_in_inner({}) returned {:?} insted of a MergedResident!",
+                    pid,
+                    ptr,
+                );
+                */
                 return Ok(res);
             }
             // loop until we succeed
@@ -790,7 +820,7 @@ where
                     ptrs.push((lsn, ptr));
                 }
                 CacheEntry::Free(_, _) => {
-                    return Ok(Some(PageGet::Free(PagePtr(head))))
+                    return Ok(Some(PageGet::Free(PagePtr(head))));
                 }
             }
         }
@@ -842,6 +872,8 @@ where
             pid,
             to_evict
         );
+
+        trace!("accessed page: {:?}", merged);
         self.page_out(to_evict, guard)
             .map_err(|e| e.danger_cast())?;
 
@@ -868,7 +900,7 @@ where
                     return Ok(None);
                 }
             }
-        } else if !fetched.is_empty() || fix_up_length >= 1 {
+        } else {
             trace!(
                 "fixing up pid {} with {} traversed frags",
                 pid,
@@ -913,6 +945,9 @@ where
                 return Ok(None);
             }
         }
+
+        let ret_ptr = PagePtr(head);
+        assert!(ret_ptr.is_merged_resident());
 
         Ok(Some(PageGet::Materialized(PagePtr(head))))
     }
