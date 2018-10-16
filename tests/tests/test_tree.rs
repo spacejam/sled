@@ -57,12 +57,12 @@ fn parallel_tree_ops() {
     par!{t, |tree: &Tree, k: Vec<u8>| {
         assert_eq!(tree.get(&*k), Ok(None));
         tree.set(k.clone(), k.clone()).unwrap();
-        assert_eq!(tree.get(&*k), Ok(Some(k)));
+        assert_eq!(tree.get(&*k).unwrap().unwrap(), k);
     }};
 
     println!("========== reading sets ==========");
     par!{t, |tree: &Tree, k: Vec<u8>| {
-        if tree.get(&*k.clone()) != Ok(Some(k.clone())) {
+        if tree.get(&*k).unwrap().unwrap() != k {
             println!("{}", tree.key_debug_str(&*k.clone()));
             panic!("expected key {:?} not found", k);
         }
@@ -80,7 +80,7 @@ fn parallel_tree_ops() {
         let k1 = k.clone();
         let mut k2 = k.clone();
         k2.reverse();
-        assert_eq!(tree.get(&*k1), Ok(Some(k2)));
+        assert_eq!(tree.get(&*k1).unwrap().unwrap(), k2);
     }};
 
     println!("========== deleting ==========");
@@ -115,7 +115,7 @@ fn tree_subdir() {
 
     std::fs::remove_dir_all("/tmp/test_tree_subdir").unwrap();
 
-    assert_eq!(res, Ok(Some(vec![1])));
+    assert_eq!(res.unwrap().unwrap(), vec![1_u8]);
 }
 
 #[test]
@@ -135,37 +135,31 @@ fn tree_iterator() {
     for (i, (k, v)) in t.iter().map(|res| res.unwrap()).enumerate() {
         let should_be = kv(i);
         assert_eq!(should_be, k);
-        assert_eq!(should_be, v);
+        assert_eq!(should_be, &*v);
     }
 
     for (i, (k, v)) in t.scan(b"").map(|res| res.unwrap()).enumerate()
     {
         let should_be = kv(i);
         assert_eq!(should_be, k);
-        assert_eq!(should_be, v);
+        assert_eq!(should_be, &*v);
     }
 
     let half_way = N_PER_THREAD / 2;
     let half_key = kv(half_way);
     let mut tree_scan = t.scan(&*half_key);
-    assert_eq!(
-        tree_scan.next(),
-        Some(Ok((half_key.clone(), half_key)))
-    );
+    let r1 = tree_scan.next().unwrap().unwrap();
+    assert_eq!((r1.0, &*r1.1), (half_key.clone(), &*half_key));
 
     let first_key = kv(0);
     let mut tree_scan = t.scan(&*first_key);
-    assert_eq!(
-        tree_scan.next(),
-        Some(Ok((first_key.clone(), first_key)))
-    );
+    let r2 = tree_scan.next().unwrap().unwrap();
+    assert_eq!((r2.0, &*r2.1), (first_key.clone(), &*first_key));
 
     let last_key = kv(N_PER_THREAD - 1);
     let mut tree_scan = t.scan(&*last_key);
-    assert_eq!(
-        tree_scan.next(),
-        Some(Ok((last_key.clone(), last_key)))
-    );
+    let r3 = tree_scan.next().unwrap().unwrap();
+    assert_eq!((r3.0, &*r3.1), (last_key.clone(), &*last_key));
     assert_eq!(tree_scan.next(), None);
 }
 
@@ -189,7 +183,7 @@ fn recover_tree() {
     let t = sled::Tree::start(config.clone()).unwrap();
     for i in 0..config.blink_fanout << 1 {
         let k = kv(i as usize);
-        assert_eq!(t.get(&*k), Ok(Some(k.clone())));
+        assert_eq!(t.get(&*k).unwrap().unwrap(), k);
         t.del(&*k).unwrap();
     }
     drop(t);
@@ -297,7 +291,9 @@ fn bytes_to_u16(v: &[u8]) -> u16 {
 }
 
 fn u16_to_bytes(u: u16) -> Vec<u8> {
-    vec![(u >> 8) as u8, u as u8]
+    let ret = vec![(u >> 8) as u8, u as u8];
+    println!("turning {} into {:?}", u, ret);
+    ret
 }
 
 // just adds up values as if they were u16's
@@ -332,13 +328,13 @@ fn prop_tree_matches_btreemap(
         .build();
 
     let mut tree = sled::Tree::start(config.clone()).unwrap();
-    let mut reference = BTreeMap::new();
+    let mut reference: BTreeMap<Key, u16> = BTreeMap::new();
 
     for op in ops.into_iter() {
         match op {
             Set(k, v) => {
                 tree.set(k.0.clone(), vec![0, v]).unwrap();
-                reference.insert(k, v as u16);
+                reference.insert(k.clone(), v as u16);
             }
             Merge(k, v) => {
                 tree.merge(k.0.clone(), vec![v]).unwrap();
@@ -359,8 +355,10 @@ fn prop_tree_matches_btreemap(
             }
             Cas(k, old, new) => {
                 let tree_old = tree.get(&*k.0).unwrap();
-                if tree_old == Some(vec![0, old]) {
-                    tree.set(k.0.clone(), vec![0, new]).unwrap();
+                if let Some(old_tree) = tree_old {
+                    if old_tree == &*vec![0, old] {
+                        tree.set(k.0.clone(), vec![0, new]).unwrap();
+                    }
                 }
 
                 let ref_old = reference.get(&k).cloned();
@@ -378,11 +376,22 @@ fn prop_tree_matches_btreemap(
                     .filter(|&(ref rk, _rv)| **rk >= k)
                     .take(len)
                     .map(|(ref rk, ref rv)| (rk.0.clone(), **rv));
+
+                println!("scanning!");
                 for r in ref_iter {
-                    let tree_next = tree_iter.next();
+                    let tree_next = tree_iter.next().unwrap();
+                    println!("oh yeah, {:?}", &*tree_next.1);
+                    println!("oh really, {:?}", &*u16_to_bytes(r.1));
+                    println!("oh yeah, {:?}", &*tree_next.1);
+                    let lhs = (tree_next.0, &*tree_next.1);
+                    println!("lhs: {:?}", lhs);
+                    println!("lhs: {:?}", lhs);
+                    let r0 = r.0.clone();
+
+                    let rhs = (r.0.clone(), &*u16_to_bytes(r.1));
+                    println!("lhs: {:?}", lhs);
                     assert_eq!(
-                        Some((r.0.clone(), u16_to_bytes(r.1))),
-                        tree_next,
+                        lhs, rhs,
                         "expected iteration over the Tree \
                          to match our BTreeMap model"
                     );
@@ -811,6 +820,20 @@ fn tree_bug_16() {
     // postmortem: the test merge function was not properly adding numbers.
     prop_tree_matches_btreemap(
         vec![Merge(Key(vec![247]), 162), Scan(Key(vec![209]), 31)],
+        0,
+        0,
+        false,
+    );
+}
+
+#[test]
+fn tree_bug_17() {
+    // postmortem:
+    prop_tree_matches_btreemap(
+        vec![
+            Set(Key(vec![194, 215, 103, 0, 138, 11, 248, 131]), 70),
+            Scan(Key(vec![]), 30),
+        ],
         0,
         0,
         false,

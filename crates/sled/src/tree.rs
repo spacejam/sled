@@ -8,7 +8,7 @@ use pagecache::{pin, Guard, PagePtr};
 use super::*;
 
 impl<'a> IntoIterator for &'a Tree {
-    type Item = Result<(Vec<u8>, Vec<u8>), ()>;
+    type Item = Result<(Vec<u8>, PinnedValue), ()>;
     type IntoIter = Iter<'a>;
 
     fn into_iter(self) -> Iter<'a> {
@@ -138,10 +138,18 @@ impl Tree {
     }
 
     /// Retrieve a value from the `Tree` if it exists.
-    pub fn get(&self, key: &[u8]) -> Result<Option<Value>, ()> {
+    pub fn get<'g>(
+        &self,
+        key: &[u8],
+    ) -> Result<Option<PinnedValue>, ()> {
         let guard = pin();
+
+        // the double guard is a hack that maintains
+        // correctness of the ret value
+        let double_guard = pin();
         let (_, ret) = self.get_internal(key, &guard)?;
-        Ok(ret)
+
+        Ok(ret.map(|r| PinnedValue::new(r, double_guard)))
     }
 
     /// Compare and swap. Capable of unique creation, conditional modification,
@@ -186,8 +194,8 @@ impl Tree {
                 .get_internal(&*key, &guard)
                 .map_err(|e| e.danger_cast())?;
 
-            if old != cur {
-                return Err(Error::CasFailed(cur));
+            if old != cur.cloned() {
+                return Err(Error::CasFailed(cur.cloned()));
             }
 
             let (leaf_frag, leaf_ptr) = path.pop().expect(
@@ -466,6 +474,7 @@ impl Tree {
             last_key: Bound::Exclusive(key.to_vec()),
             broken: broken,
             done: false,
+            guard: guard,
         }
     }
 
@@ -703,7 +712,7 @@ impl Tree {
         &self,
         key: &[u8],
         guard: &'g Guard,
-    ) -> Result<(Vec<(&'g Frag, TreePtr<'g>)>, Option<Value>), ()>
+    ) -> Result<(Vec<(&'g Frag, TreePtr<'g>)>, Option<&'g Value>), ()>
     {
         let path = self.path_for_key(&*key, guard)?;
 
@@ -719,7 +728,7 @@ impl Tree {
                     prefix_cmp(k, &*encoded_key)
                 });
             if let Ok(idx) = search {
-                Some(items[idx].1.clone())
+                Some(&items[idx].1)
             } else {
                 // key does not exist
                 None

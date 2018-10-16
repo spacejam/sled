@@ -40,6 +40,7 @@ extern crate pagecache;
 extern crate serde_derive;
 #[macro_use]
 extern crate log as _log;
+extern crate libc;
 
 mod bound;
 mod data;
@@ -47,10 +48,12 @@ mod frag;
 mod iter;
 mod materializer;
 mod node;
+mod pinned_value;
 mod prefix;
 mod tree;
 
 pub use self::iter::Iter;
+pub use self::pinned_value::PinnedValue;
 /// atomic lock-free tree
 pub use self::tree::Tree;
 
