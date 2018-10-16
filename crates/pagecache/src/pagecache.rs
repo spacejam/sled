@@ -33,10 +33,6 @@ where
         self.0.is_null()
     }
 
-    fn is_null(&self) -> bool {
-        self.0.is_null()
-    }
-
     unsafe fn deref_merged_resident(&self) -> &'g P
     where
         P: Debug,
@@ -454,7 +450,7 @@ where
 
         let prepend: LoggedUpdate<P> = LoggedUpdate {
             pid: pid,
-            update: if old.0.is_null() {
+            update: if old.is_allocated() {
                 Update::Compact(new.clone())
             } else {
                 Update::Append(new.clone())
@@ -468,7 +464,7 @@ where
         let lsn = log_reservation.lsn();
         let ptr = log_reservation.ptr();
 
-        let cache_entry = if old.is_null() {
+        let cache_entry = if old.is_allocated() {
             CacheEntry::MergedResident(new, lsn, ptr)
         } else {
             CacheEntry::Resident(new, lsn, ptr)
