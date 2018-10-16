@@ -40,7 +40,6 @@ extern crate pagecache;
 extern crate serde_derive;
 #[macro_use]
 extern crate log as _log;
-extern crate libc;
 
 mod bound;
 mod data;

@@ -13,7 +13,6 @@ pub struct PinnedValue(*const u8, usize, Guard);
 impl Deref for PinnedValue {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
-        println!("derefing ptr {} len {}", self.0 as usize, self.1);
         unsafe { std::slice::from_raw_parts(self.0, self.1) }
     }
 }
@@ -58,13 +57,7 @@ impl Debug for PinnedValue {
 
 impl PinnedValue {
     pub(crate) fn new(v: &[u8], guard: Guard) -> PinnedValue {
-        let brk = unsafe { libc::sbrk(0) };
         let ptr = v.as_ptr();
-        if ptr as u64 > brk as u64 {
-            panic!(
-                "pinning pointer to a location above the head break!"
-            );
-        }
         PinnedValue(ptr, v.len(), guard)
     }
 }

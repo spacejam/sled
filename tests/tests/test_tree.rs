@@ -73,7 +73,7 @@ fn parallel_tree_ops() {
         let k1 = k.clone();
         let mut k2 = k.clone();
         k2.reverse();
-        tree.cas(k1.clone(), Some(k1), Some(k2)).unwrap();
+        tree.cas(k1.clone(), Some(&*k1), Some(k2)).unwrap();
     }};
 
     par!{t, |tree: &Tree, k: Vec<u8>| {
@@ -377,19 +377,10 @@ fn prop_tree_matches_btreemap(
                     .take(len)
                     .map(|(ref rk, ref rv)| (rk.0.clone(), **rv));
 
-                println!("scanning!");
                 for r in ref_iter {
                     let tree_next = tree_iter.next().unwrap();
-                    println!("oh yeah, {:?}", &*tree_next.1);
-                    println!("oh really, {:?}", &*u16_to_bytes(r.1));
-                    println!("oh yeah, {:?}", &*tree_next.1);
                     let lhs = (tree_next.0, &*tree_next.1);
-                    println!("lhs: {:?}", lhs);
-                    println!("lhs: {:?}", lhs);
-                    let r0 = r.0.clone();
-
                     let rhs = (r.0.clone(), &*u16_to_bytes(r.1));
-                    println!("lhs: {:?}", lhs);
                     assert_eq!(
                         lhs, rhs,
                         "expected iteration over the Tree \
@@ -828,7 +819,9 @@ fn tree_bug_16() {
 
 #[test]
 fn tree_bug_17() {
-    // postmortem:
+    // postmortem: we were creating a copy of a node leaf during iteration
+    // before accidentally putting it into a PinnedValue, despite the
+    // fact that it was not actually part of the node's actual memory!
     prop_tree_matches_btreemap(
         vec![
             Set(Key(vec![194, 215, 103, 0, 138, 11, 248, 131]), 70),

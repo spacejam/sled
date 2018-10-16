@@ -48,7 +48,7 @@ impl<'a> Iterator for Iter<'a> {
 
             let prefix = node.lo.inner();
             for (k, v) in
-                node.data.leaf().expect("node should be a leaf")
+                node.data.leaf_ref().expect("node should be a leaf")
             {
                 let decoded_k = prefix_decode(prefix, &*k);
                 if Bound::Inclusive(decoded_k.clone()) > self.last_key
@@ -57,7 +57,7 @@ impl<'a> Iterator for Iter<'a> {
                         Bound::Inclusive(decoded_k.to_vec());
                     let ret = Ok((
                         decoded_k,
-                        PinnedValue::new(v.as_slice(), pin_guard),
+                        PinnedValue::new(&*v, pin_guard),
                     ));
                     return Some(ret);
                 }
