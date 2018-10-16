@@ -8,11 +8,11 @@
 //! let t = sled::Tree::start(config).unwrap();
 //!
 //! t.set(b"yo!".to_vec(), b"v1".to_vec());
-//! assert_eq!(t.get(b"yo!"), Ok(Some(b"v1".to_vec())));
+//! assert!(t.get(b"yo!").unwrap().unwrap() == &*b"v1".to_vec());
 //!
 //! t.cas(
 //!     b"yo!".to_vec(),       // key
-//!     Some(b"v1".to_vec()),  // old value, None for not present
+//!     Some(b"v1"),           // old value, None for not present
 //!     Some(b"v2".to_vec()),  // new value, None for delete
 //! ).unwrap();
 //!
