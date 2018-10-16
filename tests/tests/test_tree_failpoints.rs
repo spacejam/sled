@@ -838,7 +838,7 @@ fn failpoints_bug_13() {
 
 #[test]
 fn failpoints_bug_14() {
-    // postmortem 1:
+    // postmortem 1: improper bounds on splits caused a loop to happen
     assert!(prop_tree_crashes_nicely(
         vec![
             FailPoint("blob blob write"),
