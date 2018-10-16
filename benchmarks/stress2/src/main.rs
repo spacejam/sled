@@ -14,7 +14,7 @@ use docopt::Docopt;
 use rand::{thread_rng, Rng};
 
 const USAGE: &'static str = "
-Usage: stress [--threads=<#>] [--burn-in] [--duration=<s>]
+Usage: stress [--threads=<#>] [--burn-in] [--duration=<s>] [--kv-len=<l>]
 
 Options:
     --threads=<#>      Number of threads [default: 4].
