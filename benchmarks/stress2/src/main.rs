@@ -49,7 +49,7 @@ fn run(
     total: Arc<AtomicUsize>,
     kv_len: usize,
 ) {
-    let byte = || {
+    let bytes = || {
         thread_rng()
             .gen_iter::<u8>()
             .take(kv_len)
@@ -63,21 +63,25 @@ fn run(
 
         match choice {
             0 => {
-                tree.set(byte(), byte()).unwrap();
+                tree.set(bytes(), bytes()).unwrap();
             }
             1 => {
-                tree.get(&*byte()).unwrap();
+                tree.get(&*bytes()).unwrap();
             }
             2 => {
-                tree.del(&*byte()).unwrap();
+                tree.del(&*bytes()).unwrap();
             }
-            3 => match tree.cas(byte(), Some(byte()), Some(byte())) {
+            3 => match tree.cas(
+                bytes(),
+                Some(&*bytes()),
+                Some(bytes()),
+            ) {
                 Ok(_) | Err(sled::Error::CasFailed(_)) => {}
                 other => panic!("operational error: {:?}", other),
             },
             4 => {
                 let _ = tree
-                    .scan(&*byte())
+                    .scan(&*bytes())
                     .take(rng.gen_range(0, 15))
                     .map(|res| res.unwrap())
                     .collect::<Vec<_>>();
