@@ -725,15 +725,6 @@ where
             let inner_res =
                 self.page_in_inner(pid, stack_ptr, guard)?;
             if let Some(res) = inner_res {
-                /*
-                let ptr = res.clone();
-                assert!(
-                    ptr.is_merged_resident(),
-                    "page_in_inner({}) returned {:?} insted of a MergedResident!",
-                    pid,
-                    ptr,
-                );
-                */
                 return Ok(res);
             }
             // loop until we succeed
