@@ -252,9 +252,9 @@ where
 ///
 ///         // When getting a page, the provided `Materializer` is
 ///         // used to merge all pages together.
-///         let key = pc.get(id, &guard).unwrap().unwrap();
+///         let (consolidated, key) = pc.get(id, &guard).unwrap().unwrap();
 ///
-///         assert_eq!(key.unwrap(), &"abc".to_owned());
+///         assert_eq!(*consolidated, "abc".to_owned());
 ///     }
 /// }
 /// ```
