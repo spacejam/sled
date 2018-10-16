@@ -43,13 +43,27 @@ fn report(shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
     }
 }
 
+fn concatenate_merge(
+    _key: &[u8],              // the key being merged
+    old_value: Option<&[u8]>, // the previous value, if one existed
+    merged_bytes: &[u8],      // the new bytes being merged in
+) -> Option<Vec<u8>> {
+    // set the new value, return None to delete
+    let mut ret =
+        old_value.map(|ov| ov.to_vec()).unwrap_or_else(|| vec![]);
+
+    ret.extend_from_slice(merged_bytes);
+
+    Some(ret)
+}
+
 fn run(
     tree: Arc<sled::Tree>,
     shutdown: Arc<AtomicBool>,
     total: Arc<AtomicUsize>,
     kv_len: usize,
 ) {
-    let byte = || {
+    let bytes = || {
         thread_rng()
             .gen_iter::<u8>()
             .take(kv_len)
@@ -59,28 +73,35 @@ fn run(
 
     while !shutdown.load(Ordering::Relaxed) {
         total.fetch_add(1, Ordering::Release);
-        let choice = rng.gen_range(0, 5);
+        let choice = rng.gen_range(0, 6);
 
         match choice {
             0 => {
-                tree.set(byte(), byte()).unwrap();
+                tree.set(bytes(), bytes()).unwrap();
             }
             1 => {
-                tree.get(&*byte()).unwrap();
+                tree.get(&*bytes()).unwrap();
             }
             2 => {
-                tree.del(&*byte()).unwrap();
+                tree.del(&*bytes()).unwrap();
             }
-            3 => match tree.cas(byte(), Some(byte()), Some(byte())) {
+            3 => match tree.cas(
+                bytes(),
+                Some(&*bytes()),
+                Some(bytes()),
+            ) {
                 Ok(_) | Err(sled::Error::CasFailed(_)) => {}
                 other => panic!("operational error: {:?}", other),
             },
             4 => {
                 let _ = tree
-                    .scan(&*byte())
+                    .scan(&*bytes())
                     .take(rng.gen_range(0, 15))
                     .map(|res| res.unwrap())
                     .collect::<Vec<_>>();
+            }
+            5 => {
+                tree.merge(bytes(), bytes()).unwrap();
             }
             _ => panic!("impossible choice"),
         }
@@ -108,6 +129,7 @@ fn main() {
         .flush_every_ms(Some(100))
         .snapshot_after_ops(1000000)
         .print_profile_on_drop(true)
+        .merge_operator(concatenate_merge)
         .build();
 
     let tree = Arc::new(sled::Tree::start(config).unwrap());

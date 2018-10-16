@@ -174,8 +174,7 @@ fn basic_pagecache_recovery() {
         .unwrap();
     let key = pc.link(id, key, vec![2], &guard).unwrap();
     let _key = pc.link(id, key, vec![3], &guard).unwrap();
-    let (cv1_ref, consolidated) =
-        pc.get(id, &guard).unwrap().unwrap();
+    let (cv1_ref, _key) = pc.get(id, &guard).unwrap().unwrap();
     let cv1 = cv1_ref.clone();
     assert_eq!(cv1, vec![1, 2, 3]);
     drop(pc);

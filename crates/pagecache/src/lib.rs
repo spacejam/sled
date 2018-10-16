@@ -102,7 +102,7 @@ use self::iterator::LogIter;
 use self::log::{
     MessageHeader, MessageKind, SegmentHeader, SegmentTrailer,
 };
-use self::metrics::{clock, measure, Measure};
+use self::metrics::{clock, measure};
 use self::pagecache::{LoggedUpdate, Update};
 use self::parallel_io::Pio;
 use self::reader::LogReader;
@@ -114,6 +114,8 @@ pub use self::config::{Config, ConfigBuilder};
 pub use self::diskptr::DiskPtr;
 pub use self::log::{Log, LogRead};
 pub use self::materializer::{Materializer, NullMaterializer};
+#[doc(hidden)]
+pub use self::metrics::Measure;
 pub use self::metrics::M;
 pub use self::pagecache::{CacheEntry, PageCache, PageGet, PagePtr};
 pub use self::reservation::Reservation;
