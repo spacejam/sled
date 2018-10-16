@@ -244,16 +244,18 @@ impl Tree {
             match link {
                 Ok(new_cas_key) => {
                     // success
-                    if node.len() >= self.config.blink_fanout as usize
+                    if node.len() > self.config.blink_fanout as usize
                     {
-                        if let Ok(PageGet::Materialized(page, ptr)) =
-                            self.pages.get(node.id, &guard)
-                        {
-                            if new_cas_key == ptr {
-                                path.push((page, ptr));
-                                self.recursive_split(&*path, &guard)?;
-                            }
-                        }
+                        let mut path2 = path
+                            .iter()
+                            .map(|&(f, ref p)| (f.clone(), p.clone()))
+                            .collect::<Vec<(Frag, _)>>();
+                        let mut node2 = node.clone();
+                        node2
+                            .apply(&frag, self.config.merge_operator);
+                        let frag2 = Frag::Base(node2, None);
+                        path2.push((frag2, new_cas_key));
+                        self.recursive_split(path2, &guard)?;
                     }
                     return Ok(());
                 }
@@ -334,16 +336,18 @@ impl Tree {
             match link {
                 Ok(new_cas_key) => {
                     // success
-                    if node.len() >= self.config.blink_fanout as usize
+                    if node.len() > self.config.blink_fanout as usize
                     {
-                        if let Ok(PageGet::Materialized(page, ptr)) =
-                            self.pages.get(node.id, &guard)
-                        {
-                            if new_cas_key == ptr {
-                                path.push((page, ptr));
-                                self.recursive_split(&*path, &guard)?;
-                            }
-                        }
+                        let mut path2 = path
+                            .iter()
+                            .map(|&(f, ref p)| (f.clone(), p.clone()))
+                            .collect::<Vec<(Frag, _)>>();
+                        let mut node2 = node.clone();
+                        node2
+                            .apply(&frag, self.config.merge_operator);
+                        let frag2 = Frag::Base(node2, None);
+                        path2.push((frag2, new_cas_key));
+                        self.recursive_split(path2, &guard)?;
                     }
                     return Ok(());
                 }
@@ -487,7 +491,7 @@ impl Tree {
 
     fn recursive_split<'g>(
         &self,
-        path: &[(&Frag, TreePtr<'g>)],
+        path: Vec<(Frag, TreePtr<'g>)>,
         guard: &'g Guard,
     ) -> Result<(), ()> {
         // to split, we pop the path, see if it's in need of split, recurse up
@@ -515,7 +519,7 @@ impl Tree {
             let (parent_frag, parent_ptr) = window[0].clone();
             let (node_frag, node_ptr) = window[1].clone();
             let node: &Node = node_frag.unwrap_base();
-            if node.len() >= self.config.blink_fanout as usize {
+            if node.len() > self.config.blink_fanout as usize {
                 // try to child split
                 if let Ok(parent_split) =
                     self.child_split(node, node_ptr.clone(), guard)
@@ -546,7 +550,7 @@ impl Tree {
         let (ref root_frag, ref root_ptr) = path[0];
         let root_node: &Node = root_frag.unwrap_base();
 
-        if root_node.len() >= self.config.blink_fanout as usize {
+        if root_node.len() > self.config.blink_fanout as usize {
             if let Ok(parent_split) =
                 self.child_split(&root_node, root_ptr.clone(), guard)
             {
@@ -560,6 +564,7 @@ impl Tree {
                     .map_err(|e| e.danger_cast());
             }
         }
+
         Ok(())
     }
 
