@@ -40,7 +40,7 @@ fn uptime() -> Duration {
 }
 
 /// Measure the duration of an event, and call `Histo::measure()`.
-pub(crate) struct Measure<'h> {
+pub struct Measure<'h> {
     start: f64,
     #[cfg(not(feature = "no_metrics"))]
     histo: &'h Histo,
@@ -51,7 +51,7 @@ pub(crate) struct Measure<'h> {
 impl<'h> Measure<'h> {
     /// The time delta from ctor to dtor is recorded in `histo`.
     #[inline(always)]
-    pub(crate) fn new(histo: &'h Histo) -> Measure<'h> {
+    pub fn new(histo: &'h Histo) -> Measure<'h> {
         Measure {
             #[cfg(feature = "no_metrics")]
             _pd: PhantomData,
@@ -86,6 +86,9 @@ pub struct Metrics {
     pub tree_del: Histo,
     pub tree_cas: Histo,
     pub tree_scan: Histo,
+    pub tree_merge: Histo,
+    pub tree_start: Histo,
+    pub tree_traverse: Histo,
     pub page_in: Histo,
     pub rewrite_page: Histo,
     pub merge_page: Histo,
@@ -164,8 +167,11 @@ impl Metrics {
 
         println!("tree:");
         p(vec![
+            f("start", &self.tree_start),
+            f("traverse", &self.tree_traverse),
             f("get", &self.tree_get),
             f("set", &self.tree_set),
+            f("merge", &self.tree_merge),
             f("del", &self.tree_del),
             f("cas", &self.tree_cas),
             f("scan", &self.tree_scan),

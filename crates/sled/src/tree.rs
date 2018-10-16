@@ -32,6 +32,8 @@ unsafe impl Sync for Tree {}
 impl Tree {
     /// Load existing or create a new `Tree`.
     pub fn start(config: Config) -> Result<Tree, ()> {
+        let _measure = Measure::new(&M.tree_start);
+
         #[cfg(any(test, feature = "check_snapshot_integrity"))]
         match config
             .verify_snapshot::<BLinkMaterializer, Frag, Vec<(PageId, PageId)>>(
@@ -142,6 +144,7 @@ impl Tree {
         &self,
         key: &[u8],
     ) -> Result<Option<PinnedValue>, ()> {
+        let _measure = Measure::new(&M.tree_get);
         let guard = pin();
 
         // the double guard is a hack that maintains
@@ -183,6 +186,8 @@ impl Tree {
         old: Option<&[u8]>,
         new: Option<Value>,
     ) -> Result<(), Option<PinnedValue>> {
+        let _measure = Measure::new(&M.tree_cas);
+
         if self.config.read_only {
             return Err(Error::CasFailed(None));
         }
@@ -236,6 +241,8 @@ impl Tree {
         key: Key,
         value: Value,
     ) -> Result<Option<Value>, ()> {
+        let _measure = Measure::new(&M.tree_set);
+
         if self.config.read_only {
             return Err(Error::Unsupported(
                 "the database is in read-only mode".to_owned(),
@@ -349,6 +356,8 @@ impl Tree {
     /// // assert_eq!(tree.get(&k).unwrap().unwrap(), vec![4]);
     /// ```
     pub fn merge(&self, key: Key, value: Value) -> Result<(), ()> {
+        let _measure = Measure::new(&M.tree_merge);
+
         if self.config.read_only {
             return Err(Error::Unsupported(
                 "the database is in read-only mode".to_owned(),
@@ -409,6 +418,8 @@ impl Tree {
     /// assert_eq!(t.del(&*vec![1]), Ok(None));
     /// ```
     pub fn del(&self, key: &[u8]) -> Result<Option<Value>, ()> {
+        let _measure = Measure::new(&M.tree_del);
+
         if self.config.read_only {
             return Ok(None);
         }
@@ -477,6 +488,8 @@ impl Tree {
     /// // assert_eq!(iter.next(), None);
     /// ```
     pub fn scan(&self, key: &[u8]) -> Iter<'_> {
+        let _measure = Measure::new(&M.tree_scan);
+
         let guard = pin();
         let mut broken = None;
         let id = match self.get_internal(key, &guard) {
@@ -790,6 +803,8 @@ impl Tree {
         key: &[u8],
         guard: &'g Guard,
     ) -> Result<Vec<(&'g Frag, TreePtr<'g>)>, ()> {
+        let _measure = Measure::new(&M.tree_traverse);
+
         let mut cursor = self.root.load(SeqCst);
         let mut path: Vec<(&'g Frag, TreePtr<'g>)> = vec![];
 

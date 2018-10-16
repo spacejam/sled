@@ -1,6 +1,6 @@
 use super::*;
 
-use pagecache::Guard;
+use pagecache::{Guard, Measure, M};
 
 /// An iterator over keys and values in a `Tree`.
 pub struct Iter<'a> {
@@ -18,6 +18,8 @@ impl<'a> Iterator for Iter<'a> {
     type Item = Result<(Vec<u8>, PinnedValue), ()>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        let _measure = Measure::new(&M.tree_scan);
+
         if self.done {
             return None;
         } else if let Some(broken) = self.broken.take() {
