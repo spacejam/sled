@@ -20,6 +20,16 @@ pub(crate) enum Frag {
     ParentSplit(ParentSplit),
 }
 
+impl Frag {
+    pub(super) fn unwrap_base(&self) -> &Node {
+        if let Frag::Base(base, ..) = self {
+            base
+        } else {
+            panic!("called unwrap_base_ptr on non-Base Frag!")
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct ParentSplit {
     pub(crate) at: Bound,

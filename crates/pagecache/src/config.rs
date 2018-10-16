@@ -50,8 +50,6 @@ pub struct ConfigBuilder {
     #[doc(hidden)]
     pub cache_capacity: usize,
     #[doc(hidden)]
-    pub cache_fixup_threshold: usize,
-    #[doc(hidden)]
     pub flush_every_ms: Option<u64>,
     #[doc(hidden)]
     pub io_bufs: usize,
@@ -136,7 +134,6 @@ impl Default for ConfigBuilder {
             flush_every_ms: Some(500),
             snapshot_after_ops: 1_000_000,
             snapshot_path: None,
-            cache_fixup_threshold: 1,
             segment_cleanup_threshold: 0.2,
             min_free_segments: 3,
             zero_copy_storage: false,
@@ -226,7 +223,6 @@ impl ConfigBuilder {
         (zstd_compression_factor, get_zstd_compression_factor, set_zstd_compression_factor, i32, "the compression factor to use with zstd compression"),
         (flush_every_ms, get_flush_every_ms, set_flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
         (snapshot_after_ops, get_snapshot_after_ops, set_snapshot_after_ops, usize, "number of operations between page table snapshots"),
-        (cache_fixup_threshold, get_cache_fixup_threshold, set_cache_fixup_threshold, usize, "the maximum length of a cached page fragment chain"),
         (segment_cleanup_threshold, get_segment_cleanup_threshold, set_segment_cleanup_threshold, f64, "the proportion of remaining valid pages in the segment"),
         (min_free_segments, get_min_free_segments, set_min_free_segments, usize, "the minimum number of free segments to have on-deck before a compaction occurs"),
         (zero_copy_storage, get_zero_copy_storage, set_zero_copy_storage, bool, "disabling of the log segment copy cleaner"),
@@ -468,11 +464,6 @@ impl Config {
         );
         supported!(self.inner.min_free_segments <= 32, "min_free_segments need not be higher than the number IO buffers (io_bufs)");
         supported!(self.inner.min_free_segments >= 1, "min_free_segments must be nonzero or the database will never reclaim storage");
-        supported!(
-            self.inner.cache_fixup_threshold >= 1,
-            "cache_fixup_threshold must be nonzero."
-        );
-        supported!(self.inner.cache_fixup_threshold < 1 << 20, "cache_fixup_threshold must be fewer than 1 million updates.");
         supported!(
             self.inner.segment_cleanup_threshold >= 0.01,
             "segment_cleanup_threshold must be >= 1%"

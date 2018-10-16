@@ -1,7 +1,8 @@
 *db
 *conf
 *snap*
-cachegrind*
+*grind.out*
+vgcore*
 *.bk
 *orig
 tags

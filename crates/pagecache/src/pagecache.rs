@@ -1,4 +1,5 @@
 use std::collections::BinaryHeap;
+use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 
 use epoch::Shared;
@@ -30,6 +31,18 @@ where
     /// Whether this pointer is Allocated
     pub fn is_allocated(&self) -> bool {
         self.0.is_null()
+    }
+
+    unsafe fn deref_merged_resident(&self) -> &'g P
+    where
+        P: Debug,
+    {
+        match self.0.deref().deref() {
+            CacheEntry::MergedResident(m, ..) => m,
+            other => {
+                panic!("called deref_merged_resident on {:?}", other);
+            }
+        }
     }
 }
 
@@ -99,7 +112,7 @@ where
     /// This page contains data and has been prepared
     /// for presentation to the caller by the `PageCache`'s
     /// `Materializer`.
-    Materialized(PageFrag, PagePtr<'a, PageFrag>),
+    Materialized(&'a PageFrag, PagePtr<'a, PageFrag>),
     /// This page has been Freed
     Free(PagePtr<'a, PageFrag>),
     /// This page has been allocated, but will become
@@ -127,9 +140,9 @@ where
     ///
     /// # Panics
     /// Panics if it is a variant other than Materialized.
-    pub fn unwrap(self) -> (P, PagePtr<'a, P>) {
+    pub fn unwrap(self) -> (&'a P, PagePtr<'a, P>) {
         match self {
-            PageGet::Materialized(p, hptr) => (p, hptr),
+            PageGet::Materialized(pr, hptr) => (pr, hptr),
             _ => panic!("unwrap called on non-Materialized"),
         }
     }
@@ -137,7 +150,7 @@ where
     /// Returns true if the `PageGet` is `Materialized`.
     pub fn is_materialized(&self) -> bool {
         match *self {
-            PageGet::Materialized(_, _) => true,
+            PageGet::Materialized(..) => true,
             _ => false,
         }
     }
@@ -241,7 +254,7 @@ where
 ///         // used to merge all pages together.
 ///         let (consolidated, key) = pc.get(id, &guard).unwrap().unwrap();
 ///
-///         assert_eq!(consolidated, "abc".to_owned());
+///         assert_eq!(*consolidated, "abc".to_owned());
 ///     }
 /// }
 /// ```
@@ -411,7 +424,7 @@ where
             let mut free = free.lock().unwrap();
             // panic if we were able to double-free a page
             for &e in free.iter() {
-                assert_ne!(e, pid, "page was double-freed");
+                assert_ne!(e, pid, "page {} was double-freed", pid);
             }
             free.push(pid);
         });
@@ -437,7 +450,7 @@ where
 
         let prepend: LoggedUpdate<P> = LoggedUpdate {
             pid: pid,
-            update: if old.0.is_null() {
+            update: if old.is_allocated() {
                 Update::Compact(new.clone())
             } else {
                 Update::Append(new.clone())
@@ -451,7 +464,11 @@ where
         let lsn = log_reservation.lsn();
         let ptr = log_reservation.ptr();
 
-        let cache_entry = CacheEntry::Resident(new, lsn, ptr);
+        let cache_entry = if old.is_allocated() {
+            CacheEntry::MergedResident(new, lsn, ptr)
+        } else {
+            CacheEntry::Resident(new, lsn, ptr)
+        };
 
         debug_delay();
         let result = unsafe {
@@ -597,8 +614,8 @@ where
         } else {
             // page-in whole page with a get,
             let (key, update) = match self.get(pid, guard)? {
-                PageGet::Materialized(page, key) => {
-                    (key, Update::Compact(page))
+                PageGet::Materialized(data, key) => {
+                    (key, Update::Compact(data.clone()))
                 }
                 PageGet::Free(key) => (key, Update::Free),
                 PageGet::Allocated => {
@@ -704,12 +721,42 @@ where
         guard: &'g Guard,
     ) -> Result<PageGet<'g, PM::PageFrag>, Option<PagePtr<'g, P>>>
     {
+        loop {
+            let inner_res =
+                self.page_in_inner(pid, stack_ptr, guard)?;
+            if let Some(res) = inner_res {
+                return Ok(res);
+            }
+            // loop until we succeed
+        }
+    }
+
+    fn page_in_inner<'g>(
+        &self,
+        pid: PageId,
+        stack_ptr: Shared<'g, Stack<CacheEntry<P>>>,
+        guard: &'g Guard,
+    ) -> Result<
+        Option<PageGet<'g, PM::PageFrag>>,
+        Option<PagePtr<'g, P>>,
+    > {
         let _measure = Measure::new(&M.page_in);
 
         debug_delay();
         let mut head = unsafe { stack_ptr.deref().head(guard) };
 
-        let stack_iter = StackIter::from_ptr(head, guard);
+        let mut stack_iter =
+            StackIter::from_ptr(head, guard).peekable();
+
+        if let Some(CacheEntry::MergedResident { .. }) =
+            stack_iter.peek()
+        {
+            // Short circuit merging and fix-up if we only
+            // have one frag.
+            let ptr = PagePtr(head);
+            let mr = unsafe { ptr.deref_merged_resident() };
+            return Ok(Some(PageGet::Materialized(mr, ptr)));
+        }
 
         let mut to_merge = vec![];
         let mut merged_resident = false;
@@ -729,14 +776,6 @@ where
                     lsn,
                     ptr,
                 ) => {
-                    if ptrs.is_empty() {
-                        // Short circuit merging and fix-up if we only
-                        // have one frag.
-                        return Ok(PageGet::Materialized(
-                            page_frag.clone(),
-                            PagePtr(head),
-                        ));
-                    }
                     if !merged_resident {
                         to_merge.push(page_frag);
                         merged_resident = true;
@@ -749,13 +788,13 @@ where
                     ptrs.push((lsn, ptr));
                 }
                 CacheEntry::Free(_, _) => {
-                    return Ok(PageGet::Free(PagePtr(head)))
+                    return Ok(Some(PageGet::Free(PagePtr(head))));
                 }
             }
         }
 
         if ptrs.is_empty() {
-            return Ok(PageGet::Allocated);
+            return Ok(Some(PageGet::Allocated));
         }
 
         let mut fetched = Vec::with_capacity(ptrs.len());
@@ -801,6 +840,8 @@ where
             pid,
             to_evict
         );
+
+        trace!("accessed page: {:?}", merged);
         self.page_out(to_evict, guard)
             .map_err(|e| e.danger_cast())?;
 
@@ -813,20 +854,21 @@ where
             match self.cas_page(
                 pid,
                 head,
-                Update::Compact(merged.clone()),
+                Update::Compact(merged),
                 guard,
             ) {
                 Ok(new_head) => head = new_head,
                 Err(Error::CasFailed(None)) => {
                     // This page was unallocated since we
                     // read the head pointer.
-                    return Ok(PageGet::Unallocated);
+                    return Ok(Some(PageGet::Unallocated));
                 }
-                _ => (),
+                _ => {
+                    // we need to loop in the caller
+                    return Ok(None);
+                }
             }
-        } else if !fetched.is_empty()
-            || fix_up_length >= self.config.cache_fixup_threshold
-        {
+        } else {
             trace!(
                 "fixing up pid {} with {} traversed frags",
                 pid,
@@ -836,9 +878,7 @@ where
 
             let (head_lsn, head_ptr) = ptrs.remove(0);
             let head_entry = CacheEntry::MergedResident(
-                merged.clone(),
-                head_lsn,
-                head_ptr,
+                merged, head_lsn, head_ptr,
             );
             new_entries.push(head_entry);
 
@@ -869,16 +909,15 @@ where
             if let Ok(new_head) = res {
                 head = new_head;
             } else {
-                // NB explicitly DON'T update head, as our witnessed
-                // entries do NOT contain the latest state. This
-                // may not matter to callers who only care about
-                // reading, but maybe we should signal that it's
-                // out of date for those who page_in in an attempt
-                // to modify!
+                // we're out of date, retry
+                return Ok(None);
             }
         }
 
-        Ok(PageGet::Materialized(merged, PagePtr(head)))
+        let ret_ptr = PagePtr(head);
+        let mr = unsafe { ret_ptr.deref_merged_resident() };
+
+        Ok(Some(PageGet::Materialized(mr, ret_ptr)))
     }
 
     fn page_out<'g>(

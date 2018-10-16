@@ -1,6 +1,6 @@
 use super::*;
 
-use pagecache::{pin, PageGet};
+use pagecache::pin;
 
 /// An iterator over keys and values in a `Tree`.
 pub struct Iter<'a> {
@@ -26,27 +26,23 @@ impl<'a> Iterator for Iter<'a> {
 
         let guard = pin();
         loop {
-            let res = self.inner.get(self.id, &guard);
+            let res = self
+                .inner
+                .get(self.id, &guard)
+                .map(|page_get| page_get.unwrap());
 
-            let node = match res {
-                Ok(PageGet::Materialized(Frag::Base(base, _), _)) => {
-                    base
-                }
-                Err(e) => {
-                    // TODO(when implementing merge support) this could
-                    // be None if the node was removed since the last
-                    // iteration, and we need to just get the inner
-                    // node again...
-                    error!("iteration failed: {:?}", e);
-                    self.done = true;
-                    return Some(Err(e.danger_cast()));
-                }
-                other => panic!(
-                    "the pagecache returned an unexpected value \
-                     to the Tree iterator: {:?}",
-                    other
-                ),
-            };
+            if let Err(e) = res {
+                error!("iteration failed: {:?}", e);
+                self.done = true;
+                return Some(Err(e.danger_cast()));
+            }
+
+            // TODO(when implementing merge support) this could
+            // be None if the node was removed since the last
+            // iteration, and we need to just get the inner
+            // node again...
+            let (frag, _ptr) = res.unwrap();
+            let node = frag.unwrap_base();
 
             let prefix = node.lo.inner();
             for (ref k, ref v) in
