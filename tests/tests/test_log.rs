@@ -145,9 +145,7 @@ fn concurrent_logging() {
                 for i in 0..1_000 {
                     let buf = vec![6; i % buf_len];
                     let (lsn, _lid) = iobs6.write(buf).unwrap();
-                    // println!("+");
                     iobs6.make_stable(lsn).unwrap();
-                    // println!("-");
                 }
             }).unwrap();
 
