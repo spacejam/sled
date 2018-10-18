@@ -64,7 +64,7 @@ use self::bound::Bound;
 use self::data::Data;
 use self::frag::{ChildSplit, ParentSplit};
 use self::node::Node;
-use self::prefix::{prefix_cmp, prefix_decode, prefix_encode};
+use self::prefix::{prefix_cmp, prefix_decode, prefix_encode, prefix_cmp_encoded};
 
 pub(crate) use self::frag::Frag;
 pub(crate) use self::materializer::BLinkMaterializer;
