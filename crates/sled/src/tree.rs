@@ -150,7 +150,7 @@ impl Tree {
 
         // the double guard is a hack that maintains
         // correctness of the ret value
-        let double_guard = pin();
+        let double_guard = guard.clone();
         let (_, ret) = self.get_internal(key, &guard)?;
 
         Ok(ret.map(|r| PinnedValue::new(r, double_guard)))
@@ -196,7 +196,7 @@ impl Tree {
         // cap fails it doesn't mean our value was changed.
         let guard = pin();
         loop {
-            let pin_guard = pin();
+            let pin_guard = guard.clone();
             let (mut path, cur) = self
                 .get_internal(&*key, &guard)
                 .map_err(|e| e.danger_cast())?;
@@ -241,7 +241,7 @@ impl Tree {
         &self,
         key: Key,
         value: Value,
-    ) -> Result<Option<Value>, ()> {
+    ) -> Result<Option<PinnedValue>, ()> {
         let _measure = Measure::new(&M.tree_set);
 
         if self.config.read_only {
@@ -251,6 +251,7 @@ impl Tree {
         }
         let guard = pin();
         loop {
+            let double_guard = guard.clone();
             let mut path = self.path_for_key(&*key, &guard)?;
             let (leaf_frag, leaf_ptr) = path.pop().expect(
                 "path_for_key should always return a path \
@@ -273,7 +274,7 @@ impl Tree {
                 };
 
                 if let Ok(idx) = search {
-                    Some(items[idx].1.clone())
+                    Some(&*items[idx].1)
                 } else {
                     // key does not exist
                     None
@@ -304,7 +305,9 @@ impl Tree {
                         self.recursive_split(path2, &guard)?;
                     }
 
-                    return Ok(existing_key);
+                    return Ok(existing_key.map(move |r| {
+                        PinnedValue::new(r, double_guard)
+                    }));
                 }
                 Err(Error::CasFailed(_)) => {}
                 Err(other) => return Err(other.danger_cast()),
@@ -418,14 +421,15 @@ impl Tree {
     /// assert_eq!(t.del(&*vec![1]), Ok(Some(vec![1])));
     /// assert_eq!(t.del(&*vec![1]), Ok(None));
     /// ```
-    pub fn del(&self, key: &[u8]) -> Result<Option<Value>, ()> {
+    pub fn del(&self, key: &[u8]) -> Result<Option<PinnedValue>, ()> {
         let _measure = Measure::new(&M.tree_del);
 
         if self.config.read_only {
             return Ok(None);
         }
         let guard = pin();
-        let mut ret: Option<Value>;
+        let double_guard = guard.clone();
+        let mut ret: Option<&[u8]>;
         loop {
             let mut path = self.path_for_key(&*key, &guard)?;
             let (leaf_frag, leaf_ptr) = path.pop().expect(
@@ -441,7 +445,7 @@ impl Tree {
                             prefix_cmp(k, &encoded_key)
                         });
                     if let Ok(idx) = search {
-                        ret = Some(items[idx].1.clone());
+                        ret = Some(&*items[idx].1);
                     } else {
                         ret = None;
                         break;
@@ -470,7 +474,8 @@ impl Tree {
                 Err(other) => return Err(other.danger_cast()),
             }
         }
-        Ok(ret)
+
+        Ok(ret.map(move |r| PinnedValue::new(r, double_guard)))
     }
 
     /// Iterate over tuples of keys and values, starting at the provided key.
