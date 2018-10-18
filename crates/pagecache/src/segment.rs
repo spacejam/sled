@@ -697,8 +697,6 @@ impl SegmentAccountant {
                 self.ordering.remove(&old_lsn);
             }
         } else {
-            let free = self.free.clone();
-            let guard = pin();
             // We use a `epoch::Guard::defer()` to ensure that we never
             // add a segment's LogId to the free deque while any
             // active thread could be acting on it. This is necessary
@@ -707,10 +705,11 @@ impl SegmentAccountant {
             // copy of a page from being overwritten. This prevents
             // dangling references to segments that were rewritten after
             // the `LogId` was read.
+            let guard = pin();
+            let free = self.free.clone();
             guard.defer(move || {
                 free.lock().unwrap().push_back((lid, false));
             });
-            guard.flush();
         }
     }
 

@@ -5,7 +5,7 @@ use std::sync::atomic::AtomicI64;
 use std::sync::atomic::AtomicIsize;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::atomic::{spin_loop_hint, AtomicBool, AtomicUsize};
-use std::sync::{Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 #[cfg(feature = "failpoints")]
 use std::sync::atomic::Ordering::Relaxed;
@@ -75,7 +75,7 @@ pub(super) struct IoBufs {
     // to stable storage due to interesting thread interleavings.
     stable_lsn: AtomicLsn,
     max_reserved_lsn: AtomicLsn,
-    segment_accountant: Mutex<SegmentAccountant>,
+    segment_accountant: Arc<Mutex<SegmentAccountant>>,
 
     // used for signifying that we're simulating a crash
     #[cfg(feature = "failpoints")]
@@ -199,7 +199,9 @@ impl IoBufs {
             stable_lsn: AtomicLsn::new(stable as InnerLsn),
             max_reserved_lsn: AtomicLsn::new(stable as InnerLsn),
             config: config,
-            segment_accountant: Mutex::new(segment_accountant),
+            segment_accountant: Arc::new(Mutex::new(
+                segment_accountant,
+            )),
             #[cfg(feature = "failpoints")]
             _failpoint_crashing: AtomicBool::new(false),
         })
@@ -224,6 +226,32 @@ impl IoBufs {
         M.accountant_hold.measure(clock() - locked_at);
 
         ret
+    }
+
+    /// SegmentAccountant access for coordination with the `PageCache`,
+    /// performed after all threads have exited the currently checked-in
+    /// epochs using a crossbeam-epoch EBR guard.
+    pub(super) fn with_sa_deferred<F>(&self, f: F)
+    where
+        F: FnOnce(&mut SegmentAccountant) + Send + 'static,
+    {
+        let guard = pin();
+        let segment_accountant = self.segment_accountant.clone();
+
+        guard.defer(move || {
+            let start = clock();
+
+            debug_delay();
+            let mut sa = segment_accountant.lock().unwrap();
+
+            let locked_at = clock();
+
+            M.accountant_lock.measure(locked_at - start);
+
+            let _ = f(&mut sa);
+
+            M.accountant_hold.measure(clock() - locked_at);
+        });
     }
 
     fn idx(&self) -> usize {
@@ -936,9 +964,12 @@ impl IoBufs {
                 idx,
                 lid
             );
-            self.with_sa(|sa| {
-                sa.deactivate_segment(segment_lsn, segment_lid)
-            })?;
+            self.with_sa_deferred(move |sa| {
+                trace!("EBR deactivating segment {} with lsn {} and lid {}", idx, segment_lsn, segment_lid);
+                if let Err(e) = sa.deactivate_segment(segment_lsn, segment_lid) {
+                    error!("segment accountant failed to deactivate segment: {}", e);
+                }
+            });
         } else {
             trace!(
                 "not deactivating segment with lsn {}",
