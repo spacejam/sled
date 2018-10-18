@@ -64,7 +64,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::fs::File;
 use std::mem;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use self::reader::LogReader;
 use super::*;
@@ -84,7 +84,7 @@ pub(super) struct SegmentAccountant {
     // TODO put behind a single mutex
     // NB MUST group pause_rewriting with ordering
     // and free!
-    free: Mutex<VecDeque<(LogId, bool)>>,
+    free: Arc<Mutex<VecDeque<(LogId, bool)>>>,
     tip: LogId,
     to_clean: BTreeSet<LogId>,
     pause_rewriting: bool,
@@ -362,7 +362,7 @@ impl SegmentAccountant {
             config: config,
             segments: vec![],
             clean_counter: 0,
-            free: Mutex::new(VecDeque::new()),
+            free: Arc::new(Mutex::new(VecDeque::new())),
             tip: 0,
             to_clean: BTreeSet::new(),
             pause_rewriting: false,
@@ -697,9 +697,6 @@ impl SegmentAccountant {
                 self.ordering.remove(&old_lsn);
             }
         } else {
-            // NB we expect that this is always called from the
-            // `with_sa_deferred` from iobufs, which relies on
-            // `epoch::Guard::defer()`.
             // We use a `epoch::Guard::defer()` to ensure that we never
             // add a segment's LogId to the free deque while any
             // active thread could be acting on it. This is necessary
@@ -708,7 +705,11 @@ impl SegmentAccountant {
             // copy of a page from being overwritten. This prevents
             // dangling references to segments that were rewritten after
             // the `LogId` was read.
-            self.free.lock().unwrap().push_back((lid, false));
+            let guard = pin();
+            let free = self.free.clone();
+            guard.defer(move || {
+                free.lock().unwrap().push_back((lid, false));
+            });
         }
     }
 
