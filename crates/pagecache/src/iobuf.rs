@@ -965,6 +965,7 @@ impl IoBufs {
                 lid
             );
             self.with_sa_deferred(move |sa| {
+                trace!("EBR deactivating segment {} with lsn {} and lid {}", idx, segment_lsn, segment_lid);
                 if let Err(e) = sa.deactivate_segment(segment_lsn, segment_lid) {
                     error!("segment accountant failed to deactivate segment: {}", e);
                 }
