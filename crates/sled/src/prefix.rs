@@ -64,7 +64,7 @@ pub(crate) fn prefix_cmp(a: &[u8], b: &[u8]) -> Ordering {
 }
 
 /// Compare `a` and `b`, assuming that `a` is prefix encoded and `b` is not.
-pub fn prefix_cmp_encoded(a: &[u8], mut b: &[u8], mut prefix: &[u8]) -> Ordering {
+pub(crate) fn prefix_cmp_encoded(a: &[u8], mut b: &[u8], mut prefix: &[u8]) -> Ordering {
     assert!(a.len() >= 1 && a[0] as usize <= prefix.len());
 
     let mut a_prefix_len = a[0];
