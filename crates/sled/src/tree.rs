@@ -418,7 +418,7 @@ impl Tree {
     /// let config = sled::ConfigBuilder::new().temporary(true).build();
     /// let t = sled::Tree::start(config).unwrap();
     /// t.set(vec![1], vec![1]);
-    /// assert_eq!(t.del(&*vec![1]), Ok(Some(vec![1])));
+    /// assert_eq!(t.del(&*vec![1]).unwrap().unwrap(), vec![1]);
     /// assert_eq!(t.del(&*vec![1]), Ok(None));
     /// ```
     pub fn del(&self, key: &[u8]) -> Result<Option<PinnedValue>, ()> {
@@ -901,7 +901,9 @@ impl Tree {
                     let old_cursor = cursor;
 
                     for &(ref sep_k, ref ptr) in ptrs {
-                        if prefix_cmp_encoded(sep_k, key, &prefix) != Ordering::Greater {
+                        if prefix_cmp_encoded(sep_k, key, &prefix)
+                            != Ordering::Greater
+                        {
                             cursor = *ptr;
                         } else {
                             break; // we've found our next cursor
