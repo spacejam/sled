@@ -252,6 +252,7 @@ impl IoBufs {
 
             M.accountant_hold.measure(clock() - locked_at);
         });
+        guard.flush();
     }
 
     fn idx(&self) -> usize {

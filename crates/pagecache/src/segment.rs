@@ -710,6 +710,7 @@ impl SegmentAccountant {
             guard.defer(move || {
                 free.lock().unwrap().push_back((lid, false));
             });
+            guard.flush();
         }
     }
 
