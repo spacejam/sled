@@ -223,6 +223,8 @@ impl IoBufs {
 
         let ret = f(&mut sa);
 
+        drop(sa);
+
         M.accountant_hold.measure(clock() - locked_at);
 
         ret
@@ -231,7 +233,10 @@ impl IoBufs {
     /// SegmentAccountant access for coordination with the `PageCache`,
     /// performed after all threads have exited the currently checked-in
     /// epochs using a crossbeam-epoch EBR guard.
-    pub(super) fn with_sa_deferred<F>(&self, f: F)
+    ///
+    /// IMPORTANT: Never call this function with anything that calls
+    /// defer on the default EBR collector, or we could deadlock!
+    pub(super) unsafe fn with_sa_deferred<F>(&self, f: F)
     where
         F: FnOnce(&mut SegmentAccountant) + Send + 'static,
     {
@@ -250,8 +255,12 @@ impl IoBufs {
 
             let _ = f(&mut sa);
 
+            drop(sa);
+
             M.accountant_hold.measure(clock() - locked_at);
         });
+
+        guard.flush();
     }
 
     fn idx(&self) -> usize {
@@ -395,6 +404,7 @@ impl IoBufs {
         }
         let mut spins = 0;
         loop {
+            let guard = unsafe { pin_log() };
             debug_delay();
             let written_bufs = self.written_bufs.load(SeqCst);
             debug_delay();
@@ -568,6 +578,7 @@ impl IoBufs {
                 lsn: reservation_lsn,
                 lid: reservation_offset,
                 is_blob: over_blob_threshold || is_blob,
+                _guard: guard,
             });
         }
     }
@@ -964,12 +975,14 @@ impl IoBufs {
                 idx,
                 lid
             );
-            self.with_sa_deferred(move |sa| {
-                trace!("EBR deactivating segment {} with lsn {} and lid {}", idx, segment_lsn, segment_lid);
-                if let Err(e) = sa.deactivate_segment(segment_lsn, segment_lid) {
-                    error!("segment accountant failed to deactivate segment: {}", e);
-                }
-            });
+            unsafe {
+                self.with_sa_deferred(move |sa| {
+                    trace!("EBR deactivating segment {} with lsn {} and lid {}", idx, segment_lsn, segment_lid);
+                    if let Err(e) = sa.deactivate_segment(segment_lsn, segment_lid) {
+                        error!("segment accountant failed to deactivate segment: {}", e);
+                    }
+                });
+            }
         } else {
             trace!(
                 "not deactivating segment with lsn {}",

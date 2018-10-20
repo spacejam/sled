@@ -187,11 +187,8 @@ where
 ///
 /// ```
 /// extern crate pagecache;
-/// extern crate crossbeam_epoch as epoch;
 ///
-/// use pagecache::Materializer;
-///
-/// use epoch::pin;
+/// use pagecache::{pin, Materializer};
 ///
 /// pub struct TestMaterializer;
 ///
@@ -428,7 +425,6 @@ where
             }
             free.push(pid);
         });
-        guard.flush();
         Ok(())
     }
 

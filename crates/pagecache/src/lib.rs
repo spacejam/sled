@@ -65,6 +65,7 @@ mod config;
 mod constants;
 mod diskptr;
 mod ds;
+mod ebr;
 mod hash;
 mod iobuf;
 mod iterator;
@@ -95,6 +96,7 @@ use serde::Serialize;
 
 use self::blob_io::{gc_blobs, read_blob, remove_blob, write_blob};
 use self::ds::{node_from_frag_vec, Lru, Node, Stack, StackIter};
+use self::ebr::pin_log;
 use self::hash::{crc16_arr, crc64};
 use self::iobuf::IoBufs;
 use self::iterator::LogIter;
@@ -112,6 +114,7 @@ use self::util::{arr_to_u32, arr_to_u64, u32_to_arr, u64_to_arr};
 
 pub use self::config::{Config, ConfigBuilder};
 pub use self::diskptr::DiskPtr;
+pub use self::ebr::{pin, Guard};
 pub use self::log::{Log, LogRead};
 pub use self::materializer::{Materializer, NullMaterializer};
 #[doc(hidden)]
@@ -124,7 +127,7 @@ pub use self::segment::SegmentMode;
 #[doc(hidden)]
 pub use self::snapshot::{read_snapshot_or_default, Snapshot};
 pub use self::tx::Tx;
-pub use self::util::{debug_delay, pin, Guard};
+pub use self::util::debug_delay;
 #[doc(hidden)]
 pub use constants::{
     BLOB_FLUSH, BLOB_INLINE_LEN, EVIL_BYTE, FAILED_FLUSH,

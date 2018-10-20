@@ -1,7 +1,6 @@
 // lock-free stack
 use std::fmt::{self, Debug};
 use std::ops::Deref;
-use std::ptr;
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 
 use epoch::{pin, unprotected, Atomic, Guard, Owned, Shared};
@@ -119,9 +118,9 @@ impl<T: Send + Sync + 'static> Stack<T> {
     }
 
     /// Pop the next item off the stack. Returns None if nothing is there.
-    fn _pop(&self) -> Option<T> {
+    fn _pop<'g>(&self, guard: &'g Guard) -> Option<T> {
+        use std::ptr;
         debug_delay();
-        let guard = pin();
         let mut head = self.head(&guard);
         loop {
             match unsafe { head.as_ref() } {
@@ -295,8 +294,9 @@ fn basic_functionality() {
     use std::sync::Arc;
     use std::thread;
 
+    let guard = pin();
     let ll = Arc::new(Stack::default());
-    assert_eq!(ll._pop(), None);
+    assert_eq!(ll._pop(&guard), None);
     ll.push(1);
     let ll2 = Arc::clone(&ll);
     let t = thread::spawn(move || {
@@ -306,18 +306,20 @@ fn basic_functionality() {
     });
     t.join().unwrap();
     ll.push(5);
-    assert_eq!(ll._pop(), Some(5));
-    assert_eq!(ll._pop(), Some(4));
+    assert_eq!(ll._pop(&guard), Some(5));
+    assert_eq!(ll._pop(&guard), Some(4));
     let ll3 = Arc::clone(&ll);
     let t = thread::spawn(move || {
-        assert_eq!(ll3._pop(), Some(3));
-        assert_eq!(ll3._pop(), Some(2));
+        let guard = pin();
+        assert_eq!(ll3._pop(&guard), Some(3));
+        assert_eq!(ll3._pop(&guard), Some(2));
     });
     t.join().unwrap();
-    assert_eq!(ll._pop(), Some(1));
+    assert_eq!(ll._pop(&guard), Some(1));
     let ll4 = Arc::clone(&ll);
     let t = thread::spawn(move || {
-        assert_eq!(ll4._pop(), None);
+        let guard = pin();
+        assert_eq!(ll4._pop(&guard), None);
     });
     t.join().unwrap();
 }
