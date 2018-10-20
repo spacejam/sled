@@ -1,18 +1,3 @@
-use epoch;
-
-/// A guard used with epoch-based reclamation (EBR)
-/// to track threads accessing shared lock-free
-/// data structures, and safely drop data
-/// after any thread may have accessed it.
-pub type Guard = epoch::Guard;
-
-/// Enter an epoch which allows us to safely
-/// access shared data structures without
-/// using mutexes.
-pub fn pin() -> Guard {
-    epoch::pin()
-}
-
 /// This function is useful for inducing random jitter into our atomic
 /// operations, shaking out more possible interleavings quickly. It gets
 /// fully elliminated by the compiler in non-test code.

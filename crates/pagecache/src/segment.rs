@@ -705,7 +705,7 @@ impl SegmentAccountant {
             // copy of a page from being overwritten. This prevents
             // dangling references to segments that were rewritten after
             // the `LogId` was read.
-            let guard = pin();
+            let guard = unsafe { pin_log() };
             let free = self.free.clone();
             guard.defer(move || {
                 free.lock().unwrap().push_back((lid, false));

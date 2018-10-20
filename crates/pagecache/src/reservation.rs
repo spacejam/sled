@@ -13,6 +13,7 @@ pub struct Reservation<'a> {
     pub(super) lsn: Lsn,
     pub(super) lid: LogId,
     pub(super) is_blob: bool,
+    pub(super) _guard: Guard,
 }
 
 impl<'a> Drop for Reservation<'a> {
@@ -77,8 +78,7 @@ impl<'a> Reservation<'a> {
                 [0u8; std::mem::size_of::<Lsn>()];
             blob_ptr_bytes
                 .copy_from_slice(&self.data[MSG_HEADER_LEN..]);
-            let blob_ptr =
-                arr_to_u64(blob_ptr_bytes) as BlobPointer;
+            let blob_ptr = arr_to_u64(blob_ptr_bytes) as BlobPointer;
 
             Some(blob_ptr)
         } else {
