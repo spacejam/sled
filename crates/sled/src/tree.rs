@@ -83,6 +83,7 @@ impl Tree {
             root_id
         } else {
             let guard = pin();
+
             let root_id = pages.allocate(&guard)?;
             assert_eq!(
                 root_id,
@@ -125,6 +126,9 @@ impl Tree {
             pages
                 .replace(leaf_id, PagePtr::allocated(), leaf, &guard)
                 .map_err(|e| e.danger_cast())?;
+
+            guard.flush();
+
             root_id
         };
 
@@ -146,12 +150,15 @@ impl Tree {
         key: &[u8],
     ) -> Result<Option<PinnedValue>, ()> {
         let _measure = Measure::new(&M.tree_get);
+
         let guard = pin();
 
         // the double guard is a hack that maintains
         // correctness of the ret value
         let double_guard = guard.clone();
         let (_, ret) = self.get_internal(key, &guard)?;
+
+        guard.flush();
 
         Ok(ret.map(|r| PinnedValue::new(r, double_guard)))
     }
@@ -192,9 +199,11 @@ impl Tree {
         if self.config.read_only {
             return Err(Error::CasFailed(None));
         }
+
+        let guard = pin();
+
         // we need to retry caps until old != cur, since just because
         // cap fails it doesn't mean our value was changed.
-        let guard = pin();
         loop {
             let pin_guard = guard.clone();
             let (mut path, cur) = self
@@ -227,9 +236,15 @@ impl Tree {
                 &guard,
             );
             match link {
-                Ok(_) => return Ok(()),
+                Ok(_) => {
+                    guard.flush();
+                    return Ok(());
+                }
                 Err(Error::CasFailed(_)) => {}
-                Err(other) => return Err(other.danger_cast()),
+                Err(other) => {
+                    guard.flush();
+                    return Err(other.danger_cast());
+                }
             }
             M.tree_looped();
         }
@@ -249,7 +264,9 @@ impl Tree {
                 "the database is in read-only mode".to_owned(),
             ));
         }
+
         let guard = pin();
+
         loop {
             let double_guard = guard.clone();
             let mut path = self.path_for_key(&*key, &guard)?;
@@ -305,12 +322,18 @@ impl Tree {
                         self.recursive_split(path2, &guard)?;
                     }
 
+                    guard.flush();
+
                     return Ok(existing_key.map(move |r| {
                         PinnedValue::new(r, double_guard)
                     }));
                 }
                 Err(Error::CasFailed(_)) => {}
-                Err(other) => return Err(other.danger_cast()),
+                Err(other) => {
+                    guard.flush();
+
+                    return Err(other.danger_cast());
+                }
             }
             M.tree_looped();
         }
@@ -367,7 +390,9 @@ impl Tree {
                 "the database is in read-only mode".to_owned(),
             ));
         }
+
         let guard = pin();
+
         loop {
             let mut path = self.path_for_key(&*key, &guard)?;
             let (leaf_frag, leaf_ptr) = path.pop().expect(
@@ -401,10 +426,14 @@ impl Tree {
                         path2.push((frag2, new_cas_key));
                         self.recursive_split(path2, &guard)?;
                     }
+                    guard.flush();
                     return Ok(());
                 }
                 Err(Error::CasFailed(_)) => {}
-                Err(other) => return Err(other.danger_cast()),
+                Err(other) => {
+                    guard.flush();
+                    return Err(other.danger_cast());
+                }
             }
             M.tree_looped();
         }
@@ -427,7 +456,9 @@ impl Tree {
         if self.config.read_only {
             return Ok(None);
         }
+
         let guard = pin();
+
         let double_guard = guard.clone();
         let mut ret: Option<&[u8]>;
         loop {
@@ -475,6 +506,8 @@ impl Tree {
             }
         }
 
+        guard.flush();
+
         Ok(ret.map(move |r| PinnedValue::new(r, double_guard)))
     }
 
@@ -497,6 +530,7 @@ impl Tree {
         let _measure = Measure::new(&M.tree_scan);
 
         let guard = pin();
+
         let mut broken = None;
         let id = match self.get_internal(key, &guard) {
             Ok((ref mut path, _)) if !path.is_empty() => {
@@ -518,6 +552,9 @@ impl Tree {
                 0
             }
         };
+
+        guard.flush();
+
         Iter {
             id: id,
             inner: &self.pages,
@@ -789,6 +826,7 @@ impl Tree {
     #[doc(hidden)]
     pub fn key_debug_str(&self, key: &[u8]) -> String {
         let guard = pin();
+
         let path = self.path_for_key(key, &guard).expect(
             "path_for_key should always return at least 2 nodes, \
              even if the key being searched for is not present",
@@ -797,6 +835,9 @@ impl Tree {
         for (node, _ptr) in &path {
             ret.push_str(&*format!("\n{:?}", node));
         }
+
+        guard.flush();
+
         ret
     }
 
@@ -937,6 +978,7 @@ impl Debug for Tree {
         f.write_str("\tlevel 0:\n")?;
 
         let guard = pin();
+
         loop {
             let get_res = self.pages.get(pid, &guard);
             let node = match get_res {
@@ -992,6 +1034,8 @@ impl Debug for Tree {
                 }
             }
         }
+
+        guard.flush();
 
         Ok(())
     }
