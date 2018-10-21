@@ -274,7 +274,7 @@ enum P {
 }
 
 fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
-    // tests::setup_logger();
+    tests::setup_logger();
     use self::Op::*;
     let config = ConfigBuilder::new()
         .temporary(true)
@@ -295,6 +295,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
         let guard = pin();
         match op {
             Replace(pid, c) => {
+                println!("tests/tests/test_pagecache.rs:298");
                 let get = pc.get(pid, &guard).unwrap();
                 let ref_get =
                     reference.entry(pid).or_insert(P::Unallocated);
@@ -331,6 +332,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                 }
             }
             Link(pid, c) => {
+                println!("tests/tests/test_pagecache.rs:335");
                 let get = pc.get(pid, &guard).unwrap();
                 let ref_get =
                     reference.entry(pid).or_insert(P::Unallocated);
@@ -364,6 +366,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                 }
             }
             Get(pid) => {
+                println!("tests/tests/test_pagecache.rs:369");
                 let get = pc.get(pid, &guard).unwrap();
 
                 match reference.get(&pid) {
@@ -390,6 +393,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                 }
             }
             Free(pid) => {
+                println!("tests/tests/test_pagecache.rs:396");
                 let pre_get = pc.get(pid, &guard).unwrap();
 
                 match pre_get {
@@ -416,12 +420,14 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                 }
             }
             Allocate => {
+                println!("tests/tests/test_pagecache.rs:423");
                 let pid = pc.allocate(&guard).unwrap();
                 reference.insert(pid, P::Allocated);
                 let get = pc.get(pid, &guard);
                 assert!(get.unwrap().is_allocated());
             }
             Restart => {
+                println!("tests/tests/test_pagecache.rs:430");
                 drop(pc);
 
                 config

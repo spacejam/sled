@@ -176,7 +176,7 @@ impl<T: Send + Sync + 'static> Stack<T> {
         }
     }
 
-    /// attempt consolidation
+    /// compare and swap
     pub(crate) fn cas<'g>(
         &self,
         old: Shared<'g, Node<T>>,

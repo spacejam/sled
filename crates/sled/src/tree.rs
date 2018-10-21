@@ -708,9 +708,12 @@ impl Tree {
             Ok(_) => {}
             Err(Error::CasFailed(_)) => {
                 // if we failed, don't follow through with the parent split
-                self.pages
-                    .free(new_pid, new_ptr, guard)
-                    .map_err(|e| e.danger_cast())?;
+                if let Err(e) =
+                    self.pages.free(new_pid, new_ptr.clone(), guard)
+                {
+                    println!("failed to free newly allocated page {} with expected ptr {:?}: {:?}", new_pid, new_ptr, e);
+                    return Err(e.danger_cast());
+                }
                 return Err(Error::CasFailed(()));
             }
             Err(other) => return Err(other.danger_cast()),
