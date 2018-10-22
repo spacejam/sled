@@ -11,34 +11,6 @@ use pagetable::PageTable;
 
 use super::*;
 
-#[derive(Debug)]
-struct SendablePtr<T>(*mut T);
-
-impl<T> std::cmp::Ord for SendablePtr<T> {
-    fn cmp(&self, other: &SendablePtr<T>) -> std::cmp::Ordering {
-        (self.0 as usize).cmp(&(other.0 as usize))
-    }
-}
-
-impl<T> std::cmp::PartialOrd for SendablePtr<T> {
-    fn partial_cmp(
-        &self,
-        other: &SendablePtr<T>,
-    ) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<T> std::cmp::PartialEq for SendablePtr<T> {
-    fn eq(&self, other: &SendablePtr<T>) -> bool {
-        self.0 as usize == other.0 as usize
-    }
-}
-
-impl<T> std::cmp::Eq for SendablePtr<T> {}
-
-unsafe impl<T> Send for SendablePtr<T> {}
-
 type PagePtrInner<'g, P> = epoch::Shared<'g, Node<CacheEntry<P>>>;
 
 /// A pointer to shared lock-free state bound by a pinned epoch's lifetime.
@@ -291,9 +263,7 @@ where
     config: Config,
     inner: Arc<PageTable<Stack<CacheEntry<P>>>>,
     max_pid: AtomicUsize,
-    free: Arc<
-        Mutex<BinaryHeap<(PageId, SendablePtr<Node<CacheEntry<P>>>)>>,
-    >,
+    free: Arc<Mutex<BinaryHeap<PageId>>>,
     log: Log,
     lru: Lru,
     updates: AtomicUsize,
@@ -402,31 +372,31 @@ where
         &self,
         guard: &'g Guard,
     ) -> Result<PageId, ()> {
-        let (pid, old_ptr) = if let Some((pid, old_raw_ptr)) =
-            self.free.lock().unwrap().pop()
-        {
+        let pid = if let Some(pid) = self.free.lock().unwrap().pop() {
             trace!("re-allocating pid {}", pid);
-
-            let old_owned = unsafe { Owned::from_raw(old_raw_ptr.0) };
-            let old_ptr = old_owned.into_shared(guard);
-
-            (pid, old_ptr)
+            let p = self.inner.del(pid, guard).unwrap();
+            unsafe {
+                match p.deref().head(guard).deref().deref() {
+                    CacheEntry::Free(..) => (),
+                    _ => panic!("expected page {} to be Free", pid),
+                }
+            };
+            pid
         } else {
             let pid = self.max_pid.fetch_add(1, SeqCst);
             trace!("allocating pid {}", pid);
 
-            let new_stack = Stack::default();
-            let stack_ptr = Owned::new(new_stack).into_shared(guard);
-
-            self.inner
-                .cas(pid, Shared::null(), stack_ptr, guard)
-                .expect("allocating new page should never encounter existing data");
-            let old_ptr = Shared::null();
-
-            (pid, old_ptr)
+            pid
         };
 
-        self.cas_page(pid, old_ptr, Update::Allocate, &guard)
+        let new_stack = Stack::default();
+        let stack_ptr = Owned::new(new_stack).into_shared(guard);
+
+        self.inner
+                .cas(pid, Shared::null(), stack_ptr, guard)
+                .expect("allocating new page should never encounter existing data");
+
+        self.cas_page(pid, Shared::null(), Update::Allocate, &guard)
             .map_err(|e| e.danger_cast())?;
 
         Ok(pid)
@@ -441,18 +411,17 @@ where
     ) -> Result<(), Option<PagePtr<'g, P>>> {
         trace!("attempting to free pid {}", pid);
 
-        let ptr = self.cas_page(pid, old.0, Update::Free, guard)?;
-        let raw_ptr = SendablePtr(ptr.as_raw() as *mut _);
+        self.cas_page(pid, old.0, Update::Free, guard)?;
 
         let free = self.free.clone();
         guard.defer(move || {
             let mut free = free.lock().unwrap();
-            // panic if we were able to double-free a page
-            for &(e, _) in free.iter() {
+            // panic if we double-freed a page
+            for &e in free.iter() {
                 assert_ne!(e, pid, "page {} was double-freed", pid);
             }
 
-            free.push((pid, raw_ptr));
+            free.push(pid);
         });
         Ok(())
     }
@@ -1180,26 +1149,11 @@ where
                 }
                 &PageState::Free(lsn, ptr) => {
                     // blow away any existing state
+                    trace!("load_snapshot freeing pid {}", *pid);
                     let _ = self.inner.del(*pid, &guard);
-                    let shared_stack = Owned::new(Stack::default())
-                        .into_shared(&guard);
-                    let new_ptr = self
-                        .inner
-                        .cas(
-                            *pid,
-                            Shared::null(),
-                            shared_stack,
-                            &guard,
-                        ).unwrap()
-                        .as_raw()
-                        as *mut _;
-                    self.free
-                        .lock()
-                        .unwrap()
-                        .push((*pid, SendablePtr(new_ptr)));
                     stack.push(CacheEntry::Free(lsn, ptr));
+                    self.free.lock().unwrap().push(*pid);
                     snapshot_free.remove(&pid);
-                    continue;
                 }
                 &PageState::Allocated(_lsn, _ptr) => {
                     assert!(!snapshot.free.contains(pid));

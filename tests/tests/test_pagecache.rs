@@ -437,6 +437,8 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                 pc = PageCache::start(config.clone()).unwrap();
             }
         }
+        guard.flush();
+        drop(guard);
     }
 
     true
@@ -1122,24 +1124,43 @@ fn pagecache_bug_26() {
     // postmortem: an implementation of make_stable was accidentally
     // returning early before doing any stabilization.
     use Op::*;
-    for _ in 0..100 {
-        prop_pagecache_works(
-            vec![
-                Allocate,
-                Allocate,
-                Allocate,
-                Allocate,
-                Link(3, 9261),
-                Replace(2, 9263),
-                Restart,
-                Link(3, 9266),
-                Link(3, 9268),
-                Get(2),
-                Free(3),
-            ],
-            true,
-        );
-    }
+    prop_pagecache_works(
+        vec![
+            Allocate,
+            Allocate,
+            Allocate,
+            Allocate,
+            Link(3, 9261),
+            Replace(2, 9263),
+            Restart,
+            Link(3, 9266),
+            Link(3, 9268),
+            Get(2),
+            Free(3),
+        ],
+        true,
+    );
+}
+
+#[test]
+fn pagecache_bug_27() {
+    // postmortem: was using a bad pointer for recovery
+    use Op::*;
+    prop_pagecache_works(
+        vec![Allocate, Free(0), Restart, Allocate],
+        true,
+    );
+}
+
+#[test]
+fn pagecache_bug_28() {
+    // postmortem: should not be using pointers in the free page list
+    // at all, because segments can be relocated during segment compaction.
+    use Op::*;
+    prop_pagecache_works(
+        vec![Allocate, Free(0), Restart, Free(0), Allocate],
+        true,
+    );
 }
 
 fn _pagecache_bug_() {
