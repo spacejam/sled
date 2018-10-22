@@ -22,6 +22,8 @@
 //! ```
 //! #[macro_use]
 //! extern crate model;
+//! #[macro_use]
+//! extern crate proptest;
 //!
 //! use std::sync::atomic::{AtomicUsize, Ordering};
 //!
@@ -96,7 +98,10 @@
 extern crate permutohedron;
 extern crate proptest;
 
+use std::env;
 use std::ops::Deref;
+
+use proptest::test_runner::Config;
 
 pub struct Shared<T>(*mut T);
 
@@ -134,7 +139,7 @@ macro_rules! model {
         $($op:ident ($($type:ty),*) ($parm:pat in $strategy:expr) => $body:expr),*
     ) => {
         model! {
-            Config => Config::with_cases(1000).clone_with_source_file(file!()),
+            Config => $crate::default_config(file!()),
             Model => $model,
             Implementation => $implementation,
             $($op ($($type),*) ($parm in $strategy) => $body),*
@@ -148,7 +153,7 @@ macro_rules! model {
     ) => {
         use proptest::collection::vec as prop_vec;
         use proptest::prelude::*;
-        use proptest::test_runner::{Config, TestRunner};
+        use proptest::test_runner::TestRunner;
 
         #[derive(Debug)]
         enum Op {
@@ -194,11 +199,22 @@ macro_rules! linearizable {
         Implementation => $implementation:stmt,
         $($op:ident ($($type:ty),*) ($parm:pat in $strategy:expr) -> $ret:ty $body:block),*
     ) => {
+        linearizable! {
+            Config => $crate::default_config(file!()),
+            Implementation => $implementation,
+            $($op ($($type),*) ($parm in $strategy) -> $ret $body),*
+        }
+    };
+    (
+        Config => $config:expr,
+        Implementation => $implementation:stmt,
+        $($op:ident ($($type:ty),*) ($parm:pat in $strategy:expr) -> $ret:ty $body:block),*
+    ) => {
         use std::thread;
 
         use proptest::collection::vec as prop_vec;
         use proptest::prelude::*;
-        use proptest::test_runner::{Config, TestRunner};
+        use proptest::test_runner::TestRunner;
 
         #[derive(Debug, Clone)]
         enum Op {
@@ -227,7 +243,7 @@ macro_rules! linearizable {
                 .boxed()
         }
 
-        let config = Config::with_cases(10000).clone_with_source_file(file!());
+        let config = $config;
         let mut runner = TestRunner::new(config);
 
         match runner.run(&arb(), |&(split_point, ref ops)| {
@@ -275,7 +291,7 @@ macro_rules! linearizable {
 
             let mut linearizable = false;
 
-            let call_permutations = model::permutohedron_heap(&mut indexes);
+            let call_permutations = $crate::permutohedron_heap(&mut indexes);
 
             'outer: for walk in call_permutations {
                 $implementation;
@@ -321,4 +337,13 @@ where
     T: 'a,
 {
     permutohedron::Heap::new(orig)
+}
+
+/// Provide a default config with number of cases respecting the `PROPTEST_CASES` env variable.
+pub fn default_config(file: &'static str) -> Config {
+    let cases = env::var("PROPTEST_CASES")
+        .ok()
+        .and_then(|val| val.parse().ok())
+        .unwrap_or(1000);
+    Config::with_cases(cases).clone_with_source_file(file)
 }
