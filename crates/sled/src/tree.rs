@@ -708,11 +708,16 @@ impl Tree {
             Ok(_) => {}
             Err(Error::CasFailed(_)) => {
                 // if we failed, don't follow through with the parent split
-                if let Err(e) =
-                    self.pages.free(new_pid, new_ptr.clone(), guard)
-                {
-                    println!("failed to free newly allocated page {} with expected ptr {:?}: {:?}", new_pid, new_ptr, e);
-                    return Err(e.danger_cast());
+                let mut ptr = new_ptr.clone();
+                loop {
+                    match self.pages.free(new_pid, ptr, guard) {
+                        Err(Error::CasFailed(Some(actual_ptr))) => {
+                            ptr = actual_ptr.clone()
+                        }
+                        Err(Error::CasFailed(None)) => panic!("somehow allocated child was already freed"),
+                        Err(other) => return Err(other.danger_cast()),
+                        Ok(_) => break,
+                    }
                 }
                 return Err(Error::CasFailed(()));
             }
