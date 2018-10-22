@@ -1129,8 +1129,6 @@ where
 
         let mut snapshot_free = snapshot.free.clone();
 
-        let guard = pin();
-
         for (pid, state) in &snapshot.pt {
             trace!("load_snapshot page {} {:?}", pid, state);
 
@@ -1150,7 +1148,6 @@ where
                 &PageState::Free(lsn, ptr) => {
                     // blow away any existing state
                     trace!("load_snapshot freeing pid {}", *pid);
-                    let _ = self.inner.del(*pid, &guard);
                     stack.push(CacheEntry::Free(lsn, ptr));
                     self.free.lock().unwrap().push(*pid);
                     snapshot_free.remove(&pid);
@@ -1160,6 +1157,8 @@ where
                     // empty stack with null ptr head implies Allocated
                 }
             }
+
+            let guard = pin();
 
             let shared_stack = Owned::new(stack).into_shared(&guard);
 
