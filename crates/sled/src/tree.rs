@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use std::fmt::{self, Debug};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
@@ -308,8 +307,7 @@ impl Tree {
             match link {
                 Ok(new_cas_key) => {
                     // success
-                    if node.len() > self.config.blink_fanout as usize
-                    {
+                    if node.should_split(self.config.blink_fanout) {
                         let mut path2 = path
                             .iter()
                             .map(|&(f, ref p)| (f.clone(), p.clone()))
@@ -413,8 +411,7 @@ impl Tree {
             match link {
                 Ok(new_cas_key) => {
                     // success
-                    if node.len() > self.config.blink_fanout as usize
-                    {
+                    if node.should_split(self.config.blink_fanout) {
                         let mut path2 = path
                             .iter()
                             .map(|&(f, ref p)| (f.clone(), p.clone()))
@@ -615,7 +612,7 @@ impl Tree {
             let (parent_frag, parent_ptr) = window[0].clone();
             let (node_frag, node_ptr) = window[1].clone();
             let node: &Node = node_frag.unwrap_base();
-            if node.len() > self.config.blink_fanout as usize {
+            if node.should_split(self.config.blink_fanout) {
                 // try to child split
                 if let Ok(parent_split) =
                     self.child_split(node, node_ptr.clone(), guard)
@@ -646,7 +643,7 @@ impl Tree {
         let (ref root_frag, ref root_ptr) = path[0];
         let root_node: &Node = root_frag.unwrap_base();
 
-        if root_node.len() > self.config.blink_fanout as usize {
+        if root_node.should_split(self.config.blink_fanout) {
             if let Ok(parent_split) =
                 self.child_split(&root_node, root_ptr.clone(), guard)
             {
@@ -949,15 +946,17 @@ impl Tree {
                 Data::Index(ref ptrs) => {
                     let old_cursor = cursor;
 
-                    for &(ref sep_k, ref ptr) in ptrs {
-                        if prefix_cmp_encoded(sep_k, key, &prefix)
-                            != Ordering::Greater
-                        {
-                            cursor = *ptr;
-                        } else {
-                            break; // we've found our next cursor
-                        }
-                    }
+                    let search = binary_search_lub(
+                        ptrs,
+                        |&(ref k, ref _v)| {
+                            prefix_cmp_encoded(k, &key, &prefix)
+                        },
+                    );
+
+                    let index = search.expect("overshot key somehow");
+
+                    cursor = ptrs[index].1;
+
                     if cursor == old_cursor {
                         panic!("stuck in page traversal loop");
                     }
