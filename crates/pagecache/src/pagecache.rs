@@ -1160,6 +1160,8 @@ where
 
             let guard = pin();
 
+            // Set up new stack
+
             let shared_stack = Owned::new(stack).into_shared(&guard);
 
             self.inner
