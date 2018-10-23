@@ -44,7 +44,7 @@ impl Deref for Config {
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct ConfigBuilder {
     #[doc(hidden)]
-    pub blink_fanout: u8,
+    pub blink_node_split_size: usize,
     #[doc(hidden)]
     pub cache_bits: usize,
     #[doc(hidden)]
@@ -122,7 +122,7 @@ impl Default for ConfigBuilder {
             io_bufs: 3,
             io_buf_size: 2 << 22,     // 8mb
             min_items_per_segment: 4, // capacity for >=4 pages/segment
-            blink_fanout: 32,
+            blink_node_split_size: 4096,
             page_consolidation_threshold: 10,
             path: PathBuf::from("default.sled"),
             read_only: false,
@@ -212,7 +212,7 @@ impl ConfigBuilder {
         (io_bufs, get_io_bufs, set_io_bufs, usize, "number of io buffers"),
         (io_buf_size, get_io_buf_size, set_io_buf_size, usize, "size of each io flush buffer. MUST be multiple of 512!"),
         (min_items_per_segment, get_min_items_per_segment, set_min_items_per_segment, usize, "minimum data chunks/pages in a segment."),
-        (blink_fanout, get_blink_fanout, set_blink_fanout, u8, "b-link node fanout, minimum of 2"),
+        (blink_node_split_size, get_blink_node_split_size, set_blink_node_split_size, usize, "b-link tree node size in bytes before splitting"),
         (page_consolidation_threshold, get_page_consolidation_threshold, set_page_consolidation_threshold, usize, "page consolidation threshold"),
         (temporary, get_temporary, set_temporary, bool, "if this database should be removed after the ConfigBuilder is dropped"),
         (read_only, get_read_only, set_read_only, bool, "whether to run in read-only mode"),
@@ -451,10 +451,6 @@ impl Config {
         supported!(
             self.inner.min_items_per_segment < 128,
             "min_items_per_segment must be < 128"
-        );
-        supported!(
-            self.inner.blink_fanout >= 2,
-            "tree nodes must have at least 2 children"
         );
         supported!(self.inner.page_consolidation_threshold >= 1, "must consolidate pages after a non-zero number of updates");
         supported!(self.inner.page_consolidation_threshold < 1 << 20, "must consolidate pages after fewer than 1 million updates");

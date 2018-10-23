@@ -1,3 +1,5 @@
+use std::mem::size_of;
+
 use super::*;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -10,6 +12,16 @@ pub(crate) struct Node {
 }
 
 impl Node {
+    #[inline]
+    pub(crate) fn size_in_bytes(&self) -> usize {
+        let self_sz = size_of::<Node>();
+        let lo_sz = self.lo.size_in_bytes();
+        let hi_sz = self.hi.size_in_bytes();
+        let data_sz = self.data.size_in_bytes();
+
+        self_sz + lo_sz + hi_sz + data_sz
+    }
+
     pub(crate) fn apply(
         &mut self,
         frag: &Frag,
@@ -154,8 +166,8 @@ impl Node {
         }
     }
 
-    pub(crate) fn should_split(&self, fanout: u8) -> bool {
-        self.data.len() > fanout as usize
+    pub(crate) fn should_split(&self, max_sz: usize) -> bool {
+        self.data.len() > 2 && self.size_in_bytes() > max_sz
     }
 
     pub(crate) fn split(&self, id: PageId) -> Node {

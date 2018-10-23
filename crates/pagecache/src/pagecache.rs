@@ -226,6 +226,12 @@ where
 ///     fn recover(&self, _: &Self::PageFrag) -> Option<Self::Recovery> {
 ///         None
 ///     }
+///
+///     // Used to determine the resident size for this item in cache.
+///     fn size_in_bytes(&self, frag: &String) -> usize {
+///         std::mem::size_of::<String>() + frag.as_bytes().len()
+///     }
+///
 /// }
 ///
 /// fn main() {
@@ -828,7 +834,8 @@ where
         let merged =
             measure(&M.merge_page, || self.t.merge(&*combined));
 
-        let size = std::mem::size_of_val(&merged);
+        let size = self.t.size_in_bytes(&merged);
+
         let to_evict = self.lru.accessed(pid, size);
         trace!(
             "accessed pid {} -> paging out pids {:?}",

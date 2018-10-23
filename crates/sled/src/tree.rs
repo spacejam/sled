@@ -307,7 +307,9 @@ impl Tree {
             match link {
                 Ok(new_cas_key) => {
                     // success
-                    if node.should_split(self.config.blink_fanout) {
+                    if node.should_split(
+                        self.config.blink_node_split_size,
+                    ) {
                         let mut path2 = path
                             .iter()
                             .map(|&(f, ref p)| (f.clone(), p.clone()))
@@ -411,7 +413,9 @@ impl Tree {
             match link {
                 Ok(new_cas_key) => {
                     // success
-                    if node.should_split(self.config.blink_fanout) {
+                    if node.should_split(
+                        self.config.blink_node_split_size,
+                    ) {
                         let mut path2 = path
                             .iter()
                             .map(|&(f, ref p)| (f.clone(), p.clone()))
@@ -612,7 +616,7 @@ impl Tree {
             let (parent_frag, parent_ptr) = window[0].clone();
             let (node_frag, node_ptr) = window[1].clone();
             let node: &Node = node_frag.unwrap_base();
-            if node.should_split(self.config.blink_fanout) {
+            if node.should_split(self.config.blink_node_split_size) {
                 // try to child split
                 if let Ok(parent_split) =
                     self.child_split(node, node_ptr.clone(), guard)
@@ -643,7 +647,7 @@ impl Tree {
         let (ref root_frag, ref root_ptr) = path[0];
         let root_node: &Node = root_frag.unwrap_base();
 
-        if root_node.should_split(self.config.blink_fanout) {
+        if root_node.should_split(self.config.blink_node_split_size) {
             if let Ok(parent_split) =
                 self.child_split(&root_node, root_ptr.clone(), guard)
             {

@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::mem::size_of;
 
 #[derive(Clone, Debug, Ord, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) enum Bound {
@@ -13,6 +14,20 @@ impl Bound {
             Bound::Inclusive(ref v) | Bound::Exclusive(ref v) => &*v,
             Bound::Inf => panic!("inner() called on Bound::Inf"),
         }
+    }
+
+    #[inline]
+    pub(crate) fn size_in_bytes(&self) -> usize {
+        let self_sz = size_of::<Bound>();
+
+        let inner_sz = match self {
+            Bound::Inclusive(ref v) | Bound::Exclusive(ref v) => {
+                v.len() + size_of::<Vec<u8>>()
+            }
+            Bound::Inf => 0,
+        };
+
+        self_sz + inner_sz
     }
 }
 
