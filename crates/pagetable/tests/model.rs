@@ -7,7 +7,7 @@ extern crate pagetable;
 
 use std::collections::HashMap;
 
-use epoch::pin;
+use epoch::{pin, Owned, Shared as EpochShared};
 use model::Shared;
 use pagetable::PageTable;
 
@@ -19,7 +19,10 @@ fn test_model() {
         Insert((usize, usize))((k, new) in (0usize..4, 0usize..4)) => {
             if !m.contains_key(&k) {
                 m.insert(k, new);
-                i.insert(k, new).expect("should be able to insert a value");
+
+                let guard = pin();
+                let v = Owned::new(new).into_shared(&guard);
+                i.cas(k, EpochShared::null(), v, &guard ).expect("should be able to insert a value");
             }
         },
         Get(usize)(k in 0usize..4) => {
@@ -59,8 +62,10 @@ fn test_linearizability() {
                 i.get(k, &guard).map(|s| *s.deref())
             }
         },
-        Insert((usize, usize))((k, new) in (0usize..4, 0usize..4)) -> Result<(), ()> {
-            i.insert(k, new)
+        Insert((usize, usize))((k, new) in (0usize..4, 0usize..4)) -> bool {
+            let guard = pin();
+            let v = Owned::new(new).into_shared(&guard);
+            i.cas(k, EpochShared::null(), v, &guard).is_err()
         },
         Cas((usize, usize, usize))((k, old, new)
             in (0usize..4, 0usize..4, 0usize..4))
