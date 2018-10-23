@@ -100,15 +100,6 @@ impl<T> PageTable<T>
 where
     T: 'static + Send + Sync,
 {
-    /// Try to create a new item in the tree.
-    pub fn insert(&self, pid: PageId, item: T) -> Result<(), ()> {
-        let guard = pin();
-        let new = Owned::new(item).into_shared(&guard);
-        self.cas(pid, Shared::null(), new, &guard)
-            .map(|_| ())
-            .map_err(|_| ())
-    }
-
     /// Atomically swap the previous value in a tree with a new one.
     pub fn swap<'g>(
         &self,
@@ -288,7 +279,8 @@ fn basic_functionality() {
     unsafe {
         let guard = pin();
         let rt = PageTable::default();
-        rt.insert(0, 5).unwrap();
+        let v1 = Owned::new(5).into_shared(&guard);
+        rt.cas(0, Shared::null(), v1, &guard).unwrap();
         let ptr = rt.get(0, &guard).unwrap();
         assert_eq!(ptr.deref(), &5);
         rt.cas(0, ptr, Owned::new(6).into_shared(&guard), &guard)
@@ -300,10 +292,12 @@ fn basic_functionality() {
         let k2 = 321 << FANFACTOR;
         let k3 = k2 + 1;
 
-        rt.insert(k2, 2).unwrap();
+        let v2 = Owned::new(2).into_shared(&guard);
+        rt.cas(k2, Shared::null(), v2, &guard).unwrap();
         assert_eq!(rt.get(k2, &guard).unwrap().deref(), &2);
         assert!(rt.get(k3, &guard).is_none());
-        rt.insert(k3, 3).unwrap();
+        let v3 = Owned::new(3).into_shared(&guard);
+        rt.cas(k3, Shared::null(), v3, &guard).unwrap();
         assert_eq!(rt.get(k3, &guard).unwrap().deref(), &3);
         assert_eq!(rt.get(k2, &guard).unwrap().deref(), &2);
     }

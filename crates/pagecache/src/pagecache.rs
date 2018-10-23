@@ -2,7 +2,7 @@ use std::collections::BinaryHeap;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 
-use epoch::Shared;
+use epoch::{Owned, Shared};
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
@@ -372,35 +372,32 @@ where
         &self,
         guard: &'g Guard,
     ) -> Result<PageId, ()> {
-        let pid = self
-            .free
-            .lock()
-            .unwrap()
-            .pop()
-            .unwrap_or_else(|| self.max_pid.fetch_add(1, SeqCst));
+        let pid = if let Some(pid) = self.free.lock().unwrap().pop() {
+            trace!("re-allocating pid {}", pid);
+            let p = self.inner.del(pid, guard).unwrap();
+            unsafe {
+                match p.deref().head(guard).deref().deref() {
+                    CacheEntry::Free(..) => (),
+                    _ => panic!("expected page {} to be Free", pid),
+                }
+            };
+            pid
+        } else {
+            let pid = self.max_pid.fetch_add(1, SeqCst);
+            trace!("allocating pid {}", pid);
 
-        trace!("allocating pid {}", pid);
-
-        // set up new stack
-        let stack = Stack::default();
-
-        // TODO shouldn't we CAS instead of del?
-        self.inner.del(pid, guard);
-        self.inner.insert(pid, stack).map_err(|_| {
-            Error::ReportableBug("insertion failed".to_owned())
-        })?;
-
-        // serialize log update
-        let prepend: LoggedUpdate<P> = LoggedUpdate {
-            pid: pid,
-            update: Update::Allocate,
+            pid
         };
-        let bytes =
-            measure(&M.serialize, || serialize(&prepend).unwrap());
 
-        // reserve slot in log
-        // FIXME not threadsafe?
-        self.log.write(bytes)?;
+        let new_stack = Stack::default();
+        let stack_ptr = Owned::new(new_stack).into_shared(guard);
+
+        self.inner
+                .cas(pid, Shared::null(), stack_ptr, guard)
+                .expect("allocating new page should never encounter existing data");
+
+        self.cas_page(pid, Shared::null(), Update::Allocate, &guard)
+            .map_err(|e| e.danger_cast())?;
 
         Ok(pid)
     }
@@ -419,10 +416,11 @@ where
         let free = self.free.clone();
         guard.defer(move || {
             let mut free = free.lock().unwrap();
-            // panic if we were able to double-free a page
+            // panic if we double-freed a page
             for &e in free.iter() {
                 assert_ne!(e, pid, "page {} was double-freed", pid);
             }
+
             free.push(pid);
         });
         Ok(())
@@ -439,6 +437,10 @@ where
         new: P,
         guard: &'g Guard,
     ) -> Result<PagePtr<'g, P>, Option<PagePtr<'g, P>>> {
+        if old.is_allocated() {
+            return self.replace(pid, old, new, guard);
+        }
+
         let stack_ptr = match self.inner.get(pid, guard) {
             None => return Err(Error::CasFailed(None)),
             Some(s) => s,
@@ -446,11 +448,7 @@ where
 
         let prepend: LoggedUpdate<P> = LoggedUpdate {
             pid: pid,
-            update: if old.is_allocated() {
-                Update::Compact(new.clone())
-            } else {
-                Update::Append(new.clone())
-            },
+            update: Update::Append(new.clone()),
         };
 
         let bytes =
@@ -460,11 +458,7 @@ where
         let lsn = log_reservation.lsn();
         let ptr = log_reservation.ptr();
 
-        let cache_entry = if old.is_allocated() {
-            CacheEntry::MergedResident(new, lsn, ptr)
-        } else {
-            CacheEntry::Resident(new, lsn, ptr)
-        };
+        let cache_entry = CacheEntry::Resident(new, lsn, ptr);
 
         debug_delay();
         let result = unsafe {
@@ -638,7 +632,12 @@ where
         guard: &'g Guard,
     ) -> Result<PagePtrInner<'g, P>, Option<PagePtr<'g, P>>> {
         let stack_ptr = match self.inner.get(pid, guard) {
-            None => return Err(Error::CasFailed(None)),
+            None => {
+                trace!(
+                    "early-returning from cas_page, no stack found"
+                );
+                return Err(Error::CasFailed(None));
+            }
             Some(s) => s,
         };
 
@@ -1147,8 +1146,10 @@ where
                     }
                 }
                 &PageState::Free(lsn, ptr) => {
-                    self.free.lock().unwrap().push(*pid);
+                    // blow away any existing state
+                    trace!("load_snapshot freeing pid {}", *pid);
                     stack.push(CacheEntry::Free(lsn, ptr));
+                    self.free.lock().unwrap().push(*pid);
                     snapshot_free.remove(&pid);
                 }
                 &PageState::Allocated(_lsn, _ptr) => {
@@ -1157,7 +1158,15 @@ where
                 }
             }
 
-            self.inner.insert(*pid, stack).unwrap();
+            let guard = pin();
+
+            // Set up new stack
+
+            let shared_stack = Owned::new(stack).into_shared(&guard);
+
+            self.inner
+                .cas(*pid, Shared::null(), shared_stack, &guard)
+                .unwrap();
         }
 
         assert!(
