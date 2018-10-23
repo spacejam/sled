@@ -13,8 +13,6 @@ use serde::Serialize;
 
 use bincode::{deserialize, serialize};
 
-use uptime_lib;
-
 use super::*;
 
 impl Deref for Config {
@@ -98,9 +96,9 @@ unsafe impl Send for ConfigBuilder {}
 impl Default for ConfigBuilder {
     fn default() -> ConfigBuilder {
         let salt = {
-            let now = uptime_lib::get().unwrap();
-            (now.num_seconds() * 1_000_000_000)
-                + now.num_nanoseconds().unwrap_or(0)
+            let now = uptime();
+            (now.as_secs() * 1_000_000_000)
+                + now.subsec_nanos() as u64
         };
 
         // use shared memory for temporary linux files

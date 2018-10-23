@@ -42,7 +42,6 @@ extern crate zstd;
 #[macro_use]
 extern crate fail;
 extern crate pagetable;
-extern crate uptime_lib;
 
 macro_rules! maybe_fail {
     ($e:expr) => {
@@ -105,7 +104,7 @@ use self::iterator::LogIter;
 use self::log::{
     MessageHeader, MessageKind, SegmentHeader, SegmentTrailer,
 };
-use self::metrics::{clock, measure};
+use self::metrics::{clock, measure, uptime};
 use self::pagecache::{LoggedUpdate, Update};
 use self::parallel_io::Pio;
 use self::reader::LogReader;
