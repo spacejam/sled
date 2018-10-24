@@ -68,7 +68,7 @@ const CRC16TAB: [u16; 256] =
      0xcf5d, 0xdf7c, 0xaf9b, 0xbfba, 0x8fd9, 0x9ff8, 0x6e17, 0x7e36, 0x4e55, 0x5e74, 0x2e93,
      0x3eb2, 0x0ed1, 0x1ef0];
 
-#[inline(always)]
+#[cfg_attr(not(feature = "no_inline"), inline)]
 fn crc16(buf: &[u8]) -> u16 {
     let mut crc = 0u16;
     for &b in &*buf {
@@ -79,7 +79,7 @@ fn crc16(buf: &[u8]) -> u16 {
     crc
 }
 
-#[inline(always)]
+#[cfg_attr(not(feature = "no_inline"), inline)]
 pub(crate) fn crc16_arr(buf: &[u8]) -> [u8; 2] {
     let crc16 = crc16(buf);
     [(crc16 >> 8) as u8, crc16 as u8]

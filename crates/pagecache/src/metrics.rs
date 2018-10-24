@@ -71,7 +71,7 @@ impl<'h> Drop for Measure<'h> {
 }
 
 /// Measure the time spent on calling a given function in a given `Histo`.
-#[inline(always)]
+#[cfg_attr(not(feature = "no_inline"), inline)]
 pub(crate) fn measure<F: FnOnce() -> R, R>(histo: &Histo, f: F) -> R {
     #[cfg(not(feature = "no_metrics"))]
     let _measure = Measure::new(histo);

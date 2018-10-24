@@ -1312,50 +1312,50 @@ impl IoBuf {
     }
 }
 
-#[inline(always)]
+#[cfg_attr(not(feature = "no_inline"), inline)]
 fn is_sealed(v: Header) -> bool {
     v & 1 << 31 == 1 << 31
 }
 
-#[inline(always)]
+#[cfg_attr(not(feature = "no_inline"), inline)]
 fn mk_sealed(v: Header) -> Header {
     v | 1 << 31
 }
 
-#[inline(always)]
+#[cfg_attr(not(feature = "no_inline"), inline)]
 fn n_writers(v: Header) -> Header {
     v << 33 >> 57
 }
 
-#[inline(always)]
+#[cfg_attr(not(feature = "no_inline"), inline)]
 fn incr_writers(v: Header) -> Header {
     assert_ne!(n_writers(v), MAX_WRITERS);
     v + (1 << 24)
 }
 
-#[inline(always)]
+#[cfg_attr(not(feature = "no_inline"), inline)]
 fn decr_writers(v: Header) -> Header {
     assert_ne!(n_writers(v), 0);
     v - (1 << 24)
 }
 
-#[inline(always)]
+#[cfg_attr(not(feature = "no_inline"), inline)]
 fn offset(v: Header) -> Header {
     v << 40 >> 40
 }
 
-#[inline(always)]
+#[cfg_attr(not(feature = "no_inline"), inline)]
 fn bump_offset(v: Header, by: Header) -> Header {
     assert_eq!(by >> 24, 0);
     v + by
 }
 
-#[inline(always)]
+#[cfg_attr(not(feature = "no_inline"), inline)]
 fn bump_salt(v: Header) -> Header {
     (v + (1 << 32)) & 0xFFFFFFFF00000000
 }
 
-#[inline(always)]
+#[cfg_attr(not(feature = "no_inline"), inline)]
 fn salt(v: Header) -> Header {
     v >> 32 << 32
 }
