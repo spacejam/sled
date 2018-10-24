@@ -105,6 +105,8 @@ use self::log::{
     MessageHeader, MessageKind, SegmentHeader, SegmentTrailer,
 };
 use self::metrics::{clock, measure};
+#[cfg(not(unix))]
+use self::metrics::uptime;
 use self::pagecache::{LoggedUpdate, Update};
 use self::parallel_io::Pio;
 use self::reader::LogReader;

@@ -4,7 +4,7 @@ use std::io::{Read, Seek, Write};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{
-    AtomicPtr, AtomicUsize, Ordering, ATOMIC_USIZE_INIT,
+    AtomicPtr, AtomicUsize, Ordering, ATOMIC_USIZE_INIT
 };
 use std::sync::{Arc, Mutex};
 
@@ -95,20 +95,19 @@ unsafe impl Send for ConfigBuilder {}
 
 impl Default for ConfigBuilder {
     fn default() -> ConfigBuilder {
-        static SALT_COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
-
-        #[cfg(unix)]
+         #[cfg(unix)]
         let salt = {
+            static SALT_COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
             let pid = unsafe { libc::getpid() };
             ((pid as u64) << 32)
                 + SALT_COUNTER.fetch_add(1, Ordering::SeqCst) as u64
         };
-
-        #[cfg(not(unix))]
+        
+         #[cfg(not(unix))]
         let salt = {
             let now = uptime();
             (now.as_secs() * 1_000_000_000)
-                + u64::from(now.subsec_nanos())
+                + now.subsec_nanos() as u64
         };
 
         // use shared memory for temporary linux files

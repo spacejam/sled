@@ -27,7 +27,7 @@ pub(crate) fn clock() -> f64 {
 }
 
 // not correct, since it starts counting at the first observance...
-fn uptime() -> Duration {
+pub(crate) fn uptime() -> Duration {
     lazy_static! {
         static ref START: Instant = Instant::now();
     }
