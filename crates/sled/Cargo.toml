@@ -20,6 +20,7 @@ no_metrics = ["pagecache/no_metrics"]
 rayon = ["pagecache/rayon"]
 zstd = ["pagecache/zstd"]
 nightly = ["pagecache/nightly"]
+no_inline = ["pagecache/no_inline"]
 
 [dependencies.log]
 version = "0.4"
