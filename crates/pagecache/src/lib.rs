@@ -30,9 +30,7 @@ extern crate lazy_static;
 extern crate log as _log;
 #[cfg(unix)]
 extern crate libc;
-#[cfg(
-    any(test, feature = "failpoints", feature = "lock_free_delays")
-)]
+#[cfg(any(test, feature = "failpoints", feature = "lock_free_delays"))]
 extern crate rand;
 #[cfg(feature = "rayon")]
 extern crate rayon;
@@ -84,57 +82,65 @@ mod util;
 
 pub mod log;
 
-use std::cell::UnsafeCell;
-use std::fmt::{self, Debug};
-use std::io;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering::SeqCst;
+use std::{
+    cell::UnsafeCell,
+    fmt::{self, Debug},
+    io,
+    sync::atomic::AtomicUsize,
+    sync::atomic::Ordering::SeqCst,
+};
 
 use bincode::{deserialize, serialize};
-use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::{de::DeserializeOwned, Serialize};
 
-use self::blob_io::{gc_blobs, read_blob, remove_blob, write_blob};
-use self::ds::{node_from_frag_vec, Lru, Node, Stack, StackIter};
-use self::ebr::pin_log;
-use self::hash::{crc16_arr, crc64};
-use self::iobuf::IoBufs;
-use self::iterator::LogIter;
 #[doc(hidden)]
 use self::log::{
     MessageHeader, MessageKind, SegmentHeader, SegmentTrailer,
 };
-use self::metrics::{clock, measure};
+
 #[cfg(not(unix))]
 use self::metrics::uptime;
-use self::pagecache::{LoggedUpdate, Update};
-use self::parallel_io::Pio;
-use self::reader::LogReader;
-use self::segment::{raw_segment_iter_from, SegmentAccountant};
-use self::snapshot::{advance_snapshot, PageState};
-use self::util::{arr_to_u32, arr_to_u64, u32_to_arr, u64_to_arr};
 
-pub use self::config::{Config, ConfigBuilder};
-pub use self::diskptr::DiskPtr;
-pub use self::ebr::{pin, Guard};
-pub use self::log::{Log, LogRead};
-pub use self::materializer::{Materializer, NullMaterializer};
+use self::{
+    blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
+    ds::{node_from_frag_vec, Lru, Node, Stack, StackIter},
+    ebr::pin_log,
+    hash::{crc16_arr, crc64},
+    iobuf::IoBufs,
+    iterator::LogIter,
+    metrics::{clock, measure},
+    pagecache::{LoggedUpdate, Update},
+    parallel_io::Pio,
+    reader::LogReader,
+    segment::{raw_segment_iter_from, SegmentAccountant},
+    snapshot::{advance_snapshot, PageState},
+    util::{arr_to_u32, arr_to_u64, u32_to_arr, u64_to_arr},
+};
+
+pub use self::{
+    config::{Config, ConfigBuilder},
+    diskptr::DiskPtr,
+    ebr::{pin, Guard},
+    log::{Log, LogRead},
+    materializer::{Materializer, NullMaterializer},
+    metrics::M,
+    pagecache::{CacheEntry, PageCache, PageGet, PagePtr},
+    reservation::Reservation,
+    result::{Error, Result},
+    segment::SegmentMode,
+    tx::Tx,
+    util::debug_delay,
+};
+
 #[doc(hidden)]
-pub use self::metrics::Measure;
-pub use self::metrics::M;
-pub use self::pagecache::{CacheEntry, PageCache, PageGet, PagePtr};
-pub use self::reservation::Reservation;
-pub use self::result::{Error, Result};
-pub use self::segment::SegmentMode;
-#[doc(hidden)]
-pub use self::snapshot::{read_snapshot_or_default, Snapshot};
-pub use self::tx::Tx;
-pub use self::util::debug_delay;
-#[doc(hidden)]
-pub use constants::{
-    BLOB_FLUSH, BLOB_INLINE_LEN, EVIL_BYTE, FAILED_FLUSH,
-    INLINE_FLUSH, MSG_HEADER_LEN, SEGMENT_PAD, SEG_HEADER_LEN,
-    SEG_TRAILER_LEN,
+pub use self::{
+    constants::{
+        BLOB_FLUSH, BLOB_INLINE_LEN, EVIL_BYTE, FAILED_FLUSH,
+        INLINE_FLUSH, MSG_HEADER_LEN, SEGMENT_PAD, SEG_HEADER_LEN,
+        SEG_TRAILER_LEN,
+    },
+    metrics::Measure,
+    snapshot::{read_snapshot_or_default, Snapshot},
 };
 
 /// An offset for a storage file segment.

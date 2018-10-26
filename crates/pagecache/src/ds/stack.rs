@@ -1,11 +1,14 @@
 // lock-free stack
-use std::fmt::{self, Debug};
-use std::ops::Deref;
-use std::sync::atomic::Ordering::{Relaxed, SeqCst};
+use std::{
+    fmt::{self, Debug},
+    ops::Deref,
+    sync::atomic::Ordering::{Relaxed, SeqCst},
+};
 
-use epoch::{pin, unprotected, Atomic, Guard, Owned, Shared};
-
-use debug_delay;
+use crate::{
+    debug_delay,
+    epoch::{pin, unprotected, Atomic, Guard, Owned, Shared},
+};
 
 /// A node in the lock-free `Stack`.
 #[derive(Debug)]

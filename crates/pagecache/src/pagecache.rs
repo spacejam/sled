@@ -1,8 +1,10 @@
-use std::collections::BinaryHeap;
-use std::ops::Deref;
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::BinaryHeap,
+    ops::Deref,
+    sync::{Arc, Mutex},
+};
 
-use epoch::{Owned, Shared};
+use crate::epoch::{Owned, Shared};
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
@@ -68,7 +70,7 @@ pub enum CacheEntry<M: Send> {
 
 impl<M: Send> CacheEntry<M> {
     fn ptr(&self) -> DiskPtr {
-        use CacheEntry::*;
+        use self::CacheEntry::*;
         match self {
             MergedResident(_, _, ptr)
             | Resident(_, _, ptr)

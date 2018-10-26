@@ -1,4 +1,4 @@
-use epoch::{self, Collector, LocalHandle};
+use crate::epoch::{self, Collector, LocalHandle};
 
 /// A guard used with epoch-based reclamation (EBR)
 /// to track threads accessing shared lock-free
