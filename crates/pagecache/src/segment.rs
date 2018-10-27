@@ -677,7 +677,7 @@ impl SegmentAccountant {
         // we depend on the invariant that the last segments
         // always link together, so that we can detect torn
         // segments during recovery.
-        self.ensure_safe_free_distance(lid);
+        self.ensure_safe_free_distance();
 
         if in_recovery {
             self.free.lock().unwrap().push_back((lid, false));
@@ -956,7 +956,7 @@ impl SegmentAccountant {
         lid
     }
 
-    fn ensure_safe_free_distance(&mut self, lid: LogId) {
+    fn ensure_safe_free_distance(&mut self) {
         // NB If updates always have to wait in a queue
         // at least as long as the number of IO buffers, it
         // guarantees that the old updates are actually safe
@@ -968,31 +968,13 @@ impl SegmentAccountant {
         // IO buffer during a PageCache replace, but whose
         // replacing updates have not actually landed on disk
         // yet.
-        let position = self
-            .safety_buffer
-            .iter()
-            .position(|&previous_lid| previous_lid == lid);
-        if let Some(position) = position {
-            // if the segment was newest in the safety buffer
-            // (which will always have # io bufs elements)
-            // then the free list needs to contain at least
-            // # io_bufs before we can push this segment. if
-            // the segment is the oldest in the safety buffer,
-            // we can just push one thing to the free list first.
-
-            // 1 for 0-indexing, 1 for having at least safety buffer
-            let min_free_len = position + 2;
-
-            while self.free.lock().unwrap().len() < min_free_len {
-                let new_lid = self.bump_tip();
-                trace!(
+        while self.free.lock().unwrap().len() < self.config.io_bufs {
+            let new_lid = self.bump_tip();
+            trace!(
                     "pushing segment {} to free from ensure_safe_free_distance",
                     new_lid
                 );
-                self.free.lock().unwrap().push_front((new_lid, true));
-            }
-        } else {
-            // lid not in safety buffer, we don't need to pad anything
+            self.free.lock().unwrap().push_front((new_lid, true));
         }
     }
 
