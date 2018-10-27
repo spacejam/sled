@@ -93,7 +93,8 @@ impl<R> Snapshot<R> {
         disk_ptr: DiskPtr,
         bytes: &[u8],
         config: &Config,
-    ) where
+    ) -> Result<(), ()>
+    where
         P: 'static
             + Debug
             + Clone
@@ -120,7 +121,7 @@ impl<R> Snapshot<R> {
                 disk_ptr,
                 e
             );
-            return;
+            return Err(Error::Corruption { at: disk_ptr });
         }
 
         let prepend = deserialization.unwrap();
@@ -149,11 +150,15 @@ impl<R> Snapshot<R> {
                     );
 
                     if lids.is_free() {
+                        // this can happen if the allocate or replace
+                        // has been moved to a later segment.
+
                         trace!(
                             "we have not yet encountered an \
                              allocation of this page, skipping push"
                         );
-                        return;
+
+                        return Ok(());
                     }
 
                     if let Some(r) =
@@ -226,6 +231,8 @@ impl<R> Snapshot<R> {
                 self.free.insert(pid);
             }
         }
+
+        Ok(())
     }
 
     fn replace_pid(
@@ -349,7 +356,19 @@ where
         snapshot.replacements.remove(&segment_idx);
 
         if !PM::is_null() {
-            snapshot.apply(&materializer, lsn, ptr, &*bytes, config);
+            if let Err(e) = snapshot.apply(
+                &materializer,
+                lsn,
+                ptr,
+                &*bytes,
+                config,
+            ) {
+                error!(
+                    "encountered error while reading log message: {}",
+                    e
+                );
+                break;
+            }
         }
     }
 
