@@ -19,12 +19,6 @@ no_logs = ["log/max_level_off"]
 nightly = []
 no_inline = []
 
-[dependencies.historian]
-version = "3.0"
-
-[dependencies.log]
-version = "0.4"
-
 [dependencies]
 libc = "0.2"
 crossbeam-epoch = "0.6"
@@ -37,6 +31,12 @@ rayon = {version = "1.0", optional = true}
 zstd = {version = "0.4", optional = true}
 rand = {version = "0.5", optional = true}
 pagetable = {version = "0.0", path = "../pagetable"}
+
+[dependencies.historian]
+version = "3.0"
+
+[dependencies.log]
+version = "0.4"
 
 [dev-dependencies]
 rand = "0.5"
