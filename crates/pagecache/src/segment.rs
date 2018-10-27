@@ -1005,13 +1005,16 @@ impl SegmentAccountant {
             self.bump_tip()
         } else {
             loop {
-                let res = self.free.lock().unwrap().pop_front();
-                if res.is_none() {
-                    break self.bump_tip();
-                } else {
-                    let (next, pushed_by_ensure_safe_free_distance) =
-                        res.unwrap();
+                let pop_res = self.free.lock().unwrap().pop_front();
 
+                if let Some((
+                    next,
+                    pushed_by_ensure_safe_free_distance,
+                )) = pop_res
+                {
+                    // it's safe for us to truncate only
+                    // if we don't dig into the safety buffer
+                    // on our next pop
                     let next_next_in_safety_buffer = self
                         .free
                         .lock()
@@ -1041,6 +1044,8 @@ impl SegmentAccountant {
                     } else {
                         break next;
                     }
+                } else {
+                    break self.bump_tip();
                 }
             }
         };
