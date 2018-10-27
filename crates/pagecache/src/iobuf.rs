@@ -248,6 +248,7 @@ impl IoBufs {
         raw_buf: Vec<u8>,
         lsn: Lsn,
         over_blob_threshold: bool,
+        is_blob_rewrite: bool,
     ) -> Result<Vec<u8>, ()> {
         let buf = if over_blob_threshold {
             // write blob to file
@@ -265,7 +266,7 @@ impl IoBufs {
         let crc16 = crc16_arr(&buf);
 
         let header = MessageHeader {
-            kind: if over_blob_threshold {
+            kind: if over_blob_threshold || is_blob_rewrite {
                 MessageKind::Blob
             } else {
                 MessageKind::Inline
@@ -317,7 +318,7 @@ impl IoBufs {
     fn reserve_inner(
         &self,
         raw_buf: Vec<u8>,
-        is_blob: bool,
+        is_blob_rewrite: bool,
     ) -> Result<Reservation<'_>, ()> {
         let _measure = Measure::new(&M.reserve);
 
@@ -530,10 +531,13 @@ impl IoBufs {
 
             self.bump_max_reserved_lsn(reservation_lsn);
 
+            assert!(!(over_blob_threshold && is_blob_rewrite));
+
             let encapsulated_buf = self.encapsulate(
                 buf,
                 reservation_lsn,
-                over_blob_threshold || is_blob,
+                over_blob_threshold,
+                is_blob_rewrite,
             )?;
 
             return Ok(Reservation {
@@ -544,7 +548,7 @@ impl IoBufs {
                 flushed: false,
                 lsn: reservation_lsn,
                 lid: reservation_offset,
-                is_blob: over_blob_threshold || is_blob,
+                is_blob: over_blob_threshold || is_blob_rewrite,
                 _guard: guard,
             });
         }
