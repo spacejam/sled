@@ -563,6 +563,7 @@ where
         if cache_entries.len() == 1
             && cache_entries[0].ptr().is_blob()
         {
+            trace!("rewriting blob with pid {}", pid);
             let blob_ptr = cache_entries[0].ptr().blob().1;
 
             let log_reservation = self
@@ -604,6 +605,8 @@ where
                 .map(|_| ())
                 .map_err(|e| Error::CasFailed(Some(PagePtr(e))))
         } else {
+            trace!("rewriting page with pid {}", pid);
+
             // page-in whole page with a get,
             let (key, update) = match self.get(pid, guard)? {
                 PageGet::Materialized(data, key) => {
