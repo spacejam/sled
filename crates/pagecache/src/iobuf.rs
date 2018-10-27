@@ -230,39 +230,6 @@ impl IoBufs {
         ret
     }
 
-    /// SegmentAccountant access for coordination with the `PageCache`,
-    /// performed after all threads have exited the currently checked-in
-    /// epochs using a crossbeam-epoch EBR guard.
-    ///
-    /// IMPORTANT: Never call this function with anything that calls
-    /// defer on the default EBR collector, or we could deadlock!
-    pub(super) unsafe fn with_sa_deferred<F>(&self, f: F)
-    where
-        F: FnOnce(&mut SegmentAccountant) + Send + 'static,
-    {
-        let guard = pin();
-        let segment_accountant = self.segment_accountant.clone();
-
-        guard.defer(move || {
-            let start = clock();
-
-            debug_delay();
-            let mut sa = segment_accountant.lock().unwrap();
-
-            let locked_at = clock();
-
-            M.accountant_lock.measure(locked_at - start);
-
-            let _ = f(&mut sa);
-
-            drop(sa);
-
-            M.accountant_hold.measure(clock() - locked_at);
-        });
-
-        guard.flush();
-    }
-
     fn idx(&self) -> usize {
         debug_delay();
         let current_buf = self.current_buf.load(SeqCst);
@@ -404,7 +371,7 @@ impl IoBufs {
         }
         let mut spins = 0;
         loop {
-            let guard = unsafe { pin_log() };
+            let guard = pin();
             debug_delay();
             let written_bufs = self.written_bufs.load(SeqCst);
             debug_delay();
@@ -975,14 +942,11 @@ impl IoBufs {
                 idx,
                 lid
             );
-            unsafe {
-                self.with_sa_deferred(move |sa| {
-                    trace!("EBR deactivating segment {} with lsn {} and lid {}", idx, segment_lsn, segment_lid);
+            self.with_sa(move |sa| {
                     if let Err(e) = sa.deactivate_segment(segment_lsn, segment_lid) {
                         error!("segment accountant failed to deactivate segment: {}", e);
                     }
                 });
-            }
         } else {
             trace!(
                 "not deactivating segment with lsn {}",

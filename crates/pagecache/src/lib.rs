@@ -104,7 +104,6 @@ use self::metrics::uptime;
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
     ds::{node_from_frag_vec, Lru, Node, Stack, StackIter},
-    ebr::pin_log,
     hash::{crc16_arr, crc64},
     iobuf::IoBufs,
     iterator::LogIter,

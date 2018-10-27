@@ -704,8 +704,12 @@ impl SegmentAccountant {
             // the safe buffer only prevents the sole remaining
             // copy of a page from being overwritten. This prevents
             // dangling references to segments that were rewritten after
-            // the `LogId` was read.
-            let guard = unsafe { pin_log() };
+            // the `LogId` was read. Additionally, we guarantee that
+            // any reservations that have replaced items in this segment
+            // have already been fsynced, due to the EBR guard
+            // that is attached to any reservation before operating
+            // on a segment.
+            let guard = pin();
             let free = self.free.clone();
             guard.defer(move || {
                 free.lock().unwrap().push_back((lid, false));
