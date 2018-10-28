@@ -77,6 +77,7 @@ assert_eq!(tree.get(&k), Ok(Some(vec![4])));
 
 * ordered map API
 * fully atomic single-key operations, supports CAS
+* zero-copy reads
 * merge operators
 * [zstd](https://github.com/facebook/zstd) compression (use the zstd build feature)
 * cpu-scalable lock-free implementation
