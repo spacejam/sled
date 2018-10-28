@@ -20,16 +20,45 @@ Options:
     --threads=<#>      Number of threads [default: 4].
     --burn-in          Don't halt until we receive a signal.
     --duration=<s>     Seconds to run for [default: 10].
-    --kv-len=<l>       The length of both keys and values [default: 2].
+    --key-len=<l>      The length of keys [default: 1].
+    --val-len=<l>      The length of values [default: 100].
+    --get-prop=<p>     The relative proportion of get requests [default: 75].
+    --set-prop=<p>     The relative proportion of set requests [default: 5].
+    --del-prop=<p>     The relative proportion of del requests [default: 5].
+    --cas-prop=<p>     The relative proportion of cas requests [default: 5].
+    --scan-prop=<p>    The relative proportion of scan requests [default: 5].
+    --merge-prop=<p>   The relative proportion of merge requests [default: 5].
 ";
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 struct Args {
     flag_threads: usize,
     flag_burn_in: bool,
     flag_duration: u64,
-    flag_kv_len: usize,
+    flag_key_len: usize,
+    flag_val_len: usize,
+    flag_get_prop: usize,
+    flag_set_prop: usize,
+    flag_del_prop: usize,
+    flag_cas_prop: usize,
+    flag_scan_prop: usize,
+    flag_merge_prop: usize,
 }
+
+// defaults will be applied later based on USAGE above
+static mut ARGS: Args = Args {
+    flag_threads: 0,
+    flag_burn_in: false,
+    flag_duration: 0,
+    flag_key_len: 0,
+    flag_val_len: 0,
+    flag_get_prop: 0,
+    flag_set_prop: 0,
+    flag_del_prop: 0,
+    flag_cas_prop: 0,
+    flag_scan_prop: 0,
+    flag_merge_prop: 0,
+};
 
 fn report(shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
     let mut last = 0;
@@ -61,49 +90,55 @@ fn run(
     tree: Arc<sled::Tree>,
     shutdown: Arc<AtomicBool>,
     total: Arc<AtomicUsize>,
-    kv_len: usize,
 ) {
-    let bytes = || {
-        thread_rng()
-            .gen_iter::<u8>()
-            .take(kv_len)
-            .collect::<Vec<_>>()
+    let args = unsafe { ARGS.clone() };
+
+    let bytes = |len| {
+        thread_rng().gen_iter::<u8>().take(len).collect::<Vec<_>>()
     };
     let mut rng = thread_rng();
 
     while !shutdown.load(Ordering::Relaxed) {
         total.fetch_add(1, Ordering::Release);
-        let choice = rng.gen_range(0, 6);
+        let key = bytes(args.flag_key_len);
+
+        let get_max = args.flag_get_prop;
+        let set_max = get_max + args.flag_set_prop;
+        let del_max = set_max + args.flag_del_prop;
+        let cas_max = del_max + args.flag_cas_prop;
+        let scan_max = cas_max + args.flag_scan_prop;
+        let merge_max = scan_max + args.flag_merge_prop;
+
+        let choice = rng.gen_range(0, merge_max + 1);
 
         match choice {
-            0 => {
-                tree.get(&*bytes()).unwrap();
+            v if v <= get_max => {
+                tree.get(&*key).unwrap();
             }
-            1 => {
-                tree.set(bytes(), bytes()).unwrap();
+            v if v <= set_max => {
+                tree.set(key, bytes(args.flag_val_len)).unwrap();
             }
-            2 => {
-                tree.del(&*bytes()).unwrap();
+            v if v <= del_max => {
+                tree.del(&*key).unwrap();
             }
-            3 => match tree.cas(
-                bytes(),
-                Some(&*bytes()),
-                Some(bytes()),
+            v if v <= cas_max => match tree.cas(
+                key,
+                Some(&*bytes(args.flag_val_len)),
+                Some(bytes(args.flag_val_len)),
             ) {
                 Ok(_) | Err(sled::Error::CasFailed(_)) => {}
                 other => panic!("operational error: {:?}", other),
             },
-            4 => {
+            v if v <= scan_max => {
                 let _ = tree
-                    .scan(&*bytes())
+                    .scan(&*key)
                     .take(rng.gen_range(0, 15))
                     .map(|res| res.unwrap())
                     .collect::<Vec<_>>();
             }
-            5 => {
-                tree.merge(bytes(), bytes()).unwrap();
+            _ => {
+                tree.merge(key, bytes(args.flag_val_len)).unwrap();
             }
-            _ => panic!("impossible choice"),
         }
     }
 }
@@ -111,10 +146,13 @@ fn run(
 fn main() {
     let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
 
-    let args: Args = Docopt::new(USAGE)
-        .and_then(|d| {
-            d.argv(std::env::args().into_iter()).deserialize()
-        }).unwrap_or_else(|e| e.exit());
+    let args = unsafe {
+        ARGS = Docopt::new(USAGE)
+            .and_then(|d| {
+                d.argv(std::env::args().into_iter()).deserialize()
+            }).unwrap_or_else(|e| e.exit());
+        ARGS.clone()
+    };
 
     let total = Arc::new(AtomicUsize::new(0));
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -139,7 +177,6 @@ fn main() {
     let now = std::time::Instant::now();
 
     let n_threads = args.flag_threads;
-    let kv_len = args.flag_kv_len;
 
     for i in 0..n_threads + 1 {
         let tree = tree.clone();
@@ -149,20 +186,20 @@ fn main() {
         let t = if i == 0 {
             thread::spawn(move || report(shutdown, total))
         } else {
-            thread::spawn(move || run(tree, shutdown, total, kv_len))
+            thread::spawn(move || run(tree, shutdown, total))
         };
 
         threads.push(t);
     }
 
-    if args.flag_burn_in {
+    if unsafe { ARGS.flag_burn_in } {
         println!("waiting on signal");
         signal.recv();
         println!("got shutdown signal, cleaning up...");
     } else {
-        thread::sleep(std::time::Duration::from_secs(
-            args.flag_duration,
-        ));
+        thread::sleep(std::time::Duration::from_secs(unsafe {
+            ARGS.flag_duration
+        }));
     }
 
     shutdown.store(true, Ordering::SeqCst);
