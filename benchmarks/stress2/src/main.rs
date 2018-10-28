@@ -5,16 +5,27 @@ extern crate docopt;
 extern crate rand;
 extern crate sled;
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::thread;
+use std::{
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    },
+    thread,
+};
 
 use chan_signal::Signal;
 use docopt::Docopt;
 use rand::{thread_rng, Rng};
 
 const USAGE: &'static str = "
-Usage: stress [--threads=<#>] [--burn-in] [--duration=<s>] [--kv-len=<l>]
+Usage: stress [--threads=<#>] [--burn-in] [--duration=<s>] \
+    [--key-len=<l>] [--val-len=<l>] \
+    [--get-prop=<p>] \
+    [--set-prop=<p>] \
+    [--del-prop=<p>] \
+    [--cas-prop=<p>] \
+    [--scan-prop=<p>] \
+    [--merge-prop=<p>]
 
 Options:
     --threads=<#>      Number of threads [default: 4].
@@ -115,21 +126,33 @@ fn run(
             v if v <= get_max => {
                 tree.get(&*key).unwrap();
             }
-            v if v <= set_max => {
+            v if v > get_max && v <= set_max => {
                 tree.set(key, bytes(args.flag_val_len)).unwrap();
             }
-            v if v <= del_max => {
+            v if v > set_max && v <= del_max => {
                 tree.del(&*key).unwrap();
             }
-            v if v <= cas_max => match tree.cas(
-                key,
-                Some(&*bytes(args.flag_val_len)),
-                Some(bytes(args.flag_val_len)),
-            ) {
-                Ok(_) | Err(sled::Error::CasFailed(_)) => {}
-                other => panic!("operational error: {:?}", other),
-            },
-            v if v <= scan_max => {
+            v if v > del_max && v <= cas_max => {
+                let old_k = bytes(args.flag_val_len);
+
+                let old = if rng.gen::<bool>() {
+                    Some(&*old_k)
+                } else {
+                    None
+                };
+
+                let new = if rng.gen::<bool>() {
+                    Some(bytes(args.flag_val_len))
+                } else {
+                    None
+                };
+
+                match tree.cas(key, old, new) {
+                    Ok(_) | Err(sled::Error::CasFailed(_)) => {}
+                    other => panic!("operational error: {:?}", other),
+                }
+            }
+            v if v > cas_max && v <= scan_max => {
                 let _ = tree
                     .scan(&*key)
                     .take(rng.gen_range(0, 15))
@@ -165,7 +188,7 @@ fn main() {
         .cache_bits(6)
         .cache_capacity(1_000_000_000)
         .flush_every_ms(Some(10))
-        .snapshot_after_ops(100000000)
+        .snapshot_after_ops(100_000_000)
         .print_profile_on_drop(true)
         .merge_operator(concatenate_merge)
         .build();

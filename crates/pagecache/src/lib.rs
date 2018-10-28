@@ -134,8 +134,8 @@ pub use self::{
 pub use self::{
     constants::{
         BLOB_FLUSH, BLOB_INLINE_LEN, EVIL_BYTE, FAILED_FLUSH,
-        INLINE_FLUSH, MSG_HEADER_LEN, SEGMENT_PAD, SEG_HEADER_LEN,
-        SEG_TRAILER_LEN,
+        INLINE_FLUSH, MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN,
+        SEGMENT_PAD, SEG_HEADER_LEN, SEG_TRAILER_LEN,
     },
     metrics::Measure,
     snapshot::{read_snapshot_or_default, Snapshot},

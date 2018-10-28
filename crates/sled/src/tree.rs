@@ -30,6 +30,14 @@ unsafe impl Send for Tree {}
 unsafe impl Sync for Tree {}
 
 impl Tree {
+    /// Load existing or create a new `Tree` with a default configuration.
+    pub fn start_default<P: AsRef<std::path::Path>>(
+        path: P,
+    ) -> Result<Tree, ()> {
+        let config = ConfigBuilder::new().path(path).build();
+        Self::start(config)
+    }
+
     /// Load existing or create a new `Tree`.
     pub fn start(config: Config) -> Result<Tree, ()> {
         let _measure = Measure::new(&M.tree_start);

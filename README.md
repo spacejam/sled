@@ -13,13 +13,9 @@ An alpha modern embedded database.
 ```rust
 extern crate sled;
 
-use sled::{ConfigBuilder, Tree};
+use sled::Tree;
 
-let config = ConfigBuilder::new()
-  .path(path)
-  .build();
-
-let tree = Tree::start(config).unwrap();
+let tree = Tree::start_default(path)?;
 
 // set and get
 tree.set(k, v1);

@@ -4,7 +4,7 @@ use std::io::{Read, Seek, Write};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{
-    AtomicPtr, AtomicUsize, Ordering, ATOMIC_USIZE_INIT
+    AtomicPtr, AtomicUsize, Ordering, ATOMIC_USIZE_INIT,
 };
 use std::sync::{Arc, Mutex};
 
@@ -56,10 +56,6 @@ pub struct ConfigBuilder {
     #[doc(hidden)]
     pub io_buf_size: usize,
     #[doc(hidden)]
-    pub min_free_segments: usize,
-    #[doc(hidden)]
-    pub min_items_per_segment: usize,
-    #[doc(hidden)]
     pub page_consolidation_threshold: usize,
     #[doc(hidden)]
     pub path: PathBuf,
@@ -67,6 +63,8 @@ pub struct ConfigBuilder {
     pub read_only: bool,
     #[doc(hidden)]
     pub segment_cleanup_threshold: f64,
+    #[doc(hidden)]
+    pub segment_cleanup_skew: usize,
     #[doc(hidden)]
     pub segment_mode: SegmentMode,
     #[doc(hidden)]
@@ -80,10 +78,6 @@ pub struct ConfigBuilder {
     #[doc(hidden)]
     pub use_compression: bool,
     #[doc(hidden)]
-    pub use_os_cache: bool,
-    #[doc(hidden)]
-    pub zero_copy_storage: bool,
-    #[doc(hidden)]
     pub zstd_compression_factor: i32,
     #[doc(hidden)]
     pub merge_operator: Option<usize>,
@@ -95,15 +89,15 @@ unsafe impl Send for ConfigBuilder {}
 
 impl Default for ConfigBuilder {
     fn default() -> ConfigBuilder {
-         #[cfg(unix)]
+        #[cfg(unix)]
         let salt = {
             static SALT_COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
             let pid = unsafe { libc::getpid() };
             ((pid as u64) << 32)
                 + SALT_COUNTER.fetch_add(1, Ordering::SeqCst) as u64
         };
-        
-         #[cfg(not(unix))]
+
+        #[cfg(not(unix))]
         let salt = {
             let now = uptime();
             (now.as_secs() * 1_000_000_000)
@@ -119,23 +113,20 @@ impl Default for ConfigBuilder {
 
         ConfigBuilder {
             io_bufs: 3,
-            io_buf_size: 2 << 22,     // 8mb
-            min_items_per_segment: 4, // capacity for >=4 pages/segment
+            io_buf_size: 2 << 22, // 8mb
             blink_node_split_size: 4096,
             page_consolidation_threshold: 10,
             path: PathBuf::from("default.sled"),
             read_only: false,
             cache_bits: 6, // 64 shards
             cache_capacity: 1024 * 1024 * 1024, // 1gb
-            use_os_cache: true,
             use_compression: true,
             zstd_compression_factor: 5,
             flush_every_ms: Some(500),
             snapshot_after_ops: 1_000_000,
             snapshot_path: None,
             segment_cleanup_threshold: 0.2,
-            min_free_segments: 3,
-            zero_copy_storage: false,
+            segment_cleanup_skew: 10,
             tmp_path: PathBuf::from(tmp_path),
             temporary: false,
             segment_mode: SegmentMode::Gc,
@@ -210,21 +201,18 @@ impl ConfigBuilder {
     builder!(
         (io_bufs, get_io_bufs, set_io_bufs, usize, "number of io buffers"),
         (io_buf_size, get_io_buf_size, set_io_buf_size, usize, "size of each io flush buffer. MUST be multiple of 512!"),
-        (min_items_per_segment, get_min_items_per_segment, set_min_items_per_segment, usize, "minimum data chunks/pages in a segment."),
         (blink_node_split_size, get_blink_node_split_size, set_blink_node_split_size, usize, "b-link tree node size in bytes before splitting"),
         (page_consolidation_threshold, get_page_consolidation_threshold, set_page_consolidation_threshold, usize, "page consolidation threshold"),
         (temporary, get_temporary, set_temporary, bool, "if this database should be removed after the ConfigBuilder is dropped"),
         (read_only, get_read_only, set_read_only, bool, "whether to run in read-only mode"),
         (cache_bits, get_cache_bits, set_cache_bits, usize, "log base 2 of the number of cache shards"),
         (cache_capacity, get_cache_capacity, set_cache_capacity, usize, "maximum size for the system page cache"),
-        (use_os_cache, get_use_os_cache, set_use_os_cache, bool, "whether to use the OS page cache"),
         (use_compression, get_use_compression, set_use_compression, bool, "whether to use zstd compression"),
         (zstd_compression_factor, get_zstd_compression_factor, set_zstd_compression_factor, i32, "the compression factor to use with zstd compression"),
         (flush_every_ms, get_flush_every_ms, set_flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
         (snapshot_after_ops, get_snapshot_after_ops, set_snapshot_after_ops, usize, "number of operations between page table snapshots"),
         (segment_cleanup_threshold, get_segment_cleanup_threshold, set_segment_cleanup_threshold, f64, "the proportion of remaining valid pages in the segment"),
-        (min_free_segments, get_min_free_segments, set_min_free_segments, usize, "the minimum number of free segments to have on-deck before a compaction occurs"),
-        (zero_copy_storage, get_zero_copy_storage, set_zero_copy_storage, bool, "disabling of the log segment copy cleaner"),
+        (segment_cleanup_skew, get_segment_cleanup_skew, set_segment_cleanup_skew, usize, "the cleanup threshold skew in percentage points between the first and last segments"),
         (segment_mode, get_segment_mode, set_segment_mode, SegmentMode, "the file segment selection mode"),
         (snapshot_path, get_snapshot_path, set_snapshot_path, Option<PathBuf>, "snapshot file location"),
         (print_profile_on_drop, get_print_profile_on_drop, set_print_profile_on_drop, bool, "print a performance profile when the Config is dropped")
@@ -443,25 +431,19 @@ impl Config {
             self.inner.io_buf_size <= 1 << 24,
             "io_buf_size should be <= 16mb"
         );
-        supported!(
-            self.inner.min_items_per_segment >= 1,
-            "min_items_per_segment must be >= 4"
-        );
-        supported!(
-            self.inner.min_items_per_segment < 128,
-            "min_items_per_segment must be < 128"
-        );
         supported!(self.inner.page_consolidation_threshold >= 1, "must consolidate pages after a non-zero number of updates");
         supported!(self.inner.page_consolidation_threshold < 1 << 20, "must consolidate pages after fewer than 1 million updates");
         supported!(
             self.inner.cache_bits <= 20,
             "# LRU shards = 2^cache_bits. set this to 20 or less."
         );
-        supported!(self.inner.min_free_segments <= 32, "min_free_segments need not be higher than the number IO buffers (io_bufs)");
-        supported!(self.inner.min_free_segments >= 1, "min_free_segments must be nonzero or the database will never reclaim storage");
         supported!(
             self.inner.segment_cleanup_threshold >= 0.01,
             "segment_cleanup_threshold must be >= 1%"
+        );
+        supported!(
+            self.inner.segment_cleanup_skew < 99,
+            "cleanup skew cannot be greater than 99%"
         );
         supported!(
             self.inner.zstd_compression_factor >= 1,
@@ -476,9 +458,7 @@ impl Config {
 
     fn verify_config_changes_ok(&self) -> Result<(), ()> {
         match self.read_config() {
-            Ok(Some(mut old)) => {
-                let old_tmp = old.tmp_path;
-                old.tmp_path = self.inner.tmp_path.clone();
+            Ok(Some(old)) => {
                 if old.merge_operator.is_some() {
                     supported!(self.inner.merge_operator.is_some(),
                         "this system was previously opened with a \
@@ -486,19 +466,14 @@ impl Config {
                         choosing to do so once, BWAHAHAHAHAHAHA!!!!");
                 }
 
-                old.merge_operator = self.inner.merge_operator;
-
                 supported!(
-                    &*self.inner == &old,
-                    "changing the configuration \
-                     between usages is currently unsupported"
+                    self.inner.io_buf_size == old.io_buf_size,
+                    format!(
+                        "cannot change the io buffer size across restarts. \
+                        please change it back to {}",
+                        old.io_buf_size
+                    )
                 );
-                // need to keep the old path so that when old gets
-                // dropped we don't remove our tmp_path (but it
-                // might not matter even if we did, since it just
-                // becomes anonymous as long as we keep a reference
-                // open to it in the Config)
-                old.tmp_path = old_tmp;
                 Ok(())
             }
             Ok(None) => self.write_config().map_err(|e| e.into()),

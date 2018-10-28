@@ -62,8 +62,10 @@ pub(super) struct IoBufs {
     // full, and in order to prevent threads from having to spin in
     // the reserve function, we can have them block until a buffer becomes
     // available.
-    buf_mu: Mutex<()>,
-    bufs_updated: Condvar,
+    current_buf_mu: Mutex<()>,
+    written_bufs_mu: Mutex<()>,
+    current_buf_updated: Condvar,
+    written_bufs_updated: Condvar,
     bufs: Vec<IoBuf>,
     current_buf: AtomicUsize,
     written_bufs: AtomicUsize,
@@ -198,8 +200,10 @@ impl IoBufs {
         Ok(IoBufs {
             config: config,
 
-            buf_mu: Mutex::new(()),
-            bufs_updated: Condvar::new(),
+            current_buf_mu: Mutex::new(()),
+            written_bufs_mu: Mutex::new(()),
+            current_buf_updated: Condvar::new(),
+            written_bufs_updated: Condvar::new(),
             bufs: bufs,
             current_buf: AtomicUsize::new(current_buf),
             written_bufs: AtomicUsize::new(0),
@@ -386,14 +390,11 @@ impl IoBufs {
 
         let total_buf_len = MSG_HEADER_LEN + buf.len();
 
-        let max_overhead = if self.config.min_items_per_segment == 1 {
-            SEG_HEADER_LEN + SEG_TRAILER_LEN
-        } else {
-            std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN)
-        };
+        let max_overhead =
+            std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN);
 
         let max_buf_size = (self.config.io_buf_size
-            / self.config.min_items_per_segment)
+            / MINIMUM_ITEMS_PER_SEGMENT)
             - max_overhead;
 
         let over_blob_threshold = total_buf_len > max_buf_size;
@@ -459,9 +460,12 @@ impl IoBufs {
 
                 // use a condition variable to wait until
                 // we've updated the written_bufs counter.
-                let mut buf_mu = self.buf_mu.lock().unwrap();
+                let mut buf_mu = self.written_bufs_mu.lock().unwrap();
                 while written_bufs == self.written_bufs.load(SeqCst) {
-                    buf_mu = self.bufs_updated.wait(buf_mu).unwrap();
+                    buf_mu = self
+                        .written_bufs_updated
+                        .wait(buf_mu)
+                        .unwrap();
                 }
                 continue;
             }
@@ -476,6 +480,16 @@ impl IoBufs {
                 // has already been bumped by sealer.
                 trace_once!("io buffer already sealed, spinning");
                 spin_loop_hint();
+
+                // use a condition variable to wait until
+                // we've updated the current_buf counter.
+                let mut buf_mu = self.current_buf_mu.lock().unwrap();
+                while current_buf == self.current_buf.load(SeqCst) {
+                    buf_mu = self
+                        .current_buf_updated
+                        .wait(buf_mu)
+                        .unwrap();
+                }
                 continue;
             }
 
@@ -884,9 +898,21 @@ impl IoBufs {
 
         trace!("{} zeroed header", next_idx);
 
+        // we acquire this mutex to guarantee that any threads that
+        // are going to wait on the condition variable will observe
+        // the change.
+        debug_delay();
+        let _ = self.current_buf_mu.lock().unwrap();
+
+        // communicate to other threads that we have advanced an IO buffer.
         debug_delay();
         let _current_buf = self.current_buf.fetch_add(1, SeqCst) + 1;
         trace!("{} current_buf", _current_buf % self.config.io_bufs);
+
+        // let any threads that are blocked on buf_mu know about the
+        // updated counter.
+        debug_delay();
+        self.current_buf_updated.notify_all();
 
         // if writers is 0, it's our responsibility to write the buffer.
         if n_writers(sealed) == 0 {
@@ -1017,7 +1043,7 @@ impl IoBufs {
         // are going to wait on the condition variable will observe
         // the change.
         debug_delay();
-        let _ = self.buf_mu.lock().unwrap();
+        let _ = self.written_bufs_mu.lock().unwrap();
 
         // communicate to other threads that we have written an IO buffer.
         debug_delay();
@@ -1027,7 +1053,7 @@ impl IoBufs {
         // let any threads that are blocked on buf_mu know about the
         // updated counter.
         debug_delay();
-        self.bufs_updated.notify_all();
+        self.written_bufs_updated.notify_all();
 
         Ok(())
     }

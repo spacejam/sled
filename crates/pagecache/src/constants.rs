@@ -36,3 +36,8 @@ pub const SEG_TRAILER_LEN: usize = 10;
 /// contain a value (in addition to their header)
 /// of this length.
 pub const BLOB_INLINE_LEN: usize = std::mem::size_of::<Lsn>();
+
+/// The minimum number of items per segment.
+/// Items larger than this fraction of an io_buf
+/// will be stored as an off-log blob.
+pub const MINIMUM_ITEMS_PER_SEGMENT: usize = 4;
