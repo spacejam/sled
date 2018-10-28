@@ -57,14 +57,23 @@ unsafe impl Sync for IoBuf {}
 
 pub(super) struct IoBufs {
     pub(super) config: Config,
+
+    // We have a fixed number of io buffers. Sometimes they will all be
+    // full, and in order to prevent threads from having to spin in
+    // the reserve function, we can have them block until a buffer becomes
+    // available.
+    buf_mu: Mutex<()>,
+    bufs_updated: Condvar,
     bufs: Vec<IoBuf>,
     current_buf: AtomicUsize,
     written_bufs: AtomicUsize,
+
     // Pending intervals that have been written to stable storage, but may be
     // higher than the current value of `stable` due to interesting thread
     // interleavings.
     intervals: Mutex<Vec<(Lsn, Lsn)>>,
     interval_updated: Condvar,
+
     // The highest CONTIGUOUS log sequence number that has been written to
     // stable storage. This may be lower than the length of the underlying
     // file, and there may be buffers that have been written out-of-order
@@ -187,17 +196,23 @@ impl IoBufs {
         gc_blobs(&config, stable)?;
 
         Ok(IoBufs {
+            config: config,
+
+            buf_mu: Mutex::new(()),
+            bufs_updated: Condvar::new(),
             bufs: bufs,
             current_buf: AtomicUsize::new(current_buf),
             written_bufs: AtomicUsize::new(0),
+
             intervals: Mutex::new(vec![]),
             interval_updated: Condvar::new(),
+
             stable_lsn: AtomicLsn::new(stable as InnerLsn),
             max_reserved_lsn: AtomicLsn::new(stable as InnerLsn),
-            config: config,
             segment_accountant: Arc::new(Mutex::new(
                 segment_accountant,
             )),
+
             #[cfg(feature = "failpoints")]
             _failpoint_crashing: AtomicBool::new(false),
         })
@@ -401,6 +416,14 @@ impl IoBufs {
         }
         let mut spins = 0;
         loop {
+            M.log_reservation_attempted();
+            #[cfg(feature = "failpoints")]
+            {
+                if self._failpoint_crashing.load(Relaxed) {
+                    return Err(Error::FailPoint);
+                }
+            }
+
             let guard = pin();
             debug_delay();
             let written_bufs = self.written_bufs.load(SeqCst);
@@ -422,13 +445,6 @@ impl IoBufs {
                 // before the sealing thread gets around to bumping
                 // current_buf.
                 trace_once!("written ahead of sealed, spinning");
-                M.log_looped();
-                #[cfg(feature = "failpoints")]
-                {
-                    if self._failpoint_crashing.load(Relaxed) {
-                        return Err(Error::FailPoint);
-                    }
-                }
                 spin_loop_hint();
                 continue;
             }
@@ -439,14 +455,14 @@ impl IoBufs {
                 trace_once!(
                     "old io buffer not written yet, spinning"
                 );
-                M.log_looped();
-                #[cfg(feature = "failpoints")]
-                {
-                    if self._failpoint_crashing.load(Relaxed) {
-                        return Err(Error::FailPoint);
-                    }
-                }
                 spin_loop_hint();
+
+                // use a condition variable to wait until
+                // we've updated the written_bufs counter.
+                let mut buf_mu = self.buf_mu.lock().unwrap();
+                while written_bufs == self.written_bufs.load(SeqCst) {
+                    buf_mu = self.bufs_updated.wait(buf_mu).unwrap();
+                }
                 continue;
             }
 
@@ -459,13 +475,6 @@ impl IoBufs {
                 // already sealed, start over and hope cur
                 // has already been bumped by sealer.
                 trace_once!("io buffer already sealed, spinning");
-                M.log_looped();
-                #[cfg(feature = "failpoints")]
-                {
-                    if self._failpoint_crashing.load(Relaxed) {
-                        return Err(Error::FailPoint);
-                    }
-                }
                 spin_loop_hint();
                 continue;
             }
@@ -482,13 +491,6 @@ impl IoBufs {
                 // there are zero writers.
                 trace_once!("io buffer too full, spinning");
                 self.maybe_seal_and_write_iobuf(idx, header, true)?;
-                M.log_looped();
-                #[cfg(feature = "failpoints")]
-                {
-                    if self._failpoint_crashing.load(Relaxed) {
-                        return Err(Error::FailPoint);
-                    }
-                }
                 spin_loop_hint();
                 continue;
             }
@@ -503,7 +505,6 @@ impl IoBufs {
                     "spinning because our buffer has {} writers already",
                     MAX_WRITERS
                 );
-                M.log_looped();
                 spin_loop_hint();
                 continue;
             }
@@ -516,13 +517,6 @@ impl IoBufs {
                 trace_once!(
                     "CAS failed while claiming buffer slot, spinning"
                 );
-                M.log_looped();
-                #[cfg(feature = "failpoints")]
-                {
-                    if self._failpoint_crashing.load(Relaxed) {
-                        return Err(Error::FailPoint);
-                    }
-                }
                 spin_loop_hint();
                 continue;
             }
@@ -568,6 +562,8 @@ impl IoBufs {
                 over_blob_threshold,
                 is_blob_rewrite,
             )?;
+
+            M.log_reservation_success();
 
             return Ok(Reservation {
                 idx: idx,
@@ -1017,10 +1013,21 @@ impl IoBufs {
         iobuf.set_lid(max);
         trace!("{} log <- MAX", idx);
 
+        // we acquire this mutex to guarantee that any threads that
+        // are going to wait on the condition variable will observe
+        // the change.
+        debug_delay();
+        let _ = self.buf_mu.lock().unwrap();
+
         // communicate to other threads that we have written an IO buffer.
         debug_delay();
         let _written_bufs = self.written_bufs.fetch_add(1, SeqCst);
         trace!("{} written", _written_bufs % self.config.io_bufs);
+
+        // let any threads that are blocked on buf_mu know about the
+        // updated counter.
+        debug_delay();
+        self.bufs_updated.notify_all();
 
         Ok(())
     }
