@@ -1,8 +1,8 @@
 use std::mem::size_of;
 #[cfg(target_pointer_width = "32")]
-use std::sync::atomic::AtomicI64;
+use std::sync::atomic::AtomicI64 as AtomicLsn;
 #[cfg(target_pointer_width = "64")]
-use std::sync::atomic::AtomicIsize;
+use std::sync::atomic::AtomicIsize as AtomicLsn;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::atomic::{spin_loop_hint, AtomicBool, AtomicUsize};
 use std::sync::{Arc, Condvar, Mutex};
@@ -23,11 +23,6 @@ use super::*;
 const MAX_WRITERS: Header = 127;
 
 type Header = u64;
-
-#[cfg(target_pointer_width = "64")]
-type AtomicLsn = AtomicIsize;
-#[cfg(target_pointer_width = "32")]
-type AtomicLsn = AtomicI64;
 
 /// A logical sequence number.
 #[cfg(target_pointer_width = "64")]
@@ -228,6 +223,39 @@ impl IoBufs {
         M.accountant_hold.measure(clock() - locked_at);
 
         ret
+    }
+
+    /// SegmentAccountant access for coordination with the `PageCache`,
+    /// performed after all threads have exited the currently checked-in
+    /// epochs using a crossbeam-epoch EBR guard.
+    ///
+    /// IMPORTANT: Never call this function with anything that calls
+    /// defer on the default EBR collector, or we could deadlock!
+    pub(super) unsafe fn with_sa_deferred<F>(&self, f: F)
+    where
+        F: FnOnce(&mut SegmentAccountant) + Send + 'static,
+    {
+        let guard = pin();
+        let segment_accountant = self.segment_accountant.clone();
+
+        guard.defer(move || {
+            let start = clock();
+
+            debug_delay();
+            let mut sa = segment_accountant.lock().unwrap();
+
+            let locked_at = clock();
+
+            M.accountant_lock.measure(locked_at - start);
+
+            let _ = f(&mut sa);
+
+            drop(sa);
+
+            M.accountant_hold.measure(clock() - locked_at);
+        });
+
+        guard.flush();
     }
 
     fn idx(&self) -> usize {
@@ -946,11 +974,14 @@ impl IoBufs {
                 idx,
                 lid
             );
-            self.with_sa(move |sa| {
+            unsafe {
+                self.with_sa_deferred(move |sa| {
+                    trace!("EBR deactivating segment {} with lsn {} and lid {}", idx, segment_lsn, segment_lid);
                     if let Err(e) = sa.deactivate_segment(segment_lsn, segment_lid) {
                         error!("segment accountant failed to deactivate segment: {}", e);
                     }
                 });
+            }
         } else {
             trace!(
                 "not deactivating segment with lsn {}",
