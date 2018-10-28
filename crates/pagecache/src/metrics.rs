@@ -234,6 +234,10 @@ impl Metrics {
 
 #[cfg(feature = "no_metrics")]
 impl Metrics {
+    pub fn log_reservation_attempted(&self) {}
+
+    pub fn log_reservation_success(&self) {}
+
     pub fn tree_looped(&self) {}
 
     pub fn log_looped(&self) {}

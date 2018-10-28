@@ -36,6 +36,8 @@ pub enum Error<Actual> {
 
 use self::Error::*;
 
+impl<A> Eq for Error<A> where A: Eq {}
+
 impl<A> PartialEq for Error<A>
 where
     A: PartialEq,
