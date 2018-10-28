@@ -468,6 +468,10 @@ impl Config {
             "segment_cleanup_threshold must be >= 1%"
         );
         supported!(
+            self.inner.segment_cleanup_skew < 99,
+            "cleanup skew cannot be greater than 99%"
+        );
+        supported!(
             self.inner.zstd_compression_factor >= 1,
             "compression factor must be >= 0"
         );
