@@ -104,7 +104,8 @@ pub struct Metrics {
     pub written_bytes: Histo,
     pub read: Histo,
     pub tree_loops: AtomicUsize,
-    pub log_loops: AtomicUsize,
+    pub log_reservations: AtomicUsize,
+    pub log_reservation_attempts: AtomicUsize,
     pub accountant_lock: Histo,
     pub accountant_hold: Histo,
 }
@@ -115,8 +116,12 @@ impl Metrics {
         self.tree_loops.fetch_add(1, Relaxed);
     }
 
-    pub fn log_looped(&self) {
-        self.log_loops.fetch_add(1, Relaxed);
+    pub fn log_reservation_attempted(&self) {
+        self.log_reservation_attempts.fetch_add(1, Relaxed);
+    }
+
+    pub fn log_reservation_success(&self) {
+        self.log_reservations.fetch_add(1, Relaxed);
     }
 
     pub fn print_profile(&self) {
@@ -210,8 +215,12 @@ impl Metrics {
             f("reserve", &self.reserve),
         ]);
         println!(
-            "log contention loops: {}",
-            self.log_loops.load(Acquire)
+            "log reservations: {}",
+            self.log_reservations.load(Acquire)
+        );
+        println!(
+            "log res attempts: {}",
+            self.log_reservation_attempts.load(Acquire)
         );
 
         println!("{}", repeat("-").take(103).collect::<String>());
