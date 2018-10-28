@@ -41,6 +41,7 @@ extern crate serde_derive;
 #[macro_use]
 extern crate log as _log;
 
+mod binary_search_least_upper_bound;
 mod bound;
 mod data;
 mod frag;
@@ -60,11 +61,14 @@ use pagecache::*;
 
 pub use pagecache::{Config, ConfigBuilder, Error, Result};
 
+use self::binary_search_least_upper_bound::binary_search_lub;
 use self::bound::Bound;
 use self::data::Data;
 use self::frag::{ChildSplit, ParentSplit};
 use self::node::Node;
-use self::prefix::{prefix_cmp, prefix_decode, prefix_encode, prefix_cmp_encoded};
+use self::prefix::{
+    prefix_cmp, prefix_cmp_encoded, prefix_decode, prefix_encode,
+};
 
 pub(crate) use self::frag::Frag;
 pub(crate) use self::materializer::BLinkMaterializer;
