@@ -56,6 +56,11 @@ impl Materializer for TestMaterializer {
     fn recover(&self, _: &Self::PageFrag) -> Option<Self::Recovery> {
         None
     }
+
+    // Used to determine the resident size for this item in cache.
+    fn size_in_bytes(&self, frag: &String) -> usize {
+        std::mem::size_of::<String>() + frag.as_bytes().len()
+    }
 }
 
 fn main() {

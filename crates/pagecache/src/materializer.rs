@@ -41,6 +41,9 @@ pub trait Materializer {
         &self,
         frag: &Self::PageFrag,
     ) -> Option<Self::Recovery>;
+
+    /// Used to determine the size of the value for caching purposes.
+    fn size_in_bytes(&self, frag: &Self::PageFrag) -> usize;
 }
 
 /// A materializer for things that have nothing to
@@ -67,5 +70,9 @@ impl Materializer for NullMaterializer {
 
     fn recover(&self, _: &Self::PageFrag) -> Option<Self::Recovery> {
         None
+    }
+
+    fn size_in_bytes(&self, _: &Self::PageFrag) -> usize {
+        0
     }
 }

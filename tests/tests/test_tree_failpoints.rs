@@ -134,7 +134,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
         .flush_every_ms(if flusher { Some(1) } else {None})
         .io_buf_size(io_buf_size)
         .min_items_per_segment(1)
-        .blink_fanout(2) // smol pages for smol buffers
+        .blink_node_split_size(0) // smol pages for smol buffers
         .cache_capacity(40)
         .cache_bits(2)
         .build();

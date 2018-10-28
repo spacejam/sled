@@ -59,4 +59,13 @@ impl Materializer for BLinkMaterializer {
         }
         None
     }
+
+    fn size_in_bytes(&self, frag: &Frag) -> usize {
+        match *frag {
+            Frag::Base(ref node, _prev_root) => {
+                std::mem::size_of::<Frag>() + node.size_in_bytes()
+            }
+            _ => std::mem::size_of::<Frag>(),
+        }
+    }
 }

@@ -42,6 +42,10 @@ impl Materializer for TestMaterializer {
     fn recover(&self, _: &Vec<usize>) -> Option<()> {
         None
     }
+
+    fn size_in_bytes(&self, frag: &Vec<usize>) -> usize {
+        std::mem::size_of::<Vec<usize>>() + frag.len()
+    }
 }
 
 #[test]

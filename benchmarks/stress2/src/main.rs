@@ -77,10 +77,10 @@ fn run(
 
         match choice {
             0 => {
-                tree.set(bytes(), bytes()).unwrap();
+                tree.get(&*bytes()).unwrap();
             }
             1 => {
-                tree.get(&*bytes()).unwrap();
+                tree.set(bytes(), bytes()).unwrap();
             }
             2 => {
                 tree.del(&*bytes()).unwrap();
@@ -122,12 +122,12 @@ fn main() {
     let config = sled::ConfigBuilder::new()
         .io_bufs(2)
         .io_buf_size(8_000_000)
-        .blink_fanout(32)
+        .blink_node_split_size(4096)
         .page_consolidation_threshold(10)
         .cache_bits(6)
-        .cache_capacity(1_000_000)
-        .flush_every_ms(Some(100))
-        .snapshot_after_ops(1000000)
+        .cache_capacity(1_000_000_000)
+        .flush_every_ms(Some(10))
+        .snapshot_after_ops(100000000)
         .print_profile_on_drop(true)
         .merge_operator(concatenate_merge)
         .build();

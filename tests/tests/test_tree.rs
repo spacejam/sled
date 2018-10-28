@@ -51,8 +51,10 @@ fn parallel_tree_ops() {
     }
 
     println!("========== initial sets ==========");
-    let config =
-        ConfigBuilder::new().temporary(true).blink_fanout(2).build();
+    let config = ConfigBuilder::new()
+        .temporary(true)
+        .blink_node_split_size(0)
+        .build();
     let t = Arc::new(sled::Tree::start(config).unwrap());
     par!{t, |tree: &Tree, k: Vec<u8>| {
         assert_eq!(tree.get(&*k), Ok(None));
@@ -123,7 +125,7 @@ fn tree_iterator() {
     println!("========== iterator ==========");
     let config = ConfigBuilder::new()
         .temporary(true)
-        .blink_fanout(2)
+        .blink_node_split_size(0)
         .flush_every_ms(None)
         .build();
     let t = sled::Tree::start(config).unwrap();
@@ -168,7 +170,7 @@ fn recover_tree() {
     println!("========== recovery ==========");
     let config = ConfigBuilder::new()
         .temporary(true)
-        .blink_fanout(2)
+        .blink_node_split_size(0)
         .io_buf_size(5000)
         .flush_every_ms(None)
         .snapshot_after_ops(100)
@@ -181,7 +183,7 @@ fn recover_tree() {
     drop(t);
 
     let t = sled::Tree::start(config.clone()).unwrap();
-    for i in 0..config.blink_fanout << 1 {
+    for i in 0..4 {
         let k = kv(i as usize);
         assert_eq!(t.get(&*k).unwrap().unwrap(), k);
         t.del(&*k).unwrap();
@@ -189,7 +191,7 @@ fn recover_tree() {
     drop(t);
 
     let t = sled::Tree::start(config.clone()).unwrap();
-    for i in 0..config.blink_fanout << 1 {
+    for i in 0..4 {
         let k = kv(i as usize);
         assert_eq!(t.get(&*k), Ok(None));
     }
@@ -292,7 +294,6 @@ fn bytes_to_u16(v: &[u8]) -> u16 {
 
 fn u16_to_bytes(u: u16) -> Vec<u8> {
     let ret = vec![(u >> 8) as u8, u as u8];
-    println!("turning {} into {:?}", u, ret);
     ret
 }
 
@@ -311,7 +312,7 @@ fn test_merge_operator(
 
 fn prop_tree_matches_btreemap(
     ops: Vec<Op>,
-    blink_fanout: u8,
+    blink_node_exponent: u8,
     snapshot_after: u8,
     flusher: bool,
 ) -> bool {
@@ -321,8 +322,9 @@ fn prop_tree_matches_btreemap(
         .snapshot_after_ops(snapshot_after as usize + 1)
         .flush_every_ms(if flusher { Some(1) } else { None })
         .io_buf_size(10000)
-        .blink_fanout(blink_fanout + 2)
-        .cache_capacity(40)
+        .blink_node_split_size(
+            1 << std::cmp::min(blink_node_exponent, 20),
+        ).cache_capacity(40)
         .cache_bits(0)
         .merge_operator(test_merge_operator)
         .build();

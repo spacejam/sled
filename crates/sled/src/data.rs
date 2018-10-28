@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::mem::size_of;
 
 use super::*;
 
@@ -9,6 +10,35 @@ pub(crate) enum Data {
 }
 
 impl Data {
+    #[inline]
+    pub(crate) fn size_in_bytes(&self) -> usize {
+        let self_sz = size_of::<Bound>();
+
+        let inner_sz = match self {
+            Data::Index(ref v) => {
+                let mut sz = 0;
+                for (k, _p) in v.iter() {
+                    sz += k.len()
+                        + size_of::<Key>()
+                        + size_of::<PageId>();
+                }
+                sz + size_of::<Vec<(Key, PageId)>>()
+            }
+            Data::Leaf(ref v) => {
+                let mut sz = 0;
+                for (k, value) in v.iter() {
+                    sz += k.len()
+                        + size_of::<Key>()
+                        + value.len()
+                        + size_of::<Value>();
+                }
+                sz + size_of::<Vec<(Key, Value)>>()
+            }
+        };
+
+        self_sz + inner_sz
+    }
+
     pub(crate) fn len(&self) -> usize {
         match *self {
             Data::Index(ref ptrs) => ptrs.len(),
