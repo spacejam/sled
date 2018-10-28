@@ -386,14 +386,11 @@ impl IoBufs {
 
         let total_buf_len = MSG_HEADER_LEN + buf.len();
 
-        let max_overhead = if self.config.min_items_per_segment == 1 {
-            SEG_HEADER_LEN + SEG_TRAILER_LEN
-        } else {
-            std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN)
-        };
+        let max_overhead =
+            std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN);
 
         let max_buf_size = (self.config.io_buf_size
-            / self.config.min_items_per_segment)
+            / MINIMUM_ITEMS_PER_SEGMENT)
             - max_overhead;
 
         let over_blob_threshold = total_buf_len > max_buf_size;

@@ -542,13 +542,13 @@ impl SegmentAccountant {
             } else {
                 0.99
             };
-            let min_items = self.config.min_items_per_segment;
 
             let segment_low_pct =
                 segment.live_pct() <= cleanup_threshold;
 
             let segment_low_count = (segment.len() as f64)
-                < min_items as f64 * cleanup_threshold;
+                < MINIMUM_ITEMS_PER_SEGMENT as f64
+                    * cleanup_threshold;
 
             let can_free = segment.is_empty()
                 && !self.pause_rewriting
@@ -866,15 +866,13 @@ impl SegmentAccountant {
             0.99
         };
 
-        let min_items = self.config.min_items_per_segment;
-
         let segment_start = (idx * self.config.io_buf_size) as LogId;
 
         let segment_low_pct =
             self.segments[idx].live_pct() <= cleanup_threshold;
 
         let segment_low_count = (self.segments[idx].len() as f64)
-            < min_items as f64 * cleanup_threshold;
+            < MINIMUM_ITEMS_PER_SEGMENT as f64 * cleanup_threshold;
 
         let can_drain = self.segments[idx].is_inactive()
             && (segment_low_pct || segment_low_count);
