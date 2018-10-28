@@ -526,9 +526,11 @@ impl SegmentAccountant {
                 self.config.segment_cleanup_threshold;
             let cleanup_skew = self.config.segment_cleanup_skew;
 
-            assert!(!self.segments.is_empty());
-            let relative_prop =
-                idx as f64 / self.segments.len() as f64;
+            let relative_prop = if self.segments.is_empty() {
+                0.5
+            } else {
+                idx as f64 / self.segments.len() as f64
+            };
 
             // we bias to having a higher threshold closer to segment 0
             let inverse_prop = 1. - relative_prop;
