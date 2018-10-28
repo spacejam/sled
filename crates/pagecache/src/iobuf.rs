@@ -1,14 +1,15 @@
-use std::mem::size_of;
 #[cfg(target_pointer_width = "32")]
 use std::sync::atomic::AtomicI64 as AtomicLsn;
 #[cfg(target_pointer_width = "64")]
 use std::sync::atomic::AtomicIsize as AtomicLsn;
-use std::sync::atomic::Ordering::SeqCst;
-use std::sync::atomic::{spin_loop_hint, AtomicBool, AtomicUsize};
-use std::sync::{Arc, Condvar, Mutex};
-
 #[cfg(feature = "failpoints")]
 use std::sync::atomic::Ordering::Relaxed;
+use std::{
+    mem::size_of,
+    sync::atomic::Ordering::SeqCst,
+    sync::atomic::{spin_loop_hint, AtomicBool, AtomicUsize},
+    sync::{Arc, Condvar, Mutex},
+};
 
 #[cfg(feature = "zstd")]
 use zstd::block::compress;
@@ -62,8 +63,8 @@ pub(super) struct IoBufs {
     // Pending intervals that have been written to stable storage, but may be
     // higher than the current value of `stable` due to interesting thread
     // interleavings.
-    pub(super) intervals: Mutex<Vec<(Lsn, Lsn)>>,
-    pub(super) interval_updated: Condvar,
+    intervals: Mutex<Vec<(Lsn, Lsn)>>,
+    interval_updated: Condvar,
     // The highest CONTIGUOUS log sequence number that has been written to
     // stable storage. This may be lower than the length of the underlying
     // file, and there may be buffers that have been written out-of-order
