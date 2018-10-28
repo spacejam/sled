@@ -1,4 +1,4 @@
-# sled likes eating data! it's alpha
+# sled
 
 <p>
   <img src="https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face.png" width="20%" height="auto" />
@@ -8,7 +8,7 @@
 [![crates.io](https://meritbadge.herokuapp.com/sled)](https://crates.io/crates/sled)
 [![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled)
 
-An alpha modern embedded database.
+An (alpha) modern embedded database.
 
 ```rust
 extern crate sled;
