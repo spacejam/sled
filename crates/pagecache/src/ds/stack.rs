@@ -225,7 +225,7 @@ impl<T: Send + Sync + 'static> Stack<T> {
 /// An iterator over nodes in a lock-free stack.
 pub(crate) struct StackIter<'a, T>
 where
-    T: 'a + Send + 'static + Sync,
+    T: Send + 'static + Sync,
 {
     inner: Shared<'a, Node<T>>,
     guard: &'a Guard,

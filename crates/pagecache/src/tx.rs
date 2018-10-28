@@ -1,3 +1,5 @@
+#![allow(rust_2018_idioms)]
+
 use super::*;
 
 use crate::epoch::Guard;
