@@ -518,8 +518,30 @@ impl SegmentAccountant {
             self.ordering.insert(lsn, segment_start);
 
             // can we transition these segments?
-            let cleanup_threshold =
+
+            // we calculate the cleanup threshold in a skewed way,
+            // which encourages earlier segments to be rewritten
+            // more frequently.
+            let base_cleanup_threshold =
                 self.config.segment_cleanup_threshold;
+            let cleanup_skew = self.config.segment_cleanup_skew;
+
+            assert!(!self.segments.is_empty());
+            let relative_prop =
+                idx as f64 / self.segments.len() as f64;
+
+            // we bias to having a higher threshold closer to segment 0
+            let inverse_prop = 1. - relative_prop;
+            let relative_threshold =
+                cleanup_skew as f64 * inverse_prop;
+            let computed_threshold =
+                base_cleanup_threshold + relative_threshold;
+            // We should always be below 1, or we will rewrite everything
+            let cleanup_threshold = if computed_threshold < 1. {
+                computed_threshold
+            } else {
+                0.99
+            };
             let min_items = self.config.min_items_per_segment;
 
             let segment_low_pct =
@@ -822,7 +844,28 @@ impl SegmentAccountant {
         idx: usize,
         lsn: Lsn,
     ) {
-        let cleanup_threshold = self.config.segment_cleanup_threshold;
+        // we calculate the cleanup threshold in a skewed way,
+        // which encourages earlier segments to be rewritten
+        // more frequently.
+        let base_cleanup_threshold =
+            self.config.segment_cleanup_threshold;
+        let cleanup_skew = self.config.segment_cleanup_skew;
+
+        assert!(!self.segments.is_empty());
+        let relative_prop = idx as f64 / self.segments.len() as f64;
+
+        // we bias to having a higher threshold closer to segment 0
+        let inverse_prop = 1. - relative_prop;
+        let relative_threshold = cleanup_skew as f64 * inverse_prop;
+        let computed_threshold =
+            base_cleanup_threshold + relative_threshold;
+        // We should always be below 1, or we will rewrite everything
+        let cleanup_threshold = if computed_threshold < 1. {
+            computed_threshold
+        } else {
+            0.99
+        };
+
         let min_items = self.config.min_items_per_segment;
 
         let segment_start = (idx * self.config.io_buf_size) as LogId;

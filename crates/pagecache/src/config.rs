@@ -4,7 +4,7 @@ use std::io::{Read, Seek, Write};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{
-    AtomicPtr, AtomicUsize, Ordering, ATOMIC_USIZE_INIT
+    AtomicPtr, AtomicUsize, Ordering, ATOMIC_USIZE_INIT,
 };
 use std::sync::{Arc, Mutex};
 
@@ -68,6 +68,8 @@ pub struct ConfigBuilder {
     #[doc(hidden)]
     pub segment_cleanup_threshold: f64,
     #[doc(hidden)]
+    pub segment_cleanup_skew: usize,
+    #[doc(hidden)]
     pub segment_mode: SegmentMode,
     #[doc(hidden)]
     pub snapshot_after_ops: usize,
@@ -95,15 +97,15 @@ unsafe impl Send for ConfigBuilder {}
 
 impl Default for ConfigBuilder {
     fn default() -> ConfigBuilder {
-         #[cfg(unix)]
+        #[cfg(unix)]
         let salt = {
             static SALT_COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
             let pid = unsafe { libc::getpid() };
             ((pid as u64) << 32)
                 + SALT_COUNTER.fetch_add(1, Ordering::SeqCst) as u64
         };
-        
-         #[cfg(not(unix))]
+
+        #[cfg(not(unix))]
         let salt = {
             let now = uptime();
             (now.as_secs() * 1_000_000_000)
@@ -134,6 +136,7 @@ impl Default for ConfigBuilder {
             snapshot_after_ops: 1_000_000,
             snapshot_path: None,
             segment_cleanup_threshold: 0.2,
+            segment_cleanup_skew: 10,
             min_free_segments: 3,
             zero_copy_storage: false,
             tmp_path: PathBuf::from(tmp_path),
@@ -223,6 +226,7 @@ impl ConfigBuilder {
         (flush_every_ms, get_flush_every_ms, set_flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
         (snapshot_after_ops, get_snapshot_after_ops, set_snapshot_after_ops, usize, "number of operations between page table snapshots"),
         (segment_cleanup_threshold, get_segment_cleanup_threshold, set_segment_cleanup_threshold, f64, "the proportion of remaining valid pages in the segment"),
+        (segment_cleanup_skew, get_segment_cleanup_skew, set_segment_cleanup_skew, usize, "the cleanup threshold skew in percentage points between the first and last segments"),
         (min_free_segments, get_min_free_segments, set_min_free_segments, usize, "the minimum number of free segments to have on-deck before a compaction occurs"),
         (zero_copy_storage, get_zero_copy_storage, set_zero_copy_storage, bool, "disabling of the log segment copy cleaner"),
         (segment_mode, get_segment_mode, set_segment_mode, SegmentMode, "the file segment selection mode"),
