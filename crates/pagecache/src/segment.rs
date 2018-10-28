@@ -677,7 +677,7 @@ impl SegmentAccountant {
         // we depend on the invariant that the last segments
         // always link together, so that we can detect torn
         // segments during recovery.
-        self.ensure_safe_free_distance(lid);
+        self.ensure_safe_free_distance();
 
         if in_recovery {
             self.free.lock().unwrap().push_back((lid, false));
@@ -704,13 +704,26 @@ impl SegmentAccountant {
             // the safe buffer only prevents the sole remaining
             // copy of a page from being overwritten. This prevents
             // dangling references to segments that were rewritten after
-            // the `LogId` was read.
-            let guard = unsafe { pin_log() };
+            // the `LogId` was read. Additionally, we guarantee that
+            // any reservations that have replaced items in this segment
+            // have already been fsynced, due to the EBR guard
+            // that is attached to any reservation before operating
+            // on a segment.
+            //
+            // We spawn a thread to accomplish this because we
+            // are already holding a lock to the segment accountant,
+            // and when the guard that is created below is dropped
+            // it may cause the segment accountant to be locked again.
+            // We can't have the same thread that is already holding
+            // the SA lock try to lock it again, or we deadlock.
             let free = self.free.clone();
-            guard.defer(move || {
-                free.lock().unwrap().push_back((lid, false));
+            rayon::spawn(move || {
+                let guard = pin();
+                guard.defer(move || {
+                    free.lock().unwrap().push_back((lid, false));
+                });
+                guard.flush();
             });
-            guard.flush();
         }
     }
 
@@ -952,7 +965,7 @@ impl SegmentAccountant {
         lid
     }
 
-    fn ensure_safe_free_distance(&mut self, lid: LogId) {
+    fn ensure_safe_free_distance(&mut self) {
         // NB If updates always have to wait in a queue
         // at least as long as the number of IO buffers, it
         // guarantees that the old updates are actually safe
@@ -964,31 +977,13 @@ impl SegmentAccountant {
         // IO buffer during a PageCache replace, but whose
         // replacing updates have not actually landed on disk
         // yet.
-        let position = self
-            .safety_buffer
-            .iter()
-            .position(|&previous_lid| previous_lid == lid);
-        if let Some(position) = position {
-            // if the segment was newest in the safety buffer
-            // (which will always have # io bufs elements)
-            // then the free list needs to contain at least
-            // # io_bufs before we can push this segment. if
-            // the segment is the oldest in the safety buffer,
-            // we can just push one thing to the free list first.
-
-            // 1 for 0-indexing, 1 for having at least safety buffer
-            let min_free_len = position + 2;
-
-            while self.free.lock().unwrap().len() < min_free_len {
-                let new_lid = self.bump_tip();
-                trace!(
+        while self.free.lock().unwrap().len() < self.config.io_bufs {
+            let new_lid = self.bump_tip();
+            trace!(
                     "pushing segment {} to free from ensure_safe_free_distance",
                     new_lid
                 );
-                self.free.lock().unwrap().push_front((new_lid, true));
-            }
-        } else {
-            // lid not in safety buffer, we don't need to pad anything
+            self.free.lock().unwrap().push_front((new_lid, true));
         }
     }
 
@@ -1005,13 +1000,16 @@ impl SegmentAccountant {
             self.bump_tip()
         } else {
             loop {
-                let res = self.free.lock().unwrap().pop_front();
-                if res.is_none() {
-                    break self.bump_tip();
-                } else {
-                    let (next, pushed_by_ensure_safe_free_distance) =
-                        res.unwrap();
+                let pop_res = self.free.lock().unwrap().pop_front();
 
+                if let Some((
+                    next,
+                    pushed_by_ensure_safe_free_distance,
+                )) = pop_res
+                {
+                    // it's safe for us to truncate only
+                    // if we don't dig into the safety buffer
+                    // on our next pop
                     let next_next_in_safety_buffer = self
                         .free
                         .lock()
@@ -1041,6 +1039,8 @@ impl SegmentAccountant {
                     } else {
                         break next;
                     }
+                } else {
+                    break self.bump_tip();
                 }
             }
         };

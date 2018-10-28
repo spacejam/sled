@@ -1,6 +1,8 @@
+#![allow(rust_2018_idioms)]
+
 use super::*;
 
-use epoch::Guard;
+use crate::epoch::Guard;
 
 /// A handle to an ongoing pagecache transaction. Ensures
 /// that any state which is removed from a shared in-memory

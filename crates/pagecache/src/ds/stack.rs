@@ -1,11 +1,14 @@
 // lock-free stack
-use std::fmt::{self, Debug};
-use std::ops::Deref;
-use std::sync::atomic::Ordering::{Relaxed, SeqCst};
+use std::{
+    fmt::{self, Debug},
+    ops::Deref,
+    sync::atomic::Ordering::{Relaxed, SeqCst},
+};
 
-use epoch::{pin, unprotected, Atomic, Guard, Owned, Shared};
-
-use debug_delay;
+use crate::{
+    debug_delay,
+    epoch::{pin, unprotected, Atomic, Guard, Owned, Shared},
+};
 
 /// A node in the lock-free `Stack`.
 #[derive(Debug)]
@@ -222,7 +225,7 @@ impl<T: Send + Sync + 'static> Stack<T> {
 /// An iterator over nodes in a lock-free stack.
 pub(crate) struct StackIter<'a, T>
 where
-    T: 'a + Send + 'static + Sync,
+    T: Send + 'static + Sync,
 {
     inner: Shared<'a, Node<T>>,
     guard: &'a Guard,

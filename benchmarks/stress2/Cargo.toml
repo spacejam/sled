@@ -11,7 +11,6 @@ debug = true
 default = []
 lock_free_delays = ["sled/lock_free_delays"]
 check_snapshot_integrity = ["sled/check_snapshot_integrity"]
-rayon = ["sled/rayon"]
 zstd = ["sled/zstd"]
 no_logs = ["sled/no_logs"]
 no_metrics = ["sled/no_metrics"]

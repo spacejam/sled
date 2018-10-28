@@ -45,7 +45,10 @@ pub(crate) fn write_blob(
 
     f.write_all(&crc)
         .and_then(|_| f.write_all(&data))
-        .map_err(|e| e.into())
+        .map(|r| {
+            trace!("successfully wrote blob at {:?}", path);
+            r
+        }).map_err(|e| e.into())
 }
 
 pub(crate) fn gc_blobs(
