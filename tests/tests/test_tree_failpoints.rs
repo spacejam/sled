@@ -131,9 +131,8 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
     let config = ConfigBuilder::new()
         .temporary(true)
         .snapshot_after_ops(1)
-        .flush_every_ms(if flusher { Some(1) } else {None})
+        .flush_every_ms(if flusher { Some(1) } else { None })
         .io_buf_size(io_buf_size)
-        .min_items_per_segment(1)
         .blink_node_split_size(0) // smol pages for smol buffers
         .cache_capacity(40)
         .cache_bits(2)
@@ -207,10 +206,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                     continue;
                 }
                 other => {
-                    println!(
-                        "got non-failpoint err: {:?}",
-                        other
-                    );
+                    println!("got non-failpoint err: {:?}", other);
                     return false;
                 }
             }

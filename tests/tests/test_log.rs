@@ -19,7 +19,8 @@ use rand::{thread_rng, Rng};
 
 use pagecache::{
     ConfigBuilder, DiskPtr, Log, LogRead, SegmentMode,
-    MSG_HEADER_LEN, SEG_HEADER_LEN, SEG_TRAILER_LEN,
+    MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
+    SEG_TRAILER_LEN,
 };
 
 type Lsn = i64;
@@ -58,7 +59,7 @@ fn non_contiguous_log_flush() {
     let log = Log::start_raw_log(config.clone()).unwrap();
 
     let seg_overhead = std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN);
-    let buf_len = (config.io_buf_size / config.min_items_per_segment)
+    let buf_len = (config.io_buf_size / MINIMUM_ITEMS_PER_SEGMENT)
         - (MSG_HEADER_LEN + seg_overhead);
 
     let res1 = log.reserve(vec![0; buf_len]).unwrap();
@@ -92,7 +93,7 @@ fn concurrent_logging() {
         let seg_overhead =
             std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN);
         let buf_len = (config.io_buf_size
-            / config.min_items_per_segment)
+            / MINIMUM_ITEMS_PER_SEGMENT)
             - (MSG_HEADER_LEN + seg_overhead);
 
         let t1 = thread::Builder::new()
@@ -248,7 +249,6 @@ fn log_chunky_iterator() {
                 .temporary(true)
                 .segment_mode(SegmentMode::Linear)
                 .io_buf_size(100)
-                .min_items_per_segment(1)
                 .build();
 
             let log = Log::start_raw_log(config.clone()).unwrap();
@@ -351,7 +351,6 @@ fn multi_segment_log_iteration() {
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
         .io_buf_size(1000)
-        .min_items_per_segment(1)
         .build();
 
     let total_seg_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;
