@@ -4,15 +4,12 @@ version = "0.1.0"
 authors = ["Tyler Neely <t@jujit.su>"]
 publish = false
 
-[features]
-rayon = ["pagecache/rayon"]
-
 [dependencies]
 log = "0.4"
 env_logger = "0.5"
 
 [dev-dependencies.pagecache]
-features = ["failpoints", "lock_free_delays", "rayon"]
+features = ["failpoints", "lock_free_delays"]
 path = "../crates/pagecache"
 
 [dev-dependencies.sled]

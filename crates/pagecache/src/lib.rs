@@ -32,7 +32,6 @@ extern crate log as _log;
 extern crate libc;
 #[cfg(any(test, feature = "failpoints", feature = "lock_free_delays"))]
 extern crate rand;
-#[cfg(feature = "rayon")]
 extern crate rayon;
 #[cfg(feature = "zstd")]
 extern crate zstd;

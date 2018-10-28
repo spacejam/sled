@@ -709,12 +709,21 @@ impl SegmentAccountant {
             // have already been fsynced, due to the EBR guard
             // that is attached to any reservation before operating
             // on a segment.
-            let guard = pin();
+            //
+            // We spawn a thread to accomplish this because we
+            // are already holding a lock to the segment accountant,
+            // and when the guard that is created below is dropped
+            // it may cause the segment accountant to be locked again.
+            // We can't have the same thread that is already holding
+            // the SA lock try to lock it again, or we deadlock.
             let free = self.free.clone();
-            guard.defer(move || {
-                free.lock().unwrap().push_back((lid, false));
+            rayon::spawn(move || {
+                let guard = pin();
+                guard.defer(move || {
+                    free.lock().unwrap().push_back((lid, false));
+                });
+                guard.flush();
             });
-            guard.flush();
         }
     }
 
