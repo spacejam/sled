@@ -473,6 +473,13 @@ impl IoBufs {
                 // has already been bumped by sealer.
                 trace_once!("io buffer already sealed, spinning");
                 spin_loop_hint();
+
+                // use a condition variable to wait until
+                // we've updated the written_bufs counter.
+                let mut buf_mu = self.buf_mu.lock().unwrap();
+                while written_bufs == self.written_bufs.load(SeqCst) {
+                    buf_mu = self.bufs_updated.wait(buf_mu).unwrap();
+                }
                 continue;
             }
 
