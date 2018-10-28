@@ -24,28 +24,15 @@ impl PartialEq for PinnedValue {
     }
 }
 
+impl<T: AsRef<[u8]>> PartialEq<T> for PinnedValue {
+    fn eq(&self, other: &T) -> bool {
+        self.deref() == other.as_ref()
+    }
+}
+
 impl PartialEq<[u8]> for PinnedValue {
     fn eq(&self, other: &[u8]) -> bool {
         self.deref() == other
-    }
-}
-
-impl<'a> PartialEq<&'a [u8]> for PinnedValue {
-    fn eq(&self, other: &&[u8]) -> bool {
-        self.deref() == *other
-    }
-}
-
-impl PartialEq<Value> for PinnedValue {
-    fn eq(&self, other: &Value) -> bool {
-        use std::ops::Deref;
-        self.deref() == &**other
-    }
-}
-
-impl AsRef<[u8]> for PinnedValue {
-    fn as_ref(&self) -> &[u8] {
-        self.deref()
     }
 }
 
