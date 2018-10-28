@@ -5,16 +5,27 @@ extern crate docopt;
 extern crate rand;
 extern crate sled;
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::thread;
+use std::{
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    },
+    thread,
+};
 
 use chan_signal::Signal;
 use docopt::Docopt;
 use rand::{thread_rng, Rng};
 
 const USAGE: &'static str = "
-Usage: stress [--threads=<#>] [--burn-in] [--duration=<s>] [--kv-len=<l>]
+Usage: stress [--threads=<#>] [--burn-in] [--duration=<s>] \
+    [--key-len=<l>] [--val-len=<l>] \
+    [--get-prop=<p>] \
+    [--set-prop=<p>] \
+    [--del-prop=<p>] \
+    [--cas-prop=<p>] \
+    [--scan-prop=<p>] \
+    [--merge-prop=<p>]
 
 Options:
     --threads=<#>      Number of threads [default: 4].
@@ -165,7 +176,7 @@ fn main() {
         .cache_bits(6)
         .cache_capacity(1_000_000_000)
         .flush_every_ms(Some(10))
-        .snapshot_after_ops(100000000)
+        .snapshot_after_ops(100_000_000)
         .print_profile_on_drop(true)
         .merge_operator(concatenate_merge)
         .build();
