@@ -1,7 +1,9 @@
-use std::cmp::PartialEq;
-use std::error::Error as StdError;
-use std::fmt::{self, Debug, Display};
-use std::io;
+use std::{
+    cmp::PartialEq,
+    error::Error as StdError,
+    fmt::{self, Debug, Display},
+    io,
+};
 
 use super::*;
 
@@ -32,7 +34,7 @@ pub enum Error<Actual> {
     FailPoint,
 }
 
-use Error::*;
+use self::Error::*;
 
 impl<A> PartialEq for Error<A>
 where

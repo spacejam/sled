@@ -1,4 +1,8 @@
-#![cfg(all(not(target_os = "fuchsia"), not(target_os = "android"), not(target_os = "windows")))]
+#![cfg(all(
+    not(target_os = "fuchsia"),
+    not(target_os = "android"),
+    not(target_os = "windows")
+))]
 
 extern crate libc;
 extern crate pagecache;
@@ -16,7 +20,7 @@ use rand::Rng;
 
 use pagecache::{Config, ConfigBuilder};
 
-const CYCLE: usize = 16; // 65536;
+const CYCLE: usize = 256;
 
 /// Verifies that the keys in the tree are correctly recovered.
 /// Panics if they are incorrect.

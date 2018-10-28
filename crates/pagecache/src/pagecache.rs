@@ -1,10 +1,11 @@
-use std::collections::BinaryHeap;
-use std::ops::Deref;
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::BinaryHeap,
+    ops::Deref,
+    sync::{Arc, Mutex},
+};
 
-use epoch::{Owned, Shared};
+use crate::epoch::{Owned, Shared};
 
-#[cfg(feature = "rayon")]
 use rayon::prelude::*;
 
 use pagetable::PageTable;
@@ -68,7 +69,7 @@ pub enum CacheEntry<M: Send> {
 
 impl<M: Send> CacheEntry<M> {
     fn ptr(&self) -> DiskPtr {
-        use CacheEntry::*;
+        use self::CacheEntry::*;
         match self {
             MergedResident(_, _, ptr)
             | Resident(_, _, ptr)
@@ -567,6 +568,7 @@ where
         if cache_entries.len() == 1
             && cache_entries[0].ptr().is_blob()
         {
+            trace!("rewriting blob with pid {}", pid);
             let blob_ptr = cache_entries[0].ptr().blob().1;
 
             let log_reservation = self
@@ -608,6 +610,8 @@ where
                 .map(|_| ())
                 .map_err(|e| Error::CasFailed(Some(PagePtr(e))))
         } else {
+            trace!("rewriting page with pid {}", pid);
+
             // page-in whole page with a get,
             let (key, update) = match self.get(pid, guard)? {
                 PageGet::Materialized(data, key) => {
@@ -805,22 +809,14 @@ where
         if !merged_resident {
             let to_pull = &ptrs[to_merge.len()..];
 
-            #[cfg(feature = "rayon")]
-            {
-                let pulled_res: Vec<_> = to_pull
-                    .par_iter()
-                    .map(|&(lsn, ptr)| self.rayon_pull(lsn, ptr))
-                    .collect();
+            let pulled_res: Vec<_> = to_pull
+                .par_iter()
+                .map(|&(lsn, ptr)| self.pull(lsn, ptr))
+                .collect();
 
-                for res in pulled_res {
-                    let item = res.map_err(|e| e.danger_cast())?;
-                    fetched.push(item);
-                }
-            }
-
-            #[cfg(not(feature = "rayon"))]
-            for &(lsn, ptr) in to_pull {
-                fetched.push(self.pull(lsn, ptr)?);
+            for res in pulled_res {
+                let item = res.map_err(|e| e.danger_cast())?;
+                fetched.push(item);
             }
         }
 
