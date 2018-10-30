@@ -144,13 +144,8 @@ macro_rules! supported {
 }
 
 macro_rules! builder {
-    ($(($name:ident, $get:ident, $set:ident, $t:ty, $desc:expr)),*) => {
+    ($(($name:ident, $t:ty, $desc:expr)),*) => {
         $(
-            #[doc=$desc]
-            pub fn $set(&mut self, to: $t) {
-                self.$name = to;
-            }
-
             #[doc=$desc]
             pub fn $name(mut self, to: $t) -> ConfigBuilder {
                 self.$name = to;
@@ -170,11 +165,6 @@ impl ConfigBuilder {
     pub fn path<P: AsRef<Path>>(mut self, path: P) -> ConfigBuilder {
         self.path = path.as_ref().to_path_buf();
         self
-    }
-
-    /// Set the path of the database
-    pub fn set_path<P: AsRef<Path>>(&mut self, path: P) {
-        self.path = path.as_ref().to_path_buf();
     }
 
     /// Set the merge operator that can be relied on during merges in
@@ -199,23 +189,23 @@ impl ConfigBuilder {
     }
 
     builder!(
-        (io_bufs, get_io_bufs, set_io_bufs, usize, "number of io buffers"),
-        (io_buf_size, get_io_buf_size, set_io_buf_size, usize, "size of each io flush buffer. MUST be multiple of 512!"),
-        (blink_node_split_size, get_blink_node_split_size, set_blink_node_split_size, usize, "b-link tree node size in bytes before splitting"),
-        (page_consolidation_threshold, get_page_consolidation_threshold, set_page_consolidation_threshold, usize, "page consolidation threshold"),
-        (temporary, get_temporary, set_temporary, bool, "if this database should be removed after the ConfigBuilder is dropped"),
-        (read_only, get_read_only, set_read_only, bool, "whether to run in read-only mode"),
-        (cache_bits, get_cache_bits, set_cache_bits, usize, "log base 2 of the number of cache shards"),
-        (cache_capacity, get_cache_capacity, set_cache_capacity, usize, "maximum size for the system page cache"),
-        (use_compression, get_use_compression, set_use_compression, bool, "whether to use zstd compression"),
-        (zstd_compression_factor, get_zstd_compression_factor, set_zstd_compression_factor, i32, "the compression factor to use with zstd compression"),
-        (flush_every_ms, get_flush_every_ms, set_flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
-        (snapshot_after_ops, get_snapshot_after_ops, set_snapshot_after_ops, usize, "number of operations between page table snapshots"),
-        (segment_cleanup_threshold, get_segment_cleanup_threshold, set_segment_cleanup_threshold, f64, "the proportion of remaining valid pages in the segment"),
-        (segment_cleanup_skew, get_segment_cleanup_skew, set_segment_cleanup_skew, usize, "the cleanup threshold skew in percentage points between the first and last segments"),
-        (segment_mode, get_segment_mode, set_segment_mode, SegmentMode, "the file segment selection mode"),
-        (snapshot_path, get_snapshot_path, set_snapshot_path, Option<PathBuf>, "snapshot file location"),
-        (print_profile_on_drop, get_print_profile_on_drop, set_print_profile_on_drop, bool, "print a performance profile when the Config is dropped")
+        (io_bufs, usize, "number of io buffers"),
+        (io_buf_size, usize, "size of each io flush buffer. MUST be multiple of 512!"),
+        (blink_node_split_size, usize, "b-link tree node size in bytes before splitting"),
+        (page_consolidation_threshold, usize, "page consolidation threshold"),
+        (temporary, bool, "if this database should be removed after the ConfigBuilder is dropped"),
+        (read_only, bool, "whether to run in read-only mode"),
+        (cache_bits, usize, "log base 2 of the number of cache shards"),
+        (cache_capacity, usize, "maximum size for the system page cache"),
+        (use_compression, bool, "whether to use zstd compression"),
+        (zstd_compression_factor, i32, "the compression factor to use with zstd compression"),
+        (flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
+        (snapshot_after_ops, usize, "number of operations between page table snapshots"),
+        (segment_cleanup_threshold, f64, "the proportion of remaining valid pages in the segment"),
+        (segment_cleanup_skew, usize, "the cleanup threshold skew in percentage points between the first and last segments"),
+        (segment_mode, SegmentMode, "the file segment selection mode"),
+        (snapshot_path, Option<PathBuf>, "snapshot file location"),
+        (print_profile_on_drop, bool, "print a performance profile when the Config is dropped")
     );
 }
 
