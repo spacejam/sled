@@ -100,6 +100,8 @@ pub struct Metrics {
     pub decompress: Histo,
     pub make_stable: Histo,
     pub reserve: Histo,
+    pub reserve_current_condvar_wait: Histo,
+    pub reserve_written_condvar_wait: Histo,
     pub write_to_log: Histo,
     pub written_bytes: Histo,
     pub read: Histo,
@@ -213,6 +215,8 @@ impl Metrics {
             f("write", &self.write_to_log),
             f("written bytes", &self.written_bytes),
             f("reserve", &self.reserve),
+            f("res cvar r", &self.reserve_current_condvar_wait),
+            f("res cvar w", &self.reserve_written_condvar_wait),
         ]);
         println!(
             "log reservations: {}",

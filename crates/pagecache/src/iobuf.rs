@@ -460,6 +460,8 @@ impl IoBufs {
 
                 // use a condition variable to wait until
                 // we've updated the written_bufs counter.
+                let _measure =
+                    Measure::new(&M.reserve_written_condvar_wait);
                 let mut buf_mu = self.written_bufs_mu.lock().unwrap();
                 while written_bufs == self.written_bufs.load(SeqCst) {
                     buf_mu = self
@@ -483,6 +485,8 @@ impl IoBufs {
 
                 // use a condition variable to wait until
                 // we've updated the current_buf counter.
+                let _measure =
+                    Measure::new(&M.reserve_current_condvar_wait);
                 let mut buf_mu = self.current_buf_mu.lock().unwrap();
                 while current_buf == self.current_buf.load(SeqCst) {
                     buf_mu = self
