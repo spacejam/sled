@@ -62,10 +62,8 @@ pub(super) struct IoBufs {
     // full, and in order to prevent threads from having to spin in
     // the reserve function, we can have them block until a buffer becomes
     // available.
-    current_buf_mu: Mutex<()>,
-    written_bufs_mu: Mutex<()>,
-    current_buf_updated: Condvar,
-    written_bufs_updated: Condvar,
+    buf_mu: Mutex<()>,
+    buf_updated: Condvar,
     bufs: Vec<IoBuf>,
     current_buf: AtomicUsize,
     written_bufs: AtomicUsize,
@@ -200,10 +198,8 @@ impl IoBufs {
         Ok(IoBufs {
             config: config,
 
-            current_buf_mu: Mutex::new(()),
-            written_bufs_mu: Mutex::new(()),
-            current_buf_updated: Condvar::new(),
-            written_bufs_updated: Condvar::new(),
+            buf_mu: Mutex::new(()),
+            buf_updated: Condvar::new(),
             bufs: bufs,
             current_buf: AtomicUsize::new(current_buf),
             written_bufs: AtomicUsize::new(0),
@@ -462,12 +458,9 @@ impl IoBufs {
                 // we've updated the written_bufs counter.
                 let _measure =
                     Measure::new(&M.reserve_written_condvar_wait);
-                let mut buf_mu = self.written_bufs_mu.lock().unwrap();
+                let mut buf_mu = self.buf_mu.lock().unwrap();
                 while written_bufs == self.written_bufs.load(SeqCst) {
-                    buf_mu = self
-                        .written_bufs_updated
-                        .wait(buf_mu)
-                        .unwrap();
+                    buf_mu = self.buf_updated.wait(buf_mu).unwrap();
                 }
                 continue;
             }
@@ -487,12 +480,9 @@ impl IoBufs {
                 // we've updated the current_buf counter.
                 let _measure =
                     Measure::new(&M.reserve_current_condvar_wait);
-                let mut buf_mu = self.current_buf_mu.lock().unwrap();
+                let mut buf_mu = self.buf_mu.lock().unwrap();
                 while current_buf == self.current_buf.load(SeqCst) {
-                    buf_mu = self
-                        .current_buf_updated
-                        .wait(buf_mu)
-                        .unwrap();
+                    buf_mu = self.buf_updated.wait(buf_mu).unwrap();
                 }
                 continue;
             }
@@ -906,7 +896,7 @@ impl IoBufs {
         // are going to wait on the condition variable will observe
         // the change.
         debug_delay();
-        let _ = self.current_buf_mu.lock().unwrap();
+        let _ = self.buf_mu.lock().unwrap();
 
         // communicate to other threads that we have advanced an IO buffer.
         debug_delay();
@@ -916,7 +906,7 @@ impl IoBufs {
         // let any threads that are blocked on buf_mu know about the
         // updated counter.
         debug_delay();
-        self.current_buf_updated.notify_all();
+        self.buf_updated.notify_all();
 
         // if writers is 0, it's our responsibility to write the buffer.
         if n_writers(sealed) == 0 {
@@ -1047,7 +1037,7 @@ impl IoBufs {
         // are going to wait on the condition variable will observe
         // the change.
         debug_delay();
-        let _ = self.written_bufs_mu.lock().unwrap();
+        let _ = self.buf_mu.lock().unwrap();
 
         // communicate to other threads that we have written an IO buffer.
         debug_delay();
@@ -1057,7 +1047,7 @@ impl IoBufs {
         // let any threads that are blocked on buf_mu know about the
         // updated counter.
         debug_delay();
-        self.written_bufs_updated.notify_all();
+        self.buf_updated.notify_all();
 
         Ok(())
     }
