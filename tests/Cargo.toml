@@ -4,21 +4,19 @@ version = "0.1.0"
 authors = ["Tyler Neely <t@jujit.su>"]
 publish = false
 
-[dependencies]
-log = "0.4"
-env_logger = "0.5"
-
-[dev-dependencies.pagecache]
+[dependencies.pagecache]
 features = ["failpoints", "lock_free_delays"]
 path = "../crates/pagecache"
 
-[dev-dependencies.sled]
+[dependencies.sled]
 features = ["failpoints", "lock_free_delays", "check_snapshot_integrity"]
 path = "../crates/sled"
 
-[dev-dependencies]
+[dependencies]
 quickcheck = "0.7"
 rand = "0.5"
+log = "0.4"
+env_logger = "0.5"
 libc = "0.2"
 fail = "0.2"
 lazy_static = "1.0"

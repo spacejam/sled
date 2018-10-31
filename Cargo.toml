@@ -3,7 +3,7 @@ members = [
   "crates/pagecache",
   "crates/pagetable",
   "crates/sled",
-  "tests"
+  "tests",
 ]
 exclude = [
   "benchmarks/stress2",
