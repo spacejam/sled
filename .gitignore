@@ -18,3 +18,5 @@ Cargo.lock
 *swp
 *swo
 *.proptest-regressions
+corpus
+artifacts
