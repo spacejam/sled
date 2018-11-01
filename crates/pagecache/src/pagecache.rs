@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::epoch::{Owned, Shared};
+use crate::sync::{Owned, Shared};
 
 use rayon::prelude::*;
 
@@ -12,7 +12,7 @@ use pagetable::PageTable;
 
 use super::*;
 
-type PagePtrInner<'g, P> = epoch::Shared<'g, Node<CacheEntry<P>>>;
+type PagePtrInner<'g, P> = sync::Shared<'g, Node<CacheEntry<P>>>;
 
 /// A pointer to shared lock-free state bound by a pinned epoch's lifetime.
 #[derive(Debug, Clone, PartialEq)]
@@ -26,7 +26,7 @@ where
 {
     /// Create a null `PagePtr`
     pub fn allocated() -> PagePtr<'g, P> {
-        PagePtr(epoch::Shared::null())
+        PagePtr(sync::Shared::null())
     }
 
     /// Whether this pointer is Allocated

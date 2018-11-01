@@ -1,15 +1,14 @@
 #[macro_use]
 extern crate model;
-#[macro_use]
-extern crate proptest;
-extern crate crossbeam_epoch as epoch;
+
 extern crate pagetable;
+extern crate sled_sync as sync;
 
 use std::collections::HashMap;
 
-use epoch::{pin, Owned, Shared as EpochShared};
 use model::Shared;
 use pagetable::PageTable;
+use sync::{pin, Owned, Shared as EpochShared};
 
 #[test]
 fn test_model() {
@@ -40,7 +39,7 @@ fn test_model() {
                 continue;
             }
 
-            let new_v = epoch::Owned::new(new).into_shared(&guard);
+            let new_v = Owned::new(new).into_shared(&guard);
 
             if expected_current == Some(old) {
                 m.insert(k, new);
@@ -71,7 +70,7 @@ fn test_linearizability() {
             in (0usize..4, 0usize..4, 0usize..4))
             -> Result<(), usize> {
             let guard = pin();
-            i.cas(k, epoch::Owned::new(old).into_shared(&guard), epoch::Owned::new(new).into_shared(&guard), &guard)
+            i.cas(k, Owned::new(old).into_shared(&guard), Owned::new(new).into_shared(&guard), &guard)
                 .map(|_| ())
                 .map_err(|s| unsafe { *s.deref() })
         }
