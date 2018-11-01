@@ -14,5 +14,4 @@ crossbeam-epoch = "0.6"
 
 [dev-dependencies]
 model = {version = "0.0", path = "../model"}
-proptest = "0.8"
 rand = "0.5"

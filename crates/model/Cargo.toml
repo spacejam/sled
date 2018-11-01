@@ -1,6 +1,6 @@
 [package]
 name = "model"
-version = "0.0.5"
+version = "0.1.0"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "model-based testing for data structures, with linearizability checking"
 license = "MIT/Apache-2.0"
@@ -10,5 +10,5 @@ keywords = ["testing", "simulation", "deterministic", "model-checking"]
 documentation = "https://docs.rs/model/"
 
 [dependencies]
-proptest = "0.7"
+proptest = "0.8"
 permutohedron = "0.2"
