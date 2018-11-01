@@ -1,7 +1,5 @@
 #[macro_use]
 extern crate model;
-#[macro_use]
-extern crate proptest;
 extern crate crossbeam_epoch as epoch;
 extern crate pagetable;
 
