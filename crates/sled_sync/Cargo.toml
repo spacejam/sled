@@ -1,0 +1,13 @@
+[package]
+name = "sled_sync"
+version = "0.1.0"
+authors = ["Tyler Neely <tyler.neely@ferrous-systems.com>"]
+
+[features]
+lock_free_delays = ["rand"]
+nightly = []
+no_inline = []
+
+[dependencies]
+crossbeam-epoch = "0.6"
+rand = {version = "0.5", optional = true}

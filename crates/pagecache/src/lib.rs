@@ -21,17 +21,15 @@ compile_error!(
 #[macro_use]
 extern crate serde_derive;
 extern crate bincode;
-extern crate crossbeam_epoch as epoch;
 extern crate historian;
 extern crate serde;
+extern crate sled_sync as sync;
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
 extern crate log as _log;
 #[cfg(unix)]
 extern crate libc;
-#[cfg(any(test, feature = "failpoints", feature = "lock_free_delays"))]
-extern crate rand;
 extern crate rayon;
 #[cfg(feature = "zstd")]
 extern crate zstd;
@@ -62,7 +60,6 @@ mod config;
 mod constants;
 mod diskptr;
 mod ds;
-mod ebr;
 mod hash;
 mod iobuf;
 mod iterator;
@@ -92,6 +89,8 @@ use std::{
 use bincode::{deserialize, serialize};
 use serde::{de::DeserializeOwned, Serialize};
 
+use crate::sync::{debug_delay, Guard};
+
 #[doc(hidden)]
 use self::log::{
     MessageHeader, MessageKind, SegmentHeader, SegmentTrailer,
@@ -118,7 +117,6 @@ use self::{
 pub use self::{
     config::{Config, ConfigBuilder},
     diskptr::DiskPtr,
-    ebr::{pin, Guard},
     log::{Log, LogRead},
     materializer::{Materializer, NullMaterializer},
     metrics::M,
@@ -126,8 +124,8 @@ pub use self::{
     reservation::Reservation,
     result::{Error, Result},
     segment::SegmentMode,
+    sync::pin,
     tx::Tx,
-    util::debug_delay,
 };
 
 #[doc(hidden)]

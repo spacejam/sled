@@ -1,6 +1,6 @@
 use super::*;
 
-use pagecache::{Guard, Measure, M};
+use pagecache::{Measure, M};
 
 /// An iterator over keys and values in a `Tree`.
 pub struct Iter<'a> {

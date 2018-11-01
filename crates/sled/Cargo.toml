@@ -12,7 +12,7 @@ readme = "../../README.md"
 
 [features]
 default = []
-lock_free_delays = ["pagecache/lock_free_delays"]
+lock_free_delays = ["sled_sync/lock_free_delays"]
 failpoints = ["pagecache/failpoints"]
 check_snapshot_integrity = []
 no_logs = ["log/max_level_off", "pagecache/no_logs"]
@@ -28,3 +28,4 @@ version = "0.4"
 serde = "1.0"
 serde_derive = "1.0"
 pagecache = { path = "../pagecache", version = "0.7.0" }
+sled_sync = { version = "0.1", path = "../sled_sync" }
