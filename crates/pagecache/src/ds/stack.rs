@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     debug_delay,
-    epoch::{pin, unprotected, Atomic, Guard, Owned, Shared},
+    sync::{pin, unprotected, Atomic, Guard, Owned, Shared},
 };
 
 /// A node in the lock-free `Stack`.

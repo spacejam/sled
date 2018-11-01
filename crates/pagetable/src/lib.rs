@@ -1,12 +1,13 @@
 /// A simple wait-free, grow-only pagetable, assumes a dense keyspace.
-extern crate crossbeam_epoch as epoch;
 
 #[cfg(any(test, feature = "lock_free_delays"))]
 extern crate rand;
 
+extern crate sled_sync;
+
 use std::sync::atomic::Ordering::SeqCst;
 
-use epoch::{pin, unprotected, Atomic, Guard, Owned, Shared};
+use sled_sync::{pin, unprotected, Atomic, Guard, Owned, Shared};
 
 const FANFACTOR: usize = 18;
 const FANOUT: usize = 1 << FANFACTOR;
