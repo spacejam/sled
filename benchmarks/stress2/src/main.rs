@@ -25,7 +25,8 @@ Usage: stress [--threads=<#>] [--burn-in] [--duration=<s>] \
     [--del-prop=<p>] \
     [--cas-prop=<p>] \
     [--scan-prop=<p>] \
-    [--merge-prop=<p>]
+    [--merge-prop=<p>] \
+    [--entries=<n>]
 
 Options:
     --threads=<#>      Number of threads [default: 4].
@@ -39,6 +40,7 @@ Options:
     --cas-prop=<p>     The relative proportion of cas requests [default: 5].
     --scan-prop=<p>    The relative proportion of scan requests [default: 5].
     --merge-prop=<p>   The relative proportion of merge requests [default: 5].
+    --entries=<n>      The total keyspace [default: 100000].
 ";
 
 #[derive(Deserialize, Clone)]
@@ -54,6 +56,7 @@ struct Args {
     flag_cas_prop: usize,
     flag_scan_prop: usize,
     flag_merge_prop: usize,
+    flag_entries: usize,
 }
 
 // defaults will be applied later based on USAGE above
@@ -69,6 +72,7 @@ static mut ARGS: Args = Args {
     flag_cas_prop: 0,
     flag_scan_prop: 0,
     flag_merge_prop: 0,
+    flag_entries: 0,
 };
 
 fn report(shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
@@ -104,22 +108,24 @@ fn run(
 ) {
     let args = unsafe { ARGS.clone() };
 
-    let bytes = |len| {
-        thread_rng().gen_iter::<u8>().take(len).collect::<Vec<_>>()
+    let get_max = args.flag_get_prop;
+    let set_max = get_max + args.flag_set_prop;
+    let del_max = set_max + args.flag_del_prop;
+    let cas_max = del_max + args.flag_cas_prop;
+    let scan_max = cas_max + args.flag_scan_prop;
+    let merge_max = scan_max + args.flag_merge_prop;
+
+    let bytes = |len| -> Vec<u8> {
+        let i = thread_rng().gen::<usize>() % args.flag_entries;
+        let i_bytes: [u8; std::mem::size_of::<usize>()] =
+            unsafe { std::mem::transmute(i) };
+        i_bytes.into_iter().cycle().take(len).cloned().collect()
     };
     let mut rng = thread_rng();
 
     while !shutdown.load(Ordering::Relaxed) {
         total.fetch_add(1, Ordering::Release);
         let key = bytes(args.flag_key_len);
-
-        let get_max = args.flag_get_prop;
-        let set_max = get_max + args.flag_set_prop;
-        let del_max = set_max + args.flag_del_prop;
-        let cas_max = del_max + args.flag_cas_prop;
-        let scan_max = cas_max + args.flag_scan_prop;
-        let merge_max = scan_max + args.flag_merge_prop;
-
         let choice = rng.gen_range(0, merge_max + 1);
 
         match choice {
