@@ -1,7 +1,5 @@
 #[macro_use]
 extern crate model;
-#[macro_use]
-extern crate proptest;
 
 #[test]
 fn test_model() {
@@ -48,7 +46,7 @@ fn test_linearizability_of_bad_impl() {
         Implementation => let i = Shared::new(AtomicUsize::new(0)),
         BuggyAdd(usize)(v in 0usize..4) -> usize {
             let current = i.load(Ordering::SeqCst);
-            thread::yield_now();
+            std::thread::yield_now();
             i.store(current + v, Ordering::SeqCst);
             current + v
         },
@@ -57,7 +55,7 @@ fn test_linearizability_of_bad_impl() {
         },
         BuggyCas((usize, usize))((old, new) in (0usize..4, 0usize..4)) -> usize {
             let current = i.load(Ordering::SeqCst);
-            thread::yield_now();
+            std::thread::yield_now();
             if current == old {
                 i.store(new, Ordering::SeqCst);
                 new
