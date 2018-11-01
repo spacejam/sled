@@ -13,5 +13,5 @@ documentation = "https://docs.rs/pagetable/"
 crossbeam-epoch = "0.6"
 
 [dev-dependencies]
-model = {version = "0.0", path = "../model"}
+model = {version = "0.1", path = "../model"}
 rand = "0.5"
