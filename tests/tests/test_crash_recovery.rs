@@ -95,14 +95,7 @@ fn slice_to_u32(b: &[u8]) -> u32 {
     unsafe { std::mem::transmute(buf) }
 }
 
-fn run(config: Config) {
-    // tests::setup_logger();
-    let tree = sled::Tree::start(config).unwrap();
-
-    // flush to ensure the initial root is stable.
-    // TODO is this necessary or voodoo?
-    tree.flush().unwrap();
-
+fn spawn_killah() {
     thread::spawn(|| {
         let runtime = rand::thread_rng().gen_range(0, 200);
         thread::sleep(Duration::from_millis(runtime));
@@ -110,6 +103,22 @@ fn run(config: Config) {
             libc::raise(9);
         }
     });
+}
+
+fn run(config: Config) {
+    // tests::setup_logger();
+    let crash_during_initialization =
+        rand::thread_rng().gen_bool(0.1);
+
+    if crash_during_initialization {
+        spawn_killah();
+    }
+
+    let tree = sled::Tree::start(config).unwrap();
+
+    if !crash_during_initialization {
+        spawn_killah();
+    }
 
     let (key, highest) = verify(&tree);
 
