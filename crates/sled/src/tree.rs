@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::Arc;
 
-use pagecache::{pin, Guard, PagePtr};
+use pagecache::PagePtr;
 
 use super::*;
 
@@ -779,7 +779,7 @@ impl Tree {
             },
             Some(from),
         );
-        pagecache::debug_delay();
+        debug_delay();
         let new_root_ptr = self
             .pages
             .replace(
@@ -792,7 +792,7 @@ impl Tree {
                  allocated page without issue",
             );
 
-        pagecache::debug_delay();
+        debug_delay();
         let cas =
             self.root.compare_and_swap(from, new_root_pid, SeqCst);
         if cas == from {

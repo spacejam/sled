@@ -38,6 +38,7 @@ extern crate pagecache;
 extern crate serde_derive;
 #[macro_use]
 extern crate log as _log;
+extern crate sled_sync as sync;
 
 mod binary_search_least_upper_bound;
 mod bound;
@@ -67,6 +68,8 @@ use self::node::Node;
 use self::prefix::{
     prefix_cmp, prefix_cmp_encoded, prefix_decode, prefix_encode,
 };
+
+use self::sync::{debug_delay, pin, Guard};
 
 pub(crate) use self::frag::Frag;
 pub(crate) use self::materializer::BLinkMaterializer;

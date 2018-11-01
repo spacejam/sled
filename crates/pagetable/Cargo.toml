@@ -10,7 +10,7 @@ keywords = ["paging", "page-table", "table", "data-structure", "lookup"]
 documentation = "https://docs.rs/pagetable/"
 
 [dependencies]
-crossbeam-epoch = "0.6"
+sled_sync = { version = "0.1", path = "../sled_sync" }
 
 [dev-dependencies]
 model = {version = "0.0", path = "../model"}

@@ -12,25 +12,25 @@ readme = "README.md"
 
 [features]
 default = []
-lock_free_delays = ["rand"]
-failpoints = ["fail"]
+lock_free_delays = ["sled_sync/lock_free_delays"]
+failpoints = ["fail", "rand"]
 no_metrics = ["historian/bypass"]
 no_logs = ["log/max_level_off"]
-nightly = []
-no_inline = []
+nightly = ["sled_sync/nightly"]
+no_inline = ["sled_sync/no_inline"]
 
 [dependencies]
 libc = "0.2"
-crossbeam-epoch = "0.6"
 bincode = "1.0"
 serde = "1.0"
 serde_derive = "1.0"
 lazy_static = "1.1"
-fail = {version = "0.2", optional = true}
+fail = { version = "0.2", optional = true }
+rand = { version = "0.5", optional = true }
 rayon = "1.0"
-zstd = {version = "0.4", optional = true}
-rand = {version = "0.5", optional = true}
-pagetable = {version = "0.1", path = "../pagetable"}
+zstd = { version = "0.4", optional = true }
+pagetable = { version = "0.1", path = "../pagetable" }
+sled_sync = { version = "0.1", path = "../sled_sync" }
 
 [dependencies.historian]
 version = "3.0"

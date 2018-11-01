@@ -2,7 +2,7 @@
 
 use super::*;
 
-use crate::epoch::Guard;
+use crate::sync::Guard;
 
 /// A handle to an ongoing pagecache transaction. Ensures
 /// that any state which is removed from a shared in-memory
