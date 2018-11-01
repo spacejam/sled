@@ -22,8 +22,6 @@
 //! ```
 //! #[macro_use]
 //! extern crate model;
-//! #[macro_use]
-//! extern crate proptest;
 //!
 //! use std::sync::atomic::{AtomicUsize, Ordering};
 //!
@@ -65,8 +63,6 @@
 //! ```no_run
 //! #[macro_use]
 //! extern crate model;
-//! #[macro_use]
-//! extern crate proptest;
 //!
 //! use std::sync::atomic::{AtomicUsize, Ordering};
 //!
@@ -75,7 +71,7 @@
 //!     Implementation => let i = model::Shared::new(AtomicUsize::new(0)),
 //!     BuggyAdd(usize)(v in 0usize..4) -> usize {
 //!         let current = i.load(Ordering::SeqCst);
-//!         thread::yield_now();
+//!         std::thread::yield_now();
 //!         i.store(current + v, Ordering::SeqCst);
 //!         current + v
 //!     },
@@ -84,7 +80,7 @@
 //!     },
 //!     BuggyCas((usize, usize))((old, new) in (0usize..4, 0usize..4)) -> usize {
 //!         let current = i.load(Ordering::SeqCst);
-//!         thread::yield_now();
+//!         std::thread::yield_now();
 //!         if current == old {
 //!             i.store(new, Ordering::SeqCst);
 //!             new
@@ -96,12 +92,11 @@
 //!# }
 //! ```
 extern crate permutohedron;
-extern crate proptest;
 
-use std::env;
-use std::ops::Deref;
-
-use proptest::test_runner::Config;
+#[macro_use]
+pub extern crate proptest as pt;
+#[doc(hidden)]
+pub use pt::*;
 
 pub struct Shared<T>(*mut T);
 
@@ -117,7 +112,7 @@ unsafe impl<T> Sync for Shared<T> {}
 
 unsafe impl<T> Send for Shared<T> {}
 
-impl<T> Deref for Shared<T> {
+impl<T> std::ops::Deref for Shared<T> {
     type Target = T;
 
     fn deref(&self) -> &T {
@@ -151,9 +146,9 @@ macro_rules! model {
         Implementation => $implementation:stmt,
         $($op:ident ($($type:ty),*) ($parm:pat in $strategy:expr) => $body:expr),*
     ) => {
-        use proptest::collection::vec as prop_vec;
-        use proptest::prelude::*;
-        use proptest::test_runner::TestRunner;
+        use $crate::pt::collection::vec as prop_vec;
+        use $crate::pt::prelude::*;
+        use $crate::pt::test_runner::TestRunner;
 
         #[derive(Debug)]
         enum Op {
@@ -181,7 +176,7 @@ macro_rules! model {
             $implementation;
 
             for op in ops {
-                match *op {
+                match op {
                     $(Op::$op($parm) => $body),*
                 };
             };
@@ -210,11 +205,11 @@ macro_rules! linearizable {
         Implementation => $implementation:stmt,
         $($op:ident ($($type:ty),*) ($parm:pat in $strategy:expr) -> $ret:ty $body:block),*
     ) => {
-        use std::thread;
+        use $crate::pt::collection::vec as prop_vec;
+        use $crate::pt::prelude::*;
+        use $crate::pt::test_runner::TestRunner;
 
-        use proptest::collection::vec as prop_vec;
-        use proptest::prelude::*;
-        use proptest::test_runner::TestRunner;
+        use std::ops::Deref as StdDeref;
 
         #[derive(Debug, Clone)]
         enum Op {
@@ -246,13 +241,13 @@ macro_rules! linearizable {
         let config = $config;
         let mut runner = TestRunner::new(config);
 
-        match runner.run(&arb(), |&(split_point, ref ops)| {
+        match runner.run(&arb(), |(split_point, ref ops)| {
             $implementation;
 
             let ops1 = ops[0..split_point].to_vec();
             let ops2 = ops[split_point..].to_vec();
 
-            let t1 = thread::spawn(move || {
+            let t1 = std::thread::spawn(move || {
                     let mut ret = vec![];
                     for op in ops1 {
                         ret.push(match op {
@@ -264,7 +259,7 @@ macro_rules! linearizable {
                     ret
                 });
 
-            let t2 = thread::spawn(move || {
+            let t2 = std::thread::spawn(move || {
                     let mut ret = vec![];
                     for op in ops2 {
                         ret.push(match op {
@@ -326,7 +321,7 @@ macro_rules! linearizable {
             Ok(_) => {}
             Err(e) =>  panic!("{}\n{}", e, runner),
         }
-    }
+    };
 }
 
 pub fn permutohedron_heap<'a, Data, T>(
@@ -340,8 +335,10 @@ where
 }
 
 /// Provide a default config with number of cases respecting the `PROPTEST_CASES` env variable.
+use pt::test_runner::Config;
+
 pub fn default_config(file: &'static str) -> Config {
-    let cases = env::var("PROPTEST_CASES")
+    let cases = std::env::var("PROPTEST_CASES")
         .ok()
         .and_then(|val| val.parse().ok())
         .unwrap_or(1000);
