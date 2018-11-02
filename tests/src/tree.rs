@@ -44,10 +44,9 @@ impl RngCore for SledGen {
 pub fn fuzz_then_shrink(buf: &[u8]) {
     let ops: Vec<Op> = buf
         .chunks(2)
-        .filter(|chunk| chunk.len() == 2)
         .map(|chunk| {
             let mut seed = [0u8; 32];
-            seed[0..2].copy_from_slice(chunk);
+            seed[0..chunk.len()].copy_from_slice(chunk);
             let rng: StdRng = SeedableRng::from_seed(seed);
             let mut sled_rng = SledGen { r: rng, size: 2 };
 
