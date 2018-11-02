@@ -92,26 +92,26 @@ assert_eq!(tree.get(&k), Ok(Some(vec![4])));
 
 # plans
 
-* beat [LSM trees](https://en.wikipedia.org/wiki/Log-structured_merge-tree)
-  for reads and [traditional B+ trees](https://en.wikipedia.org/wiki/B%2B_tree) for writes
-* MVCC, transactions, and snapshots provided via a higher-level `Db` versioned-key interface
-* form the iron core of a [linearizable store](https://github.com/spacejam/rasputin) and a [flexible location-agnostic store](https://github.com/spacejam/icefall)
+* [LSM tree](https://en.wikipedia.org/wiki/Log-structured_merge-tree)-like write performance
+  with [traditional B+ tree](https://en.wikipedia.org/wiki/B%2B_tree)-like read performance
+* MVCC, transactions, and snapshots
 * forward-compatible binary format
-* bindings for other languages
+* prefix subscription semantics
+* concurrent snapshot delta generation and recovery
+* first-class access to replication stream
+* consensus protocol for [PC/EC](https://en.wikipedia.org/wiki/PACELC_theorem) systems
+* pluggable conflict detection and resolution strategies for [PA/EL](https://en.wikipedia.org/wiki/PACELC_theorem) systems
+* SQL support
+* native bindings
 
 # known issues, warnings
 
-* quite young, should be considered unstable for the time being
-* the C API is likely to change rapidly
 * the on-disk format is going to change in non-forward compatible ways
   before the `1.0.0` release! after that, we will always support
   forward migrations.
-* has not yet received much attention for performance tuning,
-  it has an extremely high theoretical performance but there
-  is a bit of tuning to get there. currently only around 200k
-  operations per second with mixed workloads, and 7 million/s
-  for read-only workloads on tiny keys. this will be improving
-  dramatically soon!
+* quite young, should be considered unstable for the time being
+* the C API is likely to change rapidly
+* writepath is not well optimized yet. readpath is essentially wait-free and zero-copy.
 * 32 bit architectures [require Rust nightly with the `nightly` feature enabled](https://github.com/spacejam/sled/issues/145).
 
 # contribution welcome!
