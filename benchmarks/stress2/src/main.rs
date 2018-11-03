@@ -17,6 +17,9 @@ use chan_signal::Signal;
 use docopt::Docopt;
 use rand::{thread_rng, Rng};
 
+static TOTAL: AtomicUsize = AtomicUsize::new(0);
+static SEQ: AtomicUsize = AtomicUsize::new(0);
+
 const USAGE: &'static str = "
 Usage: stress [--threads=<#>] [--burn-in] [--duration=<s>] \
     [--key-len=<l>] [--val-len=<l>] \
@@ -26,7 +29,8 @@ Usage: stress [--threads=<#>] [--burn-in] [--duration=<s>] \
     [--cas-prop=<p>] \
     [--scan-prop=<p>] \
     [--merge-prop=<p>] \
-    [--entries=<n>]
+    [--entries=<n>] \
+    [--sequential]
 
 Options:
     --threads=<#>      Number of threads [default: 4].
@@ -41,6 +45,7 @@ Options:
     --scan-prop=<p>    The relative proportion of scan requests [default: 5].
     --merge-prop=<p>   The relative proportion of merge requests [default: 5].
     --entries=<n>      The total keyspace [default: 100000].
+    --sequential       Run the test in sequential mode instead of random.
 ";
 
 #[derive(Deserialize, Clone)]
@@ -57,6 +62,7 @@ struct Args {
     flag_scan_prop: usize,
     flag_merge_prop: usize,
     flag_entries: usize,
+    flag_sequential: bool,
 }
 
 // defaults will be applied later based on USAGE above
@@ -73,13 +79,14 @@ static mut ARGS: Args = Args {
     flag_scan_prop: 0,
     flag_merge_prop: 0,
     flag_entries: 0,
+    flag_sequential: false,
 };
 
-fn report(shutdown: Arc<AtomicBool>, total: Arc<AtomicUsize>) {
+fn report(shutdown: Arc<AtomicBool>) {
     let mut last = 0;
     while !shutdown.load(Ordering::Relaxed) {
         thread::sleep(std::time::Duration::from_secs(1));
-        let total = total.load(Ordering::Acquire);
+        let total = TOTAL.load(Ordering::Acquire);
 
         println!("did {} ops", total - last);
 
@@ -101,11 +108,7 @@ fn concatenate_merge(
     Some(ret)
 }
 
-fn run(
-    tree: Arc<sled::Tree>,
-    shutdown: Arc<AtomicBool>,
-    total: Arc<AtomicUsize>,
-) {
+fn run(tree: Arc<sled::Tree>, shutdown: Arc<AtomicBool>) {
     let args = unsafe { ARGS.clone() };
 
     let get_max = args.flag_get_prop;
@@ -116,15 +119,21 @@ fn run(
     let merge_max = scan_max + args.flag_merge_prop;
 
     let bytes = |len| -> Vec<u8> {
-        let i = thread_rng().gen::<usize>() % args.flag_entries;
+        let i = if args.flag_sequential {
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        } else {
+            thread_rng().gen::<usize>()
+        } % args.flag_entries;
+
         let i_bytes: [u8; std::mem::size_of::<usize>()] =
             unsafe { std::mem::transmute(i) };
+
         i_bytes.into_iter().cycle().take(len).cloned().collect()
     };
     let mut rng = thread_rng();
 
     while !shutdown.load(Ordering::Relaxed) {
-        total.fetch_add(1, Ordering::Release);
+        TOTAL.fetch_add(1, Ordering::Release);
         let key = bytes(args.flag_key_len);
         let choice = rng.gen_range(0, merge_max + 1);
 
@@ -183,7 +192,6 @@ fn main() {
         ARGS.clone()
     };
 
-    let total = Arc::new(AtomicUsize::new(0));
     let shutdown = Arc::new(AtomicBool::new(false));
 
     let config = sled::ConfigBuilder::new()
@@ -210,12 +218,11 @@ fn main() {
     for i in 0..n_threads + 1 {
         let tree = tree.clone();
         let shutdown = shutdown.clone();
-        let total = total.clone();
 
         let t = if i == 0 {
-            thread::spawn(move || report(shutdown, total))
+            thread::spawn(move || report(shutdown))
         } else {
-            thread::spawn(move || run(tree, shutdown, total))
+            thread::spawn(move || run(tree, shutdown))
         };
 
         threads.push(t);
@@ -237,7 +244,7 @@ fn main() {
         t.join().unwrap();
     }
 
-    let ops = total.load(Ordering::SeqCst);
+    let ops = TOTAL.load(Ordering::SeqCst);
     let time = now.elapsed().as_secs() as usize;
 
     println!(
