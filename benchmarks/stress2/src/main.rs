@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate serde_derive;
-extern crate chan_signal;
 extern crate docopt;
+extern crate env_logger;
 extern crate rand;
 extern crate sled;
 
@@ -13,7 +13,6 @@ use std::{
     thread,
 };
 
-use chan_signal::Signal;
 use docopt::Docopt;
 use rand::{thread_rng, Rng};
 
@@ -182,7 +181,7 @@ fn run(tree: Arc<sled::Tree>, shutdown: Arc<AtomicBool>) {
 }
 
 fn main() {
-    let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
+    env_logger::init();
 
     let args = unsafe {
         ARGS = Docopt::new(USAGE)
@@ -228,17 +227,12 @@ fn main() {
         threads.push(t);
     }
 
-    if unsafe { ARGS.flag_burn_in } {
-        println!("waiting on signal");
-        signal.recv();
-        println!("got shutdown signal, cleaning up...");
-    } else {
+    if !args.flag_burn_in {
         thread::sleep(std::time::Duration::from_secs(unsafe {
             ARGS.flag_duration
         }));
+        shutdown.store(true, Ordering::SeqCst);
     }
-
-    shutdown.store(true, Ordering::SeqCst);
 
     for t in threads.into_iter() {
         t.join().unwrap();
