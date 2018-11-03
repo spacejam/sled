@@ -1,6 +1,6 @@
 [package]
 name = "sled_sync"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Tyler Neely <tyler.neely@ferrous-systems.com>"]
 
 [features]
