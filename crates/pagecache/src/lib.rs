@@ -21,6 +21,7 @@ compile_error!(
 #[macro_use]
 extern crate serde_derive;
 extern crate bincode;
+extern crate fs2;
 extern crate historian;
 extern crate serde;
 extern crate sled_sync as sync;

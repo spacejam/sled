@@ -1,17 +1,21 @@
-use std::fmt::Debug;
-use std::fs;
-use std::io::{Read, Seek, Write};
-use std::ops::Deref;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{
-    AtomicPtr, AtomicUsize, Ordering, ATOMIC_USIZE_INIT,
+use std::{
+    fmt::Debug,
+    fs,
+    io::{Read, Seek, Write},
+    ops::Deref,
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{
+            AtomicPtr, AtomicUsize, Ordering, ATOMIC_USIZE_INIT,
+        },
+        Arc, Mutex,
+    },
 };
-use std::sync::{Arc, Mutex};
-
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 
 use bincode::{deserialize, serialize};
+use fs2::FileExt;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 
 use super::*;
 
@@ -395,6 +399,14 @@ impl Config {
 
         match options.open(&path) {
             Ok(file) => {
+                // try to exclusively lock the file
+                if let Err(_) = file.try_lock_exclusive() {
+                    return Err(Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "could not acquire exclusive file lock",
+                    )));
+                }
+
                 // turn file into a raw pointer for future use
                 let file_ptr =
                     Box::into_raw(Box::new(Arc::new(file)));

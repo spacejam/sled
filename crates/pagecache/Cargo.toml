@@ -31,6 +31,7 @@ rayon = "1.0"
 zstd = { version = "0.4", optional = true }
 pagetable = { version = "0.1", path = "../pagetable" }
 sled_sync = { version = "0.1", path = "../sled_sync" }
+fs2 = "0.4"
 
 [dependencies.historian]
 version = "3.0"
