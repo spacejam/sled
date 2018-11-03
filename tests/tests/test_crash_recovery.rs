@@ -193,6 +193,7 @@ fn run_with_snapshot() {
 }
 
 #[test]
+#[ignore]
 fn test_crash_recovery_with_runtime_snapshot() {
     cleanup_with_snapshots();
     for _ in 0..100 {
@@ -218,6 +219,7 @@ fn test_crash_recovery_with_runtime_snapshot() {
 }
 
 #[test]
+#[ignore]
 fn test_crash_recovery_no_runtime_snapshot() {
     cleanup();
     for _ in 0..100 {

@@ -201,6 +201,7 @@ fn recover_tree() {
 
 #[test]
 #[cfg(not(target_os = "fuchsia"))]
+#[ignore]
 fn quickcheck_tree_matches_btreemap() {
     // use fewer tests for travis OSX builds that stall out all the time
     #[cfg(target_os = "macos")]
