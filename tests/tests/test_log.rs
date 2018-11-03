@@ -571,6 +571,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
 }
 
 #[test]
+#[ignore]
 fn quickcheck_log_works() {
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 100))

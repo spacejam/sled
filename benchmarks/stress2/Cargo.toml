@@ -19,6 +19,6 @@ no_metrics = ["sled/no_metrics"]
 serde = "1.0"
 serde_derive = "1.0"
 docopt = "1.0"
-chan-signal = "0.3"
+env_logger = "0.5"
 rand = "0.4"
 sled = { path = "../../crates/sled" }
