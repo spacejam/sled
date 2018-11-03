@@ -194,6 +194,7 @@ impl Metrics {
             f("snapshot", &self.advance_snapshot),
             f("page_in", &self.page_in),
             f("merge", &self.merge_page),
+            f("rewrite", &self.rewrite_page),
             f("pull", &self.pull),
             f("page_out", &self.page_out),
         ]);
