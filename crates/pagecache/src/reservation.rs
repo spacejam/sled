@@ -33,8 +33,6 @@ impl<'a> Reservation<'a> {
         if self.is_blob {
             let blob_ptr = self.blob_ptr().unwrap();
 
-            assert_eq!(self.lsn, blob_ptr);
-
             trace!(
                 "removing blob for aborted reservation at lsn {}",
                 blob_ptr
