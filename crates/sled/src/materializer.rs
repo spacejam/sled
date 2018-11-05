@@ -23,7 +23,7 @@ impl Materializer for BLinkMaterializer {
 
         BLinkMaterializer {
             roots: Mutex::new(roots),
-            config: config,
+            config,
         }
     }
 
@@ -41,22 +41,20 @@ impl Materializer for BLinkMaterializer {
     }
 
     fn recover(&self, frag: &Frag) -> Option<Vec<(PageId, PageId)>> {
-        match *frag {
-            Frag::Base(ref node, prev_root) => {
-                if let Some(prev_root) = prev_root {
-                    let mut roots = self.roots.lock().expect(
-                        "a thread panicked and poisoned the BLinkMaterializer's
-                        roots mutex.",
-                    );
-                    if !roots.contains(&(node.id, prev_root)) {
-                        roots.push((node.id, prev_root));
-                        roots.sort();
-                        return Some(roots.clone());
-                    }
+        if let Frag::Base(ref node, prev_root) = *frag {
+            if let Some(prev_root) = prev_root {
+                let mut roots = self.roots.lock().expect(
+                    "a thread panicked and poisoned the BLinkMaterializer's
+                    roots mutex.",    
+                );
+                if !roots.contains(&(node.id, prev_root)) {
+                    roots.push((node.id, prev_root));
+                    roots.sort();
+                    return Some(roots.clone());
                 }
             }
-            _ => (),
         }
+        
         None
     }
 
