@@ -30,7 +30,7 @@ pub(crate) fn prefix_encode(prefix: &[u8], buf: &[u8]) -> Vec<u8> {
 }
 
 pub(crate) fn prefix_decode(prefix: &[u8], buf: &[u8]) -> Vec<u8> {
-    assert!(buf.len() >= 1);
+    assert!(!buf.is_empty());
     let prefix_len = buf[0] as usize;
     let mut ret = Vec::with_capacity(prefix_len + buf.len() - 1);
     unsafe {
@@ -55,17 +55,17 @@ pub(crate) fn prefix_cmp(a: &[u8], b: &[u8]) -> Ordering {
     }
 
     if a[0] > b[0] {
-        return Ordering::Less;
+        Ordering::Less
     } else if a[0] < b[0] {
-        return Ordering::Greater;
+        Ordering::Greater
     } else {
-        return a[1..].cmp(&b[1..]);
+        a[1..].cmp(&b[1..])
     }
 }
 
 /// Compare `a` and `b`, assuming that `a` is prefix encoded and `b` is not.
 pub(crate) fn prefix_cmp_encoded(a: &[u8], mut b: &[u8], mut prefix: &[u8]) -> Ordering {
-    assert!(a.len() >= 1 && a[0] as usize <= prefix.len());
+    assert!(a.is_empty() && a[0] as usize <= prefix.len());
 
     let mut a_prefix_len = a[0];
     let a_suffix = &a[1..];
