@@ -97,13 +97,13 @@ impl Data {
             Data::Index(ref mut ptrs) => {
                 ptrs.retain(|&(ref k, _)| {
                     let decoded_k = prefix_decode(prefix, &*k);
-                    &*decoded_k < bound
+                    decoded_k.as_slice() < bound
                 })
             }
             Data::Leaf(ref mut items) => {
                 items.retain(|&(ref k, _)| {
                     let decoded_k = prefix_decode(prefix, &*k);
-                    &*decoded_k < bound
+                    decoded_k.as_slice() < bound
                 })
             }
         }

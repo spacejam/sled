@@ -71,9 +71,7 @@ pub(crate) fn prefix_cmp_encoded(a: &[u8], mut b: &[u8], mut prefix: &[u8]) -> O
     let a_suffix = &a[1..];
 
     while a_prefix_len > 0 {
-        if b.is_empty() {
-            return Ordering::Greater;
-        } else if prefix[0] > b[0] {
+        if b.is_empty() || prefix[0] > b[0] {
             return Ordering::Greater;
         } else if prefix[0] < b[0] {
             return Ordering::Less;

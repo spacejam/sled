@@ -1,4 +1,3 @@
-#[allow(unused)]
 #[macro_use]
 extern crate log;
 extern crate crossbeam_epoch as epoch;
