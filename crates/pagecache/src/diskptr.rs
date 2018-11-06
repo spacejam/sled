@@ -4,7 +4,17 @@ use super::*;
 use super::LogReader;
 
 /// A pointer to a location on disk or an off-log blob.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialOrd,
+    Ord,
+    Copy,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+)]
 pub enum DiskPtr {
     /// Points to a value stored in the single-file log.
     Inline(LogId),

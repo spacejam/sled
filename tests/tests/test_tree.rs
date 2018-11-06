@@ -16,8 +16,8 @@ use tests::tree::{
 
 use quickcheck::{QuickCheck, StdGen};
 
-const N_THREADS: usize = 5;
-const N_PER_THREAD: usize = 2000;
+const N_THREADS: usize = 10;
+const N_PER_THREAD: usize = 1000;
 const N: usize = N_THREADS * N_PER_THREAD; // NB N should be multiple of N_THREADS
 const SPACE: usize = N;
 
@@ -32,8 +32,12 @@ fn kv(i: usize) -> Vec<u8> {
 fn parallel_tree_ops() {
     let config = ConfigBuilder::new()
         .temporary(true)
-        .blink_node_split_size(0)
+        .io_bufs(3)
+        .blink_node_split_size(500)
+        .flush_every_ms(None)
+        .snapshot_after_ops(100_000_000)
         .io_buf_size(128_000)
+        .print_profile_on_drop(true)
         .build();
 
     macro_rules! par {
@@ -74,6 +78,14 @@ fn parallel_tree_ops() {
         sled::Tree::start(config.clone())
             .expect("should be able to restart Tree"),
     );
+
+    let n_scanned = t.iter().count();
+    if n_scanned != N {
+        println!(
+            "WARNING: only {} keys present in the DB. expected {}",
+            n_scanned, N
+        );
+    }
 
     println!("========== reading sets ==========");
     par!{t, |tree: &Tree, k: Vec<u8>| {

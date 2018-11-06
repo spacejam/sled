@@ -77,6 +77,9 @@ mod snapshot;
 mod tx;
 mod util;
 
+#[cfg(feature = "event_log")]
+pub mod event_log;
+
 pub mod log;
 
 use std::{

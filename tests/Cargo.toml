@@ -5,7 +5,7 @@ authors = ["Tyler Neely <t@jujit.su>"]
 publish = false
 
 [dependencies.pagecache]
-features = ["failpoints", "lock_free_delays"]
+features = ["failpoints", "lock_free_delays", "event_log"]
 path = "../crates/pagecache"
 
 [dependencies.sled]
