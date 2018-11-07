@@ -78,6 +78,7 @@ mod tx;
 mod util;
 
 #[cfg(feature = "event_log")]
+/// The event log helps debug concurrency issues.
 pub mod event_log;
 
 pub mod log;

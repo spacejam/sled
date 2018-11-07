@@ -224,7 +224,8 @@ pub struct Config {
     build_locker: Arc<Mutex<()>>,
     refs: Arc<AtomicUsize>,
     #[cfg(feature = "event_log")]
-    events: Arc<event_log::EventLog>,
+    /// an event log for concurrent debugging
+    pub events: Arc<event_log::EventLog>,
 }
 
 unsafe impl Send for Config {}
