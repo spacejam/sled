@@ -334,7 +334,7 @@ where
         }
 
         self.config
-            .events
+            .event_log
             .pages_before_restart(pages_before_restart);
     }
 }
@@ -1232,7 +1232,7 @@ where
             }
 
             self.config
-                .events
+                .event_log
                 .pages_after_restart(pages_after_restart);
         }
     }

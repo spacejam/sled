@@ -190,7 +190,7 @@ impl ConfigBuilder {
             build_locker: Arc::new(Mutex::new(())),
             refs: Arc::new(AtomicUsize::new(0)),
             #[cfg(feature = "event_log")]
-            events: Arc::new(crate::event_log::EventLog::default()),
+            event_log: Arc::new(crate::event_log::EventLog::default()),
         }
     }
 
@@ -225,7 +225,7 @@ pub struct Config {
     refs: Arc<AtomicUsize>,
     #[cfg(feature = "event_log")]
     /// an event log for concurrent debugging
-    pub events: Arc<event_log::EventLog>,
+    pub event_log: Arc<event_log::EventLog>,
 }
 
 unsafe impl Send for Config {}
@@ -240,7 +240,7 @@ impl Clone for Config {
             build_locker: self.build_locker.clone(),
             refs: self.refs.clone(),
             #[cfg(feature = "event_log")]
-            events: self.events.clone(),
+            event_log: self.event_log.clone(),
         }
     }
 }

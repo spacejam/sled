@@ -45,16 +45,34 @@ impl EventLog {
         // if we encounter a `PagesAfterRestart`, then we should
         // compare it to any subsequent `PagesBeforeRestart`
 
-        let mut par = None;
+        let mut recovered_pages = None;
+        let mut recovered_segments = None;
+        let mut recovered_tree_root = None;
 
         for event in iter {
             match event {
                 Event::PagesAfterRestart { pages } => {
-                    par = Some(pages.clone());
+                    recovered_pages = Some(pages.clone());
                 }
                 Event::PagesBeforeRestart { pages } => {
-                    if let Some(ref par) = par {
+                    if let Some(ref par) = recovered_pages {
                         assert_eq!(par, pages);
+                    }
+                }
+                Event::SegmentsAfterRestart { segments } => {
+                    recovered_segments = Some(segments.clone());
+                }
+                Event::SegmentsBeforeRestart { segments } => {
+                    if let Some(ref segs) = recovered_segments {
+                        assert_eq!(segs, segments);
+                    }
+                }
+                Event::TreeRootAfterRestart { pid } => {
+                    recovered_tree_root = Some(pid);
+                }
+                Event::TreeRootBeforeRestart { pid } => {
+                    if let Some(ref root) = recovered_tree_root {
+                        assert_eq!(*root, pid);
                     }
                 }
                 _ => {}
@@ -76,12 +94,29 @@ impl EventLog {
         self.inner.push(Event::PagesAfterRestart { pages });
     }
 
+    pub fn segments_before_restart(
+        &self,
+        segments: HashMap<Lsn, LogId>,
+    ) {
+        self.inner.push(Event::SegmentsBeforeRestart { segments });
+    }
+
+    pub fn segments_after_restart(
+        &self,
+        segments: HashMap<Lsn, LogId>,
+    ) {
+        self.inner.push(Event::SegmentsAfterRestart { segments });
+    }
+
+    pub fn tree_root_before_restart(&self, pid: usize) {
+        self.inner.push(Event::TreeRootBeforeRestart { pid });
+    }
+
+    pub fn tree_root_after_restart(&self, pid: usize) {
+        self.inner.push(Event::TreeRootAfterRestart { pid });
+    }
+
     /*
-
-    fn segments_before_restart(&self, snapshot: &Snapshot) {}
-
-    fn segments_after_restart(&self, snapshot: &Snapshot) {}
-
     fn key_to_page(&self, Lsn, key: &[u8], page: PageId) {}
 
     fn page_to_segment(
@@ -99,7 +134,6 @@ impl EventLog {
 impl Drop for EventLog {
     fn drop(&mut self) {
         self.verify();
-        panic!("dropping event log");
     }
 }
 
@@ -130,10 +164,10 @@ pub enum Event {
         lid: LogId,
     },
     SegmentsBeforeRestart {
-        segments: HashMap<LogId, Lsn>,
+        segments: HashMap<Lsn, LogId>,
     },
     SegmentsAfterRestart {
-        segments: HashMap<LogId, Lsn>,
+        segments: HashMap<Lsn, LogId>,
     },
     PagesBeforeRestart {
         pages: HashMap<PageId, Vec<DiskPtr>>,

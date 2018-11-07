@@ -92,6 +92,16 @@ pub(super) struct SegmentAccountant {
     ordering: BTreeMap<Lsn, LogId>,
 }
 
+#[cfg(feature = "event_log")]
+impl Drop for SegmentAccountant {
+    fn drop(&mut self) {
+        let segments: std::collections::HashMap<Lsn, LogId> =
+            self.ordering.iter().map(|(&k, &v)| (k, v)).collect();
+
+        self.config.event_log.segments_before_restart(segments);
+    }
+}
+
 /// A `Segment` holds the bookkeeping information for
 /// a contiguous block of the disk. It may contain many
 /// fragments from different pages. Over time, we track
@@ -629,6 +639,16 @@ impl SegmentAccountant {
             debug!(
                 "recovered no segments so not initializing from any",
             );
+        }
+
+        #[cfg(feature = "event_log")]
+        {
+            let segments: std::collections::HashMap<
+                Lsn,
+                LogId,
+            > = self.ordering.iter().map(|(&k, &v)| (k, v)).collect();
+
+            self.config.event_log.segments_before_restart(segments);
         }
 
         Ok(())

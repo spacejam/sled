@@ -29,6 +29,15 @@ pub struct Tree {
 unsafe impl Send for Tree {}
 unsafe impl Sync for Tree {}
 
+#[cfg(feature = "event_log")]
+impl Drop for Tree {
+    fn drop(&mut self) {
+        self.config
+            .event_log
+            .tree_root_before_restart(self.root.load(SeqCst));
+    }
+}
+
 impl Tree {
     /// Load existing or create a new `Tree` with a default configuration.
     pub fn start_default<P: AsRef<std::path::Path>>(
@@ -138,6 +147,9 @@ impl Tree {
 
             root_id
         };
+
+        #[cfg(feature = "event_log")]
+        config.event_log.tree_root_after_restart(root_id);
 
         Ok(Tree {
             pages: Arc::new(pages),
