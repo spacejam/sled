@@ -84,15 +84,7 @@ impl Arbitrary for Key {
     }
 
     fn shrink(&self) -> Box<Iterator<Item = Key>> {
-        let mut out = vec![];
-        for len in 0..self.0.len() {
-            out.push(Key(self.0[..len]
-                .iter()
-                .map(|e| e / 2)
-                .collect()));
-            out.push(Key(self.0[..len].to_vec()));
-        }
-        Box::new(out.into_iter())
+        Box::new(self.0.shrink().map(|k| Key(k)))
     }
 }
 
@@ -108,6 +100,16 @@ pub enum Op {
 }
 
 use self::Op::*;
+
+impl Op {
+    pub fn is_restart(&self) -> bool {
+        if let Restart = self {
+            true
+        } else {
+            false
+        }
+    }
+}
 
 impl Arbitrary for Op {
     fn arbitrary<G: Gen>(g: &mut G) -> Op {

@@ -9,7 +9,7 @@ features = ["failpoints", "lock_free_delays", "event_log"]
 path = "../crates/pagecache"
 
 [dependencies.sled]
-features = ["failpoints", "lock_free_delays", "check_snapshot_integrity"]
+features = ["failpoints", "lock_free_delays", "check_snapshot_integrity", "event_log"]
 path = "../crates/sled"
 
 [dependencies]
@@ -20,3 +20,4 @@ env_logger = "0.5"
 libc = "0.2"
 fail = "0.2"
 lazy_static = "1.0"
+deterministic = { path = "../crates/deterministic" }
