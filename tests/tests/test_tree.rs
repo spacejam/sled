@@ -254,17 +254,12 @@ fn recover_tree() {
 #[cfg(not(target_os = "fuchsia"))]
 #[ignore]
 fn quickcheck_tree_matches_btreemap() {
-    // use fewer tests for travis OSX builds that stall out all the time
-    #[cfg(target_os = "macos")]
     let n_tests = 100;
-
-    #[cfg(not(target_os = "macos"))]
-    let n_tests = 5;
 
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 1000))
         .tests(n_tests)
-        .max_tests(100000)
+        .max_tests(1000)
         .quickcheck(
             prop_tree_matches_btreemap
                 as fn(Vec<Op>, u8, u8, bool) -> bool,
@@ -684,4 +679,10 @@ fn tree_bug_17() {
         0,
         false,
     );
+}
+
+#[test]
+fn tree_bug_18() {
+    // postmortem:
+    prop_tree_matches_btreemap(vec![], 0, 0, false);
 }
