@@ -92,19 +92,29 @@ impl LogReader for File {
         if header.lsn as usize % segment_len
             != lid as usize % segment_len
         {
+            let _hb: [u8; MSG_HEADER_LEN] = header.into();
             // our message lsn was not aligned to our segment offset
+            trace!(
+                "read a message whose header lsn \
+                 is not aligned to its position \
+                 within its segment. header: {:?} \
+                 expected: relative offset {} bytes: {:?}",
+                header,
+                lid as usize % segment_len,
+                _hb
+            );
             return Ok(LogRead::Corrupted(header.len));
         }
 
         let max_possible_len =
             (ceiling - lid - MSG_HEADER_LEN as LogId) as usize;
         if header.len > max_possible_len {
-            trace!("read a corrupted message of len {}", header.len);
+            trace!("read a corrupted message with impossibly long length of {}", header.len);
             return Ok(LogRead::Corrupted(header.len));
         }
 
         if header.kind == MessageKind::Corrupted {
-            trace!("read a corrupted message of len {}", header.len);
+            trace!("read a corrupted message with Corrupted MessageKind with len {}", header.len);
             return Ok(LogRead::Corrupted(header.len));
         }
 

@@ -32,6 +32,10 @@ impl Iterator for LogIter {
             {
                 // We've read to the end of a torn
                 // segment and should stop now.
+                trace!(
+                    "trailer is none, ending iteration at {}",
+                    self.max_lsn
+                );
                 return None;
             } else if self.segment_base.is_none()
                 || remaining_seg_too_small_for_msg
@@ -59,12 +63,14 @@ impl Iterator for LogIter {
                         return None;
                     }
                 } else {
+                    trace!("no segments remaining to iterate over");
                     return None;
                 }
             }
 
             if self.cur_lsn > self.max_lsn {
                 // all done
+                trace!("hit max_lsn in iterator, stopping");
                 return None;
             }
 
@@ -107,7 +113,8 @@ impl Iterator for LogIter {
                             (MSG_HEADER_LEN + on_disk_len) as Lsn;
                     }
                     Ok(LogRead::Corrupted(_len)) => {
-                        trace!("read corrupted end in LogIter::next");
+                        trace!("read corrupted msg in LogIter::next as lid {} lsn {}",
+                               lid, self.cur_lsn);
                         return None;
                     }
                     Ok(LogRead::Pad(lsn)) => {
@@ -118,6 +125,7 @@ impl Iterator for LogIter {
 
                         if self.trailer.is_none() {
                             // This segment was torn, nothing left to read.
+                            trace!("no segment trailer found, ending iteration");
                             return None;
                         }
 
@@ -148,7 +156,7 @@ impl Iterator for LogIter {
                     }
                 }
             } else {
-                return None;
+                panic!("iterator created for system with no file opened yet");
             }
         }
     }
@@ -217,6 +225,7 @@ impl LogIter {
             if st.ok && st.lsn == trailer_lsn {
                 Some(st.lsn)
             } else {
+                trace!("segment trailer corrupted, not reading next segment");
                 None
             }
         });

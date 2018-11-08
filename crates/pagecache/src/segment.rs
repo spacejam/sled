@@ -670,8 +670,9 @@ impl SegmentAccountant {
                 continue;
             }
             warn!(
-                "zeroing out empty segment header at lsn {} lid {}",
-                lsn, lid
+                "zeroing out empty segment header for segment \
+                 above snapshot_max_lsn {} at lsn {} lid {}",
+                snapshot_max_lsn, lsn, lid
             );
             to_zero.push(lsn);
             let f = self.config.file()?;

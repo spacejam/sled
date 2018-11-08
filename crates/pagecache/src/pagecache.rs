@@ -668,13 +668,12 @@ where
                 PageGet::Unallocated => {
                     // TODO when merge functionality is added,
                     // this may break
-                    panic!("get returned Unallocated");
+                    warn!("page stack deleted from pagetable before page could be rewritten");
+                    return Ok(());
                 }
             };
 
-            self.cas_page(pid, key.0, update, guard).map(|_| ())?;
-
-            Ok(())
+            self.cas_page(pid, key.0, update, guard).map(|_| ())
         }
     }
 
