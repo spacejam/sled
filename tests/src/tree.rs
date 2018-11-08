@@ -84,7 +84,16 @@ impl Arbitrary for Key {
     }
 
     fn shrink(&self) -> Box<Iterator<Item = Key>> {
-        Box::new(self.0.shrink().map(|k| Key(k)))
+        // we only want to shrink on length, not byte values
+        Box::new(
+            self.0
+                .len()
+                .shrink()
+                .zip(std::iter::repeat(self.0.clone()))
+                .map(|(len, underlying)| {
+                    Key(underlying[..len].to_vec())
+                }),
+        )
     }
 }
 
