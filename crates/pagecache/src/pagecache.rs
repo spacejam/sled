@@ -78,6 +78,17 @@ impl<M: Send> CacheEntry<M> {
             | Free(_, ptr) => *ptr,
         }
     }
+
+    fn ptr_ref_mut(&mut self) -> &mut DiskPtr {
+        use self::CacheEntry::*;
+        match self {
+            MergedResident(_, _, ptr)
+            | Resident(_, _, ptr)
+            | PartialFlush(_, ptr)
+            | Flush(_, ptr)
+            | Free(_, ptr) => ptr,
+        }
+    }
 }
 
 /// `LoggedUpdate` is for writing blocks of `Update`'s to disk
@@ -606,9 +617,13 @@ where
                 .reserve_blob(blob_ptr)
                 .map_err(|e| e.danger_cast())?;
 
-            let node =
-                node_from_frag_vec(vec![cache_entries[0].clone()])
-                    .into_shared(guard);
+            let new_ptr = log_reservation.ptr();
+            let mut new_cache_entry = cache_entries[0].clone();
+
+            *new_cache_entry.ptr_ref_mut() = new_ptr.clone();
+
+            let node = node_from_frag_vec(vec![new_cache_entry])
+                .into_shared(guard);
 
             debug_delay();
             let result =
@@ -617,7 +632,6 @@ where
             if result.is_ok() {
                 let ptrs = ptrs_from_stack(head, guard);
                 let lsn = log_reservation.lsn();
-                let new_ptr = log_reservation.ptr();
 
                 self.log
                     .with_sa(|sa| {
