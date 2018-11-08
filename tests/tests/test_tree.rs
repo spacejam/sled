@@ -36,9 +36,11 @@ fn parallel_tree_ops() {
         .blink_node_split_size(500)
         .flush_every_ms(None)
         .snapshot_after_ops(100_000_000)
-        .io_buf_size(128_000)
+        .io_buf_size(100_000)
         .print_profile_on_drop(true)
         .build();
+
+    tests::setup_logger();
 
     macro_rules! par {
         ($t:ident, $f:expr) => {
@@ -73,6 +75,14 @@ fn parallel_tree_ops() {
         assert_eq!(tree.get(&*k).unwrap().expect("we should read what we just wrote"), k);
     }};
 
+    let n_scanned = t.iter().count();
+    if n_scanned != N {
+        println!(
+            "WARNING: only {} keys present in the DB BEFORE restarting. expected {}",
+            n_scanned, N
+        );
+    }
+
     drop(t);
     let t = Arc::new(
         sled::Tree::start(config.clone())
@@ -82,7 +92,7 @@ fn parallel_tree_ops() {
     let n_scanned = t.iter().count();
     if n_scanned != N {
         println!(
-            "WARNING: only {} keys present in the DB. expected {}",
+            "WARNING: only {} keys present in the DB AFTER restarting. expected {}",
             n_scanned, N
         );
     }
