@@ -1,5 +1,4 @@
-#[allow(unused)]
-#[macro_use]
+#[cfg_attr(any(test, feature = "lock_free_delays"), macro_use)]
 extern crate log;
 extern crate crossbeam_epoch as epoch;
 

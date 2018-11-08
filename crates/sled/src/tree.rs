@@ -7,6 +7,8 @@ use pagecache::PagePtr;
 
 use super::*;
 
+type Path<'g> = Vec<(&'g Frag, TreePtr<'g>)>;
+
 impl<'a> IntoIterator for &'a Tree {
     type Item = Result<(Vec<u8>, PinnedValue), ()>;
     type IntoIter = Iter<'a>;
@@ -153,7 +155,7 @@ impl Tree {
 
         Ok(Tree {
             pages: Arc::new(pages),
-            config: config,
+            config,
             root: Arc::new(AtomicUsize::new(root_id)),
         })
     }
@@ -164,7 +166,7 @@ impl Tree {
     }
 
     /// Retrieve a value from the `Tree` if it exists.
-    pub fn get<'g>(
+    pub fn get(
         &self,
         key: &[u8],
     ) -> Result<Option<PinnedValue>, ()> {
@@ -577,12 +579,12 @@ impl Tree {
         guard.flush();
 
         Iter {
-            id: id,
+            id,
             inner: &self.pages,
             last_key: Bound::Exclusive(key.to_vec()),
-            broken: broken,
+            broken,
             done: false,
-            guard: guard,
+            guard,
         }
     }
 
@@ -828,7 +830,7 @@ impl Tree {
         &self,
         key: &[u8],
         guard: &'g Guard,
-    ) -> Result<(Vec<(&'g Frag, TreePtr<'g>)>, Option<&'g [u8]>), ()>
+    ) -> Result<(Path<'g>, Option<&'g [u8]>), ()>
     {
         let path = self.path_for_key(&*key, guard)?;
 

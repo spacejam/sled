@@ -173,7 +173,7 @@ impl Node {
     pub(crate) fn split(&self, id: PageId) -> Node {
         let (split, right_data) = self.data.split(self.lo.inner());
         Node {
-            id: id,
+            id,
             data: right_data,
             next: self.next,
             lo: Bound::Inclusive(split),
