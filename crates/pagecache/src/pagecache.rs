@@ -1041,15 +1041,6 @@ where
         Ok(())
     }
 
-    #[cfg(feature = "rayon")]
-    fn rayon_pull<'g>(
-        &self,
-        lsn: Lsn,
-        ptr: DiskPtr,
-    ) -> Result<P, Option<PagePtr<'g, P>>> {
-        self.pull(lsn, ptr).map_err(|e1| e1.danger_cast())
-    }
-
     fn pull<'g>(
         &self,
         lsn: Lsn,
