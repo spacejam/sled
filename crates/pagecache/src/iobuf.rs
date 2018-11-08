@@ -730,17 +730,7 @@ impl IoBufs {
             return Ok(());
         }
 
-        let should_pad = from_reserve
-            && capacity - offset(header) as usize >= MSG_HEADER_LEN;
-
-        let sealed = if should_pad {
-            mk_sealed(bump_offset(
-                header,
-                capacity as LogId - offset(header),
-            ))
-        } else {
-            mk_sealed(header)
-        };
+        let sealed = mk_sealed(header);
         let res_len = offset(sealed) as usize;
 
         let maxed = res_len == capacity;
@@ -766,31 +756,6 @@ impl IoBufs {
         });
         if !worked {
             return Ok(());
-        }
-
-        if should_pad {
-            let offset = offset(header) as usize;
-            let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
-            let len = capacity - offset - MSG_HEADER_LEN;
-
-            // take the crc of the random bytes already after where we
-            // would place our header.
-            let padding_bytes = vec![EVIL_BYTE; len];
-            let crc16 = crc16_arr(&*padding_bytes);
-
-            let header = MessageHeader {
-                kind: MessageKind::Pad,
-                lsn: lsn + offset as Lsn,
-                len: len,
-                crc16: crc16,
-            };
-
-            let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
-
-            data[offset..offset + MSG_HEADER_LEN]
-                .copy_from_slice(&header_bytes);
-            data[offset + MSG_HEADER_LEN..capacity]
-                .copy_from_slice(&*padding_bytes);
         }
 
         assert!(
@@ -925,6 +890,7 @@ impl IoBufs {
         let header = iobuf.get_header();
         let lid = iobuf.get_lid();
         let base_lsn = iobuf.get_lsn();
+        let capacity = iobuf.get_capacity();
 
         let io_buf_size = self.config.io_buf_size;
 
@@ -939,18 +905,52 @@ impl IoBufs {
             "created reservation for uninitialized slot",
         );
 
+        assert!(is_sealed(header));
+
         let res_len = offset(header) as usize;
+
+        let maxed = iobuf.linearized(|| iobuf.get_maxed());
+        let unused_space = capacity - res_len;
+        let should_pad = unused_space >= MSG_HEADER_LEN;
+
+        let total_len = if maxed && should_pad {
+            let offset = offset(header) as usize;
+            let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
+            let len = capacity - offset - MSG_HEADER_LEN;
+
+            // take the crc of the random bytes already after where we
+            // would place our header.
+            let padding_bytes = vec![EVIL_BYTE; len];
+            let crc16 = crc16_arr(&*padding_bytes);
+
+            let header = MessageHeader {
+                kind: MessageKind::Pad,
+                lsn: base_lsn + offset as Lsn,
+                len: len,
+                crc16: crc16,
+            };
+
+            let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
+
+            data[offset..offset + MSG_HEADER_LEN]
+                .copy_from_slice(&header_bytes);
+            data[offset + MSG_HEADER_LEN..capacity]
+                .copy_from_slice(&*padding_bytes);
+
+            capacity
+        } else {
+            res_len
+        };
 
         let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
 
         let f = self.config.file()?;
         io_fail!(self, "buffer write");
-        f.pwrite_all(&data[..res_len], lid)?;
+        f.pwrite_all(&data[..total_len], lid)?;
         f.sync_all()?;
         io_fail!(self, "buffer write post");
 
         // write a trailer if we're maxed
-        let maxed = iobuf.linearized(|| iobuf.get_maxed());
         if maxed {
             let segment_lsn =
                 base_lsn / io_buf_size as Lsn * io_buf_size as Lsn;
@@ -974,6 +974,8 @@ impl IoBufs {
             f.pwrite_all(&trailer_bytes, trailer_lid)?;
             f.sync_all()?;
             io_fail!(self, "trailer write post");
+
+            M.written_bytes.measure(SEG_TRAILER_LEN as f64);
 
             iobuf.set_maxed(false);
 
@@ -1006,27 +1008,27 @@ impl IoBufs {
             );
         }
 
-        if res_len > 0 || maxed {
+        if total_len > 0 || maxed {
             let complete_len = if maxed {
                 let lsn_idx = base_lsn as usize / io_buf_size;
                 let next_seg_beginning = (lsn_idx + 1) * io_buf_size;
                 next_seg_beginning - base_lsn as usize
             } else {
-                res_len
+                total_len
             };
 
             debug!(
                 "wrote lsns {}-{} to disk at offsets {}-{} in buffer {}",
                 base_lsn,
-                base_lsn + res_len as Lsn - 1,
+                base_lsn + total_len as Lsn - 1,
                 lid,
-                lid + res_len as LogId - 1,
+                lid + total_len as LogId - 1,
                 idx
             );
             self.mark_interval(base_lsn, complete_len);
         }
 
-        M.written_bytes.measure(res_len as f64);
+        M.written_bytes.measure(total_len as f64);
 
         // signal that this IO buffer is now uninitialized
         let max = std::usize::MAX as LogId;
