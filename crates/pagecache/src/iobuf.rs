@@ -258,7 +258,17 @@ impl IoBufs {
             let start = clock();
 
             debug_delay();
-            let mut sa = segment_accountant.lock().unwrap();
+            let mut sa = match segment_accountant.lock() {
+                Ok(sa) => sa,
+                Err(poisoned) => {
+                    error!(
+                        "iobuf with_sa_deferred failed to \
+                         unlock poisoned mutex: {:?}",
+                        poisoned
+                    );
+                    return;
+                }
+            };
 
             let locked_at = clock();
 
