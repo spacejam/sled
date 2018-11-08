@@ -819,15 +819,14 @@ impl SegmentAccountant {
             if self.segments[old_idx].lsn() > lsn {
                 // has been replaced after this call already,
                 // quite a big race happened
-                // TODO think about how this happens with our segment delay
-
-                continue;
+                panic!("mark_replace called on previous version of segment. \
+                this means it was reused while other threads still had references to it.");
             }
 
             if self.segments[old_idx].state == Free {
                 // this segment is already reused
-                // TODO should this be a panic?
-                continue;
+                panic!("mark_replace called on segment already marked Free. \
+                this means it was dropped while other threads still had references to it.");
             }
 
             self.segments[old_idx].remove_pid(pid, lsn);
