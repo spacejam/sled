@@ -56,7 +56,7 @@ impl EventLog {
                 }
                 Event::PagesBeforeRestart { pages } => {
                     if let Some(ref par) = recovered_pages {
-                        assert_eq!(par, pages);
+                        assert_eq!(pages, par);
                     }
                 }
                 Event::SegmentsAfterRestart { segments } => {
@@ -64,7 +64,7 @@ impl EventLog {
                 }
                 Event::SegmentsBeforeRestart { segments } => {
                     if let Some(ref segs) = recovered_segments {
-                        assert_eq!(segs, segments);
+                        assert_eq!(segments, segs);
                     }
                 }
                 Event::TreeRootAfterRestart { pid } => {
@@ -72,7 +72,7 @@ impl EventLog {
                 }
                 Event::TreeRootBeforeRestart { pid } => {
                     if let Some(ref root) = recovered_tree_root {
-                        assert_eq!(*root, pid);
+                        assert_eq!(pid, *root);
                     }
                 }
                 _ => {}
