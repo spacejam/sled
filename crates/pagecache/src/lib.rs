@@ -90,8 +90,6 @@ use std::{
 use bincode::{deserialize, serialize};
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::sync::{debug_delay, Guard};
-
 #[doc(hidden)]
 use self::log::{
     MessageHeader, MessageKind, SegmentHeader, SegmentTrailer,
@@ -125,7 +123,7 @@ pub use self::{
     reservation::Reservation,
     result::{Error, Result},
     segment::SegmentMode,
-    sync::pin,
+    sync::{debug_delay, pin, unprotected, Guard},
     tx::Tx,
 };
 
