@@ -95,8 +95,17 @@ pub(super) struct SegmentAccountant {
 #[cfg(feature = "event_log")]
 impl Drop for SegmentAccountant {
     fn drop(&mut self) {
-        let segments: std::collections::HashMap<Lsn, LogId> =
-            self.ordering.iter().map(|(&k, &v)| (k, v)).collect();
+        let segments: std::collections::HashMap<
+            Lsn,
+            (SegmentState, LogId),
+        > = self
+            .ordering
+            .iter()
+            .map(|(&lsn, &lid)| {
+                let id = lid as usize / self.config.io_buf_size;
+                let state = self.segments[id].state.clone();
+                (lsn, (state, lid))
+            }).collect();
 
         self.config.event_log.segments_before_restart(segments);
     }
@@ -117,8 +126,10 @@ struct Segment {
     state: SegmentState,
 }
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-enum SegmentState {
+#[derive(
+    Debug, Eq, Hash, PartialEq, Clone, Serialize, Deserialize,
+)]
+pub(crate) enum SegmentState {
     /// the segment is marked for reuse, should never receive
     /// new pids,
     /// TODO consider: but may receive removals for pids that were
@@ -645,10 +656,17 @@ impl SegmentAccountant {
         {
             let segments: std::collections::HashMap<
                 Lsn,
-                LogId,
-            > = self.ordering.iter().map(|(&k, &v)| (k, v)).collect();
+                (SegmentState, LogId),
+            > = self
+                .ordering
+                .iter()
+                .map(|(&lsn, &lid)| {
+                    let id = lid as usize / self.config.io_buf_size;
+                    let state = self.segments[id].state.clone();
+                    (lsn, (state, lid))
+                }).collect();
 
-            self.config.event_log.segments_before_restart(segments);
+            self.config.event_log.segments_after_restart(segments);
         }
 
         Ok(())
