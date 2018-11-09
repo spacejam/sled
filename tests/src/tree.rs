@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, panic};
+use std::{collections::BTreeMap, fmt, panic};
 
 use quickcheck::{Arbitrary, Gen, RngCore};
 use rand::distributions::{Distribution, Gamma};
@@ -6,8 +6,14 @@ use rand::{Rng, SeedableRng, StdRng};
 
 use sled::*;
 
-#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Key(pub Vec<u8>);
+
+impl fmt::Debug for Key {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Key(vec!{:?})", self.0)
+    }
+}
 
 struct SledGen {
     r: StdRng,
