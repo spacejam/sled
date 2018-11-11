@@ -22,7 +22,7 @@
 //! 4.
 #![allow(missing_docs)]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 
 use super::*;
 
@@ -65,13 +65,21 @@ impl EventLog {
                 Event::SegmentsBeforeRestart { segments } => {
                     if let Some(ref segs) = recovered_segments {
                         if segments != segs {
-                            let before: HashSet<_> = segments.iter().collect();
-                            let after: HashSet<_> = segs.iter().collect();
+                            let before: BTreeSet<_> = segments
+                                .iter()
+                                .map(|(lsn, (state, live, lid))| (*lsn, (*state, *live, *lid)))
+                                .collect();
+                            let after: BTreeSet<(Lsn, (segment::SegmentState, usize, LogId))> =
+                                segs
+                                    .iter()
+                                    .map(|(lsn, (state, live, lid))| (*lsn, (*state, *live, *lid)))
+                                    .collect();
 
-                            let only_before =
-                                before.difference(&after);
-                            let only_after =
-                                before.difference(&after);
+                            let mut only_before: Vec<_>=
+                                before.difference(&after).collect();
+
+                            let mut only_after: Vec<_> =
+                                after.difference(&before).collect();
 
                             panic!(
                                 "segments failed to recover properly. \n \
@@ -112,14 +120,14 @@ impl EventLog {
 
     pub(crate) fn segments_before_restart(
         &self,
-        segments: HashMap<Lsn, (segment::SegmentState, LogId)>,
+        segments: HashMap<Lsn, (segment::SegmentState, usize, LogId)>,
     ) {
         self.inner.push(Event::SegmentsBeforeRestart { segments });
     }
 
     pub(crate) fn segments_after_restart(
         &self,
-        segments: HashMap<Lsn, (segment::SegmentState, LogId)>,
+        segments: HashMap<Lsn, (segment::SegmentState, usize, LogId)>,
     ) {
         self.inner.push(Event::SegmentsAfterRestart { segments });
     }
@@ -166,10 +174,10 @@ enum Event {
         lid: LogId,
     },
     SegmentsBeforeRestart {
-        segments: HashMap<Lsn, (segment::SegmentState, LogId)>,
+        segments: HashMap<Lsn, (segment::SegmentState, usize, LogId)>,
     },
     SegmentsAfterRestart {
-        segments: HashMap<Lsn, (segment::SegmentState, LogId)>,
+        segments: HashMap<Lsn, (segment::SegmentState, usize, LogId)>,
     },
     PagesBeforeRestart {
         pages: HashMap<PageId, Vec<DiskPtr>>,
