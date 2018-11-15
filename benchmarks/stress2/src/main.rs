@@ -138,19 +138,19 @@ fn run(tree: Arc<sled::Tree>, shutdown: Arc<AtomicBool>) {
 
         match choice {
             v if v <= get_max => {
-                tree.get(&*key).unwrap();
+                tree.get(&key).unwrap();
             }
             v if v > get_max && v <= set_max => {
-                tree.set(key, bytes(args.flag_val_len)).unwrap();
+                tree.set(&key, bytes(args.flag_val_len)).unwrap();
             }
             v if v > set_max && v <= del_max => {
-                tree.del(&*key).unwrap();
+                tree.del(&key).unwrap();
             }
             v if v > del_max && v <= cas_max => {
                 let old_k = bytes(args.flag_val_len);
 
                 let old = if rng.gen::<bool>() {
-                    Some(&*old_k)
+                    Some(old_k.as_slice())
                 } else {
                     None
                 };
@@ -161,20 +161,20 @@ fn run(tree: Arc<sled::Tree>, shutdown: Arc<AtomicBool>) {
                     None
                 };
 
-                match tree.cas(key, old, new) {
+                match tree.cas(&key, old, new) {
                     Ok(_) | Err(sled::Error::CasFailed(_)) => {}
                     other => panic!("operational error: {:?}", other),
                 }
             }
             v if v > cas_max && v <= scan_max => {
                 let _ = tree
-                    .scan(&*key)
+                    .scan(&key)
                     .take(rng.gen_range(0, 15))
                     .map(|res| res.unwrap())
                     .collect::<Vec<_>>();
             }
             _ => {
-                tree.merge(key, bytes(args.flag_val_len)).unwrap();
+                tree.merge(&key, bytes(args.flag_val_len)).unwrap();
             }
         }
     }
