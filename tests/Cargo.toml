@@ -14,7 +14,7 @@ path = "../crates/sled"
 
 [dependencies]
 quickcheck = "0.7"
-rand = "0.5"
+rand = "0.6"
 log = "0.4"
 env_logger = "0.6"
 libc = "0.2"

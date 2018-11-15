@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, fmt, panic};
 
 use quickcheck::{Arbitrary, Gen, RngCore};
 use rand::distributions::{Distribution, Gamma};
-use rand::{Rng, SeedableRng, StdRng};
+use rand::{rngs::StdRng, Rng, SeedableRng};
 
 use sled::*;
 
@@ -140,7 +140,7 @@ impl Arbitrary for Op {
             2 => Get(Key::arbitrary(g)),
             3 => Del(Key::arbitrary(g)),
             4 => Cas(Key::arbitrary(g), g.gen::<u8>(), g.gen::<u8>()),
-            5 => Scan(Key::arbitrary(g), g.gen_range::<usize>(0, 40)),
+            5 => Scan(Key::arbitrary(g), g.gen_range(0, 40)),
             _ => panic!("impossible choice"),
         }
     }
