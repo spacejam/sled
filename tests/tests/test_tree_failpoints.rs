@@ -235,7 +235,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 // insert false certainty until it fully completes
                 reference.insert(set_counter, (set_counter, false));
 
-                fp_crash!(tree.set(vec![hi, lo], val));
+                fp_crash!(tree.set(&[hi, lo], val));
 
                 // make sure we keep the disk and reference in-sync
                 // maybe in the future put pending things in their own

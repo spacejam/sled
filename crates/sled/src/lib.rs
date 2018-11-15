@@ -5,11 +5,11 @@
 //! ```
 //! let t = sled::Tree::start_default("my_db").unwrap();
 //!
-//! t.set(b"yo!".to_vec(), b"v1".to_vec());
+//! t.set(b"yo!", b"v1".to_vec());
 //! assert!(t.get(b"yo!").unwrap().unwrap() == &*b"v1".to_vec());
 //!
 //! t.cas(
-//!     b"yo!".to_vec(),       // key
+//!     b"yo!",                // key
 //!     Some(b"v1"),           // old value, None for not present
 //!     Some(b"v2".to_vec()),  // new value, None for delete
 //! ).unwrap();
