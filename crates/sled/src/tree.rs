@@ -166,9 +166,9 @@ impl Tree {
     }
 
     /// Retrieve a value from the `Tree` if it exists.
-    pub fn get(
+    pub fn get<K: AsRef<[u8]>>(
         &self,
-        key: &[u8],
+        key: K,
     ) -> Result<Option<PinnedValue>, ()> {
         let _measure = Measure::new(&M.tree_get);
 
@@ -177,7 +177,7 @@ impl Tree {
         // the double guard is a hack that maintains
         // correctness of the ret value
         let double_guard = guard.clone();
-        let (_, ret) = self.get_internal(key, &guard)?;
+        let (_, ret) = self.get_internal(key.as_ref(), &guard)?;
 
         guard.flush();
 
@@ -198,22 +198,22 @@ impl Tree {
     /// let t = sled::Tree::start(config).unwrap();
     ///
     /// // unique creation
-    /// assert_eq!(t.cas(vec![1], None, Some(vec![1])), Ok(()));
-    /// // assert_eq!(t.cas(vec![1], None, Some(vec![1])), Err(Error::CasFailed(Some(vec![1]))));
+    /// assert_eq!(t.cas(&[1], None, Some(vec![1])), Ok(()));
+    /// // assert_eq!(t.cas(&[1], None, Some(vec![1])), Err(Error::CasFailed(Some(vec![1]))));
     ///
     /// // conditional modification
-    /// assert_eq!(t.cas(vec![1], Some(&*vec![1]), Some(vec![2])), Ok(()));
-    /// // assert_eq!(t.cas(vec![1], Some(vec![1]), Some(vec![2])), Err(Error::CasFailed(Some(vec![2]))));
+    /// assert_eq!(t.cas(&[1], Some(&*vec![1]), Some(vec![2])), Ok(()));
+    /// // assert_eq!(t.cas(&[1], Some(vec![1]), Some(vec![2])), Err(Error::CasFailed(Some(vec![2]))));
     ///
     /// // conditional deletion
-    /// assert_eq!(t.cas(vec![1], Some(&*vec![2]), None), Ok(()));
-    /// assert_eq!(t.get(&*vec![1]), Ok(None));
+    /// assert_eq!(t.cas(&[1], Some(&[2]), None), Ok(()));
+    /// assert_eq!(t.get(&[1]), Ok(None));
     /// ```
-    pub fn cas(
+    pub fn cas<K: AsRef<[u8]>>(
         &self,
-        key: Key,
+        key: K,
         old: Option<&[u8]>,
-        new: Option<Value>,
+        new: Option<Value>
     ) -> Result<(), Option<PinnedValue>> {
         let _measure = Measure::new(&M.tree_cas);
 
@@ -228,10 +228,10 @@ impl Tree {
         loop {
             let pin_guard = guard.clone();
             let (mut path, cur) = self
-                .get_internal(&*key, &guard)
+                .get_internal(key.as_ref(), &guard)
                 .map_err(|e| e.danger_cast())?;
 
-            if old != cur.map(|v| &*v) {
+            if old.as_ref().map(|o| o.as_ref()) != cur.map(|v| &*v) {
                 return Err(Error::CasFailed(
                     cur.map(|c| PinnedValue::new(c, pin_guard)),
                 ));
@@ -243,7 +243,7 @@ impl Tree {
 
             let (node_id, encoded_key) = {
                 let node: &Node = leaf_frag.unwrap_base();
-                (node.id, prefix_encode(node.lo.inner(), &*key))
+                (node.id, prefix_encode(node.lo.inner(), key.as_ref()))
             };
             let frag = if let Some(ref n) = new {
                 Frag::Set(encoded_key, n.clone())
@@ -273,9 +273,9 @@ impl Tree {
 
     /// Set a key to a new value, returning the old value if it
     /// was set.
-    pub fn set(
+    pub fn set<K: AsRef<[u8]>>(
         &self,
-        key: Key,
+        key: K,
         value: Value,
     ) -> Result<Option<PinnedValue>, ()> {
         let _measure = Measure::new(&M.tree_set);
@@ -290,13 +290,13 @@ impl Tree {
 
         loop {
             let double_guard = guard.clone();
-            let mut path = self.path_for_key(&*key, &guard)?;
+            let mut path = self.path_for_key(key.as_ref(), &guard)?;
             let (leaf_frag, leaf_ptr) = path.pop().expect(
                 "path_for_key should always return a path \
                  of length >= 2 (root + leaf)",
             );
             let node: &Node = leaf_frag.unwrap_base();
-            let encoded_key = prefix_encode(node.lo.inner(), &*key);
+            let encoded_key = prefix_encode(node.lo.inner(), key.as_ref());
 
             // Search for the existing key, so we can return
             // it later.
@@ -387,24 +387,28 @@ impl Tree {
     ///
     /// let tree = sled::Tree::start(config).unwrap();
     ///
-    /// let k = b"k1".to_vec();
+    /// let k = b"k1";
     ///
-    /// tree.set(k.clone(), vec![0]);
-    /// tree.merge(k.clone(), vec![1]);
-    /// tree.merge(k.clone(), vec![2]);
-    /// // assert_eq!(tree.get(&k).unwrap().unwrap(), vec![0, 1, 2]);
+    /// tree.set(k, vec![0]);
+    /// tree.merge(k, vec![1]);
+    /// tree.merge(k, vec![2]);
+    /// // assert_eq!(tree.get(k).unwrap().unwrap(), vec![0, 1, 2]);
     ///
     /// // sets replace previously merged data,
     /// // bypassing the merge function.
-    /// tree.set(k.clone(), vec![3]);
-    /// // assert_eq!(tree.get(&k), Ok(Some(vec![3])));
+    /// tree.set(k, vec![3]);
+    /// // assert_eq!(tree.get(k), Ok(Some(vec![3])));
     ///
     /// // merges on non-present values will add them
-    /// tree.del(&k);
-    /// tree.merge(k.clone(), vec![4]);
-    /// // assert_eq!(tree.get(&k).unwrap().unwrap(), vec![4]);
+    /// tree.del(k);
+    /// tree.merge(k, vec![4]);
+    /// // assert_eq!(tree.get(k).unwrap().unwrap(), vec![4]);
     /// ```
-    pub fn merge(&self, key: Key, value: Value) -> Result<(), ()> {
+    pub fn merge<K: AsRef<[u8]>>(
+        &self,
+        key: K,
+        value: Value
+    ) -> Result<(), ()> {
         let _measure = Measure::new(&M.tree_merge);
 
         if self.config.read_only {
@@ -416,14 +420,14 @@ impl Tree {
         let guard = pin();
 
         loop {
-            let mut path = self.path_for_key(&*key, &guard)?;
+            let mut path = self.path_for_key(key.as_ref(), &guard)?;
             let (leaf_frag, leaf_ptr) = path.pop().expect(
                 "path_for_key should always return a path \
                  of length >= 2 (root + leaf)",
             );
             let node: &Node = leaf_frag.unwrap_base();
 
-            let encoded_key = prefix_encode(node.lo.inner(), &*key);
+            let encoded_key = prefix_encode(node.lo.inner(), key.as_ref());
             let frag = Frag::Merge(encoded_key, value.clone());
 
             let link = self.pages.link(
@@ -469,11 +473,14 @@ impl Tree {
     /// ```
     /// let config = sled::ConfigBuilder::new().temporary(true).build();
     /// let t = sled::Tree::start(config).unwrap();
-    /// t.set(vec![1], vec![1]);
+    /// t.set(&[1], vec![1]);
     /// assert_eq!(t.del(&*vec![1]).unwrap().unwrap(), vec![1]);
     /// assert_eq!(t.del(&*vec![1]), Ok(None));
     /// ```
-    pub fn del(&self, key: &[u8]) -> Result<Option<PinnedValue>, ()> {
+    pub fn del<K: AsRef<[u8]>>(
+        &self,
+        key: K
+    ) -> Result<Option<PinnedValue>, ()> {
         let _measure = Measure::new(&M.tree_del);
 
         if self.config.read_only {
@@ -485,13 +492,13 @@ impl Tree {
         let double_guard = guard.clone();
         let mut ret: Option<&[u8]>;
         loop {
-            let mut path = self.path_for_key(&*key, &guard)?;
+            let mut path = self.path_for_key(key.as_ref(), &guard)?;
             let (leaf_frag, leaf_ptr) = path.pop().expect(
                 "path_for_key should always return a path \
                  of length >= 2 (root + leaf)",
             );
             let node: &Node = leaf_frag.unwrap_base();
-            let encoded_key = prefix_encode(node.lo.inner(), key);
+            let encoded_key = prefix_encode(node.lo.inner(), key.as_ref());
             match node.data {
                 Data::Leaf(ref items) => {
                     let search =
@@ -541,21 +548,21 @@ impl Tree {
     /// ```
     /// let config = sled::ConfigBuilder::new().temporary(true).build();
     /// let t = sled::Tree::start(config).unwrap();
-    /// t.set(vec![1], vec![10]);
-    /// t.set(vec![2], vec![20]);
-    /// t.set(vec![3], vec![30]);
+    /// t.set(&[1], vec![10]);
+    /// t.set(&[2], vec![20]);
+    /// t.set(&[3], vec![30]);
     /// let mut iter = t.scan(&*vec![2]);
     /// // assert_eq!(iter.next(), Some(Ok((vec![2], vec![20]))));
     /// // assert_eq!(iter.next(), Some(Ok((vec![3], vec![30]))));
     /// // assert_eq!(iter.next(), None);
     /// ```
-    pub fn scan(&self, key: &[u8]) -> Iter<'_> {
+    pub fn scan<K: AsRef<[u8]>>(&self, key: K) -> Iter<'_> {
         let _measure = Measure::new(&M.tree_scan);
 
         let guard = pin();
 
         let mut broken = None;
-        let id = match self.get_internal(key, &guard) {
+        let id = match self.get_internal(key.as_ref(), &guard) {
             Ok((ref mut path, _)) if !path.is_empty() => {
                 let (leaf_frag, _leaf_ptr) = path.pop().expect(
                     "path_for_key should always return a path \
@@ -581,7 +588,7 @@ impl Tree {
         Iter {
             id,
             inner: &self.pages,
-            last_key: Bound::Exclusive(key.to_vec()),
+            last_key: Bound::Exclusive(key.as_ref().to_vec()),
             broken,
             done: false,
             guard,
@@ -595,9 +602,9 @@ impl Tree {
     /// ```
     /// let config = sled::ConfigBuilder::new().temporary(true).build();
     /// let t = sled::Tree::start(config).unwrap();
-    /// t.set(vec![1], vec![10]);
-    /// t.set(vec![2], vec![20]);
-    /// t.set(vec![3], vec![30]);
+    /// t.set(&[1], vec![10]);
+    /// t.set(&[2], vec![20]);
+    /// t.set(&[3], vec![30]);
     /// let mut iter = t.iter();
     /// // assert_eq!(iter.next(), Some(Ok((vec![1], vec![10]))));
     /// // assert_eq!(iter.next(), Some(Ok((vec![2], vec![20]))));
@@ -826,13 +833,13 @@ impl Tree {
         }
     }
 
-    fn get_internal<'g>(
+    fn get_internal<'g, K: AsRef<[u8]>>(
         &self,
-        key: &[u8],
+        key: K,
         guard: &'g Guard,
     ) -> Result<(Path<'g>, Option<&'g [u8]>), ()>
     {
-        let path = self.path_for_key(&*key, guard)?;
+        let path = self.path_for_key(key.as_ref(), guard)?;
 
         let ret = path.last().and_then(|(last_frag, _tree_ptr)| {
             let last_node = last_frag.unwrap_base();
@@ -841,7 +848,7 @@ impl Tree {
                 data.leaf_ref().expect("last_node should be a leaf");
             let search =
                 items.binary_search_by(|&(ref k, ref _v)| {
-                    prefix_cmp_encoded(k, &key, last_node.lo.inner())
+                    prefix_cmp_encoded(k, key.as_ref(), last_node.lo.inner())
                 });
             if let Ok(idx) = search {
                 Some(&*items[idx].1)
@@ -855,10 +862,10 @@ impl Tree {
     }
 
     #[doc(hidden)]
-    pub fn key_debug_str(&self, key: &[u8]) -> String {
+    pub fn key_debug_str<K: AsRef<[u8]>>(&self, key: K) -> String {
         let guard = pin();
 
-        let path = self.path_for_key(key, &guard).expect(
+        let path = self.path_for_key(key.as_ref(), &guard).expect(
             "path_for_key should always return at least 2 nodes, \
              even if the key being searched for is not present",
         );
@@ -874,9 +881,9 @@ impl Tree {
 
     /// returns the traversal path, completing any observed
     /// partially complete splits or merges along the way.
-    fn path_for_key<'g>(
+    fn path_for_key<'g, K: AsRef<[u8]>>(
         &self,
-        key: &[u8],
+        key: K,
         guard: &'g Guard,
     ) -> Result<Vec<(&'g Frag, TreePtr<'g>)>, ()> {
         let _measure = Measure::new(&M.tree_traverse);
@@ -921,10 +928,10 @@ impl Tree {
             let node = frag.unwrap_base();
 
             // TODO this may need to change when handling (half) merges
-            assert!(node.lo.inner() <= key, "overshot key somehow");
+            assert!(node.lo.inner() <= key.as_ref(), "overshot key somehow");
 
             // half-complete split detect & completion
-            if node.hi <= Bound::Inclusive(key.to_vec()) {
+            if node.hi <= Bound::Inclusive(key.as_ref().to_vec()) {
                 // we have encountered a child split, without
                 // having hit the parent split above.
                 cursor = node.next.expect(
@@ -975,7 +982,7 @@ impl Tree {
                     let search = binary_search_lub(
                         ptrs,
                         |&(ref k, ref _v)| {
-                            prefix_cmp_encoded(k, &key, &prefix)
+                            prefix_cmp_encoded(k, key.as_ref(), &prefix)
                         },
                     );
 
