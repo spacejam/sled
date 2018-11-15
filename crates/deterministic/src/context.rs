@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Condvar;
 
-use rand::{RngCore, SeedableRng, StdRng};
+use rand::{rngs::StdRng, RngCore, SeedableRng};
 
 use super::*;
 
