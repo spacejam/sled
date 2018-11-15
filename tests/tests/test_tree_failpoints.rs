@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::Mutex;
 
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
-use rand::Rng;
+use rand::{seq::SliceRandom, Rng};
 
 use sled::*;
 
@@ -52,7 +52,7 @@ impl Arbitrary for Op {
         ];
 
         if g.gen_bool(1. / 30.) {
-            return FailPoint(*g.choose(&fail_points).unwrap());
+            return FailPoint(fail_points.choose(g).unwrap());
         }
 
         if g.gen_bool(1. / 10.) {
