@@ -246,8 +246,9 @@ impl IoBufs {
     /// epochs using a crossbeam-epoch EBR guard.
     ///
     /// IMPORTANT: Never call this function with anything that calls
-    /// defer on the default EBR collector, or we could deadlock!
-    pub(super) unsafe fn with_sa_deferred<F>(&self, f: F)
+    /// defer on the same thread, as if a guard drops inside, it could
+    /// trigger the below mutex lock, causing a deadlock.
+    unsafe fn with_sa_deferred<F>(&self, f: F)
     where
         F: FnOnce(&mut SegmentAccountant) + Send + 'static,
     {
