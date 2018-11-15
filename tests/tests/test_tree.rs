@@ -60,7 +60,7 @@ fn parallel_tree_ops() {
     let t = Arc::new(sled::Tree::start(config).unwrap());
     par!{t, |tree: &Tree, k: Vec<u8>| {
         assert_eq!(tree.get(&*k), Ok(None));
-        tree.set(k.clone(), k.clone()).unwrap();
+        tree.set(&k, k.clone()).unwrap();
         assert_eq!(tree.get(&*k).unwrap().unwrap(), k);
     }};
 
@@ -77,7 +77,7 @@ fn parallel_tree_ops() {
         let k1 = k.clone();
         let mut k2 = k.clone();
         k2.reverse();
-        tree.cas(k1.clone(), Some(&*k1), Some(k2)).unwrap();
+        tree.cas(&k1, Some(&*k1), Some(k2)).unwrap();
     }};
 
     par!{t, |tree: &Tree, k: Vec<u8>| {
@@ -104,7 +104,7 @@ fn tree_subdir() {
         .build();
     let t = sled::Tree::start(config).unwrap();
 
-    t.set(vec![1], vec![1]).unwrap();
+    t.set(&[1], vec![1]).unwrap();
 
     drop(t);
 
@@ -133,7 +133,7 @@ fn tree_iterator() {
     let t = sled::Tree::start(config).unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
-        t.set(k.clone(), k).unwrap();
+        t.set(&k, k.clone()).unwrap();
     }
 
     for (i, (k, v)) in t.iter().map(|res| res.unwrap()).enumerate() {
@@ -180,7 +180,7 @@ fn recover_tree() {
     let t = sled::Tree::start(config.clone()).unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
-        t.set(k.clone(), k).unwrap();
+        t.set(&k, k.clone()).unwrap();
     }
     drop(t);
 
