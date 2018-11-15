@@ -898,7 +898,6 @@ impl SegmentAccountant {
             if !old_segments.contains(&old_idx) {
                 old_segments.push(old_idx);
             }
-
         }
 
         for old_idx in old_segments.into_iter (){
