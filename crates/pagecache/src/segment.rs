@@ -796,6 +796,10 @@ impl SegmentAccountant {
         let schedule_rm_blob =
             !(old_ptrs.len() == 1 && old_ptrs[0].is_blob());
 
+        // TODO use smallvec
+        let mut old_segments =
+            Vec::with_capacity(self.config.page_consolidation_threshold + 1);
+
         for old_ptr in old_ptrs {
             if schedule_rm_blob && old_ptr.is_blob() {
                 trace!(
@@ -819,16 +823,30 @@ impl SegmentAccountant {
             if self.segments[old_idx].lsn() > lsn {
                 // has been replaced after this call already,
                 // quite a big race happened
-                panic!("mark_replace called on previous version of segment. \
-                this means it was reused while other threads still had references to it.");
+                panic!(
+                    "mark_replace called on previous version of segment. \
+                    this means it was reused while other threads still \
+                    had references to it."
+                );
             }
 
             if self.segments[old_idx].state == Free {
                 // this segment is already reused
-                panic!("mark_replace called on segment already marked Free. \
-                this means it was dropped while other threads still had references to it.");
+                panic!(
+                    "mark_replace called on Free segment with lid {}. \
+                    this means it was dropped while other threads still had \
+                    references to it.",
+                    old_idx * self.config.io_buf_size
+                );
             }
 
+            if !old_segments.contains(&old_idx) {
+                old_segments.push(old_idx);
+            }
+
+        }
+
+        for old_idx in old_segments.into_iter (){
             self.segments[old_idx].remove_pid(pid, lsn);
 
             // can we transition these segments?
