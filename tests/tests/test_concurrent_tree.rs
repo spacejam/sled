@@ -198,6 +198,7 @@ fn quickcheck_concurrent_tree_matches_btreemap() {
 }
 
 #[test]
+#[ignore]
 fn test_concurrent_tree_01() {
     prop_concurrent_tree_matches_btreemap(
         vec![

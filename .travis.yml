@@ -69,13 +69,17 @@ matrix:
       rust: stable
       env:
         - TEST=clippy
+    - os: linux
+      rust: stable
+      env:
+        - TEST=concurrent
         - RUSTFLAGS=-Dwarnings
 
 script:
   - bash -c 'case "$TEST" in
                osx)
-                 cargo check;
-                 cargo check --features=all;
+                 cargo check &&
+                 cargo check --features=all &&
                  cargo test test_crash_recovery --release -- --ignored &&
                  cargo test tree --release
                  ;;
@@ -92,8 +96,8 @@ script:
                  cargo clippy
                  ;;
                lsan)
-                 cd benchmarks/stress2;
-                 cargo build --target x86_64-unknown-linux-gnu;
+                 cd benchmarks/stress2 &&
+                 cargo build --target x86_64-unknown-linux-gnu &&
                  sudo target/x86_64-unknown-linux-gnu/debug/stress2
                  ;;
                tsan)
@@ -109,9 +113,12 @@ script:
                  pushd crates/pagecache && cargo build --target $TARGET --features=nightly && popd
                  ;;
                standard)
-                 cargo check;
-                 cargo check --features=all;
+                 cargo check &&
+                 cargo check --features=all &&
                  cargo test --release
+                 ;;
+               concurrent)
+                 cargo test concurrent --release -- --ignored
                  ;;
                *)
                  echo "unknown TEST value \"$TEST\"";
