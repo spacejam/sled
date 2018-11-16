@@ -66,7 +66,15 @@ impl<'a> Iterator for Iter<'a> {
             }
             match node.next {
                 Some(id) => self.id = id,
-                None => return None,
+                None => {
+                    assert_eq!(
+                        node.hi,
+                        Bound::Inf,
+                        "if a node has no right sibling, \
+                         it must be the upper-bound node"
+                    );
+                    return None;
+                }
             }
         }
     }

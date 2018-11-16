@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, panic};
+use std::{collections::BTreeMap, fmt, panic};
 
 use quickcheck::{Arbitrary, Gen, RngCore};
 use rand::distributions::{Distribution, Gamma};
@@ -6,8 +6,14 @@ use rand::{rngs::StdRng, Rng, SeedableRng};
 
 use sled::*;
 
-#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Key(pub Vec<u8>);
+
+impl fmt::Debug for Key {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Key(vec!{:?})", self.0)
+    }
+}
 
 struct SledGen {
     r: StdRng,
@@ -84,15 +90,16 @@ impl Arbitrary for Key {
     }
 
     fn shrink(&self) -> Box<Iterator<Item = Key>> {
-        let mut out = vec![];
-        for len in 0..self.0.len() {
-            out.push(Key(self.0[..len]
-                .iter()
-                .map(|e| e / 2)
-                .collect()));
-            out.push(Key(self.0[..len].to_vec()));
-        }
-        Box::new(out.into_iter())
+        // we only want to shrink on length, not byte values
+        Box::new(
+            self.0
+                .len()
+                .shrink()
+                .zip(std::iter::repeat(self.0.clone()))
+                .map(|(len, underlying)| {
+                    Key(underlying[..len].to_vec())
+                }),
+        )
     }
 }
 
@@ -108,6 +115,16 @@ pub enum Op {
 }
 
 use self::Op::*;
+
+impl Op {
+    pub fn is_restart(&self) -> bool {
+        if let Restart = self {
+            true
+        } else {
+            false
+        }
+    }
+}
 
 impl Arbitrary for Op {
     fn arbitrary<G: Gen>(g: &mut G) -> Op {

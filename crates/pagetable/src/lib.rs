@@ -1,13 +1,11 @@
 /// A simple wait-free, grow-only pagetable, assumes a dense keyspace.
-
-#[cfg(any(test, feature = "lock_free_delays"))]
-extern crate rand;
-
 extern crate sled_sync;
 
 use std::sync::atomic::Ordering::SeqCst;
 
-use sled_sync::{pin, unprotected, Atomic, Guard, Owned, Shared};
+use sled_sync::{
+    debug_delay, pin, unprotected, Atomic, Guard, Owned, Shared,
+};
 
 const FANFACTOR: usize = 18;
 const FANOUT: usize = 1 << FANFACTOR;
@@ -25,23 +23,6 @@ macro_rules! rep_no_copy {
 
         v
     }};
-}
-
-/// This function is useful for inducing random jitter into our atomic
-/// operations, shaking out more possible interleavings quickly. It gets
-/// fully elliminated by the compiler in non-test code.
-#[inline(always)]
-pub fn debug_delay() {
-    #[cfg(any(test, feature = "lock_free_delays"))]
-    {
-        use rand::{thread_rng, Rng};
-
-        if thread_rng().gen_bool(1. / 1000.) {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-
-        std::thread::yield_now();
-    }
 }
 
 #[inline(always)]
