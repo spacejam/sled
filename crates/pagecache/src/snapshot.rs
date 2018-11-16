@@ -328,8 +328,6 @@ where
     let io_buf_size = config.io_buf_size;
 
     for (lsn, ptr, bytes) in iter {
-        let segment_idx = ptr.lid() as SegmentId / io_buf_size;
-
         trace!(
             "in advance_snapshot looking at item with lsn {} ptr {}",
             lsn,
@@ -353,6 +351,7 @@ where
         snapshot.last_lid = ptr.lid();
 
         // invalidate any removed pids
+        let segment_idx = ptr.lid() as SegmentId / io_buf_size;
         snapshot.replacements.remove(&segment_idx);
 
         if !PM::is_null() {

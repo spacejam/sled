@@ -18,6 +18,7 @@ no_metrics = ["historian/bypass"]
 no_logs = ["log/max_level_off"]
 nightly = ["sled_sync/nightly"]
 no_inline = ["sled_sync/no_inline"]
+event_log = []
 
 [dependencies]
 libc = "0.2"

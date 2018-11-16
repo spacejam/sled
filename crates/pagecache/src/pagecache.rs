@@ -320,6 +320,36 @@ where
     }
 }
 
+#[cfg(feature = "event_log")]
+impl<PM, P, R> Drop for PageCache<PM, P, R>
+where
+    P: 'static + Send + Sync,
+{
+    fn drop(&mut self) {
+        use std::collections::HashMap;
+        let mut pages_before_restart: HashMap<
+            PageId,
+            Vec<DiskPtr>,
+        > = HashMap::new();
+
+        let guard = pin();
+
+        for pid in 0..self.max_pid.load(SeqCst) {
+            let stack = self.inner.get(pid, &guard);
+            if stack.is_none() {
+                continue;
+            }
+            let head = unsafe { stack.unwrap().deref().head(&guard) };
+            let ptrs = ptrs_from_stack(head, &guard);
+            pages_before_restart.insert(pid, ptrs);
+        }
+
+        self.config
+            .event_log
+            .pages_before_restart(pages_before_restart);
+    }
+}
+
 impl<PM, P, R> PageCache<PM, P, R>
 where
     PM: Materializer<PageFrag = P, Recovery = R>,
@@ -1193,6 +1223,32 @@ where
                 not found in recovered page table",
             snapshot_free
         );
+
+        #[cfg(feature = "event_log")]
+        {
+            use std::collections::HashMap;
+            let mut pages_after_restart: HashMap<
+                PageId,
+                Vec<DiskPtr>,
+            > = HashMap::new();
+
+            let guard = pin();
+
+            for pid in 0..self.max_pid.load(SeqCst) {
+                let stack = self.inner.get(pid, &guard);
+                if stack.is_none() {
+                    continue;
+                }
+                let head =
+                    unsafe { stack.unwrap().deref().head(&guard) };
+                let ptrs = ptrs_from_stack(head, &guard);
+                pages_after_restart.insert(pid, ptrs);
+            }
+
+            self.config
+                .event_log
+                .pages_after_restart(pages_after_restart);
+        }
     }
 }
 
