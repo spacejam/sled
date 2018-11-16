@@ -3,6 +3,9 @@ extern crate crossbeam_epoch as epoch;
 extern crate log;
 
 #[cfg(any(test, feature = "lock_free_delays"))]
+extern crate rand_hc;
+
+#[cfg(any(test, feature = "lock_free_delays"))]
 extern crate rand;
 
 #[cfg(any(test, feature = "lock_free_delays"))]
@@ -18,6 +21,6 @@ pub use debug_delay::debug_delay;
 pub fn debug_delay() {}
 
 pub use epoch::{
-    unprotected, Atomic, Collector, CompareAndSetError, Guard,
+    pin, unprotected, Atomic, Collector, CompareAndSetError, Guard,
     LocalHandle, Owned, Shared,
 };

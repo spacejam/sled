@@ -3,9 +3,10 @@ use std::rc::Rc;
 
 use rand::{
     distributions::{Distribution, Gamma},
-    prng::hc128::Hc128Core,
-    EntropyRng, ReseedingRng, Rng, RngCore, SeedableRng,
+    rngs::EntropyRng,
+    ReseedingRng, Rng, RngCore, SeedableRng,
 };
+use rand_hc::Hc128Core;
 
 /// This function is useful for inducing random jitter into our atomic
 /// operations, shaking out more possible interleavings quickly. It gets
