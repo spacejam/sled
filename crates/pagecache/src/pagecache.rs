@@ -668,13 +668,12 @@ where
                 PageGet::Unallocated => {
                     // TODO when merge functionality is added,
                     // this may break
-                    panic!("get returned Unallocated");
+                    warn!("page stack deleted from pagetable before page could be rewritten");
+                    return Ok(());
                 }
             };
 
-            self.cas_page(pid, key.0, update, guard).map(|_| ())?;
-
-            Ok(())
+            self.cas_page(pid, key.0, update, guard).map(|_| ())
         }
     }
 
@@ -1040,15 +1039,6 @@ where
             }
         }
         Ok(())
-    }
-
-    #[cfg(feature = "rayon")]
-    fn rayon_pull<'g>(
-        &self,
-        lsn: Lsn,
-        ptr: DiskPtr,
-    ) -> Result<P, Option<PagePtr<'g, P>>> {
-        self.pull(lsn, ptr).map_err(|e1| e1.danger_cast())
     }
 
     fn pull<'g>(
