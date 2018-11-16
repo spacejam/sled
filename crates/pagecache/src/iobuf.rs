@@ -72,7 +72,7 @@ pub(super) struct IoBufs {
     // higher than the current value of `stable` due to interesting thread
     // interleavings.
     intervals: Mutex<Vec<(Lsn, Lsn)>>,
-    interval_updated: Condvar,
+    pub(super) interval_updated: Condvar,
 
     // The highest CONTIGUOUS log sequence number that has been written to
     // stable storage. This may be lower than the length of the underlying
@@ -84,7 +84,7 @@ pub(super) struct IoBufs {
 
     // used for signifying that we're simulating a crash
     #[cfg(feature = "failpoints")]
-    _failpoint_crashing: AtomicBool,
+    pub(super) _failpoint_crashing: AtomicBool,
 }
 
 /// `IoBufs` is a set of lock-free buffers for coordinating
@@ -1148,26 +1148,6 @@ impl Drop for IoBufs {
         }
 
         debug!("IoBufs dropped");
-    }
-}
-
-impl periodic::Callback for std::sync::Arc<IoBufs> {
-    fn call(&self) {
-        if let Err(e) = self.flush() {
-            #[cfg(feature = "failpoints")]
-            {
-                if let Error::FailPoint = e {
-                    self._failpoint_crashing.store(true, SeqCst);
-                    // wake up any waiting threads so they don't stall forever
-                    self.interval_updated.notify_all();
-                }
-            }
-
-            error!(
-                "failed to flush from periodic flush thread: {}",
-                e
-            );
-        }
     }
 }
 
