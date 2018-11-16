@@ -23,3 +23,4 @@ env_logger = "0.6"
 libc = "0.2"
 fail = "0.2"
 lazy_static = "1.0"
+deterministic = { path = "../crates/deterministic" }

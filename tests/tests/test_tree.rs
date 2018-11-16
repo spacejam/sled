@@ -16,8 +16,8 @@ use tests::tree::{
 
 use quickcheck::{QuickCheck, StdGen};
 
-const N_THREADS: usize = 5;
-const N_PER_THREAD: usize = 300;
+const N_THREADS: usize = 10;
+const N_PER_THREAD: usize = 1000;
 const N: usize = N_THREADS * N_PER_THREAD; // NB N should be multiple of N_THREADS
 const SPACE: usize = N;
 
@@ -30,47 +30,90 @@ fn kv(i: usize) -> Vec<u8> {
 
 #[test]
 fn parallel_tree_ops() {
+    let config = ConfigBuilder::new()
+        .temporary(true)
+        .io_bufs(3)
+        .blink_node_split_size(500)
+        .flush_every_ms(None)
+        .snapshot_after_ops(100_000_000)
+        .io_buf_size(100_000)
+        .print_profile_on_drop(true)
+        .build();
+
+    tests::setup_logger();
+
     macro_rules! par {
         ($t:ident, $f:expr) => {
             let mut threads = vec![];
             for tn in 0..N_THREADS {
-                let sz = N / N_THREADS;
                 let tree = $t.clone();
                 let thread = thread::Builder::new()
                     .name(format!("t({})", tn))
                     .spawn(move || {
-                        for i in (tn * sz)..((tn + 1) * sz) {
+                        for i in (tn * N_PER_THREAD)
+                            ..((tn + 1) * N_PER_THREAD)
+                        {
                             let k = kv(i);
                             $f(&*tree, k);
                         }
-                    }).unwrap();
+                    }).expect("should be able to spawn thread");
                 threads.push(thread);
             }
             while let Some(thread) = threads.pop() {
-                thread.join().unwrap();
+                if let Err(e) = thread.join() {
+                    panic!("thread failure: {:?}", e);
+                }
             }
         };
     }
 
     println!("========== initial sets ==========");
-    let config = ConfigBuilder::new()
-        .temporary(true)
-        .blink_node_split_size(0)
-        .build();
-    let t = Arc::new(sled::Tree::start(config).unwrap());
+    let t = Arc::new(sled::Tree::start(config.clone()).unwrap());
     par!{t, |tree: &Tree, k: Vec<u8>| {
         assert_eq!(tree.get(&*k), Ok(None));
-        tree.set(&k, k.clone()).unwrap();
-        assert_eq!(tree.get(&*k).unwrap().unwrap(), k);
+        tree.set(&k, k.clone()).expect("we should write successfully");
+        assert_eq!(tree.get(&*k).unwrap().expect("we should read what we just wrote"), k);
     }};
+
+    let n_scanned = t.iter().count();
+    if n_scanned != N {
+        println!(
+            "WARNING: only {} keys present in the DB BEFORE restarting. expected {}",
+            n_scanned, N
+        );
+    }
+
+    drop(t);
+    let t = Arc::new(
+        sled::Tree::start(config.clone())
+            .expect("should be able to restart Tree"),
+    );
+
+    let n_scanned = t.iter().count();
+    if n_scanned != N {
+        println!(
+            "WARNING: only {} keys present in the DB AFTER restarting. expected {}",
+            n_scanned, N
+        );
+    }
 
     println!("========== reading sets ==========");
     par!{t, |tree: &Tree, k: Vec<u8>| {
-        if tree.get(&*k).unwrap().unwrap() != k {
-            println!("{}", tree.key_debug_str(&*k.clone()));
-            panic!("expected key {:?} not found", k);
+        if let Some(v) =  tree.get(&*k).unwrap() {
+            if v != k {
+                println!("{}", tree.key_debug_str(&*k.clone()));
+                panic!("expected key {:?} not found", k);
+            }
+        } else {
+            panic!("could not read key {:?}, which we just wrote", k);
         }
     }};
+
+    drop(t);
+    let t = Arc::new(
+        sled::Tree::start(config.clone())
+            .expect("should be able to restart Tree"),
+    );
 
     println!("========== CAS test ==========");
     par!{t, |tree: &Tree, k: Vec<u8>| {
@@ -80,6 +123,12 @@ fn parallel_tree_ops() {
         tree.cas(&k1, Some(&*k1), Some(k2)).unwrap();
     }};
 
+    drop(t);
+    let t = Arc::new(
+        sled::Tree::start(config.clone())
+            .expect("should be able to restart Tree"),
+    );
+
     par!{t, |tree: &Tree, k: Vec<u8>| {
         let k1 = k.clone();
         let mut k2 = k.clone();
@@ -87,10 +136,22 @@ fn parallel_tree_ops() {
         assert_eq!(tree.get(&*k1).unwrap().unwrap(), k2);
     }};
 
+    drop(t);
+    let t = Arc::new(
+        sled::Tree::start(config.clone())
+            .expect("should be able to restart Tree"),
+    );
+
     println!("========== deleting ==========");
     par!{t, |tree: &Tree, k: Vec<u8>| {
         tree.del(&*k).unwrap();
     }};
+
+    drop(t);
+    let t = Arc::new(
+        sled::Tree::start(config.clone())
+            .expect("should be able to restart Tree"),
+    );
 
     par!{t, |tree: &Tree, k: Vec<u8>| {
         assert_eq!(tree.get(&*k), Ok(None));
@@ -203,17 +264,12 @@ fn recover_tree() {
 #[cfg(not(target_os = "fuchsia"))]
 #[ignore]
 fn quickcheck_tree_matches_btreemap() {
-    // use fewer tests for travis OSX builds that stall out all the time
-    #[cfg(target_os = "macos")]
     let n_tests = 100;
-
-    #[cfg(not(target_os = "macos"))]
-    let n_tests = 5;
 
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 1000))
         .tests(n_tests)
-        .max_tests(100000)
+        .max_tests(1000)
         .quickcheck(
             prop_tree_matches_btreemap
                 as fn(Vec<Op>, u8, u8, bool) -> bool,
@@ -633,4 +689,10 @@ fn tree_bug_17() {
         0,
         false,
     );
+}
+
+#[test]
+fn tree_bug_18() {
+    // postmortem:
+    prop_tree_matches_btreemap(vec![], 0, 0, false);
 }
