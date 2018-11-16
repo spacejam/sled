@@ -69,7 +69,8 @@ impl EventLog {
                                 .iter()
                                 .map(|(lsn, (state, live, lid))| (*lsn, (*state, *live, *lid)))
                                 .collect();
-                            let after: BTreeSet<(Lsn, (segment::SegmentState, usize, LogId))> =
+
+                            let after: BTreeSet<(Lsn, (segment::SegmentState, u8, LogId))> =
                                 segs
                                     .iter()
                                     .map(|(lsn, (state, live, lid))| (*lsn, (*state, *live, *lid)))
@@ -120,14 +121,14 @@ impl EventLog {
 
     pub(crate) fn segments_before_restart(
         &self,
-        segments: HashMap<Lsn, (segment::SegmentState, usize, LogId)>,
+        segments: HashMap<Lsn, (segment::SegmentState, u8, LogId)>,
     ) {
         self.inner.push(Event::SegmentsBeforeRestart { segments });
     }
 
     pub(crate) fn segments_after_restart(
         &self,
-        segments: HashMap<Lsn, (segment::SegmentState, usize, LogId)>,
+        segments: HashMap<Lsn, (segment::SegmentState, u8, LogId)>,
     ) {
         self.inner.push(Event::SegmentsAfterRestart { segments });
     }
@@ -174,10 +175,10 @@ enum Event {
         lid: LogId,
     },
     SegmentsBeforeRestart {
-        segments: HashMap<Lsn, (segment::SegmentState, usize, LogId)>,
+        segments: HashMap<Lsn, (segment::SegmentState, u8, LogId)>,
     },
     SegmentsAfterRestart {
-        segments: HashMap<Lsn, (segment::SegmentState, usize, LogId)>,
+        segments: HashMap<Lsn, (segment::SegmentState, u8, LogId)>,
     },
     PagesBeforeRestart {
         pages: HashMap<PageId, Vec<DiskPtr>>,

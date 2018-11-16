@@ -4,6 +4,9 @@ version = "0.1.0"
 authors = ["Tyler Neely <t@jujit.su>"]
 publish = false
 
+[features]
+event_log = ["pagecache/event_log", "sled/event_log"]
+
 [dependencies.pagecache]
 features = ["failpoints", "lock_free_delays", "event_log"]
 path = "../crates/pagecache"

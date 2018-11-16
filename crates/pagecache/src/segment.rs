@@ -97,12 +97,13 @@ impl Drop for SegmentAccountant {
     fn drop(&mut self) {
         let segments: std::collections::HashMap<
             Lsn,
-            (SegmentState, usize, LogId),
+            (SegmentState, u8, LogId),
         > = self
             .ordering
-            .iter()
-            .map(|(&lsn, &lid)| {
-                let id = lid as usize / self.config.io_buf_size;
+            .clone()
+            .into_iter()
+            .map(|(lsn, lid)| {
+                let id = self.lid_to_idx(lid);
                 let segment = &self.segments[id];
                 let live = segment.live_pct();
                 let state = segment.state.clone();
@@ -651,7 +652,7 @@ impl SegmentAccountant {
         {
             let segments: std::collections::HashMap<
                 Lsn,
-                (SegmentState, usize, LogId),
+                (SegmentState, u8, LogId),
             > = self
                 .ordering
                 .iter()
