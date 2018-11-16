@@ -1,6 +1,6 @@
 [package]
 name = "deterministic"
-version = "0.0.10"
+version = "0.1.1"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "deterministic building blocks for testable systems"
 license = "MIT/Apache-2.0"
@@ -10,6 +10,6 @@ keywords = ["testing", "realtime-scheduler"]
 documentation = "https://docs.rs/deterministic/"
 
 [dependencies]
-rand = "0.5"
+rand = "0.6"
 libc = "0.2"
 serde = "1.0"
