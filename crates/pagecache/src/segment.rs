@@ -1441,7 +1441,7 @@ fn segment_is_drainable(
     // which encourages earlier segments to be rewritten
     // more frequently.
     let base_cleanup_threshold =
-        config.segment_cleanup_threshold as usize * 100;
+        (config.segment_cleanup_threshold * 100.) as usize;
     let cleanup_skew = config.segment_cleanup_skew;
 
     let relative_prop = if num_segments == 0 {
@@ -1455,8 +1455,15 @@ fn segment_is_drainable(
     let relative_threshold = cleanup_skew * inverse_prop / 100;
     let computed_threshold =
         base_cleanup_threshold + relative_threshold;
+
     // We should always be below 100, or we will rewrite everything
-    let cleanup_threshold = std::cmp::min(99, computed_threshold);
+    let cleanup_threshold = if computed_threshold == 0 {
+        1
+    } else if computed_threshold > 99 {
+        99
+    } else {
+        computed_threshold
+    };
 
     let segment_low_pct = live_pct as usize <= cleanup_threshold;
 
