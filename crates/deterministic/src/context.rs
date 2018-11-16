@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Condvar;
 
-use rand::{Rng, SeedableRng, StdRng};
+use rand::{rngs::StdRng, RngCore, SeedableRng};
 
 use super::*;
 
@@ -67,9 +67,14 @@ pub fn seed() -> usize {
 }
 
 pub fn set_seed(seed: usize) {
-    with_context(|c| {
-        let seed_slice: &[usize] = &[seed];
-        c.rng.reseed(seed_slice);
+    let mut seed_slice = [0u8; 32];
+    let seed_bytes: [u8; std::mem::size_of::<usize>()] =
+        unsafe { std::mem::transmute(seed) };
+
+    seed_slice[0..seed_bytes.len()].copy_from_slice(&seed_bytes);
+
+    with_context(move |c| {
+        c.rng = SeedableRng::from_seed(seed_slice);
         c.seed = Some(seed)
     });
 }
@@ -80,9 +85,24 @@ pub fn now() -> SystemTime {
 
 pub struct Rand;
 
-impl Rng for Rand {
+impl RngCore for Rand {
     fn next_u32(&mut self) -> u32 {
         with_context(|c| c.rng.next_u32())
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        with_context(|c| c.rng.next_u64())
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        with_context(|c| c.rng.fill_bytes(dest));
+    }
+
+    fn try_fill_bytes(
+        &mut self,
+        dest: &mut [u8],
+    ) -> Result<(), rand::Error> {
+        Ok(self.fill_bytes(dest))
     }
 }
 
@@ -92,7 +112,7 @@ pub fn thread_rng() -> Rand {
 
 impl Default for ContextInner {
     fn default() -> ContextInner {
-        let seed: &[_] = &[0];
+        let seed = [0u8; 32];
         ContextInner {
             seed: None,
             clock: UNIX_EPOCH,
