@@ -107,8 +107,19 @@ struct Segment {
     state: SegmentState,
 }
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-enum SegmentState {
+#[derive(
+    Debug,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialOrd,
+    PartialEq,
+    Clone,
+    Serialize,
+    Deserialize,
+)]
+pub(crate) enum SegmentState {
     /// the segment is marked for reuse, should never receive
     /// new pids,
     /// TODO consider: but may receive removals for pids that were
@@ -338,9 +349,16 @@ impl Segment {
         Ok(())
     }
 
-    fn live_pct(&self) -> f64 {
+    // The live percentage between 0 and 100
+    fn live_pct(&self) -> u8 {
         let total = self.present.len() + self.removed.len();
-        self.present.len() as f64 / total as f64
+        if total == 0 {
+            return 100;
+        }
+
+        let live = self.present.len() * 100 / total;
+        assert!(live <= 100);
+        live as u8
     }
 
     fn can_free(&self) -> bool {
@@ -496,6 +514,8 @@ impl SegmentAccountant {
 
         debug!("set self.tip to {}", self.tip);
 
+        let segments_len = segments.len();
+
         for (idx, ref mut segment) in segments.iter_mut().enumerate()
         {
             let segment_start = idx as LogId * io_buf_size as LogId;
@@ -519,45 +539,17 @@ impl SegmentAccountant {
 
             // can we transition these segments?
 
-            // we calculate the cleanup threshold in a skewed way,
-            // which encourages earlier segments to be rewritten
-            // more frequently.
-            let base_cleanup_threshold =
-                self.config.segment_cleanup_threshold;
-            let cleanup_skew = self.config.segment_cleanup_skew;
-
-            let relative_prop = if self.segments.is_empty() {
-                0.5
-            } else {
-                idx as f64 / self.segments.len() as f64
-            };
-
-            // we bias to having a higher threshold closer to segment 0
-            let inverse_prop = 1. - relative_prop;
-            let relative_threshold =
-                cleanup_skew as f64 * inverse_prop;
-            let computed_threshold =
-                base_cleanup_threshold + relative_threshold;
-            // We should always be below 1, or we will rewrite everything
-            let cleanup_threshold = if computed_threshold < 1. {
-                computed_threshold
-            } else {
-                0.99
-            };
-
-            let segment_low_pct =
-                segment.live_pct() <= cleanup_threshold;
-
-            let segment_low_count = (segment.len() as f64)
-                < MINIMUM_ITEMS_PER_SEGMENT as f64
-                    * cleanup_threshold;
-
             let can_free = segment.is_empty()
                 && !self.pause_rewriting
                 && lsn != highest_lsn;
 
-            let can_drain = (segment_low_pct || segment_low_count)
-                && !self.pause_rewriting
+            let can_drain = segment_is_drainable(
+                idx,
+                segments_len,
+                segment.live_pct(),
+                segment.len(),
+                &self.config,
+            ) && !self.pause_rewriting
                 && lsn != highest_lsn;
 
             // populate free and to_clean if the segment has seen
@@ -797,8 +789,9 @@ impl SegmentAccountant {
             !(old_ptrs.len() == 1 && old_ptrs[0].is_blob());
 
         // TODO use smallvec
-        let mut old_segments =
-            Vec::with_capacity(self.config.page_consolidation_threshold + 1);
+        let mut old_segments = Vec::with_capacity(
+            self.config.page_consolidation_threshold + 1,
+        );
 
         for old_ptr in old_ptrs {
             if schedule_rm_blob && old_ptr.is_blob() {
@@ -843,10 +836,9 @@ impl SegmentAccountant {
             if !old_segments.contains(&old_idx) {
                 old_segments.push(old_idx);
             }
-
         }
 
-        for old_idx in old_segments.into_iter (){
+        for old_idx in old_segments.into_iter() {
             self.segments[old_idx].remove_pid(pid, lsn);
 
             // can we transition these segments?
@@ -863,38 +855,14 @@ impl SegmentAccountant {
         idx: usize,
         lsn: Lsn,
     ) {
-        // we calculate the cleanup threshold in a skewed way,
-        // which encourages earlier segments to be rewritten
-        // more frequently.
-        let base_cleanup_threshold =
-            self.config.segment_cleanup_threshold;
-        let cleanup_skew = self.config.segment_cleanup_skew;
-
-        assert!(!self.segments.is_empty());
-        let relative_prop = idx as f64 / self.segments.len() as f64;
-
-        // we bias to having a higher threshold closer to segment 0
-        let inverse_prop = 1. - relative_prop;
-        let relative_threshold = cleanup_skew as f64 * inverse_prop;
-        let computed_threshold =
-            base_cleanup_threshold + relative_threshold;
-        // We should always be below 1, or we will rewrite everything
-        let cleanup_threshold = if computed_threshold < 1. {
-            computed_threshold
-        } else {
-            0.99
-        };
-
+        let can_drain = segment_is_drainable(
+            idx,
+            self.segments.len(),
+            self.segments[idx].live_pct(),
+            self.segments[idx].len(),
+            &self.config,
+        ) && self.segments[idx].is_inactive();
         let segment_start = (idx * self.config.io_buf_size) as LogId;
-
-        let segment_low_pct =
-            self.segments[idx].live_pct() <= cleanup_threshold;
-
-        let segment_low_count = (self.segments[idx].len() as f64)
-            < MINIMUM_ITEMS_PER_SEGMENT as f64 * cleanup_threshold;
-
-        let can_drain = self.segments[idx].is_inactive()
-            && (segment_low_pct || segment_low_count);
 
         if can_drain {
             // can be cleaned
@@ -1460,4 +1428,47 @@ pub(super) fn raw_segment_iter_from(
         use_compression: config.use_compression,
         trailer: None,
     })
+}
+
+fn segment_is_drainable(
+    idx: usize,
+    num_segments: usize,
+    live_pct: u8,
+    len: usize,
+    config: &Config,
+) -> bool {
+    // we calculate the cleanup threshold in a skewed way,
+    // which encourages earlier segments to be rewritten
+    // more frequently.
+    let base_cleanup_threshold =
+        (config.segment_cleanup_threshold * 100.) as usize;
+    let cleanup_skew = config.segment_cleanup_skew;
+
+    let relative_prop = if num_segments == 0 {
+        50
+    } else {
+        (idx * 100) / num_segments
+    };
+
+    // we bias to having a higher threshold closer to segment 0
+    let inverse_prop = 100 - relative_prop;
+    let relative_threshold = cleanup_skew * inverse_prop / 100;
+    let computed_threshold =
+        base_cleanup_threshold + relative_threshold;
+
+    // We should always be below 100, or we will rewrite everything
+    let cleanup_threshold = if computed_threshold == 0 {
+        1
+    } else if computed_threshold > 99 {
+        99
+    } else {
+        computed_threshold
+    };
+
+    let segment_low_pct = live_pct as usize <= cleanup_threshold;
+
+    let segment_low_count =
+        len < MINIMUM_ITEMS_PER_SEGMENT * 100 / cleanup_threshold;
+
+    segment_low_pct || segment_low_count
 }
