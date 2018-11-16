@@ -3,8 +3,14 @@ extern crate quickcheck;
 extern crate rand;
 extern crate tests;
 
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT},
+        Arc,
+    },
+    thread,
+};
 
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::Rng;
@@ -79,6 +85,123 @@ fn pagecache_caching() {
         let key = pc.link(id, key, vec![i], &guard).unwrap();
         keys.insert(id, key);
     }
+}
+
+#[test]
+fn parallel_pagecache() {
+    const N_THREADS: usize = 10;
+    const N_PER_THREAD: usize = 1000;
+
+    let config = ConfigBuilder::new()
+        .temporary(true)
+        .io_bufs(3)
+        .blink_node_split_size(500)
+        .flush_every_ms(None)
+        .snapshot_after_ops(100_000_000)
+        .io_buf_size(8_000)
+        .page_consolidation_threshold(3)
+        .print_profile_on_drop(true)
+        .build();
+
+    macro_rules! par {
+        ($t:ident, $f:expr) => {
+            let mut threads = vec![];
+            for tn in 0..N_THREADS {
+                let tree = $t.clone();
+                let thread = thread::Builder::new()
+                    .name(format!("t({})", tn))
+                    .spawn(move || {
+                        for i in (tn * N_PER_THREAD)
+                            ..((tn + 1) * N_PER_THREAD)
+                        {
+                            $f(&*tree, i);
+                        }
+                    }).expect("should be able to spawn thread");
+                threads.push(thread);
+            }
+            while let Some(thread) = threads.pop() {
+                if let Err(e) = thread.join() {
+                    panic!("thread failure: {:?}", e);
+                }
+            }
+        };
+    }
+
+    println!("========== sets ==========");
+    let p: Arc<PageCache<TestMaterializer, Vec<usize>, ()>> =
+        Arc::new(PageCache::start(config.clone()).unwrap());
+
+    par!{p, |pc: &PageCache<_, _, _>, _i: usize| {
+        let guard = pin();
+        let id = pc.allocate(&guard).unwrap();
+        let _key = pc
+            .replace(id, PagePtr::allocated(), vec![id], &guard)
+            .unwrap();
+        let (ptr, _key): (&Vec<usize>, _) =
+                           pc.get(id, &guard)
+                             .expect("we should read what we just wrote")
+                             .unwrap();
+        assert_eq!(ptr[0], id);
+    }};
+
+    drop(p);
+
+    println!("========== gets ==========");
+    let p: Arc<PageCache<TestMaterializer, Vec<usize>, ()>> =
+        Arc::new(PageCache::start(config.clone()).unwrap());
+
+    par!{p, |pc: &PageCache<_, _, _>, i: usize| {
+        let guard = pin();
+        let (ptr, _key): (&Vec<usize>, _) =
+                           pc.get(i, &guard)
+                             .expect("we should read what we just wrote")
+                             .unwrap();
+        assert_eq!(*ptr, vec![i]);
+    }};
+
+    drop(p);
+
+    println!("========== links ==========");
+    let p: Arc<PageCache<TestMaterializer, Vec<usize>, ()>> =
+        Arc::new(PageCache::start(config.clone()).unwrap());
+
+    par!{p, |pc: &PageCache<_, _, _>, i: usize| {
+        let mut success = 0;
+
+        while success <= 10 {
+            let guard = pin();
+            let (_ptr, key) = pc.get(i, &guard)
+                .expect("we should read what we just wrote")
+                .unwrap();
+            match pc.link(i, key, vec![success], &guard) {
+                Err(_) => {},
+                Ok(_) => {
+                    success += 1;
+                }
+            }
+        }
+        let guard = pin();
+        let (ptr, _key): (&Vec<usize>, _) =
+                           pc.get(i, &guard)
+                             .expect("we should read what we just wrote")
+                             .unwrap();
+        assert_eq!(*ptr, vec![i, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    }};
+
+    drop(p);
+
+    println!("========== gets ==========");
+    let p: Arc<PageCache<TestMaterializer, Vec<usize>, ()>> =
+        Arc::new(PageCache::start(config.clone()).unwrap());
+
+    par!{p, |pc: &PageCache<_, _, _>, i: usize| {
+        let guard = pin();
+        let (ptr, _key): (&Vec<usize>, _) =
+                           pc.get(i, &guard)
+                             .expect("we should read what we just wrote")
+                             .unwrap();
+        assert_eq!(*ptr, vec![i, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    }};
 }
 
 #[test]
