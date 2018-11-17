@@ -250,10 +250,9 @@ impl<T: Send + 'static> Drop for Node2<T> {
 }
 
 #[test]
-#[ignore]
 fn test_split_fanout() {
-    assert_eq!(split_fanout(0b11_1111), (0b11_1111, 0));
-    assert_eq!(split_fanout(0b111_1111), (0b11_1111, 0b1));
+    assert_eq!(split_fanout(0b11_1111_1111_1111_1111), (0, 0b11_1111_1111_1111_1111));
+    assert_eq!(split_fanout(0b111_1111_1111_1111_1111), (0b1, 0b11_1111_1111_1111_1111));
 }
 
 #[test]
