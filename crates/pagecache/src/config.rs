@@ -19,6 +19,8 @@ use serde::Serialize;
 
 use super::*;
 
+const DEFAULT_PATH: &'static str = "default.sled";
+
 impl Deref for Config {
     type Target = ConfigBuilder;
     fn deref(&self) -> &Self::Target {
@@ -78,8 +80,6 @@ pub struct ConfigBuilder {
     #[doc(hidden)]
     pub temporary: bool,
     #[doc(hidden)]
-    pub tmp_path: PathBuf,
-    #[doc(hidden)]
     pub use_compression: bool,
     #[doc(hidden)]
     pub zstd_compression_factor: i32,
@@ -93,34 +93,12 @@ unsafe impl Send for ConfigBuilder {}
 
 impl Default for ConfigBuilder {
     fn default() -> ConfigBuilder {
-        #[cfg(unix)]
-        let salt = {
-            static SALT_COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
-            let pid = unsafe { libc::getpid() };
-            ((pid as u64) << 32)
-                + SALT_COUNTER.fetch_add(1, Ordering::SeqCst) as u64
-        };
-
-        #[cfg(not(unix))]
-        let salt = {
-            let now = uptime();
-            (now.as_secs() * 1_000_000_000)
-                + now.subsec_nanos() as u64
-        };
-
-        // use shared memory for temporary linux files
-        #[cfg(target_os = "linux")]
-        let tmp_path = format!("/dev/shm/pagecache.tmp.{}", salt);
-
-        #[cfg(not(target_os = "linux"))]
-        let tmp_path = format!("/tmp/pagecache.tmp.{}", salt);
-
         ConfigBuilder {
             io_bufs: 3,
             io_buf_size: 2 << 22, // 8mb
             blink_node_split_size: 4096,
             page_consolidation_threshold: 10,
-            path: PathBuf::from("default.sled"),
+            path: PathBuf::from(DEFAULT_PATH),
             read_only: false,
             cache_bits: 6, // 64 shards
             cache_capacity: 1024 * 1024 * 1024, // 1gb
@@ -131,7 +109,6 @@ impl Default for ConfigBuilder {
             snapshot_path: None,
             segment_cleanup_threshold: 0.2,
             segment_cleanup_skew: 10,
-            tmp_path: PathBuf::from(tmp_path),
             temporary: false,
             segment_mode: SegmentMode::Gc,
             merge_operator: None,
@@ -182,7 +159,35 @@ impl ConfigBuilder {
     }
 
     /// Finalize the configuration.
-    pub fn build(self) -> Config {
+    pub fn build(mut self) -> Config {
+        if self.temporary && self.path == PathBuf::from(DEFAULT_PATH)
+        {
+            #[cfg(unix)]
+            let salt = {
+                static SALT_COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
+                let pid = unsafe { libc::getpid() };
+                ((pid as u64) << 32)
+                    + SALT_COUNTER.fetch_add(1, Ordering::SeqCst)
+                        as u64
+            };
+
+            #[cfg(not(unix))]
+            let salt = {
+                let now = uptime();
+                (now.as_secs() * 1_000_000_000)
+                    + now.subsec_nanos() as u64
+            };
+
+            // use shared memory for temporary linux files
+            #[cfg(target_os = "linux")]
+            let tmp_path = format!("/dev/shm/pagecache.tmp.{}", salt);
+
+            #[cfg(not(target_os = "linux"))]
+            let tmp_path = format!("/tmp/pagecache.tmp.{}", salt);
+
+            self.path = PathBuf::from(tmp_path);
+        }
+
         // seal config in a Config
         Config {
             inner: Arc::new(self),
@@ -199,7 +204,7 @@ impl ConfigBuilder {
         (io_buf_size, usize, "size of each io flush buffer. MUST be multiple of 512!"),
         (blink_node_split_size, usize, "b-link tree node size in bytes before splitting"),
         (page_consolidation_threshold, usize, "page consolidation threshold"),
-        (temporary, bool, "if this database should be removed after the ConfigBuilder is dropped"),
+        (temporary, bool, "deletes the database after drop. if no path is set, uses /dev/shm on linux"),
         (read_only, bool, "whether to run in read-only mode"),
         (cache_bits, usize, "log base 2 of the number of cache shards"),
         (cache_capacity, usize, "maximum size for the system page cache"),
@@ -268,10 +273,10 @@ impl Drop for Config {
 
             // Our files are temporary, so nuke them.
             warn!(
-                "removing ephemeral storage file {}",
-                self.inner.tmp_path.to_string_lossy()
+                "removing temporary storage file {}",
+                self.inner.path.to_string_lossy()
             );
-            let _res = fs::remove_dir_all(&self.tmp_path);
+            let _res = fs::remove_dir_all(&self.path);
         }
     }
 }
@@ -299,11 +304,7 @@ impl Config {
     // Get the path of the database
     #[doc(hidden)]
     pub fn get_path(&self) -> PathBuf {
-        if self.inner.temporary {
-            self.inner.tmp_path.clone()
-        } else {
-            self.inner.path.clone()
-        }
+        self.inner.path.clone()
     }
 
     // returns the current snapshot file prefix
