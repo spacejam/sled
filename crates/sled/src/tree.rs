@@ -213,7 +213,7 @@ impl Tree {
         &self,
         key: K,
         old: Option<&[u8]>,
-        new: Option<Value>
+        new: Option<Value>,
     ) -> Result<(), Option<PinnedValue>> {
         let _measure = Measure::new(&M.tree_cas);
 
@@ -243,7 +243,10 @@ impl Tree {
 
             let (node_id, encoded_key) = {
                 let node: &Node = leaf_frag.unwrap_base();
-                (node.id, prefix_encode(node.lo.inner(), key.as_ref()))
+                (
+                    node.id,
+                    prefix_encode(node.lo.inner(), key.as_ref()),
+                )
             };
             let frag = if let Some(ref n) = new {
                 Frag::Set(encoded_key, n.clone())
@@ -296,7 +299,8 @@ impl Tree {
                  of length >= 2 (root + leaf)",
             );
             let node: &Node = leaf_frag.unwrap_base();
-            let encoded_key = prefix_encode(node.lo.inner(), key.as_ref());
+            let encoded_key =
+                prefix_encode(node.lo.inner(), key.as_ref());
 
             // Search for the existing key, so we can return
             // it later.
@@ -407,7 +411,7 @@ impl Tree {
     pub fn merge<K: AsRef<[u8]>>(
         &self,
         key: K,
-        value: Value
+        value: Value,
     ) -> Result<(), ()> {
         let _measure = Measure::new(&M.tree_merge);
 
@@ -427,7 +431,8 @@ impl Tree {
             );
             let node: &Node = leaf_frag.unwrap_base();
 
-            let encoded_key = prefix_encode(node.lo.inner(), key.as_ref());
+            let encoded_key =
+                prefix_encode(node.lo.inner(), key.as_ref());
             let frag = Frag::Merge(encoded_key, value.clone());
 
             let link = self.pages.link(
@@ -479,7 +484,7 @@ impl Tree {
     /// ```
     pub fn del<K: AsRef<[u8]>>(
         &self,
-        key: K
+        key: K,
     ) -> Result<Option<PinnedValue>, ()> {
         let _measure = Measure::new(&M.tree_del);
 
@@ -498,7 +503,8 @@ impl Tree {
                  of length >= 2 (root + leaf)",
             );
             let node: &Node = leaf_frag.unwrap_base();
-            let encoded_key = prefix_encode(node.lo.inner(), key.as_ref());
+            let encoded_key =
+                prefix_encode(node.lo.inner(), key.as_ref());
             match node.data {
                 Data::Leaf(ref items) => {
                     let search =
@@ -837,8 +843,7 @@ impl Tree {
         &self,
         key: K,
         guard: &'g Guard,
-    ) -> Result<(Path<'g>, Option<&'g [u8]>), ()>
-    {
+    ) -> Result<(Path<'g>, Option<&'g [u8]>), ()> {
         let path = self.path_for_key(key.as_ref(), guard)?;
 
         let ret = path.last().and_then(|(last_frag, _tree_ptr)| {
@@ -848,7 +853,11 @@ impl Tree {
                 data.leaf_ref().expect("last_node should be a leaf");
             let search =
                 items.binary_search_by(|&(ref k, ref _v)| {
-                    prefix_cmp_encoded(k, key.as_ref(), last_node.lo.inner())
+                    prefix_cmp_encoded(
+                        k,
+                        key.as_ref(),
+                        last_node.lo.inner(),
+                    )
                 });
             if let Ok(idx) = search {
                 Some(&*items[idx].1)
@@ -928,7 +937,10 @@ impl Tree {
             let node = frag.unwrap_base();
 
             // TODO this may need to change when handling (half) merges
-            assert!(node.lo.inner() <= key.as_ref(), "overshot key somehow");
+            assert!(
+                node.lo.inner() <= key.as_ref(),
+                "overshot key somehow"
+            );
 
             // half-complete split detect & completion
             if node.hi <= Bound::Inclusive(key.as_ref().to_vec()) {
@@ -982,7 +994,11 @@ impl Tree {
                     let search = binary_search_lub(
                         ptrs,
                         |&(ref k, ref _v)| {
-                            prefix_cmp_encoded(k, key.as_ref(), &prefix)
+                            prefix_cmp_encoded(
+                                k,
+                                key.as_ref(),
+                                &prefix,
+                            )
                         },
                     );
 

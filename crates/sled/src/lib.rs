@@ -60,7 +60,9 @@ use pagecache::*;
 
 pub use pagecache::{Config, ConfigBuilder, Error, Result};
 
-use self::binary_search_least_upper_bound::binary_search_lub;
+use self::binary_search_least_upper_bound::{
+    binary_search_lub, binary_search_pred,
+};
 use self::bound::Bound;
 use self::data::Data;
 use self::frag::{ChildSplit, ParentSplit};
