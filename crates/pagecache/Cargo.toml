@@ -25,7 +25,7 @@ libc = "0.2"
 bincode = "1.0"
 serde = "1.0"
 serde_derive = "1.0"
-lazy_static = "1.1"
+lazy_static = "1.2"
 fail = { version = "0.2", optional = true }
 rand = { version = "0.6", optional = true }
 rayon = "1.0"

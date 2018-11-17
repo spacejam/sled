@@ -37,12 +37,11 @@ pub struct Log {
     /// iobufs is the underlying lock-free IO write buffer.
     iobufs: Arc<IoBufs>,
     config: Config,
-    /// Preiodically flushes `iobufs`.
-    _flusher: periodic::Periodic<Arc<IoBufs>>,
+    /// Periodically flushes `iobufs`.
+    _flusher: Option<flusher::Flusher>,
 }
 
 unsafe impl Send for Log {}
-unsafe impl Sync for Log {}
 
 impl Log {
     /// Start the log, open or create the configured file,
@@ -53,11 +52,13 @@ impl Log {
     ) -> Result<Log, ()> {
         let iobufs =
             Arc::new(IoBufs::start(config.clone(), snapshot)?);
-        let flusher = periodic::Periodic::new(
-            "log flusher".to_owned(),
-            iobufs.clone(),
-            config.flush_every_ms,
-        );
+        let flusher = config.flush_every_ms.map(|fem| {
+            flusher::Flusher::new(
+                "log flusher".to_owned(),
+                iobufs.clone(),
+                fem,
+            )
+        });
 
         Ok(Log {
             iobufs: iobufs,
