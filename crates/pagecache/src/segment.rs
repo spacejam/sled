@@ -64,7 +64,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::fs::File;
 use std::mem;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use self::reader::LogReader;
 use super::*;
@@ -84,7 +84,7 @@ pub(super) struct SegmentAccountant {
     // TODO put behind a single mutex
     // NB MUST group pause_rewriting with ordering
     // and free!
-    free: Arc<Mutex<VecDeque<(LogId, bool)>>>,
+    free: Mutex<VecDeque<(LogId, bool)>>,
     tip: LogId,
     to_clean: BTreeSet<LogId>,
     pause_rewriting: bool,
@@ -402,7 +402,7 @@ impl SegmentAccountant {
             config: config,
             segments: vec![],
             clean_counter: 0,
-            free: Arc::new(Mutex::new(VecDeque::new())),
+            free: Mutex::new(VecDeque::new()),
             tip: 0,
             to_clean: BTreeSet::new(),
             pause_rewriting: false,
