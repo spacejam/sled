@@ -64,7 +64,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::fs::File;
 use std::mem;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use self::reader::LogReader;
 use super::*;
@@ -84,7 +84,7 @@ pub(super) struct SegmentAccountant {
     // TODO put behind a single mutex
     // NB MUST group pause_rewriting with ordering
     // and free!
-    free: Arc<Mutex<VecDeque<(LogId, bool)>>>,
+    free: Mutex<VecDeque<(LogId, bool)>>,
     tip: LogId,
     to_clean: BTreeSet<LogId>,
     pause_rewriting: bool,
@@ -402,7 +402,7 @@ impl SegmentAccountant {
             config: config,
             segments: vec![],
             clean_counter: 0,
-            free: Arc::new(Mutex::new(VecDeque::new())),
+            free: Mutex::new(VecDeque::new()),
             tip: 0,
             to_clean: BTreeSet::new(),
             pause_rewriting: false,
@@ -738,8 +738,6 @@ impl SegmentAccountant {
         self.ensure_safe_free_distance();
 
         if in_recovery {
-            self.free.lock().unwrap().push_back((lid, false));
-
             // We only want to immediately remove the segment
             // mapping if we're in recovery because otherwise
             // we may be acting on updates relating to things
@@ -754,35 +752,9 @@ impl SegmentAccountant {
                 );
                 self.ordering.remove(&old_lsn);
             }
-        } else {
-            // We use a `epoch::Guard::defer()` to ensure that we never
-            // add a segment's LogId to the free deque while any
-            // active thread could be acting on it. This is necessary
-            // despite the "safe buffer" in the free queue because
-            // the safe buffer only prevents the sole remaining
-            // copy of a page from being overwritten. This prevents
-            // dangling references to segments that were rewritten after
-            // the `LogId` was read. Additionally, we guarantee that
-            // any reservations that have replaced items in this segment
-            // have already been fsynced, due to the EBR guard
-            // that is attached to any reservation before operating
-            // on a segment.
-            //
-            // We spawn a thread to accomplish this because we
-            // are already holding a lock to the segment accountant,
-            // and when the guard that is created below is dropped
-            // it may cause the segment accountant to be locked again.
-            // We can't have the same thread that is already holding
-            // the SA lock try to lock it again, or we deadlock.
-            let free = self.free.clone();
-            rayon::spawn(move || {
-                let guard = pin();
-                guard.defer(move || {
-                    free.lock().unwrap().push_back((lid, false));
-                });
-                guard.flush();
-            });
         }
+
+        self.free.lock().unwrap().push_back((lid, false));
     }
 
     /// Causes all new allocations to occur at the end of the file, which
@@ -1010,8 +982,8 @@ impl SegmentAccountant {
     pub(super) fn deactivate_segment(
         &mut self,
         lsn: Lsn,
-        lid: LogId,
     ) -> Result<(), ()> {
+        let lid = self.ordering[&lsn];
         let idx = self.lid_to_idx(lid);
 
         self.segments[idx].active_to_inactive(

@@ -241,40 +241,6 @@ impl IoBufs {
         ret
     }
 
-    /// SegmentAccountant access for coordination with the `PageCache`,
-    /// performed after all threads have exited the currently checked-in
-    /// epochs using a crossbeam-epoch EBR guard.
-    ///
-    /// IMPORTANT: Never call this function with anything that calls
-    /// defer on the same thread, as if a guard drops inside, it could
-    /// trigger the below mutex lock, causing a deadlock.
-    unsafe fn with_sa_deferred<F>(&self, f: F)
-    where
-        F: FnOnce(&mut SegmentAccountant) + Send + 'static,
-    {
-        let guard = pin();
-        let segment_accountant = self.segment_accountant.clone();
-
-        guard.defer(move || {
-            let start = clock();
-
-            debug_delay();
-            let mut sa = segment_accountant.lock().unwrap();
-
-            let locked_at = clock();
-
-            M.accountant_lock.measure(locked_at - start);
-
-            let _ = f(&mut sa);
-
-            drop(sa);
-
-            M.accountant_hold.measure(clock() - locked_at);
-        });
-
-        guard.flush();
-    }
-
     fn idx(&self) -> usize {
         debug_delay();
         let current_buf = self.current_buf.load(SeqCst);
@@ -422,7 +388,6 @@ impl IoBufs {
                 }
             }
 
-            let guard = pin();
             debug_delay();
             let written_bufs = self.written_bufs.load(SeqCst);
             debug_delay();
@@ -583,7 +548,6 @@ impl IoBufs {
                 lsn: reservation_lsn,
                 lid: reservation_offset,
                 is_blob: over_blob_threshold || is_blob_rewrite,
-                _guard: guard,
             });
         }
     }
@@ -984,24 +948,6 @@ impl IoBufs {
                 "wrote trailer at lid {} for lsn {}",
                 trailer_lid, trailer_lsn
             );
-
-            // transition this segment into deplete-only mode now
-            // that n_writers is 0, and all calls to mark_replace/link
-            // happen before the reservation completes.
-            trace!(
-                "deactivating segment with lsn {} at idx {} with lid {}",
-                segment_lsn,
-                idx,
-                lid
-            );
-            unsafe {
-                self.with_sa_deferred(move |sa| {
-                    trace!("EBR deactivating segment {} with lsn {} and lid {}", idx, segment_lsn, segment_lid);
-                    if let Err(e) = sa.deactivate_segment(segment_lsn, segment_lid) {
-                        error!("segment accountant failed to deactivate segment: {}", e);
-                    }
-                });
-            }
         } else {
             trace!(
                 "not deactivating segment with lsn {}",
@@ -1071,6 +1017,7 @@ impl IoBufs {
             whence
         );
         let mut intervals = self.intervals.lock().unwrap();
+        let lsn_before = self.stable_lsn.load(SeqCst) as Lsn;
 
         let interval = (whence, whence + len as Lsn - 1);
 
@@ -1088,6 +1035,7 @@ impl IoBufs {
         let mut updated = false;
 
         let len_before = intervals.len();
+        let mut lsn_after = lsn_before;
 
         while let Some(&(low, high)) = intervals.last() {
             assert_ne!(low, high);
@@ -1111,6 +1059,7 @@ impl IoBufs {
                 debug!("new highest interval: {} - {}", low, high);
                 intervals.pop();
                 updated = true;
+                lsn_after = high;
             } else {
                 break;
             }
@@ -1125,6 +1074,26 @@ impl IoBufs {
 
         if updated {
             self.interval_updated.notify_all();
+        }
+
+        drop(intervals);
+
+        let logical_segment_before = lsn_before / self.config.io_buf_size as Lsn;
+        let logical_segment_after = lsn_after / self.config.io_buf_size as Lsn;
+        if logical_segment_before != logical_segment_after {
+            self.with_sa(move |sa| {
+                for logical_segment in logical_segment_before..logical_segment_after {
+                    let segment_lsn = logical_segment * self.config.io_buf_size as Lsn;
+                    // transition this segment into deplete-only mode
+                    trace!(
+                        "deactivating segment with lsn {}",
+                        segment_lsn,
+                    );
+                    if let Err(e) = sa.deactivate_segment(segment_lsn) {
+                        error!("segment accountant failed to deactivate segment: {}", e);
+                    }
+                }
+            });
         }
     }
 }
