@@ -1,6 +1,6 @@
 [package]
 name = "pagetable"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "simple wait-free two-level pagetable with 2mb pages"
 license = "MIT/Apache-2.0"
