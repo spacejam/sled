@@ -159,6 +159,21 @@ where
         }
     }
 
+    /// unwraps the `PageGet` into its inner `Materialized`
+    /// form, or panics with the specified error message.
+    ///
+    /// # Panics
+    /// Panics if it is a variant other than Materialized.
+    pub fn expect(
+        self,
+        msg: &'static str,
+    ) -> (&'a P, PagePtr<'a, P>) {
+        match self {
+            PageGet::Materialized(pr, hptr) => (pr, hptr),
+            _ => panic!(msg),
+        }
+    }
+
     /// Returns true if the `PageGet` is `Materialized`.
     pub fn is_materialized(&self) -> bool {
         match *self {
