@@ -108,6 +108,8 @@ pub enum Op {
     Set(Key, u8),
     Merge(Key, u8),
     Get(Key),
+    GetLt(Key),
+    GetGt(Key),
     Del(Key),
     Cas(Key, u8, u8),
     Scan(Key, usize),
@@ -132,15 +134,17 @@ impl Arbitrary for Op {
             return Restart;
         }
 
-        let choice = g.gen_range(0, 6);
+        let choice = g.gen_range(0, 8);
 
         match choice {
             0 => Set(Key::arbitrary(g), g.gen::<u8>()),
             1 => Merge(Key::arbitrary(g), g.gen::<u8>()),
             2 => Get(Key::arbitrary(g)),
-            3 => Del(Key::arbitrary(g)),
-            4 => Cas(Key::arbitrary(g), g.gen::<u8>(), g.gen::<u8>()),
-            5 => Scan(Key::arbitrary(g), g.gen_range(0, 40)),
+            3 => GetLt(Key::arbitrary(g)),
+            4 => GetGt(Key::arbitrary(g)),
+            5 => Del(Key::arbitrary(g)),
+            6 => Cas(Key::arbitrary(g), g.gen::<u8>(), g.gen::<u8>()),
+            7 => Scan(Key::arbitrary(g), g.gen_range(0, 40)),
             _ => panic!("impossible choice"),
         }
     }
@@ -154,6 +158,12 @@ impl Arbitrary for Op {
                 Box::new(k.shrink().map(move |k| Merge(k, v.clone())))
             }
             Get(ref k) => Box::new(k.shrink().map(move |k| Get(k))),
+            GetLt(ref k) => {
+                Box::new(k.shrink().map(move |k| GetLt(k)))
+            }
+            GetGt(ref k) => {
+                Box::new(k.shrink().map(move |k| GetGt(k)))
+            }
             Cas(ref k, old, new) => Box::new(Box::new(
                 k.shrink()
                     .map(move |k| Cas(k, old.clone(), new.clone())),
@@ -229,6 +239,32 @@ pub fn prop_tree_matches_btreemap(
                     .unwrap()
                     .map(|v| bytes_to_u16(&*v));
                 let res2 = reference.get(&k).cloned();
+                assert_eq!(res1, res2);
+            }
+            GetLt(k) => {
+                let res1 = tree
+                    .get_lt(&*k.0)
+                    .unwrap()
+                    .map(|v| bytes_to_u16(&*v));
+                let res2 = reference
+                    .iter()
+                    .rev()
+                    .filter(|(key, _)| *key < &k)
+                    .nth(0)
+                    .map(|(_, v)| *v);
+                assert_eq!(res1, res2);
+            }
+            GetGt(k) => {
+                let res1 = tree
+                    .get_gt(&*k.0)
+                    .unwrap()
+                    .map(|v| bytes_to_u16(&*v));
+                let res2 = reference
+                    .iter()
+                    .filter(|(key, _)| *key > &k)
+                    .nth(0)
+                    .map(|(_, v)| *v);
+                println!("tree: {:?}", tree);
                 assert_eq!(res1, res2);
             }
             Del(k) => {
