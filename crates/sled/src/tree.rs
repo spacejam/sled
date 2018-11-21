@@ -1,7 +1,11 @@
-use std::fmt::{self, Debug};
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering::SeqCst;
-use std::sync::Arc;
+use std::{
+    cmp::Ordering::{self, Equal},
+    fmt::{self, Debug},
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Arc,
+    },
+};
 
 use pagecache::PagePtr;
 
@@ -177,7 +181,8 @@ impl Tree {
         // the double guard is a hack that maintains
         // correctness of the ret value
         let double_guard = guard.clone();
-        let (_, ret) = self.get_internal(key.as_ref(), &guard)?;
+        let (_, ret) =
+            self.get_internal(key.as_ref(), Equal, &guard)?;
 
         guard.flush();
 
@@ -228,7 +233,7 @@ impl Tree {
         loop {
             let pin_guard = guard.clone();
             let (mut path, cur) = self
-                .get_internal(key.as_ref(), &guard)
+                .get_internal(key.as_ref(), Equal, &guard)
                 .map_err(|e| e.danger_cast())?;
 
             if old.as_ref().map(|o| o.as_ref()) != cur.map(|v| &*v) {
@@ -293,7 +298,8 @@ impl Tree {
 
         loop {
             let double_guard = guard.clone();
-            let mut path = self.path_for_key(key.as_ref(), &guard)?;
+            let (mut path, existing_key) =
+                self.get_internal(key.as_ref(), Equal, &guard)?;
             let (leaf_frag, leaf_ptr) = path.pop().expect(
                 "path_for_key should always return a path \
                  of length >= 2 (root + leaf)",
@@ -301,27 +307,6 @@ impl Tree {
             let node: &Node = leaf_frag.unwrap_base();
             let encoded_key =
                 prefix_encode(node.lo.inner(), key.as_ref());
-
-            // Search for the existing key, so we can return
-            // it later.
-            let existing_key = {
-                let data = &node.data;
-                let items =
-                    data.leaf_ref().expect("node should be a leaf");
-                let search = {
-                    let ek = &encoded_key;
-                    items.binary_search_by(|&(ref k, ref _v)| {
-                        prefix_cmp(k, &*ek)
-                    })
-                };
-
-                if let Ok(idx) = search {
-                    Some(&*items[idx].1)
-                } else {
-                    // key does not exist
-                    None
-                }
-            };
 
             let frag = Frag::Set(encoded_key, value.clone());
             let link = self.pages.link(
@@ -424,7 +409,8 @@ impl Tree {
         let guard = pin();
 
         loop {
-            let mut path = self.path_for_key(key.as_ref(), &guard)?;
+            let mut path =
+                self.path_for_key(key.as_ref(), Equal, &guard)?;
             let (leaf_frag, leaf_ptr) = path.pop().expect(
                 "path_for_key should always return a path \
                  of length >= 2 (root + leaf)",
@@ -493,11 +479,11 @@ impl Tree {
         }
 
         let guard = pin();
-
         let double_guard = guard.clone();
-        let mut ret: Option<&[u8]>;
+
         loop {
-            let mut path = self.path_for_key(key.as_ref(), &guard)?;
+            let (mut path, existing_key) =
+                self.get_internal(key.as_ref(), Equal, &guard)?;
             let (leaf_frag, leaf_ptr) = path.pop().expect(
                 "path_for_key should always return a path \
                  of length >= 2 (root + leaf)",
@@ -505,21 +491,6 @@ impl Tree {
             let node: &Node = leaf_frag.unwrap_base();
             let encoded_key =
                 prefix_encode(node.lo.inner(), key.as_ref());
-            match node.data {
-                Data::Leaf(ref items) => {
-                    let search =
-                        items.binary_search_by(|&(ref k, ref _v)| {
-                            prefix_cmp(k, &encoded_key)
-                        });
-                    if let Ok(idx) = search {
-                        ret = Some(&*items[idx].1);
-                    } else {
-                        ret = None;
-                        break;
-                    }
-                }
-                _ => panic!("last node in path is not leaf"),
-            }
 
             let frag = Frag::Del(encoded_key);
             let link = self.pages.link(
@@ -532,7 +503,10 @@ impl Tree {
             match link {
                 Ok(_) => {
                     // success
-                    break;
+                    guard.flush();
+                    return Ok(existing_key.map(move |r| {
+                        PinnedValue::new(r, double_guard)
+                    }));
                 }
                 Err(Error::CasFailed(_)) => {
                     M.tree_looped();
@@ -541,10 +515,6 @@ impl Tree {
                 Err(other) => return Err(other.danger_cast()),
             }
         }
-
-        guard.flush();
-
-        Ok(ret.map(move |r| PinnedValue::new(r, double_guard)))
     }
 
     /// Iterate over tuples of keys and values, starting at the provided key.
@@ -568,8 +538,9 @@ impl Tree {
         let guard = pin();
 
         let mut broken = None;
-        let id = match self.get_internal(key.as_ref(), &guard) {
-            Ok((ref mut path, _)) if !path.is_empty() => {
+        let id = match self.path_for_key(key.as_ref(), Equal, &guard)
+        {
+            Ok(ref mut path) if !path.is_empty() => {
                 let (leaf_frag, _leaf_ptr) = path.pop().expect(
                     "path_for_key should always return a path \
                      of length >= 2 (root + leaf)",
@@ -842,9 +813,10 @@ impl Tree {
     fn get_internal<'g, K: AsRef<[u8]>>(
         &self,
         key: K,
+        ord: Ordering,
         guard: &'g Guard,
     ) -> Result<(Path<'g>, Option<&'g [u8]>), ()> {
-        let path = self.path_for_key(key.as_ref(), guard)?;
+        let path = self.path_for_key(key.as_ref(), ord, guard)?;
 
         let ret = path.last().and_then(|(last_frag, _tree_ptr)| {
             let last_node = last_frag.unwrap_base();
@@ -874,7 +846,9 @@ impl Tree {
     pub fn key_debug_str<K: AsRef<[u8]>>(&self, key: K) -> String {
         let guard = pin();
 
-        let path = self.path_for_key(key.as_ref(), &guard).expect(
+        let path = self
+            .path_for_key(key.as_ref(), Equal, &guard)
+            .expect(
             "path_for_key should always return at least 2 nodes, \
              even if the key being searched for is not present",
         );
@@ -893,6 +867,7 @@ impl Tree {
     fn path_for_key<'g, K: AsRef<[u8]>>(
         &self,
         key: K,
+        _ord: Ordering,
         guard: &'g Guard,
     ) -> Result<Vec<(&'g Frag, TreePtr<'g>)>, ()> {
         let _measure = Measure::new(&M.tree_traverse);
@@ -972,7 +947,12 @@ impl Tree {
                     guard,
                 );
                 match link {
-                    Ok(_) => {}
+                    Ok(_new_key) => {
+                        // TODO set parent's cas_key (not this cas_key) to
+                        // new_key in the path, along with updating the
+                        // parent's node in the path vec. if we don't do
+                        // both, we lose the newly appended parent split.
+                    }
                     Err(Error::CasFailed(_)) => {}
                     Err(other) => return Err(other.danger_cast()),
                 }
