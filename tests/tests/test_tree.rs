@@ -693,6 +693,56 @@ fn tree_bug_17() {
 
 #[test]
 fn tree_bug_18() {
+    // postmortem: when implementing get_gt and get_lt, there were some
+    // issues with getting order comparisons correct.
+    prop_tree_matches_btreemap(
+        vec![
+            Set(Key(vec![]), 19),
+            Set(Key(vec![78]), 98),
+            Set(Key(vec![255]), 224),
+            Set(Key(vec![]), 131),
+            Get(Key(vec![255])),
+            GetGt(Key(vec![89])),
+        ],
+        0,
+        0,
+        false,
+    );
+}
+
+#[test]
+fn tree_bug_19() {
+    // postmortem: we were not seeking properly to the next node
+    // when we hit a half-split child and were using get_lt
+    prop_tree_matches_btreemap(
+        vec![
+            Set(Key(vec![]), 138),
+            Set(Key(vec![68]), 113),
+            Set(Key(vec![155]), 73),
+            Set(Key(vec![50]), 220),
+            Set(Key(vec![]), 247),
+            GetLt(Key(vec![100])),
+        ],
+        0,
+        0,
+        false,
+    );
+}
+
+#[test]
+fn tree_bug_20() {
     // postmortem:
-    prop_tree_matches_btreemap(vec![], 0, 0, false);
+    prop_tree_matches_btreemap(
+        vec![
+            Set(Key(vec![]), 10),
+            Set(Key(vec![56]), 42),
+            Set(Key(vec![138]), 27),
+            Set(Key(vec![155]), 73),
+            Set(Key(vec![]), 251),
+            GetGt(Key(vec![94])),
+        ],
+        0,
+        0,
+        false,
+    );
 }
