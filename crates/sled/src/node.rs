@@ -83,8 +83,7 @@ impl Node {
                     prefix_cmp(k, &*key)
                 });
             if let Ok(idx) = search {
-                records.push((key, val));
-                records.swap_remove(idx);
+                records[idx] = (key, val);
             } else {
                 records.push((key, val));
                 records.sort_unstable_by(|a, b| {
@@ -116,8 +115,7 @@ impl Node {
                     &val,
                 );
                 if let Some(new) = new {
-                    records.push((key, new));
-                    records.swap_remove(idx);
+                    records[idx] = (key, new);
                 } else {
                     records.remove(idx);
                 }
