@@ -40,7 +40,7 @@ extern crate serde_derive;
 extern crate log as _log;
 extern crate sled_sync as sync;
 
-mod binary_search_least_upper_bound;
+mod binary_search;
 mod bound;
 mod data;
 mod frag;
@@ -60,9 +60,7 @@ use pagecache::*;
 
 pub use pagecache::{Config, ConfigBuilder, Error, Result};
 
-use self::binary_search_least_upper_bound::{
-    binary_search_lub, binary_search_pred,
-};
+use self::binary_search::binary_search_lub;
 use self::bound::Bound;
 use self::data::Data;
 use self::frag::{ChildSplit, ParentSplit};
