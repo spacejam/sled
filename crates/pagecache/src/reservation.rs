@@ -13,7 +13,6 @@ pub struct Reservation<'a> {
     pub(super) lsn: Lsn,
     pub(super) lid: LogId,
     pub(super) is_blob: bool,
-    pub(super) _guard: Guard,
 }
 
 impl<'a> Drop for Reservation<'a> {

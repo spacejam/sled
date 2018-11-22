@@ -1,6 +1,6 @@
 [package]
 name = "pagecache"
-version = "0.7.4"
+version = "0.7.5"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "lock-free pagecache and log for high-performance databases"
 license = "MIT/Apache-2.0"
@@ -26,13 +26,13 @@ bincode = "1.0"
 serde = "1.0"
 serde_derive = "1.0"
 lazy_static = "1.2"
-fail = { version = "0.2", optional = true }
-rand = { version = "0.6", optional = true }
 rayon = "1.0"
-zstd = { version = "0.4", optional = true }
+fs2 = "0.4"
 pagetable = { version = "0.1", path = "../pagetable" }
 sled_sync = { version = "0.1", path = "../sled_sync" }
-fs2 = "0.4"
+zstd = { version = "0.4", optional = true }
+fail = { version = "0.2", optional = true }
+rand = { version = "0.6", optional = true }
 
 [dependencies.historian]
 version = "3.0"
