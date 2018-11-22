@@ -1,5 +1,5 @@
 use std::{
-    borrow::Cow;
+    borrow::Cow,
     cmp::Ordering::{Greater, Less},
     fmt::{self, Debug},
     sync::{
@@ -479,12 +479,14 @@ impl Tree {
                     ) {
                         let mut path2 = path
                             .iter()
-                            .map(|&(f, ref p)| (Cow::Borrowed(f), p.clone()))
-                            .collect::<Vec<(Cow<'_, Frag>, _)>>();
+                            .map(|&(f, ref p)| {
+                                (Cow::Borrowed(f), p.clone())
+                            }).collect::<Vec<(Cow<'_, Frag>, _)>>();
                         let mut node2 = node.clone();
                         node2
                             .apply(&frag, self.config.merge_operator);
-                        let frag2 = Cow::Owned(Frag::Base(node2, None));
+                        let frag2 =
+                            Cow::Owned(Frag::Base(node2, None));
                         path2.push((frag2, new_cas_key));
                         self.recursive_split(path2, &guard)?;
                     }
@@ -590,12 +592,14 @@ impl Tree {
                     ) {
                         let mut path2 = path
                             .iter()
-                            .map(|&(f, ref p)| (Cow::Borrowed(f), p.clone()))
-                            .collect::<Vec<(Cow<'_, Frag>, _)>>();
+                            .map(|&(f, ref p)| {
+                                (Cow::Borrowed(f), p.clone())
+                            }).collect::<Vec<(Cow<'_, Frag>, _)>>();
                         let mut node2 = node.clone();
                         node2
                             .apply(&frag, self.config.merge_operator);
-                        let frag2 = Cow::Owned(Frag::Base(node2, None));
+                        let frag2 =
+                            Cow::Owned(Frag::Base(node2, None));
                         path2.push((frag2, new_cas_key));
                         self.recursive_split(path2, &guard)?;
                     }
