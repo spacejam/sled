@@ -1,5 +1,5 @@
 use std::{
-    cmp::Ordering::{self, Equal, Greater, Less},
+    cmp::Ordering::{Greater, Less},
     fmt::{self, Debug},
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -25,7 +25,7 @@ impl<'a> IntoIterator for &'a Tree {
 /// A flash-sympathetic persistent lock-free B+ tree
 #[derive(Clone)]
 pub struct Tree {
-    pages: Arc<
+    pub(crate) pages: Arc<
         PageCache<BLinkMaterializer, Frag, Vec<(PageId, PageId)>>,
     >,
     config: Config,
@@ -181,8 +181,7 @@ impl Tree {
         // the double guard is a hack that maintains
         // correctness of the ret value
         let double_guard = guard.clone();
-        let (_, ret) =
-            self.get_internal(key.as_ref(), Equal, &guard)?;
+        let (_, ret) = self.get_internal(key.as_ref(), &guard)?;
 
         guard.flush();
 
@@ -206,28 +205,63 @@ impl Tree {
     ///
     /// assert!(tree.get_lt(vec![]).unwrap().is_none());
     /// assert!(tree.get_lt(vec![0]).unwrap().is_none());
-    /// assert!(tree.get_lt(vec![1]).unwrap().unwrap() == vec![0]);
-    /// assert!(tree.get_lt(vec![9]).unwrap().unwrap() == vec![8]);
-    /// assert!(tree.get_lt(vec![10]).unwrap().unwrap() == vec![9]);
-    /// assert!(tree.get_lt(vec![255]).unwrap().unwrap() == vec![9]);
+    /// assert!(tree.get_lt(vec![1]).unwrap().unwrap().1 == vec![0]);
+    /// assert!(tree.get_lt(vec![9]).unwrap().unwrap().1 == vec![8]);
+    /// assert!(tree.get_lt(vec![10]).unwrap().unwrap().1 == vec![9]);
+    /// assert!(tree.get_lt(vec![255]).unwrap().unwrap().1 == vec![9]);
     /// ```
     pub fn get_lt<K: AsRef<[u8]>>(
         &self,
         key: K,
-    ) -> Result<Option<PinnedValue>, ()> {
+    ) -> Result<Option<(Key, PinnedValue)>, ()> {
         let _measure = Measure::new(&M.tree_get);
-
-        let guard = pin();
 
         // the double guard is a hack that maintains
         // correctness of the ret value
+        let guard = pin();
         let double_guard = guard.clone();
-        let (_, ret) =
-            self.get_internal(key.as_ref(), Less, &guard)?;
+
+        let path = self.path_for_key(key.as_ref(), &guard)?;
+        let (last_frag, _tree_ptr) = path
+            .last()
+            .expect("path should always contain a last element");
+
+        let last_node = last_frag.unwrap_base();
+        let data = &last_node.data;
+        let items =
+            data.leaf_ref().expect("last_node should be a leaf");
+        let search = leaf_search(Less, items, |&(ref k, ref _v)| {
+            prefix_cmp_encoded(k, key.as_ref(), last_node.lo.inner())
+        });
+
+        let ret = if search.is_none() {
+            let mut iter = Iter {
+                id: last_node.id,
+                inner: &self,
+                last_key: key.as_ref().to_vec(),
+                inclusive: false,
+                broken: None,
+                done: false,
+                guard: guard.clone(),
+            };
+
+            match iter.next_back() {
+                Some(Err(e)) => return Err(e),
+                Some(Ok(pair)) => Some(pair),
+                None => None,
+            }
+        } else {
+            let idx = search.unwrap();
+            let (encoded_key, v) = &items[idx];
+            Some((
+                prefix_decode(last_node.lo.inner(), &*encoded_key),
+                PinnedValue::new(&*v, double_guard),
+            ))
+        };
 
         guard.flush();
 
-        Ok(ret.map(|r| PinnedValue::new(r, double_guard)))
+        Ok(ret)
     }
 
     /// Retrieve a value from the `Tree` for the key after the
@@ -245,29 +279,69 @@ impl Tree {
     ///     tree.set(vec![i], vec![i]).expect("should write successfully");
     /// }
     ///
-    /// assert!(tree.get_gt(vec![]).unwrap().unwrap() == vec![0]);
-    /// assert!(tree.get_gt(vec![0]).unwrap().unwrap() == vec![1]);
-    /// assert!(tree.get_gt(vec![1]).unwrap().unwrap() == vec![2]);
-    /// assert!(tree.get_gt(vec![8]).unwrap().unwrap() == vec![9]);
+    /// assert!(tree.get_gt(vec![]).unwrap().unwrap().1 == vec![0]);
+    /// assert!(tree.get_gt(vec![0]).unwrap().unwrap().1 == vec![1]);
+    /// assert!(tree.get_gt(vec![1]).unwrap().unwrap().1 == vec![2]);
+    /// assert!(tree.get_gt(vec![8]).unwrap().unwrap().1 == vec![9]);
     /// assert!(tree.get_gt(vec![9]).unwrap().is_none());
     /// ```
     pub fn get_gt<K: AsRef<[u8]>>(
         &self,
         key: K,
-    ) -> Result<Option<PinnedValue>, ()> {
+    ) -> Result<Option<(Key, PinnedValue)>, ()> {
         let _measure = Measure::new(&M.tree_get);
-
-        let guard = pin();
 
         // the double guard is a hack that maintains
         // correctness of the ret value
+        let guard = pin();
         let double_guard = guard.clone();
-        let (_, ret) =
-            self.get_internal(key.as_ref(), Greater, &guard)?;
+
+        let path = self.path_for_key(key.as_ref(), &guard)?;
+        let (last_frag, _tree_ptr) = path
+            .last()
+            .expect("path should always contain a last element");
+
+        let last_node = last_frag.unwrap_base();
+        let data = &last_node.data;
+        let items =
+            data.leaf_ref().expect("last_node should be a leaf");
+        let search =
+            leaf_search(Greater, items, |&(ref k, ref _v)| {
+                prefix_cmp_encoded(
+                    k,
+                    key.as_ref(),
+                    last_node.lo.inner(),
+                )
+            });
+
+        let ret = if search.is_none() {
+            let mut iter = Iter {
+                id: last_node.id,
+                inner: &self,
+                last_key: key.as_ref().to_vec(),
+                inclusive: false,
+                broken: None,
+                done: false,
+                guard: guard.clone(),
+            };
+
+            match iter.next() {
+                Some(Err(e)) => return Err(e),
+                Some(Ok(pair)) => Some(pair),
+                None => None,
+            }
+        } else {
+            let idx = search.unwrap();
+            let (encoded_key, v) = &items[idx];
+            Some((
+                prefix_decode(last_node.lo.inner(), &*encoded_key),
+                PinnedValue::new(&*v, double_guard),
+            ))
+        };
 
         guard.flush();
 
-        Ok(ret.map(|r| PinnedValue::new(r, double_guard)))
+        Ok(ret)
     }
 
     /// Compare and swap. Capable of unique creation, conditional modification,
@@ -314,7 +388,7 @@ impl Tree {
         loop {
             let pin_guard = guard.clone();
             let (mut path, cur) = self
-                .get_internal(key.as_ref(), Equal, &guard)
+                .get_internal(key.as_ref(), &guard)
                 .map_err(|e| e.danger_cast())?;
 
             if old.as_ref().map(|o| o.as_ref()) != cur.map(|v| &*v) {
@@ -380,7 +454,7 @@ impl Tree {
         loop {
             let double_guard = guard.clone();
             let (mut path, existing_key) =
-                self.get_internal(key.as_ref(), Equal, &guard)?;
+                self.get_internal(key.as_ref(), &guard)?;
             let (leaf_frag, leaf_ptr) = path.pop().expect(
                 "path_for_key should always return a path \
                  of length >= 2 (root + leaf)",
@@ -490,8 +564,7 @@ impl Tree {
         let guard = pin();
 
         loop {
-            let mut path =
-                self.path_for_key(key.as_ref(), Equal, &guard)?;
+            let mut path = self.path_for_key(key.as_ref(), &guard)?;
             let (leaf_frag, leaf_ptr) = path.pop().expect(
                 "path_for_key should always return a path \
                  of length >= 2 (root + leaf)",
@@ -564,7 +637,7 @@ impl Tree {
 
         loop {
             let (mut path, existing_key) =
-                self.get_internal(key.as_ref(), Equal, &guard)?;
+                self.get_internal(key.as_ref(), &guard)?;
             let (leaf_frag, leaf_ptr) = path.pop().expect(
                 "path_for_key should always return a path \
                  of length >= 2 (root + leaf)",
@@ -619,8 +692,7 @@ impl Tree {
         let guard = pin();
 
         let mut broken = None;
-        let id = match self.path_for_key(key.as_ref(), Equal, &guard)
-        {
+        let id = match self.path_for_key(key.as_ref(), &guard) {
             Ok(ref mut path) if !path.is_empty() => {
                 let (leaf_frag, _leaf_ptr) = path.pop().expect(
                     "path_for_key should always return a path \
@@ -645,8 +717,9 @@ impl Tree {
 
         Iter {
             id,
-            inner: &self.pages,
-            last_key: Bound::Exclusive(key.as_ref().to_vec()),
+            inner: &self,
+            last_key: key.as_ref().to_vec(),
+            inclusive: true,
             broken,
             done: false,
             guard,
@@ -894,27 +967,23 @@ impl Tree {
     fn get_internal<'g, K: AsRef<[u8]>>(
         &self,
         key: K,
-        ord: Ordering,
         guard: &'g Guard,
     ) -> Result<(Path<'g>, Option<&'g [u8]>), ()> {
-        let path = self.path_for_key(key.as_ref(), ord, guard)?;
+        let path = self.path_for_key(key.as_ref(), guard)?;
 
         let ret = path.last().and_then(|(last_frag, _tree_ptr)| {
             let last_node = last_frag.unwrap_base();
             let data = &last_node.data;
             let items =
                 data.leaf_ref().expect("last_node should be a leaf");
-            let search =
-                leaf_search(ord, items, |&(ref k, ref _v)| {
+            let search = items
+                .binary_search_by(|&(ref k, ref _v)| {
                     prefix_cmp_encoded(
                         k,
                         key.as_ref(),
                         last_node.lo.inner(),
                     )
-                });
-
-            println!("searching leaf {:?} with prefix {:?} and hi {:?} for key {:?} at ord {:?} resulted in idx {:?}",
-                     items, last_node.lo.inner(), last_node.hi, key.as_ref(), ord, search);
+                }).ok();
 
             search.map(|idx| &*items[idx].1)
         });
@@ -926,9 +995,7 @@ impl Tree {
     pub fn key_debug_str<K: AsRef<[u8]>>(&self, key: K) -> String {
         let guard = pin();
 
-        let path = self
-            .path_for_key(key.as_ref(), Equal, &guard)
-            .expect(
+        let path = self.path_for_key(key.as_ref(), &guard).expect(
             "path_for_key should always return at least 2 nodes, \
              even if the key being searched for is not present",
         );
@@ -944,10 +1011,9 @@ impl Tree {
 
     /// returns the traversal path, completing any observed
     /// partially complete splits or merges along the way.
-    fn path_for_key<'g, K: AsRef<[u8]>>(
+    pub(crate) fn path_for_key<'g, K: AsRef<[u8]>>(
         &self,
         key: K,
-        ord: Ordering,
         guard: &'g Guard,
     ) -> Result<Vec<(&'g Frag, TreePtr<'g>)>, ()> {
         let _measure = Measure::new(&M.tree_traverse);
@@ -993,68 +1059,50 @@ impl Tree {
             let node = frag.unwrap_base();
 
             // TODO this may need to change when handling (half) merges
-            if ord == Ordering::Equal {
-                assert!(
-                    node.lo.inner() <= key.as_ref(),
-                    "overshot key somehow"
-                );
+            assert!(
+                node.lo.inner() <= key.as_ref(),
+                "overshot key somehow"
+            );
 
-                // half-complete split detect & completion
-                if node.hi <= Bound::Inclusive(key.as_ref().to_vec())
-                {
-                    // we have encountered a child split, without
-                    // having hit the parent split above.
-                    cursor = node.next.expect(
-                        "if our hi bound is not Inf (inity), \
-                         we should have a right sibling",
-                    );
-                    if unsplit_parent.is_none() && !path.is_empty() {
-                        unsplit_parent = Some(path.len() - 1);
-                    }
-                    continue;
-                } else if let Some(idx) = unsplit_parent.take() {
-                    // we have found the proper page for
-                    // our split.
-                    let (parent_frag, parent_ptr) = &path[idx];
-                    let parent_node = parent_frag.unwrap_base();
-
-                    let ps = Frag::ParentSplit(ParentSplit {
-                        at: node.lo.clone(),
-                        to: node.id,
-                    });
-
-                    let link = self.pages.link(
-                        parent_node.id,
-                        parent_ptr.clone(),
-                        ps,
-                        guard,
-                    );
-                    match link {
-                        Ok(_new_key) => {
-                            // TODO set parent's cas_key (not this cas_key) to
-                            // new_key in the path, along with updating the
-                            // parent's node in the path vec. if we don't do
-                            // both, we lose the newly appended parent split.
-                        }
-                        Err(Error::CasFailed(_)) => {}
-                        Err(other) => return Err(other.danger_cast()),
-                    }
-                }
-            } else if node.hi
-                <= Bound::Inclusive(key.as_ref().to_vec())
-            {
+            // half-complete split detect & completion
+            if node.hi <= Bound::Inclusive(key.as_ref().to_vec()) {
+                // we have encountered a child split, without
+                // having hit the parent split above.
                 cursor = node.next.expect(
                     "if our hi bound is not Inf (inity), \
                      we should have a right sibling",
                 );
+                if unsplit_parent.is_none() && !path.is_empty() {
+                    unsplit_parent = Some(path.len() - 1);
+                }
                 continue;
-            } else if ord == Ordering::Less
-                && node.lo > Bound::Inclusive(key.as_ref().to_vec())
-            {
-                // we've overshot the key, need to start from the top and retry
-                cursor = self.root.load(SeqCst);
-                not_found_loops += 1;
-                continue;
+            } else if let Some(idx) = unsplit_parent.take() {
+                // we have found the proper page for
+                // our split.
+                let (parent_frag, parent_ptr) = &path[idx];
+                let parent_node = parent_frag.unwrap_base();
+
+                let ps = Frag::ParentSplit(ParentSplit {
+                    at: node.lo.clone(),
+                    to: node.id,
+                });
+
+                let link = self.pages.link(
+                    parent_node.id,
+                    parent_ptr.clone(),
+                    ps,
+                    guard,
+                );
+                match link {
+                    Ok(_new_key) => {
+                        // TODO set parent's cas_key (not this cas_key) to
+                        // new_key in the path, along with updating the
+                        // parent's node in the path vec. if we don't do
+                        // both, we lose the newly appended parent split.
+                    }
+                    Err(Error::CasFailed(_)) => {}
+                    Err(other) => return Err(other.danger_cast()),
+                }
             }
 
             path.push((frag, cas_key.clone()));
@@ -1069,8 +1117,7 @@ impl Tree {
                 Data::Index(ref ptrs) => {
                     let old_cursor = cursor;
 
-                    let search = index_search(
-                        ord,
+                    let search = binary_search_lub(
                         ptrs,
                         |&(ref k, ref _v)| {
                             prefix_cmp_encoded(
@@ -1081,31 +1128,10 @@ impl Tree {
                         },
                     );
 
-                    println!(
-                        "k: {:?} ord: {:?} idx: {:?} ptrs: {:?}",
-                        key.as_ref(),
-                        ord,
-                        search,
-                        ptrs
-                    );
-
                     // This might be none if ord is Less and we're
                     // searching for the empty key
-                    let index = match (search, ord) {
-                        (Some(i), _) => i,
-                        (None, Less) => 0,
-                        (None, Greater) => {
-                            if let Some(next) = node.next {
-                                cursor = next;
-                                continue;
-                            } else {
-                                0
-                            }
-                        }
-                        (None, Equal) => {
-                            panic!("failed to traverse index")
-                        }
-                    };
+                    let index =
+                        search.expect("failed to traverse index");
 
                     cursor = ptrs[index].1;
 
