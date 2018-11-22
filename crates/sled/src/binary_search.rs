@@ -1,22 +1,6 @@
 use std::cmp::Ordering::{self, Equal, Greater, Less};
 
 #[inline]
-pub(crate) fn index_search<'a, T, F>(
-    ord: Ordering,
-    slice: &'a [T],
-    f: F,
-) -> Option<usize>
-where
-    F: FnMut(&'a T) -> Ordering,
-{
-    match ord {
-        Less => binary_search_lt(slice, f),
-        Equal => binary_search_lub(slice, f),
-        Greater => binary_search_gt(slice, f),
-    }
-}
-
-#[inline]
 pub(crate) fn leaf_search<'a, T, F>(
     ord: Ordering,
     slice: &'a [T],
