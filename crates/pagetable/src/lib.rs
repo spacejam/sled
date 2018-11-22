@@ -129,9 +129,7 @@ where
     ) -> Option<Shared<'g, T>> {
         debug_delay();
         let tip = traverse(self.head.load(SeqCst, guard), pid, guard);
-        if tip.load(SeqCst, guard).is_null() {
-            return None;
-        }
+
         let res = tip.load(SeqCst, guard);
         if res.is_null() {
             None
