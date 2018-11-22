@@ -731,7 +731,9 @@ fn tree_bug_19() {
 
 #[test]
 fn tree_bug_20() {
-    // postmortem:
+    // postmortem: we were not seeking forward during get_gt
+    // if path_for_key reached a leaf that didn't include
+    // a key for our
     prop_tree_matches_btreemap(
         vec![
             Set(Key(vec![]), 10),
@@ -740,6 +742,39 @@ fn tree_bug_20() {
             Set(Key(vec![155]), 73),
             Set(Key(vec![]), 251),
             GetGt(Key(vec![94])),
+        ],
+        0,
+        0,
+        false,
+    );
+}
+
+#[test]
+fn tree_bug_21() {
+    // postmortem: more split woes while implementing get_lt
+    prop_tree_matches_btreemap(
+        vec![
+            Set(Key(vec![176]), 163),
+            Set(Key(vec![]), 229),
+            Set(Key(vec![169]), 121),
+            Set(Key(vec![]), 58),
+            GetLt(Key(vec![176])),
+        ],
+        0,
+        0,
+        false,
+    );
+}
+
+#[test]
+fn tree_bug_22() {
+    // postmortem: inclusivity wasn't being properly flipped off after
+    // the first result during iteration
+    prop_tree_matches_btreemap(
+        vec![
+            Merge(Key(vec![]), 155),
+            Merge(Key(vec![56]), 251),
+            Scan(Key(vec![]), 2),
         ],
         0,
         0,

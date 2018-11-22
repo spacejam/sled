@@ -245,7 +245,7 @@ pub fn prop_tree_matches_btreemap(
                 let res1 = tree
                     .get_lt(&*k.0)
                     .unwrap()
-                    .map(|v| bytes_to_u16(&*v));
+                    .map(|v| bytes_to_u16(&*v.1));
                 let res2 = reference
                     .iter()
                     .rev()
@@ -258,13 +258,12 @@ pub fn prop_tree_matches_btreemap(
                 let res1 = tree
                     .get_gt(&*k.0)
                     .unwrap()
-                    .map(|v| bytes_to_u16(&*v));
+                    .map(|v| bytes_to_u16(&*v.1));
                 let res2 = reference
                     .iter()
                     .filter(|(key, _)| *key > &k)
                     .nth(0)
                     .map(|(_, v)| *v);
-                println!("tree: {:?}", tree);
                 assert_eq!(res1, res2);
             }
             Del(k) => {
