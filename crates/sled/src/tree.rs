@@ -5,7 +5,7 @@ use std::sync::{
         AtomicUsize,
         Ordering::{Acquire, Release, SeqCst},
     },
-    Arc, Condvar, Mutex,
+    Arc, Mutex,
 };
 
 use pagecache::PagePtr;
@@ -36,7 +36,6 @@ pub struct Tree {
     idgen: Arc<AtomicUsize>,
     idgen_persists: Arc<AtomicUsize>,
     idgen_persist_mu: Arc<Mutex<()>>,
-    idgen_persist_cv: Arc<Condvar>,
 }
 
 unsafe impl Send for Tree {}
@@ -198,7 +197,6 @@ impl Tree {
                 idgen_persists,
             )),
             idgen_persist_mu: Arc::new(Mutex::new(())),
-            idgen_persist_cv: Arc::new(Condvar::new()),
         })
     }
 
