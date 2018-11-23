@@ -67,6 +67,33 @@ fn run_ops(
                 let res2 = r.get(&k).cloned();
                 assert_eq!(res1, res2);
             }
+            GetLt(k) => {
+                let r = reference.read().unwrap();
+                let res1 = tree
+                    .get_lt(&*k.0)
+                    .unwrap()
+                    .map(|v| bytes_to_u16(&*v.1));
+                let res2 = r
+                    .iter()
+                    .rev()
+                    .filter(|(key, _)| *key < &k)
+                    .nth(0)
+                    .map(|(_, v)| *v);
+                assert_eq!(res1, res2);
+            }
+            GetGt(k) => {
+                let r = reference.read().unwrap();
+                let res1 = tree
+                    .get_gt(&*k.0)
+                    .unwrap()
+                    .map(|v| bytes_to_u16(&*v.1));
+                let res2 = r
+                    .iter()
+                    .filter(|(key, _)| *key > &k)
+                    .nth(0)
+                    .map(|(_, v)| *v);
+                assert_eq!(res1, res2);
+            }
             Del(k) => {
                 let mut r = reference.write().unwrap();
                 tree.del(&*k.0).unwrap();
@@ -87,7 +114,7 @@ fn run_ops(
                 }
             }
             Scan(k, len) => {
-                let mut r = reference.write().unwrap();
+                let mut r = reference.read().unwrap();
                 let mut tree_iter = tree
                     .scan(&*k.0)
                     .take(len)

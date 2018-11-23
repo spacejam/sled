@@ -55,7 +55,7 @@ fn test_model() {
 fn test_linearizability() {
     linearizable! {
         Implementation => let i = Shared::new(PageTable::default()),
-        Get(usize)(k in any::<usize>()) -> Option<usize> {
+        Get(usize)(k in 0usize..4) -> Option<usize> {
             let guard = pin();
             unsafe {
                 i.get(k, &guard).map(|s| *s.deref())
@@ -72,7 +72,11 @@ fn test_linearizability() {
             let guard = pin();
             i.cas(k, Owned::new(old).into_shared(&guard), Owned::new(new).into_shared(&guard), &guard)
                 .map(|_| ())
-                .map_err(|s| unsafe { *s.deref() })
+                .map_err(|s| if s.is_null() {
+                    0
+                } else {
+                    unsafe { *s.deref() }
+                })
         }
     }
 }

@@ -74,6 +74,11 @@ fn test_bounds() {
     assert_eq!(Inclusive(b"hi".to_vec()), Inclusive(b"hi".to_vec()));
     assert_eq!(Exclusive(b"hi".to_vec()), Exclusive(b"hi".to_vec()));
     assert!(Inclusive(b"hi".to_vec()) > Exclusive(b"hi".to_vec()));
+    assert!(Exclusive(b"hi".to_vec()) < Inclusive(b"hi".to_vec()));
+    assert!(Inclusive(b"a".to_vec()) < Inclusive(b"z".to_vec()));
+    assert!(Exclusive(b"a".to_vec()) < Exclusive(b"z".to_vec()));
+    assert!(Inclusive(b"z".to_vec()) > Inclusive(b"a".to_vec()));
+    assert!(Exclusive(b"z".to_vec()) > Exclusive(b"a".to_vec()));
     assert!(Inclusive(vec![]) < Inf);
     assert!(Exclusive(vec![]) < Inf);
     assert!(Inf > Inclusive(vec![0, 0, 0, 0, 0, 0, 136, 184]));
