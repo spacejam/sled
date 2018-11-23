@@ -70,23 +70,35 @@ pub fn fuzz_then_shrink(buf: &[u8]) {
 
 impl Arbitrary for Key {
     fn arbitrary<G: Gen>(g: &mut G) -> Key {
-        let gs = g.size();
-        let gamma = Gamma::new(0.3, gs as f64);
-        let v = gamma.sample(&mut rand::thread_rng());
-        let len = if v > 30000.0 {
-            30000
-        } else if v < 1. && v > 0.0001 {
-            1
+        if g.gen::<bool>() {
+            let gs = g.size();
+            let gamma = Gamma::new(0.3, gs as f64);
+            let v = gamma.sample(&mut rand::thread_rng());
+            let len = if v > 30000.0 {
+                30000
+            } else if v < 1. && v > 0.0001 {
+                1
+            } else {
+                v as usize
+            };
+
+            let space = g.gen_range(0, gs) + 1;
+
+            let inner = (0..len)
+                .map(|_| g.gen_range(0, space) as u8)
+                .collect();
+
+            Key(inner)
         } else {
-            v as usize
-        };
+            let len = g.gen_range(0, 2);
+            let mut inner = vec![];
 
-        let space = g.gen_range(0, gs) + 1;
+            for _ in 0..len {
+                inner.push(g.gen::<u8>());
+            }
 
-        let inner =
-            (0..len).map(|_| g.gen_range(0, space) as u8).collect();
-
-        Key(inner)
+            Key(inner)
+        }
     }
 
     fn shrink(&self) -> Box<Iterator<Item = Key>> {
