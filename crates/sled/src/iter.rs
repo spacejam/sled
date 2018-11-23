@@ -39,8 +39,6 @@ impl<'a> DoubleEndedIterator for Values<'a> {
 /// An iterator over keys and values in a `Tree`.
 pub struct Iter<'a> {
     pub(super) id: PageId,
-    pub(super) inner:
-        &'a PageCache<BLinkMaterializer, Frag, Recovery>,
     pub(super) inner: &'a Tree,
     pub(super) last_key: Key,
     pub(super) inclusive: bool,

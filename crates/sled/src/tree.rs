@@ -4,8 +4,8 @@ use std::{
     fmt::{self, Debug},
     sync::{
         atomic::{
-          AtomicUsize, 
-          Ordering::{Acquire, Release, SeqCst},
+            AtomicUsize,
+            Ordering::{Acquire, Release, SeqCst},
         },
         Arc, Mutex,
     },
@@ -33,7 +33,8 @@ impl<'a> IntoIterator for &'a Tree {
 /// A flash-sympathetic persistent lock-free B+ tree
 #[derive(Clone)]
 pub struct Tree {
-    pages: Arc<PageCache<BLinkMaterializer, Frag, Recovery>>,
+    pub(crate) pages:
+        Arc<PageCache<BLinkMaterializer, Frag, Recovery>>,
     config: Config,
     root: Arc<AtomicUsize>,
     idgen: Arc<AtomicUsize>,
@@ -271,7 +272,7 @@ impl Tree {
 
         Ok(ret)
     }
-  
+
     /// Clears the `Tree`, removing all values.
     ///
     /// Note that this is NOT atomic.
