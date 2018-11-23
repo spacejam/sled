@@ -261,7 +261,7 @@ impl Tree {
                 // during recovery we add 2x the interval. we only
                 // need to block if the last one wasn't stable yet.
                 if key.last_lsn() > self.pages.stable_lsn() {
-                    self.flush()?;
+                    self.pages.make_stable(key.last_lsn())?;
                 }
             }
         }

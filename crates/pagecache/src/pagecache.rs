@@ -783,6 +783,12 @@ where
         self.log.stable_offset()
     }
 
+    /// Blocks until the provided Lsn is stable on disk,
+    /// triggering necessary flushes in the process.
+    pub fn make_stable(&self, lsn: Lsn) -> Result<(), ()> {
+        self.log.make_stable(lsn)
+    }
+
     fn page_in<'g>(
         &self,
         pid: PageId,
