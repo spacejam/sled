@@ -19,6 +19,7 @@ use sled::*;
 enum Op {
     Set,
     Del(u8),
+    Id,
     Restart,
     FailPoint(&'static str),
 }
@@ -59,11 +60,12 @@ impl Arbitrary for Op {
             return Restart;
         }
 
-        let choice = g.gen_range(0, 2);
+        let choice = g.gen_range(0, 3);
 
         match choice {
             0 => Set,
             1 => Del(g.gen::<u8>()),
+            2 => Id,
             _ => panic!("impossible choice"),
         }
     }
@@ -136,12 +138,14 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
         .blink_node_split_size(0) // smol pages for smol buffers
         .cache_capacity(40)
         .cache_bits(2)
+        .idgen_persist_interval(1)
         .build();
 
     let mut tree =
         sled::Tree::start(config.clone()).expect("tree should start");
     let mut reference = BTreeMap::new();
     let mut fail_points = HashSet::new();
+    let mut max_id: isize = -1;
 
     macro_rules! restart {
         () => {
@@ -258,6 +262,11 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 fp_crash!(tree.flush());
 
                 reference.remove(&(k as u16));
+            }
+            Id => {
+                let id = fp_crash!(tree.generate_id());
+                assert!(id as isize > max_id);
+                max_id = id as isize;
             }
             Restart => {
                 restart!();
