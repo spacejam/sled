@@ -40,7 +40,7 @@ extern crate serde_derive;
 extern crate log as _log;
 extern crate sled_sync as sync;
 
-mod binary_search_least_upper_bound;
+mod binary_search;
 mod bound;
 mod data;
 mod frag;
@@ -51,7 +51,7 @@ mod pinned_value;
 mod prefix;
 mod tree;
 
-pub use self::iter::Iter;
+pub use self::iter::{Iter, Keys, Values};
 pub use self::pinned_value::PinnedValue;
 /// atomic lock-free tree
 pub use self::tree::Tree;
@@ -60,7 +60,10 @@ use pagecache::*;
 
 pub use pagecache::{Config, ConfigBuilder, Error, Result};
 
-use self::binary_search_least_upper_bound::binary_search_lub;
+use self::binary_search::{
+    binary_search_gt, binary_search_lt, binary_search_lub,
+    leaf_search,
+};
 use self::bound::Bound;
 use self::data::Data;
 use self::frag::{ChildSplit, ParentSplit};

@@ -29,7 +29,12 @@ macro_rules! rep_no_copy {
 fn split_fanout(i: usize) -> (usize, usize) {
     // right shift 32 on 32-bit pointer systems panics
     #[cfg(target_pointer_width = "64")]
-    assert!(i <= 1 << (FANFACTOR * 2));
+    assert!(
+        i <= 1 << (FANFACTOR * 2),
+        "trying to access key of {}, which is \
+         higher than 2 ^ 36",
+        i
+    );
 
     let left = i >> FANFACTOR;
     let right = i & FAN_MASK;
@@ -249,8 +254,14 @@ impl<T: Send + 'static> Drop for Node2<T> {
 
 #[test]
 fn test_split_fanout() {
-    assert_eq!(split_fanout(0b11_1111_1111_1111_1111), (0, 0b11_1111_1111_1111_1111));
-    assert_eq!(split_fanout(0b111_1111_1111_1111_1111), (0b1, 0b11_1111_1111_1111_1111));
+    assert_eq!(
+        split_fanout(0b11_1111_1111_1111_1111),
+        (0, 0b11_1111_1111_1111_1111)
+    );
+    assert_eq!(
+        split_fanout(0b111_1111_1111_1111_1111),
+        (0b1, 0b11_1111_1111_1111_1111)
+    );
 }
 
 #[test]

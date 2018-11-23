@@ -64,7 +64,11 @@ pub(crate) fn prefix_cmp(a: &[u8], b: &[u8]) -> Ordering {
 }
 
 /// Compare `a` and `b`, assuming that `a` is prefix encoded and `b` is not.
-pub(crate) fn prefix_cmp_encoded(a: &[u8], mut b: &[u8], mut prefix: &[u8]) -> Ordering {
+pub(crate) fn prefix_cmp_encoded(
+    a: &[u8],
+    mut b: &[u8],
+    mut prefix: &[u8],
+) -> Ordering {
     assert!(!a.is_empty() && a[0] as usize <= prefix.len());
 
     let mut a_prefix_len = a[0];
@@ -152,11 +156,18 @@ fn test_prefix_cmp() {
     assert_eq!(prefix_cmp(&[1, 1], &[1, 3]), Ordering::Less);
 }
 
-
 #[test]
 fn test_prefix_cmp_encoded() {
-    fn assert_pce(a: &[u8], b: &[u8], prefix: &[u8], expected: Ordering) {
-        assert_eq!(prefix_cmp_encoded(a, &prefix_decode(prefix, b), prefix), expected);
+    fn assert_pce(
+        a: &[u8],
+        b: &[u8],
+        prefix: &[u8],
+        expected: Ordering,
+    ) {
+        assert_eq!(
+            prefix_cmp_encoded(a, &prefix_decode(prefix, b), prefix),
+            expected
+        );
     }
 
     let prefix = &vec![3, 3, 3, 3];
