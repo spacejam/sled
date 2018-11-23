@@ -200,6 +200,9 @@ fn possible_predecessor(s: &[u8]) -> Option<Vec<u8>> {
         Some(i) if i == 0 => Some(ret),
         Some(i) => {
             ret.push(i - 1);
+            for _ in 0..4 {
+                ret.push(255);
+            }
             Some(ret)
         }
     }
