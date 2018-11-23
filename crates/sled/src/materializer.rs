@@ -18,8 +18,7 @@ impl Materializer for BLinkMaterializer {
         config: Config,
         recovery: &Option<Self::Recovery>,
     ) -> Self {
-        let mut recovery = recovery.clone().unwrap_or_default();
-        recovery.counter += config.idgen_persist_interval;
+        let recovery = recovery.clone().unwrap_or_default();
 
         BLinkMaterializer {
             recovery: Mutex::new(recovery),

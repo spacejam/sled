@@ -1,8 +1,11 @@
 use std::borrow::Cow;
 use std::fmt::{self, Debug};
 use std::sync::{
-    atomic::{AtomicUsize, Ordering::SeqCst},
-    Arc,
+    atomic::{
+        AtomicUsize,
+        Ordering::{Acquire, Release, SeqCst},
+    },
+    Arc, Condvar, Mutex,
 };
 
 use pagecache::PagePtr;
@@ -25,8 +28,11 @@ impl<'a> IntoIterator for &'a Tree {
 pub struct Tree {
     pages: Arc<PageCache<BLinkMaterializer, Frag, Recovery>>,
     config: Config,
-    idgen: Arc<AtomicUsize>,
     root: Arc<AtomicUsize>,
+    idgen: Arc<AtomicUsize>,
+    idgen_persists: Arc<AtomicUsize>,
+    idgen_persist_mu: Arc<Mutex<()>>,
+    idgen_persist_cv: Arc<Condvar>,
 }
 
 unsafe impl Send for Tree {}
@@ -68,7 +74,10 @@ impl Tree {
 
         let mut recovery: Recovery =
             pages.recovered_state().unwrap_or_default();
-        let idgen_recovery = recovery.counter;
+        let idgen_recovery =
+            recovery.counter + config.idgen_persist_interval;
+        let idgen_persists =
+            recovery.counter / config.idgen_persist_interval;
 
         let roots_opt = if recovery.root_transitions.is_empty() {
             None
@@ -173,7 +182,32 @@ impl Tree {
             config,
             root: Arc::new(AtomicUsize::new(root_id)),
             idgen: Arc::new(AtomicUsize::new(idgen_recovery)),
+            idgen_persists: Arc::new(AtomicUsize::new(
+                idgen_persists,
+            )),
+            idgen_persist_mu: Arc::new(Mutex::new(())),
+            idgen_persist_cv: Arc::new(Condvar::new()),
         })
+    }
+
+    /// Generate a monotonic ID. Not guaranteed to be
+    /// contiguous.
+    pub fn generate_id(&self) -> usize {
+        let ret = self.idgen.fetch_add(1, Release);
+
+        let necessary_persists =
+            ret / self.config.idgen_persist_interval;
+        let mut persisted = self.idgen_persists.load(Acquire);
+
+        while persisted < necessary_persists {
+            let _mu = self.idgen_persist_mu.lock().unwrap();
+            persisted = self.idgen_persists.load(Acquire);
+            if persisted < necessary_persists {
+                // it's our responsibility to persist up to our ID
+            }
+        }
+
+        ret
     }
 
     /// Flushes any pending IO buffers to disk to ensure durability.
