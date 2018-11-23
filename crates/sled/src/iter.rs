@@ -6,7 +6,7 @@ use pagecache::{Measure, M};
 pub struct Iter<'a> {
     pub(super) id: PageId,
     pub(super) inner:
-        &'a PageCache<BLinkMaterializer, Frag, Vec<(PageId, PageId)>>,
+        &'a PageCache<BLinkMaterializer, Frag, Recovery>,
     pub(super) last_key: Bound,
     pub(super) broken: Option<Error<()>>,
     pub(super) done: bool,

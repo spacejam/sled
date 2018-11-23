@@ -49,6 +49,7 @@ mod materializer;
 mod node;
 mod pinned_value;
 mod prefix;
+mod recovery;
 mod tree;
 
 pub use self::iter::Iter;
@@ -68,6 +69,7 @@ use self::node::Node;
 use self::prefix::{
     prefix_cmp, prefix_cmp_encoded, prefix_decode, prefix_encode,
 };
+use self::recovery::Recovery;
 
 use self::sync::{debug_delay, pin, Guard};
 

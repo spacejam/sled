@@ -87,6 +87,8 @@ pub struct ConfigBuilder {
     pub merge_operator: Option<usize>,
     #[doc(hidden)]
     pub print_profile_on_drop: bool,
+    #[doc(hidden)]
+    pub idgen_persist_interval: usize,
 }
 
 unsafe impl Send for ConfigBuilder {}
@@ -113,6 +115,7 @@ impl Default for ConfigBuilder {
             segment_mode: SegmentMode::Gc,
             merge_operator: None,
             print_profile_on_drop: false,
+            idgen_persist_interval: 1_000_000,
         }
     }
 }
@@ -216,7 +219,8 @@ impl ConfigBuilder {
         (segment_cleanup_skew, usize, "the cleanup threshold skew in percentage points between the first and last segments"),
         (segment_mode, SegmentMode, "the file segment selection mode"),
         (snapshot_path, Option<PathBuf>, "snapshot file location"),
-        (print_profile_on_drop, bool, "print a performance profile when the Config is dropped")
+        (print_profile_on_drop, bool, "print a performance profile when the Config is dropped"),
+        (idgen_persist_interval, usize, "generated IDs are persisted at this interval. during recovery we skip this many")
     );
 }
 

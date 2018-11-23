@@ -1,6 +1,9 @@
-use std::fmt::{self, Debug};
-use std::sync::{Arc, atomic::{AtomicUsize, Ordering::SeqCst}};
 use std::borrow::Cow;
+use std::fmt::{self, Debug};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering::SeqCst},
+    Arc,
+};
 
 use pagecache::PagePtr;
 
@@ -20,10 +23,9 @@ impl<'a> IntoIterator for &'a Tree {
 /// A flash-sympathetic persistent lock-free B+ tree
 #[derive(Clone)]
 pub struct Tree {
-    pages: Arc<
-        PageCache<BLinkMaterializer, Frag, Vec<(PageId, PageId)>>,
-    >,
+    pages: Arc<PageCache<BLinkMaterializer, Frag, Recovery>>,
     config: Config,
+    idgen: Arc<AtomicUsize>,
     root: Arc<AtomicUsize>,
 }
 
@@ -54,8 +56,8 @@ impl Tree {
 
         #[cfg(any(test, feature = "check_snapshot_integrity"))]
         match config
-            .verify_snapshot::<BLinkMaterializer, Frag, Vec<(PageId, PageId)>>(
-            ) {
+            .verify_snapshot::<BLinkMaterializer, Frag, Recovery>()
+        {
             Ok(_) => {}
             #[cfg(feature = "failpoints")]
             Err(Error::FailPoint) => {}
@@ -64,36 +66,36 @@ impl Tree {
 
         let pages = PageCache::start(config.clone())?;
 
-        let roots_opt = pages.recovered_state().clone().and_then(
-            |mut roots: Vec<(PageId, PageId)>| {
-                if roots.is_empty() {
-                    None
-                } else {
-                    let mut last = std::usize::MAX;
-                    let mut last_idx = std::usize::MAX;
-                    while !roots.is_empty() {
-                        // find the root that links to the last one
-                        for (i, &(root, prev_root)) in
-                            roots.iter().enumerate()
-                        {
-                            if prev_root == last {
-                                last = root;
-                                last_idx = i;
-                                break;
-                            }
-                            assert_ne!(
-                                i + 1,
-                                roots.len(),
-                                "encountered gap in root chain"
-                            );
-                        }
-                        roots.remove(last_idx);
+        let mut recovery: Recovery =
+            pages.recovered_state().unwrap_or_default();
+        let idgen_recovery = recovery.counter;
+
+        let roots_opt = if recovery.root_transitions.is_empty() {
+            None
+        } else {
+            let mut last = std::usize::MAX;
+            let mut last_idx = std::usize::MAX;
+            while !recovery.root_transitions.is_empty() {
+                // find the root that links to the last one
+                for (i, &(root, prev_root)) in
+                    recovery.root_transitions.iter().enumerate()
+                {
+                    if prev_root == last {
+                        last = root;
+                        last_idx = i;
+                        break;
                     }
-                    assert_ne!(last, std::usize::MAX);
-                    Some(last)
+                    assert_ne!(
+                        i + 1,
+                        recovery.root_transitions.len(),
+                        "encountered gap in root chain"
+                    );
                 }
-            },
-        );
+                recovery.root_transitions.remove(last_idx);
+            }
+            assert_ne!(last, std::usize::MAX);
+            Some(last)
+        };
 
         let root_id = if let Some(root_id) = roots_opt {
             debug!("recovered root {} while starting tree", root_id);
@@ -101,14 +103,18 @@ impl Tree {
         } else {
             let guard = pin();
 
-            let root_id = pages.allocate(&guard)?;
-            assert_eq!(
-                root_id,
-                0,
-                "we expect that this is the first page ever allocated"
-            );
-            debug!("allocated pid {} for root of new tree", root_id);
+            // set up idgen
+            let counter_id = pages.allocate(&guard)?;
+            let counter = Frag::CounterBase(0);
+            pages
+                .replace(
+                    counter_id,
+                    PagePtr::allocated(),
+                    counter,
+                    &guard,
+                ).map_err(|e| e.danger_cast())?;
 
+            // set up empty leaf
             let leaf_id = pages.allocate(&guard)?;
             trace!("allocated pid {} for leaf in new", leaf_id);
 
@@ -122,6 +128,19 @@ impl Tree {
                 },
                 None,
             );
+
+            pages
+                .replace(leaf_id, PagePtr::allocated(), leaf, &guard)
+                .map_err(|e| e.danger_cast())?;
+
+            // set up root index
+            let root_id = pages.allocate(&guard)?;
+            assert_eq!(
+                root_id,
+                2,
+                "we expect that this is the third page ever allocated"
+            );
+            debug!("allocated pid {} for root of new tree", root_id);
 
             // vec![0] represents a prefix-encoded empty prefix
             let root_index_vec = vec![(vec![0], leaf_id)];
@@ -140,9 +159,6 @@ impl Tree {
             pages
                 .replace(root_id, PagePtr::allocated(), root, &guard)
                 .map_err(|e| e.danger_cast())?;
-            pages
-                .replace(leaf_id, PagePtr::allocated(), leaf, &guard)
-                .map_err(|e| e.danger_cast())?;
 
             guard.flush();
 
@@ -156,6 +172,7 @@ impl Tree {
             pages: Arc::new(pages),
             config,
             root: Arc::new(AtomicUsize::new(root_id)),
+            idgen: Arc::new(AtomicUsize::new(idgen_recovery)),
         })
     }
 
@@ -212,7 +229,7 @@ impl Tree {
         &self,
         key: K,
         old: Option<&[u8]>,
-        new: Option<Value>
+        new: Option<Value>,
     ) -> Result<(), Option<PinnedValue>> {
         let _measure = Measure::new(&M.tree_cas);
 
@@ -242,7 +259,10 @@ impl Tree {
 
             let (node_id, encoded_key) = {
                 let node: &Node = leaf_frag.unwrap_base();
-                (node.id, prefix_encode(node.lo.inner(), key.as_ref()))
+                (
+                    node.id,
+                    prefix_encode(node.lo.inner(), key.as_ref()),
+                )
             };
             let frag = if let Some(ref n) = new {
                 Frag::Set(encoded_key, n.clone())
@@ -295,7 +315,8 @@ impl Tree {
                  of length >= 2 (root + leaf)",
             );
             let node: &Node = leaf_frag.unwrap_base();
-            let encoded_key = prefix_encode(node.lo.inner(), key.as_ref());
+            let encoded_key =
+                prefix_encode(node.lo.inner(), key.as_ref());
 
             // Search for the existing key, so we can return
             // it later.
@@ -333,12 +354,14 @@ impl Tree {
                     ) {
                         let mut path2 = path
                             .iter()
-                            .map(|&(f, ref p)| (Cow::Borrowed(f), p.clone()))
-                            .collect::<Vec<(Cow<'_, Frag>, _)>>();
+                            .map(|&(f, ref p)| {
+                                (Cow::Borrowed(f), p.clone())
+                            }).collect::<Vec<(Cow<'_, Frag>, _)>>();
                         let mut node2 = node.clone();
                         node2
                             .apply(&frag, self.config.merge_operator);
-                        let frag2 = Cow::Owned(Frag::Base(node2, None));
+                        let frag2 =
+                            Cow::Owned(Frag::Base(node2, None));
                         path2.push((frag2, new_cas_key));
                         self.recursive_split(path2, &guard)?;
                     }
@@ -406,7 +429,7 @@ impl Tree {
     pub fn merge<K: AsRef<[u8]>>(
         &self,
         key: K,
-        value: Value
+        value: Value,
     ) -> Result<(), ()> {
         let _measure = Measure::new(&M.tree_merge);
 
@@ -426,7 +449,8 @@ impl Tree {
             );
             let node: &Node = leaf_frag.unwrap_base();
 
-            let encoded_key = prefix_encode(node.lo.inner(), key.as_ref());
+            let encoded_key =
+                prefix_encode(node.lo.inner(), key.as_ref());
             let frag = Frag::Merge(encoded_key, value.clone());
 
             let link = self.pages.link(
@@ -443,12 +467,14 @@ impl Tree {
                     ) {
                         let mut path2 = path
                             .iter()
-                            .map(|&(f, ref p)| (Cow::Borrowed(f), p.clone()))
-                            .collect::<Vec<(Cow<'_, Frag>, _)>>();
+                            .map(|&(f, ref p)| {
+                                (Cow::Borrowed(f), p.clone())
+                            }).collect::<Vec<(Cow<'_, Frag>, _)>>();
                         let mut node2 = node.clone();
                         node2
                             .apply(&frag, self.config.merge_operator);
-                        let frag2 = Cow::Owned(Frag::Base(node2, None));
+                        let frag2 =
+                            Cow::Owned(Frag::Base(node2, None));
                         path2.push((frag2, new_cas_key));
                         self.recursive_split(path2, &guard)?;
                     }
@@ -478,7 +504,7 @@ impl Tree {
     /// ```
     pub fn del<K: AsRef<[u8]>>(
         &self,
-        key: K
+        key: K,
     ) -> Result<Option<PinnedValue>, ()> {
         let _measure = Measure::new(&M.tree_del);
 
@@ -497,7 +523,8 @@ impl Tree {
                  of length >= 2 (root + leaf)",
             );
             let node: &Node = leaf_frag.unwrap_base();
-            let encoded_key = prefix_encode(node.lo.inner(), key.as_ref());
+            let encoded_key =
+                prefix_encode(node.lo.inner(), key.as_ref());
             match node.data {
                 Data::Leaf(ref items) => {
                     let search =
@@ -836,8 +863,7 @@ impl Tree {
         &self,
         key: K,
         guard: &'g Guard,
-    ) -> Result<(Path<'g>, Option<&'g [u8]>), ()>
-    {
+    ) -> Result<(Path<'g>, Option<&'g [u8]>), ()> {
         let path = self.path_for_key(key.as_ref(), guard)?;
 
         let ret = path.last().and_then(|(last_frag, _tree_ptr)| {
@@ -847,7 +873,11 @@ impl Tree {
                 data.leaf_ref().expect("last_node should be a leaf");
             let search =
                 items.binary_search_by(|&(ref k, ref _v)| {
-                    prefix_cmp_encoded(k, key.as_ref(), last_node.lo.inner())
+                    prefix_cmp_encoded(
+                        k,
+                        key.as_ref(),
+                        last_node.lo.inner(),
+                    )
                 });
             if let Ok(idx) = search {
                 Some(&*items[idx].1)
@@ -927,7 +957,10 @@ impl Tree {
             let node = frag.unwrap_base();
 
             // TODO this may need to change when handling (half) merges
-            assert!(node.lo.inner() <= key.as_ref(), "overshot key somehow");
+            assert!(
+                node.lo.inner() <= key.as_ref(),
+                "overshot key somehow"
+            );
 
             // half-complete split detect & completion
             if node.hi <= Bound::Inclusive(key.as_ref().to_vec()) {
@@ -981,7 +1014,11 @@ impl Tree {
                     let search = binary_search_lub(
                         ptrs,
                         |&(ref k, ref _v)| {
-                            prefix_cmp_encoded(k, key.as_ref(), &prefix)
+                            prefix_cmp_encoded(
+                                k,
+                                key.as_ref(),
+                                &prefix,
+                            )
                         },
                     );
 

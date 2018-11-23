@@ -18,6 +18,8 @@ pub(crate) enum Frag {
     Base(Node, Option<PageId>),
     ChildSplit(ChildSplit),
     ParentSplit(ParentSplit),
+    BumpCounter(usize),
+    CounterBase(usize),
 }
 
 impl Frag {
