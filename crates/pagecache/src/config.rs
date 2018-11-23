@@ -435,11 +435,11 @@ impl Config {
     fn validate(&self) -> Result<(), ()> {
         supported!(
             self.inner.io_bufs <= 32,
-            "too many configured io_bufs"
+            "too many configured io_bufs. please make <= 32"
         );
         supported!(
             self.inner.io_buf_size >= 100,
-            "io_buf_size should be hundreds of kb at minimum"
+            "io_buf_size should be hundreds of kb at minimum, and we won't start if below 100"
         );
         supported!(
             self.inner.io_buf_size <= 1 << 24,
@@ -449,7 +449,7 @@ impl Config {
         supported!(self.inner.page_consolidation_threshold < 1 << 20, "must consolidate pages after fewer than 1 million updates");
         supported!(
             self.inner.cache_bits <= 20,
-            "# LRU shards = 2^cache_bits. set this to 20 or less."
+            "# LRU shards = 2^cache_bits. set cache_bits to 20 or less."
         );
         supported!(
             self.inner.segment_cleanup_threshold >= 0.01,
@@ -457,15 +457,19 @@ impl Config {
         );
         supported!(
             self.inner.segment_cleanup_skew < 99,
-            "cleanup skew cannot be greater than 99%"
+            "segment_cleanup_skew cannot be greater than 99%"
         );
         supported!(
             self.inner.zstd_compression_factor >= 1,
-            "compression factor must be >= 0"
+            "zstd_compression_factor must be >= 0"
         );
         supported!(
             self.inner.zstd_compression_factor <= 22,
-            "compression factor must be <= 22"
+            "zstd_compression_factor must be <= 22"
+        );
+        supported!(
+            self.inner.idgen_persist_interval > 0,
+            "idgen_persist_interval must be above 0"
         );
         Ok(())
     }
