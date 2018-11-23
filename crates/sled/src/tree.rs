@@ -165,6 +165,17 @@ impl Tree {
         })
     }
 
+    /// Clears the `Tree`, removing all values.
+    ///
+    /// Note that this is NOT atomic.
+    pub fn clear(&self) -> Result<(), ()> {
+        for k in self.keys(b"") {
+            let key = k?;
+            self.del(key)?;
+        }
+        Ok(())
+    }
+
     /// Flushes any pending IO buffers to disk to ensure durability.
     pub fn flush(&self) -> Result<(), ()> {
         self.pages.flush()
@@ -263,6 +274,15 @@ impl Tree {
         guard.flush();
 
         Ok(ret)
+    }
+
+    /// Returns `true` if the `Tree` contains a value for
+    /// the specified key.
+    pub fn contains_key<K: AsRef<[u8]>>(
+        &self,
+        key: K,
+    ) -> Result<bool, ()> {
+        self.get(key).map(|r| r.is_some())
     }
 
     /// Retrieve a value from the `Tree` for the key after the
@@ -676,6 +696,26 @@ impl Tree {
         }
     }
 
+    /// Iterate over the tuples of keys and values in this tree.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let config = sled::ConfigBuilder::new().temporary(true).build();
+    /// let t = sled::Tree::start(config).unwrap();
+    /// t.set(&[1], vec![10]);
+    /// t.set(&[2], vec![20]);
+    /// t.set(&[3], vec![30]);
+    /// let mut iter = t.iter();
+    /// // assert_eq!(iter.next(), Some(Ok((vec![1], vec![10]))));
+    /// // assert_eq!(iter.next(), Some(Ok((vec![2], vec![20]))));
+    /// // assert_eq!(iter.next(), Some(Ok((vec![3], vec![30]))));
+    /// // assert_eq!(iter.next(), None);
+    /// ```
+    pub fn iter(&self) -> Iter<'_> {
+        self.scan(b"")
+    }
+
     /// Iterate over tuples of keys and values, starting at the provided key.
     ///
     /// # Examples
@@ -731,7 +771,7 @@ impl Tree {
         }
     }
 
-    /// Iterate over the tuples of keys and values in this tree.
+    /// Iterate over keys, starting at the provided key.
     ///
     /// # Examples
     ///
@@ -741,14 +781,44 @@ impl Tree {
     /// t.set(&[1], vec![10]);
     /// t.set(&[2], vec![20]);
     /// t.set(&[3], vec![30]);
-    /// let mut iter = t.iter();
-    /// // assert_eq!(iter.next(), Some(Ok((vec![1], vec![10]))));
-    /// // assert_eq!(iter.next(), Some(Ok((vec![2], vec![20]))));
-    /// // assert_eq!(iter.next(), Some(Ok((vec![3], vec![30]))));
+    /// let mut iter = t.scan(&*vec![2]);
+    /// // assert_eq!(iter.next(), Some(Ok(vec![2])));
+    /// // assert_eq!(iter.next(), Some(Ok(vec![3])));
     /// // assert_eq!(iter.next(), None);
     /// ```
-    pub fn iter(&self) -> Iter<'_> {
-        self.scan(b"")
+    pub fn keys<K: AsRef<[u8]>>(&self, key: K) -> Keys<'_> {
+        self.scan(key).keys()
+    }
+
+    /// Iterate over values, starting at the provided key.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let config = sled::ConfigBuilder::new().temporary(true).build();
+    /// let t = sled::Tree::start(config).unwrap();
+    /// t.set(&[1], vec![10]);
+    /// t.set(&[2], vec![20]);
+    /// t.set(&[3], vec![30]);
+    /// let mut iter = t.scan(&*vec![2]);
+    /// // assert_eq!(iter.next(), Some(Ok(vec![20])));
+    /// // assert_eq!(iter.next(), Some(Ok(vec![30])));
+    /// // assert_eq!(iter.next(), None);
+    /// ```
+    pub fn values<K: AsRef<[u8]>>(&self, key: K) -> Values<'_> {
+        self.scan(key).values()
+    }
+
+    /// Returns the number of elements in this tree.
+    ///
+    /// Beware: performs a full O(n) scan under the hood.
+    pub fn len(&self) -> usize {
+        self.iter().count()
+    }
+
+    /// Returns `true` if the `Tree` contains no elements.
+    pub fn is_empty(&self) -> bool {
+        self.iter().next().is_none()
     }
 
     fn recursive_split<'g>(

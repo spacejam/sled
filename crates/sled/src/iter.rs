@@ -2,6 +2,40 @@ use pagecache::{Measure, M};
 
 use super::*;
 
+/// An iterator over keys in a `Tree`
+pub struct Keys<'a>(Iter<'a>);
+
+impl<'a> Iterator for Keys<'a> {
+    type Item = Result<Vec<u8>, ()>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(|r| r.map(|(k, _v)| k))
+    }
+}
+
+impl<'a> DoubleEndedIterator for Keys<'a> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.0.next_back().map(|r| r.map(|(k, _v)| k))
+    }
+}
+
+/// An iterator over values in a `Tree`
+pub struct Values<'a>(Iter<'a>);
+
+impl<'a> Iterator for Values<'a> {
+    type Item = Result<PinnedValue, ()>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(|r| r.map(|(_k, v)| v))
+    }
+}
+
+impl<'a> DoubleEndedIterator for Values<'a> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.0.next_back().map(|r| r.map(|(_k, v)| v))
+    }
+}
+
 /// An iterator over keys and values in a `Tree`.
 pub struct Iter<'a> {
     pub(super) id: PageId,
@@ -12,6 +46,18 @@ pub struct Iter<'a> {
     pub(super) done: bool,
     pub(super) guard: Guard,
     // TODO we have to refactor this in light of pages being deleted
+}
+
+impl<'a> Iter<'a> {
+    /// Iterate over the keys of this Tree
+    pub fn keys(self) -> Keys<'a> {
+        Keys(self)
+    }
+
+    /// Iterate over the values of this Tree
+    pub fn values(self) -> Values<'a> {
+        Values(self)
+    }
 }
 
 impl<'a> Iterator for Iter<'a> {

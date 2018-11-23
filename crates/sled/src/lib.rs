@@ -51,7 +51,7 @@ mod pinned_value;
 mod prefix;
 mod tree;
 
-pub use self::iter::Iter;
+pub use self::iter::{Iter, Keys, Values};
 pub use self::pinned_value::PinnedValue;
 /// atomic lock-free tree
 pub use self::tree::Tree;
