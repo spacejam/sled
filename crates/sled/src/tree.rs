@@ -12,6 +12,10 @@ use pagecache::PagePtr;
 
 use super::*;
 
+const COUNTER_PID: PageId = 0;
+const LEFT_LEAF_PID: PageId = 1;
+const ORIGINAL_ROOT_PID: PageId = 2;
+
 type Path<'g> = Vec<(&'g Frag, TreePtr<'g>)>;
 
 impl<'a> IntoIterator for &'a Tree {
@@ -75,7 +79,7 @@ impl Tree {
         let mut recovery: Recovery =
             pages.recovered_state().unwrap_or_default();
         let idgen_recovery =
-            recovery.counter + config.idgen_persist_interval;
+            recovery.counter + (2 * config.idgen_persist_interval);
         let idgen_persists =
             recovery.counter / config.idgen_persist_interval;
 
@@ -114,7 +118,7 @@ impl Tree {
 
             // set up idgen
             let counter_id = pages.allocate(&guard)?;
-            let counter = Frag::CounterBase(0);
+            let counter = Frag::Counter(0);
             pages
                 .replace(
                     counter_id,
@@ -126,6 +130,14 @@ impl Tree {
             // set up empty leaf
             let leaf_id = pages.allocate(&guard)?;
             trace!("allocated pid {} for leaf in new", leaf_id);
+
+            assert_eq!(
+                leaf_id,
+                LEFT_LEAF_PID,
+                "we expect the first leaf to have pid {}, but it had pid {} instead",
+                LEFT_LEAF_PID,
+                leaf_id,
+            );
 
             let leaf = Frag::Base(
                 Node {
@@ -146,7 +158,7 @@ impl Tree {
             let root_id = pages.allocate(&guard)?;
             assert_eq!(
                 root_id,
-                2,
+                ORIGINAL_ROOT_PID,
                 "we expect that this is the third page ever allocated"
             );
             debug!("allocated pid {} for root of new tree", root_id);
@@ -191,8 +203,14 @@ impl Tree {
     }
 
     /// Generate a monotonic ID. Not guaranteed to be
-    /// contiguous.
-    pub fn generate_id(&self) -> usize {
+    /// contiguous. Written to disk every `idgen_persist_interval`
+    /// operations, followed by a blocking flush. During recovery, we
+    /// take the last recovered generated ID and add 2x
+    /// the `idgen_persist_interval` to it. While persisting, if the
+    /// previous persisted counter wasn't synced to disk yet, we will do
+    /// a blocking flush to fsync the latest counter, ensuring
+    /// that we will never give out the same counter twice.
+    pub fn generate_id(&self) -> Result<usize, ()> {
         let ret = self.idgen.fetch_add(1, Release);
 
         let necessary_persists =
@@ -204,10 +222,53 @@ impl Tree {
             persisted = self.idgen_persists.load(Acquire);
             if persisted < necessary_persists {
                 // it's our responsibility to persist up to our ID
+                let guard = pin();
+                let (current, key) = self
+                    .pages
+                    .get(COUNTER_PID, &guard)
+                    .map_err(|e| e.danger_cast())?
+                    .unwrap();
+
+                if let Frag::Counter(current) = current {
+                    assert_eq!(
+                        *current,
+                        persisted
+                            * self.config.idgen_persist_interval
+                    );
+                } else {
+                    panic!(
+                        "counter pid contained non-Counter: {:?}",
+                        current
+                    );
+                }
+
+                let new_counter = necessary_persists * self
+                    .config
+                    .idgen_persist_interval;
+
+                let counter_frag = Frag::Counter(new_counter);
+
+                let old =
+                    self.idgen_persists.swap(new_counter, Release);
+                assert_eq!(old, persisted);
+
+                self.pages
+                    .replace(
+                        COUNTER_PID,
+                        key.clone(),
+                        counter_frag,
+                        &guard,
+                    ).map_err(|e| e.danger_cast())?;
+
+                // during recovery we add 2x the interval. we only
+                // need to block if the last one wasn't stable yet.
+                if key.last_lsn() > self.pages.stable_lsn() {
+                    self.flush()?;
+                }
             }
         }
 
-        ret
+        Ok(ret)
     }
 
     /// Flushes any pending IO buffers to disk to ensure durability.

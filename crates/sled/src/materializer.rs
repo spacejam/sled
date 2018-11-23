@@ -35,10 +35,11 @@ impl Materializer for BLinkMaterializer {
 
                 Frag::Base(base_node, is_root)
             }
-            Frag::CounterBase(mut count) => {
+            Frag::Counter(count) => {
+                let mut max = count;
                 for &frag in &frags[1..] {
-                    if let Frag::BumpCounter(amount) = frag {
-                        count += amount;
+                    if let Frag::Counter(count) = frag {
+                        max = std::cmp::max(*count, max);
                     } else {
                         panic!(
                             "got non-BumpCounter in frag chain: {:?}",
@@ -47,7 +48,7 @@ impl Materializer for BLinkMaterializer {
                     }
                 }
 
-                Frag::CounterBase(count)
+                Frag::Counter(max)
             }
             _ => panic!("non-Base in first element of frags slice"),
         }
@@ -76,27 +77,14 @@ impl Materializer for BLinkMaterializer {
                     None
                 }
             }
-            Frag::CounterBase(count) => {
+            Frag::Counter(count) => {
                 let mut recovery = self.recovery.lock().expect(
                     "a thread panicked and poisoned the BLinkMaterializer's
                     roots mutex.",
                 );
-                assert!(
-                    count >= recovery.counter,
-                    "somehow counter was not recovered monotonically: found later count of {} vs previous count of {}",
-                    count, recovery.counter
-                );
+                recovery.counter =
+                    std::cmp::max(count, recovery.counter);
 
-                recovery.counter = count;
-
-                Some(recovery.clone())
-            }
-            Frag::BumpCounter(amount) => {
-                let mut recovery  = self.recovery.lock().expect(
-                    "a thread panicked and poisoned the BLinkMaterializer's
-                    roots mutex.",
-                );
-                recovery.counter += amount;
                 Some(recovery.clone())
             }
             _ => None,
