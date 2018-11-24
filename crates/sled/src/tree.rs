@@ -5,7 +5,7 @@ use std::{
     sync::{
         atomic::{
             AtomicUsize,
-            Ordering::{Acquire, Release, SeqCst},
+            Ordering::{Acquire, Relaxed, Release, SeqCst},
         },
         Arc, Mutex,
     },
@@ -105,8 +105,9 @@ impl Tree {
             pages.recovered_state().unwrap_or_default();
         let idgen_recovery =
             recovery.counter + (2 * config.idgen_persist_interval);
-        let idgen_persists =
-            recovery.counter / config.idgen_persist_interval;
+        let idgen_persists = recovery.counter
+            / config.idgen_persist_interval
+            * config.idgen_persist_interval;
 
         let roots_opt = if recovery.root_transitions.is_empty() {
             None
@@ -235,10 +236,10 @@ impl Tree {
     /// a blocking flush to fsync the latest counter, ensuring
     /// that we will never give out the same counter twice.
     pub fn generate_id(&self) -> Result<usize, ()> {
-        let ret = self.idgen.fetch_add(1, Release);
+        let ret = self.idgen.fetch_add(1, Relaxed);
 
-        let necessary_persists =
-            ret / self.config.idgen_persist_interval;
+        let interval = self.config.idgen_persist_interval;
+        let necessary_persists = ret / interval * interval;
         let mut persisted = self.idgen_persists.load(Acquire);
 
         while persisted < necessary_persists {
@@ -254,11 +255,7 @@ impl Tree {
                     .unwrap();
 
                 if let Frag::Counter(current) = current {
-                    assert_eq!(
-                        *current,
-                        persisted
-                            * self.config.idgen_persist_interval
-                    );
+                    assert_eq!(*current, persisted);
                 } else {
                     panic!(
                         "counter pid contained non-Counter: {:?}",
@@ -266,14 +263,11 @@ impl Tree {
                     );
                 }
 
-                let new_counter = necessary_persists * self
-                    .config
-                    .idgen_persist_interval;
+                let counter_frag = Frag::Counter(necessary_persists);
 
-                let counter_frag = Frag::Counter(new_counter);
-
-                let old =
-                    self.idgen_persists.swap(new_counter, Release);
+                let old = self
+                    .idgen_persists
+                    .swap(necessary_persists, Release);
                 assert_eq!(old, persisted);
 
                 self.pages
@@ -289,6 +283,8 @@ impl Tree {
                 if key.last_lsn() > self.pages.stable_lsn() {
                     self.pages.make_stable(key.last_lsn())?;
                 }
+
+                guard.flush();
             }
         }
 
