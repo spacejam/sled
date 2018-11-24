@@ -87,6 +87,8 @@ pub struct ConfigBuilder {
     pub merge_operator: Option<usize>,
     #[doc(hidden)]
     pub print_profile_on_drop: bool,
+    #[doc(hidden)]
+    pub idgen_persist_interval: usize,
 }
 
 unsafe impl Send for ConfigBuilder {}
@@ -113,6 +115,7 @@ impl Default for ConfigBuilder {
             segment_mode: SegmentMode::Gc,
             merge_operator: None,
             print_profile_on_drop: false,
+            idgen_persist_interval: 1_000_000,
         }
     }
 }
@@ -216,7 +219,8 @@ impl ConfigBuilder {
         (segment_cleanup_skew, usize, "the cleanup threshold skew in percentage points between the first and last segments"),
         (segment_mode, SegmentMode, "the file segment selection mode"),
         (snapshot_path, Option<PathBuf>, "snapshot file location"),
-        (print_profile_on_drop, bool, "print a performance profile when the Config is dropped")
+        (print_profile_on_drop, bool, "print a performance profile when the Config is dropped"),
+        (idgen_persist_interval, usize, "generated IDs are persisted at this interval. during recovery we skip twice this number")
     );
 }
 
@@ -431,11 +435,11 @@ impl Config {
     fn validate(&self) -> Result<(), ()> {
         supported!(
             self.inner.io_bufs <= 32,
-            "too many configured io_bufs"
+            "too many configured io_bufs. please make <= 32"
         );
         supported!(
             self.inner.io_buf_size >= 100,
-            "io_buf_size should be hundreds of kb at minimum"
+            "io_buf_size should be hundreds of kb at minimum, and we won't start if below 100"
         );
         supported!(
             self.inner.io_buf_size <= 1 << 24,
@@ -445,7 +449,7 @@ impl Config {
         supported!(self.inner.page_consolidation_threshold < 1 << 20, "must consolidate pages after fewer than 1 million updates");
         supported!(
             self.inner.cache_bits <= 20,
-            "# LRU shards = 2^cache_bits. set this to 20 or less."
+            "# LRU shards = 2^cache_bits. set cache_bits to 20 or less."
         );
         supported!(
             self.inner.segment_cleanup_threshold >= 0.01,
@@ -453,15 +457,19 @@ impl Config {
         );
         supported!(
             self.inner.segment_cleanup_skew < 99,
-            "cleanup skew cannot be greater than 99%"
+            "segment_cleanup_skew cannot be greater than 99%"
         );
         supported!(
             self.inner.zstd_compression_factor >= 1,
-            "compression factor must be >= 0"
+            "zstd_compression_factor must be >= 0"
         );
         supported!(
             self.inner.zstd_compression_factor <= 22,
-            "compression factor must be <= 22"
+            "zstd_compression_factor must be <= 22"
+        );
+        supported!(
+            self.inner.idgen_persist_interval > 0,
+            "idgen_persist_interval must be above 0"
         );
         Ok(())
     }

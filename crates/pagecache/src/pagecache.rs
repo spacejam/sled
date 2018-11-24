@@ -34,6 +34,11 @@ where
         self.0.is_null()
     }
 
+    /// The last Lsn number for the head of this page
+    pub fn last_lsn(&self) -> Lsn {
+        unsafe { self.0.deref().deref().lsn() }
+    }
+
     unsafe fn deref_merged_resident(&self) -> &'g P
     where
         P: Debug,
@@ -76,6 +81,17 @@ impl<M: Send> CacheEntry<M> {
             | PartialFlush(_, ptr)
             | Flush(_, ptr)
             | Free(_, ptr) => *ptr,
+        }
+    }
+
+    fn lsn(&self) -> Lsn {
+        use self::CacheEntry::*;
+        match self {
+            MergedResident(_, lsn, ..)
+            | Resident(_, lsn, ..)
+            | PartialFlush(lsn, ..)
+            | Flush(lsn, ..)
+            | Free(lsn, ..) => *lsn,
         }
     }
 
@@ -775,6 +791,17 @@ where
         };
 
         self.page_in(pid, stack_ptr, guard)
+    }
+
+    /// The highest known stable Lsn on disk.
+    pub fn stable_lsn(&self) -> Lsn {
+        self.log.stable_offset()
+    }
+
+    /// Blocks until the provided Lsn is stable on disk,
+    /// triggering necessary flushes in the process.
+    pub fn make_stable(&self, lsn: Lsn) -> Result<(), ()> {
+        self.log.make_stable(lsn)
     }
 
     fn page_in<'g>(

@@ -3,14 +3,21 @@ use std::{
     cmp::Ordering::{Greater, Less},
     fmt::{self, Debug},
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
-        Arc,
+        atomic::{
+            AtomicUsize,
+            Ordering::{Acquire, Release, SeqCst},
+        },
+        Arc, Mutex,
     },
 };
 
 use pagecache::PagePtr;
 
 use super::*;
+
+const COUNTER_PID: PageId = 0;
+const LEFT_LEAF_PID: PageId = 1;
+const ORIGINAL_ROOT_PID: PageId = 2;
 
 type Path<'g> = Vec<(&'g Frag, TreePtr<'g>)>;
 
@@ -24,13 +31,37 @@ impl<'a> IntoIterator for &'a Tree {
 }
 
 /// A flash-sympathetic persistent lock-free B+ tree
+///
+/// # Examples
+///
+/// ```
+/// let t = sled::Tree::start_default("path_to_my_database").unwrap();
+///
+/// t.set(b"yo!", b"v1".to_vec());
+/// assert!(t.get(b"yo!").unwrap().unwrap() == &*b"v1".to_vec());
+///
+/// t.cas(
+///     b"yo!",                // key
+///     Some(b"v1"),           // old value, None for not present
+///     Some(b"v2".to_vec()),  // new value, None for delete
+/// ).unwrap();
+///
+/// let mut iter = t.scan(b"a non-present key before yo!");
+/// // assert_eq!(iter.next(), Some(Ok((b"yo!".to_vec(), b"v2".to_vec()))));
+/// // assert_eq!(iter.next(), None);
+///
+/// t.del(b"yo!");
+/// assert_eq!(t.get(b"yo!"), Ok(None));
+/// ```
 #[derive(Clone)]
 pub struct Tree {
-    pub(crate) pages: Arc<
-        PageCache<BLinkMaterializer, Frag, Vec<(PageId, PageId)>>,
-    >,
+    pub(crate) pages:
+        Arc<PageCache<BLinkMaterializer, Frag, Recovery>>,
     config: Config,
     root: Arc<AtomicUsize>,
+    idgen: Arc<AtomicUsize>,
+    idgen_persists: Arc<AtomicUsize>,
+    idgen_persist_mu: Arc<Mutex<()>>,
 }
 
 unsafe impl Send for Tree {}
@@ -60,8 +91,8 @@ impl Tree {
 
         #[cfg(any(test, feature = "check_snapshot_integrity"))]
         match config
-            .verify_snapshot::<BLinkMaterializer, Frag, Vec<(PageId, PageId)>>(
-            ) {
+            .verify_snapshot::<BLinkMaterializer, Frag, Recovery>()
+        {
             Ok(_) => {}
             #[cfg(feature = "failpoints")]
             Err(Error::FailPoint) => {}
@@ -70,36 +101,39 @@ impl Tree {
 
         let pages = PageCache::start(config.clone())?;
 
-        let roots_opt = pages.recovered_state().clone().and_then(
-            |mut roots: Vec<(PageId, PageId)>| {
-                if roots.is_empty() {
-                    None
-                } else {
-                    let mut last = std::usize::MAX;
-                    let mut last_idx = std::usize::MAX;
-                    while !roots.is_empty() {
-                        // find the root that links to the last one
-                        for (i, &(root, prev_root)) in
-                            roots.iter().enumerate()
-                        {
-                            if prev_root == last {
-                                last = root;
-                                last_idx = i;
-                                break;
-                            }
-                            assert_ne!(
-                                i + 1,
-                                roots.len(),
-                                "encountered gap in root chain"
-                            );
-                        }
-                        roots.remove(last_idx);
+        let mut recovery: Recovery =
+            pages.recovered_state().unwrap_or_default();
+        let idgen_recovery =
+            recovery.counter + (2 * config.idgen_persist_interval);
+        let idgen_persists =
+            recovery.counter / config.idgen_persist_interval;
+
+        let roots_opt = if recovery.root_transitions.is_empty() {
+            None
+        } else {
+            let mut last = std::usize::MAX;
+            let mut last_idx = std::usize::MAX;
+            while !recovery.root_transitions.is_empty() {
+                // find the root that links to the last one
+                for (i, &(root, prev_root)) in
+                    recovery.root_transitions.iter().enumerate()
+                {
+                    if prev_root == last {
+                        last = root;
+                        last_idx = i;
+                        break;
                     }
-                    assert_ne!(last, std::usize::MAX);
-                    Some(last)
+                    assert_ne!(
+                        i + 1,
+                        recovery.root_transitions.len(),
+                        "encountered gap in root chain"
+                    );
                 }
-            },
-        );
+                recovery.root_transitions.remove(last_idx);
+            }
+            assert_ne!(last, std::usize::MAX);
+            Some(last)
+        };
 
         let root_id = if let Some(root_id) = roots_opt {
             debug!("recovered root {} while starting tree", root_id);
@@ -107,16 +141,28 @@ impl Tree {
         } else {
             let guard = pin();
 
-            let root_id = pages.allocate(&guard)?;
-            assert_eq!(
-                root_id,
-                0,
-                "we expect that this is the first page ever allocated"
-            );
-            debug!("allocated pid {} for root of new tree", root_id);
+            // set up idgen
+            let counter_id = pages.allocate(&guard)?;
+            let counter = Frag::Counter(0);
+            pages
+                .replace(
+                    counter_id,
+                    PagePtr::allocated(),
+                    counter,
+                    &guard,
+                ).map_err(|e| e.danger_cast())?;
 
+            // set up empty leaf
             let leaf_id = pages.allocate(&guard)?;
             trace!("allocated pid {} for leaf in new", leaf_id);
+
+            assert_eq!(
+                leaf_id,
+                LEFT_LEAF_PID,
+                "we expect the first leaf to have pid {}, but it had pid {} instead",
+                LEFT_LEAF_PID,
+                leaf_id,
+            );
 
             let leaf = Frag::Base(
                 Node {
@@ -128,6 +174,19 @@ impl Tree {
                 },
                 None,
             );
+
+            pages
+                .replace(leaf_id, PagePtr::allocated(), leaf, &guard)
+                .map_err(|e| e.danger_cast())?;
+
+            // set up root index
+            let root_id = pages.allocate(&guard)?;
+            assert_eq!(
+                root_id,
+                ORIGINAL_ROOT_PID,
+                "we expect that this is the third page ever allocated"
+            );
+            debug!("allocated pid {} for root of new tree", root_id);
 
             // vec![0] represents a prefix-encoded empty prefix
             let root_index_vec = vec![(vec![0], leaf_id)];
@@ -146,9 +205,6 @@ impl Tree {
             pages
                 .replace(root_id, PagePtr::allocated(), root, &guard)
                 .map_err(|e| e.danger_cast())?;
-            pages
-                .replace(leaf_id, PagePtr::allocated(), leaf, &guard)
-                .map_err(|e| e.danger_cast())?;
 
             guard.flush();
 
@@ -162,12 +218,86 @@ impl Tree {
             pages: Arc::new(pages),
             config,
             root: Arc::new(AtomicUsize::new(root_id)),
+            idgen: Arc::new(AtomicUsize::new(idgen_recovery)),
+            idgen_persists: Arc::new(AtomicUsize::new(
+                idgen_persists,
+            )),
+            idgen_persist_mu: Arc::new(Mutex::new(())),
         })
+    }
+
+    /// Generate a monotonic ID. Not guaranteed to be
+    /// contiguous. Written to disk every `idgen_persist_interval`
+    /// operations, followed by a blocking flush. During recovery, we
+    /// take the last recovered generated ID and add 2x
+    /// the `idgen_persist_interval` to it. While persisting, if the
+    /// previous persisted counter wasn't synced to disk yet, we will do
+    /// a blocking flush to fsync the latest counter, ensuring
+    /// that we will never give out the same counter twice.
+    pub fn generate_id(&self) -> Result<usize, ()> {
+        let ret = self.idgen.fetch_add(1, Release);
+
+        let necessary_persists =
+            ret / self.config.idgen_persist_interval;
+        let mut persisted = self.idgen_persists.load(Acquire);
+
+        while persisted < necessary_persists {
+            let _mu = self.idgen_persist_mu.lock().unwrap();
+            persisted = self.idgen_persists.load(Acquire);
+            if persisted < necessary_persists {
+                // it's our responsibility to persist up to our ID
+                let guard = pin();
+                let (current, key) = self
+                    .pages
+                    .get(COUNTER_PID, &guard)
+                    .map_err(|e| e.danger_cast())?
+                    .unwrap();
+
+                if let Frag::Counter(current) = current {
+                    assert_eq!(
+                        *current,
+                        persisted
+                            * self.config.idgen_persist_interval
+                    );
+                } else {
+                    panic!(
+                        "counter pid contained non-Counter: {:?}",
+                        current
+                    );
+                }
+
+                let new_counter = necessary_persists * self
+                    .config
+                    .idgen_persist_interval;
+
+                let counter_frag = Frag::Counter(new_counter);
+
+                let old =
+                    self.idgen_persists.swap(new_counter, Release);
+                assert_eq!(old, persisted);
+
+                self.pages
+                    .replace(
+                        COUNTER_PID,
+                        key.clone(),
+                        counter_frag,
+                        &guard,
+                    ).map_err(|e| e.danger_cast())?;
+
+                // during recovery we add 2x the interval. we only
+                // need to block if the last one wasn't stable yet.
+                if key.last_lsn() > self.pages.stable_lsn() {
+                    self.pages.make_stable(key.last_lsn())?;
+                }
+            }
+        }
+
+        Ok(ret)
     }
 
     /// Clears the `Tree`, removing all values.
     ///
-    /// Note that this is NOT atomic.
+    /// Note that this is not atomic.
     pub fn clear(&self) -> Result<(), ()> {
         for k in self.keys(b"") {
             let key = k?;
@@ -176,9 +306,21 @@ impl Tree {
         Ok(())
     }
 
-    /// Flushes any pending IO buffers to disk to ensure durability.
+    /// Flushes all dirty IO buffers and calls fsync.
+    /// If this succeeds, it is guaranteed that
+    /// all previous writes will be recovered if
+    /// the system crashes.
     pub fn flush(&self) -> Result<(), ()> {
         self.pages.flush()
+    }
+
+    /// Returns `true` if the `Tree` contains a value for
+    /// the specified key.
+    pub fn contains_key<K: AsRef<[u8]>>(
+        &self,
+        key: K,
+    ) -> Result<bool, ()> {
+        self.get(key).map(|r| r.is_some())
     }
 
     /// Retrieve a value from the `Tree` if it exists.
@@ -200,8 +342,8 @@ impl Tree {
         Ok(ret.map(|r| PinnedValue::new(r, double_guard)))
     }
 
-    /// Retrieve a value from the `Tree` for the key before the
-    /// given key, if one exists.
+    /// Retrieve the key and value before the provided key,
+    /// if one exists.
     ///
     /// # Examples
     ///
@@ -276,17 +418,8 @@ impl Tree {
         Ok(ret)
     }
 
-    /// Returns `true` if the `Tree` contains a value for
-    /// the specified key.
-    pub fn contains_key<K: AsRef<[u8]>>(
-        &self,
-        key: K,
-    ) -> Result<bool, ()> {
-        self.get(key).map(|r| r.is_some())
-    }
-
-    /// Retrieve a value from the `Tree` for the key after the
-    /// given key, if one exists.
+    /// Retrieve the next key and value from the `Tree` after the
+    /// provided key.
     ///
     /// # Examples
     ///
@@ -528,7 +661,76 @@ impl Tree {
         }
     }
 
-    /// Merge a new value into the total state for a key.
+    /// Delete a value, returning the last result if it existed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let config = sled::ConfigBuilder::new().temporary(true).build();
+    /// let t = sled::Tree::start(config).unwrap();
+    /// t.set(&[1], vec![1]);
+    /// assert_eq!(t.del(&*vec![1]).unwrap().unwrap(), vec![1]);
+    /// assert_eq!(t.del(&*vec![1]), Ok(None));
+    /// ```
+    pub fn del<K: AsRef<[u8]>>(
+        &self,
+        key: K,
+    ) -> Result<Option<PinnedValue>, ()> {
+        let _measure = Measure::new(&M.tree_del);
+
+        if self.config.read_only {
+            return Ok(None);
+        }
+
+        let guard = pin();
+        let double_guard = guard.clone();
+
+        loop {
+            let (mut path, existing_key) =
+                self.get_internal(key.as_ref(), &guard)?;
+            let (leaf_frag, leaf_ptr) = path.pop().expect(
+                "path_for_key should always return a path \
+                 of length >= 2 (root + leaf)",
+            );
+            let node: &Node = leaf_frag.unwrap_base();
+            let encoded_key =
+                prefix_encode(node.lo.inner(), key.as_ref());
+
+            let frag = Frag::Del(encoded_key);
+            let link = self.pages.link(
+                node.id,
+                leaf_ptr.clone(),
+                frag,
+                &guard,
+            );
+
+            match link {
+                Ok(_) => {
+                    // success
+                    guard.flush();
+                    return Ok(existing_key.map(move |r| {
+                        PinnedValue::new(r, double_guard)
+                    }));
+                }
+                Err(Error::CasFailed(_)) => {
+                    M.tree_looped();
+                    continue;
+                }
+                Err(other) => return Err(other.danger_cast()),
+            }
+        }
+    }
+
+    /// Merge state directly into a given key's value using the
+    /// configured merge operator. This allows state to be written
+    /// into a value directly, without any read-modify-write steps.
+    /// Merge operators can be used to implement arbitrary data
+    /// structures.
+    ///
+    /// # Panics
+    ///
+    /// Calling `merge` will panic if no merge operator has been
+    /// configured.
     ///
     /// # Examples
     ///
@@ -633,66 +835,6 @@ impl Tree {
                 }
             }
             M.tree_looped();
-        }
-    }
-
-    /// Delete a value, returning the last result if it existed.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let config = sled::ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Tree::start(config).unwrap();
-    /// t.set(&[1], vec![1]);
-    /// assert_eq!(t.del(&*vec![1]).unwrap().unwrap(), vec![1]);
-    /// assert_eq!(t.del(&*vec![1]), Ok(None));
-    /// ```
-    pub fn del<K: AsRef<[u8]>>(
-        &self,
-        key: K,
-    ) -> Result<Option<PinnedValue>, ()> {
-        let _measure = Measure::new(&M.tree_del);
-
-        if self.config.read_only {
-            return Ok(None);
-        }
-
-        let guard = pin();
-        let double_guard = guard.clone();
-
-        loop {
-            let (mut path, existing_key) =
-                self.get_internal(key.as_ref(), &guard)?;
-            let (leaf_frag, leaf_ptr) = path.pop().expect(
-                "path_for_key should always return a path \
-                 of length >= 2 (root + leaf)",
-            );
-            let node: &Node = leaf_frag.unwrap_base();
-            let encoded_key =
-                prefix_encode(node.lo.inner(), key.as_ref());
-
-            let frag = Frag::Del(encoded_key);
-            let link = self.pages.link(
-                node.id,
-                leaf_ptr.clone(),
-                frag,
-                &guard,
-            );
-
-            match link {
-                Ok(_) => {
-                    // success
-                    guard.flush();
-                    return Ok(existing_key.map(move |r| {
-                        PinnedValue::new(r, double_guard)
-                    }));
-                }
-                Err(Error::CasFailed(_)) => {
-                    M.tree_looped();
-                    continue;
-                }
-                Err(other) => return Err(other.danger_cast()),
-            }
         }
     }
 

@@ -18,6 +18,7 @@ pub(crate) enum Frag {
     Base(Node, Option<PageId>),
     ChildSplit(ChildSplit),
     ParentSplit(ParentSplit),
+    Counter(usize),
 }
 
 impl Frag {
