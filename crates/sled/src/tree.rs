@@ -35,7 +35,7 @@ impl<'a> IntoIterator for &'a Tree {
 /// # Examples
 ///
 /// ```
-/// let t = sled::Tree::start_default("my_db").unwrap();
+/// let t = sled::Tree::start_default("path_to_my_database").unwrap();
 ///
 /// t.set(b"yo!", b"v1".to_vec());
 /// assert!(t.get(b"yo!").unwrap().unwrap() == &*b"v1".to_vec());
