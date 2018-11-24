@@ -31,6 +31,28 @@ impl<'a> IntoIterator for &'a Tree {
 }
 
 /// A flash-sympathetic persistent lock-free B+ tree
+///
+/// # Examples
+///
+/// ```
+/// let t = sled::Tree::start_default("my_db").unwrap();
+///
+/// t.set(b"yo!", b"v1".to_vec());
+/// assert!(t.get(b"yo!").unwrap().unwrap() == &*b"v1".to_vec());
+///
+/// t.cas(
+///     b"yo!",                // key
+///     Some(b"v1"),           // old value, None for not present
+///     Some(b"v2".to_vec()),  // new value, None for delete
+/// ).unwrap();
+///
+/// let mut iter = t.scan(b"a non-present key before yo!");
+/// // assert_eq!(iter.next(), Some(Ok((b"yo!".to_vec(), b"v2".to_vec()))));
+/// // assert_eq!(iter.next(), None);
+///
+/// t.del(b"yo!");
+/// assert_eq!(t.get(b"yo!"), Ok(None));
+/// ```
 #[derive(Clone)]
 pub struct Tree {
     pub(crate) pages:
@@ -275,7 +297,7 @@ impl Tree {
 
     /// Clears the `Tree`, removing all values.
     ///
-    /// Note that this is NOT atomic.
+    /// Note that this is not atomic.
     pub fn clear(&self) -> Result<(), ()> {
         for k in self.keys(b"") {
             let key = k?;
@@ -284,9 +306,21 @@ impl Tree {
         Ok(())
     }
 
-    /// Flushes any pending IO buffers to disk to ensure durability.
+    /// Flushes all dirty IO buffers and calls fsync.
+    /// If this succeeds, it is guaranteed that
+    /// all previous writes will be recovered if
+    /// the system crashes.
     pub fn flush(&self) -> Result<(), ()> {
         self.pages.flush()
+    }
+
+    /// Returns `true` if the `Tree` contains a value for
+    /// the specified key.
+    pub fn contains_key<K: AsRef<[u8]>>(
+        &self,
+        key: K,
+    ) -> Result<bool, ()> {
+        self.get(key).map(|r| r.is_some())
     }
 
     /// Retrieve a value from the `Tree` if it exists.
@@ -308,8 +342,8 @@ impl Tree {
         Ok(ret.map(|r| PinnedValue::new(r, double_guard)))
     }
 
-    /// Retrieve a value from the `Tree` for the key before the
-    /// given key, if one exists.
+    /// Retrieve the key and value before the provided key,
+    /// if one exists.
     ///
     /// # Examples
     ///
@@ -384,17 +418,8 @@ impl Tree {
         Ok(ret)
     }
 
-    /// Returns `true` if the `Tree` contains a value for
-    /// the specified key.
-    pub fn contains_key<K: AsRef<[u8]>>(
-        &self,
-        key: K,
-    ) -> Result<bool, ()> {
-        self.get(key).map(|r| r.is_some())
-    }
-
-    /// Retrieve a value from the `Tree` for the key after the
-    /// given key, if one exists.
+    /// Retrieve the next key and value from the `Tree` after the
+    /// provided key.
     ///
     /// # Examples
     ///
@@ -636,7 +661,76 @@ impl Tree {
         }
     }
 
-    /// Merge a new value into the total state for a key.
+    /// Delete a value, returning the last result if it existed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let config = sled::ConfigBuilder::new().temporary(true).build();
+    /// let t = sled::Tree::start(config).unwrap();
+    /// t.set(&[1], vec![1]);
+    /// assert_eq!(t.del(&*vec![1]).unwrap().unwrap(), vec![1]);
+    /// assert_eq!(t.del(&*vec![1]), Ok(None));
+    /// ```
+    pub fn del<K: AsRef<[u8]>>(
+        &self,
+        key: K,
+    ) -> Result<Option<PinnedValue>, ()> {
+        let _measure = Measure::new(&M.tree_del);
+
+        if self.config.read_only {
+            return Ok(None);
+        }
+
+        let guard = pin();
+        let double_guard = guard.clone();
+
+        loop {
+            let (mut path, existing_key) =
+                self.get_internal(key.as_ref(), &guard)?;
+            let (leaf_frag, leaf_ptr) = path.pop().expect(
+                "path_for_key should always return a path \
+                 of length >= 2 (root + leaf)",
+            );
+            let node: &Node = leaf_frag.unwrap_base();
+            let encoded_key =
+                prefix_encode(node.lo.inner(), key.as_ref());
+
+            let frag = Frag::Del(encoded_key);
+            let link = self.pages.link(
+                node.id,
+                leaf_ptr.clone(),
+                frag,
+                &guard,
+            );
+
+            match link {
+                Ok(_) => {
+                    // success
+                    guard.flush();
+                    return Ok(existing_key.map(move |r| {
+                        PinnedValue::new(r, double_guard)
+                    }));
+                }
+                Err(Error::CasFailed(_)) => {
+                    M.tree_looped();
+                    continue;
+                }
+                Err(other) => return Err(other.danger_cast()),
+            }
+        }
+    }
+
+    /// Merge state directly into a given key's value using the
+    /// configured merge operator. This allows state to be written
+    /// into a value directly, without any read-modify-write steps.
+    /// Merge operators can be used to implement arbitrary data
+    /// structures.
+    ///
+    /// # Panics
+    ///
+    /// Calling `merge` will panic if no merge operator has been
+    /// configured.
     ///
     /// # Examples
     ///
@@ -741,66 +835,6 @@ impl Tree {
                 }
             }
             M.tree_looped();
-        }
-    }
-
-    /// Delete a value, returning the last result if it existed.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let config = sled::ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Tree::start(config).unwrap();
-    /// t.set(&[1], vec![1]);
-    /// assert_eq!(t.del(&*vec![1]).unwrap().unwrap(), vec![1]);
-    /// assert_eq!(t.del(&*vec![1]), Ok(None));
-    /// ```
-    pub fn del<K: AsRef<[u8]>>(
-        &self,
-        key: K,
-    ) -> Result<Option<PinnedValue>, ()> {
-        let _measure = Measure::new(&M.tree_del);
-
-        if self.config.read_only {
-            return Ok(None);
-        }
-
-        let guard = pin();
-        let double_guard = guard.clone();
-
-        loop {
-            let (mut path, existing_key) =
-                self.get_internal(key.as_ref(), &guard)?;
-            let (leaf_frag, leaf_ptr) = path.pop().expect(
-                "path_for_key should always return a path \
-                 of length >= 2 (root + leaf)",
-            );
-            let node: &Node = leaf_frag.unwrap_base();
-            let encoded_key =
-                prefix_encode(node.lo.inner(), key.as_ref());
-
-            let frag = Frag::Del(encoded_key);
-            let link = self.pages.link(
-                node.id,
-                leaf_ptr.clone(),
-                frag,
-                &guard,
-            );
-
-            match link {
-                Ok(_) => {
-                    // success
-                    guard.flush();
-                    return Ok(existing_key.map(move |r| {
-                        PinnedValue::new(r, double_guard)
-                    }));
-                }
-                Err(Error::CasFailed(_)) => {
-                    M.tree_looped();
-                    continue;
-                }
-                Err(other) => return Err(other.danger_cast()),
-            }
         }
     }
 
