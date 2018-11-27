@@ -176,11 +176,11 @@ fn tree_subdir() {
 
     let res = t.get(&*vec![1]);
 
+    assert_eq!(res.unwrap().unwrap(), vec![1_u8]);
+    
     drop(t);
 
     std::fs::remove_dir_all("/tmp/test_tree_subdir").unwrap();
-
-    assert_eq!(res.unwrap().unwrap(), vec![1_u8]);
 }
 
 #[test]
