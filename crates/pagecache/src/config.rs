@@ -12,10 +12,10 @@ use std::{
     },
 };
 
-use bincode::{deserialize, serialize};
+// use bincode::{deserialize, serialize};
 use fs2::FileExt;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
+// use serde::de::DeserializeOwned;
+// use serde::Serialize;
 
 use super::*;
 
@@ -47,7 +47,7 @@ impl Deref for Config {
 ///     .path("/path/to/data".to_owned())
 ///     .read_only(true);
 /// ```
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone)] // TODO(flatbuffers)
 pub struct ConfigBuilder {
     #[doc(hidden)]
     pub blink_node_split_size: usize,
@@ -500,7 +500,7 @@ impl Config {
     }
 
     fn write_config(&self) -> Result<(), ()> {
-        let bytes = serialize(&*self.inner).unwrap();
+        let bytes: Vec<u8>  = unimplemented!(); // TODO(flatbuffers) serialize(&*self.inner).unwrap();
         let crc: u64 = crc64(&*bytes);
         let crc_arr = u64_to_arr(crc);
 
@@ -563,7 +563,8 @@ impl Config {
             );
         }
 
-        Ok(deserialize::<ConfigBuilder>(&*buf).ok())
+        let deserialized: Result<ConfigBuilder, bincode::Error> = unimplemented!(); // TODO(flatbuffers) deserialize::<ConfigBuilder>(&*buf);
+        Ok(deserialized.ok())
     }
 
     pub(crate) fn blob_path(&self, id: Lsn) -> PathBuf {
@@ -592,14 +593,14 @@ impl Config {
         P: 'static
             + Debug
             + Clone
-            + Serialize
-            + DeserializeOwned
+            // + Serialize
+            // + DeserializeOwned
             + Send
             + Sync,
         R: Debug
             + Clone
-            + Serialize
-            + DeserializeOwned
+            // + Serialize
+            // + DeserializeOwned
             + Send
             + PartialEq,
     {

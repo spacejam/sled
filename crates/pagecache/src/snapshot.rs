@@ -98,11 +98,11 @@ impl<R> Snapshot<R> {
         P: 'static
             + Debug
             + Clone
-            + Serialize
-            + DeserializeOwned
+            // + Serialize
+            // + DeserializeOwned
             + Send
             + Sync,
-        R: Debug + Clone + Serialize + DeserializeOwned + Send,
+        R: Debug + Clone + /* Serialize + DeserializeOwned + */ Send,
     {
         // unwrapping this because it's already passed the crc check
         // in the log iterator
@@ -111,7 +111,7 @@ impl<R> Snapshot<R> {
             disk_ptr,
             lsn
         );
-        let deserialization = deserialize::<LoggedUpdate<P>>(&*bytes);
+        let deserialization: Result<LoggedUpdate<P>, bincode::Error> = unimplemented!(); // TODO(flatbuffers) deserialize::<LoggedUpdate<P>>(&*bytes);
 
         if let Err(e) = deserialization {
             error!(
@@ -313,11 +313,11 @@ where
     P: 'static
         + Debug
         + Clone
-        + Serialize
-        + DeserializeOwned
+        // + Serialize
+        // + DeserializeOwned
         + Send
         + Sync,
-    R: Debug + Clone + Serialize + DeserializeOwned + Send,
+    R: Debug + Clone + /* Serialize + DeserializeOwned + */ Send,
 {
     let start = clock();
 
@@ -390,11 +390,11 @@ where
     P: 'static
         + Debug
         + Clone
-        + Serialize
-        + DeserializeOwned
+        // + Serialize
+        // + DeserializeOwned
         + Send
         + Sync,
-    R: Debug + Clone + Serialize + DeserializeOwned + Send,
+    R: Debug + Clone + /* Serialize + DeserializeOwned + */ Send,
 {
     let last_snap =
         read_snapshot(config)?.unwrap_or_else(Snapshot::default);
@@ -409,7 +409,7 @@ fn read_snapshot<R>(
     config: &Config,
 ) -> std::io::Result<Option<Snapshot<R>>>
 where
-    R: Debug + Clone + Serialize + DeserializeOwned + Send,
+    R: Debug + Clone + /* Serialize + DeserializeOwned + */ Send,
 {
     let mut candidates = config.get_snapshot_files()?;
     if candidates.is_empty() {
@@ -461,7 +461,8 @@ where
     #[cfg(not(feature = "zstd"))]
     let bytes = buf;
 
-    Ok(deserialize::<Snapshot<R>>(&*bytes).ok())
+    let deserialized: Result<Snapshot<R>, bincode::Error> = unimplemented!(); // TODO(flatbuffers) deserialize::<Snapshot<R>>(&*bytes)
+    Ok(deserialized.ok())
 }
 
 pub(crate) fn write_snapshot<R>(
@@ -469,9 +470,10 @@ pub(crate) fn write_snapshot<R>(
     snapshot: &Snapshot<R>,
 ) -> Result<(), ()>
 where
-    R: Debug + Clone + Serialize + DeserializeOwned + Send,
+    R: Debug + Clone + /* Serialize + DeserializeOwned + */ Send,
 {
-    let raw_bytes = serialize(&snapshot).unwrap();
+    let raw_bytes_deserialized: Result<Vec<u8>, bincode::Error> = unimplemented!(); // TODO(flatbuffers) serialize(&snapshot);
+    let raw_bytes = raw_bytes_deserialized.unwrap();
     let decompressed_len = raw_bytes.len();
 
     #[cfg(feature = "zstd")]

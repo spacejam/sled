@@ -109,21 +109,21 @@ impl<M: Send> CacheEntry<M> {
 
 /// `LoggedUpdate` is for writing blocks of `Update`'s to disk
 /// sequentially, to reduce IO during page reads.
-#[serde(bound(deserialize = ""))]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+// #[serde(bound(deserialize = ""))]
+#[derive(Clone, Debug, PartialEq)] // TODO(flatbuffers)
 pub(super) struct LoggedUpdate<PageFrag>
-where
-    PageFrag: Serialize + DeserializeOwned,
+// where
+//    PageFrag: Serialize + DeserializeOwned,
 {
     pub(super) pid: PageId,
     pub(super) update: Update<PageFrag>,
 }
 
-#[serde(bound(deserialize = ""))]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+// #[serde(bound(deserialize = ""))]
+#[derive(Clone, Debug, PartialEq)] // TODO(flatbuffers)
 pub(super) enum Update<PageFrag>
-where
-    PageFrag: DeserializeOwned + Serialize,
+// where
+//     PageFrag: DeserializeOwned + Serialize,
 {
     Append(PageFrag),
     Compact(PageFrag),
@@ -135,7 +135,7 @@ where
 #[derive(Clone, Debug, PartialEq)]
 pub enum PageGet<'a, PageFrag>
 where
-    PageFrag: 'static + DeserializeOwned + Serialize + Send + Sync,
+    PageFrag: 'static + /* DeserializeOwned + Serialize + */ Send + Sync,
 {
     /// This page contains data and has been prepared
     /// for presentation to the caller by the `PageCache`'s
@@ -152,16 +152,16 @@ where
 }
 
 unsafe impl<'a, P> Send for PageGet<'a, P> where
-    P: DeserializeOwned + Serialize + Send + Sync
+    P: /* DeserializeOwned + Serialize + */ Send + Sync
 {}
 
 unsafe impl<'a, P> Sync for PageGet<'a, P> where
-    P: DeserializeOwned + Serialize + Send + Sync
+    P: /* DeserializeOwned + Serialize + */ Send + Sync
 {}
 
 impl<'a, P> PageGet<'a, P>
 where
-    P: DeserializeOwned + Serialize + Send + Sync,
+    P: /* DeserializeOwned + Serialize + */ Send + Sync,
 {
     /// unwraps the `PageGet` into its inner `Materialized`
     /// form.
@@ -388,11 +388,11 @@ where
     P: 'static
         + Debug
         + Clone
-        + Serialize
-        + DeserializeOwned
+        // + Serialize
+        // + DeserializeOwned
         + Send
         + Sync,
-    R: Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
+    R: Debug + Clone + /* Serialize + DeserializeOwned + */ Send + Sync,
 {
     /// Instantiate a new `PageCache`.
     pub fn start(config: Config) -> Result<PageCache<PM, P, R>, ()> {
@@ -531,7 +531,7 @@ where
         };
 
         let bytes =
-            measure(&M.serialize, || serialize(&prepend).unwrap());
+            measure(&M.serialize, || unimplemented!() /* TODO(flatbuffers) serialize(&prepend).unwrap() */);
         let log_reservation =
             self.log.reserve(bytes).map_err(|e| e.danger_cast())?;
         let lsn = log_reservation.lsn();
@@ -730,7 +730,7 @@ where
             update: new.clone(),
         };
         let bytes =
-            measure(&M.serialize, || serialize(&replace).unwrap());
+            measure(&M.serialize, || unimplemented!() /* TODO(flatbuffers) serialize(&replace).unwrap() */);
         let log_reservation =
             self.log.reserve(bytes).map_err(|e| e.danger_cast())?;
         let lsn = log_reservation.lsn();
@@ -1115,7 +1115,8 @@ where
         }?;
 
         let logged_update = measure(&M.deserialize, || {
-            deserialize::<LoggedUpdate<P>>(&*bytes)
+            let deserialized: Result<LoggedUpdate<P>, bincode::Error> = unimplemented!(); // TODO(flatbuffers) deserialize::<LoggedUpdate<P>>(&*bytes)
+            deserialized
                 .map_err(|_| ())
                 .expect("failed to deserialize data")
         });

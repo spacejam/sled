@@ -119,7 +119,7 @@ impl Drop for SegmentAccountant {
 /// fragments from different pages. Over time, we track
 /// when segments become reusable and allow them to be
 /// overwritten for new data.
-#[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, PartialEq, Clone)] // TODO(flatbuuffers)
 struct Segment {
     present: BTreeSet<PageId>,
     removed: HashSet<PageId>,
@@ -138,8 +138,6 @@ struct Segment {
     PartialOrd,
     PartialEq,
     Clone,
-    Serialize,
-    Deserialize,
 )]
 pub(crate) enum SegmentState {
     /// the segment is marked for reuse, should never receive
@@ -1399,7 +1397,7 @@ fn clean_tail_tears(
 /// The log may be configured to write data
 /// in several different ways, depending on
 /// the constraints of the system using it.
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone)] // TODO(flatbuffers)
 pub enum SegmentMode {
     /// Write to the end of the log, always.
     Linear,
