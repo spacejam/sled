@@ -3,9 +3,7 @@ extern crate sled_sync;
 
 use std::sync::atomic::Ordering::SeqCst;
 
-use sled_sync::{
-    debug_delay, pin, unprotected, Atomic, Guard, Owned, Shared,
-};
+use sled_sync::{debug_delay, pin, Atomic, Guard, Owned, Shared};
 
 const FANFACTOR: usize = 18;
 const FANOUT: usize = 1 << FANFACTOR;
@@ -209,8 +207,12 @@ where
 {
     fn drop(&mut self) {
         unsafe {
-            let head = self.head.load(SeqCst, unprotected()).as_raw();
-            drop(Box::from_raw(head as *mut Node1<T>));
+            let guard = pin();
+            let head =
+                self.head.load(SeqCst, &guard).as_raw() as usize;
+            guard.defer(move || {
+                drop(Box::from_raw(head as *mut Node1<T>));
+            });
         }
     }
 }
