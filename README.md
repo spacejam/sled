@@ -126,8 +126,8 @@ lock-free tree on a lock-free pagecache on a lock-free log. the pagecache scatte
 partial page fragments across the log, rather than rewriting entire pages at a time
 as B+ trees for spinning disks historically have. on page reads, we concurrently
 scatter-gather reads across the log to materialize the page from its fragments.
-check out the [architectural outlook](https://github.com/spacejam/sled/wiki/sled-architectural-outlook)
-for a more detailed overview of where we're at and where we see things going.
+check out the [architectural outlook](wiki/sled-architectural-outlook)
+for a more detailed overview of where we're at and where we see things going!
 
 # References
 
