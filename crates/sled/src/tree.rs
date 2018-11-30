@@ -151,7 +151,8 @@ impl Tree {
                     PagePtr::allocated(),
                     counter,
                     &guard,
-                ).map_err(|e| e.danger_cast())?;
+                )
+                .map_err(|e| e.danger_cast())?;
 
             // set up empty leaf
             let leaf_id = pages.allocate(&guard)?;
@@ -276,7 +277,8 @@ impl Tree {
                         key.clone(),
                         counter_frag,
                         &guard,
-                    ).map_err(|e| e.danger_cast())?;
+                    )
+                    .map_err(|e| e.danger_cast())?;
 
                 // during recovery we add 2x the interval. we only
                 // need to block if the last one wasn't stable yet.
@@ -624,13 +626,14 @@ impl Tree {
                 Ok(new_cas_key) => {
                     // success
                     if node.should_split(
-                        self.config.blink_node_split_size,
+                        self.config.blink_node_split_size as u64,
                     ) {
                         let mut path2 = path
                             .iter()
                             .map(|&(f, ref p)| {
                                 (Cow::Borrowed(f), p.clone())
-                            }).collect::<Vec<(Cow<'_, Frag>, _)>>();
+                            })
+                            .collect::<Vec<(Cow<'_, Frag>, _)>>();
                         let mut node2 = node.clone();
                         node2
                             .apply(&frag, self.config.merge_operator);
@@ -806,13 +809,14 @@ impl Tree {
                 Ok(new_cas_key) => {
                     // success
                     if node.should_split(
-                        self.config.blink_node_split_size,
+                        self.config.blink_node_split_size as u64,
                     ) {
                         let mut path2 = path
                             .iter()
                             .map(|&(f, ref p)| {
                                 (Cow::Borrowed(f), p.clone())
-                            }).collect::<Vec<(Cow<'_, Frag>, _)>>();
+                            })
+                            .collect::<Vec<(Cow<'_, Frag>, _)>>();
                         let mut node2 = node.clone();
                         node2
                             .apply(&frag, self.config.merge_operator);
@@ -989,7 +993,9 @@ impl Tree {
             let (parent_frag, parent_ptr) = window[0].clone();
             let (node_frag, node_ptr) = window[1].clone();
             let node: &Node = node_frag.unwrap_base();
-            if node.should_split(self.config.blink_node_split_size) {
+            if node.should_split(
+                self.config.blink_node_split_size as u64,
+            ) {
                 // try to child split
                 if let Ok(parent_split) =
                     self.child_split(node, node_ptr.clone(), guard)
@@ -1020,7 +1026,9 @@ impl Tree {
         let (ref root_frag, ref root_ptr) = path[0];
         let root_node: &Node = root_frag.unwrap_base();
 
-        if root_node.should_split(self.config.blink_node_split_size) {
+        if root_node
+            .should_split(self.config.blink_node_split_size as u64)
+        {
             if let Ok(parent_split) =
                 self.child_split(&root_node, root_ptr.clone(), guard)
             {
@@ -1030,7 +1038,8 @@ impl Tree {
                         parent_split.to,
                         parent_split.at.inner().to_vec(),
                         guard,
-                    ).map(|_| ())
+                    )
+                    .map(|_| ())
                     .map_err(|e| e.danger_cast());
             }
         }
@@ -1068,7 +1077,8 @@ impl Tree {
                 PagePtr::allocated(),
                 Frag::Base(rhs, None),
                 guard,
-            ).map_err(|e| e.danger_cast())?;
+            )
+            .map_err(|e| e.danger_cast())?;
 
         // try to install a child split on the left side
         let link = self.pages.link(
@@ -1152,7 +1162,8 @@ impl Tree {
                 PagePtr::allocated(),
                 new_root,
                 guard,
-            ).expect(
+            )
+            .expect(
                 "we should be able to replace a newly \
                  allocated page without issue",
             );
@@ -1196,7 +1207,8 @@ impl Tree {
                         key.as_ref(),
                         last_node.lo.inner(),
                     )
-                }).ok();
+                })
+                .ok();
 
             search.map(|idx| &*items[idx].1)
         });

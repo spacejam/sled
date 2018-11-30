@@ -13,13 +13,16 @@ pub(crate) struct Node {
 
 impl Node {
     #[inline]
-    pub(crate) fn size_in_bytes(&self) -> usize {
-        let self_sz = size_of::<Node>();
+    pub(crate) fn size_in_bytes(&self) -> u64 {
+        let self_sz = size_of::<Node>() as u64;
         let lo_sz = self.lo.size_in_bytes();
         let hi_sz = self.hi.size_in_bytes();
         let data_sz = self.data.size_in_bytes();
 
-        self_sz + lo_sz + hi_sz + data_sz
+        self_sz
+            .saturating_add(lo_sz)
+            .saturating_add(hi_sz)
+            .saturating_add(data_sz)
     }
 
     pub(crate) fn apply(
@@ -165,7 +168,7 @@ impl Node {
         }
     }
 
-    pub(crate) fn should_split(&self, max_sz: usize) -> bool {
+    pub(crate) fn should_split(&self, max_sz: u64) -> bool {
         self.data.len() > 2 && self.size_in_bytes() > max_sz
     }
 

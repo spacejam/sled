@@ -11,32 +11,38 @@ pub(crate) enum Data {
 
 impl Data {
     #[inline]
-    pub(crate) fn size_in_bytes(&self) -> usize {
-        let self_sz = size_of::<Bound>();
+    pub(crate) fn size_in_bytes(&self) -> u64 {
+        let self_sz = size_of::<Bound>() as u64;
 
         let inner_sz = match self {
             Data::Index(ref v) => {
-                let mut sz = 0;
+                let mut sz = 0u64;
                 for (k, _p) in v.iter() {
-                    sz += k.len()
-                        + size_of::<Key>()
-                        + size_of::<PageId>();
+                    sz = sz
+                        .saturating_add(k.len() as u64)
+                        .saturating_add(size_of::<Key>() as u64)
+                        .saturating_add(size_of::<PageId>() as u64);
                 }
-                sz + size_of::<Vec<(Key, PageId)>>()
+                sz.saturating_add(
+                    size_of::<Vec<(Key, PageId)>>() as u64
+                )
             }
             Data::Leaf(ref v) => {
-                let mut sz = 0;
+                let mut sz = 0u64;
                 for (k, value) in v.iter() {
-                    sz += k.len()
-                        + size_of::<Key>()
-                        + value.len()
-                        + size_of::<Value>();
+                    sz = sz
+                        .saturating_add(k.len() as u64)
+                        .saturating_add(size_of::<Key>() as u64)
+                        .saturating_add(value.len() as u64)
+                        .saturating_add(size_of::<Value>() as u64);
                 }
-                sz + size_of::<Vec<(Key, Value)>>()
+                sz.saturating_add(
+                    size_of::<Vec<(Key, Value)>>() as u64
+                )
             }
         };
 
-        self_sz + inner_sz
+        self_sz.saturating_add(inner_sz)
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -59,7 +65,8 @@ impl Data {
                 .map(|&(ref k, ref v)| {
                     let decoded_k = prefix_decode(lhs_prefix, &*k);
                     (decoded_k, v.clone())
-                }).collect();
+                })
+                .collect();
             decoded_xs.sort();
 
             let (_lhs, rhs) =
@@ -74,7 +81,8 @@ impl Data {
                 .map(|&(ref k, ref v)| {
                     let new_k = prefix_encode(&*split, k);
                     (new_k, v.clone())
-                }).collect();
+                })
+                .collect();
 
             (split, rhs_data)
         }
