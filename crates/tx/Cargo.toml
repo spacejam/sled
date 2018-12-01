@@ -5,3 +5,6 @@ version = "0.1.0"
 authors = ["Tyler Neely <t@jujit.su>"]
 
 [dependencies]
+lazy_static = "1.2"
+pagetable = { version = "0.1", path = "../pagetable" }
+crossbeam-epoch = "0.6.1"
