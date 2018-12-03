@@ -10,9 +10,15 @@ use std::{
     marker::PhantomData,
     ops::{Deref, DerefMut},
     sync::atomic::{
-        AtomicUsize,
+        fence, AtomicUsize,
         Ordering::{Acquire, Relaxed, SeqCst},
     },
+};
+
+#[cfg(test)]
+use std::{
+    sync::mpsc::{sync_channel, Receiver, SyncSender},
+    thread,
 };
 
 use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
@@ -20,12 +26,12 @@ use pagetable::PageTable;
 
 #[macro_export]
 macro_rules! tx {
-    ($($item:expr;)*) => {
+    ($($item:stmt;)*) => {
         tx! {
             $($item);*
         }
     };
-    ($($item:expr);*) => {
+    ($($item:stmt);*) => {
         loop {
             $crate::begin_tx();
 
@@ -51,21 +57,40 @@ thread_local! {
     static L: RefCell<HashMap<usize, LocalView>> = RefCell::new(HashMap::new());
     static TS: RefCell<usize> = RefCell::new(0);
     static GUARD: RefCell<Option<Guard>> = RefCell::new(None);
+
+    // a scheduler for exhaustive testing
+    #[cfg(test)]
+    static SCHED: RefCell<Option<Receiver<()>>> = RefCell::new(None);
 }
 
-struct DelayedDropPtr<T>(*mut T);
+#[cfg(test)]
+fn tn() -> String {
+    std::thread::current()
+        .name()
+        .unwrap_or("unknown")
+        .to_owned()
+}
 
-unsafe impl<T> Send for DelayedDropPtr<T> {}
+macro_rules! sched_delay {
+    () => {
+        #[cfg(not(test))]
+        {}
+        #[cfg(test)]
+        {
+            fence(SeqCst);
+            SCHED.with(|ref s| {
+                if let Some(s) = &*s.borrow() {
+                    // prime to signal readiness to scheduler
+                    s.recv().unwrap();
 
-/*
-    1. generate new timestamp
-    1. Deref pulls versioned ref into local cache, if not present
-    1. DerefMut pulls versioned clone into local cache, if not present
-    1. stage writes
-    1. verify for all reads, no w_ts > observed ts
-    1. verify for all writes, no r/w_ts > ts
-    1. commit
-*/
+                    // actually go
+                    s.recv().unwrap();
+                    println!("\t{} {} {}", tn(), file!(), line!());
+                }
+            })
+        }
+    };
+}
 
 #[derive(Debug)]
 enum LocalView {
@@ -127,7 +152,7 @@ struct Vsn {
 unsafe impl Send for Vsn {}
 unsafe impl Sync for Vsn {}
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 struct TVar<T: Clone> {
     _pd: PhantomData<T>,
     id: usize,
@@ -135,7 +160,7 @@ struct TVar<T: Clone> {
 
 impl<T> fmt::Debug for TVar<T>
 where
-    T: 'static + Clone + fmt::Debug,
+    T: Clone + fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let guard = pin();
@@ -144,7 +169,8 @@ where
 }
 
 impl<T: Clone> TVar<T> {
-    fn new(val: T) -> TVar<T> {
+    pub fn new(val: T) -> TVar<T> {
+        sched_delay!();
         let id = TVARS.fetch_add(1, Relaxed);
         let ptr = Box::into_raw(Box::new(val));
         let guard = pin();
@@ -158,7 +184,9 @@ impl<T: Clone> TVar<T> {
             }),
         )).into_shared(&guard);
 
-        G.cas(id, Shared::null(), gv, &guard);
+        sched_delay!();
+        G.cas(id, Shared::null(), gv, &guard)
+            .expect("installation should succeed");
 
         TVar {
             _pd: PhantomData,
@@ -168,19 +196,19 @@ impl<T: Clone> TVar<T> {
 }
 
 fn read_from_g(id: usize, guard: &Guard) -> LocalView {
-    let (_rts, vsn_ptr) = unsafe {
-        G.get(id, guard).unwrap().deref()
-    };
-    let gv = unsafe {
-        vsn_ptr.load(SeqCst, guard).deref()
-    };
+    sched_delay!();
+    let (_rts, vsn_ptr) =
+        unsafe { G.get(id, guard).unwrap().deref() };
+
+    sched_delay!();
+    let gv = unsafe { vsn_ptr.load(SeqCst, guard).deref() };
     LocalView::Read {
         ptr: gv.stable,
         read_wts: gv.stable_wts,
     }
 }
 
-fn read_from_l<T>(id: usize, guard: &Guard) -> &'static T {
+fn read_from_l<T>(id: usize, guard: &Guard) -> *mut T {
     L.with(|l| {
         let mut hm = l.borrow_mut();
         let lk =
@@ -189,32 +217,29 @@ fn read_from_l<T>(id: usize, guard: &Guard) -> &'static T {
     })
 }
 
-fn write_into_l<T: Clone>(
-    id: usize,
-    guard: &Guard,
-) -> &'static mut T {
+fn write_into_l<T: Clone>(id: usize, guard: &Guard) -> *mut T {
     L.with(|l| {
         let mut hm = l.borrow_mut();
-        let mut lk =
+        let lk =
             hm.entry(id).or_insert_with(|| read_from_g(id, guard));
         lk.maybe_upgrade_to_write::<T>();
         unsafe { &mut *(lk.ptr() as *mut T) }
     })
 }
 
-impl<T: 'static + Clone> Deref for TVar<T> {
+impl<T: Clone> Deref for TVar<T> {
     type Target = T;
 
     fn deref(&self) -> &T {
         let guard = pin();
-        read_from_l(self.id, &guard)
+        unsafe { &*read_from_l(self.id, &guard) }
     }
 }
 
-impl<T: 'static + Clone> DerefMut for TVar<T> {
+impl<T: Clone> DerefMut for TVar<T> {
     fn deref_mut(&mut self) -> &mut T {
         let guard = pin();
-        write_into_l(self.id, &guard)
+        unsafe { &mut *write_into_l(self.id, &guard) }
     }
 }
 
@@ -224,6 +249,7 @@ pub fn begin_tx() {
     TS.with(|ts| {
         let mut ts = ts.borrow_mut();
         if *ts == 0 {
+            sched_delay!();
             *ts = TX.fetch_add(1, SeqCst) + 1;
             GUARD.with(|g| {
                 let mut g = g.borrow_mut();
@@ -247,20 +273,20 @@ pub fn try_commit() -> bool {
         }).into_iter()
         .map(|(tvar, local)| {
             let (rts, vsn_ptr) = unsafe {
-                G
-                .get(tvar, &guard)
-                .expect("should find TVar in global lookup table")
-                .deref()
+                G.get(tvar, &guard)
+                    .expect("should find TVar in global lookup table")
+                    .deref()
             };
             (tvar, rts, vsn_ptr, local)
         }).collect::<Vec<_>>();
 
     // install pending
-    for (tvar, rts, vsn_ptr, local) in transacted
+    for (tvar, _rts, vsn_ptr, local) in transacted
         .iter()
         .filter(|(_, _, _, local)| local.is_write())
     {
         println!("installing write for tvar {}", tvar);
+        sched_delay!();
         let current_ptr = vsn_ptr.load(SeqCst, &guard);
         let current = unsafe { current_ptr.deref() };
 
@@ -274,13 +300,14 @@ pub fn try_commit() -> bool {
         new.pending_wts = ts;
         new.pending = local.ptr();
 
+        sched_delay!();
         match vsn_ptr.compare_and_set(
             current_ptr,
             Owned::new(new).into_shared(&guard),
             SeqCst,
             &guard,
         ) {
-            Ok(old) => {
+            Ok(_old) => {
                 // TODO delay add the ptr to the gc stack for this TVar
                 // guard.defer(|| drop(ddp.0));
             }
@@ -297,19 +324,19 @@ pub fn try_commit() -> bool {
         return false;
     }
 
-
     // update rts
-    for (tvar, rts, vsn_ptr, local) in
+    for (_tvar, rts, _vsn_ptr, _local) in
         transacted.iter().filter(|(_, _, _, local)| local.is_read())
     {
         bump_gte(rts, ts);
     }
 
     // check version consistency
-    for (tvar, rts, vsn_ptr, local) in transacted
+    for (_tvar, rts, vsn_ptr, _local) in transacted
         .iter()
         .filter(|(_, _, _, local)| local.is_write())
     {
+        sched_delay!();
         let rts = rts.load(Acquire);
 
         if rts > ts {
@@ -318,6 +345,7 @@ pub fn try_commit() -> bool {
             break;
         }
 
+        sched_delay!();
         let current = unsafe { vsn_ptr.load(SeqCst, &guard).deref() };
 
         assert_eq!(
@@ -338,10 +366,11 @@ pub fn try_commit() -> bool {
     }
 
     // commit
-    for (tvar, rts, vsn_ptr, local) in transacted
+    for (_tvar, _rts, vsn_ptr, _local) in transacted
         .iter()
         .filter(|(_, _, _, local)| local.is_write())
     {
+        sched_delay!();
         let current_ptr = vsn_ptr.load(SeqCst, &guard);
         let current = unsafe { current_ptr.deref() };
 
@@ -361,13 +390,14 @@ pub fn try_commit() -> bool {
             pending_wts: 0,
         });
 
+        sched_delay!();
         match vsn_ptr.compare_and_set(
             current_ptr,
             new,
             SeqCst,
             &guard,
         ) {
-            Ok(old) => {
+            Ok(_old) => {
                 // TODO handle GC
                 // guard.defer(|| drop(old)),
             }
@@ -392,10 +422,11 @@ fn cleanup(
     transacted: Vec<(usize, &AtomicUsize, &Atomic<Vsn>, LocalView)>,
     guard: &Guard,
 ) {
-    for (tvar, rts, vsn_ptr, local) in transacted
+    for (_tvar, _rts, vsn_ptr, _local) in transacted
         .iter()
         .filter(|(_, _, _, local)| local.is_write())
     {
+        sched_delay!();
         let current_ptr = vsn_ptr.load(SeqCst, &guard);
         let current = unsafe { current_ptr.deref() };
 
@@ -410,6 +441,7 @@ fn cleanup(
             pending_wts: 0,
         });
 
+        sched_delay!();
         vsn_ptr
             .compare_and_set(current_ptr, new, SeqCst, &guard)
             .expect(
@@ -419,14 +451,11 @@ fn cleanup(
 }
 
 fn bump_gte(a: &AtomicUsize, to: usize) {
-    let mut current = a.load(Acquire);
+    sched_delay!();
+    let mut current = a.load(SeqCst);
     while current < to as usize {
-        let last = a.compare_and_swap(current, to, SeqCst);
-        if last == current {
-            // we succeeded.
-            return;
-        }
-        current = last;
+        // TODO sched_delay!();
+        current = a.compare_and_swap(current, to, SeqCst);
     }
 }
 
@@ -466,4 +495,159 @@ fn basic() {
         second_ts,
         first_ts
     );
+}
+
+#[cfg(test)]
+fn run_interleavings(
+    mut scheds: Vec<SyncSender<()>>,
+    mut choices: &mut Vec<(usize, usize)>,
+) -> bool {
+    // wait for all threads to reach sync points
+    for s in &scheds {
+        s.send(()).expect("should be able to prime all threads");
+    }
+
+    assert!(!scheds.is_empty());
+    let mut ticks = 0;
+
+    // replay previous choices
+    println!("replaying choices {:?}", choices);
+
+    for c in 0..choices.len() {
+        ticks += 1;
+        let (choice, _len) = choices[c];
+        println!(
+            "{} working on choice {:?}, scheds: {:?}",
+            ticks, choice, scheds
+        );
+
+        scheds[choice].send(()).expect("should be able to run target thread if it's still in scheds");
+
+        // prime it or remove from scheds
+        if scheds[choice].send(()).is_err() {
+            println!("removing choice");
+            scheds.remove(choice);
+        }
+    }
+
+    println!("~~~~~~");
+
+    // choose 0th choice until we are done
+    while !scheds.is_empty() {
+        ticks += 1;
+        let choice = 0;
+        choices.push((choice, scheds.len()));
+
+        println!(
+            "{} working on choice {:?}, scheds: {:?}",
+            ticks, choice, scheds
+        );
+
+        scheds[choice].send(()).expect("should be able to run target thread if it's still in scheds");
+
+        // prime it or remove from scheds
+        if scheds[choice].send(()).is_err() {
+            println!("removing choice");
+            scheds.remove(choice);
+        }
+    }
+
+    println!("took choices: {:?}", choices);
+
+    // pop off choices until we hit one where choice < possibilities
+    while !choices.is_empty() {
+        let (choice, len) = choices.pop().unwrap();
+
+        if choice + 1 >= len {
+            continue;
+        }
+
+        choices.push((choice + 1, len));
+        break;
+    }
+
+    // we're done when we've explored every option
+    choices.is_empty()
+}
+
+#[test]
+fn test_swap() {
+    let mut choices = vec![];
+
+    loop {
+        println!();
+        println!();
+        println!();
+
+        let mut tvs = [TVar::new(1), TVar::new(2), TVar::new(3)];
+
+        let mut threads = vec![];
+        let mut scheds = vec![];
+
+        for t in 0..3 {
+            let (tx, rx) = sync_channel(0);
+            let mut tvs = tvs.clone();
+
+            let t = thread::Builder::new()
+                .name(format!("t_{}", t))
+                .spawn(move || {
+                    // set up scheduler listener
+                    SCHED.with(|s| {
+                        let mut s = s.borrow_mut();
+                        *s = Some(rx);
+                    });
+
+                    for i in 0..2 {
+                        if (i + t) % 2 == 0 {
+                            // swap tvars
+                            let i1 = i % 3;
+                            let i2 = (i + t) % 3;
+
+                            tx! {
+                                let tmp1 = *tvs[i1];
+                                let tmp2 = *tvs[i2];
+
+                                *tvs[i1] = tmp2;
+                                *tvs[i2] = tmp1;
+                            }
+                        } else {
+                            // read tvars
+
+                            let mut r = [0, 0, 0];
+
+                            tx! {
+                                r[0] = *tvs[0];
+                                r[1] = *tvs[1];
+                                r[2] = *tvs[2];
+                            }
+
+                            assert_eq!(
+                                r[0] + r[1] + r[2],
+                                6,
+                                "expected observed values to be different, instead: {:?}",
+                                r
+                            );
+                            assert_eq!(
+                                r[0] * r[1] * r[2],
+                                6,
+                                "expected observed values to be different, instead: {:?}",
+                                r
+                            );
+                        }
+                    }
+                }).expect("should be able to start thread");
+
+            threads.push(t);
+            scheds.push(tx);
+        }
+
+        let finished = run_interleavings(scheds, &mut choices);
+        if finished {
+            return;
+        }
+
+        for t in threads.into_iter() {
+            t.join().expect("thread should not crash");
+        }
+    }
 }
