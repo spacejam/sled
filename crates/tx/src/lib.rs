@@ -272,6 +272,7 @@ pub fn try_commit() -> bool {
             std::mem::replace(lr, HashMap::new())
         }).into_iter()
         .map(|(tvar, local)| {
+            sched_delay!();
             let (rts, vsn_ptr) = unsafe {
                 G.get(tvar, &guard)
                     .expect("should find TVar in global lookup table")
@@ -454,7 +455,7 @@ fn bump_gte(a: &AtomicUsize, to: usize) {
     sched_delay!();
     let mut current = a.load(SeqCst);
     while current < to as usize {
-        // TODO sched_delay!();
+        sched_delay!();
         current = a.compare_and_swap(current, to, SeqCst);
     }
 }
