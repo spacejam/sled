@@ -10,7 +10,7 @@ use std::{
     marker::PhantomData,
     ops::{Deref, DerefMut},
     sync::atomic::{
-        fence, AtomicUsize,
+        AtomicUsize,
         Ordering::{Acquire, Relaxed, SeqCst},
     },
 };
@@ -77,7 +77,6 @@ macro_rules! sched_delay {
         {}
         #[cfg(test)]
         {
-            fence(SeqCst);
             SCHED.with(|ref s| {
                 if let Some(s) = &*s.borrow() {
                     // prime to signal readiness to scheduler
@@ -153,7 +152,7 @@ unsafe impl Send for Vsn {}
 unsafe impl Sync for Vsn {}
 
 #[derive(Clone)]
-struct TVar<T: Clone> {
+pub struct TVar<T: Clone> {
     _pd: PhantomData<T>,
     id: usize,
 }
@@ -242,8 +241,6 @@ impl<T: Clone> DerefMut for TVar<T> {
         unsafe { &mut *write_into_l(self.id, &guard) }
     }
 }
-
-struct Ref<T: Clone>(T, bool);
 
 pub fn begin_tx() {
     TS.with(|ts| {
@@ -465,7 +462,7 @@ fn basic() {
     let mut a = TVar::new(5);
     let mut b = TVar::new(String::from("ok"));
 
-    let mut first_ts = 0;
+    let mut first_ts;
     tx! {
         *a += 5;
         println!("a is now {:?}", a);
@@ -475,6 +472,7 @@ fn basic() {
         println!("b is now {:?}", b);
         first_ts = TS.with(|ts| *ts.borrow());
     }
+    let mut second_ts;
     tx! {
         *a += 5;
         println!("a is now {:?}", a);
@@ -482,11 +480,6 @@ fn basic() {
         println!("a is now {:?}", a);
         b.push_str("ayo");
         println!("b is now {:?}", b);
-        first_ts = TS.with(|ts| *ts.borrow());
-    }
-
-    let mut second_ts = 0;
-    tx! {
         second_ts = TS.with(|ts| *ts.borrow());
     }
 
@@ -501,7 +494,7 @@ fn basic() {
 #[cfg(test)]
 fn run_interleavings(
     mut scheds: Vec<SyncSender<()>>,
-    mut choices: &mut Vec<(usize, usize)>,
+    choices: &mut Vec<(usize, usize)>,
 ) -> bool {
     // wait for all threads to reach sync points
     for s in &scheds {
@@ -580,7 +573,7 @@ fn test_swap() {
         println!();
         println!();
 
-        let mut tvs = [TVar::new(1), TVar::new(2), TVar::new(3)];
+        let tvs = [TVar::new(1), TVar::new(2), TVar::new(3)];
 
         let mut threads = vec![];
         let mut scheds = vec![];
@@ -636,6 +629,7 @@ fn test_swap() {
                             );
                         }
                     }
+                    sched_delay!();
                 }).expect("should be able to start thread");
 
             threads.push(t);
