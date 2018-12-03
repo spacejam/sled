@@ -17,17 +17,18 @@ impl Bound {
     }
 
     #[inline]
-    pub(crate) fn size_in_bytes(&self) -> usize {
-        let self_sz = size_of::<Bound>();
+    pub(crate) fn size_in_bytes(&self) -> u64 {
+        let self_sz = size_of::<Bound>() as u64;
 
         let inner_sz = match self {
             Bound::Inclusive(ref v) | Bound::Exclusive(ref v) => {
-                v.len() + size_of::<Vec<u8>>()
+                (v.len() as u64)
+                    .saturating_add(size_of::<Vec<u8>>() as u64)
             }
-            Bound::Inf => 0,
+            Bound::Inf => 0u64,
         };
 
-        self_sz + inner_sz
+        self_sz.saturating_add(inner_sz)
     }
 }
 

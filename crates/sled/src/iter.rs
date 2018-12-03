@@ -103,7 +103,8 @@ impl<'a> Iterator for Iter<'a> {
                 self.inclusive = false;
                 leaf.binary_search_by(|&(ref k, ref _v)| {
                     prefix_cmp_encoded(k, &self.last_key, prefix)
-                }).ok()
+                })
+                .ok()
                 .or_else(|| {
                     binary_search_gt(leaf, |&(ref k, ref _v)| {
                         prefix_cmp_encoded(k, &self.last_key, prefix)
@@ -181,7 +182,8 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 self.inclusive = false;
                 leaf.binary_search_by(|&(ref k, ref _v)| {
                     prefix_cmp_encoded(k, &self.last_key, prefix)
-                }).ok()
+                })
+                .ok()
                 .or_else(|| {
                     binary_search_lt(leaf, |&(ref k, ref _v)| {
                         prefix_cmp_encoded(k, &self.last_key, prefix)
