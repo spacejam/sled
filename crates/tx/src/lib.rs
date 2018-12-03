@@ -9,10 +9,7 @@ use std::{
     fmt,
     marker::PhantomData,
     ops::{Deref, DerefMut},
-    sync::atomic::{
-        AtomicUsize,
-        Ordering::{Acquire, Relaxed, SeqCst},
-    },
+    sync::atomic::{AtomicUsize, Ordering::SeqCst},
 };
 
 #[cfg(test)]
@@ -84,7 +81,7 @@ macro_rules! sched_delay {
 
                     // actually go
                     s.recv().unwrap();
-                    println!("\t{} {} {}", tn(), file!(), line!());
+                    // println!("\t{} {} {}", tn(), file!(), line!());
                 }
             })
         }
@@ -170,7 +167,7 @@ where
 impl<T: Clone> TVar<T> {
     pub fn new(val: T) -> TVar<T> {
         sched_delay!();
-        let id = TVARS.fetch_add(1, Relaxed);
+        let id = TVARS.fetch_add(1, SeqCst);
         let ptr = Box::into_raw(Box::new(val));
         let guard = pin();
         let gv = Owned::new((
@@ -323,19 +320,32 @@ pub fn try_commit() -> bool {
     }
 
     // update rts
-    for (_tvar, rts, _vsn_ptr, _local) in
+    for (_tvar, rts, vsn_ptr, local) in
         transacted.iter().filter(|(_, _, _, local)| local.is_read())
     {
         bump_gte(rts, ts);
+
+        let current_ptr = vsn_ptr.load(SeqCst, &guard);
+        let current = unsafe { current_ptr.deref() };
+
+        if current.stable_wts != local.read_wts() {
+            abort = true;
+            break;
+        }
+    }
+
+    if abort {
+        cleanup(ts, transacted, &guard);
+        return false;
     }
 
     // check version consistency
-    for (_tvar, rts, vsn_ptr, _local) in transacted
+    for (_tvar, rts, vsn_ptr, local) in transacted
         .iter()
         .filter(|(_, _, _, local)| local.is_write())
     {
         sched_delay!();
-        let rts = rts.load(Acquire);
+        let rts = rts.load(SeqCst);
 
         if rts > ts {
             // read conflict
@@ -351,7 +361,7 @@ pub fn try_commit() -> bool {
             "somehow our pending write got lost"
         );
 
-        if current.stable_wts > ts {
+        if current.stable_wts != local.read_wts() {
             // write conflict
             abort = true;
             break;
@@ -578,7 +588,7 @@ fn test_swap() {
         let mut threads = vec![];
         let mut scheds = vec![];
 
-        for t in 0..3 {
+        for t in 0..2 {
             let (tx, rx) = sync_channel(0);
             let mut tvs = tvs.clone();
 
