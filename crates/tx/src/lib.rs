@@ -15,34 +15,17 @@ use std::{
 #[cfg(test)]
 use std::{
     sync::mpsc::{sync_channel, Receiver, SyncSender},
-    thread,
+    thread::{self, JoinHandle},
 };
 
 use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
 use pagetable::PageTable;
 
-#[macro_export]
-macro_rules! tx {
-    ($($item:stmt;)*) => {
-        tx! {
-            $($item);*
-        }
-    };
-    ($($item:stmt);*) => {
-        loop {
-            $crate::begin_tx();
-
-            $($item);*;
-
-            if $crate::try_commit() {
-                break;
-            }
-        }
-    };
-}
-
 static TX: AtomicUsize = AtomicUsize::new(0);
 static TVARS: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(test)]
+static TICKS: AtomicUsize = AtomicUsize::new(0);
 
 // TODO add GC stack to entries here
 lazy_static! {
@@ -69,7 +52,7 @@ fn tn() -> String {
 }
 
 macro_rules! sched_delay {
-    () => {
+    ($note:expr) => {
         #[cfg(not(test))]
         {}
         #[cfg(test)]
@@ -81,11 +64,36 @@ macro_rules! sched_delay {
 
                     // actually go
                     s.recv().unwrap();
-                    // println!("\t{} {} {}", tn(), file!(), line!());
+                    println!(
+                        "{} {} {} {} {}",
+                        TICKS.load(SeqCst),
+                        tn(),
+                        file!(),
+                        line!(),
+                        $note,
+                    );
                 }
             })
         }
     };
+}
+
+pub fn tx<F, R>(mut f: F) -> R
+where
+    F: FnMut() -> R,
+{
+    sched_delay!("begin_tx");
+    let res = loop {
+        begin_tx();
+
+        let result = f();
+
+        if try_commit() {
+            break result;
+        }
+    };
+    sched_delay!("committed tx");
+    res
 }
 
 #[derive(Debug)]
@@ -166,7 +174,7 @@ where
 
 impl<T: Clone> TVar<T> {
     pub fn new(val: T) -> TVar<T> {
-        sched_delay!();
+        sched_delay!("creating new tvar");
         let id = TVARS.fetch_add(1, SeqCst);
         let ptr = Box::into_raw(Box::new(val));
         let guard = pin();
@@ -180,7 +188,7 @@ impl<T: Clone> TVar<T> {
             }),
         )).into_shared(&guard);
 
-        sched_delay!();
+        sched_delay!("installing tvar to global table");
         G.cas(id, Shared::null(), gv, &guard)
             .expect("installation should succeed");
 
@@ -192,11 +200,11 @@ impl<T: Clone> TVar<T> {
 }
 
 fn read_from_g(id: usize, guard: &Guard) -> LocalView {
-    sched_delay!();
+    sched_delay!("reading tvar from global table");
     let (_rts, vsn_ptr) =
         unsafe { G.get(id, guard).unwrap().deref() };
 
-    sched_delay!();
+    sched_delay!("loading atomic ptr for global version");
     let gv = unsafe { vsn_ptr.load(SeqCst, guard).deref() };
     LocalView::Read {
         ptr: gv.stable,
@@ -243,11 +251,14 @@ pub fn begin_tx() {
     TS.with(|ts| {
         let mut ts = ts.borrow_mut();
         if *ts == 0 {
-            sched_delay!();
+            sched_delay!("generating new timestamp");
             *ts = TX.fetch_add(1, SeqCst) + 1;
             GUARD.with(|g| {
                 let mut g = g.borrow_mut();
-                assert!(g.is_none(), "we expect that no local transaction is already happening");
+                assert!(
+                    g.is_none(),
+                    "we do not support nested transactions yet"
+                );
                 *g = Some(pin());
             });
         }
@@ -266,7 +277,7 @@ pub fn try_commit() -> bool {
             std::mem::replace(lr, HashMap::new())
         }).into_iter()
         .map(|(tvar, local)| {
-            sched_delay!();
+            sched_delay!("re-reading global state");
             let (rts, vsn_ptr) = unsafe {
                 G.get(tvar, &guard)
                     .expect("should find TVar in global lookup table")
@@ -276,12 +287,12 @@ pub fn try_commit() -> bool {
         }).collect::<Vec<_>>();
 
     // install pending
-    for (tvar, _rts, vsn_ptr, local) in transacted
+    for (_tvar, _rts, vsn_ptr, local) in transacted
         .iter()
         .filter(|(_, _, _, local)| local.is_write())
     {
-        println!("installing write for tvar {}", tvar);
-        sched_delay!();
+        // println!("installing write for tvar {}", tvar);
+        sched_delay!("reading current ptr before installing write");
         let current_ptr = vsn_ptr.load(SeqCst, &guard);
         let current = unsafe { current_ptr.deref() };
 
@@ -295,7 +306,7 @@ pub fn try_commit() -> bool {
         new.pending_wts = ts;
         new.pending = local.ptr();
 
-        sched_delay!();
+        sched_delay!("installing write with CAS");
         match vsn_ptr.compare_and_set(
             current_ptr,
             Owned::new(new).into_shared(&guard),
@@ -325,6 +336,7 @@ pub fn try_commit() -> bool {
     {
         bump_gte(rts, ts);
 
+        sched_delay!("reading current stable_rts after bumping RTS");
         let current_ptr = vsn_ptr.load(SeqCst, &guard);
         let current = unsafe { current_ptr.deref() };
 
@@ -344,7 +356,7 @@ pub fn try_commit() -> bool {
         .iter()
         .filter(|(_, _, _, local)| local.is_write())
     {
-        sched_delay!();
+        sched_delay!("reading RTS to check consistency");
         let rts = rts.load(SeqCst);
 
         if rts > ts {
@@ -353,7 +365,9 @@ pub fn try_commit() -> bool {
             break;
         }
 
-        sched_delay!();
+        sched_delay!(
+            "loading current ptr to check current stable and pending"
+        );
         let current = unsafe { vsn_ptr.load(SeqCst, &guard).deref() };
 
         assert_eq!(
@@ -378,7 +392,7 @@ pub fn try_commit() -> bool {
         .iter()
         .filter(|(_, _, _, local)| local.is_write())
     {
-        sched_delay!();
+        sched_delay!("loading current version before committing");
         let current_ptr = vsn_ptr.load(SeqCst, &guard);
         let current = unsafe { current_ptr.deref() };
 
@@ -398,7 +412,7 @@ pub fn try_commit() -> bool {
             pending_wts: 0,
         });
 
-        sched_delay!();
+        sched_delay!("installing new version during commit");
         match vsn_ptr.compare_and_set(
             current_ptr,
             new,
@@ -434,7 +448,7 @@ fn cleanup(
         .iter()
         .filter(|(_, _, _, local)| local.is_write())
     {
-        sched_delay!();
+        sched_delay!("reading current version before cleaning up");
         let current_ptr = vsn_ptr.load(SeqCst, &guard);
         let current = unsafe { current_ptr.deref() };
 
@@ -449,7 +463,7 @@ fn cleanup(
             pending_wts: 0,
         });
 
-        sched_delay!();
+        sched_delay!("installing cleaned-up version");
         vsn_ptr
             .compare_and_set(current_ptr, new, SeqCst, &guard)
             .expect(
@@ -459,10 +473,10 @@ fn cleanup(
 }
 
 fn bump_gte(a: &AtomicUsize, to: usize) {
-    sched_delay!();
+    sched_delay!("loading RTS before bumping");
     let mut current = a.load(SeqCst);
     while current < to as usize {
-        sched_delay!();
+        sched_delay!("CAS to bump RTS");
         current = a.compare_and_swap(current, to, SeqCst);
     }
 }
@@ -472,26 +486,24 @@ fn basic() {
     let mut a = TVar::new(5);
     let mut b = TVar::new(String::from("ok"));
 
-    let mut first_ts;
-    tx! {
+    let first_ts = tx(|| {
         *a += 5;
         println!("a is now {:?}", a);
         *a -= 3;
         println!("a is now {:?}", a);
         b.push_str("ayo");
         println!("b is now {:?}", b);
-        first_ts = TS.with(|ts| *ts.borrow());
-    }
-    let mut second_ts;
-    tx! {
+        TS.with(|ts| *ts.borrow())
+    });
+    let second_ts = tx(|| {
         *a += 5;
         println!("a is now {:?}", a);
         *a -= 3;
         println!("a is now {:?}", a);
         b.push_str("ayo");
         println!("b is now {:?}", b);
-        second_ts = TS.with(|ts| *ts.borrow());
-    }
+        TS.with(|ts| *ts.borrow())
+    });
 
     assert!(
         second_ts > first_ts,
@@ -504,33 +516,34 @@ fn basic() {
 #[cfg(test)]
 fn run_interleavings(
     mut scheds: Vec<SyncSender<()>>,
+    mut threads: Vec<JoinHandle<()>>,
     choices: &mut Vec<(usize, usize)>,
 ) -> bool {
+    TICKS.store(0, SeqCst);
+
     // wait for all threads to reach sync points
     for s in &scheds {
         s.send(()).expect("should be able to prime all threads");
     }
 
     assert!(!scheds.is_empty());
-    let mut ticks = 0;
 
     // replay previous choices
-    println!("replaying choices {:?}", choices);
+    // println!("replaying choices {:?}", choices);
 
     for c in 0..choices.len() {
-        ticks += 1;
+        TICKS.fetch_add(1, SeqCst);
         let (choice, _len) = choices[c];
-        println!(
-            "{} working on choice {:?}, scheds: {:?}",
-            ticks, choice, scheds
-        );
 
         scheds[choice].send(()).expect("should be able to run target thread if it's still in scheds");
 
         // prime it or remove from scheds
         if scheds[choice].send(()).is_err() {
-            println!("removing choice");
             scheds.remove(choice);
+            let t = threads.remove(choice);
+            if let Err(_e) = t.join() {
+                panic!("failed to replay successfully");
+            }
         }
     }
 
@@ -538,25 +551,23 @@ fn run_interleavings(
 
     // choose 0th choice until we are done
     while !scheds.is_empty() {
-        ticks += 1;
+        TICKS.fetch_add(1, SeqCst);
         let choice = 0;
         choices.push((choice, scheds.len()));
-
-        println!(
-            "{} working on choice {:?}, scheds: {:?}",
-            ticks, choice, scheds
-        );
 
         scheds[choice].send(()).expect("should be able to run target thread if it's still in scheds");
 
         // prime it or remove from scheds
         if scheds[choice].send(()).is_err() {
-            println!("removing choice");
             scheds.remove(choice);
+            let t = threads.remove(choice);
+            if let Err(e) = t.join() {
+                return true;
+            }
         }
     }
 
-    println!("took choices: {:?}", choices);
+    // println!("took choices: {:?}", choices);
 
     // pop off choices until we hit one where choice < possibilities
     while !choices.is_empty() {
@@ -589,7 +600,7 @@ fn test_swap() {
         let mut scheds = vec![];
 
         for t in 0..2 {
-            let (tx, rx) = sync_channel(0);
+            let (transmit, rx) = sync_channel(0);
             let mut tvs = tvs.clone();
 
             let t = thread::Builder::new()
@@ -607,23 +618,23 @@ fn test_swap() {
                             let i1 = i % 3;
                             let i2 = (i + t) % 3;
 
-                            tx! {
+                            tx(||  {
                                 let tmp1 = *tvs[i1];
                                 let tmp2 = *tvs[i2];
 
                                 *tvs[i1] = tmp2;
                                 *tvs[i2] = tmp1;
-                            }
+                            });
                         } else {
                             // read tvars
 
-                            let mut r = [0, 0, 0];
-
-                            tx! {
-                                r[0] = *tvs[0];
-                                r[1] = *tvs[1];
-                                r[2] = *tvs[2];
-                            }
+                            let r = tx(|| {
+                                [
+                                    *tvs[0],
+                                    *tvs[1],
+                                    *tvs[2],
+                                ]
+                            });
 
                             assert_eq!(
                                 r[0] + r[1] + r[2],
@@ -639,20 +650,16 @@ fn test_swap() {
                             );
                         }
                     }
-                    sched_delay!();
                 }).expect("should be able to start thread");
 
             threads.push(t);
-            scheds.push(tx);
+            scheds.push(transmit);
         }
 
-        let finished = run_interleavings(scheds, &mut choices);
+        let finished =
+            run_interleavings(scheds, threads, &mut choices);
         if finished {
             return;
-        }
-
-        for t in threads.into_iter() {
-            t.join().expect("thread should not crash");
         }
     }
 }
