@@ -168,7 +168,9 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let guard = pin();
-        write!(f, "TVar({:?})", read_from_l::<T>(self.id, &guard))
+        write!(f, "TVar({:?})", unsafe {
+            &*read_from_l::<T>(self.id, &guard)
+        })
     }
 }
 
@@ -470,13 +472,19 @@ fn cleanup(
                 "somehow version changed before we could clean up",
             );
     }
+
+    TS.with(|ts| *ts.borrow_mut() = 0);
+    GUARD.with(|g| {
+        g.borrow_mut()
+            .take()
+            .expect("should be able to end transaction")
+    });
 }
 
 fn bump_gte(a: &AtomicUsize, to: usize) {
     sched_delay!("loading RTS before bumping");
     let mut current = a.load(SeqCst);
     while current < to as usize {
-        sched_delay!("CAS to bump RTS");
         current = a.compare_and_swap(current, to, SeqCst);
     }
 }
@@ -515,10 +523,12 @@ fn basic() {
 
 #[cfg(test)]
 fn run_interleavings(
+    symmetric: bool,
     mut scheds: Vec<SyncSender<()>>,
     mut threads: Vec<JoinHandle<()>>,
     choices: &mut Vec<(usize, usize)>,
 ) -> bool {
+    println!("-----------------------------");
     TICKS.store(0, SeqCst);
 
     // wait for all threads to reach sync points
@@ -535,14 +545,15 @@ fn run_interleavings(
         TICKS.fetch_add(1, SeqCst);
         let (choice, _len) = choices[c];
 
+        // println!("choice: {} out of {:?}", choice, scheds);
         scheds[choice].send(()).expect("should be able to run target thread if it's still in scheds");
 
         // prime it or remove from scheds
         if scheds[choice].send(()).is_err() {
             scheds.remove(choice);
             let t = threads.remove(choice);
-            if let Err(_e) = t.join() {
-                panic!("failed to replay successfully");
+            if let Err(e) = t.join() {
+                panic!(e);
             }
         }
     }
@@ -553,6 +564,7 @@ fn run_interleavings(
     while !scheds.is_empty() {
         TICKS.fetch_add(1, SeqCst);
         let choice = 0;
+        // println!("choice: {} out of {:?}", choice, scheds);
         choices.push((choice, scheds.len()));
 
         scheds[choice].send(()).expect("should be able to run target thread if it's still in scheds");
@@ -562,12 +574,12 @@ fn run_interleavings(
             scheds.remove(choice);
             let t = threads.remove(choice);
             if let Err(e) = t.join() {
-                return true;
+                panic!(e);
             }
         }
     }
 
-    // println!("took choices: {:?}", choices);
+    println!("took choices: {:?}", choices);
 
     // pop off choices until we hit one where choice < possibilities
     while !choices.is_empty() {
@@ -582,18 +594,20 @@ fn run_interleavings(
     }
 
     // we're done when we've explored every option
-    choices.is_empty()
+    if symmetric {
+        // symmetric workloads don't need to try other top-levels
+        choices.len() <= 1
+    } else {
+        choices.is_empty()
+    }
 }
 
 #[test]
-fn test_swap() {
+#[ignore]
+fn test_swap_scheduled() {
     let mut choices = vec![];
 
     loop {
-        println!();
-        println!();
-        println!();
-
         let tvs = [TVar::new(1), TVar::new(2), TVar::new(3)];
 
         let mut threads = vec![];
@@ -618,7 +632,7 @@ fn test_swap() {
                             let i1 = i % 3;
                             let i2 = (i + t) % 3;
 
-                            tx(||  {
+                            tx(|| {
                                 let tmp1 = *tvs[i1];
                                 let tmp2 = *tvs[i2];
 
@@ -657,9 +671,60 @@ fn test_swap() {
         }
 
         let finished =
-            run_interleavings(scheds, threads, &mut choices);
+            run_interleavings(true, scheds, threads, &mut choices);
         if finished {
             return;
         }
+    }
+}
+
+#[test]
+fn test_swap() {
+    let tvs = [TVar::new(1), TVar::new(2), TVar::new(3)];
+
+    let mut threads = vec![];
+
+    for t in 0..2 {
+        let mut tvs = tvs.clone();
+
+        let t = thread::spawn(move || {
+            for i in 0..5 {
+                if (i + t) % 2 == 0 {
+                    // swap tvars
+                    let i1 = i % 3;
+                    let i2 = (i + t) % 3;
+
+                    tx(|| {
+                        let tmp1 = *tvs[i1];
+                        let tmp2 = *tvs[i2];
+
+                        *tvs[i1] = tmp2;
+                        *tvs[i2] = tmp1;
+                    });
+                } else {
+                    // read tvars
+                    let r = tx(|| [*tvs[0], *tvs[1], *tvs[2]]);
+
+                    assert_eq!(
+                        r[0] + r[1] + r[2],
+                        6,
+                        "expected observed values to be different, instead: {:?}",
+                        r
+                    );
+                    assert_eq!(
+                        r[0] * r[1] * r[2],
+                        6,
+                        "expected observed values to be different, instead: {:?}",
+                        r
+                    );
+                }
+            }
+        });
+
+        threads.push(t);
+    }
+
+    for t in threads.into_iter() {
+        t.join().unwrap();
     }
 }
