@@ -41,6 +41,7 @@ macro_rules! tx {
 static TX: AtomicUsize = AtomicUsize::new(0);
 static TVARS: AtomicUsize = AtomicUsize::new(0);
 
+// TODO add GC stack to entries here
 lazy_static! {
     static ref G: PageTable<(AtomicUsize, Atomic<Vsn>)> =
         PageTable::default();
@@ -115,6 +116,7 @@ impl LocalView {
     }
 }
 
+#[derive(Clone)]
 struct Vsn {
     stable_wts: usize,
     stable: *mut usize,
@@ -136,7 +138,8 @@ where
     T: 'static + Clone + fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "TVar({:?})", read_from_l::<T>(self.id))
+        let guard = pin();
+        write!(f, "TVar({:?})", read_from_l::<T>(self.id, &guard))
     }
 }
 
@@ -147,15 +150,15 @@ impl<T: Clone> TVar<T> {
         let guard = pin();
         let gv = Owned::new((
             AtomicUsize::new(0),
-            Vsn {
+            Atomic::new(Vsn {
                 stable_wts: 0,
                 stable: ptr as *mut usize,
                 pending_wts: 0,
                 pending: std::ptr::null_mut(),
-            },
+            }),
         )).into_shared(&guard);
 
-        G.compare_and_set(id, Shared::null(), gv, &guard);
+        G.cas(id, Shared::null(), gv, &guard);
 
         TVar {
             _pd: PhantomData,
@@ -165,17 +168,23 @@ impl<T: Clone> TVar<T> {
 }
 
 fn read_from_g(id: usize, guard: &Guard) -> LocalView {
-    let gv = G.get(&id, guard).unwrap();
+    let (_rts, vsn_ptr) = unsafe {
+        G.get(id, guard).unwrap().deref()
+    };
+    let gv = unsafe {
+        vsn_ptr.load(SeqCst, guard).deref()
+    };
     LocalView::Read {
         ptr: gv.stable,
         read_wts: gv.stable_wts,
     }
 }
 
-fn read_from_l<T>(id: usize) -> &'static T {
+fn read_from_l<T>(id: usize, guard: &Guard) -> &'static T {
     L.with(|l| {
         let mut hm = l.borrow_mut();
-        let lk = hm.entry(id).or_insert_with(|| read_from_g(id));
+        let lk =
+            hm.entry(id).or_insert_with(|| read_from_g(id, guard));
         unsafe { &mut *(lk.ptr() as *mut T) }
     })
 }
@@ -186,7 +195,8 @@ fn write_into_l<T: Clone>(
 ) -> &'static mut T {
     L.with(|l| {
         let mut hm = l.borrow_mut();
-        let mut lk = hm.entry(id).or_insert_with(|| read_from_g(id));
+        let mut lk =
+            hm.entry(id).or_insert_with(|| read_from_g(id, guard));
         lk.maybe_upgrade_to_write::<T>();
         unsafe { &mut *(lk.ptr() as *mut T) }
     })
@@ -196,13 +206,15 @@ impl<T: 'static + Clone> Deref for TVar<T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        read_from_l(self.id)
+        let guard = pin();
+        read_from_l(self.id, &guard)
     }
 }
 
 impl<T: 'static + Clone> DerefMut for TVar<T> {
     fn deref_mut(&mut self) -> &mut T {
-        write_into_l(self.id)
+        let guard = pin();
+        write_into_l(self.id, &guard)
     }
 }
 
@@ -222,38 +234,43 @@ pub fn begin_tx() {
     });
 }
 
-// fn remove_pending(ts: usize,
-
 pub fn try_commit() -> bool {
     let ts = TS.with(|ts| *ts.borrow());
     let guard = pin();
+    let mut abort = false;
 
     // clear out local cache
-    let transacted = L.with(|l| {
-        let lr: &mut HashMap<_, _> = &mut *l.borrow_mut();
-        std::mem::replace(lr, HashMap::new())
-    });
+    let transacted = L
+        .with(|l| {
+            let lr: &mut HashMap<_, _> = &mut *l.borrow_mut();
+            std::mem::replace(lr, HashMap::new())
+        }).into_iter()
+        .map(|(tvar, local)| {
+            let (rts, vsn_ptr) = unsafe {
+                G
+                .get(tvar, &guard)
+                .expect("should find TVar in global lookup table")
+                .deref()
+            };
+            (tvar, rts, vsn_ptr, local)
+        }).collect::<Vec<_>>();
 
     // install pending
-    for (tvar, local) in
-        transacted.iter().filter(|(_tvar, local)| local.is_write())
+    for (tvar, rts, vsn_ptr, local) in transacted
+        .iter()
+        .filter(|(_, _, _, local)| local.is_write())
     {
-        println!("installing write for tv {}", tvar);
-        let (_rts, vsn_ptr) = G
-            .get(*tvar, &guard)
-            .expect("should find TVar in global lookup table")
-            .deref();
-
+        println!("installing write for tvar {}", tvar);
         let current_ptr = vsn_ptr.load(SeqCst, &guard);
-        let current = current_ptr.deref();
+        let current = unsafe { current_ptr.deref() };
 
         if !current.pending.is_null() || current.pending_wts != 0 {
             // write conflict
-            cleanup(transacted);
-            return false;
+            abort = true;
+            break;
         }
 
-        let mut new = *current.clone();
+        let mut new = current.clone();
         new.pending_wts = ts;
         new.pending = local.ptr();
 
@@ -263,45 +280,45 @@ pub fn try_commit() -> bool {
             SeqCst,
             &guard,
         ) {
-            Ok(old) => guard.defer(|| drop(old)),
+            Ok(old) => {
+                // TODO delay add the ptr to the gc stack for this TVar
+                // guard.defer(|| drop(ddp.0));
+            }
             Err(_) => {
                 // write conflict
-                cleanup(transacted);
-                return false;
+                abort = true;
+                break;
             }
         }
     }
 
-    // update rts
-    for (tvar, local) in
-        transacted.iter().filter(|(_tvar, local)| local.is_read())
-    {
-        let (rts, _vsn_ptr) = G
-            .get(*tvar, &guard)
-            .expect("should find TVar in global lookup table")
-            .deref();
+    if abort {
+        cleanup(ts, transacted, &guard);
+        return false;
+    }
 
-        bump_gte(&rts, ts);
+
+    // update rts
+    for (tvar, rts, vsn_ptr, local) in
+        transacted.iter().filter(|(_, _, _, local)| local.is_read())
+    {
+        bump_gte(rts, ts);
     }
 
     // check version consistency
-    for (tvar, local) in
-        transacted.iter().filter(|(_tvar, local)| local.is_write())
+    for (tvar, rts, vsn_ptr, local) in transacted
+        .iter()
+        .filter(|(_, _, _, local)| local.is_write())
     {
-        let (rts, vsn_ptr) = G
-            .get(*tvar, &guard)
-            .expect("should find TVar in global lookup table")
-            .deref();
-
         let rts = rts.load(Acquire);
 
         if rts > ts {
             // read conflict
-            cleanup(transacted);
-            return false;
+            abort = true;
+            break;
         }
 
-        let current = vsn_ptr.load(SeqCst, &guard).deref();
+        let current = unsafe { vsn_ptr.load(SeqCst, &guard).deref() };
 
         assert_eq!(
             current.pending_wts, ts,
@@ -310,31 +327,31 @@ pub fn try_commit() -> bool {
 
         if current.stable_wts > ts {
             // write conflict
-            cleanup(transacted);
-            return false;
+            abort = true;
+            break;
         }
     }
 
-    // commit
-    for (tvar, local) in
-        transacted.iter().filter(|(_tvar, local)| local.is_write())
-    {
-        let (_rts, vsn_ptr) = G
-            .get(*tvar, &guard)
-            .expect("should find TVar in global lookup table")
-            .deref();
+    if abort {
+        cleanup(ts, transacted, &guard);
+        return false;
+    }
 
+    // commit
+    for (tvar, rts, vsn_ptr, local) in transacted
+        .iter()
+        .filter(|(_, _, _, local)| local.is_write())
+    {
         let current_ptr = vsn_ptr.load(SeqCst, &guard);
-        let current = current_ptr.deref();
+        let current = unsafe { current_ptr.deref() };
 
         assert_eq!(
             current.pending_wts, ts,
             "somehow our pending write got lost"
         );
 
-        if !current.pending.is_null() {
-            cleanup(transacted);
-            return false;
+        if current.pending.is_null() {
+            panic!("somehow an item in our commit writeset isn't present in the Vsn anymore");
         }
 
         let new = Owned::new(Vsn {
@@ -350,30 +367,54 @@ pub fn try_commit() -> bool {
             SeqCst,
             &guard,
         ) {
-            Ok(old) => guard.defer(|| drop(old)),
+            Ok(old) => {
+                // TODO handle GC
+                // guard.defer(|| drop(old)),
+            }
             Err(_) => {
                 // write conflict
-                cleanup(transacted);
-                return false;
+                panic!("somehow we got a conflict while committing a transaction");
             }
         }
     }
 
     TS.with(|ts| *ts.borrow_mut() = 0);
-    GUARD.with(|g| g.borrow_mut().take());
+    GUARD.with(|g| {
+        g.borrow_mut()
+            .take()
+            .expect("should be able to end transaction")
+    });
     true
 }
 
-fn cleanup(transacted: HashMap<usize, LocalView>) {
-    for (tvar, local) in
-        transacted.iter().filter(|(_tvar, local)| local.is_write())
+fn cleanup(
+    ts: usize,
+    transacted: Vec<(usize, &AtomicUsize, &Atomic<Vsn>, LocalView)>,
+    guard: &Guard,
+) {
+    for (tvar, rts, vsn_ptr, local) in transacted
+        .iter()
+        .filter(|(_, _, _, local)| local.is_write())
     {
-        let mut global = g
-            .get_mut(&tvar)
-            .expect("should find TVar in global lookup table");
+        let current_ptr = vsn_ptr.load(SeqCst, &guard);
+        let current = unsafe { current_ptr.deref() };
 
-        global.pending = std::ptr::null_mut();
-        global.pending_wts = 0;
+        if current.pending_wts != ts || current.pending.is_null() {
+            continue;
+        }
+
+        let new = Owned::new(Vsn {
+            stable: current.pending,
+            stable_wts: current.pending_wts,
+            pending: std::ptr::null_mut(),
+            pending_wts: 0,
+        });
+
+        vsn_ptr
+            .compare_and_set(current_ptr, new, SeqCst, &guard)
+            .expect(
+                "somehow version changed before we could clean up",
+            );
     }
 }
 
