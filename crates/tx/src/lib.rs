@@ -681,6 +681,7 @@ fn test_swap_scheduled() {
                             tx(|| {
                                 let tmp1 = *tvs[i1];
                                 let tmp2 = *tvs[i2];
+                                println!("{} read {}@{} and {}@{} before swapping", tn(), tmp1, i1, tmp2, i2);
 
                                 *tvs[i1] = tmp2;
                                 *tvs[i2] = tmp1;
@@ -688,6 +689,7 @@ fn test_swap_scheduled() {
                         } else {
                             // read tvars
 
+                            println!("{} reading", tn());
                             let r = tx(|| {
                                 [
                                     *tvs[0],
@@ -695,6 +697,7 @@ fn test_swap_scheduled() {
                                     *tvs[2],
                                 ]
                             });
+                            println!("{} read {:?}", tn(), r);
 
                             assert_eq!(
                                 r[0] + r[1] + r[2],
@@ -710,6 +713,7 @@ fn test_swap_scheduled() {
                             );
                         }
                     }
+                    println!("{} done", tn());
                 }).expect("should be able to start thread");
 
             threads.push(t);
