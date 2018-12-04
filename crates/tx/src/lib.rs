@@ -145,7 +145,7 @@ impl LocalView {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Vsn {
     stable_wts: usize,
     stable: *mut usize,
@@ -255,6 +255,8 @@ pub fn begin_tx() {
         if *ts == 0 {
             sched_delay!("generating new timestamp");
             *ts = TX.fetch_add(1, SeqCst) + 1;
+            #[cfg(test)]
+            println!("{} started tx {}", tn(), *ts);
             GUARD.with(|g| {
                 let mut g = g.borrow_mut();
                 assert!(
@@ -293,13 +295,19 @@ pub fn try_commit() -> bool {
         .iter()
         .filter(|(_, _, _, local)| local.is_write())
     {
-        // println!("installing write for tvar {}", tvar);
         sched_delay!("reading current ptr before installing write");
         let current_ptr = vsn_ptr.load(SeqCst, &guard);
         let current = unsafe { current_ptr.deref() };
 
         if !current.pending.is_null() || current.pending_wts != 0 {
             // write conflict
+            #[cfg(test)]
+            println!(
+                "{} hit conflict in tx {} at line {}",
+                tn(),
+                ts,
+                line!()
+            );
             abort = true;
             break;
         }
@@ -307,6 +315,9 @@ pub fn try_commit() -> bool {
         let mut new = current.clone();
         new.pending_wts = ts;
         new.pending = local.ptr();
+
+        #[cfg(test)]
+        println!("{} changing {:?} to {:?}", tn(), current, new);
 
         sched_delay!("installing write with CAS");
         match vsn_ptr.compare_and_set(
@@ -321,6 +332,13 @@ pub fn try_commit() -> bool {
             }
             Err(_) => {
                 // write conflict
+                #[cfg(test)]
+                println!(
+                    "{} hit conflict in tx {} at line {}",
+                    tn(),
+                    ts,
+                    line!()
+                );
                 abort = true;
                 break;
             }
@@ -343,6 +361,13 @@ pub fn try_commit() -> bool {
         let current = unsafe { current_ptr.deref() };
 
         if current.stable_wts != local.read_wts() {
+            #[cfg(test)]
+            println!(
+                "{} hit conflict in tx {} at line {}",
+                tn(),
+                ts,
+                line!()
+            );
             abort = true;
             break;
         }
@@ -363,6 +388,13 @@ pub fn try_commit() -> bool {
 
         if rts > ts {
             // read conflict
+            #[cfg(test)]
+            println!(
+                "{} hit conflict in tx {} at line {}",
+                tn(),
+                ts,
+                line!()
+            );
             abort = true;
             break;
         }
@@ -379,6 +411,13 @@ pub fn try_commit() -> bool {
 
         if current.stable_wts != local.read_wts() {
             // write conflict
+            #[cfg(test)]
+            println!(
+                "{} hit conflict in tx {} at line {}",
+                tn(),
+                ts,
+                line!()
+            );
             abort = true;
             break;
         }
@@ -432,6 +471,8 @@ pub fn try_commit() -> bool {
         }
     }
 
+    #[cfg(test)]
+    println!("{} committed tx {}", tn(), ts);
     TS.with(|ts| *ts.borrow_mut() = 0);
     GUARD.with(|g| {
         g.borrow_mut()
@@ -446,6 +487,9 @@ fn cleanup(
     transacted: Vec<(usize, &AtomicUsize, &Atomic<Vsn>, LocalView)>,
     guard: &Guard,
 ) {
+    #[cfg(test)]
+    println!("{} aborting tx {}", tn(), ts);
+
     for (_tvar, _rts, vsn_ptr, _local) in transacted
         .iter()
         .filter(|(_, _, _, local)| local.is_write())
@@ -459,8 +503,8 @@ fn cleanup(
         }
 
         let new = Owned::new(Vsn {
-            stable: current.pending,
-            stable_wts: current.pending_wts,
+            stable: current.stable,
+            stable_wts: current.stable_wts,
             pending: std::ptr::null_mut(),
             pending_wts: 0,
         });
@@ -579,7 +623,7 @@ fn run_interleavings(
         }
     }
 
-    println!("took choices: {:?}", choices);
+    // println!("took choices: {:?}", choices);
 
     // pop off choices until we hit one where choice < possibilities
     while !choices.is_empty() {
@@ -632,6 +676,8 @@ fn test_swap_scheduled() {
                             let i1 = i % 3;
                             let i2 = (i + t) % 3;
 
+                            println!("{} swapping {} and {}", tn(), i1, i2);
+
                             tx(|| {
                                 let tmp1 = *tvs[i1];
                                 let tmp2 = *tvs[i2];
@@ -680,14 +726,15 @@ fn test_swap_scheduled() {
 
 #[test]
 fn test_swap() {
-    let tvs = [TVar::new(1), TVar::new(2), TVar::new(3)];
+    for _ in 0..100000 {
+        let tvs = [TVar::new(1), TVar::new(2), TVar::new(3)];
 
-    let mut threads = vec![];
+        let mut threads = vec![];
 
-    for t in 0..2 {
-        let mut tvs = tvs.clone();
+        for t in 0..2 {
+            let mut tvs = tvs.clone();
 
-        let t = thread::spawn(move || {
+            let t = thread::Builder::new().name(format!("t_{}", t)).spawn(move || {
             for i in 0..5 {
                 if (i + t) % 2 == 0 {
                     // swap tvars
@@ -698,12 +745,15 @@ fn test_swap() {
                         let tmp1 = *tvs[i1];
                         let tmp2 = *tvs[i2];
 
+                        // println!("{} tmp1: {:?} tmp2: {:?}", tn(), tmp1, tmp2);
+
                         *tvs[i1] = tmp2;
                         *tvs[i2] = tmp1;
                     });
                 } else {
                     // read tvars
                     let r = tx(|| [*tvs[0], *tvs[1], *tvs[2]]);
+                    // println!("{} read {:?}", tn(), r);
 
                     assert_eq!(
                         r[0] + r[1] + r[2],
@@ -719,12 +769,13 @@ fn test_swap() {
                     );
                 }
             }
-        });
+        }).unwrap();
 
-        threads.push(t);
-    }
+            threads.push(t);
+        }
 
-    for t in threads.into_iter() {
-        t.join().unwrap();
+        for t in threads.into_iter() {
+            t.join().unwrap();
+        }
     }
 }
