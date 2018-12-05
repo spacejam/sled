@@ -14,7 +14,10 @@ use std::{
 
 #[cfg(test)]
 use std::{
-    sync::mpsc::{sync_channel, Receiver, SyncSender},
+    sync::{
+        atomic::fence,
+        mpsc::{sync_channel, Receiver, SyncSender},
+    },
     thread::{self, JoinHandle},
 };
 
@@ -60,18 +63,23 @@ macro_rules! sched_delay {
             SCHED.with(|ref s| {
                 if let Some(s) = &*s.borrow() {
                     // prime to signal readiness to scheduler
+                    fence(SeqCst);
                     s.recv().unwrap();
+                    fence(SeqCst);
 
                     // actually go
                     s.recv().unwrap();
-                    println!(
-                        "{} {} {} {} {}",
-                        TICKS.load(SeqCst),
-                        tn(),
-                        file!(),
-                        line!(),
-                        $note,
-                    );
+                    fence(SeqCst);
+                    /*
+                                            println!(
+                                                "{} {} {} {} {}",
+                                                TICKS.load(SeqCst),
+                                                tn(),
+                                                file!(),
+                                                line!(),
+                                                $note,
+                                            );
+                                            */
                 }
             })
         }
@@ -255,8 +263,8 @@ pub fn begin_tx() {
         if *ts == 0 {
             sched_delay!("generating new timestamp");
             *ts = TX.fetch_add(1, SeqCst) + 1;
-            #[cfg(test)]
-            println!("{} started tx {}", tn(), *ts);
+            //            #[cfg(test)]
+            //            println!("{} started tx {}", tn(), *ts);
             GUARD.with(|g| {
                 let mut g = g.borrow_mut();
                 assert!(
@@ -316,8 +324,8 @@ pub fn try_commit() -> bool {
         new.pending_wts = ts;
         new.pending = local.ptr();
 
-        #[cfg(test)]
-        println!("{} changing {:?} to {:?}", tn(), current, new);
+        //        #[cfg(test)]
+        //        println!("{} changing {:?} to {:?}", tn(), current, new);
 
         sched_delay!("installing write with CAS");
         match vsn_ptr.compare_and_set(
@@ -363,10 +371,12 @@ pub fn try_commit() -> bool {
         if current.stable_wts != local.read_wts() {
             #[cfg(test)]
             println!(
-                "{} hit conflict in tx {} at line {}",
+                "{} hit conflict in tx {} at line {}: current: {:?} local: {:?}",
                 tn(),
                 ts,
-                line!()
+                line!(),
+                current,
+                local,
             );
             abort = true;
             break;
@@ -529,7 +539,10 @@ fn bump_gte(a: &AtomicUsize, to: usize) {
     sched_delay!("loading RTS before bumping");
     let mut current = a.load(SeqCst);
     while current < to as usize {
-        current = a.compare_and_swap(current, to, SeqCst);
+        match a.compare_exchange(current, to, SeqCst, SeqCst) {
+            Ok(_) => return,
+            Err(c) => current = c,
+        }
     }
 }
 
@@ -593,7 +606,8 @@ fn run_interleavings(
         scheds[choice].send(()).expect("should be able to run target thread if it's still in scheds");
 
         // prime it or remove from scheds
-        if scheds[choice].send(()).is_err() {
+        if let Err(e) = scheds[choice].send(()) {
+            println!("removing finished thread after problem sending: {:?}", e);
             scheds.remove(choice);
             let t = threads.remove(choice);
             if let Err(e) = t.join() {
@@ -614,7 +628,8 @@ fn run_interleavings(
         scheds[choice].send(()).expect("should be able to run target thread if it's still in scheds");
 
         // prime it or remove from scheds
-        if scheds[choice].send(()).is_err() {
+        if let Err(e) = scheds[choice].send(()) {
+            println!("removing finished thread after problem sending: {:?}", e);
             scheds.remove(choice);
             let t = threads.remove(choice);
             if let Err(e) = t.join() {
@@ -651,7 +666,12 @@ fn run_interleavings(
 fn test_swap_scheduled() {
     let mut choices = vec![];
 
+    let mut printed = false;
+    let mut possibilities = 1;
+    let mut runs = 0;
+
     loop {
+        runs += 1;
         let tvs = [TVar::new(1), TVar::new(2), TVar::new(3)];
 
         let mut threads = vec![];
@@ -665,10 +685,12 @@ fn test_swap_scheduled() {
                 .name(format!("t_{}", t))
                 .spawn(move || {
                     // set up scheduler listener
+                    fence(SeqCst);
                     SCHED.with(|s| {
                         let mut s = s.borrow_mut();
                         *s = Some(rx);
                     });
+                    fence(SeqCst);
 
                     for i in 0..2 {
                         if (i + t) % 2 == 0 {
@@ -697,22 +719,30 @@ fn test_swap_scheduled() {
                                     *tvs[2],
                                 ]
                             });
-                            println!("{} read {:?}", tn(), r);
+                            // println!("{} read {:?}", tn(), r);
 
                             assert_eq!(
                                 r[0] + r[1] + r[2],
                                 6,
-                                "expected observed values to be different, instead: {:?}",
+                                "{} expected observed values to be different, instead: {:?}",
+                                tn(),
                                 r
                             );
                             assert_eq!(
                                 r[0] * r[1] * r[2],
                                 6,
-                                "expected observed values to be different, instead: {:?}",
+                                "{} expected observed values to be different, instead: {:?}",
+                                tn(),
                                 r
                             );
                         }
                     }
+                    fence(SeqCst);
+                    SCHED.with(|s| {
+                        let mut s = s.borrow_mut();
+                        drop(s.take());
+                    });
+                    fence(SeqCst);
                     println!("{} done", tn());
                 }).expect("should be able to start thread");
 
@@ -722,8 +752,20 @@ fn test_swap_scheduled() {
 
         let finished =
             run_interleavings(true, scheds, threads, &mut choices);
+
         if finished {
+            println!("done, took {}", runs);
             return;
+        } else if !printed {
+            for (_choice, options) in &choices {
+                possibilities *= options;
+            }
+            println!("{} possibilities", possibilities);
+            printed = true;
+        } else {
+            if runs % (possibilities / 10) == 0 {
+                println!("{} / {}", runs, possibilities);
+            }
         }
     }
 }
