@@ -10,6 +10,9 @@ use std::sync::atomic::Ordering::{Acquire, Relaxed};
 
 use historian::Histo;
 
+#[cfg(feature = "measure_allocs")]
+use super::measure_allocs;
+
 lazy_static! {
     /// A metric collector for all pagecache users running in this
     /// process.
@@ -110,6 +113,10 @@ pub struct Metrics {
     pub log_reservation_attempts: AtomicUsize,
     pub accountant_lock: Histo,
     pub accountant_hold: Histo,
+    #[cfg(feature = "measure_allocs")]
+    pub allocations: AtomicUsize,
+    #[cfg(feature = "measure_allocs")]
+    pub allocated_bytes: AtomicUsize,
 }
 
 #[cfg(not(feature = "no_metrics"))]
@@ -234,6 +241,20 @@ impl Metrics {
             f("acquire", &self.accountant_lock),
             f("hold", &self.accountant_hold),
         ]);
+
+        #[cfg(feature = "measure_allocs")]
+        {
+            println!("{}", repeat("-").take(103).collect::<String>());
+            println!("allocation statistics:");
+            println!(
+                "total allocations: {}",
+                measure_allocs::ALLOCATIONS.load(Acquire)
+            );
+            println!(
+                "allocated bytes: {}",
+                measure_allocs::ALLOCATED_BYTES.load(Acquire)
+            );
+        }
     }
 }
 
