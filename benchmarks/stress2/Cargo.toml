@@ -14,6 +14,7 @@ check_snapshot_integrity = ["sled/check_snapshot_integrity"]
 zstd = ["sled/zstd"]
 no_logs = ["sled/no_logs"]
 no_metrics = ["sled/no_metrics"]
+measure_allocs = ["sled/measure_allocs"]
 
 [dependencies]
 serde = "1.0"

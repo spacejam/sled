@@ -77,6 +77,14 @@ mod snapshot;
 mod tx;
 mod util;
 
+#[cfg(feature = "measure_allocs")]
+mod measure_allocs;
+
+#[cfg(feature = "measure_allocs")]
+#[global_allocator]
+static ALLOCATOR: measure_allocs::TrackingAllocator =
+    measure_allocs::TrackingAllocator;
+
 #[cfg(feature = "event_log")]
 /// The event log helps debug concurrency issues.
 pub mod event_log;
