@@ -1,10 +1,19 @@
 [package]
 name = "tx"
-description = "dead-simple hash-transactor"
+description = "contention-aware speculative software transactional memory"
 version = "0.1.0"
 authors = ["Tyler Neely <t@jujit.su>"]
+
+[profile.dev]
+panic = 'abort'
+
+[features]
+default = []
+lock_free_delays = ["sled_sync/lock_free_delays"]
 
 [dependencies]
 lazy_static = "1.2"
 pagetable = { version = "0.1", path = "../pagetable" }
 crossbeam-epoch = "0.6.1"
+sled_sync = { version = "0.1", path = "../sled_sync" }
+log = "0.4.6"
