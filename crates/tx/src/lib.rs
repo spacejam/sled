@@ -371,7 +371,11 @@ pub fn try_commit() -> bool {
         let current_ptr = vsn_ptr.load(SeqCst, &guard);
         let current = unsafe { current_ptr.deref() };
 
-        if current.stable_wts != local.read_wts() {
+        let pending_predecessor =
+            current.pending_wts != 0 && current.pending_wts < ts;
+        if current.stable_wts != local.read_wts()
+            || pending_predecessor
+        {
             #[cfg(test)]
             println!(
                 "{} hit conflict in tx {} at line {}: current: {:?} local: {:?}",
