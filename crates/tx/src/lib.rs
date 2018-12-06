@@ -14,7 +14,7 @@ use std::{
     fmt,
     marker::PhantomData,
     ops::{Deref, DerefMut},
-    sync::atomic::{AtomicUsize, Ordering::SeqCst},
+    sync::atomic::{AtomicIsize, AtomicUsize, Ordering::SeqCst},
 };
 
 #[cfg(test)]
@@ -36,6 +36,17 @@ static TVARS: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(test)]
 static TICKS: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(test)]
+enum ConflictState {
+    Init = 0_isize,
+    Started = 1_isize,
+    Aborted = 2_isize,
+}
+
+#[cfg(test)]
+static CONFLICT_TRACKER: AtomicIsize =
+    AtomicIsize::new(ConflictState::Init as isize);
 
 // TODO add GC stack to entries here
 lazy_static! {
@@ -331,13 +342,19 @@ impl<T: Clone> DerefMut for TVar<T> {
 }
 
 pub fn begin_tx() {
+    #[cfg(test)]
+    CONFLICT_TRACKER.compare_and_swap(
+        ConflictState::Init as isize,
+        ConflictState::Started as isize,
+        SeqCst,
+    );
     TS.with(|ts| {
         let mut ts = ts.borrow_mut();
         if *ts == 0 {
             sched_delay!("generating new timestamp");
             *ts = TX.fetch_add(1, SeqCst) + 1;
             #[cfg(test)]
-            println!("{} started tx {}", tn(), *ts);
+            trace!("{} started tx {}", tn(), *ts);
             GUARD.with(|g| {
                 let mut g = g.borrow_mut();
                 assert!(
@@ -630,6 +647,13 @@ fn cleanup(
             .take()
             .expect("should be able to end transaction")
     });
+
+    #[cfg(test)]
+    CONFLICT_TRACKER.compare_and_swap(
+        ConflictState::Started as isize,
+        ConflictState::Aborted as isize,
+        SeqCst,
+    );
 }
 
 fn bump_gte(a: &AtomicUsize, to: usize) {
@@ -713,29 +737,39 @@ fn run_interleavings(
         }
     }
 
-    println!("~~~~~~");
+    trace!("~~~~~~");
+
+    CONFLICT_TRACKER.store(ConflictState::Init as isize, SeqCst);
 
     // choose 0th choice until we are done
     while !scheds.is_empty() {
         TICKS.fetch_add(1, SeqCst);
         let choice = 0;
-        // println!("choice: {} out of {:?}", choice, scheds);
+        // trace!("choice: {} out of {:?}", choice, scheds);
         choices.push((choice, scheds.len()));
 
         scheds[choice].send(()).expect("should be able to run target thread if it's still in scheds");
 
         // prime it or remove from scheds
         if let Err(e) = scheds[choice].send(()) {
-            println!("removing finished thread after problem sending: {:?}", e);
+            trace!("removing finished thread after problem sending: {:?}", e);
             scheds.remove(choice);
             let t = threads.remove(choice);
             if let Err(e) = t.join() {
                 panic!(e);
             }
+        } else if CONFLICT_TRACKER.load(SeqCst)
+            == ConflictState::Aborted as isize
+        {
+            // we've detected a conflict in a transaction that we started
+            // while only scheduing the first choice! switch it up!
+            assert!(scheds.len() > 1);
+            choices.push((1, scheds.len()));
+            return false;
         }
     }
 
-    // println!("took choices: {:?}", choices);
+    // trace!("took choices: {:?}", choices);
 
     // pop off choices until we hit one where choice < possibilities
     while !choices.is_empty() {
