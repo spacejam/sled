@@ -1,7 +1,12 @@
 #[macro_use]
+extern crate log;
+
+#[macro_use]
 extern crate lazy_static;
 extern crate crossbeam_epoch;
 extern crate pagetable;
+#[cfg(test)]
+extern crate sled_sync;
 
 use std::{
     cell::RefCell,
@@ -84,6 +89,9 @@ macro_rules! sched_delay {
                                                 $note,
                                             );
                                             */
+                }
+                else {
+                    sled_sync::debug_delay();
                 }
             })
         }
