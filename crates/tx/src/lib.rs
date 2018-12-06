@@ -307,7 +307,10 @@ pub fn try_commit() -> bool {
         let current_ptr = vsn_ptr.load(SeqCst, &guard);
         let current = unsafe { current_ptr.deref() };
 
-        if !current.pending.is_null() || current.pending_wts != 0 {
+        if !current.pending.is_null()
+            || current.pending_wts != 0
+            || current.stable_wts > ts
+        {
             // write conflict
             #[cfg(test)]
             println!(
