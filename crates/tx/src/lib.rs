@@ -24,6 +24,8 @@ use std::{
 use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
 use pagetable::PageTable;
 
+const CONTENTION_THRESHOLD: usize = 1;
+
 static TX: AtomicUsize = AtomicUsize::new(0);
 static TVARS: AtomicUsize = AtomicUsize::new(0);
 
@@ -40,6 +42,8 @@ thread_local! {
     static L: RefCell<HashMap<usize, LocalView>> = RefCell::new(HashMap::new());
     static TS: RefCell<usize> = RefCell::new(0);
     static GUARD: RefCell<Option<Guard>> = RefCell::new(None);
+    static ABORTS: RefCell<usize> = RefCell::new(0);
+    static HAS_ABORTED: RefCell<bool> = RefCell::new(false);
 
     // a scheduler for exhaustive testing
     #[cfg(test)]
@@ -99,9 +103,55 @@ where
         if try_commit() {
             break result;
         }
+
+        maybe_bump_aborts();
+
+        #[cfg(test)]
+        println!("{} retrying tx", tn());
     };
+
+    maybe_decr_aborts();
+
     sched_delay!("committed tx");
     res
+}
+
+fn is_contended() -> bool {
+    ABORTS.with(|a| *a.borrow() >= CONTENTION_THRESHOLD)
+}
+
+fn maybe_bump_aborts() {
+    HAS_ABORTED.with(|ha| {
+        let mut ha = ha.borrow_mut();
+
+        if !*ha {
+            ABORTS.with(|a| {
+                let mut a = a.borrow_mut();
+                *a = std::cmp::min(5, *a + 1);
+            });
+        }
+
+        *ha = true;
+    });
+}
+
+fn maybe_decr_aborts() {
+    HAS_ABORTED.with(|ha| {
+        let mut ha = ha.borrow_mut();
+
+        if !*ha {
+            ABORTS.with(|a| {
+                let mut a = a.borrow_mut();
+                *a = std::cmp::max(1, *a) - 1;
+            });
+        }
+
+        *ha = false;
+    });
+}
+
+fn current_ts() -> usize {
+    TS.with(|ts| *ts.borrow())
 }
 
 #[derive(Debug)]
@@ -216,9 +266,24 @@ fn read_from_g(id: usize, guard: &Guard) -> LocalView {
 
     sched_delay!("loading atomic ptr for global version");
     let gv = unsafe { vsn_ptr.load(SeqCst, guard).deref() };
-    LocalView::Read {
-        ptr: gv.stable,
-        read_wts: gv.stable_wts,
+
+    #[cfg(test)]
+    println!("{} reading tvar from global table: {:?}", tn(), gv);
+
+    if !is_contended()
+        && gv.pending_wts != 0
+        && gv.pending_wts < current_ts()
+    {
+        // speculative reads if we're not contended
+        LocalView::Read {
+            ptr: gv.pending,
+            read_wts: gv.pending_wts,
+        }
+    } else {
+        LocalView::Read {
+            ptr: gv.stable,
+            read_wts: gv.stable_wts,
+        }
     }
 }
 
@@ -278,7 +343,7 @@ pub fn begin_tx() {
 }
 
 pub fn try_commit() -> bool {
-    let ts = TS.with(|ts| *ts.borrow());
+    let ts = current_ts();
     let guard = pin();
     let mut abort = false;
 
@@ -565,7 +630,7 @@ fn basic() {
         println!("a is now {:?}", a);
         b.push_str("ayo");
         println!("b is now {:?}", b);
-        TS.with(|ts| *ts.borrow())
+        current_ts()
     });
     let second_ts = tx(|| {
         *a += 5;
@@ -574,7 +639,7 @@ fn basic() {
         println!("a is now {:?}", a);
         b.push_str("ayo");
         println!("b is now {:?}", b);
-        TS.with(|ts| *ts.borrow())
+        current_ts()
     });
 
     assert!(
