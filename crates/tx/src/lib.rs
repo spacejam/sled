@@ -91,7 +91,7 @@ macro_rules! sched_delay {
                     s.recv().unwrap();
                     fence(SeqCst);
                     /*
-                                            println!(
+                                            trace!(
                                                 "{} {} {} {} {}",
                                                 TICKS.load(SeqCst),
                                                 tn(),
@@ -126,7 +126,7 @@ where
         maybe_bump_aborts();
 
         #[cfg(test)]
-        println!("{} retrying tx", tn());
+        trace!("{} retrying tx", tn());
     };
 
     maybe_decr_aborts();
@@ -287,7 +287,7 @@ fn read_from_g(id: usize, guard: &Guard) -> LocalView {
     let gv = unsafe { vsn_ptr.load(SeqCst, guard).deref() };
 
     #[cfg(test)]
-    println!("{} reading tvar from global table: {:?}", tn(), gv);
+    trace!("{} reading tvar from global table: {:?}", tn(), gv);
 
     if !is_contended()
         && gv.pending_wts != 0
@@ -403,7 +403,7 @@ pub fn try_commit() -> bool {
         {
             // write conflict
             #[cfg(test)]
-            println!(
+            trace!(
                 "{} hit conflict in tx {} at line {}",
                 tn(),
                 ts,
@@ -418,7 +418,7 @@ pub fn try_commit() -> bool {
         new.pending = local.ptr();
 
         #[cfg(test)]
-        println!(
+        trace!(
             "{} installing pending {:?} to {:?}",
             tn(),
             current,
@@ -439,7 +439,7 @@ pub fn try_commit() -> bool {
             Err(_) => {
                 // write conflict
                 #[cfg(test)]
-                println!(
+                trace!(
                     "{} hit conflict in tx {} at line {}",
                     tn(),
                     ts,
@@ -472,7 +472,7 @@ pub fn try_commit() -> bool {
             || pending_predecessor
         {
             #[cfg(test)]
-            println!(
+            trace!(
                 "{} hit conflict in tx {} at line {}: current: {:?} local: {:?}",
                 tn(),
                 ts,
@@ -501,7 +501,7 @@ pub fn try_commit() -> bool {
         if rts > ts {
             // read conflict
             #[cfg(test)]
-            println!(
+            trace!(
                 "{} hit conflict in tx {} at line {}, rts {} > our ts {}",
                 tn(),
                 ts,
@@ -526,7 +526,7 @@ pub fn try_commit() -> bool {
         if current.stable_wts != local.read_wts() {
             // write conflict
             #[cfg(test)]
-            println!(
+            trace!(
                 "{} hit conflict in tx {} at line {}, stable_wts {} != our read wts {}",
                 tn(),
                 ts,
@@ -570,7 +570,7 @@ pub fn try_commit() -> bool {
         });
 
         #[cfg(test)]
-        println!(
+        trace!(
             "{} installing committed old {:?} to new {:?}",
             tn(),
             current,
@@ -596,7 +596,7 @@ pub fn try_commit() -> bool {
     }
 
     #[cfg(test)]
-    println!("{} committed tx {}", tn(), ts);
+    trace!("{} committed tx {}", tn(), ts);
     TS.with(|ts| *ts.borrow_mut() = 0);
     GUARD.with(|g| {
         g.borrow_mut()
@@ -612,7 +612,7 @@ fn cleanup(
     guard: &Guard,
 ) {
     #[cfg(test)]
-    println!("{} aborting tx {}", tn(), ts);
+    trace!("{} aborting tx {}", tn(), ts);
 
     for (_tvar, _rts, vsn_ptr, _local) in transacted
         .iter()
@@ -674,20 +674,20 @@ fn basic() {
 
     let first_ts = tx(|| {
         *a += 5;
-        println!("a is now {:?}", a);
+        trace!("a is now {:?}", a);
         *a -= 3;
-        println!("a is now {:?}", a);
+        trace!("a is now {:?}", a);
         b.push_str("ayo");
-        println!("b is now {:?}", b);
+        trace!("b is now {:?}", b);
         current_ts()
     });
     let second_ts = tx(|| {
         *a += 5;
-        println!("a is now {:?}", a);
+        trace!("a is now {:?}", a);
         *a -= 3;
-        println!("a is now {:?}", a);
+        trace!("a is now {:?}", a);
         b.push_str("ayo");
-        println!("b is now {:?}", b);
+        trace!("b is now {:?}", b);
         current_ts()
     });
 
@@ -706,7 +706,7 @@ fn run_interleavings(
     mut threads: Vec<JoinHandle<()>>,
     choices: &mut Vec<(usize, usize)>,
 ) -> bool {
-    println!("-----------------------------");
+    trace!("-----------------------------");
     TICKS.store(0, SeqCst);
 
     // wait for all threads to reach sync points
@@ -717,18 +717,18 @@ fn run_interleavings(
     assert!(!scheds.is_empty());
 
     // replay previous choices
-    // println!("replaying choices {:?}", choices);
+    // trace!("replaying choices {:?}", choices);
 
     for c in 0..choices.len() {
         TICKS.fetch_add(1, SeqCst);
         let (choice, _len) = choices[c];
 
-        // println!("choice: {} out of {:?}", choice, scheds);
+        // trace!("choice: {} out of {:?}", choice, scheds);
         scheds[choice].send(()).expect("should be able to run target thread if it's still in scheds");
 
         // prime it or remove from scheds
         if let Err(e) = scheds[choice].send(()) {
-            println!("removing finished thread after problem sending: {:?}", e);
+            trace!("removing finished thread after problem sending: {:?}", e);
             scheds.remove(choice);
             let t = threads.remove(choice);
             if let Err(e) = t.join() {
@@ -829,12 +829,12 @@ fn test_swap_scheduled() {
                             let i1 = i % 3;
                             let i2 = (i + t) % 3;
 
-                            println!("{} swapping {} and {}", tn(), i1, i2);
+                            trace!("{} swapping {} and {}", tn(), i1, i2);
 
                             tx(|| {
                                 let tmp1 = *tvs[i1];
                                 let tmp2 = *tvs[i2];
-                                println!("{} read {}@{} and {}@{} before swapping", tn(), tmp1, i1, tmp2, i2);
+                                trace!("{} read {}@{} and {}@{} before swapping", tn(), tmp1, i1, tmp2, i2);
 
                                 *tvs[i1] = tmp2;
                                 *tvs[i2] = tmp1;
@@ -842,7 +842,7 @@ fn test_swap_scheduled() {
                         } else {
                             // read tvars
 
-                            println!("{} reading", tn());
+                            trace!("{} reading", tn());
                             let r = tx(|| {
                                 [
                                     *tvs[0],
@@ -850,7 +850,7 @@ fn test_swap_scheduled() {
                                     *tvs[2],
                                 ]
                             });
-                            // println!("{} read {:?}", tn(), r);
+                            // trace!("{} read {:?}", tn(), r);
 
                             assert_eq!(
                                 r[0] + r[1] + r[2],
@@ -874,7 +874,7 @@ fn test_swap_scheduled() {
                         drop(s.take());
                     });
                     fence(SeqCst);
-                    println!("{} done", tn());
+                    trace!("{} done", tn());
                 }).expect("should be able to start thread");
 
             threads.push(t);
@@ -885,17 +885,17 @@ fn test_swap_scheduled() {
             run_interleavings(true, scheds, threads, &mut choices);
 
         if finished {
-            println!("done, took {}", runs);
+            trace!("done, took {}", runs);
             return;
         } else if !printed {
             for (_choice, options) in &choices {
                 possibilities *= options;
             }
-            println!("{} possibilities", possibilities);
+            trace!("{} possibilities", possibilities);
             printed = true;
         } else {
             if runs % (possibilities / 10) == 0 {
-                println!("{} / {}", runs, possibilities);
+                trace!("{} / {}", runs, possibilities);
             }
         }
     }
@@ -903,50 +903,51 @@ fn test_swap_scheduled() {
 
 #[test]
 fn test_swap() {
-    for _ in 0..100000 {
+    for _ in 0..10 {
+        println!("t");
         let tvs = [TVar::new(1), TVar::new(2), TVar::new(3)];
 
         let mut threads = vec![];
 
-        for t in 0..2 {
+        for t in 0..200 {
             let mut tvs = tvs.clone();
 
             let t = thread::Builder::new().name(format!("t_{}", t)).spawn(move || {
-            for i in 0..5 {
-                if (i + t) % 2 == 0 {
-                    // swap tvars
-                    let i1 = i % 3;
-                    let i2 = (i + t) % 3;
+                for i in 0..500 {
+                    if (i + t) % 2 == 0 {
+                        // swap tvars
+                        let i1 = i % 3;
+                        let i2 = (i + t) % 3;
 
-                    tx(|| {
-                        let tmp1 = *tvs[i1];
-                        let tmp2 = *tvs[i2];
+                        tx(|| {
+                            let tmp1 = *tvs[i1];
+                            let tmp2 = *tvs[i2];
 
-                        // println!("{} tmp1: {:?} tmp2: {:?}", tn(), tmp1, tmp2);
+                            // trace!("{} tmp1: {:?} tmp2: {:?}", tn(), tmp1, tmp2);
 
-                        *tvs[i1] = tmp2;
-                        *tvs[i2] = tmp1;
-                    });
-                } else {
-                    // read tvars
-                    let r = tx(|| [*tvs[0], *tvs[1], *tvs[2]]);
-                    // println!("{} read {:?}", tn(), r);
+                            *tvs[i1] = tmp2;
+                            *tvs[i2] = tmp1;
+                        });
+                    } else {
+                        // read tvars
+                        let r = tx(|| [*tvs[0], *tvs[1], *tvs[2]]);
+                        // trace!("{} read {:?}", tn(), r);
 
-                    assert_eq!(
-                        r[0] + r[1] + r[2],
-                        6,
-                        "expected observed values to be different, instead: {:?}",
-                        r
-                    );
-                    assert_eq!(
-                        r[0] * r[1] * r[2],
-                        6,
-                        "expected observed values to be different, instead: {:?}",
-                        r
-                    );
+                        assert_eq!(
+                            r[0] + r[1] + r[2],
+                            6,
+                            "expected observed values to be different, instead: {:?}",
+                            r
+                        );
+                        assert_eq!(
+                            r[0] * r[1] * r[2],
+                            6,
+                            "expected observed values to be different, instead: {:?}",
+                            r
+                        );
+                    }
                 }
-            }
-        }).unwrap();
+            }).unwrap();
 
             threads.push(t);
         }
