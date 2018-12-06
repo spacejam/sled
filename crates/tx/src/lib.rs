@@ -328,8 +328,8 @@ pub fn begin_tx() {
         if *ts == 0 {
             sched_delay!("generating new timestamp");
             *ts = TX.fetch_add(1, SeqCst) + 1;
-            //            #[cfg(test)]
-            //            println!("{} started tx {}", tn(), *ts);
+            #[cfg(test)]
+            println!("{} started tx {}", tn(), *ts);
             GUARD.with(|g| {
                 let mut g = g.borrow_mut();
                 assert!(
@@ -392,8 +392,13 @@ pub fn try_commit() -> bool {
         new.pending_wts = ts;
         new.pending = local.ptr();
 
-        //        #[cfg(test)]
-        //        println!("{} changing {:?} to {:?}", tn(), current, new);
+        #[cfg(test)]
+        println!(
+            "{} installing pending {:?} to {:?}",
+            tn(),
+            current,
+            new
+        );
 
         sched_delay!("installing write with CAS");
         match vsn_ptr.compare_and_set(
@@ -472,10 +477,12 @@ pub fn try_commit() -> bool {
             // read conflict
             #[cfg(test)]
             println!(
-                "{} hit conflict in tx {} at line {}",
+                "{} hit conflict in tx {} at line {}, rts {} > our ts {}",
                 tn(),
                 ts,
-                line!()
+                line!(),
+                rts,
+                ts,
             );
             abort = true;
             break;
@@ -495,10 +502,12 @@ pub fn try_commit() -> bool {
             // write conflict
             #[cfg(test)]
             println!(
-                "{} hit conflict in tx {} at line {}",
+                "{} hit conflict in tx {} at line {}, stable_wts {} != our read wts {}",
                 tn(),
                 ts,
-                line!()
+                line!(),
+                current.stable_wts,
+                local.read_wts(),
             );
             abort = true;
             break;
@@ -534,6 +543,14 @@ pub fn try_commit() -> bool {
             pending: std::ptr::null_mut(),
             pending_wts: 0,
         });
+
+        #[cfg(test)]
+        println!(
+            "{} installing committed old {:?} to new {:?}",
+            tn(),
+            current,
+            new
+        );
 
         sched_delay!("installing new version during commit");
         match vsn_ptr.compare_and_set(
