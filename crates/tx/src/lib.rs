@@ -2,7 +2,6 @@ use lazy_static::lazy_static;
 
 use std::{
     cell::RefCell,
-    collections::HashMap,
     fmt,
     marker::PhantomData,
     ops::{Deref, DerefMut},
@@ -11,6 +10,13 @@ use std::{
         Arc,
     },
 };
+
+// we use BTreeMap during testing for deterministic iteration
+#[cfg(test)]
+use std::collections::BTreeMap as Map;
+
+#[cfg(not(test))]
+use std::collections::HashMap as Map;
 
 #[cfg(test)]
 use {
@@ -57,7 +63,7 @@ lazy_static! {
 }
 
 thread_local! {
-    static L: RefCell<HashMap<usize, LocalView>> = RefCell::new(HashMap::new());
+    static L: RefCell<Map<usize, LocalView>> = RefCell::new(Map::new());
     static TS: RefCell<usize> = RefCell::new(0);
     static GUARD: RefCell<Option<Guard>> = RefCell::new(None);
     static ABORTS: RefCell<usize> = RefCell::new(0);
@@ -484,8 +490,8 @@ pub fn try_commit() -> bool {
     // clear out local cache
     let transacted = L
         .with(|l| {
-            let lr: &mut HashMap<_, _> = &mut *l.borrow_mut();
-            std::mem::replace(lr, HashMap::new())
+            let lr: &mut Map<_, _> = &mut *l.borrow_mut();
+            std::mem::replace(lr, Map::new())
         })
         .into_iter()
         .map(|(tvar, local)| {
@@ -997,6 +1003,11 @@ fn test_swap_scheduled() {
     let mut runs = 0;
 
     loop {
+        // clear out FREE because its ordering would
+        // cause non-deterministic iteration of items
+        // during testing.
+        while FREE.pop().is_some() {}
+
         runs += 1;
         let tvs = [TVar::new(1), TVar::new(2), TVar::new(3)];
 
