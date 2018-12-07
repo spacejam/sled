@@ -3,17 +3,19 @@ name = "tx"
 description = "contention-aware speculative software transactional memory"
 version = "0.1.0"
 authors = ["Tyler Neely <t@jujit.su>"]
-
-[profile.dev]
-panic = 'abort'
+edition = "2018"
 
 [features]
 default = []
 lock_free_delays = ["sled_sync/lock_free_delays"]
 
+[dev-dependencies]
+sled_sync = { version = "0.1", path = "../sled_sync" }
+env_logger = "0.6"
+
 [dependencies]
 lazy_static = "1.2"
 pagetable = { version = "0.1", path = "../pagetable" }
 crossbeam-epoch = "0.6.1"
-sled_sync = { version = "0.1", path = "../sled_sync" }
 log = "0.4.6"
+crossbeam = "0.3.2"
