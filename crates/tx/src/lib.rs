@@ -21,11 +21,11 @@ use std::collections::HashMap as Map;
 #[cfg(test)]
 use {
     env_logger,
-    log::{debug, error, info, trace},
+    log::{debug, info, trace},
     sled_sync,
     std::{
         sync::{
-            atomic::{fence, AtomicIsize},
+            atomic::AtomicIsize,
             mpsc::{sync_channel, Receiver, SyncSender},
         },
         thread::{self, JoinHandle},
@@ -91,7 +91,6 @@ macro_rules! sched_delay {
             SCHED.with(|ref s| {
                 if let Some(s) = &*s.borrow() {
                     // prime to signal readiness to scheduler
-                    fence(SeqCst);
                     if let Err(e) = s.recv() {
                         eprintln!(
                             "{} scheduler should never hang up: {:?}",
@@ -100,8 +99,6 @@ macro_rules! sched_delay {
                         );
                         std::process::exit(1);
                     }
-
-                    fence(SeqCst);
 
                     // actually go
                     if let Err(e) = s.recv() {
@@ -113,7 +110,6 @@ macro_rules! sched_delay {
                         std::process::exit(1);
                     }
 
-                    fence(SeqCst);
                     trace!(
                         "{} {} {} {} {}",
                         TICKS.load(SeqCst),
@@ -122,8 +118,6 @@ macro_rules! sched_delay {
                         line!(),
                         $note,
                     );
-
-                    fence(SeqCst);
                 } else {
                     sled_sync::debug_delay();
                 }
@@ -350,7 +344,7 @@ where
 
 impl<T: Clone> TVar<T> {
     pub fn new(val: T) -> TVar<T> {
-        // sched_delay!("creating new tvar");
+        sched_delay!("creating new tvar");
         let id =
             FREE.pop().unwrap_or_else(|| TVARS.fetch_add(1, SeqCst));
         let ptr = Box::into_raw(Box::new(val));
@@ -366,7 +360,7 @@ impl<T: Clone> TVar<T> {
         ))
         .into_shared(&guard);
 
-        // sched_delay!("installing tvar to global table");
+        sched_delay!("installing tvar to global table");
         G.cas(id, Shared::null(), gv, &guard)
             .expect("installation should succeed");
 
@@ -384,11 +378,11 @@ impl<T: Clone> TVar<T> {
 }
 
 fn read_from_g(id: usize, guard: &Guard) -> LocalView {
-    // sched_delay!("reading tvar from global table");
+    sched_delay!("reading tvar from global table");
     let (_rts, vsn_ptr) =
         unsafe { G.get(id, guard).unwrap().deref() };
 
-    // sched_delay!("loading atomic ptr for global version");
+    sched_delay!("loading atomic ptr for global version");
     let gv = unsafe { vsn_ptr.load(SeqCst, guard).deref() };
 
     #[cfg(test)]
@@ -451,22 +445,16 @@ impl<T: 'static + Clone> DerefMut for TVar<T> {
 
 pub fn begin_tx() {
     #[cfg(test)]
-    fence(SeqCst);
-
-    #[cfg(test)]
     CONFLICT_TRACKER.compare_and_swap(
         ConflictState::Init as isize,
         ConflictState::Pending as isize,
         SeqCst,
     );
 
-    #[cfg(test)]
-    fence(SeqCst);
-
     TS.with(|ts| {
         let mut ts = ts.borrow_mut();
         if *ts == 0 {
-            // sched_delay!("generating new timestamp");
+            sched_delay!("generating new timestamp");
             *ts = TX.fetch_add(1, SeqCst) + 1;
             #[cfg(test)]
             debug!("{} started tx {}", tn(), *ts);
@@ -485,7 +473,6 @@ pub fn begin_tx() {
 pub fn try_commit() -> bool {
     let ts = current_ts();
     let guard = pin();
-    let mut abort = false;
 
     // clear out local cache
     let transacted = L
@@ -495,7 +482,7 @@ pub fn try_commit() -> bool {
         })
         .into_iter()
         .map(|(tvar, local)| {
-            // sched_delay!("re-reading global state");
+            sched_delay!("re-reading global state");
             let (rts, vsn_ptr) = unsafe {
                 G.get(tvar, &guard)
                     .expect("should find TVar in global lookup table")
@@ -510,7 +497,7 @@ pub fn try_commit() -> bool {
         .iter()
         .filter(|(_, _, _, local)| local.is_write())
     {
-        // sched_delay!("reading current ptr before installing write");
+        sched_delay!("reading current ptr before installing write");
         let current_ptr = vsn_ptr.load(SeqCst, &guard);
         let current = unsafe { current_ptr.deref() };
 
@@ -526,8 +513,7 @@ pub fn try_commit() -> bool {
                 ts,
                 line!()
             );
-            abort = true;
-            break;
+            return cleanup(ts, transacted, &guard);
         }
 
         let mut new = current.clone();
@@ -542,10 +528,7 @@ pub fn try_commit() -> bool {
             new
         );
 
-        #[cfg(test)]
-        fence(SeqCst);
-
-        // sched_delay!("installing pending write with CAS");
+        sched_delay!("installing pending write with CAS");
         match vsn_ptr.compare_and_set(
             current_ptr,
             Owned::new(new).into_shared(&guard),
@@ -562,18 +545,9 @@ pub fn try_commit() -> bool {
                     ts,
                     line!()
                 );
-                abort = true;
-                break;
+                return cleanup(ts, transacted, &guard);
             }
         }
-
-        #[cfg(test)]
-        fence(SeqCst);
-    }
-
-    if abort {
-        cleanup(ts, transacted, &guard);
-        return false;
     }
 
     // update rts
@@ -582,7 +556,7 @@ pub fn try_commit() -> bool {
     {
         bump_gte(rts, ts);
 
-        // sched_delay!("reading current stable_rts after bumping RTS");
+        sched_delay!("reading current stable_rts after bumping RTS");
         let current_ptr = vsn_ptr.load(SeqCst, &guard);
         let current = unsafe { current_ptr.deref() };
 
@@ -600,14 +574,8 @@ pub fn try_commit() -> bool {
                 current,
                 local,
             );
-            abort = true;
-            break;
+            return cleanup(ts, transacted, &guard);
         }
-    }
-
-    if abort {
-        cleanup(ts, transacted, &guard);
-        return false;
     }
 
     // check version consistency
@@ -629,11 +597,12 @@ pub fn try_commit() -> bool {
                 rts,
                 ts,
             );
-            abort = true;
-            break;
+            return cleanup(ts, transacted, &guard);
         }
 
-        // sched_delay!( "loading current ptr to check current stable and pending");
+        sched_delay!(
+            "loading current ptr to check current stable and pending"
+        );
         let current = unsafe { vsn_ptr.load(SeqCst, &guard).deref() };
 
         assert_eq!(
@@ -652,14 +621,8 @@ pub fn try_commit() -> bool {
                 current.stable_wts,
                 local.read_wts(),
             );
-            abort = true;
-            break;
+            return cleanup(ts, transacted, &guard);
         }
-    }
-
-    if abort {
-        cleanup(ts, transacted, &guard);
-        return false;
     }
 
     // commit
@@ -667,7 +630,7 @@ pub fn try_commit() -> bool {
         .iter()
         .filter(|(_, _, _, local)| local.is_write())
     {
-        // sched_delay!("loading current version before committing");
+        sched_delay!("loading current version before committing");
         let current_ptr = vsn_ptr.load(SeqCst, &guard);
         let current = unsafe { current_ptr.deref() };
 
@@ -695,9 +658,6 @@ pub fn try_commit() -> bool {
             new
         );
 
-        #[cfg(test)]
-        fence(SeqCst);
-
         sched_delay!("installing new version during commit");
         match vsn_ptr.compare_and_set(
             current_ptr,
@@ -721,9 +681,6 @@ pub fn try_commit() -> bool {
                 panic!("somehow we got a conflict while committing a transaction");
             }
         }
-
-        #[cfg(test)]
-        fence(SeqCst);
     }
 
     #[cfg(test)]
@@ -748,7 +705,7 @@ fn cleanup(
     ts: usize,
     transacted: Vec<(usize, &AtomicUsize, &Atomic<Vsn>, LocalView)>,
     guard: &Guard,
-) {
+) -> bool {
     #[cfg(test)]
     debug!("{} aborting tx {}", tn(), ts);
 
@@ -756,7 +713,7 @@ fn cleanup(
         .iter()
         .filter(|(_, _, _, local)| local.is_write())
     {
-        // sched_delay!("reading current version before cleaning up");
+        sched_delay!("reading current version before cleaning up");
         let current_ptr = vsn_ptr.load(SeqCst, &guard);
         let current = unsafe { current_ptr.deref() };
 
@@ -771,10 +728,7 @@ fn cleanup(
             pending_wts: 0,
         });
 
-        #[cfg(test)]
-        fence(SeqCst);
-
-        // sched_delay!("installing cleaned-up version");
+        sched_delay!("installing cleaned-up version");
         vsn_ptr
             .compare_and_set(current_ptr, new, SeqCst, &guard)
             .expect(
@@ -787,9 +741,6 @@ fn cleanup(
         let dropper: fn(DropContainer) =
             unsafe { std::mem::transmute(dropper) };
         dropper(drop_container);
-
-        #[cfg(test)]
-        fence(SeqCst);
     }
 
     TS.with(|ts| *ts.borrow_mut() = 0);
@@ -800,24 +751,17 @@ fn cleanup(
     });
 
     #[cfg(test)]
-    fence(SeqCst);
-
-    #[cfg(test)]
     CONFLICT_TRACKER.compare_and_swap(
         ConflictState::Pending as isize,
         ConflictState::Aborted as isize,
         SeqCst,
     );
 
-    #[cfg(test)]
-    fence(SeqCst);
+    false
 }
 
 fn bump_gte(a: &AtomicUsize, to: usize) {
     sched_delay!("loading RTS before bumping");
-
-    #[cfg(test)]
-    fence(SeqCst);
 
     let mut current = a.load(SeqCst);
     while current < to as usize {
@@ -826,9 +770,6 @@ fn bump_gte(a: &AtomicUsize, to: usize) {
             Err(c) => current = c,
         }
     }
-
-    #[cfg(test)]
-    fence(SeqCst);
 }
 
 #[test]
@@ -892,8 +833,7 @@ fn run_interleavings(
         let (choice, _len) = choices[c];
 
         if choice >= scheds.len() {
-            error!("runtime scheds length mismatch, skipping buggy execution");
-            break;
+            panic!("runtime scheds length mismatch, skipping buggy execution");
         }
 
         // debug!("choice: {} out of {:?}", choice, scheds);
@@ -948,6 +888,7 @@ fn run_interleavings(
             || CONFLICT_TRACKER.load(SeqCst)
                 == ConflictState::Aborted as isize
         {
+            debug!("detected loop or above budget, running rest out");
             // finish threads
             let mut idx = 0;
             while !scheds.is_empty() {
@@ -964,9 +905,9 @@ fn run_interleavings(
         }
     }
 
-    choices.truncate(budget);
+    info!("took choices: {:?}", choices);
 
-    // debug!("took choices: {:?}", choices);
+    choices.truncate(budget);
 
     // pop off choices until we hit one where choice < possibilities
     while !choices.is_empty() {
@@ -1018,16 +959,14 @@ fn test_swap_scheduled() {
             let (transmit, rx) = sync_channel(0);
             let mut tvs = tvs.clone();
 
-            let t = thread::Builder::new()
+            let thread = thread::Builder::new()
                 .name(format!("t_{}", t))
                 .spawn(move || {
                     // set up scheduler listener
-                    fence(SeqCst);
                     SCHED.with(|s| {
                         let mut s = s.borrow_mut();
                         *s = Some(rx);
                     });
-                    fence(SeqCst);
 
                     for i in 0..2 {
                         if (i + t) % 2 == 0 {
@@ -1082,23 +1021,21 @@ fn test_swap_scheduled() {
                             );
                         }
                     }
-                    fence(SeqCst);
                     debug!("{} clearing receiving scheduler", tn());
                     SCHED.with(|s| {
                         let mut s = s.borrow_mut();
                         drop(s.take());
                     });
-                    fence(SeqCst);
                     debug!("{} done", tn());
                 }).expect("should be able to start thread");
 
-            threads.push(t);
+            threads.push(thread);
             scheds.push(transmit);
         }
 
         let finished = run_interleavings(
             false,
-            13,
+            14,
             scheds,
             threads,
             &mut choices,
@@ -1130,11 +1067,11 @@ fn test_swap() {
 
         let mut threads = vec![];
 
-        for t in 0..2 {
+        for t in 0..20 {
             let mut tvs = tvs.clone();
 
             let t = thread::Builder::new().name(format!("t_{}", t)).spawn(move || {
-                for i in 0..10000 {
+                for i in 0..30000 {
                     if (i + t) % 2 == 0 {
                         // swap tvars
                         let i1 = i % 3;
@@ -1193,11 +1130,13 @@ fn test_bank_transfer() {
 
         let mut threads = vec![];
 
-        for thread_no in 0..30 {
+        for thread_no in 0..4 {
             let mut alice_accounts = alice_accounts.clone();
             let mut bob_account = bob_account.clone();
 
             let t = thread::Builder::new().name(format!("t_{}", thread_no)).spawn(move || {
+                assert!(!is_contended());
+
                 for i in 0..500 {
                     if (i + thread_no) % 2 == 0 {
                         // try to transfer
