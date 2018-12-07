@@ -1,12 +1,4 @@
-#[macro_use]
-extern crate log;
-
-#[macro_use]
-extern crate lazy_static;
-extern crate crossbeam_epoch;
-extern crate pagetable;
-#[cfg(test)]
-extern crate sled_sync;
+use lazy_static::lazy_static;
 
 use std::{
     cell::RefCell,
@@ -14,18 +6,27 @@ use std::{
     fmt,
     marker::PhantomData,
     ops::{Deref, DerefMut},
-    sync::atomic::{AtomicIsize, AtomicUsize, Ordering::SeqCst},
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Arc,
+    },
 };
 
 #[cfg(test)]
-use std::{
-    sync::{
-        atomic::fence,
-        mpsc::{sync_channel, Receiver, SyncSender},
+use {
+    env_logger,
+    log::{debug, info, trace},
+    sled_sync,
+    std::{
+        sync::{
+            atomic::{fence, AtomicIsize},
+            mpsc::{sync_channel, Receiver, SyncSender},
+        },
+        thread::{self, JoinHandle},
     },
-    thread::{self, JoinHandle},
 };
 
+use crossbeam::sync::TreiberStack;
 use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
 use pagetable::PageTable;
 
@@ -48,10 +49,10 @@ enum ConflictState {
 static CONFLICT_TRACKER: AtomicIsize =
     AtomicIsize::new(ConflictState::Init as isize);
 
-// TODO add GC stack to entries here
 lazy_static! {
     static ref G: PageTable<(AtomicUsize, Atomic<Vsn>)> =
         PageTable::default();
+    static ref FREE: TreiberStack<usize> = TreiberStack::new();
 }
 
 thread_local! {
@@ -173,10 +174,40 @@ fn current_ts() -> usize {
     TS.with(|ts| *ts.borrow())
 }
 
+struct DropContainer(usize);
+
+unsafe impl Send for DropContainer {}
+unsafe impl Sync for DropContainer {}
+
+#[derive(Clone)]
+struct Dropper(usize);
+
+unsafe impl Send for Dropper {}
+unsafe impl Sync for Dropper {}
+
+impl fmt::Debug for Dropper {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Dropper(..)")
+    }
+}
+
+fn drop_from_ptr<T>(drop_container: DropContainer) {
+    let ptr = drop_container.0 as *mut T;
+    let owned = unsafe { Box::from_raw(ptr) };
+    drop(owned);
+}
+
 #[derive(Debug)]
 enum LocalView {
-    Read { ptr: *mut usize, read_wts: usize },
-    Write { ptr: *mut usize, read_wts: usize },
+    Read {
+        ptr: *mut usize,
+        read_wts: usize,
+    },
+    Write {
+        ptr: *mut usize,
+        read_wts: usize,
+        drop: Dropper,
+    },
 }
 
 impl LocalView {
@@ -194,14 +225,27 @@ impl LocalView {
         }
     }
 
-    fn maybe_upgrade_to_write<T: Clone>(&mut self) {
+    fn dropper(&self) -> Dropper {
+        match self {
+            LocalView::Read { .. } => {
+                panic!("called dropper on a LocalView::Read")
+            }
+            LocalView::Write { drop, .. } => drop.clone(),
+        }
+    }
+
+    fn maybe_upgrade_to_write<T: 'static + Clone>(&mut self) {
         let needs_upgrade = self.is_read();
         if needs_upgrade {
             let old_ptr = self.ptr::<T>();
             let new = unsafe { (*old_ptr).clone() };
             let ptr = Box::into_raw(Box::new(new)) as *mut usize;
             let read_wts = self.read_wts();
-            *self = LocalView::Write { ptr, read_wts };
+            *self = LocalView::Write {
+                ptr,
+                read_wts,
+                drop: Dropper(drop_from_ptr::<T> as usize),
+            };
         }
     }
 
@@ -233,9 +277,40 @@ struct Vsn {
 unsafe impl Send for Vsn {}
 unsafe impl Sync for Vsn {}
 
+struct IdDropper {
+    id: usize,
+    dropper: Dropper,
+}
+
+impl Drop for IdDropper {
+    fn drop(&mut self) {
+        let guard = pin();
+        let global_val = G.swap(self.id, Shared::null(), &guard);
+        assert_ne!(global_val, Shared::null());
+
+        // NB must happen AFTER resetting G entry to null
+        FREE.push(self.id);
+
+        // GC old stable value
+        let (_rts, vsn_ptr) = unsafe { global_val.deref() };
+        let current_ptr = vsn_ptr.load(SeqCst, &guard);
+        let current = unsafe { current_ptr.deref() };
+
+        assert_eq!(current.pending_wts, 0);
+        assert_eq!(current.pending, std::ptr::null_mut());
+
+        // handle GC
+        let drop_container = DropContainer(current.stable as usize);
+        let dropper: fn(DropContainer) =
+            unsafe { std::mem::transmute(self.dropper.clone()) };
+        dropper(drop_container)
+    }
+}
+
 #[derive(Clone)]
 pub struct TVar<T: Clone> {
     _pd: PhantomData<T>,
+    id_dropper: Arc<IdDropper>,
     id: usize,
 }
 
@@ -253,8 +328,9 @@ where
 
 impl<T: Clone> TVar<T> {
     pub fn new(val: T) -> TVar<T> {
-        sched_delay!("creating new tvar");
-        let id = TVARS.fetch_add(1, SeqCst);
+        // sched_delay!("creating new tvar");
+        let id =
+            FREE.pop().unwrap_or_else(|| TVARS.fetch_add(1, SeqCst));
         let ptr = Box::into_raw(Box::new(val));
         let guard = pin();
         let gv = Owned::new((
@@ -265,14 +341,21 @@ impl<T: Clone> TVar<T> {
                 pending_wts: 0,
                 pending: std::ptr::null_mut(),
             }),
-        )).into_shared(&guard);
+        ))
+        .into_shared(&guard);
 
-        sched_delay!("installing tvar to global table");
+        // sched_delay!("installing tvar to global table");
         G.cas(id, Shared::null(), gv, &guard)
             .expect("installation should succeed");
 
+        let id_dropper = IdDropper {
+            id: id,
+            dropper: Dropper(drop_from_ptr::<T> as usize),
+        };
+
         TVar {
             _pd: PhantomData,
+            id_dropper: Arc::new(id_dropper),
             id,
         }
     }
@@ -315,7 +398,10 @@ fn read_from_l<T>(id: usize, guard: &Guard) -> *mut T {
     })
 }
 
-fn write_into_l<T: Clone>(id: usize, guard: &Guard) -> *mut T {
+fn write_into_l<T: 'static + Clone>(
+    id: usize,
+    guard: &Guard,
+) -> *mut T {
     L.with(|l| {
         let mut hm = l.borrow_mut();
         let lk =
@@ -334,7 +420,7 @@ impl<T: Clone> Deref for TVar<T> {
     }
 }
 
-impl<T: Clone> DerefMut for TVar<T> {
+impl<T: 'static + Clone> DerefMut for TVar<T> {
     fn deref_mut(&mut self) -> &mut T {
         let guard = pin();
         unsafe { &mut *write_into_l(self.id, &guard) }
@@ -545,7 +631,7 @@ pub fn try_commit() -> bool {
     }
 
     // commit
-    for (_tvar, _rts, vsn_ptr, _local) in transacted
+    for (_tvar, _rts, vsn_ptr, local) in transacted
         .iter()
         .filter(|(_, _, _, local)| local.is_write())
     {
@@ -585,24 +671,41 @@ pub fn try_commit() -> bool {
             &guard,
         ) {
             Ok(_old) => {
-                // TODO handle GC
-                // guard.defer(|| drop(old)),
+                // handle GC
+                let drop_container =
+                    DropContainer(current.stable as usize);
+                let dropper = local.dropper().0;
+                guard.defer(move || {
+                    let dropper: fn(DropContainer) =
+                        unsafe { std::mem::transmute(dropper) };
+                    dropper(drop_container)
+                });
             }
             Err(_) => {
                 // write conflict
                 panic!("somehow we got a conflict while committing a transaction");
             }
         }
+
+        #[cfg(test)]
+        fence(SeqCst);
     }
 
     #[cfg(test)]
-    trace!("{} committed tx {}", tn(), ts);
+    debug!("{} committed tx {}", tn(), ts);
     TS.with(|ts| *ts.borrow_mut() = 0);
     GUARD.with(|g| {
         g.borrow_mut()
             .take()
             .expect("should be able to end transaction")
     });
+
+    #[cfg(test)]
+    CONFLICT_TRACKER.compare_and_swap(
+        ConflictState::Pending as isize,
+        ConflictState::Init as isize,
+        SeqCst,
+    );
     true
 }
 
@@ -612,13 +715,13 @@ fn cleanup(
     guard: &Guard,
 ) {
     #[cfg(test)]
-    trace!("{} aborting tx {}", tn(), ts);
+    debug!("{} aborting tx {}", tn(), ts);
 
-    for (_tvar, _rts, vsn_ptr, _local) in transacted
+    for (_tvar, _rts, vsn_ptr, local) in transacted
         .iter()
         .filter(|(_, _, _, local)| local.is_write())
     {
-        sched_delay!("reading current version before cleaning up");
+        // sched_delay!("reading current version before cleaning up");
         let current_ptr = vsn_ptr.load(SeqCst, &guard);
         let current = unsafe { current_ptr.deref() };
 
@@ -633,12 +736,25 @@ fn cleanup(
             pending_wts: 0,
         });
 
-        sched_delay!("installing cleaned-up version");
+        #[cfg(test)]
+        fence(SeqCst);
+
+        // sched_delay!("installing cleaned-up version");
         vsn_ptr
             .compare_and_set(current_ptr, new, SeqCst, &guard)
             .expect(
                 "somehow version changed before we could clean up",
             );
+
+        // handle GC
+        let drop_container = DropContainer(current.pending as usize);
+        let dropper = local.dropper().0;
+        let dropper: fn(DropContainer) =
+            unsafe { std::mem::transmute(dropper) };
+        dropper(drop_container);
+
+        #[cfg(test)]
+        fence(SeqCst);
     }
 
     TS.with(|ts| *ts.borrow_mut() = 0);
@@ -649,15 +765,25 @@ fn cleanup(
     });
 
     #[cfg(test)]
+    fence(SeqCst);
+
+    #[cfg(test)]
     CONFLICT_TRACKER.compare_and_swap(
-        ConflictState::Started as isize,
+        ConflictState::Pending as isize,
         ConflictState::Aborted as isize,
         SeqCst,
     );
+
+    #[cfg(test)]
+    fence(SeqCst);
 }
 
 fn bump_gte(a: &AtomicUsize, to: usize) {
-    sched_delay!("loading RTS before bumping");
+    // sched_delay!("loading RTS before bumping");
+
+    #[cfg(test)]
+    fence(SeqCst);
+
     let mut current = a.load(SeqCst);
     while current < to as usize {
         match a.compare_exchange(current, to, SeqCst, SeqCst) {
@@ -665,6 +791,9 @@ fn bump_gte(a: &AtomicUsize, to: usize) {
             Err(c) => current = c,
         }
     }
+
+    #[cfg(test)]
+    fence(SeqCst);
 }
 
 #[test]
