@@ -39,9 +39,10 @@ static TVARS: AtomicUsize = AtomicUsize::new(0);
 static TICKS: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(test)]
+#[derive(Debug)]
 enum ConflictState {
     Init = 0_isize,
-    Started = 1_isize,
+    Pending = 1_isize,
     Aborted = 2_isize,
 }
 
@@ -85,24 +86,39 @@ macro_rules! sched_delay {
                 if let Some(s) = &*s.borrow() {
                     // prime to signal readiness to scheduler
                     fence(SeqCst);
-                    s.recv().unwrap();
+                    if let Err(e) = s.recv() {
+                        eprintln!(
+                            "{} scheduler should never hang up: {:?}",
+                            tn(),
+                            e
+                        );
+                        std::process::exit(1);
+                    }
+
                     fence(SeqCst);
 
                     // actually go
-                    s.recv().unwrap();
+                    if let Err(e) = s.recv() {
+                        eprintln!(
+                            "{} scheduler should never hang up: {:?}",
+                            tn(),
+                            e
+                        );
+                        std::process::exit(1);
+                    }
+
                     fence(SeqCst);
-                    /*
-                                            trace!(
-                                                "{} {} {} {} {}",
-                                                TICKS.load(SeqCst),
-                                                tn(),
-                                                file!(),
-                                                line!(),
-                                                $note,
-                                            );
-                                            */
-                }
-                else {
+                    trace!(
+                        "{} {} {} {} {}",
+                        TICKS.load(SeqCst),
+                        tn(),
+                        file!(),
+                        line!(),
+                        $note,
+                    );
+
+                    fence(SeqCst);
+                } else {
                     sled_sync::debug_delay();
                 }
             })
@@ -114,8 +130,8 @@ pub fn tx<F, R>(mut f: F) -> R
 where
     F: FnMut() -> R,
 {
-    sched_delay!("begin_tx");
     let res = loop {
+        sched_delay!("begin_tx");
         begin_tx();
 
         let result = f();
@@ -127,7 +143,7 @@ where
         maybe_bump_aborts();
 
         #[cfg(test)]
-        trace!("{} retrying tx", tn());
+        debug!("{} retrying tx", tn());
     };
 
     maybe_decr_aborts();
@@ -366,11 +382,11 @@ fn read_from_g(id: usize, guard: &Guard) -> LocalView {
     let (_rts, vsn_ptr) =
         unsafe { G.get(id, guard).unwrap().deref() };
 
-    sched_delay!("loading atomic ptr for global version");
+    // sched_delay!("loading atomic ptr for global version");
     let gv = unsafe { vsn_ptr.load(SeqCst, guard).deref() };
 
     #[cfg(test)]
-    trace!("{} reading tvar from global table: {:?}", tn(), gv);
+    debug!("{} reading tvar from global table: {:?}", tn(), gv);
 
     if !is_contended()
         && gv.pending_wts != 0
@@ -429,18 +445,25 @@ impl<T: 'static + Clone> DerefMut for TVar<T> {
 
 pub fn begin_tx() {
     #[cfg(test)]
+    fence(SeqCst);
+
+    #[cfg(test)]
     CONFLICT_TRACKER.compare_and_swap(
         ConflictState::Init as isize,
-        ConflictState::Started as isize,
+        ConflictState::Pending as isize,
         SeqCst,
     );
+
+    #[cfg(test)]
+    fence(SeqCst);
+
     TS.with(|ts| {
         let mut ts = ts.borrow_mut();
         if *ts == 0 {
-            sched_delay!("generating new timestamp");
+            // sched_delay!("generating new timestamp");
             *ts = TX.fetch_add(1, SeqCst) + 1;
             #[cfg(test)]
-            trace!("{} started tx {}", tn(), *ts);
+            debug!("{} started tx {}", tn(), *ts);
             GUARD.with(|g| {
                 let mut g = g.borrow_mut();
                 assert!(
@@ -463,7 +486,8 @@ pub fn try_commit() -> bool {
         .with(|l| {
             let lr: &mut HashMap<_, _> = &mut *l.borrow_mut();
             std::mem::replace(lr, HashMap::new())
-        }).into_iter()
+        })
+        .into_iter()
         .map(|(tvar, local)| {
             sched_delay!("re-reading global state");
             let (rts, vsn_ptr) = unsafe {
@@ -472,7 +496,8 @@ pub fn try_commit() -> bool {
                     .deref()
             };
             (tvar, rts, vsn_ptr, local)
-        }).collect::<Vec<_>>();
+        })
+        .collect::<Vec<_>>();
 
     // install pending
     for (_tvar, _rts, vsn_ptr, local) in transacted
@@ -489,7 +514,7 @@ pub fn try_commit() -> bool {
         {
             // write conflict
             #[cfg(test)]
-            trace!(
+            debug!(
                 "{} hit conflict in tx {} at line {}",
                 tn(),
                 ts,
@@ -504,28 +529,28 @@ pub fn try_commit() -> bool {
         new.pending = local.ptr();
 
         #[cfg(test)]
-        trace!(
+        debug!(
             "{} installing pending {:?} to {:?}",
             tn(),
             current,
             new
         );
 
-        sched_delay!("installing write with CAS");
+        #[cfg(test)]
+        fence(SeqCst);
+
+        // sched_delay!("installing write with CAS");
         match vsn_ptr.compare_and_set(
             current_ptr,
             Owned::new(new).into_shared(&guard),
             SeqCst,
             &guard,
         ) {
-            Ok(_old) => {
-                // TODO delay add the ptr to the gc stack for this TVar
-                // guard.defer(|| drop(ddp.0));
-            }
+            Ok(_old) => {}
             Err(_) => {
                 // write conflict
                 #[cfg(test)]
-                trace!(
+                debug!(
                     "{} hit conflict in tx {} at line {}",
                     tn(),
                     ts,
@@ -535,6 +560,9 @@ pub fn try_commit() -> bool {
                 break;
             }
         }
+
+        #[cfg(test)]
+        fence(SeqCst);
     }
 
     if abort {
@@ -558,7 +586,7 @@ pub fn try_commit() -> bool {
             || pending_predecessor
         {
             #[cfg(test)]
-            trace!(
+            debug!(
                 "{} hit conflict in tx {} at line {}: current: {:?} local: {:?}",
                 tn(),
                 ts,
@@ -587,7 +615,7 @@ pub fn try_commit() -> bool {
         if rts > ts {
             // read conflict
             #[cfg(test)]
-            trace!(
+            debug!(
                 "{} hit conflict in tx {} at line {}, rts {} > our ts {}",
                 tn(),
                 ts,
@@ -599,9 +627,7 @@ pub fn try_commit() -> bool {
             break;
         }
 
-        sched_delay!(
-            "loading current ptr to check current stable and pending"
-        );
+        // sched_delay!( "loading current ptr to check current stable and pending");
         let current = unsafe { vsn_ptr.load(SeqCst, &guard).deref() };
 
         assert_eq!(
@@ -612,7 +638,7 @@ pub fn try_commit() -> bool {
         if current.stable_wts != local.read_wts() {
             // write conflict
             #[cfg(test)]
-            trace!(
+            debug!(
                 "{} hit conflict in tx {} at line {}, stable_wts {} != our read wts {}",
                 tn(),
                 ts,
@@ -656,12 +682,15 @@ pub fn try_commit() -> bool {
         });
 
         #[cfg(test)]
-        trace!(
+        debug!(
             "{} installing committed old {:?} to new {:?}",
             tn(),
             current,
             new
         );
+
+        #[cfg(test)]
+        fence(SeqCst);
 
         sched_delay!("installing new version during commit");
         match vsn_ptr.compare_and_set(
@@ -803,20 +832,20 @@ fn basic() {
 
     let first_ts = tx(|| {
         *a += 5;
-        trace!("a is now {:?}", a);
+        debug!("a is now {:?}", a);
         *a -= 3;
-        trace!("a is now {:?}", a);
+        debug!("a is now {:?}", a);
         b.push_str("ayo");
-        trace!("b is now {:?}", b);
+        debug!("b is now {:?}", b);
         current_ts()
     });
     let second_ts = tx(|| {
         *a += 5;
-        trace!("a is now {:?}", a);
+        debug!("a is now {:?}", a);
         *a -= 3;
-        trace!("a is now {:?}", a);
+        debug!("a is now {:?}", a);
         b.push_str("ayo");
-        trace!("b is now {:?}", b);
+        debug!("b is now {:?}", b);
         current_ts()
     });
 
@@ -831,11 +860,12 @@ fn basic() {
 #[cfg(test)]
 fn run_interleavings(
     symmetric: bool,
+    budget: usize,
     mut scheds: Vec<SyncSender<()>>,
     mut threads: Vec<JoinHandle<()>>,
     choices: &mut Vec<(usize, usize)>,
 ) -> bool {
-    trace!("-----------------------------");
+    debug!("-----------------------------");
     TICKS.store(0, SeqCst);
 
     // wait for all threads to reach sync points
@@ -846,27 +876,37 @@ fn run_interleavings(
     assert!(!scheds.is_empty());
 
     // replay previous choices
-    // trace!("replaying choices {:?}", choices);
+    info!(
+        "replaying choices {:?}",
+        choices.iter().map(|c| c.0).take(100).collect::<Vec<_>>()
+    );
 
     for c in 0..choices.len() {
         TICKS.fetch_add(1, SeqCst);
         let (choice, _len) = choices[c];
 
-        // trace!("choice: {} out of {:?}", choice, scheds);
-        scheds[choice].send(()).expect("should be able to run target thread if it's still in scheds");
+        // debug!("choice: {} out of {:?}", choice, scheds);
+        scheds[choice]
+            .send(())
+            .expect("should be able to run target thread if it's still in scheds");
 
         // prime it or remove from scheds
         if let Err(e) = scheds[choice].send(()) {
-            trace!("removing finished thread after problem sending: {:?}", e);
+            debug!("{} removing finished thread after problem sending: {:?}", tn(), e);
             scheds.remove(choice);
             let t = threads.remove(choice);
             if let Err(e) = t.join() {
-                panic!(e);
+                eprintln!(
+                    "child thread did not exit successfully: {:?}",
+                    e
+                );
+                std::process::exit(1);
             }
+            debug!("{} successfully joined thread", tn());
         }
     }
 
-    trace!("~~~~~~");
+    debug!("~~~~~~");
 
     CONFLICT_TRACKER.store(ConflictState::Init as isize, SeqCst);
 
@@ -874,31 +914,52 @@ fn run_interleavings(
     while !scheds.is_empty() {
         TICKS.fetch_add(1, SeqCst);
         let choice = 0;
-        // trace!("choice: {} out of {:?}", choice, scheds);
+        debug!("choice: {} out of {:?}", choice, scheds);
         choices.push((choice, scheds.len()));
 
-        scheds[choice].send(()).expect("should be able to run target thread if it's still in scheds");
+        scheds[choice]
+            .send(())
+            .expect("should be able to run target thread if it's still in scheds");
 
         // prime it or remove from scheds
         if let Err(e) = scheds[choice].send(()) {
-            trace!("removing finished thread after problem sending: {:?}", e);
+            debug!("removing finished thread after problem sending: {:?}", e);
             scheds.remove(choice);
             let t = threads.remove(choice);
             if let Err(e) = t.join() {
-                panic!(e);
+                eprintln!(
+                    "child thread did not exit successfully: {:?}",
+                    e
+                );
+                std::process::exit(1);
             }
-        } else if CONFLICT_TRACKER.load(SeqCst)
-            == ConflictState::Aborted as isize
+        } else if choices.len() > budget
+            || CONFLICT_TRACKER.load(SeqCst)
+                == ConflictState::Aborted as isize
         {
-            // we've detected a conflict in a transaction that we started
-            // while only scheduing the first choice! switch it up!
-            assert!(scheds.len() > 1);
-            choices.push((1, scheds.len()));
-            return false;
+            // finish threads
+            let mut idx = 0;
+            while !scheds.is_empty() {
+                idx += 1;
+                let choice = idx % scheds.len();
+                if scheds[choice].send(()).is_err() {
+                    scheds.remove(choice);
+                }
+            }
+
+            for t in threads.drain(..) {
+                t.join().expect("child should not have crashed");
+            }
         }
     }
 
-    // trace!("took choices: {:?}", choices);
+    println!(
+        "choices: {:?}",
+        choices.iter().map(|c| c.0).take(100).collect::<Vec<_>>()
+    );
+    choices.truncate(budget);
+
+    // debug!("took choices: {:?}", choices);
 
     // pop off choices until we hit one where choice < possibilities
     while !choices.is_empty() {
@@ -912,6 +973,8 @@ fn run_interleavings(
         break;
     }
 
+    debug!("{} clearing receiving scheduler", tn());
+
     // we're done when we've explored every option
     if symmetric {
         // symmetric workloads don't need to try other top-levels
@@ -924,6 +987,8 @@ fn run_interleavings(
 #[test]
 #[ignore]
 fn test_swap_scheduled() {
+    env_logger::init();
+
     let mut choices = vec![];
 
     let mut printed = false;
@@ -958,12 +1023,20 @@ fn test_swap_scheduled() {
                             let i1 = i % 3;
                             let i2 = (i + t) % 3;
 
-                            trace!("{} swapping {} and {}", tn(), i1, i2);
+                            debug!("{} swapping {} and {}", tn(), i1, i2);
 
                             tx(|| {
                                 let tmp1 = *tvs[i1];
                                 let tmp2 = *tvs[i2];
-                                trace!("{} read {}@{} and {}@{} before swapping", tn(), tmp1, i1, tmp2, i2);
+                                debug!(
+                                    "{} read {}@{} and {}@{} \
+                                   before swapping",
+                                   tn(),
+                                   tmp1,
+                                   i1,
+                                   tmp2,
+                                   i2,
+                                 );
 
                                 *tvs[i1] = tmp2;
                                 *tvs[i2] = tmp1;
@@ -971,7 +1044,7 @@ fn test_swap_scheduled() {
                         } else {
                             // read tvars
 
-                            trace!("{} reading", tn());
+                            debug!("{} reading", tn());
                             let r = tx(|| {
                                 [
                                     *tvs[0],
@@ -979,7 +1052,7 @@ fn test_swap_scheduled() {
                                     *tvs[2],
                                 ]
                             });
-                            // trace!("{} read {:?}", tn(), r);
+                            // debug!("{} read {:?}", tn(), r);
 
                             assert_eq!(
                                 r[0] + r[1] + r[2],
@@ -998,33 +1071,41 @@ fn test_swap_scheduled() {
                         }
                     }
                     fence(SeqCst);
+                    debug!("{} clearing receiving scheduler", tn());
                     SCHED.with(|s| {
                         let mut s = s.borrow_mut();
                         drop(s.take());
                     });
                     fence(SeqCst);
-                    trace!("{} done", tn());
+                    debug!("{} done", tn());
                 }).expect("should be able to start thread");
 
             threads.push(t);
             scheds.push(transmit);
         }
 
-        let finished =
-            run_interleavings(true, scheds, threads, &mut choices);
+        let finished = run_interleavings(
+            true,
+            20,
+            scheds,
+            threads,
+            &mut choices,
+        );
 
         if finished {
-            trace!("done, took {}", runs);
-            return;
+            info!("done, took {}", runs);
+            break;
         } else if !printed {
             for (_choice, options) in &choices {
                 possibilities *= options;
             }
-            trace!("{} possibilities", possibilities);
+            info!("{} possibilities", possibilities);
             printed = true;
         } else {
-            if runs % (possibilities / 10) == 0 {
-                trace!("{} / {}", runs, possibilities);
+            debug!("{} getting ready to run another schedule", tn());
+
+            if runs % (possibilities + 1 / 10) == 0 {
+                info!("{} / {}", runs, possibilities);
             }
         }
     }
@@ -1033,7 +1114,6 @@ fn test_swap_scheduled() {
 #[test]
 fn test_swap() {
     for _ in 0..10 {
-        println!("t");
         let tvs = [TVar::new(1), TVar::new(2), TVar::new(3)];
 
         let mut threads = vec![];
@@ -1052,7 +1132,7 @@ fn test_swap() {
                             let tmp1 = *tvs[i1];
                             let tmp2 = *tvs[i2];
 
-                            // trace!("{} tmp1: {:?} tmp2: {:?}", tn(), tmp1, tmp2);
+                            // debug!("{} tmp1: {:?} tmp2: {:?}", tn(), tmp1, tmp2);
 
                             *tvs[i1] = tmp2;
                             *tvs[i2] = tmp1;
@@ -1060,7 +1140,7 @@ fn test_swap() {
                     } else {
                         // read tvars
                         let r = tx(|| [*tvs[0], *tvs[1], *tvs[2]]);
-                        // trace!("{} read {:?}", tn(), r);
+                        // debug!("{} read {:?}", tn(), r);
 
                         assert_eq!(
                             r[0] + r[1] + r[2],
@@ -1072,6 +1152,69 @@ fn test_swap() {
                             r[0] * r[1] * r[2],
                             6,
                             "expected observed values to be different, instead: {:?}",
+                            r
+                        );
+                    }
+                }
+            }).unwrap();
+
+            threads.push(t);
+        }
+
+        for t in threads.into_iter() {
+            t.join().unwrap();
+        }
+    }
+}
+
+// In this test, we are trying to induce a write skew anomaly.
+// Essentially, if a write depends on a read that isn't part of a later write,
+// we may not be able to guarantee transactional semantics unless we
+// "materialize" the conflict by looking at more than just the writes.
+#[test]
+fn test_bank_transfer() {
+    for _ in 0..10 {
+        let alice_accounts =
+            [TVar::new(50_isize), TVar::new(50_isize)];
+        let bob_account = TVar::new(0_usize);
+
+        let mut threads = vec![];
+
+        for t in 0..200 {
+            let mut alice_accounts = alice_accounts.clone();
+            let mut bob_account = bob_account.clone();
+
+            let t = thread::Builder::new().name(format!("t_{}", t)).spawn(move || {
+                for i in 0..500 {
+                    if (i + t) % 2 == 0 {
+                        // try to transfer
+                        let withdrawal_account = i % alice_accounts.len();
+
+                        tx(|| {
+                            let sum = *alice_accounts[0] + *alice_accounts[1];
+
+                            if sum >= 100 {
+                                *alice_accounts[withdrawal_account] -= 100;
+                                *bob_account += 100;
+                            }
+                        });
+                    } else {
+                        // assert that the sum of alice's accounts
+                        // never go negative
+                        let r = tx(|| (*alice_accounts[0], *alice_accounts[1], *bob_account));
+
+                        assert!(
+                            r.0 + r.1 >= 0
+                            "possible write skew anomaly detected! expected the \
+                            sum of alice's accounts to be >= 0. observed values: {:?}"
+                            r
+                        );
+
+                        assert_ne!(
+                            r.2,
+                            200,
+                            "A double-transfer to bob was detected! \
+                            read values: {:?}",
                             r
                         );
                     }
