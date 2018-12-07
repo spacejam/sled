@@ -15,7 +15,7 @@ use std::{
 #[cfg(test)]
 use {
     env_logger,
-    log::{debug, info, trace},
+    log::{debug, error, info, trace},
     sled_sync,
     std::{
         sync::{
@@ -378,7 +378,7 @@ impl<T: Clone> TVar<T> {
 }
 
 fn read_from_g(id: usize, guard: &Guard) -> LocalView {
-    sched_delay!("reading tvar from global table");
+    // sched_delay!("reading tvar from global table");
     let (_rts, vsn_ptr) =
         unsafe { G.get(id, guard).unwrap().deref() };
 
@@ -489,7 +489,7 @@ pub fn try_commit() -> bool {
         })
         .into_iter()
         .map(|(tvar, local)| {
-            sched_delay!("re-reading global state");
+            // sched_delay!("re-reading global state");
             let (rts, vsn_ptr) = unsafe {
                 G.get(tvar, &guard)
                     .expect("should find TVar in global lookup table")
@@ -504,7 +504,7 @@ pub fn try_commit() -> bool {
         .iter()
         .filter(|(_, _, _, local)| local.is_write())
     {
-        sched_delay!("reading current ptr before installing write");
+        // sched_delay!("reading current ptr before installing write");
         let current_ptr = vsn_ptr.load(SeqCst, &guard);
         let current = unsafe { current_ptr.deref() };
 
@@ -539,7 +539,7 @@ pub fn try_commit() -> bool {
         #[cfg(test)]
         fence(SeqCst);
 
-        // sched_delay!("installing write with CAS");
+        // sched_delay!("installing pending write with CAS");
         match vsn_ptr.compare_and_set(
             current_ptr,
             Owned::new(new).into_shared(&guard),
@@ -576,7 +576,7 @@ pub fn try_commit() -> bool {
     {
         bump_gte(rts, ts);
 
-        sched_delay!("reading current stable_rts after bumping RTS");
+        // sched_delay!("reading current stable_rts after bumping RTS");
         let current_ptr = vsn_ptr.load(SeqCst, &guard);
         let current = unsafe { current_ptr.deref() };
 
@@ -661,7 +661,7 @@ pub fn try_commit() -> bool {
         .iter()
         .filter(|(_, _, _, local)| local.is_write())
     {
-        sched_delay!("loading current version before committing");
+        // sched_delay!("loading current version before committing");
         let current_ptr = vsn_ptr.load(SeqCst, &guard);
         let current = unsafe { current_ptr.deref() };
 
@@ -808,7 +808,7 @@ fn cleanup(
 }
 
 fn bump_gte(a: &AtomicUsize, to: usize) {
-    // sched_delay!("loading RTS before bumping");
+    sched_delay!("loading RTS before bumping");
 
     #[cfg(test)]
     fence(SeqCst);
@@ -885,6 +885,11 @@ fn run_interleavings(
         TICKS.fetch_add(1, SeqCst);
         let (choice, _len) = choices[c];
 
+        if choice >= scheds.len() {
+            error!("runtime scheds length mismatch, skipping buggy execution");
+            break;
+        }
+
         // debug!("choice: {} out of {:?}", choice, scheds);
         scheds[choice]
             .send(())
@@ -953,10 +958,6 @@ fn run_interleavings(
         }
     }
 
-    println!(
-        "choices: {:?}",
-        choices.iter().map(|c| c.0).take(100).collect::<Vec<_>>()
-    );
     choices.truncate(budget);
 
     // debug!("took choices: {:?}", choices);
@@ -992,7 +993,7 @@ fn test_swap_scheduled() {
     let mut choices = vec![];
 
     let mut printed = false;
-    let mut possibilities = 1;
+    let possibilities = 1_usize;
     let mut runs = 0;
 
     loop {
@@ -1085,8 +1086,8 @@ fn test_swap_scheduled() {
         }
 
         let finished = run_interleavings(
-            true,
-            20,
+            false,
+            13,
             scheds,
             threads,
             &mut choices,
@@ -1097,7 +1098,7 @@ fn test_swap_scheduled() {
             break;
         } else if !printed {
             for (_choice, options) in &choices {
-                possibilities *= options;
+                possibilities.saturating_mul(*options);
             }
             info!("{} possibilities", possibilities);
             printed = true;
@@ -1113,16 +1114,16 @@ fn test_swap_scheduled() {
 
 #[test]
 fn test_swap() {
-    for _ in 0..10 {
+    for _ in 0..1 {
         let tvs = [TVar::new(1), TVar::new(2), TVar::new(3)];
 
         let mut threads = vec![];
 
-        for t in 0..200 {
+        for t in 0..2 {
             let mut tvs = tvs.clone();
 
             let t = thread::Builder::new().name(format!("t_{}", t)).spawn(move || {
-                for i in 0..500 {
+                for i in 0..10000 {
                     if (i + t) % 2 == 0 {
                         // swap tvars
                         let i1 = i % 3;
@@ -1173,22 +1174,23 @@ fn test_swap() {
 // "materialize" the conflict by looking at more than just the writes.
 #[test]
 fn test_bank_transfer() {
-    for _ in 0..10 {
+    env_logger::init();
+    for _ in 0..1 {
         let alice_accounts =
             [TVar::new(50_isize), TVar::new(50_isize)];
         let bob_account = TVar::new(0_usize);
 
         let mut threads = vec![];
 
-        for t in 0..200 {
+        for thread_no in 0..30 {
             let mut alice_accounts = alice_accounts.clone();
             let mut bob_account = bob_account.clone();
 
-            let t = thread::Builder::new().name(format!("t_{}", t)).spawn(move || {
+            let t = thread::Builder::new().name(format!("t_{}", thread_no)).spawn(move || {
                 for i in 0..500 {
-                    if (i + t) % 2 == 0 {
+                    if (i + thread_no) % 2 == 0 {
                         // try to transfer
-                        let withdrawal_account = i % alice_accounts.len();
+                        let withdrawal_account = thread_no % alice_accounts.len();
 
                         tx(|| {
                             let sum = *alice_accounts[0] + *alice_accounts[1];
@@ -1217,6 +1219,13 @@ fn test_bank_transfer() {
                             read values: {:?}",
                             r
                         );
+
+                        // reset accounts
+                        tx(|| {
+                            *alice_accounts[0] = 50;
+                            *alice_accounts[1] = 50;
+                            *bob_account = 0;
+                        });
                     }
                 }
             }).unwrap();
