@@ -315,6 +315,10 @@ impl Drop for IdDropper {
         assert_eq!(current.pending_wts, 0);
         assert_eq!(current.pending, std::ptr::null_mut());
 
+        unsafe {
+            guard.defer_destroy(current_ptr);
+        }
+
         // handle GC
         let drop_container = DropContainer(current.stable as usize);
         let dropper: fn(DropContainer) =
@@ -536,7 +540,9 @@ pub fn try_commit() -> bool {
             SeqCst,
             &guard,
         ) {
-            Ok(_old) => {}
+            Ok(_old) => unsafe {
+                guard.defer_destroy(current_ptr);
+            },
             Err(_) => {
                 // write conflict
                 #[cfg(test)]
@@ -678,6 +684,10 @@ pub fn try_commit() -> bool {
             &guard,
         ) {
             Ok(_old) => {
+                unsafe {
+                    guard.defer_destroy(current_ptr);
+                }
+
                 // handle GC
                 let drop_container =
                     DropContainer(current.stable as usize);
@@ -746,6 +756,10 @@ fn cleanup(
             .expect(
                 "somehow version changed before we could clean up",
             );
+
+        unsafe {
+            guard.defer_destroy(current_ptr);
+        }
 
         // handle GC
         let drop_container = DropContainer(current.pending as usize);
