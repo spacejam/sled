@@ -504,6 +504,7 @@ pub fn try_commit() -> bool {
         if !current.pending.is_null()
             || current.pending_wts != 0
             || current.stable_wts > ts
+            || local.read_wts() > ts
         {
             // write conflict
             #[cfg(test)]
@@ -551,14 +552,25 @@ pub fn try_commit() -> bool {
     }
 
     // update rts
-    for (_tvar, rts, vsn_ptr, local) in
-        transacted.iter().filter(|(_, _, _, local)| local.is_read())
-    {
+    for (_tvar, rts, vsn_ptr, local) in transacted.iter() {
         bump_gte(rts, ts);
 
         sched_delay!("reading current stable_rts after bumping RTS");
         let current_ptr = vsn_ptr.load(SeqCst, &guard);
         let current = unsafe { current_ptr.deref() };
+
+        if current.stable_wts > ts {
+            #[cfg(test)]
+            debug!(
+                "{} hit conflict in tx {} at line {}: current: {:?} local: {:?}",
+                tn(),
+                ts,
+                line!(),
+                current,
+                local,
+            );
+            return cleanup(ts, transacted, &guard);
+        }
 
         let pending_predecessor =
             current.pending_wts != 0 && current.pending_wts < ts;
