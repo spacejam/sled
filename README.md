@@ -1,13 +1,13 @@
 # sled
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face.png" width="20%" height="auto" />
-</p>
-
+  
 [![Build Status](https://travis-ci.org/spacejam/sled.svg?branch=master)](https://travis-ci.org/spacejam/sled)
 [![crates.io](https://meritbadge.herokuapp.com/sled)](https://crates.io/crates/sled)
 [![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled)
 [![chat](https://img.shields.io/discord/509773073294295082.svg?logo=discord)](https://discord.gg/Z6VsXds)
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face.png" width="20%" height="auto" />
+</p>
 
 An (alpha) modern embedded database.
 
