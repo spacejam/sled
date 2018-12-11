@@ -476,7 +476,7 @@ where
 
     #[cfg(feature = "zstd")]
     let bytes = if config.use_compression {
-        compress(&*raw_bytes, config.zstd_compression_factor).unwrap()
+        compress(&*raw_bytes, config.compression_factor).unwrap()
     } else {
         raw_bytes
     };

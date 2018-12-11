@@ -1,6 +1,6 @@
 use std::fs::File;
 
-#[cfg(feature = "zstd")]
+#[cfg(feature = "compression")]
 use zstd::block::decompress;
 
 use super::Pio;
@@ -167,7 +167,7 @@ impl LogReader for File {
             MessageKind::Inline => {
                 trace!("read a successful inline message");
                 let buf = {
-                    #[cfg(feature = "zstd")]
+                    #[cfg(feature = "compression")]
                     {
                         if config.use_compression {
                             let _measure =
@@ -178,7 +178,7 @@ impl LogReader for File {
                         }
                     }
 
-                    #[cfg(not(feature = "zstd"))]
+                    #[cfg(not(feature = "compression"))]
                     buf
                 };
 

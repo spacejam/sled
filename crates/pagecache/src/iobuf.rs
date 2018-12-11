@@ -11,7 +11,7 @@ use std::{
     sync::{Arc, Condvar, Mutex},
 };
 
-#[cfg(feature = "zstd")]
+#[cfg(feature = "compression")]
 use zstd::block::compress;
 
 use self::reader::LogReader;
@@ -339,16 +339,16 @@ impl IoBufs {
         #[cfg(target_pointer_width = "64")]
         assert_eq!((raw_buf.len() + MSG_HEADER_LEN) >> 32, 0);
 
-        #[cfg(feature = "zstd")]
+        #[cfg(feature = "compression")]
         let buf = if self.config.use_compression {
             let _measure = Measure::new(&M.compress);
-            compress(&*raw_buf, self.config.zstd_compression_factor)
+            compress(&*raw_buf, self.config.compression_factor)
                 .unwrap()
         } else {
             raw_buf
         };
 
-        #[cfg(not(feature = "zstd"))]
+        #[cfg(not(feature = "compression"))]
         let buf = raw_buf;
 
         let total_buf_len = MSG_HEADER_LEN + buf.len();
@@ -1078,8 +1078,10 @@ impl IoBufs {
 
         drop(intervals);
 
-        let logical_segment_before = lsn_before / self.config.io_buf_size as Lsn;
-        let logical_segment_after = lsn_after / self.config.io_buf_size as Lsn;
+        let logical_segment_before =
+            lsn_before / self.config.io_buf_size as Lsn;
+        let logical_segment_after =
+            lsn_after / self.config.io_buf_size as Lsn;
         if logical_segment_before != logical_segment_after {
             self.with_sa(move |sa| {
                 for logical_segment in logical_segment_before..logical_segment_after {

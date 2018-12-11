@@ -82,7 +82,7 @@ pub struct ConfigBuilder {
     #[doc(hidden)]
     pub use_compression: bool,
     #[doc(hidden)]
-    pub zstd_compression_factor: i32,
+    pub compression_factor: i32,
     #[doc(hidden)]
     pub merge_operator: Option<usize>,
     #[doc(hidden)]
@@ -105,7 +105,7 @@ impl Default for ConfigBuilder {
             cache_bits: 6, // 64 shards
             cache_capacity: 1024 * 1024 * 1024, // 1gb
             use_compression: true,
-            zstd_compression_factor: 5,
+            compression_factor: 5,
             flush_every_ms: Some(500),
             snapshot_after_ops: 1_000_000,
             snapshot_path: None,
@@ -191,6 +191,9 @@ impl ConfigBuilder {
             self.path = PathBuf::from(tmp_path);
         }
 
+        #[cfg(feature = "event_log")]
+        panic!("OHNO");
+
         // seal config in a Config
         Config {
             inner: Arc::new(self),
@@ -212,7 +215,7 @@ impl ConfigBuilder {
         (cache_bits, usize, "log base 2 of the number of cache shards"),
         (cache_capacity, usize, "maximum size for the system page cache"),
         (use_compression, bool, "whether to use zstd compression"),
-        (zstd_compression_factor, i32, "the compression factor to use with zstd compression"),
+        (compression_factor, i32, "the compression factor to use with zstd compression"),
         (flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
         (snapshot_after_ops, usize, "number of operations between page table snapshots"),
         (segment_cleanup_threshold, f64, "the proportion of remaining valid pages in the segment"),
@@ -460,12 +463,12 @@ impl Config {
             "segment_cleanup_skew cannot be greater than 99%"
         );
         supported!(
-            self.inner.zstd_compression_factor >= 1,
-            "zstd_compression_factor must be >= 0"
+            self.inner.compression_factor >= 1,
+            "compression_factor must be >= 0"
         );
         supported!(
-            self.inner.zstd_compression_factor <= 22,
-            "zstd_compression_factor must be <= 22"
+            self.inner.compression_factor <= 22,
+            "compression_factor must be <= 22"
         );
         supported!(
             self.inner.idgen_persist_interval > 0,
@@ -483,6 +486,16 @@ impl Config {
                         merge operator. must supply one FOREVER after \
                         choosing to do so once, BWAHAHAHAHAHAHA!!!!");
                 }
+
+                supported!(
+                    self.inner.use_compression == old.use_compression,
+                    format!("cannot change compression values across restarts. \
+                        old value of use_compression loaded from disk: {}, \
+                        currently set value: {}.",
+                        old.use_compression,
+                        self.inner.use_compression,
+                    )
+                );
 
                 supported!(
                     self.inner.io_buf_size == old.io_buf_size,
