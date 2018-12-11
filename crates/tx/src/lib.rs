@@ -379,6 +379,10 @@ impl<T: Clone> TVar<T> {
             id,
         }
     }
+
+    pub fn tvar_id(&self) -> usize {
+        self.id
+    }
 }
 
 fn read_from_g(id: usize, guard: &Guard) -> LocalView {
@@ -931,7 +935,7 @@ fn run_interleavings(
         }
     }
 
-    info!("took choices: {:?}", choices);
+    // info!("took choices: {:?}", choices);
 
     choices.truncate(budget);
 
@@ -961,7 +965,7 @@ fn run_interleavings(
 #[test]
 #[ignore]
 fn test_swap_scheduled() {
-    env_logger::init();
+    let _ = env_logger::try_init();
 
     let mut choices = vec![];
 
@@ -981,7 +985,7 @@ fn test_swap_scheduled() {
         let mut threads = vec![];
         let mut scheds = vec![];
 
-        for t in 0..2 {
+        for t in 0..5 {
             let (transmit, rx) = sync_channel(0);
             let mut tvs = tvs.clone();
 
@@ -1031,13 +1035,14 @@ fn test_swap_scheduled() {
                             });
                             // debug!("{} read {:?}", tn(), r);
 
-                            assert_eq!(
-                                r[0] + r[1] + r[2],
-                                6,
-                                "{} expected observed values to be different, instead: {:?}",
-                                tn(),
-                                r
-                            );
+                            if (r[0] + r[1] + r[2] != 6) || (r[0] * r[1] * r[2] != 6){
+                                println!(
+                                    "{} expected observed values to be different, instead: {:?}",
+                                    tn(),
+                                    r
+                                );
+                                std::process::exit(1);
+                            }
                             assert_eq!(
                                 r[0] * r[1] * r[2],
                                 6,
@@ -1061,7 +1066,7 @@ fn test_swap_scheduled() {
 
         let finished = run_interleavings(
             false,
-            14,
+            5,
             scheds,
             threads,
             &mut choices,
@@ -1088,7 +1093,8 @@ fn test_swap_scheduled() {
 
 #[test]
 fn test_swap() {
-    for _ in 0..1 {
+    let _ = env_logger::try_init();
+    for _ in 0..10 {
         let tvs = [TVar::new(1), TVar::new(2), TVar::new(3)];
 
         let mut threads = vec![];
@@ -1097,7 +1103,7 @@ fn test_swap() {
             let mut tvs = tvs.clone();
 
             let t = thread::Builder::new().name(format!("t_{}", t)).spawn(move || {
-                for i in 0..30000 {
+                for i in 0..1000 {
                     if (i + t) % 2 == 0 {
                         // swap tvars
                         let i1 = i % 3;
@@ -1117,12 +1123,14 @@ fn test_swap() {
                         let r = tx(|| [*tvs[0], *tvs[1], *tvs[2]]);
                         // debug!("{} read {:?}", tn(), r);
 
-                        assert_eq!(
-                            r[0] + r[1] + r[2],
-                            6,
-                            "expected observed values to be different, instead: {:?}",
-                            r
-                        );
+                        if r[0] + r[1] + r[2] != 6 {
+                            println!(
+                                "{} expected observed values to be different, instead: {:?}",
+                                tn(),
+                                r,
+                            );
+                            std::process::exit(1);
+                        }
                         assert_eq!(
                             r[0] * r[1] * r[2],
                             6,
@@ -1148,15 +1156,15 @@ fn test_swap() {
 // "materialize" the conflict by looking at more than just the writes.
 #[test]
 fn test_bank_transfer() {
-    env_logger::init();
-    for _ in 0..1 {
+    let _ = env_logger::try_init();
+    for _ in 0..10 {
         let alice_accounts =
             [TVar::new(50_isize), TVar::new(50_isize)];
         let bob_account = TVar::new(0_usize);
 
         let mut threads = vec![];
 
-        for thread_no in 0..4 {
+        for thread_no in 0..20 {
             let mut alice_accounts = alice_accounts.clone();
             let mut bob_account = bob_account.clone();
 
@@ -1211,6 +1219,110 @@ fn test_bank_transfer() {
 
         for t in threads.into_iter() {
             t.join().unwrap();
+        }
+    }
+}
+
+#[test]
+fn test_dll() {
+    #[derive(Clone)]
+    struct Node<T: Clone> {
+        item: T,
+        next: Option<TVar<Node<T>>>,
+        prev: Option<TVar<Node<T>>>,
+    }
+
+    #[derive(Clone)]
+    struct Dll<T: Clone>(TVar<DllInner<T>>);
+
+    #[derive(Clone)]
+    struct DllInner<T: Clone> {
+        head: Option<TVar<Node<T>>>,
+        tail: Option<TVar<Node<T>>>,
+    }
+
+    impl<T: 'static + Clone> Dll<T> {
+        fn new() -> Dll<T> {
+            Dll(TVar::new(DllInner {
+                head: None,
+                tail: None,
+            }))
+        }
+
+        fn push_front(&mut self, item: T) {
+            let mut node = TVar::new(Node {
+                item: item,
+                next: None,
+                prev: None,
+            });
+
+            tx(|| {
+                node.next = Some(
+                    self.0
+                        .head
+                        .clone()
+                        .unwrap_or_else(|| node.clone()),
+                );
+                node.prev = Some(
+                    self.0
+                        .tail
+                        .clone()
+                        .unwrap_or_else(|| node.clone()),
+                );
+
+                self.0.tail = node.prev.clone();
+                self.0.head = Some(node.clone());
+            })
+        }
+
+        fn push_back(&mut self, item: T) {
+            let mut node = TVar::new(Node {
+                item: item,
+                next: None,
+                prev: None,
+            });
+
+            tx(|| {
+                node.next = Some(
+                    self.0
+                        .head
+                        .clone()
+                        .unwrap_or_else(|| node.clone()),
+                );
+                node.prev = Some(
+                    self.0
+                        .tail
+                        .clone()
+                        .unwrap_or_else(|| node.clone()),
+                );
+
+                self.0.tail = Some(node.clone());
+                self.0.head = node.next.clone();
+            })
+        }
+
+        fn pop_front(&mut self) -> Option<T> {
+            tx(|| {
+                let mut taken: TVar<Node<T>> = self.0.head.take()?;
+                let id = taken.tvar_id();
+
+                let tail = &mut self.0.tail.clone().unwrap();
+
+                if tail.tvar_id() == id {
+                    // head == tail, only one item in Dll
+                    self.0.tail.take();
+                } else {
+                    let next = taken.next.unwrap();
+                    tail.next = Some(next.clone());
+                    next.prev = Some(tail.clone());
+                }
+
+                Some(taken.item.clone())
+            })
+        }
+
+        fn pop_back(&mut self) -> Option<T> {
+            unimplemented!()
         }
     }
 }
