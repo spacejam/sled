@@ -4,6 +4,7 @@ description = "testable concurrent primitives for the sled database framework"
 version = "0.1.5"
 license = "MIT/Apache-2.0"
 authors = ["Tyler Neely <tyler.neely@ferrous-systems.com>"]
+edition = "2018"
 
 [features]
 lock_free_delays = []

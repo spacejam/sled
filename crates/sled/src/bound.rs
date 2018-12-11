@@ -1,6 +1,8 @@
 use std::cmp::Ordering;
 use std::mem::size_of;
 
+use super::*;
+
 #[derive(Clone, Debug, Ord, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) enum Bound {
     Inclusive(Vec<u8>),

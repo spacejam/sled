@@ -1,5 +1,3 @@
-extern crate crossbeam_epoch;
-
 use std::marker::PhantomData;
 use std::ops::Deref;
 

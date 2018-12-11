@@ -33,13 +33,6 @@
 #![cfg_attr(feature = "clippy", plugin(clippy))]
 #![cfg_attr(feature = "clippy", allow(inline_always))]
 
-extern crate pagecache;
-#[macro_use]
-extern crate serde_derive;
-#[macro_use]
-extern crate log as _log;
-extern crate sled_sync as sync;
-
 mod binary_search;
 mod bound;
 mod data;
@@ -57,7 +50,10 @@ pub use self::pinned_value::PinnedValue;
 /// atomic lock-free tree
 pub use self::tree::Tree;
 
-use pagecache::*;
+use pagecache::{
+    Materializer, Measure, MergeOperator, PageCache, PageGet, PageId,
+    M,
+};
 
 pub use pagecache::{Config, ConfigBuilder, Error, Result};
 
@@ -74,7 +70,10 @@ use self::prefix::{
 };
 use self::recovery::Recovery;
 
-use self::sync::{debug_delay, pin, Guard};
+use sled_sync::{debug_delay, pin, Guard};
+
+use log::{debug, error, trace};
+use serde_derive::{Deserialize, Serialize};
 
 pub(crate) use self::frag::Frag;
 pub(crate) use self::materializer::BLinkMaterializer;

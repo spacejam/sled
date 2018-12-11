@@ -8,6 +8,7 @@ homepage = "https://github.com/spacejam/sled/tree/master/crates/deterministic"
 repository = "https://github.com/spacejam/sled"
 keywords = ["testing", "realtime-scheduler"]
 documentation = "https://docs.rs/deterministic/"
+edition = "2018"
 
 [dependencies]
 rand = "0.6"

@@ -8,6 +8,7 @@ homepage = "https://github.com/spacejam/sled/tree/master/crates/simulator"
 repository = "https://github.com/spacejam/sled"
 keywords = ["testing", "realtime-scheduler", "simulation", "model-checking"]
 documentation = "https://docs.rs/simulator/"
+edition = "2018"
 
 [dependencies]
 deterministic = {version = "0.0.10", path = "../deterministic"}

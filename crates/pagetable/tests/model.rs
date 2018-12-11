@@ -1,14 +1,10 @@
-#[macro_use]
-extern crate model;
-
-extern crate pagetable;
-extern crate sled_sync as sync;
+use model::{linearizable, model, prop_oneof};
 
 use std::collections::HashMap;
 
 use model::Shared;
 use pagetable::PageTable;
-use sync::{pin, Owned, Shared as EpochShared};
+use sled_sync::{pin, Owned, Shared as EpochShared};
 
 #[test]
 fn test_model() {

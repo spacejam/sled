@@ -8,6 +8,7 @@ homepage = "https://github.com/spacejam/sled/tree/master/crates/fortress"
 repository = "https://github.com/spacejam/sled"
 keywords = ["testing", "realtime-scheduler", "visualization"]
 documentation = "https://docs.rs/fortress/"
+edition = "2018"
 
 [dependencies]
 deterministic = {version = "0.0.5", path = "../deterministic"}

@@ -1,6 +1,4 @@
 /// A simple wait-free, grow-only pagetable, assumes a dense keyspace.
-extern crate sled_sync;
-
 use std::sync::atomic::Ordering::SeqCst;
 
 use sled_sync::{debug_delay, pin, Atomic, Guard, Owned, Shared};

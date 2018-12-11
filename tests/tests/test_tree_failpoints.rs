@@ -1,15 +1,7 @@
-#[macro_use]
-extern crate lazy_static;
-extern crate fail;
-extern crate pagecache;
-extern crate quickcheck;
-extern crate rand;
-extern crate sled;
-extern crate tests;
-
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Mutex;
 
+use lazy_static::lazy_static;
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::{seq::SliceRandom, Rng};
 
@@ -24,7 +16,7 @@ enum Op {
     FailPoint(&'static str),
 }
 
-use Op::*;
+use self::Op::*;
 
 impl Arbitrary for Op {
     fn arbitrary<G: Gen>(g: &mut G) -> Op {

@@ -12,8 +12,6 @@ A construction kit for databases. Provides a lock-free log store and pagecache.
 * [The Design and Implementation of a Log-Structured File System](https://people.eecs.berkeley.edu/~brewer/cs262/LFS.pdf)
 
 ```
-extern crate pagecache;
-
 use pagecache::{PagePtr, pin, Materializer};
 
 pub struct TestMaterializer;

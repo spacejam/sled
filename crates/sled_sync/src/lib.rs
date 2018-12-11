@@ -1,18 +1,8 @@
-extern crate crossbeam_epoch as epoch;
-#[cfg_attr(any(test, feature = "lock_free_delays"), macro_use)]
-extern crate log;
-
-#[cfg(any(test, feature = "lock_free_delays"))]
-extern crate rand_hc;
-
-#[cfg(any(test, feature = "lock_free_delays"))]
-extern crate rand;
-
 #[cfg(any(test, feature = "lock_free_delays"))]
 mod debug_delay;
 
 #[cfg(any(test, feature = "lock_free_delays"))]
-pub use debug_delay::debug_delay;
+pub use self::debug_delay::debug_delay;
 
 /// This function is useful for inducing random jitter into our atomic
 /// operations, shaking out more possible interleavings quickly. It gets
@@ -20,7 +10,9 @@ pub use debug_delay::debug_delay;
 #[cfg(not(any(test, feature = "lock_free_delays")))]
 pub fn debug_delay() {}
 
-pub use epoch::{
+pub use crossbeam_epoch::{
     pin, unprotected, Atomic, Collector, CompareAndSetError, Guard,
     LocalHandle, Owned, Shared,
 };
+
+pub use std::sync::atomic;

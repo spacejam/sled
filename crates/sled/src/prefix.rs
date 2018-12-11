@@ -1,7 +1,5 @@
 use std::cmp::Ordering;
 
-use super::*;
-
 pub(crate) fn prefix_encode(prefix: &[u8], buf: &[u8]) -> Vec<u8> {
     assert!(
         prefix <= buf,

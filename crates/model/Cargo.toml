@@ -8,6 +8,7 @@ homepage = "https://github.com/spacejam/sled/tree/master/crates/model"
 repository = "https://github.com/spacejam/sled"
 keywords = ["testing", "simulation", "deterministic", "model-checking"]
 documentation = "https://docs.rs/model/"
+edition = "2018"
 
 [dependencies]
 proptest = "0.8"

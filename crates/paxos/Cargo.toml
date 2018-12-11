@@ -9,6 +9,7 @@ repository = "https://github.com/spacejam/sled"
 keywords = ["database", "embedded", "consensus", "distributed", "paxos"]
 documentation = "https://docs.rs/paxos/"
 readme = "README.md"
+edition = "2018"
 
 [dependencies]
 sled = { path = "../sled", version = "0.15"}

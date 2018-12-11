@@ -3,10 +3,6 @@
 // #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
 
-extern crate libc;
-extern crate rand;
-extern crate serde;
-
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -61,8 +57,8 @@ fn set_context(context: Arc<Context>) {
 
 mod context;
 
-use context::Context;
+use self::context::Context;
 
-pub use context::{
+pub use self::context::{
     now, seed, set_seed, set_time, sleep, thread_rng, Rand,
 };

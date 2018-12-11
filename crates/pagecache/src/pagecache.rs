@@ -4,15 +4,14 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::sync::{Owned, Shared};
+use pagetable::PageTable;
+use sled_sync::{Owned, Shared};
 
 use rayon::prelude::*;
 
-use pagetable::PageTable;
-
 use super::*;
 
-type PagePtrInner<'g, P> = sync::Shared<'g, Node<CacheEntry<P>>>;
+type PagePtrInner<'g, P> = Shared<'g, Node<CacheEntry<P>>>;
 
 /// A pointer to shared lock-free state bound by a pinned epoch's lifetime.
 #[derive(Debug, Clone, PartialEq)]
@@ -26,7 +25,7 @@ where
 {
     /// Create a null `PagePtr`
     pub fn allocated() -> PagePtr<'g, P> {
-        PagePtr(sync::Shared::null())
+        PagePtr(Shared::null())
     }
 
     /// Whether this pointer is Allocated
@@ -153,11 +152,13 @@ where
 
 unsafe impl<'a, P> Send for PageGet<'a, P> where
     P: DeserializeOwned + Serialize + Send + Sync
-{}
+{
+}
 
 unsafe impl<'a, P> Sync for PageGet<'a, P> where
     P: DeserializeOwned + Serialize + Send + Sync
-{}
+{
+}
 
 impl<'a, P> PageGet<'a, P>
 where
@@ -229,8 +230,6 @@ where
 /// # Working with the `PageCache`
 ///
 /// ```
-/// extern crate pagecache;
-///
 /// use pagecache::{pin, Materializer};
 ///
 /// pub struct TestMaterializer;
@@ -324,14 +323,16 @@ where
     PM: Send + Sync,
     P: 'static + Send + Sync,
     R: Send + Sync,
-{}
+{
+}
 
 unsafe impl<PM, P, R> Sync for PageCache<PM, P, R>
 where
     PM: Send + Sync,
     P: 'static + Send + Sync,
     R: Send + Sync,
-{}
+{
+}
 
 impl<PM, P, R> Debug for PageCache<PM, P, R>
 where
@@ -358,10 +359,8 @@ where
 {
     fn drop(&mut self) {
         use std::collections::HashMap;
-        let mut pages_before_restart: HashMap<
-            PageId,
-            Vec<DiskPtr>,
-        > = HashMap::new();
+        let mut pages_before_restart: HashMap<PageId, Vec<DiskPtr>> =
+            HashMap::new();
 
         let guard = pin();
 
@@ -667,7 +666,8 @@ where
                 self.log
                     .with_sa(|sa| {
                         sa.mark_replace(pid, lsn, ptrs, new_ptr)
-                    }).map_err(|e| e.danger_cast())?;
+                    })
+                    .map_err(|e| e.danger_cast())?;
 
                 // NB complete must happen AFTER calls to SA, because
                 // when the iobuf's n_writers hits 0, we may transition
@@ -751,7 +751,8 @@ where
             .map(|cache_entry| {
                 node_from_frag_vec(vec![cache_entry])
                     .into_shared(guard)
-            }).unwrap_or_else(|| Shared::null());
+            })
+            .unwrap_or_else(|| Shared::null());
 
         debug_delay();
         let result =
@@ -763,7 +764,8 @@ where
             self.log
                 .with_sa(|sa| {
                     sa.mark_replace(pid, lsn, ptrs, new_ptr)
-                }).map_err(|e| e.danger_cast())?;
+                })
+                .map_err(|e| e.danger_cast())?;
 
             // NB complete must happen AFTER calls to SA, because
             // when the iobuf's n_writers hits 0, we may transition
