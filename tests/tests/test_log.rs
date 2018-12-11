@@ -103,7 +103,8 @@ fn concurrent_logging() {
                     let buf = vec![1; i % buf_len];
                     log.write(buf);
                 }
-            }).unwrap();
+            })
+            .unwrap();
 
         let t2 = thread::Builder::new()
             .name("c2".to_string())
@@ -112,7 +113,8 @@ fn concurrent_logging() {
                     let buf = vec![2; i % buf_len];
                     iobs2.write(buf);
                 }
-            }).unwrap();
+            })
+            .unwrap();
 
         let t3 = thread::Builder::new()
             .name("c3".to_string())
@@ -121,7 +123,8 @@ fn concurrent_logging() {
                     let buf = vec![3; i % buf_len];
                     iobs3.write(buf);
                 }
-            }).unwrap();
+            })
+            .unwrap();
 
         let t4 = thread::Builder::new()
             .name("c4".to_string())
@@ -130,7 +133,8 @@ fn concurrent_logging() {
                     let buf = vec![4; i % buf_len];
                     iobs4.write(buf);
                 }
-            }).unwrap();
+            })
+            .unwrap();
         let t5 = thread::Builder::new()
             .name("c5".to_string())
             .spawn(move || {
@@ -138,7 +142,8 @@ fn concurrent_logging() {
                     let buf = vec![5; i % buf_len];
                     iobs5.write(buf);
                 }
-            }).unwrap();
+            })
+            .unwrap();
 
         let t6 = thread::Builder::new()
             .name("c6".to_string())
@@ -148,7 +153,8 @@ fn concurrent_logging() {
                     let (lsn, _lid) = iobs6.write(buf).unwrap();
                     iobs6.make_stable(lsn).unwrap();
                 }
-            }).unwrap();
+            })
+            .unwrap();
 
         t1.join().unwrap();
         t2.join().unwrap();
@@ -458,12 +464,8 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
 
     let mut tip = 0;
     let mut log = Log::start_raw_log(config.clone()).unwrap();
-    let mut reference: Vec<(
-        Lsn,
-        DiskPtr,
-        Option<Vec<u8>>,
-        usize,
-    )> = vec![];
+    let mut reference: Vec<(Lsn, DiskPtr, Option<Vec<u8>>, usize)> =
+        vec![];
 
     for op in ops.into_iter() {
         match op {
@@ -584,7 +586,7 @@ fn quickcheck_log_works() {
 fn log_bug_01() {
     // postmortem: test was not stabilizing its buffers before
     // reading
-    use Op::*;
+    use self::Op::*;
     prop_log_works(
         vec![
             AbortReservation(vec![]),
@@ -603,7 +605,7 @@ fn log_bug_2() {
     // until the next readable byte hit the end of the file.
     // fix: when something hits the end of the file, return
     // LogRead::Zeroed.
-    use Op::*;
+    use self::Op::*;
     prop_log_works(vec![AbortReservation(vec![46]), Read(0)], true);
 }
 
@@ -613,14 +615,14 @@ fn log_bug_3() {
     // the next valid log entry when reading a zeroed entry
     // was being triggered on valid entries of size 0.
     // fix: don't skip-ahead for empty valid entries.
-    use Op::*;
+    use self::Op::*;
     prop_log_works(vec![Write(vec![]), Read(0)], true);
 }
 
 #[test]
 fn log_bug_7() {
     // postmortem: test alignment
-    use Op::*;
+    use self::Op::*;
     prop_log_works(
         vec![
             Write(vec![]),
@@ -641,7 +643,7 @@ fn log_bug_7() {
 fn log_bug_9() {
     // postmortem: test was mishandling truncation, which
     // should test loss, not extension
-    use Op::*;
+    use self::Op::*;
     prop_log_works(
         vec![Truncate(99), Write(vec![234]), Truncate(8), Read(0)],
         true,
@@ -651,7 +653,7 @@ fn log_bug_9() {
 #[test]
 fn log_bug_10() {
     // postmortem: test alignment
-    use Op::*;
+    use self::Op::*;
     prop_log_works(
         vec![
             Write(vec![231]),
@@ -679,7 +681,7 @@ fn log_bug_10() {
 fn log_bug_11() {
     // postmortem: was miscalculating the initial disk offset
     // on startup
-    use Op::*;
+    use self::Op::*;
     prop_log_works(vec![Write(vec![]), Restart], true);
 }
 
@@ -689,7 +691,7 @@ fn log_bug_12() {
     // just reusing the tip as the next start location. this
     // breaks recovery. fix: traverse the segment until we
     // encounter the last valid entry.
-    use Op::*;
+    use self::Op::*;
     prop_log_works(
         vec![
             Write(vec![]),
@@ -704,7 +706,7 @@ fn log_bug_12() {
 #[test]
 fn log_bug_13() {
     // postmortem: was not recording the proper highest lsn on recovery.
-    use Op::*;
+    use self::Op::*;
     prop_log_works(
         vec![
             Write(vec![35]),
@@ -721,7 +723,7 @@ fn log_bug_14a() {
     // postmortem: was not simulating the "rewind" behavior of the
     // log to replace aborted flushes at the log tip properly.
     // postmortem 2:
-    use Op::*;
+    use self::Op::*;
     prop_log_works(
         vec![
             AbortReservation(vec![12]),
@@ -741,7 +743,7 @@ fn log_bug_14b() {
     // descriptors ended up being used. resulted in weird stuff like
     // reads not returning recent writes. Lesson: don't go around
     // FinalConfig!
-    use Op::*;
+    use self::Op::*;
     prop_log_works(vec![Restart, Write(vec![]), Read(0)], true);
 }
 
@@ -749,7 +751,7 @@ fn log_bug_14b() {
 fn log_bug_15() {
     // postmortem: was not properly clearing previously
     // overwritten writes during truncation
-    use Op::*;
+    use self::Op::*;
     prop_log_works(
         vec![Write(vec![]), Truncate(0), Write(vec![]), Read(0)],
         true,
@@ -759,7 +761,7 @@ fn log_bug_15() {
 #[test]
 fn log_bug_16() {
     // postmortem: a bug in recovery created by the massive log overhaul
-    use Op::*;
+    use self::Op::*;
     prop_log_works(
         vec![
             Write(vec![189]),
@@ -777,7 +779,7 @@ fn log_bug_16() {
 fn log_bug_17() {
     // postmortem: this was a transient failure caused by failing to stabilize
     // an update before later reading it.
-    use Op::*;
+    use self::Op::*;
     prop_log_works(
         vec![
             Write(vec![]),
@@ -798,7 +800,7 @@ fn log_bug_17() {
 #[test]
 fn log_bug_18() {
     // postmortem: this was a recovery bug
-    use Op::*;
+    use self::Op::*;
     prop_log_works(vec![Restart], true);
 }
 
@@ -807,7 +809,7 @@ fn log_bug_19() {
     // postmortem: this was stalling in make_stable
     // postmortem 2: SA recovery skipped the first segment because we
     // were not properly adding the empty tip to the free list.
-    use Op::*;
+    use self::Op::*;
     prop_log_works(
         vec![
             Restart,
@@ -826,7 +828,7 @@ fn log_bug_19() {
 fn log_bug_20() {
     // postmortem: message header length was not being included when
     // calculating the starting log offsets.
-    use Op::*;
+    use self::Op::*;
     prop_log_works(
         vec![Write(vec![]), Restart, Write(vec![2]), Read(1)],
         true,
@@ -837,7 +839,7 @@ fn log_bug_20() {
 fn log_bug_21() {
     // postmortem: message header length was not being included when
     // calculating the starting log offsets.
-    use Op::*;
+    use self::Op::*;
     prop_log_works(
         vec![Write(vec![1]), Restart, Write(vec![2]), Read(1)],
         true,
@@ -847,7 +849,7 @@ fn log_bug_21() {
 #[test]
 fn log_bug_22() {
     // postmortem:
-    use Op::*;
+    use self::Op::*;
     prop_log_works(
         vec![
             Read(10),
@@ -861,6 +863,6 @@ fn log_bug_22() {
 
 fn _log_bug_() {
     // postmortem: TEMPLATE
-    // use Op::*;
+    // use self::Op::*;
     prop_log_works(vec![], true);
 }

@@ -1,8 +1,3 @@
-extern crate pagecache;
-extern crate quickcheck;
-extern crate rand;
-extern crate tests;
-
 use std::{
     collections::HashMap,
     sync::{
@@ -116,7 +111,8 @@ fn parallel_pagecache() {
                         {
                             $f(&*tree, i);
                         }
-                    }).expect("should be able to spawn thread");
+                    })
+                    .expect("should be able to spawn thread");
                 threads.push(thread);
             }
             while let Some(thread) = threads.pop() {
@@ -131,7 +127,7 @@ fn parallel_pagecache() {
     let p: Arc<PageCache<TestMaterializer, Vec<usize>, ()>> =
         Arc::new(PageCache::start(config.clone()).unwrap());
 
-    par!{p, |pc: &PageCache<_, _, _>, _i: usize| {
+    par! {p, |pc: &PageCache<_, _, _>, _i: usize| {
         let guard = pin();
         let id = pc.allocate(&guard).unwrap();
         let _key = pc
@@ -150,7 +146,7 @@ fn parallel_pagecache() {
     let p: Arc<PageCache<TestMaterializer, Vec<usize>, ()>> =
         Arc::new(PageCache::start(config.clone()).unwrap());
 
-    par!{p, |pc: &PageCache<_, _, _>, i: usize| {
+    par! {p, |pc: &PageCache<_, _, _>, i: usize| {
         let guard = pin();
         let (ptr, _key): (&Vec<usize>, _) =
                            pc.get(i, &guard)
@@ -165,7 +161,7 @@ fn parallel_pagecache() {
     let p: Arc<PageCache<TestMaterializer, Vec<usize>, ()>> =
         Arc::new(PageCache::start(config.clone()).unwrap());
 
-    par!{p, |pc: &PageCache<_, _, _>, i: usize| {
+    par! {p, |pc: &PageCache<_, _, _>, i: usize| {
         let mut success = 0;
 
         while success <= 10 {
@@ -194,7 +190,7 @@ fn parallel_pagecache() {
     let p: Arc<PageCache<TestMaterializer, Vec<usize>, ()>> =
         Arc::new(PageCache::start(config.clone()).unwrap());
 
-    par!{p, |pc: &PageCache<_, _, _>, i: usize| {
+    par! {p, |pc: &PageCache<_, _, _>, i: usize| {
         let guard = pin();
         let (ptr, _key): (&Vec<usize>, _) =
                            pc.get(i, &guard)
@@ -434,7 +430,8 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                             PagePtr::allocated(),
                             vec![c],
                             &guard,
-                        ).unwrap();
+                        )
+                        .unwrap();
                         *ref_get = P::Present(vec![c]);
                     }
                     &mut P::Present(ref mut existing) => {
@@ -445,7 +442,8 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                             old_key.clone(),
                             vec![c],
                             &guard,
-                        ).unwrap();
+                        )
+                        .unwrap();
                         existing.clear();
                         existing.push(c);
                     }
@@ -469,7 +467,8 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                             PagePtr::allocated(),
                             vec![c],
                             &guard,
-                        ).unwrap();
+                        )
+                        .unwrap();
                         *ref_get = P::Present(vec![c]);
                     }
                     &mut P::Present(ref mut existing) => {
@@ -479,7 +478,8 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                             old_key.clone(),
                             vec![c],
                             &guard,
-                        ).unwrap();
+                        )
+                        .unwrap();
                         existing.push(c);
                     }
                     &mut P::Free => {
@@ -582,7 +582,7 @@ fn quickcheck_pagecache_works() {
 fn pagecache_bug_01() {
     // postmortem: this happened because `PageCache::page_in` assumed
     // at least one update had been stored for a retrieved page.
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(vec![Allocate, Get(0)], true);
 }
 
@@ -592,14 +592,14 @@ fn pagecache_bug_02() {
     // a compacting base to it. changed the snapshot and page-in code
     // to allow a link being the first update to hit a page.
     // portmortem 2:
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(vec![Allocate, Restart, Link(0, 1)], true);
 }
 
 #[test]
 fn pagecache_bug_3() {
     // postmortem: this was a mismatch in semantics in the test harness itself
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(vec![Allocate, Get(0)], true);
 }
 
@@ -607,21 +607,21 @@ fn pagecache_bug_3() {
 fn pagecache_bug_4() {
     // postmortem: previously this caused a panic, we shouldn't break
     // when the user asks us to mutate non-existant pages!
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(vec![Link(98, 1)], true);
 }
 
 #[test]
 fn pagecache_bug_5() {
     // postmortem: this was a mismatch in semantics in the test harness itself
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(vec![Link(132, 1), Replace(132, 1)], true);
 }
 
 #[test]
 fn pagecache_bug_6() {
     // postmortem: the test wasn't actually recording changes to the reference page...
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(
         vec![Allocate, Replace(0, 53), Replace(0, 54)],
         true,
@@ -632,7 +632,7 @@ fn pagecache_bug_6() {
 fn pagecache_bug_7() {
     // postmortem: the test wasn't correctly recording the replacement effect of a replace
     // in the reference page
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(
         vec![Allocate, Link(0, 201), Replace(0, 208), Get(0)],
         true,
@@ -642,7 +642,7 @@ fn pagecache_bug_7() {
 #[test]
 fn pagecache_bug_8() {
     // postmortem: page_in messed up the stack ordering when storing a linked stack
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(
         vec![
             Allocate,
@@ -662,7 +662,7 @@ fn pagecache_bug_8() {
 fn pagecache_bug_9() {
     // postmortem: this started failing in the giant refactor for log structured storage,
     // and was possibly fixed by properly handling intervals in mark_interval
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(
         vec![
             Allocate,
@@ -682,7 +682,7 @@ fn pagecache_bug_10() {
     // postmortem: the segment was marked free before it
     // was actually full, because the pids inside were
     // rewritten.
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(
         vec![
             Allocate,
@@ -699,7 +699,7 @@ fn pagecache_bug_10() {
 fn pagecache_bug_11() {
     // postmortem: failed to completely back-out an experiment
     // to tombstone allocations, which removed a check.
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(vec![Free(0)], true);
 }
 
@@ -707,7 +707,7 @@ fn pagecache_bug_11() {
 fn pagecache_bug_12() {
     // postmortem: refactor to add Free tombstones changed
     // the model.
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(
         vec![Allocate, Free(0), Replace(0, 66)],
         true,
@@ -718,7 +718,7 @@ fn pagecache_bug_12() {
 fn pagecache_bug_13() {
     // postmortem: Free tombstones mean that the page table may
     // already have an entry for a newly-allocated page.
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(
         vec![Allocate, Free(0), Free(0), Restart, Allocate, Allocate],
         true,
@@ -729,7 +729,7 @@ fn pagecache_bug_13() {
 fn pagecache_bug_14() {
     // postmortem: Free tombstones are a little weird with the Lru.
     // Make sure they don't get paged out.
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(
         vec![
             Allocate,
@@ -749,7 +749,7 @@ fn pagecache_bug_14() {
 fn pagecache_bug_15() {
     // postmortem: non-idempotent PageCache::free.
     // fixed by deduplicating the free list on recovery.
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(
         vec![
             Allocate,
@@ -771,7 +771,7 @@ fn pagecache_bug_16() {
     // postmortem: non-idempotent PageCache::free.
     // did not check if a Free tombstone was present,
     // just if the stack was present.
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(
         vec![
             Allocate,
@@ -791,7 +791,7 @@ fn pagecache_bug_16() {
 #[test]
 fn pagecache_bug_17() {
     // postmortem:
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(
         vec![
             Allocate,
@@ -845,7 +845,7 @@ fn pagecache_bug_17() {
 fn pagecache_bug_18() {
     // postmortem: added page replacement information to
     // the segment that a page was being added to.
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(
         vec![Allocate, Link(0, 273), Free(0), Restart, Restart],
         true,
@@ -858,7 +858,7 @@ fn pagecache_bug_19() {
     // removed pages in segments, before doing the recovery
     // check to see if the snapshot already includes updates
     // for that lsn.
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(
         vec![
             Allocate,
@@ -904,7 +904,7 @@ fn pagecache_bug_19() {
 fn pagecache_bug_20() {
     // postmortem: failed to handle Unallocated nodes properly
     // in refactored test model.
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(vec![Free(0), Replace(0, 17)], true);
 }
 
@@ -912,7 +912,7 @@ fn pagecache_bug_20() {
 fn pagecache_bug_21() {
     // postmortem: test model marked unused pids as Unallocated
     // instead of Free during recovery.
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(
         vec![Allocate, Free(0), Restart, Allocate, Restart, Get(0)],
         true,
@@ -923,7 +923,7 @@ fn pagecache_bug_21() {
 fn pagecache_bug_22() {
     // postmortem: was initializing the SA with segments that were not
     // necessarily populated beyond the initial header.
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(
         vec![
             Allocate,
@@ -996,7 +996,7 @@ fn pagecache_bug_23() {
     // free list signifying if they were pushed from
     // ensure_safe_free_distance or not, and only
     // perform file truncation if not.
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(
         vec![
             Allocate,
@@ -1079,7 +1079,7 @@ fn pagecache_bug_23() {
 #[test]
 fn pagecache_bug_24() {
     // postmortem:
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(
         vec![
             Allocate,
@@ -1159,7 +1159,7 @@ fn pagecache_bug_24() {
 #[test]
 fn pagecache_bug_25() {
     // postmortem:
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(
         vec![
             Allocate,
@@ -1245,7 +1245,7 @@ fn pagecache_bug_25() {
 fn pagecache_bug_26() {
     // postmortem: an implementation of make_stable was accidentally
     // returning early before doing any stabilization.
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(
         vec![
             Allocate,
@@ -1267,7 +1267,7 @@ fn pagecache_bug_26() {
 #[test]
 fn pagecache_bug_27() {
     // postmortem: was using a bad pointer for recovery
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(
         vec![Allocate, Free(0), Restart, Allocate],
         true,
@@ -1278,7 +1278,7 @@ fn pagecache_bug_27() {
 fn pagecache_bug_28() {
     // postmortem: should not be using pointers in the free page list
     // at all, because segments can be relocated during segment compaction.
-    use Op::*;
+    use self::Op::*;
     prop_pagecache_works(
         vec![Allocate, Free(0), Restart, Free(0), Allocate],
         true,
@@ -1288,6 +1288,6 @@ fn pagecache_bug_28() {
 fn _pagecache_bug_() {
     // postmortem: TEMPLATE
     // portmortem 2: ...
-    // use Op::*;
+    // use self::Op::*;
     prop_pagecache_works(vec![], true);
 }

@@ -71,7 +71,7 @@ static ALLOCATOR: measure_allocs::TrackingAllocator =
 /// The event log helps debug concurrency issues.
 pub mod event_log;
 
-pub mod log;
+pub mod logger;
 
 use std::{
     cell::UnsafeCell,
@@ -79,15 +79,15 @@ use std::{
     io,
 };
 
-use _log::{debug, error, info, trace, warn};
 use bincode::{deserialize, serialize};
+use log::{debug, error, info, trace, warn};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_derive::{Deserialize, Serialize};
 
 use sled_sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
 #[doc(hidden)]
-use self::log::{
+use self::logger::{
     MessageHeader, MessageKind, SegmentHeader, SegmentTrailer,
 };
 
@@ -112,7 +112,7 @@ use self::{
 pub use self::{
     config::{Config, ConfigBuilder},
     diskptr::DiskPtr,
-    log::{Log, LogRead},
+    logger::{Log, LogRead},
     materializer::{Materializer, NullMaterializer},
     metrics::M,
     pagecache::{CacheEntry, PageCache, PageGet, PagePtr},

@@ -50,7 +50,10 @@ pub use self::pinned_value::PinnedValue;
 /// atomic lock-free tree
 pub use self::tree::Tree;
 
-use pagecache::*;
+use pagecache::{
+    Materializer, Measure, MergeOperator, PageCache, PageGet, PageId,
+    M,
+};
 
 pub use pagecache::{Config, ConfigBuilder, Error, Result};
 
@@ -69,7 +72,7 @@ use self::recovery::Recovery;
 
 use sled_sync::{debug_delay, pin, Guard};
 
-use _log::{debug, error, trace};
+use log::{debug, error, trace};
 use serde_derive::{Deserialize, Serialize};
 
 pub(crate) use self::frag::Frag;

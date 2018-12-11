@@ -16,7 +16,7 @@ default = []
 lock_free_delays = ["sled_sync/lock_free_delays"]
 failpoints = ["pagecache/failpoints"]
 check_snapshot_integrity = []
-no_logs = ["_log/max_level_off", "pagecache/no_logs"]
+no_logs = ["log/max_level_off", "pagecache/no_logs"]
 no_metrics = ["pagecache/no_metrics"]
 compression = ["pagecache/compression"]
 nightly = ["pagecache/nightly"]
@@ -24,12 +24,11 @@ no_inline = ["pagecache/no_inline"]
 event_log = ["pagecache/event_log"]
 measure_allocs = ["pagecache/measure_allocs"]
 
-[dependencies._log]
-package = "log"
+[dependencies.log]
 version = "0.4"
 
 [dependencies]
 serde = "1.0"
 serde_derive = "1.0"
-pagecache = { path = "../pagecache", version = "0.7.7" }
+pagecache = { path = "../pagecache", version = "0.8" }
 sled_sync = { version = "0.1", path = "../sled_sync" }
