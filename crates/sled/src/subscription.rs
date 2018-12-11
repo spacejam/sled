@@ -15,11 +15,21 @@ use futures::sync::oneshot::{
 static ID_GEN: AtomicUsize = AtomicUsize::new(0);
 
 /// An event that happened to a key that a subscriber is interested in.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Event {
-    Set(Vec<u8>),
-    Merge(Vec<u8>),
+    Set(Vec<u8>, Vec<u8>),
+    Merge(Vec<u8>, Vec<u8>),
     Del(Vec<u8>),
+}
+
+impl Event {
+    pub fn key(&self) -> &[u8] {
+        match self {
+            Event::Set(k, ..)
+            | Event::Merge(k, ..)
+            | Event::Del(k) => &*k,
+        }
+    }
 }
 
 impl Clone for Event {
@@ -27,8 +37,8 @@ impl Clone for Event {
         use self::Event::*;
 
         match self {
-            Set(k) => Set(k.clone()), //, v.shallow_copy()),
-            Merge(k) => Merge(k.clone()), //, v.shallow_copy()),
+            Set(k, v) => Set(k.clone(), v.clone()),
+            Merge(k, v) => Merge(k.clone(), v.clone()),
             Del(k) => Del(k.clone()),
         }
     }
@@ -166,4 +176,62 @@ impl ReservedBroadcast {
             let _ = tx.send(event);
         }
     }
+}
+
+#[test]
+fn basic_subscription() {
+    let subs = Subscriptions::default();
+
+    let mut s2 = subs.register(vec![0]);
+    let mut s3 = subs.register(vec![0, 1]);
+    let mut s4 = subs.register(vec![1, 2]);
+
+    let r1 = subs.reserve(b"awft");
+    assert!(r1.is_none());
+
+    let mut s1 = subs.register(vec![]);
+
+    let k2 = vec![];
+    let r2 = subs.reserve(&k2).unwrap();
+    r2.complete(Event::Set(k2.clone(), k2.clone()));
+
+    let k3 = vec![0];
+    let r3 = subs.reserve(&k3).unwrap();
+    r3.complete(Event::Set(k3.clone(), k3.clone()));
+
+    let k4 = vec![0, 1];
+    let r4 = subs.reserve(&k4).unwrap();
+    r4.complete(Event::Del(k4.clone()));
+
+    let k5 = vec![0, 1, 2];
+    let r5 = subs.reserve(&k5).unwrap();
+    r5.complete(Event::Merge(k5.clone(), k5.clone()));
+
+    let k6 = vec![1, 1, 2];
+    let r6 = subs.reserve(&k6).unwrap();
+    r6.complete(Event::Del(k6.clone()));
+
+    let k7 = vec![1, 1, 2];
+    let r7 = subs.reserve(&k7).unwrap();
+    drop(r7);
+
+    let k8 = vec![1, 2, 2];
+    let r8 = subs.reserve(&k8).unwrap();
+    r8.complete(Event::Set(k8.clone(), k8.clone()));
+
+    assert_eq!(s1.next().unwrap().key(), &*k2);
+    assert_eq!(s1.next().unwrap().key(), &*k3);
+    assert_eq!(s1.next().unwrap().key(), &*k4);
+    assert_eq!(s1.next().unwrap().key(), &*k5);
+    assert_eq!(s1.next().unwrap().key(), &*k6);
+    assert_eq!(s1.next().unwrap().key(), &*k8);
+
+    assert_eq!(s2.next().unwrap().key(), &*k3);
+    assert_eq!(s2.next().unwrap().key(), &*k4);
+    assert_eq!(s2.next().unwrap().key(), &*k5);
+
+    assert_eq!(s3.next().unwrap().key(), &*k4);
+    assert_eq!(s3.next().unwrap().key(), &*k5);
+
+    assert_eq!(s4.next().unwrap().key(), &*k8);
 }

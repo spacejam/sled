@@ -591,6 +591,7 @@ impl Tree {
                         let event = if new.is_some() {
                             subscription::Event::Set(
                                 key.as_ref().to_vec(),
+                                new.unwrap().clone(),
                             )
                         } else {
                             subscription::Event::Del(
@@ -659,6 +660,7 @@ impl Tree {
                     if let Some(res) = subscriber_reservation.take() {
                         let event = subscription::Event::Set(
                             key.as_ref().to_vec(),
+                            value.clone(),
                         );
 
                         res.complete(event);
