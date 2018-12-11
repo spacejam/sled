@@ -1,5 +1,4 @@
-#[macro_use]
-extern crate model;
+use model::{linearizable, model};
 
 #[test]
 fn test_model() {

@@ -1,12 +1,15 @@
 use std::cell::UnsafeCell;
 use std::rc::Rc;
 
-use rand::{
-    distributions::{Distribution, Gamma},
-    rngs::EntropyRng,
-    ReseedingRng, Rng, RngCore, SeedableRng,
+use {
+    log::warn,
+    rand::{
+        distributions::{Distribution, Gamma},
+        rngs::EntropyRng,
+        ReseedingRng, Rng, RngCore, SeedableRng,
+    },
+    rand_hc::Hc128Core,
 };
-use rand_hc::Hc128Core;
 
 /// This function is useful for inducing random jitter into our atomic
 /// operations, shaking out more possible interleavings quickly. It gets

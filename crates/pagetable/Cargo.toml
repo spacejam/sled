@@ -8,6 +8,7 @@ homepage = "https://github.com/spacejam/sled/tree/master/crates/pagetable"
 repository = "https://github.com/spacejam/sled"
 keywords = ["paging", "page-table", "table", "data-structure", "lookup"]
 documentation = "https://docs.rs/pagetable/"
+edition = "2018"
 
 [dependencies]
 sled_sync = { version = "0.1", path = "../sled_sync" }

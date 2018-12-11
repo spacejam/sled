@@ -9,6 +9,7 @@ use std::marker::PhantomData;
 use std::sync::atomic::Ordering::{Acquire, Relaxed};
 
 use historian::Histo;
+use lazy_static::lazy_static;
 
 #[cfg(feature = "measure_allocs")]
 use super::measure_allocs;

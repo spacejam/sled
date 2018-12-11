@@ -18,26 +18,8 @@ compile_error!(
      See https://github.com/spacejam/sled/issues/145"
 );
 
-#[macro_use]
-extern crate serde_derive;
-extern crate bincode;
-extern crate fs2;
-extern crate historian;
-extern crate serde;
-extern crate sled_sync as sync;
-#[macro_use]
-extern crate lazy_static;
-#[macro_use]
-extern crate log as _log;
-#[cfg(unix)]
-extern crate libc;
-extern crate rayon;
-#[cfg(feature = "compression")]
-extern crate zstd;
 #[cfg(feature = "failpoints")]
-#[macro_use]
-extern crate fail;
-extern crate pagetable;
+use fail::fail_point;
 
 macro_rules! maybe_fail {
     ($e:expr) => {
@@ -95,12 +77,14 @@ use std::{
     cell::UnsafeCell,
     fmt::{self, Debug},
     io,
-    sync::atomic::AtomicUsize,
-    sync::atomic::Ordering::SeqCst,
 };
 
+use _log::{debug, error, info, trace, warn};
 use bincode::{deserialize, serialize};
 use serde::{de::DeserializeOwned, Serialize};
+use serde_derive::{Deserialize, Serialize};
+
+use sled_sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
 #[doc(hidden)]
 use self::log::{
@@ -135,9 +119,10 @@ pub use self::{
     reservation::Reservation,
     result::{Error, Result},
     segment::SegmentMode,
-    sync::{debug_delay, pin, unprotected, Guard},
     tx::Tx,
 };
+
+pub use sled_sync::{debug_delay, pin, unprotected, Guard};
 
 #[doc(hidden)]
 pub use self::{

@@ -5,9 +5,8 @@ use std::{
     sync::atomic::Ordering::{Relaxed, SeqCst},
 };
 
-use crate::{
-    debug_delay,
-    sync::{pin, unprotected, Atomic, Guard, Owned, Shared},
+use sled_sync::{
+    debug_delay, pin, unprotected, Atomic, Guard, Owned, Shared,
 };
 
 /// A node in the lock-free `Stack`.
@@ -112,7 +111,8 @@ impl<T: Send + Sync + 'static> Stack<T> {
                         node,
                         SeqCst,
                         unprotected(),
-                    ).is_ok()
+                    )
+                    .is_ok()
                 {
                     return;
                 }

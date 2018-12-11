@@ -33,13 +33,6 @@
 #![cfg_attr(feature = "clippy", plugin(clippy))]
 #![cfg_attr(feature = "clippy", allow(inline_always))]
 
-extern crate pagecache;
-#[macro_use]
-extern crate serde_derive;
-#[macro_use]
-extern crate log as _log;
-extern crate sled_sync as sync;
-
 mod binary_search;
 mod bound;
 mod data;
@@ -74,7 +67,10 @@ use self::prefix::{
 };
 use self::recovery::Recovery;
 
-use self::sync::{debug_delay, pin, Guard};
+use sled_sync::{debug_delay, pin, Guard};
+
+use _log::{debug, error, trace};
+use serde_derive::{Deserialize, Serialize};
 
 pub(crate) use self::frag::Frag;
 pub(crate) use self::materializer::BLinkMaterializer;

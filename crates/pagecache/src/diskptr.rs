@@ -77,7 +77,7 @@ impl DiskPtr {
         match self {
             DiskPtr::Blob(_lid, ptr) => read_blob(*ptr, &config),
             DiskPtr::Inline(lid) => {
-                let mut f = config.file()?;
+                let f = config.file()?;
 
                 f.read_message(*lid, &config).map(|log_read| {
                     log_read
@@ -88,7 +88,8 @@ impl DiskPtr {
                              in a valid Inline read. It's \
                              possible the DiskPtr outlived \
                              an outer guard.",
-                        ).1
+                        )
+                        .1
                 })
             }
         }

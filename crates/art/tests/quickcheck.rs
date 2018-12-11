@@ -1,9 +1,4 @@
-#[macro_use]
-extern crate quickcheck;
-extern crate art;
-extern crate rand;
-
-use self::quickcheck::{Arbitrary, Gen};
+use quickcheck::{quickcheck, Arbitrary, Gen};
 
 // The maximum key size. keeping it relatively
 // small increases the chance of multiple

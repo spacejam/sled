@@ -9,13 +9,14 @@ repository = "https://github.com/spacejam/sled"
 keywords = ["database", "embedded", "concurrent", "persistent", "lock-free"]
 documentation = "https://docs.rs/pagecache/"
 readme = "README.md"
+edition = "2018"
 
 [features]
 default = []
 lock_free_delays = ["sled_sync/lock_free_delays"]
 failpoints = ["fail", "rand"]
 no_metrics = ["historian/bypass"]
-no_logs = ["log/max_level_off"]
+no_logs = ["_log/max_level_off"]
 nightly = ["sled_sync/nightly"]
 no_inline = ["sled_sync/no_inline"]
 event_log = []
@@ -39,7 +40,8 @@ rand = { version = "0.6", optional = true }
 [dependencies.historian]
 version = "3.0"
 
-[dependencies.log]
+[dependencies._log]
+package = "log"
 version = "0.4"
 
 [dev-dependencies]

@@ -3,5 +3,6 @@ name = "tx"
 description = "dead-simple hash-transactor"
 version = "0.1.0"
 authors = ["Tyler Neely <t@jujit.su>"]
+edition = "2018"
 
 [dependencies]

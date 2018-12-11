@@ -8,6 +8,7 @@ homepage = "https://github.com/spacejam/sled/tree/master/crates/art"
 repository = "https://github.com/spacejam/sled"
 keywords = ["database", "embedded", "concurrent", "lock-free"]
 documentation = "https://docs.rs/art/"
+edition = "2018"
 
 [features]
 default = []
@@ -15,7 +16,7 @@ lock_free_delays = ["rand"]
 
 [dependencies]
 rand = {version = "0.5", optional = true}
-crossbeam-epoch = "0.7"
+crossbeam-epoch = "0.6"
 
 [dev-dependencies]
 quickcheck = "0.7"
