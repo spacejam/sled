@@ -108,7 +108,8 @@ impl Drop for SegmentAccountant {
                 let live = segment.live_pct();
                 let state = segment.state.clone();
                 (lsn, (state, live, lid))
-            }).collect();
+            })
+            .collect();
 
         self.config.event_log.segments_before_restart(segments);
     }
@@ -659,7 +660,8 @@ impl SegmentAccountant {
                     let live = segment.live_pct();
                     let state = segment.state.clone();
                     (lsn, (state, live, lid))
-                }).collect();
+                })
+                .collect();
 
             self.config.event_log.segments_after_restart(segments);
         }
@@ -1060,7 +1062,8 @@ impl SegmentAccountant {
                         .cloned()
                         .map(|(lid, _)| {
                             self.safety_buffer.contains(&lid)
-                        }).unwrap_or(false);
+                        })
+                        .unwrap_or(false);
 
                     // this will only be in safety_buffer if it's the last
                     // element
@@ -1439,7 +1442,6 @@ pub(super) fn raw_segment_iter_from(
         segment_base: None,
         segment_iter: segment_iter,
         segment_len: config.io_buf_size,
-        use_compression: config.use_compression,
         trailer: None,
     })
 }

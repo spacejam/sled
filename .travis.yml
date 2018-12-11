@@ -27,6 +27,11 @@ matrix:
     - os: linux
       rust: nightly-2018-10-26
       env:
+        - TEST=asan
+        - RUSTFLAGS="-Z sanitizer=address"
+    - os: linux
+      rust: nightly-2018-10-26
+      env:
         - TEST=lsan
         - RUSTFLAGS="-Z sanitizer=leak"
     - os: linux
@@ -74,34 +79,44 @@ matrix:
 script:
   - bash -c 'case "$TEST" in
                osx)
+                 pushd tests &&
                  cargo check &&
                  cargo check --features=all &&
                  cargo test test_crash_recovery --release -- --ignored &&
                  cargo test tree --release
                  ;;
                qc_log)
+                 pushd tests &&
                  cargo test quickcheck_log_works --release -- --ignored
                  ;;
                qc_pagecache)
+                 pushd tests &&
                  cargo test quickcheck_pagecache_works --release -- --ignored
                  ;;
                qc_tree)
+                 pushd tests &&
                  cargo test quickcheck_tree_matches_btreemap --release -- --ignored
                  ;;
                clippy)
                  cargo clippy
                  ;;
+               asan)
+                 pushd benchmarks/stress2 &&
+                 cargo build --target x86_64-unknown-linux-gnu &&
+                 sudo target/x86_64-unknown-linux-gnu/debug/stress2
+                 ;;
                lsan)
-                 cd benchmarks/stress2 &&
+                 pushd benchmarks/stress2 &&
                  cargo build --target x86_64-unknown-linux-gnu &&
                  sudo target/x86_64-unknown-linux-gnu/debug/stress2
                  ;;
                tsan)
-                 cd benchmarks/stress2;
+                 pushd benchmarks/stress2;
                  cargo run --features=lock_free_delays --target x86_64-unknown-linux-gnu
                  ;;
                crash)
-                 cargo test test_crash_recovery --release --features="check_snapshot_integrity" -- --nocapture --ignored
+                 pushd tests &&
+                 cargo test test_crash_recovery --release -- --nocapture --ignored
                  ;;
                cross-build)
                  echo "https://github.com/rust-lang/cargo/issues/4753";
@@ -109,8 +124,10 @@ script:
                  pushd crates/pagecache && cargo build --target $TARGET --features=nightly && popd
                  ;;
                standard)
+                 pushd tests &&
                  cargo check &&
                  cargo check --features=all &&
+                 popd &&
                  cargo test --release
                  ;;
                concurrent)

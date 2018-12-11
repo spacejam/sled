@@ -8,7 +8,6 @@ pub struct LogIter {
     pub segment_iter: Box<dyn Iterator<Item = (Lsn, LogId)>>,
     pub segment_base: Option<LogId>,
     pub segment_len: usize,
-    pub use_compression: bool,
     pub max_lsn: Lsn,
     pub cur_lsn: Lsn,
     pub trailer: Option<Lsn>,
@@ -206,7 +205,8 @@ impl LogIter {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
                 "encountered torn segment",
-            ).into());
+            )
+            .into());
         }
 
         let trailer_offset = offset + self.segment_len as LogId

@@ -20,6 +20,7 @@ nightly = ["sled_sync/nightly"]
 no_inline = ["sled_sync/no_inline"]
 event_log = []
 measure_allocs = []
+compression = ["zstd"]
 
 [dependencies]
 libc = "0.2"

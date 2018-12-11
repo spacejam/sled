@@ -32,7 +32,7 @@ extern crate log as _log;
 #[cfg(unix)]
 extern crate libc;
 extern crate rayon;
-#[cfg(feature = "zstd")]
+#[cfg(feature = "compression")]
 extern crate zstd;
 #[cfg(feature = "failpoints")]
 #[macro_use]
@@ -166,6 +166,8 @@ pub type Lsn = i64;
 pub type PageId = usize;
 
 /// Allows arbitrary logic to be injected into mere operations of the `PageCache`.
-pub type MergeOperator =
-    fn(key: &[u8], last_value: Option<&[u8]>, new_merge: &[u8])
-        -> Option<Vec<u8>>;
+pub type MergeOperator = fn(
+    key: &[u8],
+    last_value: Option<&[u8]>,
+    new_merge: &[u8],
+) -> Option<Vec<u8>>;

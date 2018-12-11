@@ -5,7 +5,10 @@ authors = ["Tyler Neely <t@jujit.su>"]
 publish = false
 
 [features]
+default = []
+all = ["event_log", "compression"]
 event_log = ["pagecache/event_log", "sled/event_log"]
+compression = ["pagecache/compression", "sled/compression"]
 
 [dependencies.pagecache]
 features = ["failpoints", "lock_free_delays"]

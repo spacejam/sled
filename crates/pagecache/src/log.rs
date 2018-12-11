@@ -133,7 +133,6 @@ impl Log {
             segment_base: None,
             segment_iter: segment_iter,
             segment_len: io_buf_size,
-            use_compression: self.config.use_compression,
             trailer: None,
         }
     }
@@ -164,7 +163,8 @@ impl Log {
                     }
                 }
                 _ => Ok(log_read),
-            }).map_err(|e| e.into())
+            })
+            .map_err(|e| e.into())
         } else {
             let (_lid, blob_ptr) = ptr.blob();
             read_blob(blob_ptr, &self.config)
