@@ -10,6 +10,13 @@ use super::*;
 /// value exists.
 pub struct PinnedValue(*const u8, usize, Guard);
 
+impl PinnedValue {
+    /// Create a shallow copy of the PinnedValue
+    pub fn shallow_copy(&self) -> PinnedValue {
+        PinnedValue(self.0, self.1, self.2.clone())
+    }
+}
+
 impl Deref for PinnedValue {
     type Target = [u8];
     fn deref(&self) -> &[u8] {

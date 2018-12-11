@@ -62,6 +62,7 @@ pub struct Tree {
     idgen: Arc<AtomicUsize>,
     idgen_persists: Arc<AtomicUsize>,
     idgen_persist_mu: Arc<Mutex<()>>,
+    subscriptions: Arc<Subscriptions>,
 }
 
 unsafe impl Send for Tree {}
@@ -225,7 +226,17 @@ impl Tree {
                 idgen_persists,
             )),
             idgen_persist_mu: Arc::new(Mutex::new(())),
+            subscriptions: Arc::new(Subscriptions::default()),
         })
+    }
+
+    /// Subscribe to `Event`s that happen to keys that have
+    /// the specified prefix.
+    pub fn subscribe_to_prefix(
+        &self,
+        prefix: Vec<u8>,
+    ) -> subscription::Subscriber {
+        self.subscriptions.register(prefix)
     }
 
     /// Generate a monotonic ID. Not guaranteed to be
@@ -549,6 +560,9 @@ impl Tree {
                 ));
             }
 
+            let mut subscriber_reservation =
+                self.subscriptions.reserve(&key);
+
             let (leaf_frag, leaf_ptr) = path.pop().expect(
                 "get_internal somehow returned a path of length zero",
             );
@@ -573,6 +587,20 @@ impl Tree {
             );
             match link {
                 Ok(_) => {
+                    if let Some(res) = subscriber_reservation.take() {
+                        let event = if new.is_some() {
+                            subscription::Event::Set(
+                                key.as_ref().to_vec(),
+                            )
+                        } else {
+                            subscription::Event::Del(
+                                key.as_ref().to_vec(),
+                            )
+                        };
+
+                        res.complete(event);
+                    }
+
                     guard.flush();
                     return Ok(());
                 }
@@ -615,6 +643,9 @@ impl Tree {
             let encoded_key =
                 prefix_encode(node.lo.inner(), key.as_ref());
 
+            let mut subscriber_reservation =
+                self.subscriptions.reserve(&key);
+
             let frag = Frag::Set(encoded_key, value.clone());
             let link = self.pages.link(
                 node.id,
@@ -625,6 +656,14 @@ impl Tree {
             match link {
                 Ok(new_cas_key) => {
                     // success
+                    if let Some(res) = subscriber_reservation.take() {
+                        let event = subscription::Event::Set(
+                            key.as_ref().to_vec(),
+                        );
+
+                        res.complete(event);
+                    }
+
                     if node.should_split(
                         self.config.blink_node_split_size as u64,
                     ) {
@@ -687,6 +726,10 @@ impl Tree {
         loop {
             let (mut path, existing_key) =
                 self.get_internal(key.as_ref(), &guard)?;
+
+            let mut subscriber_reservation =
+                self.subscriptions.reserve(&key);
+
             let (leaf_frag, leaf_ptr) = path.pop().expect(
                 "path_for_key should always return a path \
                  of length >= 2 (root + leaf)",
@@ -706,6 +749,14 @@ impl Tree {
             match link {
                 Ok(_) => {
                     // success
+                    if let Some(res) = subscriber_reservation.take() {
+                        let event = subscription::Event::Del(
+                            key.as_ref().to_vec(),
+                        );
+
+                        res.complete(event);
+                    }
+
                     guard.flush();
                     return Ok(existing_key.map(move |r| {
                         PinnedValue::new(r, double_guard)

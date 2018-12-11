@@ -43,6 +43,7 @@ mod node;
 mod pinned_value;
 mod prefix;
 mod recovery;
+mod subscription;
 mod tree;
 
 pub use self::iter::{Iter, Keys, Values};
@@ -57,18 +58,21 @@ use pagecache::{
 
 pub use pagecache::{Config, ConfigBuilder, Error, Result};
 
-use self::binary_search::{
-    binary_search_gt, binary_search_lt, binary_search_lub,
-    leaf_search,
+use self::{
+    binary_search::{
+        binary_search_gt, binary_search_lt, binary_search_lub,
+        leaf_search,
+    },
+    bound::Bound,
+    data::Data,
+    frag::{ChildSplit, ParentSplit},
+    node::Node,
+    prefix::{
+        prefix_cmp, prefix_cmp_encoded, prefix_decode, prefix_encode,
+    },
+    recovery::Recovery,
+    subscription::Subscriptions,
 };
-use self::bound::Bound;
-use self::data::Data;
-use self::frag::{ChildSplit, ParentSplit};
-use self::node::Node;
-use self::prefix::{
-    prefix_cmp, prefix_cmp_encoded, prefix_decode, prefix_encode,
-};
-use self::recovery::Recovery;
 
 use sled_sync::{debug_delay, pin, Guard};
 
