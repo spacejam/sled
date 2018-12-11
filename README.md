@@ -1,9 +1,11 @@
-# sled
 
-<p>
+
+<p align="center">
   <img src="https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face.png" width="20%" height="auto" />
 </p>
 
+
+# sled
 [![Build Status](https://travis-ci.org/spacejam/sled.svg?branch=master)](https://travis-ci.org/spacejam/sled)
 [![crates.io](https://meritbadge.herokuapp.com/sled)](https://crates.io/crates/sled)
 [![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled)
@@ -12,8 +14,6 @@
 An (alpha) modern embedded database.
 
 ```rust
-extern crate sled;
-
 use sled::Tree;
 
 let tree = Tree::start_default(path)?;
@@ -32,55 +32,22 @@ assert_eq!(iter.next(), None);
 
 // deletion
 tree.del(&k);
+
+// block until all operations are on-disk
+tree.flush();
 ```
 
-We also support merge operators.
-
-```rust
-fn concatenate_merge(
-  _key: &[u8],               // the key being merged
-  old_value: Option<&[u8]>,  // the previous value, if one existed
-  merged_bytes: &[u8]        // the new bytes being merged in
-) -> Option<Vec<u8>> {       // set the new value, return None to delete
-  let mut ret = old_value
-    .map(|ov| ov.to_vec())
-    .unwrap_or_else(|| vec![]);
-
-  ret.extend_from_slice(merged_bytes);
-
-  Some(ret)
-}
-
-let config = ConfigBuilder::new()
-  .temporary(true)
-  .merge_operator(concatenate_merge)
-  .build();
-
-let tree = Tree::start(config).unwrap();
-
-tree.set(k, vec![0]);
-tree.merge(k, vec![1]);
-tree.merge(k, vec![2]);
-assert_eq!(tree.get(&k), Ok(Some(vec![0, 1, 2])));
-
-// sets replace previously merged data,
-// bypassing the merge function.
-tree.set(k, vec![3]);
-assert_eq!(tree.get(&k), Ok(Some(vec![3])));
-
-// merges on non-present values will add them
-tree.del(&k);
-tree.merge(k, vec![4]);
-assert_eq!(tree.get(&k), Ok(Some(vec![4])));
-```
+We also support [merge operators](https://github.com/spacejam/sled/wiki/merge-operators)!
 
 # features
 
-* ordered map API
+* API similar to a threadsafe `BTreeMap<Vec<u8>, Vec<u8>>`
 * fully atomic single-key operations, supports CAS
 * zero-copy reads
 * merge operators
-* [zstd](https://github.com/facebook/zstd) compression (use the zstd build feature)
+* forward and reverse iterators
+* a crash-safe monotonic ID generator capable of generating 75-125 million ID's per second
+* [zstd](https://github.com/facebook/zstd) compression (use the `compression` build feature)
 * cpu-scalable lock-free implementation
 * SSD-optimized log-structured storage
 
@@ -95,9 +62,9 @@ assert_eq!(tree.get(&k), Ok(Some(vec![4])));
 
 * [LSM tree](https://en.wikipedia.org/wiki/Log-structured_merge-tree)-like write performance
   with [traditional B+ tree](https://en.wikipedia.org/wiki/B%2B_tree)-like read performance
-* MVCC, transactions, and snapshots
+* MVCC, serializable transactions, and snapshots
 * forward-compatible binary format
-* prefix subscription semantics
+* FIFO prefix subscription semantics
 * concurrent snapshot delta generation and recovery
 * first-class access to replication stream
 * consensus protocol for [PC/EC](https://en.wikipedia.org/wiki/PACELC_theorem) systems
