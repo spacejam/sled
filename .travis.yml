@@ -116,7 +116,7 @@ script:
                  ;;
                crash)
                  pushd tests &&
-                 cargo test test_crash_recovery --release --features="check_snapshot_integrity" -- --nocapture --ignored
+                 cargo test test_crash_recovery --release -- --nocapture --ignored
                  ;;
                cross-build)
                  echo "https://github.com/rust-lang/cargo/issues/4753";
