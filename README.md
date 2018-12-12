@@ -44,6 +44,7 @@ We also support [merge operators](https://github.com/spacejam/sled/wiki/merge-op
 * API similar to a threadsafe `BTreeMap<Vec<u8>, Vec<u8>>`
 * fully atomic single-key operations, supports CAS
 * zero-copy reads
+* subscription/watch semantics on key prefixes
 * merge operators
 * forward and reverse iterators
 * a crash-safe monotonic ID generator capable of generating 75-125 million ID's per second
