@@ -48,7 +48,7 @@ mod tree;
 
 pub use self::iter::{Iter, Keys, Values};
 pub use self::pinned_value::PinnedValue;
-pub use self::subscription::Event;
+pub use self::subscription::{Event, Subscriber};
 /// atomic lock-free tree
 pub use self::tree::Tree;
 

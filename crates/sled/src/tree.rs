@@ -256,14 +256,17 @@ impl Tree {
     /// });
     ///
     /// // events is a blocking `Iterator` over `Event`s
-    /// assert_eq!(events.next().unwrap(), Event::Set(vec![0], vec![1]));
+    /// for event in events.take(1) {
+    ///     match event {
+    ///         Event::Set(key, value) => assert_eq!(key, vec![0]),
+    ///         Event::Merge(key, partial_value) => {}
+    ///         Event::Del(key) => {}
+    ///     }
+    /// }
     ///
     /// thread.join().unwrap();
     /// ```
-    pub fn watch_prefix(
-        &self,
-        prefix: Vec<u8>,
-    ) -> subscription::Subscriber {
+    pub fn watch_prefix(&self, prefix: Vec<u8>) -> Subscriber {
         self.subscriptions.register(prefix)
     }
 
