@@ -231,8 +231,36 @@ impl Tree {
     }
 
     /// Subscribe to `Event`s that happen to keys that have
-    /// the specified prefix.
-    pub fn subscribe_to_prefix(
+    /// the specified prefix. Events for particular keys are
+    /// guaranteed to be witnessed in the same order by all
+    /// threads, but threads may witness different interleavings
+    /// of `Event`s across different keys. If subscribers don't
+    /// keep up with new writes, they will cause new writes
+    /// to block. There is a buffer of 1024 items per
+    /// `Subscriber`. This can be used to build reactive
+    /// and replicated systems.
+    ///
+    /// # Examples
+    /// ```
+    /// use sled::{Event, ConfigBuilder};
+    /// let config = ConfigBuilder::new().temporary(true).build();
+    ///
+    /// let tree = sled::Tree::start(config).unwrap();
+    ///
+    /// // watch all events by subscribing to the empty prefix
+    /// let mut events = tree.watch_prefix(vec![]);
+    ///
+    /// let tree_2 = tree.clone();
+    /// let thread = std::thread::spawn(move || {
+    ///     tree.set(vec![0], vec![1]).unwrap();
+    /// });
+    ///
+    /// // events is a blocking `Iterator` over `Event`s
+    /// assert_eq!(events.next().unwrap(), Event::Set(vec![0], vec![1]));
+    ///
+    /// thread.join().unwrap();
+    /// ```
+    pub fn watch_prefix(
         &self,
         prefix: Vec<u8>,
     ) -> subscription::Subscriber {

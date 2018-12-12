@@ -7,9 +7,12 @@ use std::{
     },
 };
 
-use futures::sync::oneshot::{
-    channel as future_channel, Receiver as FutureReceiver,
-    Sender as FutureSender,
+use futures::{
+    future::Future,
+    sync::oneshot::{
+        channel as future_channel, Receiver as FutureReceiver,
+        Sender as FutureSender,
+    },
 };
 
 static ID_GEN: AtomicUsize = AtomicUsize::new(0);
@@ -17,12 +20,16 @@ static ID_GEN: AtomicUsize = AtomicUsize::new(0);
 /// An event that happened to a key that a subscriber is interested in.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Event {
+    /// A new complete (key, value) pair
     Set(Vec<u8>, Vec<u8>),
+    /// A new partial (key, merged value) pair
     Merge(Vec<u8>, Vec<u8>),
+    /// A deleted key
     Del(Vec<u8>),
 }
 
 impl Event {
+    /// Return a reference to the key that this `Event` refers to
     pub fn key(&self) -> &[u8] {
         match self {
             Event::Set(k, ..)
@@ -64,10 +71,9 @@ impl Iterator for Subscriber {
 
     fn next(&mut self) -> Option<Event> {
         loop {
-            let mut future_rx = self.rx.recv().ok()?;
-            match future_rx.try_recv() {
-                Ok(Some(event)) => return Some(event),
-                Ok(None) => panic!("stale value unexpected"),
+            let future_rx = self.rx.recv().ok()?;
+            match future_rx.wait() {
+                Ok(event) => return Some(event),
                 Err(_cancelled) => continue,
             }
         }
