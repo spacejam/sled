@@ -128,7 +128,8 @@ impl Tree {
                     assert_ne!(
                         i + 1,
                         recovery.root_transitions.len(),
-                        "encountered gap in root chain"
+                        "encountered gap in root transitions: {:?}",
+                        recovery.root_transitions
                     );
                 }
                 recovery.root_transitions.remove(last_idx);

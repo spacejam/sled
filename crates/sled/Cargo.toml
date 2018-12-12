@@ -1,6 +1,6 @@
 [package]
 name = "sled"
-version = "0.16.9"
+version = "0.16.10"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "a flash-sympathetic persistent lock-free B+ tree"
 license = "MIT/Apache-2.0"
@@ -24,12 +24,14 @@ no_inline = ["pagecache/no_inline"]
 event_log = ["pagecache/event_log"]
 measure_allocs = ["pagecache/measure_allocs"]
 
+[dependencies.serde]
+version = "1.0"
+features = ["derive"]
+
 [dependencies.log]
 version = "0.4"
 
 [dependencies]
-serde = "1.0"
-serde_derive = "1.0"
 pagecache = { path = "../pagecache", version = "0.8" }
 sled_sync = { version = "0.2", path = "../sled_sync" }
 futures = "0.1"

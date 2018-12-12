@@ -78,7 +78,7 @@ use self::{
 use sled_sync::{debug_delay, pin, Guard};
 
 use log::{debug, error, trace};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
 pub(crate) use self::frag::Frag;
 pub(crate) use self::materializer::BLinkMaterializer;
