@@ -180,14 +180,8 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
 
             let search = if self.inclusive {
                 self.inclusive = false;
-                leaf.binary_search_by(|&(ref k, ref _v)| {
+                binary_search_lub(leaf, |&(ref k, ref _v)| {
                     prefix_cmp_encoded(k, &self.last_key, prefix)
-                })
-                .ok()
-                .or_else(|| {
-                    binary_search_lt(leaf, |&(ref k, ref _v)| {
-                        prefix_cmp_encoded(k, &self.last_key, prefix)
-                    })
                 })
             } else {
                 binary_search_lt(leaf, |&(ref k, ref _v)| {
@@ -204,7 +198,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 return Some(ret);
             }
 
-            // we need to get the node to the right of ours by
+            // we need to get the node to the left of ours by
             // guessing a key that might land on it, and then
             // fast-forwarding through the right child pointers
             // if we went too far to the left.
