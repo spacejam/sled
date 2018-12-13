@@ -12,7 +12,7 @@ install:
     sh -s -- -y --default-toolchain $TRAVIS_RUST_VERSION &&
     rustup component add clippy-preview
   - if [ -n "$TARGETS" ]; then
-      for TARGET in ${TARGETS[@]}; do
+      for TARGET in $TARGETS; do
         rustup target add $TARGET;
       done
     fi
@@ -40,7 +40,7 @@ matrix:
       rust: nightly-2018-10-26
       env:
         - TEST=cross-build
-        - TARGETS=(i686-unknown-linux-gnu x86_64-pc-windows-gnu)
+        - TARGETS='i686-unknown-linux-gnu x86_64-pc-windows-gnu'
     - os: osx
       rust: stable
       env:
@@ -122,7 +122,7 @@ script:
                  ;;
                cross-build)
                  echo "https://github.com/rust-lang/cargo/issues/4753";
-                 for TARGET in ${TARGETS[@]}; do
+                 for TARGET in $TARGETS; do
                    echo "checking target $TARGET";
                    pushd crates/sled      && cargo check --target $TARGET --features=compress && popd &&
                    pushd crates/pagecache && cargo check --target $TARGET --features=compress && popd &&
