@@ -941,15 +941,30 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// let config = sled::ConfigBuilder::new().temporary(true).build();
+    /// let config = sled::ConfigBuilder::new()
+    ///     .temporary(true)
+    ///     .build();
     /// let t = sled::Tree::start(config).unwrap();
-    /// t.set(&[1], vec![10]);
-    /// t.set(&[2], vec![20]);
-    /// t.set(&[3], vec![30]);
-    /// let mut iter = t.scan(&*vec![2]);
-    /// // assert_eq!(iter.next(), Some(Ok((vec![2], vec![20]))));
-    /// // assert_eq!(iter.next(), Some(Ok((vec![3], vec![30]))));
-    /// // assert_eq!(iter.next(), None);
+    ///
+    /// t.set(b"0", vec![0]).unwrap();
+    /// t.set(b"1", vec![10]).unwrap();
+    /// t.set(b"2", vec![20]).unwrap();
+    /// t.set(b"3", vec![30]).unwrap();
+    /// t.set(b"4", vec![40]).unwrap();
+    /// t.set(b"5", vec![50]).unwrap();
+    ///
+    /// let mut r = t.scan(b"2");
+    /// assert_eq!(r.next().unwrap().unwrap().0, b"2");
+    /// assert_eq!(r.next().unwrap().unwrap().0, b"3");
+    /// assert_eq!(r.next().unwrap().unwrap().0, b"4");
+    /// assert_eq!(r.next().unwrap().unwrap().0, b"5");
+    /// assert_eq!(r.next(), None);
+
+    /// let mut r = t.scan(b"2").rev();
+    /// assert_eq!(r.next().unwrap().unwrap().0, b"2");
+    /// assert_eq!(r.next().unwrap().unwrap().0, b"1");
+    /// assert_eq!(r.next().unwrap().unwrap().0, b"0");
+    /// assert_eq!(r.next(), None);
     /// ```
     pub fn scan<K>(&self, key: K) -> Iter<'_>
     where
@@ -966,16 +981,31 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// let config = sled::ConfigBuilder::new().temporary(true).build();
+    /// let config = sled::ConfigBuilder::new()
+    ///     .temporary(true)
+    ///     .build();
     /// let t = sled::Tree::start(config).unwrap();
-    /// t.set(b"0", vec![0]);
-    /// t.set(b"1", vec![10]);
-    /// t.set(b"2", vec![20]);
-    /// t.set(b"3", vec![30]);
-    /// let mut iter = t.range(b"1"..b"2");
-    /// // assert_eq!(iter.next(), Some(Ok((vec![1], vec![10]))));
-    /// // assert_eq!(iter.next(), Some(Ok((vec![2], vec![20]))));
-    /// // assert_eq!(iter.next(), None);
+    ///
+    /// t.set(b"0", vec![0]).unwrap();
+    /// t.set(b"1", vec![10]).unwrap();
+    /// t.set(b"2", vec![20]).unwrap();
+    /// t.set(b"3", vec![30]).unwrap();
+    /// t.set(b"4", vec![40]).unwrap();
+    /// t.set(b"5", vec![50]).unwrap();
+    ///
+    /// let start: &[u8] = b"2";
+    /// let end: &[u8] = b"4";
+    /// let mut r = t.range(start..end);
+    /// assert_eq!(r.next().unwrap().unwrap().0, b"2");
+    /// assert_eq!(r.next().unwrap().unwrap().0, b"3");
+    /// assert_eq!(r.next(), None);
+    ///
+    /// let start = b"2".to_vec();
+    /// let end = b"4".to_vec();
+    /// let mut r = t.range(start..end).rev();
+    /// assert_eq!(r.next().unwrap().unwrap().0, b"3");
+    /// assert_eq!(r.next().unwrap().unwrap().0, b"2");
+    /// assert_eq!(r.next(), None);
     /// ```
     pub fn range<K, R>(&self, range: R) -> Iter<'_>
     where
