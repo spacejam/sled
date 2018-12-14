@@ -2,6 +2,7 @@ use std::{
     borrow::Cow,
     cmp::Ordering::{Greater, Less},
     fmt::{self, Debug},
+    ops::{self, RangeBounds},
     sync::{
         atomic::{
             AtomicUsize,
@@ -430,15 +431,10 @@ impl Tree {
         });
 
         let ret = if search.is_none() {
-            let mut iter = Iter {
-                id: last_node.id,
-                inner: &self,
-                last_key: key.as_ref().to_vec(),
-                inclusive: false,
-                broken: None,
-                done: false,
-                guard: guard.clone(),
-            };
+            let mut iter = self.range((
+                std::ops::Bound::Unbounded,
+                std::ops::Bound::Excluded(key),
+            ));
 
             match iter.next_back() {
                 Some(Err(e)) => return Err(e),
@@ -510,15 +506,10 @@ impl Tree {
             });
 
         let ret = if search.is_none() {
-            let mut iter = Iter {
-                id: last_node.id,
-                inner: &self,
-                last_key: key.as_ref().to_vec(),
-                inclusive: false,
-                broken: None,
-                done: false,
-                guard: guard.clone(),
-            };
+            let mut iter = self.range((
+                std::ops::Bound::Excluded(key),
+                std::ops::Bound::Unbounded,
+            ));
 
             match iter.next() {
                 Some(Err(e)) => return Err(e),
@@ -923,7 +914,8 @@ impl Tree {
         }
     }
 
-    /// Iterate over the tuples of keys and values in this tree.
+    /// Create a double-ended iterator over the tuples of keys and
+    /// values in this tree.
     ///
     /// # Examples
     ///
@@ -940,65 +932,123 @@ impl Tree {
     /// // assert_eq!(iter.next(), None);
     /// ```
     pub fn iter(&self) -> Iter<'_> {
-        self.scan(b"")
+        self.range::<Vec<u8>, _>(..)
     }
 
-    /// Iterate over tuples of keys and values, starting at the provided key.
+    /// Create a double-ended iterator over tuples of keys and values,
+    /// starting at the provided key.
     ///
     /// # Examples
     ///
     /// ```
-    /// let config = sled::ConfigBuilder::new().temporary(true).build();
+    /// let config = sled::ConfigBuilder::new()
+    ///     .temporary(true)
+    ///     .build();
     /// let t = sled::Tree::start(config).unwrap();
-    /// t.set(&[1], vec![10]);
-    /// t.set(&[2], vec![20]);
-    /// t.set(&[3], vec![30]);
-    /// let mut iter = t.scan(&*vec![2]);
-    /// // assert_eq!(iter.next(), Some(Ok((vec![2], vec![20]))));
-    /// // assert_eq!(iter.next(), Some(Ok((vec![3], vec![30]))));
-    /// // assert_eq!(iter.next(), None);
+    ///
+    /// t.set(b"0", vec![0]).unwrap();
+    /// t.set(b"1", vec![10]).unwrap();
+    /// t.set(b"2", vec![20]).unwrap();
+    /// t.set(b"3", vec![30]).unwrap();
+    /// t.set(b"4", vec![40]).unwrap();
+    /// t.set(b"5", vec![50]).unwrap();
+    ///
+    /// let mut r = t.scan(b"2");
+    /// assert_eq!(r.next().unwrap().unwrap().0, b"2");
+    /// assert_eq!(r.next().unwrap().unwrap().0, b"3");
+    /// assert_eq!(r.next().unwrap().unwrap().0, b"4");
+    /// assert_eq!(r.next().unwrap().unwrap().0, b"5");
+    /// assert_eq!(r.next(), None);
+
+    /// let mut r = t.scan(b"2").rev();
+    /// assert_eq!(r.next().unwrap().unwrap().0, b"2");
+    /// assert_eq!(r.next().unwrap().unwrap().0, b"1");
+    /// assert_eq!(r.next().unwrap().unwrap().0, b"0");
+    /// assert_eq!(r.next(), None);
     /// ```
-    pub fn scan<K: AsRef<[u8]>>(&self, key: K) -> Iter<'_> {
+    pub fn scan<K>(&self, key: K) -> Iter<'_>
+    where
+        K: AsRef<[u8]>,
+    {
+        let mut iter = self.range(key..);
+        iter.is_scan = true;
+        iter
+    }
+
+    /// Create a double-ended iterator over tuples of keys and values,
+    /// where the keys fall within the specified range.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let config = sled::ConfigBuilder::new()
+    ///     .temporary(true)
+    ///     .build();
+    /// let t = sled::Tree::start(config).unwrap();
+    ///
+    /// t.set(b"0", vec![0]).unwrap();
+    /// t.set(b"1", vec![10]).unwrap();
+    /// t.set(b"2", vec![20]).unwrap();
+    /// t.set(b"3", vec![30]).unwrap();
+    /// t.set(b"4", vec![40]).unwrap();
+    /// t.set(b"5", vec![50]).unwrap();
+    ///
+    /// let start: &[u8] = b"2";
+    /// let end: &[u8] = b"4";
+    /// let mut r = t.range(start..end);
+    /// assert_eq!(r.next().unwrap().unwrap().0, b"2");
+    /// assert_eq!(r.next().unwrap().unwrap().0, b"3");
+    /// assert_eq!(r.next(), None);
+    ///
+    /// let start = b"2".to_vec();
+    /// let end = b"4".to_vec();
+    /// let mut r = t.range(start..end).rev();
+    /// assert_eq!(r.next().unwrap().unwrap().0, b"3");
+    /// assert_eq!(r.next().unwrap().unwrap().0, b"2");
+    /// assert_eq!(r.next(), None);
+    /// ```
+    pub fn range<K, R>(&self, range: R) -> Iter<'_>
+    where
+        K: AsRef<[u8]>,
+        R: RangeBounds<K>,
+    {
         let _measure = Measure::new(&M.tree_scan);
 
         let guard = pin();
 
-        let mut broken = None;
-        let id = match self.path_for_key(key.as_ref(), &guard) {
-            Ok(ref mut path) if !path.is_empty() => {
-                let (leaf_frag, _leaf_ptr) = path.pop().expect(
-                    "path_for_key should always return a path \
-                     of length >= 2 (root + leaf)",
-                );
-                let node: &Node = leaf_frag.unwrap_base();
-                node.id
+        let lo = match range.start_bound() {
+            ops::Bound::Included(ref end) => {
+                ops::Bound::Included(end.as_ref().to_vec())
             }
-            Ok(_) => {
-                broken = Some(Error::ReportableBug(
-                    "failed to get path for key".to_owned(),
-                ));
-                0
+            ops::Bound::Excluded(ref end) => {
+                ops::Bound::Excluded(end.as_ref().to_vec())
             }
-            Err(e) => {
-                broken = Some(e.danger_cast());
-                0
+            ops::Bound::Unbounded => ops::Bound::Unbounded,
+        };
+        let hi = match range.end_bound() {
+            ops::Bound::Included(ref end) => {
+                ops::Bound::Included(end.as_ref().to_vec())
             }
+            ops::Bound::Excluded(ref end) => {
+                ops::Bound::Excluded(end.as_ref().to_vec())
+            }
+            ops::Bound::Unbounded => ops::Bound::Unbounded,
         };
 
-        guard.flush();
-
         Iter {
-            id,
-            inner: &self,
-            last_key: key.as_ref().to_vec(),
-            inclusive: true,
-            broken,
+            tree: &self,
+            hi,
+            lo,
+            last_id: None,
+            last_key: None,
+            broken: None,
             done: false,
+            is_scan: false,
             guard,
         }
     }
 
-    /// Iterate over keys, starting at the provided key.
+    /// Create a double-ended iterator over keys, starting at the provided key.
     ///
     /// # Examples
     ///
@@ -1013,11 +1063,14 @@ impl Tree {
     /// // assert_eq!(iter.next(), Some(Ok(vec![3])));
     /// // assert_eq!(iter.next(), None);
     /// ```
-    pub fn keys<K: AsRef<[u8]>>(&self, key: K) -> Keys<'_> {
+    pub fn keys<K>(&self, key: K) -> Keys<'_>
+    where
+        K: AsRef<[u8]>,
+    {
         self.scan(key).keys()
     }
 
-    /// Iterate over values, starting at the provided key.
+    /// Create a double-ended iterator over values, starting at the provided key.
     ///
     /// # Examples
     ///

@@ -57,7 +57,8 @@ pub fn fuzz_then_shrink(buf: &[u8]) {
             let mut sled_rng = SledGen { r: rng, size: 2 };
 
             Op::arbitrary(&mut sled_rng)
-        }).collect();
+        })
+        .collect();
 
     println!("working on ops {:?}", ops);
     match panic::catch_unwind(move || {
@@ -226,7 +227,8 @@ pub fn prop_tree_matches_btreemap(
         .io_buf_size(10000)
         .blink_node_split_size(
             1 << std::cmp::min(blink_node_exponent, 20),
-        ).cache_capacity(40)
+        )
+        .cache_capacity(40)
         .cache_bits(0)
         .merge_operator(test_merge_operator)
         .build();
@@ -242,7 +244,7 @@ pub fn prop_tree_matches_btreemap(
             }
             Merge(k, v) => {
                 tree.merge(&k.0, vec![v]).unwrap();
-                let mut entry = reference.entry(k).or_insert(0u16);
+                let entry = reference.entry(k).or_insert(0u16);
                 *entry += v as u16;
             }
             Get(k) => {

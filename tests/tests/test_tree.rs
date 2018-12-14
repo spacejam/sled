@@ -56,7 +56,8 @@ fn parallel_tree_ops() {
                             let k = kv(i);
                             $f(&*tree, k);
                         }
-                    }).expect("should be able to spawn thread");
+                    })
+                    .expect("should be able to spawn thread");
                 threads.push(thread);
             }
             while let Some(thread) = threads.pop() {
@@ -69,7 +70,7 @@ fn parallel_tree_ops() {
 
     println!("========== initial sets ==========");
     let t = Arc::new(sled::Tree::start(config.clone()).unwrap());
-    par!{t, |tree: &Tree, k: Vec<u8>| {
+    par! {t, |tree: &Tree, k: Vec<u8>| {
         assert_eq!(tree.get(&*k), Ok(None));
         tree.set(&k, k.clone()).expect("we should write successfully");
         assert_eq!(tree.get(&*k).unwrap().expect("we should read what we just wrote"), k);
@@ -98,7 +99,7 @@ fn parallel_tree_ops() {
     }
 
     println!("========== reading sets ==========");
-    par!{t, |tree: &Tree, k: Vec<u8>| {
+    par! {t, |tree: &Tree, k: Vec<u8>| {
         if let Some(v) =  tree.get(&*k).unwrap() {
             if v != k {
                 println!("{}", tree.key_debug_str(&*k.clone()));
@@ -116,7 +117,7 @@ fn parallel_tree_ops() {
     );
 
     println!("========== CAS test ==========");
-    par!{t, |tree: &Tree, k: Vec<u8>| {
+    par! {t, |tree: &Tree, k: Vec<u8>| {
         let k1 = k.clone();
         let mut k2 = k.clone();
         k2.reverse();
@@ -129,7 +130,7 @@ fn parallel_tree_ops() {
             .expect("should be able to restart Tree"),
     );
 
-    par!{t, |tree: &Tree, k: Vec<u8>| {
+    par! {t, |tree: &Tree, k: Vec<u8>| {
         let k1 = k.clone();
         let mut k2 = k.clone();
         k2.reverse();
@@ -143,7 +144,7 @@ fn parallel_tree_ops() {
     );
 
     println!("========== deleting ==========");
-    par!{t, |tree: &Tree, k: Vec<u8>| {
+    par! {t, |tree: &Tree, k: Vec<u8>| {
         tree.del(&*k).unwrap();
     }};
 
@@ -153,7 +154,7 @@ fn parallel_tree_ops() {
             .expect("should be able to restart Tree"),
     );
 
-    par!{t, |tree: &Tree, k: Vec<u8>| {
+    par! {t, |tree: &Tree, k: Vec<u8>| {
         assert_eq!(tree.get(&*k), Ok(None));
     }};
 }
@@ -177,7 +178,7 @@ fn tree_subdir() {
     let res = t.get(&*vec![1]);
 
     assert_eq!(res.unwrap().unwrap(), vec![1_u8]);
-    
+
     drop(t);
 
     std::fs::remove_dir_all("/tmp/test_tree_subdir").unwrap();
@@ -185,7 +186,6 @@ fn tree_subdir() {
 
 #[test]
 fn tree_iterator() {
-    println!("========== iterator ==========");
     let config = ConfigBuilder::new()
         .temporary(true)
         .blink_node_split_size(0)
@@ -229,8 +229,51 @@ fn tree_iterator() {
 }
 
 #[test]
+fn tree_range() {
+    let config = ConfigBuilder::new()
+        .temporary(true)
+        .blink_node_split_size(0)
+        .flush_every_ms(None)
+        .build();
+    let t = sled::Tree::start(config).unwrap();
+
+    t.set(b"0", vec![0]).unwrap();
+    t.set(b"1", vec![10]).unwrap();
+    t.set(b"2", vec![20]).unwrap();
+    t.set(b"3", vec![30]).unwrap();
+    t.set(b"4", vec![40]).unwrap();
+    t.set(b"5", vec![50]).unwrap();
+
+    let start: &[u8] = b"2";
+    let end: &[u8] = b"4";
+    let mut r = t.range(start..end);
+    assert_eq!(r.next().unwrap().unwrap().0, b"2");
+    assert_eq!(r.next().unwrap().unwrap().0, b"3");
+    assert_eq!(r.next(), None);
+
+    let start = b"2".to_vec();
+    let end = b"4".to_vec();
+    let mut r = t.range(start..end).rev();
+    assert_eq!(r.next().unwrap().unwrap().0, b"3");
+    assert_eq!(r.next().unwrap().unwrap().0, b"2");
+    assert_eq!(r.next(), None);
+
+    let mut r = t.scan(b"2");
+    assert_eq!(r.next().unwrap().unwrap().0, b"2");
+    assert_eq!(r.next().unwrap().unwrap().0, b"3");
+    assert_eq!(r.next().unwrap().unwrap().0, b"4");
+    assert_eq!(r.next().unwrap().unwrap().0, b"5");
+    assert_eq!(r.next(), None);
+
+    let mut r = t.scan(b"2").rev();
+    assert_eq!(r.next().unwrap().unwrap().0, b"2");
+    assert_eq!(r.next().unwrap().unwrap().0, b"1");
+    assert_eq!(r.next().unwrap().unwrap().0, b"0");
+    assert_eq!(r.next(), None);
+}
+
+#[test]
 fn recover_tree() {
-    println!("========== recovery ==========");
     let config = ConfigBuilder::new()
         .temporary(true)
         .blink_node_split_size(0)
