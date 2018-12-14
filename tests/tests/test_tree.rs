@@ -244,14 +244,31 @@ fn tree_range() {
     t.set(b"4", vec![40]).unwrap();
     t.set(b"5", vec![50]).unwrap();
 
-    let mut r = t.range(b"2"..b"4");
+    let start: &[u8] = b"2";
+    let end: &[u8] = b"4";
+    let mut r = t.range(start..end);
     assert_eq!(r.next().unwrap().unwrap().0, b"2");
     assert_eq!(r.next().unwrap().unwrap().0, b"3");
     assert_eq!(r.next(), None);
 
-    let mut r = t.range(b"2"..b"4").rev();
+    let start = b"2".to_vec();
+    let end = b"4".to_vec();
+    let mut r = t.range(start..end).rev();
     assert_eq!(r.next().unwrap().unwrap().0, b"3");
     assert_eq!(r.next().unwrap().unwrap().0, b"2");
+    assert_eq!(r.next(), None);
+
+    let mut r = t.scan(b"2");
+    assert_eq!(r.next().unwrap().unwrap().0, b"2");
+    assert_eq!(r.next().unwrap().unwrap().0, b"3");
+    assert_eq!(r.next().unwrap().unwrap().0, b"4");
+    assert_eq!(r.next().unwrap().unwrap().0, b"5");
+    assert_eq!(r.next(), None);
+
+    let mut r = t.scan(b"2").rev();
+    assert_eq!(r.next().unwrap().unwrap().0, b"2");
+    assert_eq!(r.next().unwrap().unwrap().0, b"1");
+    assert_eq!(r.next().unwrap().unwrap().0, b"0");
     assert_eq!(r.next(), None);
 }
 

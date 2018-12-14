@@ -1,38 +1,35 @@
-use std::ops::{self, RangeBounds};
+use std::ops;
 
 use pagecache::{Measure, M};
 
 use super::*;
 
-// adapted from the unstable implementation of RangeBounds
-// in the standard library.
-fn contains<'a, K, B>(range: &B, item: &'a [u8]) -> bool
-where
-    K: 'a + AsRef<[u8]>,
-    B: Sized + RangeBounds<K>,
-{
-    (match range.start_bound() {
-        ops::Bound::Included(ref start) => start.as_ref() <= item,
-        ops::Bound::Excluded(ref start) => start.as_ref() < item,
+fn lower_bound_includes<'a>(
+    lb: &ops::Bound<Vec<u8>>,
+    item: &'a [u8],
+) -> bool {
+    match lb {
+        ops::Bound::Included(ref start) => &**start <= item,
+        ops::Bound::Excluded(ref start) => &**start < item,
         ops::Bound::Unbounded => true,
-    }) && (match range.end_bound() {
+    }
+}
+
+fn upper_bound_includes<'a>(
+    ub: &ops::Bound<Vec<u8>>,
+    item: &'a [u8],
+) -> bool {
+    match ub {
         ops::Bound::Included(ref end) => item <= end.as_ref(),
         ops::Bound::Excluded(ref end) => item < end.as_ref(),
         ops::Bound::Unbounded => true,
-    })
+    }
 }
 
 /// An iterator over keys in a `Tree`
-pub struct Keys<'a, K, B>(Iter<'a, K, B>)
-where
-    K: 'a + AsRef<[u8]>,
-    B: Sized + RangeBounds<K>;
+pub struct Keys<'a>(Iter<'a>);
 
-impl<'a, K, B> Iterator for Keys<'a, K, B>
-where
-    K: 'a + AsRef<[u8]>,
-    B: Sized + RangeBounds<K>,
-{
+impl<'a> Iterator for Keys<'a> {
     type Item = Result<Vec<u8>, ()>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -40,27 +37,16 @@ where
     }
 }
 
-impl<'a, K, B> DoubleEndedIterator for Keys<'a, K, B>
-where
-    K: 'a + AsRef<[u8]>,
-    B: Sized + RangeBounds<K>,
-{
+impl<'a> DoubleEndedIterator for Keys<'a> {
     fn next_back(&mut self) -> Option<Self::Item> {
         self.0.next_back().map(|r| r.map(|(k, _v)| k))
     }
 }
 
 /// An iterator over values in a `Tree`
-pub struct Values<'a, K, B>(Iter<'a, K, B>)
-where
-    K: 'a + AsRef<[u8]>,
-    B: Sized + RangeBounds<K>;
+pub struct Values<'a>(Iter<'a>);
 
-impl<'a, K, B> Iterator for Values<'a, K, B>
-where
-    K: 'a + AsRef<[u8]>,
-    B: Sized + RangeBounds<K>,
-{
+impl<'a> Iterator for Values<'a> {
     type Item = Result<PinnedValue, ()>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -68,54 +54,39 @@ where
     }
 }
 
-impl<'a, K, B> DoubleEndedIterator for Values<'a, K, B>
-where
-    K: 'a + AsRef<[u8]>,
-    B: Sized + RangeBounds<K>,
-{
+impl<'a> DoubleEndedIterator for Values<'a> {
     fn next_back(&mut self) -> Option<Self::Item> {
         self.0.next_back().map(|r| r.map(|(_k, v)| v))
     }
 }
 
 /// An iterator over keys and values in a `Tree`.
-pub struct Iter<'a, K, B>
-where
-    K: AsRef<[u8]>,
-    B: Sized + RangeBounds<K>,
-{
-    pub(super) _k: std::marker::PhantomData<K>,
+pub struct Iter<'a> {
     pub(super) tree: &'a Tree,
-    pub(super) range: B,
+    pub(super) hi: ops::Bound<Vec<u8>>,
+    pub(super) lo: ops::Bound<Vec<u8>>,
     pub(super) last_id: Option<PageId>,
     pub(super) last_key: Option<Key>,
     pub(super) broken: Option<Error<()>>,
     pub(super) done: bool,
     pub(super) guard: Guard,
+    pub(super) is_scan: bool,
     // TODO we have to refactor this in light of pages being deleted
 }
 
-impl<'a, K, B> Iter<'a, K, B>
-where
-    K: AsRef<[u8]>,
-    B: Sized + RangeBounds<K>,
-{
+impl<'a> Iter<'a> {
     /// Iterate over the keys of this Tree
-    pub fn keys(self) -> Keys<'a, K, B> {
+    pub fn keys(self) -> Keys<'a> {
         Keys(self)
     }
 
     /// Iterate over the values of this Tree
-    pub fn values(self) -> Values<'a, K, B> {
+    pub fn values(self) -> Values<'a> {
         Values(self)
     }
 }
 
-impl<'a, K, B> Iterator for Iter<'a, K, B>
-where
-    K: AsRef<[u8]>,
-    B: Sized + RangeBounds<K>,
-{
+impl<'a> Iterator for Iter<'a> {
     type Item = Result<(Vec<u8>, PinnedValue), ()>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -128,7 +99,7 @@ where
             return Some(Err(broken));
         };
 
-        let start_bound = self.range.start_bound();
+        let start_bound = &self.lo;
         let start: &[u8] = match start_bound {
             ops::Bound::Included(ref start)
             | ops::Bound::Excluded(ref start) => start.as_ref(),
@@ -160,7 +131,7 @@ where
 
             let last_id = self.last_id.unwrap();
 
-            let inclusive = match self.range.start_bound() {
+            let inclusive = match self.lo {
                 ops::Bound::Included(..) => true,
                 ops::Bound::Excluded(..) => false,
                 ops::Bound::Unbounded => true,
@@ -216,7 +187,7 @@ where
                 let (k, v) = &leaf[idx];
                 let decoded_k = prefix_decode(prefix, &k);
 
-                if !contains(&self.range, &*decoded_k) {
+                if !upper_bound_includes(&self.hi, &*decoded_k) {
                     // we've overshot our bounds
                     return None;
                 }
@@ -229,7 +200,7 @@ where
             }
 
             if !node.hi.is_inf()
-                && !contains(&self.range, node.hi.inner())
+                && !upper_bound_includes(&self.hi, node.hi.inner())
             {
                 // we've overshot our bounds
                 return None;
@@ -254,11 +225,7 @@ where
     }
 }
 
-impl<'a, K, B> DoubleEndedIterator for Iter<'a, K, B>
-where
-    K: AsRef<[u8]>,
-    B: Sized + RangeBounds<K>,
-{
+impl<'a> DoubleEndedIterator for Iter<'a> {
     fn next_back(&mut self) -> Option<Self::Item> {
         let _measure = Measure::new(&M.tree_scan);
 
@@ -270,13 +237,25 @@ where
         };
 
         // try to get a high key
-        let end_bound = self.range.end_bound();
-        let (end, unbounded): (&[u8], bool) = match end_bound {
-            ops::Bound::Included(ref start)
-            | ops::Bound::Excluded(ref start) => {
-                (start.as_ref(), false)
+        let end_bound = &self.hi;
+        let start_bound = &self.lo;
+
+        let (end, unbounded): (&[u8], bool) = if self.is_scan {
+            match start_bound {
+                ops::Bound::Included(ref start)
+                | ops::Bound::Excluded(ref start) => {
+                    (start.as_ref(), false)
+                }
+                ops::Bound::Unbounded => (&[255; 100], true),
             }
-            ops::Bound::Unbounded => (&[255; 100], true),
+        } else {
+            match end_bound {
+                ops::Bound::Included(ref start)
+                | ops::Bound::Excluded(ref start) => {
+                    (start.as_ref(), false)
+                }
+                ops::Bound::Unbounded => (&[255; 100], true),
+            }
         };
 
         loop {
@@ -322,7 +301,7 @@ where
 
             let last_id = self.last_id.unwrap();
 
-            let inclusive = match self.range.end_bound() {
+            let inclusive = match self.hi {
                 ops::Bound::Included(..) => true,
                 ops::Bound::Excluded(..) => false,
                 ops::Bound::Unbounded => true,
@@ -380,7 +359,9 @@ where
                 let (k, v) = &leaf[idx];
                 let decoded_k = prefix_decode(prefix, &k);
 
-                if !contains(&self.range, &*decoded_k) {
+                if !self.is_scan
+                    && !lower_bound_includes(&self.lo, &*decoded_k)
+                {
                     // we've overshot our bounds
                     return None;
                 }
@@ -392,7 +373,9 @@ where
                 return Some(ret);
             }
 
-            if !contains(&self.range, node.lo.inner()) {
+            if !self.is_scan
+                && !lower_bound_includes(&self.lo, node.lo.inner())
+            {
                 // we've overshot our bounds
                 return None;
             }

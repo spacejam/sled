@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     cmp::Ordering::{Greater, Less},
     fmt::{self, Debug},
-    ops::RangeBounds,
+    ops::{self, RangeBounds},
     sync::{
         atomic::{
             AtomicUsize,
@@ -24,9 +24,9 @@ type Path<'g> = Vec<(&'g Frag, TreePtr<'g>)>;
 
 impl<'a> IntoIterator for &'a Tree {
     type Item = Result<(Vec<u8>, PinnedValue), ()>;
-    type IntoIter = Iter<'a, Vec<u8>, std::ops::RangeFull>;
+    type IntoIter = Iter<'a>;
 
-    fn into_iter(self) -> Iter<'a, Vec<u8>, std::ops::RangeFull> {
+    fn into_iter(self) -> Iter<'a> {
         self.iter()
     }
 }
@@ -931,8 +931,8 @@ impl Tree {
     /// // assert_eq!(iter.next(), Some(Ok((vec![3], vec![30]))));
     /// // assert_eq!(iter.next(), None);
     /// ```
-    pub fn iter(&self) -> Iter<'_, Vec<u8>, std::ops::RangeFull> {
-        self.range(..)
+    pub fn iter(&self) -> Iter<'_> {
+        self.range::<Vec<u8>, _>(..)
     }
 
     /// Create a double-ended iterator over tuples of keys and values,
@@ -951,14 +951,13 @@ impl Tree {
     /// // assert_eq!(iter.next(), Some(Ok((vec![3], vec![30]))));
     /// // assert_eq!(iter.next(), None);
     /// ```
-    pub fn scan<K>(
-        &self,
-        key: K,
-    ) -> Iter<'_, K, std::ops::RangeFrom<K>>
+    pub fn scan<K>(&self, key: K) -> Iter<'_>
     where
         K: AsRef<[u8]>,
     {
-        self.range(key..)
+        let mut iter = self.range(key..);
+        iter.is_scan = true;
+        iter
     }
 
     /// Create a double-ended iterator over tuples of keys and values,
@@ -978,23 +977,43 @@ impl Tree {
     /// // assert_eq!(iter.next(), Some(Ok((vec![2], vec![20]))));
     /// // assert_eq!(iter.next(), None);
     /// ```
-    pub fn range<K, B>(&self, range: B) -> Iter<'_, K, B>
+    pub fn range<K, R>(&self, range: R) -> Iter<'_>
     where
         K: AsRef<[u8]>,
-        B: Sized + RangeBounds<K>,
+        R: RangeBounds<K>,
     {
         let _measure = Measure::new(&M.tree_scan);
 
         let guard = pin();
 
+        let lo = match range.start_bound() {
+            ops::Bound::Included(ref end) => {
+                ops::Bound::Included(end.as_ref().to_vec())
+            }
+            ops::Bound::Excluded(ref end) => {
+                ops::Bound::Excluded(end.as_ref().to_vec())
+            }
+            ops::Bound::Unbounded => ops::Bound::Unbounded,
+        };
+        let hi = match range.end_bound() {
+            ops::Bound::Included(ref end) => {
+                ops::Bound::Included(end.as_ref().to_vec())
+            }
+            ops::Bound::Excluded(ref end) => {
+                ops::Bound::Excluded(end.as_ref().to_vec())
+            }
+            ops::Bound::Unbounded => ops::Bound::Unbounded,
+        };
+
         Iter {
-            _k: std::marker::PhantomData,
             tree: &self,
-            range: range,
+            hi,
+            lo,
             last_id: None,
             last_key: None,
             broken: None,
             done: false,
+            is_scan: false,
             guard,
         }
     }
@@ -1014,10 +1033,7 @@ impl Tree {
     /// // assert_eq!(iter.next(), Some(Ok(vec![3])));
     /// // assert_eq!(iter.next(), None);
     /// ```
-    pub fn keys<K>(
-        &self,
-        key: K,
-    ) -> Keys<'_, K, std::ops::RangeFrom<K>>
+    pub fn keys<K>(&self, key: K) -> Keys<'_>
     where
         K: AsRef<[u8]>,
     {
@@ -1039,10 +1055,7 @@ impl Tree {
     /// // assert_eq!(iter.next(), Some(Ok(vec![30])));
     /// // assert_eq!(iter.next(), None);
     /// ```
-    pub fn values<K: AsRef<[u8]>>(
-        &self,
-        key: K,
-    ) -> Values<'_, K, std::ops::RangeFrom<K>> {
+    pub fn values<K: AsRef<[u8]>>(&self, key: K) -> Values<'_> {
         self.scan(key).values()
     }
 
