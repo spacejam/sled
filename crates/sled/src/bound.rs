@@ -18,6 +18,14 @@ impl Bound {
         }
     }
 
+    pub(crate) fn is_inf(&self) -> bool {
+        if let Bound::Inf = self {
+            true
+        } else {
+            false
+        }
+    }
+
     #[inline]
     pub(crate) fn size_in_bytes(&self) -> u64 {
         let self_sz = size_of::<Bound>() as u64;

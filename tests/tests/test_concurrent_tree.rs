@@ -55,7 +55,7 @@ fn run_ops(
             Merge(k, v) => {
                 let mut r = reference.write().unwrap();
                 tree.merge(k.0.clone(), vec![v]).unwrap();
-                let mut entry = r.entry(k).or_insert(0u16);
+                let entry = r.entry(k).or_insert(0u16);
                 *entry += v as u16;
             }
             Get(k) => {
@@ -114,7 +114,7 @@ fn run_ops(
                 }
             }
             Scan(k, len) => {
-                let mut r = reference.read().unwrap();
+                let r = reference.read().unwrap();
                 let mut tree_iter = tree
                     .scan(&*k.0)
                     .take(len)

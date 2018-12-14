@@ -2,6 +2,7 @@ use std::{
     borrow::Cow,
     cmp::Ordering::{Greater, Less},
     fmt::{self, Debug},
+    ops::RangeBounds,
     sync::{
         atomic::{
             AtomicUsize,
@@ -23,9 +24,9 @@ type Path<'g> = Vec<(&'g Frag, TreePtr<'g>)>;
 
 impl<'a> IntoIterator for &'a Tree {
     type Item = Result<(Vec<u8>, PinnedValue), ()>;
-    type IntoIter = Iter<'a>;
+    type IntoIter = Iter<'a, Vec<u8>, std::ops::RangeFull>;
 
-    fn into_iter(self) -> Iter<'a> {
+    fn into_iter(self) -> Iter<'a, Vec<u8>, std::ops::RangeFull> {
         self.iter()
     }
 }
@@ -430,15 +431,10 @@ impl Tree {
         });
 
         let ret = if search.is_none() {
-            let mut iter = Iter {
-                id: last_node.id,
-                inner: &self,
-                last_key: key.as_ref().to_vec(),
-                inclusive: false,
-                broken: None,
-                done: false,
-                guard: guard.clone(),
-            };
+            let mut iter = self.range((
+                std::ops::Bound::Unbounded,
+                std::ops::Bound::Excluded(key),
+            ));
 
             match iter.next_back() {
                 Some(Err(e)) => return Err(e),
@@ -510,15 +506,10 @@ impl Tree {
             });
 
         let ret = if search.is_none() {
-            let mut iter = Iter {
-                id: last_node.id,
-                inner: &self,
-                last_key: key.as_ref().to_vec(),
-                inclusive: false,
-                broken: None,
-                done: false,
-                guard: guard.clone(),
-            };
+            let mut iter = self.range((
+                std::ops::Bound::Excluded(key),
+                std::ops::Bound::Unbounded,
+            ));
 
             match iter.next() {
                 Some(Err(e)) => return Err(e),
@@ -923,7 +914,8 @@ impl Tree {
         }
     }
 
-    /// Iterate over the tuples of keys and values in this tree.
+    /// Create a double-ended iterator over the tuples of keys and
+    /// values in this tree.
     ///
     /// # Examples
     ///
@@ -939,11 +931,12 @@ impl Tree {
     /// // assert_eq!(iter.next(), Some(Ok((vec![3], vec![30]))));
     /// // assert_eq!(iter.next(), None);
     /// ```
-    pub fn iter(&self) -> Iter<'_> {
-        self.scan(b"")
+    pub fn iter(&self) -> Iter<'_, Vec<u8>, std::ops::RangeFull> {
+        self.range(..)
     }
 
-    /// Iterate over tuples of keys and values, starting at the provided key.
+    /// Create a double-ended iterator over tuples of keys and values,
+    /// starting at the provided key.
     ///
     /// # Examples
     ///
@@ -958,47 +951,55 @@ impl Tree {
     /// // assert_eq!(iter.next(), Some(Ok((vec![3], vec![30]))));
     /// // assert_eq!(iter.next(), None);
     /// ```
-    pub fn scan<K: AsRef<[u8]>>(&self, key: K) -> Iter<'_> {
+    pub fn scan<K>(
+        &self,
+        key: K,
+    ) -> Iter<'_, K, std::ops::RangeFrom<K>>
+    where
+        K: AsRef<[u8]>,
+    {
+        self.range(key..)
+    }
+
+    /// Create a double-ended iterator over tuples of keys and values,
+    /// where the keys fall within the specified range.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let config = sled::ConfigBuilder::new().temporary(true).build();
+    /// let t = sled::Tree::start(config).unwrap();
+    /// t.set(b"0", vec![0]);
+    /// t.set(b"1", vec![10]);
+    /// t.set(b"2", vec![20]);
+    /// t.set(b"3", vec![30]);
+    /// let mut iter = t.range(b"1"..b"2");
+    /// // assert_eq!(iter.next(), Some(Ok((vec![1], vec![10]))));
+    /// // assert_eq!(iter.next(), Some(Ok((vec![2], vec![20]))));
+    /// // assert_eq!(iter.next(), None);
+    /// ```
+    pub fn range<K, B>(&self, range: B) -> Iter<'_, K, B>
+    where
+        K: AsRef<[u8]>,
+        B: Sized + RangeBounds<K>,
+    {
         let _measure = Measure::new(&M.tree_scan);
 
         let guard = pin();
 
-        let mut broken = None;
-        let id = match self.path_for_key(key.as_ref(), &guard) {
-            Ok(ref mut path) if !path.is_empty() => {
-                let (leaf_frag, _leaf_ptr) = path.pop().expect(
-                    "path_for_key should always return a path \
-                     of length >= 2 (root + leaf)",
-                );
-                let node: &Node = leaf_frag.unwrap_base();
-                node.id
-            }
-            Ok(_) => {
-                broken = Some(Error::ReportableBug(
-                    "failed to get path for key".to_owned(),
-                ));
-                0
-            }
-            Err(e) => {
-                broken = Some(e.danger_cast());
-                0
-            }
-        };
-
-        guard.flush();
-
         Iter {
-            id,
-            inner: &self,
-            last_key: key.as_ref().to_vec(),
-            inclusive: true,
-            broken,
+            _k: std::marker::PhantomData,
+            tree: &self,
+            range: range,
+            last_id: None,
+            last_key: None,
+            broken: None,
             done: false,
             guard,
         }
     }
 
-    /// Iterate over keys, starting at the provided key.
+    /// Create a double-ended iterator over keys, starting at the provided key.
     ///
     /// # Examples
     ///
@@ -1013,11 +1014,17 @@ impl Tree {
     /// // assert_eq!(iter.next(), Some(Ok(vec![3])));
     /// // assert_eq!(iter.next(), None);
     /// ```
-    pub fn keys<K: AsRef<[u8]>>(&self, key: K) -> Keys<'_> {
+    pub fn keys<K>(
+        &self,
+        key: K,
+    ) -> Keys<'_, K, std::ops::RangeFrom<K>>
+    where
+        K: AsRef<[u8]>,
+    {
         self.scan(key).keys()
     }
 
-    /// Iterate over values, starting at the provided key.
+    /// Create a double-ended iterator over values, starting at the provided key.
     ///
     /// # Examples
     ///
@@ -1032,7 +1039,10 @@ impl Tree {
     /// // assert_eq!(iter.next(), Some(Ok(vec![30])));
     /// // assert_eq!(iter.next(), None);
     /// ```
-    pub fn values<K: AsRef<[u8]>>(&self, key: K) -> Values<'_> {
+    pub fn values<K: AsRef<[u8]>>(
+        &self,
+        key: K,
+    ) -> Values<'_, K, std::ops::RangeFrom<K>> {
         self.scan(key).values()
     }
 
