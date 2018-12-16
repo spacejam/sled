@@ -241,6 +241,33 @@ impl IoBufs {
         ret
     }
 
+    /// Return an iterator over the log, starting with
+    /// a specified offset.
+    pub(crate) fn iter_from(&self, lsn: Lsn) -> LogIter {
+        trace!("iterating from lsn {}", lsn);
+        let io_buf_size = self.config.io_buf_size;
+        let segment_base_lsn =
+            lsn / io_buf_size as Lsn * io_buf_size as Lsn;
+        let min_lsn = segment_base_lsn + SEG_HEADER_LEN as Lsn;
+
+        // corrected_lsn accounts for the segment header length
+        let corrected_lsn = std::cmp::max(lsn, min_lsn);
+
+        let segment_iter = self.with_sa(|sa| {
+            sa.segment_snapshot_iter_from(corrected_lsn)
+        });
+
+        LogIter {
+            config: self.config.clone(),
+            max_lsn: self.stable(),
+            cur_lsn: corrected_lsn,
+            segment_base: None,
+            segment_iter: segment_iter,
+            segment_len: io_buf_size,
+            trailer: None,
+        }
+    }
+
     fn idx(&self) -> usize {
         debug_delay();
         let current_buf = self.current_buf.load(SeqCst);
