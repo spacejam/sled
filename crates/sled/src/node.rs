@@ -7,16 +7,16 @@ pub(crate) struct Node {
     pub(crate) id: PageId,
     pub(crate) data: Data,
     pub(crate) next: Option<PageId>,
-    pub(crate) lo: Bound,
-    pub(crate) hi: Bound,
+    pub(crate) lo: Vec<u8>,
+    pub(crate) hi: Vec<u8>,
 }
 
 impl Node {
     #[inline]
     pub(crate) fn size_in_bytes(&self) -> u64 {
         let self_sz = size_of::<Node>() as u64;
-        let lo_sz = self.lo.size_in_bytes();
-        let hi_sz = self.hi.size_in_bytes();
+        let lo_sz = (size_of::<Vec<u8>>() + self.lo.len()) as u64;
+        let hi_sz = (size_of::<Vec<u8>>() + self.hi.len()) as u64;
         let data_sz = self.data.size_in_bytes();
 
         self_sz
@@ -34,16 +34,22 @@ impl Node {
 
         match *frag {
             Set(ref k, ref v) => {
-                let decoded_k = prefix_decode(self.lo.inner(), k);
-                if Bound::Inclusive(decoded_k) < self.hi {
+                // (when hi is empty, it means it's unbounded)
+                if self.hi.is_empty()
+                    || prefix_cmp_encoded(k, &self.hi, &self.lo)
+                        == std::cmp::Ordering::Less
+                {
                     self.set_leaf(k.clone(), v.clone());
                 } else {
                     panic!("tried to consolidate set at key <= hi")
                 }
             }
             Merge(ref k, ref v) => {
-                let decoded_k = prefix_decode(self.lo.inner(), k);
-                if Bound::Inclusive(decoded_k) < self.hi {
+                // (when hi is empty, it means it's unbounded)
+                if self.hi.is_empty()
+                    || prefix_cmp_encoded(k, &self.hi, &self.lo)
+                        == std::cmp::Ordering::Less
+                {
                     let merge_fn_ptr = merge_operator
                         .expect("must have a merge operator set");
                     unsafe {
@@ -66,8 +72,11 @@ impl Node {
                 self.parent_split(parent_split);
             }
             Del(ref k) => {
-                let decoded_k = prefix_decode(self.lo.inner(), k);
-                if Bound::Inclusive(decoded_k) < self.hi {
+                // (when hi is empty, it means it's unbounded)
+                if self.hi.is_empty()
+                    || prefix_cmp_encoded(k, &self.hi, &self.lo)
+                        == std::cmp::Ordering::Less
+                {
                     self.del_leaf(k);
                 } else {
                     panic!("tried to consolidate del at key <= hi")
@@ -111,7 +120,7 @@ impl Node {
                     prefix_cmp(k, &*key)
                 });
 
-            let decoded_k = prefix_decode(self.lo.inner(), &key);
+            let decoded_k = prefix_decode(&self.lo, &key);
             if let Ok(idx) = search {
                 let new = merge_fn(
                     &*decoded_k,
@@ -138,15 +147,14 @@ impl Node {
     }
 
     pub(crate) fn child_split(&mut self, cs: &ChildSplit) {
-        self.data.drop_gte(&cs.at, self.lo.inner());
-        self.hi = Bound::Exclusive(cs.at.inner().to_vec());
+        self.data.drop_gte(&cs.at, &self.lo);
+        self.hi = cs.at.clone();
         self.next = Some(cs.to);
     }
 
     pub(crate) fn parent_split(&mut self, ps: &ParentSplit) {
         if let Data::Index(ref mut ptrs) = self.data {
-            let encoded_sep =
-                prefix_encode(self.lo.inner(), ps.at.inner());
+            let encoded_sep = prefix_encode(&self.lo, &ps.at);
             ptrs.push((encoded_sep, ps.to));
             ptrs.sort_unstable_by(|a, b| prefix_cmp(&*a.0, &*b.0));
         } else {
@@ -173,12 +181,12 @@ impl Node {
     }
 
     pub(crate) fn split(&self, id: PageId) -> Node {
-        let (split, right_data) = self.data.split(self.lo.inner());
+        let (split, right_data) = self.data.split(&self.lo);
         Node {
             id,
             data: right_data,
             next: self.next,
-            lo: Bound::Inclusive(split),
+            lo: split,
             hi: self.hi.clone(),
         }
     }

@@ -157,7 +157,7 @@ impl<'a> Iterator for Iter<'a> {
             let node = frag.unwrap_base();
             let leaf =
                 node.data.leaf_ref().expect("node should be a leaf");
-            let prefix = node.lo.inner();
+            let prefix = &node.lo;
 
             let search = if inclusive && self.last_key.is_none() {
                 leaf.binary_search_by(|&(ref k, ref _v)| {
@@ -192,15 +192,15 @@ impl<'a> Iterator for Iter<'a> {
                     return None;
                 }
 
-                self.last_key = Some(decoded_k.to_vec());
+                self.last_key = Some(decoded_k.clone());
 
                 let ret =
                     Ok((decoded_k, PinnedValue::new(&*v, pin_guard)));
                 return Some(ret);
             }
 
-            if !node.hi.is_inf()
-                && !upper_bound_includes(&self.hi, node.hi.inner())
+            if !node.hi.is_empty()
+                && !upper_bound_includes(&self.hi, &node.hi)
             {
                 // we've overshot our bounds
                 return None;
@@ -214,7 +214,7 @@ impl<'a> Iterator for Iter<'a> {
                 None => {
                     assert_eq!(
                         node.hi,
-                        Bound::Inf,
+                        vec![],
                         "if a node has no right sibling, \
                          it must be the upper-bound node"
                     );
@@ -279,7 +279,8 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                     path.last().expect("path should never be empty");
                 let mut last_node = last_frag.unwrap_base();
 
-                while unbounded && !last_node.hi.is_inf() {
+                // (when hi is empty, it means it's the rightmost node)
+                while unbounded && !last_node.hi.is_empty() {
                     // if we're unbounded, scan to the end
                     let res = self
                         .tree
@@ -327,7 +328,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
             let node = frag.unwrap_base();
             let leaf =
                 node.data.leaf_ref().expect("node should be a leaf");
-            let prefix = node.lo.inner();
+            let prefix = &node.lo;
 
             let search = if inclusive && self.last_key.is_none() {
                 if unbounded {
@@ -366,7 +367,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                     return None;
                 }
 
-                self.last_key = Some(decoded_k.to_vec());
+                self.last_key = Some(decoded_k.clone());
 
                 let ret =
                     Ok((decoded_k, PinnedValue::new(&*v, pin_guard)));
@@ -374,7 +375,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
             }
 
             if !self.is_scan
-                && !lower_bound_includes(&self.lo, node.lo.inner())
+                && !lower_bound_includes(&self.lo, &node.lo)
             {
                 // we've overshot our bounds
                 return None;

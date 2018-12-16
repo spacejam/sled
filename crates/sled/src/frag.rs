@@ -33,12 +33,12 @@ impl Frag {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct ParentSplit {
-    pub(crate) at: Bound,
+    pub(crate) at: Vec<u8>,
     pub(crate) to: PageId,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct ChildSplit {
-    pub(crate) at: Bound,
+    pub(crate) at: Vec<u8>,
     pub(crate) to: PageId,
 }
