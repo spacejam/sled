@@ -119,12 +119,6 @@ script:
                  export TSAN_OPTIONS=suppressions=/home/travis/build/spacejam/sled/tsan_suppressions.txt &&
                  cargo run --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu -- --duration=30
                  ;;
-               lsan)
-                 pushd benchmarks/stress2 &&
-                 ;;
-               tsan)
-                 pushd benchmarks/stress2;
-                 ;;
                crash)
                  pushd tests &&
                  cargo test test_crash_recovery --release -- --nocapture --ignored
