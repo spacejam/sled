@@ -125,7 +125,7 @@ script:
                  for TARGET in $TARGETS; do
                    echo "checking target $TARGET";
                    pushd crates/sled      && cargo check --target $TARGET --features=nightly && popd &&
-                   pushd crates/pagecache && cargo check --target $TARGET --features=nightly && popd;
+                   pushd crates/pagecache && cargo check --target $TARGET --features=nightly && popd
                    # &&
                    # pushd crates/sled      && cargo check --target $TARGET --features=compression && popd &&
                    # pushd crates/pagecache && cargo check --target $TARGET --features=compression && popd &&
