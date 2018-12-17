@@ -11,11 +11,11 @@ install:
   - curl https://sh.rustup.rs -sSf |
     sh -s -- -y --default-toolchain $TRAVIS_RUST_VERSION &&
     rustup component add clippy-preview
-  - if [ -n "$TARGETS" ]; then
+  - bash -c 'if [ -n "$TARGETS" ]; then
       for TARGET in $TARGETS; do
         rustup target add $TARGET;
       done
-    fi
+    fi'
   - source ~/.cargo/env
 
 matrix:
