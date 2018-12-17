@@ -89,6 +89,7 @@ script:
                  cargo clippy
                  ;;
                sanitizers)
+                 pushd benchmarks/stress2 &&
                  echo "lsan" &&
                  cargo clean -p sled_sync &&
                  cargo clean -p pagecache &&
