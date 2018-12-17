@@ -43,15 +43,7 @@ matrix:
     - os: linux
       rust: stable
       env:
-        - TEST=qc_log
-    - os: linux
-      rust: stable
-      env:
-        - TEST=qc_pagecache
-    - os: linux
-      rust: stable
-      env:
-        - TEST=qc_tree
+        - TEST=qc
     - os: linux
       rust: stable
       env:
@@ -73,16 +65,13 @@ script:
                  cargo test test_crash_recovery --release -- --ignored &&
                  cargo test tree --release
                  ;;
-               qc_log)
+               qc)
                  pushd tests &&
-                 cargo test quickcheck_log_works --release -- --ignored
-                 ;;
-               qc_pagecache)
-                 pushd tests &&
-                 cargo test quickcheck_pagecache_works --release -- --ignored
-                 ;;
-               qc_tree)
-                 pushd tests &&
+                 echo "qc log" &&
+                 cargo test quickcheck_log_works --release -- --ignored &&
+                 echo "qc pagecache" &&
+                 cargo test quickcheck_pagecache_works --release -- --ignored &&
+                 echo "qc tree" &&
                  cargo test quickcheck_tree_matches_btreemap --release -- --ignored
                  ;;
                clippy)
