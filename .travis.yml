@@ -90,7 +90,6 @@ script:
                  ;;
                sanitizers)
                  echo "lsan" &&
-                 cargo clean -p stress2 &&
                  cargo clean -p sled_sync &&
                  cargo clean -p pagecache &&
                  cargo clean -p pagetable &&
@@ -100,7 +99,6 @@ script:
                  sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30 &&
 
                  echo "asan" &&
-                 cargo clean -p stress2 &&
                  cargo clean -p sled_sync &&
                  cargo clean -p pagecache &&
                  cargo clean -p pagetable &&
@@ -110,7 +108,6 @@ script:
                  sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30 &&
 
                  echo "tsan" &&
-                 cargo clean -p stress2 &&
                  cargo clean -p sled_sync &&
                  cargo clean -p pagecache &&
                  cargo clean -p pagetable &&
