@@ -11,10 +11,9 @@ install:
   - curl https://sh.rustup.rs -sSf |
     sh -s -- -y --default-toolchain $TRAVIS_RUST_VERSION &&
     rustup component add clippy-preview
-  - bash -c 'if [ -n "$TARGETS" ]; then
-      for TARGET in $TARGETS; do
-        rustup target add $TARGET;
-      done
+  - bash -c 'if [ "$TEST" = "cross-build" ]; then
+      rustup target add i686-unknown-linux-gnu;
+      rustup target add x86_64-pc-windows-gnu;
     fi'
   - source ~/.cargo/env
 
@@ -40,7 +39,6 @@ matrix:
       rust: nightly-2018-10-26
       env:
         - TEST=cross-build
-        - TARGETS="i686-unknown-linux-gnu x86_64-pc-windows-gnu"
     - os: osx
       rust: stable
       env:
@@ -122,11 +120,10 @@ script:
                  ;;
                cross-build)
                  echo "https://github.com/rust-lang/cargo/issues/4753";
-                 for TARGET in $TARGETS; do
-                   echo "checking target $TARGET";
-                   pushd crates/sled      && cargo check --target $TARGET --features=nightly && popd &&
-                   pushd crates/pagecache && cargo check --target $TARGET --features=nightly && popd
-                 done
+                 pushd crates/sled      && cargo check --target i686-unknown-linux-gnu --features=nightly && popd &&
+                 pushd crates/sled      && cargo check --target x86_64-pc-windows-gnu  --features=nightly && popd &&
+                 pushd crates/pagecache && cargo check --target i686-unknown-linux-gnu --features=nightly && popd &&
+                 pushd crates/pagecache && cargo check --target x86_64-pc-windows-gnu  --features=nightly && popd
                  ;;
                standard)
                  pushd tests &&
