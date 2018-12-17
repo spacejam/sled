@@ -102,17 +102,17 @@ script:
                  ;;
                asan)
                  pushd benchmarks/stress2 &&
-                 cargo build --target x86_64-unknown-linux-gnu &&
-                 sudo target/x86_64-unknown-linux-gnu/debug/stress2
+                 cargo build --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu &&
+                 sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30
                  ;;
                lsan)
                  pushd benchmarks/stress2 &&
-                 cargo build --target x86_64-unknown-linux-gnu &&
-                 sudo target/x86_64-unknown-linux-gnu/debug/stress2
+                 cargo build --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu &&
+                 sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30
                  ;;
                tsan)
                  pushd benchmarks/stress2;
-                 cargo run --features=lock_free_delays --target x86_64-unknown-linux-gnu
+                 cargo run --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu -- --duration=30
                  ;;
                crash)
                  pushd tests &&

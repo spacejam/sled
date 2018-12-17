@@ -17,7 +17,7 @@ use std::{
 use docopt::Docopt;
 use rand::{thread_rng, Rng};
 
-#[global_allocator]
+#[cfg_attr(not(feature = "no_jemalloc"), global_allocator)]
 static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 static TOTAL: AtomicUsize = AtomicUsize::new(0);

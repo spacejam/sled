@@ -15,6 +15,7 @@ compression = ["sled/compression"]
 no_logs = ["sled/no_logs"]
 no_metrics = ["sled/no_metrics"]
 measure_allocs = ["sled/measure_allocs"]
+no_jemalloc = []
 
 [dependencies]
 serde = "1.0"
