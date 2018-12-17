@@ -21,19 +21,7 @@ matrix:
     - os: linux
       rust: nightly-2018-10-26
       env:
-        - TEST=tsan
-        - RUSTFLAGS="-Z sanitizer=thread"
-        - TSAN_OPTIONS=suppressions=/home/travis/build/spacejam/sled/tsan_suppressions.txt
-    - os: linux
-      rust: nightly-2018-10-26
-      env:
-        - TEST=asan
-        - RUSTFLAGS="-Z sanitizer=address"
-    - os: linux
-      rust: nightly-2018-10-26
-      env:
-        - TEST=lsan
-        - RUSTFLAGS="-Z sanitizer=leak"
+        - TEST=sanitizers
     - os: linux
       rust: nightly-2018-10-26
       env:
@@ -100,19 +88,42 @@ script:
                clippy)
                  cargo clippy
                  ;;
-               asan)
-                 pushd benchmarks/stress2 &&
+               sanitizers)
+                 echo "lsan" &&
+                 cargo clean -p stress2 &&
+                 cargo clean -p sled_sync &&
+                 cargo clean -p pagecache &&
+                 cargo clean -p pagetable &&
+                 cargo clean -p sled &&
+                 export RUSTFLAGS="-Z sanitizer=leak" &&
                  cargo build --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu &&
-                 sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30
+                 sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30 &&
+
+                 echo "asan" &&
+                 cargo clean -p stress2 &&
+                 cargo clean -p sled_sync &&
+                 cargo clean -p pagecache &&
+                 cargo clean -p pagetable &&
+                 cargo clean -p sled &&
+                 export RUSTFLAGS="-Z sanitizer=address" &&
+                 cargo build --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu &&
+                 sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30 &&
+
+                 echo "tsan" &&
+                 cargo clean -p stress2 &&
+                 cargo clean -p sled_sync &&
+                 cargo clean -p pagecache &&
+                 cargo clean -p pagetable &&
+                 cargo clean -p sled &&
+                 export RUSTFLAGS="-Z sanitizer=thread" &&
+                 export TSAN_OPTIONS=suppressions=/home/travis/build/spacejam/sled/tsan_suppressions.txt &&
+                 cargo run --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu -- --duration=30
                  ;;
                lsan)
                  pushd benchmarks/stress2 &&
-                 cargo build --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu &&
-                 sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30
                  ;;
                tsan)
                  pushd benchmarks/stress2;
-                 cargo run --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu -- --duration=30
                  ;;
                crash)
                  pushd tests &&
