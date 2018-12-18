@@ -1,7 +1,7 @@
 #![cfg(all(
     not(target_os = "fuchsia"),
     not(target_os = "android"),
-    not(target_os = "windows")
+    not(windows)
 ))]
 
 use std::fs;

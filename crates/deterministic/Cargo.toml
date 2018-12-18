@@ -12,5 +12,7 @@ edition = "2018"
 
 [dependencies]
 rand = "0.6"
-libc = "0.2"
 serde = "1.0"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

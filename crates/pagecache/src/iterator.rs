@@ -48,7 +48,7 @@ impl Iterator for LogIter {
                             that contain the initial cur_lsn value or higher"
                     );
 
-                    #[cfg(target_os = "linux")]
+                    #[cfg(unix)]
                     self.fadvise_willneed(next_lid);
 
                     if let Err(e) =
@@ -237,7 +237,7 @@ impl LogIter {
         Ok(())
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     fn fadvise_willneed(&self, lid: LogId) {
         use std::os::unix::io::AsRawFd;
 

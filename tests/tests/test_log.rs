@@ -1,6 +1,6 @@
 #![cfg_attr(test, allow(unused))]
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
 use std::sync::Arc;
@@ -511,7 +511,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
                 log = Log::start_raw_log(config.clone()).unwrap();
             }
             Truncate(new_len) => {
-                #[cfg(target_os = "linux")]
+                #[cfg(unix)]
                 {
                     if tip as u64 <= new_len {
                         // we are testing data loss, not rogue extensions
