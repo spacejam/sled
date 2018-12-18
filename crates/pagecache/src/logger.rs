@@ -35,7 +35,7 @@ use super::*;
 /// to know where to find persisted bits in the future.
 pub struct Log {
     /// iobufs is the underlying lock-free IO write buffer.
-    iobufs: Arc<IoBufs>,
+    pub(super) iobufs: Arc<IoBufs>,
     config: Config,
     /// Periodically flushes `iobufs`.
     _flusher: Option<flusher::Flusher>,
@@ -113,28 +113,7 @@ impl Log {
     /// Return an iterator over the log, starting with
     /// a specified offset.
     pub fn iter_from(&self, lsn: Lsn) -> LogIter {
-        trace!("iterating from lsn {}", lsn);
-        let io_buf_size = self.config.io_buf_size;
-        let segment_base_lsn =
-            lsn / io_buf_size as Lsn * io_buf_size as Lsn;
-        let min_lsn = segment_base_lsn + SEG_HEADER_LEN as Lsn;
-
-        // corrected_lsn accounts for the segment header length
-        let corrected_lsn = std::cmp::max(lsn, min_lsn);
-
-        let segment_iter = self.with_sa(|sa| {
-            sa.segment_snapshot_iter_from(corrected_lsn)
-        });
-
-        LogIter {
-            config: self.config.clone(),
-            max_lsn: self.stable_offset(),
-            cur_lsn: corrected_lsn,
-            segment_base: None,
-            segment_iter: segment_iter,
-            segment_len: io_buf_size,
-            trailer: None,
-        }
+        self.iobufs.iter_from(lsn)
     }
 
     /// read a buffer from the disk

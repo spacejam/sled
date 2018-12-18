@@ -1,6 +1,6 @@
 [package]
 name = "pagecache"
-version = "0.8.2"
+version = "0.8.3"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "lock-free pagecache and log for high-performance databases"
 license = "MIT/Apache-2.0"
@@ -13,6 +13,8 @@ edition = "2018"
 
 [features]
 default = []
+compression = ["zstd"]
+async_snapshots = []
 lock_free_delays = ["sled_sync/lock_free_delays"]
 failpoints = ["fail", "rand"]
 no_metrics = ["historian/bypass"]
@@ -21,7 +23,6 @@ nightly = ["sled_sync/nightly"]
 no_inline = ["sled_sync/no_inline"]
 event_log = []
 measure_allocs = []
-compression = ["zstd"]
 
 [dependencies.serde]
 version = "1.0"

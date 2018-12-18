@@ -8,7 +8,8 @@ publish = false
 debug = true
 
 [features]
-default = []
+default = ["async_snapshots"]
+async_snapshots = ["sled/async_snapshots"]
 lock_free_delays = ["sled/lock_free_delays"]
 check_snapshot_integrity = ["sled/check_snapshot_integrity"]
 compression = ["sled/compression"]
