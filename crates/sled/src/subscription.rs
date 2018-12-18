@@ -15,6 +15,8 @@ use futures::{
     },
 };
 
+use super::KeyRef;
+
 static ID_GEN: AtomicUsize = AtomicUsize::new(0);
 
 /// An event that happened to a key that a subscriber is interested in.
@@ -51,12 +53,14 @@ impl Clone for Event {
     }
 }
 
+// Reduce complexity of parent structures
+type Senders = Vec<(usize, SyncSender<FutureReceiver<Event>>)>;
+
 /// A subscriber listening on a specified prefix
 pub struct Subscriber {
     id: usize,
     rx: Receiver<FutureReceiver<Event>>,
-    home:
-        Arc<RwLock<Vec<(usize, SyncSender<FutureReceiver<Event>>)>>>,
+    home: Arc<RwLock<Senders>>,
 }
 
 impl Drop for Subscriber {
@@ -82,30 +86,24 @@ impl Iterator for Subscriber {
 
 #[derive(Default)]
 pub(crate) struct Subscriptions {
-    watched: RwLock<
-        BTreeMap<
-            Vec<u8>,
-            Arc<
-                RwLock<
-                    Vec<(usize, SyncSender<FutureReceiver<Event>>)>,
-                >,
-            >,
-        >,
-    >,
+    watched: RwLock<BTreeMap<Vec<u8>, Arc<RwLock<Senders>>>>,
 }
 
 impl Subscriptions {
-    pub(crate) fn register(&self, prefix: Vec<u8>) -> Subscriber {
+    pub(crate) fn register<'a>(
+        &self,
+        prefix: KeyRef<'a>,
+    ) -> Subscriber {
         let r_mu = {
             let r_mu = self.watched.read().unwrap();
-            if r_mu.contains_key(&prefix) {
+            if r_mu.contains_key(prefix) {
                 r_mu
             } else {
                 drop(r_mu);
                 let mut w_mu = self.watched.write().unwrap();
-                if !w_mu.contains_key(&prefix) {
+                if !w_mu.contains_key(prefix) {
                     w_mu.insert(
-                        prefix.clone(),
+                        prefix.to_vec(),
                         Arc::new(RwLock::new(vec![])),
                     );
                 }
@@ -116,7 +114,7 @@ impl Subscriptions {
 
         let (tx, rx) = sync_channel(1024);
 
-        let arc_senders = &r_mu[&prefix];
+        let arc_senders = &r_mu[prefix];
         let mut w_senders = arc_senders.write().unwrap();
 
         let id = ID_GEN.fetch_add(1, Relaxed);
@@ -124,8 +122,8 @@ impl Subscriptions {
         w_senders.push((id, tx));
 
         Subscriber {
-            id: id,
-            rx: rx,
+            id,
+            rx,
             home: arc_senders.clone(),
         }
     }
@@ -188,14 +186,14 @@ impl ReservedBroadcast {
 fn basic_subscription() {
     let subs = Subscriptions::default();
 
-    let mut s2 = subs.register(vec![0]);
-    let mut s3 = subs.register(vec![0, 1]);
-    let mut s4 = subs.register(vec![1, 2]);
+    let mut s2 = subs.register(&[0]);
+    let mut s3 = subs.register(&[0, 1]);
+    let mut s4 = subs.register(&[1, 2]);
 
     let r1 = subs.reserve(b"awft");
     assert!(r1.is_none());
 
-    let mut s1 = subs.register(vec![]);
+    let mut s1 = subs.register(&[]);
 
     let k2 = vec![];
     let r2 = subs.reserve(&k2).unwrap();

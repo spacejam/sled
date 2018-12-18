@@ -29,7 +29,7 @@ pub fn debug_delay() {
     };
 
     if rng.gen_bool(1. / 1000.) {
-        let gamma = Gamma::new(0.3, 100000.0);
+        let gamma = Gamma::new(0.3, 100_000.0);
         let duration = gamma.sample(&mut try_thread_rng().unwrap());
         thread::sleep(Duration::from_micros(duration as u64));
     }
@@ -84,6 +84,7 @@ impl RngCore for ThreadRng {
         &mut self,
         dest: &mut [u8],
     ) -> Result<(), rand::Error> {
-        Ok(self.fill_bytes(dest))
+        self.fill_bytes(dest);
+        Ok(())
     }
 }

@@ -91,9 +91,17 @@
 //! }
 //!# }
 //! ```
+//!
+#![cfg_attr(test, deny(warnings))]
+#![cfg_attr(test, deny(bad_style))]
+#![cfg_attr(test, deny(future_incompatible))]
+#![cfg_attr(test, deny(nonstandard_style))]
+#![cfg_attr(test, deny(rust_2018_compatibility))]
+#![cfg_attr(test, deny(rust_2018_idioms))]
+#![cfg_attr(test, deny(unused))]
+
 extern crate permutohedron;
 
-#[macro_use]
 pub extern crate proptest as pt;
 #[doc(hidden)]
 pub use pt::*;

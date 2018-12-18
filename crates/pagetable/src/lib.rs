@@ -48,14 +48,14 @@ struct Node2<T: Send + 'static> {
 impl<T: Send + 'static> Default for Node1<T> {
     fn default() -> Node1<T> {
         let children = rep_no_copy!(Atomic::null(); FANOUT);
-        Node1 { children: children }
+        Node1 { children }
     }
 }
 
 impl<T: Send + 'static> Default for Node2<T> {
     fn default() -> Node2<T> {
         let children = rep_no_copy!(Atomic::null(); FANOUT);
-        Node2 { children: children }
+        Node2 { children }
     }
 }
 

@@ -19,9 +19,9 @@ pub fn setup_logger() {
     let mut builder = env_logger::Builder::new();
     builder
         .format(|buf, record| {
-            write!(
+            writeln!(
                 buf,
-                "{:05} {:20} {:10} {}\n",
+                "{:05} {:20} {:10} {}",
                 record.level(),
                 tn(),
                 record
@@ -32,7 +32,8 @@ pub fn setup_logger() {
                     .unwrap(),
                 record.args()
             )
-        }).filter(None, log::LevelFilter::Info);
+        })
+        .filter(None, log::LevelFilter::Info);
 
     if std::env::var("RUST_LOG").is_ok() {
         builder.parse(&std::env::var("RUST_LOG").unwrap());

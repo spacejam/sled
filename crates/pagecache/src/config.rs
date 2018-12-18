@@ -5,9 +5,7 @@ use std::{
     ops::Deref,
     path::{Path, PathBuf},
     sync::{
-        atomic::{
-            AtomicPtr, AtomicUsize, Ordering, ATOMIC_USIZE_INIT,
-        },
+        atomic::{AtomicPtr, AtomicUsize, Ordering},
         Arc, Mutex,
     },
 };
@@ -19,7 +17,7 @@ use serde::Serialize;
 
 use super::*;
 
-const DEFAULT_PATH: &'static str = "default.sled";
+const DEFAULT_PATH: &str = "default.sled";
 
 impl Deref for Config {
     type Target = ConfigBuilder;
@@ -119,9 +117,9 @@ impl Default for ConfigBuilder {
         }
     }
 }
-macro_rules! supported {
+macro_rules! check {
     ($cond:expr, $msg:expr) => {
-        if !$cond {
+        if $cond {
             return Err(Error::Unsupported($msg.to_owned()));
         }
     };
@@ -178,7 +176,7 @@ impl ConfigBuilder {
             let salt = {
                 let now = uptime();
                 (now.as_secs() * 1_000_000_000)
-                    + now.subsec_nanos() as u64
+                    + u64::from(now.subsec_nanos())
             };
 
             // use shared memory for temporary linux files
@@ -443,7 +441,7 @@ impl Config {
         match options.open(&path) {
             Ok(file) => {
                 // try to exclusively lock the file
-                if let Err(_) = file.try_lock_exclusive() {
+                if file.try_lock_exclusive().is_err() {
                     return Err(Error::Io(std::io::Error::new(
                         std::io::ErrorKind::Other,
                         "could not acquire exclusive file lock",
@@ -464,43 +462,46 @@ impl Config {
 
     // panics if config options are outside of advised range
     fn validate(&self) -> Result<(), ()> {
-        supported!(
-            self.inner.io_bufs <= 32,
+        check!(
+            self.inner.io_bufs > 32,
             "too many configured io_bufs. please make <= 32"
         );
-        supported!(
-            self.inner.io_buf_size >= 100,
-            "io_buf_size should be hundreds of kb at minimum, and we won't start if below 100"
+        check!(
+            self.inner.io_buf_size < 100,
+            "io_buf_size should be hundreds of kb at minimum, and we won't \
+            start if below 100"
         );
-        supported!(
-            self.inner.io_buf_size <= 1 << 24,
+        check!(
+            self.inner.io_buf_size > 1 << 24,
             "io_buf_size should be <= 16mb"
         );
-        supported!(self.inner.page_consolidation_threshold >= 1, "must consolidate pages after a non-zero number of updates");
-        supported!(self.inner.page_consolidation_threshold < 1 << 20, "must consolidate pages after fewer than 1 million updates");
-        supported!(
-            self.inner.cache_bits <= 20,
+        check!(self.inner.page_consolidation_threshold < 1,
+            "must consolidate pages after a non-zero number of updates");
+        check!(self.inner.page_consolidation_threshold >= 1 << 20,
+            "must consolidate pages after fewer than 1 million updates");
+        check!(
+            self.inner.cache_bits > 20,
             "# LRU shards = 2^cache_bits. set cache_bits to 20 or less."
         );
-        supported!(
-            self.inner.segment_cleanup_threshold >= 0.01,
+        check!(
+            self.inner.segment_cleanup_threshold < 0.01,
             "segment_cleanup_threshold must be >= 1%"
         );
-        supported!(
-            self.inner.segment_cleanup_skew < 99,
+        check!(
+            self.inner.segment_cleanup_skew >= 99,
             "segment_cleanup_skew cannot be greater than 99%"
         );
-        supported!(
-            self.inner.compression_factor >= 1,
-            "compression_factor must be >= 0"
+        check!(
+            self.inner.compression_factor < 1,
+            "compression_factor must be >= 1"
         );
-        supported!(
-            self.inner.compression_factor <= 22,
+        check!(
+            self.inner.compression_factor > 22,
             "compression_factor must be <= 22"
         );
-        supported!(
-            self.inner.idgen_persist_interval > 0,
-            "idgen_persist_interval must be above 0"
+        check!(
+            self.inner.idgen_persist_interval < 1,
+            "idgen_persist_interval must be 1 or larger"
         );
         Ok(())
     }
@@ -509,14 +510,14 @@ impl Config {
         match self.read_config() {
             Ok(Some(old)) => {
                 if old.merge_operator.is_some() {
-                    supported!(self.inner.merge_operator.is_some(),
+                    check!(self.inner.merge_operator.is_none(),
                         "this system was previously opened with a \
                         merge operator. must supply one FOREVER after \
                         choosing to do so once, BWAHAHAHAHAHAHA!!!!");
                 }
 
-                supported!(
-                    self.inner.use_compression == old.use_compression,
+                check!(
+                    self.inner.use_compression != old.use_compression,
                     format!("cannot change compression values across restarts. \
                         old value of use_compression loaded from disk: {}, \
                         currently set value: {}.",
@@ -525,8 +526,8 @@ impl Config {
                     )
                 );
 
-                supported!(
-                    self.inner.io_buf_size == old.io_buf_size,
+                check!(
+                    self.inner.io_buf_size != old.io_buf_size,
                     format!(
                         "cannot change the io buffer size across restarts. \
                         please change it back to {}",
@@ -535,7 +536,7 @@ impl Config {
                 );
                 Ok(())
             }
-            Ok(None) => self.write_config().map_err(|e| e.into()),
+            Ok(None) => self.write_config().map_err(|e| e),
             Err(e) => Err(e.into()),
         }
     }

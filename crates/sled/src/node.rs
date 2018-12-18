@@ -55,11 +55,7 @@ impl Node {
                     unsafe {
                         let merge_fn: MergeOperator =
                             std::mem::transmute(merge_fn_ptr);
-                        self.merge_leaf(
-                            k.clone(),
-                            v.clone(),
-                            merge_fn,
-                        );
+                        self.merge_leaf(k.clone(), v, merge_fn);
                     }
                 } else {
                     panic!("tried to consolidate set at key <= hi")
@@ -111,7 +107,7 @@ impl Node {
     pub(crate) fn merge_leaf(
         &mut self,
         key: Key,
-        val: Value,
+        val: &[u8],
         merge_fn: MergeOperator,
     ) {
         if let Data::Leaf(ref mut records) = self.data {

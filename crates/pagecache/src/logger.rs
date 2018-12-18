@@ -61,8 +61,8 @@ impl Log {
         });
 
         Ok(Log {
-            iobufs: iobufs,
-            config: config,
+            iobufs,
+            config,
             _flusher: flusher,
         })
     }
@@ -143,7 +143,7 @@ impl Log {
                 }
                 _ => Ok(log_read),
             })
-            .map_err(|e| e.into())
+            .map_err(|e| e)
         } else {
             let (_lid, blob_ptr) = ptr.blob();
             read_blob(blob_ptr, &self.config)
@@ -325,10 +325,10 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
         let crc16 = [buf[13] ^ 0xFF, buf[14] ^ 0xFF];
 
         MessageHeader {
-            kind: kind,
-            lsn: lsn,
+            kind,
+            lsn,
             len: len as usize,
-            crc16: crc16,
+            crc16,
         }
     }
 }
@@ -374,7 +374,7 @@ impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
         let crc16_tested = crc16_arr(&lsn_arr);
 
         SegmentHeader {
-            lsn: lsn,
+            lsn,
             ok: crc16_tested == crc16,
         }
     }
@@ -410,7 +410,7 @@ impl From<[u8; SEG_TRAILER_LEN]> for SegmentTrailer {
         let crc16_tested = crc16_arr(&lsn_arr);
 
         SegmentTrailer {
-            lsn: lsn,
+            lsn,
             ok: crc16_tested == crc16,
         }
     }

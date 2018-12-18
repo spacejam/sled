@@ -1,4 +1,5 @@
 //! `pagecache` is a lock-free pagecache and log for building high-performance databases.
+#![cfg_attr(feature = "nightly", feature(integer_atomics))]
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
 #![cfg_attr(test, deny(bad_style))]
@@ -7,10 +8,7 @@
 #![cfg_attr(test, deny(rust_2018_compatibility))]
 #![cfg_attr(test, deny(rust_2018_idioms))]
 #![cfg_attr(test, deny(unused))]
-#![cfg_attr(feature = "clippy", feature(plugin))]
-#![cfg_attr(feature = "clippy", plugin(clippy))]
-#![cfg_attr(feature = "clippy", allow(inline_always))]
-#![cfg_attr(feature = "nightly", feature(integer_atomics))]
+#![allow(clippy::inline_always)]
 
 #[cfg(all(not(feature = "nightly"), target_pointer_width = "32"))]
 compile_error!(

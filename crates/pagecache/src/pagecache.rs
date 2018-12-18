@@ -420,7 +420,7 @@ where
             max_pid: AtomicUsize::new(0),
             free: Arc::new(Mutex::new(BinaryHeap::new())),
             log: Log::start(config, snapshot.clone())?,
-            lru: lru,
+            lru,
             updates: AtomicUsize::new(0),
             last_snapshot: Arc::new(Mutex::new(Some(snapshot))),
         };
@@ -487,6 +487,7 @@ where
     }
 
     /// Free a particular page.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn free<'g>(
         &self,
         pid: PageId,
@@ -514,6 +515,7 @@ where
     /// Returns `Ok(new_key)` if the operation was successful. Returns
     /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
     /// if the atomic append fails.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn link<'g>(
         &self,
         pid: PageId,
@@ -531,7 +533,7 @@ where
         };
 
         let prepend: LoggedUpdate<P> = LoggedUpdate {
-            pid: pid,
+            pid,
             update: Update::Append(new.clone()),
         };
 
@@ -580,7 +582,7 @@ where
         }
 
         result
-            .map(|p| PagePtr(p))
+            .map(PagePtr)
             .map_err(|e| Error::CasFailed(Some(PagePtr(e))))
     }
 
@@ -588,6 +590,7 @@ where
     /// Returns `Ok(new_key)` if the operation was successful. Returns
     /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
     /// if the atomic swap fails.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn replace<'g>(
         &self,
         pid: PageId,
@@ -617,7 +620,7 @@ where
             }
         }
 
-        result.map(|p| PagePtr(p))
+        result.map(PagePtr)
     }
 
     // rewrite a page so we can reuse the segment that it is
@@ -656,7 +659,7 @@ where
             let new_ptr = log_reservation.ptr();
             let mut new_cache_entry = cache_entries[0].clone();
 
-            *new_cache_entry.ptr_ref_mut() = new_ptr.clone();
+            *new_cache_entry.ptr_ref_mut() = new_ptr;
 
             let node = node_from_frag_vec(vec![new_cache_entry])
                 .into_shared(guard);
@@ -714,6 +717,7 @@ where
         }
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn cas_page<'g>(
         &self,
         pid: PageId,
@@ -732,7 +736,7 @@ where
         };
 
         let replace: LoggedUpdate<P> = LoggedUpdate {
-            pid: pid,
+            pid,
             update: new.clone(),
         };
         let bytes =
@@ -758,7 +762,7 @@ where
                 node_from_frag_vec(vec![cache_entry])
                     .into_shared(guard)
             })
-            .unwrap_or_else(|| Shared::null());
+            .unwrap_or_else(Shared::null);
 
         debug_delay();
         let result =
@@ -1131,11 +1135,9 @@ where
         match logged_update.update {
             Update::Compact(page_frag)
             | Update::Append(page_frag) => Ok(page_frag),
-            _ => {
-                return Err(Error::ReportableBug(
+            _ => Err(Error::ReportableBug(
                     "non-append/compact found in pull".to_owned(),
                 ))
-            }
         }
     }
 
@@ -1245,8 +1247,8 @@ where
 
             let stack = Stack::default();
 
-            match state {
-                &PageState::Present(ref ptrs) => {
+            match *state {
+                PageState::Present(ref ptrs) => {
                     let (base_lsn, base_ptr) = ptrs[0];
 
                     stack.push(CacheEntry::Flush(base_lsn, base_ptr));
@@ -1256,14 +1258,14 @@ where
                             .push(CacheEntry::PartialFlush(lsn, ptr));
                     }
                 }
-                &PageState::Free(lsn, ptr) => {
+                PageState::Free(lsn, ptr) => {
                     // blow away any existing state
                     trace!("load_snapshot freeing pid {}", *pid);
                     stack.push(CacheEntry::Free(lsn, ptr));
                     self.free.lock().unwrap().push(*pid);
                     snapshot_free.remove(&pid);
                 }
-                &PageState::Allocated(_lsn, _ptr) => {
+                PageState::Allocated(_lsn, _ptr) => {
                     assert!(!snapshot.free.contains(pid));
                     // empty stack with null ptr head implies Allocated
                 }

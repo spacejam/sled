@@ -422,8 +422,8 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                 let ref_get =
                     reference.entry(pid).or_insert(P::Unallocated);
 
-                match ref_get {
-                    &mut P::Allocated => {
+                match *ref_get {
+                    P::Allocated => {
                         assert_eq!(get, PageGet::Allocated);
                         pc.replace(
                             pid,
@@ -434,23 +434,18 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                         .unwrap();
                         *ref_get = P::Present(vec![c]);
                     }
-                    &mut P::Present(ref mut existing) => {
+                    P::Present(ref mut existing) => {
                         let (v, old_key) = get.unwrap();
                         assert_eq!(v, existing);
-                        pc.replace(
-                            pid,
-                            old_key.clone(),
-                            vec![c],
-                            &guard,
-                        )
-                        .unwrap();
+                        pc.replace(pid, old_key, vec![c], &guard)
+                            .unwrap();
                         existing.clear();
                         existing.push(c);
                     }
-                    &mut P::Free => {
+                    P::Free => {
                         assert!(get.is_free());
                     }
-                    &mut P::Unallocated => {
+                    P::Unallocated => {
                         assert_eq!(get, PageGet::Unallocated);
                     }
                 }
@@ -460,8 +455,8 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                 let ref_get =
                     reference.entry(pid).or_insert(P::Unallocated);
 
-                match ref_get {
-                    &mut P::Allocated => {
+                match *ref_get {
+                    P::Allocated => {
                         pc.link(
                             pid,
                             PagePtr::allocated(),
@@ -471,21 +466,16 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                         .unwrap();
                         *ref_get = P::Present(vec![c]);
                     }
-                    &mut P::Present(ref mut existing) => {
+                    P::Present(ref mut existing) => {
                         let (_, old_key) = get.unwrap();
-                        pc.link(
-                            pid,
-                            old_key.clone(),
-                            vec![c],
-                            &guard,
-                        )
-                        .unwrap();
+                        pc.link(pid, old_key, vec![c], &guard)
+                            .unwrap();
                         existing.push(c);
                     }
-                    &mut P::Free => {
+                    P::Free => {
                         assert!(get.is_free());
                     }
-                    &mut P::Unallocated => {
+                    P::Unallocated => {
                         assert_eq!(get, PageGet::Unallocated);
                     }
                 }
@@ -572,7 +562,7 @@ fn quickcheck_pagecache_works() {
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 100))
         .tests(1000)
-        .max_tests(1000000)
+        .max_tests(1_000_000)
         .quickcheck(
             prop_pagecache_works as fn(Vec<Op>, bool) -> bool,
         );

@@ -268,8 +268,9 @@ impl Tree {
     ///
     /// thread.join().unwrap();
     /// ```
+    #[allow(clippy::needless_pass_by_value)]
     pub fn watch_prefix(&self, prefix: Vec<u8>) -> Subscriber {
-        self.subscriptions.register(prefix)
+        self.subscriptions.register(&prefix)
     }
 
     /// Generate a monotonic ID. Not guaranteed to be
@@ -573,7 +574,7 @@ impl Tree {
                 .get_internal(key.as_ref(), &guard)
                 .map_err(|e| e.danger_cast())?;
 
-            if old.as_ref().map(|o| o.as_ref()) != cur.map(|v| &*v) {
+            if old != cur.map(|v| &*v) {
                 return Err(Error::CasFailed(
                     cur.map(|c| PinnedValue::new(c, pin_guard)),
                 ));
@@ -633,6 +634,7 @@ impl Tree {
 
     /// Set a key to a new value, returning the old value if it
     /// was set.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn set<K: AsRef<[u8]>>(
         &self,
         key: K,
@@ -839,6 +841,7 @@ impl Tree {
     /// tree.merge(k, vec![4]);
     /// // assert_eq!(tree.get(k).unwrap().unwrap(), vec![4]);
     /// ```
+    #[allow(clippy::needless_pass_by_value)]
     pub fn merge<K: AsRef<[u8]>>(
         &self,
         key: K,
@@ -1091,6 +1094,7 @@ impl Tree {
         self.iter().next().is_none()
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn recursive_split<'g>(
         &self,
         path: Vec<(Cow<'g, Frag>, TreePtr<'g>)>,
@@ -1239,6 +1243,7 @@ impl Tree {
         Ok(parent_split)
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn parent_split<'g>(
         &self,
         parent_node_id: usize,
@@ -1255,6 +1260,7 @@ impl Tree {
         )
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn root_hoist<'g>(
         &self,
         from: PageId,

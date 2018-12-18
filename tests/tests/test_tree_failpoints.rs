@@ -73,13 +73,14 @@ impl Arbitrary for Op {
     }
 }
 
-fn v(b: &Vec<u8>) -> u16 {
+fn v(b: &[u8]) -> u16 {
     if b[0] % 4 != 0 {
         assert_eq!(b.len(), 2);
     }
-    ((b[0] as u16) << 8) + b[1] as u16
+    (u16::from(b[0]) << 8) + u16::from(b[1])
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
     println!("ops: {:?}, flusher: {}", ops, flusher);
     lazy_static! {
@@ -94,7 +95,7 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
     fail::teardown();
 
     let res = std::panic::catch_unwind(|| {
-        run_tree_crashes_nicely(ops.clone(), flusher)
+        run_tree_crashes_nicely(ops.to_vec(), flusher)
     });
 
     fail::teardown();
@@ -248,12 +249,12 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
             }
             Del(k) => {
                 // insert false certainty before completes
-                reference.insert(k as u16, (k as u16, false));
+                reference.insert(u16::from(k), (u16::from(k), false));
 
                 fp_crash!(tree.del(&*vec![0, k]));
                 fp_crash!(tree.flush());
 
-                reference.remove(&(k as u16));
+                reference.remove(&u16::from(k));
             }
             Id => {
                 let id = fp_crash!(tree.generate_id());
@@ -264,7 +265,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 restart!();
             }
             FailPoint(fp) => {
-                fail_points.insert(fp.clone());
+                fail_points.insert(fp);
                 fail::cfg(&*fp, "return")
                     .expect("should be able to configure failpoint");
             }

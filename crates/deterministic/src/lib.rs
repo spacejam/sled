@@ -1,7 +1,15 @@
 //! A collection of simple utilities for building
 //! flake-free testable systems.
-// #![deny(missing_docs)]
+#![cfg_attr(feature = "nightly", feature(integer_atomics))]
+//#![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
+#![cfg_attr(test, deny(bad_style))]
+#![cfg_attr(test, deny(future_incompatible))]
+#![cfg_attr(test, deny(nonstandard_style))]
+#![cfg_attr(test, deny(rust_2018_compatibility))]
+#![cfg_attr(test, deny(rust_2018_idioms))]
+#![cfg_attr(test, deny(unused))]
+#![allow(clippy::inline_always)]
 
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
@@ -47,7 +55,7 @@ thread_local! {
     pub static CONTEXT: RefCell<Arc<Context>> = RefCell::new(Arc::new(Context::default()));
 }
 
-fn context<'a>() -> Arc<Context> {
+fn context() -> Arc<Context> {
     CONTEXT.with(|c| c.borrow().clone())
 }
 

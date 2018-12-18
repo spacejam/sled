@@ -400,7 +400,7 @@ impl SegmentAccountant {
         snapshot: Snapshot<R>,
     ) -> Result<SegmentAccountant, ()> {
         let mut ret = SegmentAccountant {
-            config: config,
+            config,
             segments: vec![],
             clean_counter: 0,
             free: Mutex::new(VecDeque::new()),
@@ -1440,7 +1440,7 @@ pub(super) fn raw_segment_iter_from(
         max_lsn: std::i64::MAX,
         cur_lsn: SEG_HEADER_LEN as Lsn,
         segment_base: None,
-        segment_iter: segment_iter,
+        segment_iter,
         segment_len: config.io_buf_size,
         trailer: None,
     })

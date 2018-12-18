@@ -9,16 +9,17 @@ use sled_sync::{pin, Owned, Shared as EpochShared};
 #[test]
 fn test_model() {
     model! {
-        Model => let mut m = HashMap::new(),
+        Model => let mut m: HashMap<usize, usize> = HashMap::new(),
         Implementation => let i = PageTable::default(),
         Insert((usize, usize))((k, new) in (0usize..4, 0usize..4)) => {
-            if !m.contains_key(&k) {
-                m.insert(k, new);
-
+            m.entry(k).or_insert_with(|| {
+                // Updating impl as side effect
                 let guard = pin();
                 let v = Owned::new(new).into_shared(&guard);
                 i.cas(k, EpochShared::null(), v, &guard ).expect("should be able to insert a value");
-            }
+
+                new
+            });
         },
         Get(usize)(k in 0usize..4) => {
             let guard = pin();
