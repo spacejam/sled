@@ -1146,7 +1146,7 @@ where
         let iobufs = self.log.iobufs.clone();
         let config = self.config.clone();
 
-        rayon::spawn(move || {
+        let gen_snapshot = move || {
             let snapshot_opt_res = snapshot_mu.try_lock();
             if snapshot_opt_res.is_err() {
                 // some other thread is snapshotting
@@ -1209,7 +1209,19 @@ where
                     *snapshot_opt = Some(next_snapshot);
                 }
             }
-        });
+        };
+
+        if cfg!(feature = "async_snapshots") {
+            debug!(
+                "asynchronously spawning snapshot generation task"
+            );
+            let thread_pool =
+                self.config.thread_pool.as_ref().unwrap();
+            thread_pool.spawn(gen_snapshot);
+        } else {
+            debug!("synchronously generating a new snapshot");
+            gen_snapshot();
+        }
 
         // TODO add future for waiting on the result of this if desired
         Ok(())
