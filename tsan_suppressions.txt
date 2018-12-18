@@ -10,3 +10,7 @@
 # on atomic::fence for correctness, which doesn't get picked up by TSAN
 # as of Feb 1 2018 / rust 1.23.
 race:crossbeam_epoch::internal::Global::collect
+
+# Rayon relies on crossbeam stuff which uses raw fences, which are
+# not detected by TSAN.
+race:rayon
