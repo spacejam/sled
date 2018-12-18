@@ -1154,7 +1154,7 @@ where
                     "snapshot skipped because previous attempt \
                      appears not to have completed"
                 );
-                return;
+                return Ok(());
             }
 
             let mut snapshot_opt = snapshot_opt_res.unwrap();
@@ -1169,7 +1169,7 @@ where
                 );
                 iobufs.with_sa(|sa| sa.resume_rewriting());
                 *snapshot_opt = Some(last_snapshot);
-                return;
+                return Err(e);
             }
 
             // we disable rewriting so that our log becomes append-only,
@@ -1204,9 +1204,11 @@ where
                 Err(e) => {
                     *snapshot_opt = Some(Snapshot::default());
                     error!("failed to generate snapshot: {:?}", e);
+                    Err(e)
                 }
                 Ok(next_snapshot) => {
                     *snapshot_opt = Some(next_snapshot);
+                    Ok(())
                 }
             }
         };
@@ -1217,10 +1219,12 @@ where
             );
             let thread_pool =
                 self.config.thread_pool.as_ref().unwrap();
-            thread_pool.spawn(gen_snapshot);
+            thread_pool.spawn(move || {
+                let _ = gen_snapshot();
+            });
         } else {
             debug!("synchronously generating a new snapshot");
-            gen_snapshot();
+            gen_snapshot()?;
         }
 
         // TODO add future for waiting on the result of this if desired
