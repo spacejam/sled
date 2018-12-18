@@ -1,7 +1,4 @@
-extern crate deterministic;
 /// Simulation for network partitions. Like Jepsen but thousands of times faster.
-extern crate quickcheck;
-extern crate rand;
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};

@@ -1,10 +1,3 @@
-#[macro_use]
-extern crate serde_derive;
-extern crate docopt;
-extern crate env_logger;
-extern crate rand;
-extern crate sled;
-
 use std::{
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},

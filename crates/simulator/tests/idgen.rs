@@ -1,10 +1,3 @@
-extern crate bincode;
-extern crate deterministic;
-extern crate serde;
-extern crate simulator;
-#[macro_use]
-extern crate serde_derive;
-
 use std::collections::HashMap;
 
 use deterministic::Reactor;

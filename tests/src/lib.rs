@@ -1,9 +1,3 @@
-extern crate env_logger;
-extern crate log;
-extern crate quickcheck;
-extern crate rand;
-extern crate sled;
-
 pub mod tree;
 
 pub fn setup_logger() {

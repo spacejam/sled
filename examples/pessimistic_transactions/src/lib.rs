@@ -16,8 +16,6 @@
 
 #![allow(dead_code)]
 
-extern crate sled;
-
 mod crc16;
 
 use std::sync::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};

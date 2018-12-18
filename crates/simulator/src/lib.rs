@@ -1,6 +1,3 @@
-extern crate deterministic;
-extern crate quickcheck;
-
 use std::collections::{BinaryHeap, HashMap};
 use std::fmt::Debug;
 use std::ops::Add;

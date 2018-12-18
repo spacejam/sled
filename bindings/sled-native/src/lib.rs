@@ -1,6 +1,3 @@
-extern crate sled;
-extern crate libc;
-
 use std::ffi::CString;
 use std::mem;
 use std::ptr;

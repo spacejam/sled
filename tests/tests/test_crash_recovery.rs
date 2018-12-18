@@ -4,12 +4,6 @@
     not(target_os = "windows")
 ))]
 
-extern crate libc;
-extern crate pagecache;
-extern crate rand;
-extern crate sled;
-extern crate tests;
-
 use std::fs;
 use std::mem::size_of;
 use std::path::Path;

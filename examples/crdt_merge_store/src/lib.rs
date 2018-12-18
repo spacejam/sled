@@ -1,10 +1,3 @@
-#[macro_use]
-extern crate serde_derive;
-extern crate serde;
-extern crate bincode;
-extern crate sled;
-extern crate crdts;
-
 use std::path::Path;
 
 use crdts::{Orswot, VClock};

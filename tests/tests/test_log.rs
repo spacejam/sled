@@ -1,14 +1,6 @@
 #![cfg_attr(test, allow(unused))]
 
 #[cfg(target_os = "linux")]
-extern crate libc;
-extern crate quickcheck;
-extern crate rand;
-
-extern crate pagecache;
-extern crate sled;
-extern crate tests;
-
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
 use std::sync::Arc;

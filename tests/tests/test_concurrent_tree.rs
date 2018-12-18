@@ -1,9 +1,4 @@
 #![cfg(target_os = "linux")]
-extern crate deterministic;
-extern crate quickcheck;
-extern crate sled;
-extern crate tests;
-
 use std::{
     collections::BTreeMap,
     sync::{Arc, RwLock},

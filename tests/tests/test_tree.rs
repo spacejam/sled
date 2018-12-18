@@ -1,9 +1,3 @@
-extern crate pagecache;
-extern crate quickcheck;
-extern crate rand;
-extern crate sled;
-extern crate tests;
-
 use std::sync::Arc;
 use std::thread;
 

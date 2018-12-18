@@ -20,9 +20,6 @@
 //! model-based testing:
 //!
 //! ```
-//! #[macro_use]
-//! extern crate model;
-//!
 //! use std::sync::atomic::{AtomicUsize, Ordering};
 //!
 //!# fn main() {
@@ -61,9 +58,6 @@
 //! linearizability testing:
 //!
 //! ```no_run
-//! #[macro_use]
-//! extern crate model;
-//!
 //! use std::sync::atomic::{AtomicUsize, Ordering};
 //!
 //!# fn main() {
@@ -99,8 +93,6 @@
 #![cfg_attr(test, deny(rust_2018_compatibility))]
 #![cfg_attr(test, deny(rust_2018_idioms))]
 #![cfg_attr(test, deny(unused))]
-
-extern crate permutohedron;
 
 pub extern crate proptest as pt;
 #[doc(hidden)]

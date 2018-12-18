@@ -1,7 +1,3 @@
-#[macro_use]
-extern crate neon;
-extern crate sled;
-
 use neon::vm::{Call, JsResult};
 use neon::js::JsString;
 use neon::js::JsNull;
