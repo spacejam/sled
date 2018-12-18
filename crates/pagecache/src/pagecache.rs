@@ -391,13 +391,7 @@ where
         + DeserializeOwned
         + Send
         + Sync,
-    R: 'static
-        + Debug
-        + Clone
-        + Serialize
-        + DeserializeOwned
-        + Send
-        + Sync,
+    R: Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
 {
     /// Instantiate a new `PageCache`.
     pub fn start(config: Config) -> Result<PageCache<PM, P, R>, ()> {
@@ -1142,77 +1136,69 @@ where
     // caller is expected to have instantiated self.last_snapshot
     // in recovery already.
     fn advance_snapshot(&self) -> Result<(), ()> {
-        let snapshot_mu = self.last_snapshot.clone();
-        let iobufs = self.log.iobufs.clone();
-        let config = self.config.clone();
-
-        rayon::spawn(move || {
-            let snapshot_opt_res = snapshot_mu.try_lock();
-            if snapshot_opt_res.is_err() {
-                // some other thread is snapshotting
-                warn!(
-                    "snapshot skipped because previous attempt \
-                     appears not to have completed"
-                );
-                return;
-            }
-
-            let mut snapshot_opt = snapshot_opt_res.unwrap();
-            let last_snapshot = snapshot_opt.take().expect(
-                "PageCache::advance_snapshot called before recovery",
+        let snapshot_opt_res = self.last_snapshot.try_lock();
+        if snapshot_opt_res.is_err() {
+            // some other thread is snapshotting
+            warn!(
+                "snapshot skipped because previous attempt \
+                 appears not to have completed"
             );
+            return Ok(());
+        }
 
-            if let Err(e) = iobufs.flush() {
-                error!(
-                    "failed to flush log during advance_snapshot: {}",
-                    e
-                );
-                iobufs.with_sa(|sa| sa.resume_rewriting());
-                *snapshot_opt = Some(last_snapshot);
-                return;
-            }
+        let mut snapshot_opt = snapshot_opt_res.unwrap();
+        let last_snapshot = snapshot_opt.take().expect(
+            "PageCache::advance_snapshot called before recovery",
+        );
 
-            // we disable rewriting so that our log becomes append-only,
-            // allowing us to iterate through it without corrupting ourselves.
-            // NB must be called after taking the snapshot mutex.
-            iobufs.with_sa(|sa| sa.pause_rewriting());
-
-            let max_lsn = last_snapshot.max_lsn;
-            let start_lsn =
-                max_lsn - (max_lsn % config.io_buf_size as Lsn);
-
-            let iter = iobufs.iter_from(start_lsn);
-
-            debug!(
-                "snapshot starting from offset {} to the segment containing ~{}",
-                last_snapshot.max_lsn,
-                iobufs.stable(),
+        if let Err(e) = self.log.flush() {
+            error!(
+                "failed to flush log during advance_snapshot: {}",
+                e
             );
+            self.log.with_sa(|sa| sa.resume_rewriting());
+            *snapshot_opt = Some(last_snapshot);
+            return Err(e);
+        }
 
-            let res = advance_snapshot::<PM, P, R>(
-                iter,
-                last_snapshot,
-                &config,
-            );
+        // we disable rewriting so that our log becomes append-only,
+        // allowing us to iterate through it without corrupting ourselves.
+        // NB must be called after taking the snapshot mutex.
+        self.log.with_sa(|sa| sa.pause_rewriting());
 
-            // NB it's important to resume writing before replacing the snapshot
-            // into the mutex, otherwise we create a race condition where the SA is
-            // not actually paused when a snapshot happens.
-            iobufs.with_sa(|sa| sa.resume_rewriting());
+        let max_lsn = last_snapshot.max_lsn;
+        let start_lsn =
+            max_lsn - (max_lsn % self.config.io_buf_size as Lsn);
 
-            match res {
-                Err(e) => {
-                    *snapshot_opt = Some(Snapshot::default());
-                    error!("failed to generate snapshot: {:?}", e);
-                }
-                Ok(next_snapshot) => {
-                    *snapshot_opt = Some(next_snapshot);
-                }
+        debug!(
+            "snapshot starting from offset {} to the segment containing ~{}",
+            last_snapshot.max_lsn,
+            self.log.stable_offset(),
+        );
+
+        let iter = self.log.iter_from(start_lsn);
+
+        let res = advance_snapshot::<PM, P, R>(
+            iter,
+            last_snapshot,
+            &self.config,
+        );
+
+        // NB it's important to resume writing before replacing the snapshot
+        // into the mutex, otherwise we create a race condition where the SA is
+        // not actually paused when a snapshot happens.
+        self.log.with_sa(|sa| sa.resume_rewriting());
+
+        match res {
+            Err(e) => {
+                *snapshot_opt = Some(Snapshot::default());
+                Err(e)
             }
-        });
-
-        // TODO add future for waiting on the result of this if desired
-        Ok(())
+            Ok(next_snapshot) => {
+                *snapshot_opt = Some(next_snapshot);
+                Ok(())
+            }
+        }
     }
 
     fn load_snapshot(&mut self) {
