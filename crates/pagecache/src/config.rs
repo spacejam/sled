@@ -11,7 +11,7 @@ use std::{
 };
 
 #[cfg(unix)]
-use std::sync::atomic::ATOMIC_BOOL_INIT;
+use std::sync::atomic::ATOMIC_USIZE_INIT;
 
 use bincode::{deserialize, serialize};
 use fs2::FileExt;
