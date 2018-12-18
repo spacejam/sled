@@ -22,20 +22,7 @@ matrix:
     - os: linux
       rust: nightly-2018-10-26
       env:
-        - TEST=tsan
-        - RUSTFLAGS="-Z sanitizer=thread"
-        - TSAN_OPTIONS=suppressions=/home/travis/build/spacejam/sled/tsan_suppressions.txt
-    - os: linux
-      rust: nightly-2018-10-26
-      env:
-        - TEST=asan
-        - ASAN_OPTIONS="detect_odr_violation=0"
-        - RUSTFLAGS="-Z sanitizer=address"
-    - os: linux
-      rust: nightly-2018-10-26
-      env:
-        - TEST=lsan
-        - RUSTFLAGS="-Z sanitizer=leak"
+        - TEST=sanitizers
     - os: linux
       rust: nightly-2018-10-26
       env:
@@ -56,15 +43,7 @@ matrix:
     - os: linux
       rust: stable
       env:
-        - TEST=qc_log
-    - os: linux
-      rust: stable
-      env:
-        - TEST=qc_pagecache
-    - os: linux
-      rust: stable
-      env:
-        - TEST=qc_tree
+        - TEST=qc
     - os: linux
       rust: stable
       env:
@@ -86,34 +65,45 @@ script:
                  cargo test test_crash_recovery --release -- --ignored &&
                  cargo test tree --release
                  ;;
-               qc_log)
+               qc)
                  pushd tests &&
-                 cargo test quickcheck_log_works --release -- --ignored
-                 ;;
-               qc_pagecache)
-                 pushd tests &&
-                 cargo test quickcheck_pagecache_works --release -- --ignored
-                 ;;
-               qc_tree)
-                 pushd tests &&
+                 echo "qc log" &&
+                 cargo test quickcheck_log_works --release -- --ignored &&
+                 echo "qc pagecache" &&
+                 cargo test quickcheck_pagecache_works --release -- --ignored &&
+                 echo "qc tree" &&
                  cargo test quickcheck_tree_matches_btreemap --release -- --ignored
                  ;;
                clippy)
                  cargo clippy
                  ;;
-               asan)
+               sanitizers)
                  pushd benchmarks/stress2 &&
-                 cargo build --target x86_64-unknown-linux-gnu &&
-                 sudo target/x86_64-unknown-linux-gnu/debug/stress2
-                 ;;
-               lsan)
-                 pushd benchmarks/stress2 &&
-                 cargo build --target x86_64-unknown-linux-gnu &&
-                 sudo target/x86_64-unknown-linux-gnu/debug/stress2
-                 ;;
-               tsan)
-                 pushd benchmarks/stress2;
-                 cargo run --features=lock_free_delays --target x86_64-unknown-linux-gnu
+                 echo "lsan" &&
+                 cargo clean &&
+                 export RUSTFLAGS="-Z sanitizer=leak" &&
+                 cargo build --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu &&
+                 sudo rm -rf default.sled &&
+                 sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30 &&
+                 sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=6 &&
+
+                 echo "asan" &&
+                 cargo clean &&
+                 export RUSTFLAGS="-Z sanitizer=address" &&
+                 export ASAN_OPTIONS="detect_odr_violation=0" &&
+                 cargo build --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu &&
+                 sudo rm -rf default.sled &&
+                 sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30 &&
+                 sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=6 &&
+                 unset ASAN_OPTIONS &&
+
+                 echo "tsan" &&
+                 cargo clean &&
+                 export RUSTFLAGS="-Z sanitizer=thread" &&
+                 export TSAN_OPTIONS=suppressions=/home/travis/build/spacejam/sled/tsan_suppressions.txt &&
+                 sudo rm -rf default.sled &&
+                 cargo run --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu -- --duration=30 &&
+                 cargo run --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu -- --duration=6
                  ;;
                crash)
                  pushd tests &&

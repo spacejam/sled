@@ -12,7 +12,7 @@ pub(crate) enum Data {
 impl Data {
     #[inline]
     pub(crate) fn size_in_bytes(&self) -> u64 {
-        let self_sz = size_of::<Bound>() as u64;
+        let self_sz = size_of::<Data>() as u64;
 
         let inner_sz = match self {
             Data::Index(ref v) => {
@@ -99,19 +99,18 @@ impl Data {
         }
     }
 
-    pub(crate) fn drop_gte(&mut self, at: &Bound, prefix: &[u8]) {
-        let bound = at.inner();
+    pub(crate) fn drop_gte(&mut self, bound: &[u8], prefix: &[u8]) {
         match *self {
             Data::Index(ref mut ptrs) => {
                 ptrs.retain(|&(ref k, _)| {
-                    let decoded_k = prefix_decode(prefix, &*k);
-                    decoded_k.as_slice() < bound
+                    prefix_cmp_encoded(k, bound, prefix)
+                        == std::cmp::Ordering::Less
                 })
             }
             Data::Leaf(ref mut items) => {
                 items.retain(|&(ref k, _)| {
-                    let decoded_k = prefix_decode(prefix, &*k);
-                    decoded_k.as_slice() < bound
+                    prefix_cmp_encoded(k, bound, prefix)
+                        == std::cmp::Ordering::Less
                 })
             }
         }

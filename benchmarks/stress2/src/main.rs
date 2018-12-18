@@ -187,7 +187,8 @@ fn main() {
         ARGS = Docopt::new(USAGE)
             .and_then(|d| {
                 d.argv(std::env::args().into_iter()).deserialize()
-            }).unwrap_or_else(|e| e.exit());
+            })
+            .unwrap_or_else(|e| e.exit());
         ARGS.clone()
     };
 

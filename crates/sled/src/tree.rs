@@ -174,8 +174,8 @@ impl Tree {
                     id: leaf_id,
                     data: Data::Leaf(vec![]),
                     next: None,
-                    lo: Bound::Inclusive(vec![]),
-                    hi: Bound::Inf,
+                    lo: vec![],
+                    hi: vec![],
                 },
                 None,
             );
@@ -201,8 +201,8 @@ impl Tree {
                     id: root_id,
                     data: Data::Index(root_index_vec),
                     next: None,
-                    lo: Bound::Inclusive(vec![]),
-                    hi: Bound::Inf,
+                    lo: vec![],
+                    hi: vec![],
                 },
                 Some(std::usize::MAX),
             );
@@ -427,7 +427,7 @@ impl Tree {
         let items =
             data.leaf_ref().expect("last_node should be a leaf");
         let search = leaf_search(Less, items, |&(ref k, ref _v)| {
-            prefix_cmp_encoded(k, key.as_ref(), last_node.lo.inner())
+            prefix_cmp_encoded(k, key.as_ref(), &last_node.lo)
         });
 
         let ret = if search.is_none() {
@@ -445,7 +445,7 @@ impl Tree {
             let idx = search.unwrap();
             let (encoded_key, v) = &items[idx];
             Some((
-                prefix_decode(last_node.lo.inner(), &*encoded_key),
+                prefix_decode(&last_node.lo, &*encoded_key),
                 PinnedValue::new(&*v, double_guard),
             ))
         };
@@ -498,11 +498,7 @@ impl Tree {
             data.leaf_ref().expect("last_node should be a leaf");
         let search =
             leaf_search(Greater, items, |&(ref k, ref _v)| {
-                prefix_cmp_encoded(
-                    k,
-                    key.as_ref(),
-                    last_node.lo.inner(),
-                )
+                prefix_cmp_encoded(k, key.as_ref(), &last_node.lo)
             });
 
         let ret = if search.is_none() {
@@ -520,7 +516,7 @@ impl Tree {
             let idx = search.unwrap();
             let (encoded_key, v) = &items[idx];
             Some((
-                prefix_decode(last_node.lo.inner(), &*encoded_key),
+                prefix_decode(&last_node.lo, &*encoded_key),
                 PinnedValue::new(&*v, double_guard),
             ))
         };
@@ -592,10 +588,7 @@ impl Tree {
 
             let (node_id, encoded_key) = {
                 let node: &Node = leaf_frag.unwrap_base();
-                (
-                    node.id,
-                    prefix_encode(node.lo.inner(), key.as_ref()),
-                )
+                (node.id, prefix_encode(&node.lo, key.as_ref()))
             };
             let frag = if let Some(ref n) = new {
                 Frag::Set(encoded_key, n.clone())
@@ -664,8 +657,7 @@ impl Tree {
                  of length >= 2 (root + leaf)",
             );
             let node: &Node = leaf_frag.unwrap_base();
-            let encoded_key =
-                prefix_encode(node.lo.inner(), key.as_ref());
+            let encoded_key = prefix_encode(&node.lo, key.as_ref());
 
             let mut subscriber_reservation =
                 self.subscriptions.reserve(&key);
@@ -760,8 +752,7 @@ impl Tree {
                  of length >= 2 (root + leaf)",
             );
             let node: &Node = leaf_frag.unwrap_base();
-            let encoded_key =
-                prefix_encode(node.lo.inner(), key.as_ref());
+            let encoded_key = prefix_encode(&node.lo, key.as_ref());
 
             let frag = Frag::Del(encoded_key);
             let link = self.pages.link(
@@ -871,8 +862,7 @@ impl Tree {
             );
             let node: &Node = leaf_frag.unwrap_base();
 
-            let encoded_key =
-                prefix_encode(node.lo.inner(), key.as_ref());
+            let encoded_key = prefix_encode(&node.lo, key.as_ref());
             let frag = Frag::Merge(encoded_key, value.clone());
 
             let link = self.pages.link(
@@ -1174,7 +1164,7 @@ impl Tree {
                     .root_hoist(
                         root_node.id,
                         parent_split.to,
-                        parent_split.at.inner().to_vec(),
+                        parent_split.at.clone(),
                         guard,
                     )
                     .map(|_| ())
@@ -1287,8 +1277,8 @@ impl Tree {
                 id: new_root_pid,
                 data: Data::Index(new_root_vec),
                 next: None,
-                lo: Bound::Inclusive(vec![]),
-                hi: Bound::Inf,
+                lo: vec![],
+                hi: vec![],
             },
             Some(from),
         );
@@ -1340,11 +1330,7 @@ impl Tree {
                 data.leaf_ref().expect("last_node should be a leaf");
             let search = items
                 .binary_search_by(|&(ref k, ref _v)| {
-                    prefix_cmp_encoded(
-                        k,
-                        key.as_ref(),
-                        last_node.lo.inner(),
-                    )
+                    prefix_cmp_encoded(k, key.as_ref(), &last_node.lo)
                 })
                 .ok();
 
@@ -1423,12 +1409,13 @@ impl Tree {
 
             // TODO this may need to change when handling (half) merges
             assert!(
-                node.lo.inner() <= key.as_ref(),
+                &*node.lo <= key.as_ref(),
                 "overshot key somehow"
             );
 
             // half-complete split detect & completion
-            if node.hi <= Bound::Inclusive(key.as_ref().to_vec()) {
+            // (when hi is empty, it means it's unbounded)
+            if !node.hi.is_empty() && &*node.hi <= key.as_ref() {
                 // we have encountered a child split, without
                 // having hit the parent split above.
                 cursor = node.next.expect(
@@ -1486,7 +1473,7 @@ impl Tree {
                             prefix_cmp_encoded(
                                 k,
                                 key.as_ref(),
-                                node.lo.inner(),
+                                &node.lo,
                             )
                         },
                     );
