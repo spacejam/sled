@@ -1,3 +1,9 @@
+extern crate docopt;
+extern crate rand;
+extern crate serde;
+
+use serde::Deserialize;
+
 use std::{
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
