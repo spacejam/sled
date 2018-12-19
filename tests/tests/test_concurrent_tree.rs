@@ -1,4 +1,5 @@
-#![cfg(unix)]
+// OS generalization depends on deterministic.
+#![cfg(target_os = "linux")]
 use std::{
     collections::BTreeMap,
     sync::{Arc, RwLock},
