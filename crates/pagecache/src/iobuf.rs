@@ -262,7 +262,7 @@ impl IoBufs {
             max_lsn: self.stable(),
             cur_lsn: corrected_lsn,
             segment_base: None,
-            segment_iter: segment_iter,
+            segment_iter,
             segment_len: io_buf_size,
             trailer: None,
         }
@@ -543,8 +543,7 @@ impl IoBufs {
             let destination = &mut (out_buf)[res_start..res_end];
 
             let reservation_offset = lid + buf_offset;
-            let reservation_lsn =
-                iobuf.get_lsn() + buf_offset as Lsn;
+            let reservation_lsn = iobuf.get_lsn() + buf_offset as Lsn;
 
             trace!(
                 "reserved {} bytes at lsn {} lid {}",

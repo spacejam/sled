@@ -1415,13 +1415,13 @@ impl Tree {
 
             // TODO this may need to change when handling (half) merges
             assert!(
-                &*node.lo <= key.as_ref(),
+                node.lo.as_slice() <= key.as_ref(),
                 "overshot key somehow"
             );
 
             // half-complete split detect & completion
             // (when hi is empty, it means it's unbounded)
-            if !node.hi.is_empty() && &*node.hi <= key.as_ref() {
+            if !node.hi.is_empty() && node.hi.as_slice() <= key.as_ref() {
                 // we have encountered a child split, without
                 // having hit the parent split above.
                 cursor = node.next.expect(
