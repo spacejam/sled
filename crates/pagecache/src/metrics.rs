@@ -140,24 +140,35 @@ impl Metrics {
     pub fn print_profile(&self) {
         println!(
             "pagecache profile:\n\
-            {0: >17} | {1: >10} | {2: >10} | {3: >10} | {4: >10} | {5: >10} | {6: >10} | {7: >10}",
+            {0: >17} | {1: >10} | {2: >10} | {3: >10} | {4: >10} | {5: >10} | {6: >10} | {7: >10} | {8: >10}",
             "op",
             "min (us)",
             "90 (us)",
             "99 (us)",
             "99.9 (us)",
+            "99.99 (us)",
             "max (us)",
             "count",
             "sum (s)"
         );
-        println!("{}", repeat("-").take(103).collect::<String>());
+        println!("{}", repeat("-").take(121).collect::<String>());
 
-        let p = |mut tuples: Vec<(String, _, _, _, _, _, _, _)>| {
-            tuples.sort_by_key(|t| (t.7 * -1. * 1e3) as i64);
+        let p = |mut tuples: Vec<(
+            String,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+        )>| {
+            tuples.sort_by_key(|t| (t.8 * -1. * 1e3) as i64);
             for v in tuples {
                 println!(
                     "{0: >17} | {1: >10.1} | {2: >10.1} | {3: >10.1} \
-                | {4: >10.1} | {5: >10.1} | {6: >10.1} | {7: >10.3}",
+                | {4: >10.1} | {5: >10.1} | {6: >10.1} | {7: >10.1} | {8: >10.3}",
                     v.0,
                     v.1,
                     v.2,
@@ -165,7 +176,8 @@ impl Metrics {
                     v.4,
                     v.5,
                     v.6,
-                    v.7
+                    v.7,
+                    v.8,
                 );
             }
         };
@@ -177,6 +189,7 @@ impl Metrics {
                 histo.percentile(90.) / 1e3,
                 histo.percentile(99.) / 1e3,
                 histo.percentile(99.9) / 1e3,
+                histo.percentile(99.99) / 1e3,
                 histo.percentile(100.) / 1e3,
                 histo.count(),
                 histo.sum() as f64 / 1e9,
@@ -199,7 +212,7 @@ impl Metrics {
             self.tree_loops.load(Acquire)
         );
 
-        println!("{}", repeat("-").take(103).collect::<String>());
+        println!("{}", repeat("-").take(121).collect::<String>());
         println!("pagecache:");
         p(vec![
             f("snapshot", &self.advance_snapshot),
@@ -210,7 +223,7 @@ impl Metrics {
             f("page_out", &self.page_out),
         ]);
 
-        println!("{}", repeat("-").take(103).collect::<String>());
+        println!("{}", repeat("-").take(121).collect::<String>());
         println!("serialization and compression:");
         p(vec![
             f("serialize", &self.serialize),
@@ -219,7 +232,7 @@ impl Metrics {
             f("decompress", &self.decompress),
         ]);
 
-        println!("{}", repeat("-").take(103).collect::<String>());
+        println!("{}", repeat("-").take(121).collect::<String>());
         println!("log:");
         p(vec![
             f("make_stable", &self.make_stable),
@@ -239,7 +252,7 @@ impl Metrics {
             self.log_reservation_attempts.load(Acquire)
         );
 
-        println!("{}", repeat("-").take(103).collect::<String>());
+        println!("{}", repeat("-").take(121).collect::<String>());
         println!("segment accountant:");
         p(vec![
             f("acquire", &self.accountant_lock),
@@ -248,7 +261,7 @@ impl Metrics {
 
         #[cfg(feature = "measure_allocs")]
         {
-            println!("{}", repeat("-").take(103).collect::<String>());
+            println!("{}", repeat("-").take(121).collect::<String>());
             println!("allocation statistics:");
             println!(
                 "total allocations: {}",
