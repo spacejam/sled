@@ -9,7 +9,6 @@ debug = true
 
 [features]
 default = []
-async_io = ["sled/async_io"]
 lock_free_delays = ["sled/lock_free_delays"]
 check_snapshot_integrity = ["sled/check_snapshot_integrity"]
 compression = ["sled/compression"]
