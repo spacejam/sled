@@ -2,6 +2,7 @@
 extern crate serde_derive;
 extern crate docopt;
 extern crate env_logger;
+extern crate jemallocator;
 extern crate rand;
 extern crate sled;
 
@@ -15,6 +16,9 @@ use std::{
 
 use docopt::Docopt;
 use rand::{thread_rng, Rng};
+
+#[cfg_attr(not(feature = "no_jemalloc"), global_allocator)]
+static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 static TOTAL: AtomicUsize = AtomicUsize::new(0);
 static SEQ: AtomicUsize = AtomicUsize::new(0);
@@ -202,7 +206,7 @@ fn main() {
         .cache_bits(6)
         .cache_capacity(1_000_000_000)
         .flush_every_ms(Some(10))
-        .snapshot_after_ops(100_000_000)
+        .snapshot_after_ops(100_000)
         .print_profile_on_drop(true)
         .merge_operator(concatenate_merge)
         .build();

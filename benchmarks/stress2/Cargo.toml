@@ -25,3 +25,4 @@ docopt = "1.0"
 env_logger = "0.5"
 rand = "0.4"
 sled = { path = "../../crates/sled" }
+jemallocator = "0.1"
