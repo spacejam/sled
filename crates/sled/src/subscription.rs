@@ -51,12 +51,13 @@ impl Clone for Event {
     }
 }
 
+type Senders = Vec<(usize, SyncSender<FutureReceiver<Event>>)>;
+
 /// A subscriber listening on a specified prefix
 pub struct Subscriber {
     id: usize,
     rx: Receiver<FutureReceiver<Event>>,
-    home:
-        Arc<RwLock<Vec<(usize, SyncSender<FutureReceiver<Event>>)>>>,
+    home: Arc<RwLock<Senders>>,
 }
 
 impl Drop for Subscriber {
@@ -82,16 +83,7 @@ impl Iterator for Subscriber {
 
 #[derive(Default)]
 pub(crate) struct Subscriptions {
-    watched: RwLock<
-        BTreeMap<
-            Vec<u8>,
-            Arc<
-                RwLock<
-                    Vec<(usize, SyncSender<FutureReceiver<Event>>)>,
-                >,
-            >,
-        >,
-    >,
+    watched: RwLock<BTreeMap<Vec<u8>, Arc<RwLock<Senders>>>>,
 }
 
 impl Subscriptions {
@@ -124,8 +116,8 @@ impl Subscriptions {
         w_senders.push((id, tx));
 
         Subscriber {
-            id: id,
-            rx: rx,
+            id,
+            rx,
             home: arc_senders.clone(),
         }
     }

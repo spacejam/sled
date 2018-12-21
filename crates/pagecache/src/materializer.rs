@@ -64,9 +64,7 @@ impl Materializer for NullMaterializer {
         NullMaterializer
     }
 
-    fn merge(&self, _: &[&Self::PageFrag]) -> Self::PageFrag {
-        ()
-    }
+    fn merge(&self, _: &[&Self::PageFrag]) -> Self::PageFrag {}
 
     fn recover(&self, _: &Self::PageFrag) -> Option<Self::Recovery> {
         None

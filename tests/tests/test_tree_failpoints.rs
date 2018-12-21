@@ -264,7 +264,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 restart!();
             }
             FailPoint(fp) => {
-                fail_points.insert(fp.clone());
+                fail_points.insert(fp);
                 fail::cfg(&*fp, "return")
                     .expect("should be able to configure failpoint");
             }

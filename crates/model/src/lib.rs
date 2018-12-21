@@ -93,7 +93,6 @@
 //! ```
 extern crate permutohedron;
 
-#[macro_use]
 pub extern crate proptest as pt;
 #[doc(hidden)]
 pub use pt::*;

@@ -247,6 +247,12 @@ impl OpenOptions {
     }
 }
 
+impl Default for file::OpenOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// A file with the ability to be "crashed" during test mode.
 #[derive(Clone, Debug)]
 pub struct File(Arc<Mutex<FileInner>>);

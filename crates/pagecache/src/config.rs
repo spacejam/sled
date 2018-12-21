@@ -20,7 +20,7 @@ use serde::Serialize;
 
 use super::*;
 
-const DEFAULT_PATH: &'static str = "default.sled";
+const DEFAULT_PATH: &str = "default.sled";
 
 impl Deref for Config {
     type Target = ConfigBuilder;
@@ -444,7 +444,7 @@ impl Config {
         match options.open(&path) {
             Ok(file) => {
                 // try to exclusively lock the file
-                if let Err(_) = file.try_lock_exclusive() {
+                if file.try_lock_exclusive().is_err() {
                     return Err(Error::Io(std::io::Error::new(
                         std::io::ErrorKind::Other,
                         "could not acquire exclusive file lock",
@@ -536,7 +536,7 @@ impl Config {
                 );
                 Ok(())
             }
-            Ok(None) => self.write_config().map_err(|e| e.into()),
+            Ok(None) => self.write_config(),
             Err(e) => Err(e.into()),
         }
     }

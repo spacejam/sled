@@ -165,26 +165,21 @@ impl Arbitrary for Op {
     fn shrink(&self) -> Box<Iterator<Item = Op>> {
         match *self {
             Set(ref k, v) => {
-                Box::new(k.shrink().map(move |sk| Set(sk, v.clone())))
+                Box::new(k.shrink().map(move |sk| Set(sk, v)))
             }
             Merge(ref k, v) => {
-                Box::new(k.shrink().map(move |k| Merge(k, v.clone())))
+                Box::new(k.shrink().map(move |k| Merge(k, v)))
             }
-            Get(ref k) => Box::new(k.shrink().map(move |k| Get(k))),
-            GetLt(ref k) => {
-                Box::new(k.shrink().map(move |k| GetLt(k)))
-            }
-            GetGt(ref k) => {
-                Box::new(k.shrink().map(move |k| GetGt(k)))
-            }
+            Get(ref k) => Box::new(k.shrink().map(Get)),
+            GetLt(ref k) => Box::new(k.shrink().map(GetLt)),
+            GetGt(ref k) => Box::new(k.shrink().map(GetGt)),
             Cas(ref k, old, new) => Box::new(Box::new(
-                k.shrink()
-                    .map(move |k| Cas(k, old.clone(), new.clone())),
+                k.shrink().map(move |k| Cas(k, old, new)),
             )),
             Scan(ref k, len) => {
                 Box::new(k.shrink().map(move |k| Scan(k, len)))
             }
-            Del(ref k) => Box::new(k.shrink().map(|k| Del(k))),
+            Del(ref k) => Box::new(k.shrink().map(Del)),
             Restart => Box::new(vec![].into_iter()),
         }
     }

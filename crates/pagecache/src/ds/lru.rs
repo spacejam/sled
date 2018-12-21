@@ -84,7 +84,7 @@ impl Shard {
         Shard {
             list: Dll::default(),
             entries: vec![],
-            capacity: capacity,
+            capacity,
             sz: 0,
         }
     }
