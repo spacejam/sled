@@ -5,12 +5,13 @@ use std::{
     ops::Deref,
     path::{Path, PathBuf},
     sync::{
-        atomic::{
-            AtomicPtr, AtomicUsize, Ordering, ATOMIC_USIZE_INIT,
-        },
+        atomic::{AtomicPtr, AtomicUsize, Ordering},
         Arc, Mutex,
     },
 };
+
+#[cfg(unix)]
+use std::sync::atomic::ATOMIC_USIZE_INIT;
 
 use bincode::{deserialize, serialize};
 use fs2::FileExt;

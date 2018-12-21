@@ -94,9 +94,11 @@ impl OpenOptionsExt for OpenOptions {
         self.inner.attributes(attributes);
         self
     }
-    fn security_qos_flags(&mut self, flags: u32) -> &mut OpenOptions {
-        self.inner.security_quos_flags(flags);
-        self
+    fn security_qos_flags(
+        &mut self,
+        flags: u32,
+    ) -> &mut fs::OpenOptions {
+        self.inner.security_qos_flags(flags)
     }
 }
 
@@ -267,11 +269,11 @@ impl FileExt for File {
         buf: &mut [u8],
         offset: u64,
     ) -> Result<usize> {
-        self.with_inner(|f| f.read_at(buf, offset))
+        self.with_inner(|f| f.seek_read(buf, offset))
     }
 
     fn seek_write(&self, buf: &[u8], offset: u64) -> Result<usize> {
-        self.with_inner(|f| f.write_at(buf, offset))
+        self.with_inner(|f| f.seek_write(buf, offset))
     }
 }
 
@@ -404,7 +406,11 @@ impl FileInner {
     }
 
     #[cfg(windows)]
-    fn seek_write(&self, buf: &[u8], offset: u64) -> Result<usize> {
+    fn seek_write(
+        &mut self,
+        buf: &[u8],
+        offset: u64,
+    ) -> Result<usize> {
         if self.is_crashing {
             return Err(Error::new(ErrorKind::BrokenPipe, "oh no!"));
         }
@@ -485,8 +491,13 @@ impl FileInner {
 
         for &(offset, ref buf) in self.updates.iter().take(stabilize)
         {
+            #[cfg(unix)]
             self.inner
                 .write_at(&*buf, offset as u64)
+                .expect("replayed write should work");
+            #[cfg(windows)]
+            self.inner
+                .seek_write(&*buf, offset as u64)
                 .expect("replayed write should work");
         }
 
