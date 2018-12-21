@@ -433,12 +433,17 @@ impl IoBufs {
         // Succeeded in decrementing writers, if we decremented writn
         // to 0 and it's sealed then we should write it to storage.
         if n_writers(header) == 0 && is_sealed(header) {
+            if let Some(e) = self.0.config.global_error() {
+                return Err(e);
+            }
             if let Some(ref thread_pool) = iobufs.config.thread_pool {
                 let thread_pool = thread_pool.clone();
                 trace!("asynchronously writing index {} to log from exit_reservation", idx);
                 let iobufs = self.clone();
                 thread_pool.spawn(move || {
-                    let _ = iobufs.write_to_log(idx);
+                    if let Err(e) = iobufs.write_to_log(idx) {
+                        iobufs.0.config.set_global_error(e);
+                    }
                 });
                 Ok(())
             } else {
@@ -631,13 +636,17 @@ impl IoBufs {
 
         // if writers is 0, it's our responsibility to write the buffer.
         if n_writers(sealed) == 0 {
+            if let Some(e) = self.0.config.global_error() {
+                return Err(e);
+            }
             if let Some(ref thread_pool) = iobufs.config.thread_pool {
                 let thread_pool = thread_pool.clone();
                 trace!("asynchronously writing index {} to log from maybe_seal", idx);
-                let iobufs = iobufs.clone();
+                let iobufs = self.clone();
                 thread_pool.spawn(move || {
-                    let iobufs = IoBufs(iobufs);
-                    let _ = iobufs.write_to_log(idx);
+                    if let Err(e) = iobufs.write_to_log(idx) {
+                        iobufs.0.config.set_global_error(e);
+                    }
                 });
                 Ok(())
             } else {

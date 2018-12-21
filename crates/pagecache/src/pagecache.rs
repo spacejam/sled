@@ -1211,12 +1211,19 @@ where
             }
         };
 
+        if let Some(e) = self.config.global_error() {
+            return Err(e);
+        }
+
         if let Some(ref thread_pool) = self.config.thread_pool {
             debug!(
                 "asynchronously spawning snapshot generation task"
             );
+            let config = self.config.clone();
             thread_pool.spawn(move || {
-                let _ = gen_snapshot();
+                if let Err(e) = gen_snapshot() {
+                    config.set_global_error(e);
+                }
             });
         } else {
             debug!("synchronously generating a new snapshot");
