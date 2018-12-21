@@ -253,7 +253,7 @@ impl<R> Snapshot<R> {
                     let entry = self
                         .replacements
                         .entry(idx)
-                        .or_insert(HashSet::new());
+                        .or_insert_with(HashSet::new);
                     entry.insert((pid, replaced_at_lsn));
                 }
 
@@ -289,7 +289,7 @@ impl<R> Snapshot<R> {
                 let entry = self
                     .replacements
                     .entry(idx)
-                    .or_insert(HashSet::new());
+                    .or_insert_with(HashSet::new);
                 entry.insert((pid, replaced_at_lsn));
             }
             None => {

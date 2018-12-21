@@ -51,7 +51,7 @@ impl Flusher {
                     shutdown = sc2
                         .wait_timeout(
                             shutdown,
-                            sleep_duration.clone(),
+                            sleep_duration,
                         ).unwrap()
                         .0;
                 }

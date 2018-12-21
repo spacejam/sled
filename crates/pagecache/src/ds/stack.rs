@@ -94,7 +94,7 @@ impl<T: Send + Sync + 'static> Stack<T> {
     pub(crate) fn push(&self, inner: T) {
         debug_delay();
         let node = Owned::new(Node {
-            inner: inner,
+            inner,
             next: Atomic::null(),
         });
 
@@ -242,7 +242,7 @@ where
     ) -> StackIter<'b, T> {
         StackIter {
             inner: ptr,
-            guard: guard,
+            guard,
         }
     }
 }

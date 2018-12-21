@@ -420,7 +420,7 @@ where
             max_pid: AtomicUsize::new(0),
             free: Arc::new(Mutex::new(BinaryHeap::new())),
             log: Log::start(config, snapshot.clone())?,
-            lru: lru,
+            lru,
             updates: AtomicUsize::new(0),
             last_snapshot: Arc::new(Mutex::new(Some(snapshot))),
         };
@@ -531,7 +531,7 @@ where
         };
 
         let prepend: LoggedUpdate<P> = LoggedUpdate {
-            pid: pid,
+            pid,
             update: Update::Append(new.clone()),
         };
 
@@ -580,7 +580,7 @@ where
         }
 
         result
-            .map(|p| PagePtr(p))
+            .map(PagePtr)
             .map_err(|e| Error::CasFailed(Some(PagePtr(e))))
     }
 
@@ -617,7 +617,7 @@ where
             }
         }
 
-        result.map(|p| PagePtr(p))
+        result.map(PagePtr)
     }
 
     // rewrite a page so we can reuse the segment that it is
@@ -656,7 +656,7 @@ where
             let new_ptr = log_reservation.ptr();
             let mut new_cache_entry = cache_entries[0].clone();
 
-            *new_cache_entry.ptr_ref_mut() = new_ptr.clone();
+            *new_cache_entry.ptr_ref_mut() = new_ptr;
 
             let node = node_from_frag_vec(vec![new_cache_entry])
                 .into_shared(guard);
@@ -758,7 +758,7 @@ where
                 node_from_frag_vec(vec![cache_entry])
                     .into_shared(guard)
             })
-            .unwrap_or_else(|| Shared::null());
+            .unwrap_or_else(Shared::null);
 
         debug_delay();
         let result =
@@ -1131,11 +1131,9 @@ where
         match logged_update.update {
             Update::Compact(page_frag)
             | Update::Append(page_frag) => Ok(page_frag),
-            _ => {
-                return Err(Error::ReportableBug(
-                    "non-append/compact found in pull".to_owned(),
-                ))
-            }
+            _ => Err(Error::ReportableBug(
+                "non-append/compact found in pull".to_owned(),
+            ))
         }
     }
 

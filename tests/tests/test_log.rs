@@ -40,7 +40,7 @@ fn more_log_reservations_than_buffers() {
     let big_msg_overhead = MSG_HEADER_LEN + total_seg_overhead;
     let big_msg_sz = config.io_buf_size - big_msg_overhead;
 
-    for _ in 0..config.io_bufs + 1 {
+    for _ in 0..=config.io_bufs {
         reservations.push(log.reserve(vec![0; big_msg_sz]).unwrap())
     }
     for res in reservations.into_iter().rev() {
@@ -509,12 +509,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
 
                 // on recovery, we will rewind over any aborted tip entries
                 while !reference.is_empty() {
-                    let should_pop =
-                        if reference.last().unwrap().2.is_none() {
-                            true
-                        } else {
-                            false
-                        };
+                    let should_pop = reference.last().unwrap().2.is_none();
                     if should_pop {
                         reference.pop();
                     } else {

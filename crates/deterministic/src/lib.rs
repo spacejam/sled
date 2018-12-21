@@ -47,7 +47,7 @@ thread_local! {
     pub static CONTEXT: RefCell<Arc<Context>> = RefCell::new(Arc::new(Context::default()));
 }
 
-fn context<'a>() -> Arc<Context> {
+fn context() -> Arc<Context> {
     CONTEXT.with(|c| c.borrow().clone())
 }
 
