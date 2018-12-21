@@ -14,7 +14,7 @@ impl Flusher {
     /// Spawns a thread that periodically calls `callback` until dropped.
     pub(crate) fn new(
         name: String,
-        iobufs: Arc<IoBufs>,
+        iobufs: IoBufs,
         flush_every_ms: u64,
     ) -> Flusher {
         let shutdown = Arc::new(Mutex::new(false));
@@ -33,10 +33,10 @@ impl Flusher {
                         #[cfg(feature = "failpoints")]
                         {
                             if let Error::FailPoint = e {
-                                iobufs._failpoint_crashing
+                                iobufs.0._failpoint_crashing
                                     .store(true, SeqCst);
                                 // wake up any waiting threads so they don't stall forever
-                                iobufs.interval_updated.notify_all();
+                                iobufs.0.interval_updated.notify_all();
                             }
                         }
 

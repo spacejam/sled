@@ -1133,7 +1133,7 @@ where
             | Update::Append(page_frag) => Ok(page_frag),
             _ => Err(Error::ReportableBug(
                 "non-append/compact found in pull".to_owned(),
-            ))
+            )),
         }
     }
 
@@ -1211,12 +1211,10 @@ where
             }
         };
 
-        if cfg!(feature = "async_snapshots") {
+        if let Some(ref thread_pool) = self.config.thread_pool {
             debug!(
                 "asynchronously spawning snapshot generation task"
             );
-            let thread_pool =
-                self.config.thread_pool.as_ref().unwrap();
             thread_pool.spawn(move || {
                 let _ = gen_snapshot();
             });

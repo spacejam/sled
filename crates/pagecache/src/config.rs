@@ -193,17 +193,25 @@ impl ConfigBuilder {
         }
 
         let threads = Arc::new(AtomicUsize::new(0));
-        let start_threads = threads.clone();
-        let end_threads = threads.clone();
-        let thread_pool = rayon::ThreadPoolBuilder::new()
-            .start_handler(move |_id| {
-                start_threads.fetch_add(1, SeqCst);
-            })
-            .exit_handler(move |_id| {
-                end_threads.fetch_sub(1, SeqCst);
-            })
-            .build()
-            .expect("should be able to start rayon threadpool");
+
+        let thread_pool = if cfg!(feature = "async_io") {
+            let start_threads = threads.clone();
+            let end_threads = threads.clone();
+
+            let tp = rayon::ThreadPoolBuilder::new()
+                .start_handler(move |_id| {
+                    start_threads.fetch_add(1, SeqCst);
+                })
+                .exit_handler(move |_id| {
+                    end_threads.fetch_sub(1, SeqCst);
+                })
+                .build()
+                .expect("should be able to start rayon threadpool");
+
+            Some(Arc::new(tp))
+        } else {
+            None
+        };
 
         // seal config in a Config
         Config {
@@ -213,7 +221,7 @@ impl ConfigBuilder {
             refs: Arc::new(AtomicUsize::new(0)),
             #[cfg(feature = "event_log")]
             event_log: Arc::new(crate::event_log::EventLog::default()),
-            thread_pool: Some(Arc::new(thread_pool)),
+            thread_pool,
             threads,
         }
     }
