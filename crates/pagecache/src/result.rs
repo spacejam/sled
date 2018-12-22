@@ -43,42 +43,42 @@ where
     A: PartialEq,
 {
     fn eq(&self, other: &Error<A>) -> bool {
-        match self {
-            &CasFailed(ref l) => {
-                if let &CasFailed(ref r) = other {
+        match *self {
+            CasFailed(ref l) => {
+                if let CasFailed(ref r) = *other {
                     l == r
                 } else {
                     false
                 }
             }
-            &Unsupported(ref l) => {
-                if let &Unsupported(ref r) = other {
+            Unsupported(ref l) => {
+                if let Unsupported(ref r) = *other {
                     l == r
                 } else {
                     false
                 }
             }
-            &ReportableBug(ref l) => {
-                if let &ReportableBug(ref r) = other {
+            ReportableBug(ref l) => {
+                if let ReportableBug(ref r) = *other {
                     l == r
                 } else {
                     false
                 }
             }
             #[cfg(feature = "failpoints")]
-            &FailPoint => if let &FailPoint = other {
+            FailPoint => if let FailPoint = *other {
                 true
             } else {
                 false
             },
-            &Corruption { at: l } => {
-                if let &Corruption { at: r } = other {
+            Corruption { at: l } => {
+                if let Corruption { at: r } = *other {
                     l == r
                 } else {
                     false
                 }
             }
-            &Io(_) => false,
+            Io(_) => false,
         }
     }
 }
