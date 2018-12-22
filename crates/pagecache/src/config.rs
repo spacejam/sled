@@ -120,9 +120,10 @@ impl Default for ConfigBuilder {
         }
     }
 }
-macro_rules! supported {
+
+macro_rules! check_supported {
     ($cond:expr, $msg:expr) => {
-        if !$cond {
+        if $cond {
             return Err(Error::Unsupported($msg.to_owned()));
         }
     };
@@ -465,43 +466,46 @@ impl Config {
 
     // panics if config options are outside of advised range
     fn validate(&self) -> Result<(), ()> {
-        supported!(
-            self.inner.io_bufs <= 32,
+        check_supported!(
+            self.inner.io_bufs > 32,
             "too many configured io_bufs. please make <= 32"
         );
-        supported!(
-            self.inner.io_buf_size >= 100,
-            "io_buf_size should be hundreds of kb at minimum, and we won't start if below 100"
+        check_supported!(
+            self.inner.io_buf_size < 100,
+            "io_buf_size should be hundreds of kb at minimum, and we won't \
+            start if below 100"
         );
-        supported!(
-            self.inner.io_buf_size <= 1 << 24,
+        check_supported!(
+            self.inner.io_buf_size > 1 << 24,
             "io_buf_size should be <= 16mb"
         );
-        supported!(self.inner.page_consolidation_threshold >= 1, "must consolidate pages after a non-zero number of updates");
-        supported!(self.inner.page_consolidation_threshold < 1 << 20, "must consolidate pages after fewer than 1 million updates");
-        supported!(
-            self.inner.cache_bits <= 20,
+        check_supported!(self.inner.page_consolidation_threshold < 1,
+            "must consolidate pages after a non-zero number of updates");
+        check_supported!(self.inner.page_consolidation_threshold >= 1 << 20,
+            "must consolidate pages after fewer than 1 million updates");
+        check_supported!(
+            self.inner.cache_bits > 20,
             "# LRU shards = 2^cache_bits. set cache_bits to 20 or less."
         );
-        supported!(
-            self.inner.segment_cleanup_threshold >= 0.01,
+        check_supported!(
+            self.inner.segment_cleanup_threshold < 0.01,
             "segment_cleanup_threshold must be >= 1%"
         );
-        supported!(
-            self.inner.segment_cleanup_skew < 99,
+        check_supported!(
+            self.inner.segment_cleanup_skew >= 99,
             "segment_cleanup_skew cannot be greater than 99%"
         );
-        supported!(
-            self.inner.compression_factor >= 1,
-            "compression_factor must be >= 0"
+        check_supported!(
+            self.inner.compression_factor < 1,
+            "compression_factor must be >= 1"
         );
-        supported!(
-            self.inner.compression_factor <= 22,
+        check_supported!(
+            self.inner.compression_factor > 22,
             "compression_factor must be <= 22"
         );
-        supported!(
-            self.inner.idgen_persist_interval > 0,
-            "idgen_persist_interval must be above 0"
+        check_supported!(
+            self.inner.idgen_persist_interval < 1,
+            "idgen_persist_interval must be 1 or larger"
         );
         Ok(())
     }
@@ -510,14 +514,14 @@ impl Config {
         match self.read_config() {
             Ok(Some(old)) => {
                 if old.merge_operator.is_some() {
-                    supported!(self.inner.merge_operator.is_some(),
+                    check_supported!(self.inner.merge_operator.is_none(),
                         "this system was previously opened with a \
                         merge operator. must supply one FOREVER after \
                         choosing to do so once, BWAHAHAHAHAHAHA!!!!");
                 }
 
-                supported!(
-                    self.inner.use_compression == old.use_compression,
+                check_supported!(
+                    self.inner.use_compression != old.use_compression,
                     format!("cannot change compression values across restarts. \
                         old value of use_compression loaded from disk: {}, \
                         currently set value: {}.",
@@ -526,8 +530,8 @@ impl Config {
                     )
                 );
 
-                supported!(
-                    self.inner.io_buf_size == old.io_buf_size,
+                check_supported!(
+                    self.inner.io_buf_size != old.io_buf_size,
                     format!(
                         "cannot change the io buffer size across restarts. \
                         please change it back to {}",
