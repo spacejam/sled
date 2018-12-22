@@ -32,12 +32,12 @@ fn kv(i: usize) -> Vec<u8> {
 fn parallel_tree_ops() {
     let config = ConfigBuilder::new()
         .temporary(true)
+        .async_io(false)
         .io_bufs(3)
         .blink_node_split_size(500)
         .flush_every_ms(None)
         .snapshot_after_ops(100_000_000)
         .io_buf_size(100_000)
-        .print_profile_on_drop(true)
         .build();
 
     tests::setup_logger();
@@ -162,6 +162,7 @@ fn parallel_tree_ops() {
 #[test]
 fn tree_subdir() {
     let config = ConfigBuilder::new()
+        .async_io(false)
         .path("/tmp/test_tree_subdir/test_subdir".to_owned())
         .build();
     let t = sled::Tree::start(config).unwrap();
@@ -344,7 +345,7 @@ fn tree_bug_01() {
 }
 
 #[test]
-fn tree_bug_2() {
+fn tree_bug_02() {
     // postmortem:
     // this was a bug in the way that the `Materializer`
     // was fed data, possibly out of order, if recover

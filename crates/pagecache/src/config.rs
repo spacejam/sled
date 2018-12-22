@@ -371,11 +371,11 @@ impl Config {
         }
     }
 
-    pub(crate) fn set_global_error<E>(&self, error: Error<E>) {
+    pub(crate) fn set_global_error(&self, error: Error<()>) {
         let ptr = Box::into_raw(Box::new(error));
         let ret = self.global_error.compare_and_swap(
             std::ptr::null_mut(),
-            ptr as *mut _,
+            ptr as *mut Error<()>,
             Ordering::Relaxed,
         );
 

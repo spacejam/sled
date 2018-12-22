@@ -1222,7 +1222,17 @@ where
             let config = self.config.clone();
             thread_pool.spawn(move || {
                 if let Err(e) = gen_snapshot() {
-                    config.set_global_error(e);
+                    match e {
+                        Error::Io(ref ioe)
+                            if ioe.kind() == std::io::ErrorKind::NotFound => {},
+                        error => {
+                            error!(
+                                "encountered error while generating snapshot: {:?}",
+                                error,
+                            );
+                            config.set_global_error(error);
+                        }
+                    }
                 }
             });
         } else {

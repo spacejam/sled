@@ -442,6 +442,7 @@ impl IoBufs {
                 let iobufs = self.clone();
                 thread_pool.spawn(move || {
                     if let Err(e) = iobufs.write_to_log(idx) {
+                        error!("hit error while writing segment {}: {:?}", idx, e);
                         iobufs.0.config.set_global_error(e);
                     }
                 });
@@ -645,6 +646,7 @@ impl IoBufs {
                 let iobufs = self.clone();
                 thread_pool.spawn(move || {
                     if let Err(e) = iobufs.write_to_log(idx) {
+                        error!("hit error while writing segment {}: {:?}", idx, e);
                         iobufs.0.config.set_global_error(e);
                     }
                 });
