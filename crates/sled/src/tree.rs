@@ -114,8 +114,8 @@ impl Tree {
         let roots_opt = if recovery.root_transitions.is_empty() {
             None
         } else {
-            let mut last = std::usize::MAX;
-            let mut last_idx = std::usize::MAX;
+            let mut last = usize::max_value();
+            let mut last_idx = usize::max_value();
             while !recovery.root_transitions.is_empty() {
                 // find the root that links to the last one
                 for (i, &(root, prev_root)) in
@@ -135,7 +135,7 @@ impl Tree {
                 }
                 recovery.root_transitions.remove(last_idx);
             }
-            assert_ne!(last, std::usize::MAX);
+            assert_ne!(last, usize::max_value());
             Some(last)
         };
 
@@ -204,7 +204,7 @@ impl Tree {
                     lo: vec![],
                     hi: vec![],
                 },
-                Some(std::usize::MAX),
+                Some(usize::max_value()),
             );
 
             pages

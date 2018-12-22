@@ -14,7 +14,7 @@ pub(crate) struct Node {
 impl Node {
     #[inline]
     pub(crate) fn size_in_bytes(&self) -> u64 {
-        let self_sz = size_of::<Node>() as u64;
+        let self_sz = size_of::<Self>() as u64;
         let lo_sz = (size_of::<Vec<u8>>() + self.lo.len()) as u64;
         let hi_sz = (size_of::<Vec<u8>>() + self.hi.len()) as u64;
         let data_sz = self.data.size_in_bytes();

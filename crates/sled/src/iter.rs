@@ -132,9 +132,8 @@ impl<'a> Iterator for Iter<'a> {
             let last_id = self.last_id.unwrap();
 
             let inclusive = match self.lo {
-                ops::Bound::Included(..) => true,
+                ops::Bound::Unbounded | ops::Bound::Included(..) => true,
                 ops::Bound::Excluded(..) => false,
-                ops::Bound::Unbounded => true,
             };
 
             let res = self
@@ -303,9 +302,8 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
             let last_id = self.last_id.unwrap();
 
             let inclusive = match self.hi {
-                ops::Bound::Included(..) => true,
+                ops::Bound::Unbounded | ops::Bound::Included(..) => true,
                 ops::Bound::Excluded(..) => false,
-                ops::Bound::Unbounded => true,
             };
 
             let res = self

@@ -64,7 +64,7 @@ where
     if size == 0 {
         return None;
     }
-    let mut base = 0usize;
+    let mut base = 0_usize;
     while size > 1 {
         let half = size / 2;
         let mid = base + half;

@@ -62,10 +62,12 @@ impl Materializer for BLinkMaterializer {
                         "a thread panicked and poisoned the BLinkMaterializer's
                         roots mutex.",
                     );
-                if !recovery
+                if recovery
                     .root_transitions
                     .contains(&(node.id, prev_root))
                 {
+                    None
+                } else {
                     recovery
                         .root_transitions
                         .push((node.id, prev_root));
@@ -73,8 +75,6 @@ impl Materializer for BLinkMaterializer {
                     recovery.root_transitions.sort();
 
                     Some(recovery.clone())
-                } else {
-                    None
                 }
             }
             Frag::Counter(count) => {
