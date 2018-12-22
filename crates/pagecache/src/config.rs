@@ -119,7 +119,7 @@ impl Default for ConfigBuilder {
             print_profile_on_drop: false,
             idgen_persist_interval: 1_000_000,
             async_io: false,
-            async_io_threads: num_cpus::get() * 2,
+            async_io_threads: 0,
         }
     }
 }
