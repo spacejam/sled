@@ -17,6 +17,7 @@ impl Flusher {
         iobufs: Arc<IoBufs>,
         flush_every_ms: u64,
     ) -> Flusher {
+        #[allow(clippy::mutex_atomic)] // mutex used in CondVar below
         let shutdown = Arc::new(Mutex::new(false));
         let sc = Arc::new(Condvar::new());
 

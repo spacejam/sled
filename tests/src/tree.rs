@@ -187,7 +187,7 @@ impl Arbitrary for Op {
 
 fn bytes_to_u16(v: &[u8]) -> u16 {
     assert_eq!(v.len(), 2);
-    ((v[0] as u16) << 8) + v[1] as u16
+    (u16::from(v[0]) << 8) + u16::from(v[1])
 }
 
 fn u16_to_bytes(u: u16) -> Vec<u8> {
@@ -203,7 +203,7 @@ fn test_merge_operator(
 ) -> Option<Vec<u8>> {
     let base = old.unwrap_or(&[0, 0]);
     let base_n = bytes_to_u16(base);
-    let new_n = base_n + to_merge[0] as u16;
+    let new_n = base_n + u16::from(to_merge[0]);
     let ret = u16_to_bytes(new_n);
     Some(ret)
 }
@@ -235,12 +235,12 @@ pub fn prop_tree_matches_btreemap(
         match op {
             Set(k, v) => {
                 tree.set(&k.0, vec![0, v]).unwrap();
-                reference.insert(k.clone(), v as u16);
+                reference.insert(k.clone(), u16::from(v));
             }
             Merge(k, v) => {
                 tree.merge(&k.0, vec![v]).unwrap();
                 let entry = reference.entry(k).or_insert(0u16);
-                *entry += v as u16;
+                *entry += u16::from(v);
             }
             Get(k) => {
                 let res1 = tree
@@ -258,7 +258,7 @@ pub fn prop_tree_matches_btreemap(
                 let res2 = reference
                     .iter()
                     .rev()
-                    .filter(|(key, _)| *key < &k)
+                    .filter(|(key, _)| **key < k)
                     .nth(0)
                     .map(|(_, v)| *v);
                 assert_eq!(res1, res2);
@@ -270,7 +270,7 @@ pub fn prop_tree_matches_btreemap(
                     .map(|v| bytes_to_u16(&*v.1));
                 let res2 = reference
                     .iter()
-                    .filter(|(key, _)| *key > &k)
+                    .filter(|(key, _)| **key > k)
                     .nth(0)
                     .map(|(_, v)| *v);
                 assert_eq!(res1, res2);
@@ -282,14 +282,14 @@ pub fn prop_tree_matches_btreemap(
             Cas(k, old, new) => {
                 let tree_old = tree.get(&*k.0).unwrap();
                 if let Some(old_tree) = tree_old {
-                    if old_tree == &*vec![0, old] {
+                    if old_tree == *vec![0, old] {
                         tree.set(&k.0, vec![0, new]).unwrap();
                     }
                 }
 
                 let ref_old = reference.get(&k).cloned();
-                if ref_old == Some(old as u16) {
-                    reference.insert(k, new as u16);
+                if ref_old == Some(u16::from(old)) {
+                    reference.insert(k, u16::from(new));
                 }
             }
             Scan(k, len) => {

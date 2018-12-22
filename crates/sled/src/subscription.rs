@@ -180,14 +180,14 @@ impl ReservedBroadcast {
 fn basic_subscription() {
     let subs = Subscriptions::default();
 
-    let mut s2 = subs.register(vec![0]);
-    let mut s3 = subs.register(vec![0, 1]);
-    let mut s4 = subs.register(vec![1, 2]);
+    let mut s2 = subs.register([0].to_vec());
+    let mut s3 = subs.register([0, 1].to_vec());
+    let mut s4 = subs.register([1, 2].to_vec());
 
     let r1 = subs.reserve(b"awft");
     assert!(r1.is_none());
 
-    let mut s1 = subs.register(vec![]);
+    let mut s1 = subs.register([].to_vec());
 
     let k2 = vec![];
     let r2 = subs.reserve(&k2).unwrap();

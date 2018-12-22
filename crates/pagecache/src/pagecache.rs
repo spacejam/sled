@@ -487,6 +487,7 @@ where
     }
 
     /// Free a particular page.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn free<'g>(
         &self,
         pid: PageId,
@@ -514,6 +515,7 @@ where
     /// Returns `Ok(new_key)` if the operation was successful. Returns
     /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
     /// if the atomic append fails.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn link<'g>(
         &self,
         pid: PageId,
@@ -588,6 +590,7 @@ where
     /// Returns `Ok(new_key)` if the operation was successful. Returns
     /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
     /// if the atomic swap fails.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn replace<'g>(
         &self,
         pid: PageId,
@@ -714,6 +717,7 @@ where
         }
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn cas_page<'g>(
         &self,
         pid: PageId,
@@ -732,7 +736,7 @@ where
         };
 
         let replace: LoggedUpdate<P> = LoggedUpdate {
-            pid: pid,
+            pid,
             update: new.clone(),
         };
         let bytes =

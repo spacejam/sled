@@ -9,8 +9,8 @@ fn lower_bound_includes<'a>(
     item: &'a [u8],
 ) -> bool {
     match lb {
-        ops::Bound::Included(ref start) => &**start <= item,
-        ops::Bound::Excluded(ref start) => &**start < item,
+        ops::Bound::Included(ref start) => start.as_slice() <= item,
+        ops::Bound::Excluded(ref start) => start.as_slice() < item,
         ops::Bound::Unbounded => true,
     }
 }
@@ -114,7 +114,7 @@ impl<'a> Iterator for Iter<'a> {
                 // initialize iterator based on valid bound
                 let path_res = self
                     .tree
-                    .path_for_key(start.as_ref(), &get_guard);
+                    .path_for_key(start, &get_guard);
                 if let Err(e) = path_res {
                     error!("iteration failed: {:?}", e);
                     self.done = true;
@@ -266,7 +266,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 // initialize iterator based on valid bound
 
                 let path_res =
-                    self.tree.path_for_key(end.as_ref(), &get_guard);
+                    self.tree.path_for_key(end, &get_guard);
                 if let Err(e) = path_res {
                     error!("iteration failed: {:?}", e);
                     self.done = true;

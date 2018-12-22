@@ -437,12 +437,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                     P::Present(ref mut existing) => {
                         let (v, old_key) = get.unwrap();
                         assert_eq!(v, existing);
-                        pc.replace(
-                            pid,
-                            old_key.clone(),
-                            vec![c],
-                            &guard,
-                        )
+                        pc.replace(pid, old_key, vec![c], &guard)
                         .unwrap();
                         existing.clear();
                         existing.push(c);
@@ -473,12 +468,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                     }
                     P::Present(ref mut existing) => {
                         let (_, old_key) = get.unwrap();
-                        pc.link(
-                            pid,
-                            old_key.clone(),
-                            vec![c],
-                            &guard,
-                        )
+                        pc.link(pid, old_key, vec![c], &guard)
                         .unwrap();
                         existing.push(c);
                     }

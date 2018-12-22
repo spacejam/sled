@@ -262,7 +262,7 @@ impl IoBufs {
             max_lsn: self.stable(),
             cur_lsn: corrected_lsn,
             segment_base: None,
-            segment_iter: segment_iter,
+            segment_iter,
             segment_len: io_buf_size,
             trailer: None,
         }

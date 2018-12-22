@@ -75,11 +75,8 @@ impl EventLog {
                                     .map(|(lsn, (state, live, lid))| (*lsn, (*state, *live, *lid)))
                                     .collect();
 
-                            let mut only_before: Vec<_>=
-                                before.difference(&after).collect();
-
-                            let mut only_after: Vec<_> =
-                                after.difference(&before).collect();
+                            let only_before: Vec<_> = before.difference(&after).collect();
+                            let only_after: Vec<_> = after.difference(&before).collect();
 
                             panic!(
                                 "segments failed to recover properly. \n \

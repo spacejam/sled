@@ -180,7 +180,7 @@ impl ConfigBuilder {
             let salt = {
                 let now = uptime();
                 (now.as_secs() * 1_000_000_000)
-                    + now.subsec_nanos() as u64
+                    + u64::from(now.subsec_nanos())
             };
 
             // use shared memory for temporary linux files

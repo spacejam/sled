@@ -55,11 +55,7 @@ impl Node {
                     unsafe {
                         let merge_fn: MergeOperator =
                             std::mem::transmute(merge_fn_ptr);
-                        self.merge_leaf(
-                            k.clone(),
-                            v.clone(),
-                            merge_fn,
-                        );
+                        self.merge_leaf(k.clone(), v.clone(), merge_fn);
                     }
                 } else {
                     panic!("tried to consolidate set at key <= hi")
