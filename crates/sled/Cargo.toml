@@ -13,7 +13,6 @@ edition = "2018"
 
 [features]
 default = []
-async_snapshots = ["pagecache/async_snapshots"]
 lock_free_delays = ["pagecache/lock_free_delays", "sled_sync/lock_free_delays"]
 failpoints = ["pagecache/failpoints"]
 check_snapshot_integrity = []

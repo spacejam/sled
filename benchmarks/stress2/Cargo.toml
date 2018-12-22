@@ -8,8 +8,7 @@ publish = false
 debug = true
 
 [features]
-default = ["async_snapshots"]
-async_snapshots = ["sled/async_snapshots"]
+default = []
 lock_free_delays = ["sled/lock_free_delays"]
 check_snapshot_integrity = ["sled/check_snapshot_integrity"]
 compression = ["sled/compression"]
@@ -25,3 +24,5 @@ docopt = "1.0"
 env_logger = "0.5"
 rand = "0.4"
 sled = { path = "../../crates/sled" }
+jemallocator = "0.1"
+log = "0.4"

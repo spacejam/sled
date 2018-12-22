@@ -36,6 +36,18 @@ pub enum Error<Actual> {
 
 use self::Error::*;
 
+impl<Actual> Clone for Error<Actual> {
+    fn clone(&self) -> Error<Actual> {
+        match self {
+            Io(ioe) => Io(std::io::Error::new(
+                ioe.kind(),
+                format!("{:?}", ioe),
+            )),
+            other => other.clone(),
+        }
+    }
+}
+
 impl<A> Eq for Error<A> where A: Eq {}
 
 impl<A> PartialEq for Error<A>
@@ -66,11 +78,13 @@ where
                 }
             }
             #[cfg(feature = "failpoints")]
-            &FailPoint => if let &FailPoint = other {
-                true
-            } else {
-                false
-            },
+            &FailPoint => {
+                if let &FailPoint = other {
+                    true
+                } else {
+                    false
+                }
+            }
             &Corruption { at: l } => {
                 if let &Corruption { at: r } = other {
                     l == r

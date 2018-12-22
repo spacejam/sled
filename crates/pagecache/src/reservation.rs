@@ -36,7 +36,8 @@ impl<'a> Reservation<'a> {
                 "removing blob for aborted reservation at lsn {}",
                 blob_ptr
             );
-            remove_blob(blob_ptr, &self.iobufs.config)?;
+
+            remove_blob(blob_ptr, &self.iobufs.0.config)?;
         }
 
         self.flush(false)
