@@ -3,6 +3,7 @@ extern crate serde_derive;
 extern crate docopt;
 extern crate env_logger;
 extern crate jemallocator;
+extern crate log;
 extern crate rand;
 extern crate sled;
 
@@ -185,7 +186,7 @@ fn run(tree: Arc<sled::Tree>, shutdown: Arc<AtomicBool>) {
 }
 
 fn main() {
-    env_logger::init();
+    setup_logger();
 
     let args = unsafe {
         ARGS = Docopt::new(USAGE)
@@ -252,4 +253,40 @@ fn main() {
         time,
         (ops * 1_000) / (time * 1_000)
     );
+}
+
+pub fn setup_logger() {
+    use std::io::Write;
+
+    fn tn() -> String {
+        std::thread::current()
+            .name()
+            .unwrap_or("unknown")
+            .to_owned()
+    }
+
+    let mut builder = env_logger::Builder::new();
+    builder
+        .format(|buf, record| {
+            writeln!(
+                buf,
+                "{:05} {:25} {:10} {}",
+                record.level(),
+                tn(),
+                record
+                    .module_path()
+                    .unwrap()
+                    .split("::")
+                    .last()
+                    .unwrap(),
+                record.args()
+            )
+        })
+        .filter(None, log::LevelFilter::Info);
+
+    if std::env::var("RUST_LOG").is_ok() {
+        builder.parse(&std::env::var("RUST_LOG").unwrap());
+    }
+
+    let _r = builder.try_init();
 }
