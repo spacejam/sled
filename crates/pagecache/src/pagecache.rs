@@ -1137,7 +1137,7 @@ where
             | Update::Append(page_frag) => Ok(page_frag),
             _ => Err(Error::ReportableBug(
                 "non-append/compact found in pull".to_owned(),
-            ))
+            )),
         }
     }
 
@@ -1215,14 +1215,29 @@ where
             }
         };
 
-        if cfg!(feature = "async_snapshots") {
+        if let Some(e) = self.config.global_error() {
+            return Err(e);
+        }
+
+        if let Some(ref thread_pool) = self.config.thread_pool {
             debug!(
                 "asynchronously spawning snapshot generation task"
             );
-            let thread_pool =
-                self.config.thread_pool.as_ref().unwrap();
+            let config = self.config.clone();
             thread_pool.spawn(move || {
-                let _ = gen_snapshot();
+                if let Err(e) = gen_snapshot() {
+                    match e {
+                        Error::Io(ref ioe)
+                            if ioe.kind() == std::io::ErrorKind::NotFound => {},
+                        error => {
+                            error!(
+                                "encountered error while generating snapshot: {:?}",
+                                error,
+                            );
+                            config.set_global_error(error);
+                        }
+                    }
+                }
             });
         } else {
             debug!("synchronously generating a new snapshot");

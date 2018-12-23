@@ -10,9 +10,6 @@ use std::{
     },
 };
 
-#[cfg(unix)]
-use std::sync::atomic::ATOMIC_USIZE_INIT;
-
 use bincode::{deserialize, serialize};
 use fs2::FileExt;
 use serde::de::DeserializeOwned;
@@ -90,6 +87,10 @@ pub struct ConfigBuilder {
     pub print_profile_on_drop: bool,
     #[doc(hidden)]
     pub idgen_persist_interval: usize,
+    #[doc(hidden)]
+    pub async_io: bool,
+    #[doc(hidden)]
+    pub async_io_threads: usize,
 }
 
 unsafe impl Send for ConfigBuilder {}
@@ -117,6 +118,8 @@ impl Default for ConfigBuilder {
             merge_operator: None,
             print_profile_on_drop: false,
             idgen_persist_interval: 1_000_000,
+            async_io: false,
+            async_io_threads: 0,
         }
     }
 }
@@ -169,7 +172,8 @@ impl ConfigBuilder {
         {
             #[cfg(unix)]
             let salt = {
-                static SALT_COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
+                static SALT_COUNTER: AtomicUsize =
+                    AtomicUsize::new(0);
                 let pid = unsafe { libc::getpid() };
                 ((pid as u64) << 32)
                     + SALT_COUNTER.fetch_add(1, Ordering::SeqCst)
@@ -194,17 +198,31 @@ impl ConfigBuilder {
         }
 
         let threads = Arc::new(AtomicUsize::new(0));
-        let start_threads = threads.clone();
-        let end_threads = threads.clone();
-        let thread_pool = rayon::ThreadPoolBuilder::new()
-            .start_handler(move |_id| {
-                start_threads.fetch_add(1, SeqCst);
-            })
-            .exit_handler(move |_id| {
-                end_threads.fetch_sub(1, SeqCst);
-            })
-            .build()
-            .expect("should be able to start rayon threadpool");
+
+        let thread_pool = if self.async_io {
+            let start_threads = threads.clone();
+            let end_threads = threads.clone();
+
+            let path = self.path.clone();
+
+            let tp = rayon::ThreadPoolBuilder::new()
+                .num_threads(self.async_io_threads)
+                .thread_name(move |id| {
+                    format!("sled_io_{}_{:?}", id, path)
+                })
+                .start_handler(move |_id| {
+                    start_threads.fetch_add(1, SeqCst);
+                })
+                .exit_handler(move |_id| {
+                    end_threads.fetch_sub(1, SeqCst);
+                })
+                .build()
+                .expect("should be able to start rayon threadpool");
+
+            Some(Arc::new(tp))
+        } else {
+            None
+        };
 
         // seal config in a Config
         Config {
@@ -212,9 +230,10 @@ impl ConfigBuilder {
             file: Arc::new(AtomicPtr::default()),
             build_locker: Arc::new(Mutex::new(())),
             refs: Arc::new(AtomicUsize::new(0)),
+            global_error: Arc::new(AtomicPtr::default()),
             #[cfg(feature = "event_log")]
             event_log: Arc::new(crate::event_log::EventLog::default()),
-            thread_pool: Some(Arc::new(thread_pool)),
+            thread_pool,
             threads,
         }
     }
@@ -237,7 +256,9 @@ impl ConfigBuilder {
         (segment_mode, SegmentMode, "the file segment selection mode"),
         (snapshot_path, Option<PathBuf>, "snapshot file location"),
         (print_profile_on_drop, bool, "print a performance profile when the Config is dropped"),
-        (idgen_persist_interval, usize, "generated IDs are persisted at this interval. during recovery we skip twice this number")
+        (idgen_persist_interval, usize, "generated IDs are persisted at this interval. during recovery we skip twice this number"),
+        (async_io, bool, "perform IO operations on a threadpool"),
+        (async_io_threads, usize, "set the number of threads in the IO threadpool. defaults to # logical CPUs.")
     );
 }
 
@@ -251,6 +272,7 @@ pub struct Config {
     pub(crate) thread_pool: Option<Arc<rayon::ThreadPool>>,
     threads: Arc<AtomicUsize>,
     refs: Arc<AtomicUsize>,
+    pub(crate) global_error: Arc<AtomicPtr<Error<()>>>,
     #[cfg(feature = "event_log")]
     /// an event log for concurrent debugging
     pub event_log: Arc<event_log::EventLog>,
@@ -271,6 +293,7 @@ impl Clone for Config {
             event_log: self.event_log.clone(),
             threads: self.threads.clone(),
             thread_pool: self.thread_pool.clone(),
+            global_error: self.global_error.clone(),
         }
     }
 }
@@ -335,6 +358,33 @@ impl Config {
             Ok(unsafe { (*self.file.load(Ordering::SeqCst)).clone() })
         } else {
             Ok(unsafe { (*loaded).clone() })
+        }
+    }
+
+    /// Return the global error if one was encountered during
+    /// an asynchronous IO operation.
+    pub fn global_error(&self) -> Option<Error<()>> {
+        let ge = self.global_error.load(Ordering::Relaxed);
+        if ge.is_null() {
+            None
+        } else {
+            unsafe { Some((*ge).clone()) }
+        }
+    }
+
+    pub(crate) fn set_global_error(&self, error: Error<()>) {
+        let ptr = Box::into_raw(Box::new(error));
+        let ret = self.global_error.compare_and_swap(
+            std::ptr::null_mut(),
+            ptr as *mut Error<()>,
+            Ordering::Relaxed,
+        );
+
+        if ret != std::ptr::null_mut() {
+            // CAS failed, reclaim memory
+            unsafe {
+                drop(Box::from_raw(ptr));
+            }
         }
     }
 

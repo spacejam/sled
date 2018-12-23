@@ -216,6 +216,7 @@ pub fn prop_tree_matches_btreemap(
 ) -> bool {
     use self::*;
     let config = ConfigBuilder::new()
+        .async_io(false)
         .temporary(true)
         .snapshot_after_ops(snapshot_after as usize + 1)
         .flush_every_ms(if flusher { Some(1) } else { None })

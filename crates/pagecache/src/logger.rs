@@ -25,8 +25,6 @@
 //! assert_eq!(iter.next().unwrap().2, b"55555".to_vec());
 //! assert_eq!(iter.next(), None);
 //! ```
-use std::sync::Arc;
-
 use super::*;
 
 /// A sequential store which allows users to create
@@ -35,7 +33,7 @@ use super::*;
 /// to know where to find persisted bits in the future.
 pub struct Log {
     /// iobufs is the underlying lock-free IO write buffer.
-    pub(super) iobufs: Arc<IoBufs>,
+    pub(super) iobufs: IoBufs,
     config: Config,
     /// Periodically flushes `iobufs`.
     _flusher: Option<flusher::Flusher>,
@@ -50,12 +48,13 @@ impl Log {
         config: Config,
         snapshot: Snapshot<R>,
     ) -> Result<Log, ()> {
-        let iobufs =
-            Arc::new(IoBufs::start(config.clone(), snapshot)?);
-        let flusher = config.flush_every_ms.map(|fem| {
+        let iobufs = IoBufs::start(config.clone(), snapshot)?;
+
+        let iobufs_flusher = iobufs.clone();
+        let flusher = config.flush_every_ms.map(move |fem| {
             flusher::Flusher::new(
                 "log flusher".to_owned(),
-                iobufs.clone(),
+                iobufs_flusher,
                 fem,
             )
         });
@@ -107,7 +106,7 @@ impl Log {
     /// Write a buffer into the log. Returns the log sequence
     /// number and the file offset of the write.
     pub fn write(&self, buf: Vec<u8>) -> Result<(Lsn, DiskPtr), ()> {
-        self.iobufs.reserve(buf).and_then(|res| res.complete())
+        self.reserve(buf).and_then(|res| res.complete())
     }
 
     /// Return an iterator over the log, starting with
