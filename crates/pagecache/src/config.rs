@@ -379,7 +379,7 @@ impl Config {
             Ordering::Relaxed,
         );
 
-        if ret != std::ptr::null_mut() {
+        if ret.is_null() {
             // CAS failed, reclaim memory
             unsafe {
                 drop(Box::from_raw(ptr));
@@ -534,7 +534,10 @@ impl Config {
             "# LRU shards = 2^cache_bits. set cache_bits to 20 or less."
         );
         supported!(
-            self.inner.segment_cleanup_threshold >= 0.01,
+            match self.inner.segment_cleanup_threshold.partial_cmp(&0.01) {
+                Some(std::cmp::Ordering::Equal) | Some(std::cmp::Ordering::Greater) => true,
+                Some(std::cmp::Ordering::Less) | None => false,
+            },
             "segment_cleanup_threshold must be >= 1%"
         );
         supported!(
@@ -543,7 +546,7 @@ impl Config {
         );
         supported!(
             self.inner.compression_factor >= 1,
-            "compression_factor must be >= 0"
+            "compression_factor must be >= 1"
         );
         supported!(
             self.inner.compression_factor <= 22,

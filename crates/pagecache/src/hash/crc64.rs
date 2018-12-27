@@ -38,7 +38,7 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE. */
 
-#[cfg_attr(rustfmt, rustfmt_skip)]
+#[rustfmt::skip]
 const CRC64TAB: [u64; 256] = [
     0x0000_0000_0000_0000, 0x7ad8_70c8_3035_8979,
     0xf5b0_e190_606b_12f2, 0x8f68_9158_505e_9b8b,
