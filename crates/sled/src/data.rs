@@ -12,11 +12,11 @@ pub(crate) enum Data {
 impl Data {
     #[inline]
     pub(crate) fn size_in_bytes(&self) -> u64 {
-        let self_sz = size_of::<Data>() as u64;
+        let self_sz = size_of::<Self>() as u64;
 
         let inner_sz = match self {
             Data::Index(ref v) => {
-                let mut sz = 0u64;
+                let mut sz = 0_u64;
                 for (k, _p) in v.iter() {
                     sz = sz
                         .saturating_add(k.len() as u64)
@@ -28,7 +28,7 @@ impl Data {
                 )
             }
             Data::Leaf(ref v) => {
-                let mut sz = 0u64;
+                let mut sz = 0_u64;
                 for (k, value) in v.iter() {
                     sz = sz
                         .saturating_add(k.len() as u64)

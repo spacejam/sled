@@ -7,8 +7,8 @@ pub(crate) fn prefix_encode(prefix: &[u8], buf: &[u8]) -> Vec<u8> {
         prefix,
         buf
     );
-    let limit = std::cmp::min(std::u8::MAX as usize, buf.len());
-    let mut prefix_len = 0usize;
+    let limit = std::cmp::min(u8::max_value() as usize, buf.len());
+    let mut prefix_len = 0_usize;
     for (i, c) in prefix.iter().take(limit).enumerate() {
         if buf[i] == *c {
             prefix_len += 1;

@@ -487,6 +487,7 @@ where
     }
 
     /// Free a particular page.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn free<'g>(
         &self,
         pid: PageId,
@@ -514,6 +515,7 @@ where
     /// Returns `Ok(new_key)` if the operation was successful. Returns
     /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
     /// if the atomic append fails.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn link<'g>(
         &self,
         pid: PageId,
@@ -588,6 +590,7 @@ where
     /// Returns `Ok(new_key)` if the operation was successful. Returns
     /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
     /// if the atomic swap fails.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn replace<'g>(
         &self,
         pid: PageId,
@@ -714,6 +717,7 @@ where
         }
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn cas_page<'g>(
         &self,
         pid: PageId,
@@ -732,7 +736,7 @@ where
         };
 
         let replace: LoggedUpdate<P> = LoggedUpdate {
-            pid: pid,
+            pid,
             update: new.clone(),
         };
         let bytes =
@@ -1258,8 +1262,8 @@ where
 
             let stack = Stack::default();
 
-            match state {
-                &PageState::Present(ref ptrs) => {
+            match *state {
+                PageState::Present(ref ptrs) => {
                     let (base_lsn, base_ptr) = ptrs[0];
 
                     stack.push(CacheEntry::Flush(base_lsn, base_ptr));
@@ -1269,14 +1273,14 @@ where
                             .push(CacheEntry::PartialFlush(lsn, ptr));
                     }
                 }
-                &PageState::Free(lsn, ptr) => {
+                PageState::Free(lsn, ptr) => {
                     // blow away any existing state
                     trace!("load_snapshot freeing pid {}", *pid);
                     stack.push(CacheEntry::Free(lsn, ptr));
                     self.free.lock().unwrap().push(*pid);
                     snapshot_free.remove(&pid);
                 }
-                &PageState::Allocated(_lsn, _ptr) => {
+                PageState::Allocated(_lsn, _ptr) => {
                     assert!(!snapshot.free.contains(pid));
                     // empty stack with null ptr head implies Allocated
                 }

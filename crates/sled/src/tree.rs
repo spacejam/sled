@@ -114,8 +114,8 @@ impl Tree {
         let roots_opt = if recovery.root_transitions.is_empty() {
             None
         } else {
-            let mut last = std::usize::MAX;
-            let mut last_idx = std::usize::MAX;
+            let mut last = usize::max_value();
+            let mut last_idx = usize::max_value();
             while !recovery.root_transitions.is_empty() {
                 // find the root that links to the last one
                 for (i, &(root, prev_root)) in
@@ -135,7 +135,7 @@ impl Tree {
                 }
                 recovery.root_transitions.remove(last_idx);
             }
-            assert_ne!(last, std::usize::MAX);
+            assert_ne!(last, usize::max_value());
             Some(last)
         };
 
@@ -204,7 +204,7 @@ impl Tree {
                     lo: vec![],
                     hi: vec![],
                 },
-                Some(std::usize::MAX),
+                Some(usize::max_value()),
             );
 
             pages
@@ -573,7 +573,7 @@ impl Tree {
                 .get_internal(key.as_ref(), &guard)
                 .map_err(|e| e.danger_cast())?;
 
-            if old.as_ref().map(|o| o.as_ref()) != cur.map(|v| &*v) {
+            if old != cur.map(|v| &*v) {
                 return Err(Error::CasFailed(
                     cur.map(|c| PinnedValue::new(c, pin_guard)),
                 ));
@@ -1409,13 +1409,13 @@ impl Tree {
 
             // TODO this may need to change when handling (half) merges
             assert!(
-                &*node.lo <= key.as_ref(),
+                node.lo.as_slice() <= key.as_ref(),
                 "overshot key somehow"
             );
 
             // half-complete split detect & completion
             // (when hi is empty, it means it's unbounded)
-            if !node.hi.is_empty() && &*node.hi <= key.as_ref() {
+            if !node.hi.is_empty() && node.hi.as_slice() <= key.as_ref() {
                 // we have encountered a child split, without
                 // having hit the parent split above.
                 cursor = node.next.expect(

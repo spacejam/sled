@@ -50,7 +50,7 @@ impl Debug for PinnedValue {
 }
 
 impl PinnedValue {
-    pub(crate) fn new(v: &[u8], guard: Guard) -> PinnedValue {
+    pub(crate) fn new(v: &[u8], guard: Guard) -> Self {
         let ptr = v.as_ptr();
         PinnedValue(ptr, v.len(), guard)
     }

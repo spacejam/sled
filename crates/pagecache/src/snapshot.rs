@@ -37,14 +37,14 @@ pub enum PageState {
 
 impl PageState {
     fn push(&mut self, item: (Lsn, DiskPtr)) {
-        match self {
-            &mut PageState::Present(ref mut items) => {
+        match *self {
+            PageState::Present(ref mut items) => {
                 items.push(item)
             }
-            &mut PageState::Allocated(_, _) => {
+            PageState::Allocated(_, _) => {
                 *self = PageState::Present(vec![item])
             }
-            &mut PageState::Free(_, _) => {
+            PageState::Free(_, _) => {
                 panic!("pushed items to a PageState::Free")
             }
         }
@@ -52,12 +52,12 @@ impl PageState {
 
     /// Iterate over the (lsn, lid) pairs that hold this page's state.
     pub fn iter(&self) -> Box<dyn Iterator<Item = (Lsn, DiskPtr)>> {
-        match self {
-            &PageState::Present(ref items) => {
+        match *self {
+            PageState::Present(ref items) => {
                 Box::new(items.clone().into_iter())
             }
-            &PageState::Allocated(lsn, ptr)
-            | &PageState::Free(lsn, ptr) => {
+            PageState::Allocated(lsn, ptr)
+            | PageState::Free(lsn, ptr) => {
                 Box::new(vec![(lsn, ptr)].into_iter())
             }
         }
