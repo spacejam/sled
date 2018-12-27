@@ -173,9 +173,9 @@ impl Arbitrary for Op {
             Get(ref k) => Box::new(k.shrink().map(Get)),
             GetLt(ref k) => Box::new(k.shrink().map(GetLt)),
             GetGt(ref k) => Box::new(k.shrink().map(GetGt)),
-            Cas(ref k, old, new) => Box::new(Box::new(
+            Cas(ref k, old, new) => Box::new(
                 k.shrink().map(move |k| Cas(k, old, new)),
-            )),
+            ),
             Scan(ref k, len) => {
                 Box::new(k.shrink().map(move |k| Scan(k, len)))
             }
