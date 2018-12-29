@@ -49,7 +49,7 @@ Options:
     --scan-prop=<p>    The relative proportion of scan requests [default: 5].
     --merge-prop=<p>   The relative proportion of merge requests [default: 5].
     --entries=<n>      The total keyspace [default: 100000].
-    --sequential       Run the test in sequential mode instead of random [default: false
+    --sequential       Run the test in sequential mode instead of random.
 ";
 
 #[derive(Deserialize, Clone)]
