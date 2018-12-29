@@ -253,13 +253,14 @@ where
 ///
 ///     // Used to merge chains of partial pages into a form
 ///     // that is useful for the `PageCache` owner.
-///     fn merge(&self, frags: &[&Self::PageFrag]) -> Self::PageFrag {
-///         let mut consolidated = String::new();
-///         for frag in frags.into_iter() {
-///             consolidated.push_str(&*frag);
-///         }
-///
-///         consolidated
+///     fn merge<'a, I>(&'a self, frags: I) -> Self::PageFrag
+///     where
+///         I: IntoIterator<Item = &'a Self::PageFrag>,
+///     {
+///         frags.into_iter().fold(String::new(), |mut acc, ref s| {
+///             acc.push_str(&*s);
+///             acc
+///         })
 ///     }
 ///
 ///     // Used to feed custom recovery information back to a higher-level abstraction
