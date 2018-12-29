@@ -917,15 +917,21 @@ where
             }
         }
 
-        let combined: Vec<&P> = to_merge
-            .iter()
-            .cloned()
-            .chain(fetched.iter())
-            .rev()
-            .collect();
-
-        let merged =
-            measure(&M.merge_page, || self.t.merge(&*combined));
+        let merged = if to_merge.is_empty() && fetched.len() == 1 {
+            // don't perform any merging logic if we have
+            // no found `Resident`s and only a single fetched
+            // `Frag`.
+            fetched.pop().unwrap()
+        } else {
+            let _measure = Measure::new(&M.merge_page);
+            let combined: Vec<&P> = to_merge
+                .iter()
+                .cloned()
+                .chain(fetched.iter())
+                .rev()
+                .collect();
+            self.t.merge(&*combined)
+        };
 
         let size = self.t.size_in_bytes(&merged);
 

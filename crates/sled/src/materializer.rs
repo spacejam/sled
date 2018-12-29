@@ -50,12 +50,9 @@ impl Materializer for BLinkMaterializer {
 
                 Frag::Counter(max)
             }
-            Frag::Meta(meta) => {
-                // TODO this should be unreachable, because merge
-                // should never be called on frags of length 1!!!
-                assert_eq!(frags.len(), 1, "the Meta page should always be replaced, not linked");
-                Frag::Meta(meta)
-            }
+            Frag::Meta(_meta) => unimplemented!(
+                "the Meta page should always be replaced, not linked"
+            ),
             _ => panic!("non-Base in first element of frags slice"),
         }
     }
