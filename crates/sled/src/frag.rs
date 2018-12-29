@@ -13,18 +13,25 @@ pub(crate) enum Frag {
     Set(Key, Value),
     Del(Key),
     Merge(Key, Value),
-    /// The optional page in Base means this node has replaced
-    /// the specified page as a new root.
-    Base(Node, Option<PageId>),
+    Base(Node),
     ChildSplit(ChildSplit),
     ParentSplit(ParentSplit),
     Counter(usize),
+    Meta(Meta),
 }
 
 impl Frag {
     pub(super) fn unwrap_base(&self) -> &Node {
         if let Frag::Base(base, ..) = self {
             base
+        } else {
+            panic!("called unwrap_base_ptr on non-Base Frag!")
+        }
+    }
+
+    pub(super) fn unwrap_meta(&self) -> &Meta {
+        if let Frag::Meta(meta) = self {
+            meta
         } else {
             panic!("called unwrap_base_ptr on non-Base Frag!")
         }

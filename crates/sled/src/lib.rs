@@ -53,7 +53,7 @@ use pagecache::{
     M,
 };
 
-pub use pagecache::{Config, ConfigBuilder, Error, Result};
+pub use pagecache::{Config, ConfigBuilder, Error, Meta, Result};
 
 use self::{
     binary_search::{
