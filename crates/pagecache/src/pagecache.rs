@@ -924,13 +924,11 @@ where
             fetched.pop().unwrap()
         } else {
             let _measure = Measure::new(&M.merge_page);
-            let combined: Vec<&P> = to_merge
-                .iter()
-                .cloned()
-                .chain(fetched.iter())
-                .rev()
-                .collect();
-            self.t.merge(&*combined)
+
+            let combined_iter =
+                to_merge.iter().cloned().chain(fetched.iter()).rev();
+
+            self.t.merge(combined_iter)
         };
 
         let size = self.t.size_in_bytes(&merged);

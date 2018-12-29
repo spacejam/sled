@@ -26,18 +26,28 @@ impl Materializer for BLinkMaterializer {
         }
     }
 
-    fn merge(&self, frags: &[&Frag]) -> Frag {
-        match frags[0].clone() {
-            Frag::Base(mut base_node) => {
-                for &frag in &frags[1..] {
+    fn merge<'a, I>(&'a self, frags: I) -> Self::PageFrag
+    where
+        I: IntoIterator<Item = &'a Self::PageFrag>,
+    {
+        let mut frag_iter = frags.into_iter();
+
+        let possible_base = frag_iter.next().expect(
+            "merge should only be called on non-empty sets of Frag's",
+        );
+
+        match possible_base {
+            Frag::Base(ref base_node_ref) => {
+                let mut base_node = base_node_ref.clone();
+                for frag in frag_iter {
                     base_node.apply(frag, self.config.merge_operator);
                 }
 
                 Frag::Base(base_node)
             }
-            Frag::Counter(count) => {
-                let mut max = count;
-                for &frag in &frags[1..] {
+            Frag::Counter(ref count) => {
+                let mut max = *count;
+                for frag in frag_iter {
                     if let Frag::Counter(count) = frag {
                         max = std::cmp::max(*count, max);
                     } else {
