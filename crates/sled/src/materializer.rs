@@ -28,12 +28,12 @@ impl Materializer for BLinkMaterializer {
 
     fn merge(&self, frags: &[&Frag]) -> Frag {
         match frags[0].clone() {
-            Frag::Base(mut base_node, is_root) => {
+            Frag::Base(mut base_node) => {
                 for &frag in &frags[1..] {
                     base_node.apply(frag, self.config.merge_operator);
                 }
 
-                Frag::Base(base_node, is_root)
+                Frag::Base(base_node)
             }
             Frag::Counter(count) => {
                 let mut max = count;
@@ -50,33 +50,18 @@ impl Materializer for BLinkMaterializer {
 
                 Frag::Counter(max)
             }
+            Frag::Meta(meta) => {
+                // TODO this should be unreachable, because merge
+                // should never be called on frags of length 1!!!
+                assert_eq!(frags.len(), 1, "the Meta page should always be replaced, not linked");
+                Frag::Meta(meta)
+            }
             _ => panic!("non-Base in first element of frags slice"),
         }
     }
 
     fn recover(&self, frag: &Frag) -> Option<Recovery> {
         match *frag {
-            Frag::Base(ref node, prev_root) => {
-                let prev_root = prev_root?;
-                let mut recovery = self.recovery.lock().expect(
-                        "a thread panicked and poisoned the BLinkMaterializer's
-                        roots mutex.",
-                    );
-                if recovery
-                    .root_transitions
-                    .contains(&(node.id, prev_root))
-                {
-                    None
-                } else {
-                    recovery
-                        .root_transitions
-                        .push((node.id, prev_root));
-
-                    recovery.root_transitions.sort();
-
-                    Some(recovery.clone())
-                }
-            }
             Frag::Counter(count) => {
                 let mut recovery = self.recovery.lock().expect(
                     "a thread panicked and poisoned the BLinkMaterializer's
@@ -93,10 +78,8 @@ impl Materializer for BLinkMaterializer {
 
     fn size_in_bytes(&self, frag: &Frag) -> usize {
         match *frag {
-            Frag::Base(ref node, _prev_root) => {
-                std::mem::size_of::<Frag>()
-                    .saturating_add(node.size_in_bytes() as usize)
-            }
+            Frag::Base(ref node) => std::mem::size_of::<Frag>()
+                .saturating_add(node.size_in_bytes() as usize),
             _ => std::mem::size_of::<Frag>(),
         }
     }

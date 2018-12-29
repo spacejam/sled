@@ -35,6 +35,7 @@ mod data;
 mod frag;
 mod iter;
 mod materializer;
+mod meta;
 mod node;
 mod pinned_value;
 mod prefix;
@@ -62,6 +63,7 @@ use self::{
     },
     data::Data,
     frag::{ChildSplit, ParentSplit},
+    meta::Meta,
     node::Node,
     prefix::{
         prefix_cmp, prefix_cmp_encoded, prefix_decode, prefix_encode,

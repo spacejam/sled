@@ -55,7 +55,11 @@ impl Node {
                     unsafe {
                         let merge_fn: MergeOperator =
                             std::mem::transmute(merge_fn_ptr);
-                        self.merge_leaf(k.clone(), v.clone(), merge_fn);
+                        self.merge_leaf(
+                            k.clone(),
+                            v.clone(),
+                            merge_fn,
+                        );
                     }
                 } else {
                     panic!("tried to consolidate set at key <= hi")
@@ -78,10 +82,11 @@ impl Node {
                     panic!("tried to consolidate del at key <= hi")
                 }
             }
-            Base(_, _) => {
+            Base(_) => {
                 panic!("encountered base page in middle of chain")
             }
             Counter(_) => unimplemented!(),
+            Meta(_) => unimplemented!(),
         }
     }
 

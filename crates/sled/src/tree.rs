@@ -6,7 +6,7 @@ use std::{
     sync::{
         atomic::{
             AtomicUsize,
-            Ordering::{Acquire, Relaxed, Release, SeqCst},
+            Ordering::{Acquire, Relaxed, Release},
         },
         Arc, Mutex,
     },
@@ -16,9 +16,9 @@ use pagecache::PagePtr;
 
 use super::*;
 
-const COUNTER_PID: PageId = 0;
-const LEFT_LEAF_PID: PageId = 1;
-const ORIGINAL_ROOT_PID: PageId = 2;
+const META_PID: PageId = 0;
+const COUNTER_PID: PageId = 1;
+const ORIGINAL_ROOT_PID: PageId = 3;
 
 type Path<'g> = Vec<(&'g Frag, TreePtr<'g>)>;
 
@@ -59,7 +59,6 @@ pub struct Tree {
     pub(crate) pages:
         Arc<PageCache<BLinkMaterializer, Frag, Recovery>>,
     config: Config,
-    root: Arc<AtomicUsize>,
     idgen: Arc<AtomicUsize>,
     idgen_persists: Arc<AtomicUsize>,
     idgen_persist_mu: Arc<Mutex<()>>,
@@ -103,7 +102,7 @@ impl Tree {
 
         let pages = PageCache::start(config.clone())?;
 
-        let mut recovery: Recovery =
+        let recovery: Recovery =
             pages.recovered_state().unwrap_or_default();
         let idgen_recovery =
             recovery.counter + (2 * config.idgen_persist_interval);
@@ -111,42 +110,40 @@ impl Tree {
             / config.idgen_persist_interval
             * config.idgen_persist_interval;
 
-        let roots_opt = if recovery.root_transitions.is_empty() {
-            None
-        } else {
-            let mut last = usize::max_value();
-            let mut last_idx = usize::max_value();
-            while !recovery.root_transitions.is_empty() {
-                // find the root that links to the last one
-                for (i, &(root, prev_root)) in
-                    recovery.root_transitions.iter().enumerate()
-                {
-                    if prev_root == last {
-                        last = root;
-                        last_idx = i;
-                        break;
-                    }
-                    assert_ne!(
-                        i + 1,
-                        recovery.root_transitions.len(),
-                        "encountered gap in root transitions: {:?}",
-                        recovery.root_transitions
-                    );
-                }
-                recovery.root_transitions.remove(last_idx);
-            }
-            assert_ne!(last, usize::max_value());
-            Some(last)
-        };
+        let guard = pin();
 
-        let root_id = if let Some(root_id) = roots_opt {
-            debug!("recovered root {} while starting tree", root_id);
-            root_id
-        } else {
-            let guard = pin();
+        if pages
+            .get(META_PID, &guard)
+            .map_err(|e| e.danger_cast())?
+            .is_unallocated()
+        {
+            // set up meta
+            let meta_id = pages.allocate(&guard)?;
+
+            assert_eq!(
+                meta_id,
+                META_PID,
+                "we expect the meta page to have pid {}, but it had pid {} instead",
+                META_PID,
+                meta_id,
+            );
+
+            let meta = Frag::Meta(Meta::default());
+            pages
+                .replace(meta_id, PagePtr::allocated(), meta, &guard)
+                .map_err(|e| e.danger_cast())?;
 
             // set up idgen
             let counter_id = pages.allocate(&guard)?;
+
+            assert_eq!(
+                counter_id,
+                COUNTER_PID,
+                "we expect the counter to have pid {}, but it had pid {} instead",
+                COUNTER_PID,
+                counter_id,
+            );
+
             let counter = Frag::Counter(0);
             pages
                 .replace(
@@ -156,80 +153,158 @@ impl Tree {
                     &guard,
                 )
                 .map_err(|e| e.danger_cast())?;
-
-            // set up empty leaf
-            let leaf_id = pages.allocate(&guard)?;
-            trace!("allocated pid {} for leaf in new", leaf_id);
-
-            assert_eq!(
-                leaf_id,
-                LEFT_LEAF_PID,
-                "we expect the first leaf to have pid {}, but it had pid {} instead",
-                LEFT_LEAF_PID,
-                leaf_id,
-            );
-
-            let leaf = Frag::Base(
-                Node {
-                    id: leaf_id,
-                    data: Data::Leaf(vec![]),
-                    next: None,
-                    lo: vec![],
-                    hi: vec![],
-                },
-                None,
-            );
-
-            pages
-                .replace(leaf_id, PagePtr::allocated(), leaf, &guard)
-                .map_err(|e| e.danger_cast())?;
-
-            // set up root index
-            let root_id = pages.allocate(&guard)?;
-            assert_eq!(
-                root_id,
-                ORIGINAL_ROOT_PID,
-                "we expect that this is the third page ever allocated"
-            );
-            debug!("allocated pid {} for root of new tree", root_id);
-
-            // vec![0] represents a prefix-encoded empty prefix
-            let root_index_vec = vec![(vec![0], leaf_id)];
-
-            let root = Frag::Base(
-                Node {
-                    id: root_id,
-                    data: Data::Index(root_index_vec),
-                    next: None,
-                    lo: vec![],
-                    hi: vec![],
-                },
-                Some(usize::max_value()),
-            );
-
-            pages
-                .replace(root_id, PagePtr::allocated(), root, &guard)
-                .map_err(|e| e.danger_cast())?;
-
-            guard.flush();
-
-            root_id
         };
 
         #[cfg(feature = "event_log")]
         config.event_log.tree_root_after_restart(root_id);
 
-        Ok(Tree {
+        let ret = Tree {
             pages: Arc::new(pages),
             config,
-            root: Arc::new(AtomicUsize::new(root_id)),
             idgen: Arc::new(AtomicUsize::new(idgen_recovery)),
             idgen_persists: Arc::new(AtomicUsize::new(
                 idgen_persists,
             )),
             idgen_persist_mu: Arc::new(Mutex::new(())),
             subscriptions: Arc::new(Subscriptions::default()),
-        })
+        };
+
+        if ret.root_for_tree(b"default", &guard)?.is_none() {
+            // set up initial tree
+
+            ret.new_tree(b"default".to_vec(), &guard)?;
+            assert_eq!(
+                ret.root_for_tree(b"default", &guard)?,
+                Some(ORIGINAL_ROOT_PID)
+            );
+        }
+
+        Ok(ret)
+    }
+
+    fn meta<'a>(&self, guard: &'a Guard) -> Result<&'a Meta, ()> {
+        let meta_page_get = self
+            .pages
+            .get(META_PID, guard)
+            .map_err(|e| e.danger_cast())?;
+
+        let meta = match meta_page_get {
+            PageGet::Materialized(ref meta_ptr, ref _ptr) => {
+                meta_ptr.unwrap_meta()
+            }
+            broken => panic!(
+                "pagecache returned non-base node: {:?}",
+                broken
+            ),
+        };
+
+        Ok(meta)
+    }
+
+    fn root_for_tree(
+        &self,
+        name: &[u8],
+        guard: &Guard,
+    ) -> Result<Option<usize>, ()> {
+        let meta = self.meta(guard)?;
+        Ok(meta.root(name))
+    }
+
+    fn cas_root(
+        &self,
+        name: Vec<u8>,
+        old: Option<usize>,
+        new: usize,
+        guard: &Guard,
+    ) -> Result<(), Option<usize>> {
+        let meta_page_get = self
+            .pages
+            .get(META_PID, guard)
+            .map_err(|e| e.danger_cast())?;
+
+        let (meta_key, meta) = match meta_page_get {
+            PageGet::Materialized(ref meta_ptr, ref key) => {
+                let meta = meta_ptr.unwrap_meta();
+                (key, meta)
+            }
+            broken => panic!(
+                "pagecache returned non-base node: {:?}",
+                broken
+            ),
+        };
+
+        let mut current: PagePtr<_> = meta_key.clone();
+        loop {
+            let actual = meta.root(&name);
+            if actual != old {
+                return Err(Error::CasFailed(actual));
+            }
+
+            let mut new_meta = meta.clone();
+            new_meta.set_root(name.clone(), new);
+
+            let new_meta_frag = Frag::Meta(new_meta);
+            let res = self
+                .pages
+                .replace(META_PID, current, new_meta_frag, &guard)
+                .map_err(|e| e.danger_cast());
+
+            match res {
+                Ok(_) => return Ok(()),
+                Err(Error::CasFailed(actual)) => current = actual,
+                Err(other) => return Err(other.danger_cast()),
+            }
+        }
+    }
+
+    fn new_tree<'a>(
+        &self,
+        name: Vec<u8>,
+        guard: &'a Guard,
+    ) -> Result<usize, ()> {
+        // set up empty leaf
+        let leaf_id = self.pages.allocate(&guard)?;
+        trace!("allocated pid {} for leaf in new_tree for namespace {:?}", leaf_id, name);
+
+        let leaf = Frag::Base(Node {
+            id: leaf_id,
+            data: Data::Leaf(vec![]),
+            next: None,
+            lo: vec![],
+            hi: vec![],
+        });
+
+        self.pages
+            .replace(leaf_id, PagePtr::allocated(), leaf, &guard)
+            .map_err(|e| e.danger_cast())?;
+
+        // set up root index
+        let root_id = self.pages.allocate(&guard)?;
+
+        debug!(
+            "allocated pid {} for root of new_tree {:?}",
+            root_id, name
+        );
+
+        // vec![0] represents a prefix-encoded empty prefix
+        let root_index_vec = vec![(vec![0], leaf_id)];
+
+        let root = Frag::Base(Node {
+            id: root_id,
+            data: Data::Index(root_index_vec),
+            next: None,
+            lo: vec![],
+            hi: vec![],
+        });
+
+        self.pages
+            .replace(root_id, PagePtr::allocated(), root, &guard)
+            .map_err(|e| e.danger_cast())?;
+
+        self.cas_root(name, None, root_id, guard)
+            .map_err(|e| e.danger_cast())?;
+
+        Ok(root_id)
     }
 
     /// Subscribe to `Event`s that happen to keys that have
@@ -693,8 +768,7 @@ impl Tree {
                         let mut node2 = node.clone();
                         node2
                             .apply(&frag, self.config.merge_operator);
-                        let frag2 =
-                            Cow::Owned(Frag::Base(node2, None));
+                        let frag2 = Cow::Owned(Frag::Base(node2));
                         path2.push((frag2, new_cas_key));
                         self.recursive_split(path2, &guard)?;
                     }
@@ -886,8 +960,7 @@ impl Tree {
                         let mut node2 = node.clone();
                         node2
                             .apply(&frag, self.config.merge_operator);
-                        let frag2 =
-                            Cow::Owned(Frag::Base(node2, None));
+                        let frag2 = Cow::Owned(Frag::Base(node2));
                         path2.push((frag2, new_cas_key));
                         self.recursive_split(path2, &guard)?;
                     }
@@ -1203,7 +1276,7 @@ impl Tree {
             .replace(
                 new_pid,
                 PagePtr::allocated(),
-                Frag::Base(rhs, None),
+                Frag::Base(rhs),
                 guard,
             )
             .map_err(|e| e.danger_cast())?;
@@ -1272,16 +1345,13 @@ impl Tree {
 
         let encoded_at = prefix_encode(root_lo, &*at);
         new_root_vec.push((encoded_at, to));
-        let new_root = Frag::Base(
-            Node {
-                id: new_root_pid,
-                data: Data::Index(new_root_vec),
-                next: None,
-                lo: vec![],
-                hi: vec![],
-            },
-            Some(from),
-        );
+        let new_root = Frag::Base(Node {
+            id: new_root_pid,
+            data: Data::Index(new_root_vec),
+            next: None,
+            lo: vec![],
+            hi: vec![],
+        });
         debug_delay();
         let new_root_ptr = self
             .pages
@@ -1297,9 +1367,13 @@ impl Tree {
             );
 
         debug_delay();
-        let cas =
-            self.root.compare_and_swap(from, new_root_pid, SeqCst);
-        if cas == from {
+        let cas = self.cas_root(
+            b"default".to_vec(),
+            Some(from),
+            new_root_pid,
+            guard,
+        );
+        if cas.is_ok() {
             debug!(
                 "root hoist from {} to {} successful",
                 from, new_root_pid
@@ -1307,8 +1381,8 @@ impl Tree {
             Ok(())
         } else {
             debug!(
-                "root hoist from {} to {} failed",
-                from, new_root_pid
+                "root hoist from {} to {} failed: {:?}",
+                from, new_root_pid, cas
             );
             self.pages
                 .free(new_root_pid, new_root_ptr, guard)
@@ -1367,7 +1441,8 @@ impl Tree {
     ) -> Result<Vec<(&'g Frag, TreePtr<'g>)>, ()> {
         let _measure = Measure::new(&M.tree_traverse);
 
-        let mut cursor = self.root.load(SeqCst);
+        let mut cursor =
+            self.root_for_tree(b"default", guard).unwrap().unwrap();
         let mut path: Vec<(&'g Frag, TreePtr<'g>)> = vec![];
 
         // unsplit_parent is used for tracking need
@@ -1389,7 +1464,8 @@ impl Tree {
                     "cannot find pid {} in path_for_key",
                     cursor
                 );
-                cursor = self.root.load(SeqCst);
+                cursor =
+                    self.root_for_tree(b"default", guard)?.unwrap();
                 continue;
             }
 
@@ -1415,7 +1491,9 @@ impl Tree {
 
             // half-complete split detect & completion
             // (when hi is empty, it means it's unbounded)
-            if !node.hi.is_empty() && node.hi.as_slice() <= key.as_ref() {
+            if !node.hi.is_empty()
+                && node.hi.as_slice() <= key.as_ref()
+            {
                 // we have encountered a child split, without
                 // having hit the parent split above.
                 cursor = node.next.expect(
@@ -1504,15 +1582,16 @@ impl Debug for Tree {
         &self,
         f: &mut fmt::Formatter<'_>,
     ) -> std::result::Result<(), fmt::Error> {
-        let mut pid = self.root.load(SeqCst);
+        let guard = pin();
+
+        let mut pid =
+            self.root_for_tree(b"default", &guard).unwrap().unwrap();
         let mut left_most = pid;
         let mut level = 0;
 
         f.write_str("Tree: \n\t")?;
         self.pages.fmt(f)?;
         f.write_str("\tlevel 0:\n")?;
-
-        let guard = pin();
 
         loop {
             let get_res = self.pages.get(pid, &guard);
