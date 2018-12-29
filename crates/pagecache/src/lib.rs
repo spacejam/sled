@@ -45,6 +45,7 @@ mod hash;
 mod iobuf;
 mod iterator;
 mod materializer;
+mod meta;
 mod metrics;
 mod pagecache;
 mod parallel_io;
@@ -111,6 +112,7 @@ pub use self::{
     diskptr::DiskPtr,
     logger::{Log, LogRead},
     materializer::{Materializer, NullMaterializer},
+    meta::Meta,
     metrics::M,
     pagecache::{CacheEntry, PageCache, PageGet, PagePtr},
     reservation::Reservation,

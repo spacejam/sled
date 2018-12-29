@@ -71,9 +71,13 @@ unsafe impl Sync for Tree {}
 #[cfg(feature = "event_log")]
 impl Drop for Tree {
     fn drop(&mut self) {
-        self.config
-            .event_log
-            .tree_root_before_restart(self.root.load(SeqCst));
+        let guard = pin();
+
+        self.config.event_log.meta_before_restart(
+            self.meta(&guard)
+                .expect("should get meta under test")
+                .clone(),
+        );
     }
 }
 
@@ -155,9 +159,6 @@ impl Tree {
                 .map_err(|e| e.danger_cast())?;
         };
 
-        #[cfg(feature = "event_log")]
-        config.event_log.tree_root_after_restart(root_id);
-
         let ret = Tree {
             pages: Arc::new(pages),
             config,
@@ -168,6 +169,13 @@ impl Tree {
             idgen_persist_mu: Arc::new(Mutex::new(())),
             subscriptions: Arc::new(Subscriptions::default()),
         };
+
+        #[cfg(feature = "event_log")]
+        ret.config.event_log.meta_after_restart(
+            ret.meta(&guard)
+                .expect("should be able to get meta under test")
+                .clone(),
+        );
 
         if ret.root_for_tree(b"default", &guard)?.is_none() {
             // set up initial tree
@@ -207,7 +215,7 @@ impl Tree {
         guard: &Guard,
     ) -> Result<Option<usize>, ()> {
         let meta = self.meta(guard)?;
-        Ok(meta.root(name))
+        Ok(meta.get_root(name))
     }
 
     fn cas_root(
@@ -235,7 +243,7 @@ impl Tree {
 
         let mut current: PagePtr<_> = meta_key.clone();
         loop {
-            let actual = meta.root(&name);
+            let actual = meta.get_root(&name);
             if actual != old {
                 return Err(Error::CasFailed(actual));
             }
