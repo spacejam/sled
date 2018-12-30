@@ -24,6 +24,7 @@ pub struct Db {
     tenants: Arc<RwLock<HashMap<Vec<u8>, Arc<Tree>>>>,
     default: Arc<Tree>,
     transactions: Arc<Tree>,
+    was_recovered: bool,
 }
 
 #[cfg(feature = "event_log")]
@@ -89,11 +90,15 @@ impl Db {
 
         let guard = pin();
 
+        let was_recovered: bool;
+
         if pages
             .get(META_PID, &guard)
             .map_err(|e| e.danger_cast())?
             .is_unallocated()
         {
+            was_recovered = false;
+
             // set up meta
             let meta_id = pages.allocate(&guard)?;
 
@@ -130,6 +135,8 @@ impl Db {
                     &guard,
                 )
                 .map_err(|e| e.danger_cast())?;
+        } else {
+            was_recovered = true;
         };
 
         let ret = Db {
@@ -143,6 +150,7 @@ impl Db {
             tenants: unsafe { std::mem::uninitialized() },
             default: unsafe { std::mem::uninitialized() },
             transactions: unsafe { std::mem::uninitialized() },
+            was_recovered,
         };
 
         #[cfg(feature = "event_log")]
@@ -340,6 +348,20 @@ impl Db {
         tenants.insert(name, tree.clone());
 
         Ok(tree)
+    }
+
+    /// Returns `true` if the database was
+    /// recovered from a previous process.
+    /// Note that database state is only
+    /// guaranteed to be present up to the
+    /// last call to `flush`! Otherwise state
+    /// is synced to disk periodically if the
+    /// `sync_every_ms` configuration option
+    /// is set to `Some(number_of_ms_between_syncs)`
+    /// or if the IO buffer gets filled to
+    /// capacity before being rotated.
+    pub fn was_recovered(&self) -> bool {
+        self.was_recovered
     }
 
     /// Record a set of pages as being involved in

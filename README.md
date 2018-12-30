@@ -14,9 +14,9 @@
 An (alpha) modern embedded database.
 
 ```rust
-use sled::Tree;
+use sled::Db;
 
-let tree = Tree::start_default(path)?;
+let tree = Db::start_default(path)?;
 
 // set and get
 tree.set(k, v1);
