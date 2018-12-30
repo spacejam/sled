@@ -38,9 +38,7 @@ pub enum PageState {
 impl PageState {
     fn push(&mut self, item: (Lsn, DiskPtr)) {
         match *self {
-            PageState::Present(ref mut items) => {
-                items.push(item)
-            }
+            PageState::Present(ref mut items) => items.push(item),
             PageState::Allocated(_, _) => {
                 *self = PageState::Present(vec![item])
             }
@@ -86,9 +84,9 @@ impl<R> Default for Snapshot<R> {
 }
 
 impl<R> Snapshot<R> {
-    fn apply<P>(
+    fn apply<P, M>(
         &mut self,
-        materializer: &dyn Materializer<PageFrag = P, Recovery = R>,
+        materializer: &M,
         lsn: Lsn,
         disk_ptr: DiskPtr,
         bytes: &[u8],
@@ -103,6 +101,7 @@ impl<R> Snapshot<R> {
             + Send
             + Sync,
         R: Debug + Clone + Serialize + DeserializeOwned + Send,
+        M: Materializer<PageFrag = P, Recovery = R>,
     {
         // unwrapping this because it's already passed the crc check
         // in the log iterator
