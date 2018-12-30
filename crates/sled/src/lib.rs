@@ -3,7 +3,7 @@
 //! # Examples
 //!
 //! ```
-//! let t = sled::Tree::start_default("my_db").unwrap();
+//! let t = sled::Db::start_default("my_db").unwrap();
 //!
 //! t.set(b"yo!", b"v1".to_vec());
 //! assert!(t.get(b"yo!").unwrap().unwrap() == &*b"v1".to_vec());
