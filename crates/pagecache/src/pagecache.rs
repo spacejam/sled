@@ -253,13 +253,14 @@ where
 ///
 ///     // Used to merge chains of partial pages into a form
 ///     // that is useful for the `PageCache` owner.
-///     fn merge(&self, frags: &[&Self::PageFrag]) -> Self::PageFrag {
-///         let mut consolidated = String::new();
-///         for frag in frags.into_iter() {
-///             consolidated.push_str(&*frag);
-///         }
-///
-///         consolidated
+///     fn merge<'a, I>(&'a self, frags: I) -> Self::PageFrag
+///     where
+///         I: IntoIterator<Item = &'a Self::PageFrag>,
+///     {
+///         frags.into_iter().fold(String::new(), |mut acc, ref s| {
+///             acc.push_str(&*s);
+///             acc
+///         })
 ///     }
 ///
 ///     // Used to feed custom recovery information back to a higher-level abstraction
@@ -857,12 +858,15 @@ where
             // have one frag.
             let ptr = PagePtr(head);
             let mr = unsafe { ptr.deref_merged_resident() };
+
             return Ok(Some(PageGet::Materialized(mr, ptr)));
         }
 
         let mut to_merge = vec![];
         let mut merged_resident = false;
-        let mut ptrs = vec![];
+        let mut ptrs = Vec::with_capacity(
+            self.config.page_consolidation_threshold + 2,
+        );
         let mut fix_up_length = 0;
 
         for cache_entry_ptr in stack_iter {
@@ -917,15 +921,19 @@ where
             }
         }
 
-        let combined: Vec<&P> = to_merge
-            .iter()
-            .cloned()
-            .chain(fetched.iter())
-            .rev()
-            .collect();
+        let merged = if to_merge.is_empty() && fetched.len() == 1 {
+            // don't perform any merging logic if we have
+            // no found `Resident`s and only a single fetched
+            // `Frag`.
+            fetched.pop().unwrap()
+        } else {
+            let _measure = Measure::new(&M.merge_page);
 
-        let merged =
-            measure(&M.merge_page, || self.t.merge(&*combined));
+            let combined_iter =
+                to_merge.into_iter().chain(fetched.iter()).rev();
+
+            self.t.merge(combined_iter)
+        };
 
         let size = self.t.size_in_bytes(&merged);
 

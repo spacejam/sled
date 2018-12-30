@@ -32,7 +32,9 @@ pub trait Materializer {
 
     /// Used to merge chains of partial pages into a form
     /// that is useful for the `PageCache` owner.
-    fn merge(&self, frags: &[&Self::PageFrag]) -> Self::PageFrag;
+    fn merge<'a, I>(&'a self, frags: I) -> Self::PageFrag
+    where
+        I: IntoIterator<Item = &'a Self::PageFrag>;
 
     /// Used to feed custom recovery information back to a higher-level abstraction
     /// during startup. For example, a B-Link tree must know what the current
@@ -64,7 +66,11 @@ impl Materializer for NullMaterializer {
         NullMaterializer
     }
 
-    fn merge(&self, _: &[&Self::PageFrag]) -> Self::PageFrag {}
+    fn merge<'a, I>(&'a self, _frags: I) -> Self::PageFrag
+    where
+        I: IntoIterator<Item = &'a Self::PageFrag>,
+    {
+    }
 
     fn recover(&self, _: &Self::PageFrag) -> Option<Self::Recovery> {
         None

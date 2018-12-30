@@ -30,9 +30,12 @@ impl Materializer for TestMaterializer {
         TestMaterializer
     }
 
-    fn merge(&self, frags: &[&Vec<usize>]) -> Vec<usize> {
+    fn merge<'a, I>(&'a self, frags: I) -> Self::PageFrag
+    where
+        I: IntoIterator<Item = &'a Self::PageFrag>,
+    {
         let mut consolidated = vec![];
-        for &frag in frags.iter() {
+        for frag in frags.into_iter() {
             let mut frag = frag.clone();
             consolidated.append(&mut frag);
         }
@@ -438,7 +441,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                         let (v, old_key) = get.unwrap();
                         assert_eq!(v, existing);
                         pc.replace(pid, old_key, vec![c], &guard)
-                        .unwrap();
+                            .unwrap();
                         existing.clear();
                         existing.push(c);
                     }
@@ -469,7 +472,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                     P::Present(ref mut existing) => {
                         let (_, old_key) = get.unwrap();
                         pc.link(pid, old_key, vec![c], &guard)
-                        .unwrap();
+                            .unwrap();
                         existing.push(c);
                     }
                     P::Free => {
