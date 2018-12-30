@@ -134,7 +134,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
         .build();
 
     let mut tree =
-        sled::Tree::start(config.clone()).expect("tree should start");
+        sled::Db::start(config.clone()).expect("tree should start");
     let mut reference = BTreeMap::new();
     let mut fail_points = HashSet::new();
     let mut max_id: isize = -1;
@@ -142,7 +142,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
     macro_rules! restart {
         () => {
             drop(tree);
-            let tree_res = sled::Tree::start(config.clone());
+            let tree_res = sled::Db::start(config.clone());
             if let Err(ref e) = tree_res {
                 if e == &Error::FailPoint {
                     return true;

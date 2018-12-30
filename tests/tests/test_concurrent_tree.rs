@@ -42,7 +42,7 @@ fn test_merge_operator(
 
 fn run_ops(
     ops: Vec<Op>,
-    tree: Arc<Tree>,
+    tree: Arc<Db>,
     reference: Arc<RwLock<BTreeMap<Key, u16>>>,
 ) {
     for op in ops.into_iter() {
@@ -163,8 +163,7 @@ fn prop_concurrent_tree_matches_btreemap(
         .merge_operator(test_merge_operator)
         .build();
 
-    let mut tree =
-        Arc::new(sled::Tree::start(config.clone()).unwrap());
+    let mut tree = Arc::new(sled::Db::start(config.clone()).unwrap());
     let reference: Arc<RwLock<BTreeMap<Key, u16>>> =
         Arc::new(RwLock::new(BTreeMap::new()));
 
@@ -176,8 +175,7 @@ fn prop_concurrent_tree_matches_btreemap(
         if epoch.is_empty() {
             // restart
             drop(tree);
-            tree =
-                Arc::new(sled::Tree::start(config.clone()).unwrap());
+            tree = Arc::new(sled::Db::start(config.clone()).unwrap());
         }
 
         let ops_per_thread = epoch.len() / threads;
@@ -203,7 +201,7 @@ fn prop_concurrent_tree_matches_btreemap(
 
         // restart
         drop(tree);
-        tree = Arc::new(sled::Tree::start(config.clone()).unwrap());
+        tree = Arc::new(sled::Db::start(config.clone()).unwrap());
     }
 
     true

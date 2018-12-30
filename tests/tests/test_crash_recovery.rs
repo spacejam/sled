@@ -114,7 +114,7 @@ fn run(config: Config) {
         spawn_killah();
     }
 
-    let tree = sled::Tree::start(config).unwrap();
+    let tree = sled::Db::start(config).unwrap();
 
     if !crash_during_initialization {
         spawn_killah();

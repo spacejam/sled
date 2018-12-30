@@ -173,9 +173,9 @@ impl Arbitrary for Op {
             Get(ref k) => Box::new(k.shrink().map(Get)),
             GetLt(ref k) => Box::new(k.shrink().map(GetLt)),
             GetGt(ref k) => Box::new(k.shrink().map(GetGt)),
-            Cas(ref k, old, new) => Box::new(
-                k.shrink().map(move |k| Cas(k, old, new)),
-            ),
+            Cas(ref k, old, new) => {
+                Box::new(k.shrink().map(move |k| Cas(k, old, new)))
+            }
             Scan(ref k, len) => {
                 Box::new(k.shrink().map(move |k| Scan(k, len)))
             }
@@ -229,7 +229,7 @@ pub fn prop_tree_matches_btreemap(
         .merge_operator(test_merge_operator)
         .build();
 
-    let mut tree = sled::Tree::start(config.clone()).unwrap();
+    let mut tree = sled::Db::start(config.clone()).unwrap();
     let mut reference: BTreeMap<Key, u16> = BTreeMap::new();
 
     for op in ops.into_iter() {
@@ -317,7 +317,7 @@ pub fn prop_tree_matches_btreemap(
             }
             Restart => {
                 drop(tree);
-                tree = sled::Tree::start(config.clone()).unwrap();
+                tree = sled::Db::start(config.clone()).unwrap();
             }
         }
     }

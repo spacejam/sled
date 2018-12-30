@@ -3,22 +3,12 @@ use std::{
     cmp::Ordering::{Greater, Less},
     fmt::{self, Debug},
     ops::{self, RangeBounds},
-    sync::{
-        atomic::{
-            AtomicUsize,
-            Ordering::{Acquire, Relaxed, Release},
-        },
-        Arc, Mutex,
-    },
+    sync::Arc,
 };
 
 use pagecache::PagePtr;
 
 use super::*;
-
-const META_PID: PageId = 0;
-const COUNTER_PID: PageId = 1;
-const ORIGINAL_ROOT_PID: PageId = 3;
 
 type Path<'g> = Vec<(&'g Frag, TreePtr<'g>)>;
 
@@ -36,7 +26,7 @@ impl<'a> IntoIterator for &'a Tree {
 /// # Examples
 ///
 /// ```
-/// let t = sled::Tree::start_default("path_to_my_database").unwrap();
+/// let t = sled::Db::start_default("path_to_my_database").unwrap();
 ///
 /// t.set(b"yo!", b"v1".to_vec());
 /// assert!(t.get(b"yo!").unwrap().unwrap() == &*b"v1".to_vec());
@@ -56,265 +46,16 @@ impl<'a> IntoIterator for &'a Tree {
 /// ```
 #[derive(Clone)]
 pub struct Tree {
+    pub(crate) config: Config,
+    pub(crate) subscriptions: Arc<Subscriptions>,
     pub(crate) pages:
         Arc<PageCache<BLinkMaterializer, Frag, Recovery>>,
-    config: Config,
-    idgen: Arc<AtomicUsize>,
-    idgen_persists: Arc<AtomicUsize>,
-    idgen_persist_mu: Arc<Mutex<()>>,
-    subscriptions: Arc<Subscriptions>,
 }
 
 unsafe impl Send for Tree {}
 unsafe impl Sync for Tree {}
 
-#[cfg(feature = "event_log")]
-impl Drop for Tree {
-    fn drop(&mut self) {
-        let guard = pin();
-
-        self.config.event_log.meta_before_restart(
-            self.meta(&guard)
-                .expect("should get meta under test")
-                .clone(),
-        );
-    }
-}
-
 impl Tree {
-    /// Load existing or create a new `Tree` with a default configuration.
-    pub fn start_default<P: AsRef<std::path::Path>>(
-        path: P,
-    ) -> Result<Tree, ()> {
-        let config = ConfigBuilder::new().path(path).build();
-        Self::start(config)
-    }
-
-    /// Load existing or create a new `Tree`.
-    pub fn start(config: Config) -> Result<Tree, ()> {
-        let _measure = Measure::new(&M.tree_start);
-
-        #[cfg(any(test, feature = "check_snapshot_integrity"))]
-        match config
-            .verify_snapshot::<BLinkMaterializer, Frag, Recovery>()
-        {
-            Ok(_) => {}
-            #[cfg(feature = "failpoints")]
-            Err(Error::FailPoint) => {}
-            other => panic!("failed to verify snapshot: {:?}", other),
-        }
-
-        let pages = PageCache::start(config.clone())?;
-
-        let recovery: Recovery =
-            pages.recovered_state().unwrap_or_default();
-        let idgen_recovery =
-            recovery.counter + (2 * config.idgen_persist_interval);
-        let idgen_persists = recovery.counter
-            / config.idgen_persist_interval
-            * config.idgen_persist_interval;
-
-        let guard = pin();
-
-        if pages
-            .get(META_PID, &guard)
-            .map_err(|e| e.danger_cast())?
-            .is_unallocated()
-        {
-            // set up meta
-            let meta_id = pages.allocate(&guard)?;
-
-            assert_eq!(
-                meta_id,
-                META_PID,
-                "we expect the meta page to have pid {}, but it had pid {} instead",
-                META_PID,
-                meta_id,
-            );
-
-            let meta = Frag::Meta(Meta::default());
-            pages
-                .replace(meta_id, PagePtr::allocated(), meta, &guard)
-                .map_err(|e| e.danger_cast())?;
-
-            // set up idgen
-            let counter_id = pages.allocate(&guard)?;
-
-            assert_eq!(
-                counter_id,
-                COUNTER_PID,
-                "we expect the counter to have pid {}, but it had pid {} instead",
-                COUNTER_PID,
-                counter_id,
-            );
-
-            let counter = Frag::Counter(0);
-            pages
-                .replace(
-                    counter_id,
-                    PagePtr::allocated(),
-                    counter,
-                    &guard,
-                )
-                .map_err(|e| e.danger_cast())?;
-        };
-
-        let ret = Tree {
-            pages: Arc::new(pages),
-            config,
-            idgen: Arc::new(AtomicUsize::new(idgen_recovery)),
-            idgen_persists: Arc::new(AtomicUsize::new(
-                idgen_persists,
-            )),
-            idgen_persist_mu: Arc::new(Mutex::new(())),
-            subscriptions: Arc::new(Subscriptions::default()),
-        };
-
-        #[cfg(feature = "event_log")]
-        ret.config.event_log.meta_after_restart(
-            ret.meta(&guard)
-                .expect("should be able to get meta under test")
-                .clone(),
-        );
-
-        if ret.root_for_tree(b"default", &guard)?.is_none() {
-            // set up initial tree
-
-            ret.new_tree(b"default".to_vec(), &guard)?;
-            assert_eq!(
-                ret.root_for_tree(b"default", &guard)?,
-                Some(ORIGINAL_ROOT_PID)
-            );
-        }
-
-        Ok(ret)
-    }
-
-    fn meta<'a>(&self, guard: &'a Guard) -> Result<&'a Meta, ()> {
-        let meta_page_get = self
-            .pages
-            .get(META_PID, guard)
-            .map_err(|e| e.danger_cast())?;
-
-        let meta = match meta_page_get {
-            PageGet::Materialized(ref meta_ptr, ref _ptr) => {
-                meta_ptr.unwrap_meta()
-            }
-            broken => panic!(
-                "pagecache returned non-base node: {:?}",
-                broken
-            ),
-        };
-
-        Ok(meta)
-    }
-
-    fn root_for_tree(
-        &self,
-        name: &[u8],
-        guard: &Guard,
-    ) -> Result<Option<usize>, ()> {
-        let meta = self.meta(guard)?;
-        Ok(meta.get_root(name))
-    }
-
-    fn cas_root(
-        &self,
-        name: Vec<u8>,
-        old: Option<usize>,
-        new: usize,
-        guard: &Guard,
-    ) -> Result<(), Option<usize>> {
-        let meta_page_get = self
-            .pages
-            .get(META_PID, guard)
-            .map_err(|e| e.danger_cast())?;
-
-        let (meta_key, meta) = match meta_page_get {
-            PageGet::Materialized(ref meta_ptr, ref key) => {
-                let meta = meta_ptr.unwrap_meta();
-                (key, meta)
-            }
-            broken => panic!(
-                "pagecache returned non-base node: {:?}",
-                broken
-            ),
-        };
-
-        let mut current: PagePtr<_> = meta_key.clone();
-        loop {
-            let actual = meta.get_root(&name);
-            if actual != old {
-                return Err(Error::CasFailed(actual));
-            }
-
-            let mut new_meta = meta.clone();
-            new_meta.set_root(name.clone(), new);
-
-            let new_meta_frag = Frag::Meta(new_meta);
-            let res = self
-                .pages
-                .replace(META_PID, current, new_meta_frag, &guard)
-                .map_err(|e| e.danger_cast());
-
-            match res {
-                Ok(_) => return Ok(()),
-                Err(Error::CasFailed(actual)) => current = actual,
-                Err(other) => return Err(other.danger_cast()),
-            }
-        }
-    }
-
-    fn new_tree<'a>(
-        &self,
-        name: Vec<u8>,
-        guard: &'a Guard,
-    ) -> Result<usize, ()> {
-        // set up empty leaf
-        let leaf_id = self.pages.allocate(&guard)?;
-        trace!("allocated pid {} for leaf in new_tree for namespace {:?}", leaf_id, name);
-
-        let leaf = Frag::Base(Node {
-            id: leaf_id,
-            data: Data::Leaf(vec![]),
-            next: None,
-            lo: vec![],
-            hi: vec![],
-        });
-
-        self.pages
-            .replace(leaf_id, PagePtr::allocated(), leaf, &guard)
-            .map_err(|e| e.danger_cast())?;
-
-        // set up root index
-        let root_id = self.pages.allocate(&guard)?;
-
-        debug!(
-            "allocated pid {} for root of new_tree {:?}",
-            root_id, name
-        );
-
-        // vec![0] represents a prefix-encoded empty prefix
-        let root_index_vec = vec![(vec![0], leaf_id)];
-
-        let root = Frag::Base(Node {
-            id: root_id,
-            data: Data::Index(root_index_vec),
-            next: None,
-            lo: vec![],
-            hi: vec![],
-        });
-
-        self.pages
-            .replace(root_id, PagePtr::allocated(), root, &guard)
-            .map_err(|e| e.danger_cast())?;
-
-        self.cas_root(name, None, root_id, guard)
-            .map_err(|e| e.danger_cast())?;
-
-        Ok(root_id)
-    }
-
     /// Subscribe to `Event`s that happen to keys that have
     /// the specified prefix. Events for particular keys are
     /// guaranteed to be witnessed in the same order by all
@@ -330,7 +71,7 @@ impl Tree {
     /// use sled::{Event, ConfigBuilder};
     /// let config = ConfigBuilder::new().temporary(true).build();
     ///
-    /// let tree = sled::Tree::start(config).unwrap();
+    /// let tree = sled::Db::start(config).unwrap();
     ///
     /// // watch all events by subscribing to the empty prefix
     /// let mut events = tree.watch_prefix(vec![]);
@@ -353,71 +94,6 @@ impl Tree {
     /// ```
     pub fn watch_prefix(&self, prefix: Vec<u8>) -> Subscriber {
         self.subscriptions.register(prefix)
-    }
-
-    /// Generate a monotonic ID. Not guaranteed to be
-    /// contiguous. Written to disk every `idgen_persist_interval`
-    /// operations, followed by a blocking flush. During recovery, we
-    /// take the last recovered generated ID and add 2x
-    /// the `idgen_persist_interval` to it. While persisting, if the
-    /// previous persisted counter wasn't synced to disk yet, we will do
-    /// a blocking flush to fsync the latest counter, ensuring
-    /// that we will never give out the same counter twice.
-    pub fn generate_id(&self) -> Result<usize, ()> {
-        let ret = self.idgen.fetch_add(1, Relaxed);
-
-        let interval = self.config.idgen_persist_interval;
-        let necessary_persists = ret / interval * interval;
-        let mut persisted = self.idgen_persists.load(Acquire);
-
-        while persisted < necessary_persists {
-            let _mu = self.idgen_persist_mu.lock().unwrap();
-            persisted = self.idgen_persists.load(Acquire);
-            if persisted < necessary_persists {
-                // it's our responsibility to persist up to our ID
-                let guard = pin();
-                let (current, key) = self
-                    .pages
-                    .get(COUNTER_PID, &guard)
-                    .map_err(|e| e.danger_cast())?
-                    .unwrap();
-
-                if let Frag::Counter(current) = current {
-                    assert_eq!(*current, persisted);
-                } else {
-                    panic!(
-                        "counter pid contained non-Counter: {:?}",
-                        current
-                    );
-                }
-
-                let counter_frag = Frag::Counter(necessary_persists);
-
-                let old = self
-                    .idgen_persists
-                    .swap(necessary_persists, Release);
-                assert_eq!(old, persisted);
-
-                self.pages
-                    .replace(
-                        COUNTER_PID,
-                        key.clone(),
-                        counter_frag,
-                        &guard,
-                    )
-                    .map_err(|e| e.danger_cast())?;
-
-                // during recovery we add 2x the interval. we only
-                // need to block if the last one wasn't stable yet.
-                if key.last_lsn() > self.pages.stable_lsn() {
-                    self.pages.make_stable(key.last_lsn())?;
-                }
-
-                guard.flush();
-            }
-        }
-
-        Ok(ret)
     }
 
     /// Clears the `Tree`, removing all values.
@@ -476,7 +152,7 @@ impl Tree {
     /// use sled::{ConfigBuilder, Error};
     /// let config = ConfigBuilder::new().temporary(true).build();
     ///
-    /// let tree = sled::Tree::start(config).unwrap();
+    /// let tree = sled::Db::start(config).unwrap();
     ///
     /// for i in 0..10 {
     ///     tree.set(vec![i], vec![i]).expect("should write successfully");
@@ -547,7 +223,7 @@ impl Tree {
     /// use sled::{ConfigBuilder, Error};
     /// let config = ConfigBuilder::new().temporary(true).build();
     ///
-    /// let tree = sled::Tree::start(config).unwrap();
+    /// let tree = sled::Db::start(config).unwrap();
     ///
     /// for i in 0..10 {
     ///     tree.set(vec![i], vec![i]).expect("should write successfully");
@@ -620,7 +296,7 @@ impl Tree {
     /// ```
     /// use sled::{ConfigBuilder, Error};
     /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Tree::start(config).unwrap();
+    /// let t = sled::Db::start(config).unwrap();
     ///
     /// // unique creation
     /// assert_eq!(t.cas(&[1], None, Some(vec![1])), Ok(()));
@@ -804,7 +480,7 @@ impl Tree {
     ///
     /// ```
     /// let config = sled::ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Tree::start(config).unwrap();
+    /// let t = sled::Db::start(config).unwrap();
     /// t.set(&[1], vec![1]);
     /// assert_eq!(t.del(&*vec![1]).unwrap().unwrap(), vec![1]);
     /// assert_eq!(t.del(&*vec![1]), Ok(None));
@@ -902,7 +578,7 @@ impl Tree {
     ///   .merge_operator(concatenate_merge)
     ///   .build();
     ///
-    /// let tree = sled::Tree::start(config).unwrap();
+    /// let tree = sled::Db::start(config).unwrap();
     ///
     /// let k = b"k1";
     ///
@@ -992,7 +668,7 @@ impl Tree {
     ///
     /// ```
     /// let config = sled::ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Tree::start(config).unwrap();
+    /// let t = sled::Db::start(config).unwrap();
     /// t.set(&[1], vec![10]);
     /// t.set(&[2], vec![20]);
     /// t.set(&[3], vec![30]);
@@ -1015,7 +691,7 @@ impl Tree {
     /// let config = sled::ConfigBuilder::new()
     ///     .temporary(true)
     ///     .build();
-    /// let t = sled::Tree::start(config).unwrap();
+    /// let t = sled::Db::start(config).unwrap();
     ///
     /// t.set(b"0", vec![0]).unwrap();
     /// t.set(b"1", vec![10]).unwrap();
@@ -1055,7 +731,7 @@ impl Tree {
     /// let config = sled::ConfigBuilder::new()
     ///     .temporary(true)
     ///     .build();
-    /// let t = sled::Tree::start(config).unwrap();
+    /// let t = sled::Db::start(config).unwrap();
     ///
     /// t.set(b"0", vec![0]).unwrap();
     /// t.set(b"1", vec![10]).unwrap();
@@ -1125,7 +801,7 @@ impl Tree {
     ///
     /// ```
     /// let config = sled::ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Tree::start(config).unwrap();
+    /// let t = sled::Db::start(config).unwrap();
     /// t.set(&[1], vec![10]);
     /// t.set(&[2], vec![20]);
     /// t.set(&[3], vec![30]);
@@ -1147,7 +823,7 @@ impl Tree {
     ///
     /// ```
     /// let config = sled::ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Tree::start(config).unwrap();
+    /// let t = sled::Db::start(config).unwrap();
     /// t.set(&[1], vec![10]);
     /// t.set(&[2], vec![20]);
     /// t.set(&[3], vec![30]);
@@ -1422,6 +1098,81 @@ impl Tree {
         Ok((path, ret))
     }
 
+    fn meta<'a>(&self, guard: &'a Guard) -> Result<&'a Meta, ()> {
+        let meta_page_get = self
+            .pages
+            .get(META_PID, guard)
+            .map_err(|e| e.danger_cast())?;
+
+        let meta = match meta_page_get {
+            PageGet::Materialized(ref meta_ptr, ref _ptr) => {
+                meta_ptr.unwrap_meta()
+            }
+            broken => panic!(
+                "pagecache returned non-base node: {:?}",
+                broken
+            ),
+        };
+
+        Ok(meta)
+    }
+
+    fn pid_for_name(
+        &self,
+        name: &[u8],
+        guard: &Guard,
+    ) -> Result<Option<usize>, ()> {
+        let meta = self.meta(guard)?;
+        Ok(meta.get_root(name))
+    }
+
+    fn cas_root(
+        &self,
+        name: Vec<u8>,
+        old: Option<usize>,
+        new: usize,
+        guard: &Guard,
+    ) -> Result<(), Option<usize>> {
+        let meta_page_get = self
+            .pages
+            .get(META_PID, guard)
+            .map_err(|e| e.danger_cast())?;
+
+        let (meta_key, meta) = match meta_page_get {
+            PageGet::Materialized(ref meta_ptr, ref key) => {
+                let meta = meta_ptr.unwrap_meta();
+                (key, meta)
+            }
+            broken => panic!(
+                "pagecache returned non-base node: {:?}",
+                broken
+            ),
+        };
+
+        let mut current: PagePtr<_> = meta_key.clone();
+        loop {
+            let actual = meta.get_root(&name);
+            if actual != old {
+                return Err(Error::CasFailed(actual));
+            }
+
+            let mut new_meta = meta.clone();
+            new_meta.set_root(name.clone(), new);
+
+            let new_meta_frag = Frag::Meta(new_meta);
+            let res = self
+                .pages
+                .replace(META_PID, current, new_meta_frag, &guard)
+                .map_err(|e| e.danger_cast());
+
+            match res {
+                Ok(_) => return Ok(()),
+                Err(Error::CasFailed(actual)) => current = actual,
+                Err(other) => return Err(other.danger_cast()),
+            }
+        }
+    }
+
     #[doc(hidden)]
     pub fn key_debug_str<K: AsRef<[u8]>>(&self, key: K) -> String {
         let guard = pin();
@@ -1450,7 +1201,7 @@ impl Tree {
         let _measure = Measure::new(&M.tree_traverse);
 
         let mut cursor =
-            self.root_for_tree(b"default", guard).unwrap().unwrap();
+            self.pid_for_name(b"default", guard).unwrap().unwrap();
         let mut path: Vec<(&'g Frag, TreePtr<'g>)> = vec![];
 
         // unsplit_parent is used for tracking need
@@ -1473,7 +1224,7 @@ impl Tree {
                     cursor
                 );
                 cursor =
-                    self.root_for_tree(b"default", guard)?.unwrap();
+                    self.pid_for_name(b"default", guard)?.unwrap();
                 continue;
             }
 
@@ -1593,7 +1344,7 @@ impl Debug for Tree {
         let guard = pin();
 
         let mut pid =
-            self.root_for_tree(b"default", &guard).unwrap().unwrap();
+            self.pid_for_name(b"default", &guard).unwrap().unwrap();
         let mut left_most = pid;
         let mut level = 0;
 
