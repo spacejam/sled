@@ -112,7 +112,7 @@ fn concatenate_merge(
     Some(ret)
 }
 
-fn run(tree: Arc<sled::Tree>, shutdown: Arc<AtomicBool>) {
+fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
     let args = unsafe { ARGS.clone() };
 
     let get_max = args.flag_get_prop;
@@ -212,7 +212,7 @@ fn main() {
         .merge_operator(concatenate_merge)
         .build();
 
-    let tree = Arc::new(sled::Tree::start(config).unwrap());
+    let tree = Arc::new(sled::Db::start(config).unwrap());
 
     let mut threads = vec![];
 

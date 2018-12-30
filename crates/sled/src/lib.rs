@@ -3,7 +3,7 @@
 //! # Examples
 //!
 //! ```
-//! let t = sled::Tree::start_default("my_db").unwrap();
+//! let t = sled::Db::start_default("my_db").unwrap();
 //!
 //! t.set(b"yo!", b"v1".to_vec());
 //! assert!(t.get(b"yo!").unwrap().unwrap() == &*b"v1".to_vec());
@@ -32,6 +32,7 @@
 
 mod binary_search;
 mod data;
+mod db;
 mod frag;
 mod iter;
 mod materializer;
@@ -42,11 +43,17 @@ mod recovery;
 mod subscription;
 mod tree;
 
-pub use self::iter::{Iter, Keys, Values};
-pub use self::pinned_value::PinnedValue;
-pub use self::subscription::{Event, Subscriber};
-/// atomic lock-free tree
-pub use self::tree::Tree;
+const META_PID: PageId = 0;
+const COUNTER_PID: PageId = 1;
+const ORIGINAL_ROOT_PID: PageId = 3;
+
+pub use self::{
+    db::Db,
+    iter::{Iter, Keys, Values},
+    pinned_value::PinnedValue,
+    subscription::{Event, Subscriber},
+    tree::Tree,
+};
 
 use pagecache::{
     Materializer, Measure, MergeOperator, PageCache, PageGet, PageId,

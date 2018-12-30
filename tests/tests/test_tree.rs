@@ -69,7 +69,7 @@ fn parallel_tree_ops() {
     }
 
     println!("========== initial sets ==========");
-    let t = Arc::new(sled::Tree::start(config.clone()).unwrap());
+    let t = Arc::new(sled::Db::start(config.clone()).unwrap());
     par! {t, |tree: &Tree, k: Vec<u8>| {
         assert_eq!(tree.get(&*k), Ok(None));
         tree.set(&k, k.clone()).expect("we should write successfully");
@@ -86,7 +86,7 @@ fn parallel_tree_ops() {
 
     drop(t);
     let t = Arc::new(
-        sled::Tree::start(config.clone())
+        sled::Db::start(config.clone())
             .expect("should be able to restart Tree"),
     );
 
@@ -112,7 +112,7 @@ fn parallel_tree_ops() {
 
     drop(t);
     let t = Arc::new(
-        sled::Tree::start(config.clone())
+        sled::Db::start(config.clone())
             .expect("should be able to restart Tree"),
     );
 
@@ -126,7 +126,7 @@ fn parallel_tree_ops() {
 
     drop(t);
     let t = Arc::new(
-        sled::Tree::start(config.clone())
+        sled::Db::start(config.clone())
             .expect("should be able to restart Tree"),
     );
 
@@ -139,7 +139,7 @@ fn parallel_tree_ops() {
 
     drop(t);
     let t = Arc::new(
-        sled::Tree::start(config.clone())
+        sled::Db::start(config.clone())
             .expect("should be able to restart Tree"),
     );
 
@@ -150,7 +150,7 @@ fn parallel_tree_ops() {
 
     drop(t);
     let t = Arc::new(
-        sled::Tree::start(config.clone())
+        sled::Db::start(config.clone())
             .expect("should be able to restart Tree"),
     );
 
@@ -165,7 +165,7 @@ fn tree_subdir() {
         .async_io(false)
         .path("/tmp/test_tree_subdir/test_subdir".to_owned())
         .build();
-    let t = sled::Tree::start(config).unwrap();
+    let t = sled::Db::start(config).unwrap();
 
     t.set(&[1], vec![1]).unwrap();
 
@@ -174,7 +174,7 @@ fn tree_subdir() {
     let config = ConfigBuilder::new()
         .path("/tmp/test_tree_subdir/test_subdir".to_owned())
         .build();
-    let t = sled::Tree::start(config).unwrap();
+    let t = sled::Db::start(config).unwrap();
 
     let res = t.get(&*vec![1]);
 
@@ -192,7 +192,7 @@ fn tree_iterator() {
         .blink_node_split_size(0)
         .flush_every_ms(None)
         .build();
-    let t = sled::Tree::start(config).unwrap();
+    let t = sled::Db::start(config).unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
         t.set(&k, k.clone()).unwrap();
@@ -236,7 +236,7 @@ fn tree_range() {
         .blink_node_split_size(0)
         .flush_every_ms(None)
         .build();
-    let t = sled::Tree::start(config).unwrap();
+    let t = sled::Db::start(config).unwrap();
 
     t.set(b"0", vec![0]).unwrap();
     t.set(b"1", vec![10]).unwrap();
@@ -282,14 +282,14 @@ fn recover_tree() {
         .flush_every_ms(None)
         .snapshot_after_ops(100)
         .build();
-    let t = sled::Tree::start(config.clone()).unwrap();
+    let t = sled::Db::start(config.clone()).unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
         t.set(&k, k.clone()).unwrap();
     }
     drop(t);
 
-    let t = sled::Tree::start(config.clone()).unwrap();
+    let t = sled::Db::start(config.clone()).unwrap();
     for i in 0..4 {
         let k = kv(i as usize);
         assert_eq!(t.get(&*k).unwrap().unwrap(), k);
@@ -297,7 +297,7 @@ fn recover_tree() {
     }
     drop(t);
 
-    let t = sled::Tree::start(config.clone()).unwrap();
+    let t = sled::Db::start(config.clone()).unwrap();
     for i in 0..4 {
         let k = kv(i as usize);
         assert_eq!(t.get(&*k), Ok(None));

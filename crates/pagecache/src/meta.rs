@@ -19,4 +19,9 @@ impl Meta {
     pub fn set_root(&mut self, name: Vec<u8>, pid: PageId) {
         self.inner.insert(name, pid);
     }
+
+    /// Return the current rooted tenants in Meta
+    pub fn tenants(&self) -> BTreeMap<Vec<u8>, PageId> {
+        self.inner.clone()
+    }
 }
