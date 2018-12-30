@@ -14,19 +14,16 @@ use pagecache::PagePtr;
 
 use super::*;
 
-/// A collection of disk-backed data structures
-/// sharing a common pagecache, monotonic ID generator,
-/// and transactional domain.
+/// The `sled` embedded database!
 pub struct Db {
     config: Config,
-    pub(crate) pages:
-        Arc<PageCache<BLinkMaterializer, Frag, Recovery>>,
-
-    tenants: Arc<RwLock<HashMap<Vec<u8>, Arc<Tree>>>>,
-
+    pages: Arc<PageCache<BLinkMaterializer, Frag, Recovery>>,
     idgen: Arc<AtomicUsize>,
     idgen_persists: Arc<AtomicUsize>,
     idgen_persist_mu: Arc<Mutex<()>>,
+    tenants: Arc<RwLock<HashMap<Vec<u8>, Arc<Tree>>>>,
+    default: Arc<Tree>,
+    transactions: Arc<Tree>,
 }
 
 #[cfg(feature = "event_log")]
@@ -47,9 +44,7 @@ impl Deref for Db {
     type Target = Tree;
 
     fn deref(&self) -> &Tree {
-        let r = self.tenants.read().unwrap();
-        let k: &[u8] = b"default";
-        let tree_arc: &Arc<Tree> = &r[k];
+        let tree_arc: &Arc<Tree> = &self.default;
         let tree_ref: &Tree = &*tree_arc;
         let tp = tree_ref as *const Tree;
         unsafe {
@@ -140,12 +135,14 @@ impl Db {
         let ret = Db {
             pages: Arc::new(pages),
             config,
-            tenants: Arc::new(RwLock::new(HashMap::new())),
             idgen: Arc::new(AtomicUsize::new(idgen_recovery)),
             idgen_persists: Arc::new(AtomicUsize::new(
                 idgen_persists,
             )),
             idgen_persist_mu: Arc::new(Mutex::new(())),
+            tenants: unsafe { std::mem::uninitialized() },
+            default: unsafe { std::mem::uninitialized() },
+            transactions: unsafe { std::mem::uninitialized() },
         };
 
         #[cfg(feature = "event_log")]
@@ -155,19 +152,39 @@ impl Db {
                 .clone(),
         );
 
-        if ret.pid_for_name(b"default", &guard)?.is_none() {
+        if meta::pid_for_name(&*ret.pages, DEFAULT_TREE_ID, &guard)?
+            .is_none()
+        {
             // set up initial tree
 
-            ret.open_tree(b"default".to_vec(), &guard)?;
+            ret.open_tree(DEFAULT_TREE_ID.to_vec(), &guard)?;
             assert_eq!(
-                ret.pid_for_name(b"default", &guard)?,
-                Some(ORIGINAL_ROOT_PID)
+                meta::pid_for_name(
+                    &*ret.pages,
+                    DEFAULT_TREE_ID,
+                    &guard
+                )?,
+                Some(DEFAULT_TREE_PID)
+            );
+        }
+
+        if meta::pid_for_name(&*ret.pages, TX_TREE_ID, &guard)?
+            .is_none()
+        {
+            // set up initial tree
+
+            ret.open_tree(TX_TREE_ID.to_vec(), &guard)?;
+            assert_eq!(
+                meta::pid_for_name(&*ret.pages, TX_TREE_ID, &guard)?,
+                Some(TX_TREE_PID)
             );
         }
 
         let mut tenants = HashMap::new();
 
-        for (id, _root) in ret.meta(&guard)?.tenants().into_iter() {
+        for (id, _root) in
+            meta::meta(&*ret.pages, &guard)?.tenants().into_iter()
+        {
             let tree = Tree {
                 subscriptions: Arc::new(Subscriptions::default()),
                 config: ret.config.clone(),
@@ -179,36 +196,12 @@ impl Db {
         let mut ret = ret;
 
         ret.tenants = Arc::new(RwLock::new(tenants));
+        ret.default =
+            ret.open_tree(DEFAULT_TREE_ID.to_vec(), &guard)?;
+        ret.transactions =
+            ret.open_tree(TX_TREE_ID.to_vec(), &guard)?;
 
         Ok(ret)
-    }
-
-    fn pid_for_name(
-        &self,
-        name: &[u8],
-        guard: &Guard,
-    ) -> Result<Option<usize>, ()> {
-        let meta = self.meta(guard)?;
-        Ok(meta.get_root(name))
-    }
-
-    fn meta<'a>(&self, guard: &'a Guard) -> Result<&'a Meta, ()> {
-        let meta_page_get = self
-            .pages
-            .get(META_PID, guard)
-            .map_err(|e| e.danger_cast())?;
-
-        let meta = match meta_page_get {
-            PageGet::Materialized(ref meta_ptr, ref _ptr) => {
-                meta_ptr.unwrap_meta()
-            }
-            broken => panic!(
-                "pagecache returned non-base node: {:?}",
-                broken
-            ),
-        };
-
-        Ok(meta)
     }
 
     /// Generate a monotonic ID. Not guaranteed to be
@@ -276,7 +269,7 @@ impl Db {
         Ok(ret)
     }
 
-    /// Openor create a new disk-backed Tree with its own keyspace,
+    /// Open or create a new disk-backed Tree with its own keyspace,
     /// accessible from the `Db` via the provided identifier.
     pub fn open_tree<'a>(
         &self,
@@ -329,8 +322,14 @@ impl Db {
             .replace(root_id, PagePtr::allocated(), root, &guard)
             .map_err(|e| e.danger_cast())?;
 
-        self.cas_root(name.clone(), None, root_id, guard)
-            .map_err(|e| e.danger_cast())?;
+        meta::cas_root(
+            &*self.pages,
+            name.clone(),
+            None,
+            root_id,
+            guard,
+        )
+        .map_err(|e| e.danger_cast())?;
 
         let mut tenants = self.tenants.write().unwrap();
         let tree = Arc::new(Tree {
@@ -343,50 +342,59 @@ impl Db {
         Ok(tree)
     }
 
-    fn cas_root(
+    /// Record a set of pages as being involved in
+    /// a transaction that is about to be written to
+    /// one of the structures in the Db. Do this
+    /// before performing transactions in case
+    /// the system crashes before all changes
+    /// can be written. During recovery,
+    /// you can call `possibly_dirty_pages`
+    /// to get the set of pages that may have
+    /// transactional state written to them.
+    pub fn mark_pending_tx(
         &self,
-        name: Vec<u8>,
-        old: Option<usize>,
-        new: usize,
-        guard: &Guard,
-    ) -> Result<(), Option<usize>> {
-        let meta_page_get = self
-            .pages
-            .get(META_PID, guard)
-            .map_err(|e| e.danger_cast())?;
+        pages: Vec<PageId>,
+        txid: u64,
+    ) -> Result<(), ()> {
+        unimplemented!()
+    }
 
-        let (meta_key, meta) = match meta_page_get {
-            PageGet::Materialized(ref meta_ptr, ref key) => {
-                let meta = meta_ptr.unwrap_meta();
-                (key, meta)
-            }
-            broken => panic!(
-                "pagecache returned non-base node: {:?}",
-                broken
-            ),
-        };
+    /// Mark a transaction as being aborted. This
+    /// ensures that during recovery we know that
+    /// this transaction is not the last one that
+    /// should be recovered, because the process
+    /// finished the transaction, but we may need
+    /// to clean up its pending state still.
+    pub fn abort_tx(&self, txid: u64) -> Result<(), ()> {
+        unimplemented!()
+    }
 
-        let mut current: PagePtr<_> = meta_key.clone();
-        loop {
-            let actual = meta.get_root(&name);
-            if actual != old {
-                return Err(Error::CasFailed(actual));
-            }
+    /// Mark a transaction as being completed. This
+    /// ensures that during recovery we know that
+    /// this transaction completed, and that we
+    /// can safely remove its entry in the
+    /// transaction table.
+    pub fn commit_tx(&self, txid: u64) -> Result<(), ()> {
+        unimplemented!()
+    }
 
-            let mut new_meta = meta.clone();
-            new_meta.set_root(name.clone(), new);
+    /// Remove entries associated with this transaction
+    /// in the transaction table, because we have
+    /// completed the transaction and finished
+    /// applying or removing pending state, and do
+    /// not need to know about it during crash recovery.
+    pub fn cleanup_tx(&self, txid: u64) -> Result<(), ()> {
+        unimplemented!()
+    }
 
-            let new_meta_frag = Frag::Meta(new_meta);
-            let res = self
-                .pages
-                .replace(META_PID, current, new_meta_frag, &guard)
-                .map_err(|e| e.danger_cast());
-
-            match res {
-                Ok(_) => return Ok(()),
-                Err(Error::CasFailed(actual)) => current = actual,
-                Err(other) => return Err(other.danger_cast()),
-            }
-        }
+    /// Call this during recovery to retrieve the set of
+    /// pages that were involved in a transaction
+    /// that was in a pending or aborted (but not
+    /// yet fully cleaned up) state during process
+    /// termination.
+    pub fn possibly_dirty_pages(
+        &self,
+    ) -> Result<Vec<(u64, Vec<PageId>)>, ()> {
+        unimplemented!()
     }
 }

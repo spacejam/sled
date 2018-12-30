@@ -36,6 +36,7 @@ mod db;
 mod frag;
 mod iter;
 mod materializer;
+mod meta;
 mod node;
 mod pinned_value;
 mod prefix;
@@ -45,45 +46,48 @@ mod tree;
 
 const META_PID: PageId = 0;
 const COUNTER_PID: PageId = 1;
-const ORIGINAL_ROOT_PID: PageId = 3;
+const DEFAULT_TREE_PID: PageId = 3;
+const TX_TREE_PID: PageId = 4;
 
-pub use self::{
-    db::Db,
-    iter::{Iter, Keys, Values},
-    pinned_value::PinnedValue,
-    subscription::{Event, Subscriber},
-    tree::Tree,
-};
+const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
+const TX_TREE_ID: &[u8] = b"__sled__transactions";
 
-use pagecache::{
-    Materializer, Measure, MergeOperator, PageCache, PageGet, PageId,
-    M,
-};
-
-pub use pagecache::{Config, ConfigBuilder, Error, Meta, Result};
-
-use self::{
-    binary_search::{
-        binary_search_gt, binary_search_lt, binary_search_lub,
-        leaf_search,
+pub use {
+    self::{
+        db::Db,
+        iter::{Iter, Keys, Values},
+        pinned_value::PinnedValue,
+        subscription::{Event, Subscriber},
+        tree::Tree,
     },
-    data::Data,
-    frag::{ChildSplit, ParentSplit},
-    node::Node,
-    prefix::{
-        prefix_cmp, prefix_cmp_encoded, prefix_decode, prefix_encode,
-    },
-    recovery::Recovery,
-    subscription::Subscriptions,
+    pagecache::{Config, ConfigBuilder, Error, Meta, Result},
 };
 
-use sled_sync::{debug_delay, pin, Guard};
-
-use log::{debug, error, trace};
-use serde::{Deserialize, Serialize};
-
-pub(crate) use self::frag::Frag;
-pub(crate) use self::materializer::BLinkMaterializer;
+use {
+    self::{
+        binary_search::{
+            binary_search_gt, binary_search_lt, binary_search_lub,
+            leaf_search,
+        },
+        data::Data,
+        frag::{ChildSplit, Frag, ParentSplit},
+        materializer::BLinkMaterializer,
+        node::Node,
+        prefix::{
+            prefix_cmp, prefix_cmp_encoded, prefix_decode,
+            prefix_encode,
+        },
+        recovery::Recovery,
+        subscription::Subscriptions,
+    },
+    log::{debug, error, trace},
+    pagecache::{
+        Materializer, Measure, MergeOperator, PageCache, PageGet,
+        PageId, M,
+    },
+    serde::{Deserialize, Serialize},
+    sled_sync::{debug_delay, pin, Guard},
+};
 
 type Key = Vec<u8>;
 type KeyRef<'a> = &'a [u8];

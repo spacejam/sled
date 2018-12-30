@@ -1051,7 +1051,8 @@ impl Tree {
             );
 
         debug_delay();
-        let cas = self.cas_root(
+        let cas = meta::cas_root(
+            &*self.pages,
             b"default".to_vec(),
             Some(from),
             new_root_pid,
@@ -1098,81 +1099,6 @@ impl Tree {
         Ok((path, ret))
     }
 
-    fn meta<'a>(&self, guard: &'a Guard) -> Result<&'a Meta, ()> {
-        let meta_page_get = self
-            .pages
-            .get(META_PID, guard)
-            .map_err(|e| e.danger_cast())?;
-
-        let meta = match meta_page_get {
-            PageGet::Materialized(ref meta_ptr, ref _ptr) => {
-                meta_ptr.unwrap_meta()
-            }
-            broken => panic!(
-                "pagecache returned non-base node: {:?}",
-                broken
-            ),
-        };
-
-        Ok(meta)
-    }
-
-    fn pid_for_name(
-        &self,
-        name: &[u8],
-        guard: &Guard,
-    ) -> Result<Option<usize>, ()> {
-        let meta = self.meta(guard)?;
-        Ok(meta.get_root(name))
-    }
-
-    fn cas_root(
-        &self,
-        name: Vec<u8>,
-        old: Option<usize>,
-        new: usize,
-        guard: &Guard,
-    ) -> Result<(), Option<usize>> {
-        let meta_page_get = self
-            .pages
-            .get(META_PID, guard)
-            .map_err(|e| e.danger_cast())?;
-
-        let (meta_key, meta) = match meta_page_get {
-            PageGet::Materialized(ref meta_ptr, ref key) => {
-                let meta = meta_ptr.unwrap_meta();
-                (key, meta)
-            }
-            broken => panic!(
-                "pagecache returned non-base node: {:?}",
-                broken
-            ),
-        };
-
-        let mut current: PagePtr<_> = meta_key.clone();
-        loop {
-            let actual = meta.get_root(&name);
-            if actual != old {
-                return Err(Error::CasFailed(actual));
-            }
-
-            let mut new_meta = meta.clone();
-            new_meta.set_root(name.clone(), new);
-
-            let new_meta_frag = Frag::Meta(new_meta);
-            let res = self
-                .pages
-                .replace(META_PID, current, new_meta_frag, &guard)
-                .map_err(|e| e.danger_cast());
-
-            match res {
-                Ok(_) => return Ok(()),
-                Err(Error::CasFailed(actual)) => current = actual,
-                Err(other) => return Err(other.danger_cast()),
-            }
-        }
-    }
-
     #[doc(hidden)]
     pub fn key_debug_str<K: AsRef<[u8]>>(&self, key: K) -> String {
         let guard = pin();
@@ -1201,7 +1127,9 @@ impl Tree {
         let _measure = Measure::new(&M.tree_traverse);
 
         let mut cursor =
-            self.pid_for_name(b"default", guard).unwrap().unwrap();
+            meta::pid_for_name(&*self.pages, b"default", guard)
+                .unwrap()
+                .unwrap();
         let mut path: Vec<(&'g Frag, TreePtr<'g>)> = vec![];
 
         // unsplit_parent is used for tracking need
@@ -1223,8 +1151,12 @@ impl Tree {
                     "cannot find pid {} in path_for_key",
                     cursor
                 );
-                cursor =
-                    self.pid_for_name(b"default", guard)?.unwrap();
+                cursor = meta::pid_for_name(
+                    &*self.pages,
+                    b"default",
+                    guard,
+                )?
+                .unwrap();
                 continue;
             }
 
@@ -1344,7 +1276,9 @@ impl Debug for Tree {
         let guard = pin();
 
         let mut pid =
-            self.pid_for_name(b"default", &guard).unwrap().unwrap();
+            meta::pid_for_name(&*self.pages, b"default", &guard)
+                .unwrap()
+                .unwrap();
         let mut left_most = pid;
         let mut level = 0;
 
