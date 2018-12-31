@@ -33,7 +33,7 @@ impl Drop for Db {
         let guard = pin();
 
         self.config.event_log.meta_before_restart(
-            self.meta(&guard)
+            meta::meta(&*self.pages, &guard)
                 .expect("should get meta under test")
                 .clone(),
         );
@@ -155,7 +155,7 @@ impl Db {
 
         #[cfg(feature = "event_log")]
         ret.config.event_log.meta_after_restart(
-            ret.meta(&guard)
+            meta::meta(&*ret.pages, &guard)
                 .expect("should be able to get meta under test")
                 .clone(),
         );
@@ -375,8 +375,8 @@ impl Db {
     /// transactional state written to them.
     pub fn mark_pending_tx(
         &self,
-        pages: Vec<PageId>,
-        txid: u64,
+        _pages: Vec<PageId>,
+        _txid: u64,
     ) -> Result<(), ()> {
         unimplemented!()
     }
@@ -387,7 +387,7 @@ impl Db {
     /// should be recovered, because the process
     /// finished the transaction, but we may need
     /// to clean up its pending state still.
-    pub fn abort_tx(&self, txid: u64) -> Result<(), ()> {
+    pub fn abort_tx(&self, _txid: u64) -> Result<(), ()> {
         unimplemented!()
     }
 
@@ -396,7 +396,7 @@ impl Db {
     /// this transaction completed, and that we
     /// can safely remove its entry in the
     /// transaction table.
-    pub fn commit_tx(&self, txid: u64) -> Result<(), ()> {
+    pub fn commit_tx(&self, _txid: u64) -> Result<(), ()> {
         unimplemented!()
     }
 
@@ -405,7 +405,7 @@ impl Db {
     /// completed the transaction and finished
     /// applying or removing pending state, and do
     /// not need to know about it during crash recovery.
-    pub fn cleanup_tx(&self, txid: u64) -> Result<(), ()> {
+    pub fn cleanup_tx(&self, _txid: u64) -> Result<(), ()> {
         unimplemented!()
     }
 
