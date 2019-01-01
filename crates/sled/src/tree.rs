@@ -1053,7 +1053,7 @@ impl Tree {
         debug_delay();
         let cas = meta::cas_root(
             &*self.pages,
-            b"default".to_vec(),
+            DEFAULT_TREE_ID.to_vec(),
             Some(from),
             new_root_pid,
             guard,
@@ -1127,7 +1127,7 @@ impl Tree {
         let _measure = Measure::new(&M.tree_traverse);
 
         let mut cursor =
-            meta::pid_for_name(&*self.pages, b"default", guard)
+            meta::pid_for_name(&*self.pages, DEFAULT_TREE_ID, guard)
                 .unwrap()
                 .unwrap();
         let mut path: Vec<(&'g Frag, TreePtr<'g>)> = vec![];
@@ -1153,7 +1153,7 @@ impl Tree {
                 );
                 cursor = meta::pid_for_name(
                     &*self.pages,
-                    b"default",
+                    DEFAULT_TREE_ID,
                     guard,
                 )?
                 .unwrap();
@@ -1276,7 +1276,7 @@ impl Debug for Tree {
         let guard = pin();
 
         let mut pid =
-            meta::pid_for_name(&*self.pages, b"default", &guard)
+            meta::pid_for_name(&*self.pages, DEFAULT_TREE_ID, &guard)
                 .unwrap()
                 .unwrap();
         let mut left_most = pid;

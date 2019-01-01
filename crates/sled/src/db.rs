@@ -147,7 +147,7 @@ impl Db {
                 idgen_persists,
             )),
             idgen_persist_mu: Arc::new(Mutex::new(())),
-            tenants: unsafe { std::mem::uninitialized() },
+            tenants: Arc::new(RwLock::new(HashMap::new())),
             default: unsafe { std::mem::uninitialized() },
             transactions: unsafe { std::mem::uninitialized() },
             was_recovered,
@@ -188,7 +188,7 @@ impl Db {
             );
         }
 
-        let mut tenants = HashMap::new();
+        let mut tenants = ret.tenants.write().unwrap();
 
         for (id, _root) in
             meta::meta(&*ret.pages, &guard)?.tenants().into_iter()
@@ -201,9 +201,10 @@ impl Db {
             tenants.insert(id, Arc::new(tree));
         }
 
+        drop(tenants);
+
         let mut ret = ret;
 
-        ret.tenants = Arc::new(RwLock::new(tenants));
         ret.default =
             ret.open_tree(DEFAULT_TREE_ID.to_vec(), &guard)?;
         ret.transactions =
