@@ -230,6 +230,67 @@ fn tree_iterator() {
 }
 
 #[test]
+fn tree_subscriptions_and_keyspaces() -> Result<(), ()> {
+    let config = ConfigBuilder::new()
+        .temporary(true)
+        .blink_node_split_size(0)
+        .flush_every_ms(None)
+        .build();
+
+    let db = sled::Db::start(config.clone()).unwrap();
+
+    let t1 = db.open_tree(b"1".to_vec())?;
+    let mut s1 = t1.watch_prefix(b"".to_vec());
+
+    let t2 = db.open_tree(b"2".to_vec())?;
+    let mut s2 = t2.watch_prefix(b"".to_vec());
+
+    t1.set(b"t1_a", b"t1_a".to_vec())?;
+    t2.set(b"t2_a", b"t2_a".to_vec())?;
+
+    assert_eq!(s1.next().unwrap().key(), b"t1_a");
+    assert_eq!(s2.next().unwrap().key(), b"t2_a");
+
+    drop(db);
+    drop(t1);
+    drop(t2);
+
+    let db = sled::Db::start(config.clone()).unwrap();
+
+    let t1 = db.open_tree(b"1".to_vec())?;
+    let mut s1 = t1.watch_prefix(b"".to_vec());
+
+    let t2 = db.open_tree(b"2".to_vec())?;
+    let mut s2 = t2.watch_prefix(b"".to_vec());
+
+    assert!(db.is_empty());
+    assert_eq!(t1.len(), 1);
+    assert_eq!(t2.len(), 1);
+
+    t1.set(b"t1_b", b"t1_b".to_vec())?;
+    t2.set(b"t2_b", b"t2_b".to_vec())?;
+
+    assert_eq!(s1.next().unwrap().key(), b"t1_b");
+    assert_eq!(s2.next().unwrap().key(), b"t2_b");
+
+    drop(db);
+    drop(t1);
+    drop(t2);
+
+    let db = sled::Db::start(config.clone()).unwrap();
+
+    let t1 = db.open_tree(b"1".to_vec())?;
+
+    let t2 = db.open_tree(b"2".to_vec())?;
+
+    assert!(db.is_empty());
+    assert_eq!(t1.len(), 2);
+    assert_eq!(t2.len(), 2);
+
+    Ok(())
+}
+
+#[test]
 fn tree_range() {
     let config = ConfigBuilder::new()
         .temporary(true)

@@ -60,7 +60,6 @@ pub fn fuzz_then_shrink(buf: &[u8]) {
         })
         .collect();
 
-    println!("working on ops {:?}", ops);
     match panic::catch_unwind(move || {
         prop_tree_matches_btreemap(ops, 0, 100, false)
     }) {
@@ -214,6 +213,8 @@ pub fn prop_tree_matches_btreemap(
     snapshot_after: u8,
     flusher: bool,
 ) -> bool {
+    super::setup_logger();
+
     use self::*;
     let config = ConfigBuilder::new()
         .async_io(false)
