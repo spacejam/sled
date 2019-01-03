@@ -510,7 +510,7 @@ impl ConfigBuilder {
 #[derive(Debug)]
 pub struct Config {
     inner: Arc<ConfigBuilder>,
-    file: Arc<fs::File>,
+    pub(crate) file: Arc<fs::File>,
     pub(crate) thread_pool: Option<Arc<rayon::ThreadPool>>,
     threads: Arc<AtomicUsize>,
     refs: Arc<AtomicUsize>,
@@ -583,15 +583,6 @@ fn tn() -> String {
 */
 
 impl Config {
-    // Retrieve a thread-local file handle to the
-    // configured underlying storage,
-    // or create a new one if this is the first time the
-    // thread is accessing it.
-    #[doc(hidden)]
-    pub fn file(&self) -> Result<Arc<fs::File>, ()> {
-        Ok(self.file.clone())
-    }
-
     /// Return the global error if one was encountered during
     /// an asynchronous IO operation.
     pub fn global_error(&self) -> Option<Error<()>> {
@@ -814,5 +805,13 @@ impl Config {
         );
         */
         Ok(())
+    }
+
+    #[doc(hidden)]
+    // truncate the underlying file for corruption testing purposes.
+    pub fn truncate_corrupt(&self, new_len: u64) {
+        self.file
+            .set_len(new_len)
+            .expect("should be able to truncate");
     }
 }

@@ -96,7 +96,7 @@ impl IoBufs {
         mut snapshot: Snapshot<R>,
     ) -> Result<IoBufs, ()> {
         // open file for writing
-        let file = config.file()?;
+        let file = &config.file;
 
         let io_buf_size = config.io_buf_size;
 
@@ -985,7 +985,7 @@ impl IoBufs {
 
         let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
 
-        let f = iobufs.config.file()?;
+        let f = &iobufs.config.file;
         io_fail!(self, "buffer write");
         f.pwrite_all(&data[..total_len], lid)?;
         f.sync_all()?;
@@ -1191,9 +1191,7 @@ impl Drop for IoBufs {
             error!("failed to flush from IoBufs::drop: {}", e);
         }
 
-        if let Ok(f) = self.0.config.file() {
-            f.sync_all().unwrap();
-        }
+        self.0.config.file.sync_all().unwrap();
 
         debug!("IoBufs dropped");
     }

@@ -77,7 +77,7 @@ impl DiskPtr {
         match self {
             DiskPtr::Blob(_lid, ptr) => read_blob(*ptr, &config),
             DiskPtr::Inline(lid) => {
-                let f = config.file()?;
+                let f = &config.file;
 
                 f.read_message(*lid, &config).map(|log_read| {
                     log_read

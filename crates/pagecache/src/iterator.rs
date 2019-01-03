@@ -76,86 +76,81 @@ impl Iterator for LogIter {
             let lid = self.segment_base.unwrap()
                 + (self.cur_lsn % self.segment_len as Lsn) as LogId;
 
-            if let Ok(f) = self.config.file() {
-                match f.read_message(lid, &self.config) {
-                    Ok(LogRead::Blob(lsn, buf, blob_ptr)) => {
-                        if lsn != self.cur_lsn {
-                            error!("read Flush with bad lsn");
-                            return None;
-                        }
-                        trace!("read blob flush in LogIter::next");
-                        self.cur_lsn +=
-                            (MSG_HEADER_LEN + BLOB_INLINE_LEN) as Lsn;
-                        return Some((
-                            lsn,
-                            DiskPtr::Blob(lid, blob_ptr),
-                            buf,
-                        ));
-                    }
-                    Ok(LogRead::Inline(lsn, buf, on_disk_len)) => {
-                        if lsn != self.cur_lsn {
-                            error!("read Flush with bad lsn");
-                            return None;
-                        }
-                        trace!("read inline flush in LogIter::next");
-                        self.cur_lsn +=
-                            (MSG_HEADER_LEN + on_disk_len) as Lsn;
-                        return Some((lsn, DiskPtr::Inline(lid), buf));
-                    }
-                    Ok(LogRead::Failed(lsn, on_disk_len)) => {
-                        if lsn != self.cur_lsn {
-                            error!("read Failed with bad lsn");
-                            return None;
-                        }
-                        trace!("read zeroed in LogIter::next");
-                        self.cur_lsn +=
-                            (MSG_HEADER_LEN + on_disk_len) as Lsn;
-                    }
-                    Ok(LogRead::Corrupted(_len)) => {
-                        trace!("read corrupted msg in LogIter::next as lid {} lsn {}",
-                               lid, self.cur_lsn);
+            let f = &self.config.file;
+            match f.read_message(lid, &self.config) {
+                Ok(LogRead::Blob(lsn, buf, blob_ptr)) => {
+                    if lsn != self.cur_lsn {
+                        error!("read Flush with bad lsn");
                         return None;
                     }
-                    Ok(LogRead::Pad(lsn)) => {
-                        if lsn != self.cur_lsn {
-                            error!("read Pad with bad lsn");
-                            return None;
-                        }
-
-                        if self.trailer.is_none() {
-                            // This segment was torn, nothing left to read.
-                            trace!("no segment trailer found, ending iteration");
-                            return None;
-                        }
-
-                        self.segment_base.take();
-
-                        self.trailer.take();
-                        continue;
-                    }
-                    Ok(LogRead::DanglingBlob(lsn, blob_ptr)) => {
-                        debug!(
-                            "encountered dangling blob \
-                             pointer at lsn {} ptr {}",
-                            lsn, blob_ptr
-                        );
-                        self.cur_lsn +=
-                            (MSG_HEADER_LEN + BLOB_INLINE_LEN) as Lsn;
-                        continue;
-                    }
-                    Err(e) => {
-                        error!(
-                            "failed to read log message at lid {} \
-                            with expected lsn {} during iteration: {}",
-                            lid,
-                            self.cur_lsn,
-                            e
-                        );
-                        return None;
-                    }
+                    trace!("read blob flush in LogIter::next");
+                    self.cur_lsn +=
+                        (MSG_HEADER_LEN + BLOB_INLINE_LEN) as Lsn;
+                    return Some((
+                        lsn,
+                        DiskPtr::Blob(lid, blob_ptr),
+                        buf,
+                    ));
                 }
-            } else {
-                panic!("iterator created for system with no file opened yet");
+                Ok(LogRead::Inline(lsn, buf, on_disk_len)) => {
+                    if lsn != self.cur_lsn {
+                        error!("read Flush with bad lsn");
+                        return None;
+                    }
+                    trace!("read inline flush in LogIter::next");
+                    self.cur_lsn +=
+                        (MSG_HEADER_LEN + on_disk_len) as Lsn;
+                    return Some((lsn, DiskPtr::Inline(lid), buf));
+                }
+                Ok(LogRead::Failed(lsn, on_disk_len)) => {
+                    if lsn != self.cur_lsn {
+                        error!("read Failed with bad lsn");
+                        return None;
+                    }
+                    trace!("read zeroed in LogIter::next");
+                    self.cur_lsn +=
+                        (MSG_HEADER_LEN + on_disk_len) as Lsn;
+                }
+                Ok(LogRead::Corrupted(_len)) => {
+                    trace!("read corrupted msg in LogIter::next as lid {} lsn {}",
+                               lid, self.cur_lsn);
+                    return None;
+                }
+                Ok(LogRead::Pad(lsn)) => {
+                    if lsn != self.cur_lsn {
+                        error!("read Pad with bad lsn");
+                        return None;
+                    }
+
+                    if self.trailer.is_none() {
+                        // This segment was torn, nothing left to read.
+                        trace!("no segment trailer found, ending iteration");
+                        return None;
+                    }
+
+                    self.segment_base.take();
+
+                    self.trailer.take();
+                    continue;
+                }
+                Ok(LogRead::DanglingBlob(lsn, blob_ptr)) => {
+                    debug!(
+                        "encountered dangling blob \
+                         pointer at lsn {} ptr {}",
+                        lsn, blob_ptr
+                    );
+                    self.cur_lsn +=
+                        (MSG_HEADER_LEN + BLOB_INLINE_LEN) as Lsn;
+                    continue;
+                }
+                Err(e) => {
+                    error!(
+                        "failed to read log message at lid {} \
+                         with expected lsn {} during iteration: {}",
+                        lid, self.cur_lsn, e
+                    );
+                    return None;
+                }
             }
         }
     }
@@ -177,7 +172,7 @@ impl LogIter {
         // we add segment_len to this check because we may be getting the
         // initial segment that is a bit behind where we left off before.
         assert!(lsn + self.segment_len as Lsn >= self.cur_lsn);
-        let f = self.config.file()?;
+        let f = &self.config.file;
         let segment_header = f.read_segment_header(offset)?;
         if offset % self.segment_len as LogId != 0 {
             debug!("segment offset not divisible by segment length");
@@ -241,21 +236,20 @@ impl LogIter {
     fn fadvise_willneed(&self, lid: LogId) {
         use std::os::unix::io::AsRawFd;
 
-        if let Ok(f) = self.config.file() {
-            let ret = unsafe {
-                libc::posix_fadvise(
-                    f.as_raw_fd(),
-                    lid as libc::off_t,
-                    self.config.io_buf_size as libc::off_t,
-                    libc::POSIX_FADV_WILLNEED,
-                )
-            };
-            if ret != 0 {
-                panic!(
-                    "failed to call fadvise: {}",
-                    std::io::Error::from_raw_os_error(ret)
-                );
-            }
+        let f = &self.config.file;
+        let ret = unsafe {
+            libc::posix_fadvise(
+                f.as_raw_fd(),
+                lid as libc::off_t,
+                self.config.io_buf_size as libc::off_t,
+                libc::POSIX_FADV_WILLNEED,
+            )
+        };
+        if ret != 0 {
+            panic!(
+                "failed to call fadvise: {}",
+                std::io::Error::from_raw_os_error(ret)
+            );
         }
     }
 }
