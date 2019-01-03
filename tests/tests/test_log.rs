@@ -509,7 +509,8 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
 
                 // on recovery, we will rewind over any aborted tip entries
                 while !reference.is_empty() {
-                    let should_pop = reference.last().unwrap().2.is_none();
+                    let should_pop =
+                        reference.last().unwrap().2.is_none();
                     if should_pop {
                         reference.pop();
                     } else {
@@ -553,11 +554,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
 
                     use std::os::unix::io::AsRawFd;
 
-                    {
-                        let f = config.file().unwrap();
-                        f.set_len(new_len)
-                            .expect("should be able to truncate");
-                    }
+                    config.truncate_corrupt(new_len);
 
                     log = Log::start_raw_log(config.clone()).unwrap();
                 }

@@ -127,7 +127,7 @@ impl Log {
 
         if ptr.is_inline() {
             let lid = ptr.inline();
-            let f = self.config.file()?;
+            let f = &self.config.file;
 
             let read = f.read_message(lid, &self.config);
 

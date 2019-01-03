@@ -690,7 +690,7 @@ impl SegmentAccountant {
                 snapshot_max_lsn, lsn, lid
             );
             to_zero.push(lsn);
-            let f = self.config.file()?;
+            let f = &self.config.file;
             maybe_fail!("zero garbage segment");
             f.pwrite_all(&*vec![EVIL_BYTE; SEG_HEADER_LEN], lid)?;
             f.sync_all()?;
@@ -1094,7 +1094,7 @@ impl SegmentAccountant {
             "zeroing out segment beginning at {} for future lsn {}",
             lid, lsn
         );
-        let f = self.config.file()?;
+        let f = &self.config.file;
         maybe_fail!("zero segment");
         f.pwrite_all(
             &*vec![EVIL_BYTE; self.config.io_buf_size],
@@ -1199,7 +1199,7 @@ impl SegmentAccountant {
 
         debug!("truncating file to length {}", at);
 
-        let f = self.config.file()?;
+        let f = &self.config.file;
         f.set_len(at)?;
         f.sync_all().map_err(|e| e.into())
     }
@@ -1248,7 +1248,7 @@ fn scan_segment_lsns(
     let segment_len = config.io_buf_size as LogId;
     let mut cursor = 0;
 
-    let f = config.file()?;
+    let f = &config.file;
     while let Ok(segment) = f.read_segment_header(cursor) {
         // in the future this can be optimized to just read
         // the initial header at that position... but we need to
