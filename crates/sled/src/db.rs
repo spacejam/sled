@@ -78,7 +78,7 @@ impl Db {
             other => panic!("failed to verify snapshot: {:?}", other),
         }
 
-        let pages = PageCache::start(config.clone())?;
+        let pages = Arc::new(PageCache::start(config.clone())?);
 
         let recovery: Recovery =
             pages.recovered_state().unwrap_or_default();
@@ -139,8 +139,21 @@ impl Db {
             was_recovered = true;
         };
 
+        let default_tree = meta::open_tree(
+            pages.clone(),
+            config.clone(),
+            DEFAULT_TREE_ID.to_vec(),
+            &guard,
+        )?;
+        let tx_tree = meta::open_tree(
+            pages.clone(),
+            config.clone(),
+            TX_TREE_ID.to_vec(),
+            &guard,
+        )?;
+
         let ret = Db {
-            pages: Arc::new(pages),
+            pages: pages,
             config,
             idgen: Arc::new(AtomicUsize::new(idgen_recovery)),
             idgen_persists: Arc::new(AtomicUsize::new(
@@ -148,8 +161,8 @@ impl Db {
             )),
             idgen_persist_mu: Arc::new(Mutex::new(())),
             tenants: Arc::new(RwLock::new(HashMap::new())),
-            default: unsafe { std::mem::uninitialized() },
-            transactions: unsafe { std::mem::uninitialized() },
+            default: Arc::new(default_tree),
+            transactions: Arc::new(tx_tree),
             was_recovered,
         };
 
@@ -160,40 +173,13 @@ impl Db {
                 .clone(),
         );
 
-        if meta::pid_for_name(&*ret.pages, DEFAULT_TREE_ID, &guard)?
-            .is_none()
-        {
-            // set up initial tree
-
-            ret.open_tree(DEFAULT_TREE_ID.to_vec(), &guard)?;
-            assert_eq!(
-                meta::pid_for_name(
-                    &*ret.pages,
-                    DEFAULT_TREE_ID,
-                    &guard
-                )?,
-                Some(DEFAULT_TREE_PID)
-            );
-        }
-
-        if meta::pid_for_name(&*ret.pages, TX_TREE_ID, &guard)?
-            .is_none()
-        {
-            // set up initial tree
-
-            ret.open_tree(TX_TREE_ID.to_vec(), &guard)?;
-            assert_eq!(
-                meta::pid_for_name(&*ret.pages, TX_TREE_ID, &guard)?,
-                Some(TX_TREE_PID)
-            );
-        }
-
         let mut tenants = ret.tenants.write().unwrap();
 
         for (id, _root) in
             meta::meta(&*ret.pages, &guard)?.tenants().into_iter()
         {
             let tree = Tree {
+                tree_id: id.clone(),
                 subscriptions: Arc::new(Subscriptions::default()),
                 config: ret.config.clone(),
                 pages: ret.pages.clone(),
@@ -205,10 +191,8 @@ impl Db {
 
         let mut ret = ret;
 
-        ret.default =
-            ret.open_tree(DEFAULT_TREE_ID.to_vec(), &guard)?;
-        ret.transactions =
-            ret.open_tree(TX_TREE_ID.to_vec(), &guard)?;
+        ret.default = ret.open_tree(DEFAULT_TREE_ID.to_vec())?;
+        ret.transactions = ret.open_tree(TX_TREE_ID.to_vec())?;
 
         Ok(ret)
     }
@@ -283,8 +267,9 @@ impl Db {
     pub fn open_tree<'a>(
         &self,
         name: Vec<u8>,
-        guard: &'a Guard,
     ) -> Result<Arc<Tree>, ()> {
+        let guard = pin();
+
         let tenants = self.tenants.read().unwrap();
         if let Some(tree) = tenants.get(&name) {
             return Ok(tree.clone());
@@ -336,12 +321,13 @@ impl Db {
             name.clone(),
             None,
             root_id,
-            guard,
+            &guard,
         )
         .map_err(|e| e.danger_cast())?;
 
         let mut tenants = self.tenants.write().unwrap();
         let tree = Arc::new(Tree {
+            tree_id: name.clone(),
             subscriptions: Arc::new(Subscriptions::default()),
             config: self.config.clone(),
             pages: self.pages.clone(),

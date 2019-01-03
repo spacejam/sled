@@ -46,6 +46,7 @@ impl<'a> IntoIterator for &'a Tree {
 /// ```
 #[derive(Clone)]
 pub struct Tree {
+    pub(crate) tree_id: Vec<u8>,
     pub(crate) config: Config,
     pub(crate) subscriptions: Arc<Subscriptions>,
     pub(crate) pages:
@@ -1053,7 +1054,7 @@ impl Tree {
         debug_delay();
         let cas = meta::cas_root(
             &*self.pages,
-            DEFAULT_TREE_ID.to_vec(),
+            self.tree_id.clone(),
             Some(from),
             new_root_pid,
             guard,
@@ -1127,7 +1128,7 @@ impl Tree {
         let _measure = Measure::new(&M.tree_traverse);
 
         let mut cursor =
-            meta::pid_for_name(&*self.pages, DEFAULT_TREE_ID, guard)
+            meta::pid_for_name(&*self.pages, &self.tree_id, guard)
                 .unwrap()
                 .unwrap();
         let mut path: Vec<(&'g Frag, TreePtr<'g>)> = vec![];
@@ -1153,7 +1154,7 @@ impl Tree {
                 );
                 cursor = meta::pid_for_name(
                     &*self.pages,
-                    DEFAULT_TREE_ID,
+                    &self.tree_id,
                     guard,
                 )?
                 .unwrap();
@@ -1276,7 +1277,7 @@ impl Debug for Tree {
         let guard = pin();
 
         let mut pid =
-            meta::pid_for_name(&*self.pages, DEFAULT_TREE_ID, &guard)
+            meta::pid_for_name(&*self.pages, &self.tree_id, &guard)
                 .unwrap()
                 .unwrap();
         let mut left_most = pid;
