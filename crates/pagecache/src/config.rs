@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicPtr, AtomicUsize, Ordering},
-        Arc, Mutex,
+        Arc,
     },
 };
 
@@ -166,7 +166,17 @@ impl ConfigBuilder {
     }
 
     /// Finalize the configuration.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if it is not possible
+    /// to open the files for performing database IO,
+    /// or if the provided configuration fails some
+    /// basic sanity checks.
     pub fn build(mut self) -> Config {
+        // only validate, setup directory, and open file once
+        self.validate().unwrap();
+
         if self.temporary && self.path == PathBuf::from(DEFAULT_PATH)
         {
             #[cfg(unix)]
@@ -223,11 +233,15 @@ impl ConfigBuilder {
             None
         };
 
+        let file = self.open_file().expect(&format!(
+            "should be able to open configured file at {:?}",
+            self.db_path(),
+        ));
+
         // seal config in a Config
         Config {
             inner: Arc::new(self),
-            file: Arc::new(AtomicPtr::default()),
-            build_locker: Arc::new(Mutex::new(())),
+            file: Arc::new(file),
             refs: Arc::new(AtomicUsize::new(0)),
             global_error: Arc::new(AtomicPtr::default()),
             #[cfg(feature = "event_log")]
@@ -259,199 +273,55 @@ impl ConfigBuilder {
         (async_io, bool, "perform IO operations on a threadpool"),
         (async_io_threads, usize, "set the number of threads in the IO threadpool. defaults to # logical CPUs.")
     );
-}
 
-/// A finalized `ConfigBuilder` that can be use multiple times
-/// to open a `Tree` or `Log`.
-#[derive(Debug)]
-pub struct Config {
-    inner: Arc<ConfigBuilder>,
-    file: Arc<AtomicPtr<Arc<fs::File>>>,
-    build_locker: Arc<Mutex<()>>,
-    pub(crate) thread_pool: Option<Arc<rayon::ThreadPool>>,
-    threads: Arc<AtomicUsize>,
-    refs: Arc<AtomicUsize>,
-    pub(crate) global_error: Arc<AtomicPtr<Error<()>>>,
-    #[cfg(feature = "event_log")]
-    /// an event log for concurrent debugging
-    pub event_log: Arc<event_log::EventLog>,
-}
-
-unsafe impl Send for Config {}
-unsafe impl Sync for Config {}
-
-impl Clone for Config {
-    fn clone(&self) -> Config {
-        self.refs.fetch_add(1, Ordering::SeqCst);
-        Config {
-            inner: self.inner.clone(),
-            file: self.file.clone(),
-            build_locker: self.build_locker.clone(),
-            refs: self.refs.clone(),
-            #[cfg(feature = "event_log")]
-            event_log: self.event_log.clone(),
-            threads: self.threads.clone(),
-            thread_pool: self.thread_pool.clone(),
-            global_error: self.global_error.clone(),
-        }
-    }
-}
-
-impl Drop for Config {
-    fn drop(&mut self) {
-        // if our ref count is 0 we can drop and close our file properly.
-        if self.refs.fetch_sub(1, Ordering::SeqCst) == 0 {
-            // wait on thread pool to close
-            debug!("dropping threadpool and waiting for it to drain");
-            let thread_pool = self.thread_pool.take();
-            drop(thread_pool);
-
-            while self.threads.load(SeqCst) != 0 {
-                std::thread::sleep(std::time::Duration::from_millis(
-                    50,
-                ));
-            }
-            debug!("threadpool drained");
-
-            let f_ptr: *mut Arc<fs::File> = self
-                .file
-                .swap(std::ptr::null_mut(), Ordering::Relaxed);
-            if !f_ptr.is_null() {
-                let f: Box<Arc<fs::File>> =
-                    unsafe { Box::from_raw(f_ptr) };
-                drop(f);
-            }
-
-            if self.print_profile_on_drop {
-                M.print_profile();
-            }
-
-            if !self.temporary {
-                return;
-            }
-
-            // Our files are temporary, so nuke them.
-            warn!(
-                "removing temporary storage file {}",
-                self.inner.path.to_string_lossy()
-            );
-            let _res = fs::remove_dir_all(&self.path);
-        }
-    }
-}
-
-impl Config {
-    // Retrieve a thread-local file handle to the
-    // configured underlying storage,
-    // or create a new one if this is the first time the
-    // thread is accessing it.
-    #[doc(hidden)]
-    pub fn file(&self) -> Result<Arc<fs::File>, ()> {
-        let loaded = self.file.load(Ordering::Relaxed);
-
-        if loaded.is_null() {
-            let _lock = self.build_locker.lock().unwrap();
-            if self.file.load(Ordering::SeqCst).is_null() {
-                self.initialize()?;
-            }
-            Ok(unsafe { (*self.file.load(Ordering::SeqCst)).clone() })
-        } else {
-            Ok(unsafe { (*loaded).clone() })
-        }
-    }
-
-    /// Return the global error if one was encountered during
-    /// an asynchronous IO operation.
-    pub fn global_error(&self) -> Option<Error<()>> {
-        let ge = self.global_error.load(Ordering::Relaxed);
-        if ge.is_null() {
-            None
-        } else {
-            unsafe { Some((*ge).clone()) }
-        }
-    }
-
-    pub(crate) fn set_global_error(&self, error: Error<()>) {
-        let ptr = Box::into_raw(Box::new(error));
-        let ret = self.global_error.compare_and_swap(
-            std::ptr::null_mut(),
-            ptr as *mut Error<()>,
-            Ordering::Relaxed,
+    // panics if config options are outside of advised range
+    fn validate(&self) -> Result<(), ()> {
+        supported!(
+            self.io_bufs <= 32,
+            "too many configured io_bufs. please make <= 32"
         );
-
-        if ret.is_null() {
-            // CAS failed, reclaim memory
-            unsafe {
-                drop(Box::from_raw(ptr));
-            }
-        }
+        supported!(
+            self.io_buf_size >= 100,
+            "io_buf_size should be hundreds of kb at minimum, and we won't start if below 100"
+        );
+        supported!(
+            self.io_buf_size <= 1 << 24,
+            "io_buf_size should be <= 16mb"
+        );
+        supported!(self.page_consolidation_threshold >= 1, "must consolidate pages after a non-zero number of updates");
+        supported!(self.page_consolidation_threshold < 1 << 20, "must consolidate pages after fewer than 1 million updates");
+        supported!(
+            self.cache_bits <= 20,
+            "# LRU shards = 2^cache_bits. set cache_bits to 20 or less."
+        );
+        supported!(
+            match self.segment_cleanup_threshold.partial_cmp(&0.01) {
+                Some(std::cmp::Ordering::Equal)
+                | Some(std::cmp::Ordering::Greater) => true,
+                Some(std::cmp::Ordering::Less) | None => false,
+            },
+            "segment_cleanup_threshold must be >= 1%"
+        );
+        supported!(
+            self.segment_cleanup_skew < 99,
+            "segment_cleanup_skew cannot be greater than 99%"
+        );
+        supported!(
+            self.compression_factor >= 1,
+            "compression_factor must be >= 1"
+        );
+        supported!(
+            self.compression_factor <= 22,
+            "compression_factor must be <= 22"
+        );
+        supported!(
+            self.idgen_persist_interval > 0,
+            "idgen_persist_interval must be above 0"
+        );
+        Ok(())
     }
 
-    // Get the path of the database
-    #[doc(hidden)]
-    pub fn get_path(&self) -> PathBuf {
-        self.inner.path.clone()
-    }
-
-    // returns the current snapshot file prefix
-    #[doc(hidden)]
-    pub fn snapshot_prefix(&self) -> PathBuf {
-        let snapshot_path = self.snapshot_path.clone();
-        let path = self.get_path();
-
-        snapshot_path.unwrap_or(path)
-    }
-
-    // returns the snapshot file paths for this system
-    #[doc(hidden)]
-    pub fn get_snapshot_files(
-        &self,
-    ) -> std::io::Result<Vec<PathBuf>> {
-        let mut prefix = self.snapshot_prefix();
-
-        prefix.push("snap.");
-
-        let abs_prefix: PathBuf = if Path::new(&prefix).is_absolute()
-        {
-            prefix
-        } else {
-            let mut abs_path = std::env::current_dir()?;
-            abs_path.push(prefix.clone());
-            abs_path
-        };
-
-        let filter =
-            |dir_entry: std::io::Result<std::fs::DirEntry>| {
-                if let Ok(de) = dir_entry {
-                    let path_buf = de.path();
-                    let path = path_buf.as_path();
-                    let path_str = &*path.to_string_lossy();
-                    if path_str
-                        .starts_with(&*abs_prefix.to_string_lossy())
-                        && !path_str.ends_with(".in___motion")
-                    {
-                        Some(path.to_path_buf())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            };
-
-        let snap_dir = Path::new(&abs_prefix).parent().unwrap();
-
-        if !snap_dir.exists() {
-            std::fs::create_dir_all(snap_dir)?;
-        }
-
-        Ok(snap_dir.read_dir()?.filter_map(filter).collect())
-    }
-
-    fn initialize(&self) -> Result<(), ()> {
-        // only validate, setup directory, and open file once
-        self.validate()?;
-
+    fn open_file(&mut self) -> Result<fs::File, ()> {
         let path = self.db_path();
 
         // panic if we can't parse the path
@@ -501,86 +371,34 @@ impl Config {
                     )));
                 }
 
-                // turn file into a raw pointer for future use
-                let file_ptr =
-                    Box::into_raw(Box::new(Arc::new(file)));
-                self.file.store(file_ptr, Ordering::SeqCst);
+                Ok(file)
             }
-            Err(e) => {
-                return Err(e.into());
-            }
+            Err(e) => Err(e.into()),
         }
-        Ok(())
-    }
-
-    // panics if config options are outside of advised range
-    fn validate(&self) -> Result<(), ()> {
-        supported!(
-            self.inner.io_bufs <= 32,
-            "too many configured io_bufs. please make <= 32"
-        );
-        supported!(
-            self.inner.io_buf_size >= 100,
-            "io_buf_size should be hundreds of kb at minimum, and we won't start if below 100"
-        );
-        supported!(
-            self.inner.io_buf_size <= 1 << 24,
-            "io_buf_size should be <= 16mb"
-        );
-        supported!(self.inner.page_consolidation_threshold >= 1, "must consolidate pages after a non-zero number of updates");
-        supported!(self.inner.page_consolidation_threshold < 1 << 20, "must consolidate pages after fewer than 1 million updates");
-        supported!(
-            self.inner.cache_bits <= 20,
-            "# LRU shards = 2^cache_bits. set cache_bits to 20 or less."
-        );
-        supported!(
-            match self.inner.segment_cleanup_threshold.partial_cmp(&0.01) {
-                Some(std::cmp::Ordering::Equal) | Some(std::cmp::Ordering::Greater) => true,
-                Some(std::cmp::Ordering::Less) | None => false,
-            },
-            "segment_cleanup_threshold must be >= 1%"
-        );
-        supported!(
-            self.inner.segment_cleanup_skew < 99,
-            "segment_cleanup_skew cannot be greater than 99%"
-        );
-        supported!(
-            self.inner.compression_factor >= 1,
-            "compression_factor must be >= 1"
-        );
-        supported!(
-            self.inner.compression_factor <= 22,
-            "compression_factor must be <= 22"
-        );
-        supported!(
-            self.inner.idgen_persist_interval > 0,
-            "idgen_persist_interval must be above 0"
-        );
-        Ok(())
     }
 
     fn verify_config_changes_ok(&self) -> Result<(), ()> {
         match self.read_config() {
             Ok(Some(old)) => {
                 if old.merge_operator.is_some() {
-                    supported!(self.inner.merge_operator.is_some(),
+                    supported!(self.merge_operator.is_some(),
                         "this system was previously opened with a \
                         merge operator. must supply one FOREVER after \
                         choosing to do so once, BWAHAHAHAHAHAHA!!!!");
                 }
 
                 supported!(
-                    self.inner.use_compression == old.use_compression,
+                    self.use_compression == old.use_compression,
                     format!("cannot change compression values across restarts. \
                         old value of use_compression loaded from disk: {}, \
                         currently set value: {}.",
                         old.use_compression,
-                        self.inner.use_compression,
+                        self.use_compression,
                     )
                 );
 
                 supported!(
-                    self.inner.io_buf_size == old.io_buf_size,
+                    self.io_buf_size == old.io_buf_size,
                     format!(
                         "cannot change the io buffer size across restarts. \
                         please change it back to {}",
@@ -595,7 +413,7 @@ impl Config {
     }
 
     fn write_config(&self) -> Result<(), ()> {
-        let bytes = serialize(&*self.inner).unwrap();
+        let bytes = serialize(&*self).unwrap();
         let crc: u64 = crc64(&*bytes);
         let crc_arr = u64_to_arr(crc);
 
@@ -661,6 +479,12 @@ impl Config {
         Ok(deserialize::<ConfigBuilder>(&*buf).ok())
     }
 
+    // Get the path of the database
+    #[doc(hidden)]
+    pub fn get_path(&self) -> PathBuf {
+        self.path.clone()
+    }
+
     pub(crate) fn blob_path(&self, id: Lsn) -> PathBuf {
         let mut path = self.get_path();
         path.push("blobs");
@@ -678,6 +502,176 @@ impl Config {
         let mut path = self.get_path();
         path.push("conf");
         path
+    }
+}
+
+/// A finalized `ConfigBuilder` that can be use multiple times
+/// to open a `Tree` or `Log`.
+#[derive(Debug)]
+pub struct Config {
+    inner: Arc<ConfigBuilder>,
+    file: Arc<fs::File>,
+    pub(crate) thread_pool: Option<Arc<rayon::ThreadPool>>,
+    threads: Arc<AtomicUsize>,
+    refs: Arc<AtomicUsize>,
+    pub(crate) global_error: Arc<AtomicPtr<Error<()>>>,
+    #[cfg(feature = "event_log")]
+    /// an event log for concurrent debugging
+    pub event_log: Arc<event_log::EventLog>,
+}
+
+unsafe impl Send for Config {}
+unsafe impl Sync for Config {}
+
+impl Clone for Config {
+    fn clone(&self) -> Config {
+        self.refs.fetch_add(1, Ordering::SeqCst);
+        Config {
+            inner: self.inner.clone(),
+            file: self.file.clone(),
+            refs: self.refs.clone(),
+            #[cfg(feature = "event_log")]
+            event_log: self.event_log.clone(),
+            threads: self.threads.clone(),
+            thread_pool: self.thread_pool.clone(),
+            global_error: self.global_error.clone(),
+        }
+    }
+}
+
+impl Drop for Config {
+    fn drop(&mut self) {
+        // if our ref count is 0 we can drop and close our file properly.
+        if self.refs.fetch_sub(1, Ordering::SeqCst) == 0 {
+            // wait on thread pool to close
+            debug!("dropping threadpool and waiting for it to drain");
+            let thread_pool = self.thread_pool.take();
+            drop(thread_pool);
+
+            while self.threads.load(SeqCst) != 0 {
+                std::thread::sleep(std::time::Duration::from_millis(
+                    50,
+                ));
+            }
+            debug!("threadpool drained");
+
+            if self.print_profile_on_drop {
+                M.print_profile();
+            }
+
+            if !self.temporary {
+                return;
+            }
+
+            // Our files are temporary, so nuke them.
+            warn!(
+                "removing temporary storage file {}",
+                self.inner.path.to_string_lossy()
+            );
+            let _res = fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
+/*
+fn tn() -> String {
+    std::thread::current()
+        .name()
+        .unwrap_or("unknown")
+        .to_owned()
+}
+*/
+
+impl Config {
+    // Retrieve a thread-local file handle to the
+    // configured underlying storage,
+    // or create a new one if this is the first time the
+    // thread is accessing it.
+    #[doc(hidden)]
+    pub fn file(&self) -> Result<Arc<fs::File>, ()> {
+        Ok(self.file.clone())
+    }
+
+    /// Return the global error if one was encountered during
+    /// an asynchronous IO operation.
+    pub fn global_error(&self) -> Option<Error<()>> {
+        let ge = self.global_error.load(Ordering::Relaxed);
+        if ge.is_null() {
+            None
+        } else {
+            unsafe { Some((*ge).clone()) }
+        }
+    }
+
+    pub(crate) fn set_global_error(&self, error: Error<()>) {
+        let ptr = Box::into_raw(Box::new(error));
+        let ret = self.global_error.compare_and_swap(
+            std::ptr::null_mut(),
+            ptr as *mut Error<()>,
+            Ordering::Relaxed,
+        );
+
+        if ret.is_null() {
+            // CAS failed, reclaim memory
+            unsafe {
+                drop(Box::from_raw(ptr));
+            }
+        }
+    }
+
+    // returns the current snapshot file prefix
+    #[doc(hidden)]
+    pub fn snapshot_prefix(&self) -> PathBuf {
+        let snapshot_path = self.snapshot_path.clone();
+        let path = self.get_path();
+
+        snapshot_path.unwrap_or(path)
+    }
+
+    // returns the snapshot file paths for this system
+    #[doc(hidden)]
+    pub fn get_snapshot_files(
+        &self,
+    ) -> std::io::Result<Vec<PathBuf>> {
+        let mut prefix = self.snapshot_prefix();
+
+        prefix.push("snap.");
+
+        let abs_prefix: PathBuf = if Path::new(&prefix).is_absolute()
+        {
+            prefix
+        } else {
+            let mut abs_path = std::env::current_dir()?;
+            abs_path.push(prefix.clone());
+            abs_path
+        };
+
+        let filter =
+            |dir_entry: std::io::Result<std::fs::DirEntry>| {
+                if let Ok(de) = dir_entry {
+                    let path_buf = de.path();
+                    let path = path_buf.as_path();
+                    let path_str = &*path.to_string_lossy();
+                    if path_str
+                        .starts_with(&*abs_prefix.to_string_lossy())
+                        && !path_str.ends_with(".in___motion")
+                    {
+                        Some(path.to_path_buf())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            };
+
+        let snap_dir = Path::new(&abs_prefix).parent().unwrap();
+
+        if !snap_dir.exists() {
+            std::fs::create_dir_all(snap_dir)?;
+        }
+
+        Ok(snap_dir.read_dir()?.filter_map(filter).collect())
     }
 
     #[doc(hidden)]
