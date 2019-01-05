@@ -8,9 +8,6 @@ members = [
 exclude = [
   "benchmarks/stress2",
   "bindings/sled-native",
-  "crates/deterministic",
-  "crates/model",
-  "crates/simulator",
   "examples/crdt_merge_store",
   "examples/pessimistic_transactions",
   "examples/playground",
