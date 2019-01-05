@@ -133,15 +133,13 @@ impl Tree {
         let _measure = Measure::new(&M.tree_get);
 
         let guard = pin();
+        let pin_guard = pin();
 
-        // the double guard is a hack that maintains
-        // correctness of the ret value
-        let double_guard = guard.clone();
         let (_, ret) = self.get_internal(key.as_ref(), &guard)?;
 
         guard.flush();
 
-        Ok(ret.map(|r| PinnedValue::new(r, double_guard)))
+        Ok(ret.map(|r| PinnedValue::new(r, pin_guard)))
     }
 
     /// Retrieve the key and value before the provided key,
@@ -175,7 +173,7 @@ impl Tree {
         // the double guard is a hack that maintains
         // correctness of the ret value
         let guard = pin();
-        let double_guard = guard.clone();
+        let pin_guard = pin();
 
         let path = self.path_for_key(key.as_ref(), &guard)?;
         let (last_frag, _tree_ptr) = path
@@ -206,7 +204,7 @@ impl Tree {
             let (encoded_key, v) = &items[idx];
             Some((
                 prefix_decode(&last_node.lo, &*encoded_key),
-                PinnedValue::new(&*v, double_guard),
+                PinnedValue::new(&*v, pin_guard),
             ))
         };
 
@@ -242,10 +240,8 @@ impl Tree {
     ) -> Result<Option<(Key, PinnedValue)>, ()> {
         let _measure = Measure::new(&M.tree_get);
 
-        // the double guard is a hack that maintains
-        // correctness of the ret value
         let guard = pin();
-        let double_guard = guard.clone();
+        let pin_guard = pin();
 
         let path = self.path_for_key(key.as_ref(), &guard)?;
         let (last_frag, _tree_ptr) = path
@@ -277,7 +273,7 @@ impl Tree {
             let (encoded_key, v) = &items[idx];
             Some((
                 prefix_decode(&last_node.lo, &*encoded_key),
-                PinnedValue::new(&*v, double_guard),
+                PinnedValue::new(&*v, pin_guard),
             ))
         };
 
@@ -328,7 +324,7 @@ impl Tree {
         // we need to retry caps until old != cur, since just because
         // cap fails it doesn't mean our value was changed.
         loop {
-            let pin_guard = guard.clone();
+            let pin_guard = pin();
             let (mut path, cur) = self
                 .get_internal(key.as_ref(), &guard)
                 .map_err(|e| e.danger_cast())?;
@@ -409,7 +405,7 @@ impl Tree {
         let guard = pin();
 
         loop {
-            let double_guard = guard.clone();
+            let pin_guard = pin();
             let (mut path, existing_key) =
                 self.get_internal(key.as_ref(), &guard)?;
             let (leaf_frag, leaf_ptr) = path.pop().expect(
@@ -461,7 +457,7 @@ impl Tree {
                     guard.flush();
 
                     return Ok(existing_key.map(move |r| {
-                        PinnedValue::new(r, double_guard)
+                        PinnedValue::new(r, pin_guard)
                     }));
                 }
                 Err(Error::CasFailed(_)) => {}
@@ -497,7 +493,7 @@ impl Tree {
         }
 
         let guard = pin();
-        let double_guard = guard.clone();
+        let pin_guard = pin();
 
         loop {
             let (mut path, existing_key) =
@@ -534,7 +530,7 @@ impl Tree {
 
                     guard.flush();
                     return Ok(existing_key.map(move |r| {
-                        PinnedValue::new(r, double_guard)
+                        PinnedValue::new(r, pin_guard)
                     }));
                 }
                 Err(Error::CasFailed(_)) => {

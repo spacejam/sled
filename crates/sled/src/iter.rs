@@ -107,14 +107,12 @@ impl<'a> Iterator for Iter<'a> {
         };
 
         loop {
-            let pin_guard = self.guard.clone();
-            let get_guard = self.guard.clone();
+            let value_guard = pin();
 
             if self.last_id.is_none() {
                 // initialize iterator based on valid bound
-                let path_res = self
-                    .tree
-                    .path_for_key(start, &get_guard);
+                let path_res =
+                    self.tree.path_for_key(start, &self.guard);
                 if let Err(e) = path_res {
                     error!("iteration failed: {:?}", e);
                     self.done = true;
@@ -132,14 +130,16 @@ impl<'a> Iterator for Iter<'a> {
             let last_id = self.last_id.unwrap();
 
             let inclusive = match self.lo {
-                ops::Bound::Unbounded | ops::Bound::Included(..) => true,
+                ops::Bound::Unbounded | ops::Bound::Included(..) => {
+                    true
+                }
                 ops::Bound::Excluded(..) => false,
             };
 
             let res = self
                 .tree
                 .pages
-                .get(last_id, &get_guard)
+                .get(last_id, &self.guard)
                 .map(|page_get| page_get.unwrap());
 
             if let Err(e) = res {
@@ -193,8 +193,10 @@ impl<'a> Iterator for Iter<'a> {
 
                 self.last_key = Some(decoded_k.clone());
 
-                let ret =
-                    Ok((decoded_k, PinnedValue::new(&*v, pin_guard)));
+                let ret = Ok((
+                    decoded_k,
+                    PinnedValue::new(&*v, value_guard),
+                ));
                 return Some(ret);
             }
 
@@ -258,14 +260,13 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
         };
 
         loop {
-            let pin_guard = self.guard.clone();
-            let get_guard = self.guard.clone();
+            let value_guard = pin();
 
             if self.last_id.is_none() {
                 // initialize iterator based on valid bound
 
                 let path_res =
-                    self.tree.path_for_key(end, &get_guard);
+                    self.tree.path_for_key(end, &self.guard);
                 if let Err(e) = path_res {
                     error!("iteration failed: {:?}", e);
                     self.done = true;
@@ -284,7 +285,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                     let res = self
                         .tree
                         .pages
-                        .get(last_node.next.unwrap(), &get_guard)
+                        .get(last_node.next.unwrap(), &self.guard)
                         .map(|page_get| page_get.unwrap());
 
                     if let Err(e) = res {
@@ -302,14 +303,16 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
             let last_id = self.last_id.unwrap();
 
             let inclusive = match self.hi {
-                ops::Bound::Unbounded | ops::Bound::Included(..) => true,
+                ops::Bound::Unbounded | ops::Bound::Included(..) => {
+                    true
+                }
                 ops::Bound::Excluded(..) => false,
             };
 
             let res = self
                 .tree
                 .pages
-                .get(last_id, &get_guard)
+                .get(last_id, &self.guard)
                 .map(|page_get| page_get.unwrap());
 
             if let Err(e) = res {
@@ -367,8 +370,10 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
 
                 self.last_key = Some(decoded_k.clone());
 
-                let ret =
-                    Ok((decoded_k, PinnedValue::new(&*v, pin_guard)));
+                let ret = Ok((
+                    decoded_k,
+                    PinnedValue::new(&*v, value_guard),
+                ));
                 return Some(ret);
             }
 
@@ -385,7 +390,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
             // if we went too far to the left.
             let pred = possible_predecessor(prefix)?;
             let mut next_node =
-                match self.tree.path_for_key(pred, &get_guard) {
+                match self.tree.path_for_key(pred, &self.guard) {
                     Err(e) => {
                         error!("next_back iteration failed: {:?}", e);
                         self.done = true;
@@ -399,7 +404,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 let res = self
                     .tree
                     .pages
-                    .get(next_node.next?, &get_guard)
+                    .get(next_node.next?, &self.guard)
                     .map(|page_get| page_get.unwrap());
 
                 if let Err(e) = res {
