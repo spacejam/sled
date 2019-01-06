@@ -33,5 +33,5 @@ version = "0.4"
 
 [dependencies]
 pagecache = { path = "../pagecache", version = "0.9" }
-sled_sync = { version = "0.2", path = "../sled_sync" }
+sled_sync = { version = "0.2.2", path = "../sled_sync" }
 futures = "0.1"

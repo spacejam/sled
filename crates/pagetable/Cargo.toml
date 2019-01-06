@@ -11,8 +11,8 @@ documentation = "https://docs.rs/pagetable/"
 edition = "2018"
 
 [dependencies]
-sled_sync = { version = "0.2", path = "../sled_sync" }
+sled_sync = { version = "0.2.2", path = "../sled_sync" }
 
 [dev-dependencies]
-model = {version = "0.1", path = "../model"}
+model = "0.1"
 rand = "0.6"

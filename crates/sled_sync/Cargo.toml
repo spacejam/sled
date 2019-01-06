@@ -1,18 +1,18 @@
 [package]
 name = "sled_sync"
 description = "testable concurrent primitives for the sled database framework"
-version = "0.2.0"
+version = "0.2.2"
 license = "MIT/Apache-2.0"
 authors = ["Tyler Neely <tyler.neely@ferrous-systems.com>"]
 edition = "2018"
 
 [features]
-lock_free_delays = []
+lock_free_delays = ["log", "rand", "rand_hc"]
 nightly = []
 no_inline = []
 
 [dependencies]
-crossbeam-epoch = "0.6"
-log = "0.4"
-rand = "0.6"
-rand_hc = "0.1"
+crossbeam-epoch = "0.7"
+log = { version = "0.4", optional = true }
+rand = { version = "0.6", optional = true }
+rand_hc = { version = "0.1", optional = true }
