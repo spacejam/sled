@@ -45,6 +45,7 @@ We also support [merge operators](https://github.com/spacejam/sled/wiki/merge-op
 * fully atomic single-key operations, supports CAS
 * zero-copy reads
 * subscription/watch semantics on key prefixes
+* multiple keyspace support
 * merge operators
 * forward and reverse iterators
 * a crash-safe monotonic ID generator capable of generating 75-125 million ID's per second
@@ -65,7 +66,6 @@ We also support [merge operators](https://github.com/spacejam/sled/wiki/merge-op
   with [traditional B+ tree](https://en.wikipedia.org/wiki/B%2B_tree)-like read performance
 * MVCC, serializable transactions, and snapshots
 * forward-compatible binary format
-* FIFO prefix subscription semantics
 * concurrent snapshot delta generation and recovery
 * first-class access to replication stream
 * consensus protocol for [PC/EC](https://en.wikipedia.org/wiki/PACELC_theorem) systems
