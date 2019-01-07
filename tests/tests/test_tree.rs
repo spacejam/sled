@@ -251,6 +251,10 @@ fn tree_subscriptions_and_keyspaces() -> Result<(), ()> {
     assert_eq!(s1.next().unwrap().key(), b"t1_a");
     assert_eq!(s2.next().unwrap().key(), b"t2_a");
 
+    let guard = pagecache::pin();
+    guard.flush();
+    drop(guard);
+
     drop(db);
     drop(t1);
     drop(t2);
@@ -273,6 +277,10 @@ fn tree_subscriptions_and_keyspaces() -> Result<(), ()> {
     assert_eq!(s1.next().unwrap().key(), b"t1_b");
     assert_eq!(s2.next().unwrap().key(), b"t2_b");
 
+    let guard = pagecache::pin();
+    guard.flush();
+    drop(guard);
+
     drop(db);
     drop(t1);
     drop(t2);
@@ -280,7 +288,6 @@ fn tree_subscriptions_and_keyspaces() -> Result<(), ()> {
     let db = sled::Db::start(config.clone()).unwrap();
 
     let t1 = db.open_tree(b"1".to_vec())?;
-
     let t2 = db.open_tree(b"2".to_vec())?;
 
     assert!(db.is_empty());
@@ -299,6 +306,8 @@ fn tree_subscriptions_and_keyspaces() -> Result<(), ()> {
         t2.get(b""),
         Err(Error::CollectionNotFound(b"2".to_vec()))
     );
+
+    db.flush();
 
     let guard = pagecache::pin();
     guard.flush();
