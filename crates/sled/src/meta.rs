@@ -25,16 +25,20 @@ pub(crate) fn pid_for_name(
     pages: &PageCache<BLinkMaterializer, Frag, Recovery>,
     name: &[u8],
     guard: &Guard,
-) -> Result<Option<usize>, ()> {
+) -> Result<usize, ()> {
     let m = meta(pages, guard)?;
-    Ok(m.get_root(name))
+    if let Some(root) = m.get_root(name) {
+        Ok(root)
+    } else {
+        Err(Error::CollectionNotFound(name.to_vec()))
+    }
 }
 
 pub(crate) fn cas_root(
     pages: &PageCache<BLinkMaterializer, Frag, Recovery>,
     name: Vec<u8>,
     old: Option<usize>,
-    new: usize,
+    new: Option<usize>,
     guard: &Guard,
 ) -> Result<(), Option<usize>> {
     let meta_page_get =
@@ -58,7 +62,11 @@ pub(crate) fn cas_root(
         }
 
         let mut new_meta = meta.clone();
-        new_meta.set_root(name.clone(), new);
+        if let Some(new) = new {
+            new_meta.set_root(name.clone(), new);
+        } else {
+            new_meta.del_root(&name);
+        }
 
         let new_meta_frag = Frag::Meta(new_meta);
         let res = pages
@@ -81,13 +89,17 @@ pub(crate) fn open_tree<'a>(
     name: Vec<u8>,
     guard: &'a Guard,
 ) -> Result<Tree, ()> {
-    if pid_for_name(&*pages, &name, guard)?.is_some() {
-        return Ok(Tree {
-            tree_id: name,
-            subscriptions: Arc::new(Subscriptions::default()),
-            config: config,
-            pages: pages,
-        });
+    match pid_for_name(&*pages, &name, guard) {
+        Ok(_) => {
+            return Ok(Tree {
+                tree_id: name,
+                subscriptions: Arc::new(Subscriptions::default()),
+                config: config,
+                pages: pages,
+            });
+        }
+        Err(Error::CollectionNotFound(_)) => {}
+        Err(other) => return Err(other),
     }
 
     // set up empty leaf
@@ -133,7 +145,7 @@ pub(crate) fn open_tree<'a>(
         .replace(root_id, TreePtr::allocated(), root, &guard)
         .map_err(|e| e.danger_cast())?;
 
-    meta::cas_root(&*pages, name.clone(), None, root_id, guard)
+    meta::cas_root(&*pages, name.clone(), None, Some(root_id), guard)
         .map_err(|e| e.danger_cast())?;
 
     Ok(Tree {

@@ -264,10 +264,7 @@ impl Db {
 
     /// Open or create a new disk-backed Tree with its own keyspace,
     /// accessible from the `Db` via the provided identifier.
-    pub fn open_tree<'a>(
-        &self,
-        name: Vec<u8>,
-    ) -> Result<Arc<Tree>, ()> {
+    pub fn open_tree(&self, name: Vec<u8>) -> Result<Arc<Tree>, ()> {
         let guard = pin();
 
         let tenants = self.tenants.read().unwrap();
@@ -279,7 +276,11 @@ impl Db {
 
         // set up empty leaf
         let leaf_id = self.pages.allocate(&guard)?;
-        trace!("allocated pid {} for leaf in new_tree for namespace {:?}", leaf_id, name);
+        trace!(
+            "allocated pid {} for leaf in open_tree for namespace {:?}",
+            leaf_id,
+            name,
+        );
 
         let leaf = Frag::Base(Node {
             id: leaf_id,
@@ -320,7 +321,7 @@ impl Db {
             &*self.pages,
             name.clone(),
             None,
-            root_id,
+            Some(root_id),
             &guard,
         )
         .map_err(|e| e.danger_cast())?;
@@ -335,6 +336,61 @@ impl Db {
         tenants.insert(name, tree.clone());
 
         Ok(tree)
+    }
+
+    /// Remove a disk-backed collection.
+    pub fn drop_tree(&self, name: &[u8]) -> Result<bool, ()> {
+        if name == DEFAULT_TREE_ID || name == TX_TREE_ID {
+            return Err(Error::Unsupported(
+                "cannot remove the core structures".into(),
+            ));
+        }
+        trace!("dropping tree {:?}", name,);
+
+        let mut tenants = self.tenants.write().unwrap();
+
+        let tree = if let Some(tree) = tenants.remove(&*name) {
+            tree
+        } else {
+            return Ok(false);
+        };
+
+        let guard = pin();
+
+        let mut root_id =
+            meta::pid_for_name(&*self.pages, &name, &guard)?;
+
+        let leftmost_chain: Vec<PageId> = tree
+            .path_for_key(b"", &guard)?
+            .into_iter()
+            .map(|(frag, _tp)| frag.unwrap_base().id)
+            .collect();
+
+        loop {
+            let res = meta::cas_root(
+                &*self.pages,
+                name.to_vec(),
+                Some(root_id),
+                None,
+                &guard,
+            )
+            .map_err(|e| e.danger_cast());
+
+            match res {
+                Ok(_) => break,
+                Err(Error::CasFailed(actual)) => root_id = actual,
+                Err(other) => return Err(other.danger_cast()),
+            }
+        }
+
+        // drop writer lock
+        drop(tenants);
+
+        guard.defer(move || tree.gc_pages(leftmost_chain));
+
+        guard.flush();
+
+        Ok(true)
     }
 
     /// Returns `true` if the database was

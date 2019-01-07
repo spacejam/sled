@@ -20,6 +20,11 @@ impl Meta {
         self.inner.insert(name, pid);
     }
 
+    /// Remove the page mapping for a given identifier
+    pub fn del_root(&mut self, name: &[u8]) -> Option<PageId> {
+        self.inner.remove(name)
+    }
+
     /// Return the current rooted tenants in Meta
     pub fn tenants(&self) -> BTreeMap<Vec<u8>, PageId> {
         self.inner.clone()

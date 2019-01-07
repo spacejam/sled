@@ -1052,7 +1052,7 @@ impl Tree {
             &*self.pages,
             self.tree_id.clone(),
             Some(from),
-            new_root_pid,
+            Some(new_root_pid),
             guard,
         );
         if cas.is_ok() {
@@ -1124,9 +1124,7 @@ impl Tree {
         let _measure = Measure::new(&M.tree_traverse);
 
         let mut cursor =
-            meta::pid_for_name(&*self.pages, &self.tree_id, guard)
-                .unwrap()
-                .unwrap();
+            meta::pid_for_name(&*self.pages, &self.tree_id, guard)?;
         let mut path: Vec<(&'g Frag, TreePtr<'g>)> = vec![];
 
         // unsplit_parent is used for tracking need
@@ -1152,8 +1150,7 @@ impl Tree {
                     &*self.pages,
                     &self.tree_id,
                     guard,
-                )?
-                .unwrap();
+                )?;
                 continue;
             }
 
@@ -1263,6 +1260,53 @@ impl Tree {
 
         Ok(path)
     }
+
+    // Remove all pages for this tree from the underlying
+    // PageCache. This will leave orphans behind if
+    // the tree crashes during gc.
+    pub(crate) fn gc_pages(
+        &self,
+        mut leftmost_chain: Vec<PageId>,
+    ) -> Result<(), ()> {
+        let guard = pin();
+
+        while let Some(mut pid) = leftmost_chain.pop() {
+            loop {
+                let get_cursor = self
+                    .pages
+                    .get(pid, &guard)
+                    .map_err(|e| e.danger_cast())?;
+
+                let (node, key) = match get_cursor {
+                    PageGet::Materialized(node, key) => {
+                        (node, key)
+                    }
+                    broken => {
+                        return Err(Error::ReportableBug(format!(
+                            "got non-base node while GC'ing tree: {:?}",
+                            broken
+                        )))
+                    }
+                };
+
+                let ret = self.pages.free(pid, key.clone(), &guard);
+
+                match ret {
+                    Ok(_) => {
+                        let next_pid = node.unwrap_base().id;
+                        if next_pid == 0 {
+                            break;
+                        }
+                        pid = next_pid;
+                    }
+                    Err(Error::CasFailed(_k)) => continue,
+                    Err(other) => return Err(other.danger_cast()),
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Debug for Tree {
@@ -1274,8 +1318,7 @@ impl Debug for Tree {
 
         let mut pid =
             meta::pid_for_name(&*self.pages, &self.tree_id, &guard)
-                .unwrap()
-                .unwrap();
+                .expect("tree does not exist");
         let mut left_most = pid;
         let mut level = 0;
 
