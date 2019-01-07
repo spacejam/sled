@@ -15,8 +15,10 @@ pub type Result<T, Actual> = std::result::Result<T, Error<Actual>>;
 /// in both the expected and unexpected operation of a PageCache.
 #[derive(Debug)]
 pub enum Error<Actual> {
-    /// An atomic operation has failed, and the current value is provided
+    /// An atomic operation has failed, and the current value is provided.
     CasFailed(Actual),
+    /// The underlying collection no longer exists.
+    CollectionNotFound(Vec<u8>),
     /// The system has been used in an unsupported way.
     Unsupported(String),
     /// An unexpected bug has happened. Please open an issue on github!
@@ -63,6 +65,13 @@ where
                     false
                 }
             }
+            CollectionNotFound(ref l) => {
+                if let CollectionNotFound(ref r) = *other {
+                    l == r
+                } else {
+                    false
+                }
+            }
             Unsupported(ref l) => {
                 if let Unsupported(ref r) = *other {
                     l == r
@@ -78,10 +87,12 @@ where
                 }
             }
             #[cfg(feature = "failpoints")]
-            FailPoint => if let FailPoint = *other {
-                true
-            } else {
-                false
+            FailPoint => {
+                if let FailPoint = *other {
+                    true
+                } else {
+                    false
+                }
             }
             Corruption { at: l } => {
                 if let Corruption { at: r } = *other {
@@ -111,6 +122,7 @@ where
             CasFailed(_) => {
                 "Compare and swap failed to successfully compare."
             }
+            CollectionNotFound(_) => "Collection does not exist.",
             Unsupported(ref e) => &*e,
             ReportableBug(ref e) => &*e,
             #[cfg(feature = "failpoints")]
@@ -136,6 +148,9 @@ where
                  with actual value {:?}",
                 e
             ),
+            CollectionNotFound(ref name) => {
+                write!(f, "Collection {:?} does not exist", name,)
+            }
             Unsupported(ref e) => write!(f, "Unsupported: {}", e),
             ReportableBug(ref e) => write!(
                 f,
@@ -167,6 +182,7 @@ impl<T> Error<T> {
                     "trying to cast CasFailed(()) into a different Error type"
                 )
             }
+            CollectionNotFound(n) => CollectionNotFound(n),
             Unsupported(s) => Unsupported(s),
             ReportableBug(s) => ReportableBug(s),
             #[cfg(feature = "failpoints")]
@@ -187,6 +203,7 @@ impl<T> Error<T> {
     {
         match self {
             CasFailed(other) => CasFailed(other.into()),
+            CollectionNotFound(n) => CollectionNotFound(n),
             Unsupported(s) => Unsupported(s),
             ReportableBug(s) => ReportableBug(s),
             #[cfg(feature = "failpoints")]

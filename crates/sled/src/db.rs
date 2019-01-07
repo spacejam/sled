@@ -264,10 +264,7 @@ impl Db {
 
     /// Open or create a new disk-backed Tree with its own keyspace,
     /// accessible from the `Db` via the provided identifier.
-    pub fn open_tree<'a>(
-        &self,
-        name: Vec<u8>,
-    ) -> Result<Arc<Tree>, ()> {
+    pub fn open_tree(&self, name: Vec<u8>) -> Result<Arc<Tree>, ()> {
         let guard = pin();
 
         let tenants = self.tenants.read().unwrap();
@@ -279,7 +276,11 @@ impl Db {
 
         // set up empty leaf
         let leaf_id = self.pages.allocate(&guard)?;
-        trace!("allocated pid {} for leaf in new_tree for namespace {:?}", leaf_id, name);
+        trace!(
+            "allocated pid {} for leaf in open_tree for namespace {:?}",
+            leaf_id,
+            name,
+        );
 
         let leaf = Frag::Base(Node {
             id: leaf_id,
@@ -320,7 +321,7 @@ impl Db {
             &*self.pages,
             name.clone(),
             None,
-            root_id,
+            Some(root_id),
             &guard,
         )
         .map_err(|e| e.danger_cast())?;

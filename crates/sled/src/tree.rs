@@ -1052,7 +1052,7 @@ impl Tree {
             &*self.pages,
             self.tree_id.clone(),
             Some(from),
-            new_root_pid,
+            Some(new_root_pid),
             guard,
         );
         if cas.is_ok() {
@@ -1124,9 +1124,7 @@ impl Tree {
         let _measure = Measure::new(&M.tree_traverse);
 
         let mut cursor =
-            meta::pid_for_name(&*self.pages, &self.tree_id, guard)
-                .unwrap()
-                .unwrap();
+            meta::pid_for_name(&*self.pages, &self.tree_id, guard)?;
         let mut path: Vec<(&'g Frag, TreePtr<'g>)> = vec![];
 
         // unsplit_parent is used for tracking need
@@ -1152,8 +1150,7 @@ impl Tree {
                     &*self.pages,
                     &self.tree_id,
                     guard,
-                )?
-                .unwrap();
+                )?;
                 continue;
             }
 
@@ -1274,8 +1271,7 @@ impl Debug for Tree {
 
         let mut pid =
             meta::pid_for_name(&*self.pages, &self.tree_id, &guard)
-                .unwrap()
-                .unwrap();
+                .expect("tree does not exist");
         let mut left_most = pid;
         let mut level = 0;
 
