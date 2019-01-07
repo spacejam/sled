@@ -300,6 +300,10 @@ fn tree_subscriptions_and_keyspaces() -> Result<(), ()> {
         Err(Error::CollectionNotFound(b"2".to_vec()))
     );
 
+    let guard = pagecache::pin();
+    guard.flush();
+    drop(guard);
+
     drop(db);
     drop(t1);
     drop(t2);
@@ -307,7 +311,6 @@ fn tree_subscriptions_and_keyspaces() -> Result<(), ()> {
     let db = sled::Db::start(config.clone()).unwrap();
 
     let t1 = db.open_tree(b"1".to_vec())?;
-
     let t2 = db.open_tree(b"2".to_vec())?;
 
     assert!(db.is_empty());
