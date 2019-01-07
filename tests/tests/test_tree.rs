@@ -287,6 +287,33 @@ fn tree_subscriptions_and_keyspaces() -> Result<(), ()> {
     assert_eq!(t1.len(), 2);
     assert_eq!(t2.len(), 2);
 
+    db.drop_tree(b"1")?;
+    db.drop_tree(b"2")?;
+
+    assert_eq!(
+        t1.get(b""),
+        Err(Error::CollectionNotFound(b"1".to_vec()))
+    );
+
+    assert_eq!(
+        t2.get(b""),
+        Err(Error::CollectionNotFound(b"2".to_vec()))
+    );
+
+    drop(db);
+    drop(t1);
+    drop(t2);
+
+    let db = sled::Db::start(config.clone()).unwrap();
+
+    let t1 = db.open_tree(b"1".to_vec())?;
+
+    let t2 = db.open_tree(b"2".to_vec())?;
+
+    assert!(db.is_empty());
+    assert_eq!(t1.len(), 0);
+    assert_eq!(t2.len(), 0);
+
     Ok(())
 }
 
