@@ -23,7 +23,7 @@ features = ["failpoints", "lock_free_delays", "check_snapshot_integrity"]
 path = "../crates/sled"
 
 [dependencies]
-quickcheck = "0.7"
+quickcheck = "0.8"
 rand = "0.6"
 log = "0.4"
 env_logger = "0.6"
