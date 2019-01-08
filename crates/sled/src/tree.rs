@@ -54,6 +54,7 @@ pub struct Tree {
 }
 
 unsafe impl Send for Tree {}
+
 unsafe impl Sync for Tree {}
 
 impl Tree {
