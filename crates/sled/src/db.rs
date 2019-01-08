@@ -14,6 +14,7 @@ use pagecache::{FastMap8, PagePtr};
 use super::*;
 
 /// The `sled` embedded database!
+#[derive(Clone)]
 pub struct Db {
     config: Config,
     pages: Arc<PageCache<BLinkMaterializer, Frag, Recovery>>,
