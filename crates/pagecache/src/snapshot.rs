@@ -1,10 +1,21 @@
-use std::collections::{HashMap, HashSet};
-use std::io::{Read, Seek, Write};
+use std::{
+    collections::{HashMap as HM, HashSet as HS},
+    hash::BuildHasherDefault,
+    io::{Read, Seek, Write},
+};
+
+use fxhash::FxHasher64;
 
 #[cfg(feature = "zstd")]
 use zstd::block::{compress, decompress};
 
 use super::*;
+
+/// HashMap backed by FxHasher64
+pub type HashMap<K, V> = HM<K, V, BuildHasherDefault<FxHasher64>>;
+
+/// HashSet backed by FxHasher64
+pub type HashSet<V> = HS<V, BuildHasherDefault<FxHasher64>>;
 
 /// A snapshot of the state required to quickly restart
 /// the `PageCache` and `SegmentAccountant`.
@@ -75,9 +86,9 @@ impl<R> Default for Snapshot<R> {
             max_lsn: 0,
             last_lid: 0,
             max_pid: 0,
-            pt: HashMap::new(),
-            replacements: HashMap::new(),
-            free: HashSet::new(),
+            pt: HashMap::default(),
+            replacements: HashMap::default(),
+            free: HashSet::default(),
             recovery: None,
         }
     }
@@ -252,7 +263,7 @@ impl<R> Snapshot<R> {
                     let entry = self
                         .replacements
                         .entry(idx)
-                        .or_insert_with(HashSet::new);
+                        .or_insert_with(HashSet::default);
                     entry.insert((pid, replaced_at_lsn));
                 }
 
@@ -288,7 +299,7 @@ impl<R> Snapshot<R> {
                 let entry = self
                     .replacements
                     .entry(idx)
-                    .or_insert_with(HashSet::new);
+                    .or_insert_with(HashSet::default);
                 entry.insert((pid, replaced_at_lsn));
             }
             None => {

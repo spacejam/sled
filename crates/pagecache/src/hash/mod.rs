@@ -1,6 +1,8 @@
 mod crc16;
 mod crc64;
 
+pub(crate) mod map;
+
 // used for protecting large snapshot files
 pub(crate) use self::crc64::crc64;
 

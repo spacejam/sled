@@ -532,6 +532,8 @@ impl IoBufs {
         // open new slot
         let mut next_lsn = lsn;
 
+        let measure_assign_offset = Measure::new(&M.assign_offset);
+
         let next_offset = if from_reserve || maxed {
             // roll lsn to the next offset
             let lsn_idx = lsn / io_buf_size as Lsn;
@@ -634,6 +636,8 @@ impl IoBufs {
         // updated counter.
         debug_delay();
         iobufs.buf_updated.notify_all();
+
+        drop(measure_assign_offset);
 
         // if writers is 0, it's our responsibility to write the buffer.
         if n_writers(sealed) == 0 {

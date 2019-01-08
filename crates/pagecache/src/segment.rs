@@ -61,7 +61,7 @@
 //!    previous segment Lsn pointers don't match up, we know
 //!    we have encountered a lost segment, and we will not
 //!    continue the recovery past the detected gap.
-use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs::File;
 use std::mem;
 use std::sync::Mutex;
@@ -120,12 +120,12 @@ impl Drop for SegmentAccountant {
 /// fragments from different pages. Over time, we track
 /// when segments become reusable and allow them to be
 /// overwritten for new data.
-#[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, PartialEq, Clone)]
 struct Segment {
     present: BTreeSet<PageId>,
-    removed: HashSet<PageId>,
-    deferred_remove: HashSet<PageId>,
-    deferred_rm_blob: HashSet<BlobPointer>,
+    removed: FastSet8<PageId>,
+    deferred_remove: FastSet8<PageId>,
+    deferred_rm_blob: FastSet8<BlobPointer>,
     lsn: Option<Lsn>,
     state: SegmentState,
 }
@@ -239,14 +239,18 @@ impl Segment {
         self.state = Inactive;
 
         // now we can push any deferred removals to the removed set
-        let deferred =
-            mem::replace(&mut self.deferred_remove, HashSet::new());
+        let deferred = mem::replace(
+            &mut self.deferred_remove,
+            FastSet8::default(),
+        );
         for pid in deferred {
             self.remove_pid(pid, lsn);
         }
 
-        let deferred_rm_blob =
-            mem::replace(&mut self.deferred_rm_blob, HashSet::new());
+        let deferred_rm_blob = mem::replace(
+            &mut self.deferred_rm_blob,
+            FastSet8::default(),
+        );
         for ptr in deferred_rm_blob {
             trace!(
                 "removing blob {} while transitioning \
