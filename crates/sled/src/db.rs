@@ -27,6 +27,10 @@ pub struct Db {
     was_recovered: bool,
 }
 
+unsafe impl Send for Db {}
+
+unsafe impl Sync for Db {}
+
 #[cfg(feature = "event_log")]
 impl Drop for Db {
     fn drop(&mut self) {
