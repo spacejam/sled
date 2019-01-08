@@ -106,6 +106,7 @@ pub struct Metrics {
     pub compress: Histo,
     pub decompress: Histo,
     pub make_stable: Histo,
+    pub assign_offset: Histo,
     pub reserve: Histo,
     pub reserve_current_condvar_wait: Histo,
     pub reserve_written_condvar_wait: Histo,
@@ -140,9 +141,10 @@ impl Metrics {
     pub fn print_profile(&self) {
         println!(
             "pagecache profile:\n\
-            {0: >17} | {1: >10} | {2: >10} | {3: >10} | {4: >10} | {5: >10} | {6: >10} | {7: >10} | {8: >10}",
+            {0: >17} | {1: >10} | {2: >10} | {3: >10} | {4: >10} | {5: >10} | {6: >10} | {7: >10} | {8: >10} | {9: >10}",
             "op",
             "min (us)",
+            "avg (us)",
             "90 (us)",
             "99 (us)",
             "99.9 (us)",
@@ -151,24 +153,16 @@ impl Metrics {
             "count",
             "sum (s)"
         );
-        println!("{}", repeat("-").take(121).collect::<String>());
+        println!("{}", repeat("-").take(134).collect::<String>());
 
-        let p = |mut tuples: Vec<(
-            String,
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-        )>| {
-            tuples.sort_by_key(|t| (t.8 * -1. * 1e3) as i64);
-            for v in tuples {
-                println!(
+        let p =
+            |mut tuples: Vec<(String, _, _, _, _, _, _, _, _, _)>| {
+                tuples.sort_by_key(|t| (t.9 * -1. * 1e3) as i64);
+                for v in tuples {
+                    println!(
                     "{0: >17} | {1: >10.1} | {2: >10.1} | {3: >10.1} \
-                | {4: >10.1} | {5: >10.1} | {6: >10.1} | {7: >10.1} | {8: >10.3}",
+                | {4: >10.1} | {5: >10.1} | {6: >10.1} | {7: >10.1} \
+                | {8: >10.1} | {9: >10.3}",
                     v.0,
                     v.1,
                     v.2,
@@ -178,14 +172,16 @@ impl Metrics {
                     v.6,
                     v.7,
                     v.8,
+                    v.9,
                 );
-            }
-        };
+                }
+            };
 
         let f = |name: &str, histo: &Histo| {
             (
                 name.to_string(),
                 histo.percentile(0.) / 1e3,
+                histo.percentile(50.) / 1e3,
                 histo.percentile(90.) / 1e3,
                 histo.percentile(99.) / 1e3,
                 histo.percentile(99.9) / 1e3,
@@ -212,7 +208,7 @@ impl Metrics {
             self.tree_loops.load(Acquire)
         );
 
-        println!("{}", repeat("-").take(121).collect::<String>());
+        println!("{}", repeat("-").take(134).collect::<String>());
         println!("pagecache:");
         p(vec![
             f("snapshot", &self.advance_snapshot),
@@ -223,7 +219,7 @@ impl Metrics {
             f("page_out", &self.page_out),
         ]);
 
-        println!("{}", repeat("-").take(121).collect::<String>());
+        println!("{}", repeat("-").take(134).collect::<String>());
         println!("serialization and compression:");
         p(vec![
             f("serialize", &self.serialize),
@@ -232,13 +228,14 @@ impl Metrics {
             f("decompress", &self.decompress),
         ]);
 
-        println!("{}", repeat("-").take(121).collect::<String>());
+        println!("{}", repeat("-").take(134).collect::<String>());
         println!("log:");
         p(vec![
             f("make_stable", &self.make_stable),
             f("read", &self.read),
             f("write", &self.write_to_log),
             f("written bytes", &self.written_bytes),
+            f("assign offset", &self.assign_offset),
             f("reserve", &self.reserve),
             f("res cvar r", &self.reserve_current_condvar_wait),
             f("res cvar w", &self.reserve_written_condvar_wait),
@@ -252,7 +249,7 @@ impl Metrics {
             self.log_reservation_attempts.load(Acquire)
         );
 
-        println!("{}", repeat("-").take(121).collect::<String>());
+        println!("{}", repeat("-").take(134).collect::<String>());
         println!("segment accountant:");
         p(vec![
             f("acquire", &self.accountant_lock),
@@ -261,7 +258,7 @@ impl Metrics {
 
         #[cfg(feature = "measure_allocs")]
         {
-            println!("{}", repeat("-").take(121).collect::<String>());
+            println!("{}", repeat("-").take(134).collect::<String>());
             println!("allocation statistics:");
             println!(
                 "total allocations: {}",
