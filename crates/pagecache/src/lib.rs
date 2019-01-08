@@ -110,6 +110,9 @@ use self::{
 pub use self::{
     config::{Config, ConfigBuilder},
     diskptr::DiskPtr,
+    hash::map::{
+        FastMap1, FastMap4, FastMap8, FastSet1, FastSet4, FastSet8,
+    },
     logger::{Log, LogRead},
     materializer::{Materializer, NullMaterializer},
     meta::Meta,

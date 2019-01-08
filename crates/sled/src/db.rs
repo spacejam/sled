@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     ops::Deref,
     sync::{
         atomic::{
@@ -10,7 +9,7 @@ use std::{
     },
 };
 
-use pagecache::PagePtr;
+use pagecache::{FastMap8, PagePtr};
 
 use super::*;
 
@@ -21,7 +20,7 @@ pub struct Db {
     idgen: Arc<AtomicUsize>,
     idgen_persists: Arc<AtomicUsize>,
     idgen_persist_mu: Arc<Mutex<()>>,
-    tenants: Arc<RwLock<HashMap<Vec<u8>, Arc<Tree>>>>,
+    tenants: Arc<RwLock<FastMap8<Vec<u8>, Arc<Tree>>>>,
     default: Arc<Tree>,
     transactions: Arc<Tree>,
     was_recovered: bool,
@@ -160,7 +159,7 @@ impl Db {
                 idgen_persists,
             )),
             idgen_persist_mu: Arc::new(Mutex::new(())),
-            tenants: Arc::new(RwLock::new(HashMap::new())),
+            tenants: Arc::new(RwLock::new(FastMap8::default())),
             default: Arc::new(default_tree),
             transactions: Arc::new(tx_tree),
             was_recovered,
