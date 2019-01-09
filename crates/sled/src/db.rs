@@ -44,18 +44,11 @@ impl Drop for Db {
     }
 }
 
-// We can assume we always have a default Tree.
 impl Deref for Db {
     type Target = Tree;
 
     fn deref(&self) -> &Tree {
-        let tree_arc: &Arc<Tree> = &self.default;
-        let tree_ref: &Tree = &*tree_arc;
-        let tp = tree_ref as *const Tree;
-        unsafe {
-            // lol
-            &*tp
-        }
+        &self.default
     }
 }
 
