@@ -70,8 +70,9 @@ We also support [merge operators](https://github.com/spacejam/sled/wiki/merge-op
 * first-class access to replication stream
 * consensus protocol for [PC/EC](https://en.wikipedia.org/wiki/PACELC_theorem) systems
 * pluggable conflict detection and resolution strategies for [PA/EL](https://en.wikipedia.org/wiki/PACELC_theorem) systems
-* SQL support
-* native bindings
+* multiple collection types like tables, BKD trees, Merkle trees, bloom filters, etc... unified under a single transactional and operational domain
+
+Want to prioritize a specific feature or get commercial help with using sled in your project? [Ferrous Systems](https://ferrous-systems.com) provides commercial support for sled, and can work with you to solve a wide variety of storage problems across the latency-throughput, consistency, and price performance spectra. [Get in touch!](mailto:sled@ferrous-systems.com)
 
 # known issues, warnings
 
