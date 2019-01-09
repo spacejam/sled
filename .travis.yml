@@ -11,7 +11,7 @@ install:
   - curl https://sh.rustup.rs -sSf |
     sh -s -- -y --default-toolchain $TRAVIS_RUST_VERSION &&
     rustup component add clippy-preview
-  - bash -c 'if [ "$TEST" = "cross-build" ]; then
+  - bash -c 'if [ "$TEST" = "sanitizers-and-cross-build" ]; then
       rustup target add i686-unknown-linux-gnu;
       rustup target add x86_64-pc-windows-gnu;
     fi'
@@ -22,11 +22,7 @@ matrix:
     - os: linux
       rust: nightly-2018-10-26
       env:
-        - TEST=sanitizers
-    - os: linux
-      rust: nightly-2018-10-26
-      env:
-        - TEST=cross-build
+        - TEST=sanitizers-and-cross-build
     - os: osx
       rust: stable
       env:
@@ -77,7 +73,7 @@ script:
                clippy)
                  cargo clippy
                  ;;
-               sanitizers)
+               sanitizers-and-cross-build)
                  pushd benchmarks/stress2 &&
                  echo "lsan" &&
                  cargo clean &&
@@ -103,18 +99,18 @@ script:
                  export TSAN_OPTIONS=suppressions=${TRAVIS_BUILD_DIR}/tsan_suppressions.txt &&
                  sudo rm -rf default.sled &&
                  cargo run --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu -- --duration=30 &&
-                 cargo run --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu -- --duration=6
-                 ;;
-               crash)
-                 pushd tests &&
-                 cargo test test_crash_recovery --release -- --nocapture --ignored
-                 ;;
-               cross-build)
-                 echo "https://github.com/rust-lang/cargo/issues/4753";
+                 cargo run --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu -- --duration=6 &&
+
+                 echo "cross build" &&
+                 echo "https://github.com/rust-lang/cargo/issues/4753" &&
                  pushd crates/sled      && cargo check --target i686-unknown-linux-gnu --features=nightly && popd &&
                  pushd crates/sled      && cargo check --target x86_64-pc-windows-gnu  --features=nightly && popd &&
                  pushd crates/pagecache && cargo check --target i686-unknown-linux-gnu --features=nightly && popd &&
                  pushd crates/pagecache && cargo check --target x86_64-pc-windows-gnu  --features=nightly && popd
+                 ;;
+               crash)
+                 pushd tests &&
+                 cargo test test_crash_recovery --release -- --nocapture --ignored
                  ;;
                standard)
                  pushd tests &&
