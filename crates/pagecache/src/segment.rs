@@ -911,7 +911,7 @@ impl SegmentAccountant {
     /// try to rewrite elsewhere.
     pub(super) fn clean(
         &mut self,
-        ignore_pid: Option<PageId>,
+        ignore_pid: PageId,
     ) -> Option<PageId> {
         let item = self.to_clean.iter().nth(0).cloned();
         if let Some(lid) = item {
@@ -928,7 +928,7 @@ impl SegmentAccountant {
             self.clean_counter += 1;
             let offset = self.clean_counter % segment.present.len();
             let pid = segment.present.iter().nth(offset).unwrap();
-            if Some(*pid) == ignore_pid {
+            if *pid == ignore_pid {
                 return None;
             }
             trace!(

@@ -555,10 +555,28 @@ where
         if result.is_err() {
             log_reservation.abort().map_err(|e| e.danger_cast())?;
         } else {
-            let to_clean = self.log.with_sa(|sa| {
-                sa.mark_link(pid, lsn, ptr);
-                sa.clean(None)
-            });
+            let skip_mark = {
+                // if the last update for this page was also
+                // sent to this segment, we can skip marking it
+                let previous_head_lsn = unsafe {
+                    stack_ptr.deref().head(guard).deref().lsn()
+                };
+
+                let previous_lsn_segment = previous_head_lsn
+                    / self.config.io_buf_size as i64;
+                let new_lsn_segment =
+                    lsn / self.config.io_buf_size as i64;
+
+                previous_lsn_segment == new_lsn_segment
+            };
+            let to_clean = if skip_mark {
+                None
+            } else {
+                self.log.with_sa(|sa| {
+                    sa.mark_link(pid, lsn, ptr);
+                    sa.clean(pid)
+                })
+            };
 
             // NB complete must happen AFTER calls to SA, because
             // when the iobuf's n_writers hits 0, we may transition
@@ -605,7 +623,7 @@ where
             self.cas_page(pid, old.0, Update::Compact(new), guard);
 
         if result.is_ok() {
-            let to_clean = self.log.with_sa(|sa| sa.clean(Some(pid)));
+            let to_clean = self.log.with_sa(|sa| sa.clean(pid));
 
             if let Some(to_clean) = to_clean {
                 assert_ne!(pid, to_clean);
