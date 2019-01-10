@@ -100,6 +100,8 @@ script:
                  sudo rm -rf default.sled &&
                  cargo run --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu -- --duration=30 &&
                  cargo run --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu -- --duration=6 &&
+                 unset RUSTFLAGS &&
+                 unset TSAN_OPTIONS &&
                  popd &&
 
                  echo "cross build" &&
