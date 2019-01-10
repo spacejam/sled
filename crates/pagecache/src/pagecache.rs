@@ -503,8 +503,8 @@ where
         guard.defer(move || {
             let mut free = free.lock().unwrap();
             // panic if we double-freed a page
-            for &e in free.iter() {
-                assert_ne!(e, pid, "page {} was double-freed", pid);
+            if free.iter().any(|e| e == &pid) {
+                panic!("page {} was double-freed", pid);
             }
 
             free.push(pid);
@@ -558,9 +558,10 @@ where
             let skip_mark = {
                 // if the last update for this page was also
                 // sent to this segment, we can skip marking it
-                let previous_head_lsn = unsafe {
-                    stack_ptr.deref().head(guard).deref().lsn()
-                };
+                let previous_head_lsn =
+                    unsafe { old.0.deref().lsn() };
+
+                assert_ne!(previous_head_lsn, 0);
 
                 let previous_lsn_segment = previous_head_lsn
                     / self.config.io_buf_size as i64;
@@ -744,6 +745,7 @@ where
         new: Update<P>,
         guard: &'g Guard,
     ) -> Result<PagePtrInner<'g, P>, Option<PagePtr<'g, P>>> {
+        trace!("cas_page called on pid {}", pid);
         let stack_ptr = match self.inner.get(pid, guard) {
             None => {
                 trace!(
@@ -788,6 +790,7 @@ where
             unsafe { stack_ptr.deref().cas(old, node, guard) };
 
         if result.is_ok() {
+            trace!("cas_page succeeded on pid {}", pid);
             let ptrs = ptrs_from_stack(old, guard);
 
             self.log
@@ -803,6 +806,7 @@ where
                 .complete()
                 .map_err(|e| e.danger_cast())?;
         } else {
+            trace!("cas_page failed on pid {}", pid);
             log_reservation.abort().map_err(|e| e.danger_cast())?;
         }
 
