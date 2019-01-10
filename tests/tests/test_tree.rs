@@ -11,8 +11,8 @@ use tests::tree::{
 use log::debug;
 use quickcheck::{QuickCheck, StdGen};
 
-const N_THREADS: usize = 2;
-const N_PER_THREAD: usize = 20;
+const N_THREADS: usize = 10;
+const N_PER_THREAD: usize = 100;
 const N: usize = N_THREADS * N_PER_THREAD; // NB N should be multiple of N_THREADS
 const SPACE: usize = N;
 
