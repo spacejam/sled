@@ -48,7 +48,8 @@ pub(crate) fn write_blob(
         .map(|r| {
             trace!("successfully wrote blob at {:?}", path);
             r
-        }).map_err(|e| e.into())
+        })
+        .map_err(|e| e.into())
 }
 
 pub(crate) fn gc_blobs(
@@ -99,7 +100,7 @@ pub(crate) fn remove_blob(
     let path = config.blob_path(id);
 
     if let Err(e) = std::fs::remove_file(&path) {
-        warn!("removing blob at {:?} failed: {}", path, e);
+        debug!("removing blob at {:?} failed: {}", path, e);
     } else {
         trace!("successfully removed blob at {:?}", path);
     }

@@ -423,7 +423,7 @@ where
 {
     let mut candidates = config.get_snapshot_files()?;
     if candidates.is_empty() {
-        info!("no previous snapshot found");
+        debug!("no previous snapshot found");
         return Ok(None);
     }
 
