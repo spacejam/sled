@@ -69,13 +69,16 @@ pub(crate) fn cas_root(
         }
 
         let new_meta_frag = Frag::Meta(new_meta);
-        let res = pages
-            .replace(META_PID, current, new_meta_frag, &guard)
-            .map_err(|e| e.danger_cast());
+        let res =
+            pages.replace(META_PID, current, new_meta_frag, &guard);
 
         match res {
             Ok(_) => return Ok(()),
-            Err(Error::CasFailed(actual)) => current = actual,
+            Err(Error::CasFailed(Some(actual))) => current = actual,
+            Err(Error::CasFailed(None)) => return Err(Error::ReportableBug(
+                "replacing the META page has failed because \
+                the pagecache does not think it currently exists.".into()
+            )),
             Err(other) => return Err(other.danger_cast()),
         }
     }
