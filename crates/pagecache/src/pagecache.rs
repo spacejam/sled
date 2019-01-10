@@ -938,8 +938,22 @@ where
                 .collect();
 
             for res in pulled_res {
-                let item = res.map_err(|e| e.danger_cast())?;
-                fetched.push(item);
+                let item_res = res.map_err(|e| e.danger_cast());
+
+                if item_res.is_err() {
+                    // check to see if the page head pointer is the same.
+                    // if not, we may have failed our pull because a blob
+                    // is no longer present that was replaced by another
+                    // thread and removed.
+
+                    let current_head =
+                        unsafe { stack_ptr.deref().head(guard) };
+                    if current_head != head {
+                        return Ok(None);
+                    }
+                }
+
+                fetched.push(item_res?);
             }
         }
 
