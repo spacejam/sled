@@ -31,16 +31,26 @@ unsafe impl Send for Db {}
 
 unsafe impl Sync for Db {}
 
-#[cfg(feature = "event_log")]
 impl Drop for Db {
     fn drop(&mut self) {
-        let guard = pin();
+        if let Err(e) = self.pages.flush() {
+            error!(
+                "failed to flush underlying \
+                 pagecache during drop: {:?}",
+                e
+            );
+        }
 
-        self.config.event_log.meta_before_restart(
-            meta::meta(&*self.pages, &guard)
-                .expect("should get meta under test")
-                .clone(),
-        );
+        #[cfg(feature = "event_log")]
+        {
+            let guard = pin();
+
+            self.config.event_log.meta_before_restart(
+                meta::meta(&*self.pages, &guard)
+                    .expect("should get meta under test")
+                    .clone(),
+            );
+        }
     }
 }
 
