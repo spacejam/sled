@@ -938,6 +938,11 @@ where
                     let current_head =
                         unsafe { stack_ptr.deref().head(guard) };
                     if current_head != head {
+                        debug!(
+                            "pull failed for item for pid {}, but we'll \
+                             retry because the stack has changed",
+                             pid,
+                        );
                         return Ok(None);
                     }
 
@@ -945,13 +950,35 @@ where
                         .inner
                         .get(pid, guard)
                     {
-                        None => return Ok(Some(PageGet::Unallocated)),
+                        None => {
+                            debug!(
+                                "pull failed for item for pid {}, but we'll \
+                                just return Unallocated because the pid is \
+                                no longer present in the pagetable.",
+                                pid,
+                            );
+                            return Ok(Some(PageGet::Unallocated));
+                        }
                         Some(s) => s,
                     };
 
                     if current_stack_ptr != stack_ptr {
-                        return Ok(None);
+                        panic!(
+                            "pull failed for item for pid {}, and somehow \
+                             the page's entire stack has changed due to \
+                             being reallocated while we were still \
+                             witnessing it. This is probably a failure in the \
+                             way that EBR is being used to handle page frees.",
+                             pid,
+                        );
                     }
+
+                    debug!(
+                        "pull failed for item for pid {}, but our stack of \
+                        items has remained intact since we initially observed it, \
+                        so there is probably a corruption issue or race condition.",
+                        pid,
+                    );
                 }
 
                 fetched.push(item_res?);
