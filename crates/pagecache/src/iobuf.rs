@@ -922,6 +922,7 @@ impl IoBufs {
                 lsn: reservation_lsn,
                 lid: reservation_offset,
                 is_blob: over_blob_threshold || is_blob_rewrite,
+                is_blob_rewrite,
             });
         }
     }
