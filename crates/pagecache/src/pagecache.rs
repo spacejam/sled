@@ -820,12 +820,18 @@ where
         guard: &'g Guard,
     ) -> Result<PageGet<'g, PM::PageFrag>, Option<PagePtr<'g, P>>>
     {
-        let stack_ptr = match self.inner.get(pid, guard) {
-            None => return Ok(PageGet::Unallocated),
-            Some(s) => s,
-        };
+        loop {
+            let stack_ptr = match self.inner.get(pid, guard) {
+                None => return Ok(PageGet::Unallocated),
+                Some(s) => s,
+            };
 
-        self.page_in(pid, stack_ptr, guard)
+            let inner_res = self.page_in(pid, stack_ptr, guard)?;
+            if let Some(res) = inner_res {
+                return Ok(res);
+            }
+            // loop until we succeed
+        }
     }
 
     /// The highest known stable Lsn on disk.
@@ -840,23 +846,6 @@ where
     }
 
     fn page_in<'g>(
-        &self,
-        pid: PageId,
-        stack_ptr: Shared<'g, Stack<CacheEntry<P>>>,
-        guard: &'g Guard,
-    ) -> Result<PageGet<'g, PM::PageFrag>, Option<PagePtr<'g, P>>>
-    {
-        loop {
-            let inner_res =
-                self.page_in_inner(pid, stack_ptr, guard)?;
-            if let Some(res) = inner_res {
-                return Ok(res);
-            }
-            // loop until we succeed
-        }
-    }
-
-    fn page_in_inner<'g>(
         &self,
         pid: PageId,
         stack_ptr: Shared<'g, Stack<CacheEntry<P>>>,
@@ -949,6 +938,18 @@ where
                     let current_head =
                         unsafe { stack_ptr.deref().head(guard) };
                     if current_head != head {
+                        return Ok(None);
+                    }
+
+                    let current_stack_ptr = match self
+                        .inner
+                        .get(pid, guard)
+                    {
+                        None => return Ok(Some(PageGet::Unallocated)),
+                        Some(s) => s,
+                    };
+
+                    if current_stack_ptr != stack_ptr {
                         return Ok(None);
                     }
                 }
@@ -1166,8 +1167,10 @@ where
 
                 Ok(buf)
             }
-            // FIXME 'read invalid data at lid 66244182' in cycle test
-            _other => Err(Error::Corruption { at: ptr }),
+            other => {
+                debug!("failed to read page: {:?}", other);
+                Err(Error::Corruption { at: ptr })
+            }
         }?;
 
         let logged_update = measure(&M.deserialize, || {

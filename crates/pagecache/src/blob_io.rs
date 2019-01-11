@@ -10,7 +10,7 @@ pub(crate) fn read_blob(
     let mut f = std::fs::OpenOptions::new().read(true).open(&path)?;
 
     let mut crc_expected_bytes = [0u8; BLOB_INLINE_LEN];
-    f.read_exact(&mut crc_expected_bytes).unwrap();
+    f.read_exact(&mut crc_expected_bytes)?;
     let crc_expected = arr_to_u64(crc_expected_bytes);
 
     let mut buf = vec![];
