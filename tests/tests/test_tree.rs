@@ -27,6 +27,10 @@ fn kv(i: usize) -> Vec<u8> {
 fn parallel_tree_ops() {
     tests::setup_logger();
 
+    #[cfg(target_os = "macos")]
+    const INTENSITY: usize = 5;
+
+    #[cfg(not(target_os = "macos"))]
     const INTENSITY: usize = 10;
 
     for i in 0..INTENSITY {
@@ -38,7 +42,7 @@ fn parallel_tree_ops() {
             .blink_node_split_size(100)
             .flush_every_ms(None)
             .snapshot_after_ops(100_000_000)
-            .io_buf_size(1000)
+            .io_buf_size(250)
             .build();
 
         macro_rules! par {
@@ -138,7 +142,7 @@ fn parallel_tree_ops() {
             let k1 = k.clone();
             let mut k2 = k.clone();
             k2.reverse();
-            assert_eq!(tree.get(&*k1).unwrap().unwrap(), k2);
+            assert_eq!(tree.get(&*k1).unwrap().unwrap().to_vec(), k2);
         }};
 
         drop(t);
@@ -311,8 +315,6 @@ fn tree_subscriptions_and_keyspaces() -> Result<(), ()> {
         t2.get(b""),
         Err(Error::CollectionNotFound(b"2".to_vec()))
     );
-
-    db.flush();
 
     let guard = pagecache::pin();
     guard.flush();
