@@ -64,7 +64,6 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs::File;
 use std::mem;
-use std::sync::Mutex;
 
 use self::reader::LogReader;
 use super::*;
@@ -84,7 +83,7 @@ pub(super) struct SegmentAccountant {
     // TODO put behind a single mutex
     // NB MUST group pause_rewriting with ordering
     // and free!
-    free: Mutex<VecDeque<(LogId, bool)>>,
+    free: VecDeque<(LogId, bool)>,
     tip: LogId,
     to_clean: BTreeSet<LogId>,
     pause_rewriting: bool,
@@ -407,7 +406,7 @@ impl SegmentAccountant {
             config,
             segments: vec![],
             clean_counter: 0,
-            free: Mutex::new(VecDeque::new()),
+            free: VecDeque::new(),
             tip: 0,
             to_clean: BTreeSet::new(),
             pause_rewriting: false,
@@ -628,15 +627,9 @@ impl SegmentAccountant {
 
                 segment.inactive_to_draining(lsn);
                 self.to_clean.insert(segment_start);
-                self.free
-                    .lock()
-                    .unwrap()
-                    .retain(|&(s, _)| s != segment_start);
+                self.free.retain(|&(s, _)| s != segment_start);
             } else {
-                self.free
-                    .lock()
-                    .unwrap()
-                    .retain(|&(s, _)| s != segment_start);
+                self.free.retain(|&(s, _)| s != segment_start);
             }
         }
 
@@ -760,7 +753,7 @@ impl SegmentAccountant {
             }
         }
 
-        self.free.lock().unwrap().push_back((lid, false));
+        self.free.push_back((lid, false));
     }
 
     /// Causes all new allocations to occur at the end of the file, which
@@ -786,6 +779,8 @@ impl SegmentAccountant {
         old_ptrs: Vec<DiskPtr>,
         new_ptr: DiskPtr,
     ) -> Result<(), ()> {
+        let _measure = Measure::new(&M.accountant_mark_replace);
+
         trace!(
             "mark_replace pid {} from ptrs {:?} to ptr {} with lsn {}",
             pid,
@@ -952,6 +947,8 @@ impl SegmentAccountant {
         lsn: Lsn,
         ptr: DiskPtr,
     ) {
+        let _measure = Measure::new(&M.accountant_mark_link);
+
         trace!("mark_link pid {} at ptr {}", pid, ptr);
         let idx = self.lid_to_idx(ptr.lid());
 
@@ -1025,18 +1022,20 @@ impl SegmentAccountant {
         // IO buffer during a PageCache replace, but whose
         // replacing updates have not actually landed on disk
         // yet.
-        while self.free.lock().unwrap().len() < self.config.io_bufs {
+        while self.free.len() < self.config.io_bufs {
             let new_lid = self.bump_tip();
             trace!(
                     "pushing segment {} to free from ensure_safe_free_distance",
                     new_lid
                 );
-            self.free.lock().unwrap().push_front((new_lid, true));
+            self.free.push_front((new_lid, true));
         }
     }
 
     /// Returns the next offset to write a new segment in.
     pub(super) fn next(&mut self, lsn: Lsn) -> Result<LogId, ()> {
+        let _measure = Measure::new(&M.accountant_next);
+
         assert_eq!(
             lsn % self.config.io_buf_size as Lsn,
             0,
@@ -1048,7 +1047,7 @@ impl SegmentAccountant {
             self.bump_tip()
         } else {
             loop {
-                let pop_res = self.free.lock().unwrap().pop_front();
+                let pop_res = self.free.pop_front();
 
                 if let Some((
                     next,
@@ -1060,8 +1059,6 @@ impl SegmentAccountant {
                     // on our next pop
                     let next_next_in_safety_buffer = self
                         .free
-                        .lock()
-                        .unwrap()
                         .get(0)
                         .cloned()
                         .map(|(lid, _)| {
@@ -1131,7 +1128,7 @@ impl SegmentAccountant {
 
         if lid == 0 {
             let all_zeroes =
-                self.safety_buffer == vec![0; self.config.io_bufs];
+                self.safety_buffer.iter().all(|item| *item == 0);
             let no_zeroes = !self.safety_buffer.contains(&0);
             assert!(
                 all_zeroes || no_zeroes,
@@ -1205,7 +1202,9 @@ impl SegmentAccountant {
 
         let f = &self.config.file;
         f.set_len(at)?;
-        f.sync_all().map_err(|e| e.into())
+        f.sync_all()?;
+
+        Ok(())
     }
 
     fn ensure_ordering_initialized(&mut self) -> Result<(), ()> {
@@ -1231,8 +1230,7 @@ impl SegmentAccountant {
     }
 
     fn segment_in_free(&self, lid: LogId) -> bool {
-        let free = self.free.lock().unwrap();
-        for &(seg_lid, _) in &*free {
+        for &(seg_lid, _) in &self.free {
             if seg_lid == lid {
                 return true;
             }
