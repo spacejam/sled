@@ -573,6 +573,7 @@ impl IoBufs {
         // NB we spin on this CAS because the next iobuf may not actually
         // be written to disk yet! (we've lapped the writer in the iobuf
         // ring buffer)
+        let measure_assign_spinloop = Measure::new(&M.assign_spinloop);
         let mut spins = 0;
         while next_iobuf.cas_lid(max, next_offset).is_err() {
             spins += 1;
@@ -596,6 +597,7 @@ impl IoBufs {
             }
             spin_loop_hint();
         }
+        drop(measure_assign_spinloop);
         trace!("{} log set to {}", next_idx, next_offset);
 
         // NB as soon as the "sealed" bit is 0, this allows new threads

@@ -107,6 +107,7 @@ pub struct Metrics {
     pub decompress: Histo,
     pub make_stable: Histo,
     pub assign_offset: Histo,
+    pub assign_spinloop: Histo,
     pub reserve: Histo,
     pub reserve_current_condvar_wait: Histo,
     pub reserve_written_condvar_wait: Histo,
@@ -118,6 +119,10 @@ pub struct Metrics {
     pub log_reservation_attempts: AtomicUsize,
     pub accountant_lock: Histo,
     pub accountant_hold: Histo,
+    pub accountant_next: Histo,
+    pub accountant_mark_link: Histo,
+    pub accountant_mark_replace: Histo,
+    pub accountant_bump_tip: Histo,
     #[cfg(feature = "measure_allocs")]
     pub allocations: AtomicUsize,
     #[cfg(feature = "measure_allocs")]
@@ -144,7 +149,7 @@ impl Metrics {
             {0: >17} | {1: >10} | {2: >10} | {3: >10} | {4: >10} | {5: >10} | {6: >10} | {7: >10} | {8: >10} | {9: >10}",
             "op",
             "min (us)",
-            "avg (us)",
+            "med (us)",
             "90 (us)",
             "99 (us)",
             "99.9 (us)",
@@ -236,6 +241,7 @@ impl Metrics {
             f("write", &self.write_to_log),
             f("written bytes", &self.written_bytes),
             f("assign offset", &self.assign_offset),
+            f("assign spinloop", &self.assign_spinloop),
             f("reserve", &self.reserve),
             f("res cvar r", &self.reserve_current_condvar_wait),
             f("res cvar w", &self.reserve_written_condvar_wait),
@@ -254,6 +260,9 @@ impl Metrics {
         p(vec![
             f("acquire", &self.accountant_lock),
             f("hold", &self.accountant_hold),
+            f("next", &self.accountant_next),
+            f("replace", &self.accountant_mark_replace),
+            f("link", &self.accountant_mark_link),
         ]);
 
         #[cfg(feature = "measure_allocs")]
