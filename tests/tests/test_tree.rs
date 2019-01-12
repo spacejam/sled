@@ -8,7 +8,7 @@ use tests::tree::{
     Op::{self, *},
 };
 
-use log::debug;
+use log::{debug, warn};
 use quickcheck::{QuickCheck, StdGen};
 
 const N_THREADS: usize = 10;
@@ -84,7 +84,7 @@ fn parallel_tree_ops() {
 
         let n_scanned = t.iter().count();
         if n_scanned != N {
-            debug!(
+            warn!(
                 "WARNING: test {} only had {} keys present \
                  in the DB BEFORE restarting. expected {}",
                 i, n_scanned, N,
@@ -99,7 +99,7 @@ fn parallel_tree_ops() {
 
         let n_scanned = t.iter().count();
         if n_scanned != N {
-            debug!(
+            warn!(
                 "WARNING: test {} only had {} keys present \
                  in the DB AFTER restarting. expected {}",
                 i, n_scanned, N,
