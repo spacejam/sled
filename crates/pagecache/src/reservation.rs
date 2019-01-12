@@ -13,6 +13,7 @@ pub struct Reservation<'a> {
     pub(super) lsn: Lsn,
     pub(super) lid: LogId,
     pub(super) is_blob: bool,
+    pub(super) is_blob_rewrite: bool,
 }
 
 impl<'a> Drop for Reservation<'a> {
@@ -32,12 +33,17 @@ impl<'a> Reservation<'a> {
         if self.is_blob {
             let blob_ptr = self.blob_ptr().unwrap();
 
-            trace!(
-                "removing blob for aborted reservation at lsn {}",
-                blob_ptr
-            );
+            if !self.is_blob_rewrite {
+                // we don't want to remove this blob if something
+                // else may still be using it.
 
-            remove_blob(blob_ptr, &self.iobufs.0.config)?;
+                trace!(
+                    "removing blob for aborted reservation at lsn {}",
+                    blob_ptr
+                );
+
+                remove_blob(blob_ptr, &self.iobufs.0.config)?;
+            }
         }
 
         self.flush(false)

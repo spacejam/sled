@@ -503,8 +503,8 @@ where
         guard.defer(move || {
             let mut free = free.lock().unwrap();
             // panic if we double-freed a page
-            for &e in free.iter() {
-                assert_ne!(e, pid, "page {} was double-freed", pid);
+            if free.iter().any(|e| e == &pid) {
+                panic!("page {} was double-freed", pid);
             }
 
             free.push(pid);
@@ -555,10 +555,29 @@ where
         if result.is_err() {
             log_reservation.abort().map_err(|e| e.danger_cast())?;
         } else {
-            let to_clean = self.log.with_sa(|sa| {
-                sa.mark_link(pid, lsn, ptr);
-                sa.clean(None)
-            });
+            let skip_mark = {
+                // if the last update for this page was also
+                // sent to this segment, we can skip marking it
+                let previous_head_lsn =
+                    unsafe { old.0.deref().lsn() };
+
+                assert_ne!(previous_head_lsn, 0);
+
+                let previous_lsn_segment = previous_head_lsn
+                    / self.config.io_buf_size as i64;
+                let new_lsn_segment =
+                    lsn / self.config.io_buf_size as i64;
+
+                previous_lsn_segment == new_lsn_segment
+            };
+            let to_clean = if skip_mark {
+                None
+            } else {
+                self.log.with_sa(|sa| {
+                    sa.mark_link(pid, lsn, ptr);
+                    sa.clean(pid)
+                })
+            };
 
             // NB complete must happen AFTER calls to SA, because
             // when the iobuf's n_writers hits 0, we may transition
@@ -605,7 +624,7 @@ where
             self.cas_page(pid, old.0, Update::Compact(new), guard);
 
         if result.is_ok() {
-            let to_clean = self.log.with_sa(|sa| sa.clean(Some(pid)));
+            let to_clean = self.log.with_sa(|sa| sa.clean(pid));
 
             if let Some(to_clean) = to_clean {
                 assert_ne!(pid, to_clean);
@@ -726,6 +745,7 @@ where
         new: Update<P>,
         guard: &'g Guard,
     ) -> Result<PagePtrInner<'g, P>, Option<PagePtr<'g, P>>> {
+        trace!("cas_page called on pid {}", pid);
         let stack_ptr = match self.inner.get(pid, guard) {
             None => {
                 trace!(
@@ -770,6 +790,7 @@ where
             unsafe { stack_ptr.deref().cas(old, node, guard) };
 
         if result.is_ok() {
+            trace!("cas_page succeeded on pid {}", pid);
             let ptrs = ptrs_from_stack(old, guard);
 
             self.log
@@ -785,6 +806,7 @@ where
                 .complete()
                 .map_err(|e| e.danger_cast())?;
         } else {
+            trace!("cas_page failed on pid {}", pid);
             log_reservation.abort().map_err(|e| e.danger_cast())?;
         }
 
@@ -798,12 +820,18 @@ where
         guard: &'g Guard,
     ) -> Result<PageGet<'g, PM::PageFrag>, Option<PagePtr<'g, P>>>
     {
-        let stack_ptr = match self.inner.get(pid, guard) {
-            None => return Ok(PageGet::Unallocated),
-            Some(s) => s,
-        };
+        loop {
+            let stack_ptr = match self.inner.get(pid, guard) {
+                None => return Ok(PageGet::Unallocated),
+                Some(s) => s,
+            };
 
-        self.page_in(pid, stack_ptr, guard)
+            let inner_res = self.page_in(pid, stack_ptr, guard)?;
+            if let Some(res) = inner_res {
+                return Ok(res);
+            }
+            // loop until we succeed
+        }
     }
 
     /// The highest known stable Lsn on disk.
@@ -818,23 +846,6 @@ where
     }
 
     fn page_in<'g>(
-        &self,
-        pid: PageId,
-        stack_ptr: Shared<'g, Stack<CacheEntry<P>>>,
-        guard: &'g Guard,
-    ) -> Result<PageGet<'g, PM::PageFrag>, Option<PagePtr<'g, P>>>
-    {
-        loop {
-            let inner_res =
-                self.page_in_inner(pid, stack_ptr, guard)?;
-            if let Some(res) = inner_res {
-                return Ok(res);
-            }
-            // loop until we succeed
-        }
-    }
-
-    fn page_in_inner<'g>(
         &self,
         pid: PageId,
         stack_ptr: Shared<'g, Stack<CacheEntry<P>>>,
@@ -916,8 +927,61 @@ where
                 .collect();
 
             for res in pulled_res {
-                let item = res.map_err(|e| e.danger_cast())?;
-                fetched.push(item);
+                let item_res = res.map_err(|e| e.danger_cast());
+
+                if item_res.is_err() {
+                    // check to see if the page head pointer is the same.
+                    // if not, we may have failed our pull because a blob
+                    // is no longer present that was replaced by another
+                    // thread and removed.
+
+                    let current_head =
+                        unsafe { stack_ptr.deref().head(guard) };
+                    if current_head != head {
+                        debug!(
+                            "pull failed for item for pid {}, but we'll \
+                             retry because the stack has changed",
+                             pid,
+                        );
+                        return Ok(None);
+                    }
+
+                    let current_stack_ptr = match self
+                        .inner
+                        .get(pid, guard)
+                    {
+                        None => {
+                            debug!(
+                                "pull failed for item for pid {}, but we'll \
+                                just return Unallocated because the pid is \
+                                no longer present in the pagetable.",
+                                pid,
+                            );
+                            return Ok(Some(PageGet::Unallocated));
+                        }
+                        Some(s) => s,
+                    };
+
+                    if current_stack_ptr != stack_ptr {
+                        panic!(
+                            "pull failed for item for pid {}, and somehow \
+                             the page's entire stack has changed due to \
+                             being reallocated while we were still \
+                             witnessing it. This is probably a failure in the \
+                             way that EBR is being used to handle page frees.",
+                             pid,
+                        );
+                    }
+
+                    debug!(
+                        "pull failed for item for pid {}, but our stack of \
+                        items has remained intact since we initially observed it, \
+                        so there is probably a corruption issue or race condition.",
+                        pid,
+                    );
+                }
+
+                fetched.push(item_res?);
             }
         }
 
@@ -1130,8 +1194,10 @@ where
 
                 Ok(buf)
             }
-            // FIXME 'read invalid data at lid 66244182' in cycle test
-            _other => Err(Error::Corruption { at: ptr }),
+            other => {
+                debug!("failed to read page: {:?}", other);
+                Err(Error::Corruption { at: ptr })
+            }
         }?;
 
         let logged_update = measure(&M.deserialize, || {

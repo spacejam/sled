@@ -11,9 +11,6 @@ all = ["event_log", "compression"]
 event_log = ["pagecache/event_log", "sled/event_log"]
 compression = ["pagecache/compression", "sled/compression"]
 
-[profile.release]
-debug = true
-
 [dependencies.pagecache]
 features = ["failpoints", "lock_free_delays"]
 path = "../crates/pagecache"

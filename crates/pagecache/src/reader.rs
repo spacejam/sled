@@ -151,7 +151,11 @@ impl LogReader for File {
 
                 match read_blob(id, config) {
                     Ok(buf) => {
-                        trace!("read a successful blob message");
+                        trace!(
+                            "read a successful blob message for Blob({}, {})",
+                            header.lsn,
+                            id,
+                        );
 
                         Ok(LogRead::Blob(header.lsn, buf, id))
                     }
@@ -159,9 +163,17 @@ impl LogReader for File {
                         if e.kind()
                             == std::io::ErrorKind::NotFound =>
                     {
+                        debug!(
+                            "underlying blob file not found for Blob({}, {})",
+                            header.lsn,
+                            id,
+                        );
                         Ok(LogRead::DanglingBlob(header.lsn, id))
                     }
-                    Err(other_e) => Err(other_e),
+                    Err(other_e) => {
+                        debug!("failed to read blob: {:?}", other_e);
+                        Err(other_e)
+                    }
                 }
             }
             MessageKind::Inline => {

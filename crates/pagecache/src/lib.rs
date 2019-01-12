@@ -79,7 +79,7 @@ use std::{
 
 use bincode::{deserialize, serialize};
 use lazy_static::lazy_static;
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, trace, warn};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use sled_sync::atomic::{AtomicUsize, Ordering::SeqCst};

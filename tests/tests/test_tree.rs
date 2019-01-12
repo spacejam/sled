@@ -1,9 +1,3 @@
-extern crate pagecache;
-extern crate quickcheck;
-extern crate rand;
-extern crate sled;
-extern crate tests;
-
 use std::sync::Arc;
 use std::thread;
 
@@ -14,10 +8,11 @@ use tests::tree::{
     Op::{self, *},
 };
 
+use log::{debug, warn};
 use quickcheck::{QuickCheck, StdGen};
 
 const N_THREADS: usize = 10;
-const N_PER_THREAD: usize = 1000;
+const N_PER_THREAD: usize = 100;
 const N: usize = N_THREADS * N_PER_THREAD; // NB N should be multiple of N_THREADS
 const SPACE: usize = N;
 
@@ -30,133 +25,147 @@ fn kv(i: usize) -> Vec<u8> {
 
 #[test]
 fn parallel_tree_ops() {
-    let config = ConfigBuilder::new()
-        .temporary(true)
-        .async_io(false)
-        .io_bufs(3)
-        .blink_node_split_size(500)
-        .flush_every_ms(None)
-        .snapshot_after_ops(100_000_000)
-        .io_buf_size(100_000)
-        .build();
-
     tests::setup_logger();
 
-    macro_rules! par {
-        ($t:ident, $f:expr) => {
-            let mut threads = vec![];
-            for tn in 0..N_THREADS {
-                let tree = $t.clone();
-                let thread = thread::Builder::new()
-                    .name(format!("t({})", tn))
-                    .spawn(move || {
-                        for i in (tn * N_PER_THREAD)
-                            ..((tn + 1) * N_PER_THREAD)
-                        {
-                            let k = kv(i);
-                            $f(&*tree, k);
-                        }
-                    })
-                    .expect("should be able to spawn thread");
-                threads.push(thread);
-            }
-            while let Some(thread) = threads.pop() {
-                if let Err(e) = thread.join() {
-                    panic!("thread failure: {:?}", e);
+    #[cfg(target_os = "macos")]
+    const INTENSITY: usize = 5;
+
+    #[cfg(not(target_os = "macos"))]
+    const INTENSITY: usize = 10;
+
+    for i in 0..INTENSITY {
+        debug!("beginning test {}", i);
+        let config = ConfigBuilder::new()
+            .temporary(true)
+            .async_io(false)
+            .io_bufs(3)
+            .blink_node_split_size(100)
+            .flush_every_ms(None)
+            .snapshot_after_ops(100_000_000)
+            .io_buf_size(250)
+            .build();
+
+        macro_rules! par {
+            ($t:ident, $f:expr) => {
+                let mut threads = vec![];
+                for tn in 0..N_THREADS {
+                    let tree = $t.clone();
+                    let thread = thread::Builder::new()
+                        .name(format!(
+                            "t(thread: {} test: {})",
+                            tn, i
+                        ))
+                        .spawn(move || {
+                            for i in (tn * N_PER_THREAD)
+                                ..((tn + 1) * N_PER_THREAD)
+                            {
+                                let k = kv(i);
+                                $f(&*tree, k);
+                            }
+                        })
+                        .expect("should be able to spawn thread");
+                    threads.push(thread);
                 }
-            }
-        };
-    }
-
-    println!("========== initial sets ==========");
-    let t = Arc::new(sled::Db::start(config.clone()).unwrap());
-    par! {t, |tree: &Tree, k: Vec<u8>| {
-        assert_eq!(tree.get(&*k), Ok(None));
-        tree.set(&k, k.clone()).expect("we should write successfully");
-        assert_eq!(tree.get(&*k).unwrap().expect("we should read what we just wrote"), k);
-    }};
-
-    let n_scanned = t.iter().count();
-    if n_scanned != N {
-        println!(
-            "WARNING: only {} keys present in the DB BEFORE restarting. expected {}",
-            n_scanned, N
-        );
-    }
-
-    drop(t);
-    let t = Arc::new(
-        sled::Db::start(config.clone())
-            .expect("should be able to restart Tree"),
-    );
-
-    let n_scanned = t.iter().count();
-    if n_scanned != N {
-        println!(
-            "WARNING: only {} keys present in the DB AFTER restarting. expected {}",
-            n_scanned, N
-        );
-    }
-
-    println!("========== reading sets ==========");
-    par! {t, |tree: &Tree, k: Vec<u8>| {
-        if let Some(v) =  tree.get(&*k).unwrap() {
-            if v != k {
-                println!("{}", tree.key_debug_str(&*k.clone()));
-                panic!("expected key {:?} not found", k);
-            }
-        } else {
-            panic!("could not read key {:?}, which we just wrote", k);
+                while let Some(thread) = threads.pop() {
+                    if let Err(e) = thread.join() {
+                        panic!("thread failure: {:?}", e);
+                    }
+                }
+            };
         }
-    }};
 
-    drop(t);
-    let t = Arc::new(
-        sled::Db::start(config.clone())
-            .expect("should be able to restart Tree"),
-    );
+        debug!("========== initial sets test {} ==========", i);
+        let t = Arc::new(sled::Db::start(config.clone()).unwrap());
+        par! {t, |tree: &Tree, k: Vec<u8>| {
+            assert_eq!(tree.get(&*k), Ok(None));
+            tree.set(&k, k.clone()).expect("we should write successfully");
+            assert_eq!(tree.get(&*k).unwrap().expect("we should read what we just wrote"), k);
+        }};
 
-    println!("========== CAS test ==========");
-    par! {t, |tree: &Tree, k: Vec<u8>| {
-        let k1 = k.clone();
-        let mut k2 = k.clone();
-        k2.reverse();
-        tree.cas(&k1, Some(&*k1), Some(k2)).unwrap();
-    }};
+        let n_scanned = t.iter().count();
+        if n_scanned != N {
+            warn!(
+                "WARNING: test {} only had {} keys present \
+                 in the DB BEFORE restarting. expected {}",
+                i, n_scanned, N,
+            );
+        }
 
-    drop(t);
-    let t = Arc::new(
-        sled::Db::start(config.clone())
-            .expect("should be able to restart Tree"),
-    );
+        drop(t);
+        let t = Arc::new(
+            sled::Db::start(config.clone())
+                .expect("should be able to restart Tree"),
+        );
 
-    par! {t, |tree: &Tree, k: Vec<u8>| {
-        let k1 = k.clone();
-        let mut k2 = k.clone();
-        k2.reverse();
-        assert_eq!(tree.get(&*k1).unwrap().unwrap(), k2);
-    }};
+        let n_scanned = t.iter().count();
+        if n_scanned != N {
+            warn!(
+                "WARNING: test {} only had {} keys present \
+                 in the DB AFTER restarting. expected {}",
+                i, n_scanned, N,
+            );
+        }
 
-    drop(t);
-    let t = Arc::new(
-        sled::Db::start(config.clone())
-            .expect("should be able to restart Tree"),
-    );
+        debug!("========== reading sets in test {} ==========", i);
+        par! {t, |tree: &Tree, k: Vec<u8>| {
+            if let Some(v) =  tree.get(&*k).unwrap() {
+                if v != k {
+                    debug!("test {} failed: {}", i, tree.key_debug_str(&*k.clone()));
+                    panic!("expected key {:?} not found", k);
+                }
+            } else {
+                panic!("could not read key {:?}, which we just wrote", k);
+            }
+        }};
 
-    println!("========== deleting ==========");
-    par! {t, |tree: &Tree, k: Vec<u8>| {
-        tree.del(&*k).unwrap();
-    }};
+        drop(t);
+        let t = Arc::new(
+            sled::Db::start(config.clone())
+                .expect("should be able to restart Tree"),
+        );
 
-    drop(t);
-    let t = Arc::new(
-        sled::Db::start(config.clone())
-            .expect("should be able to restart Tree"),
-    );
+        debug!("========== CAS test in test {} ==========", i);
+        par! {t, |tree: &Tree, k: Vec<u8>| {
+            let k1 = k.clone();
+            let mut k2 = k.clone();
+            k2.reverse();
+            tree.cas(&k1, Some(&*k1), Some(k2)).unwrap();
+        }};
 
-    par! {t, |tree: &Tree, k: Vec<u8>| {
-        assert_eq!(tree.get(&*k), Ok(None));
-    }};
+        drop(t);
+        let t = Arc::new(
+            sled::Db::start(config.clone())
+                .expect("should be able to restart Tree"),
+        );
+
+        par! {t, |tree: &Tree, k: Vec<u8>| {
+            let k1 = k.clone();
+            let mut k2 = k.clone();
+            k2.reverse();
+            assert_eq!(tree.get(&*k1).unwrap().unwrap().to_vec(), k2);
+        }};
+
+        drop(t);
+        let t = Arc::new(
+            sled::Db::start(config.clone())
+                .expect("should be able to restart Tree"),
+        );
+
+        debug!("========== deleting in test {} ==========", i);
+        par! {t, |tree: &Tree, k: Vec<u8>| {
+            tree.del(&*k).unwrap();
+        }};
+
+        drop(t);
+        let t = Arc::new(
+            sled::Db::start(config.clone())
+                .expect("should be able to restart Tree"),
+        );
+
+        par! {t, |tree: &Tree, k: Vec<u8>| {
+            assert_eq!(tree.get(&*k), Ok(None));
+        }};
+    }
 }
 
 #[test]
@@ -306,8 +315,6 @@ fn tree_subscriptions_and_keyspaces() -> Result<(), ()> {
         t2.get(b""),
         Err(Error::CollectionNotFound(b"2".to_vec()))
     );
-
-    db.flush();
 
     let guard = pagecache::pin();
     guard.flush();

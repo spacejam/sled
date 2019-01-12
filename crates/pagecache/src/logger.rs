@@ -135,6 +135,11 @@ impl Log {
                 LogRead::Inline(read_lsn, _, _)
                 | LogRead::Blob(read_lsn, _, _) => {
                     if lsn != read_lsn {
+                        debug!(
+                            "lsn of disk read is {} but we expected it to be {}",
+                            read_lsn,
+                            lsn,
+                        );
                         Err(Error::Corruption { at: ptr })
                     } else {
                         Ok(log_read)
