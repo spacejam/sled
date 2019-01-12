@@ -1,5 +1,6 @@
 use std::{
     ops::Deref,
+    path::Path,
     sync::{
         atomic::{
             AtomicUsize,
@@ -9,9 +10,331 @@ use std::{
     },
 };
 
-use pagecache::{FastMap8, PagePtr};
+use pagecache::{FastMap8, PagePtr, MergeOperator};
 
 use super::*;
+
+#[derive(Clone)]
+pub struct OpenOptions {
+    merge_operator: Option<MergeOperator>,
+    write: bool,
+    clear: bool,
+    create: bool,
+    create_new: bool,
+    pagecache_config: Option<Config>,
+}
+
+impl OpenOptions {
+    pub fn new() -> Self {
+        OpenOptions {
+            merge_operator: None,
+            write: false,
+            clear: false,
+            create: false,
+            create_new: false,
+            pagecache_config: None,
+        }
+    }
+
+    pub fn merge_operator(&mut self, merge_operator: MergeOperator) -> &mut Self {
+        self.merge_operator = Some(merge_operator);
+        self
+    }
+
+    pub fn write(&mut self, write: bool) -> &mut Self {
+        self.write = write;
+        self
+    }
+
+    pub fn clear(&mut self, clear: bool) -> &mut Self {
+        self.clear = clear;
+        self
+    }
+
+    pub fn create(&mut self, create: bool) -> &mut Self {
+        self.create = create;
+        self
+    }
+
+    pub fn create_new(&mut self, create_new: bool) -> &mut Self {
+        self.create_new = create_new;
+        self
+    }
+
+    pub fn pagecache_config(&mut self, pagecache_config: Config) -> &mut Self {
+        self.pagecache_config = Some(pagecache_config);
+        self
+    }
+
+    pub fn open<P: AsRef<Path>>(&self, path: P) -> Result<Db, ()> {
+        let _measure = Measure::new(&M.tree_start);
+
+        let config = self.pagecache_config.clone().unwrap_or_else(|| ConfigBuilder::new().build());
+
+        #[cfg(any(test, feature = "check_snapshot_integrity"))]
+        match config
+            .verify_snapshot::<BLinkMaterializer, Frag, Recovery>()
+        {
+            Ok(_) => {}
+            #[cfg(feature = "failpoints")]
+            Err(Error::FailPoint) => {}
+            other => panic!("failed to verify snapshot: {:?}", other),
+        }
+
+        let pages = Arc::new(PageCache::start(config.clone())?);
+
+        let recovery: Recovery =
+            pages.recovered_state().unwrap_or_default();
+        let idgen_recovery =
+            recovery.counter + (2 * config.idgen_persist_interval);
+        let idgen_persists = recovery.counter
+            / config.idgen_persist_interval
+            * config.idgen_persist_interval;
+
+        let guard = pin();
+
+        let was_recovered: bool;
+
+        if pages
+            .get(META_PID, &guard)
+            .map_err(|e| e.danger_cast())?
+            .is_unallocated()
+        {
+            was_recovered = false;
+
+            // set up meta
+            let meta_id = pages.allocate(&guard)?;
+
+            assert_eq!(
+                meta_id,
+                META_PID,
+                "we expect the meta page to have pid {}, but it had pid {} instead",
+                META_PID,
+                meta_id,
+            );
+
+            let meta = Frag::Meta(Meta::default());
+            pages
+                .replace(meta_id, PagePtr::allocated(), meta, &guard)
+                .map_err(|e| e.danger_cast())?;
+
+            // set up idgen
+            let counter_id = pages.allocate(&guard)?;
+
+            assert_eq!(
+                counter_id,
+                COUNTER_PID,
+                "we expect the counter to have pid {}, but it had pid {} instead",
+                COUNTER_PID,
+                counter_id,
+            );
+
+            let counter = Frag::Counter(0);
+            pages
+                .replace(
+                    counter_id,
+                    PagePtr::allocated(),
+                    counter,
+                    &guard,
+                )
+                .map_err(|e| e.danger_cast())?;
+        } else {
+            was_recovered = true;
+        };
+
+        let default_tree = meta::open_tree(
+            pages.clone(),
+            config.clone(),
+            DEFAULT_TREE_ID.to_vec(),
+            &guard,
+        )?;
+        let tx_tree = meta::open_tree(
+            pages.clone(),
+            config.clone(),
+            TX_TREE_ID.to_vec(),
+            &guard,
+        )?;
+
+        let ret = Db {
+            pages: pages,
+            config,
+            idgen: Arc::new(AtomicUsize::new(idgen_recovery)),
+            idgen_persists: Arc::new(AtomicUsize::new(
+                idgen_persists,
+            )),
+            idgen_persist_mu: Arc::new(Mutex::new(())),
+            tenants: Arc::new(RwLock::new(FastMap8::default())),
+            default: Arc::new(default_tree),
+            transactions: Arc::new(tx_tree),
+            was_recovered,
+        };
+
+        #[cfg(feature = "event_log")]
+        ret.config.event_log.meta_after_restart(
+            meta::meta(&*ret.pages, &guard)
+                .expect("should be able to get meta under test")
+                .clone(),
+        );
+
+        let mut tenants = ret.tenants.write().unwrap();
+
+        for (id, _root) in
+            meta::meta(&*ret.pages, &guard)?.tenants().into_iter()
+        {
+            let tree = Tree {
+                tree_id: id.clone(),
+                subscriptions: Arc::new(Subscriptions::default()),
+                config: ret.config.clone(),
+                pages: ret.pages.clone(),
+            };
+            tenants.insert(id, Arc::new(tree));
+        }
+
+        drop(tenants);
+
+        let mut ret = ret;
+
+        ret.default = ret.open_tree(DEFAULT_TREE_ID.to_vec())?;
+        ret.transactions = ret.open_tree(TX_TREE_ID.to_vec())?;
+
+        Ok(ret)
+    }
+}
+
+#[derive(Clone)]
+pub struct TreeOpenOptions<'a> {
+    db: &'a Db,
+    merge_operator: Option<MergeOperator>,
+    write: bool,
+    clear: bool,
+    create: bool,
+    create_new: bool,
+}
+
+impl<'a> TreeOpenOptions<'a> {
+    pub fn new(db: &'a Db) -> TreeOpenOptions<'a> {
+        TreeOpenOptions {
+            db,
+            merge_operator: None,
+            write: false,
+            clear: false,
+            create: false,
+            create_new: false,
+        }
+    }
+
+    pub fn merge_operator(&mut self, merge_operator: MergeOperator) -> &mut Self {
+        self.merge_operator = Some(merge_operator);
+        self
+    }
+
+    pub fn write(&mut self, write: bool) -> &mut Self {
+        self.write = write;
+        self
+    }
+
+    pub fn clear(&mut self, clear: bool) -> &mut Self {
+        self.clear = clear;
+        self
+    }
+
+    pub fn create(&mut self, create: bool) -> &mut Self {
+        self.create = create;
+        self
+    }
+
+    /// If `.create_new(true)` is set, `.create()` and `.clear()` are ignored.
+    pub fn create_new(&mut self, create_new: bool) -> &mut Self {
+        self.create_new = create_new;
+        self
+    }
+
+    pub fn open(&self, name: Vec<u8>) -> Result<Arc<Tree>, ()> {
+        let guard = pin();
+
+        let tenants = self.db.tenants.read().unwrap();
+        if let Some(tree) = tenants.get(&name) {
+            if self.create_new {
+                unimplemented!("Error: `create_new` option set but Tree already exists and must not")
+            }
+            if self.clear {
+                // What if this tree is shared? Must we use Arc::get_mut?
+                // The clear method is not atomic...
+                tree.clear();
+            }
+            return Ok(tree.clone());
+        }
+        // drop reader lock
+        drop(tenants);
+
+        if !self.create_new && !self.create {
+            unimplemented!("Error: We don't specify us to create the Tree so we will not!")
+        }
+
+        // set up empty leaf
+        let leaf_id = self.db.pages.allocate(&guard)?;
+        trace!(
+            "allocated pid {} for leaf in open_tree for namespace {:?}",
+            leaf_id,
+            name,
+        );
+
+        let leaf = Frag::Base(Node {
+            id: leaf_id,
+            data: Data::Leaf(vec![]),
+            next: None,
+            lo: vec![].into(),
+            hi: vec![].into(),
+        });
+
+        self.db.pages
+            .replace(leaf_id, PagePtr::allocated(), leaf, &guard)
+            .map_err(|e| e.danger_cast())?;
+
+        // set up root index
+        let root_id = self.db.pages.allocate(&guard)?;
+
+        debug!(
+            "allocated pid {} for root of new_tree {:?}",
+            root_id, name
+        );
+
+        // vec![0] represents a prefix-encoded empty prefix
+        let root_index_vec = vec![(vec![0].into(), leaf_id)];
+
+        let root = Frag::Base(Node {
+            id: root_id,
+            data: Data::Index(root_index_vec),
+            next: None,
+            lo: vec![].into(),
+            hi: vec![].into(),
+        });
+
+        self.db.pages
+            .replace(root_id, PagePtr::allocated(), root, &guard)
+            .map_err(|e| e.danger_cast())?;
+
+        meta::cas_root(
+            &*self.db.pages,
+            name.clone(),
+            None,
+            Some(root_id),
+            &guard,
+        )
+        .map_err(|e| e.danger_cast())?;
+
+        let mut tenants = self.db.tenants.write().unwrap();
+        let tree = Arc::new(Tree {
+            tree_id: name.clone(),
+            subscriptions: Arc::new(Subscriptions::default()),
+            config: self.db.config.clone(),
+            pages: self.db.pages.clone(),
+        });
+        tenants.insert(name, tree.clone());
+
+        Ok(tree)
+    }
+}
 
 /// The `sled` embedded database!
 #[derive(Clone)]
@@ -63,6 +386,76 @@ impl Deref for Db {
 }
 
 impl Db {
+    /// Load existing or create a new `Db`.
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Db, ()> {
+        OpenOptions::new().write(true).create(true).open(path)
+    }
+
+    /// Open or create a disk-backed Tree with its own keyspace,
+    /// accessible from the `Db` via the provided identifier.
+    pub fn open_tree(&self, name: Vec<u8>) -> Result<Arc<Tree>, ()> {
+        TreeOpenOptions::new(self).write(true).create(true).open(name)
+    }
+
+    pub fn tree_with_options(&self) -> TreeOpenOptions {
+        TreeOpenOptions::new(self)
+    }
+
+    /// Remove a disk-backed collection.
+    pub fn drop_tree(&self, name: &[u8]) -> Result<bool, ()> {
+        if name == DEFAULT_TREE_ID || name == TX_TREE_ID {
+            return Err(Error::Unsupported(
+                "cannot remove the core structures".into(),
+            ));
+        }
+        trace!("dropping tree {:?}", name,);
+
+        let mut tenants = self.tenants.write().unwrap();
+
+        let tree = if let Some(tree) = tenants.remove(&*name) {
+            tree
+        } else {
+            return Ok(false);
+        };
+
+        let guard = pin();
+
+        let mut root_id =
+            meta::pid_for_name(&*self.pages, &name, &guard)?;
+
+        let leftmost_chain: Vec<PageId> = tree
+            .path_for_key(b"", &guard)?
+            .into_iter()
+            .map(|(frag, _tp)| frag.unwrap_base().id)
+            .collect();
+
+        loop {
+            let res = meta::cas_root(
+                &*self.pages,
+                name.to_vec(),
+                Some(root_id),
+                None,
+                &guard,
+            )
+            .map_err(|e| e.danger_cast());
+
+            match res {
+                Ok(_) => break,
+                Err(Error::CasFailed(actual)) => root_id = actual,
+                Err(other) => return Err(other.danger_cast()),
+            }
+        }
+
+        // drop writer lock
+        drop(tenants);
+
+        guard.defer(move || tree.gc_pages(leftmost_chain));
+
+        guard.flush();
+
+        Ok(true)
+    }
+
     /// Load existing or create a new `Db` with a default configuration.
     pub fn start_default<P: AsRef<std::path::Path>>(
         path: P,
@@ -267,137 +660,6 @@ impl Db {
         }
 
         Ok(ret)
-    }
-
-    /// Open or create a new disk-backed Tree with its own keyspace,
-    /// accessible from the `Db` via the provided identifier.
-    pub fn open_tree(&self, name: Vec<u8>) -> Result<Arc<Tree>, ()> {
-        let guard = pin();
-
-        let tenants = self.tenants.read().unwrap();
-        if let Some(tree) = tenants.get(&name) {
-            return Ok(tree.clone());
-        }
-        // drop reader lock
-        drop(tenants);
-
-        // set up empty leaf
-        let leaf_id = self.pages.allocate(&guard)?;
-        trace!(
-            "allocated pid {} for leaf in open_tree for namespace {:?}",
-            leaf_id,
-            name,
-        );
-
-        let leaf = Frag::Base(Node {
-            id: leaf_id,
-            data: Data::Leaf(vec![]),
-            next: None,
-            lo: vec![].into(),
-            hi: vec![].into(),
-        });
-
-        self.pages
-            .replace(leaf_id, PagePtr::allocated(), leaf, &guard)
-            .map_err(|e| e.danger_cast())?;
-
-        // set up root index
-        let root_id = self.pages.allocate(&guard)?;
-
-        debug!(
-            "allocated pid {} for root of new_tree {:?}",
-            root_id, name
-        );
-
-        // vec![0] represents a prefix-encoded empty prefix
-        let root_index_vec = vec![(vec![0].into(), leaf_id)];
-
-        let root = Frag::Base(Node {
-            id: root_id,
-            data: Data::Index(root_index_vec),
-            next: None,
-            lo: vec![].into(),
-            hi: vec![].into(),
-        });
-
-        self.pages
-            .replace(root_id, PagePtr::allocated(), root, &guard)
-            .map_err(|e| e.danger_cast())?;
-
-        meta::cas_root(
-            &*self.pages,
-            name.clone(),
-            None,
-            Some(root_id),
-            &guard,
-        )
-        .map_err(|e| e.danger_cast())?;
-
-        let mut tenants = self.tenants.write().unwrap();
-        let tree = Arc::new(Tree {
-            tree_id: name.clone(),
-            subscriptions: Arc::new(Subscriptions::default()),
-            config: self.config.clone(),
-            pages: self.pages.clone(),
-        });
-        tenants.insert(name, tree.clone());
-
-        Ok(tree)
-    }
-
-    /// Remove a disk-backed collection.
-    pub fn drop_tree(&self, name: &[u8]) -> Result<bool, ()> {
-        if name == DEFAULT_TREE_ID || name == TX_TREE_ID {
-            return Err(Error::Unsupported(
-                "cannot remove the core structures".into(),
-            ));
-        }
-        trace!("dropping tree {:?}", name,);
-
-        let mut tenants = self.tenants.write().unwrap();
-
-        let tree = if let Some(tree) = tenants.remove(&*name) {
-            tree
-        } else {
-            return Ok(false);
-        };
-
-        let guard = pin();
-
-        let mut root_id =
-            meta::pid_for_name(&*self.pages, &name, &guard)?;
-
-        let leftmost_chain: Vec<PageId> = tree
-            .path_for_key(b"", &guard)?
-            .into_iter()
-            .map(|(frag, _tp)| frag.unwrap_base().id)
-            .collect();
-
-        loop {
-            let res = meta::cas_root(
-                &*self.pages,
-                name.to_vec(),
-                Some(root_id),
-                None,
-                &guard,
-            )
-            .map_err(|e| e.danger_cast());
-
-            match res {
-                Ok(_) => break,
-                Err(Error::CasFailed(actual)) => root_id = actual,
-                Err(other) => return Err(other.danger_cast()),
-            }
-        }
-
-        // drop writer lock
-        drop(tenants);
-
-        guard.defer(move || tree.gc_pages(leftmost_chain));
-
-        guard.flush();
-
-        Ok(true)
     }
 
     /// Returns `true` if the database was

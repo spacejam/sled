@@ -22,7 +22,7 @@
 //! assert_eq!(t.get(b"yo!"), Ok(None));
 //! ```
 
-#![deny(missing_docs)]
+#![warn(missing_docs)]
 #![cfg_attr(test, deny(clippy::warnings))]
 #![cfg_attr(test, deny(clippy::bad_style))]
 #![cfg_attr(test, deny(clippy::future_incompatible))]
@@ -55,7 +55,7 @@ const TX_TREE_ID: &[u8] = b"__sled__transactions";
 
 pub use {
     self::{
-        db::Db,
+        db::{Db, OpenOptions, TreeOpenOptions},
         iter::{Iter, Keys, Values},
         pinned_value::PinnedValue,
         subscription::{Event, Subscriber},

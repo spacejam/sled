@@ -102,9 +102,8 @@ impl Tree {
     ///
     /// Note that this is not atomic.
     pub fn clear(&self) -> Result<(), ()> {
-        for k in self.keys(b"") {
-            let key = k?;
-            self.del(key)?;
+        for key in self.keys("") {
+            self.del(key?)?;
         }
         Ok(())
     }
