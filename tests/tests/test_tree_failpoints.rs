@@ -23,8 +23,6 @@ impl Arbitrary for Op {
         let fail_points = vec![
             "initial allocation",
             "initial allocation post",
-            "zero segment",
-            "zero segment post",
             "zero garbage segment",
             "zero garbage segment post",
             "buffer write",

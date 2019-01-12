@@ -437,7 +437,6 @@ impl IoBufs {
                 return Err(e);
             }
             if let Some(ref thread_pool) = iobufs.config.thread_pool {
-                let thread_pool = thread_pool.clone();
                 trace!("asynchronously writing index {} to log from exit_reservation", idx);
                 let iobufs = self.clone();
                 thread_pool.spawn(move || {
@@ -573,7 +572,8 @@ impl IoBufs {
         // NB we spin on this CAS because the next iobuf may not actually
         // be written to disk yet! (we've lapped the writer in the iobuf
         // ring buffer)
-        let measure_assign_spinloop = Measure::new(&M.assign_spinloop);
+        let measure_assign_spinloop =
+            Measure::new(&M.assign_spinloop);
         let mut spins = 0;
         while next_iobuf.cas_lid(max, next_offset).is_err() {
             spins += 1;
@@ -647,7 +647,6 @@ impl IoBufs {
                 return Err(e);
             }
             if let Some(ref thread_pool) = iobufs.config.thread_pool {
-                let thread_pool = thread_pool.clone();
                 trace!("asynchronously writing index {} to log from maybe_seal", idx);
                 let iobufs = self.clone();
                 thread_pool.spawn(move || {
