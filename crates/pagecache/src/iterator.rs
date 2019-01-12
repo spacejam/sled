@@ -80,7 +80,7 @@ impl Iterator for LogIter {
             match f.read_message(lid, &self.config) {
                 Ok(LogRead::Blob(lsn, buf, blob_ptr)) => {
                     if lsn != self.cur_lsn {
-                        error!("read Flush with bad lsn");
+                        debug!("read Flush with bad lsn");
                         return None;
                     }
                     trace!("read blob flush in LogIter::next");
@@ -94,7 +94,7 @@ impl Iterator for LogIter {
                 }
                 Ok(LogRead::Inline(lsn, buf, on_disk_len)) => {
                     if lsn != self.cur_lsn {
-                        error!("read Flush with bad lsn");
+                        debug!("read Flush with bad lsn");
                         return None;
                     }
                     trace!("read inline flush in LogIter::next");
@@ -104,7 +104,7 @@ impl Iterator for LogIter {
                 }
                 Ok(LogRead::Failed(lsn, on_disk_len)) => {
                     if lsn != self.cur_lsn {
-                        error!("read Failed with bad lsn");
+                        debug!("read Failed with bad lsn");
                         return None;
                     }
                     trace!("read zeroed in LogIter::next");
@@ -118,7 +118,7 @@ impl Iterator for LogIter {
                 }
                 Ok(LogRead::Pad(lsn)) => {
                     if lsn != self.cur_lsn {
-                        error!("read Pad with bad lsn");
+                        debug!("read Pad with bad lsn");
                         return None;
                     }
 
@@ -144,7 +144,7 @@ impl Iterator for LogIter {
                     continue;
                 }
                 Err(e) => {
-                    error!(
+                    debug!(
                         "failed to read log message at lid {} \
                          with expected lsn {} during iteration: {}",
                         lid, self.cur_lsn, e
@@ -193,7 +193,7 @@ impl LogIter {
 
         if segment_header.lsn != lsn {
             // this page was torn, nothing to read
-            error!(
+            debug!(
                 "segment header lsn ({}) != expected lsn ({})",
                 segment_header.lsn, lsn
             );

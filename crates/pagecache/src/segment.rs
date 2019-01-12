@@ -61,11 +61,16 @@
 //!    previous segment Lsn pointers don't match up, we know
 //!    we have encountered a lost segment, and we will not
 //!    continue the recovery past the detected gap.
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::fs::File;
-use std::mem;
+use std::{
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    fs::File,
+    mem,
+};
 
 use self::reader::LogReader;
+
+use futures::{future::Future, oneshot, Oneshot};
+
 use super::*;
 
 /// The segment accountant keeps track of the logical blocks
@@ -89,6 +94,7 @@ pub(super) struct SegmentAccountant {
     pause_rewriting: bool,
     safety_buffer: Vec<LogId>,
     ordering: BTreeMap<Lsn, LogId>,
+    async_truncations: Vec<Oneshot<Result<(), ()>>>,
 }
 
 #[cfg(feature = "event_log")]
@@ -412,6 +418,7 @@ impl SegmentAccountant {
             pause_rewriting: false,
             safety_buffer: vec![],
             ordering: BTreeMap::new(),
+            async_truncations: Vec::new(),
         };
 
         if let SegmentMode::Linear = ret.config.segment_mode {
@@ -1001,6 +1008,18 @@ impl SegmentAccountant {
     }
 
     fn bump_tip(&mut self) -> LogId {
+        let truncations =
+            mem::replace(&mut self.async_truncations, Vec::new());
+
+        for truncation in truncations {
+            match truncation.wait() {
+                Ok(Ok(())) => {}
+                error => {
+                    error!("failed to shrink file: {:?}", error);
+                }
+            }
+        }
+
         let lid = self.tip;
 
         self.tip += self.config.io_buf_size as LogId;
@@ -1025,9 +1044,9 @@ impl SegmentAccountant {
         while self.free.len() < self.config.io_bufs {
             let new_lid = self.bump_tip();
             trace!(
-                    "pushing segment {} to free from ensure_safe_free_distance",
-                    new_lid
-                );
+                "pushing segment {} to free from ensure_safe_free_distance",
+                new_lid
+            );
             self.free.push_front((new_lid, true));
         }
     }
@@ -1090,19 +1109,6 @@ impl SegmentAccountant {
                 }
             }
         };
-
-        debug!(
-            "zeroing out segment beginning at {} for future lsn {}",
-            lid, lsn
-        );
-        let f = &self.config.file;
-        maybe_fail!("zero segment");
-        f.pwrite_all(
-            &*vec![EVIL_BYTE; self.config.io_buf_size],
-            lid,
-        )?;
-        f.sync_all()?;
-        maybe_fail!("zero segment post");
 
         let last_given = self.safety_buffer[self.config.io_bufs - 1];
 
@@ -1198,13 +1204,34 @@ impl SegmentAccountant {
             "double-free of a segment occurred"
         );
 
-        debug!("truncating file to length {}", at);
+        if let Some(ref thread_pool) = self.config.thread_pool {
+            trace!("asynchronously truncating file to length {}", at);
+            let (completer, oneshot) = oneshot();
 
-        let f = &self.config.file;
-        f.set_len(at)?;
-        f.sync_all()?;
+            let config = self.config.clone();
 
-        Ok(())
+            thread_pool.spawn(move || {
+                debug!("truncating file to length {}", at);
+                let f = &config.file;
+
+                let res = f.set_len(at)
+                    .and_then(|_| f.sync_all())
+                    .map_err(|e| e.into());
+                if let Err(e) = completer.send(res) {
+                    error!("failed to fill async truncation future: {:?}", e);
+                }
+            });
+
+            self.async_truncations.push(oneshot);
+
+            Ok(())
+        } else {
+            trace!("synchronously truncating file to length {}", at);
+            let f = &self.config.file;
+            f.set_len(at)?;
+            f.sync_all()?;
+            Ok(())
+        }
     }
 
     fn ensure_ordering_initialized(&mut self) -> Result<(), ()> {
