@@ -1208,12 +1208,10 @@ impl SegmentAccountant {
             trace!("asynchronously truncating file to length {}", at);
             let (completer, oneshot) = oneshot();
 
-            let config = self.config.clone();
+            let f = self.config.file.clone();
 
             thread_pool.spawn(move || {
                 debug!("truncating file to length {}", at);
-                let f = &config.file;
-
                 let res = f.set_len(at)
                     .and_then(|_| f.sync_all())
                     .map_err(|e| e.into());
