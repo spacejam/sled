@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
 use std::thread;
 
 use pagecache::ConfigBuilder;
@@ -166,6 +166,149 @@ fn parallel_tree_ops() {
             assert_eq!(tree.get(&*k), Ok(None));
         }};
     }
+}
+
+#[test]
+fn parallel_iterators() -> Result<(), ()> {
+    let config = ConfigBuilder::new()
+        .temporary(true)
+        .blink_node_split_size(0)
+        .flush_every_ms(None)
+        .build();
+
+    let t = sled::Db::start(config).unwrap();
+
+    const INDELIBLE: [&[u8]; 16] = [
+        &[0u8; 4], &[1u8; 4], &[2u8; 4], &[3u8; 4], &[4u8; 4],
+        &[5u8; 4], &[6u8; 4], &[7u8; 4], &[8u8; 4], &[9u8; 4],
+        &[10u8; 4], &[11u8; 4], &[12u8; 4], &[13u8; 4], &[14u8; 4],
+        &[15u8; 4],
+    ];
+
+    for item in &INDELIBLE {
+        t.set(item.to_vec(), item.to_vec())?;
+    }
+
+    let barrier = Arc::new(Barrier::new(4));
+
+    let forward: thread::JoinHandle<Result<(), ()>> = thread::spawn(
+        {
+            let t = t.clone();
+            let barrier = barrier.clone();
+            move || {
+                barrier.wait();
+                for _ in 0..100 {
+                    let expected = INDELIBLE.iter();
+                    let mut keys = t.iter().keys();
+
+                    for expect in expected {
+                        loop {
+                            let k: Vec<u8> = keys.next().unwrap()?;
+                            assert!(
+                                &*k <= *expect,
+                                "witnessed key is {:?} but we expected \
+                                one <= {:?}, so we overshot due to a \
+                                concurrent modification",
+                                k,
+                                expect,
+                            );
+                            if &*k == *expect {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                println!("f");
+
+                Ok(())
+            }
+        },
+    );
+
+    let reverse: thread::JoinHandle<Result<(), ()>> = thread::spawn(
+        {
+            let t = t.clone();
+            let barrier = barrier.clone();
+            move || {
+                barrier.wait();
+                for _ in 0..100 {
+                    let expected = INDELIBLE.iter().rev();
+                    let mut keys = t.iter().keys().rev();
+
+                    for expect in expected {
+                        loop {
+                            let k: Vec<u8> = keys.next().unwrap()?;
+                            assert!(
+                                &*k >= *expect,
+                                "witnessed key is {:?} but we expected \
+                                one >= {:?}, so we overshot due to a \
+                                concurrent modification",
+                                k,
+                                expect,
+                            );
+                            if &*k == *expect {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                println!("r");
+
+                Ok(())
+            }
+        },
+    );
+
+    let inserter = thread::spawn({
+        let t = t.clone();
+        let barrier = barrier.clone();
+        move || {
+            barrier.wait();
+
+            for i in 0..(16 * 16 * 8) {
+                let major = i / (16 * 8);
+                let minor = i % 16;
+
+                let mut base = INDELIBLE[major].to_vec();
+                base.push(minor as u8);
+                t.set(base.clone(), base.clone())?;
+            }
+
+            println!("i");
+
+            Ok(())
+        }
+    });
+
+    let deleter = thread::spawn({
+        let t = t.clone();
+        let barrier = barrier.clone();
+        move || {
+            barrier.wait();
+
+            for i in 0..(16 * 16 * 8) {
+                let major = i / (16 * 8);
+                let minor = i % 16;
+
+                let mut base = INDELIBLE[major].to_vec();
+                base.push(minor as u8);
+                t.del(&base)?;
+            }
+
+            println!("d");
+            Ok(())
+        }
+    });
+
+    for thread in
+        vec![forward, reverse, inserter, deleter].into_iter()
+    {
+        thread.join().expect("thread should not have crashed")?;
+    }
+
+    Ok(())
 }
 
 #[test]
