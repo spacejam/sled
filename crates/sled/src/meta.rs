@@ -117,8 +117,8 @@ pub(crate) fn open_tree<'a>(
         id: leaf_id,
         data: Data::Leaf(vec![]),
         next: None,
-        lo: vec![],
-        hi: vec![],
+        lo: vec![].into(),
+        hi: vec![].into(),
     });
 
     pages
@@ -134,14 +134,14 @@ pub(crate) fn open_tree<'a>(
     );
 
     // vec![0] represents a prefix-encoded empty prefix
-    let root_index_vec = vec![(vec![0], leaf_id)];
+    let root_index_vec = vec![(vec![0].into(), leaf_id)];
 
     let root = Frag::Base(Node {
         id: root_id,
         data: Data::Index(root_index_vec),
         next: None,
-        lo: vec![],
-        hi: vec![],
+        lo: vec![].into(),
+        hi: vec![].into(),
     });
 
     pages

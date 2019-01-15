@@ -5,8 +5,8 @@ use super::*;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) enum Data {
-    Index(Vec<(Key, PageId)>),
-    Leaf(Vec<(Key, Value)>),
+    Index(Vec<(IVec, PageId)>),
+    Leaf(Vec<(IVec, IVec)>),
 }
 
 impl Data {
@@ -20,11 +20,11 @@ impl Data {
                 for (k, _p) in v.iter() {
                     sz = sz
                         .saturating_add(k.len() as u64)
-                        .saturating_add(size_of::<Key>() as u64)
+                        .saturating_add(size_of::<IVec>() as u64)
                         .saturating_add(size_of::<PageId>() as u64);
                 }
                 sz.saturating_add(
-                    size_of::<Vec<(Key, PageId)>>() as u64
+                    size_of::<Vec<(IVec, PageId)>>() as u64
                 )
             }
             Data::Leaf(ref v) => {
@@ -32,12 +32,12 @@ impl Data {
                 for (k, value) in v.iter() {
                     sz = sz
                         .saturating_add(k.len() as u64)
-                        .saturating_add(size_of::<Key>() as u64)
+                        .saturating_add(size_of::<IVec>() as u64)
                         .saturating_add(value.len() as u64)
-                        .saturating_add(size_of::<Value>() as u64);
+                        .saturating_add(size_of::<IVec>() as u64);
                 }
                 sz.saturating_add(
-                    size_of::<Vec<(Key, Value)>>() as u64
+                    size_of::<Vec<(IVec, IVec)>>() as u64
                 )
             }
         };
@@ -52,11 +52,11 @@ impl Data {
         }
     }
 
-    pub(crate) fn split(&self, lhs_prefix: &[u8]) -> (Key, Data) {
+    pub(crate) fn split(&self, lhs_prefix: &[u8]) -> (IVec, Data) {
         fn split_inner<T>(
-            xs: &[(Key, T)],
+            xs: &[(IVec, T)],
             lhs_prefix: &[u8],
-        ) -> (Key, Vec<(Key, T)>)
+        ) -> (IVec, Vec<(IVec, T)>)
         where
             T: Clone + Debug + Ord,
         {
@@ -80,11 +80,11 @@ impl Data {
                 .iter()
                 .map(|&(ref k, ref v)| {
                     let new_k = prefix_encode(&*split, k);
-                    (new_k, v.clone())
+                    (new_k.into(), v.clone())
                 })
                 .collect();
 
-            (split, rhs_data)
+            (split.into(), rhs_data)
         }
 
         match *self {
@@ -116,7 +116,7 @@ impl Data {
         }
     }
 
-    pub(crate) fn leaf_ref(&self) -> Option<&Vec<(Key, Value)>> {
+    pub(crate) fn leaf_ref(&self) -> Option<&Vec<(IVec, IVec)>> {
         match *self {
             Data::Index(_) => None,
             Data::Leaf(ref items) => Some(items),

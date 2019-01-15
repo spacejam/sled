@@ -1,6 +1,8 @@
+use super::*;
+
 use std::cmp::Ordering;
 
-pub(crate) fn prefix_encode(prefix: &[u8], buf: &[u8]) -> Vec<u8> {
+pub(crate) fn prefix_encode(prefix: &[u8], buf: &[u8]) -> IVec {
     assert!(
         prefix <= buf,
         "prefix {:?} must be lexicographically <= to the encoded buf {:?}",
@@ -24,7 +26,7 @@ pub(crate) fn prefix_encode(prefix: &[u8], buf: &[u8]) -> Vec<u8> {
     }
     ret[1..].copy_from_slice(&buf[prefix_len..]);
     ret[0] = prefix_len as u8;
-    ret
+    ret.into()
 }
 
 pub(crate) fn prefix_decode(prefix: &[u8], buf: &[u8]) -> Vec<u8> {

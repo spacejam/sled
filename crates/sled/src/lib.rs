@@ -35,6 +35,7 @@ mod data;
 mod db;
 mod frag;
 mod iter;
+mod ivec;
 mod materializer;
 mod meta;
 mod node;
@@ -71,6 +72,7 @@ use {
         },
         data::Data,
         frag::{ChildSplit, Frag, ParentSplit},
+        ivec::IVec,
         materializer::BLinkMaterializer,
         node::Node,
         prefix::{
@@ -90,7 +92,6 @@ use {
 };
 
 type Key = Vec<u8>;
-type KeyRef<'a> = &'a [u8];
 type Value = Vec<u8>;
 
 type TreePtr<'g> = pagecache::PagePtr<'g, Frag>;

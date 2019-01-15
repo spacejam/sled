@@ -348,7 +348,7 @@ impl Tree {
                 (node.id, prefix_encode(&node.lo, key.as_ref()))
             };
             let frag = if let Some(ref n) = new {
-                Frag::Set(encoded_key, n.clone())
+                Frag::Set(encoded_key, n.clone().into())
             } else {
                 Frag::Del(encoded_key)
             };
@@ -419,7 +419,7 @@ impl Tree {
             let mut subscriber_reservation =
                 self.subscriptions.reserve(&key);
 
-            let frag = Frag::Set(encoded_key, value.clone());
+            let frag = Frag::Set(encoded_key, value.clone().into());
             let link = self.pages.link(
                 node.id,
                 leaf_ptr.clone(),
@@ -619,7 +619,7 @@ impl Tree {
             let node: &Node = leaf_frag.unwrap_base();
 
             let encoded_key = prefix_encode(&node.lo, key.as_ref());
-            let frag = Frag::Merge(encoded_key, value.clone());
+            let frag = Frag::Merge(encoded_key, value.clone().into());
 
             let link = self.pages.link(
                 node.id,
@@ -1014,7 +1014,7 @@ impl Tree {
         &self,
         from: PageId,
         to: PageId,
-        at: Key,
+        at: IVec,
         guard: &'g Guard,
     ) -> Result<(), ()> {
         // hoist new root, pointing to lhs & rhs
@@ -1023,7 +1023,7 @@ impl Tree {
 
         let root_lo = b"";
         let mut new_root_vec = vec![];
-        new_root_vec.push((vec![0], from));
+        new_root_vec.push((vec![0].into(), from));
 
         let encoded_at = prefix_encode(root_lo, &*at);
         new_root_vec.push((encoded_at, to));
@@ -1031,8 +1031,8 @@ impl Tree {
             id: new_root_pid,
             data: Data::Index(new_root_vec),
             next: None,
-            lo: vec![],
-            hi: vec![],
+            lo: vec![].into(),
+            hi: vec![].into(),
         });
         debug_delay();
         let new_root_ptr = self
@@ -1171,14 +1171,14 @@ impl Tree {
 
             // TODO this may need to change when handling (half) merges
             assert!(
-                node.lo.as_slice() <= key.as_ref(),
+                node.lo.as_ref() <= key.as_ref(),
                 "overshot key somehow"
             );
 
             // half-complete split detect & completion
             // (when hi is empty, it means it's unbounded)
             if !node.hi.is_empty()
-                && node.hi.as_slice() <= key.as_ref()
+                && node.hi.as_ref() <= key.as_ref()
             {
                 // we have encountered a child split, without
                 // having hit the parent split above.
