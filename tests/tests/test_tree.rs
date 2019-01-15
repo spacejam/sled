@@ -179,10 +179,22 @@ fn parallel_iterators() -> Result<(), ()> {
     let t = sled::Db::start(config).unwrap();
 
     const INDELIBLE: [&[u8]; 16] = [
-        &[0u8; 4], &[1u8; 4], &[2u8; 4], &[3u8; 4], &[4u8; 4],
-        &[5u8; 4], &[6u8; 4], &[7u8; 4], &[8u8; 4], &[9u8; 4],
-        &[10u8; 4], &[11u8; 4], &[12u8; 4], &[13u8; 4], &[14u8; 4],
-        &[15u8; 4],
+        &[0u8],
+        &[1u8],
+        &[2u8],
+        &[3u8],
+        &[4u8],
+        &[5u8],
+        &[6u8],
+        &[7u8],
+        &[8u8],
+        &[9u8],
+        &[10u8],
+        &[11u8],
+        &[12u8],
+        &[13u8],
+        &[14u8],
+        &[15u8],
     ];
 
     for item in &INDELIBLE {
@@ -226,6 +238,13 @@ fn parallel_iterators() -> Result<(), ()> {
         },
     );
 
+    // 2: 0, 1, 2, 3
+    // rev: 3, 2
+    // split 2
+    //
+    // 2: 0, 01
+    // rev: 01 !!!!!
+
     let reverse: thread::JoinHandle<Result<(), ()>> = thread::spawn(
         {
             let t = t.clone();
@@ -238,17 +257,24 @@ fn parallel_iterators() -> Result<(), ()> {
 
                     for expect in expected {
                         loop {
-                            let k: Vec<u8> = keys.next().unwrap()?;
-                            assert!(
-                                &*k >= *expect,
-                                "witnessed key is {:?} but we expected \
-                                one >= {:?}, so we overshot due to a \
-                                concurrent modification",
-                                k,
-                                expect,
-                            );
-                            if &*k == *expect {
-                                break;
+                            if let Some(Ok(k)) = keys.next() {
+                                assert!(
+                                    &*k >= *expect,
+                                    "witnessed key is {:?} but we expected \
+                                    one >= {:?}, so we overshot due to a \
+                                    concurrent modification\n{:?}",
+                                    k,
+                                    expect,
+                                    *t,
+                                );
+                                if &*k == *expect {
+                                    break;
+                                }
+                            } else {
+                                panic!(
+                                    "undershot key on tree: \n{:?}",
+                                    *t
+                                );
                             }
                         }
                     }
