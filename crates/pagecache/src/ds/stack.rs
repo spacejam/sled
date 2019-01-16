@@ -2,7 +2,7 @@
 use std::{
     fmt::{self, Debug},
     ops::Deref,
-    sync::atomic::Ordering::{Relaxed, SeqCst},
+    sync::atomic::Ordering::SeqCst,
 };
 
 use sled_sync::{
@@ -19,8 +19,7 @@ pub(crate) struct Node<T: Send + 'static> {
 impl<T: Send + 'static> Drop for Node<T> {
     fn drop(&mut self) {
         unsafe {
-            let next =
-                self.next.load(Relaxed, unprotected()).as_raw();
+            let next = self.next.load(SeqCst, unprotected()).as_raw();
             if !next.is_null() {
                 drop(Box::from_raw(next as *mut Node<T>));
             }
@@ -45,8 +44,7 @@ impl<T: Send + 'static> Default for Stack<T> {
 impl<T: Send + 'static> Drop for Stack<T> {
     fn drop(&mut self) {
         unsafe {
-            let curr =
-                self.head.load(Relaxed, unprotected()).as_raw();
+            let curr = self.head.load(SeqCst, unprotected()).as_raw();
             if !curr.is_null() {
                 drop(Box::from_raw(curr as *mut Node<T>));
             }

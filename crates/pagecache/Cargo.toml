@@ -1,6 +1,6 @@
 [package]
 name = "pagecache"
-version = "0.9.3"
+version = "0.9.4"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "lock-free pagecache and log for high-performance databases"
 license = "MIT/Apache-2.0"
@@ -36,7 +36,7 @@ hashbrown = "0.1"
 lazy_static = "1.2"
 libc = "0.2"
 rayon = "1.0"
-pagetable = { version = "0.1.3", path = "../pagetable" }
+pagetable = { version = "0.1.4", path = "../pagetable" }
 sled_sync = { version = "0.2.2", path = "../sled_sync" }
 zstd = { version = "0.4", optional = true }
 fail = { version = "0.2", optional = true }
