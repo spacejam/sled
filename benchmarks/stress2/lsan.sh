@@ -6,12 +6,12 @@ echo "asan"
 # cargo clean
 export RUSTFLAGS="-Z sanitizer=address"
 # export ASAN_OPTIONS="detect_odr_violation=0"
-export ASAN_OPTIONS=detect_odr_violation=0
+export ASAN_OPTIONS=detect_odr_violation=0,print_stats=true
+export LSAN_OPTIONS=report_objects=true
 cargo build --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu
 sudo rm -rf default.sled
-sudo ASAN_OPTIONS=detect_odr_violation=0 target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30
-sudo ASAN_OPTIONS=detect_odr_violation=0 target/x86_64-unknown-linux-gnu/debug/stress2 --duration=6
-unset ASAN_OPTIONS
+sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=6
+sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=6
 
 echo "lsan"
 cargo clean
@@ -20,6 +20,8 @@ cargo build --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linu
 sudo rm -rf default.sled
 sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=6
 sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=6
+unset ASAN_OPTIONS
+unset LSAN_OPTIONS
 
 echo "tsan"
 cargo clean
