@@ -1,6 +1,10 @@
 use super::*;
 
-use std::{fmt, ops::Deref};
+use std::{
+    alloc::{alloc, dealloc, Layout},
+    fmt,
+    ops::Deref,
+};
 
 const INLINE_LEN_MASK: u8 = 0b0000_1111;
 const KIND_MASK: u8 = 0b1111_0000;
@@ -25,21 +29,34 @@ pub(crate) struct IVec {
 }
 
 impl IVec {
-    pub(crate) fn new(v: Vec<u8>) -> IVec {
+    pub(crate) fn new<V: AsRef<[u8]>>(v: V) -> IVec {
+        let v = v.as_ref();
         if v.len() <= CUTOFF {
             let sz = v.len() as u8;
             let tag = KIND_INLINE | sz;
 
-            let mut data = [0u8; 16];
+            let mut data: Inner = [0; std::mem::size_of::<Inner>()];
             data[CUTOFF] = tag;
             data[0..v.len()].copy_from_slice(&v[0..v.len()]);
 
             IVec { data }
         } else {
-            let bs = v.into_boxed_slice();
-            let ptr: *mut _ = Box::into_raw(bs);
-            let mut data: [u8; 16] =
-                unsafe { std::mem::transmute(ptr) };
+            let layout = Layout::from_size_align(v.len(), 1).unwrap();
+
+            let slice = unsafe {
+                let dst = alloc(layout);
+                assert_ne!(dst, std::ptr::null_mut());
+                std::ptr::copy_nonoverlapping(
+                    v.as_ptr(),
+                    dst,
+                    v.len(),
+                );
+
+                std::slice::from_raw_parts(dst, v.len())
+            };
+
+            let mut data: Inner =
+                unsafe { std::mem::transmute(slice) };
 
             assert_eq!(
                 data[CUTOFF], 0,
@@ -94,7 +111,7 @@ impl Deref for IVec {
                 unsafe { std::slice::from_raw_parts(base, len) }
             }
             k if (k == KIND_OWNED || k == KIND_BORROWED) => {
-                let mut data: [u8; 16] = self.data;
+                let mut data: Inner = self.data;
                 data[CUTOFF] = 0;
 
                 unsafe {
@@ -111,13 +128,7 @@ impl Deref for IVec {
 
 impl Clone for IVec {
     fn clone(&self) -> IVec {
-        let ret: IVec = self.deref().to_vec().into();
-        trace!(
-            "cloned IVec pointing to {:?} to one pointing to {:?}",
-            self.deref().as_ptr(),
-            ret.deref().as_ptr(),
-        );
-        ret
+        IVec::new(self.deref())
     }
 }
 
@@ -129,10 +140,14 @@ impl Drop for IVec {
             k if k == KIND_OWNED => {
                 let mut data = self.data.clone();
                 data[CUTOFF] = 0;
+
                 unsafe {
-                    let ptr: *mut [u8] = std::mem::transmute(data);
-                    let b: Box<[u8]> = Box::from_raw(ptr);
-                    drop(b);
+                    let slice: &mut [u8] = std::mem::transmute(data);
+                    let len = slice.len();
+                    let layout =
+                        Layout::from_size_align(len, 1).unwrap();
+
+                    dealloc(slice.as_mut_ptr(), layout);
                 }
             }
             _ => {
