@@ -314,6 +314,7 @@ impl Tree {
         old: Option<&[u8]>,
         new: Option<Value>,
     ) -> Result<(), Option<PinnedValue>> {
+        trace!("casing key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_cas);
 
         if self.config.read_only {
@@ -391,6 +392,7 @@ impl Tree {
         key: K,
         value: Value,
     ) -> Result<Option<PinnedValue>, ()> {
+        trace!("setting key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_set);
 
         if self.config.read_only {
@@ -596,6 +598,7 @@ impl Tree {
         key: K,
         value: Value,
     ) -> Result<(), ()> {
+        trace!("merging key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_merge);
 
         if self.config.read_only {
@@ -614,6 +617,9 @@ impl Tree {
             );
             let node: &Node = leaf_frag.unwrap_base();
 
+            let mut subscriber_reservation =
+                self.subscriptions.reserve(&key);
+
             let encoded_key = prefix_encode(&node.lo, key.as_ref());
             let frag = Frag::Merge(encoded_key, value.clone().into());
 
@@ -626,6 +632,14 @@ impl Tree {
             match link {
                 Ok(new_cas_key) => {
                     // success
+                    if let Some(res) = subscriber_reservation.take() {
+                        let event = subscription::Event::Merge(
+                            key.as_ref().to_vec(),
+                            value.clone(),
+                        );
+
+                        res.complete(event);
+                    }
                     if node.should_split(
                         self.config.blink_node_split_size as u64,
                     ) {
