@@ -15,8 +15,8 @@ impl Node {
     #[inline]
     pub(crate) fn size_in_bytes(&self) -> u64 {
         let self_sz = size_of::<Self>() as u64;
-        let lo_sz = (size_of::<IVec>() + self.lo.len()) as u64;
-        let hi_sz = (size_of::<IVec>() + self.hi.len()) as u64;
+        let lo_sz = self.lo.size_in_bytes();
+        let hi_sz = self.hi.size_in_bytes();
         let data_sz = self.data.size_in_bytes();
 
         self_sz

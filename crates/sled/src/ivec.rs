@@ -29,8 +29,7 @@ pub(crate) struct IVec {
 }
 
 impl IVec {
-    pub(crate) fn new<V: AsRef<[u8]>>(v: V) -> IVec {
-        let v = v.as_ref();
+    pub(crate) fn new(v: &[u8]) -> IVec {
         if v.len() <= CUTOFF {
             let sz = v.len() as u8;
             let tag = KIND_INLINE | sz;
@@ -41,9 +40,11 @@ impl IVec {
 
             IVec { data }
         } else {
-            let layout = Layout::from_size_align(v.len(), 1).unwrap();
-
             let slice = unsafe {
+                let layout = Layout::from_size_align_unchecked(
+                    v.len(),
+                    std::mem::size_of::<u8>(),
+                );
                 let dst = alloc(layout);
                 assert_ne!(dst, std::ptr::null_mut());
                 std::ptr::copy_nonoverlapping(
@@ -71,6 +72,16 @@ impl IVec {
         }
     }
 
+    #[inline]
+    pub(crate) fn size_in_bytes(&self) -> u64 {
+        if self.data[CUTOFF] == KIND_INLINE {
+            std::mem::size_of::<IVec>() as u64
+        } else {
+            let sz = std::mem::size_of::<IVec>() as u64;
+            sz.saturating_add(self.len() as u64)
+        }
+    }
+
     pub(crate) fn take(&mut self) -> IVec {
         assert_ne!(
             self.data[CUTOFF], KIND_BORROWED,
@@ -94,7 +105,21 @@ impl IVec {
 
 impl From<Vec<u8>> for IVec {
     fn from(v: Vec<u8>) -> IVec {
-        IVec::new(v)
+        if v.len() <= CUTOFF {
+            IVec::new(&v)
+        } else {
+            let bs = v.into_boxed_slice();
+            let slice: &[u8] = bs.deref();
+            let mut data: Inner = unsafe {
+                std::mem::transmute(slice)
+            };
+            std::mem::forget(bs);
+            assert_eq!(data[CUTOFF], 0);
+            data[CUTOFF] = KIND_OWNED;
+            IVec {
+                data
+            }
+        }
     }
 }
 
@@ -144,8 +169,10 @@ impl Drop for IVec {
                 unsafe {
                     let slice: &mut [u8] = std::mem::transmute(data);
                     let len = slice.len();
-                    let layout =
-                        Layout::from_size_align(len, 1).unwrap();
+                    let layout = Layout::from_size_align_unchecked(
+                        len,
+                        std::mem::size_of::<u8>(),
+                    );
 
                     dealloc(slice.as_mut_ptr(), layout);
                 }
@@ -195,7 +222,7 @@ pub(crate) mod ser {
 
     use std::ops::Deref;
 
-    use serde::de::{Deserialize, Deserializer};
+    use serde::de::{Deserializer, Visitor};
     use serde::ser::Serializer;
 
     pub(crate) fn serialize<S>(
@@ -212,7 +239,30 @@ pub(crate) mod ser {
 
         let iv = IVec { data: data };
         let ivr: &[u8] = iv.deref();
-        serializer.collect_seq(ivr)
+
+        serializer.serialize_bytes(ivr)
+    }
+
+    struct IVecVisitor;
+
+    impl<'de> Visitor<'de> for IVecVisitor {
+        type Value = IVec;
+
+        fn expecting(
+            &self,
+            formatter: &mut std::fmt::Formatter,
+        ) -> std::fmt::Result {
+            formatter.write_str("a borrowed byte array")
+        }
+
+        #[inline]
+        fn visit_borrowed_bytes<E>(
+            self,
+            v: &'de [u8],
+        ) -> Result<IVec, E>
+        {
+            Ok(IVec::new(v))
+        }
     }
 
     pub(crate) fn deserialize<'de, D>(
@@ -221,10 +271,9 @@ pub(crate) mod ser {
     where
         D: Deserializer<'de>,
     {
-        let v = Vec::<u8>::deserialize(deserializer)?;
-        let mut iv: IVec = v.into();
+        let iv = deserializer.deserialize_bytes(IVecVisitor)?;
         let data: Inner = iv.data;
-        iv.data[CUTOFF] = KIND_BORROWED;
+        std::mem::forget(iv);
         Ok(data)
     }
 }
@@ -233,6 +282,6 @@ pub(crate) mod ser {
 fn ivec_usage() {
     let iv1: IVec = vec![1, 2, 3].into();
     assert_eq!(iv1, vec![1, 2, 3]);
-    let iv2 = IVec::new(vec![4; 128]);
+    let iv2 = IVec::new(&[4; 128]);
     assert_eq!(iv2, vec![4; 128]);
 }
