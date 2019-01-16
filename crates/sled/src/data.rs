@@ -80,7 +80,7 @@ impl Data {
                 .iter()
                 .map(|&(ref k, ref v)| {
                     let new_k = prefix_encode(&*split, k);
-                    (new_k.into(), v.clone())
+                    (new_k, v.clone())
                 })
                 .collect();
 
