@@ -32,17 +32,28 @@ impl IVec {
                 unsafe { std::mem::transmute(ptr) };
 
             assert_eq!(
-                data[15],
-                0,
+                data[15], 0,
                 "we incorrectly assumed that we could use \
-                the highest bits in the length field. please \
-                report this bug ASAP!"
+                 the highest bits in the length field. please \
+                 report this bug ASAP!"
             );
 
             data[15] = KIND_OWNED;
 
             IVec { data }
         }
+    }
+
+    pub(crate) fn take(&mut self) -> IVec {
+        assert_ne!(
+            self.data[15], KIND_BORROWED,
+            "take called on Borrowed IVec"
+        );
+        let ret = IVec { data: self.data };
+        if self.data[15] == KIND_OWNED {
+            self.data[15] = KIND_BORROWED;
+        }
+        ret
     }
 }
 
@@ -65,12 +76,13 @@ impl Deref for IVec {
                 unsafe { std::slice::from_raw_parts(base, len) }
             }
             k if (k == KIND_OWNED || k == KIND_BORROWED) => {
-                let mut data = self.data.clone();
+                let mut data: [u8; 16] = self.data;
                 data[15] = 0;
-                let ptr: *mut [u8] =
-                    unsafe { std::mem::transmute(data) };
 
-                unsafe { &*ptr }
+                unsafe {
+                    let ptr: *mut [u8] = std::mem::transmute(data);
+                    &*ptr
+                }
             }
             other => {
                 panic!("unknown kind {}", other);
@@ -81,7 +93,7 @@ impl Deref for IVec {
 
 impl Clone for IVec {
     fn clone(&self) -> IVec {
-        self.to_vec().into()
+        self.deref().to_vec().into()
     }
 }
 
@@ -93,10 +105,11 @@ impl Drop for IVec {
             k if k == KIND_OWNED => {
                 let mut data = self.data.clone();
                 data[15] = 0;
-                let ptr: *mut [u8] =
-                    unsafe { std::mem::transmute(data) };
-                let b: Box<[u8]> = unsafe { Box::from_raw(ptr) };
-                drop(b);
+                unsafe {
+                    let ptr: *mut [u8] = std::mem::transmute(data);
+                    let b: Box<[u8]> = Box::from_raw(ptr);
+                    drop(b);
+                }
             }
             _ => {
                 // no owned remote storage
@@ -139,7 +152,7 @@ impl fmt::Debug for IVec {
 }
 
 pub(crate) mod ser {
-    use super::IVec;
+    use super::{IVec, KIND_BORROWED, KIND_OWNED};
 
     use std::ops::Deref;
 
@@ -153,7 +166,12 @@ pub(crate) mod ser {
     where
         S: Serializer,
     {
-        let iv = IVec { data: *data };
+        let mut data: [u8; 16] = *data;
+        if data[15] == KIND_OWNED {
+            data[15] = KIND_BORROWED;
+        }
+
+        let iv = IVec { data: data };
         let ivr: &[u8] = iv.deref();
         serializer.collect_seq(ivr)
     }
@@ -165,9 +183,9 @@ pub(crate) mod ser {
         D: Deserializer<'de>,
     {
         let v = Vec::<u8>::deserialize(deserializer)?;
-        let iv: IVec = v.into();
+        let mut iv: IVec = v.into();
         let data: [u8; 16] = iv.data;
-        std::mem::forget(iv);
+        iv.data[15] = KIND_BORROWED;
         Ok(data)
     }
 }
