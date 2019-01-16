@@ -352,12 +352,8 @@ impl Tree {
             } else {
                 Frag::Del(encoded_key)
             };
-            let link = self.pages.link(
-                node_id,
-                leaf_ptr,
-                frag.clone(),
-                &guard,
-            );
+            let link =
+                self.pages.link(node_id, leaf_ptr, frag, &guard);
             match link {
                 Ok(_) => {
                     if let Some(res) = subscriber_reservation.take() {
@@ -1177,8 +1173,7 @@ impl Tree {
 
             // half-complete split detect & completion
             // (when hi is empty, it means it's unbounded)
-            if !node.hi.is_empty()
-                && node.hi.as_ref() <= key.as_ref()
+            if !node.hi.is_empty() && node.hi.as_ref() <= key.as_ref()
             {
                 // we have encountered a child split, without
                 // having hit the parent split above.
