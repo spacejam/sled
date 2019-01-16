@@ -171,7 +171,7 @@ impl<T: Send + Sync + 'static> Stack<T> {
                     // dropped when we drop this node.
                     node.deref().next.store(Shared::null(), SeqCst);
                     let node_owned = node.into_owned();
-                    guard.defer(move || node_owned);
+                    drop(node_owned)
                 }
                 Err(e.current)
             }
@@ -203,7 +203,7 @@ impl<T: Send + Sync + 'static> Stack<T> {
                 if !new.is_null() {
                     unsafe {
                         let new_owned = new.into_owned();
-                        guard.defer(move || new_owned)
+                        drop(new_owned)
                     };
                 }
 
@@ -240,10 +240,7 @@ where
         ptr: Shared<'b, Node<T>>,
         guard: &'b Guard,
     ) -> StackIter<'b, T> {
-        StackIter {
-            inner: ptr,
-            guard,
-        }
+        StackIter { inner: ptr, guard }
     }
 }
 
