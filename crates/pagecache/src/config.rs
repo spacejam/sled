@@ -464,7 +464,7 @@ impl ConfigBuilder {
         let mut crc_arr = [0u8; 8];
         f.seek(std::io::SeekFrom::End(-8)).unwrap();
         f.read_exact(&mut crc_arr).unwrap();
-        let crc_expected = arr_to_u64(crc_arr);
+        let crc_expected = arr_to_u64(&crc_arr);
 
         let crc_actual = crc64(&*buf);
 

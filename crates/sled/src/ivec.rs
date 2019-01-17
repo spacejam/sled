@@ -36,7 +36,14 @@ impl IVec {
 
             let mut data: Inner = [0; std::mem::size_of::<Inner>()];
             data[CUTOFF] = tag;
-            data[0..v.len()].copy_from_slice(&v[0..v.len()]);
+
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    v.as_ptr(),
+                    data.as_mut_ptr(),
+                    v.len(),
+                );
+            }
 
             IVec { data }
         } else {
@@ -126,6 +133,7 @@ impl From<Vec<u8>> for IVec {
 impl Deref for IVec {
     type Target = [u8];
 
+    #[inline]
     fn deref(&self) -> &[u8] {
         let tag = self.data[CUTOFF];
         let kind = tag & KIND_MASK;

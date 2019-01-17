@@ -318,8 +318,18 @@ impl IoBufs {
         let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
 
         let mut out = vec![0; MSG_HEADER_LEN + buf.len()];
-        out[0..MSG_HEADER_LEN].copy_from_slice(&header_bytes);
-        out[MSG_HEADER_LEN..].copy_from_slice(&*buf);
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                header_bytes.as_ptr(),
+                out.as_mut_ptr(),
+                MSG_HEADER_LEN,
+            );
+            std::ptr::copy_nonoverlapping(
+                buf.as_ptr(),
+                out[MSG_HEADER_LEN..].as_mut_ptr(),
+                buf.len(),
+            );
+        }
         Ok(out)
     }
 
@@ -963,26 +973,34 @@ impl IoBufs {
         let total_len = if maxed && should_pad {
             let offset = offset(header) as usize;
             let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
-            let len = capacity - offset - MSG_HEADER_LEN;
+            let pad_len = capacity - offset - MSG_HEADER_LEN;
 
             // take the crc of the random bytes already after where we
             // would place our header.
-            let padding_bytes = vec![EVIL_BYTE; len];
+            let padding_bytes = vec![EVIL_BYTE; pad_len];
             let crc16 = crc16_arr(&*padding_bytes);
 
             let header = MessageHeader {
                 kind: MessageKind::Pad,
                 lsn: base_lsn + offset as Lsn,
-                len,
+                len: pad_len,
                 crc16,
             };
 
             let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
 
-            data[offset..offset + MSG_HEADER_LEN]
-                .copy_from_slice(&header_bytes);
-            data[offset + MSG_HEADER_LEN..capacity]
-                .copy_from_slice(&*padding_bytes);
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    header_bytes.as_ptr(),
+                    data[offset..].as_mut_ptr(),
+                    MSG_HEADER_LEN,
+                );
+                std::ptr::copy_nonoverlapping(
+                    padding_bytes.as_ptr(),
+                    data[offset + MSG_HEADER_LEN..].as_mut_ptr(),
+                    pad_len,
+                );
+            }
 
             capacity
         } else {
@@ -1277,8 +1295,11 @@ impl IoBuf {
         let header_bytes: [u8; SEG_HEADER_LEN] = header.into();
 
         unsafe {
-            (*self.buf.get())[0..SEG_HEADER_LEN]
-                .copy_from_slice(&header_bytes);
+            std::ptr::copy_nonoverlapping(
+                header_bytes.as_ptr(),
+                (*self.buf.get()).as_mut_ptr(),
+                SEG_HEADER_LEN,
+            );
         }
 
         // ensure writes to the buffer land after our header.
