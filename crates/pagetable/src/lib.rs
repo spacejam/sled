@@ -1,7 +1,9 @@
 /// A simple wait-free, grow-only pagetable, assumes a dense keyspace.
 use std::sync::atomic::Ordering::SeqCst;
 
-use sled_sync::{debug_delay, pin, Atomic, Guard, Owned, Shared};
+use sled_sync::{
+    debug_delay, unprotected, Atomic, Guard, Owned, Shared,
+};
 
 const FANFACTOR: usize = 18;
 const FANOUT: usize = 1 << FANFACTOR;
@@ -205,12 +207,9 @@ where
 {
     fn drop(&mut self) {
         unsafe {
-            let guard = pin();
-            let head =
-                self.head.load(SeqCst, &guard).as_raw() as usize;
-            guard.defer(move || {
-                drop(Box::from_raw(head as *mut Node1<T>));
-            });
+            let head = self.head.load(SeqCst, &unprotected()).as_raw()
+                as usize;
+            drop(Box::from_raw(head as *mut Node1<T>));
         }
     }
 }
@@ -218,11 +217,10 @@ where
 impl<T: Send + 'static> Drop for Node1<T> {
     fn drop(&mut self) {
         unsafe {
-            let guard = pin();
             let children: Vec<*const Node2<T>> = self
                 .children
                 .iter()
-                .map(|c| c.load(SeqCst, &guard).as_raw())
+                .map(|c| c.load(SeqCst, &unprotected()).as_raw())
                 .filter(|c| !c.is_null())
                 .collect();
 
@@ -236,12 +234,10 @@ impl<T: Send + 'static> Drop for Node1<T> {
 impl<T: Send + 'static> Drop for Node2<T> {
     fn drop(&mut self) {
         unsafe {
-            let guard = pin();
-
             let children: Vec<*const T> = self
                 .children
                 .iter()
-                .map(|c| c.load(SeqCst, &guard).as_raw())
+                .map(|c| c.load(SeqCst, &unprotected()).as_raw())
                 .filter(|c| !c.is_null())
                 .collect();
 
@@ -267,7 +263,7 @@ fn test_split_fanout() {
 #[test]
 fn basic_functionality() {
     unsafe {
-        let guard = pin();
+        let guard = sled_sync::pin();
         let rt = PageTable::default();
         let v1 = Owned::new(5).into_shared(&guard);
         rt.cas(0, Shared::null(), v1, &guard).unwrap();

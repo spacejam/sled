@@ -2,7 +2,7 @@
 use std::{
     fmt::{self, Debug},
     ops::Deref,
-    sync::atomic::Ordering::{Relaxed, SeqCst},
+    sync::atomic::Ordering::SeqCst,
 };
 
 use sled_sync::{
@@ -19,8 +19,7 @@ pub(crate) struct Node<T: Send + 'static> {
 impl<T: Send + 'static> Drop for Node<T> {
     fn drop(&mut self) {
         unsafe {
-            let next =
-                self.next.load(Relaxed, unprotected()).as_raw();
+            let next = self.next.load(SeqCst, unprotected()).as_raw();
             if !next.is_null() {
                 drop(Box::from_raw(next as *mut Node<T>));
             }
@@ -45,8 +44,7 @@ impl<T: Send + 'static> Default for Stack<T> {
 impl<T: Send + 'static> Drop for Stack<T> {
     fn drop(&mut self) {
         unsafe {
-            let curr =
-                self.head.load(Relaxed, unprotected()).as_raw();
+            let curr = self.head.load(SeqCst, unprotected()).as_raw();
             if !curr.is_null() {
                 drop(Box::from_raw(curr as *mut Node<T>));
             }
@@ -171,7 +169,7 @@ impl<T: Send + Sync + 'static> Stack<T> {
                     // dropped when we drop this node.
                     node.deref().next.store(Shared::null(), SeqCst);
                     let node_owned = node.into_owned();
-                    guard.defer(move || node_owned);
+                    drop(node_owned)
                 }
                 Err(e.current)
             }
@@ -203,7 +201,7 @@ impl<T: Send + Sync + 'static> Stack<T> {
                 if !new.is_null() {
                     unsafe {
                         let new_owned = new.into_owned();
-                        guard.defer(move || new_owned)
+                        drop(new_owned)
                     };
                 }
 
@@ -240,10 +238,7 @@ where
         ptr: Shared<'b, Node<T>>,
         guard: &'b Guard,
     ) -> StackIter<'b, T> {
-        StackIter {
-            inner: ptr,
-            guard,
-        }
+        StackIter { inner: ptr, guard }
     }
 }
 

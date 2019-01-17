@@ -10,9 +10,9 @@ use super::*;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) enum Frag {
-    Set(Key, Value),
-    Del(Key),
-    Merge(Key, Value),
+    Set(IVec, IVec),
+    Del(IVec),
+    Merge(IVec, IVec),
     Base(Node),
     ChildSplit(ChildSplit),
     ParentSplit(ParentSplit),
@@ -36,16 +36,25 @@ impl Frag {
             panic!("called unwrap_base_ptr on non-Base Frag!")
         }
     }
+
+    pub(super) fn set_key(&mut self, key: IVec) {
+        match self {
+            Frag::Set(_, v) => *self = Frag::Set(key, v.take()),
+            Frag::Del(_) => *self = Frag::Del(key),
+            Frag::Merge(_, v) => *self = Frag::Merge(key, v.take()),
+            other => panic!("set_key called on {:?}", other),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct ParentSplit {
-    pub(crate) at: Vec<u8>,
+    pub(crate) at: IVec,
     pub(crate) to: PageId,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct ChildSplit {
-    pub(crate) at: Vec<u8>,
+    pub(crate) at: IVec,
     pub(crate) to: PageId,
 }

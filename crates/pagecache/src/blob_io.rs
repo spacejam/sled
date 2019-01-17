@@ -29,7 +29,7 @@ pub(crate) fn read_blob(
         return Err(e.into());
     }
 
-    let crc_expected = arr_to_u64(crc_expected_bytes);
+    let crc_expected = arr_to_u64(&crc_expected_bytes);
 
     let mut buf = vec![];
     if let Err(e) = f.read_to_end(&mut buf) {

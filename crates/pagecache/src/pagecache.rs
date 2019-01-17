@@ -524,6 +524,7 @@ where
         new: P,
         guard: &'g Guard,
     ) -> Result<PagePtr<'g, P>, Option<PagePtr<'g, P>>> {
+        trace!("linking pid {}", pid);
         if old.is_allocated() {
             return self.replace(pid, old, new, guard);
         }
@@ -535,13 +536,20 @@ where
 
         let prepend: LoggedUpdate<P> = LoggedUpdate {
             pid,
-            update: Update::Append(new.clone()),
+            update: Update::Append(new),
         };
 
         let bytes =
             measure(&M.serialize, || serialize(&prepend).unwrap());
         let log_reservation =
             self.log.reserve(bytes).map_err(|e| e.danger_cast())?;
+
+        let new = if let Update::Append(new) = prepend.update {
+            new
+        } else {
+            unreachable!()
+        };
+
         let lsn = log_reservation.lsn();
         let ptr = log_reservation.ptr();
 
@@ -553,8 +561,10 @@ where
         };
 
         if result.is_err() {
+            trace!("link of pid {} failed", pid);
             log_reservation.abort().map_err(|e| e.danger_cast())?;
         } else {
+            trace!("link of pid {} succeeded", pid);
             let skip_mark = {
                 // if the last update for this page was also
                 // sent to this segment, we can skip marking it
@@ -756,10 +766,8 @@ where
             Some(s) => s,
         };
 
-        let replace: LoggedUpdate<P> = LoggedUpdate {
-            pid,
-            update: new.clone(),
-        };
+        let replace: LoggedUpdate<P> =
+            LoggedUpdate { pid, update: new };
         let bytes =
             measure(&M.serialize, || serialize(&replace).unwrap());
         let log_reservation =
@@ -767,7 +775,7 @@ where
         let lsn = log_reservation.lsn();
         let new_ptr = log_reservation.ptr();
 
-        let cache_entry = match new {
+        let cache_entry = match replace.update {
             Update::Compact(m) => {
                 Some(CacheEntry::MergedResident(m, lsn, new_ptr))
             }
