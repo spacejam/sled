@@ -111,7 +111,7 @@ impl Default for ConfigBuilder {
             flush_every_ms: Some(500),
             snapshot_after_ops: 1_000_000,
             snapshot_path: None,
-            segment_cleanup_threshold: 0.2,
+            segment_cleanup_threshold: 0.4,
             segment_cleanup_skew: 10,
             temporary: false,
             segment_mode: SegmentMode::Gc,

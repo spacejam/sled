@@ -181,11 +181,8 @@ impl Segment {
             - self.removed.len()
     }
 
-    fn _is_free(&self) -> bool {
-        match self.state {
-            Free => true,
-            _ => false,
-        }
+    fn is_free(&self) -> bool {
+        self.state == Free
     }
 
     fn is_inactive(&self) -> bool {
@@ -867,6 +864,28 @@ impl SegmentAccountant {
             self.possibly_clean_or_free_segment(old_idx, lsn);
         }
 
+        // if we have a lot of free segments in our whole file,
+        // let's start relocating the current tip to boil it down
+        let free_segs =
+            self.segments.iter().filter(|s| s.is_free()).count();
+        let inactive_segs =
+            self.segments.iter().filter(|s| s.is_inactive()).count();
+        let free_ratio =
+            (free_segs * 100) / (1 + free_segs + inactive_segs);
+
+        if free_ratio
+            >= (self.config.segment_cleanup_threshold * 100.) as usize
+            && inactive_segs > 5
+        {
+            let last_index = self
+                .segments
+                .iter()
+                .rposition(|s| s.is_inactive())
+                .unwrap();
+            let segment_start = last_index * self.config.io_buf_size;
+            self.to_clean.insert(segment_start as LogId);
+        }
+
         self.mark_link(pid, lsn, new_ptr);
 
         Ok(())
@@ -1067,6 +1086,9 @@ impl SegmentAccountant {
 
         // truncate if possible
         loop {
+            if self.tip == 0 {
+                break;
+            }
             let last_segment =
                 self.tip - self.config.io_buf_size as LogId;
             if self.free.get(&last_segment) == Some(&false)
