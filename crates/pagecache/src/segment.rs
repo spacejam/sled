@@ -1088,7 +1088,7 @@ impl SegmentAccountant {
             .cloned()
             .nth(0);
 
-        let lid = if self.pause_rewriting || safe.is_some() {
+        let lid = if self.pause_rewriting || safe.is_none() {
             self.bump_tip()
         } else {
             let next = safe.unwrap();
