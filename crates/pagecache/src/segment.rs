@@ -62,7 +62,7 @@
 //!    we have encountered a lost segment, and we will not
 //!    continue the recovery past the detected gap.
 use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet},
     fs::File,
     mem,
 };
@@ -88,9 +88,9 @@ pub(super) struct SegmentAccountant {
     // TODO put behind a single mutex
     // NB MUST group pause_rewriting with ordering
     // and free!
-    free: VecDeque<(LogId, bool)>,
+    free: BTreeMap<LogId, bool>,
     tip: LogId,
-    to_clean: BTreeSet<LogId>,
+    to_clean: FastSet8<LogId>,
     pause_rewriting: bool,
     safety_buffer: Vec<LogId>,
     ordering: BTreeMap<Lsn, LogId>,
@@ -412,9 +412,9 @@ impl SegmentAccountant {
             config,
             segments: vec![],
             clean_counter: 0,
-            free: VecDeque::new(),
+            free: BTreeMap::default(),
             tip: 0,
-            to_clean: BTreeSet::new(),
+            to_clean: FastSet8::default(),
             pause_rewriting: false,
             safety_buffer: vec![],
             ordering: BTreeMap::new(),
@@ -634,9 +634,9 @@ impl SegmentAccountant {
 
                 segment.inactive_to_draining(lsn);
                 self.to_clean.insert(segment_start);
-                self.free.retain(|&(s, _)| s != segment_start);
+                self.free.remove(&segment_start);
             } else {
-                self.free.retain(|&(s, _)| s != segment_start);
+                self.free.remove(&segment_start);
             }
         }
 
@@ -741,7 +741,7 @@ impl SegmentAccountant {
         // we depend on the invariant that the last segments
         // always link together, so that we can detect torn
         // segments during recovery.
-        self.ensure_safe_free_distance();
+        self.ensure_safe_free_distance(lid);
 
         if in_recovery {
             // We only want to immediately remove the segment
@@ -760,7 +760,7 @@ impl SegmentAccountant {
             }
         }
 
-        self.free.push_back((lid, false));
+        self.free.insert(lid, false);
     }
 
     /// Causes all new allocations to occur at the end of the file, which
@@ -1029,7 +1029,7 @@ impl SegmentAccountant {
         lid
     }
 
-    fn ensure_safe_free_distance(&mut self) {
+    fn ensure_safe_free_distance(&mut self, lid: LogId) {
         // NB If updates always have to wait in a queue
         // at least as long as the number of IO buffers, it
         // guarantees that the old updates are actually safe
@@ -1041,13 +1041,17 @@ impl SegmentAccountant {
         // IO buffer during a PageCache replace, but whose
         // replacing updates have not actually landed on disk
         // yet.
-        while self.free.len() < self.config.io_bufs {
-            let new_lid = self.bump_tip();
-            trace!(
-                "pushing segment {} to free from ensure_safe_free_distance",
-                new_lid
-            );
-            self.free.push_front((new_lid, true));
+        if let Some(idx) =
+            &self.safety_buffer.iter().position(|l| *l == lid)
+        {
+            while self.free.len() <= *idx {
+                let new_lid = self.bump_tip();
+                debug!(
+                    "pushing segment {} to free from ensure_safe_free_distance",
+                    new_lid
+                );
+                self.free.insert(new_lid, true);
+            }
         }
     }
 
@@ -1061,53 +1065,35 @@ impl SegmentAccountant {
             "unaligned Lsn provided to next!"
         );
 
+        // truncate if possible
+        loop {
+            let last_segment =
+                self.tip - self.config.io_buf_size as LogId;
+            if self.free.get(&last_segment) == Some(&false)
+                && !self.safety_buffer.contains(&last_segment)
+            {
+                self.free.remove(&last_segment);
+                self.truncate(last_segment)?;
+            } else {
+                break;
+            }
+        }
+
         // pop free or add to end
-        let lid = if self.pause_rewriting {
+        let safe = self
+            .free
+            .keys()
+            .filter(|l| !self.safety_buffer.contains(l))
+            .take(1)
+            .cloned()
+            .nth(0);
+
+        let lid = if self.pause_rewriting || safe.is_some() {
             self.bump_tip()
         } else {
-            loop {
-                let pop_res = self.free.pop_front();
-
-                if let Some((
-                    next,
-                    pushed_by_ensure_safe_free_distance,
-                )) = pop_res
-                {
-                    // it's safe for us to truncate only
-                    // if we don't dig into the safety buffer
-                    // on our next pop
-                    let next_next_in_safety_buffer = self
-                        .free
-                        .get(0)
-                        .cloned()
-                        .map(|(lid, _)| {
-                            self.safety_buffer.contains(&lid)
-                        })
-                        .unwrap_or(false);
-
-                    // this will only be in safety_buffer if it's the last
-                    // element
-                    let truncate_prohibited =
-                        pushed_by_ensure_safe_free_distance
-                            || next_next_in_safety_buffer;
-
-                    if truncate_prohibited {
-                        break next;
-                    }
-
-                    // if we just returned the last segment
-                    // in the file, shrink the file.
-                    let io_buf_size =
-                        self.config.io_buf_size as LogId;
-                    if next + io_buf_size == self.tip {
-                        self.truncate(next)?;
-                    } else {
-                        break next;
-                    }
-                } else {
-                    break self.bump_tip();
-                }
-            }
+            let next = safe.unwrap();
+            self.free.remove(&next);
+            next
         };
 
         let last_given = self.safety_buffer[self.config.io_bufs - 1];
@@ -1128,8 +1114,13 @@ impl SegmentAccountant {
 
         debug!(
             "segment accountant returning offset: {} \
-             paused: {} last: {} on deck: {:?}",
-            lid, self.pause_rewriting, last_given, self.free
+             paused: {} last: {} on deck: {:?}, \
+             safety_buffer: {:?}",
+            lid,
+            self.pause_rewriting,
+            last_given,
+            self.free,
+            self.safety_buffer
         );
 
         if lid == 0 {
@@ -1255,12 +1246,7 @@ impl SegmentAccountant {
     }
 
     fn segment_in_free(&self, lid: LogId) -> bool {
-        for &(seg_lid, _) in &self.free {
-            if seg_lid == lid {
-                return true;
-            }
-        }
-        false
+        self.free.contains_key(&lid)
     }
 }
 
