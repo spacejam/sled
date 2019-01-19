@@ -51,7 +51,7 @@ impl PageState {
         match *self {
             PageState::Present(ref mut items) => items.push(item),
             PageState::Allocated(_, _) => {
-                *self = PageState::Present(vec![item])
+                *self = PageState::Present(vec![item]);
             }
             PageState::Free(_, _) => {
                 panic!("pushed items to a PageState::Free")

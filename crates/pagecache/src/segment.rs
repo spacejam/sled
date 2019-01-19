@@ -792,13 +792,15 @@ impl SegmentAccountant {
             new_ptr,
             lsn
         );
+
         let new_idx =
             new_ptr.lid() as usize / self.config.io_buf_size;
 
         // make sure we're not actively trying to replace the destination
         let new_segment_start =
             new_idx as LogId * self.config.io_buf_size as LogId;
-        self.to_clean.remove(&new_segment_start);
+
+        assert!(!self.to_clean.contains(&new_segment_start));
 
         // Do we need to schedule any blob cleanups?
         // Not if we just moved the pointer without changing
@@ -812,7 +814,15 @@ impl SegmentAccountant {
             self.config.page_consolidation_threshold + 1,
         );
 
-        for old_ptr in old_ptrs {
+        for old_ptr in &old_ptrs {
+            let old_lid = old_ptr.lid();
+
+            if old_lid == LogId::max_value() {
+                // this is used as a special value for initial Allocations
+                // before they are logged and fully installed with cas_page
+                continue;
+            }
+
             if schedule_rm_blob && old_ptr.is_blob() {
                 trace!(
                     "queueing blob removal for {} in our own segment",
@@ -821,8 +831,6 @@ impl SegmentAccountant {
                 self.segments[new_idx]
                     .remove_blob(old_ptr.blob().1, &self.config)?;
             }
-
-            let old_lid = old_ptr.lid();
 
             let old_idx = self.lid_to_idx(old_lid);
             if new_idx == old_idx {
@@ -934,7 +942,14 @@ impl SegmentAccountant {
         &mut self,
         ignore_pid: PageId,
     ) -> Option<PageId> {
-        let item = self.to_clean.iter().nth(0).cloned();
+        let seg_offset =
+            if self.to_clean.is_empty() || self.to_clean.len() == 1 {
+                0
+            } else {
+                self.clean_counter % self.to_clean.len()
+            };
+
+        let item = self.to_clean.iter().nth(seg_offset).cloned();
         if let Some(lid) = item {
             let idx = self.lid_to_idx(lid);
             let segment = &self.segments[idx];
@@ -947,7 +962,13 @@ impl SegmentAccountant {
             }
 
             self.clean_counter += 1;
-            let offset = self.clean_counter % segment.present.len();
+
+            let offset = if segment.present.len() == 1 {
+                0
+            } else {
+                self.clean_counter % segment.present.len()
+            };
+
             let pid = segment.present.iter().nth(offset).unwrap();
             if *pid == ignore_pid {
                 return None;
@@ -982,7 +1003,7 @@ impl SegmentAccountant {
         let new_segment_start =
             idx as LogId * self.config.io_buf_size as LogId;
 
-        self.to_clean.remove(&new_segment_start);
+        assert!(!self.to_clean.contains(&new_segment_start));
 
         let segment = &mut self.segments[idx];
 

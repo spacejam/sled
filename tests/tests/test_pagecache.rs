@@ -87,6 +87,7 @@ fn pagecache_caching() {
 
 #[test]
 fn parallel_pagecache() {
+    tests::setup_logger();
     const N_THREADS: usize = 10;
     const N_PER_THREAD: usize = 1000;
 
@@ -400,7 +401,7 @@ enum P {
 }
 
 fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
-    // tests::setup_logger();
+    tests::setup_logger();
     use self::Op::*;
     let config = ConfigBuilder::new()
         .temporary(true)
@@ -427,15 +428,13 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
 
                 match *ref_get {
                     P::Allocated => {
-                        assert_eq!(get, PageGet::Allocated);
-                        pc.replace(
-                            pid,
-                            PagePtr::allocated(),
-                            vec![c],
-                            &guard,
-                        )
-                        .unwrap();
-                        *ref_get = P::Present(vec![c]);
+                        if let PageGet::Allocated(ptr) = get {
+                            pc.replace(pid, ptr, vec![c], &guard)
+                                .unwrap();
+                            *ref_get = P::Present(vec![c]);
+                        } else {
+                            panic!("expected Allocated page get, instead got {:?}", get);
+                        }
                     }
                     P::Present(ref mut existing) => {
                         let (v, old_key) = get.unwrap();
@@ -513,12 +512,10 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                 let pre_get = pc.get(pid, &guard).unwrap();
 
                 match pre_get {
-                    PageGet::Materialized(_, ptr) => {
+                    PageGet::Allocated(ptr)
+                    | PageGet::Materialized(_, ptr) => {
                         pc.free(pid, ptr, &guard).unwrap()
                     }
-                    PageGet::Allocated => pc
-                        .free(pid, PagePtr::allocated(), &guard)
-                        .unwrap(),
                     _ => {}
                 }
 
@@ -538,11 +535,18 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
             Allocate => {
                 let pid = pc.allocate(&guard).unwrap();
                 reference.insert(pid, P::Allocated);
-                let get = pc.get(pid, &guard);
-                assert!(get.unwrap().is_allocated());
+                let get = pc.get(pid, &guard).unwrap();
+                if !get.is_allocated() {
+                    panic!(
+                        "expected allocated page, instead got {:?}",
+                        get
+                    );
+                }
             }
             Restart => {
                 drop(pc);
+
+                println!("restarting pagecache in test");
 
                 config
                     .verify_snapshot::<TestMaterializer, _, _>()
