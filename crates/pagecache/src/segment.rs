@@ -1026,23 +1026,35 @@ impl SegmentAccountant {
             &self.config,
         )?;
 
-        for (pid, old_idx) in replacements {
+        for &(pid, old_idx) in &replacements {
             let segment = &mut self.segments[old_idx];
             assert_ne!(
                 segment.state,
                 Active,
-                "segment {} is processing replacements for \
-                 segment {}, which is in the Active state",
+                "segment {} is processing pid {} replacements for \
+                 segment {}, which is in the Active state. \
+                 all replacements for pid: {:?}",
                 lid,
-                old_idx * self.config.io_buf_size
+                pid,
+                old_idx * self.config.io_buf_size,
+                replacements
+                    .iter()
+                    .filter(|(p, _)| p == &pid)
+                    .collect::<Vec<_>>()
             );
             assert_ne!(
                 segment.state,
                 Free,
-                "segment {} is processing replacements for \
-                 segment {}, which is in the Free state",
+                "segment {} is processing pid {} replacements for \
+                 segment {}, which is in the Free state. \
+                 all replacements for pid: {:?}",
                 lid,
-                old_idx * self.config.io_buf_size
+                pid,
+                old_idx * self.config.io_buf_size,
+                replacements
+                    .iter()
+                    .filter(|(p, _)| p == &pid)
+                    .collect::<Vec<_>>()
             );
             debug_assert!(
                 segment.present.contains(&pid),

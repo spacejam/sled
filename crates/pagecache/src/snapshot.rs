@@ -142,10 +142,8 @@ impl<R> Snapshot<R> {
             self.max_pid = pid + 1;
         }
 
-        let io_buf_size = config.io_buf_size;
-
         let replaced_at_idx =
-            disk_ptr.lid() as SegmentId / io_buf_size;
+            disk_ptr.lid() as SegmentId / config.io_buf_size;
 
         match prepend.update {
             Update::Append(partial_page) => {
@@ -193,12 +191,7 @@ impl<R> Snapshot<R> {
                     self.recovery = Some(r);
                 }
 
-                self.replace_pid(
-                    pid,
-                    replaced_at_idx,
-                    io_buf_size,
-                    config,
-                );
+                self.replace_pid(pid, replaced_at_idx, config);
                 self.pt.insert(
                     pid,
                     PageState::Present(vec![(lsn, disk_ptr)]),
@@ -212,12 +205,7 @@ impl<R> Snapshot<R> {
                     disk_ptr,
                     lsn
                 );
-                self.replace_pid(
-                    pid,
-                    replaced_at_idx,
-                    io_buf_size,
-                    config,
-                );
+                self.replace_pid(pid, replaced_at_idx, config);
                 self.pt
                     .insert(pid, PageState::Allocated(lsn, disk_ptr));
                 self.free.remove(&pid);
@@ -229,12 +217,7 @@ impl<R> Snapshot<R> {
                     disk_ptr,
                     lsn
                 );
-                self.replace_pid(
-                    pid,
-                    replaced_at_idx,
-                    io_buf_size,
-                    config,
-                );
+                self.replace_pid(pid, replaced_at_idx, config);
                 self.pt.insert(pid, PageState::Free(lsn, disk_ptr));
                 self.free.insert(pid);
             }
@@ -247,21 +230,19 @@ impl<R> Snapshot<R> {
         &mut self,
         pid: PageId,
         replaced_at_idx: usize,
-        io_buf_size: usize,
         config: &Config,
     ) {
+        let mut replacements = HashSet::default();
+
         match self.pt.remove(&pid) {
             Some(PageState::Present(coords)) => {
-                let entry = self
-                    .replacements
-                    .entry(replaced_at_idx)
-                    .or_insert_with(HashSet::default);
                 for (_lsn, ptr) in &coords {
-                    let idx = ptr.lid() as SegmentId / io_buf_size;
+                    let idx =
+                        ptr.lid() as SegmentId / config.io_buf_size;
                     if replaced_at_idx == idx {
                         continue;
                     }
-                    entry.insert((pid, idx));
+                    replacements.insert((pid, idx));
                 }
 
                 // re-run any blob removals in case
@@ -289,16 +270,10 @@ impl<R> Snapshot<R> {
             }
             Some(PageState::Allocated(_lsn, ptr))
             | Some(PageState::Free(_lsn, ptr)) => {
-                let idx = ptr.lid() as SegmentId / io_buf_size;
-                if replaced_at_idx == idx {
-                    return;
+                let idx = ptr.lid() as SegmentId / config.io_buf_size;
+                if replaced_at_idx != idx {
+                    replacements.insert((pid, idx));
                 }
-                let entry = self
-                    .replacements
-                    .entry(replaced_at_idx)
-                    .or_insert_with(HashSet::default);
-                entry.insert((pid, idx));
-                // TODO make sure we free all Allocated's on recovery
             }
             None => {
                 // we just encountered a replace without it
@@ -306,8 +281,11 @@ impl<R> Snapshot<R> {
                 // relocated it to a later segment than
                 // the one we're currently at during recovery.
                 // so we can skip it here.
+                assert!(!self.replacements.contains_key(&pid));
             }
         }
+
+        self.replacements.insert(pid, replacements);
     }
 }
 
