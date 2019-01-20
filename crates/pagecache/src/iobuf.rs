@@ -1177,8 +1177,10 @@ impl IoBufs {
             iobufs.interval_updated.notify_all();
         }
 
-        drop(intervals);
-
+        // NB we continue to hold the intervals mutex for
+        // our calls to the segment accountant below so
+        // that we guarantee that we deactivate segments
+        // in order of LSN.
         let logical_segment_before =
             lsn_before / iobufs.config.io_buf_size as Lsn;
         let logical_segment_after =

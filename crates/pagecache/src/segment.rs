@@ -129,8 +129,9 @@ impl Drop for SegmentAccountant {
 struct Segment {
     present: BTreeSet<PageId>,
     removed: FastSet8<PageId>,
-    deferred_remove: FastSet8<PageId>,
     deferred_rm_blob: FastSet8<BlobPointer>,
+    // set of pages that we replaced from other segments
+    deferred_replacements: FastSet8<(PageId, SegmentId)>,
     lsn: Option<Lsn>,
     state: SegmentState,
 }
@@ -215,19 +216,21 @@ impl Segment {
         assert_eq!(self.state, Free);
         self.present.clear();
         self.removed.clear();
-        self.deferred_remove.clear();
         self.deferred_rm_blob.clear();
+        self.deferred_replacements.clear();
         self.lsn = Some(new_lsn);
         self.state = Active;
     }
 
     /// Transitions a segment to being in the Inactive state.
+    /// Returns the set of page replacements that happened
+    /// while this Segment was Active
     fn active_to_inactive(
         &mut self,
         lsn: Lsn,
         from_recovery: bool,
         config: &Config,
-    ) -> Result<(), ()> {
+    ) -> Result<FastSet8<(PageId, usize)>, ()> {
         trace!(
             "setting Segment with lsn {:?} to Inactive",
             self.lsn()
@@ -240,15 +243,7 @@ impl Segment {
         }
         self.state = Inactive;
 
-        // now we can push any deferred removals to the removed set
-        let deferred = mem::replace(
-            &mut self.deferred_remove,
-            FastSet8::default(),
-        );
-        for pid in deferred {
-            self.remove_pid(pid, lsn);
-        }
-
+        // now we can push any deferred blob removals to the removed set
         let deferred_rm_blob = mem::replace(
             &mut self.deferred_rm_blob,
             FastSet8::default(),
@@ -263,7 +258,12 @@ impl Segment {
             remove_blob(ptr, config).map_err(|e| e.danger_cast())?;
         }
 
-        Ok(())
+        let deferred_replacements = mem::replace(
+            &mut self.deferred_replacements,
+            FastSet8::default(),
+        );
+
+        Ok(deferred_replacements)
     }
 
     fn inactive_to_draining(&mut self, lsn: Lsn) {
@@ -333,20 +333,33 @@ impl Segment {
     /// Mark that a pid in this Segment has been relocated.
     /// The caller must provide the LSN of the removal.
     fn remove_pid(&mut self, pid: PageId, lsn: Lsn) {
-        // TODO this could be racy?
         assert!(lsn >= self.lsn.unwrap());
         match self.state {
             Active => {
                 // we have received a removal before
-                // transferring this segment to Inactive, so
-                // we defer this pid's removal until the transfer.
-                self.deferred_remove.insert(pid);
+                // transferring this segment to Inactive.
+                // This should have been deferred by the
+                // segment that actually replaced this,
+                // and if we're still Active, something is
+                // wrong.
+                panic!("remove_pid called on Active segment");
             }
             Inactive | Draining => {
                 self.present.remove(&pid);
                 self.removed.insert(pid);
             }
             Free => panic!("remove_pid called on a Free Segment"),
+        }
+    }
+
+    fn defer_replace_pids(
+        &mut self,
+        deferred: FastSet8<(PageId, usize)>,
+        lsn: Lsn,
+    ) {
+        assert!(lsn >= self.lsn.unwrap());
+        for item in deferred.into_iter() {
+            self.deferred_replacements.insert(item);
         }
     }
 
@@ -447,20 +460,28 @@ impl SegmentAccountant {
         // generate segments from snapshot lids
         let mut segments = vec![];
 
-        let add =
-            |pid, lsn, lid: LogId, segments: &mut Vec<Segment>| {
-                // add pid to segment
-                let idx = lid as usize / io_buf_size;
-                if segments.len() < idx + 1 {
-                    segments.resize(idx + 1, Segment::default());
-                }
+        let add = |pid,
+                   lsn,
+                   lid: LogId,
+                   segments: &mut Vec<Segment>| {
+            // add pid to segment
+            let idx = lid as usize / io_buf_size;
+            trace!(
+                "adding lsn: {} lid: {} for pid {} to segment {} during SA recovery",
+                lsn,
+                lid,
+                pid,
+                idx
+            );
+            if segments.len() < idx + 1 {
+                segments.resize(idx + 1, Segment::default());
+            }
 
-                let segment_lsn =
-                    lsn / io_buf_size as Lsn * io_buf_size as Lsn;
-                segments[idx]
-                    .recovery_ensure_initialized(segment_lsn);
-                segments[idx].insert_pid(pid, segment_lsn);
-            };
+            let segment_lsn =
+                lsn / io_buf_size as Lsn * io_buf_size as Lsn;
+            segments[idx].recovery_ensure_initialized(segment_lsn);
+            segments[idx].insert_pid(pid, segment_lsn);
+        };
 
         for (pid, state) in snapshot.pt {
             match state {
@@ -476,28 +497,22 @@ impl SegmentAccountant {
             }
         }
 
-        for (idx, pids) in snapshot.replacements {
-            if segments.len() <= idx {
-                // segment doesn't have pids anyway,
-                // and will be marked as free later
-                continue;
-            }
-            if let Some(segment_lsn) = segments[idx].lsn {
-                for (pid, lsn) in pids {
-                    if lsn < segment_lsn {
-                        // TODO is this avoidable? can punt more
-                        // work to snapshot generation logic.
-                        trace!(
-                            "stale removed pid {} with lsn {}, on segment {} with current lsn: {:?}",
-                            pid,
-                            lsn,
-                            idx,
-                            segments[idx].lsn
-                        );
-                    } else {
-                        segments[idx].remove_pid(pid, lsn);
-                    }
-                }
+        let mut ordering: Vec<(SegmentId, Lsn)> = segments
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| s.lsn.map(|l| (i, l)))
+            .collect();
+
+        ordering.sort_unstable_by_key(|&(_i, l)| l);
+
+        for (idx, lsn) in ordering.into_iter() {
+            if let Some(replacements) =
+                snapshot.replacements.get(&idx)
+            {
+                segments[idx].defer_replace_pids(
+                    replacements.iter().cloned().collect(),
+                    lsn,
+                );
             }
         }
 
@@ -809,10 +824,7 @@ impl SegmentAccountant {
         let schedule_rm_blob =
             !(old_ptrs.len() == 1 && old_ptrs[0].is_blob());
 
-        // TODO use smallvec
-        let mut old_segments = Vec::with_capacity(
-            self.config.page_consolidation_threshold + 1,
-        );
+        let mut deferred_replacements = FastSet8::default();
 
         for old_ptr in &old_ptrs {
             let old_lid = old_ptr.lid();
@@ -860,39 +872,11 @@ impl SegmentAccountant {
                 );
             }
 
-            if !old_segments.contains(&old_idx) {
-                old_segments.push(old_idx);
-            }
+            deferred_replacements.insert((pid, old_idx));
         }
 
-        for old_idx in old_segments.into_iter() {
-            self.segments[old_idx].remove_pid(pid, lsn);
-
-            // can we transition these segments?
-            self.possibly_clean_or_free_segment(old_idx, lsn);
-        }
-
-        // if we have a lot of free segments in our whole file,
-        // let's start relocating the current tip to boil it down
-        let free_segs =
-            self.segments.iter().filter(|s| s.is_free()).count();
-        let inactive_segs =
-            self.segments.iter().filter(|s| s.is_inactive()).count();
-        let free_ratio =
-            (free_segs * 100) / (1 + free_segs + inactive_segs);
-
-        if free_ratio
-            >= (self.config.segment_cleanup_threshold * 100.) as usize
-            && inactive_segs > 5
-        {
-            let last_index = self
-                .segments
-                .iter()
-                .rposition(|s| s.is_inactive())
-                .unwrap();
-            let segment_start = last_index * self.config.io_buf_size;
-            self.to_clean.insert(segment_start as LogId);
-        }
+        self.segments[new_idx]
+            .defer_replace_pids(deferred_replacements, lsn);
 
         self.mark_link(pid, lsn, new_ptr);
 
@@ -1036,13 +1020,75 @@ impl SegmentAccountant {
         let lid = self.ordering[&lsn];
         let idx = self.lid_to_idx(lid);
 
-        self.segments[idx].active_to_inactive(
+        let replacements = self.segments[idx].active_to_inactive(
             lsn,
             false,
             &self.config,
         )?;
 
+        for (pid, old_idx) in replacements {
+            let segment = &mut self.segments[old_idx];
+            assert_ne!(
+                segment.state,
+                Active,
+                "segment {} is processing replacements for \
+                 segment {}, which is in the Active state",
+                lid,
+                old_idx * self.config.io_buf_size
+            );
+            assert_ne!(
+                segment.state,
+                Free,
+                "segment {} is processing replacements for \
+                 segment {}, which is in the Free state",
+                lid,
+                old_idx * self.config.io_buf_size
+            );
+            debug_assert!(
+                segment.present.contains(&pid),
+                "we expect deferred replacements to provide \
+                 all previous segments so we can clean them. \
+                 pid {} old_ptr segment: {} segments with pid: {:?}",
+                pid,
+                old_idx * self.config.io_buf_size,
+                self.segments
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| s.present.contains(&pid))
+                    .map(|(i, s)| (
+                        i * self.config.io_buf_size,
+                        s.state,
+                        s.present.clone(),
+                    ))
+                    .collect::<Vec<_>>()
+            );
+
+            segment.remove_pid(pid, lsn);
+        }
+
         self.possibly_clean_or_free_segment(idx, lsn);
+
+        // if we have a lot of free segments in our whole file,
+        // let's start relocating the current tip to boil it down
+        let free_segs =
+            self.segments.iter().filter(|s| s.is_free()).count();
+        let inactive_segs =
+            self.segments.iter().filter(|s| s.is_inactive()).count();
+        let free_ratio =
+            (free_segs * 100) / (1 + free_segs + inactive_segs);
+
+        if free_ratio
+            >= (self.config.segment_cleanup_threshold * 100.) as usize
+            && inactive_segs > 5
+        {
+            let last_index = self
+                .segments
+                .iter()
+                .rposition(|s| s.is_inactive())
+                .unwrap();
+            let segment_start = last_index * self.config.io_buf_size;
+            self.to_clean.insert(segment_start as LogId);
+        }
 
         Ok(())
     }

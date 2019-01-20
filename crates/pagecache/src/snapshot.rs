@@ -32,7 +32,8 @@ pub struct Snapshot<R> {
     /// the mapping from pages to (lsn, lid)
     pub pt: HashMap<PageId, PageState>,
     /// replaced pages per segment index
-    pub replacements: HashMap<SegmentId, HashSet<(PageId, Lsn)>>,
+    pub replacements:
+        HashMap<SegmentId, HashSet<(PageId, SegmentId)>>,
     /// the free pids
     pub free: HashSet<PageId>,
     /// the `Materializer`-specific recovered state
@@ -195,7 +196,6 @@ impl<R> Snapshot<R> {
                 self.replace_pid(
                     pid,
                     replaced_at_idx,
-                    lsn,
                     io_buf_size,
                     config,
                 );
@@ -215,7 +215,6 @@ impl<R> Snapshot<R> {
                 self.replace_pid(
                     pid,
                     replaced_at_idx,
-                    lsn,
                     io_buf_size,
                     config,
                 );
@@ -233,7 +232,6 @@ impl<R> Snapshot<R> {
                 self.replace_pid(
                     pid,
                     replaced_at_idx,
-                    lsn,
                     io_buf_size,
                     config,
                 );
@@ -249,22 +247,21 @@ impl<R> Snapshot<R> {
         &mut self,
         pid: PageId,
         replaced_at_idx: usize,
-        replaced_at_lsn: Lsn,
         io_buf_size: usize,
         config: &Config,
     ) {
         match self.pt.remove(&pid) {
             Some(PageState::Present(coords)) => {
+                let entry = self
+                    .replacements
+                    .entry(replaced_at_idx)
+                    .or_insert_with(HashSet::default);
                 for (_lsn, ptr) in &coords {
                     let idx = ptr.lid() as SegmentId / io_buf_size;
                     if replaced_at_idx == idx {
-                        return;
+                        continue;
                     }
-                    let entry = self
-                        .replacements
-                        .entry(idx)
-                        .or_insert_with(HashSet::default);
-                    entry.insert((pid, replaced_at_lsn));
+                    entry.insert((pid, idx));
                 }
 
                 // re-run any blob removals in case
@@ -298,9 +295,10 @@ impl<R> Snapshot<R> {
                 }
                 let entry = self
                     .replacements
-                    .entry(idx)
+                    .entry(replaced_at_idx)
                     .or_insert_with(HashSet::default);
-                entry.insert((pid, replaced_at_lsn));
+                entry.insert((pid, idx));
+                // TODO make sure we free all Allocated's on recovery
             }
             None => {
                 // we just encountered a replace without it
