@@ -117,6 +117,8 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 }
 
 fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
+    tests::setup_logger();
+
     let io_buf_size = 300;
 
     let config = ConfigBuilder::new()
@@ -208,6 +210,8 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
     }
 
     let mut set_counter = 0u16;
+
+    println!("ops: {:?}", ops);
 
     for op in ops.into_iter() {
         match op {
@@ -867,6 +871,15 @@ fn failpoints_bug_15() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
         vec![FailPoint("buffer write"), Id, Restart, Id],
+        false,
+    ))
+}
+
+#[test]
+fn failpoints_bug_16() {
+    // postmortem 1:
+    assert!(prop_tree_crashes_nicely(
+        vec![FailPoint("zero garbage segment"), Id, Id],
         false,
     ))
 }
