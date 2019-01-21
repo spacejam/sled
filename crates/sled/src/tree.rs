@@ -882,12 +882,19 @@ impl Tree {
         //
         //  root is special case, where we need to hoist a new root
 
-        for window in path.windows(2).rev() {
-            let (parent_frag, parent_ptr) = window[0].clone();
-            let (node_frag, node_ptr) = window[1].clone();
+        // nodes toward the root are larger
+        let adjusted_max = |height| {
+            let threshold = std::cmp::min(height, 8) as u32;
+            let multiplier = 2_u64.pow(threshold);
+            self.config.blink_node_split_size as u64 * multiplier
+        };
+
+        for (height, window) in path.windows(2).rev().enumerate() {
+            let (parent_frag, parent_ptr) = &window[0];
+            let (node_frag, node_ptr) = &window[1];
             let node: &Node = node_frag.unwrap_base();
             if node.should_split(
-                self.config.blink_node_split_size as u64,
+                adjusted_max(height)
             ) {
                 // try to child split
                 if let Ok(parent_split) =
@@ -920,7 +927,7 @@ impl Tree {
         let root_node: &Node = root_frag.unwrap_base();
 
         if root_node
-            .should_split(self.config.blink_node_split_size as u64)
+            .should_split(adjusted_max(path.len()))
         {
             if let Ok(parent_split) =
                 self.child_split(&root_node, root_ptr.clone(), guard)
