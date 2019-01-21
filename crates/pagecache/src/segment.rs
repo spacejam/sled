@@ -1394,7 +1394,7 @@ fn scan_segment_lsns(
 
     // Check that the last <# io buffers> segments properly
     // link their previous segment pointers.
-    Ok(clean_tail_tears(ordering, config, &f))
+    clean_tail_tears(ordering, config, &f)
 }
 
 // This ensures that the last <# io buffers> segments on
@@ -1406,7 +1406,7 @@ fn clean_tail_tears(
     mut ordering: BTreeMap<Lsn, LogId>,
     config: &Config,
     f: &File,
-) -> BTreeMap<Lsn, LogId> {
+) -> Result<BTreeMap<Lsn, LogId>, ()> {
     let safety_buffer = config.io_bufs;
     let logical_tail: Vec<Lsn> = ordering
         .iter()
@@ -1486,7 +1486,26 @@ fn clean_tail_tears(
             "filtering out segments after detected tear at {}",
             tear
         );
-        for (&lsn, &lid) in &ordering {
+        let tears = ordering
+            .iter()
+            .filter(|&(lsn, _lid)| *lsn > tear)
+            .collect::<Vec<_>>();
+
+        if tears.len() > config.io_bufs {
+            error!(
+                "encountered corruption in the middle \
+                 of the database file, before the \
+                 section that would be impacted by \
+                 a normal crash. tear at lsn {} \
+                 segments after that: {:?}",
+                tear, tears,
+            );
+            return Err(Error::Corruption {
+                at: DiskPtr::Inline(ordering[&tear]),
+            });
+        }
+
+        for (&lsn, &lid) in &tears {
             if lsn > tear {
                 error!(
                     "filtering out segment with lsn {} at lid {}",
@@ -1510,7 +1529,7 @@ fn clean_tail_tears(
             .collect();
     }
 
-    ordering
+    Ok(ordering)
 }
 
 /// The log may be configured to write data
