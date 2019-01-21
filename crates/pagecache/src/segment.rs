@@ -509,6 +509,26 @@ impl SegmentAccountant {
             if let Some(replacements) =
                 snapshot.replacements.get(&idx)
             {
+                for &(old_pid, segment_id) in replacements {
+                    let old_lsn =
+                        segments.get(segment_id).and_then(|s| s.lsn);
+                    if let Some(old_lsn) = old_lsn {
+                        debug_assert!(
+                            old_lsn < lsn,
+                            "segment {} with lsn {} contains replacements \
+                            for pid {} in segment {} with lsn {}, which \
+                            means we recovered in an invalid order",
+                            idx, lsn, old_pid, segment_id, old_lsn,
+                        );
+                    }
+                }
+
+                trace!(
+                    "deferring replacement of pids {:?} \
+                     to segment {} during recovery",
+                    replacements,
+                    idx,
+                );
                 segments[idx].defer_replace_pids(
                     replacements.iter().cloned().collect(),
                     lsn,

@@ -886,7 +886,9 @@ fn failpoints_bug_16() {
 
 #[test]
 fn failpoints_bug_17() {
-    // postmortem 1:
+    // postmortem 1: during recovery we were not properly
+    // filtering replaced pages in segments by the source
+    // segment still
     assert!(prop_tree_crashes_nicely(
         vec![
             Del(0),
@@ -912,6 +914,28 @@ fn failpoints_bug_17() {
             Set,
             Id,
             Del(3),
+            Set
+        ],
+        false,
+    ))
+}
+
+#[test]
+fn failpoints_bug_18() {
+    // postmortem 1:
+    assert!(prop_tree_crashes_nicely(
+        vec![
+            Id,
+            Id,
+            Set,
+            Id,
+            Id,
+            Id,
+            Set,
+            Del(0),
+            Restart,
+            Del(0),
+            Id,
             Set
         ],
         false,

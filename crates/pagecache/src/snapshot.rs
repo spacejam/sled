@@ -237,16 +237,18 @@ impl<R> Snapshot<R> {
         match self.pt.remove(&pid) {
             Some(PageState::Present(coords)) => {
                 for (_lsn, ptr) in &coords {
-                    let idx =
+                    let old_idx =
                         ptr.lid() as SegmentId / config.io_buf_size;
-                    if replaced_at_idx == idx {
+                    if replaced_at_idx == old_idx {
                         continue;
                     }
-                    replacements.insert((pid, idx));
+                    replacements.insert((pid, old_idx));
                 }
 
                 // re-run any blob removals in case
-                // they were not completed.
+                // they were not completed. blobs are
+                // not rewritten if they are the only
+                // frag for a page during rewrite.
                 if coords.len() > 1 {
                     let blob_ptrs = coords
                         .iter()
@@ -270,9 +272,10 @@ impl<R> Snapshot<R> {
             }
             Some(PageState::Allocated(_lsn, ptr))
             | Some(PageState::Free(_lsn, ptr)) => {
-                let idx = ptr.lid() as SegmentId / config.io_buf_size;
-                if replaced_at_idx != idx {
-                    replacements.insert((pid, idx));
+                let old_idx =
+                    ptr.lid() as SegmentId / config.io_buf_size;
+                if replaced_at_idx != old_idx {
+                    replacements.insert((pid, old_idx));
                 }
             }
             None => {
