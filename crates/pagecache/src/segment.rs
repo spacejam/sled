@@ -332,7 +332,12 @@ impl Segment {
 
     /// Mark that a pid in this Segment has been relocated.
     /// The caller must provide the LSN of the removal.
-    fn remove_pid(&mut self, pid: PageId, lsn: Lsn) {
+    fn remove_pid(
+        &mut self,
+        pid: PageId,
+        lsn: Lsn,
+        in_recovery: bool,
+    ) {
         assert!(lsn >= self.lsn.unwrap());
         match self.state {
             Active => {
@@ -342,7 +347,15 @@ impl Segment {
                 // segment that actually replaced this,
                 // and if we're still Active, something is
                 // wrong.
-                panic!("remove_pid called on Active segment");
+                if !in_recovery {
+                    panic!("remove_pid called on Active segment");
+                }
+                assert!(
+                    !self.present.contains(&pid),
+                    "did not expect present to contain pid {} during recovery",
+                    pid,
+                );
+                self.removed.insert(pid);
             }
             Inactive | Draining => {
                 self.present.remove(&pid);
@@ -436,13 +449,6 @@ impl SegmentAccountant {
             // when operating without a `PageCache`
             ret.pause_rewriting();
         }
-        if snapshot.last_lid > ret.tip {
-            let io_buf_size = ret.config.io_buf_size;
-            let last_idx = snapshot.last_lid / io_buf_size as LogId;
-            let new_idx = last_idx + 1;
-            let new_tip = new_idx * io_buf_size as LogId;
-            ret.tip = new_tip;
-        }
 
         ret.set_safety_buffer(snapshot.max_lsn)?;
 
@@ -458,7 +464,9 @@ impl SegmentAccountant {
         let io_buf_size = self.config.io_buf_size;
 
         // generate segments from snapshot lids
-        let mut segments = vec![];
+        let n_segments =
+            snapshot.max_lid as usize / self.config.io_buf_size;
+        let mut segments = vec![Segment::default(); n_segments];
 
         let add = |pid,
                    lsn,
@@ -473,10 +481,6 @@ impl SegmentAccountant {
                 pid,
                 idx
             );
-            if segments.len() < idx + 1 {
-                segments.resize(idx + 1, Segment::default());
-            }
-
             let segment_lsn =
                 lsn / io_buf_size as Lsn * io_buf_size as Lsn;
             segments[idx].recovery_ensure_initialized(segment_lsn);
@@ -497,42 +501,56 @@ impl SegmentAccountant {
             }
         }
 
-        let mut ordering: Vec<(SegmentId, Lsn)> = segments
+        let ordering = segments
             .iter()
             .enumerate()
-            .filter_map(|(i, s)| s.lsn.map(|l| (i, l)))
-            .collect();
-
-        ordering.sort_unstable_by_key(|&(_i, l)| l);
+            .map(|(i, s)| (i, s.lsn))
+            .collect::<Vec<_>>();
 
         for (idx, lsn) in ordering.into_iter() {
             if let Some(replacements) =
                 snapshot.replacements.get(&idx)
             {
-                for &(old_pid, segment_id) in replacements {
-                    let old_lsn =
-                        segments.get(segment_id).and_then(|s| s.lsn);
-                    if let Some(old_lsn) = old_lsn {
-                        debug_assert!(
-                            old_lsn < lsn,
-                            "segment {} with lsn {} contains replacements \
-                            for pid {} in segment {} with lsn {}, which \
-                            means we recovered in an invalid order",
-                            idx, lsn, old_pid, segment_id, old_lsn,
-                        );
+                // TODO if this segment has an lsn/is Active, add it to
+                // the segment's defer replace pids.
+                //
+                // if not, iterate over all of the replacements and
+                // manually remove_pid for them, because we won't
+                // process it otherwise.
+                if segments[idx].state == Free {
+                    for &(old_pid, old_idx) in replacements {
+                        // TODO manually remove pid
+                        let old_lsn =
+                            segments.get(old_idx).and_then(|s| s.lsn);
+                        if let Some(old_lsn) = old_lsn {
+                            let replacement_lsn =
+                                lsn.unwrap_or(snapshot.max_lsn);
+                            debug_assert!(
+                                old_lsn < replacement_lsn,
+                                "segment {} with lsn {:?} contains replacements \
+                                for pid {} in segment {} with lsn {}, which \
+                                means we recovered in an invalid order",
+                                idx, lsn, old_pid, old_idx, old_lsn,
+                            );
+                            segments[old_idx].remove_pid(
+                                old_pid,
+                                lsn.unwrap_or(snapshot.max_lsn),
+                                true,
+                            );
+                        }
                     }
+                } else {
+                    trace!(
+                        "deferring replacement of pids {:?} \
+                         to segment {} during recovery",
+                        replacements,
+                        idx,
+                    );
+                    segments[idx].defer_replace_pids(
+                        replacements.iter().cloned().collect(),
+                        lsn.expect("if the segment is not Free, it should have an lsn"),
+                    );
                 }
-
-                trace!(
-                    "deferring replacement of pids {:?} \
-                     to segment {} during recovery",
-                    replacements,
-                    idx,
-                );
-                segments[idx].defer_replace_pids(
-                    replacements.iter().cloned().collect(),
-                    lsn,
-                );
             }
         }
 
@@ -1095,7 +1113,7 @@ impl SegmentAccountant {
                     .collect::<Vec<_>>()
             );
 
-            segment.remove_pid(pid, lsn);
+            segment.remove_pid(pid, lsn, false);
         }
 
         self.possibly_clean_or_free_segment(idx, lsn);

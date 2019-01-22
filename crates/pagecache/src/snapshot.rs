@@ -27,6 +27,8 @@ pub struct Snapshot<R> {
     pub max_lsn: Lsn,
     /// the last lid included in the `Snapshot`
     pub last_lid: LogId,
+    /// the highest lid observed while generating the `Snapshot`
+    pub max_lid: LogId,
     /// the highest allocated pid
     pub max_pid: PageId,
     /// the mapping from pages to (lsn, lid)
@@ -85,6 +87,7 @@ impl<R> Default for Snapshot<R> {
     fn default() -> Snapshot<R> {
         Snapshot {
             max_lsn: 0,
+            max_lid: 0,
             last_lid: 0,
             max_pid: 0,
             pt: HashMap::default(),
@@ -338,6 +341,9 @@ where
         assert!(lsn > snapshot.max_lsn);
         snapshot.max_lsn = lsn;
         snapshot.last_lid = ptr.lid();
+        if ptr.lid() > snapshot.max_lid {
+            snapshot.max_lid = ptr.lid();
+        }
 
         // invalidate any removed pids
         let segment_idx = ptr.lid() as SegmentId / io_buf_size;
