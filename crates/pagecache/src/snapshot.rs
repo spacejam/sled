@@ -1,27 +1,15 @@
-use std::{
-    collections::{HashMap as HM, HashSet as HS},
-    hash::BuildHasherDefault,
-    io::{Read, Seek, Write},
-};
-
-use fxhash::FxHasher64;
+use std::io::{Read, Seek, Write};
 
 #[cfg(feature = "zstd")]
 use zstd::block::{compress, decompress};
 
 use super::*;
 
-/// HashMap backed by FxHasher64
-pub type HashMap<K, V> = HM<K, V, BuildHasherDefault<FxHasher64>>;
-
-/// HashSet backed by FxHasher64
-pub type HashSet<V> = HS<V, BuildHasherDefault<FxHasher64>>;
-
 /// A snapshot of the state required to quickly restart
 /// the `PageCache` and `SegmentAccountant`.
 /// TODO consider splitting `Snapshot` into separate
 /// snapshots for PC, SA, Materializer.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Snapshot<R> {
     /// the last lsn included in the `Snapshot`
     pub max_lsn: Lsn,
@@ -32,12 +20,12 @@ pub struct Snapshot<R> {
     /// the highest allocated pid
     pub max_pid: PageId,
     /// the mapping from pages to (lsn, lid)
-    pub pt: HashMap<PageId, PageState>,
+    pub pt: FastMap8<PageId, PageState>,
     /// replaced pages per segment index
     pub replacements:
-        HashMap<SegmentId, HashSet<(PageId, SegmentId)>>,
+        FastMap8<SegmentId, (Lsn, FastSet8<(PageId, SegmentId)>)>,
     /// the free pids
-    pub free: HashSet<PageId>,
+    pub free: FastSet8<PageId>,
     /// the `Materializer`-specific recovered state
     pub recovery: Option<R>,
 }
@@ -90,9 +78,9 @@ impl<R> Default for Snapshot<R> {
             max_lid: 0,
             last_lid: 0,
             max_pid: 0,
-            pt: HashMap::default(),
-            replacements: HashMap::default(),
-            free: HashSet::default(),
+            pt: FastMap8::default(),
+            replacements: FastMap8::default(),
+            free: FastSet8::default(),
             recovery: None,
         }
     }
@@ -147,6 +135,9 @@ impl<R> Snapshot<R> {
 
         let replaced_at_idx =
             disk_ptr.lid() as SegmentId / config.io_buf_size;
+        let replaced_at_segment_lsn = (lsn
+            / config.io_buf_size as Lsn)
+            * config.io_buf_size as Lsn;
 
         match prepend.update {
             Update::Append(partial_page) => {
@@ -194,7 +185,12 @@ impl<R> Snapshot<R> {
                     self.recovery = Some(r);
                 }
 
-                self.replace_pid(pid, replaced_at_idx, config);
+                self.replace_pid(
+                    pid,
+                    replaced_at_segment_lsn,
+                    replaced_at_idx,
+                    config,
+                );
                 self.pt.insert(
                     pid,
                     PageState::Present(vec![(lsn, disk_ptr)]),
@@ -208,7 +204,12 @@ impl<R> Snapshot<R> {
                     disk_ptr,
                     lsn
                 );
-                self.replace_pid(pid, replaced_at_idx, config);
+                self.replace_pid(
+                    pid,
+                    replaced_at_segment_lsn,
+                    replaced_at_idx,
+                    config,
+                );
                 self.pt
                     .insert(pid, PageState::Allocated(lsn, disk_ptr));
                 self.free.remove(&pid);
@@ -220,7 +221,12 @@ impl<R> Snapshot<R> {
                     disk_ptr,
                     lsn
                 );
-                self.replace_pid(pid, replaced_at_idx, config);
+                self.replace_pid(
+                    pid,
+                    replaced_at_segment_lsn,
+                    replaced_at_idx,
+                    config,
+                );
                 self.pt.insert(pid, PageState::Free(lsn, disk_ptr));
                 self.free.insert(pid);
             }
@@ -232,10 +238,16 @@ impl<R> Snapshot<R> {
     fn replace_pid(
         &mut self,
         pid: PageId,
+        replaced_at_segment_lsn: Lsn,
         replaced_at_idx: usize,
         config: &Config,
     ) {
-        let mut replacements = HashSet::default();
+        let replacements = self
+            .replacements
+            .entry(replaced_at_idx)
+            .or_insert((replaced_at_segment_lsn, FastSet8::default()));
+
+        assert_eq!(replaced_at_segment_lsn, replacements.0);
 
         match self.pt.remove(&pid) {
             Some(PageState::Present(coords)) => {
@@ -245,7 +257,7 @@ impl<R> Snapshot<R> {
                     if replaced_at_idx == old_idx {
                         continue;
                     }
-                    replacements.insert((pid, old_idx));
+                    replacements.1.insert((pid, old_idx));
                 }
 
                 // re-run any blob removals in case
@@ -278,7 +290,7 @@ impl<R> Snapshot<R> {
                 let old_idx =
                     ptr.lid() as SegmentId / config.io_buf_size;
                 if replaced_at_idx != old_idx {
-                    replacements.insert((pid, old_idx));
+                    replacements.1.insert((pid, old_idx));
                 }
             }
             None => {
@@ -287,11 +299,8 @@ impl<R> Snapshot<R> {
                 // relocated it to a later segment than
                 // the one we're currently at during recovery.
                 // so we can skip it here.
-                assert!(!self.replacements.contains_key(&pid));
             }
         }
-
-        self.replacements.insert(pid, replacements);
     }
 }
 
@@ -311,13 +320,15 @@ where
         + Sync,
     R: Debug + Clone + Serialize + DeserializeOwned + Send,
 {
-    let start = clock();
+    let _measure = Measure::new(&M.advance_snapshot);
 
     trace!("building on top of old snapshot: {:?}", snapshot);
 
     let materializer = PM::new(config.clone(), &snapshot.recovery);
 
     let io_buf_size = config.io_buf_size;
+
+    let mut last_seg_lsn = snapshot.max_lsn / io_buf_size as Lsn;
 
     for (lsn, ptr, bytes) in iter {
         trace!(
@@ -345,9 +356,13 @@ where
             snapshot.max_lid = ptr.lid();
         }
 
-        // invalidate any removed pids
-        let segment_idx = ptr.lid() as SegmentId / io_buf_size;
-        snapshot.replacements.remove(&segment_idx);
+        if lsn / (io_buf_size as Lsn) > last_seg_lsn {
+            // invalidate any removed pids
+            let segment_idx = ptr.lid() as usize / io_buf_size;
+
+            snapshot.replacements.remove(&segment_idx);
+            last_seg_lsn = lsn / (io_buf_size as Lsn);
+        }
 
         if !PM::is_null() {
             if let Err(e) = snapshot.apply(
@@ -369,8 +384,6 @@ where
     write_snapshot(config, &snapshot)?;
 
     trace!("generated new snapshot: {:?}", snapshot);
-
-    M.advance_snapshot.measure(clock() - start);
 
     Ok(snapshot)
 }

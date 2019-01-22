@@ -125,7 +125,7 @@ impl Drop for SegmentAccountant {
 /// fragments from different pages. Over time, we track
 /// when segments become reusable and allow them to be
 /// overwritten for new data.
-#[derive(Default, Debug, PartialEq, Clone)]
+#[derive(Default, Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct Segment {
     present: BTreeSet<PageId>,
     removed: FastSet8<PageId>,
@@ -313,14 +313,10 @@ impl Segment {
     /// the Segment's LSN.
     fn insert_pid(&mut self, pid: PageId, lsn: Lsn) {
         assert_eq!(lsn, self.lsn.unwrap());
-        // if this breaks, we didn't implement the transition
+        // if this breaks, maybe we didn't implement the transition
         // logic right in write_to_log, and maybe a thread is
         // using the SA to add pids AFTER their calls to
         // res.complete() worked.
-        // FIXME Free, called from Tree::new -> replace -> mark_replace -> mark_link
-        // FIXME Inactive, called from Tree::del -> path_for_key -> pc::get -> pc::page_in ->
-        // pc::cas_page -> sa::free_segment -> sa::possibly_clean_or_free_segment ->
-        // Segment::draining_to_free
         assert_eq!(
             self.state, Active,
             "expected segment with lsn {} to be Active",
@@ -466,7 +462,7 @@ impl SegmentAccountant {
         // generate segments from snapshot lids
         let n_segments =
             snapshot.max_lid as usize / self.config.io_buf_size;
-        let mut segments = vec![Segment::default(); n_segments];
+        let mut segments = vec![Segment::default(); n_segments + 1];
 
         let add = |pid,
                    lsn,
@@ -501,56 +497,39 @@ impl SegmentAccountant {
             }
         }
 
-        let ordering = segments
+        let mut ordering = segments
             .iter()
             .enumerate()
             .map(|(i, s)| (i, s.lsn))
             .collect::<Vec<_>>();
 
-        for (idx, lsn) in ordering.into_iter() {
-            if let Some(replacements) =
-                snapshot.replacements.get(&idx)
-            {
-                // TODO if this segment has an lsn/is Active, add it to
-                // the segment's defer replace pids.
-                //
-                // if not, iterate over all of the replacements and
-                // manually remove_pid for them, because we won't
-                // process it otherwise.
-                if segments[idx].state == Free {
-                    for &(old_pid, old_idx) in replacements {
-                        // TODO manually remove pid
-                        let old_lsn =
-                            segments.get(old_idx).and_then(|s| s.lsn);
-                        if let Some(old_lsn) = old_lsn {
-                            let replacement_lsn =
-                                lsn.unwrap_or(snapshot.max_lsn);
-                            debug_assert!(
-                                old_lsn < replacement_lsn,
-                                "segment {} with lsn {:?} contains replacements \
-                                for pid {} in segment {} with lsn {}, which \
-                                means we recovered in an invalid order",
-                                idx, lsn, old_pid, old_idx, old_lsn,
-                            );
-                            segments[old_idx].remove_pid(
-                                old_pid,
-                                lsn.unwrap_or(snapshot.max_lsn),
-                                true,
-                            );
-                        }
-                    }
+        ordering.sort_unstable_by_key(|(_idx, lsn)| *lsn);
+
+        for (idx, _lsn) in ordering.into_iter() {
+            let (replacement_lsn, replacements) =
+                if let Some(r) = snapshot.replacements.get(&idx) {
+                    r
                 } else {
-                    trace!(
-                        "deferring replacement of pids {:?} \
-                         to segment {} during recovery",
-                        replacements,
-                        idx,
-                    );
-                    segments[idx].defer_replace_pids(
-                        replacements.iter().cloned().collect(),
-                        lsn.expect("if the segment is not Free, it should have an lsn"),
-                    );
+                    // no replacements to handle
+                    continue;
+                };
+
+            for &(old_pid, old_idx) in replacements {
+                let replaced_current_lsn =
+                    segments.get(old_idx).and_then(|s| s.lsn);
+                if replaced_current_lsn.unwrap_or(Lsn::max_value())
+                    > *replacement_lsn
+                {
+                    // we can skip this if it's already empty or
+                    // has been rewritten since the replacement.
+                    continue;
                 }
+
+                segments[old_idx].remove_pid(
+                    old_pid,
+                    *replacement_lsn,
+                    true,
+                );
             }
         }
 
@@ -1065,12 +1044,12 @@ impl SegmentAccountant {
         )?;
 
         for &(pid, old_idx) in &replacements {
-            let segment = &mut self.segments[old_idx];
+            let old_segment = &mut self.segments[old_idx];
             assert_ne!(
-                segment.state,
+                old_segment.state,
                 Active,
                 "segment {} is processing pid {} replacements for \
-                 segment {}, which is in the Active state. \
+                 old segment {}, which is in the Active state. \
                  all replacements for pid: {:?}",
                 lid,
                 pid,
@@ -1081,7 +1060,7 @@ impl SegmentAccountant {
                     .collect::<Vec<_>>()
             );
             assert_ne!(
-                segment.state,
+                old_segment.state,
                 Free,
                 "segment {} is processing pid {} replacements for \
                  segment {}, which is in the Free state. \
@@ -1095,7 +1074,7 @@ impl SegmentAccountant {
                     .collect::<Vec<_>>()
             );
             debug_assert!(
-                segment.present.contains(&pid),
+                old_segment.present.contains(&pid),
                 "we expect deferred replacements to provide \
                  all previous segments so we can clean them. \
                  pid {} old_ptr segment: {} segments with pid: {:?}",
@@ -1113,7 +1092,7 @@ impl SegmentAccountant {
                     .collect::<Vec<_>>()
             );
 
-            segment.remove_pid(pid, lsn, false);
+            old_segment.remove_pid(pid, lsn, false);
         }
 
         self.possibly_clean_or_free_segment(idx, lsn);
