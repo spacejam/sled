@@ -196,8 +196,6 @@ impl IoBufs {
         // remove all blob files larger than our stable offset
         gc_blobs(&config, stable)?;
 
-        println!("starting iobufs with lsn {}", stable);
-
         Ok(IoBufs(Arc::new(IoBufsInner {
             config,
 
