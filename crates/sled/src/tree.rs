@@ -323,6 +323,12 @@ impl Tree {
 
         let guard = pin();
 
+        let new_ivec = if let Some(ref n) = new {
+            Some(IVec::from(&**n))
+        } else {
+            None
+        };
+
         // we need to retry caps until old != cur, since just because
         // cap fails it doesn't mean our value was changed.
         loop {
@@ -348,8 +354,8 @@ impl Tree {
                 let node: &Node = leaf_frag.unwrap_base();
                 (node.id, prefix_encode(&node.lo, key.as_ref()))
             };
-            let frag = if let Some(ref n) = new {
-                Frag::Set(encoded_key, n.clone().into())
+            let frag = if let Some(ref n) = new_ivec {
+                Frag::Set(encoded_key, n.clone())
             } else {
                 Frag::Del(encoded_key)
             };
@@ -358,10 +364,10 @@ impl Tree {
             match link {
                 Ok(_) => {
                     if let Some(res) = subscriber_reservation.take() {
-                        let event = if new.is_some() {
+                        let event = if let Some(n) = new {
                             subscription::Event::Set(
                                 key.as_ref().to_vec(),
-                                new.unwrap().clone(),
+                                n.clone(),
                             )
                         } else {
                             subscription::Event::Del(
@@ -403,6 +409,8 @@ impl Tree {
 
         let guard = pin();
 
+        let val_ivec: IVec = IVec::from(&*value);
+
         loop {
             let pin_guard = pin();
             let (mut path, existing_key) =
@@ -417,7 +425,7 @@ impl Tree {
             let mut subscriber_reservation =
                 self.subscriptions.reserve(&key);
 
-            let frag = Frag::Set(encoded_key, value.clone().into());
+            let frag = Frag::Set(encoded_key, val_ivec.clone());
             let link = self.pages.link(
                 node.id,
                 leaf_ptr.clone(),
@@ -609,6 +617,8 @@ impl Tree {
 
         let guard = pin();
 
+        let val_ivec = IVec::from(&*value);
+
         loop {
             let mut path = self.path_for_key(key.as_ref(), &guard)?;
             let (leaf_frag, leaf_ptr) = path.pop().expect(
@@ -621,7 +631,7 @@ impl Tree {
                 self.subscriptions.reserve(&key);
 
             let encoded_key = prefix_encode(&node.lo, key.as_ref());
-            let frag = Frag::Merge(encoded_key, value.clone().into());
+            let frag = Frag::Merge(encoded_key, val_ivec.clone());
 
             let link = self.pages.link(
                 node.id,
@@ -882,8 +892,8 @@ impl Tree {
         //
         //  root is special case, where we need to hoist a new root
 
-        // nodes toward the root are larger
         let adjusted_max = |height| {
+            // nodes toward the root are larger
             let threshold = std::cmp::min(height, 8) as u32;
             let multiplier = 2_u64.pow(threshold);
             self.config.blink_node_split_size as u64 * multiplier
