@@ -155,7 +155,7 @@ impl IoBufs {
         );
 
         if next_lsn == 0 {
-            // recovering at segment boundary
+            // initializing new system
             assert_eq!(next_lid, next_lsn as LogId);
             let iobuf = &bufs[current_buf];
             let lid = segment_accountant.next(next_lsn)?;
@@ -195,6 +195,8 @@ impl IoBufs {
 
         // remove all blob files larger than our stable offset
         gc_blobs(&config, stable)?;
+
+        println!("starting iobufs with lsn {}", stable);
 
         Ok(IoBufs(Arc::new(IoBufsInner {
             config,

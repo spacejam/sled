@@ -556,8 +556,6 @@ impl SegmentAccountant {
         // we ensure the segment safety discipline, it is going to
         // bump the tip, which hopefully is already the final recovered
         // tip.
-        self.tip = (io_buf_size * segments.len()) as LogId;
-
         // we need to make sure that we raise the tip over any
         // segments that are in the safety_buffer. The safety_buffer
         // may contain segments that are beyond what we have tracked
@@ -583,7 +581,9 @@ impl SegmentAccountant {
             let segment_start = idx as LogId * io_buf_size as LogId;
 
             if segment.lsn.is_none() {
-                self.free_segment(segment_start, true);
+                if self.tip > segment_start {
+                    self.free_segment(segment_start, true);
+                }
                 continue;
             }
 
@@ -770,6 +770,7 @@ impl SegmentAccountant {
         // we depend on the invariant that the last segments
         // always link together, so that we can detect torn
         // segments during recovery.
+        println!("freeing segment {} in recovery {}", lid, in_recovery);
         self.ensure_safe_free_distance(lid);
 
         if in_recovery {
@@ -1140,6 +1141,7 @@ impl SegmentAccountant {
         self.tip += self.config.io_buf_size as LogId;
 
         trace!("advancing file tip from {} to {}", lid, self.tip);
+        println!("advancing file tip from {} to {}", lid, self.tip);
 
         lid
     }
@@ -1160,6 +1162,7 @@ impl SegmentAccountant {
             &self.safety_buffer.iter().position(|l| *l == lid)
         {
             while self.free.len() <= *idx {
+                println!("bumping tip from ensure_safe...");
                 let new_lid = self.bump_tip();
                 debug!(
                     "pushing segment {} to free from ensure_safe_free_distance",
@@ -1207,6 +1210,7 @@ impl SegmentAccountant {
             .nth(0);
 
         let lid = if self.pause_rewriting || safe.is_none() {
+            println!("bumping tip from next");
             self.bump_tip()
         } else {
             let next = safe.unwrap();
@@ -1229,6 +1233,17 @@ impl SegmentAccountant {
         self.segments[idx].free_to_active(lsn);
 
         self.ordering.insert(lsn, lid);
+
+        println!(
+            "segment accountant returning offset: {} \
+             paused: {} last: {} on deck: {:?}, \
+             safety_buffer: {:?}",
+            lid,
+            self.pause_rewriting,
+            last_given,
+            self.free,
+            self.safety_buffer
+        );
 
         debug!(
             "segment accountant returning offset: {} \

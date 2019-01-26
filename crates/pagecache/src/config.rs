@@ -573,15 +573,6 @@ impl Drop for Config {
     }
 }
 
-/*
-fn tn() -> String {
-    std::thread::current()
-        .name()
-        .unwrap_or("unknown")
-        .to_owned()
-}
-*/
-
 impl Config {
     /// Return the global error if one was encountered during
     /// an asynchronous IO operation.
