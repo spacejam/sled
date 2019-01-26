@@ -460,9 +460,7 @@ impl SegmentAccountant {
         let io_buf_size = self.config.io_buf_size;
 
         // generate segments from snapshot lids
-        let n_segments =
-            snapshot.max_lid as usize / self.config.io_buf_size;
-        let mut segments = vec![Segment::default(); n_segments + 1];
+        let mut segments = vec![];
 
         let add = |pid,
                    lsn,
@@ -470,6 +468,9 @@ impl SegmentAccountant {
                    segments: &mut Vec<Segment>| {
             // add pid to segment
             let idx = lid as usize / io_buf_size;
+            if segments.len() < idx + 1 {
+                segments.resize(idx + 1, Segment::default());
+            }
             trace!(
                 "adding lsn: {} lid: {} for pid {} to segment {} during SA recovery",
                 lsn,
