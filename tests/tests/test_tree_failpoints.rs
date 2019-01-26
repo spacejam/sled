@@ -941,3 +941,46 @@ fn failpoints_bug_18() {
         false,
     ))
 }
+
+#[test]
+fn failpoints_bug_19() {
+    // postmortem 1:
+    assert!(prop_tree_crashes_nicely(
+        vec![
+            Set,
+            Set,
+            Set,
+            Set,
+            Del(4),
+            Id,
+            Del(4),
+            Id,
+            Id,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Id,
+            Set,
+            Set,
+            Del(11),
+            Del(13),
+            Id,
+            Del(122),
+            Del(134),
+            Del(101),
+            Del(81),
+            Set,
+            Del(15),
+            Del(76),
+            Restart,
+            Set,
+            Id,
+            Id,
+            Set,
+            Restart
+        ],
+        false,
+    ))
+}
