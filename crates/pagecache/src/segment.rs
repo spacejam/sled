@@ -970,7 +970,7 @@ impl SegmentAccountant {
         if let Some(lid) = item {
             let idx = self.lid_to_idx(lid);
             let segment = &self.segments[idx];
-            assert_eq!(segment.state, Draining);
+            assert!(segment.state == Draining || segment.state == Inactive);
 
             if segment.present.is_empty() {
                 // This could legitimately be empty if it's completely
