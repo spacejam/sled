@@ -10,9 +10,9 @@ use super::*;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) enum Frag {
-    Set(Key, Value),
-    Del(Key),
-    Merge(Key, Value),
+    Set(IVec, IVec),
+    Del(IVec),
+    Merge(IVec, IVec),
     Base(Node),
     ChildSplit(ChildSplit),
     ParentSplit(ParentSplit),
@@ -40,12 +40,12 @@ impl Frag {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct ParentSplit {
-    pub(crate) at: Vec<u8>,
+    pub(crate) at: IVec,
     pub(crate) to: PageId,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct ChildSplit {
-    pub(crate) at: Vec<u8>,
+    pub(crate) at: IVec,
     pub(crate) to: PageId,
 }

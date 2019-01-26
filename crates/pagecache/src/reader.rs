@@ -145,9 +145,7 @@ impl LogReader for File {
                 Ok(LogRead::Pad(header.lsn))
             }
             MessageKind::Blob => {
-                let mut id_bytes = [0u8; 8];
-                id_bytes.copy_from_slice(&*buf);
-                let id = arr_to_u64(id_bytes) as Lsn;
+                let id = arr_to_u64(&buf) as Lsn;
 
                 match read_blob(id, config) {
                     Ok(buf) => {

@@ -315,15 +315,8 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
             _ => MessageKind::Corrupted,
         };
 
-        let lsn_buf = &buf[1..9];
-        let mut lsn_arr = [0u8; 8];
-        lsn_arr.copy_from_slice(&*lsn_buf);
-        let lsn = arr_to_u64(lsn_arr) as Lsn;
-
-        let len_buf = &buf[9..13];
-        let mut len_arr = [0u8; 4];
-        len_arr.copy_from_slice(&*len_buf);
-        let len = arr_to_u32(len_arr);
+        let lsn = arr_to_u64(&buf[1..9]) as Lsn;
+        let len = arr_to_u32(&buf[9..13]);
 
         let crc16 = [buf[13] ^ 0xFF, buf[14] ^ 0xFF];
 
@@ -351,11 +344,23 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
         // for the item is claimed, when we actually know the lsn,
         // in PageCache::reserve.
         let lsn_arr = u64_to_arr(self.lsn as u64);
-        buf[1..9].copy_from_slice(&lsn_arr);
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                lsn_arr.as_ptr(),
+                buf[1..].as_mut_ptr(),
+                std::mem::size_of::<u64>(),
+            );
+        }
 
         assert!(self.len <= std::u32::MAX as usize);
         let len_arr = u32_to_arr(self.len as u32);
-        buf[9..13].copy_from_slice(&len_arr);
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                len_arr.as_ptr(),
+                buf[9..].as_mut_ptr(),
+                std::mem::size_of::<u32>(),
+            );
+        }
 
         buf[13] = self.crc16[0] ^ 0xFF;
         buf[14] = self.crc16[1] ^ 0xFF;
@@ -368,13 +373,10 @@ impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
     fn from(buf: [u8; SEG_HEADER_LEN]) -> SegmentHeader {
         let crc16 = [buf[0] ^ 0xFF, buf[1] ^ 0xFF];
 
-        let lsn_buf = &buf[2..10];
-        let mut lsn_arr = [0u8; 8];
-        lsn_arr.copy_from_slice(&*lsn_buf);
-        let xor_lsn = arr_to_u64(lsn_arr) as Lsn;
+        let xor_lsn = arr_to_u64(&buf[2..10]) as Lsn;
         let lsn = xor_lsn ^ 0xFFFF_FFFF;
 
-        let crc16_tested = crc16_arr(&lsn_arr);
+        let crc16_tested = crc16_arr(&buf[2..10]);
 
         SegmentHeader {
             lsn,
@@ -389,7 +391,13 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
 
         let xor_lsn = self.lsn ^ 0xFFFF_FFFF;
         let lsn_arr = u64_to_arr(xor_lsn as u64);
-        buf[2..10].copy_from_slice(&lsn_arr);
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                lsn_arr.as_ptr(),
+                buf[2..].as_mut_ptr(),
+                std::mem::size_of::<u64>(),
+            );
+        }
 
         let crc16 = crc16_arr(&lsn_arr);
 
@@ -404,13 +412,10 @@ impl From<[u8; SEG_TRAILER_LEN]> for SegmentTrailer {
     fn from(buf: [u8; SEG_TRAILER_LEN]) -> SegmentTrailer {
         let crc16 = [buf[0] ^ 0xFF, buf[1] ^ 0xFF];
 
-        let lsn_buf = &buf[2..10];
-        let mut lsn_arr = [0u8; 8];
-        lsn_arr.copy_from_slice(&*lsn_buf);
-        let xor_lsn = arr_to_u64(lsn_arr) as Lsn;
+        let xor_lsn = arr_to_u64(&buf[2..10]) as Lsn;
         let lsn = xor_lsn ^ 0xFFFF_FFFF;
 
-        let crc16_tested = crc16_arr(&lsn_arr);
+        let crc16_tested = crc16_arr(&buf[2..10]);
 
         SegmentTrailer {
             lsn,
@@ -425,7 +430,13 @@ impl Into<[u8; SEG_TRAILER_LEN]> for SegmentTrailer {
 
         let xor_lsn = self.lsn ^ 0xFFFF_FFFF;
         let lsn_arr = u64_to_arr(xor_lsn as u64);
-        buf[2..10].copy_from_slice(&lsn_arr);
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                lsn_arr.as_ptr(),
+                buf[2..].as_mut_ptr(),
+                std::mem::size_of::<u64>(),
+            );
+        }
 
         let crc16 = crc16_arr(&lsn_arr);
         buf[0] = crc16[0] ^ 0xFF;

@@ -7,16 +7,16 @@ pub(crate) struct Node {
     pub(crate) id: PageId,
     pub(crate) data: Data,
     pub(crate) next: Option<PageId>,
-    pub(crate) lo: Vec<u8>,
-    pub(crate) hi: Vec<u8>,
+    pub(crate) lo: IVec,
+    pub(crate) hi: IVec,
 }
 
 impl Node {
     #[inline]
     pub(crate) fn size_in_bytes(&self) -> u64 {
         let self_sz = size_of::<Self>() as u64;
-        let lo_sz = (size_of::<Vec<u8>>() + self.lo.len()) as u64;
-        let hi_sz = (size_of::<Vec<u8>>() + self.hi.len()) as u64;
+        let lo_sz = self.lo.size_in_bytes();
+        let hi_sz = self.hi.size_in_bytes();
         let data_sz = self.data.size_in_bytes();
 
         self_sz
@@ -39,7 +39,7 @@ impl Node {
                     || prefix_cmp_encoded(k, &self.hi, &self.lo)
                         == std::cmp::Ordering::Less
                 {
-                    self.set_leaf(k.clone(), v.clone());
+                    self.set_leaf(k.clone().into(), v.clone().into());
                 } else {
                     panic!("tried to consolidate set at key <= hi")
                 }
@@ -90,7 +90,7 @@ impl Node {
         }
     }
 
-    pub(crate) fn set_leaf(&mut self, key: Key, val: Value) {
+    pub(crate) fn set_leaf(&mut self, key: IVec, val: IVec) {
         if let Data::Leaf(ref mut records) = self.data {
             let search =
                 records.binary_search_by(|&(ref k, ref _v)| {
@@ -111,8 +111,8 @@ impl Node {
 
     pub(crate) fn merge_leaf(
         &mut self,
-        key: Key,
-        val: Value,
+        key: IVec,
+        val: IVec,
         merge_fn: MergeOperator,
     ) {
         if let Data::Leaf(ref mut records) = self.data {
@@ -129,14 +129,14 @@ impl Node {
                     &val,
                 );
                 if let Some(new) = new {
-                    records[idx] = (key, new);
+                    records[idx] = (key, new.into());
                 } else {
                     records.remove(idx);
                 }
             } else {
                 let new = merge_fn(&*decoded_k, None, &val);
                 if let Some(new) = new {
-                    records.push((key, new));
+                    records.push((key, new.into()));
                     records.sort_unstable_by(|a, b| {
                         prefix_cmp(&*a.0, &*b.0)
                     });
@@ -156,14 +156,14 @@ impl Node {
     pub(crate) fn parent_split(&mut self, ps: &ParentSplit) {
         if let Data::Index(ref mut ptrs) = self.data {
             let encoded_sep = prefix_encode(&self.lo, &ps.at);
-            ptrs.push((encoded_sep, ps.to));
+            ptrs.push((encoded_sep.into(), ps.to));
             ptrs.sort_unstable_by(|a, b| prefix_cmp(&*a.0, &*b.0));
         } else {
             panic!("tried to attach a ParentSplit to a Leaf chain");
         }
     }
 
-    pub(crate) fn del_leaf(&mut self, key: KeyRef<'_>) {
+    pub(crate) fn del_leaf(&mut self, key: &IVec) {
         if let Data::Leaf(ref mut records) = self.data {
             let search =
                 records.binary_search_by(|&(ref k, ref _v)| {

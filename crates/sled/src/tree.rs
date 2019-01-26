@@ -314,6 +314,7 @@ impl Tree {
         old: Option<&[u8]>,
         new: Option<Value>,
     ) -> Result<(), Option<PinnedValue>> {
+        trace!("casing key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_cas);
 
         if self.config.read_only {
@@ -321,6 +322,12 @@ impl Tree {
         }
 
         let guard = pin();
+
+        let new_ivec = if let Some(ref n) = new {
+            Some(IVec::from(&**n))
+        } else {
+            None
+        };
 
         // we need to retry caps until old != cur, since just because
         // cap fails it doesn't mean our value was changed.
@@ -347,24 +354,20 @@ impl Tree {
                 let node: &Node = leaf_frag.unwrap_base();
                 (node.id, prefix_encode(&node.lo, key.as_ref()))
             };
-            let frag = if let Some(ref n) = new {
+            let frag = if let Some(ref n) = new_ivec {
                 Frag::Set(encoded_key, n.clone())
             } else {
                 Frag::Del(encoded_key)
             };
-            let link = self.pages.link(
-                node_id,
-                leaf_ptr,
-                frag.clone(),
-                &guard,
-            );
+            let link =
+                self.pages.link(node_id, leaf_ptr, frag, &guard);
             match link {
                 Ok(_) => {
                     if let Some(res) = subscriber_reservation.take() {
-                        let event = if new.is_some() {
+                        let event = if let Some(n) = new {
                             subscription::Event::Set(
                                 key.as_ref().to_vec(),
-                                new.unwrap().clone(),
+                                n.clone(),
                             )
                         } else {
                             subscription::Event::Del(
@@ -395,6 +398,7 @@ impl Tree {
         key: K,
         value: Value,
     ) -> Result<Option<PinnedValue>, ()> {
+        trace!("setting key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_set);
 
         if self.config.read_only {
@@ -404,6 +408,8 @@ impl Tree {
         }
 
         let guard = pin();
+
+        let val_ivec: IVec = IVec::from(&*value);
 
         loop {
             let pin_guard = pin();
@@ -419,7 +425,7 @@ impl Tree {
             let mut subscriber_reservation =
                 self.subscriptions.reserve(&key);
 
-            let frag = Frag::Set(encoded_key, value.clone());
+            let frag = Frag::Set(encoded_key, val_ivec.clone());
             let link = self.pages.link(
                 node.id,
                 leaf_ptr.clone(),
@@ -600,6 +606,7 @@ impl Tree {
         key: K,
         value: Value,
     ) -> Result<(), ()> {
+        trace!("merging key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_merge);
 
         if self.config.read_only {
@@ -610,6 +617,8 @@ impl Tree {
 
         let guard = pin();
 
+        let val_ivec = IVec::from(&*value);
+
         loop {
             let mut path = self.path_for_key(key.as_ref(), &guard)?;
             let (leaf_frag, leaf_ptr) = path.pop().expect(
@@ -618,8 +627,11 @@ impl Tree {
             );
             let node: &Node = leaf_frag.unwrap_base();
 
+            let mut subscriber_reservation =
+                self.subscriptions.reserve(&key);
+
             let encoded_key = prefix_encode(&node.lo, key.as_ref());
-            let frag = Frag::Merge(encoded_key, value.clone());
+            let frag = Frag::Merge(encoded_key, val_ivec.clone());
 
             let link = self.pages.link(
                 node.id,
@@ -630,6 +642,14 @@ impl Tree {
             match link {
                 Ok(new_cas_key) => {
                     // success
+                    if let Some(res) = subscriber_reservation.take() {
+                        let event = subscription::Event::Merge(
+                            key.as_ref().to_vec(),
+                            value.clone(),
+                        );
+
+                        res.complete(event);
+                    }
                     if node.should_split(
                         self.config.blink_node_split_size as u64,
                     ) {
@@ -873,8 +893,8 @@ impl Tree {
         //  root is special case, where we need to hoist a new root
 
         for window in path.windows(2).rev() {
-            let (parent_frag, parent_ptr) = window[0].clone();
-            let (node_frag, node_ptr) = window[1].clone();
+            let (parent_frag, parent_ptr) = &window[0];
+            let (node_frag, node_ptr) = &window[1];
             let node: &Node = node_frag.unwrap_base();
             if node.should_split(
                 self.config.blink_node_split_size as u64,
@@ -1014,7 +1034,7 @@ impl Tree {
         &self,
         from: PageId,
         to: PageId,
-        at: Key,
+        at: IVec,
         guard: &'g Guard,
     ) -> Result<(), ()> {
         // hoist new root, pointing to lhs & rhs
@@ -1023,7 +1043,7 @@ impl Tree {
 
         let root_lo = b"";
         let mut new_root_vec = vec![];
-        new_root_vec.push((vec![0], from));
+        new_root_vec.push((vec![0].into(), from));
 
         let encoded_at = prefix_encode(root_lo, &*at);
         new_root_vec.push((encoded_at, to));
@@ -1031,8 +1051,8 @@ impl Tree {
             id: new_root_pid,
             data: Data::Index(new_root_vec),
             next: None,
-            lo: vec![],
-            hi: vec![],
+            lo: vec![].into(),
+            hi: vec![].into(),
         });
         debug_delay();
         let new_root_ptr = self
@@ -1171,14 +1191,13 @@ impl Tree {
 
             // TODO this may need to change when handling (half) merges
             assert!(
-                node.lo.as_slice() <= key.as_ref(),
+                node.lo.as_ref() <= key.as_ref(),
                 "overshot key somehow"
             );
 
             // half-complete split detect & completion
             // (when hi is empty, it means it's unbounded)
-            if !node.hi.is_empty()
-                && node.hi.as_slice() <= key.as_ref()
+            if !node.hi.is_empty() && node.hi.as_ref() <= key.as_ref()
             {
                 // we have encountered a child split, without
                 // having hit the parent split above.

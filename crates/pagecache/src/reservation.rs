@@ -78,11 +78,7 @@ impl<'a> Reservation<'a> {
 
     fn blob_ptr(&self) -> Option<BlobPointer> {
         if self.is_blob {
-            let mut blob_ptr_bytes =
-                [0u8; std::mem::size_of::<Lsn>()];
-            blob_ptr_bytes
-                .copy_from_slice(&self.data[MSG_HEADER_LEN..]);
-            let blob_ptr = arr_to_u64(blob_ptr_bytes) as BlobPointer;
+            let blob_ptr = arr_to_u64(&self.data[MSG_HEADER_LEN..]) as BlobPointer;
 
             Some(blob_ptr)
         } else {
@@ -103,7 +99,13 @@ impl<'a> Reservation<'a> {
             // on recovery to find corruption.
         }
 
-        self.destination.copy_from_slice(&*self.data);
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                self.data.as_ptr(),
+                self.destination.as_mut_ptr(),
+                self.data.len(),
+            );
+        }
 
         self.iobufs.exit_reservation(self.idx)?;
 
