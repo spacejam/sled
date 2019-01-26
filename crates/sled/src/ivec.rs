@@ -8,7 +8,6 @@ use std::{
 };
 
 const INLINE_LEN_MASK: u8 = 0b0000_1111;
-const KIND_MASK: u8 = 0b1111_0000;
 const KIND_INLINE: u8 = 0b1000_0000;
 const KIND_REMOTE: u8 = 0b0100_0000;
 
