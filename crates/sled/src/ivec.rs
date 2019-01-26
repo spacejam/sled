@@ -115,7 +115,7 @@ impl Drop for IVec {
             let slice: &mut [u8] = std::mem::transmute(data);
             let len = slice.len();
             let layout = Layout::from_size_align_unchecked(
-                len,
+                len + ARC_SZ,
                 std::mem::size_of::<AtomicUsize>(),
             );
 
