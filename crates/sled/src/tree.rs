@@ -893,8 +893,8 @@ impl Tree {
         //  root is special case, where we need to hoist a new root
 
         for window in path.windows(2).rev() {
-            let (parent_frag, parent_ptr) = window[0].clone();
-            let (node_frag, node_ptr) = window[1].clone();
+            let (parent_frag, parent_ptr) = &window[0];
+            let (node_frag, node_ptr) = &window[1];
             let node: &Node = node_frag.unwrap_base();
             if node.should_split(
                 self.config.blink_node_split_size as u64,
