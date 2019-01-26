@@ -565,11 +565,9 @@ impl SegmentAccountant {
         // to be in the safety buffer, in order to prevent us from
         // zeroing and recycling something in the safety buffer, breaking
         // the recovery of later segments if a tear is discovered.
-        if !self.safety_buffer.iter().all(|&l| l == 0) {
-            for &lid in &self.safety_buffer {
-                if self.tip <= lid {
-                    self.tip = lid + io_buf_size as LogId;
-                }
+        for &lid in &self.safety_buffer {
+            if self.tip <= lid {
+                self.tip = lid + io_buf_size as LogId;
             }
         }
 
@@ -756,10 +754,6 @@ impl SegmentAccountant {
 
         // we want the things written last to be last in this Vec
         safety_buffer.reverse();
-
-        while safety_buffer.len() < safety_buffer_len {
-            safety_buffer.insert(0, 0);
-        }
 
         self.safety_buffer = safety_buffer;
 
@@ -1230,8 +1224,6 @@ impl SegmentAccountant {
             next
         };
 
-        let last_given = self.safety_buffer[self.config.io_bufs - 1];
-
         // pin lsn to this segment
         let idx = self.lid_to_idx(lid);
 
@@ -1248,23 +1240,21 @@ impl SegmentAccountant {
 
         debug!(
             "segment accountant returning offset: {} \
-             paused: {} last: {} on deck: {:?}, \
+             paused: {} last: {:?} on deck: {:?}, \
              safety_buffer: {:?}",
             lid,
             self.pause_rewriting,
-            last_given,
+            self.safety_buffer.last(),
             self.free,
             self.safety_buffer
         );
 
         if lid == 0 {
-            let all_zeroes =
-                self.safety_buffer.iter().all(|item| *item == 0);
             let no_zeroes = !self.safety_buffer.contains(&0);
             assert!(
-                all_zeroes || no_zeroes,
+                self.safety_buffer.is_empty() || no_zeroes,
                 "SA returning 0, and we expected \
-                the safety buffer to either be all zeroes, or contain no other \
+                the safety buffer to either be empty, or contain no other \
                 zeroes, but it was {:?}",
                 self.safety_buffer
             );
@@ -1278,7 +1268,10 @@ impl SegmentAccountant {
         }
 
         self.safety_buffer.push(lid);
-        self.safety_buffer.remove(0);
+        if self.safety_buffer.len() > self.config.io_bufs {
+            self.safety_buffer.remove(0);
+        }
+        assert!(self.safety_buffer.len() <= self.config.io_bufs);
 
         Ok(lid)
     }
