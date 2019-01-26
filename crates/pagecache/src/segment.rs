@@ -564,7 +564,7 @@ impl SegmentAccountant {
         // to be in the safety buffer, in order to prevent us from
         // zeroing and recycling something in the safety buffer, breaking
         // the recovery of later segments if a tear is discovered.
-        if self.tip != 0 {
+        if !self.safety_buffer.iter().all(|&l| l == 0) {
             for &lid in &self.safety_buffer {
                 if self.tip <= lid {
                     self.tip = lid + io_buf_size as LogId;
@@ -585,6 +585,10 @@ impl SegmentAccountant {
                     self.free_segment(segment_start, true);
                 }
                 continue;
+            }
+
+            if segment_start >= self.tip {
+                self.tip = segment_start + io_buf_size as LogId;
             }
 
             let lsn = segment.lsn();
@@ -679,6 +683,12 @@ impl SegmentAccountant {
             );
         }
 
+        for (&lid, _) in &self.free {
+            if self.tip <= lid {
+                self.tip = lid + io_buf_size as LogId;
+            }
+        }
+
         #[cfg(feature = "event_log")]
         {
             let segments: std::collections::HashMap<
@@ -761,6 +771,11 @@ impl SegmentAccountant {
         debug!("free list before free {:?}", self.free);
 
         let idx = self.lid_to_idx(lid);
+        assert!(
+            self.tip > lid,
+            "freed a segment above our current file tip, \
+             please report this bug!"
+        );
         assert_eq!(self.segments[idx].state, Free);
         assert!(
             !self.segment_in_free(lid),
@@ -770,7 +785,6 @@ impl SegmentAccountant {
         // we depend on the invariant that the last segments
         // always link together, so that we can detect torn
         // segments during recovery.
-        println!("freeing segment {} in recovery {}", lid, in_recovery);
         self.ensure_safe_free_distance(lid);
 
         if in_recovery {
@@ -1141,7 +1155,6 @@ impl SegmentAccountant {
         self.tip += self.config.io_buf_size as LogId;
 
         trace!("advancing file tip from {} to {}", lid, self.tip);
-        println!("advancing file tip from {} to {}", lid, self.tip);
 
         lid
     }
@@ -1162,7 +1175,6 @@ impl SegmentAccountant {
             &self.safety_buffer.iter().position(|l| *l == lid)
         {
             while self.free.len() <= *idx {
-                println!("bumping tip from ensure_safe...");
                 let new_lid = self.bump_tip();
                 debug!(
                     "pushing segment {} to free from ensure_safe_free_distance",
@@ -1210,7 +1222,6 @@ impl SegmentAccountant {
             .nth(0);
 
         let lid = if self.pause_rewriting || safe.is_none() {
-            println!("bumping tip from next");
             self.bump_tip()
         } else {
             let next = safe.unwrap();
@@ -1233,17 +1244,6 @@ impl SegmentAccountant {
         self.segments[idx].free_to_active(lsn);
 
         self.ordering.insert(lsn, lid);
-
-        println!(
-            "segment accountant returning offset: {} \
-             paused: {} last: {} on deck: {:?}, \
-             safety_buffer: {:?}",
-            lid,
-            self.pause_rewriting,
-            last_given,
-            self.free,
-            self.safety_buffer
-        );
 
         debug!(
             "segment accountant returning offset: {} \
