@@ -39,9 +39,9 @@ impl Frag {
 
     pub(super) fn set_key(&mut self, key: IVec) {
         match self {
-            Frag::Set(_, v) => *self = Frag::Set(key, v.take()),
+            Frag::Set(_, v) => *self = Frag::Set(key, v.clone()),
             Frag::Del(_) => *self = Frag::Del(key),
-            Frag::Merge(_, v) => *self = Frag::Merge(key, v.take()),
+            Frag::Merge(_, v) => *self = Frag::Merge(key, v.clone()),
             other => panic!("set_key called on {:?}", other),
         }
     }

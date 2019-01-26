@@ -4,23 +4,17 @@ use std::{
     alloc::{alloc, dealloc, Layout},
     fmt,
     ops::Deref,
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 const INLINE_LEN_MASK: u8 = 0b0000_1111;
 const KIND_MASK: u8 = 0b1111_0000;
 const KIND_INLINE: u8 = 0b1000_0000;
-const KIND_OWNED: u8 = 0b0100_0000;
-const KIND_BORROWED: u8 = 0b0010_0000;
+const KIND_REMOTE: u8 = 0b0100_0000;
 
-#[cfg(target_pointer_width = "64")]
-const CUTOFF: usize = 15;
-#[cfg(target_pointer_width = "64")]
-type Inner = [u8; 16];
-
-#[cfg(target_pointer_width = "32")]
-const CUTOFF: usize = 7;
-#[cfg(target_pointer_width = "32")]
-type Inner = [u8; 8];
+const CUTOFF: usize = std::mem::size_of::<&[u8]>() - 1;
+type Inner = [u8; std::mem::size_of::<&[u8]>()];
+const ARC_SZ: usize = std::mem::size_of::<AtomicUsize>();
 
 #[derive(Default, Ord, Eq, Serialize, Deserialize)]
 pub(crate) struct IVec {
@@ -49,14 +43,20 @@ impl IVec {
         } else {
             let slice = unsafe {
                 let layout = Layout::from_size_align_unchecked(
-                    v.len(),
-                    std::mem::size_of::<u8>(),
+                    v.len() + ARC_SZ,
+                    std::mem::size_of::<AtomicUsize>(),
                 );
                 let dst = alloc(layout);
                 assert_ne!(dst, std::ptr::null_mut());
+
+                // set arc
+                let arc: &AtomicUsize = std::mem::transmute(dst);
+                arc.store(1, Ordering::SeqCst);
+
+                // copy source to destination
                 std::ptr::copy_nonoverlapping(
                     v.as_ptr(),
-                    dst,
+                    dst.offset(ARC_SZ as isize),
                     v.len(),
                 );
 
@@ -73,60 +73,84 @@ impl IVec {
                  report this bug ASAP!"
             );
 
-            data[CUTOFF] = KIND_OWNED;
+            data[CUTOFF] = KIND_REMOTE;
 
             IVec { data }
         }
     }
 
     #[inline]
+    fn is_inline(&self) -> bool {
+        self.data[CUTOFF] != KIND_REMOTE
+    }
+
+    #[inline]
     pub(crate) fn size_in_bytes(&self) -> u64 {
-        if self.data[CUTOFF] == KIND_INLINE {
+        if self.is_inline() {
             std::mem::size_of::<IVec>() as u64
         } else {
             let sz = std::mem::size_of::<IVec>() as u64;
             sz.saturating_add(self.len() as u64)
         }
     }
+}
 
-    pub(crate) fn take(&mut self) -> IVec {
-        assert_ne!(
-            self.data[CUTOFF], KIND_BORROWED,
-            "take called on Borrowed IVec"
-        );
-        let ret = IVec { data: self.data };
-        if self.data[CUTOFF] == KIND_OWNED {
-            self.data[CUTOFF] = KIND_BORROWED;
+impl Drop for IVec {
+    fn drop(&mut self) {
+        if self.is_inline() {
+            return;
         }
-        ret
+        let mut data = self.data.clone();
+        data[CUTOFF] = 0;
+
+        unsafe {
+            // decrement arc
+            let arc: &AtomicUsize =
+                std::mem::transmute(data.as_ptr());
+            if arc.fetch_sub(1, Ordering::SeqCst) != 1 {
+                return;
+            }
+
+            // arc has hit 0, time to deallocate
+            let slice: &mut [u8] = std::mem::transmute(data);
+            let len = slice.len();
+            let layout = Layout::from_size_align_unchecked(
+                len,
+                std::mem::size_of::<AtomicUsize>(),
+            );
+
+            dealloc(slice.as_mut_ptr(), layout);
+        }
     }
+}
 
-    pub(crate) fn borrow(&self) -> IVec {
-        let mut ret = IVec { data: self.data };
-        if ret.data[CUTOFF] == KIND_OWNED {
-            ret.data[CUTOFF] = KIND_BORROWED;
+impl Clone for IVec {
+    fn clone(&self) -> IVec {
+        if !self.is_inline() {
+            // bump arc by 1
+            let mut data = self.data.clone();
+            data[CUTOFF] = 0;
+
+            unsafe {
+                let arc: &AtomicUsize =
+                    std::mem::transmute(data.as_ptr());
+                arc.fetch_add(1, Ordering::SeqCst);
+            }
         }
-        ret
+
+        IVec { data: self.data }
+    }
+}
+
+impl From<&[u8]> for IVec {
+    fn from(v: &[u8]) -> IVec {
+        IVec::new(v)
     }
 }
 
 impl From<Vec<u8>> for IVec {
     fn from(v: Vec<u8>) -> IVec {
-        if v.len() <= CUTOFF {
-            IVec::new(&v)
-        } else {
-            let bs = v.into_boxed_slice();
-            let slice: &[u8] = bs.deref();
-            let mut data: Inner = unsafe {
-                std::mem::transmute(slice)
-            };
-            std::mem::forget(bs);
-            assert_eq!(data[CUTOFF], 0);
-            data[CUTOFF] = KIND_OWNED;
-            IVec {
-                data
-            }
-        }
+        IVec::new(&v)
     }
 }
 
@@ -135,58 +159,18 @@ impl Deref for IVec {
 
     #[inline]
     fn deref(&self) -> &[u8] {
-        let tag = self.data[CUTOFF];
-        let kind = tag & KIND_MASK;
-        match kind {
-            k if k == KIND_INLINE => {
-                let base = self.data.as_ptr();
-                let len = (tag & INLINE_LEN_MASK) as usize;
-                unsafe { std::slice::from_raw_parts(base, len) }
-            }
-            k if (k == KIND_OWNED || k == KIND_BORROWED) => {
-                let mut data: Inner = self.data;
-                data[CUTOFF] = 0;
+        if self.is_inline() {
+            let base = self.data.as_ptr();
+            let tag = self.data[CUTOFF];
+            let len = (tag & INLINE_LEN_MASK) as usize;
+            unsafe { std::slice::from_raw_parts(base, len) }
+        } else {
+            let mut data: Inner = self.data;
+            data[CUTOFF] = 0;
 
-                unsafe {
-                    let ptr: *mut [u8] = std::mem::transmute(data);
-                    &*ptr
-                }
-            }
-            other => {
-                panic!("unknown kind {}", other);
-            }
-        }
-    }
-}
-
-impl Clone for IVec {
-    fn clone(&self) -> IVec {
-        IVec::new(self.deref())
-    }
-}
-
-impl Drop for IVec {
-    fn drop(&mut self) {
-        let tag = self.data[CUTOFF];
-        let kind = tag & KIND_MASK;
-        match kind {
-            k if k == KIND_OWNED => {
-                let mut data = self.data.clone();
-                data[CUTOFF] = 0;
-
-                unsafe {
-                    let slice: &mut [u8] = std::mem::transmute(data);
-                    let len = slice.len();
-                    let layout = Layout::from_size_align_unchecked(
-                        len,
-                        std::mem::size_of::<u8>(),
-                    );
-
-                    dealloc(slice.as_mut_ptr(), layout);
-                }
-            }
-            _ => {
-                // no owned remote storage
+            unsafe {
+                let ptr: &[u8] = std::mem::transmute(data);
+                &ptr[ARC_SZ..]
             }
         }
     }
@@ -226,7 +210,7 @@ impl fmt::Debug for IVec {
 }
 
 pub(crate) mod ser {
-    use super::{IVec, Inner, CUTOFF, KIND_BORROWED, KIND_OWNED};
+    use super::{IVec, Inner};
 
     use std::ops::Deref;
 
@@ -240,12 +224,7 @@ pub(crate) mod ser {
     where
         S: Serializer,
     {
-        let mut data: Inner = *data;
-        if data[CUTOFF] == KIND_OWNED {
-            data[CUTOFF] = KIND_BORROWED;
-        }
-
-        let iv = IVec { data: data };
+        let iv = IVec { data: *data };
         let ivr: &[u8] = iv.deref();
 
         serializer.serialize_bytes(ivr)
@@ -267,8 +246,7 @@ pub(crate) mod ser {
         fn visit_borrowed_bytes<E>(
             self,
             v: &'de [u8],
-        ) -> Result<IVec, E>
-        {
+        ) -> Result<IVec, E> {
             Ok(IVec::new(v))
         }
     }
