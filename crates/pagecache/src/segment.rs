@@ -571,7 +571,7 @@ impl SegmentAccountant {
             }
         }
 
-        debug!("set self.tip to {}", self.tip);
+        debug!("set self.tip to {} based on safety buffer", self.tip);
 
         let segments_len = segments.len();
 
@@ -579,20 +579,14 @@ impl SegmentAccountant {
         {
             let segment_start = idx as LogId * io_buf_size as LogId;
 
-            if segment.lsn.is_none() {
-                if self.tip > segment_start {
-                    self.free_segment(segment_start, true);
-                }
-                continue;
-            }
-
             if segment_start >= self.tip {
                 self.tip = segment_start + io_buf_size as LogId;
+                debug!("set self.tip to {} based on encountered segment", self.tip);
             }
 
-            let lsn = segment.lsn();
+            let lsn = segment.lsn.unwrap_or(Lsn::max_value());
 
-            if lsn != highest_lsn {
+            if lsn != highest_lsn && segment.state == Active {
                 segment.active_to_inactive(
                     lsn,
                     true,
@@ -603,10 +597,10 @@ impl SegmentAccountant {
             self.ordering.insert(lsn, segment_start);
 
             // can we transition these segments?
-
-            let can_free = segment.is_empty()
-                && !self.pause_rewriting
-                && lsn != highest_lsn;
+            let can_free = segment.lsn.is_none()
+                || (segment.is_empty()
+                    && !self.pause_rewriting
+                    && lsn != highest_lsn);
 
             let can_drain = segment_is_drainable(
                 idx,
@@ -620,49 +614,34 @@ impl SegmentAccountant {
             // populate free and to_clean if the segment has seen
             if can_free {
                 // can be reused immediately
-                if segment.state == Active {
-                    segment.active_to_inactive(
-                        lsn,
-                        true,
-                        &self.config,
-                    )?;
-                }
-
                 if segment.state == Inactive {
                     segment.inactive_to_draining(lsn);
+                    segment.draining_to_free(lsn);
+                } else {
+                    assert_eq!(segment.state, Free);
                 }
 
                 self.to_clean.remove(&segment_start);
-                trace!(
-                    "pid {} freed @initialize_from_snapshot",
-                    segment_start
-                );
-
-                segment.draining_to_free(lsn);
-
                 trace!(
                     "freeing segment {} from initialize_from_snapshot, tip: {}",
                     segment_start,
                     self.tip
                 );
-                self.free_segment(segment_start, true);
+                if !self.free.contains_key(&segment_start) {
+                    self.free_segment(segment_start, true);
+                } else {
+                    trace!(
+                        "skipped freeing of segment {} \
+                        because it was already in free list",
+                        segment_start,
+                    );
+                }
             } else if can_drain {
-                // hack! we check here for pause_rewriting to work with
-                // raw logs, which are created with this set to true.
-
                 // can be cleaned
                 trace!(
                     "setting segment {} to Draining from initialize_from_snapshot",
                     segment_start
                 );
-
-                if segment.state == Active {
-                    segment.active_to_inactive(
-                        lsn,
-                        true,
-                        &self.config,
-                    )?;
-                }
 
                 segment.inactive_to_draining(lsn);
                 self.to_clean.insert(segment_start);
@@ -680,12 +659,6 @@ impl SegmentAccountant {
             debug!(
                 "recovered no segments so not initializing from any",
             );
-        }
-
-        for (&lid, _) in &self.free {
-            if self.tip <= lid {
-                self.tip = lid + io_buf_size as LogId;
-            }
         }
 
         #[cfg(feature = "event_log")]
@@ -964,7 +937,10 @@ impl SegmentAccountant {
         if let Some(lid) = item {
             let idx = self.lid_to_idx(lid);
             let segment = &self.segments[idx];
-            assert!(segment.state == Draining || segment.state == Inactive);
+            assert!(
+                segment.state == Draining
+                    || segment.state == Inactive
+            );
 
             if segment.present.is_empty() {
                 // This could legitimately be empty if it's completely
@@ -1171,6 +1147,13 @@ impl SegmentAccountant {
         {
             while self.free.len() <= *idx {
                 let new_lid = self.bump_tip();
+                assert!(
+                    new_lid > lid,
+                    "we freed segment {} while self.tip of {} \
+                    was somehow below it",
+                    lid,
+                    new_lid,
+                );
                 debug!(
                     "pushing segment {} to free from ensure_safe_free_distance",
                     new_lid
