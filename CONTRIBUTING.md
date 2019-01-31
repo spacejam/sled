@@ -21,6 +21,7 @@ Specifically, there are a few areas that I would love external help with:
 
 General considerations:
 
+* API changes and additions should begin by opening an issue, and later move to implementation after it's clear that we are interested in changing the API in the proposed way
 * all PR's block on failing tests
 * all PR's block on breaking API changes (with the sole exception of the emerging C API)
 * don't be a jerk - here's our [code of conduct](./code-of-conduct.md)
