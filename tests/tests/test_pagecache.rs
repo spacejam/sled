@@ -87,16 +87,16 @@ fn pagecache_caching() {
 
 #[test]
 fn parallel_pagecache() {
+    tests::setup_logger();
     const N_THREADS: usize = 10;
     const N_PER_THREAD: usize = 1000;
 
     let config = ConfigBuilder::new()
         .temporary(true)
         .io_bufs(3)
-        .blink_node_split_size(500)
-        .flush_every_ms(None)
+        .flush_every_ms(Some(10))
         .snapshot_after_ops(100_000_000)
-        .io_buf_size(8_000)
+        .io_buf_size(250)
         .page_consolidation_threshold(3)
         .print_profile_on_drop(true)
         .build();
@@ -133,9 +133,12 @@ fn parallel_pagecache() {
     par! {p, |pc: &PageCache<_, _, _>, _i: usize| {
         let guard = pin();
         let id = pc.allocate(&guard).unwrap();
-        let _key = pc
-            .replace(id, PagePtr::allocated(), vec![id], &guard)
-            .unwrap();
+        let mut key = PagePtr::allocated();
+        while let Err(pagecache::Error::CasFailed(Some(k))) = pc
+            .replace(id, key, vec![id], &guard)
+        {
+            key = k;
+        }
         let (ptr, _key): (&Vec<usize>, _) =
                            pc.get(id, &guard)
                              .expect("we should read what we just wrote")
@@ -400,7 +403,7 @@ enum P {
 }
 
 fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
-    // tests::setup_logger();
+    tests::setup_logger();
     use self::Op::*;
     let config = ConfigBuilder::new()
         .temporary(true)
@@ -427,15 +430,13 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
 
                 match *ref_get {
                     P::Allocated => {
-                        assert_eq!(get, PageGet::Allocated);
-                        pc.replace(
-                            pid,
-                            PagePtr::allocated(),
-                            vec![c],
-                            &guard,
-                        )
-                        .unwrap();
-                        *ref_get = P::Present(vec![c]);
+                        if let PageGet::Allocated(ptr) = get {
+                            pc.replace(pid, ptr, vec![c], &guard)
+                                .unwrap();
+                            *ref_get = P::Present(vec![c]);
+                        } else {
+                            panic!("expected Allocated page get, instead got {:?}", get);
+                        }
                     }
                     P::Present(ref mut existing) => {
                         let (v, old_key) = get.unwrap();
@@ -513,12 +514,10 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                 let pre_get = pc.get(pid, &guard).unwrap();
 
                 match pre_get {
-                    PageGet::Materialized(_, ptr) => {
+                    PageGet::Allocated(ptr)
+                    | PageGet::Materialized(_, ptr) => {
                         pc.free(pid, ptr, &guard).unwrap()
                     }
-                    PageGet::Allocated => pc
-                        .free(pid, PagePtr::allocated(), &guard)
-                        .unwrap(),
                     _ => {}
                 }
 
@@ -538,11 +537,18 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
             Allocate => {
                 let pid = pc.allocate(&guard).unwrap();
                 reference.insert(pid, P::Allocated);
-                let get = pc.get(pid, &guard);
-                assert!(get.unwrap().is_allocated());
+                let get = pc.get(pid, &guard).unwrap();
+                if !get.is_allocated() {
+                    panic!(
+                        "expected allocated page, instead got {:?}",
+                        get
+                    );
+                }
             }
             Restart => {
                 drop(pc);
+
+                println!("restarting pagecache in test");
 
                 config
                     .verify_snapshot::<TestMaterializer, _, _>()
@@ -1278,9 +1284,50 @@ fn pagecache_bug_28() {
     );
 }
 
+#[test]
+fn pagecache_bug_29() {
+    // postmortem:
+    use self::Op::*;
+    prop_pagecache_works(
+        vec![
+            Allocate,
+            Allocate,
+            Allocate,
+            Allocate,
+            Replace(0, 21),
+            Allocate,
+            Replace(0, 25),
+            Link(0, 26),
+            Replace(0, 27),
+            Replace(0, 28),
+            Allocate,
+            Replace(0, 29),
+            Allocate,
+            Free(1),
+            Allocate,
+            Link(2, 30),
+            Link(0, 31),
+            Replace(2, 32),
+            Allocate,
+            Replace(0, 33),
+            Allocate,
+            Free(1),
+            Free(0),
+            Allocate,
+            Allocate,
+            Link(0, 35),
+            Link(0, 36),
+            Replace(0, 37),
+            Free(1),
+            Restart,
+        ],
+        false,
+    );
+}
+
 fn _pagecache_bug_() {
     // postmortem: TEMPLATE
     // portmortem 2: ...
     // use self::Op::*;
-    prop_pagecache_works(vec![], true);
+    prop_pagecache_works(vec![], false);
 }
