@@ -446,9 +446,13 @@ impl SegmentAccountant {
             ret.pause_rewriting();
         }
 
-        ret.set_safety_buffer(snapshot.max_lsn)?;
+        if snapshot.max_lsn > SEG_HEADER_LEN as Lsn
+            && !snapshot.pt.is_empty()
+        {
+            ret.set_safety_buffer(snapshot.max_lsn)?;
 
-        ret.initialize_from_snapshot(snapshot)?;
+            ret.initialize_from_snapshot(snapshot)?;
+        }
 
         Ok(ret)
     }
@@ -581,7 +585,10 @@ impl SegmentAccountant {
 
             if segment_start >= self.tip {
                 self.tip = segment_start + io_buf_size as LogId;
-                debug!("set self.tip to {} based on encountered segment", self.tip);
+                debug!(
+                    "set self.tip to {} based on encountered segment",
+                    self.tip
+                );
             }
 
             let lsn = segment.lsn.unwrap_or(Lsn::max_value());
@@ -597,10 +604,8 @@ impl SegmentAccountant {
             self.ordering.insert(lsn, segment_start);
 
             // can we transition these segments?
-            let can_free = segment.lsn.is_none()
-                || (segment.is_empty()
-                    && !self.pause_rewriting
-                    && lsn != highest_lsn);
+            let can_free =
+                segment.lsn.is_none() || segment.is_empty();
 
             let can_drain = segment_is_drainable(
                 idx,
@@ -608,11 +613,12 @@ impl SegmentAccountant {
                 segment.live_pct(),
                 segment.len(),
                 &self.config,
-            ) && !self.pause_rewriting
-                && lsn != highest_lsn;
+            );
 
             // populate free and to_clean if the segment has seen
-            if can_free {
+            if self.pause_rewriting || lsn == highest_lsn {
+                self.free.remove(&segment_start);
+            } else if can_free {
                 // can be reused immediately
                 if segment.state == Inactive {
                     segment.inactive_to_draining(lsn);
@@ -632,12 +638,11 @@ impl SegmentAccountant {
                 } else {
                     trace!(
                         "skipped freeing of segment {} \
-                        because it was already in free list",
+                         because it was already in free list",
                         segment_start,
                     );
                 }
             } else if can_drain {
-                // can be cleaned
                 trace!(
                     "setting segment {} to Draining from initialize_from_snapshot",
                     segment_start
@@ -1150,7 +1155,7 @@ impl SegmentAccountant {
                 assert!(
                     new_lid > lid,
                     "we freed segment {} while self.tip of {} \
-                    was somehow below it",
+                     was somehow below it",
                     lid,
                     new_lid,
                 );
