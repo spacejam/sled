@@ -2,11 +2,12 @@
 name = "sled"
 version = "0.17.9"
 authors = ["Tyler Neely <t@jujit.su>"]
-description = "a flash-sympathetic persistent lock-free B+ tree"
+description = "a modern embedded database"
 license = "MIT/Apache-2.0"
 homepage = "https://github.com/spacejam/sled"
 repository = "https://github.com/spacejam/sled"
 keywords = ["database", "embedded", "concurrent", "persistent", "lock-free"]
+categories = ["database-implementations", "concurrency", "data-structures", "algorithms", "caching"]
 documentation = "https://docs.rs/sled/"
 readme = "../../README.md"
 edition = "2018"
