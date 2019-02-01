@@ -400,7 +400,7 @@ impl Arbitrary for Op {
         LEN.compare_and_swap(0, 1, Ordering::SeqCst);
 
         let mut incr = || {
-            let len = thread_rng().gen_range(0, 100);
+            let len = thread_rng().gen_range(0, 2);
             LEN.fetch_add(len + MSG_HEADER_LEN, Ordering::Relaxed);
             vec![COUNTER.fetch_add(1, Ordering::Relaxed) as u8; len]
         };
@@ -466,7 +466,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
     use self::Op::*;
     let config = ConfigBuilder::new()
         .temporary(true)
-        .io_buf_size(500)
+        .io_buf_size(8192)
         .flush_every_ms(if flusher { Some(1) } else { None })
         .segment_mode(SegmentMode::Linear)
         .build();
