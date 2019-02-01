@@ -47,7 +47,6 @@ pub(crate) fn read_blob(
         warn!("blob {} failed crc check!", blob_ptr);
 
         Err(Error::Corruption {
-            // FIXME Corruption pointer below should not have 0 as its LogId
             at: DiskPtr::Blob(0, blob_ptr),
         })
     } else {

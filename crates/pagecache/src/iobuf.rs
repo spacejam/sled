@@ -2,6 +2,7 @@
 use std::sync::atomic::AtomicI64 as AtomicLsn;
 #[cfg(target_pointer_width = "64")]
 use std::sync::atomic::AtomicIsize as AtomicLsn;
+
 use std::{
     mem::size_of,
     sync::atomic::Ordering::SeqCst,
@@ -110,23 +111,14 @@ impl IoBufs {
             snapshot.last_lid = 0;
             (0, 0)
         } else {
-            match file.read_message(snapshot_last_lid, &config) {
-                Ok(LogRead::Inline(_lsn, _buf, len)) => (
-                    snapshot_max_lsn
-                        + len as Lsn
-                        + MSG_HEADER_LEN as Lsn,
-                    snapshot_last_lid
-                        + len as LogId
-                        + MSG_HEADER_LEN as LogId,
-                ),
-                Ok(LogRead::Blob(_lsn, _buf, _blob_ptr)) => (
-                    snapshot_max_lsn
-                        + BLOB_INLINE_LEN as Lsn
-                        + MSG_HEADER_LEN as Lsn,
-                    snapshot_last_lid
-                        + BLOB_INLINE_LEN as LogId
-                        + MSG_HEADER_LEN as LogId,
-                ),
+            let width = match file
+                .read_message(snapshot_last_lid, &config)
+            {
+                Ok(LogRead::Failed(_, len)) |
+                Ok(LogRead::Inline(_, _, len)) =>
+                    len + MSG_HEADER_LEN,
+                Ok(LogRead::Blob(_lsn, _buf, _blob_ptr)) =>
+                    BLOB_INLINE_LEN + MSG_HEADER_LEN,
                 other => {
                     // we can overwrite this non-flush
                     debug!(
@@ -134,9 +126,14 @@ impl IoBufs {
                             snapshot_last_lid,
                             other
                         );
-                    (snapshot_max_lsn, snapshot_last_lid)
+                    0
                 }
-            }
+            };
+
+            (
+                snapshot_max_lsn + width as Lsn,
+                snapshot_last_lid + width as LogId,
+            )
         };
 
         let mut segment_accountant =
@@ -155,7 +152,7 @@ impl IoBufs {
         );
 
         if next_lsn == 0 {
-            // recovering at segment boundary
+            // initializing new system
             assert_eq!(next_lid, next_lsn as LogId);
             let iobuf = &bufs[current_buf];
             let lid = segment_accountant.next(next_lsn)?;
@@ -1177,8 +1174,10 @@ impl IoBufs {
             iobufs.interval_updated.notify_all();
         }
 
-        drop(intervals);
-
+        // NB we continue to hold the intervals mutex for
+        // our calls to the segment accountant below so
+        // that we guarantee that we deactivate segments
+        // in order of LSN.
         let logical_segment_before =
             lsn_before / iobufs.config.io_buf_size as Lsn;
         let logical_segment_after =

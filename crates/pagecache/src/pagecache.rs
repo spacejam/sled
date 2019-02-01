@@ -69,39 +69,57 @@ pub enum CacheEntry<M: Send> {
     Flush(Lsn, DiskPtr),
     /// A freed page tombstone.
     Free(Lsn, DiskPtr),
+    /// An allocated page that doesn't have user data linked/replaced into it yet
+    Allocated(Lsn, DiskPtr),
 }
 
 impl<M: Send> CacheEntry<M> {
     fn ptr(&self) -> DiskPtr {
         use self::CacheEntry::*;
+
         match self {
             MergedResident(_, _, ptr)
             | Resident(_, _, ptr)
             | PartialFlush(_, ptr)
             | Flush(_, ptr)
-            | Free(_, ptr) => *ptr,
+            | Free(_, ptr)
+            | Allocated(_, ptr) => *ptr,
         }
     }
 
     fn lsn(&self) -> Lsn {
         use self::CacheEntry::*;
+
         match self {
             MergedResident(_, lsn, ..)
             | Resident(_, lsn, ..)
             | PartialFlush(lsn, ..)
             | Flush(lsn, ..)
-            | Free(lsn, ..) => *lsn,
+            | Free(lsn, ..)
+            | Allocated(lsn, ..) => *lsn,
         }
     }
 
     fn ptr_ref_mut(&mut self) -> &mut DiskPtr {
         use self::CacheEntry::*;
+
         match self {
             MergedResident(_, _, ptr)
             | Resident(_, _, ptr)
             | PartialFlush(_, ptr)
             | Flush(_, ptr)
-            | Free(_, ptr) => ptr,
+            | Free(_, ptr)
+            | Allocated(_, ptr) => ptr,
+        }
+    }
+
+    fn is_free(&self) -> bool {
+        use self::CacheEntry::*;
+
+        if let Free(..) = self {
+            true
+        } else {
+            false
         }
     }
 }
@@ -119,7 +137,7 @@ where
 }
 
 #[serde(bound(deserialize = ""))]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(super) enum Update<PageFrag>
 where
     PageFrag: DeserializeOwned + Serialize,
@@ -145,7 +163,7 @@ where
     /// This page has been allocated, but will become
     /// Free after restarting the system unless some
     /// data gets written to it.
-    Allocated,
+    Allocated(PagePtr<'a, PageFrag>),
     /// This page was never allocated.
     Unallocated,
 }
@@ -210,7 +228,7 @@ where
     /// Returns true if the `PageGet` is `Allocated`.
     pub fn is_allocated(&self) -> bool {
         match *self {
-            PageGet::Allocated => true,
+            PageGet::Allocated(_) => true,
             _ => false,
         }
     }
@@ -220,6 +238,17 @@ where
         match *self {
             PageGet::Unallocated => true,
             _ => false,
+        }
+    }
+
+    fn into_ptr(self) -> PagePtr<'a, P> {
+        match self {
+            PageGet::Materialized(_, ptr)
+            | PageGet::Free(ptr)
+            | PageGet::Allocated(ptr) => ptr,
+            PageGet::Unallocated => {
+                panic!("into_ptr called on PageGet::Unallocated")
+            }
         }
     }
 }
@@ -457,32 +486,70 @@ where
         &self,
         guard: &'g Guard,
     ) -> Result<PageId, ()> {
-        let pid = if let Some(pid) = self.free.lock().unwrap().pop() {
+        let (pid, mut key) = if let Some(pid) =
+            self.free.lock().unwrap().pop()
+        {
             trace!("re-allocating pid {}", pid);
-            let p = self.inner.del(pid, guard).unwrap();
-            unsafe {
-                match p.deref().head(guard).deref().deref() {
-                    CacheEntry::Free(..) => (),
-                    _ => panic!("expected page {} to be Free", pid),
+
+            let key = match self.get(pid, guard)? {
+                PageGet::Free(key) => key.0,
+                other => {
+                    panic!("reallocating page set to {:?}", other)
                 }
             };
-            pid
+
+            (pid, key)
         } else {
             let pid = self.max_pid.fetch_add(1, SeqCst);
+
             trace!("allocating pid {}", pid);
 
-            pid
-        };
+            let new_stack = Stack::default();
+            new_stack.push(CacheEntry::Allocated(
+                Lsn::max_value(),
+                DiskPtr::Inline(LogId::max_value()),
+            ));
 
-        let new_stack = Stack::default();
-        let stack_ptr = Owned::new(new_stack).into_shared(guard);
+            let key = new_stack.head(guard);
 
-        self.inner
-                .cas(pid, Shared::null(), stack_ptr, guard)
+            let stack_ptr = Owned::new(new_stack).into_shared(guard);
+
+            self.inner.cas(pid, Shared::null(), stack_ptr, guard)
                 .expect("allocating new page should never encounter existing data");
 
-        self.cas_page(pid, Shared::null(), Update::Allocate, &guard)
-            .map_err(|e| e.danger_cast())?;
+            (pid, key)
+        };
+
+        loop {
+            // we need to loop because the pagecache may relocate
+            // our page due to it being free
+            match self.cas_page(pid, key, Update::Allocate, guard) {
+                Ok(_) => break,
+                Err(Error::CasFailed(Some(other))) => unsafe {
+                    let o = other.0.deref().deref();
+                    if o.is_free() {
+                        key = other.0;
+                        continue;
+                    } else {
+                        panic!(
+                            "failed to install new Update::Allocate \
+                             for new page because we encountered \
+                             a non-Free: {:?}",
+                            o,
+                        );
+                    }
+                },
+                Err(Error::CasFailed(None)) => {
+                    panic!(
+                        "failed to allocate pid {} due to \
+                         the stack disappearing before we could \
+                         install our Update::Allocate",
+                        pid,
+                    );
+                }
+                Err(other) => return Err(other.danger_cast()),
+            }
+        }
 
         Ok(pid)
     }
@@ -525,6 +592,7 @@ where
         guard: &'g Guard,
     ) -> Result<PagePtr<'g, P>, Option<PagePtr<'g, P>>> {
         trace!("linking pid {}", pid);
+
         if old.is_allocated() {
             return self.replace(pid, old, new, guard);
         }
@@ -581,7 +649,10 @@ where
                 previous_lsn_segment == new_lsn_segment
             };
             let to_clean = if skip_mark {
-                None
+                self.log.with_sa(|sa| {
+                    sa.mark_link(pid, lsn, ptr);
+                    sa.clean(pid)
+                })
             } else {
                 self.log.with_sa(|sa| {
                     sa.mark_link(pid, lsn, ptr);
@@ -599,7 +670,11 @@ where
                 .map_err(|e| e.danger_cast())?;
 
             if let Some(to_clean) = to_clean {
-                let _ = self.rewrite_page(to_clean, guard);
+                match self.rewrite_page(to_clean, guard) {
+                    Ok(_) => {}
+                    Err(Error::CasFailed(_)) => {}
+                    other => other?,
+                }
             }
 
             let count = self.updates.fetch_add(1, SeqCst) + 1;
@@ -638,7 +713,11 @@ where
 
             if let Some(to_clean) = to_clean {
                 assert_ne!(pid, to_clean);
-                let _ = self.rewrite_page(to_clean, guard);
+                match self.rewrite_page(to_clean, guard) {
+                    Ok(_) => {}
+                    Err(Error::CasFailed(_)) => {}
+                    other => other?,
+                }
             }
 
             let count = self.updates.fetch_add(1, SeqCst) + 1;
@@ -727,14 +806,15 @@ where
             trace!("rewriting page with pid {}", pid);
 
             // page-in whole page with a get,
-            let (key, update) = match self.get(pid, guard)? {
+            let (key, update) = match self
+                .get(pid, guard)
+                .map_err(|e| e.danger_cast())?
+            {
                 PageGet::Materialized(data, key) => {
                     (key, Update::Compact(data.clone()))
                 }
                 PageGet::Free(key) => (key, Update::Free),
-                PageGet::Allocated => {
-                    (PagePtr(Shared::null()), Update::Allocate)
-                }
+                PageGet::Allocated(key) => (key, Update::Allocate),
                 PageGet::Unallocated => {
                     // TODO when merge functionality is added,
                     // this may break
@@ -751,7 +831,7 @@ where
     fn cas_page<'g>(
         &self,
         pid: PageId,
-        old: PagePtrInner<'g, P>,
+        mut old: PagePtrInner<'g, P>,
         new: Update<P>,
         guard: &'g Guard,
     ) -> Result<PagePtrInner<'g, P>, Option<PagePtr<'g, P>>> {
@@ -766,6 +846,19 @@ where
             Some(s) => s,
         };
 
+        if old.is_null() {
+            match self.get(pid, guard).map_err(|e| e.danger_cast())? {
+                PageGet::Allocated(current_key) => {
+                    old = current_key.0;
+                }
+                other => {
+                    return Err(Error::CasFailed(Some(
+                        other.into_ptr(),
+                    )));
+                }
+            }
+        }
+
         let replace: LoggedUpdate<P> =
             LoggedUpdate { pid, update: new };
         let bytes =
@@ -777,21 +870,17 @@ where
 
         let cache_entry = match replace.update {
             Update::Compact(m) => {
-                Some(CacheEntry::MergedResident(m, lsn, new_ptr))
+                CacheEntry::MergedResident(m, lsn, new_ptr)
             }
-            Update::Free => Some(CacheEntry::Free(lsn, new_ptr)),
-            Update::Allocate => None,
+            Update::Free => CacheEntry::Free(lsn, new_ptr),
+            Update::Allocate => CacheEntry::Allocated(lsn, new_ptr),
             Update::Append(_) => {
                 panic!("tried to cas a page using an Append")
             }
         };
 
-        let node = cache_entry
-            .map(|cache_entry| {
-                node_from_frag_vec(vec![cache_entry])
-                    .into_shared(guard)
-            })
-            .unwrap_or_else(Shared::null);
+        let node =
+            node_from_frag_vec(vec![cache_entry]).into_shared(guard);
 
         debug_delay();
         let result =
@@ -826,15 +915,18 @@ where
         &self,
         pid: PageId,
         guard: &'g Guard,
-    ) -> Result<PageGet<'g, PM::PageFrag>, Option<PagePtr<'g, P>>>
-    {
+    ) -> Result<PageGet<'g, PM::PageFrag>, ()> {
         loop {
             let stack_ptr = match self.inner.get(pid, guard) {
-                None => return Ok(PageGet::Unallocated),
+                None => {
+                    return Ok(PageGet::Unallocated);
+                }
                 Some(s) => s,
             };
 
-            let inner_res = self.page_in(pid, stack_ptr, guard)?;
+            let inner_res = self
+                .page_in(pid, stack_ptr, guard)
+                .map_err(|e| e.danger_cast())?;
             if let Some(res) = inner_res {
                 return Ok(res);
             }
@@ -915,11 +1007,16 @@ where
                 CacheEntry::Free(_, _) => {
                     return Ok(Some(PageGet::Free(PagePtr(head))));
                 }
+                CacheEntry::Allocated(_, _) => {
+                    return Ok(Some(PageGet::Allocated(PagePtr(
+                        head,
+                    ))));
+                }
             }
         }
 
         if ptrs.is_empty() {
-            return Ok(Some(PageGet::Allocated));
+            return Ok(Some(PageGet::Unallocated));
         }
 
         let mut fetched = Vec::with_capacity(ptrs.len());
@@ -1071,16 +1168,17 @@ where
                 new_entries.push(tail);
             }
 
-            let node = node_from_frag_vec(new_entries);
+            let node =
+                node_from_frag_vec(new_entries).into_shared(guard);
+
+            debug_assert_eq!(
+                ptrs_from_stack(head, guard),
+                ptrs_from_stack(node, guard),
+            );
 
             debug_delay();
-            let res = unsafe {
-                stack_ptr.deref().cas(
-                    head,
-                    node.into_shared(guard),
-                    guard,
-                )
-            };
+            let res =
+                unsafe { stack_ptr.deref().cas(head, node, guard) };
             if let Ok(new_head) = res {
                 head = new_head;
             } else {
@@ -1132,7 +1230,8 @@ where
                 CacheEntry::PartialFlush(_, _) => {
                     panic!("got PartialFlush at end of stack...")
                 }
-                CacheEntry::Free(_, _) => {
+                CacheEntry::Allocated(_, _)
+                | CacheEntry::Free(_, _) => {
                     // don't actually evict this. this leads to
                     // a discrepency in the Lru perceived size
                     // and the real size, but this should be
@@ -1145,19 +1244,20 @@ where
                 Vec::with_capacity(cache_entries.len() + 1);
             for entry in cache_entries {
                 match entry {
-                    CacheEntry::PartialFlush(lsn, ptr) |
-                    CacheEntry::MergedResident(_, lsn, ptr) |
-                    CacheEntry::Resident(_, lsn, ptr) => {
-                        new_stack.push(CacheEntry::PartialFlush(lsn, ptr));
+                    CacheEntry::PartialFlush(lsn, ptr)
+                    | CacheEntry::MergedResident(_, lsn, ptr)
+                    | CacheEntry::Resident(_, lsn, ptr) => {
+                        new_stack
+                            .push(CacheEntry::PartialFlush(lsn, ptr));
                     }
                     CacheEntry::Flush(_, _) => {
                         panic!("got Flush in middle of stack...")
                     }
-                    CacheEntry::Free(_, _) => {
-                        panic!(
-                            "encountered a Free tombstone page in middle of stack..."
-                        )
-                    }
+                    CacheEntry::Allocated(_, _)
+                    | CacheEntry::Free(_, _) => panic!(
+                        "encountered {:?} in middle of stack...",
+                        entry
+                    ),
                 }
             }
             new_stack.push(last);
@@ -1362,9 +1462,9 @@ where
                     self.free.lock().unwrap().push(*pid);
                     snapshot_free.remove(&pid);
                 }
-                PageState::Allocated(_lsn, _ptr) => {
+                PageState::Allocated(lsn, ptr) => {
                     assert!(!snapshot.free.contains(pid));
-                    // empty stack with null ptr head implies Allocated
+                    stack.push(CacheEntry::Allocated(lsn, ptr));
                 }
             }
 
@@ -1429,7 +1529,8 @@ fn ptrs_from_stack<'g, P: Send + Sync>(
             | CacheEntry::MergedResident(_, _, ref ptr)
             | CacheEntry::PartialFlush(_, ref ptr)
             | CacheEntry::Free(_, ref ptr)
-            | CacheEntry::Flush(_, ref ptr) => {
+            | CacheEntry::Flush(_, ref ptr)
+            | CacheEntry::Allocated(_, ref ptr) => {
                 ptrs.push(*ptr);
             }
         }
