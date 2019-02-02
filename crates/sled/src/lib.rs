@@ -47,8 +47,6 @@ mod tree;
 
 const META_PID: PageId = 0;
 const COUNTER_PID: PageId = 1;
-const DEFAULT_TREE_PID: PageId = 3;
-const TX_TREE_PID: PageId = 5;
 
 const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
 const TX_TREE_ID: &[u8] = b"__sled__transactions";
