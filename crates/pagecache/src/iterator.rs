@@ -7,7 +7,6 @@ pub struct LogIter {
     pub config: Config,
     pub segment_iter: Box<dyn Iterator<Item = (Lsn, LogId)>>,
     pub segment_base: Option<LogId>,
-    pub segment_len: usize,
     pub max_lsn: Lsn,
     pub cur_lsn: Lsn,
     pub trailer: Option<Lsn>,
@@ -23,7 +22,7 @@ impl Iterator for LogIter {
         loop {
             let remaining_seg_too_small_for_msg = !valid_entry_offset(
                 self.cur_lsn as LogId,
-                self.segment_len,
+                self.config.io_buf_size,
             );
 
             if self.trailer.is_none()
@@ -43,7 +42,7 @@ impl Iterator for LogIter {
                     self.segment_iter.next()
                 {
                     assert!(
-                        next_lsn + (self.segment_len as Lsn) >= self.cur_lsn,
+                        next_lsn + (self.config.io_buf_size as Lsn) >= self.cur_lsn,
                         "caller is responsible for providing segments \
                             that contain the initial cur_lsn value or higher"
                     );
@@ -74,7 +73,7 @@ impl Iterator for LogIter {
             }
 
             let lid = self.segment_base.unwrap()
-                + (self.cur_lsn % self.segment_len as Lsn) as LogId;
+                + (self.cur_lsn % self.config.io_buf_size as Lsn) as LogId;
 
             let f = &self.config.file;
             match f.read_message(lid, &self.config) {
@@ -171,20 +170,20 @@ impl LogIter {
         );
         // we add segment_len to this check because we may be getting the
         // initial segment that is a bit behind where we left off before.
-        assert!(lsn + self.segment_len as Lsn >= self.cur_lsn);
+        assert!(lsn + self.config.io_buf_size as Lsn >= self.cur_lsn);
         let f = &self.config.file;
         let segment_header = f.read_segment_header(offset)?;
-        if offset % self.segment_len as LogId != 0 {
+        if offset % self.config.io_buf_size as LogId != 0 {
             debug!("segment offset not divisible by segment length");
             return Err(Error::Corruption {
                 at: DiskPtr::Inline(offset),
             });
         }
-        if segment_header.lsn % self.segment_len as Lsn != 0 {
+        if segment_header.lsn % self.config.io_buf_size as Lsn != 0 {
             debug!(
                 "expected a segment header lsn that is divisible \
                  by the io_buf_size ({}) instead it was {}",
-                self.segment_len, segment_header.lsn
+                self.config.io_buf_size, segment_header.lsn
             );
             return Err(Error::Corruption {
                 at: DiskPtr::Inline(offset),
@@ -204,10 +203,10 @@ impl LogIter {
             .into());
         }
 
-        let trailer_offset = offset + self.segment_len as LogId
+        let trailer_offset = offset + self.config.io_buf_size as LogId
             - SEG_TRAILER_LEN as LogId;
         let trailer_lsn = segment_header.lsn
-            + self.segment_len as Lsn
+            + self.config.io_buf_size as Lsn
             - SEG_TRAILER_LEN as Lsn;
 
         trace!("trying to read trailer from {}", trailer_offset);

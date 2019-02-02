@@ -264,7 +264,6 @@ impl IoBufs {
             cur_lsn: corrected_lsn,
             segment_base: None,
             segment_iter,
-            segment_len: io_buf_size,
             trailer: None,
         }
     }

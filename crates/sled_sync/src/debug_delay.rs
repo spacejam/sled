@@ -15,7 +15,6 @@ use {
 /// operations, shaking out more possible interleavings quickly. It gets
 /// fully elliminated by the compiler in non-test code.
 pub fn debug_delay() {
-    use std::sync::atomic::spin_loop_hint;
     use std::thread;
     use std::time::Duration;
 

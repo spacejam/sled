@@ -1604,7 +1604,6 @@ pub(super) fn raw_segment_iter_from(
         cur_lsn: SEG_HEADER_LEN as Lsn,
         segment_base: None,
         segment_iter,
-        segment_len: config.io_buf_size,
         trailer: None,
     })
 }
