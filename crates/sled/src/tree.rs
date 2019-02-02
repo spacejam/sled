@@ -926,7 +926,7 @@ impl Tree {
                         other => {
                             return other
                                 .map(|_| ())
-                                .map_err(|e| e.danger_cast())
+                                .map_err(|e| e.danger_cast());
                         }
                     }
                 }
@@ -980,15 +980,23 @@ impl Tree {
         };
 
         // install the new right side
-        let new_ptr = self
-            .pages
-            .replace(
+        let new_ptr = loop {
+            debug_delay();
+            let res = self.pages.replace(
                 new_pid,
                 PagePtr::allocated(),
-                Frag::Base(rhs),
+                Frag::Base(rhs.clone()),
                 guard,
-            )
-            .map_err(|e| e.danger_cast())?;
+            );
+
+            // This may fail if the pagecache has relocated
+            // the page since we allocated it.
+            match res {
+                Ok(r) => break r,
+                Err(Error::CasFailed(_)) => continue,
+                Err(other) => return Err(other.danger_cast()),
+            }
+        };
 
         // try to install a child split on the left side
         let link = self.pages.link(
@@ -1062,18 +1070,24 @@ impl Tree {
             hi: vec![].into(),
         });
         debug_delay();
-        let new_root_ptr = self
-            .pages
-            .replace(
+
+        let new_root_ptr = loop {
+            debug_delay();
+            let res = self.pages.replace(
                 new_root_pid,
                 PagePtr::allocated(),
-                new_root,
+                new_root.clone(),
                 guard,
-            )
-            .expect(
-                "we should be able to replace a newly \
-                 allocated page without issue",
             );
+
+            // This may fail if the pagecache has relocated
+            // the page since we allocated it.
+            match res {
+                Ok(r) => break r,
+                Err(Error::CasFailed(_)) => continue,
+                Err(other) => return Err(other.danger_cast()),
+            }
+        };
 
         debug_delay();
         let cas = meta::cas_root(
@@ -1188,9 +1202,9 @@ impl Tree {
                 }
                 broken => {
                     return Err(Error::ReportableBug(format!(
-                    "got non-base node while traversing tree: {:?}",
-                    broken
-                )))
+                        "got non-base node while traversing tree: {:?}",
+                        broken
+                    )));
                 }
             };
 
