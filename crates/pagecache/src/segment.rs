@@ -554,6 +554,7 @@ impl SegmentAccountant {
             .filter(|lsn| *lsn != Lsn::max_value())
             .max()
             .unwrap_or(0);
+
         debug!(
             "recovered highest_lsn in all segments: {}",
             highest_lsn
@@ -1273,6 +1274,10 @@ impl SegmentAccountant {
         &mut self,
         lsn: Lsn,
     ) -> Box<dyn Iterator<Item = (Lsn, LogId)>> {
+        if let Err(e) = self.ensure_ordering_initialized() {
+            error!("failed to load segment ordering: {:?}", e);
+        }
+
         assert!(
             self.pause_rewriting,
             "must pause rewriting before \
