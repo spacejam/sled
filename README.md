@@ -74,6 +74,8 @@ We also support [merge operators](https://github.com/spacejam/sled/wiki/merge-op
 
 Want to prioritize a specific feature or get commercial help with using sled in your project? [Ferrous Systems](https://ferrous-systems.com) provides commercial support for sled, and can work with you to solve a wide variety of storage problems across the latency-throughput, consistency, and price performance spectra. [Get in touch!](mailto:sled@ferrous-systems.com)
 
+[![Ferrous Systems](https://ferrous-systems.com/images/ferrous-logo-text.svg)](https://ferrous-systems.com/)
+
 # known issues, warnings
 
 * the on-disk format is going to change in non-forward compatible ways

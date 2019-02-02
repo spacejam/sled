@@ -6,6 +6,9 @@ extern crate sled;
 
 pub mod tree;
 
+#[cfg_attr(not(feature = "no_jemalloc"), global_allocator)]
+static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 pub fn setup_logger() {
     use std::io::Write;
 

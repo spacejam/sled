@@ -32,7 +32,7 @@ bincode = "1.0"
 fs2 = "0.4"
 fxhash = "0.2"
 futures = "0.1"
-hashbrown = "0.1"
+hashbrown = { version = "0.1", features = ["serde"] }
 lazy_static = "1.2"
 libc = "0.2"
 rayon = "1.0"

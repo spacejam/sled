@@ -58,17 +58,17 @@ script:
                  pushd tests &&
                  cargo check &&
                  cargo check --features=all &&
-                 cargo test test_crash_recovery --release -- --ignored &&
+                 cargo test test_crash_recovery --release -- --ignored --nocapture &&
                  cargo test tree --release
                  ;;
                qc)
                  pushd tests &&
                  echo "qc log" &&
-                 cargo test quickcheck_log_works --release -- --ignored &&
+                 cargo test quickcheck_log_works --release -- --ignored --nocapture &&
                  echo "qc pagecache" &&
-                 cargo test quickcheck_pagecache_works --release -- --ignored &&
+                 cargo test quickcheck_pagecache_works --release -- --ignored --nocapture &&
                  echo "qc tree" &&
-                 cargo test quickcheck_tree_matches_btreemap --release -- --ignored
+                 cargo test quickcheck_tree_matches_btreemap --release -- --ignored --nocapture
                  ;;
                clippy)
                  cargo clippy
@@ -123,7 +123,7 @@ script:
                  cargo test --release
                  ;;
                concurrent)
-                 cargo test concurrent --release -- --ignored
+                 cargo test concurrent --release -- --ignored --nocapture
                  ;;
                *)
                  echo "unknown TEST value \"$TEST\"";

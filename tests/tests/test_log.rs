@@ -1,26 +1,22 @@
 #![cfg_attr(test, allow(unused))]
 
-#[cfg(target_os = "linux")]
-extern crate libc;
-extern crate quickcheck;
-extern crate rand;
-
-extern crate pagecache;
-extern crate sled;
-extern crate tests;
-
-use std::fs;
-use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
-use std::sync::Arc;
-use std::thread;
-
-use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
-use rand::{thread_rng, Rng};
-
-use pagecache::{
-    ConfigBuilder, DiskPtr, Log, LogRead, SegmentMode,
-    MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
-    SEG_TRAILER_LEN,
+use {
+    lazy_static::lazy_static,
+    pagecache::{
+        ConfigBuilder, DiskPtr, Log, LogRead, SegmentMode,
+        MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
+        SEG_TRAILER_LEN,
+    },
+    quickcheck::{Arbitrary, Gen, QuickCheck, StdGen},
+    rand::{thread_rng, Rng},
+    std::{
+        fs,
+        sync::{
+            atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT},
+            {Arc, Mutex},
+        },
+        thread,
+    },
 };
 
 type Lsn = i64;
@@ -351,23 +347,24 @@ fn snapshot_with_out_of_order_buffers() {
 
 #[test]
 fn multi_segment_log_iteration() {
+    tests::setup_logger();
     // ensure segments are being linked
     // ensure trailers are valid
     let config = ConfigBuilder::new()
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
-        .io_buf_size(1000)
+        .io_buf_size(500)
         .build();
 
     let total_seg_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;
     let big_msg_overhead = MSG_HEADER_LEN + total_seg_overhead;
-    let big_msg_sz = config.io_buf_size - big_msg_overhead;
+    let big_msg_sz = (config.io_buf_size - big_msg_overhead) / 64;
 
     let log = Log::start_raw_log(config.clone()).unwrap();
 
-    for i in 0..config.io_bufs * 2 {
-        let buf = vec![i as u8; big_msg_sz];
-        log.write(buf);
+    for i in 0..config.io_bufs * 16 {
+        let buf = vec![i as u8; big_msg_sz * i];
+        log.write(buf).unwrap();
     }
     log.flush();
 
@@ -376,11 +373,14 @@ fn multi_segment_log_iteration() {
     let log = Log::start_raw_log(config.clone()).unwrap();
 
     // start iterating just past the first segment header
+    println!("creating iterator");
     let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
+    println!("using iterator");
 
-    for i in 0..config.io_bufs * 2 {
-        let expected = vec![i as u8; big_msg_sz];
-        let (_lsn, _lid, buf) = iter.next().unwrap();
+    for i in 0..config.io_bufs * 16 {
+        let expected = vec![i as u8; big_msg_sz * i];
+        let (_lsn, _lid, buf) = iter.next()
+            .expect("");
         assert_eq!(expected, buf);
     }
 }
@@ -454,10 +454,23 @@ impl Arbitrary for Op {
 }
 
 fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
+    tests::setup_logger();
+
+    /*
+    lazy_static! {
+        // forces quickcheck to run one thread at a time
+        static ref M: Mutex<()> = Mutex::new(());
+    }
+
+    let _lock =
+        M.lock().expect("our test lock should not be poisoned");
+    */
+
+    println!("ops: {:?}", ops);
     use self::Op::*;
     let config = ConfigBuilder::new()
         .temporary(true)
-        .io_buf_size(1024 * 8)
+        .io_buf_size(8192)
         .flush_every_ms(if flusher { Some(1) } else { None })
         .segment_mode(SegmentMode::Linear)
         .build();
@@ -506,6 +519,8 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
             }
             Restart => {
                 drop(log);
+
+                println!("\nrestarting\n");
 
                 // on recovery, we will rewind over any aborted tip entries
                 while !reference.is_empty() {
@@ -850,6 +865,34 @@ fn log_bug_22() {
             Write(vec![77]),
         ],
         true,
+    );
+}
+
+#[test]
+fn log_bug_23() {
+    // postmortem:
+    use self::Op::*;
+    prop_log_works(vec![AbortReservation(vec![230]), Restart], false);
+}
+
+#[test]
+fn log_bug_24() {
+    // postmortem:
+    use self::Op::*;
+    prop_log_works(
+        vec![
+            AbortReservation(vec![107]),
+            Restart,
+            AbortReservation(vec![109]),
+            Write(vec![110]),
+            Write(vec![111]),
+            Write(vec![112]),
+            Restart,
+            AbortReservation(vec![]),
+            Write(vec![114]),
+            Read(1),
+        ],
+        false,
     );
 }
 

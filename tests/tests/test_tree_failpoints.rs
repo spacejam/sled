@@ -117,6 +117,8 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 }
 
 fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
+    tests::setup_logger();
+
     let io_buf_size = 300;
 
     let config = ConfigBuilder::new()
@@ -208,6 +210,8 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
     }
 
     let mut set_counter = 0u16;
+
+    println!("ops: {:?}", ops);
 
     for op in ops.into_iter() {
         match op {
@@ -867,6 +871,116 @@ fn failpoints_bug_15() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
         vec![FailPoint("buffer write"), Id, Restart, Id],
+        false,
+    ))
+}
+
+#[test]
+fn failpoints_bug_16() {
+    // postmortem 1:
+    assert!(prop_tree_crashes_nicely(
+        vec![FailPoint("zero garbage segment"), Id, Id],
+        false,
+    ))
+}
+
+#[test]
+fn failpoints_bug_17() {
+    // postmortem 1: during recovery we were not properly
+    // filtering replaced pages in segments by the source
+    // segment still
+    assert!(prop_tree_crashes_nicely(
+        vec![
+            Del(0),
+            Set,
+            Set,
+            Set,
+            Del(3),
+            Id,
+            Id,
+            Set,
+            Id,
+            Id,
+            Del(3),
+            Id,
+            Id,
+            Del(3),
+            Restart,
+            Id,
+            FailPoint("blob blob write"),
+            Id,
+            Restart,
+            Id,
+            Set,
+            Id,
+            Del(3),
+            Set
+        ],
+        false,
+    ))
+}
+
+#[test]
+fn failpoints_bug_18() {
+    // postmortem 1:
+    assert!(prop_tree_crashes_nicely(
+        vec![
+            Id,
+            Id,
+            Set,
+            Id,
+            Id,
+            Id,
+            Set,
+            Del(0),
+            Restart,
+            Del(0),
+            Id,
+            Set
+        ],
+        false,
+    ))
+}
+
+#[test]
+fn failpoints_bug_19() {
+    // postmortem 1:
+    assert!(prop_tree_crashes_nicely(
+        vec![
+            Set,
+            Set,
+            Set,
+            Set,
+            Del(4),
+            Id,
+            Del(4),
+            Id,
+            Id,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Id,
+            Set,
+            Set,
+            Del(11),
+            Del(13),
+            Id,
+            Del(122),
+            Del(134),
+            Del(101),
+            Del(81),
+            Set,
+            Del(15),
+            Del(76),
+            Restart,
+            Set,
+            Id,
+            Id,
+            Set,
+            Restart
+        ],
         false,
     ))
 }

@@ -40,14 +40,14 @@ Options:
     --threads=<#>      Number of threads [default: 4].
     --burn-in          Don't halt until we receive a signal.
     --duration=<s>     Seconds to run for [default: 10].
-    --key-len=<l>      The length of keys [default: 1].
+    --key-len=<l>      The length of keys [default: 10].
     --val-len=<l>      The length of values [default: 100].
-    --get-prop=<p>     The relative proportion of get requests [default: 75].
-    --set-prop=<p>     The relative proportion of set requests [default: 5].
-    --del-prop=<p>     The relative proportion of del requests [default: 5].
-    --cas-prop=<p>     The relative proportion of cas requests [default: 5].
-    --scan-prop=<p>    The relative proportion of scan requests [default: 5].
-    --merge-prop=<p>   The relative proportion of merge requests [default: 5].
+    --get-prop=<p>     The relative proportion of get requests [default: 94].
+    --set-prop=<p>     The relative proportion of set requests [default: 2].
+    --del-prop=<p>     The relative proportion of del requests [default: 1].
+    --cas-prop=<p>     The relative proportion of cas requests [default: 1].
+    --scan-prop=<p>    The relative proportion of scan requests [default: 1].
+    --merge-prop=<p>   The relative proportion of merge requests [default: 1].
     --entries=<n>      The total keyspace [default: 100000].
     --sequential       Run the test in sequential mode instead of random.
 ";
