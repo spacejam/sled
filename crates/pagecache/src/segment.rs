@@ -549,9 +549,11 @@ impl SegmentAccountant {
         // use last segment as active even if it's full
         let io_buf_size = self.config.io_buf_size;
 
-        let highest_lsn = segments.iter().fold(0, |acc, segment| {
-            std::cmp::max(acc, segment.lsn.unwrap_or(acc))
-        });
+        let highest_lsn = segments.iter()
+            .filter_map(|s| s.lsn)
+            .filter(|lsn| *lsn != Lsn::max_value())
+            .max()
+            .unwrap_or(0);
         debug!(
             "recovered highest_lsn in all segments: {}",
             highest_lsn
@@ -831,12 +833,13 @@ impl SegmentAccountant {
 
         let mut deferred_replacements = FastSet8::default();
 
-        for old_ptr in &old_ptrs {
+        for old_ptr in old_ptrs {
             let old_lid = old_ptr.lid();
 
             if old_lid == LogId::max_value() {
-                // this is used as a special value for initial Allocations
-                // before they are logged and fully installed with cas_page
+                // this is used as a special value for initial
+                // Allocations before they are logged and
+                // fully installed with cas_page
                 continue;
             }
 
@@ -1349,6 +1352,7 @@ impl SegmentAccountant {
     }
 
     fn lid_to_idx(&mut self, lid: LogId) -> usize {
+        assert_ne!(lid, LogId::max_value());
         let idx = lid as usize / self.config.io_buf_size;
 
         // TODO never resize like this, make it a single
