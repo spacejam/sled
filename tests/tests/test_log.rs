@@ -347,23 +347,24 @@ fn snapshot_with_out_of_order_buffers() {
 
 #[test]
 fn multi_segment_log_iteration() {
+    tests::setup_logger();
     // ensure segments are being linked
     // ensure trailers are valid
     let config = ConfigBuilder::new()
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
-        .io_buf_size(1000)
+        .io_buf_size(500)
         .build();
 
     let total_seg_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;
     let big_msg_overhead = MSG_HEADER_LEN + total_seg_overhead;
-    let big_msg_sz = config.io_buf_size - big_msg_overhead;
+    let big_msg_sz = (config.io_buf_size - big_msg_overhead) / 64;
 
     let log = Log::start_raw_log(config.clone()).unwrap();
 
-    for i in 0..config.io_bufs * 2 {
-        let buf = vec![i as u8; big_msg_sz];
-        log.write(buf);
+    for i in 0..config.io_bufs * 16 {
+        let buf = vec![i as u8; big_msg_sz * i];
+        log.write(buf).unwrap();
     }
     log.flush();
 
@@ -372,11 +373,14 @@ fn multi_segment_log_iteration() {
     let log = Log::start_raw_log(config.clone()).unwrap();
 
     // start iterating just past the first segment header
+    println!("creating iterator");
     let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
+    println!("using iterator");
 
-    for i in 0..config.io_bufs * 2 {
-        let expected = vec![i as u8; big_msg_sz];
-        let (_lsn, _lid, buf) = iter.next().unwrap();
+    for i in 0..config.io_bufs * 16 {
+        let expected = vec![i as u8; big_msg_sz * i];
+        let (_lsn, _lid, buf) = iter.next()
+            .expect("");
         assert_eq!(expected, buf);
     }
 }
