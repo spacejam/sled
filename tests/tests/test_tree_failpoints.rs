@@ -987,12 +987,23 @@ fn failpoints_bug_19() {
 
 #[test]
 fn failpoints_bug_20() {
-    // postmortem 1:
+    // postmortem 1: failed to filter out segments with
+    // uninitialized segment ID's when creating a segment
+    // iterator.
     assert!(prop_tree_crashes_nicely(
         vec![
-        Restart, Set, Set, Del(0), Id, FailPoint("trailer write post"), Id, Set, Del(0), Id, Set
+            Restart,
+            Set,
+            Set,
+            Del(0),
+            Id,
+            FailPoint("trailer write post"),
+            Id,
+            Set,
+            Del(0),
+            Id,
+            Set
         ],
         false,
     ))
 }
-
