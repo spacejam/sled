@@ -446,12 +446,19 @@ impl SegmentAccountant {
             ret.pause_rewriting();
         }
 
-        if snapshot.max_lsn > SEG_HEADER_LEN as Lsn
+        if snapshot.max_lsn >= SEG_HEADER_LEN as Lsn
             && !snapshot.pt.is_empty()
         {
             ret.set_safety_buffer(snapshot.max_lsn)?;
 
             ret.initialize_from_snapshot(snapshot)?;
+        } else {
+            trace!(
+                "skipping initialization of SA \
+                for snapshot with max_lsn {} and pt {:?}",
+                snapshot.max_lsn,
+                snapshot.pt,
+            );
         }
 
         Ok(ret)
