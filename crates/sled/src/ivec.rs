@@ -10,7 +10,7 @@ pub(crate) enum IVec {
     Inline(u8, Inner),
     Remote {
         #[serde(with = "ser")]
-        buf: Arc<Box<[u8]>>,
+        buf: Arc<[u8]>,
     },
 }
 
@@ -32,7 +32,7 @@ impl IVec {
             IVec::Inline(sz, data)
         } else {
             IVec::Remote {
-                buf: Arc::new(v.to_vec().into_boxed_slice()),
+                buf: v.to_vec().into(),
             }
         }
     }
@@ -112,7 +112,7 @@ pub(crate) mod ser {
     use serde::ser::Serializer;
 
     pub(crate) fn serialize<S>(
-        data: &Arc<Box<[u8]>>,
+        data: &Arc<[u8]>,
         serializer: S,
     ) -> Result<S::Ok, S::Error>
     where
@@ -124,7 +124,7 @@ pub(crate) mod ser {
     struct IVecVisitor;
 
     impl<'de> Visitor<'de> for IVecVisitor {
-        type Value = Arc<Box<[u8]>>;
+        type Value = Arc<[u8]>;
 
         fn expecting(
             &self,
@@ -137,14 +137,14 @@ pub(crate) mod ser {
         fn visit_borrowed_bytes<E>(
             self,
             v: &'de [u8],
-        ) -> Result<Arc<Box<[u8]>>, E> {
-            Ok(Arc::new(v.to_vec().into_boxed_slice()))
+        ) -> Result<Arc<[u8]>, E> {
+            Ok(v.to_vec().into())
         }
     }
 
     pub(crate) fn deserialize<'de, D>(
         deserializer: D,
-    ) -> Result<Arc<Box<[u8]>>, D::Error>
+    ) -> Result<Arc<[u8]>, D::Error>
     where
         D: Deserializer<'de>,
     {
