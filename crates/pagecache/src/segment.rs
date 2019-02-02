@@ -455,7 +455,7 @@ impl SegmentAccountant {
         } else {
             trace!(
                 "skipping initialization of SA \
-                for snapshot with max_lsn {} and pt {:?}",
+                 for snapshot with max_lsn {} and pt {:?}",
                 snapshot.max_lsn,
                 snapshot.pt,
             );
@@ -556,7 +556,8 @@ impl SegmentAccountant {
         // use last segment as active even if it's full
         let io_buf_size = self.config.io_buf_size;
 
-        let highest_lsn = segments.iter()
+        let highest_lsn = segments
+            .iter()
             .filter_map(|s| s.lsn)
             .filter(|lsn| *lsn != Lsn::max_value())
             .max()
@@ -589,6 +590,8 @@ impl SegmentAccountant {
 
         let segments_len = segments.len();
 
+        let max_lsn = Lsn::max_value();
+
         for (idx, ref mut segment) in segments.iter_mut().enumerate()
         {
             let segment_start = idx as LogId * io_buf_size as LogId;
@@ -601,17 +604,17 @@ impl SegmentAccountant {
                 );
             }
 
-            let lsn = segment.lsn.unwrap_or(Lsn::max_value());
+            if let Some(lsn) = segment.lsn {
+                if lsn != highest_lsn && segment.state == Active {
+                    segment.active_to_inactive(
+                        lsn,
+                        true,
+                        &self.config,
+                    )?;
+                }
 
-            if lsn != highest_lsn && segment.state == Active {
-                segment.active_to_inactive(
-                    lsn,
-                    true,
-                    &self.config,
-                )?;
+                self.ordering.insert(lsn, segment_start);
             }
-
-            self.ordering.insert(lsn, segment_start);
 
             // can we transition these segments?
             let can_free =
@@ -626,13 +629,15 @@ impl SegmentAccountant {
             );
 
             // populate free and to_clean if the segment has seen
-            if self.pause_rewriting || lsn == highest_lsn {
+            if self.pause_rewriting
+                || segment.lsn == Some(highest_lsn)
+            {
                 self.free.remove(&segment_start);
             } else if can_free {
                 // can be reused immediately
                 if segment.state == Inactive {
-                    segment.inactive_to_draining(lsn);
-                    segment.draining_to_free(lsn);
+                    segment.inactive_to_draining(max_lsn);
+                    segment.draining_to_free(max_lsn);
                 } else {
                     assert_eq!(segment.state, Free);
                 }
@@ -658,7 +663,7 @@ impl SegmentAccountant {
                     segment_start
                 );
 
-                segment.inactive_to_draining(lsn);
+                segment.inactive_to_draining(max_lsn);
                 self.to_clean.insert(segment_start);
                 self.free.remove(&segment_start);
             } else {
@@ -711,6 +716,8 @@ impl SegmentAccountant {
         // recoveries.
         let mut to_zero = vec![];
         for (&lsn, &lid) in &self.ordering {
+            assert_ne!(lsn, Lsn::max_value());
+
             if lsn <= snapshot_max_lsn {
                 continue;
             }
@@ -1402,6 +1409,7 @@ fn scan_segment_lsns(
             cursor,
             segment
         );
+        assert_ne!(segment.lsn, Lsn::max_value());
         if segment.ok
             && (segment.lsn != 0 || cursor == 0)
             && segment.lsn >= min
@@ -1604,7 +1612,6 @@ pub(super) fn raw_segment_iter_from(
         cur_lsn: SEG_HEADER_LEN as Lsn,
         segment_base: None,
         segment_iter,
-        segment_len: config.io_buf_size,
         trailer: None,
     })
 }

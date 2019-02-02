@@ -15,7 +15,6 @@ use {
 /// operations, shaking out more possible interleavings quickly. It gets
 /// fully elliminated by the compiler in non-test code.
 pub fn debug_delay() {
-    use std::sync::atomic::spin_loop_hint;
     use std::thread;
     use std::time::Duration;
 
@@ -33,8 +32,6 @@ pub fn debug_delay() {
         let duration = gamma.sample(&mut try_thread_rng().unwrap());
         thread::sleep(Duration::from_micros(duration as u64));
     }
-
-    spin_loop_hint();
 
     if rng.gen::<bool>() {
         thread::yield_now();

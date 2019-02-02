@@ -6,12 +6,14 @@ use std::sync::atomic::AtomicIsize as AtomicLsn;
 use std::{
     mem::size_of,
     sync::atomic::Ordering::SeqCst,
-    sync::atomic::{spin_loop_hint, AtomicBool, AtomicUsize},
+    sync::atomic::{AtomicBool, AtomicUsize},
     sync::{Arc, Condvar, Mutex},
 };
 
 #[cfg(feature = "compression")]
 use zstd::block::compress;
+
+use sled_sync::Backoff;
 
 use self::reader::LogReader;
 
@@ -114,11 +116,13 @@ impl IoBufs {
             let width = match file
                 .read_message(snapshot_last_lid, &config)
             {
-                Ok(LogRead::Failed(_, len)) |
-                Ok(LogRead::Inline(_, _, len)) =>
-                    len + MSG_HEADER_LEN,
-                Ok(LogRead::Blob(_lsn, _buf, _blob_ptr)) =>
-                    BLOB_INLINE_LEN + MSG_HEADER_LEN,
+                Ok(LogRead::Failed(_, len))
+                | Ok(LogRead::Inline(_, _, len)) => {
+                    len + MSG_HEADER_LEN
+                }
+                Ok(LogRead::Blob(_lsn, _buf, _blob_ptr)) => {
+                    BLOB_INLINE_LEN + MSG_HEADER_LEN
+                }
                 other => {
                     // we can overwrite this non-flush
                     debug!(
@@ -260,7 +264,6 @@ impl IoBufs {
             cur_lsn: corrected_lsn,
             segment_base: None,
             segment_iter,
-            segment_len: io_buf_size,
             trailer: None,
         }
     }
@@ -416,14 +419,8 @@ impl IoBufs {
         let mut header = iobuf.get_header();
 
         // Decrement writer count, retrying until successful.
-        let mut spins = 0;
+        let backoff = Backoff::new();
         loop {
-            spins += 1;
-            if spins > 10 {
-                debug!("have spun >10x in decr");
-                spins = 0;
-            }
-
             let new_hv = decr_writers(header);
             match iobuf.cas_header(header, new_hv) {
                 Ok(new) => {
@@ -433,6 +430,7 @@ impl IoBufs {
                 Err(new) => {
                     // we failed to decr, retry
                     header = new;
+                    backoff.spin();
                 }
             }
         }
@@ -581,16 +579,10 @@ impl IoBufs {
         // ring buffer)
         let measure_assign_spinloop =
             Measure::new(&M.assign_spinloop);
-        let mut spins = 0;
+        let backoff = Backoff::new();
         while next_iobuf.cas_lid(max, next_offset).is_err() {
-            spins += 1;
-            if spins > 1_000_000 {
-                debug!(
-                    "have spun >1,000,000x in seal of buf {}",
-                    idx
-                );
-                spins = 0;
-            }
+            backoff.snooze();
+
             #[cfg(feature = "failpoints")]
             {
                 if self
@@ -602,7 +594,6 @@ impl IoBufs {
                     return Err(Error::FailPoint);
                 }
             }
-            spin_loop_hint();
         }
         drop(measure_assign_spinloop);
         trace!("{} log set to {}", next_idx, next_offset);
@@ -756,7 +747,9 @@ impl IoBufs {
                     printed = true;
                 }};
         }
-        let mut spins = 0;
+
+        let backoff = Backoff::new();
+
         loop {
             M.log_reservation_attempted();
             #[cfg(feature = "failpoints")]
@@ -776,21 +769,12 @@ impl IoBufs {
             let current_buf = iobufs.current_buf.load(SeqCst);
             let idx = current_buf % n_io_bufs;
 
-            spins += 1;
-            if spins > 1_000_000 {
-                debug!(
-                    "stalling in reserve, idx {}, buf len {}",
-                    idx, inline_buf_len,
-                );
-                spins = 0;
-            }
-
             if written_bufs > current_buf {
                 // This can happen because a reservation can finish up
                 // before the sealing thread gets around to bumping
                 // current_buf.
                 trace_once!("written ahead of sealed, spinning");
-                spin_loop_hint();
+                backoff.spin();
                 continue;
             }
 
@@ -800,17 +784,23 @@ impl IoBufs {
                 trace_once!(
                     "old io buffer not written yet, spinning"
                 );
-                spin_loop_hint();
+                if backoff.is_completed() {
+                    // use a condition variable to wait until
+                    // we've updated the written_bufs counter.
+                    let _measure =
+                        Measure::new(&M.reserve_written_condvar_wait);
 
-                // use a condition variable to wait until
-                // we've updated the written_bufs counter.
-                let _measure =
-                    Measure::new(&M.reserve_written_condvar_wait);
-                let mut buf_mu = iobufs.buf_mu.lock().unwrap();
-                while written_bufs == iobufs.written_bufs.load(SeqCst)
-                {
-                    buf_mu = iobufs.buf_updated.wait(buf_mu).unwrap();
+                    let mut buf_mu = iobufs.buf_mu.lock().unwrap();
+                    while written_bufs
+                        == iobufs.written_bufs.load(SeqCst)
+                    {
+                        buf_mu =
+                            iobufs.buf_updated.wait(buf_mu).unwrap();
+                    }
+                } else {
+                    backoff.snooze();
                 }
+
                 continue;
             }
 
@@ -823,16 +813,23 @@ impl IoBufs {
                 // already sealed, start over and hope cur
                 // has already been bumped by sealer.
                 trace_once!("io buffer already sealed, spinning");
-                spin_loop_hint();
 
-                // use a condition variable to wait until
-                // we've updated the current_buf counter.
-                let _measure =
-                    Measure::new(&M.reserve_current_condvar_wait);
-                let mut buf_mu = iobufs.buf_mu.lock().unwrap();
-                while current_buf == iobufs.current_buf.load(SeqCst) {
-                    buf_mu = iobufs.buf_updated.wait(buf_mu).unwrap();
+                if backoff.is_completed() {
+                    // use a condition variable to wait until
+                    // we've updated the current_buf counter.
+                    let _measure =
+                        Measure::new(&M.reserve_current_condvar_wait);
+                    let mut buf_mu = iobufs.buf_mu.lock().unwrap();
+                    while current_buf
+                        == iobufs.current_buf.load(SeqCst)
+                    {
+                        buf_mu =
+                            iobufs.buf_updated.wait(buf_mu).unwrap();
+                    }
+                } else {
+                    backoff.snooze();
                 }
+
                 continue;
             }
 
@@ -848,7 +845,7 @@ impl IoBufs {
                 // there are zero writers.
                 trace_once!("io buffer too full, spinning");
                 self.maybe_seal_and_write_iobuf(idx, header, true)?;
-                spin_loop_hint();
+                backoff.spin();
                 continue;
             }
 
@@ -862,7 +859,7 @@ impl IoBufs {
                 "spinning because our buffer has {} writers already",
                 MAX_WRITERS
             );
-                spin_loop_hint();
+                backoff.snooze();
                 continue;
             }
 
@@ -874,7 +871,7 @@ impl IoBufs {
                 trace_once!(
                     "CAS failed while claiming buffer slot, spinning"
                 );
-                spin_loop_hint();
+                backoff.spin();
                 continue;
             }
 

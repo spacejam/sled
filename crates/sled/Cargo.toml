@@ -1,6 +1,6 @@
 [package]
 name = "sled"
-version = "0.17.9"
+version = "0.18.0"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "a modern embedded database"
 license = "MIT/Apache-2.0"
@@ -33,6 +33,6 @@ features = ["derive"]
 version = "0.4"
 
 [dependencies]
-pagecache = { path = "../pagecache", version = "0.9.4" }
-sled_sync = { version = "0.2.2", path = "../sled_sync" }
+pagecache = { path = "../pagecache", version = "0.10" }
+sled_sync = { version = "0.3", path = "../sled_sync" }
 futures = "0.1"

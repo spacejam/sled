@@ -15,4 +15,6 @@ pub use crossbeam_epoch::{
     LocalHandle, Owned, Shared,
 };
 
+pub use crossbeam_utils::Backoff;
+
 pub use std::sync::atomic;
