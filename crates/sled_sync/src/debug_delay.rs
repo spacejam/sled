@@ -34,8 +34,6 @@ pub fn debug_delay() {
         thread::sleep(Duration::from_micros(duration as u64));
     }
 
-    spin_loop_hint();
-
     if rng.gen::<bool>() {
         thread::yield_now();
     }
