@@ -32,7 +32,7 @@ impl IVec {
             IVec::Inline(sz, data)
         } else {
             IVec::Remote {
-                buf: v.to_vec().into(),
+                buf: v.into(),
             }
         }
     }
@@ -138,7 +138,7 @@ pub(crate) mod ser {
             self,
             v: &'de [u8],
         ) -> Result<Arc<[u8]>, E> {
-            Ok(v.to_vec().into())
+            Ok(v.into())
         }
     }
 
