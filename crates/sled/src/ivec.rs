@@ -56,7 +56,16 @@ impl From<&[u8]> for IVec {
 
 impl From<Vec<u8>> for IVec {
     fn from(v: Vec<u8>) -> IVec {
-        IVec::new(&v)
+        if v.len() <= CUTOFF {
+            IVec::new(&v)
+        } else {
+            IVec::Remote {
+                // rely on the Arc From specialization
+                // for Vec<[T]>, which may improve
+                // over time for T's that are Copy
+                buf: v.into(),
+            }
+        }
     }
 }
 
