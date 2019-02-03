@@ -231,8 +231,6 @@ fn parallel_iterators() -> Result<(), ()> {
                     }
                 }
 
-                println!("f");
-
                 Ok(())
             }
         },
@@ -280,8 +278,6 @@ fn parallel_iterators() -> Result<(), ()> {
                     }
                 }
 
-                println!("r");
-
                 Ok(())
             }
         },
@@ -302,8 +298,6 @@ fn parallel_iterators() -> Result<(), ()> {
                 t.set(base.clone(), base.clone())?;
             }
 
-            println!("i");
-
             Ok(())
         }
     });
@@ -323,7 +317,6 @@ fn parallel_iterators() -> Result<(), ()> {
                 t.del(&base)?;
             }
 
-            println!("d");
             Ok(())
         }
     });

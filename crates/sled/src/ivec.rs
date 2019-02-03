@@ -110,7 +110,7 @@ impl PartialEq<[u8]> for IVec {
 
 impl fmt::Debug for IVec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "IVec( {:?} )", self.deref())
+        write!(f, "{:?}", self.deref())
     }
 }
 

@@ -259,7 +259,20 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
             }
         };
 
+        let mut spins = 0;
+
         loop {
+            spins += 1;
+            debug_assert_ne!(
+                spins, 1000,
+                "reverse iterator stuck in loop \
+                 looking for key before {:?} \
+                 with end_bound {:?} and \
+                 start bound {:?} on tree: \n \
+                 {:?}",
+                self.last_key, end, start_bound, self.tree,
+            );
+
             let value_guard = pin();
 
             if self.last_id.is_none() {
@@ -360,10 +373,6 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                     split_detected = true;
                     split_key = search_key;
 
-                    println!(
-                        "looking for < {:?} at {:?}",
-                        search_key, node
-                    );
                     None
                 } else {
                     binary_search_lt(leaf, |&(ref k, ref _v)| {
@@ -426,7 +435,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
             while (!split_detected
                 && (next_node.next != Some(node.id))
                 && next_node.lo < node.lo)
-                || (split_detected && &*next_node.hi <= split_key)
+                || (split_detected && &*next_node.hi < split_key)
             {
                 let res = self
                     .tree
@@ -435,14 +444,22 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                     .map(|page_get| page_get.unwrap());
 
                 if let Err(e) = res {
-                    println!("iteration failed: {:?}", e);
                     error!("iteration failed: {:?}", e);
                     self.done = true;
                     return Some(Err(e.danger_cast()));
                 }
                 let (frag, _ptr) = res.unwrap();
                 next_node = frag.unwrap_base();
-                println!("skipping to node {}", next_node.id);
+            }
+
+            if split_detected
+                && next_node.data.is_empty()
+            {
+                // we want to mark this node's lo key
+                // as our last key to prevent infinite
+                // search loops, by enforcing reverse
+                // progress.
+                self.last_key = Some(next_node.lo.to_vec());
             }
 
             self.last_id = Some(next_node.id);
