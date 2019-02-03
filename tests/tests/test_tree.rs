@@ -169,7 +169,7 @@ fn parallel_tree_ops() {
 }
 
 #[test]
-fn parallel_iterators() -> Result<(), ()> {
+fn parallel_tree_iterators() -> Result<(), ()> {
     let config = ConfigBuilder::new()
         .temporary(true)
         .blink_node_split_size(0)
