@@ -259,7 +259,20 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
             }
         };
 
+        let mut spins = 0;
+
         loop {
+            spins += 1;
+            debug_assert_ne!(
+                spins, 1000,
+                "reverse iterator stuck in loop \
+                 looking for key before {:?} \
+                 with end_bound {:?} and \
+                 start bound {:?} on tree: \n \
+                 {:?}",
+                self.last_key, end, start_bound, self.tree,
+            );
+
             let value_guard = pin();
 
             if self.last_id.is_none() {
@@ -330,6 +343,8 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
             let leaf =
                 node.data.leaf_ref().expect("node should be a leaf");
             let prefix = &node.lo;
+            let mut split_detected = false;
+            let mut split_key: &[u8] = &[];
 
             let search = if inclusive && self.last_key.is_none() {
                 if unbounded {
@@ -352,9 +367,18 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                     end
                 };
 
-                binary_search_lt(leaf, |&(ref k, ref _v)| {
-                    prefix_cmp_encoded(k, search_key, prefix)
-                })
+                if !node.hi.is_empty() && &*node.hi < search_key {
+                    // the node has been split since we saw it,
+                    // and we need to scan forward
+                    split_detected = true;
+                    split_key = search_key;
+
+                    None
+                } else {
+                    binary_search_lt(leaf, |&(ref k, ref _v)| {
+                        prefix_cmp_encoded(k, search_key, prefix)
+                    })
+                }
             };
 
             if let Some(idx) = search {
@@ -384,12 +408,16 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 return None;
             }
 
-            // we need to get the node to the left of ours by
-            // guessing a key that might land on it, and then
-            // fast-forwarding through the right child pointers
-            // if we went too far to the left.
-            let pred = possible_predecessor(prefix)?;
-            let mut next_node =
+            let mut next_node = if split_detected {
+                // we need to skip ahead to get to the node
+                // where our last key resided
+                node
+            } else {
+                // we need to get the node to the left of ours by
+                // guessing a key that might land on it, and then
+                // fast-forwarding through the right child pointers
+                // if we went too far to the left.
+                let pred = possible_predecessor(prefix)?;
                 match self.tree.path_for_key(pred, &self.guard) {
                     Err(e) => {
                         error!("next_back iteration failed: {:?}", e);
@@ -397,9 +425,17 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                         return Some(Err(e.danger_cast()));
                     }
                     Ok(path) => path.last().unwrap().0.unwrap_base(),
-                };
-            while next_node.next != Some(node.id)
-                && next_node.lo < node.lo
+                }
+            };
+
+            // If we did not detect a split, we need to
+            // seek until the node that points to our last one.
+            // If we detected a split, we need to seek until
+            // the new node that contains our last key.
+            while (!split_detected
+                && (next_node.next != Some(node.id))
+                && next_node.lo < node.lo)
+                || (split_detected && &*next_node.hi < split_key)
             {
                 let res = self
                     .tree
@@ -414,6 +450,16 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 }
                 let (frag, _ptr) = res.unwrap();
                 next_node = frag.unwrap_base();
+            }
+
+            if split_detected
+                && next_node.data.is_empty()
+            {
+                // we want to mark this node's lo key
+                // as our last key to prevent infinite
+                // search loops, by enforcing reverse
+                // progress.
+                self.last_key = Some(next_node.lo.to_vec());
             }
 
             self.last_id = Some(next_node.id);
