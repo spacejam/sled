@@ -204,7 +204,7 @@ fn parallel_tree_iterators() -> Result<(), ()> {
         t.set(item.to_vec(), item.to_vec())?;
     }
 
-    let barrier = Arc::new(Barrier::new(4));
+    let barrier = Arc::new(Barrier::new(N_FORWARD + N_REVERSE + 2));
 
     let mut threads: Vec<thread::JoinHandle<Result<(), ()>>> = vec![];
 
