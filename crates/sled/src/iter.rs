@@ -264,7 +264,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
         loop {
             spins += 1;
             debug_assert_ne!(
-                spins, 1000,
+                spins, 100,
                 "reverse iterator stuck in loop \
                  looking for key before {:?} \
                  with end_bound {:?} and \
@@ -452,14 +452,16 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 next_node = frag.unwrap_base();
             }
 
-            if split_detected
-                && next_node.data.is_empty()
-            {
+            if split_detected && next_node.data.is_empty() {
                 // we want to mark this node's lo key
                 // as our last key to prevent infinite
                 // search loops, by enforcing reverse
                 // progress.
                 self.last_key = Some(next_node.lo.to_vec());
+            }
+
+            if !split_detected {
+                self.last_key = Some(node.lo.to_vec());
             }
 
             self.last_id = Some(next_node.id);

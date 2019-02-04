@@ -16,6 +16,12 @@ const N_PER_THREAD: usize = 100;
 const N: usize = N_THREADS * N_PER_THREAD; // NB N should be multiple of N_THREADS
 const SPACE: usize = N;
 
+#[cfg(target_os = "macos")]
+const INTENSITY: usize = 5;
+
+#[cfg(not(target_os = "macos"))]
+const INTENSITY: usize = 10;
+
 #[inline(always)]
 fn kv(i: usize) -> Vec<u8> {
     let i = i % SPACE;
@@ -26,12 +32,6 @@ fn kv(i: usize) -> Vec<u8> {
 #[test]
 fn parallel_tree_ops() {
     tests::setup_logger();
-
-    #[cfg(target_os = "macos")]
-    const INTENSITY: usize = 5;
-
-    #[cfg(not(target_os = "macos"))]
-    const INTENSITY: usize = 10;
 
     for i in 0..INTENSITY {
         debug!("beginning test {}", i);
@@ -170,6 +170,9 @@ fn parallel_tree_ops() {
 
 #[test]
 fn parallel_tree_iterators() -> Result<(), ()> {
+    const N_FORWARD: usize = INTENSITY;
+    const N_REVERSE: usize = INTENSITY;
+
     let config = ConfigBuilder::new()
         .temporary(true)
         .blink_node_split_size(0)
@@ -201,10 +204,12 @@ fn parallel_tree_iterators() -> Result<(), ()> {
         t.set(item.to_vec(), item.to_vec())?;
     }
 
-    let barrier = Arc::new(Barrier::new(4));
+    let barrier = Arc::new(Barrier::new(N_FORWARD + N_REVERSE + 2));
 
-    let forward: thread::JoinHandle<Result<(), ()>> = thread::spawn(
-        {
+    let mut threads: Vec<thread::JoinHandle<Result<(), ()>>> = vec![];
+
+    for _ in 0..N_FORWARD {
+        let t = thread::spawn({
             let t = t.clone();
             let barrier = barrier.clone();
             move || {
@@ -233,18 +238,12 @@ fn parallel_tree_iterators() -> Result<(), ()> {
 
                 Ok(())
             }
-        },
-    );
+        });
+        threads.push(t);
+    }
 
-    // 2: 0, 1, 2, 3
-    // rev: 3, 2
-    // split 2
-    //
-    // 2: 0, 01
-    // rev: 01 !!!!!
-
-    let reverse: thread::JoinHandle<Result<(), ()>> = thread::spawn(
-        {
+    for _ in 0..N_REVERSE {
+        let t = thread::spawn({
             let t = t.clone();
             let barrier = barrier.clone();
             move || {
@@ -280,8 +279,10 @@ fn parallel_tree_iterators() -> Result<(), ()> {
 
                 Ok(())
             }
-        },
-    );
+        });
+
+        threads.push(t);
+    }
 
     let inserter = thread::spawn({
         let t = t.clone();
@@ -302,6 +303,8 @@ fn parallel_tree_iterators() -> Result<(), ()> {
         }
     });
 
+    threads.push(inserter);
+
     let deleter = thread::spawn({
         let t = t.clone();
         let barrier = barrier.clone();
@@ -321,9 +324,9 @@ fn parallel_tree_iterators() -> Result<(), ()> {
         }
     });
 
-    for thread in
-        vec![forward, reverse, inserter, deleter].into_iter()
-    {
+    threads.push(deleter);
+
+    for thread in threads.into_iter() {
         thread.join().expect("thread should not have crashed")?;
     }
 
