@@ -806,7 +806,10 @@ impl SegmentAccountant {
 
     /// Re-enables segment rewriting after iteration is complete.
     pub(super) fn resume_rewriting(&mut self) {
-        self.pause_rewriting = false;
+        // we never want to resume segment rewriting in Linear mode
+        if self.config.segment_mode != SegmentMode::Linear {
+            self.pause_rewriting = false;
+        }
     }
 
     /// Called by the `PageCache` when a page has been rewritten completely.
