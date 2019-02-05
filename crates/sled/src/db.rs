@@ -104,8 +104,6 @@ impl Db {
             .map_err(|e| e.danger_cast())?
             .is_unallocated()
         {
-            was_recovered = false;
-
             // set up meta
             let meta_id = pages.allocate(&guard)?;
 
@@ -116,10 +114,18 @@ impl Db {
                 META_PID,
                 meta_id,
             );
+        }
+
+        if pages
+            .get(META_PID, &guard)
+            .map_err(|e| e.danger_cast())?
+            .is_allocated()
+        {
+            was_recovered = false;
 
             let meta = Frag::Meta(Meta::default());
             pages
-                .replace(meta_id, PagePtr::allocated(), meta, &guard)
+                .replace(META_PID, PagePtr::allocated(), meta, &guard)
                 .map_err(|e| e.danger_cast())?;
 
             // set up idgen
@@ -144,7 +150,7 @@ impl Db {
                 .map_err(|e| e.danger_cast())?;
         } else {
             was_recovered = true;
-        };
+        }
 
         let default_tree = meta::open_tree(
             pages.clone(),
