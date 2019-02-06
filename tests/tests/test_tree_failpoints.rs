@@ -154,12 +154,14 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 
             tree = tree_res.expect("tree should restart");
 
-            let tree_iter = tree.iter().map(|res| {
-                let (ref tk, _) = res.expect("should be able to iterate over items in tree");
-                v(tk)
-            });
             let mut ref_iter = reference.iter().map(|(ref rk, ref rv)| (**rk, **rv));
-            for t in tree_iter {
+            for res in tree.iter() {
+                let t = match res {
+                    Ok((ref tk, _)) => v(tk),
+                    Err(Error::FailPoint) => return true,
+                    Err(other) => panic!("failed to iterate over items in tree after restart: {:?}", other),
+                };
+
                 // make sure the tree value is in there
                 while let Some((r, (_rv, certainty))) = ref_iter.next() {
                     if certainty {
@@ -1003,6 +1005,82 @@ fn failpoints_bug_20() {
             Del(0),
             Id,
             Set
+        ],
+        false,
+    ))
+}
+
+#[test]
+fn failpoints_bug_21() {
+    // postmortem 1:
+    assert!(prop_tree_crashes_nicely(
+        vec![
+            Id,
+            Del(242),
+            Set,
+            Del(172),
+            Id,
+            Del(142),
+            Del(183),
+            Set,
+            Set,
+            FailPoint("trailer write"),
+            Set,
+            Set,
+            Set,
+            Id,
+            Id,
+            Set,
+            Id,
+            Set,
+            Id,
+            Del(187),
+            Set,
+            Id,
+            Set,
+            Id,
+            Del(152),
+            Del(231),
+            Del(45),
+            Del(181),
+            Restart,
+            Id,
+            Id,
+            Id,
+            Id,
+            Id,
+            Set,
+            Del(53),
+            Restart,
+            Set,
+            Del(202),
+            Id,
+            Set,
+            Set,
+            Set,
+            Id,
+            Restart,
+            Del(99),
+            Set,
+            Set,
+            Id,
+            Restart,
+            Del(93),
+            Id,
+            Set,
+            Del(38),
+            Id,
+            Del(158),
+            Del(49),
+            Id,
+            Del(145),
+            Del(35),
+            Set,
+            Del(94),
+            Del(115),
+            Id,
+            FailPoint("trailer write post"),
+            Restart,
         ],
         false,
     ))

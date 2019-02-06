@@ -106,7 +106,20 @@ impl<'a> Iterator for Iter<'a> {
             ops::Bound::Unbounded => b"",
         };
 
+        let mut spins = 0;
+
         loop {
+            spins += 1;
+            debug_assert_ne!(
+                spins, 100,
+                "forward iterator stuck in loop \
+                 looking for key after {:?} \
+                 with start_bound {:?} \
+                 on tree: \n \
+                 {:?}",
+                self.last_key, start, self.tree,
+            );
+
             let value_guard = pin();
 
             if self.last_id.is_none() {

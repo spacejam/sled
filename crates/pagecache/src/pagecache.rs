@@ -1135,9 +1135,16 @@ where
                     // read the head pointer.
                     return Ok(Some(PageGet::Unallocated));
                 }
-                _ => {
-                    // we need to loop in the caller
+                Err(Error::CasFailed(Some(_))) => {
+                    // our consolidation failed,
+                    // so we communicate to the
+                    // caller that they should retry
                     return Ok(None);
+                }
+                Err(other) => {
+                    // we need to propagate this error
+                    // beyond the caller
+                    return Err(other);
                 }
             }
         } else {
