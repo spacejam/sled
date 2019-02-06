@@ -1142,7 +1142,8 @@ where
                     return Ok(None);
                 }
                 Err(other) => {
-                    // we need to loop in the caller
+                    // we need to propagate this error
+                    // beyond the caller
                     return Err(other);
                 }
             }
