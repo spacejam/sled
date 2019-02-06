@@ -154,12 +154,14 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 
             tree = tree_res.expect("tree should restart");
 
-            let tree_iter = tree.iter().map(|res| {
-                let (ref tk, _) = res.expect("should be able to iterate over items in tree");
-                v(tk)
-            });
             let mut ref_iter = reference.iter().map(|(ref rk, ref rv)| (**rk, **rv));
-            for t in tree_iter {
+            for res in tree.iter() {
+                let t = match res {
+                    Ok((ref tk, _)) => v(tk),
+                    Err(Error::FailPoint) => return true,
+                    Err(other) => panic!("failed to iterate over items in tree after restart: {:?}", other),
+                };
+
                 // make sure the tree value is in there
                 while let Some((r, (_rv, certainty))) = ref_iter.next() {
                     if certainty {

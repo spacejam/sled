@@ -1135,9 +1135,9 @@ where
                     // read the head pointer.
                     return Ok(Some(PageGet::Unallocated));
                 }
-                _ => {
+                Err(other) => {
                     // we need to loop in the caller
-                    return Ok(None);
+                    return Err(other);
                 }
             }
         } else {
