@@ -54,12 +54,12 @@ const TX_TREE_ID: &[u8] = b"__sled__transactions";
 pub use {
     self::{
         db::Db,
-        iter::{Iter, Keys, Values},
+        iter::Iter,
         pinned_value::PinnedValue,
         subscription::{Event, Subscriber},
         tree::Tree,
     },
-    pagecache::{Config, ConfigBuilder, Error, Meta, Result},
+    pagecache::{Config, ConfigBuilder, Error, Result},
 };
 
 use {
@@ -82,8 +82,8 @@ use {
     },
     log::{debug, error, trace},
     pagecache::{
-        Materializer, Measure, MergeOperator, PageCache, PageGet,
-        PageId, M,
+        Materializer, Measure, MergeOperator, Meta, PageCache,
+        PageGet, PageId, M,
     },
     serde::{Deserialize, Serialize},
     sled_sync::{debug_delay, pin, Guard},

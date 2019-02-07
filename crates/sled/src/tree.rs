@@ -828,7 +828,10 @@ impl Tree {
     /// // assert_eq!(iter.next(), Some(Ok(vec![3])));
     /// // assert_eq!(iter.next(), None);
     /// ```
-    pub fn keys<K>(&self, key: K) -> Keys<'_>
+    pub fn keys<'a, K>(
+        &'a self,
+        key: K,
+    ) -> impl 'a + DoubleEndedIterator<Item = Result<Vec<u8>, ()>>
     where
         K: AsRef<[u8]>,
     {
@@ -850,7 +853,13 @@ impl Tree {
     /// // assert_eq!(iter.next(), Some(Ok(vec![30])));
     /// // assert_eq!(iter.next(), None);
     /// ```
-    pub fn values<K: AsRef<[u8]>>(&self, key: K) -> Values<'_> {
+    pub fn values<'a, K>(
+        &'a self,
+        key: K,
+    ) -> impl 'a + DoubleEndedIterator<Item = Result<PinnedValue, ()>>
+    where
+        K: AsRef<[u8]>,
+    {
         self.scan(key).values()
     }
 
@@ -903,9 +912,7 @@ impl Tree {
             let (parent_frag, parent_ptr) = &window[0];
             let (node_frag, node_ptr) = &window[1];
             let node: &Node = node_frag.unwrap_base();
-            if node.should_split(
-                adjusted_max(height)
-            ) {
+            if node.should_split(adjusted_max(height)) {
                 // try to child split
                 if let Ok(parent_split) =
                     self.child_split(node, node_ptr.clone(), guard)
@@ -936,9 +943,7 @@ impl Tree {
         let (ref root_frag, ref root_ptr) = path[0];
         let root_node: &Node = root_frag.unwrap_base();
 
-        if root_node
-            .should_split(adjusted_max(path.len()))
-        {
+        if root_node.should_split(adjusted_max(path.len())) {
             if let Ok(parent_split) =
                 self.child_split(&root_node, root_ptr.clone(), guard)
             {
@@ -1115,7 +1120,9 @@ impl Tree {
                     Err(Error::CasFailed(Some(actual_ptr))) => {
                         ptr = actual_ptr.clone()
                     }
-                    Err(Error::CasFailed(None)) => panic!("somehow allocated child was already freed"),
+                    Err(Error::CasFailed(None)) => panic!(
+                        "somehow allocated child was already freed"
+                    ),
                     Err(other) => return Err(other.danger_cast()),
                 }
             }
