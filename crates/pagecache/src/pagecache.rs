@@ -403,11 +403,12 @@ where
         let guard = pin();
 
         for pid in 0..self.max_pid.load(SeqCst) {
-            let stack = self.inner.get(pid, &guard);
-            if stack.is_none() {
+            let pte = self.inner.get(pid, &guard);
+            if pte.is_none() {
                 continue;
             }
-            let head = unsafe { stack.unwrap().deref().head(&guard) };
+            let head =
+                unsafe { pte.unwrap().deref().stack.head(&guard) };
             let ptrs = ptrs_from_stack(head, &guard);
             pages_before_restart.insert(pid, ptrs);
         }
@@ -1573,12 +1574,13 @@ where
             let guard = pin();
 
             for pid in 0..self.max_pid.load(SeqCst) {
-                let stack = self.inner.get(pid, &guard);
-                if stack.is_none() {
+                let pte = self.inner.get(pid, &guard);
+                if pte.is_none() {
                     continue;
                 }
-                let head =
-                    unsafe { stack.unwrap().deref().head(&guard) };
+                let head = unsafe {
+                    pte.unwrap().deref().stack.head(&guard)
+                };
                 let ptrs = ptrs_from_stack(head, &guard);
                 pages_after_restart.insert(pid, ptrs);
             }
