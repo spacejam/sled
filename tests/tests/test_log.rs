@@ -18,6 +18,7 @@ use {
         thread,
     },
 };
+use std::mem::size_of;
 
 type Lsn = i64;
 type LogId = u64;
@@ -159,6 +160,69 @@ fn concurrent_logging() {
         t5.join().unwrap();
         t6.join().unwrap();
     }
+}
+
+#[test]
+fn concurrent_logging_404() {
+    let config = ConfigBuilder::new()
+        .temporary(true)
+        .segment_mode(SegmentMode::Linear)
+        .io_buf_size(1000)
+        .flush_every_ms(Some(50))
+        .build();
+    let log_arc = Arc::new(Log::start_raw_log(config.clone()).unwrap());
+
+    const ITERATIONS: i32 = 5000;
+    const NUM_THREADS: i32 = 6;
+
+    static SHARED_COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let mut handles = Vec::new();
+    for t in 0..NUM_THREADS {
+        let log = log_arc.clone();
+        let h = thread::Builder::new()
+            .name(format!("t_{}", t))
+            .spawn(move || {
+                for i in 0..ITERATIONS {
+                    let current = SHARED_COUNTER.load(Ordering::SeqCst);
+                    let raw_value: [u8; size_of::<usize>()] = unsafe { std::mem::transmute(current+1)};
+                    let res = log.reserve(raw_value.to_vec()).unwrap();
+                    match SHARED_COUNTER.compare_and_swap(current, current+1, Ordering::SeqCst) {
+                        // If the current value was returned, then CAS succeeded on AtomicUsize
+                        c if c == current => {
+                            res.complete().expect("reservation complete panic");
+                        },
+                        // Any other value is an error
+                        _ => { res.abort().expect("reservation abort panic"); },
+                    }
+                }
+            }).unwrap();
+        handles.push(h);
+    }
+
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    drop(log_arc);
+
+    let log = Log::start_raw_log(config).unwrap();
+    let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
+    let successfuls = SHARED_COUNTER.load(Ordering::SeqCst);
+    for i in 0..successfuls {
+        let val = iter.next().expect("expected some log entry");
+        let mut raw_value = [0_u8; size_of::<usize>()];
+        raw_value.copy_from_slice(&*val.2);
+
+        let read: usize = unsafe { std::mem::transmute(raw_value) };
+        assert_eq!(
+            i + 1,
+            read,
+            "failed to read expected value at log coordinate {}",
+            val.1
+        );
+    }
+    // Assert that there is nothing left in the log.
+    assert_eq!(iter.next(), None);
 }
 
 fn write(log: &Log) {
