@@ -188,7 +188,7 @@ impl Db {
 
         let mut tenants = ret.tenants.write().unwrap();
 
-        for (id, _root) in
+        for (id, root) in
             meta::meta(&*ret.pages, &guard)?.tenants().into_iter()
         {
             let tree = Tree {
@@ -196,6 +196,7 @@ impl Db {
                 subscriptions: Arc::new(Subscriptions::default()),
                 config: ret.config.clone(),
                 pages: ret.pages.clone(),
+                root: Arc::new(AtomicUsize::new(root)),
             };
             tenants.insert(id, Arc::new(tree));
         }
@@ -345,6 +346,7 @@ impl Db {
             subscriptions: Arc::new(Subscriptions::default()),
             config: self.config.clone(),
             pages: self.pages.clone(),
+            root: Arc::new(AtomicUsize::new(root_id)),
         });
         tenants.insert(name, tree.clone());
 

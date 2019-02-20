@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{atomic::AtomicUsize, Arc};
 
 use super::*;
 
@@ -92,69 +92,118 @@ pub(crate) fn open_tree<'a>(
     name: Vec<u8>,
     guard: &'a Guard,
 ) -> Result<Tree, ()> {
-    match pid_for_name(&*pages, &name, guard) {
-        Ok(_) => {
-            return Ok(Tree {
-                tree_id: name,
-                subscriptions: Arc::new(Subscriptions::default()),
-                config: config,
-                pages: pages,
-            });
+    // we loop because creating this Tree may race with
+    // concurrent attempts to open the same one.
+    loop {
+        match pid_for_name(&*pages, &name, guard) {
+            Ok(root_id) => {
+                return Ok(Tree {
+                    tree_id: name,
+                    subscriptions: Arc::new(Subscriptions::default()),
+                    config: config,
+                    pages: pages,
+                    root: Arc::new(AtomicUsize::new(root_id)),
+                });
+            }
+            Err(Error::CollectionNotFound(_)) => {}
+            Err(other) => return Err(other),
         }
-        Err(Error::CollectionNotFound(_)) => {}
-        Err(other) => return Err(other),
+
+        // set up empty leaf
+        let leaf_id = pages.allocate(&guard)?;
+        trace!(
+            "allocated pid {} for leaf in new_tree for namespace {:?}",
+            leaf_id,
+            name
+        );
+
+        let leaf = Frag::Base(Node {
+            id: leaf_id,
+            data: Data::Leaf(vec![]),
+            next: None,
+            lo: vec![].into(),
+            hi: vec![].into(),
+        });
+
+        let leaf_ptr = pages
+            .replace(leaf_id, TreePtr::allocated(), leaf, &guard)
+            .map_err(|e| e.danger_cast())?;
+
+        // set up root index
+        let root_id = pages.allocate(&guard)?;
+
+        debug!(
+            "allocated pid {} for root of new_tree {:?}",
+            root_id, name
+        );
+
+        // vec![0] represents a prefix-encoded empty prefix
+        let root_index_vec = vec![(vec![0].into(), leaf_id)];
+
+        let root = Frag::Base(Node {
+            id: root_id,
+            data: Data::Index(root_index_vec),
+            next: None,
+            lo: vec![].into(),
+            hi: vec![].into(),
+        });
+
+        let root_ptr = pages
+            .replace(root_id, TreePtr::allocated(), root, &guard)
+            .map_err(|e| e.danger_cast())?;
+
+        let res = meta::cas_root(
+            &*pages,
+            name.clone(),
+            None,
+            Some(root_id),
+            guard,
+        );
+
+        if res.is_err() {
+            // clean up the tree we just created if we couldn't
+            // install it.
+            let mut root_ptr = root_ptr;
+            loop {
+                match pages.free(root_id, root_ptr, guard) {
+                    Ok(_) => break,
+                    Err(Error::CasFailed(Some(actual_ptr))) => {
+                        root_ptr = actual_ptr.clone()
+                    }
+                    Err(Error::CasFailed(None)) => panic!(
+                        "somehow allocated child was already freed"
+                    ),
+                    Err(other) => return Err(other.danger_cast()),
+                }
+            }
+
+            let mut leaf_ptr = leaf_ptr;
+            loop {
+                match pages.free(leaf_id, leaf_ptr, guard) {
+                    Ok(_) => break,
+                    Err(Error::CasFailed(Some(actual_ptr))) => {
+                        leaf_ptr = actual_ptr.clone()
+                    }
+                    Err(Error::CasFailed(None)) => panic!(
+                        "somehow allocated child was already freed"
+                    ),
+                    Err(other) => return Err(other.danger_cast()),
+                }
+            }
+        }
+
+        match res {
+            Err(Error::CasFailed(..)) => continue,
+            Err(other) => return Err(other.danger_cast()),
+            Ok(_) => {}
+        }
+
+        return Ok(Tree {
+            tree_id: name,
+            subscriptions: Arc::new(Subscriptions::default()),
+            config,
+            pages,
+            root: Arc::new(AtomicUsize::new(root_id)),
+        });
     }
-
-    // set up empty leaf
-    let leaf_id = pages.allocate(&guard)?;
-    trace!(
-        "allocated pid {} for leaf in new_tree for namespace {:?}",
-        leaf_id,
-        name
-    );
-
-    let leaf = Frag::Base(Node {
-        id: leaf_id,
-        data: Data::Leaf(vec![]),
-        next: None,
-        lo: vec![].into(),
-        hi: vec![].into(),
-    });
-
-    pages
-        .replace(leaf_id, TreePtr::allocated(), leaf, &guard)
-        .map_err(|e| e.danger_cast())?;
-
-    // set up root index
-    let root_id = pages.allocate(&guard)?;
-
-    debug!(
-        "allocated pid {} for root of new_tree {:?}",
-        root_id, name
-    );
-
-    // vec![0] represents a prefix-encoded empty prefix
-    let root_index_vec = vec![(vec![0].into(), leaf_id)];
-
-    let root = Frag::Base(Node {
-        id: root_id,
-        data: Data::Index(root_index_vec),
-        next: None,
-        lo: vec![].into(),
-        hi: vec![].into(),
-    });
-
-    pages
-        .replace(root_id, TreePtr::allocated(), root, &guard)
-        .map_err(|e| e.danger_cast())?;
-
-    meta::cas_root(&*pages, name.clone(), None, Some(root_id), guard)
-        .map_err(|e| e.danger_cast())?;
-
-    Ok(Tree {
-        tree_id: name,
-        subscriptions: Arc::new(Subscriptions::default()),
-        config,
-        pages,
-    })
 }
