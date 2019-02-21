@@ -20,3 +20,4 @@ Cargo.lock
 *.proptest-regressions
 corpus
 artifacts
+.idea
