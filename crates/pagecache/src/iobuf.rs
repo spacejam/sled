@@ -714,7 +714,7 @@ impl IoBufs {
         #[cfg(target_pointer_width = "64")]
         assert_eq!((raw_buf.len() + MSG_HEADER_LEN) >> 32, 0);
 
-        let mut _compressed: Option<&[u8]> = None;
+        let mut _compressed: Option<Vec<u8>> = None;
 
         #[cfg(feature = "compression")]
         let buf = if iobufs.config.use_compression {
