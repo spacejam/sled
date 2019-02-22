@@ -6,23 +6,23 @@
 //!     .segment_mode(pagecache::SegmentMode::Linear)
 //!     .build();
 //! let log = pagecache::Log::start_raw_log(config).unwrap();
-//! let (first_lsn, _first_offset) = log.write(b"1".to_vec()).unwrap();
-//! log.write(b"22".to_vec()).unwrap();
-//! log.write(b"333".to_vec()).unwrap();
+//! let (first_lsn, _first_offset) = log.write(b"1").unwrap();
+//! log.write(b"22").unwrap();
+//! log.write(b"333").unwrap();
 //!
 //! // stick an abort in the middle, which should not be returned
-//! let res = log.reserve(b"never_gonna_hit_disk".to_vec()).unwrap();
+//! let res = log.reserve(b"never_gonna_hit_disk").unwrap();
 //! res.abort().unwrap();
 //!
-//! log.write(b"4444".to_vec());
-//! let (last_lsn, _last_offset) = log.write(b"55555".to_vec()).unwrap();
+//! log.write(b"4444");
+//! let (last_lsn, _last_offset) = log.write(b"55555").unwrap();
 //! log.make_stable(last_lsn).unwrap();
 //! let mut iter = log.iter_from(first_lsn);
-//! assert_eq!(iter.next().unwrap().2, b"1".to_vec());
-//! assert_eq!(iter.next().unwrap().2, b"22".to_vec());
-//! assert_eq!(iter.next().unwrap().2, b"333".to_vec());
-//! assert_eq!(iter.next().unwrap().2, b"4444".to_vec());
-//! assert_eq!(iter.next().unwrap().2, b"55555".to_vec());
+//! assert_eq!(iter.next().unwrap().2, b"1");
+//! assert_eq!(iter.next().unwrap().2, b"22");
+//! assert_eq!(iter.next().unwrap().2, b"333");
+//! assert_eq!(iter.next().unwrap().2, b"4444");
+//! assert_eq!(iter.next().unwrap().2, b"55555");
 //! assert_eq!(iter.next(), None);
 //! ```
 use super::*;
@@ -86,10 +86,7 @@ impl Log {
     }
 
     /// Reserve space in the log for a pending linearized operation.
-    pub fn reserve(
-        &self,
-        buf: Vec<u8>,
-    ) -> Result<Reservation<'_>, ()> {
+    pub fn reserve(&self, buf: &[u8]) -> Result<Reservation<'_>, ()> {
         self.iobufs.reserve(buf)
     }
 
@@ -105,8 +102,11 @@ impl Log {
 
     /// Write a buffer into the log. Returns the log sequence
     /// number and the file offset of the write.
-    pub fn write(&self, buf: Vec<u8>) -> Result<(Lsn, DiskPtr), ()> {
-        self.reserve(buf).and_then(|res| res.complete())
+    pub fn write<B>(&self, buf: B) -> Result<(Lsn, DiskPtr), ()>
+    where
+        B: AsRef<[u8]>,
+    {
+        self.reserve(buf.as_ref()).and_then(|res| res.complete())
     }
 
     /// Return an iterator over the log, starting with

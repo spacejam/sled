@@ -57,7 +57,7 @@ pub(crate) fn read_blob(
 pub(crate) fn write_blob(
     config: &Config,
     id: Lsn,
-    data: Vec<u8>,
+    data: &[u8],
 ) -> Result<(), ()> {
     let path = config.blob_path(id);
     let mut f = std::fs::OpenOptions::new()
@@ -65,10 +65,10 @@ pub(crate) fn write_blob(
         .create_new(true)
         .open(&path)?;
 
-    let crc = u64_to_arr(crc64(&*data));
+    let crc = u64_to_arr(crc64(data));
 
     f.write_all(&crc)
-        .and_then(|_| f.write_all(&data))
+        .and_then(|_| f.write_all(data))
         .map(|r| {
             trace!("successfully wrote blob at {:?}", path);
             r
