@@ -31,6 +31,7 @@
 #![cfg_attr(test, deny(clippy::rust_2018_idioms))]
 
 mod binary_search;
+mod context;
 mod data;
 mod db;
 mod frag;
@@ -68,6 +69,7 @@ use {
             binary_search_gt, binary_search_lt, binary_search_lub,
             leaf_search,
         },
+        context::Context,
         data::Data,
         frag::{ChildSplit, Frag, ParentSplit},
         ivec::IVec,
