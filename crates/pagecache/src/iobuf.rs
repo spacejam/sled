@@ -284,25 +284,32 @@ impl IoBufs {
     // Adds a header to the front of the buffer
     fn encapsulate(
         &self,
-        raw_buf: Vec<u8>,
+        in_buf: &[u8],
+        out_buf: &mut [u8],
         lsn: Lsn,
         over_blob_threshold: bool,
         is_blob_rewrite: bool,
-    ) -> Result<Vec<u8>, ()> {
-        let buf = if over_blob_threshold {
+    ) -> Result<(), ()> {
+        let mut _blob_ptr = None;
+
+        let to_reserve = if over_blob_threshold {
             // write blob to file
             io_fail!(self, "blob blob write");
-            write_blob(&self.0.config, lsn, raw_buf)?;
+            write_blob(&self.0.config, lsn, in_buf)?;
 
             let lsn_buf: [u8; size_of::<BlobPointer>()] =
                 u64_to_arr(lsn as u64);
 
-            lsn_buf.to_vec()
+            _blob_ptr = Some(lsn_buf);
+
+            _blob_ptr.as_mut().unwrap()
         } else {
-            raw_buf
+            in_buf
         };
 
-        let crc16 = crc16_arr(&buf);
+        assert_eq!(out_buf.len(), to_reserve.len() + MSG_HEADER_LEN);
+
+        let crc16 = crc16_arr(to_reserve);
 
         let header = MessageHeader {
             kind: if over_blob_threshold || is_blob_rewrite {
@@ -311,26 +318,25 @@ impl IoBufs {
                 MessageKind::Inline
             },
             lsn,
-            len: buf.len(),
+            len: to_reserve.len(),
             crc16,
         };
 
         let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
 
-        let mut out = vec![0; MSG_HEADER_LEN + buf.len()];
         unsafe {
             std::ptr::copy_nonoverlapping(
                 header_bytes.as_ptr(),
-                out.as_mut_ptr(),
+                out_buf.as_mut_ptr(),
                 MSG_HEADER_LEN,
             );
             std::ptr::copy_nonoverlapping(
-                buf.as_ptr(),
-                out[MSG_HEADER_LEN..].as_mut_ptr(),
-                buf.len(),
+                to_reserve.as_ptr(),
+                out_buf[MSG_HEADER_LEN..].as_mut_ptr(),
+                to_reserve.len(),
             );
         }
-        Ok(out)
+        Ok(())
     }
 
     /// blocks until the specified log sequence number has
@@ -676,7 +682,7 @@ impl IoBufs {
     /// a segment footer + a message header.
     pub(super) fn reserve<'a>(
         &'a self,
-        raw_buf: Vec<u8>,
+        raw_buf: &[u8],
     ) -> Result<Reservation<'a>, ()> {
         self.reserve_inner(raw_buf, false)
     }
@@ -691,12 +697,12 @@ impl IoBufs {
         let lsn_buf: [u8; size_of::<BlobPointer>()] =
             u64_to_arr(blob_ptr as u64);
 
-        self.reserve_inner(lsn_buf.to_vec(), true)
+        self.reserve_inner(&lsn_buf, true)
     }
 
     fn reserve_inner<'a>(
         &'a self,
-        raw_buf: Vec<u8>,
+        raw_buf: &[u8],
         is_blob_rewrite: bool,
     ) -> Result<Reservation<'a>, ()> {
         let _measure = Measure::new(&M.reserve);
@@ -708,11 +714,17 @@ impl IoBufs {
         #[cfg(target_pointer_width = "64")]
         assert_eq!((raw_buf.len() + MSG_HEADER_LEN) >> 32, 0);
 
+        let mut _compressed: Option<Vec<u8>> = None;
+
         #[cfg(feature = "compression")]
         let buf = if iobufs.config.use_compression {
             let _measure = Measure::new(&M.compress);
-            compress(&*raw_buf, iobufs.config.compression_factor)
-                .unwrap()
+            let compressed_buf =
+                compress(&*raw_buf, iobufs.config.compression_factor)
+                    .unwrap();
+            _compressed = Some(compressed_buf);
+
+            _compressed.as_ref().unwrap()
         } else {
             raw_buf
         };
@@ -909,8 +921,9 @@ impl IoBufs {
 
             assert!(!(over_blob_threshold && is_blob_rewrite));
 
-            let encapsulated_buf = self.encapsulate(
-                buf,
+            self.encapsulate(
+                &*buf,
+                destination,
                 reservation_lsn,
                 over_blob_threshold,
                 is_blob_rewrite,
@@ -918,15 +931,22 @@ impl IoBufs {
 
             M.log_reservation_success();
 
+            let ptr = if over_blob_threshold {
+                DiskPtr::new_blob(reservation_offset, reservation_lsn)
+            } else if is_blob_rewrite {
+                let blob_ptr = arr_to_u64(&*buf) as BlobPointer;
+                DiskPtr::new_blob(reservation_offset, blob_ptr)
+            } else {
+                DiskPtr::new_inline(reservation_offset)
+            };
+
             return Ok(Reservation {
                 idx,
                 iobufs: &self,
-                data: encapsulated_buf,
-                destination,
+                success_byte: &mut destination[0],
                 flushed: false,
                 lsn: reservation_lsn,
-                lid: reservation_offset,
-                is_blob: over_blob_threshold || is_blob_rewrite,
+                ptr,
                 is_blob_rewrite,
             });
         }
