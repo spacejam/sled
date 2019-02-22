@@ -624,7 +624,7 @@ where
         let bytes =
             measure(&M.serialize, || serialize(&prepend).unwrap());
         let log_reservation =
-            self.log.reserve(bytes).map_err(|e| e.danger_cast())?;
+            self.log.reserve(&bytes).map_err(|e| e.danger_cast())?;
 
         let new = if let Update::Append(new) = prepend.update {
             new
@@ -879,7 +879,7 @@ where
         let bytes =
             measure(&M.serialize, || serialize(&replace).unwrap());
         let log_reservation =
-            self.log.reserve(bytes).map_err(|e| e.danger_cast())?;
+            self.log.reserve(&bytes).map_err(|e| e.danger_cast())?;
         let lsn = log_reservation.lsn();
         let new_ptr = log_reservation.ptr();
 

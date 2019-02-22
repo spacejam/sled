@@ -1,5 +1,6 @@
 #![cfg_attr(test, allow(unused))]
 
+use std::mem::size_of;
 use {
     lazy_static::lazy_static,
     pagecache::{
@@ -18,7 +19,6 @@ use {
         thread,
     },
 };
-use std::mem::size_of;
 
 type Lsn = i64;
 type LogId = u64;
@@ -38,7 +38,7 @@ fn more_log_reservations_than_buffers() {
     let big_msg_sz = config.io_buf_size - big_msg_overhead;
 
     for _ in 0..=config.io_bufs {
-        reservations.push(log.reserve(vec![0; big_msg_sz]).unwrap())
+        reservations.push(log.reserve(&vec![0; big_msg_sz]).unwrap())
     }
     for res in reservations.into_iter().rev() {
         // abort in reverse order
@@ -59,8 +59,8 @@ fn non_contiguous_log_flush() {
     let buf_len = (config.io_buf_size / MINIMUM_ITEMS_PER_SEGMENT)
         - (MSG_HEADER_LEN + seg_overhead);
 
-    let res1 = log.reserve(vec![0; buf_len]).unwrap();
-    let res2 = log.reserve(vec![0; buf_len]).unwrap();
+    let res1 = log.reserve(&vec![0; buf_len]).unwrap();
+    let res2 = log.reserve(&vec![0; buf_len]).unwrap();
     let id = res2.lid();
     let lsn = res2.lsn();
     res2.abort();
@@ -170,7 +170,8 @@ fn concurrent_logging_404() {
         .io_buf_size(1000)
         .flush_every_ms(Some(50))
         .build();
-    let log_arc = Arc::new(Log::start_raw_log(config.clone()).unwrap());
+    let log_arc =
+        Arc::new(Log::start_raw_log(config.clone()).unwrap());
 
     const ITERATIONS: i32 = 5000;
     const NUM_THREADS: i32 = 6;
@@ -183,19 +184,30 @@ fn concurrent_logging_404() {
             .name(format!("t_{}", t))
             .spawn(move || {
                 for i in 0..ITERATIONS {
-                    let current = SHARED_COUNTER.load(Ordering::SeqCst);
-                    let raw_value: [u8; size_of::<usize>()] = unsafe { std::mem::transmute(current+1)};
-                    let res = log.reserve(raw_value.to_vec()).unwrap();
-                    match SHARED_COUNTER.compare_and_swap(current, current+1, Ordering::SeqCst) {
+                    let current =
+                        SHARED_COUNTER.load(Ordering::SeqCst);
+                    let raw_value: [u8; size_of::<usize>()] =
+                        unsafe { std::mem::transmute(current + 1) };
+                    let res = log.reserve(&raw_value).unwrap();
+                    match SHARED_COUNTER.compare_and_swap(
+                        current,
+                        current + 1,
+                        Ordering::SeqCst,
+                    ) {
                         // If the current value was returned, then CAS succeeded on AtomicUsize
                         c if c == current => {
-                            res.complete().expect("reservation complete panic");
-                        },
+                            res.complete()
+                                .expect("reservation complete panic");
+                        }
                         // Any other value is an error
-                        _ => { res.abort().expect("reservation abort panic"); },
+                        _ => {
+                            res.abort()
+                                .expect("reservation abort panic");
+                        }
                     }
                 }
-            }).unwrap();
+            })
+            .unwrap();
         handles.push(h);
     }
 
@@ -227,7 +239,7 @@ fn concurrent_logging_404() {
 
 fn write(log: &Log) {
     let data_bytes = b"yoyoyoyo";
-    let (lsn, ptr) = log.write(data_bytes.to_vec()).unwrap();
+    let (lsn, ptr) = log.write(data_bytes).unwrap();
     let read_buf = log.read(lsn, ptr).unwrap().into_data().unwrap();
     assert_eq!(
         read_buf, data_bytes,
@@ -236,7 +248,7 @@ fn write(log: &Log) {
 }
 
 fn abort(log: &Log) {
-    let res = log.reserve(vec![0; 5]).unwrap();
+    let res = log.reserve(&[0; 5]).unwrap();
     let (lsn, ptr) = res.abort().unwrap();
     match log.read(lsn, ptr) {
         Ok(LogRead::Failed(_, _)) => {}
@@ -274,21 +286,20 @@ fn log_iterator() {
         .io_buf_size(1000)
         .build();
     let log = Log::start_raw_log(config.clone()).unwrap();
-    let (first_lsn, _) = log.write(b"".to_vec()).unwrap();
-    log.write(b"1".to_vec());
-    log.write(b"22".to_vec());
-    log.write(b"333".to_vec());
+    let (first_lsn, _) = log.write(b"").unwrap();
+    log.write(b"1");
+    log.write(b"22");
+    log.write(b"333");
 
     // stick an abort in the middle, which should not be
     // returned
     {
-        let res =
-            log.reserve(b"never_gonna_hit_disk".to_vec()).unwrap();
+        let res = log.reserve(b"never_gonna_hit_disk").unwrap();
         res.abort().unwrap();
     }
 
-    log.write(b"4444".to_vec());
-    let (last_lsn, _) = log.write(b"55555".to_vec()).unwrap();
+    log.write(b"4444");
+    let (last_lsn, _) = log.write(b"55555").unwrap();
     log.make_stable(last_lsn).unwrap();
 
     drop(log);
@@ -296,12 +307,12 @@ fn log_iterator() {
     let log = Log::start_raw_log(config).unwrap();
 
     let mut iter = log.iter_from(first_lsn);
-    assert_eq!(iter.next().unwrap().2, b"".to_vec());
-    assert_eq!(iter.next().unwrap().2, b"1".to_vec());
-    assert_eq!(iter.next().unwrap().2, b"22".to_vec());
-    assert_eq!(iter.next().unwrap().2, b"333".to_vec());
-    assert_eq!(iter.next().unwrap().2, b"4444".to_vec());
-    assert_eq!(iter.next().unwrap().2, b"55555".to_vec());
+    assert_eq!(iter.next().unwrap().2, b"");
+    assert_eq!(iter.next().unwrap().2, b"1");
+    assert_eq!(iter.next().unwrap().2, b"22");
+    assert_eq!(iter.next().unwrap().2, b"333");
+    assert_eq!(iter.next().unwrap().2, b"4444");
+    assert_eq!(iter.next().unwrap().2, b"55555");
     assert_eq!(iter.next(), None);
 }
 
@@ -332,7 +343,7 @@ fn log_chunky_iterator() {
                 let abort = thread_rng().gen::<bool>();
 
                 if abort {
-                    if let Ok(res) = log.reserve(buf) {
+                    if let Ok(res) = log.reserve(&buf) {
                         res.abort().unwrap();
                     } else {
                         assert!(len > max_valid_size);
@@ -443,8 +454,7 @@ fn multi_segment_log_iteration() {
 
     for i in 0..config.io_bufs * 16 {
         let expected = vec![i as u8; big_msg_sz * i];
-        let (_lsn, _lid, buf) = iter.next()
-            .expect("");
+        let (_lsn, _lid, buf) = iter.next().expect("");
         assert_eq!(expected, buf);
     }
 }
@@ -573,7 +583,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
             }
             AbortReservation(buf) => {
                 let len = buf.len();
-                let res = log.reserve(buf.clone()).unwrap();
+                let res = log.reserve(&buf).unwrap();
                 let lsn = res.lsn();
                 let lid = res.lid();
                 let ptr = res.ptr();

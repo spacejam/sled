@@ -86,10 +86,7 @@ impl Log {
     }
 
     /// Reserve space in the log for a pending linearized operation.
-    pub fn reserve(
-        &self,
-        buf: Vec<u8>,
-    ) -> Result<Reservation<'_>, ()> {
+    pub fn reserve(&self, buf: &[u8]) -> Result<Reservation<'_>, ()> {
         self.iobufs.reserve(buf)
     }
 
@@ -105,8 +102,11 @@ impl Log {
 
     /// Write a buffer into the log. Returns the log sequence
     /// number and the file offset of the write.
-    pub fn write(&self, buf: Vec<u8>) -> Result<(Lsn, DiskPtr), ()> {
-        self.reserve(buf).and_then(|res| res.complete())
+    pub fn write<B>(&self, buf: B) -> Result<(Lsn, DiskPtr), ()>
+    where
+        B: AsRef<[u8]>,
+    {
+        self.reserve(buf.as_ref()).and_then(|res| res.complete())
     }
 
     /// Return an iterator over the log, starting with

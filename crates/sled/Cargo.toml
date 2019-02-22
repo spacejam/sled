@@ -33,6 +33,6 @@ features = ["derive"]
 version = "0.4"
 
 [dependencies]
-pagecache = { path = "../pagecache", version = "0.10" }
+pagecache = { path = "../pagecache", version = "0.11" }
 sled_sync = { version = "0.3", path = "../sled_sync" }
 futures = "0.1"
