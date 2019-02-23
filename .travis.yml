@@ -6,6 +6,8 @@ cache:
   cargo: true
   directories:
     - ~/.rustup
+    - ~/.cargo
+    - $TRAVIS_BUILD_DIR/target
 
 install:
   - curl https://sh.rustup.rs -sSf |
