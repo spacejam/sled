@@ -13,7 +13,7 @@ use {
     std::{
         fs,
         sync::{
-            atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT},
+            atomic::{AtomicUsize, Ordering},
             {Arc, Mutex},
         },
         thread,
@@ -470,8 +470,8 @@ enum Op {
 
 impl Arbitrary for Op {
     fn arbitrary<G: Gen>(g: &mut G) -> Op {
-        static COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
-        static LEN: AtomicUsize = ATOMIC_USIZE_INIT;
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        static LEN: AtomicUsize = AtomicUsize::new(0);
 
         // ensure len never is loaded at 0, as it will crash
         // the call to gen_range below if low >= high
