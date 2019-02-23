@@ -51,7 +51,6 @@ const META_PID: PageId = 0;
 const COUNTER_PID: PageId = 1;
 
 const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
-const TX_TREE_ID: &[u8] = b"__sled__transactions";
 
 pub use {
     self::{

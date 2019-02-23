@@ -107,7 +107,7 @@ impl Db {
 
     /// Remove a disk-backed collection.
     pub fn drop_tree(&self, name: &[u8]) -> Result<bool, ()> {
-        if name == DEFAULT_TREE_ID || name == TX_TREE_ID {
+        if name == DEFAULT_TREE_ID {
             return Err(Error::Unsupported(
                 "cannot remove the core structures".into(),
             ));

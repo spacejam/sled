@@ -1366,6 +1366,10 @@ impl Tree {
                     PageGet::Materialized(node, key) => {
                         (node, key)
                     }
+                    PageGet::Free(_) => {
+                        error!("encountered Free node while GC'ing tree");
+                        break;
+                    }
                     broken => {
                         return Err(Error::ReportableBug(format!(
                             "got non-base node while GC'ing tree: {:?}",
@@ -1386,6 +1390,7 @@ impl Tree {
                         if next_pid == 0 {
                             break;
                         }
+                        assert_ne!(pid, next_pid);
                         pid = next_pid;
                     }
                     Err(Error::CasFailed(_k)) => continue,
