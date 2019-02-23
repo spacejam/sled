@@ -90,6 +90,7 @@ impl Db {
         if let Some(tree) = tenants.get(&name) {
             return Ok(tree.clone());
         }
+        drop(tenants);
 
         let guard = pin();
 
@@ -151,6 +152,11 @@ impl Db {
                 Err(other) => return Err(other.danger_cast()),
             }
         }
+
+        tree.root.store(
+            usize::max_value(),
+            std::sync::atomic::Ordering::SeqCst,
+        );
 
         // drop writer lock
         drop(tenants);

@@ -1215,6 +1215,12 @@ impl Tree {
 
         let mut not_found_loops = 0;
         loop {
+            if cursor == usize::max_value() {
+                // this collection has been explicitly removed
+                return Err(Error::CollectionNotFound(
+                    self.tree_id.clone(),
+                ));
+            }
             let get_cursor = self
                 .context
                 .pagecache
