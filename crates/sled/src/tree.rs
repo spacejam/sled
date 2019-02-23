@@ -1386,7 +1386,8 @@ impl Tree {
 
                 match ret {
                     Ok(_) => {
-                        let next_pid = node.unwrap_base().id;
+                        let next_pid =
+                            node.unwrap_base().next.unwrap_or(0);
                         if next_pid == 0 {
                             break;
                         }
