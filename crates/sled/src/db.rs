@@ -1,4 +1,9 @@
-use std::{ops::Deref, sync::Arc};
+use std::{
+    ops::Deref,
+    sync::{atomic::AtomicUsize, Arc, RwLock},
+};
+
+use pagecache::FastMap8;
 
 use super::*;
 
@@ -7,6 +12,7 @@ use super::*;
 pub struct Db {
     context: Arc<Context>,
     default: Arc<Tree>,
+    tenants: Arc<RwLock<FastMap8<Vec<u8>, Arc<Tree>>>>,
 }
 
 unsafe impl Send for Db {}
@@ -38,13 +44,21 @@ impl Db {
 
         let context = Arc::new(Context::start(config)?);
 
-        let default = context
-            .pagecache
-            .open_tree(DEFAULT_TREE_ID.to_vec(), context.clone())?;
+        let default = Arc::new(meta::open_tree(
+            context.clone(),
+            DEFAULT_TREE_ID.to_vec(),
+            &guard,
+        )?);
 
-        let mut tenants = context.tenants.write().unwrap();
+        let ret = Db {
+            context: context.clone(),
+            default,
+            tenants: Arc::new(RwLock::new(FastMap8::default())),
+        };
 
-        for (id, _root) in meta::meta(&context.pagecache, &guard)?
+        let mut tenants = ret.tenants.write().unwrap();
+
+        for (id, root) in meta::meta(&context.pagecache, &guard)?
             .tenants()
             .into_iter()
         {
@@ -52,6 +66,7 @@ impl Db {
                 tree_id: id.clone(),
                 subscriptions: Arc::new(Subscriptions::default()),
                 context: context.clone(),
+                root: Arc::new(AtomicUsize::new(root)),
             };
             tenants.insert(id, Arc::new(tree));
         }
@@ -65,18 +80,86 @@ impl Db {
                 .clone(),
         );
 
-        Ok(Db { context, default })
+        Ok(ret)
     }
 
     /// Open or create a new disk-backed Tree with its own keyspace,
     /// accessible from the `Db` via the provided identifier.
     pub fn open_tree(&self, name: Vec<u8>) -> Result<Arc<Tree>, ()> {
-        self.context.pagecache.open_tree(name, self.context.clone())
+        let tenants = self.tenants.read().unwrap();
+        if let Some(tree) = tenants.get(&name) {
+            return Ok(tree.clone());
+        }
+
+        let guard = pin();
+
+        let mut tenants = self.tenants.write().unwrap();
+        let tree = Arc::new(meta::open_tree(
+            self.context.clone(),
+            name.clone(),
+            &guard,
+        )?);
+        tenants.insert(name, tree.clone());
+        drop(tenants);
+        Ok(tree)
     }
 
     /// Remove a disk-backed collection.
     pub fn drop_tree(&self, name: &[u8]) -> Result<bool, ()> {
-        self.context.pagecache.drop_tree(name, &self.context)
+        if name == DEFAULT_TREE_ID || name == TX_TREE_ID {
+            return Err(Error::Unsupported(
+                "cannot remove the core structures".into(),
+            ));
+        }
+        trace!("dropping tree {:?}", name,);
+
+        let mut tenants = self.tenants.write().unwrap();
+
+        let tree = if let Some(tree) = tenants.remove(&*name) {
+            tree
+        } else {
+            return Ok(false);
+        };
+
+        let guard = pin();
+
+        let mut root_id = meta::pid_for_name(
+            &self.context.pagecache,
+            &name,
+            &guard,
+        )?;
+
+        let leftmost_chain: Vec<PageId> = tree
+            .path_for_key(b"", &guard)?
+            .into_iter()
+            .map(|(frag, _tp)| frag.unwrap_base().id)
+            .collect();
+
+        loop {
+            let res = meta::cas_root(
+                &self.context.pagecache,
+                name.to_vec(),
+                Some(root_id),
+                None,
+                &guard,
+            )
+            .map_err(|e| e.danger_cast());
+
+            match res {
+                Ok(_) => break,
+                Err(Error::CasFailed(actual)) => root_id = actual,
+                Err(other) => return Err(other.danger_cast()),
+            }
+        }
+
+        // drop writer lock
+        drop(tenants);
+
+        guard.defer(move || tree.gc_pages(leftmost_chain));
+
+        guard.flush();
+
+        Ok(true)
     }
 
     /// Returns `true` if the database was

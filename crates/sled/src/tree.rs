@@ -3,7 +3,10 @@ use std::{
     cmp::Ordering::{Greater, Less},
     fmt::{self, Debug},
     ops::{self, RangeBounds},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Arc,
+    },
 };
 
 use pagecache::PagePtr;
@@ -49,6 +52,7 @@ pub struct Tree {
     pub(crate) tree_id: Vec<u8>,
     pub(crate) context: Arc<Context>,
     pub(crate) subscriptions: Arc<Subscriptions>,
+    pub(crate) root: Arc<AtomicUsize>,
 }
 
 unsafe impl Send for Tree {}
@@ -1111,6 +1115,18 @@ impl Tree {
                 "root hoist from {} to {} successful",
                 from, new_root_pid
             );
+
+            // we spin in a cas loop because it's possible
+            // 2 threads are at this point, and we don't want
+            // to cause roots to diverge between meta and
+            // our version.
+            while self.root.compare_and_swap(
+                from,
+                new_root_pid,
+                SeqCst,
+            ) != from
+            {}
+
             Ok(())
         } else {
             debug!(
@@ -1190,11 +1206,7 @@ impl Tree {
     ) -> Result<Vec<(&'g Frag, TreePtr<'g>)>, ()> {
         let _measure = Measure::new(&M.tree_traverse);
 
-        let mut cursor = meta::pid_for_name(
-            &self.context.pagecache,
-            &self.tree_id,
-            guard,
-        )?;
+        let mut cursor = self.root.load(SeqCst);
         let mut path: Vec<(&'g Frag, TreePtr<'g>)> = vec![];
 
         // unsplit_parent is used for tracking need
@@ -1217,11 +1229,7 @@ impl Tree {
                     "cannot find pid {} in path_for_key",
                     cursor
                 );
-                cursor = meta::pid_for_name(
-                    &self.context.pagecache,
-                    &self.tree_id,
-                    guard,
-                )?;
+                cursor = self.root.load(SeqCst);
                 continue;
             }
 
@@ -1391,12 +1399,7 @@ impl Debug for Tree {
     ) -> std::result::Result<(), fmt::Error> {
         let guard = pin();
 
-        let mut pid = meta::pid_for_name(
-            &self.context.pagecache,
-            &self.tree_id,
-            &guard,
-        )
-        .expect("tree does not exist");
+        let mut pid = self.root.load(SeqCst);
         let mut left_most = pid;
         let mut level = 0;
 

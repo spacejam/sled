@@ -1,6 +1,4 @@
-use std::sync::{atomic::AtomicUsize, Arc, Mutex, RwLock};
-
-use pagecache::FastMap8;
+use std::sync::{atomic::AtomicUsize, Arc, Mutex};
 
 use super::*;
 
@@ -14,7 +12,6 @@ pub(crate) struct Context {
     pub(crate) idgen: Arc<AtomicUsize>,
     pub(crate) idgen_persists: Arc<AtomicUsize>,
     pub(crate) idgen_persist_mu: Arc<Mutex<()>>,
-    pub(crate) tenants: Arc<RwLock<FastMap8<Vec<u8>, Arc<Tree>>>>,
     was_recovered: bool,
 }
 
@@ -131,7 +128,6 @@ impl Context {
         Ok(Context {
             config,
             pagecache,
-            tenants: Arc::new(RwLock::new(FastMap8::default())),
             idgen: Arc::new(AtomicUsize::new(idgen_recovery)),
             idgen_persists: Arc::new(AtomicUsize::new(
                 idgen_persists,
