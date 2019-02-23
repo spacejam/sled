@@ -75,7 +75,7 @@ impl Db {
 
         #[cfg(feature = "event_log")]
         context.event_log.meta_after_restart(
-            meta::meta(&*pagecache, &guard)
+            meta::meta(&context.pagecache, &guard)
                 .expect("should be able to get meta under test")
                 .clone(),
         );
