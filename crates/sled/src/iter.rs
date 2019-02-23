@@ -123,7 +123,8 @@ impl<'a> Iterator for Iter<'a> {
 
             let res = self
                 .tree
-                .pages
+                .context
+                .pagecache
                 .get(last_id, &self.guard)
                 .map(|page_get| page_get.unwrap());
 
@@ -282,7 +283,8 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                     // if we're unbounded, scan to the end
                     let res = self
                         .tree
-                        .pages
+                        .context
+                        .pagecache
                         .get(last_node.next.unwrap(), &self.guard)
                         .map(|page_get| page_get.unwrap());
 
@@ -309,7 +311,8 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
 
             let res = self
                 .tree
-                .pages
+                .context
+                .pagecache
                 .get(last_id, &self.guard)
                 .map(|page_get| page_get.unwrap());
 
@@ -424,7 +427,8 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
             {
                 let res = self
                     .tree
-                    .pages
+                    .context
+                    .pagecache
                     .get(next_node.next?, &self.guard)
                     .map(|page_get| page_get.unwrap());
 

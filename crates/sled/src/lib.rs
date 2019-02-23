@@ -40,6 +40,7 @@ mod ivec;
 mod materializer;
 mod meta;
 mod node;
+mod pagecache_ext;
 mod pinned_value;
 mod prefix;
 mod recovery;
@@ -75,6 +76,7 @@ use {
         ivec::IVec,
         materializer::BLinkMaterializer,
         node::Node,
+        pagecache_ext::PageCacheExt,
         prefix::{
             prefix_cmp, prefix_cmp_encoded, prefix_decode,
             prefix_encode,

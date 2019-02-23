@@ -1,7 +1,4 @@
-use std::{
-    ops::Deref,
-    sync::{atomic::AtomicUsize, Arc, Mutex, RwLock},
-};
+use std::{ops::Deref, sync::Arc};
 
 use super::*;
 
@@ -37,9 +34,36 @@ impl Db {
     pub fn start(config: Config) -> Result<Db, ()> {
         let _measure = Measure::new(&M.tree_start);
 
+        let guard = pin();
+
         let context = Arc::new(Context::start(config)?);
 
-        let default = context.open_tree(DEFAULT_TREE_ID.to_vec())?;
+        let default = context
+            .pagecache
+            .open_tree(DEFAULT_TREE_ID.to_vec(), context.clone())?;
+
+        let mut tenants = context.tenants.write().unwrap();
+
+        for (id, _root) in meta::meta(&context.pagecache, &guard)?
+            .tenants()
+            .into_iter()
+        {
+            let tree = Tree {
+                tree_id: id.clone(),
+                subscriptions: Arc::new(Subscriptions::default()),
+                context: context.clone(),
+            };
+            tenants.insert(id, Arc::new(tree));
+        }
+
+        drop(tenants);
+
+        #[cfg(feature = "event_log")]
+        context.event_log.meta_after_restart(
+            meta::meta(&*pagecache, &guard)
+                .expect("should be able to get meta under test")
+                .clone(),
+        );
 
         Ok(Db { context, default })
     }
@@ -47,12 +71,12 @@ impl Db {
     /// Open or create a new disk-backed Tree with its own keyspace,
     /// accessible from the `Db` via the provided identifier.
     pub fn open_tree(&self, name: Vec<u8>) -> Result<Arc<Tree>, ()> {
-        self.context.open_tree(name)
+        self.context.pagecache.open_tree(name, self.context.clone())
     }
 
     /// Remove a disk-backed collection.
     pub fn drop_tree(&self, name: &[u8]) -> Result<bool, ()> {
-        self.context.drop_tree(name)
+        self.context.pagecache.drop_tree(name, &self.context)
     }
 
     /// Returns `true` if the database was
@@ -67,5 +91,17 @@ impl Db {
     /// capacity before being rotated.
     pub fn was_recovered(&self) -> bool {
         self.context.was_recovered()
+    }
+
+    /// Generate a monotonic ID. Not guaranteed to be
+    /// contiguous. Written to disk every `idgen_persist_interval`
+    /// operations, followed by a blocking flush. During recovery, we
+    /// take the last recovered generated ID and add 2x
+    /// the `idgen_persist_interval` to it. While persisting, if the
+    /// previous persisted counter wasn't synced to disk yet, we will do
+    /// a blocking flush to fsync the latest counter, ensuring
+    /// that we will never give out the same counter twice.
+    pub fn generate_id(&self) -> Result<usize, ()> {
+        self.context.generate_id()
     }
 }
