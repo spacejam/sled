@@ -31,6 +31,7 @@
 #![cfg_attr(test, deny(clippy::rust_2018_idioms))]
 
 mod binary_search;
+mod context;
 mod data;
 mod db;
 mod frag;
@@ -49,7 +50,6 @@ const META_PID: PageId = 0;
 const COUNTER_PID: PageId = 1;
 
 const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
-const TX_TREE_ID: &[u8] = b"__sled__transactions";
 
 pub use {
     self::{
@@ -68,6 +68,7 @@ use {
             binary_search_gt, binary_search_lt, binary_search_lub,
             leaf_search,
         },
+        context::Context,
         data::Data,
         frag::{ChildSplit, Frag, ParentSplit},
         ivec::IVec,
