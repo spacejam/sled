@@ -161,7 +161,7 @@ impl Db {
         // drop writer lock
         drop(tenants);
 
-        guard.defer(move || tree.gc_pages(leftmost_chain));
+        tree.gc_pages(leftmost_chain)?;
 
         guard.flush();
 
