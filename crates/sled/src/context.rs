@@ -1,8 +1,12 @@
-use std::sync::{atomic::AtomicUsize, Arc, Mutex};
+use std::sync::{
+    atomic::{
+        AtomicUsize,
+        Ordering::{Acquire, Relaxed, Release},
+    },
+    Arc, Mutex,
+};
 
 use super::*;
-
-use crate::PageCacheExt;
 
 pub(crate) struct Context {
     // TODO file from config should be in here
@@ -160,6 +164,59 @@ impl Context {
     /// a blocking flush to fsync the latest counter, ensuring
     /// that we will never give out the same counter twice.
     pub fn generate_id(&self) -> Result<usize, ()> {
-        self.pagecache.generate_id(self)
+        let ret = self.idgen.fetch_add(1, Relaxed);
+
+        let interval = self.idgen_persist_interval;
+        let necessary_persists = ret / interval * interval;
+        let mut persisted = self.idgen_persists.load(Acquire);
+
+        while persisted < necessary_persists {
+            let _mu = self.idgen_persist_mu.lock().unwrap();
+            persisted = self.idgen_persists.load(Acquire);
+            if persisted < necessary_persists {
+                // it's our responsibility to persist up to our ID
+                let guard = pin();
+                let (current, key) = self
+                    .pagecache
+                    .get(COUNTER_PID, &guard)
+                    .map_err(|e| e.danger_cast())?
+                    .unwrap();
+
+                if let Frag::Counter(current) = current {
+                    assert_eq!(*current, persisted);
+                } else {
+                    panic!(
+                        "counter pid contained non-Counter: {:?}",
+                        current
+                    );
+                }
+
+                let counter_frag = Frag::Counter(necessary_persists);
+
+                let old = self
+                    .idgen_persists
+                    .swap(necessary_persists, Release);
+                assert_eq!(old, persisted);
+
+                self.pagecache
+                    .replace(
+                        COUNTER_PID,
+                        key.clone(),
+                        counter_frag,
+                        &guard,
+                    )
+                    .map_err(|e| e.danger_cast())?;
+
+                // during recovery we add 2x the interval. we only
+                // need to block if the last one wasn't stable yet.
+                if key.last_lsn() > self.pagecache.stable_lsn() {
+                    self.pagecache.make_stable(key.last_lsn())?;
+                }
+
+                guard.flush();
+            }
+        }
+
+        Ok(ret)
     }
 }
