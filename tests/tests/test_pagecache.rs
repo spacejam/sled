@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT},
+        atomic::{AtomicUsize, Ordering},
         Arc,
     },
     thread,
@@ -351,7 +351,7 @@ impl Arbitrary for Op {
 
         let choice = g.gen_range(0, 5);
 
-        static COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
         COUNTER.compare_and_swap(0, 1, Ordering::SeqCst);
 
         let pid = (g.gen::<u8>() % 8) as PageId;
