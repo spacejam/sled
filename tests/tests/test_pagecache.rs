@@ -21,12 +21,8 @@ pub struct TestMaterializer;
 
 impl Materializer for TestMaterializer {
     type PageFrag = Vec<usize>;
-    type Recovery = ();
 
-    fn new(
-        _config: pagecache::Config,
-        _recovery: &Option<()>,
-    ) -> TestMaterializer {
+    fn new(_config: pagecache::Config) -> TestMaterializer {
         TestMaterializer
     }
 
@@ -43,13 +39,38 @@ impl Materializer for TestMaterializer {
         consolidated
     }
 
-    fn recover(&self, _: &Vec<usize>) -> Option<()> {
-        None
-    }
-
     fn size_in_bytes(&self, frag: &Vec<usize>) -> usize {
         std::mem::size_of::<Vec<usize>>() + frag.len()
     }
+}
+
+#[test]
+fn pagecache_monotonic_idgen() {
+    let config = ConfigBuilder::new()
+        .temporary(true)
+        .cache_capacity(40)
+        .cache_bits(0)
+        .flush_every_ms(None)
+        .snapshot_after_ops(1_000_000)
+        .io_buf_size(20000)
+        .build();
+
+    let pc: PageCache<TestMaterializer, _> =
+        PageCache::start(config.clone()).unwrap();
+
+    let id1 = pc.generate_id().unwrap();
+
+    drop(pc);
+
+    let pc: PageCache<TestMaterializer, _> =
+        PageCache::start(config.clone()).unwrap();
+
+    let id2 = pc.generate_id().unwrap();
+
+    assert!(
+        id1 < id2,
+        "idgen is expected to issue monotonically increasing IDs"
+    );
 }
 
 #[test]
@@ -63,7 +84,7 @@ fn pagecache_caching() {
         .io_buf_size(20000)
         .build();
 
-    let pc: PageCache<TestMaterializer, _, _> =
+    let pc: PageCache<TestMaterializer, _> =
         PageCache::start(config.clone()).unwrap();
 
     let guard = pin();
@@ -78,7 +99,7 @@ fn pagecache_caching() {
     }
 
     for i in 0..1000 {
-        let id = i as usize % 2;
+        let id = 2 + (i as usize % 2);
         let (_, key) = pc.get(id, &guard).unwrap().unwrap();
         let key = pc.link(id, key, vec![i], &guard).unwrap();
         keys.insert(id, key);
@@ -89,7 +110,7 @@ fn pagecache_caching() {
 fn parallel_pagecache() {
     tests::setup_logger();
     const N_THREADS: usize = 10;
-    const N_PER_THREAD: usize = 1000;
+    const N_PER_THREAD: usize = 100;
 
     let config = ConfigBuilder::new()
         .temporary(true)
@@ -112,7 +133,7 @@ fn parallel_pagecache() {
                         for i in (tn * N_PER_THREAD)
                             ..((tn + 1) * N_PER_THREAD)
                         {
-                            $f(&*tree, i);
+                            $f(&*tree, i + 2);
                         }
                     })
                     .expect("should be able to spawn thread");
@@ -127,10 +148,10 @@ fn parallel_pagecache() {
     }
 
     println!("========== sets ==========");
-    let p: Arc<PageCache<TestMaterializer, Vec<usize>, ()>> =
+    let p: Arc<PageCache<TestMaterializer, Vec<usize>>> =
         Arc::new(PageCache::start(config.clone()).unwrap());
 
-    par! {p, |pc: &PageCache<_, _, _>, _i: usize| {
+    par! {p, |pc: &PageCache<_, _>, _i: usize| {
         let guard = pin();
         let id = pc.allocate(&guard).unwrap();
         let mut key = PagePtr::allocated();
@@ -149,10 +170,10 @@ fn parallel_pagecache() {
     drop(p);
 
     println!("========== gets ==========");
-    let p: Arc<PageCache<TestMaterializer, Vec<usize>, ()>> =
+    let p: Arc<PageCache<TestMaterializer, Vec<usize>>> =
         Arc::new(PageCache::start(config.clone()).unwrap());
 
-    par! {p, |pc: &PageCache<_, _, _>, i: usize| {
+    par! {p, |pc: &PageCache<_, _>, i: usize| {
         let guard = pin();
         let (ptr, _key): (&Vec<usize>, _) =
                            pc.get(i, &guard)
@@ -164,10 +185,10 @@ fn parallel_pagecache() {
     drop(p);
 
     println!("========== links ==========");
-    let p: Arc<PageCache<TestMaterializer, Vec<usize>, ()>> =
+    let p: Arc<PageCache<TestMaterializer, Vec<usize>>> =
         Arc::new(PageCache::start(config.clone()).unwrap());
 
-    par! {p, |pc: &PageCache<_, _, _>, i: usize| {
+    par! {p, |pc: &PageCache<_, _>, i: usize| {
         let mut success = 0;
 
         while success <= 10 {
@@ -193,10 +214,10 @@ fn parallel_pagecache() {
     drop(p);
 
     println!("========== gets ==========");
-    let p: Arc<PageCache<TestMaterializer, Vec<usize>, ()>> =
+    let p: Arc<PageCache<TestMaterializer, Vec<usize>>> =
         Arc::new(PageCache::start(config.clone()).unwrap());
 
-    par! {p, |pc: &PageCache<_, _, _>, i: usize| {
+    par! {p, |pc: &PageCache<_, _>, i: usize| {
         let guard = pin();
         let (ptr, _key): (&Vec<usize>, _) =
                            pc.get(i, &guard)
@@ -218,7 +239,7 @@ fn pagecache_strange_crash_1() {
         .build();
 
     {
-        let pc: PageCache<TestMaterializer, _, _> =
+        let pc: PageCache<TestMaterializer, _> =
             PageCache::start(config.clone()).unwrap();
 
         let guard = pin();
@@ -232,13 +253,13 @@ fn pagecache_strange_crash_1() {
         }
 
         for i in 0..1000 {
-            let id = i as usize % 2;
+            let id = 2 + (i as usize % 2);
             let (_, key) = pc.get(id, &guard).unwrap().unwrap();
             let key = pc.link(id, key, vec![i], &guard).unwrap();
             keys.insert(id, key);
         }
     }
-    let _pc: PageCache<TestMaterializer, _, _> =
+    let _pc: PageCache<TestMaterializer, _> =
         PageCache::start(config.clone()).unwrap();
     // TODO test no eaten lsn's on recovery
     // TODO test that we don't skip multiple segments ahead on recovery (confusing Lsn & Lid)
@@ -257,9 +278,9 @@ fn pagecache_strange_crash_2() {
             .io_buf_size(20000)
             .build();
 
-        config.verify_snapshot::<TestMaterializer, _, _>().unwrap();
+        config.verify_snapshot::<TestMaterializer, _>().unwrap();
 
-        let pc: PageCache<TestMaterializer, _, _> =
+        let pc: PageCache<TestMaterializer, _> =
             PageCache::start(config.clone()).unwrap();
 
         let mut keys = HashMap::new();
@@ -272,7 +293,7 @@ fn pagecache_strange_crash_2() {
         }
 
         for i in 0..1000 {
-            let id = i as usize % 2;
+            let id = 2 + (i as usize % 2);
             let (_, key) = pc.get(id, &guard).unwrap().unwrap();
             assert!(!key.is_allocated());
             let key_res = pc.link(id, key, vec![i], &guard);
@@ -293,7 +314,7 @@ fn basic_pagecache_recovery() {
         .io_buf_size(1000)
         .build();
 
-    let pc: PageCache<TestMaterializer, _, _> =
+    let pc: PageCache<TestMaterializer, _> =
         PageCache::start(config.clone()).unwrap();
 
     let guard = pin();
@@ -308,7 +329,7 @@ fn basic_pagecache_recovery() {
     assert_eq!(cv1, vec![1, 2, 3]);
     drop(pc);
 
-    let pc2: PageCache<TestMaterializer, _, _> =
+    let pc2: PageCache<TestMaterializer, _> =
         PageCache::start(config.clone()).unwrap();
     let (cv2_ref, consolidated2) =
         pc2.get(id, &guard).unwrap().unwrap();
@@ -318,7 +339,7 @@ fn basic_pagecache_recovery() {
     pc2.link(id, consolidated2, vec![4], &guard).unwrap();
     drop(pc2);
 
-    let pc3: PageCache<TestMaterializer, _, _> =
+    let pc3: PageCache<TestMaterializer, _> =
         PageCache::start(config.clone()).unwrap();
     let (cv3_ref, consolidated3) =
         pc3.get(id, &guard).unwrap().unwrap();
@@ -327,7 +348,7 @@ fn basic_pagecache_recovery() {
     pc3.free(id, consolidated3, &guard).unwrap();
     drop(pc3);
 
-    let pc4: PageCache<TestMaterializer, _, _> =
+    let pc4: PageCache<TestMaterializer, _> =
         PageCache::start(config.clone()).unwrap();
     let res = pc4.get(id, &guard).unwrap();
     assert!(res.is_free());
@@ -340,6 +361,7 @@ enum Op {
     Get(PageId),
     Free(PageId),
     Allocate,
+    GenId,
     Restart,
 }
 
@@ -349,7 +371,7 @@ impl Arbitrary for Op {
             return Op::Restart;
         }
 
-        let choice = g.gen_range(0, 5);
+        let choice = g.gen_range(0, 6);
 
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
         COUNTER.compare_and_swap(0, 1, Ordering::SeqCst);
@@ -367,6 +389,7 @@ impl Arbitrary for Op {
             2 => Op::Get(pid),
             3 => Op::Free(pid),
             4 => Op::Allocate,
+            5 => Op::GenId,
             _ => panic!("impossible choice"),
         }
     }
@@ -413,17 +436,26 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
         .cache_bits(0)
         .build();
 
-    let mut pc: PageCache<TestMaterializer, _, _> =
+    let mut pc: PageCache<TestMaterializer, _> =
         PageCache::start(config.clone()).unwrap();
 
     let mut reference: HashMap<PageId, P> = HashMap::new();
+    let mut highest_id: u64 = 0;
 
     // TODO use returned pointers, cleared on restart, with caching set to
     // a large amount, to test linkage.
     for op in ops.into_iter() {
         let guard = pin();
         match op {
+            GenId => {
+                let id = pc.generate_id().unwrap();
+                if id < highest_id {
+                    panic!("generated id {} is not higher than previous value of {}", id, highest_id);
+                }
+                highest_id = id;
+            }
             Replace(pid, c) => {
+                let pid = pid + 2;
                 let get = pc.get(pid, &guard).unwrap();
                 let ref_get =
                     reference.entry(pid).or_insert(P::Unallocated);
@@ -455,6 +487,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                 }
             }
             Link(pid, c) => {
+                let pid = pid + 2;
                 let get = pc.get(pid, &guard).unwrap();
                 let ref_get =
                     reference.entry(pid).or_insert(P::Unallocated);
@@ -485,6 +518,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                 }
             }
             Get(pid) => {
+                let pid = pid + 2;
                 let get = pc.get(pid, &guard).unwrap();
 
                 match reference.get(&pid) {
@@ -511,6 +545,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                 }
             }
             Free(pid) => {
+                let pid = pid + 2;
                 let pre_get = pc.get(pid, &guard).unwrap();
 
                 match pre_get {
@@ -551,7 +586,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                 println!("restarting pagecache in test");
 
                 config
-                    .verify_snapshot::<TestMaterializer, _, _>()
+                    .verify_snapshot::<TestMaterializer, _>()
                     .unwrap();
 
                 pc = PageCache::start(config.clone()).unwrap();
