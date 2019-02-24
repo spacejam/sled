@@ -24,7 +24,6 @@ type Lsn = i64;
 type LogId = u64;
 
 #[test]
-#[ignore]
 fn more_log_reservations_than_buffers() {
     let config = ConfigBuilder::new()
         .temporary(true)
@@ -378,7 +377,6 @@ fn log_chunky_iterator() {
 }
 
 #[test]
-#[ignore]
 fn snapshot_with_out_of_order_buffers() {
     let config = ConfigBuilder::new()
         .temporary(true)
