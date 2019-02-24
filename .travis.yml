@@ -60,7 +60,6 @@ script:
                  pushd tests &&
                  cargo check &&
                  cargo check --features=all &&
-                 cargo test test_crash_recovery --release -- --ignored --nocapture &&
                  cargo test tree --release
                  ;;
                qc)
