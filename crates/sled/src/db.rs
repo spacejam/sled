@@ -58,9 +58,8 @@ impl Db {
 
         let mut tenants = ret.tenants.write().unwrap();
 
-        for (id, root) in meta::meta(&context.pagecache, &guard)?
-            .tenants()
-            .into_iter()
+        for (id, root) in
+            context.pagecache.meta(&guard)?.tenants().into_iter()
         {
             let tree = Tree {
                 tree_id: id.clone(),
@@ -75,7 +74,9 @@ impl Db {
 
         #[cfg(feature = "event_log")]
         context.event_log.meta_after_restart(
-            meta::meta(&context.pagecache, &guard)
+            context
+                .pagecache
+                .meta(&guard)
                 .expect("should be able to get meta under test")
                 .clone(),
         );
@@ -124,11 +125,10 @@ impl Db {
 
         let guard = pin();
 
-        let mut root_id = meta::pid_for_name(
-            &self.context.pagecache,
-            &name,
-            &guard,
-        )?;
+        let mut root_id = self
+            .context
+            .pagecache
+            .meta_pid_for_name(&name, &guard)?;
 
         let leftmost_chain: Vec<PageId> = tree
             .path_for_key(b"", &guard)?
@@ -137,14 +137,16 @@ impl Db {
             .collect();
 
         loop {
-            let res = meta::cas_root(
-                &self.context.pagecache,
-                name.to_vec(),
-                Some(root_id),
-                None,
-                &guard,
-            )
-            .map_err(|e| e.danger_cast());
+            let res = self
+                .context
+                .pagecache
+                .cas_root_in_meta(
+                    name.to_vec(),
+                    Some(root_id),
+                    None,
+                    &guard,
+                )
+                .map_err(|e| e.danger_cast());
 
             match res {
                 Ok(_) => break,
@@ -190,7 +192,7 @@ impl Db {
     /// previous persisted counter wasn't synced to disk yet, we will do
     /// a blocking flush to fsync the latest counter, ensuring
     /// that we will never give out the same counter twice.
-    pub fn generate_id(&self) -> Result<usize, ()> {
+    pub fn generate_id(&self) -> Result<u64, ()> {
         self.context.generate_id()
     }
 }

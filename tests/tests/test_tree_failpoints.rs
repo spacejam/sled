@@ -261,7 +261,14 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
             }
             Id => {
                 let id = fp_crash!(tree.generate_id());
-                assert!(id as isize > max_id);
+                println!("got id of {}", id);
+                assert!(
+                    id as isize > max_id,
+                    "generated id of {} is not larger \
+                     than previous max id of {}",
+                    id,
+                    max_id,
+                );
                 max_id = id as isize;
             }
             Restart => {
@@ -1082,6 +1089,15 @@ fn failpoints_bug_21() {
             FailPoint("trailer write post"),
             Restart,
         ],
+        false,
+    ))
+}
+
+#[test]
+fn failpoints_bug_22() {
+    // postmortem 1:
+    assert!(prop_tree_crashes_nicely(
+        vec![Id, FailPoint("buffer write"), Set, Id],
         false,
     ))
 }

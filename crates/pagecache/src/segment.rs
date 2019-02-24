@@ -423,9 +423,9 @@ impl Segment {
 
 impl SegmentAccountant {
     /// Create a new SegmentAccountant from previously recovered segments.
-    pub(super) fn start<R>(
+    pub(super) fn start(
         config: Config,
-        snapshot: Snapshot<R>,
+        snapshot: Snapshot,
     ) -> Result<SegmentAccountant, ()> {
         let mut ret = SegmentAccountant {
             config,
@@ -464,9 +464,9 @@ impl SegmentAccountant {
         Ok(ret)
     }
 
-    fn initialize_from_snapshot<R>(
+    fn initialize_from_snapshot(
         &mut self,
-        snapshot: Snapshot<R>,
+        snapshot: Snapshot,
     ) -> Result<(), ()> {
         let io_buf_size = self.config.io_buf_size;
 

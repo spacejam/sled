@@ -85,8 +85,6 @@ impl Node {
             Base(_) => {
                 panic!("encountered base page in middle of chain")
             }
-            Counter(_) => unimplemented!(),
-            Meta(_) => unimplemented!(),
         }
     }
 

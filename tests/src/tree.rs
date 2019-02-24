@@ -228,6 +228,7 @@ pub fn prop_tree_matches_btreemap(
         .cache_capacity(40)
         .cache_bits(0)
         .merge_operator(test_merge_operator)
+        .idgen_persist_interval(1)
         .build();
 
     let mut tree = sled::Db::start(config.clone()).unwrap();

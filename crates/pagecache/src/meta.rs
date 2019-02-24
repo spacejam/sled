@@ -4,7 +4,9 @@ use super::*;
 
 /// A simple map that can be used to store metadata
 /// for the pagecache tenant.
-#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[derive(
+    Clone, Debug, Eq, PartialEq, Default, Serialize, Deserialize,
+)]
 pub struct Meta {
     inner: BTreeMap<Vec<u8>, PageId>,
 }

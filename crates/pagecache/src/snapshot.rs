@@ -10,7 +10,7 @@ use super::*;
 /// TODO consider splitting `Snapshot` into separate
 /// snapshots for PC, SA, Materializer.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Snapshot<R> {
+pub struct Snapshot {
     /// the last lsn included in the `Snapshot`
     pub max_lsn: Lsn,
     /// the last lid included in the `Snapshot`
@@ -26,8 +26,6 @@ pub struct Snapshot<R> {
         FastMap8<SegmentId, (Lsn, FastSet8<(PageId, SegmentId)>)>,
     /// the free pids
     pub free: FastSet8<PageId>,
-    /// the `Materializer`-specific recovered state
-    pub recovery: Option<R>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -71,8 +69,8 @@ impl PageState {
     }
 }
 
-impl<R> Default for Snapshot<R> {
-    fn default() -> Snapshot<R> {
+impl Default for Snapshot {
+    fn default() -> Snapshot {
         Snapshot {
             max_lsn: 0,
             max_lid: 0,
@@ -81,15 +79,13 @@ impl<R> Default for Snapshot<R> {
             pt: FastMap8::default(),
             replacements: FastMap8::default(),
             free: FastSet8::default(),
-            recovery: None,
         }
     }
 }
 
-impl<R> Snapshot<R> {
-    fn apply<P, M>(
+impl Snapshot {
+    fn apply<P>(
         &mut self,
-        materializer: &M,
         lsn: Lsn,
         disk_ptr: DiskPtr,
         bytes: &[u8],
@@ -103,8 +99,6 @@ impl<R> Snapshot<R> {
             + DeserializeOwned
             + Send
             + Sync,
-        R: Debug + Clone + Serialize + DeserializeOwned + Send,
-        M: Materializer<PageFrag = P, Recovery = R>,
     {
         // unwrapping this because it's already passed the crc check
         // in the log iterator
@@ -140,7 +134,7 @@ impl<R> Snapshot<R> {
             * config.io_buf_size as Lsn;
 
         match prepend.update {
-            Update::Append(partial_page) => {
+            Update::Append(_) => {
                 // Because we rewrite pages over time, we may have relocated
                 // a page's initial Compact to a later segment. We should skip
                 // over pages here unless we've encountered a Compact for them.
@@ -164,26 +158,20 @@ impl<R> Snapshot<R> {
                         return Ok(());
                     }
 
-                    if let Some(r) =
-                        materializer.recover(&partial_page)
-                    {
-                        self.recovery = Some(r);
-                    }
-
                     lids.push((lsn, disk_ptr));
                 }
                 self.free.remove(&pid);
             }
-            Update::Compact(partial_page) => {
+            Update::Meta(_)
+            | Update::Counter(_)
+            | Update::Compact(_) => {
                 trace!(
-                    "compact of pid {} at ptr {} lsn {}",
+                    "update {:?} of pid {} at ptr {} lsn {}",
+                    prepend.update,
                     pid,
                     disk_ptr,
                     lsn
                 );
-                if let Some(r) = materializer.recover(&partial_page) {
-                    self.recovery = Some(r);
-                }
 
                 self.replace_pid(
                     pid,
@@ -195,7 +183,11 @@ impl<R> Snapshot<R> {
                     pid,
                     PageState::Present(vec![(lsn, disk_ptr)]),
                 );
-                self.free.remove(&pid);
+                if prepend.update.is_compact() {
+                    self.free.remove(&pid);
+                } else {
+                    assert!(!self.free.contains(&pid));
+                }
             }
             Update::Allocate => {
                 trace!(
@@ -242,10 +234,11 @@ impl<R> Snapshot<R> {
         replaced_at_idx: usize,
         config: &Config,
     ) {
-        let replacements = self
-            .replacements
-            .entry(replaced_at_idx)
-            .or_insert((replaced_at_segment_lsn, FastSet8::default()));
+        let replacements =
+            self.replacements.entry(replaced_at_idx).or_insert((
+                replaced_at_segment_lsn,
+                FastSet8::default(),
+            ));
 
         assert_eq!(replaced_at_segment_lsn, replacements.0);
 
@@ -304,13 +297,13 @@ impl<R> Snapshot<R> {
     }
 }
 
-pub(super) fn advance_snapshot<PM, P, R>(
+pub(super) fn advance_snapshot<PM, P>(
     iter: LogIter,
-    mut snapshot: Snapshot<R>,
+    mut snapshot: Snapshot,
     config: &Config,
-) -> Result<Snapshot<R>, ()>
+) -> Result<Snapshot, ()>
 where
-    PM: Materializer<Recovery = R, PageFrag = P>,
+    PM: Materializer<PageFrag = P>,
     P: 'static
         + Debug
         + Clone
@@ -318,13 +311,10 @@ where
         + DeserializeOwned
         + Send
         + Sync,
-    R: Debug + Clone + Serialize + DeserializeOwned + Send,
 {
     let _measure = Measure::new(&M.advance_snapshot);
 
     trace!("building on top of old snapshot: {:?}", snapshot);
-
-    let materializer = PM::new(config.clone(), &snapshot.recovery);
 
     let io_buf_size = config.io_buf_size;
 
@@ -365,13 +355,9 @@ where
         }
 
         if !PM::is_null() {
-            if let Err(e) = snapshot.apply(
-                &materializer,
-                lsn,
-                ptr,
-                &*bytes,
-                config,
-            ) {
+            if let Err(e) =
+                snapshot.apply::<P>(lsn, ptr, &*bytes, config)
+            {
                 error!(
                     "encountered error while reading log message: {}",
                     e
@@ -390,11 +376,11 @@ where
 
 /// Read a `Snapshot` or generate a default, then advance it to
 /// the tip of the data file, if present.
-pub fn read_snapshot_or_default<PM, P, R>(
+pub fn read_snapshot_or_default<PM, P>(
     config: &Config,
-) -> Result<Snapshot<R>, ()>
+) -> Result<Snapshot, ()>
 where
-    PM: Materializer<Recovery = R, PageFrag = P>,
+    PM: Materializer<PageFrag = P>,
     P: 'static
         + Debug
         + Clone
@@ -402,23 +388,19 @@ where
         + DeserializeOwned
         + Send
         + Sync,
-    R: Debug + Clone + Serialize + DeserializeOwned + Send,
 {
     let last_snap =
         read_snapshot(config)?.unwrap_or_else(Snapshot::default);
 
     let log_iter = raw_segment_iter_from(last_snap.max_lsn, config)?;
 
-    advance_snapshot::<PM, P, R>(log_iter, last_snap, config)
+    advance_snapshot::<PM, P>(log_iter, last_snap, config)
 }
 
 /// Read a `Snapshot` from disk.
-fn read_snapshot<R>(
+fn read_snapshot(
     config: &Config,
-) -> std::io::Result<Option<Snapshot<R>>>
-where
-    R: Debug + Clone + Serialize + DeserializeOwned + Send,
-{
+) -> std::io::Result<Option<Snapshot>> {
     let mut candidates = config.get_snapshot_files()?;
     if candidates.is_empty() {
         debug!("no previous snapshot found");
@@ -469,16 +451,13 @@ where
     #[cfg(not(feature = "zstd"))]
     let bytes = buf;
 
-    Ok(deserialize::<Snapshot<R>>(&*bytes).ok())
+    Ok(deserialize::<Snapshot>(&*bytes).ok())
 }
 
-pub(crate) fn write_snapshot<R>(
+pub(crate) fn write_snapshot(
     config: &Config,
-    snapshot: &Snapshot<R>,
-) -> Result<(), ()>
-where
-    R: Debug + Clone + Serialize + DeserializeOwned + Send,
-{
+    snapshot: &Snapshot,
+) -> Result<(), ()> {
     let raw_bytes = serialize(&snapshot).unwrap();
     let decompressed_len = raw_bytes.len();
 

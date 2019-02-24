@@ -1,10 +1,7 @@
-use std::sync::Mutex;
-
 use super::*;
 
 #[derive(Debug)]
 pub(crate) struct BLinkMaterializer {
-    pub(super) recovery: Mutex<Recovery>,
     config: Config,
 }
 
@@ -12,18 +9,8 @@ impl Materializer for BLinkMaterializer {
     type PageFrag = Frag;
 
     // a vector of (root, prev root, max counter) for deterministic recovery
-    type Recovery = Recovery;
-
-    fn new(
-        config: Config,
-        recovery: &Option<Self::Recovery>,
-    ) -> Self {
-        let recovery = recovery.clone().unwrap_or_default();
-
-        BLinkMaterializer {
-            recovery: Mutex::new(recovery),
-            config,
-        }
+    fn new(config: Config) -> Self {
+        BLinkMaterializer { config }
     }
 
     fn merge<'a, I>(&'a self, frags: I) -> Self::PageFrag
@@ -45,41 +32,7 @@ impl Materializer for BLinkMaterializer {
 
                 Frag::Base(base_node)
             }
-            Frag::Counter(ref count) => {
-                let mut max = *count;
-                for frag in frag_iter {
-                    if let Frag::Counter(count) = frag {
-                        max = std::cmp::max(*count, max);
-                    } else {
-                        panic!(
-                            "got non-BumpCounter in frag chain: {:?}",
-                            frag
-                        );
-                    }
-                }
-
-                Frag::Counter(max)
-            }
-            Frag::Meta(_meta) => unimplemented!(
-                "the Meta page should always be replaced, not linked"
-            ),
             _ => panic!("non-Base in first element of frags slice"),
-        }
-    }
-
-    fn recover(&self, frag: &Frag) -> Option<Recovery> {
-        match *frag {
-            Frag::Counter(count) => {
-                let mut recovery = self.recovery.lock().expect(
-                    "a thread panicked and poisoned the BLinkMaterializer's
-                    roots mutex.",
-                );
-                recovery.counter =
-                    std::cmp::max(count, recovery.counter);
-
-                Some(recovery.clone())
-            }
-            _ => None,
         }
     }
 
