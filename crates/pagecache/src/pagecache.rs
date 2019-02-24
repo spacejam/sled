@@ -312,13 +312,9 @@ where
 ///     // at read time, and possibly cached.
 ///     type PageFrag = String;
 ///
-///     // The state returned by a call to `PageCache::recover`, as
-///     // described by `Materializer::recover`
-///     type Recovery = ();
-///
 ///     // Create a new `Materializer` with the previously recovered
 ///     // state if any existed.
-///     fn new(config: pagecache::Config, last_recovery: &Option<Self::Recovery>) -> Self {
+///     fn new(config: pagecache::Config) -> Self {
 ///         TestMaterializer
 ///     }
 ///
@@ -334,13 +330,6 @@ where
 ///         })
 ///     }
 ///
-///     // Used to feed custom recovery information back to a higher-level abstraction
-///     // during startup. For example, a B-Link tree must know what the current
-///     // root node is before it can start serving requests.
-///     fn recover(&self, _: &Self::PageFrag) -> Option<Self::Recovery> {
-///         None
-///     }
-///
 ///     // Used to determine the resident size for this item in cache.
 ///     fn size_in_bytes(&self, frag: &String) -> usize {
 ///         std::mem::size_of::<String>() + frag.as_bytes().len()
@@ -350,7 +339,7 @@ where
 ///
 /// fn main() {
 ///     let config = pagecache::ConfigBuilder::new().temporary(true).build();
-///     let pc: pagecache::PageCache<TestMaterializer, _, _> =
+///     let pc: pagecache::PageCache<TestMaterializer, _> =
 ///         pagecache::PageCache::start(config).unwrap();
 ///     {
 ///         let guard = pin();
