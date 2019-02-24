@@ -29,7 +29,8 @@ impl Drop for Context {
             let guard = pin();
 
             self.config.event_log.meta_before_restart(
-                meta::meta(&self.pagecache, &guard)
+                self.pagecache
+                    .meta(&guard)
                     .expect("should get meta under test")
                     .clone(),
             );
