@@ -42,12 +42,8 @@ mod meta;
 mod node;
 mod pinned_value;
 mod prefix;
-mod recovery;
 mod subscription;
 mod tree;
-
-const META_PID: PageId = 0;
-const COUNTER_PID: PageId = 1;
 
 const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
 
@@ -78,13 +74,12 @@ use {
             prefix_cmp, prefix_cmp_encoded, prefix_decode,
             prefix_encode,
         },
-        recovery::Recovery,
         subscription::Subscriptions,
     },
     log::{debug, error, trace},
     pagecache::{
-        Materializer, Measure, MergeOperator, Meta, PageCache,
-        PageGet, PageId, M,
+        Materializer, Measure, MergeOperator, PageCache, PageGet,
+        PageId, M,
     },
     serde::{Deserialize, Serialize},
     sled_sync::{debug_delay, pin, Guard},

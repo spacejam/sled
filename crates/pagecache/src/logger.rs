@@ -44,9 +44,9 @@ unsafe impl Send for Log {}
 impl Log {
     /// Start the log, open or create the configured file,
     /// and optionally start the periodic buffer flush thread.
-    pub fn start<R>(
+    pub fn start(
         config: Config,
-        snapshot: Snapshot<R>,
+        snapshot: Snapshot,
     ) -> Result<Log, ()> {
         let iobufs = IoBufs::start(config.clone(), snapshot)?;
 
@@ -71,13 +71,13 @@ impl Log {
         assert_eq!(config.segment_mode, SegmentMode::Linear);
         let log_iter = raw_segment_iter_from(0, &config)?;
 
-        let snapshot = advance_snapshot::<NullMaterializer, (), ()>(
+        let snapshot = advance_snapshot::<NullMaterializer, ()>(
             log_iter,
             Snapshot::default(),
             &config,
         )?;
 
-        Log::start::<()>(config, snapshot)
+        Log::start(config, snapshot)
     }
 
     /// Flushes any pending IO buffers to disk to ensure durability.

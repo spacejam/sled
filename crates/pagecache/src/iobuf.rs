@@ -94,9 +94,9 @@ pub(super) struct IoBufsInner {
 /// `IoBufs` is a set of lock-free buffers for coordinating
 /// writes to underlying storage.
 impl IoBufs {
-    pub(crate) fn start<R>(
+    pub(crate) fn start(
         config: Config,
-        mut snapshot: Snapshot<R>,
+        mut snapshot: Snapshot,
     ) -> Result<IoBufs, ()> {
         // open file for writing
         let file = &config.file;
@@ -140,7 +140,7 @@ impl IoBufs {
             )
         };
 
-        let mut segment_accountant =
+        let mut segment_accountant: SegmentAccountant =
             SegmentAccountant::start(config.clone(), snapshot)?;
 
         let bufs =

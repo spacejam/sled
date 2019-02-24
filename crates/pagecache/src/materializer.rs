@@ -9,10 +9,6 @@ pub trait Materializer {
     /// at read time, and possibly cached.
     type PageFrag;
 
-    /// The higher-level recovery state, as
-    /// described by `Materializer::recover`
-    type Recovery;
-
     #[doc(hidden)]
     fn is_null() -> bool
     where
@@ -23,10 +19,7 @@ pub trait Materializer {
 
     /// Create a new `Materializer` with the previously recovered
     /// state if any existed.
-    fn new(
-        config: Config,
-        recovered_state: &Option<Self::Recovery>,
-    ) -> Self
+    fn new(config: Config) -> Self
     where
         Self: Sized;
 
@@ -35,14 +28,6 @@ pub trait Materializer {
     fn merge<'a, I>(&'a self, frags: I) -> Self::PageFrag
     where
         I: IntoIterator<Item = &'a Self::PageFrag>;
-
-    /// Used to feed custom recovery information back to a higher-level abstraction
-    /// during startup. For example, a B-Link tree must know what the current
-    /// root node is before it can start serving requests.
-    fn recover(
-        &self,
-        frag: &Self::PageFrag,
-    ) -> Option<Self::Recovery>;
 
     /// Used to determine the size of the value for caching purposes.
     fn size_in_bytes(&self, frag: &Self::PageFrag) -> usize;
@@ -55,14 +40,13 @@ pub struct NullMaterializer;
 
 impl Materializer for NullMaterializer {
     type PageFrag = ();
-    type Recovery = ();
 
     #[doc(hidden)]
     fn is_null() -> bool {
         true
     }
 
-    fn new(_: Config, _: &Option<Self::Recovery>) -> Self {
+    fn new(_: Config) -> Self {
         NullMaterializer
     }
 
@@ -70,10 +54,6 @@ impl Materializer for NullMaterializer {
     where
         I: IntoIterator<Item = &'a Self::PageFrag>,
     {
-    }
-
-    fn recover(&self, _: &Self::PageFrag) -> Option<Self::Recovery> {
-        None
     }
 
     fn size_in_bytes(&self, _: &Self::PageFrag) -> usize {

@@ -60,6 +60,9 @@ mod util;
 #[cfg(feature = "measure_allocs")]
 mod measure_allocs;
 
+const META_PID: PageId = 0;
+const COUNTER_PID: PageId = 1;
+
 #[cfg(feature = "measure_allocs")]
 #[global_allocator]
 static ALLOCATOR: measure_allocs::TrackingAllocator =

@@ -657,9 +657,9 @@ impl Config {
     }
 
     #[doc(hidden)]
-    pub fn verify_snapshot<PM, P, R>(&self) -> Result<(), ()>
+    pub fn verify_snapshot<PM, P>(&self) -> Result<(), ()>
     where
-        PM: Materializer<Recovery = R, PageFrag = P>,
+        PM: Materializer<PageFrag = P>,
         P: 'static
             + Debug
             + Clone
@@ -667,25 +667,17 @@ impl Config {
             + DeserializeOwned
             + Send
             + Sync,
-        R: Debug
-            + Clone
-            + Serialize
-            + DeserializeOwned
-            + Send
-            + PartialEq,
     {
         debug!("generating incremental snapshot");
 
-        let incremental =
-            read_snapshot_or_default::<PM, P, R>(&self)?;
+        let incremental = read_snapshot_or_default::<PM, P>(&self)?;
 
         for snapshot_path in self.get_snapshot_files()? {
             std::fs::remove_file(snapshot_path)?;
         }
 
         debug!("generating snapshot without the previous one");
-        let regenerated =
-            read_snapshot_or_default::<PM, P, R>(&self)?;
+        let regenerated = read_snapshot_or_default::<PM, P>(&self)?;
 
         for (k, v) in &regenerated.pt {
             if !incremental.pt.contains_key(&k) {
@@ -758,10 +750,6 @@ impl Config {
         assert_eq!(
             incremental.free, regenerated.free,
             "snapshot free list diverged"
-        );
-        assert_eq!(
-            incremental.recovery, regenerated.recovery,
-            "snapshot recovery diverged"
         );
 
         /*

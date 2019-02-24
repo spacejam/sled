@@ -1103,8 +1103,7 @@ impl Tree {
         };
 
         debug_delay();
-        let cas = meta::cas_root(
-            &self.context.pagecache,
+        let cas = self.context.pagecache.cas_root_in_meta(
             self.tree_id.clone(),
             Some(from),
             Some(new_root_pid),

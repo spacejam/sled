@@ -8,12 +8,11 @@ use sled_sync::Guard;
 /// that any state which is removed from a shared in-memory
 /// data structure is not destroyed until all possible
 /// readers have concluded.
-pub struct Tx<'a, PM, P, R>
+pub struct Tx<'a, PM, P>
 where
     PM: 'a,
     P: 'static + Send + Sync,
-    R: 'a,
 {
     _guard: Guard,
-    _pc: &'a PageCache<PM, P, R>,
+    _pc: &'a PageCache<PM, P>,
 }
