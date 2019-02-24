@@ -1209,7 +1209,13 @@ where
 
                 // during recovery we add 2x the interval. we only
                 // need to block if the last one wasn't stable yet.
-                if key.last_lsn() > self.stable_lsn() {
+                let gap = (necessary_persists - persisted) / interval;
+                if gap > 1 {
+                    // this is the most pessimistic case, hopefully
+                    // we only ever hit this on the first ID generation
+                    // of a process's lifetime
+                    self.flush()?;
+                } else if key.last_lsn() > self.stable_lsn() {
                     self.make_stable(key.last_lsn())?;
                 }
 
