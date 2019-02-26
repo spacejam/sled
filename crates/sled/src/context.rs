@@ -26,11 +26,14 @@ impl Drop for Context {
 
         #[cfg(feature = "event_log")]
         {
-            let guard = pin();
+            let tx = Tx {
+                guard: pin(),
+                ts: 0,
+            };
 
             self.config.event_log.meta_before_restart(
                 self.pagecache
-                    .meta(&guard)
+                    .meta(&tx)
                     .expect("should get meta under test")
                     .clone(),
             );
