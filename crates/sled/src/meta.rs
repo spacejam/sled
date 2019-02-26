@@ -7,12 +7,12 @@ use super::*;
 pub(crate) fn open_tree<'a>(
     context: Arc<Context>,
     name: Vec<u8>,
-    guard: &'a Guard,
+    tx: &'a Tx,
 ) -> Result<Tree, ()> {
     // we loop because creating this Tree may race with
     // concurrent attempts to open the same one.
     loop {
-        match context.pagecache.meta_pid_for_name(&name, guard) {
+        match context.pagecache.meta_pid_for_name(&name, tx) {
             Ok(root_id) => {
                 return Ok(Tree {
                     tree_id: name,
@@ -26,7 +26,7 @@ pub(crate) fn open_tree<'a>(
         }
 
         // set up empty leaf
-        let leaf_id = context.pagecache.allocate(&guard)?;
+        let leaf_id = context.pagecache.allocate(&tx)?;
         trace!(
             "allocated pid {} for leaf in new_tree for namespace {:?}",
             leaf_id,
@@ -43,11 +43,11 @@ pub(crate) fn open_tree<'a>(
 
         let leaf_ptr = context
             .pagecache
-            .replace(leaf_id, TreePtr::allocated(), leaf, &guard)
+            .replace(leaf_id, TreePtr::allocated(), leaf, &tx)
             .map_err(|e| e.danger_cast())?;
 
         // set up root index
-        let root_id = context.pagecache.allocate(&guard)?;
+        let root_id = context.pagecache.allocate(&tx)?;
 
         debug!(
             "allocated pid {} for root of new_tree {:?}",
@@ -67,14 +67,14 @@ pub(crate) fn open_tree<'a>(
 
         let root_ptr = context
             .pagecache
-            .replace(root_id, TreePtr::allocated(), root, &guard)
+            .replace(root_id, TreePtr::allocated(), root, &tx)
             .map_err(|e| e.danger_cast())?;
 
         let res = context.pagecache.cas_root_in_meta(
             name.clone(),
             None,
             Some(root_id),
-            guard,
+            tx,
         );
 
         if res.is_err() {
@@ -82,8 +82,7 @@ pub(crate) fn open_tree<'a>(
             // install it.
             let mut root_ptr = root_ptr;
             loop {
-                match context.pagecache.free(root_id, root_ptr, guard)
-                {
+                match context.pagecache.free(root_id, root_ptr, tx) {
                     Ok(_) => break,
                     Err(Error::CasFailed(Some(actual_ptr))) => {
                         root_ptr = actual_ptr.clone()
@@ -97,8 +96,7 @@ pub(crate) fn open_tree<'a>(
 
             let mut leaf_ptr = leaf_ptr;
             loop {
-                match context.pagecache.free(leaf_id, leaf_ptr, guard)
-                {
+                match context.pagecache.free(leaf_id, leaf_ptr, tx) {
                     Ok(_) => break,
                     Err(Error::CasFailed(Some(actual_ptr))) => {
                         leaf_ptr = actual_ptr.clone()

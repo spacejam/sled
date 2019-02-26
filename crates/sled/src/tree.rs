@@ -16,7 +16,7 @@ use super::*;
 type Path<'g> = Vec<(&'g Frag, TreePtr<'g>)>;
 
 impl<'a> IntoIterator for &'a Tree {
-    type Item = Result<(Vec<u8>, PinnedValue), ()>;
+    type Item = Result<(Vec<u8>, IVec), ()>;
     type IntoIter = Iter<'a>;
 
     fn into_iter(self) -> Iter<'a> {
@@ -125,24 +125,23 @@ impl Tree {
         &self,
         key: K,
     ) -> Result<bool, ()> {
-        self.get(key).map(|r| r.is_some())
+        self.get(key).map(|v| v.is_some())
     }
 
     /// Retrieve a value from the `Tree` if it exists.
     pub fn get<K: AsRef<[u8]>>(
         &self,
         key: K,
-    ) -> Result<Option<PinnedValue>, ()> {
+    ) -> Result<Option<IVec>, ()> {
         let _measure = Measure::new(&M.tree_get);
 
-        let guard = pin();
-        let pin_guard = pin();
+        let tx = self.context.pagecache.begin()?;
 
-        let (_, ret) = self.get_internal(key.as_ref(), &guard)?;
+        let (_, ret) = self.get_internal(key.as_ref(), &tx)?;
 
-        guard.flush();
+        tx.flush();
 
-        Ok(ret.map(|r| PinnedValue::new(r, pin_guard)))
+        Ok(ret)
     }
 
     /// Retrieve the key and value before the provided key,
@@ -170,15 +169,14 @@ impl Tree {
     pub fn get_lt<K: AsRef<[u8]>>(
         &self,
         key: K,
-    ) -> Result<Option<(Key, PinnedValue)>, ()> {
+    ) -> Result<Option<(Key, IVec)>, ()> {
         let _measure = Measure::new(&M.tree_get);
 
-        // the double guard is a hack that maintains
+        // the double tx is a hack that maintains
         // correctness of the ret value
-        let guard = pin();
-        let pin_guard = pin();
+        let tx = self.context.pagecache.begin()?;
 
-        let path = self.path_for_key(key.as_ref(), &guard)?;
+        let path = self.path_for_key(key.as_ref(), &tx)?;
         let (last_frag, _tree_ptr) = path
             .last()
             .expect("path should always contain a last element");
@@ -207,11 +205,11 @@ impl Tree {
             let (encoded_key, v) = &items[idx];
             Some((
                 prefix_decode(&last_node.lo, &*encoded_key),
-                PinnedValue::new(&*v, pin_guard),
+                v.clone(),
             ))
         };
 
-        guard.flush();
+        tx.flush();
 
         Ok(ret)
     }
@@ -240,13 +238,12 @@ impl Tree {
     pub fn get_gt<K: AsRef<[u8]>>(
         &self,
         key: K,
-    ) -> Result<Option<(Key, PinnedValue)>, ()> {
+    ) -> Result<Option<(Key, IVec)>, ()> {
         let _measure = Measure::new(&M.tree_get);
 
-        let guard = pin();
-        let pin_guard = pin();
+        let tx = self.context.pagecache.begin()?;
 
-        let path = self.path_for_key(key.as_ref(), &guard)?;
+        let path = self.path_for_key(key.as_ref(), &tx)?;
         let (last_frag, _tree_ptr) = path
             .last()
             .expect("path should always contain a last element");
@@ -276,11 +273,11 @@ impl Tree {
             let (encoded_key, v) = &items[idx];
             Some((
                 prefix_decode(&last_node.lo, &*encoded_key),
-                PinnedValue::new(&*v, pin_guard),
+                v.clone(),
             ))
         };
 
-        guard.flush();
+        tx.flush();
 
         Ok(ret)
     }
@@ -315,15 +312,13 @@ impl Tree {
         key: K,
         old: Option<&[u8]>,
         new: Option<Value>,
-    ) -> Result<(), Option<PinnedValue>> {
+    ) -> Result<(), Option<IVec>> {
         trace!("casing key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_cas);
 
         if self.context.read_only {
             return Err(Error::CasFailed(None));
         }
-
-        let guard = pin();
 
         let new_ivec = if let Some(ref n) = new {
             Some(IVec::from(&**n))
@@ -334,15 +329,23 @@ impl Tree {
         // we need to retry caps until old != cur, since just because
         // cap fails it doesn't mean our value was changed.
         loop {
-            let pin_guard = pin();
+            let tx = self
+                .context
+                .pagecache
+                .begin()
+                .map_err(|e| e.danger_cast())?;
             let (mut path, cur) = self
-                .get_internal(key.as_ref(), &guard)
+                .get_internal(key.as_ref(), &tx)
                 .map_err(|e| e.danger_cast())?;
 
-            if old != cur.map(|v| &*v) {
-                return Err(Error::CasFailed(
-                    cur.map(|c| PinnedValue::new(c, pin_guard)),
-                ));
+            let matches = match (old, &cur) {
+                (None, None) => true,
+                (Some(o), Some(ref c)) => o == &**c,
+                _ => false,
+            };
+
+            if !matches {
+                return Err(Error::CasFailed(cur.clone()));
             }
 
             let mut subscriber_reservation =
@@ -364,7 +367,7 @@ impl Tree {
             let link = self
                 .context
                 .pagecache
-                .link(node_id, leaf_ptr, frag, &guard);
+                .link(node_id, leaf_ptr, frag, &tx);
             match link {
                 Ok(_) => {
                     if let Some(res) = subscriber_reservation.take() {
@@ -382,12 +385,12 @@ impl Tree {
                         res.complete(event);
                     }
 
-                    guard.flush();
+                    tx.flush();
                     return Ok(());
                 }
                 Err(Error::CasFailed(_)) => {}
                 Err(other) => {
-                    guard.flush();
+                    tx.flush();
                     return Err(other.danger_cast());
                 }
             }
@@ -401,7 +404,7 @@ impl Tree {
         &self,
         key: K,
         value: Value,
-    ) -> Result<Option<PinnedValue>, ()> {
+    ) -> Result<Option<IVec>, ()> {
         trace!("setting key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_set);
 
@@ -411,14 +414,12 @@ impl Tree {
             ));
         }
 
-        let guard = pin();
-
         let val_ivec: IVec = IVec::from(&*value);
 
         loop {
-            let pin_guard = pin();
+            let tx = self.context.pagecache.begin()?;
             let (mut path, existing_key) =
-                self.get_internal(key.as_ref(), &guard)?;
+                self.get_internal(key.as_ref(), &tx)?;
             let (leaf_frag, leaf_ptr) = path.pop().expect(
                 "path_for_key should always return a path \
                  of length >= 2 (root + leaf)",
@@ -434,7 +435,7 @@ impl Tree {
                 node.id,
                 leaf_ptr.clone(),
                 frag.clone(),
-                &guard,
+                &tx,
             );
             match link {
                 Ok(new_cas_key) => {
@@ -464,18 +465,16 @@ impl Tree {
                         );
                         let frag2 = Cow::Owned(Frag::Base(node2));
                         path2.push((frag2, new_cas_key));
-                        self.recursive_split(path2, &guard)?;
+                        self.recursive_split(path2, &tx)?;
                     }
 
-                    guard.flush();
+                    tx.flush();
 
-                    return Ok(existing_key.map(move |r| {
-                        PinnedValue::new(r, pin_guard)
-                    }));
+                    return Ok(existing_key);
                 }
                 Err(Error::CasFailed(_)) => {}
                 Err(other) => {
-                    guard.flush();
+                    tx.flush();
 
                     return Err(other.danger_cast());
                 }
@@ -498,19 +497,18 @@ impl Tree {
     pub fn del<K: AsRef<[u8]>>(
         &self,
         key: K,
-    ) -> Result<Option<PinnedValue>, ()> {
+    ) -> Result<Option<IVec>, ()> {
         let _measure = Measure::new(&M.tree_del);
 
         if self.context.read_only {
             return Ok(None);
         }
 
-        let guard = pin();
-        let pin_guard = pin();
-
         loop {
+            let tx = self.context.pagecache.begin()?;
+
             let (mut path, existing_key) =
-                self.get_internal(key.as_ref(), &guard)?;
+                self.get_internal(key.as_ref(), &tx)?;
 
             let mut subscriber_reservation =
                 self.subscriptions.reserve(&key);
@@ -527,7 +525,7 @@ impl Tree {
                 node.id,
                 leaf_ptr.clone(),
                 frag,
-                &guard,
+                &tx,
             );
 
             match link {
@@ -541,10 +539,8 @@ impl Tree {
                         res.complete(event);
                     }
 
-                    guard.flush();
-                    return Ok(existing_key.map(move |r| {
-                        PinnedValue::new(r, pin_guard)
-                    }));
+                    tx.flush();
+                    return Ok(existing_key);
                 }
                 Err(Error::CasFailed(_)) => {
                     M.tree_looped();
@@ -621,12 +617,12 @@ impl Tree {
             ));
         }
 
-        let guard = pin();
-
         let val_ivec = IVec::from(&*value);
 
         loop {
-            let mut path = self.path_for_key(key.as_ref(), &guard)?;
+            let tx = self.context.pagecache.begin()?;
+
+            let mut path = self.path_for_key(key.as_ref(), &tx)?;
             let (leaf_frag, leaf_ptr) = path.pop().expect(
                 "path_for_key should always return a path \
                  of length >= 2 (root + leaf)",
@@ -643,7 +639,7 @@ impl Tree {
                 node.id,
                 leaf_ptr.clone(),
                 frag.clone(),
-                &guard,
+                &tx,
             );
             match link {
                 Ok(new_cas_key) => {
@@ -672,14 +668,14 @@ impl Tree {
                         );
                         let frag2 = Cow::Owned(Frag::Base(node2));
                         path2.push((frag2, new_cas_key));
-                        self.recursive_split(path2, &guard)?;
+                        self.recursive_split(path2, &tx)?;
                     }
-                    guard.flush();
+                    tx.flush();
                     return Ok(());
                 }
                 Err(Error::CasFailed(_)) => {}
                 Err(other) => {
-                    guard.flush();
+                    tx.flush();
                     return Err(other.danger_cast());
                 }
             }
@@ -787,7 +783,25 @@ impl Tree {
     {
         let _measure = Measure::new(&M.tree_scan);
 
-        let guard = pin();
+        let tx = match self.context.pagecache.begin() {
+            Ok(tx) => tx,
+            Err(e) => {
+                return Iter {
+                    tree: &self,
+                    tx: Tx {
+                        ts: 0,
+                        guard: pin(),
+                    },
+                    broken: Some(e),
+                    done: false,
+                    hi: ops::Bound::Unbounded,
+                    lo: ops::Bound::Unbounded,
+                    is_scan: false,
+                    last_key: None,
+                    last_id: None,
+                };
+            }
+        };
 
         let lo = match range.start_bound() {
             ops::Bound::Included(ref end) => {
@@ -817,7 +831,7 @@ impl Tree {
             broken: None,
             done: false,
             is_scan: false,
-            guard,
+            tx,
         }
     }
 
@@ -864,7 +878,7 @@ impl Tree {
     pub fn values<'a, K>(
         &'a self,
         key: K,
-    ) -> impl 'a + DoubleEndedIterator<Item = Result<PinnedValue, ()>>
+    ) -> impl 'a + DoubleEndedIterator<Item = Result<IVec, ()>>
     where
         K: AsRef<[u8]>,
     {
@@ -886,7 +900,7 @@ impl Tree {
     fn recursive_split<'g>(
         &self,
         path: Vec<(Cow<'g, Frag>, TreePtr<'g>)>,
-        guard: &'g Guard,
+        tx: &'g Tx,
     ) -> Result<(), ()> {
         // to split, we pop the path, see if it's in need of split, recurse up
         // two-phase: (in prep for lock-free, not necessary for single threaded)
@@ -923,7 +937,7 @@ impl Tree {
             if node.should_split(adjusted_max(height)) {
                 // try to child split
                 if let Ok(parent_split) =
-                    self.child_split(node, node_ptr.clone(), guard)
+                    self.child_split(node, node_ptr.clone(), tx)
                 {
                     // now try to parent split
                     let parent_node = parent_frag.unwrap_base();
@@ -932,7 +946,7 @@ impl Tree {
                         parent_node.id,
                         parent_ptr.clone(),
                         parent_split.clone(),
-                        guard,
+                        tx,
                     );
 
                     match res {
@@ -953,14 +967,14 @@ impl Tree {
 
         if root_node.should_split(adjusted_max(path.len())) {
             if let Ok(parent_split) =
-                self.child_split(&root_node, root_ptr.clone(), guard)
+                self.child_split(&root_node, root_ptr.clone(), tx)
             {
                 return self
                     .root_hoist(
                         root_node.id,
                         parent_split.to,
                         parent_split.at.clone(),
-                        guard,
+                        tx,
                     )
                     .map(|_| ())
                     .map_err(|e| e.danger_cast());
@@ -974,9 +988,9 @@ impl Tree {
         &self,
         node: &Node,
         node_cas_key: TreePtr<'g>,
-        guard: &'g Guard,
+        tx: &'g Tx,
     ) -> Result<ParentSplit, ()> {
-        let new_pid = self.context.pagecache.allocate(guard)?;
+        let new_pid = self.context.pagecache.allocate(tx)?;
         trace!("allocated pid {} in child_split", new_pid);
 
         // split the node in half
@@ -999,7 +1013,7 @@ impl Tree {
                 new_pid,
                 PagePtr::allocated(),
                 Frag::Base(rhs.clone()),
-                guard,
+                tx,
             );
 
             // This may fail if the pagecache has relocated
@@ -1016,7 +1030,7 @@ impl Tree {
             node.id,
             node_cas_key,
             child_split,
-            guard,
+            tx,
         );
 
         match link {
@@ -1025,7 +1039,7 @@ impl Tree {
                 // if we failed, don't follow through with the parent split
                 let mut ptr = new_ptr.clone();
                 loop {
-                    match self.context.pagecache.free(new_pid, ptr, guard) {
+                    match self.context.pagecache.free(new_pid, ptr, tx) {
                         Err(Error::CasFailed(Some(actual_ptr))) => {
                             ptr = actual_ptr.clone()
                         }
@@ -1047,14 +1061,14 @@ impl Tree {
         parent_node_id: usize,
         parent_cas_key: TreePtr<'g>,
         parent_split: ParentSplit,
-        guard: &'g Guard,
+        tx: &'g Tx,
     ) -> Result<TreePtr<'g>, Option<TreePtr<'g>>> {
         // install parent split
         self.context.pagecache.link(
             parent_node_id,
             parent_cas_key,
             Frag::ParentSplit(parent_split.clone()),
-            guard,
+            tx,
         )
     }
 
@@ -1063,10 +1077,10 @@ impl Tree {
         from: PageId,
         to: PageId,
         at: IVec,
-        guard: &'g Guard,
+        tx: &'g Tx,
     ) -> Result<(), ()> {
         // hoist new root, pointing to lhs & rhs
-        let new_root_pid = self.context.pagecache.allocate(guard)?;
+        let new_root_pid = self.context.pagecache.allocate(tx)?;
         debug!("allocated pid {} in root_hoist", new_root_pid);
 
         let root_lo = b"";
@@ -1090,7 +1104,7 @@ impl Tree {
                 new_root_pid,
                 PagePtr::allocated(),
                 new_root.clone(),
-                guard,
+                tx,
             );
 
             // This may fail if the pagecache has relocated
@@ -1107,7 +1121,7 @@ impl Tree {
             self.tree_id.clone(),
             Some(from),
             Some(new_root_pid),
-            guard,
+            tx,
         );
         if cas.is_ok() {
             debug!(
@@ -1137,7 +1151,7 @@ impl Tree {
                 match self.context.pagecache.free(
                     new_root_pid,
                     ptr,
-                    guard,
+                    tx,
                 ) {
                     Ok(_) => break,
                     Err(Error::CasFailed(Some(actual_ptr))) => {
@@ -1157,9 +1171,9 @@ impl Tree {
     fn get_internal<'g, K: AsRef<[u8]>>(
         &self,
         key: K,
-        guard: &'g Guard,
-    ) -> Result<(Path<'g>, Option<&'g [u8]>), ()> {
-        let path = self.path_for_key(key.as_ref(), guard)?;
+        tx: &'g Tx,
+    ) -> Result<(Path<'g>, Option<IVec>), ()> {
+        let path = self.path_for_key(key.as_ref(), tx)?;
 
         let ret = path.last().and_then(|(last_frag, _tree_ptr)| {
             let last_node = last_frag.unwrap_base();
@@ -1172,7 +1186,7 @@ impl Tree {
                 })
                 .ok();
 
-            search.map(|idx| &*items[idx].1)
+            search.map(|idx| items[idx].1.clone())
         });
 
         Ok((path, ret))
@@ -1180,9 +1194,9 @@ impl Tree {
 
     #[doc(hidden)]
     pub fn key_debug_str<K: AsRef<[u8]>>(&self, key: K) -> String {
-        let guard = pin();
+        let tx = self.context.pagecache.begin().unwrap();
 
-        let path = self.path_for_key(key.as_ref(), &guard).expect(
+        let path = self.path_for_key(key.as_ref(), &tx).expect(
             "path_for_key should always return at least 2 nodes, \
              even if the key being searched for is not present",
         );
@@ -1191,7 +1205,7 @@ impl Tree {
             ret.push_str(&*format!("\n{:?}", node));
         }
 
-        guard.flush();
+        tx.flush();
 
         ret
     }
@@ -1201,7 +1215,7 @@ impl Tree {
     pub(crate) fn path_for_key<'g, K: AsRef<[u8]>>(
         &self,
         key: K,
-        guard: &'g Guard,
+        tx: &'g Tx,
     ) -> Result<Vec<(&'g Frag, TreePtr<'g>)>, ()> {
         let _measure = Measure::new(&M.tree_traverse);
 
@@ -1223,7 +1237,7 @@ impl Tree {
             let get_cursor = self
                 .context
                 .pagecache
-                .get(cursor, guard)
+                .get(cursor, tx)
                 .map_err(|e| e.danger_cast())?;
 
             if get_cursor.is_free() || get_cursor.is_allocated() {
@@ -1287,7 +1301,7 @@ impl Tree {
                     parent_node.id,
                     parent_ptr.clone(),
                     ps,
-                    guard,
+                    tx,
                 );
                 match link {
                     Ok(_new_key) => {
@@ -1351,14 +1365,14 @@ impl Tree {
         &self,
         mut leftmost_chain: Vec<PageId>,
     ) -> Result<(), ()> {
-        let guard = pin();
+        let tx = self.context.pagecache.begin()?;
 
         while let Some(mut pid) = leftmost_chain.pop() {
             loop {
                 let get_cursor = self
                     .context
                     .pagecache
-                    .get(pid, &guard)
+                    .get(pid, &tx)
                     .map_err(|e| e.danger_cast())?;
 
                 let (node, key) = match get_cursor {
@@ -1380,7 +1394,7 @@ impl Tree {
                 let ret = self.context.pagecache.free(
                     pid,
                     key.clone(),
-                    &guard,
+                    &tx,
                 );
 
                 match ret {
@@ -1408,7 +1422,7 @@ impl Debug for Tree {
         &self,
         f: &mut fmt::Formatter<'_>,
     ) -> std::result::Result<(), fmt::Error> {
-        let guard = pin();
+        let tx = self.context.pagecache.begin().unwrap();
 
         let mut pid = self.root.load(SeqCst);
         let mut left_most = pid;
@@ -1419,7 +1433,7 @@ impl Debug for Tree {
         f.write_str("\tlevel 0:\n")?;
 
         loop {
-            let get_res = self.context.pagecache.get(pid, &guard);
+            let get_res = self.context.pagecache.get(pid, &tx);
             let node = match get_res {
                 Ok(PageGet::Materialized(ref frag, ref _ptr)) => {
                     frag.unwrap_base()
@@ -1439,7 +1453,7 @@ impl Debug for Tree {
             } else {
                 // we've traversed our level, time to bump down
                 let left_get_res =
-                    self.context.pagecache.get(left_most, &guard);
+                    self.context.pagecache.get(left_most, &tx);
                 let left_node = match left_get_res {
                     Ok(PageGet::Materialized(mf, ..)) => {
                         mf.unwrap_base()
@@ -1475,7 +1489,7 @@ impl Debug for Tree {
             }
         }
 
-        guard.flush();
+        tx.flush();
 
         Ok(())
     }
