@@ -35,7 +35,7 @@ pub struct Iter<'a> {
     pub(super) last_key: Option<Key>,
     pub(super) broken: Option<Error<()>>,
     pub(super) done: bool,
-    pub(super) guard: Guard,
+    pub(super) tx: Tx,
     pub(super) is_scan: bool,
     // TODO we have to refactor this in light of pages being deleted
 }
@@ -52,14 +52,13 @@ impl<'a> Iter<'a> {
     /// Iterate over the values of this Tree
     pub fn values(
         self,
-    ) -> impl 'a + DoubleEndedIterator<Item = Result<PinnedValue, ()>>
-    {
+    ) -> impl 'a + DoubleEndedIterator<Item = Result<IVec, ()>> {
         self.map(|r| r.map(|(_k, v)| v))
     }
 }
 
 impl<'a> Iterator for Iter<'a> {
-    type Item = Result<(Vec<u8>, PinnedValue), ()>;
+    type Item = Result<(Vec<u8>, IVec), ()>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let _measure = Measure::new(&M.tree_scan);
@@ -92,12 +91,10 @@ impl<'a> Iterator for Iter<'a> {
                 self.last_key, start, self.tree,
             );
 
-            let value_guard = pin();
-
             if self.last_id.is_none() {
                 // initialize iterator based on valid bound
                 let path_res =
-                    self.tree.path_for_key(start, &self.guard);
+                    self.tree.path_for_key(start, &self.tx);
                 if let Err(e) = path_res {
                     error!("iteration failed: {:?}", e);
                     self.done = true;
@@ -125,7 +122,7 @@ impl<'a> Iterator for Iter<'a> {
                 .tree
                 .context
                 .pagecache
-                .get(last_id, &self.guard)
+                .get(last_id, &self.tx)
                 .map(|page_get| page_get.unwrap());
 
             if let Err(e) = res {
@@ -179,10 +176,7 @@ impl<'a> Iterator for Iter<'a> {
 
                 self.last_key = Some(decoded_k.clone());
 
-                let ret = Ok((
-                    decoded_k,
-                    PinnedValue::new(&*v, value_guard),
-                ));
+                let ret = Ok((decoded_k, v.clone()));
                 return Some(ret);
             }
 
@@ -259,13 +253,10 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 self.last_key, end, start_bound, self.tree,
             );
 
-            let value_guard = pin();
-
             if self.last_id.is_none() {
                 // initialize iterator based on valid bound
 
-                let path_res =
-                    self.tree.path_for_key(end, &self.guard);
+                let path_res = self.tree.path_for_key(end, &self.tx);
                 if let Err(e) = path_res {
                     error!("iteration failed: {:?}", e);
                     self.done = true;
@@ -285,7 +276,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                         .tree
                         .context
                         .pagecache
-                        .get(last_node.next.unwrap(), &self.guard)
+                        .get(last_node.next.unwrap(), &self.tx)
                         .map(|page_get| page_get.unwrap());
 
                     if let Err(e) = res {
@@ -313,7 +304,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 .tree
                 .context
                 .pagecache
-                .get(last_id, &self.guard)
+                .get(last_id, &self.tx)
                 .map(|page_get| page_get.unwrap());
 
             if let Err(e) = res {
@@ -382,10 +373,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
 
                 self.last_key = Some(decoded_k.clone());
 
-                let ret = Ok((
-                    decoded_k,
-                    PinnedValue::new(&*v, value_guard),
-                ));
+                let ret = Ok((decoded_k, v.clone()));
                 return Some(ret);
             }
 
@@ -406,7 +394,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 // fast-forwarding through the right child pointers
                 // if we went too far to the left.
                 let pred = possible_predecessor(prefix)?;
-                match self.tree.path_for_key(pred, &self.guard) {
+                match self.tree.path_for_key(pred, &self.tx) {
                     Err(e) => {
                         error!("next_back iteration failed: {:?}", e);
                         self.done = true;
@@ -429,7 +417,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                     .tree
                     .context
                     .pagecache
-                    .get(next_node.next?, &self.guard)
+                    .get(next_node.next?, &self.tx)
                     .map(|page_get| page_get.unwrap());
 
                 if let Err(e) = res {

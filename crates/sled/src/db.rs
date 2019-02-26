@@ -40,14 +40,14 @@ impl Db {
     pub fn start(config: Config) -> Result<Db, ()> {
         let _measure = Measure::new(&M.tree_start);
 
-        let guard = pin();
-
         let context = Arc::new(Context::start(config)?);
+
+        let tx = context.pagecache.begin()?;
 
         let default = Arc::new(meta::open_tree(
             context.clone(),
             DEFAULT_TREE_ID.to_vec(),
-            &guard,
+            &tx,
         )?);
 
         let ret = Db {
@@ -59,7 +59,7 @@ impl Db {
         let mut tenants = ret.tenants.write().unwrap();
 
         for (id, root) in
-            context.pagecache.meta(&guard)?.tenants().into_iter()
+            context.pagecache.meta(&tx)?.tenants().into_iter()
         {
             let tree = Tree {
                 tree_id: id.clone(),
@@ -76,7 +76,7 @@ impl Db {
         context.event_log.meta_after_restart(
             context
                 .pagecache
-                .meta(&guard)
+                .meta(&tx)
                 .expect("should be able to get meta under test")
                 .clone(),
         );
@@ -93,13 +93,13 @@ impl Db {
         }
         drop(tenants);
 
-        let guard = pin();
+        let tx = self.context.pagecache.begin()?;
 
         let mut tenants = self.tenants.write().unwrap();
         let tree = Arc::new(meta::open_tree(
             self.context.clone(),
             name.clone(),
-            &guard,
+            &tx,
         )?);
         tenants.insert(name, tree.clone());
         drop(tenants);
@@ -123,15 +123,13 @@ impl Db {
             return Ok(false);
         };
 
-        let guard = pin();
+        let tx = self.context.pagecache.begin()?;
 
-        let mut root_id = self
-            .context
-            .pagecache
-            .meta_pid_for_name(&name, &guard)?;
+        let mut root_id =
+            self.context.pagecache.meta_pid_for_name(&name, &tx)?;
 
         let leftmost_chain: Vec<PageId> = tree
-            .path_for_key(b"", &guard)?
+            .path_for_key(b"", &tx)?
             .into_iter()
             .map(|(frag, _tp)| frag.unwrap_base().id)
             .collect();
@@ -144,7 +142,7 @@ impl Db {
                     name.to_vec(),
                     Some(root_id),
                     None,
-                    &guard,
+                    &tx,
                 )
                 .map_err(|e| e.danger_cast());
 
@@ -165,7 +163,7 @@ impl Db {
 
         tree.gc_pages(leftmost_chain)?;
 
-        guard.flush();
+        tx.flush();
 
         Ok(true)
     }

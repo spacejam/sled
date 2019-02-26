@@ -40,7 +40,6 @@ mod ivec;
 mod materializer;
 mod meta;
 mod node;
-mod pinned_value;
 mod prefix;
 mod subscription;
 mod tree;
@@ -51,7 +50,7 @@ pub use {
     self::{
         db::Db,
         iter::Iter,
-        pinned_value::PinnedValue,
+        ivec::IVec,
         subscription::{Event, Subscriber},
         tree::Tree,
     },
@@ -67,7 +66,6 @@ use {
         context::Context,
         data::Data,
         frag::{ChildSplit, Frag, ParentSplit},
-        ivec::IVec,
         materializer::BLinkMaterializer,
         node::Node,
         prefix::{
@@ -79,10 +77,10 @@ use {
     log::{debug, error, trace},
     pagecache::{
         Materializer, Measure, MergeOperator, PageCache, PageGet,
-        PageId, M,
+        PageId, Tx, M,
     },
     serde::{Deserialize, Serialize},
-    sled_sync::{debug_delay, pin, Guard},
+    sled_sync::{debug_delay, pin},
 };
 
 type Key = Vec<u8>;

@@ -5,11 +5,16 @@ use std::{fmt, ops::Deref, sync::Arc};
 const CUTOFF: usize = std::mem::size_of::<&[u8]>() - 1;
 type Inner = [u8; CUTOFF];
 
+/// A buffer that may either be inline or remote and protected
+/// by an Arc
 #[derive(Clone, Ord, Eq, Serialize, Deserialize)]
-pub(crate) enum IVec {
+pub enum IVec {
+    /// An inlined small value
     Inline(u8, Inner),
+    /// A heap-allocated value protected by an Arc
     Remote {
         #[serde(with = "ser")]
+        /// The value protected by an Arc
         buf: Arc<[u8]>,
     },
 }
@@ -31,9 +36,7 @@ impl IVec {
 
             IVec::Inline(sz, data)
         } else {
-            IVec::Remote {
-                buf: v.into(),
-            }
+            IVec::Remote { buf: v.into() }
         }
     }
 
