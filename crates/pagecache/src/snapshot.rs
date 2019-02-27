@@ -438,7 +438,7 @@ fn read_snapshot(
     #[cfg(feature = "zstd")]
     let bytes = if config.use_compression {
         let len_expected: u64 = arr_to_u64(&len_expected_bytes);
-        decompress(&*buf, len_expected as isize).unwrap()
+        decompress(&*buf, len_expected as usize).unwrap()
     } else {
         buf
     };
