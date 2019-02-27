@@ -78,8 +78,10 @@ impl Deref for IVec {
     #[inline]
     fn deref(&self) -> &[u8] {
         match self {
-            IVec::Inline(sz, buf) => &buf[..*sz as usize],
-            IVec::Remote { buf } => &*buf,
+            IVec::Inline(sz, buf) => unsafe {
+                buf.get_unchecked(..*sz as usize)
+            },
+            IVec::Remote { buf } => buf.as_ref(),
         }
     }
 }
