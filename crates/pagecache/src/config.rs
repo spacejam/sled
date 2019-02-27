@@ -414,8 +414,8 @@ impl ConfigBuilder {
 
     fn write_config(&self) -> Result<(), ()> {
         let bytes = serialize(&*self).unwrap();
-        let crc: u64 = crc64(&*bytes);
-        let crc_arr = u64_to_arr(crc);
+        let crc: u32 = crc32(&*bytes);
+        let crc_arr = u32_to_arr(crc);
 
         let path = self.config_path();
 
@@ -461,12 +461,12 @@ impl ConfigBuilder {
         let len = buf.len();
         buf.split_off(len - 8);
 
-        let mut crc_arr = [0u8; 8];
+        let mut crc_arr = [0u8; 4];
         f.seek(std::io::SeekFrom::End(-8)).unwrap();
         f.read_exact(&mut crc_arr).unwrap();
-        let crc_expected = arr_to_u64(&crc_arr);
+        let crc_expected = arr_to_u32(&crc_arr);
 
-        let crc_actual = crc64(&*buf);
+        let crc_actual = crc32(&*buf);
 
         if crc_expected != crc_actual {
             warn!(

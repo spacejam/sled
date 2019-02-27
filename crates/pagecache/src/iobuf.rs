@@ -309,9 +309,7 @@ impl IoBufs {
 
         assert_eq!(out_buf.len(), to_reserve.len() + MSG_HEADER_LEN);
 
-        let mut hasher = crc32fast::Hasher::new();
-        hasher.update(to_reserve);
-        let crc32 = hasher.finalize();
+        let crc32 = crc32(to_reserve);
 
         let header = MessageHeader {
             kind: if over_blob_threshold || is_blob_rewrite {

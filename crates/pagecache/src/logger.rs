@@ -303,7 +303,7 @@ impl LogRead {
 }
 
 // NB we use a lot of xors below to differentiate between zeroed out
-// data on disk and an lsn or crc16 of 0
+// data on disk and an lsn or crc32 of 0
 
 impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
     fn from(buf: [u8; MSG_HEADER_LEN]) -> MessageHeader {
@@ -315,21 +315,18 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
             _ => MessageKind::Corrupted,
         };
 
-        let lsn = arr_to_u64(&buf[1..9]) as Lsn;
-        let len = arr_to_u32(&buf[9..13]);
+        unsafe {
+            let lsn = arr_to_u64(buf.get_unchecked(1..9)) as Lsn;
+            let len = arr_to_u32(buf.get_unchecked(9..13));
+            let crc32 =
+                arr_to_u32(buf.get_unchecked(13..)) ^ 0xFFFF_FFFF;
 
-        let crc32 = arr_to_u32(&[
-            buf[13] ^ 0xFF,
-            buf[14] ^ 0xFF,
-            buf[15] ^ 0xFF,
-            buf[16] ^ 0xFF,
-        ]);
-
-        MessageHeader {
-            kind,
-            lsn,
-            len: len as usize,
-            crc32,
+            MessageHeader {
+                kind,
+                lsn,
+                len: len as usize,
+                crc32,
+            }
         }
     }
 }
@@ -345,33 +342,28 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
             MessageKind::Corrupted => EVIL_BYTE,
         };
 
-        // NB LSN actually gets written after the reservation
-        // for the item is claimed, when we actually know the lsn,
-        // in PageCache::reserve.
+        assert!(self.len <= std::u32::MAX as usize);
         let lsn_arr = u64_to_arr(self.lsn as u64);
+        let len_arr = u32_to_arr(self.len as u32);
+        let crc32_arr = u32_to_arr(self.crc32 ^ 0xFFFF_FFFF);
+
         unsafe {
             std::ptr::copy_nonoverlapping(
                 lsn_arr.as_ptr(),
-                buf[1..].as_mut_ptr(),
+                buf.as_mut_ptr().offset(1),
                 std::mem::size_of::<u64>(),
             );
-        }
-
-        assert!(self.len <= std::u32::MAX as usize);
-        let len_arr = u32_to_arr(self.len as u32);
-        unsafe {
             std::ptr::copy_nonoverlapping(
                 len_arr.as_ptr(),
-                buf[9..].as_mut_ptr(),
+                buf.as_mut_ptr().offset(9),
+                std::mem::size_of::<u32>(),
+            );
+            std::ptr::copy_nonoverlapping(
+                crc32_arr.as_ptr(),
+                buf.as_mut_ptr().offset(13),
                 std::mem::size_of::<u32>(),
             );
         }
-
-        let crc32_arr = u32_to_arr(self.crc32);
-        buf[13] = crc32_arr[0] ^ 0xFF;
-        buf[14] = crc32_arr[1] ^ 0xFF;
-        buf[15] = crc32_arr[2] ^ 0xFF;
-        buf[16] = crc32_arr[3] ^ 0xFF;
 
         buf
     }
@@ -379,16 +371,19 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
 
 impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
     fn from(buf: [u8; SEG_HEADER_LEN]) -> SegmentHeader {
-        let crc16 = [buf[0] ^ 0xFF, buf[1] ^ 0xFF];
+        unsafe {
+            let crc32_header =
+                arr_to_u32(buf.get_unchecked(0..4)) ^ 0xFFFF_FFFF;
 
-        let xor_lsn = arr_to_u64(&buf[2..10]) as Lsn;
-        let lsn = xor_lsn ^ 0xFFFF_FFFF;
+            let xor_lsn = arr_to_u64(buf.get_unchecked(4..12)) as Lsn;
+            let lsn = xor_lsn ^ 0xFFFF_FFFF_FFFF_FFF;
 
-        let crc16_tested = crc16_arr(&buf[2..10]);
+            let crc32_tested = crc32(&buf[4..12]);
 
-        SegmentHeader {
-            lsn,
-            ok: crc16_tested == crc16,
+            SegmentHeader {
+                lsn,
+                ok: crc32_tested == crc32_header,
+            }
         }
     }
 }
@@ -397,20 +392,22 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
     fn into(self) -> [u8; SEG_HEADER_LEN] {
         let mut buf = [0u8; SEG_HEADER_LEN];
 
-        let xor_lsn = self.lsn ^ 0xFFFF_FFFF;
+        let xor_lsn = self.lsn ^ 0xFFFF_FFFF_FFFF_FFF;
         let lsn_arr = u64_to_arr(xor_lsn as u64);
+        let crc32 = u32_to_arr(crc32(&lsn_arr) ^ 0xFFFF_FFFF);
+
         unsafe {
             std::ptr::copy_nonoverlapping(
+                crc32.as_ptr(),
+                buf.as_mut_ptr(),
+                std::mem::size_of::<u64>(),
+            );
+            std::ptr::copy_nonoverlapping(
                 lsn_arr.as_ptr(),
-                buf[2..].as_mut_ptr(),
+                buf.as_mut_ptr().offset(4),
                 std::mem::size_of::<u64>(),
             );
         }
-
-        let crc16 = crc16_arr(&lsn_arr);
-
-        buf[0] = crc16[0] ^ 0xFF;
-        buf[1] = crc16[1] ^ 0xFF;
 
         buf
     }
@@ -418,16 +415,19 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
 
 impl From<[u8; SEG_TRAILER_LEN]> for SegmentTrailer {
     fn from(buf: [u8; SEG_TRAILER_LEN]) -> SegmentTrailer {
-        let crc16 = [buf[0] ^ 0xFF, buf[1] ^ 0xFF];
+        unsafe {
+            let crc32_header =
+                arr_to_u32(buf.get_unchecked(0..4)) ^ 0xFFFF_FFFF;
 
-        let xor_lsn = arr_to_u64(&buf[2..10]) as Lsn;
-        let lsn = xor_lsn ^ 0xFFFF_FFFF;
+            let xor_lsn = arr_to_u64(buf.get_unchecked(4..12)) as Lsn;
+            let lsn = xor_lsn ^ 0xFFFF_FFFF_FFFF_FFF;
 
-        let crc16_tested = crc16_arr(&buf[2..10]);
+            let crc32_tested = crc32(&buf[4..12]);
 
-        SegmentTrailer {
-            lsn,
-            ok: crc16_tested == crc16,
+            SegmentTrailer {
+                lsn,
+                ok: crc32_tested == crc32_header,
+            }
         }
     }
 }
@@ -436,19 +436,22 @@ impl Into<[u8; SEG_TRAILER_LEN]> for SegmentTrailer {
     fn into(self) -> [u8; SEG_TRAILER_LEN] {
         let mut buf = [0u8; SEG_TRAILER_LEN];
 
-        let xor_lsn = self.lsn ^ 0xFFFF_FFFF;
+        let xor_lsn = self.lsn ^ 0xFFFF_FFFF_FFFF_FFF;
         let lsn_arr = u64_to_arr(xor_lsn as u64);
+        let crc32 = u32_to_arr(crc32(&lsn_arr) ^ 0xFFFF_FFFF);
+
         unsafe {
             std::ptr::copy_nonoverlapping(
+                crc32.as_ptr(),
+                buf.as_mut_ptr(),
+                std::mem::size_of::<u32>(),
+            );
+            std::ptr::copy_nonoverlapping(
                 lsn_arr.as_ptr(),
-                buf[2..].as_mut_ptr(),
+                buf.as_mut_ptr().offset(4),
                 std::mem::size_of::<u64>(),
             );
         }
-
-        let crc16 = crc16_arr(&lsn_arr);
-        buf[0] = crc16[0] ^ 0xFF;
-        buf[1] = crc16[1] ^ 0xFF;
 
         buf
     }
