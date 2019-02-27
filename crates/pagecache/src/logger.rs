@@ -400,7 +400,7 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
             std::ptr::copy_nonoverlapping(
                 crc32.as_ptr(),
                 buf.as_mut_ptr(),
-                std::mem::size_of::<u64>(),
+                std::mem::size_of::<u32>(),
             );
             std::ptr::copy_nonoverlapping(
                 lsn_arr.as_ptr(),
