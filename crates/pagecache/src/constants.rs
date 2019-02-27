@@ -24,7 +24,7 @@ pub const SEGMENT_PAD: u8 = 3;
 pub const EVIL_BYTE: u8 = 6;
 
 /// Log messages have a header of this length.
-pub const MSG_HEADER_LEN: usize = 15;
+pub const MSG_HEADER_LEN: usize = 17;
 
 /// Log segments have a header of this length.
 pub const SEG_HEADER_LEN: usize = 10;

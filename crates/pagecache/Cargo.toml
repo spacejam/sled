@@ -23,10 +23,6 @@ no_inline = ["sled_sync/no_inline"]
 event_log = []
 measure_allocs = []
 
-[dependencies.serde]
-version = "1.0"
-features = ["derive"]
-
 [dependencies]
 bincode = "1.0"
 fs2 = "0.4"
@@ -41,6 +37,11 @@ sled_sync = { version = "0.3", path = "../sled_sync" }
 zstd = { version = "0.4", optional = true }
 fail = { version = "0.2", optional = true }
 rand = { version = "0.6", optional = true }
+crc32fast = "1.1.2"
+
+[dependencies.serde]
+version = "1.0"
+features = ["derive"]
 
 [dependencies.historian]
 version = "3.0"

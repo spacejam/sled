@@ -190,7 +190,7 @@ pub(crate) struct MessageHeader {
     pub(crate) kind: MessageKind,
     pub(crate) lsn: Lsn,
     pub(crate) len: usize,
-    pub(crate) crc16: [u8; 2],
+    pub(crate) crc32: u32,
 }
 
 /// A segment's header contains the new base LSN and a reference
@@ -318,13 +318,18 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
         let lsn = arr_to_u64(&buf[1..9]) as Lsn;
         let len = arr_to_u32(&buf[9..13]);
 
-        let crc16 = [buf[13] ^ 0xFF, buf[14] ^ 0xFF];
+        let crc32 = arr_to_u32(&[
+            buf[13] ^ 0xFF,
+            buf[14] ^ 0xFF,
+            buf[15] ^ 0xFF,
+            buf[16] ^ 0xFF,
+        ]);
 
         MessageHeader {
             kind,
             lsn,
             len: len as usize,
-            crc16,
+            crc32,
         }
     }
 }
@@ -362,8 +367,11 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
             );
         }
 
-        buf[13] = self.crc16[0] ^ 0xFF;
-        buf[14] = self.crc16[1] ^ 0xFF;
+        let crc32_arr = u32_to_arr(self.crc32);
+        buf[13] = crc32_arr[0] ^ 0xFF;
+        buf[14] = crc32_arr[1] ^ 0xFF;
+        buf[15] = crc32_arr[2] ^ 0xFF;
+        buf[16] = crc32_arr[3] ^ 0xFF;
 
         buf
     }

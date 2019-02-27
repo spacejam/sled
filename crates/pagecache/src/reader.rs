@@ -126,8 +126,11 @@ impl LogReader for File {
         }
         self.pread_exact(&mut buf, lid + MSG_HEADER_LEN as LogId)?;
 
-        let checksum = crc16_arr(&buf);
-        if checksum != header.crc16 {
+        let mut hasher = crc32fast::Hasher::new();
+        hasher.update(&buf);
+        let crc32 = hasher.finalize();
+
+        if crc32 != header.crc32 {
             trace!(
                 "read a message with a bad checksum with header {:?}",
                 header
