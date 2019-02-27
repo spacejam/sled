@@ -141,7 +141,7 @@ impl Tree {
 
         tx.flush();
 
-        Ok(ret)
+        Ok(ret.cloned())
     }
 
     /// Retrieve the key and value before the provided key,
@@ -340,12 +340,12 @@ impl Tree {
 
             let matches = match (old, &cur) {
                 (None, None) => true,
-                (Some(o), Some(ref c)) => o == &**c,
+                (Some(o), Some(ref c)) => o == &***c,
                 _ => false,
             };
 
             if !matches {
-                return Err(Error::CasFailed(cur.clone()));
+                return Err(Error::CasFailed(cur.cloned()));
             }
 
             let mut subscriber_reservation =
@@ -418,7 +418,7 @@ impl Tree {
 
         loop {
             let tx = self.context.pagecache.begin()?;
-            let (mut path, existing_key) =
+            let (mut path, existing_val) =
                 self.get_internal(key.as_ref(), &tx)?;
             let (leaf_frag, leaf_ptr) = path.pop().expect(
                 "path_for_key should always return a path \
@@ -470,7 +470,7 @@ impl Tree {
 
                     tx.flush();
 
-                    return Ok(existing_key);
+                    return Ok(existing_val.cloned());
                 }
                 Err(Error::CasFailed(_)) => {}
                 Err(other) => {
@@ -507,7 +507,7 @@ impl Tree {
         loop {
             let tx = self.context.pagecache.begin()?;
 
-            let (mut path, existing_key) =
+            let (mut path, existing_val) =
                 self.get_internal(key.as_ref(), &tx)?;
 
             let mut subscriber_reservation =
@@ -540,7 +540,7 @@ impl Tree {
                     }
 
                     tx.flush();
-                    return Ok(existing_key);
+                    return Ok(existing_val.cloned());
                 }
                 Err(Error::CasFailed(_)) => {
                     M.tree_looped();
@@ -1172,7 +1172,7 @@ impl Tree {
         &self,
         key: K,
         tx: &'g Tx,
-    ) -> Result<(Path<'g>, Option<IVec>), ()> {
+    ) -> Result<(Path<'g>, Option<&'g IVec>), ()> {
         let path = self.path_for_key(key.as_ref(), tx)?;
 
         let ret = path.last().and_then(|(last_frag, _tree_ptr)| {
@@ -1186,7 +1186,7 @@ impl Tree {
                 })
                 .ok();
 
-            search.map(|idx| items[idx].1.clone())
+            search.map(|idx| &items[idx].1)
         });
 
         Ok((path, ret))

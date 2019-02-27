@@ -564,7 +564,7 @@ impl Drop for Config {
             }
 
             // Our files are temporary, so nuke them.
-            warn!(
+            debug!(
                 "removing temporary storage file {}",
                 self.inner.path.to_string_lossy()
             );
