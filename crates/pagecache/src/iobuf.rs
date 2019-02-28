@@ -993,9 +993,7 @@ impl IoBufs {
             // would place our header.
             let padding_bytes = vec![EVIL_BYTE; pad_len];
 
-            let mut hasher = crc32fast::Hasher::new();
-            hasher.update(&padding_bytes);
-            let crc32 = hasher.finalize();
+            let crc32 = crc32(&padding_bytes);
 
             let header = MessageHeader {
                 kind: MessageKind::Pad,
