@@ -968,6 +968,15 @@ fn log_bug_24() {
     );
 }
 
+#[test]
+fn log_bug_25() {
+    // postmortem: we were making assertions
+    // about invalid segments during our initial
+    // segment scan
+    use self::Op::*;
+    prop_log_works(vec![Restart], false);
+}
+
 fn _log_bug_() {
     // postmortem: TEMPLATE
     // use self::Op::*;
