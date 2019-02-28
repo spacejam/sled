@@ -18,7 +18,7 @@ pub(crate) fn read_blob(
 
     let mut f = f_res?;
 
-    let mut crc_expected_bytes = [0u8; BLOB_INLINE_LEN];
+    let mut crc_expected_bytes = [0u8; std::mem::size_of::<u32>()];
 
     if let Err(e) = f.read_exact(&mut crc_expected_bytes) {
         debug!(
@@ -29,7 +29,7 @@ pub(crate) fn read_blob(
         return Err(e.into());
     }
 
-    let crc_expected = arr_to_u64(&crc_expected_bytes);
+    let crc_expected = arr_to_u32(&crc_expected_bytes);
 
     let mut buf = vec![];
     if let Err(e) = f.read_to_end(&mut buf) {
@@ -41,7 +41,7 @@ pub(crate) fn read_blob(
         return Err(e.into());
     }
 
-    let crc_actual = crc64(&*buf);
+    let crc_actual = crc32(&buf);
 
     if crc_expected != crc_actual {
         warn!("blob {} failed crc check!", blob_ptr);
@@ -65,7 +65,7 @@ pub(crate) fn write_blob(
         .create_new(true)
         .open(&path)?;
 
-    let crc = u64_to_arr(crc64(data));
+    let crc = u32_to_arr(crc32(data));
 
     f.write_all(&crc)
         .and_then(|_| f.write_all(data))

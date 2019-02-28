@@ -309,7 +309,7 @@ impl IoBufs {
 
         assert_eq!(out_buf.len(), to_reserve.len() + MSG_HEADER_LEN);
 
-        let crc16 = crc16_arr(to_reserve);
+        let crc32 = crc32(to_reserve);
 
         let header = MessageHeader {
             kind: if over_blob_threshold || is_blob_rewrite {
@@ -319,7 +319,7 @@ impl IoBufs {
             },
             lsn,
             len: to_reserve.len(),
-            crc16,
+            crc32,
         };
 
         let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
@@ -992,13 +992,16 @@ impl IoBufs {
             // take the crc of the random bytes already after where we
             // would place our header.
             let padding_bytes = vec![EVIL_BYTE; pad_len];
-            let crc16 = crc16_arr(&*padding_bytes);
+
+            let mut hasher = crc32fast::Hasher::new();
+            hasher.update(&padding_bytes);
+            let crc32 = hasher.finalize();
 
             let header = MessageHeader {
                 kind: MessageKind::Pad,
                 lsn: base_lsn + offset as Lsn,
                 len: pad_len,
-                crc16,
+                crc32,
             };
 
             let header_bytes: [u8; MSG_HEADER_LEN] = header.into();

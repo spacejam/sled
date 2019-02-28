@@ -41,9 +41,9 @@ mod constants;
 mod diskptr;
 mod ds;
 mod flusher;
-mod hash;
 mod iobuf;
 mod iterator;
+mod map;
 mod materializer;
 mod meta;
 mod metrics;
@@ -98,7 +98,6 @@ use self::metrics::uptime;
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
     ds::{node_from_frag_vec, Lru, Node, Stack, StackIter},
-    hash::{crc16_arr, crc64},
     iobuf::IoBufs,
     iterator::LogIter,
     metrics::{clock, measure},
@@ -113,10 +112,10 @@ use self::{
 pub use self::{
     config::{Config, ConfigBuilder},
     diskptr::DiskPtr,
-    hash::map::{
+    logger::{Log, LogRead},
+    map::{
         FastMap1, FastMap4, FastMap8, FastSet1, FastSet4, FastSet8,
     },
-    logger::{Log, LogRead},
     materializer::{Materializer, NullMaterializer},
     meta::Meta,
     metrics::M,
@@ -161,3 +160,9 @@ pub type MergeOperator = fn(
     last_value: Option<&[u8]>,
     new_merge: &[u8],
 ) -> Option<Vec<u8>>;
+
+pub(crate) fn crc32(buf: &[u8]) -> u32 {
+    let mut hasher = crc32fast::Hasher::new();
+    hasher.update(&buf);
+    hasher.finalize()
+}

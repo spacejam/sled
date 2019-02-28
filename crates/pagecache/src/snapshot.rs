@@ -1,4 +1,4 @@
-use std::io::{Read, Seek, Write};
+use std::io::{Read, Write};
 
 #[cfg(feature = "zstd")]
 use zstd::block::{compress, decompress};
@@ -412,7 +412,7 @@ fn read_snapshot(
     let path = candidates.pop().unwrap();
 
     let mut f = std::fs::OpenOptions::new().read(true).open(&path)?;
-    if f.metadata()?.len() <= 16 {
+    if f.metadata()?.len() <= 12 {
         warn!("empty/corrupt snapshot file found");
         return Ok(None);
     }
@@ -420,29 +420,24 @@ fn read_snapshot(
     let mut buf = vec![];
     f.read_to_end(&mut buf)?;
     let len = buf.len();
-    buf.split_off(len - 16);
-
     let mut len_expected_bytes = [0u8; 8];
-    f.seek(std::io::SeekFrom::End(-16)).unwrap();
-    f.read_exact(&mut len_expected_bytes).unwrap();
+    len_expected_bytes.copy_from_slice(&buf[len - 12..len - 4]);
 
-    let mut crc_expected_bytes = [0u8; 8];
-    f.seek(std::io::SeekFrom::End(-8)).unwrap();
-    f.read_exact(&mut crc_expected_bytes).unwrap();
-    let crc_expected: u64 =
-        unsafe { std::mem::transmute(crc_expected_bytes) };
+    let mut crc_expected_bytes = [0u8; 4];
+    crc_expected_bytes.copy_from_slice(&buf[len - 4..]);
 
-    let crc_actual = crc64(&*buf);
+    buf.split_off(len - 12);
+    let crc_expected: u32 = arr_to_u32(&crc_expected_bytes);
+
+    let crc_actual = crc32(&buf);
 
     if crc_expected != crc_actual {
-        error!("crc for snapshot file {:?} failed!", path);
         return Ok(None);
     }
 
     #[cfg(feature = "zstd")]
     let bytes = if config.use_compression {
-        let len_expected: u64 =
-            unsafe { std::mem::transmute(len_expected_bytes) };
+        let len_expected: u64 = arr_to_u64(&len_expected_bytes);
         decompress(&*buf, len_expected as usize).unwrap()
     } else {
         buf
@@ -471,10 +466,8 @@ pub(crate) fn write_snapshot(
     #[cfg(not(feature = "zstd"))]
     let bytes = raw_bytes;
 
-    let crc64: [u8; 8] =
-        unsafe { std::mem::transmute(crc64(&*bytes)) };
-    let len_bytes: [u8; 8] =
-        unsafe { std::mem::transmute(decompressed_len as u64) };
+    let crc32: [u8; 4] = u32_to_arr(crc32(&bytes));
+    let len_bytes: [u8; 8] = u64_to_arr(decompressed_len as u64);
 
     let path_1_suffix =
         format!("snap.{:016X}.in___motion", snapshot.max_lsn);
@@ -499,7 +492,7 @@ pub(crate) fn write_snapshot(
     maybe_fail!("snap write len");
     f.write_all(&len_bytes)?;
     maybe_fail!("snap write crc");
-    f.write_all(&crc64)?;
+    f.write_all(&crc32)?;
     f.sync_all()?;
     maybe_fail!("snap write post");
 

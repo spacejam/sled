@@ -1097,3 +1097,18 @@ fn tree_bug_22() {
         false,
     );
 }
+
+#[test]
+fn tree_bug_23() {
+    // postmortem: when rewriting CRC handling code, mis-sized the blob crc
+    prop_tree_matches_btreemap(
+        vec![
+            Set(Key(vec![6; 5120]), 92),
+            Restart,
+            Scan(Key(vec![]), 35),
+        ],
+        0,
+        0,
+        false,
+    );
+}
