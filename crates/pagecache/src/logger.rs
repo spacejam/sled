@@ -376,7 +376,7 @@ impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
                 arr_to_u32(buf.get_unchecked(0..4)) ^ 0xFFFF_FFFF;
 
             let xor_lsn = arr_to_u64(buf.get_unchecked(4..12)) as Lsn;
-            let lsn = xor_lsn ^ 0xFFFF_FFFF_FFFF_FFF;
+            let lsn = xor_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
 
             let crc32_tested = crc32(&buf[4..12]);
 
@@ -392,7 +392,7 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
     fn into(self) -> [u8; SEG_HEADER_LEN] {
         let mut buf = [0u8; SEG_HEADER_LEN];
 
-        let xor_lsn = self.lsn ^ 0xFFFF_FFFF_FFFF_FFF;
+        let xor_lsn = self.lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
         let lsn_arr = u64_to_arr(xor_lsn as u64);
         let crc32 = u32_to_arr(crc32(&lsn_arr) ^ 0xFFFF_FFFF);
 
@@ -420,7 +420,7 @@ impl From<[u8; SEG_TRAILER_LEN]> for SegmentTrailer {
                 arr_to_u32(buf.get_unchecked(0..4)) ^ 0xFFFF_FFFF;
 
             let xor_lsn = arr_to_u64(buf.get_unchecked(4..12)) as Lsn;
-            let lsn = xor_lsn ^ 0xFFFF_FFFF_FFFF_FFF;
+            let lsn = xor_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
 
             let crc32_tested = crc32(&buf[4..12]);
 
@@ -436,7 +436,7 @@ impl Into<[u8; SEG_TRAILER_LEN]> for SegmentTrailer {
     fn into(self) -> [u8; SEG_TRAILER_LEN] {
         let mut buf = [0u8; SEG_TRAILER_LEN];
 
-        let xor_lsn = self.lsn ^ 0xFFFF_FFFF_FFFF_FFF;
+        let xor_lsn = self.lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
         let lsn_arr = u64_to_arr(xor_lsn as u64);
         let crc32 = u32_to_arr(crc32(&lsn_arr) ^ 0xFFFF_FFFF);
 

@@ -1412,11 +1412,12 @@ fn scan_segment_lsns(
             cursor,
             segment
         );
-        assert_ne!(segment.lsn, Lsn::max_value());
         if segment.ok
             && (segment.lsn != 0 || cursor == 0)
             && segment.lsn >= min
         {
+            assert_ne!(segment.lsn, Lsn::max_value());
+
             // if lsn is 0, this is free
             assert!(
                 !ordering.contains_key(&segment.lsn),
