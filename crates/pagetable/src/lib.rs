@@ -1,5 +1,6 @@
-/// A simple wait-free, grow-only pagetable, assumes a dense keyspace.
-use std::sync::atomic::Ordering::SeqCst;
+//! A simple wait-free, grow-only pagetable, assumes a dense keyspace.
+
+use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 
 use sled_sync::{
     debug_delay, unprotected, Atomic, Guard, Owned, Shared,
@@ -30,8 +31,9 @@ fn split_fanout(i: usize) -> (usize, usize) {
     assert!(
         i <= 1 << (FANFACTOR * 2),
         "trying to access key of {}, which is \
-         higher than 2 ^ 36",
-        i
+         higher than 2 ^ {}",
+        i,
+        (FANFACTOR * 2)
     );
 
     let left = i >> FANFACTOR;
@@ -110,18 +112,15 @@ where
 
         debug_delay();
 
-        match tip.compare_and_set(old, new, SeqCst, guard) {
-            Ok(_) => {
-                if !old.is_null() {
-                    unsafe {
-                        let old_owned = old.into_owned();
-                        guard.defer(move || old_owned);
-                    }
-                }
-                Ok(new)
+        let _ = tip.compare_and_set(old, new, SeqCst, guard)
+            .map_err(|e| e.current)?;
+
+        if !old.is_null() {
+            unsafe {
+                guard.defer_destroy(old);
             }
-            Err(e) => Err(e.current),
         }
+        Ok(new)
     }
 
     /// Try to get a value from the tree.
@@ -151,8 +150,7 @@ where
         let old = self.swap(pid, Shared::null(), guard);
         if !old.is_null() {
             unsafe {
-                let old_owned = old.into_owned();
-                guard.defer(move || old_owned);
+                guard.defer_destroy(old);
             }
             Some(old)
         } else {
@@ -207,7 +205,7 @@ where
 {
     fn drop(&mut self) {
         unsafe {
-            let head = self.head.load(SeqCst, &unprotected()).as_raw()
+            let head = self.head.load(Relaxed, &unprotected()).as_raw()
                 as usize;
             drop(Box::from_raw(head as *mut Node1<T>));
         }
@@ -220,7 +218,7 @@ impl<T: Send + 'static> Drop for Node1<T> {
             let children: Vec<*const Node2<T>> = self
                 .children
                 .iter()
-                .map(|c| c.load(SeqCst, &unprotected()).as_raw())
+                .map(|c| c.load(Relaxed, &unprotected()).as_raw())
                 .filter(|c| !c.is_null())
                 .collect();
 
@@ -237,7 +235,7 @@ impl<T: Send + 'static> Drop for Node2<T> {
             let children: Vec<*const T> = self
                 .children
                 .iter()
-                .map(|c| c.load(SeqCst, &unprotected()).as_raw())
+                .map(|c| c.load(Relaxed, &unprotected()).as_raw())
                 .filter(|c| !c.is_null())
                 .collect();
 
