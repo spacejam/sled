@@ -80,7 +80,7 @@ use {
         PageId, Tx, M,
     },
     serde::{Deserialize, Serialize},
-    sled_sync::{debug_delay, pin},
+    sled_sync::debug_delay,
 };
 
 type Key = Vec<u8>;
