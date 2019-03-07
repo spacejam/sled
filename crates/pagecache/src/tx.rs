@@ -11,6 +11,16 @@ pub struct Tx {
     pub ts: u64,
 }
 
+impl Tx {
+    /// Creates a new Tx with a given timestamp.
+    pub fn new(ts: u64) -> Self {
+        Self {
+            guard: pin(),
+            ts: ts,
+        }
+    }
+}
+
 impl std::ops::Deref for Tx {
     type Target = Guard;
 

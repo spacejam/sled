@@ -132,8 +132,7 @@ impl<T: Send + Sync + 'static> Stack<T> {
                         .compare_and_set(head, next, SeqCst, &guard)
                     {
                         Ok(_) => unsafe {
-                            let head_owned = head.into_owned();
-                            guard.defer(move || head_owned);
+                            guard.defer_destroy(head);
                             return Some(ptr::read(&h.inner));
                         },
                         Err(h) => head = h.current,
@@ -191,8 +190,7 @@ impl<T: Send + Sync + 'static> Stack<T> {
             Ok(_) => {
                 if !old.is_null() {
                     unsafe {
-                        let old_owned = old.into_owned();
-                        guard.defer(move || old_owned)
+                        guard.defer_destroy(old);
                     };
                 }
                 Ok(new)

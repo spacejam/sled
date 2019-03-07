@@ -432,10 +432,7 @@ where
         let mut pages_before_restart: HashMap<PageId, Vec<DiskPtr>> =
             HashMap::new();
 
-        let tx = Tx {
-            guard: pin(),
-            ts: 0,
-        };
+        let tx = Tx::new(0);
 
         for pid in 0..self.max_pid.load(SeqCst) {
             let pte = self.inner.get(pid, &tx);
@@ -587,10 +584,7 @@ where
 
     /// Begins a transaction.
     pub fn begin(&self) -> Result<Tx, ()> {
-        Ok(Tx {
-            guard: pin(),
-            ts: self.generate_id()?,
-        })
+        Ok(Tx::new(self.generate_id()?))
     }
 
     /// Create a new page, trying to reuse old freed pages if possible
@@ -1158,10 +1152,7 @@ where
             persisted = self.idgen_persists.load(SeqCst);
             if persisted < necessary_persists {
                 // it's our responsibility to persist up to our ID
-                let tx = Tx {
-                    guard: pin(),
-                    ts: u64::max_value(),
-                };
+                let tx = Tx::new(u64::max_value());
                 let page_get = self
                     .get(COUNTER_PID, &tx)
                     .map_err(|e| e.danger_cast())?;
@@ -1916,10 +1907,7 @@ where
                 Vec<DiskPtr>,
             > = HashMap::new();
 
-            let tx = Tx {
-                guard: pin(),
-                ts: 0,
-            };
+            let tx = Tx::new(0);
 
             for pid in 0..self.max_pid.load(SeqCst) {
                 let pte = self.inner.get(pid, &tx);

@@ -26,10 +26,7 @@ impl Drop for Context {
 
         #[cfg(feature = "event_log")]
         {
-            let tx = Tx {
-                guard: pin(),
-                ts: 0,
-            };
+            let tx = Tx::new(0);
 
             self.config.event_log.meta_before_restart(
                 self.pagecache
