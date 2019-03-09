@@ -788,10 +788,7 @@ impl Tree {
             Err(e) => {
                 return Iter {
                     tree: &self,
-                    tx: Tx {
-                        ts: 0,
-                        guard: pin(),
-                    },
+                    tx: Tx::new(0),
                     broken: Some(e),
                     done: false,
                     hi: ops::Bound::Unbounded,

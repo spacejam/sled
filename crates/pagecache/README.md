@@ -11,7 +11,7 @@ A construction kit for databases. Provides a lock-free log store and pagecache.
 * [LLAMA: A Cache/Storage Subsystem for Modern Hardware](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/llama-vldb2013.pdf)
 * [The Design and Implementation of a Log-Structured File System](https://people.eecs.berkeley.edu/~brewer/cs262/LFS.pdf)
 
-```
+```rust
 use pagecache::{PagePtr, pin, Materializer};
 
 pub struct TestMaterializer;
