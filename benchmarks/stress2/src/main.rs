@@ -1,12 +1,3 @@
-#[macro_use]
-extern crate serde_derive;
-extern crate docopt;
-extern crate env_logger;
-extern crate jemallocator;
-extern crate log;
-extern crate rand;
-extern crate sled;
-
 use std::{
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -17,6 +8,7 @@ use std::{
 
 use docopt::Docopt;
 use rand::{thread_rng, Rng};
+use serde::Deserialize;
 
 #[cfg_attr(
     // only enable jemalloc on linux and macos by default
