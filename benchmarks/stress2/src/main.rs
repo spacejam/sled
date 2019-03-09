@@ -18,7 +18,14 @@ use std::{
 use docopt::Docopt;
 use rand::{thread_rng, Rng};
 
-#[cfg_attr(not(feature = "no_jemalloc"), global_allocator)]
+#[cfg_attr(
+    // only enable jemalloc on linux and macos by default
+    all(
+        any(target_os = "linux", target_os = "macos"),
+        not(feature = "no_jemalloc"),
+    ),
+    global_allocator
+)]
 static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 static TOTAL: AtomicUsize = AtomicUsize::new(0);
