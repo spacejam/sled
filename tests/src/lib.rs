@@ -6,7 +6,15 @@ extern crate sled;
 
 pub mod tree;
 
-#[cfg_attr(not(feature = "no_jemalloc"), global_allocator)]
+#[cfg_attr(
+    // only enable jemalloc on linux and macos by default
+    // for fast tests
+    all(
+        any(target_os = "linux", target_os = "macos"),
+        not(feature = "no_jemalloc"),
+    ),
+    global_allocator
+)]
 static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 pub fn setup_logger() {
