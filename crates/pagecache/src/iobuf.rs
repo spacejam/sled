@@ -309,8 +309,6 @@ impl IoBufs {
 
         assert_eq!(out_buf.len(), to_reserve.len() + MSG_HEADER_LEN);
 
-        let crc32 = crc32(to_reserve);
-
         let header = MessageHeader {
             kind: if over_blob_threshold || is_blob_rewrite {
                 MessageKind::Blob
@@ -319,7 +317,7 @@ impl IoBufs {
             },
             lsn,
             len: to_reserve.len(),
-            crc32,
+            crc32: 0,
         };
 
         let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
@@ -336,6 +334,19 @@ impl IoBufs {
                 to_reserve.len(),
             );
         }
+
+        // apply the crc32 to the entire message, header included
+        let crc32 = crc32(out_buf);
+        let crc32_arr = u32_to_arr(crc32 ^ 0xFFFF_FFFF);
+
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                crc32_arr.as_ptr(),
+                out_buf.as_mut_ptr().offset(13),
+                std::mem::size_of::<u32>(),
+            );
+        }
+
         Ok(())
     }
 
