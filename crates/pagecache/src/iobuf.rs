@@ -289,7 +289,7 @@ impl IoBufs {
         lsn: Lsn,
         over_blob_threshold: bool,
         is_blob_rewrite: bool,
-    ) -> Result<(), ()> {
+    ) -> Result<crc32fast::Hasher, ()> {
         let mut _blob_ptr = None;
 
         let to_reserve = if over_blob_threshold {
@@ -335,19 +335,12 @@ impl IoBufs {
             );
         }
 
-        // apply the crc32 to the entire message, header included
-        let crc32 = crc32(out_buf);
-        let crc32_arr = u32_to_arr(crc32 ^ 0xFFFF_FFFF);
-
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                crc32_arr.as_ptr(),
-                out_buf.as_mut_ptr().offset(13),
-                std::mem::size_of::<u32>(),
-            );
-        }
-
-        Ok(())
+        // apply the crc32 to the buffer, as we will
+        // calculate the rest for the header later in
+        // Reservation::flush
+        let mut hasher = crc32fast::Hasher::new();
+        hasher.update(to_reserve);
+        Ok(hasher)
     }
 
     /// blocks until the specified log sequence number has
@@ -941,13 +934,13 @@ impl IoBufs {
 
             self.bump_max_reserved_lsn(reservation_lsn);
 
-            self.encapsulate(
+            let partial_checksum = Some(self.encapsulate(
                 &*buf,
                 destination,
                 reservation_lsn,
                 over_blob_threshold,
                 is_blob_rewrite,
-            )?;
+            )?);
 
             M.log_reservation_success();
 
@@ -963,7 +956,8 @@ impl IoBufs {
             return Ok(Reservation {
                 idx,
                 iobufs: &self,
-                success_byte: &mut destination[0],
+                header_buf: &mut destination[..MSG_HEADER_LEN],
+                partial_checksum,
                 flushed: false,
                 lsn: reservation_lsn,
                 ptr,

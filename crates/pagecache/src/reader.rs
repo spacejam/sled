@@ -68,14 +68,10 @@ impl LogReader for File {
         unsafe {
             std::ptr::write_bytes(
                 msg_header_buf.as_mut_ptr().offset(13),
-                0,
+                0xFF,
                 std::mem::size_of::<u32>(),
             );
         }
-
-        let mut hasher = crc32fast::Hasher::new();
-
-        hasher.update(&msg_header_buf);
 
         let _measure = Measure::new(&M.read);
         let segment_len = config.io_buf_size;
@@ -130,7 +126,12 @@ impl LogReader for File {
         }
         self.pread_exact(&mut buf, lid + MSG_HEADER_LEN as LogId)?;
 
+        // calculate the CRC32, calculating the hash on the
+        // header afterwards
+        let mut hasher = crc32fast::Hasher::new();
         hasher.update(&buf);
+        hasher.update(&msg_header_buf);
+
         let crc32 = hasher.finalize();
 
         if crc32 != header.crc32 {

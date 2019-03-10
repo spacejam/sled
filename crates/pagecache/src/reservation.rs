@@ -7,7 +7,8 @@ use super::*;
 pub struct Reservation<'a> {
     pub(super) iobufs: &'a IoBufs,
     pub(super) idx: usize,
-    pub(super) success_byte: &'a mut u8,
+    pub(super) header_buf: &'a mut [u8],
+    pub(super) partial_checksum: Option<crc32fast::Hasher>,
     pub(super) flushed: bool,
     pub(super) ptr: DiskPtr,
     pub(super) lsn: Lsn,
@@ -78,11 +79,23 @@ impl<'a> Reservation<'a> {
         self.flushed = true;
 
         if !valid {
-            *self.success_byte = FAILED_FLUSH;
             // don't actually zero the message, still check its hash
             // on recovery to find corruption.
+            self.header_buf[0] = FAILED_FLUSH;
         }
 
+        let mut hasher = self.partial_checksum.take().unwrap();
+        hasher.update(self.header_buf);
+        let crc32 = hasher.finalize();
+        let crc32_arr = u32_to_arr(crc32 ^ 0xFFFF_FFFF);
+
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                crc32_arr.as_ptr(),
+                self.header_buf.as_mut_ptr().offset(13),
+                std::mem::size_of::<u32>(),
+            );
+        }
         self.iobufs.exit_reservation(self.idx)?;
 
         Ok((self.lsn(), self.ptr()))
