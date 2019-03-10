@@ -452,7 +452,8 @@ fn multi_segment_log_iteration() {
 
     for i in 0..config.io_bufs * 16 {
         let expected = vec![i as u8; big_msg_sz * i];
-        let (_lsn, _lid, buf) = iter.next().expect("");
+        let (_lsn, _lid, buf) =
+            iter.next().expect("expected to read another message");
         assert_eq!(expected, buf);
     }
 }
