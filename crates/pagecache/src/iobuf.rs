@@ -1413,18 +1413,15 @@ impl IoBuf {
     }
 }
 
-#[cfg_attr(not(feature = "no_inline"), inline)]
-fn is_sealed(v: Header) -> bool {
+const fn is_sealed(v: Header) -> bool {
     v & 1 << 31 == 1 << 31
 }
 
-#[cfg_attr(not(feature = "no_inline"), inline)]
-fn mk_sealed(v: Header) -> Header {
+const fn mk_sealed(v: Header) -> Header {
     v | 1 << 31
 }
 
-#[cfg_attr(not(feature = "no_inline"), inline)]
-fn n_writers(v: Header) -> Header {
+const fn n_writers(v: Header) -> Header {
     v << 33 >> 57
 }
 
@@ -1440,8 +1437,7 @@ fn decr_writers(v: Header) -> Header {
     v - (1 << 24)
 }
 
-#[cfg_attr(not(feature = "no_inline"), inline)]
-fn offset(v: Header) -> Header {
+const fn offset(v: Header) -> Header {
     v << 40 >> 40
 }
 
@@ -1451,12 +1447,10 @@ fn bump_offset(v: Header, by: Header) -> Header {
     v + by
 }
 
-#[cfg_attr(not(feature = "no_inline"), inline)]
-fn bump_salt(v: Header) -> Header {
+const fn bump_salt(v: Header) -> Header {
     (v + (1 << 32)) & 0xFFFF_FFFF_0000_0000
 }
 
-#[cfg_attr(not(feature = "no_inline"), inline)]
-fn salt(v: Header) -> Header {
+const fn salt(v: Header) -> Header {
     v >> 32 << 32
 }
