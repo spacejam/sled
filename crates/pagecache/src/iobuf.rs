@@ -743,6 +743,8 @@ impl IoBufs {
 
         let over_blob_threshold = total_buf_len > max_buf_size;
 
+        assert!(!(over_blob_threshold && is_blob_rewrite));
+
         let inline_buf_len = if over_blob_threshold {
             MSG_HEADER_LEN + size_of::<Lsn>()
         } else {
@@ -868,15 +870,14 @@ impl IoBufs {
             // check for maxed out IO buffer writers
             if n_writers(bumped_offset) == MAX_WRITERS {
                 trace_once!(
-                "spinning because our buffer has {} writers already",
-                MAX_WRITERS
-            );
+                    "spinning because our buffer has {} writers already",
+                    MAX_WRITERS
+                );
                 backoff.snooze();
                 continue;
             }
 
             let claimed = incr_writers(bumped_offset);
-            assert!(!is_sealed(claimed));
 
             if iobuf.cas_header(header, claimed).is_err() {
                 // CAS failed, start over
@@ -887,11 +888,20 @@ impl IoBufs {
                 continue;
             }
 
+            let lid = iobuf.get_lid();
+
             // if we're giving out a reservation,
             // the writer count should be positive
             assert_ne!(n_writers(claimed), 0);
 
-            let lid = iobuf.get_lid();
+            // should never have claimed a sealed buffer
+            assert!(!is_sealed(claimed));
+
+            // MAX is used to signify unreadiness of
+            // the underlying IO buffer, and if it's
+            // still set here, the buffer counters
+            // used to choose this IO buffer
+            // were incremented in a racy way.
             assert_ne!(
                 lid as usize,
                 std::usize::MAX,
@@ -905,9 +915,10 @@ impl IoBufs {
 
             let res_start = buf_offset as usize;
             let res_end = res_start + inline_buf_len;
-            let destination = &mut (out_buf)[res_start..res_end];
 
+            let destination = &mut (out_buf)[res_start..res_end];
             let reservation_offset = lid + buf_offset;
+
             let reservation_lsn = iobuf.get_lsn() + buf_offset as Lsn;
 
             trace!(
@@ -918,8 +929,6 @@ impl IoBufs {
             );
 
             self.bump_max_reserved_lsn(reservation_lsn);
-
-            assert!(!(over_blob_threshold && is_blob_rewrite));
 
             self.encapsulate(
                 &*buf,
