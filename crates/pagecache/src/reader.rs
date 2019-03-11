@@ -18,11 +18,6 @@ pub(crate) trait LogReader {
         id: LogId,
     ) -> Result<SegmentTrailer, ()>;
 
-    fn read_message_header(
-        &self,
-        id: LogId,
-    ) -> Result<MessageHeader, ()>;
-
     fn read_message(
         &self,
         lid: LogId,
@@ -55,22 +50,29 @@ impl LogReader for File {
         Ok(seg_trailer_buf.into())
     }
 
-    fn read_message_header(
-        &self,
-        lid: LogId,
-    ) -> Result<MessageHeader, ()> {
-        let mut msg_header_buf = [0u8; MSG_HEADER_LEN];
-        self.pread_exact(&mut msg_header_buf, lid)?;
-
-        Ok(msg_header_buf.into())
-    }
-
     /// read a buffer from the disk
     fn read_message(
         &self,
         lid: LogId,
         config: &Config,
     ) -> Result<LogRead, ()> {
+        let mut msg_header_buf = [0u8; MSG_HEADER_LEN];
+
+        self.pread_exact(&mut msg_header_buf, lid)?;
+        let header: MessageHeader = msg_header_buf.into();
+
+        // we set the crc bytes to 0 because we will
+        // calculate the crc32 over all bytes other
+        // than the crc itself, including the bytes
+        // in the header.
+        unsafe {
+            std::ptr::write_bytes(
+                msg_header_buf.as_mut_ptr().offset(13),
+                0xFF,
+                std::mem::size_of::<u32>(),
+            );
+        }
+
         let _measure = Measure::new(&M.read);
         let segment_len = config.io_buf_size;
         let seg_start =
@@ -86,8 +88,6 @@ impl LogReader for File {
             - SEG_TRAILER_LEN as LogId;
 
         assert!(lid + MSG_HEADER_LEN as LogId <= ceiling);
-
-        let header = self.read_message_header(lid)?;
 
         if header.lsn as usize % segment_len
             != lid as usize % segment_len
@@ -126,7 +126,13 @@ impl LogReader for File {
         }
         self.pread_exact(&mut buf, lid + MSG_HEADER_LEN as LogId)?;
 
-        let crc32 = crc32(&buf);
+        // calculate the CRC32, calculating the hash on the
+        // header afterwards
+        let mut hasher = crc32fast::Hasher::new();
+        hasher.update(&buf);
+        hasher.update(&msg_header_buf);
+
+        let crc32 = hasher.finalize();
 
         if crc32 != header.crc32 {
             trace!(

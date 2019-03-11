@@ -289,7 +289,7 @@ impl IoBufs {
         lsn: Lsn,
         over_blob_threshold: bool,
         is_blob_rewrite: bool,
-    ) -> Result<(), ()> {
+    ) -> Result<crc32fast::Hasher, ()> {
         let mut _blob_ptr = None;
 
         let to_reserve = if over_blob_threshold {
@@ -309,8 +309,6 @@ impl IoBufs {
 
         assert_eq!(out_buf.len(), to_reserve.len() + MSG_HEADER_LEN);
 
-        let crc32 = crc32(to_reserve);
-
         let header = MessageHeader {
             kind: if over_blob_threshold || is_blob_rewrite {
                 MessageKind::Blob
@@ -319,7 +317,7 @@ impl IoBufs {
             },
             lsn,
             len: to_reserve.len(),
-            crc32,
+            crc32: 0,
         };
 
         let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
@@ -332,11 +330,18 @@ impl IoBufs {
             );
             std::ptr::copy_nonoverlapping(
                 to_reserve.as_ptr(),
-                out_buf[MSG_HEADER_LEN..].as_mut_ptr(),
+                out_buf.as_mut_ptr().offset(MSG_HEADER_LEN as isize),
                 to_reserve.len(),
             );
         }
-        Ok(())
+
+        // apply the crc32 to the buffer, as we will
+        // calculate the rest for the header later in
+        // Reservation::flush
+        let mut hasher = crc32fast::Hasher::new();
+        hasher.update(to_reserve);
+
+        Ok(hasher)
     }
 
     /// blocks until the specified log sequence number has
@@ -930,13 +935,13 @@ impl IoBufs {
 
             self.bump_max_reserved_lsn(reservation_lsn);
 
-            self.encapsulate(
+            let partial_checksum = Some(self.encapsulate(
                 &*buf,
                 destination,
                 reservation_lsn,
                 over_blob_threshold,
                 is_blob_rewrite,
-            )?;
+            )?);
 
             M.log_reservation_success();
 
@@ -952,7 +957,8 @@ impl IoBufs {
             return Ok(Reservation {
                 idx,
                 iobufs: &self,
-                success_byte: &mut destination[0],
+                header_buf: &mut destination[..MSG_HEADER_LEN],
+                partial_checksum,
                 flushed: false,
                 lsn: reservation_lsn,
                 ptr,
@@ -994,21 +1000,19 @@ impl IoBufs {
         let should_pad = unused_space >= MSG_HEADER_LEN;
 
         let total_len = if maxed && should_pad {
-            let offset = offset(header) as usize;
+            let offset = offset(header) as isize;
             let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
-            let pad_len = capacity - offset - MSG_HEADER_LEN;
+            let pad_len = capacity - offset as usize - MSG_HEADER_LEN;
 
             // take the crc of the random bytes already after where we
             // would place our header.
             let padding_bytes = vec![EVIL_BYTE; pad_len];
 
-            let crc32 = crc32(&padding_bytes);
-
             let header = MessageHeader {
                 kind: MessageKind::Pad,
                 lsn: base_lsn + offset as Lsn,
                 len: pad_len,
-                crc32,
+                crc32: 0,
             };
 
             let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
@@ -1016,13 +1020,28 @@ impl IoBufs {
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     header_bytes.as_ptr(),
-                    data[offset..].as_mut_ptr(),
+                    data.as_mut_ptr().offset(offset),
                     MSG_HEADER_LEN,
                 );
                 std::ptr::copy_nonoverlapping(
                     padding_bytes.as_ptr(),
-                    data[offset + MSG_HEADER_LEN..].as_mut_ptr(),
+                    data.as_mut_ptr()
+                        .offset(offset + MSG_HEADER_LEN as isize),
                     pad_len,
+                );
+            }
+
+            let mut hasher = crc32fast::Hasher::new();
+            hasher.update(&padding_bytes);
+            hasher.update(&header_bytes);
+            let crc32 = hasher.finalize();
+            let crc32_arr = u32_to_arr(crc32 ^ 0xFFFF_FFFF);
+
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    crc32_arr.as_ptr(),
+                    data.as_mut_ptr().offset(offset + 13),
+                    std::mem::size_of::<u32>(),
                 );
             }
 
