@@ -9,19 +9,13 @@ rm stress2.db* || true
 
 cargo build \
   --bin=stress2 \
-  --features="stress" \
+  --features="no_metrics" \
   --release
 
 valgrind \
   --tool=cachegrind \
   --cachegrind-out-file="$OUTFILE" \
-  ./target/release/stress2 \
-    --ops=100000 \
-    --get=5 
-#    --set=1 \
-#    --del=1 \
-#    --cas=1 \
-#    --scan=1 \
+  ./target/release/stress2
 
 LAST=`ls -t cachegrind.stress2.* | sed -n 2p`
 
