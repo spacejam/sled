@@ -5,13 +5,11 @@ use std::{
     sync::atomic::Ordering::SeqCst,
 };
 
-use sled_sync::{
-    debug_delay, pin, unprotected, Atomic, Guard, Owned, Shared,
-};
+use super::*;
 
 /// A node in the lock-free `Stack`.
 #[derive(Debug)]
-pub(crate) struct Node<T: Send + 'static> {
+pub struct Node<T: Send + 'static> {
     inner: T,
     next: Atomic<Node<T>>,
 }
@@ -29,7 +27,7 @@ impl<T: Send + 'static> Drop for Node<T> {
 
 /// A simple lock-free stack, with the ability to atomically
 /// append or entirely swap-out entries.
-pub(crate) struct Stack<T: Send + 'static> {
+pub struct Stack<T: Send + 'static> {
     head: Atomic<Node<T>>,
 }
 
@@ -59,7 +57,7 @@ where
     fn fmt(
         &self,
         formatter: &mut fmt::Formatter<'_>,
-    ) -> Result<(), fmt::Error> {
+    ) -> std::result::Result<(), fmt::Error> {
         let guard = pin();
         let head = self.head(&guard);
         let iter = StackIter::from_ptr(head, &guard);
@@ -89,7 +87,7 @@ impl<T: Send + 'static> Deref for Node<T> {
 
 impl<T: Send + Sync + 'static> Stack<T> {
     /// Add an item to the stack, spinning until successful.
-    pub(crate) fn push(&self, inner: T) {
+    pub fn push(&self, inner: T) {
         debug_delay();
         let node = Owned::new(Node {
             inner,
@@ -144,12 +142,13 @@ impl<T: Send + Sync + 'static> Stack<T> {
     }
 
     /// compare and push
-    pub(crate) fn cap<'g>(
+    pub fn cap<'g>(
         &self,
         old: Shared<'_, Node<T>>,
         new: T,
         guard: &'g Guard,
-    ) -> Result<Shared<'g, Node<T>>, Shared<'g, Node<T>>> {
+    ) -> std::result::Result<Shared<'g, Node<T>>, Shared<'g, Node<T>>>
+    {
         debug_delay();
         let node = Owned::new(Node {
             inner: new,
@@ -177,12 +176,13 @@ impl<T: Send + Sync + 'static> Stack<T> {
     }
 
     /// compare and swap
-    pub(crate) fn cas<'g>(
+    pub fn cas<'g>(
         &self,
         old: Shared<'g, Node<T>>,
         new: Shared<'g, Node<T>>,
         guard: &'g Guard,
-    ) -> Result<Shared<'g, Node<T>>, Shared<'g, Node<T>>> {
+    ) -> std::result::Result<Shared<'g, Node<T>>, Shared<'g, Node<T>>>
+    {
         debug_delay();
         let res = self.head.compare_and_set(old, new, SeqCst, guard);
 
@@ -210,16 +210,13 @@ impl<T: Send + Sync + 'static> Stack<T> {
 
     /// Returns the current head pointer of the stack, which can
     /// later be used as the key for cas and cap operations.
-    pub(crate) fn head<'g>(
-        &self,
-        guard: &'g Guard,
-    ) -> Shared<'g, Node<T>> {
+    pub fn head<'g>(&self, guard: &'g Guard) -> Shared<'g, Node<T>> {
         self.head.load(SeqCst, guard)
     }
 }
 
 /// An iterator over nodes in a lock-free stack.
-pub(crate) struct StackIter<'a, T>
+pub struct StackIter<'a, T>
 where
     T: Send + 'static + Sync,
 {
@@ -232,7 +229,7 @@ where
     T: 'a + Send + 'static + Sync,
 {
     /// Creates a StackIter from a pointer to one.
-    pub(crate) fn from_ptr<'b>(
+    pub fn from_ptr<'b>(
         ptr: Shared<'b, Node<T>>,
         guard: &'b Guard,
     ) -> StackIter<'b, T> {
@@ -262,7 +259,7 @@ where
 
 /// Turns a vector of elements into a lock-free stack
 /// of them, and returns the head of the stack.
-pub(crate) fn node_from_frag_vec<T>(from: Vec<T>) -> Owned<Node<T>>
+pub fn node_from_frag_vec<T>(from: Vec<T>) -> Owned<Node<T>>
 where
     T: Send + 'static + Sync,
 {

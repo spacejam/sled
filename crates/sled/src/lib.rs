@@ -76,11 +76,10 @@ use {
     },
     log::{debug, error, trace},
     pagecache::{
-        Materializer, Measure, MergeOperator, PageCache, PageGet,
-        PageId, Tx, M,
+        debug_delay, Materializer, Measure, MergeOperator, PageCache,
+        PageGet, PageId, Tx, M,
     },
     serde::{Deserialize, Serialize},
-    sled_sync::debug_delay,
 };
 
 type Key = Vec<u8>;

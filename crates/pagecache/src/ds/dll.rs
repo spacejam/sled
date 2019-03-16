@@ -37,7 +37,11 @@ impl Node {
     }
 }
 
-pub(crate) struct Dll {
+/// A simple doubly-linked list where
+/// items can be efficiently removed
+/// from the middle, for the purposes
+/// of backing a Lru cache.
+pub struct Dll {
     head: *mut Node,
     tail: *mut Node,
     len: usize,

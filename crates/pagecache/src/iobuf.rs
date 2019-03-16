@@ -13,8 +13,6 @@ use std::{
 #[cfg(feature = "compression")]
 use zstd::block::compress;
 
-use sled_sync::Backoff;
-
 use self::reader::LogReader;
 
 use super::*;
@@ -200,8 +198,8 @@ impl IoBufs {
         Ok(IoBufs(Arc::new(IoBufsInner {
             config,
 
-            buf_mu: Mutex::new(()),
             buf_updated: Condvar::new(),
+            buf_mu: Mutex::new(()),
             bufs,
             current_buf: AtomicUsize::new(current_buf),
             written_bufs: AtomicUsize::new(0),
@@ -1248,6 +1246,14 @@ impl IoBufs {
 
 impl Drop for IoBufs {
     fn drop(&mut self) {
+        {
+            // this is a hack to let TSAN know
+            // that it's safe to destroy our inner
+            // members, since it doesn't pick up on
+            // the implicit barriers used elsewhere.
+            let _ = self.0.buf_mu.lock().unwrap();
+        }
+
         // don't do any more IO if we're simulating a crash
         #[cfg(feature = "failpoints")]
         {

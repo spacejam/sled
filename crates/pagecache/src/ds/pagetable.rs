@@ -2,9 +2,7 @@
 
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 
-use sled_sync::{
-    debug_delay, unprotected, Atomic, Guard, Owned, Shared,
-};
+use super::*;
 
 const FANFACTOR: usize = 18;
 const FANOUT: usize = 1 << FANFACTOR;
@@ -106,13 +104,14 @@ where
         old: Shared<'g, T>,
         new: Shared<'g, T>,
         guard: &'g Guard,
-    ) -> Result<Shared<'g, T>, Shared<'g, T>> {
+    ) -> std::result::Result<Shared<'g, T>, Shared<'g, T>> {
         debug_delay();
         let tip = traverse(self.head.load(SeqCst, guard), pid, guard);
 
         debug_delay();
 
-        let _ = tip.compare_and_set(old, new, SeqCst, guard)
+        let _ = tip
+            .compare_and_set(old, new, SeqCst, guard)
             .map_err(|e| e.current)?;
 
         if !old.is_null() {
@@ -205,8 +204,9 @@ where
 {
     fn drop(&mut self) {
         unsafe {
-            let head = self.head.load(Relaxed, &unprotected()).as_raw()
-                as usize;
+            let head =
+                self.head.load(Relaxed, &unprotected()).as_raw()
+                    as usize;
             drop(Box::from_raw(head as *mut Node1<T>));
         }
     }
@@ -261,7 +261,7 @@ fn test_split_fanout() {
 #[test]
 fn basic_functionality() {
     unsafe {
-        let guard = sled_sync::pin();
+        let guard = pin();
         let rt = PageTable::default();
         let v1 = Owned::new(5).into_shared(&guard);
         rt.cas(0, Shared::null(), v1, &guard).unwrap();
@@ -284,5 +284,83 @@ fn basic_functionality() {
         rt.cas(k3, Shared::null(), v3, &guard).unwrap();
         assert_eq!(rt.get(k3, &guard).unwrap().deref(), &3);
         assert_eq!(rt.get(k2, &guard).unwrap().deref(), &2);
+    }
+}
+
+#[test]
+#[ignore]
+fn test_model() {
+    use self::Shared as EpochShared;
+    use model::{model, prop_oneof};
+
+    model! {
+        Model => let mut m = std::collections::HashMap::new(),
+        Implementation => let i = PageTable::default(),
+        Insert((usize, usize))((k, new) in (0usize..4, 0usize..4)) => {
+            if !m.contains_key(&k) {
+                m.insert(k, new);
+
+                let guard = pin();
+                let v = Owned::new(new).into_shared(&guard);
+                i.cas(k, EpochShared::null(), v, &guard ).expect("should be able to insert a value");
+            }
+        },
+        Get(usize)(k in 0usize..4) => {
+            let guard = pin();
+            let expected = m.get(&k);
+            let actual = i.get(k, &guard).map(|s| unsafe { s.deref() });
+            assert_eq!(expected, actual);
+        },
+        Cas((usize, usize, usize))((k, old, new) in (0usize..4, 0usize..4, 0usize..4)) => {
+            let guard = pin();
+            let expected_current = m.get(&k).cloned();
+            let actual_current = i.get(k, &guard);
+            assert_eq!(expected_current, actual_current.map(|s| unsafe { *s.deref() }));
+            if expected_current.is_none() {
+                continue;
+            }
+
+            let new_v = Owned::new(new).into_shared(&guard);
+
+            if expected_current == Some(old) {
+                m.insert(k, new);
+                let cas_res = i.cas(k, actual_current.unwrap(), new_v, &guard);
+                assert!(cas_res.is_ok());
+            };
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn test_linearizability() {
+    use self::Shared as EpochShared;
+    use model::{linearizable, prop_oneof, Shared};
+
+    linearizable! {
+        Implementation => let i = Shared::new(PageTable::default()),
+        Get(usize)(k in 0usize..4) -> Option<usize> {
+            let guard = pin();
+            unsafe {
+                i.get(k, &guard).map(|s| *s.deref())
+            }
+        },
+        Insert((usize, usize))((k, new) in (0usize..4, 0usize..4)) -> bool {
+            let guard = pin();
+            let v = Owned::new(new).into_shared(&guard);
+            i.cas(k, EpochShared::null(), v, &guard).is_err()
+        },
+        Cas((usize, usize, usize))((k, old, new)
+            in (0usize..4, 0usize..4, 0usize..4))
+            -> std::result::Result<(), usize> {
+            let guard = pin();
+            i.cas(k, Owned::new(old).into_shared(&guard), Owned::new(new).into_shared(&guard), &guard)
+                .map(|_| ())
+                .map_err(|s| if s.is_null() {
+                    0
+                } else {
+                    unsafe { *s.deref() }
+                })
+        }
     }
 }
