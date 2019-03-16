@@ -97,7 +97,9 @@ use self::metrics::uptime;
 
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
-    ds::{node_from_frag_vec, Lru, Node, Stack, StackIter},
+    ds::{
+        node_from_frag_vec, Lru, Node, PageTable, Stack, StackIter,
+    },
     iobuf::IoBufs,
     iterator::LogIter,
     metrics::{clock, measure},

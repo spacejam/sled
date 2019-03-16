@@ -32,7 +32,6 @@ hashbrown = { version = "0.1", features = ["serde"] }
 lazy_static = "1.2"
 libc = "0.2"
 rayon = "1.0"
-pagetable = { version = "0.1.4", path = "../pagetable" }
 sled_sync = { version = "0.3", path = "../sled_sync" }
 zstd = { version = "0.4", optional = true }
 fail = { version = "0.2", optional = true }
@@ -51,3 +50,4 @@ version = "0.4"
 
 [dev-dependencies]
 rand = "0.6"
+model = "0.1"

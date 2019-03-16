@@ -4,7 +4,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use pagetable::PageTable;
 use sled_sync::{Owned, Shared};
 
 use rayon::prelude::*;
