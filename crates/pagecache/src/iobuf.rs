@@ -48,8 +48,8 @@ struct IoBuf {
     lid: CachePadded<AtomicUsize>,
     lsn: CachePadded<AtomicUsize>,
     capacity: CachePadded<AtomicUsize>,
-    maxed: AtomicBool,
-    linearizer: Mutex<()>,
+    maxed: CachePadded<AtomicBool>,
+    linearizer: CachePadded<Mutex<()>>,
 }
 
 unsafe impl Sync for IoBuf {}
@@ -64,8 +64,8 @@ pub(super) struct IoBufsInner {
     // full, and in order to prevent threads from having to spin in
     // the reserve function, we can have them block until a buffer becomes
     // available.
-    buf_mu: Mutex<()>,
-    buf_updated: Condvar,
+    buf_mu: CachePadded<Mutex<()>>,
+    buf_updated: CachePadded<Condvar>,
     bufs: Vec<IoBuf>,
     current_buf: CachePadded<AtomicUsize>,
     written_bufs: CachePadded<AtomicUsize>,
@@ -73,8 +73,8 @@ pub(super) struct IoBufsInner {
     // Pending intervals that have been written to stable storage, but may be
     // higher than the current value of `stable` due to interesting thread
     // interleavings.
-    intervals: Mutex<Vec<(Lsn, Lsn)>>,
-    pub(super) interval_updated: Condvar,
+    intervals: CachePadded<Mutex<Vec<(Lsn, Lsn)>>>,
+    pub(super) interval_updated: CachePadded<Condvar>,
 
     // The highest CONTIGUOUS log sequence number that has been written to
     // stable storage. This may be lower than the length of the underlying
@@ -82,7 +82,7 @@ pub(super) struct IoBufsInner {
     // to stable storage due to interesting thread interleavings.
     stable_lsn: CachePadded<AtomicLsn>,
     max_reserved_lsn: CachePadded<AtomicLsn>,
-    segment_accountant: Mutex<SegmentAccountant>,
+    segment_accountant: CachePadded<Mutex<SegmentAccountant>>,
 
     // used for signifying that we're simulating a crash
     #[cfg(feature = "failpoints")]
@@ -198,16 +198,16 @@ impl IoBufs {
         Ok(IoBufs(Arc::new(IoBufsInner {
             config,
 
-            buf_mu: Mutex::new(()),
-            buf_updated: Condvar::new(),
+            buf_updated: CachePadded::new(Condvar::new()),
+            buf_mu: CachePadded::new(Mutex::new(())),
             bufs,
             current_buf: CachePadded::new(AtomicUsize::new(
                 current_buf,
             )),
             written_bufs: CachePadded::new(AtomicUsize::new(0)),
 
-            intervals: Mutex::new(vec![]),
-            interval_updated: Condvar::new(),
+            intervals: CachePadded::new(Mutex::new(vec![])),
+            interval_updated: CachePadded::new(Condvar::new()),
 
             stable_lsn: CachePadded::new(AtomicLsn::new(
                 stable as InnerLsn,
@@ -215,7 +215,9 @@ impl IoBufs {
             max_reserved_lsn: CachePadded::new(AtomicLsn::new(
                 stable as InnerLsn,
             )),
-            segment_accountant: Mutex::new(segment_accountant),
+            segment_accountant: CachePadded::new(Mutex::new(
+                segment_accountant,
+            )),
 
             #[cfg(feature = "failpoints")]
             _failpoint_crashing: AtomicBool::new(false),
@@ -1313,8 +1315,8 @@ impl IoBuf {
             lid: CachePadded::new(AtomicUsize::new(std::usize::MAX)),
             lsn: CachePadded::new(AtomicUsize::new(0)),
             capacity: CachePadded::new(AtomicUsize::new(0)),
-            maxed: AtomicBool::new(false),
-            linearizer: Mutex::new(()),
+            maxed: CachePadded::new(AtomicBool::new(false)),
+            linearizer: CachePadded::new(Mutex::new(())),
         }
     }
 
