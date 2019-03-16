@@ -15,7 +15,7 @@ cargo build \
 valgrind \
   --tool=cachegrind \
   --cachegrind-out-file="$OUTFILE" \
-  ./target/release/stress2
+  ./target/release/stress2 --total-ops=100000
 
 LAST=`ls -t cachegrind.stress2.* | sed -n 2p`
 
