@@ -112,7 +112,8 @@ pub use self::{
     config::{Config, ConfigBuilder},
     diskptr::DiskPtr,
     ds::{
-        node_from_frag_vec, Lru, Node, PageTable, Stack, StackIter,
+        node_from_frag_vec, Histo, Lru, Node, PageTable, Stack,
+        StackIter,
     },
     logger::{Log, LogRead},
     map::{

@@ -10,12 +10,7 @@ use std::marker::PhantomData;
 #[cfg(not(feature = "no_metrics"))]
 use std::sync::atomic::Ordering::{Acquire, Relaxed};
 
-use historian::Histo;
-
-#[cfg(feature = "measure_allocs")]
-use super::measure_allocs;
-
-use super::lazy_static;
+use super::*;
 
 lazy_static! {
     /// A metric collector for all pagecache users running in this
@@ -114,9 +109,9 @@ pub struct Metrics {
     pub write_to_log: Histo,
     pub written_bytes: Histo,
     pub read: Histo,
-    pub tree_loops: AtomicUsize,
-    pub log_reservations: AtomicUsize,
-    pub log_reservation_attempts: AtomicUsize,
+    pub tree_loops: CachePadded<AtomicUsize>,
+    pub log_reservations: CachePadded<AtomicUsize>,
+    pub log_reservation_attempts: CachePadded<AtomicUsize>,
     pub accountant_lock: Histo,
     pub accountant_hold: Histo,
     pub accountant_next: Histo,
@@ -124,9 +119,9 @@ pub struct Metrics {
     pub accountant_mark_replace: Histo,
     pub accountant_bump_tip: Histo,
     #[cfg(feature = "measure_allocs")]
-    pub allocations: AtomicUsize,
+    pub allocations: CachePadded<AtomicUsize>,
     #[cfg(feature = "measure_allocs")]
-    pub allocated_bytes: AtomicUsize,
+    pub allocated_bytes: CachePadded<AtomicUsize>,
 }
 
 #[cfg(not(feature = "no_metrics"))]

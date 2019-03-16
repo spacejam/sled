@@ -16,7 +16,7 @@ default = []
 compression = ["zstd"]
 lock_free_delays = ["rand", "rand_hc"]
 failpoints = ["fail", "rand"]
-no_metrics = ["historian/bypass"]
+no_metrics = []
 no_logs = ["log/max_level_off"]
 nightly = []
 no_inline = []
@@ -43,9 +43,6 @@ crc32fast = "1.1.2"
 [dependencies.serde]
 version = "1.0"
 features = ["derive"]
-
-[dependencies.historian]
-version = "3.0"
 
 [dependencies.log]
 version = "0.4"
