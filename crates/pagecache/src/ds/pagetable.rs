@@ -288,6 +288,7 @@ fn basic_functionality() {
 }
 
 #[test]
+#[ignore]
 fn test_model() {
     use self::Shared as EpochShared;
     use model::{model, prop_oneof};
