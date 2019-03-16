@@ -1734,8 +1734,8 @@ where
     // in recovery already.
     fn advance_snapshot(&self) -> Result<(), ()> {
         let snapshot_mu = self.last_snapshot.clone();
-        let iobufs = self.log.iobufs.clone();
         let config = self.config.clone();
+        let iobufs = self.log.iobufs.clone();
 
         let gen_snapshot = move || {
             let snapshot_opt_res = snapshot_mu.try_lock();
@@ -1753,7 +1753,7 @@ where
                 "PageCache::advance_snapshot called before recovery",
             );
 
-            if let Err(e) = iobufs.flush() {
+            if let Err(e) = iobuf::flush(&iobufs) {
                 error!(
                     "failed to flush log during advance_snapshot: {}",
                     e
@@ -1804,7 +1804,7 @@ where
             }
         };
 
-        if let Some(e) = self.config.global_error() {
+        if let Some(e) = self.log.iobufs.config.global_error() {
             return Err(e);
         }
 

@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use super::*;
 
+#[derive(Debug)]
 pub(crate) struct Flusher {
     shutdown: Arc<Mutex<bool>>,
     sc: Arc<Condvar>,
@@ -14,7 +15,7 @@ impl Flusher {
     /// Spawns a thread that periodically calls `callback` until dropped.
     pub(crate) fn new(
         name: String,
-        iobufs: IoBufs,
+        iobufs: Arc<IoBufs>,
         flush_every_ms: u64,
     ) -> Flusher {
         #[allow(clippy::mutex_atomic)] // mutex used in CondVar below
@@ -41,13 +42,13 @@ impl Flusher {
 fn run(
     shutdown: Arc<Mutex<bool>>,
     sc: Arc<Condvar>,
-    iobufs: IoBufs,
+    iobufs: Arc<IoBufs>,
     flush_every_ms: u64,
 ) {
     let sleep_duration = Duration::from_millis(flush_every_ms);
     let mut shutdown = shutdown.lock().unwrap();
     while !*shutdown {
-        match iobufs.flush() {
+        match iobuf::flush(&iobufs) {
             Ok(0) => {}
             Ok(_) => {
                 // at some point, we may want to
@@ -60,13 +61,12 @@ fn run(
                 {
                     if let Error::FailPoint = e {
                         iobufs
-                            .0
                             ._failpoint_crashing
                             .store(true, SeqCst);
 
                         // wake up any waiting threads
                         // so they don't stall forever
-                        iobufs.0.interval_updated.notify_all();
+                        iobufs.interval_updated.notify_all();
                     }
                 }
 
