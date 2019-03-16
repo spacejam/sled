@@ -44,10 +44,10 @@ macro_rules! io_fail {
 
 struct IoBuf {
     buf: UnsafeCell<Vec<u8>>,
-    header: AtomicUsize,
-    lid: AtomicUsize,
-    lsn: AtomicUsize,
-    capacity: AtomicUsize,
+    header: CachePadded<AtomicUsize>,
+    lid: CachePadded<AtomicUsize>,
+    lsn: CachePadded<AtomicUsize>,
+    capacity: CachePadded<AtomicUsize>,
     maxed: AtomicBool,
     linearizer: Mutex<()>,
 }
@@ -67,8 +67,8 @@ pub(super) struct IoBufsInner {
     buf_mu: Mutex<()>,
     buf_updated: Condvar,
     bufs: Vec<IoBuf>,
-    current_buf: AtomicUsize,
-    written_bufs: AtomicUsize,
+    current_buf: CachePadded<AtomicUsize>,
+    written_bufs: CachePadded<AtomicUsize>,
 
     // Pending intervals that have been written to stable storage, but may be
     // higher than the current value of `stable` due to interesting thread
@@ -80,8 +80,8 @@ pub(super) struct IoBufsInner {
     // stable storage. This may be lower than the length of the underlying
     // file, and there may be buffers that have been written out-of-order
     // to stable storage due to interesting thread interleavings.
-    stable_lsn: AtomicLsn,
-    max_reserved_lsn: AtomicLsn,
+    stable_lsn: CachePadded<AtomicLsn>,
+    max_reserved_lsn: CachePadded<AtomicLsn>,
     segment_accountant: Mutex<SegmentAccountant>,
 
     // used for signifying that we're simulating a crash
@@ -201,14 +201,20 @@ impl IoBufs {
             buf_mu: Mutex::new(()),
             buf_updated: Condvar::new(),
             bufs,
-            current_buf: AtomicUsize::new(current_buf),
-            written_bufs: AtomicUsize::new(0),
+            current_buf: CachePadded::new(AtomicUsize::new(
+                current_buf,
+            )),
+            written_bufs: CachePadded::new(AtomicUsize::new(0)),
 
             intervals: Mutex::new(vec![]),
             interval_updated: Condvar::new(),
 
-            stable_lsn: AtomicLsn::new(stable as InnerLsn),
-            max_reserved_lsn: AtomicLsn::new(stable as InnerLsn),
+            stable_lsn: CachePadded::new(AtomicLsn::new(
+                stable as InnerLsn,
+            )),
+            max_reserved_lsn: CachePadded::new(AtomicLsn::new(
+                stable as InnerLsn,
+            )),
             segment_accountant: Mutex::new(segment_accountant),
 
             #[cfg(feature = "failpoints")]
@@ -1303,10 +1309,10 @@ impl IoBuf {
     fn new(buf_size: usize) -> IoBuf {
         IoBuf {
             buf: UnsafeCell::new(vec![0; buf_size]),
-            header: AtomicUsize::new(0),
-            lid: AtomicUsize::new(std::usize::MAX),
-            lsn: AtomicUsize::new(0),
-            capacity: AtomicUsize::new(0),
+            header: CachePadded::new(AtomicUsize::new(0)),
+            lid: CachePadded::new(AtomicUsize::new(std::usize::MAX)),
+            lsn: CachePadded::new(AtomicUsize::new(0)),
+            capacity: CachePadded::new(AtomicUsize::new(0)),
             maxed: AtomicBool::new(false),
             linearizer: Mutex::new(()),
         }
