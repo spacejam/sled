@@ -12,6 +12,8 @@ use std::sync::atomic::Ordering::{Acquire, Relaxed};
 
 use super::*;
 
+use historian::Histo;
+
 lazy_static! {
     /// A metric collector for all pagecache users running in this
     /// process.
