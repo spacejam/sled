@@ -85,7 +85,7 @@ use lazy_static::lazy_static;
 use log::{debug, error, trace, warn};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use sled_sync::atomic::{AtomicUsize, Ordering::SeqCst};
+use atomic::{AtomicUsize, Ordering::SeqCst};
 
 #[doc(hidden)]
 use self::logger::{
@@ -97,9 +97,6 @@ use self::metrics::uptime;
 
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
-    ds::{
-        node_from_frag_vec, Lru, Node, PageTable, Stack, StackIter,
-    },
     iobuf::IoBufs,
     iterator::LogIter,
     metrics::{clock, measure},
@@ -114,6 +111,9 @@ use self::{
 pub use self::{
     config::{Config, ConfigBuilder},
     diskptr::DiskPtr,
+    ds::{
+        node_from_frag_vec, Lru, Node, PageTable, Stack, StackIter,
+    },
     logger::{Log, LogRead},
     map::{
         FastMap1, FastMap4, FastMap8, FastSet1, FastSet4, FastSet8,
@@ -127,8 +127,6 @@ pub use self::{
     segment::SegmentMode,
     tx::Tx,
 };
-
-pub use sled_sync::{debug_delay, pin, unprotected, Guard};
 
 #[doc(hidden)]
 pub use self::{
@@ -168,3 +166,24 @@ pub(crate) fn crc32(buf: &[u8]) -> u32 {
     hasher.update(&buf);
     hasher.finalize()
 }
+
+#[cfg(any(test, feature = "lock_free_delays"))]
+mod debug_delay;
+
+#[cfg(any(test, feature = "lock_free_delays"))]
+pub use self::debug_delay::debug_delay;
+
+/// This function is useful for inducing random jitter into our atomic
+/// operations, shaking out more possible interleavings quickly. It gets
+/// fully elliminated by the compiler in non-test code.
+#[cfg(not(any(test, feature = "lock_free_delays")))]
+pub fn debug_delay() {}
+
+pub use crossbeam_epoch::{
+    pin, unprotected, Atomic, Collector, CompareAndSetError, Guard,
+    LocalHandle, Owned, Shared,
+};
+
+pub use crossbeam_utils::{Backoff, CachePadded};
+
+pub use std::sync::atomic;

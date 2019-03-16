@@ -14,7 +14,7 @@ edition = "2018"
 
 [features]
 default = []
-lock_free_delays = ["pagecache/lock_free_delays", "sled_sync/lock_free_delays"]
+lock_free_delays = ["pagecache/lock_free_delays"]
 failpoints = ["pagecache/failpoints"]
 check_snapshot_integrity = []
 no_logs = ["log/max_level_off", "pagecache/no_logs"]
@@ -34,5 +34,4 @@ version = "0.4"
 
 [dependencies]
 pagecache = { path = "../pagecache", version = "0.12" }
-sled_sync = { version = "0.3", path = "../sled_sync" }
 futures = "0.1"

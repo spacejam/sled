@@ -4,8 +4,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use sled_sync::{Owned, Shared};
-
 use rayon::prelude::*;
 
 use super::*;

@@ -13,8 +13,6 @@ use std::{
 #[cfg(feature = "compression")]
 use zstd::block::compress;
 
-use sled_sync::Backoff;
-
 use self::reader::LogReader;
 
 use super::*;

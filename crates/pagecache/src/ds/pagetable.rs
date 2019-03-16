@@ -2,9 +2,7 @@
 
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 
-use sled_sync::{
-    debug_delay, unprotected, Atomic, Guard, Owned, Shared,
-};
+use super::*;
 
 const FANFACTOR: usize = 18;
 const FANOUT: usize = 1 << FANFACTOR;
@@ -106,7 +104,7 @@ where
         old: Shared<'g, T>,
         new: Shared<'g, T>,
         guard: &'g Guard,
-    ) -> Result<Shared<'g, T>, Shared<'g, T>> {
+    ) -> std::result::Result<Shared<'g, T>, Shared<'g, T>> {
         debug_delay();
         let tip = traverse(self.head.load(SeqCst, guard), pid, guard);
 
@@ -263,7 +261,7 @@ fn test_split_fanout() {
 #[test]
 fn basic_functionality() {
     unsafe {
-        let guard = sled_sync::pin();
+        let guard = pin();
         let rt = PageTable::default();
         let v1 = Owned::new(5).into_shared(&guard);
         rt.cas(0, Shared::null(), v1, &guard).unwrap();
@@ -291,8 +289,8 @@ fn basic_functionality() {
 
 #[test]
 fn test_model() {
+    use self::Shared as EpochShared;
     use model::{model, prop_oneof};
-    use sled_sync::{pin, Owned, Shared as EpochShared};
 
     model! {
         Model => let mut m = std::collections::HashMap::new(),
@@ -335,8 +333,8 @@ fn test_model() {
 #[test]
 #[ignore]
 fn test_linearizability() {
+    use self::Shared as EpochShared;
     use model::{linearizable, prop_oneof, Shared};
-    use sled_sync::{pin, Owned, Shared as EpochShared};
 
     linearizable! {
         Implementation => let i = Shared::new(PageTable::default()),
@@ -353,7 +351,7 @@ fn test_linearizability() {
         },
         Cas((usize, usize, usize))((k, old, new)
             in (0usize..4, 0usize..4, 0usize..4))
-            -> Result<(), usize> {
+            -> std::result::Result<(), usize> {
             let guard = pin();
             i.cas(k, Owned::new(old).into_shared(&guard), Owned::new(new).into_shared(&guard), &guard)
                 .map(|_| ())
