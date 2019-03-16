@@ -342,14 +342,17 @@ impl IoBufs {
         Ok(hasher)
     }
 
-    /// blocks until the specified log sequence number has
-    /// been made stable on disk
-    pub(crate) fn make_stable(&self, lsn: Lsn) -> Result<(), ()> {
+    /// Blocks until the specified log sequence number has
+    /// been made stable on disk. Returns the number of
+    /// bytes written.
+    pub(crate) fn make_stable(&self, lsn: Lsn) -> Result<usize, ()> {
         let _measure = Measure::new(&M.make_stable);
         let iobufs = &self.0;
 
         // NB before we write the 0th byte of the file, stable  is -1
-        while self.stable() < lsn {
+        let first_stable = self.stable();
+        let mut stable = first_stable;
+        while stable < lsn {
             let idx = self.idx();
             let header = iobufs.bufs[idx].get_header();
             if offset(header) == 0 || is_sealed(header) {
@@ -363,7 +366,8 @@ impl IoBufs {
             // block until another thread updates the stable lsn
             let waiter = iobufs.intervals.lock().unwrap();
 
-            if self.stable() < lsn {
+            stable = self.stable();
+            if stable < lsn {
                 #[cfg(feature = "failpoints")]
                 {
                     if iobufs._failpoint_crashing.load(SeqCst) {
@@ -383,12 +387,13 @@ impl IoBufs {
             }
         }
 
-        Ok(())
+        Ok(stable as usize - first_stable as usize)
     }
 
     /// Called by users who wish to force the current buffer
-    /// to flush some pending writes.
-    pub(super) fn flush(&self) -> Result<(), ()> {
+    /// to flush some pending writes. Returns the number
+    /// of bytes written during this call.
+    pub(super) fn flush(&self) -> Result<usize, ()> {
         let max_reserved_lsn =
             self.0.max_reserved_lsn.load(SeqCst) as Lsn;
         self.make_stable(max_reserved_lsn)

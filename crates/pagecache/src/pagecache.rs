@@ -575,7 +575,8 @@ where
     }
 
     /// Flushes any pending IO buffers to disk to ensure durability.
-    pub fn flush(&self) -> Result<(), ()> {
+    /// Returns the number of bytes written during this call.
+    pub fn flush(&self) -> Result<usize, ()> {
         self.log.flush()
     }
 
@@ -1068,7 +1069,9 @@ where
 
     /// Blocks until the provided Lsn is stable on disk,
     /// triggering necessary flushes in the process.
-    pub fn make_stable(&self, lsn: Lsn) -> Result<(), ()> {
+    /// Returns the number of bytes written during
+    /// this call.
+    pub fn make_stable(&self, lsn: Lsn) -> Result<usize, ()> {
         self.log.make_stable(lsn)
     }
 

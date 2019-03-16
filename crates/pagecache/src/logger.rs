@@ -81,7 +81,8 @@ impl Log {
     }
 
     /// Flushes any pending IO buffers to disk to ensure durability.
-    pub fn flush(&self) -> Result<(), ()> {
+    /// Returns the number of bytes written during this call.
+    pub fn flush(&self) -> Result<usize, ()> {
         self.iobufs.flush()
     }
 
@@ -160,8 +161,9 @@ impl Log {
     }
 
     /// blocks until the specified log sequence number has
-    /// been made stable on disk
-    pub fn make_stable(&self, lsn: Lsn) -> Result<(), ()> {
+    /// been made stable on disk. Returns the number of
+    /// bytes written during this call.
+    pub fn make_stable(&self, lsn: Lsn) -> Result<usize, ()> {
         self.iobufs.make_stable(lsn)
     }
 
