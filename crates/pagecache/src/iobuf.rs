@@ -44,12 +44,12 @@ macro_rules! io_fail {
 
 struct IoBuf {
     buf: UnsafeCell<Vec<u8>>,
-    header: CachePadded<AtomicUsize>,
-    lid: CachePadded<AtomicUsize>,
-    lsn: CachePadded<AtomicUsize>,
-    capacity: CachePadded<AtomicUsize>,
-    maxed: CachePadded<AtomicBool>,
-    linearizer: CachePadded<Mutex<()>>,
+    header: AtomicUsize,
+    lid: AtomicUsize,
+    lsn: AtomicUsize,
+    capacity: AtomicUsize,
+    maxed: AtomicBool,
+    linearizer: Mutex<()>,
 }
 
 unsafe impl Sync for IoBuf {}
@@ -64,25 +64,25 @@ pub(super) struct IoBufsInner {
     // full, and in order to prevent threads from having to spin in
     // the reserve function, we can have them block until a buffer becomes
     // available.
-    buf_mu: CachePadded<Mutex<()>>,
-    buf_updated: CachePadded<Condvar>,
+    buf_mu: Mutex<()>,
+    buf_updated: Condvar,
     bufs: Vec<IoBuf>,
-    current_buf: CachePadded<AtomicUsize>,
-    written_bufs: CachePadded<AtomicUsize>,
+    current_buf: AtomicUsize,
+    written_bufs: AtomicUsize,
 
     // Pending intervals that have been written to stable storage, but may be
     // higher than the current value of `stable` due to interesting thread
     // interleavings.
-    intervals: CachePadded<Mutex<Vec<(Lsn, Lsn)>>>,
-    pub(super) interval_updated: CachePadded<Condvar>,
+    intervals: Mutex<Vec<(Lsn, Lsn)>>,
+    pub(super) interval_updated: Condvar,
 
     // The highest CONTIGUOUS log sequence number that has been written to
     // stable storage. This may be lower than the length of the underlying
     // file, and there may be buffers that have been written out-of-order
     // to stable storage due to interesting thread interleavings.
-    stable_lsn: CachePadded<AtomicLsn>,
-    max_reserved_lsn: CachePadded<AtomicLsn>,
-    segment_accountant: CachePadded<Mutex<SegmentAccountant>>,
+    stable_lsn: AtomicLsn,
+    max_reserved_lsn: AtomicLsn,
+    segment_accountant: Mutex<SegmentAccountant>,
 
     // used for signifying that we're simulating a crash
     #[cfg(feature = "failpoints")]
@@ -198,26 +198,18 @@ impl IoBufs {
         Ok(IoBufs(Arc::new(IoBufsInner {
             config,
 
-            buf_updated: CachePadded::new(Condvar::new()),
-            buf_mu: CachePadded::new(Mutex::new(())),
+            buf_updated: Condvar::new(),
+            buf_mu: Mutex::new(()),
             bufs,
-            current_buf: CachePadded::new(AtomicUsize::new(
-                current_buf,
-            )),
-            written_bufs: CachePadded::new(AtomicUsize::new(0)),
+            current_buf: AtomicUsize::new(current_buf),
+            written_bufs: AtomicUsize::new(0),
 
-            intervals: CachePadded::new(Mutex::new(vec![])),
-            interval_updated: CachePadded::new(Condvar::new()),
+            intervals: Mutex::new(vec![]),
+            interval_updated: Condvar::new(),
 
-            stable_lsn: CachePadded::new(AtomicLsn::new(
-                stable as InnerLsn,
-            )),
-            max_reserved_lsn: CachePadded::new(AtomicLsn::new(
-                stable as InnerLsn,
-            )),
-            segment_accountant: CachePadded::new(Mutex::new(
-                segment_accountant,
-            )),
+            stable_lsn: AtomicLsn::new(stable as InnerLsn),
+            max_reserved_lsn: AtomicLsn::new(stable as InnerLsn),
+            segment_accountant: Mutex::new(segment_accountant),
 
             #[cfg(feature = "failpoints")]
             _failpoint_crashing: AtomicBool::new(false),
@@ -1319,12 +1311,12 @@ impl IoBuf {
     fn new(buf_size: usize) -> IoBuf {
         IoBuf {
             buf: UnsafeCell::new(vec![0; buf_size]),
-            header: CachePadded::new(AtomicUsize::new(0)),
-            lid: CachePadded::new(AtomicUsize::new(std::usize::MAX)),
-            lsn: CachePadded::new(AtomicUsize::new(0)),
-            capacity: CachePadded::new(AtomicUsize::new(0)),
-            maxed: CachePadded::new(AtomicBool::new(false)),
-            linearizer: CachePadded::new(Mutex::new(())),
+            header: AtomicUsize::new(0),
+            lid: AtomicUsize::new(std::usize::MAX),
+            lsn: AtomicUsize::new(0),
+            capacity: AtomicUsize::new(0),
+            maxed: AtomicBool::new(false),
+            linearizer: Mutex::new(()),
         }
     }
 
