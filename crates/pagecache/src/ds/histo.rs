@@ -1,10 +1,36 @@
+//! A zero-config simple histogram collector
+//! for use in instrumented optimization.
+//! Uses logarithmic bucketing rather than sampling,
+//! and has bounded (generally <0.5%) error on percentiles.
+//! Performs no allocations after initial creation.
+//! Uses Relaxed atomics during collection.
+//!
+//! When you create it, it allocates 65k AtomicUsize's
+//! that it uses for incrementing. Generating reports
+//! after running workloads on dozens of `Histo`'s
+//! does not result in a perceptible delay, but it
+//! might not be acceptable for use in low-latency
+//! reporting paths.
+//!
+//! The trade-offs taken in this are to minimize latency
+//! during collection, while initial allocation and
+//! postprocessing delays are acceptable.
+//!
+//! Future work to further reduce collection latency
+//! may include using thread-local caches that perform
+//! no atomic operations until they are dropped, when
+//! they may atomically aggregate their measurements
+//! into the shared collector that will be used for
+//! reporting.
+
 use std::fmt::{self, Debug};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 const PRECISION: f64 = 100.;
 const BUCKETS: usize = 1 << 16;
 
-/// A histogram collector that uses zero-configuration logarithmic buckets.
+/// A histogram collector that uses zero-configuration
+/// logarithmic buckets.
 pub struct Histo {
     vals: Vec<AtomicUsize>,
     sum: AtomicUsize,
