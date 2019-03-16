@@ -33,7 +33,8 @@ Usage: stress [--threads=<#>] [--burn-in] [--duration=<s>] \
     [--scan-prop=<p>] \
     [--merge-prop=<p>] \
     [--entries=<n>] \
-    [--sequential]
+    [--sequential] \
+    [--total-ops=<n>]
 
 Options:
     --threads=<#>      Number of threads [default: 4].
@@ -49,6 +50,7 @@ Options:
     --merge-prop=<p>   The relative proportion of merge requests [default: 1].
     --entries=<n>      The total keyspace [default: 100000].
     --sequential       Run the test in sequential mode instead of random.
+    --total-ops=<n>    Stop test after executing a total number of operations.
 ";
 
 #[derive(Deserialize, Clone)]
@@ -66,6 +68,7 @@ struct Args {
     flag_merge_prop: usize,
     flag_entries: usize,
     flag_sequential: bool,
+    flag_total_ops: Option<usize>,
 }
 
 // defaults will be applied later based on USAGE above
@@ -83,6 +86,7 @@ static mut ARGS: Args = Args {
     flag_merge_prop: 0,
     flag_entries: 0,
     flag_sequential: false,
+    flag_total_ops: None,
 };
 
 fn report(shutdown: Arc<AtomicBool>) {
@@ -234,7 +238,16 @@ fn main() {
         threads.push(t);
     }
 
-    if !args.flag_burn_in {
+    if let Some(ops) = args.flag_total_ops {
+        assert!(
+            !args.flag_burn_in,
+            "don't set both --burn-in and --total-ops"
+        );
+        while TOTAL.load(Ordering::Relaxed) < ops {
+            thread::sleep(std::time::Duration::from_millis(50));
+        }
+        shutdown.store(true, Ordering::SeqCst);
+    } else if !args.flag_burn_in {
         thread::sleep(std::time::Duration::from_secs(unsafe {
             ARGS.flag_duration
         }));
