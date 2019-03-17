@@ -362,7 +362,7 @@ where
 ///     {
 ///         let tx = pc.begin().unwrap();
 ///         let id = pc.allocate(&tx).unwrap();
-///         let mut key = pagecache::PagePtr::allocated();
+///         let mut key = pagecache::PagePtr::allocated(0);
 ///
 ///         // The first item in a page should be set using replace,
 ///         // which signals that this is the beginning of a new
