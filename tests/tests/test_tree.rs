@@ -129,7 +129,7 @@ fn parallel_tree_ops() {
             let k1 = k.clone();
             let mut k2 = k.clone();
             k2.reverse();
-            tree.cas(&k1, Some(&*k1), Some(k2)).unwrap();
+            tree.cas(&k1, Some(&*k1), Some(k2)).unwrap().unwrap();
         }};
 
         drop(t);
@@ -169,7 +169,7 @@ fn parallel_tree_ops() {
 }
 
 #[test]
-fn parallel_tree_iterators() -> Result<(), ()> {
+fn parallel_tree_iterators() -> Result<()> {
     const N_FORWARD: usize = INTENSITY;
     const N_REVERSE: usize = INTENSITY;
 
@@ -206,7 +206,7 @@ fn parallel_tree_iterators() -> Result<(), ()> {
 
     let barrier = Arc::new(Barrier::new(N_FORWARD + N_REVERSE + 2));
 
-    let mut threads: Vec<thread::JoinHandle<Result<(), ()>>> = vec![];
+    let mut threads: Vec<thread::JoinHandle<Result<()>>> = vec![];
 
     for _ in 0..N_FORWARD {
         let t = thread::spawn({
@@ -404,7 +404,7 @@ fn tree_iterator() {
 }
 
 #[test]
-fn tree_subscriptions_and_keyspaces() -> Result<(), ()> {
+fn tree_subscriptions_and_keyspaces() -> Result<()> {
     let config = ConfigBuilder::new()
         .temporary(true)
         .blink_node_split_size(0)

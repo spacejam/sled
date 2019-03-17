@@ -107,7 +107,7 @@ fn pagecache_caching() {
 }
 
 #[test]
-fn parallel_pagecache() {
+fn parallel_pagecache() -> sled::Result<()> {
     tests::setup_logger();
     const N_THREADS: usize = 10;
     const N_PER_THREAD: usize = 100;
@@ -155,8 +155,8 @@ fn parallel_pagecache() {
         let tx = pc.begin().unwrap();
         let id = pc.allocate(&tx).unwrap();
         let mut key = PagePtr::allocated(0);
-        while let Err(pagecache::Error::CasFailed(Some(k))) = pc
-            .replace(id, key, vec![id], &tx)
+        while let Err(Some((k, _rejected))) = pc
+            .replace(id, key, vec![id], &tx).unwrap()
         {
             key = k;
         }
@@ -225,6 +225,8 @@ fn parallel_pagecache() {
                              .unwrap();
         assert_eq!(*ptr, vec![i, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     }};
+
+    Ok(())
 }
 
 #[test]
@@ -320,10 +322,12 @@ fn basic_pagecache_recovery() {
 
     let tx = pc.begin().unwrap();
     let id = pc.allocate(&tx).unwrap();
-    let key =
-        pc.replace(id, PagePtr::allocated(0), vec![1], &tx).unwrap();
-    let key = pc.link(id, key, vec![2], &tx).unwrap();
-    let _key = pc.link(id, key, vec![3], &tx).unwrap();
+    let key = pc
+        .replace(id, PagePtr::allocated(0), vec![1], &tx)
+        .unwrap()
+        .unwrap();
+    let key = pc.link(id, key, vec![2], &tx).unwrap().unwrap();
+    let _key = pc.link(id, key, vec![3], &tx).unwrap().unwrap();
     let (cv1_ref, _key) = pc.get(id, &tx).unwrap().unwrap();
     let cv1 = cv1_ref.clone();
     assert_eq!(cv1, vec![1, 2, 3]);
@@ -335,7 +339,7 @@ fn basic_pagecache_recovery() {
     let cv2 = cv2_ref.clone();
     assert_eq!(cv1, cv2);
 
-    pc2.link(id, consolidated2, vec![4], &tx).unwrap();
+    pc2.link(id, consolidated2, vec![4], &tx).unwrap().unwrap();
     drop(pc2);
 
     let pc3: PageCache<TestMaterializer, _> =
@@ -343,7 +347,7 @@ fn basic_pagecache_recovery() {
     let (cv3_ref, consolidated3) = pc3.get(id, &tx).unwrap().unwrap();
     let cv3 = cv3_ref.clone();
     assert_eq!(cv3, vec![1, 2, 3, 4]);
-    pc3.free(id, consolidated3, &tx).unwrap();
+    pc3.free(id, consolidated3, &tx).unwrap().unwrap();
     drop(pc3);
 
     let pc4: PageCache<TestMaterializer, _> =
@@ -462,6 +466,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                     P::Allocated => {
                         if let PageGet::Allocated(ptr) = get {
                             pc.replace(pid, ptr, vec![c], &tx)
+                                .unwrap()
                                 .unwrap();
                             *ref_get = P::Present(vec![c]);
                         } else {
@@ -472,6 +477,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                         let (v, old_key) = get.unwrap();
                         assert_eq!(v, existing);
                         pc.replace(pid, old_key, vec![c], &tx)
+                            .unwrap()
                             .unwrap();
                         existing.clear();
                         existing.push(c);
@@ -498,12 +504,15 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                             vec![c],
                             &tx,
                         )
+                        .unwrap()
                         .unwrap();
                         *ref_get = P::Present(vec![c]);
                     }
                     P::Present(ref mut existing) => {
                         let (_, old_key) = get.unwrap();
-                        pc.link(pid, old_key, vec![c], &tx).unwrap();
+                        pc.link(pid, old_key, vec![c], &tx)
+                            .unwrap()
+                            .unwrap();
                         existing.push(c);
                     }
                     P::Free => {
@@ -548,7 +557,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                 match pre_get {
                     PageGet::Allocated(ptr)
                     | PageGet::Materialized(_, ptr) => {
-                        pc.free(pid, ptr, &tx).unwrap()
+                        pc.free(pid, ptr, &tx).unwrap().unwrap();
                     }
                     _ => {}
                 }
