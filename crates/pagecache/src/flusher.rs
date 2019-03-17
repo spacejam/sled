@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use super::*;
 
+#[derive(Debug)]
 pub(crate) struct Flusher {
     shutdown: Arc<Mutex<bool>>,
     sc: Arc<Condvar>,
@@ -14,55 +15,72 @@ impl Flusher {
     /// Spawns a thread that periodically calls `callback` until dropped.
     pub(crate) fn new(
         name: String,
-        iobufs: IoBufs,
+        iobufs: Arc<IoBufs>,
         flush_every_ms: u64,
     ) -> Flusher {
         #[allow(clippy::mutex_atomic)] // mutex used in CondVar below
         let shutdown = Arc::new(Mutex::new(false));
         let sc = Arc::new(Condvar::new());
 
-        let mu = shutdown.clone();
-        let sc2 = sc.clone();
         let join_handle = thread::Builder::new()
             .name(name)
-            .spawn(move || {
-                let sleep_duration =
-                    Duration::from_millis(flush_every_ms);
-                let mut shutdown = mu.lock().unwrap();
-                while !*shutdown {
-                    if let Err(e) = iobufs.flush() {
-                        #[cfg(feature = "failpoints")]
-                        {
-                            if let Error::FailPoint = e {
-                                iobufs.0._failpoint_crashing
-                                    .store(true, SeqCst);
-                                // wake up any waiting threads so they don't stall forever
-                                iobufs.0.interval_updated.notify_all();
-                            }
-                        }
-
-                        error!(
-                            "failed to flush from periodic flush thread: {}",
-                            e
-                        );
-
-                        return;
-                    }
-
-                    shutdown = sc2
-                        .wait_timeout(
-                            shutdown,
-                            sleep_duration,
-                        ).unwrap()
-                        .0;
-                }
-            }).unwrap();
+            .spawn({
+                let shutdown = shutdown.clone();
+                let sc = sc.clone();
+                move || run(shutdown, sc, iobufs, flush_every_ms)
+            })
+            .unwrap();
 
         Flusher {
             shutdown,
             sc,
             join_handle: Some(join_handle),
         }
+    }
+}
+
+fn run(
+    shutdown: Arc<Mutex<bool>>,
+    sc: Arc<Condvar>,
+    iobufs: Arc<IoBufs>,
+    flush_every_ms: u64,
+) {
+    let sleep_duration = Duration::from_millis(flush_every_ms);
+    let mut shutdown = shutdown.lock().unwrap();
+    while !*shutdown {
+        match iobuf::flush(&iobufs) {
+            Ok(0) => {}
+            Ok(_) => {
+                // at some point, we may want to
+                // put adaptive logic here to tune
+                // sleeps based on how much work
+                // we accomplished
+            }
+            Err(e) => {
+                #[cfg(feature = "failpoints")]
+                {
+                    if let Error::FailPoint = e {
+                        iobufs
+                            ._failpoint_crashing
+                            .store(true, SeqCst);
+
+                        // wake up any waiting threads
+                        // so they don't stall forever
+                        iobufs.interval_updated.notify_all();
+                    }
+                }
+
+                error!(
+                    "failed to flush from periodic flush thread: {}",
+                    e
+                );
+
+                return;
+            }
+        }
+
+        shutdown =
+            sc.wait_timeout(shutdown, sleep_duration).unwrap().0;
     }
 }
 

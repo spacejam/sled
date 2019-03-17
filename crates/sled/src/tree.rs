@@ -114,8 +114,9 @@ impl Tree {
     /// Flushes all dirty IO buffers and calls fsync.
     /// If this succeeds, it is guaranteed that
     /// all previous writes will be recovered if
-    /// the system crashes.
-    pub fn flush(&self) -> Result<(), ()> {
+    /// the system crashes. Returns the number
+    /// of bytes flushed during this call.
+    pub fn flush(&self) -> Result<usize, ()> {
         self.context.pagecache.flush()
     }
 
@@ -1008,7 +1009,7 @@ impl Tree {
             debug_delay();
             let res = self.context.pagecache.replace(
                 new_pid,
-                PagePtr::allocated(),
+                PagePtr::allocated(0),
                 Frag::Base(rhs.clone()),
                 tx,
             );
@@ -1099,7 +1100,7 @@ impl Tree {
             debug_delay();
             let res = self.context.pagecache.replace(
                 new_root_pid,
-                PagePtr::allocated(),
+                PagePtr::allocated(0),
                 new_root.clone(),
                 tx,
             );

@@ -104,7 +104,7 @@ impl Default for ConfigBuilder {
             page_consolidation_threshold: 10,
             path: PathBuf::from(DEFAULT_PATH),
             read_only: false,
-            cache_bits: 6, // 64 shards
+            cache_bits: 0,                      // 1 shard
             cache_capacity: 1024 * 1024 * 1024, // 1gb
             use_compression: true,
             compression_factor: 5,
@@ -118,8 +118,8 @@ impl Default for ConfigBuilder {
             merge_operator: None,
             print_profile_on_drop: false,
             idgen_persist_interval: 1_000_000,
-            async_io: false,
-            async_io_threads: 0,
+            async_io: true,
+            async_io_threads: 3,
         }
     }
 }

@@ -4,20 +4,25 @@ set -e
 
 OUTFILE="cachegrind.stress2.`git describe --always --dirty`-`date +%s`"
 
-rm target/release/stress2 || true
-rm stress2.db* || true
+rm -rf default.sled || true
 
 cargo build \
   --bin=stress2 \
   --features="no_metrics" \
   --release
 
+
+# --tool=callgrind --dump-instr=yes --collect-jumps=yes --simulate-cache=yes \
+# --callgrind-out-file="$OUTFILE" \
+
 valgrind \
   --tool=cachegrind \
   --cachegrind-out-file="$OUTFILE" \
-  ./target/release/stress2 --total-ops=100000
+  ./target/release/stress2 --total-ops=50000 --set-prop=1000000000000 --threads=1
 
 LAST=`ls -t cachegrind.stress2.* | sed -n 2p`
+
+echo "comparing $LAST with new $OUTFILE"
 
 echo "--------------------------------------------------------------------------------"
 echo "change since last run:"

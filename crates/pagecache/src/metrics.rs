@@ -1,5 +1,4 @@
 use std::{
-    iter::repeat,
     sync::atomic::AtomicUsize,
     time::{Duration, Instant},
 };
@@ -155,7 +154,10 @@ impl Metrics {
             "count",
             "sum (s)"
         );
-        println!("{}", repeat("-").take(134).collect::<String>());
+        println!(
+            "{}",
+            std::iter::repeat("-").take(134).collect::<String>()
+        );
 
         let p =
             |mut tuples: Vec<(String, _, _, _, _, _, _, _, _, _)>| {
@@ -210,7 +212,10 @@ impl Metrics {
             self.tree_loops.load(Acquire)
         );
 
-        println!("{}", repeat("-").take(134).collect::<String>());
+        println!(
+            "{}",
+            std::iter::repeat("-").take(134).collect::<String>()
+        );
         println!("pagecache:");
         p(vec![
             f("snapshot", &self.advance_snapshot),
@@ -221,7 +226,10 @@ impl Metrics {
             f("page_out", &self.page_out),
         ]);
 
-        println!("{}", repeat("-").take(134).collect::<String>());
+        println!(
+            "{}",
+            std::iter::repeat("-").take(134).collect::<String>()
+        );
         println!("serialization and compression:");
         p(vec![
             f("serialize", &self.serialize),
@@ -230,7 +238,10 @@ impl Metrics {
             f("decompress", &self.decompress),
         ]);
 
-        println!("{}", repeat("-").take(134).collect::<String>());
+        println!(
+            "{}",
+            std::iter::repeat("-").take(134).collect::<String>()
+        );
         println!("log:");
         p(vec![
             f("make_stable", &self.make_stable),
@@ -252,7 +263,10 @@ impl Metrics {
             self.log_reservation_attempts.load(Acquire)
         );
 
-        println!("{}", repeat("-").take(134).collect::<String>());
+        println!(
+            "{}",
+            std::iter::repeat("-").take(134).collect::<String>()
+        );
         println!("segment accountant:");
         p(vec![
             f("acquire", &self.accountant_lock),
@@ -264,7 +278,10 @@ impl Metrics {
 
         #[cfg(feature = "measure_allocs")]
         {
-            println!("{}", repeat("-").take(134).collect::<String>());
+            println!(
+                "{}",
+                std::iter::repeat("-").take(134).collect::<String>()
+            );
             println!("allocation statistics:");
             println!(
                 "total allocations: {}",

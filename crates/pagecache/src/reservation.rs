@@ -5,7 +5,7 @@ use super::*;
 /// taking too long to decide will cause the underlying IO
 /// buffer to become blocked.
 pub struct Reservation<'a> {
-    pub(super) iobufs: &'a IoBufs,
+    pub(super) log: &'a Log,
     pub(super) idx: usize,
     pub(super) header_buf: &'a mut [u8],
     pub(super) partial_checksum: Option<crc32fast::Hasher>,
@@ -38,10 +38,7 @@ impl<'a> Reservation<'a> {
                     self.ptr
                 );
 
-                remove_blob(
-                    self.ptr.blob().1,
-                    &self.iobufs.0.config,
-                )?;
+                remove_blob(self.ptr.blob().1, &self.log.config)?;
             }
         }
 
@@ -96,7 +93,7 @@ impl<'a> Reservation<'a> {
                 std::mem::size_of::<u32>(),
             );
         }
-        self.iobufs.exit_reservation(self.idx)?;
+        self.log.exit_reservation(self.idx)?;
 
         Ok((self.lsn(), self.ptr()))
     }

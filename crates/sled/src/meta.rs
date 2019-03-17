@@ -43,7 +43,7 @@ pub(crate) fn open_tree<'a>(
 
         let leaf_ptr = context
             .pagecache
-            .replace(leaf_id, TreePtr::allocated(), leaf, &tx)
+            .replace(leaf_id, TreePtr::allocated(0), leaf, &tx)
             .map_err(|e| e.danger_cast())?;
 
         // set up root index
@@ -67,7 +67,7 @@ pub(crate) fn open_tree<'a>(
 
         let root_ptr = context
             .pagecache
-            .replace(root_id, TreePtr::allocated(), root, &tx)
+            .replace(root_id, TreePtr::allocated(0), root, &tx)
             .map_err(|e| e.danger_cast())?;
 
         let res = context.pagecache.cas_root_in_meta(

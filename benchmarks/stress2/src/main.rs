@@ -34,7 +34,8 @@ Usage: stress [--threads=<#>] [--burn-in] [--duration=<s>] \
     [--merge-prop=<p>] \
     [--entries=<n>] \
     [--sequential] \
-    [--total-ops=<n>]
+    [--total-ops=<n>] \
+    [--async]
 
 Options:
     --threads=<#>      Number of threads [default: 4].
@@ -51,6 +52,7 @@ Options:
     --entries=<n>      The total keyspace [default: 100000].
     --sequential       Run the test in sequential mode instead of random.
     --total-ops=<n>    Stop test after executing a total number of operations.
+    --async            Use a threadpool to perform disk IO in the background.
 ";
 
 #[derive(Deserialize, Clone)]
@@ -69,6 +71,7 @@ struct Args {
     flag_entries: usize,
     flag_sequential: bool,
     flag_total_ops: Option<usize>,
+    flag_async: bool,
 }
 
 // defaults will be applied later based on USAGE above
@@ -87,6 +90,7 @@ static mut ARGS: Args = Args {
     flag_entries: 0,
     flag_sequential: false,
     flag_total_ops: None,
+    flag_async: false,
 };
 
 fn report(shutdown: Arc<AtomicBool>) {
@@ -205,13 +209,13 @@ fn main() {
     let config = sled::ConfigBuilder::new()
         .io_bufs(16)
         .io_buf_size(8_000_000)
-        .async_io(true)
-        .async_io_threads(32)
+        .async_io(args.flag_async)
+        .async_io_threads(3)
         .blink_node_split_size(4096)
         .page_consolidation_threshold(10)
-        .cache_bits(6)
+        .cache_bits(0)
         .cache_capacity(1_000_000_000)
-        .flush_every_ms(Some(500))
+        .flush_every_ms(Some(200))
         .snapshot_after_ops(100_000_000_000)
         .print_profile_on_drop(true)
         .merge_operator(concatenate_merge)
