@@ -13,7 +13,7 @@ readme = "../../README.md"
 edition = "2018"
 
 [features]
-default = ["compression"]
+default = []
 lock_free_delays = ["pagecache/lock_free_delays"]
 failpoints = ["pagecache/failpoints"]
 check_snapshot_integrity = []
