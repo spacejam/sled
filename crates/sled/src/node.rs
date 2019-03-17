@@ -39,7 +39,7 @@ impl Node {
                     || prefix_cmp_encoded(k, &self.hi, &self.lo)
                         == std::cmp::Ordering::Less
                 {
-                    self.set_leaf(k.clone().into(), v.clone().into());
+                    self.set_leaf(k.clone(), v.clone());
                 } else {
                     panic!("tried to consolidate set at key <= hi")
                 }
@@ -154,7 +154,7 @@ impl Node {
     pub(crate) fn parent_split(&mut self, ps: &ParentSplit) {
         if let Data::Index(ref mut ptrs) = self.data {
             let encoded_sep = prefix_encode(&self.lo, &ps.at);
-            ptrs.push((encoded_sep.into(), ps.to));
+            ptrs.push((encoded_sep, ps.to));
             ptrs.sort_unstable_by(|a, b| prefix_cmp(&*a.0, &*b.0));
         } else {
             panic!("tried to attach a ParentSplit to a Leaf chain");

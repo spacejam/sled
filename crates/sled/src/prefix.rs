@@ -10,7 +10,9 @@ pub(crate) fn prefix_encode(prefix: &[u8], buf: &[u8]) -> IVec {
         buf
     );
     let mut prefix_len = 0_usize;
-    for (i, c) in prefix.iter().take(u8::max_value() as usize).enumerate() {
+    for (i, c) in
+        prefix.iter().take(u8::max_value() as usize).enumerate()
+    {
         if buf[i] == *c {
             prefix_len += 1;
         } else {

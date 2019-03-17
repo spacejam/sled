@@ -70,7 +70,7 @@ impl Pio for std::fs::File {
                     return Err(io::Error::new(
                         io::ErrorKind::WriteZero,
                         "failed to write whole buffer",
-                    ))
+                    ));
                 }
                 Ok(n) => {
                     offset += n as LogId;
@@ -139,7 +139,7 @@ impl Pio for std::fs::File {
                     return Err(io::Error::new(
                         io::ErrorKind::WriteZero,
                         "failed to write whole buffer",
-                    ))
+                    ));
                 }
                 Ok(n) => {
                     offset += n as LogId;
