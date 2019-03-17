@@ -14,7 +14,7 @@ pub struct Meta {
 impl Meta {
     /// Retrieve the PageId associated with an identifier
     pub fn get_root(&self, table: &[u8]) -> Option<PageId> {
-        self.inner.get(table).map(|r| *r)
+        self.inner.get(table).cloned()
     }
 
     /// Set the PageId associated with an identifier

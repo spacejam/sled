@@ -73,7 +73,8 @@ impl Iterator for LogIter {
             }
 
             let lid = self.segment_base.unwrap()
-                + (self.cur_lsn % self.config.io_buf_size as Lsn) as LogId;
+                + (self.cur_lsn % self.config.io_buf_size as Lsn)
+                    as LogId;
 
             let f = &self.config.file;
             match f.read_message(lid, &self.config) {
@@ -203,7 +204,8 @@ impl LogIter {
             .into());
         }
 
-        let trailer_offset = offset + self.config.io_buf_size as LogId
+        let trailer_offset = offset
+            + self.config.io_buf_size as LogId
             - SEG_TRAILER_LEN as LogId;
         let trailer_lsn = segment_header.lsn
             + self.config.io_buf_size as Lsn
