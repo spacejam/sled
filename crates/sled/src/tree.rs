@@ -1009,7 +1009,7 @@ impl Tree {
             debug_delay();
             let res = self.context.pagecache.replace(
                 new_pid,
-                PagePtr::allocated(),
+                PagePtr::allocated(0),
                 Frag::Base(rhs.clone()),
                 tx,
             );
@@ -1100,7 +1100,7 @@ impl Tree {
             debug_delay();
             let res = self.context.pagecache.replace(
                 new_root_pid,
-                PagePtr::allocated(),
+                PagePtr::allocated(0),
                 new_root.clone(),
                 tx,
             );

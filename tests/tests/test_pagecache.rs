@@ -93,7 +93,7 @@ fn pagecache_caching() {
     for _ in 0..2 {
         let id = pc.allocate(&tx).unwrap();
         let key = pc
-            .replace(id, PagePtr::allocated(), vec![0], &tx)
+            .replace(id, PagePtr::allocated(0), vec![0], &tx)
             .unwrap();
         keys.insert(id, key);
     }
@@ -154,7 +154,7 @@ fn parallel_pagecache() {
     par! {p, |pc: &PageCache<_, _>, _i: usize| {
         let tx = pc.begin().unwrap();
         let id = pc.allocate(&tx).unwrap();
-        let mut key = PagePtr::allocated();
+        let mut key = PagePtr::allocated(0);
         while let Err(pagecache::Error::CasFailed(Some(k))) = pc
             .replace(id, key, vec![id], &tx)
         {
@@ -247,7 +247,7 @@ fn pagecache_strange_crash_1() {
         for _ in 0..2 {
             let id = pc.allocate(&tx).unwrap();
             let key = pc
-                .replace(id, PagePtr::allocated(), vec![0], &tx)
+                .replace(id, PagePtr::allocated(0), vec![0], &tx)
                 .unwrap();
             keys.insert(id, key);
         }
@@ -288,7 +288,7 @@ fn pagecache_strange_crash_2() {
         for _ in 0..2 {
             let id = pc.allocate(&tx).unwrap();
             let key = pc
-                .replace(id, PagePtr::allocated(), vec![0], &tx)
+                .replace(id, PagePtr::allocated(0), vec![0], &tx)
                 .unwrap();
             keys.insert(id, key);
         }
@@ -321,7 +321,7 @@ fn basic_pagecache_recovery() {
     let tx = pc.begin().unwrap();
     let id = pc.allocate(&tx).unwrap();
     let key =
-        pc.replace(id, PagePtr::allocated(), vec![1], &tx).unwrap();
+        pc.replace(id, PagePtr::allocated(0), vec![1], &tx).unwrap();
     let key = pc.link(id, key, vec![2], &tx).unwrap();
     let _key = pc.link(id, key, vec![3], &tx).unwrap();
     let (cv1_ref, _key) = pc.get(id, &tx).unwrap().unwrap();
@@ -494,7 +494,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                     P::Allocated => {
                         pc.link(
                             pid,
-                            PagePtr::allocated(),
+                            PagePtr::allocated(0),
                             vec![c],
                             &tx,
                         )
