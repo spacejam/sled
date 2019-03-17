@@ -33,7 +33,7 @@ pub struct Iter<'a> {
     pub(super) lo: ops::Bound<Vec<u8>>,
     pub(super) last_id: Option<PageId>,
     pub(super) last_key: Option<Key>,
-    pub(super) broken: Option<Error<()>>,
+    pub(super) broken: Option<Error>,
     pub(super) done: bool,
     pub(super) tx: Tx,
     pub(super) is_scan: bool,
@@ -44,21 +44,20 @@ impl<'a> Iter<'a> {
     /// Iterate over the keys of this Tree
     pub fn keys(
         self,
-    ) -> impl 'a + DoubleEndedIterator<Item = Result<Vec<u8>, ()>>
-    {
+    ) -> impl 'a + DoubleEndedIterator<Item = Result<Vec<u8>>> {
         self.map(|r| r.map(|(k, _v)| k))
     }
 
     /// Iterate over the values of this Tree
     pub fn values(
         self,
-    ) -> impl 'a + DoubleEndedIterator<Item = Result<IVec, ()>> {
+    ) -> impl 'a + DoubleEndedIterator<Item = Result<IVec>> {
         self.map(|r| r.map(|(_k, v)| v))
     }
 }
 
 impl<'a> Iterator for Iter<'a> {
-    type Item = Result<(Vec<u8>, IVec), ()>;
+    type Item = Result<(Vec<u8>, IVec)>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let _measure = Measure::new(&M.tree_scan);
@@ -98,7 +97,7 @@ impl<'a> Iterator for Iter<'a> {
                 if let Err(e) = path_res {
                     error!("iteration failed: {:?}", e);
                     self.done = true;
-                    return Some(Err(e.danger_cast()));
+                    return Some(Err(e));
                 }
 
                 let path = path_res.unwrap();
@@ -128,7 +127,7 @@ impl<'a> Iterator for Iter<'a> {
             if let Err(e) = res {
                 error!("iteration failed: {:?}", e);
                 self.done = true;
-                return Some(Err(e.danger_cast()));
+                return Some(Err(e));
             }
 
             // TODO (when implementing merge support) this could
@@ -260,7 +259,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 if let Err(e) = path_res {
                     error!("iteration failed: {:?}", e);
                     self.done = true;
-                    return Some(Err(e.danger_cast()));
+                    return Some(Err(e));
                 }
 
                 let path = path_res.unwrap();
@@ -282,7 +281,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                     if let Err(e) = res {
                         error!("iteration failed: {:?}", e);
                         self.done = true;
-                        return Some(Err(e.danger_cast()));
+                        return Some(Err(e));
                     }
                     let (frag, _ptr) = res.unwrap();
                     last_node = frag.unwrap_base();
@@ -310,7 +309,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
             if let Err(e) = res {
                 error!("iteration failed: {:?}", e);
                 self.done = true;
-                return Some(Err(e.danger_cast()));
+                return Some(Err(e));
             }
 
             // TODO (when implementing merge support) this could
@@ -398,7 +397,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                     Err(e) => {
                         error!("next_back iteration failed: {:?}", e);
                         self.done = true;
-                        return Some(Err(e.danger_cast()));
+                        return Some(Err(e));
                     }
                     Ok(path) => path.last().unwrap().0.unwrap_base(),
                 }
@@ -423,7 +422,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 if let Err(e) = res {
                     error!("iteration failed: {:?}", e);
                     self.done = true;
-                    return Some(Err(e.danger_cast()));
+                    return Some(Err(e));
                 }
                 let (frag, _ptr) = res.unwrap();
                 next_node = frag.unwrap_base();

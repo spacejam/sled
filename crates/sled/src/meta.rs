@@ -8,7 +8,7 @@ pub(crate) fn open_tree<'a>(
     context: Arc<Context>,
     name: Vec<u8>,
     tx: &'a Tx,
-) -> Result<Tree, ()> {
+) -> Result<Tree> {
     // we loop because creating this Tree may race with
     // concurrent attempts to open the same one.
     loop {
@@ -43,8 +43,8 @@ pub(crate) fn open_tree<'a>(
 
         let leaf_ptr = context
             .pagecache
-            .replace(leaf_id, TreePtr::allocated(0), leaf, &tx)
-            .map_err(|e| e.danger_cast())?;
+            .replace(leaf_id, TreePtr::allocated(0), leaf, &tx)?
+            .expect("somehow could not install new leaf");
 
         // set up root index
         let root_id = context.pagecache.allocate(&tx)?;
@@ -67,52 +67,28 @@ pub(crate) fn open_tree<'a>(
 
         let root_ptr = context
             .pagecache
-            .replace(root_id, TreePtr::allocated(0), root, &tx)
-            .map_err(|e| e.danger_cast())?;
+            .replace(root_id, TreePtr::allocated(0), root, &tx)?
+            .expect("somehow could not install new root");
 
         let res = context.pagecache.cas_root_in_meta(
             name.clone(),
             None,
             Some(root_id),
             tx,
-        );
+        )?;
 
         if res.is_err() {
             // clean up the tree we just created if we couldn't
             // install it.
-            let mut root_ptr = root_ptr;
-            loop {
-                match context.pagecache.free(root_id, root_ptr, tx) {
-                    Ok(_) => break,
-                    Err(Error::CasFailed(Some(actual_ptr))) => {
-                        root_ptr = actual_ptr.clone()
-                    }
-                    Err(Error::CasFailed(None)) => panic!(
-                        "somehow allocated child was already freed"
-                    ),
-                    Err(other) => return Err(other.danger_cast()),
-                }
-            }
-
-            let mut leaf_ptr = leaf_ptr;
-            loop {
-                match context.pagecache.free(leaf_id, leaf_ptr, tx) {
-                    Ok(_) => break,
-                    Err(Error::CasFailed(Some(actual_ptr))) => {
-                        leaf_ptr = actual_ptr.clone()
-                    }
-                    Err(Error::CasFailed(None)) => panic!(
-                        "somehow allocated child was already freed"
-                    ),
-                    Err(other) => return Err(other.danger_cast()),
-                }
-            }
-        }
-
-        match res {
-            Err(Error::CasFailed(..)) => continue,
-            Err(other) => return Err(other.danger_cast()),
-            Ok(_) => {}
+            context
+                .pagecache
+                .free(root_id, root_ptr, tx)?
+                .expect("could not free allocated page");
+            context
+                .pagecache
+                .free(leaf_id, leaf_ptr, tx)?
+                .expect("could not free allocated page");
+            continue;
         }
 
         return Ok(Tree {
