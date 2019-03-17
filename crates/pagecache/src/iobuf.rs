@@ -10,9 +10,6 @@ use std::{
     sync::{Arc, Condvar, Mutex},
 };
 
-#[cfg(feature = "compression")]
-use zstd::block::compress;
-
 use self::reader::LogReader;
 
 use super::*;
