@@ -5,7 +5,7 @@ use super::*;
 pub(crate) fn read_blob(
     blob_ptr: Lsn,
     config: &Config,
-) -> Result<Vec<u8>, ()> {
+) -> Result<Vec<u8>> {
     let path = config.blob_path(blob_ptr);
     let f_res = std::fs::OpenOptions::new().read(true).open(&path);
 
@@ -58,7 +58,7 @@ pub(crate) fn write_blob(
     config: &Config,
     id: Lsn,
     data: &[u8],
-) -> Result<(), ()> {
+) -> Result<()> {
     let path = config.blob_path(id);
     let mut f = std::fs::OpenOptions::new()
         .write(true)
@@ -79,7 +79,7 @@ pub(crate) fn write_blob(
 pub(crate) fn gc_blobs(
     config: &Config,
     stable_lsn: Lsn,
-) -> Result<(), ()> {
+) -> Result<()> {
     let stable = config.blob_path(stable_lsn);
     let blob_dir = stable.parent().unwrap();
     let blobs = std::fs::read_dir(blob_dir)?;
@@ -117,10 +117,7 @@ pub(crate) fn gc_blobs(
     Ok(())
 }
 
-pub(crate) fn remove_blob(
-    id: Lsn,
-    config: &Config,
-) -> Result<(), ()> {
+pub(crate) fn remove_blob(id: Lsn, config: &Config) -> Result<()> {
     let path = config.blob_path(id);
 
     if let Err(e) = std::fs::remove_file(&path) {

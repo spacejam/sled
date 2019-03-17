@@ -90,7 +90,7 @@ impl Snapshot {
         disk_ptr: DiskPtr,
         bytes: &[u8],
         config: &Config,
-    ) -> Result<(), ()>
+    ) -> Result<()>
     where
         P: 'static
             + Debug
@@ -301,7 +301,7 @@ pub(super) fn advance_snapshot<PM, P>(
     iter: LogIter,
     mut snapshot: Snapshot,
     config: &Config,
-) -> Result<Snapshot, ()>
+) -> Result<Snapshot>
 where
     PM: Materializer<PageFrag = P>,
     P: 'static
@@ -378,7 +378,7 @@ where
 /// the tip of the data file, if present.
 pub fn read_snapshot_or_default<PM, P>(
     config: &Config,
-) -> Result<Snapshot, ()>
+) -> Result<Snapshot>
 where
     PM: Materializer<PageFrag = P>,
     P: 'static
@@ -452,7 +452,7 @@ fn read_snapshot(
 pub(crate) fn write_snapshot(
     config: &Config,
     snapshot: &Snapshot,
-) -> Result<(), ()> {
+) -> Result<()> {
     let raw_bytes = serialize(&snapshot).unwrap();
     let decompressed_len = raw_bytes.len();
 

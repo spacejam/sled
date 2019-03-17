@@ -10,7 +10,7 @@ use super::*;
 /// A node in the lock-free `Stack`.
 #[derive(Debug)]
 pub struct Node<T: Send + 'static> {
-    inner: T,
+    pub(crate) inner: T,
     next: Atomic<Node<T>>,
 }
 
@@ -52,7 +52,7 @@ impl<T: Send + 'static> Drop for Stack<T> {
 
 impl<T> Debug for Stack<T>
 where
-    T: Debug + Send + 'static + Sync,
+    T: Clone + Debug + Send + 'static + Sync,
 {
     fn fmt(
         &self,
@@ -85,7 +85,7 @@ impl<T: Send + 'static> Deref for Node<T> {
     }
 }
 
-impl<T: Send + Sync + 'static> Stack<T> {
+impl<T: Clone + Send + Sync + 'static> Stack<T> {
     /// Add an item to the stack, spinning until successful.
     pub fn push(&self, inner: T) {
         debug_delay();
@@ -147,8 +147,10 @@ impl<T: Send + Sync + 'static> Stack<T> {
         old: Shared<'_, Node<T>>,
         new: T,
         guard: &'g Guard,
-    ) -> std::result::Result<Shared<'g, Node<T>>, Shared<'g, Node<T>>>
-    {
+    ) -> std::result::Result<
+        Shared<'g, Node<T>>,
+        (Shared<'g, Node<T>>, T),
+    > {
         debug_delay();
         let node = Owned::new(Node {
             inner: new,
@@ -167,9 +169,8 @@ impl<T: Send + Sync + 'static> Stack<T> {
                     // dropped when we drop this node.
                     node.deref().next.store(Shared::null(), SeqCst);
                     let node_owned = node.into_owned();
-                    drop(node_owned)
+                    Err((e.current, node_owned.inner.clone()))
                 }
-                Err(e.current)
             }
             Ok(_) => Ok(node),
         }
@@ -181,8 +182,10 @@ impl<T: Send + Sync + 'static> Stack<T> {
         old: Shared<'g, Node<T>>,
         new: Shared<'g, Node<T>>,
         guard: &'g Guard,
-    ) -> std::result::Result<Shared<'g, Node<T>>, Shared<'g, Node<T>>>
-    {
+    ) -> std::result::Result<
+        Shared<'g, Node<T>>,
+        (Shared<'g, Node<T>>, Shared<'g, Node<T>>),
+    > {
         debug_delay();
         let res = self.head.compare_and_set(old, new, SeqCst, guard);
 
@@ -195,16 +198,7 @@ impl<T: Send + Sync + 'static> Stack<T> {
                 }
                 Ok(new)
             }
-            Err(e) => {
-                if !new.is_null() {
-                    unsafe {
-                        let new_owned = new.into_owned();
-                        drop(new_owned)
-                    };
-                }
-
-                Err(e.current)
-            }
+            Err(e) => Err((e.current, new)),
         }
     }
 

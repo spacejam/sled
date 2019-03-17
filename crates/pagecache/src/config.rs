@@ -275,7 +275,7 @@ impl ConfigBuilder {
     );
 
     // panics if config options are outside of advised range
-    fn validate(&self) -> Result<(), ()> {
+    fn validate(&self) -> Result<()> {
         supported!(
             self.io_bufs <= 32,
             "too many configured io_bufs. please make <= 32"
@@ -321,7 +321,7 @@ impl ConfigBuilder {
         Ok(())
     }
 
-    fn open_file(&mut self) -> Result<fs::File, ()> {
+    fn open_file(&mut self) -> Result<fs::File> {
         let path = self.db_path();
 
         // panic if we can't parse the path
@@ -348,7 +348,7 @@ impl ConfigBuilder {
             let res: std::io::Result<()> =
                 std::fs::create_dir_all(dir);
             res.map_err(|e: std::io::Error| {
-                let ret: Error<()> = e.into();
+                let ret: Error = e.into();
                 ret
             })?;
         }
@@ -377,7 +377,7 @@ impl ConfigBuilder {
         }
     }
 
-    fn verify_config_changes_ok(&self) -> Result<(), ()> {
+    fn verify_config_changes_ok(&self) -> Result<()> {
         match self.read_config() {
             Ok(Some(old)) => {
                 if old.merge_operator.is_some() {
@@ -412,7 +412,7 @@ impl ConfigBuilder {
         }
     }
 
-    fn write_config(&self) -> Result<(), ()> {
+    fn write_config(&self) -> Result<()> {
         let bytes = serialize(&*self).unwrap();
         let crc: u32 = crc32(&*bytes);
         let crc_arr = u32_to_arr(crc);
@@ -514,7 +514,7 @@ pub struct Config {
     pub(crate) thread_pool: Option<Arc<rayon::ThreadPool>>,
     threads: Arc<AtomicUsize>,
     refs: Arc<AtomicUsize>,
-    pub(crate) global_error: Arc<AtomicPtr<Error<()>>>,
+    pub(crate) global_error: Arc<AtomicPtr<Error>>,
     #[cfg(feature = "event_log")]
     /// an event log for concurrent debugging
     pub event_log: Arc<event_log::EventLog>,
@@ -576,7 +576,7 @@ impl Drop for Config {
 impl Config {
     /// Return the global error if one was encountered during
     /// an asynchronous IO operation.
-    pub fn global_error(&self) -> Option<Error<()>> {
+    pub fn global_error(&self) -> Option<Error> {
         let ge = self.global_error.load(Ordering::Relaxed);
         if ge.is_null() {
             None
@@ -585,11 +585,11 @@ impl Config {
         }
     }
 
-    pub(crate) fn set_global_error(&self, error: Error<()>) {
+    pub(crate) fn set_global_error(&self, error: Error) {
         let ptr = Box::into_raw(Box::new(error));
         let ret = self.global_error.compare_and_swap(
             std::ptr::null_mut(),
-            ptr as *mut Error<()>,
+            ptr as *mut Error,
             Ordering::Relaxed,
         );
 
@@ -657,7 +657,7 @@ impl Config {
     }
 
     #[doc(hidden)]
-    pub fn verify_snapshot<PM, P>(&self) -> Result<(), ()>
+    pub fn verify_snapshot<PM, P>(&self) -> Result<()>
     where
         PM: Materializer<PageFrag = P>,
         P: 'static

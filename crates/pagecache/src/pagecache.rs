@@ -76,9 +76,9 @@ pub enum CacheEntry<M: Send> {
     /// An allocated page that doesn't have user data linked/replaced into it yet
     Allocated(u64, Lsn, DiskPtr),
     /// The persisted counter page
-    Counter(usize, Lsn, DiskPtr),
+    Counter(usize, u64, Lsn, DiskPtr),
     /// The persisted meta page
-    Meta(Meta, Lsn, DiskPtr),
+    Meta(Meta, u64, Lsn, DiskPtr),
 }
 
 impl<M: Send> CacheEntry<M> {
@@ -92,8 +92,8 @@ impl<M: Send> CacheEntry<M> {
             | Flush(.., ptr)
             | Free(.., ptr)
             | Allocated(.., ptr)
-            | Counter(_, _, ptr)
-            | Meta(_, _, ptr) => *ptr,
+            | Counter(.., ptr)
+            | Meta(.., ptr) => *ptr,
         }
     }
 
@@ -107,8 +107,8 @@ impl<M: Send> CacheEntry<M> {
             | Flush(_, lsn, ..)
             | Free(_, lsn, ..)
             | Allocated(_, lsn, ..)
-            | Counter(_, lsn, _)
-            | Meta(_, lsn, _) => *lsn,
+            | Counter(.., lsn, _)
+            | Meta(.., lsn, _) => *lsn,
         }
     }
 
@@ -121,8 +121,9 @@ impl<M: Send> CacheEntry<M> {
             | PartialFlush(ts, ..)
             | Flush(ts, ..)
             | Free(ts, ..)
-            | Allocated(ts, ..) => *ts,
-            _ => panic!("called ts on an unexpected CacheEntry type"),
+            | Allocated(ts, ..)
+            | Counter(_, ts, ..)
+            | Meta(_, ts, ..) => *ts,
         }
     }
 
@@ -136,18 +137,8 @@ impl<M: Send> CacheEntry<M> {
             | Flush(.., ptr)
             | Free(.., ptr)
             | Allocated(.., ptr)
-            | Counter(_, _, ptr)
-            | Meta(_, _, ptr) => ptr,
-        }
-    }
-
-    fn is_free(&self) -> bool {
-        use self::CacheEntry::*;
-
-        if let Free(..) = self {
-            true
-        } else {
-            false
+            | Counter(.., ptr)
+            | Meta(.., ptr) => ptr,
         }
     }
 }
@@ -482,7 +473,7 @@ where
         + Sync,
 {
     /// Instantiate a new `PageCache`.
-    pub fn start(config: Config) -> Result<PageCache<PM, P>, ()> {
+    pub fn start(config: Config) -> Result<PageCache<PM, P>> {
         let cache_capacity = config.cache_capacity;
         let cache_shard_bits = config.cache_bits;
         let lru = Lru::new(cache_capacity, cache_shard_bits);
@@ -517,11 +508,7 @@ where
         let was_recovered: bool;
 
         // ensure counter and meta are initialized
-        if pc
-            .get(META_PID, &tx)
-            .map_err(|e| e.danger_cast())?
-            .is_unallocated()
-        {
+        if pc.get(META_PID, &tx)?.is_unallocated() {
             // set up meta
             let meta_id = pc.allocate(&tx)?;
 
@@ -534,11 +521,7 @@ where
             );
         }
 
-        if pc
-            .get(META_PID, &tx)
-            .map_err(|e| e.danger_cast())?
-            .is_allocated()
-        {
+        if pc.get(META_PID, &tx)?.is_allocated() {
             was_recovered = false;
 
             let meta_update = Update::Meta(Meta::default());
@@ -548,8 +531,8 @@ where
                 meta_update,
                 None,
                 &tx,
-            )
-            .map_err(|e| e.danger_cast())?;
+            )?
+            .expect("failed to install meta page");
 
             // set up idgen
             let counter_id = pc.allocate(&tx)?;
@@ -569,8 +552,8 @@ where
                 counter_update,
                 None,
                 &tx,
-            )
-            .map_err(|e| e.danger_cast())?;
+            )?
+            .expect("failed to install counter page");
         } else {
             was_recovered = true;
         }
@@ -599,19 +582,19 @@ where
 
     /// Flushes any pending IO buffers to disk to ensure durability.
     /// Returns the number of bytes written during this call.
-    pub fn flush(&self) -> Result<usize, ()> {
+    pub fn flush(&self) -> Result<usize> {
         self.log.flush()
     }
 
     /// Begins a transaction.
-    pub fn begin(&self) -> Result<Tx, ()> {
+    pub fn begin(&self) -> Result<Tx> {
         Ok(Tx::new(self.generate_id()?))
     }
 
     /// Create a new page, trying to reuse old freed pages if possible
     /// to maximize underlying `Radix` pointer density.
-    pub fn allocate<'g>(&self, tx: &'g Tx) -> Result<PageId, ()> {
-        let (pid, mut key) = if let Some(pid) =
+    pub fn allocate<'g>(&self, tx: &'g Tx) -> Result<PageId> {
+        let (pid, key) = if let Some(pid) =
             self.free.lock().unwrap().pop()
         {
             trace!("re-allocating pid {}", pid);
@@ -654,37 +637,8 @@ where
             (pid, key)
         };
 
-        loop {
-            // we need to loop because the pagecache may relocate
-            // our page due to it being free
-            match self.cas_page(pid, key, Update::Allocate, None, tx)
-            {
-                Ok(_) => break,
-                Err(Error::CasFailed(Some(other))) => unsafe {
-                    let o = other.cached_ptr.deref().deref();
-                    if o.is_free() {
-                        key = other;
-                        continue;
-                    } else {
-                        panic!(
-                            "failed to install new Update::Allocate \
-                             for new page because we encountered \
-                             a non-Free: {:?}",
-                            o,
-                        );
-                    }
-                },
-                Err(Error::CasFailed(None)) => {
-                    panic!(
-                        "failed to allocate pid {} due to \
-                         the stack disappearing before we could \
-                         install our Update::Allocate",
-                        pid,
-                    );
-                }
-                Err(other) => return Err(other.danger_cast()),
-            }
-        }
+        self.cas_page(pid, key, Update::Allocate, None, tx)?
+            .expect("failed to install page allocation as expected");
 
         Ok(pid)
     }
@@ -696,7 +650,7 @@ where
         pid: PageId,
         old: PagePtr<'g, P>,
         tx: &'g Tx,
-    ) -> Result<(), Option<PagePtr<'g, P>>> {
+    ) -> Result<CasResult<'g, P, ()>> {
         trace!("attempting to free pid {}", pid);
 
         if pid == META_PID || pid == COUNTER_PID {
@@ -708,7 +662,8 @@ where
             ));
         }
 
-        self.cas_page(pid, old, Update::Free, None, tx)?;
+        let new_ptr =
+            self.cas_page(pid, old, Update::Free, None, tx)?;
 
         let free = self.free.clone();
         tx.defer(move || {
@@ -720,7 +675,8 @@ where
 
             free.push(pid);
         });
-        Ok(())
+
+        Ok(new_ptr.map_err(|o| o.map(|(ptr, _)| (ptr, ()))))
     }
 
     /// Try to atomically add a `PageFrag` to the page.
@@ -729,12 +685,12 @@ where
     /// if the atomic append fails.
     #[allow(clippy::needless_pass_by_value)]
     pub fn link<'g>(
-        &self,
+        &'g self,
         pid: PageId,
-        old: PagePtr<'g, P>,
+        mut old: PagePtr<'g, P>,
         new: P,
         tx: &'g Tx,
-    ) -> Result<PagePtr<'g, P>, Option<PagePtr<'g, P>>> {
+    ) -> Result<CasResult<'g, P, P>> {
         trace!("linking pid {}", pid);
 
         if old.is_allocated() {
@@ -742,7 +698,7 @@ where
         }
 
         let pte_ptr = match self.inner.get(pid, tx) {
-            None => return Err(Error::CasFailed(None)),
+            None => return Ok(Err(None)),
             Some(p) => p,
         };
 
@@ -753,94 +709,121 @@ where
 
         let bytes =
             measure(&M.serialize, || serialize(&prepend).unwrap());
-        let log_reservation =
-            self.log.reserve(&bytes).map_err(|e| e.danger_cast())?;
 
-        let new = if let Update::Append(new) = prepend.update {
-            new
+        let mut new = if let Update::Append(new) = prepend.update {
+            Some(new)
         } else {
-            unreachable!()
+            unreachable!();
         };
 
-        let lsn = log_reservation.lsn();
-        let ptr = log_reservation.ptr();
+        loop {
+            let log_reservation = self.log.reserve(&bytes)?;
 
-        let cache_entry = CacheEntry::Resident(new, tx.ts, lsn, ptr);
+            let lsn = log_reservation.lsn();
+            let ptr = log_reservation.ptr();
 
-        debug_delay();
-        let result = unsafe {
-            pte_ptr.deref().stack.cap(old.cached_ptr, cache_entry, tx)
-        };
+            let cache_entry = CacheEntry::Resident(
+                new.take().unwrap(),
+                tx.ts,
+                lsn,
+                ptr,
+            );
 
-        if result.is_err() {
-            trace!("link of pid {} failed", pid);
-            log_reservation.abort().map_err(|e| e.danger_cast())?;
-        } else {
-            trace!("link of pid {} succeeded", pid);
-            let skip_mark = {
-                // if the last update for this page was also
-                // sent to this segment, we can skip marking it
-                let previous_head_lsn = old.last_lsn();
-
-                assert_ne!(previous_head_lsn, 0);
-
-                let previous_lsn_segment = previous_head_lsn
-                    / self.config.io_buf_size as i64;
-                let new_lsn_segment =
-                    lsn / self.config.io_buf_size as i64;
-
-                previous_lsn_segment == new_lsn_segment
+            debug_delay();
+            let result = unsafe {
+                pte_ptr.deref().stack.cap(
+                    old.cached_ptr,
+                    cache_entry,
+                    tx,
+                )
             };
-            let to_clean = if skip_mark {
-                self.log.with_sa(|sa| {
-                    sa.mark_link(pid, lsn, ptr);
-                    sa.clean(pid)
-                })
+
+            if result.is_err() {
+                trace!("link of pid {} failed", pid);
+                log_reservation.abort()?;
             } else {
-                self.log.with_sa(|sa| {
-                    sa.mark_link(pid, lsn, ptr);
-                    sa.clean(pid)
-                })
-            };
+                trace!("link of pid {} succeeded", pid);
+                let skip_mark = {
+                    // if the last update for this page was also
+                    // sent to this segment, we can skip marking it
+                    let previous_head_lsn = old.last_lsn();
 
-            // NB complete must happen AFTER calls to SA, because
-            // when the iobuf's n_writers hits 0, we may transition
-            // the segment to inactive, resulting in a race otherwise.
-            // FIXME can result in deadlock if a node that holds SA
-            // is waiting to acquire a new reservation blocked by this?
-            log_reservation
-                .complete()
-                .map_err(|e| e.danger_cast())?;
+                    assert_ne!(previous_head_lsn, 0);
 
-            if let Some(to_clean) = to_clean {
-                match self.rewrite_page(to_clean, tx) {
-                    Ok(_) => {}
-                    Err(Error::CasFailed(_)) => {}
-                    other => other?,
+                    let previous_lsn_segment = previous_head_lsn
+                        / self.config.io_buf_size as i64;
+                    let new_lsn_segment =
+                        lsn / self.config.io_buf_size as i64;
+
+                    previous_lsn_segment == new_lsn_segment
+                };
+                let to_clean = if skip_mark {
+                    self.log.with_sa(|sa| {
+                        sa.mark_link(pid, lsn, ptr);
+                        sa.clean(pid)
+                    })
+                } else {
+                    self.log.with_sa(|sa| {
+                        sa.mark_link(pid, lsn, ptr);
+                        sa.clean(pid)
+                    })
+                };
+
+                // NB complete must happen AFTER calls to SA, because
+                // when the iobuf's n_writers hits 0, we may transition
+                // the segment to inactive, resulting in a race otherwise.
+                // FIXME can result in deadlock if a node that holds SA
+                // is waiting to acquire a new reservation blocked by this?
+                log_reservation.complete()?;
+
+                if let Some(to_clean) = to_clean {
+                    self.rewrite_page(to_clean, tx)?;
+                }
+
+                let count = self.updates.fetch_add(1, SeqCst) + 1;
+                let should_snapshot =
+                    count % self.config.snapshot_after_ops == 0;
+                if should_snapshot {
+                    self.advance_snapshot()?;
                 }
             }
 
-            let count = self.updates.fetch_add(1, SeqCst) + 1;
-            let should_snapshot =
-                count % self.config.snapshot_after_ops == 0;
-            if should_snapshot {
-                self.advance_snapshot()
-                    .map_err(|e| e.danger_cast())?;
+            match result {
+                Ok(cached_ptr) => {
+                    return Ok(Ok(PagePtr {
+                        cached_ptr,
+                        wts: tx.ts,
+                    }));
+                }
+                Err((actual_ptr, returned_new)) => {
+                    let returned_new =
+                        if let CacheEntry::Resident(new, ..) =
+                            returned_new
+                        {
+                            new
+                        } else {
+                            unreachable!()
+                        };
+
+                    let actual_ts =
+                        unsafe { actual_ptr.deref().ts() };
+                    if actual_ts != old.wts {
+                        return Ok(Err(Some((
+                            PagePtr {
+                                cached_ptr: actual_ptr,
+                                wts: actual_ts,
+                            },
+                            returned_new,
+                        ))));
+                    }
+                    new = Some(returned_new);
+                    old = PagePtr {
+                        cached_ptr: actual_ptr,
+                        wts: actual_ts,
+                    };
+                }
             }
         }
-
-        result
-            .map(|cached_ptr| PagePtr {
-                cached_ptr,
-                wts: tx.ts,
-            })
-            .map_err(|e| {
-                Error::CasFailed(Some(PagePtr {
-                    cached_ptr: e,
-                    // TODO this feels bug-prone
-                    wts: 0,
-                }))
-            })
     }
 
     /// Replace an existing page with a different set of `PageFrag`s.
@@ -854,37 +837,34 @@ where
         old: PagePtr<'g, P>,
         new: P,
         tx: &'g Tx,
-    ) -> Result<PagePtr<'g, P>, Option<PagePtr<'g, P>>> {
+    ) -> Result<CasResult<'g, P, P>> {
         trace!("replacing pid {}", pid);
 
         let result =
-            self.cas_page(pid, old, Update::Compact(new), None, tx);
+            self.cas_page(pid, old, Update::Compact(new), None, tx)?;
 
-        if result.is_ok() {
-            let to_clean = self.log.with_sa(|sa| sa.clean(pid));
+        let to_clean = self.log.with_sa(|sa| sa.clean(pid));
 
-            if let Some(to_clean) = to_clean {
-                assert_ne!(pid, to_clean);
-                match self.rewrite_page(to_clean, tx) {
-                    Ok(_) => {}
-                    Err(Error::CasFailed(_)) => {}
-                    other => other?,
-                }
-            }
-
-            let count = self.updates.fetch_add(1, SeqCst) + 1;
-            let should_snapshot =
-                count % self.config.snapshot_after_ops == 0;
-            if should_snapshot {
-                self.advance_snapshot()
-                    .map_err(|e| e.danger_cast())?;
-            }
+        if let Some(to_clean) = to_clean {
+            assert_ne!(pid, to_clean);
+            self.rewrite_page(to_clean, tx)?;
         }
 
-        result.map(|cached_ptr| PagePtr {
-            cached_ptr,
-            wts: tx.ts,
-        })
+        let count = self.updates.fetch_add(1, SeqCst) + 1;
+        let should_snapshot =
+            count % self.config.snapshot_after_ops == 0;
+        if should_snapshot {
+            self.advance_snapshot()?;
+        }
+
+        Ok(result.map_err(|fail| {
+            let (ptr, shared) = fail.unwrap();
+            if let Update::Compact(rejected_new) = shared {
+                Some((ptr, rejected_new))
+            } else {
+                unreachable!();
+            }
+        }))
     }
 
     // rewrite a page so we can reuse the segment that it is
@@ -895,11 +875,11 @@ where
         &self,
         pid: PageId,
         tx: &'g Tx,
-    ) -> Result<(), Option<PagePtr<'g, P>>> {
+    ) -> Result<bool> {
         let _measure = Measure::new(&M.rewrite_page);
 
         let pte_ptr = match self.inner.get(pid, tx) {
-            None => return Ok(()),
+            None => return Ok(false),
             Some(p) => p,
         };
 
@@ -915,10 +895,7 @@ where
             trace!("rewriting blob with pid {}", pid);
             let blob_ptr = cache_entries[0].ptr().blob().1;
 
-            let log_reservation = self
-                .log
-                .reserve_blob(blob_ptr)
-                .map_err(|e| e.danger_cast())?;
+            let log_reservation = self.log.reserve_blob(blob_ptr)?;
 
             let new_ptr = log_reservation.ptr();
             let mut new_cache_entry = cache_entries[0].clone();
@@ -936,38 +913,28 @@ where
                 let ptrs = ptrs_from_stack(head, tx);
                 let lsn = log_reservation.lsn();
 
-                self.log
-                    .with_sa(|sa| {
-                        sa.mark_replace(pid, lsn, ptrs, new_ptr)
-                    })
-                    .map_err(|e| e.danger_cast())?;
+                self.log.with_sa(|sa| {
+                    sa.mark_replace(pid, lsn, ptrs, new_ptr)
+                })?;
 
                 // NB complete must happen AFTER calls to SA, because
                 // when the iobuf's n_writers hits 0, we may transition
                 // the segment to inactive, resulting in a race otherwise.
-                log_reservation
-                    .complete()
-                    .map_err(|e| e.danger_cast())?;
+                log_reservation.complete()?;
             } else {
-                log_reservation
-                    .abort()
-                    .map_err(|e| e.danger_cast())?;
+                log_reservation.abort()?;
             }
 
-            result.map(|_| ()).map_err(|e| {
-                Error::CasFailed(Some(PagePtr {
-                    cached_ptr: e,
-                    wts: 0,
-                }))
-            })
+            if result.is_ok() {
+                return Ok(true);
+            } else {
+                return Ok(false);
+            }
         } else {
             trace!("rewriting page with pid {}", pid);
 
             // page-in whole page with a get,
-            let (key, update) = match self
-                .get(pid, tx)
-                .map_err(|e| e.danger_cast())?
-            {
+            let (key, update) = match self.get(pid, tx)? {
                 PageGet::Materialized(data, key) => {
                     (key, Update::Compact(data.clone()))
                 }
@@ -983,12 +950,15 @@ where
                     // TODO when merge functionality is added,
                     // this may break
                     warn!("page stack deleted from pagetable before page could be rewritten");
-                    return Ok(());
+                    return Ok(false);
                 }
             };
 
             let wts = key.wts;
-            self.cas_page(pid, key, update, Some(wts), tx).map(|_| ())
+            let res =
+                self.cas_page(pid, key, update, Some(wts), tx)?;
+
+            Ok(res.is_ok())
         }
     }
 
@@ -1000,27 +970,25 @@ where
         new: Update<P>,
         replace_ts: Option<u64>,
         tx: &'g Tx,
-    ) -> Result<PagePtrInner<'g, P>, Option<PagePtr<'g, P>>> {
+    ) -> Result<CasResult<'g, P, Update<P>>> {
         trace!("cas_page called on pid {}", pid);
         let pte_ptr = match self.inner.get(pid, tx) {
             None => {
                 trace!(
                     "early-returning from cas_page, no stack found"
                 );
-                return Err(Error::CasFailed(None));
+                return Ok(Err(None));
             }
             Some(p) => p,
         };
 
         if old.is_allocated() && old.wts == 0 {
-            match self.get(pid, tx).map_err(|e| e.danger_cast())? {
+            match self.get(pid, tx)? {
                 PageGet::Allocated(current_key) => {
                     old = current_key;
                 }
                 other => {
-                    return Err(Error::CasFailed(Some(
-                        other.into_ptr(),
-                    )));
+                    return Ok(Err(Some((other.into_ptr(), new))));
                 }
             }
         }
@@ -1029,67 +997,108 @@ where
             LoggedUpdate { pid, update: new };
         let bytes =
             measure(&M.serialize, || serialize(&replace).unwrap());
-        let log_reservation =
-            self.log.reserve(&bytes).map_err(|e| e.danger_cast())?;
-        let lsn = log_reservation.lsn();
-        let new_ptr = log_reservation.ptr();
+        let mut new = Some(replace.update);
 
-        let ts = replace_ts.unwrap_or(tx.ts);
+        loop {
+            let log_reservation = self.log.reserve(&bytes)?;
+            let lsn = log_reservation.lsn();
+            let new_ptr = log_reservation.ptr();
 
-        let cache_entry = match replace.update {
-            Update::Compact(m) => {
-                CacheEntry::MergedResident(m, ts, lsn, new_ptr)
-            }
-            Update::Free => CacheEntry::Free(ts, lsn, new_ptr),
-            Update::Allocate => {
-                CacheEntry::Allocated(ts, lsn, new_ptr)
-            }
-            Update::Counter(counter) => {
-                CacheEntry::Counter(counter, lsn, new_ptr)
-            }
-            Update::Meta(meta) => {
-                CacheEntry::Meta(meta, lsn, new_ptr)
-            }
-            Update::Append(_) => {
-                panic!("tried to cas a page using an Append")
-            }
-        };
+            let ts = replace_ts.unwrap_or(tx.ts);
 
-        let node =
-            node_from_frag_vec(vec![cache_entry]).into_shared(tx);
+            let cache_entry = match new.take().unwrap() {
+                Update::Compact(m) => {
+                    CacheEntry::MergedResident(m, ts, lsn, new_ptr)
+                }
+                Update::Free => CacheEntry::Free(ts, lsn, new_ptr),
+                Update::Allocate => {
+                    CacheEntry::Allocated(ts, lsn, new_ptr)
+                }
+                Update::Counter(counter) => {
+                    CacheEntry::Counter(counter, ts, lsn, new_ptr)
+                }
+                Update::Meta(meta) => {
+                    CacheEntry::Meta(meta, ts, lsn, new_ptr)
+                }
+                Update::Append(_) => {
+                    panic!("tried to cas a page using an Append")
+                }
+            };
 
-        debug_delay();
-        let result = unsafe {
-            pte_ptr.deref().stack.cas(old.cached_ptr, node, tx)
-        };
+            let node =
+                node_from_frag_vec(vec![cache_entry]).into_shared(tx);
 
-        if result.is_ok() {
-            trace!("cas_page succeeded on pid {}", pid);
-            let ptrs = ptrs_from_stack(old.cached_ptr, tx);
+            debug_delay();
+            let result = unsafe {
+                pte_ptr.deref().stack.cas(old.cached_ptr, node, tx)
+            };
 
-            self.log
-                .with_sa(|sa| {
+            if result.is_ok() {
+                trace!("cas_page succeeded on pid {}", pid);
+                let ptrs = ptrs_from_stack(old.cached_ptr, tx);
+
+                self.log.with_sa(|sa| {
                     sa.mark_replace(pid, lsn, ptrs, new_ptr)
-                })
-                .map_err(|e| e.danger_cast())?;
+                })?;
 
-            // NB complete must happen AFTER calls to SA, because
-            // when the iobuf's n_writers hits 0, we may transition
-            // the segment to inactive, resulting in a race otherwise.
-            log_reservation
-                .complete()
-                .map_err(|e| e.danger_cast())?;
-        } else {
-            trace!("cas_page failed on pid {}", pid);
-            log_reservation.abort().map_err(|e| e.danger_cast())?;
-        }
+                // NB complete must happen AFTER calls to SA, because
+                // when the iobuf's n_writers hits 0, we may transition
+                // the segment to inactive, resulting in a race otherwise.
+                log_reservation.complete()?;
+            } else {
+                trace!("cas_page failed on pid {}", pid);
+                log_reservation.abort()?;
+            }
 
-        result.map_err(|e| {
-            Error::CasFailed(Some(PagePtr {
-                cached_ptr: e,
-                wts: 0,
-            }))
-        })
+            match result {
+                Ok(cached_ptr) => {
+                    return Ok(Ok(PagePtr {
+                        cached_ptr,
+                        wts: ts,
+                    }));
+                }
+                Err((actual_ptr, returned_new)) => {
+                    let returned_new = match unsafe {
+                        returned_new
+                            .into_owned()
+                            .into_box()
+                            .inner
+                            .clone()
+                    } {
+                        CacheEntry::MergedResident(m, ..) => {
+                            Update::Compact(m)
+                        }
+                        CacheEntry::Free(..) => Update::Free,
+                        CacheEntry::Allocated(..) => Update::Allocate,
+                        CacheEntry::Counter(counter, ..) => {
+                            Update::Counter(counter)
+                        }
+                        CacheEntry::Meta(meta, ..) => {
+                            Update::Meta(meta)
+                        }
+                        _ => panic!(
+                            "tried to cas a page using an Append"
+                        ),
+                    };
+                    let actual_ts =
+                        unsafe { actual_ptr.deref().ts() };
+                    if actual_ts != old.wts {
+                        return Ok(Err(Some((
+                            PagePtr {
+                                cached_ptr: actual_ptr,
+                                wts: actual_ts,
+                            },
+                            returned_new,
+                        ))));
+                    }
+                    old = PagePtr {
+                        cached_ptr: actual_ptr,
+                        wts: old.wts,
+                    };
+                    new = Some(returned_new);
+                }
+            }
+        } // loop
     }
 
     /// Try to retrieve a page by its logical ID.
@@ -1097,7 +1106,7 @@ where
         &self,
         pid: PageId,
         tx: &'g Tx,
-    ) -> Result<PageGet<'g, PM::PageFrag>, ()> {
+    ) -> Result<PageGet<'g, PM::PageFrag>> {
         loop {
             let pte_ptr = match self.inner.get(pid, tx) {
                 None => {
@@ -1106,9 +1115,7 @@ where
                 Some(p) => p,
             };
 
-            let inner_res = self
-                .page_in(pid, pte_ptr, tx)
-                .map_err(|e| e.danger_cast())?;
+            let inner_res = self.page_in(pid, pte_ptr, tx)?;
             if let Some(res) = inner_res {
                 return Ok(res);
             }
@@ -1125,7 +1132,7 @@ where
     /// triggering necessary flushes in the process.
     /// Returns the number of bytes written during
     /// this call.
-    pub fn make_stable(&self, lsn: Lsn) -> Result<usize, ()> {
+    pub fn make_stable(&self, lsn: Lsn) -> Result<usize> {
         self.log.make_stable(lsn)
     }
 
@@ -1194,7 +1201,7 @@ where
     /// previous persisted counter wasn't synced to disk yet, we will do
     /// a blocking flush to fsync the latest counter, ensuring
     /// that we will never give out the same counter twice.
-    pub fn generate_id(&self) -> Result<u64, ()> {
+    pub fn generate_id(&self) -> Result<u64> {
         let ret = self.idgen.fetch_add(1, SeqCst);
 
         let interval = self.config.idgen_persist_interval;
@@ -1207,9 +1214,7 @@ where
             if persisted < necessary_persists {
                 // it's our responsibility to persist up to our ID
                 let tx = Tx::new(u64::max_value());
-                let page_get = self
-                    .get(COUNTER_PID, &tx)
-                    .map_err(|e| e.danger_cast())?;
+                let page_get = self.get(COUNTER_PID, &tx)?;
 
                 let (current, key) = if let PageGet::Counter(
                     current,
@@ -1242,10 +1247,9 @@ where
                     &tx,
                 );
 
-                match res {
-                    Err(Error::CasFailed(..)) => continue,
-                    Err(other) => return Err(other.danger_cast()),
-                    _ => {}
+                if res?.is_err() {
+                    // CAS failed
+                    continue;
                 }
 
                 // during recovery we add 2x the interval. we only
@@ -1271,7 +1275,7 @@ where
     /// mapping from identifiers to PageId's that the `PageCache`
     /// owner may use for storing metadata about their higher-level
     /// collections.
-    pub fn meta<'a>(&self, tx: &'a Tx) -> Result<&'a Meta, ()> {
+    pub fn meta<'a>(&self, tx: &'a Tx) -> Result<&'a Meta> {
         let meta_page_get = self.get(META_PID, tx)?;
 
         match meta_page_get {
@@ -1294,7 +1298,7 @@ where
         &self,
         name: &[u8],
         tx: &Tx,
-    ) -> Result<usize, ()> {
+    ) -> Result<usize> {
         let m = self.meta(tx)?;
         if let Some(root) = m.get_root(name) {
             Ok(root)
@@ -1311,23 +1315,21 @@ where
         old: Option<usize>,
         new: Option<usize>,
         tx: &'g Tx,
-    ) -> Result<(), Option<usize>> {
-        let meta_page_get =
-            self.get(META_PID, tx).map_err(|e| e.danger_cast())?;
-
-        let (meta_key, meta) = match meta_page_get {
-            PageGet::Meta(ref meta, ref key) => (key, meta),
-            broken => panic!(
-                "pagecache returned non-base node: {:?}",
-                broken
-            ),
-        };
-
-        let mut current: PagePtr<'g, P> = meta_key.clone();
+    ) -> Result<std::result::Result<(), Option<usize>>> {
         loop {
+            let meta_page_get = self.get(META_PID, tx)?;
+
+            let (meta_key, meta) = match meta_page_get {
+                PageGet::Meta(ref meta, ref key) => (key, meta),
+                broken => panic!(
+                    "pagecache returned non-base node: {:?}",
+                    broken
+                ),
+            };
+
             let actual = meta.get_root(&name);
             if actual != old {
-                return Err(Error::CasFailed(actual));
+                return Ok(Err(actual));
             }
 
             let mut new_meta = (*meta).clone();
@@ -1338,23 +1340,23 @@ where
             }
 
             let new_meta_frag = Update::Meta(new_meta);
+
             let res = self.cas_page(
                 META_PID,
-                current,
+                meta_key.clone(),
                 new_meta_frag,
                 None,
                 &tx,
-            );
+            )?;
 
             match res {
-            Ok(_) => return Ok(()),
-            Err(Error::CasFailed(Some(actual))) => current = actual,
-            Err(Error::CasFailed(None)) => return Err(Error::ReportableBug(
-                "replacing the META page has failed because \
-                the pagecache does not think it currently exists.".into()
-            )),
-            Err(other) => return Err(other.danger_cast()),
-        }
+                Ok(_worked) => return Ok(Ok(())),
+                Err(Some((_current_ptr, _rejected))) => {},
+                Err(None) => return Err(Error::ReportableBug(
+                    "replacing the META page has failed because \
+                    the pagecache does not think it currently exists.".into()
+                )),
+            }
         }
     }
 
@@ -1363,10 +1365,7 @@ where
         pid: PageId,
         pte_ptr: Shared<'g, PageTableEntry<P>>,
         tx: &'g Tx,
-    ) -> Result<
-        Option<PageGet<'g, PM::PageFrag>>,
-        Option<PagePtr<'g, P>>,
-    > {
+    ) -> Result<Option<PageGet<'g, PM::PageFrag>>> {
         let _measure = Measure::new(&M.page_in);
 
         debug_delay();
@@ -1474,9 +1473,7 @@ where
                 .map(|&(_ts, lsn, ptr)| self.pull(lsn, ptr))
                 .collect();
 
-            for res in pulled_res {
-                let item_res = res.map_err(|e| e.danger_cast());
-
+            for item_res in pulled_res {
                 if item_res.is_err() {
                     // check to see if the page head pointer is the same.
                     // if not, we may have failed our pull because a blob
@@ -1566,7 +1563,7 @@ where
         );
 
         trace!("accessed page: {:?}", merged);
-        self.page_out(to_evict, tx).map_err(|e| e.danger_cast())?;
+        self.page_out(to_evict, tx)?;
 
         if ptrs.len() > self.config.page_consolidation_threshold {
             trace!(
@@ -1579,13 +1576,13 @@ where
                 wts: head_ts,
             };
             match self.cas_page(pid, ptr, merged, Some(head_ts), tx) {
-                Ok(new_head) => head = new_head,
-                Err(Error::CasFailed(None)) => {
+                Ok(Ok(new_head)) => head = new_head.cached_ptr,
+                Ok(Err(None)) => {
                     // This page was unallocated since we
                     // read the head pointer.
                     return Ok(Some(PageGet::Unallocated));
                 }
-                Err(Error::CasFailed(Some(_))) => {
+                Ok(Err(Some(_))) => {
                     // our consolidation failed,
                     // so we communicate to the
                     // caller that they should retry
@@ -1607,12 +1604,12 @@ where
 
             let (head_ts, head_lsn, head_ptr) = ptrs.remove(0);
             let head_entry = match merged {
-                Update::Meta(meta) => {
-                    CacheEntry::Meta(meta, head_lsn, head_ptr)
-                }
-                Update::Counter(counter) => {
-                    CacheEntry::Counter(counter, head_lsn, head_ptr)
-                }
+                Update::Meta(meta) => CacheEntry::Meta(
+                    meta, head_ts, head_lsn, head_ptr,
+                ),
+                Update::Counter(counter) => CacheEntry::Counter(
+                    counter, head_ts, head_lsn, head_ptr,
+                ),
                 Update::Compact(compact) => {
                     CacheEntry::MergedResident(
                         compact, head_ts, head_lsn, head_ptr,
@@ -1671,10 +1668,10 @@ where
                 CacheEntry::MergedResident(mr, ..) => {
                     Ok(Some(PageGet::Materialized(mr, ret_ptr)))
                 }
-                CacheEntry::Counter(counter, _, _) => {
+                CacheEntry::Counter(counter, ..) => {
                     Ok(Some(PageGet::Counter(*counter, ret_ptr)))
                 }
-                CacheEntry::Meta(meta, _, _) => {
+                CacheEntry::Meta(meta, ..) => {
                     Ok(Some(PageGet::Meta(meta, ret_ptr)))
                 }
                 other => panic!("found non-base type of node after paging in node {}: {:?}", pid, other),
@@ -1686,7 +1683,7 @@ where
         &self,
         to_evict: Vec<PageId>,
         tx: &'g Tx,
-    ) -> Result<(), ()> {
+    ) -> Result<()> {
         let _measure = Measure::new(&M.page_out);
         for pid in to_evict {
             let pte_ptr = match self.inner.get(pid, tx) {
@@ -1768,11 +1765,7 @@ where
         Ok(())
     }
 
-    fn pull<'g>(
-        &self,
-        lsn: Lsn,
-        ptr: DiskPtr,
-    ) -> Result<Update<P>, Option<PagePtr<'g, P>>> {
+    fn pull<'g>(&self, lsn: Lsn, ptr: DiskPtr) -> Result<Update<P>> {
         trace!("pulling lsn {} ptr {} from disk", lsn, ptr);
         let _measure = Measure::new(&M.pull);
         let bytes = match self.log.read(lsn, ptr).map_err(|_| ()) {
@@ -1819,7 +1812,7 @@ where
 
     // caller is expected to have instantiated self.last_snapshot
     // in recovery already.
-    fn advance_snapshot(&self) -> Result<(), ()> {
+    fn advance_snapshot(&self) -> Result<()> {
         let snapshot_mu = self.last_snapshot.clone();
         let config = self.config.clone();
         let iobufs = self.log.iobufs.clone();
@@ -2033,8 +2026,8 @@ fn ptrs_from_stack<'g, P: Send + Sync>(
             | CacheEntry::Free(.., ref ptr)
             | CacheEntry::Flush(.., ref ptr)
             | CacheEntry::Allocated(.., ref ptr)
-            | CacheEntry::Counter(_, _, ref ptr)
-            | CacheEntry::Meta(_, _, ref ptr) => {
+            | CacheEntry::Counter(.., ref ptr)
+            | CacheEntry::Meta(.., ref ptr) => {
                 ptrs.push(*ptr);
             }
         }

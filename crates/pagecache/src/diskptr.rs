@@ -70,10 +70,7 @@ impl DiskPtr {
         }
     }
 
-    pub(crate) fn read(
-        &self,
-        config: &Config,
-    ) -> Result<Vec<u8>, ()> {
+    pub(crate) fn read(&self, config: &Config) -> Result<Vec<u8>> {
         match self {
             DiskPtr::Blob(_lid, ptr) => read_blob(*ptr, &config),
             DiskPtr::Inline(lid) => {

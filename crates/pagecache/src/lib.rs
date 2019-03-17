@@ -123,7 +123,7 @@ pub use self::{
     metrics::M,
     pagecache::{CacheEntry, PageCache, PageGet, PagePtr},
     reservation::Reservation,
-    result::{Error, Result},
+    result::{CasResult, Error, Result},
     segment::SegmentMode,
     tx::Tx,
 };
