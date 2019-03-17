@@ -14,10 +14,7 @@ pub struct Tx {
 impl Tx {
     /// Creates a new Tx with a given timestamp.
     pub fn new(ts: u64) -> Self {
-        Self {
-            guard: pin(),
-            ts: ts,
-        }
+        Self { guard: pin(), ts }
     }
 }
 

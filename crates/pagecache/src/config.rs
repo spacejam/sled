@@ -233,10 +233,12 @@ impl ConfigBuilder {
             None
         };
 
-        let file = self.open_file().expect(&format!(
-            "should be able to open configured file at {:?}",
-            self.db_path(),
-        ));
+        let file = self.open_file().unwrap_or_else(|_| {
+            panic!(
+                "should be able to open configured file at {:?}",
+                self.db_path()
+            );
+        });
 
         // seal config in a Config
         Config {

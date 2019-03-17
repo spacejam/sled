@@ -345,7 +345,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                     end
                 };
 
-                if !node.hi.is_empty() && &*node.hi < search_key {
+                if !node.hi.is_empty() && *node.hi < *search_key {
                     // the node has been split since we saw it,
                     // and we need to scan forward
                     split_detected = true;
@@ -410,7 +410,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
             while (!split_detected
                 && (next_node.next != Some(node.id))
                 && next_node.lo < node.lo)
-                || (split_detected && &*next_node.hi < split_key)
+                || (split_detected && *next_node.hi < *split_key)
             {
                 let res = self
                     .tree

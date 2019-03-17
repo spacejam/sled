@@ -320,7 +320,7 @@ impl IoBufs {
             );
             std::ptr::copy_nonoverlapping(
                 to_reserve.as_ptr(),
-                out_buf.as_mut_ptr().offset(MSG_HEADER_LEN as isize),
+                out_buf.as_mut_ptr().add(MSG_HEADER_LEN),
                 to_reserve.len(),
             );
         }
