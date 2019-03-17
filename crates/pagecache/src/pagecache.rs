@@ -1012,7 +1012,7 @@ where
             Some(p) => p,
         };
 
-        if old.is_allocated() {
+        if old.is_allocated() && old.wts == 0 {
             match self.get(pid, tx).map_err(|e| e.danger_cast())? {
                 PageGet::Allocated(current_key) => {
                     old = current_key;
