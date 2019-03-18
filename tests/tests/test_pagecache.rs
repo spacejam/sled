@@ -178,7 +178,7 @@ fn parallel_pagecache() -> sled::Result<()> {
         let (ptr, _key): (&Vec<usize>, _) =
                            pc.get(i, &tx)
                              .expect("we should read what we just wrote")
-                             .unwrap();
+                             .expect("failed to recover a page we previously wrote");
         assert_eq!(*ptr, vec![i]);
     }};
 

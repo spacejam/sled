@@ -229,7 +229,7 @@ unsafe impl<'a, P> Sync for PageGet<'a, P> where
 
 impl<'a, P> PageGet<'a, P>
 where
-    P: DeserializeOwned + Serialize + Send + Sync,
+    P: std::fmt::Debug + DeserializeOwned + Serialize + Send + Sync,
 {
     /// unwraps the `PageGet` into its inner `Materialized`
     /// form.
@@ -239,7 +239,10 @@ where
     pub fn unwrap(self) -> (&'a P, PagePtr<'a, P>) {
         match self {
             PageGet::Materialized(pr, hptr) => (pr, hptr),
-            _ => panic!("unwrap called on non-Materialized"),
+            _ => panic!(
+                "unwrap called on non-Materialized: {:?}",
+                self
+            ),
         }
     }
 
@@ -921,14 +924,12 @@ where
                 // when the iobuf's n_writers hits 0, we may transition
                 // the segment to inactive, resulting in a race otherwise.
                 log_reservation.complete()?;
+
+                Ok(true)
             } else {
                 log_reservation.abort()?;
-            }
 
-            if result.is_ok() {
-                return Ok(true);
-            } else {
-                return Ok(false);
+                Ok(false)
             }
         } else {
             trace!("rewriting page with pid {}", pid);
