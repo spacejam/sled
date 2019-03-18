@@ -461,10 +461,10 @@ impl ConfigBuilder {
         let mut buf = vec![];
         f.read_to_end(&mut buf).unwrap();
         let len = buf.len();
-        buf.split_off(len - 8);
+        buf.split_off(len - 4);
 
         let mut crc_arr = [0u8; 4];
-        f.seek(std::io::SeekFrom::End(-8)).unwrap();
+        f.seek(std::io::SeekFrom::End(-4)).unwrap();
         f.read_exact(&mut crc_arr).unwrap();
         let crc_expected = arr_to_u32(&crc_arr);
 
