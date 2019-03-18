@@ -77,45 +77,43 @@ impl Deref for IVec {
 
     #[inline]
     fn deref(&self) -> &[u8] {
+        self.as_ref()
+    }
+}
+
+impl AsRef<[u8]> for IVec {
+    #[inline]
+    fn as_ref(&self) -> &[u8] {
         match self {
             IVec::Inline(sz, buf) => unsafe {
                 buf.get_unchecked(..*sz as usize)
             },
-            IVec::Remote { buf } => buf.as_ref(),
+            IVec::Remote { buf } => buf,
         }
     }
 }
 
 impl PartialOrd for IVec {
-    fn partial_cmp(
-        &self,
-        other: &IVec,
-    ) -> Option<std::cmp::Ordering> {
-        Some(self.deref().cmp(other.deref()))
+    fn partial_cmp(&self, other: &IVec) -> Option<std::cmp::Ordering> {
+        Some(self.as_ref().cmp(other.as_ref()))
     }
 }
 
-impl PartialEq for IVec {
-    fn eq(&self, other: &IVec) -> bool {
-        self.deref() == other.deref()
-    }
-}
-
-impl<'a, T: AsRef<[u8]>> PartialEq<T> for IVec {
+impl<T: AsRef<[u8]>> PartialEq<T> for IVec {
     fn eq(&self, other: &T) -> bool {
-        self.deref() == other.as_ref()
+        self.as_ref() == other.as_ref()
     }
 }
 
 impl PartialEq<[u8]> for IVec {
     fn eq(&self, other: &[u8]) -> bool {
-        self.deref() == other
+        self.as_ref() == other
     }
 }
 
 impl fmt::Debug for IVec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.deref().fmt(f)
+        self.as_ref().fmt(f)
     }
 }
 
