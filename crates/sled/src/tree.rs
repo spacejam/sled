@@ -507,7 +507,7 @@ impl Tree {
                 leaf_ptr.clone(),
                 frag,
                 &tx,
-            );
+            )?;
 
             if link.is_ok() {
                 // success
