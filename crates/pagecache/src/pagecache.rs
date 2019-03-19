@@ -251,13 +251,10 @@ where
     ///
     /// # Panics
     /// Panics if it is a variant other than Materialized.
-    pub fn expect(
-        self,
-        msg: &'static str,
-    ) -> (&'a P, PagePtr<'a, P>) {
+    pub fn expect(self, msg: &str) -> (&'a P, PagePtr<'a, P>) {
         match self {
             PageGet::Materialized(pr, hptr) => (pr, hptr),
-            _ => panic!(msg),
+            _ => panic!("{}", msg),
         }
     }
 
