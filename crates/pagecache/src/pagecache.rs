@@ -614,7 +614,8 @@ where
 
             let new_stack = Stack::default();
             new_stack.push(CacheEntry::Allocated(
-                tx.ts,
+                // we set the wts to 0 to force conflicts
+                0,
                 Lsn::max_value(),
                 DiskPtr::Inline(LogId::max_value()),
             ));
@@ -1031,31 +1032,28 @@ where
                 pte_ptr.deref().stack.cas(old.cached_ptr, node, tx)
             };
 
-            if result.is_ok() {
-                trace!("cas_page succeeded on pid {}", pid);
-                let ptrs = ptrs_from_stack(old.cached_ptr, tx);
-
-                self.log.with_sa(|sa| {
-                    sa.mark_replace(pid, lsn, ptrs, new_ptr)
-                })?;
-
-                // NB complete must happen AFTER calls to SA, because
-                // when the iobuf's n_writers hits 0, we may transition
-                // the segment to inactive, resulting in a race otherwise.
-                log_reservation.complete()?;
-            } else {
-                trace!("cas_page failed on pid {}", pid);
-                log_reservation.abort()?;
-            }
-
             match result {
                 Ok(cached_ptr) => {
+                    trace!("cas_page succeeded on pid {}", pid);
+                    let ptrs = ptrs_from_stack(old.cached_ptr, tx);
+
+                    self.log.with_sa(|sa| {
+                        sa.mark_replace(pid, lsn, ptrs, new_ptr)
+                    })?;
+
+                    // NB complete must happen AFTER calls to SA, because
+                    // when the iobuf's n_writers hits 0, we may transition
+                    // the segment to inactive, resulting in a race otherwise.
+                    log_reservation.complete()?;
                     return Ok(Ok(PagePtr {
                         cached_ptr,
                         wts: ts,
                     }));
                 }
                 Err((actual_ptr, returned_new)) => {
+                    trace!("cas_page failed on pid {}", pid);
+                    log_reservation.abort()?;
+
                     let returned_new = match unsafe {
                         returned_new
                             .into_owned()
@@ -1089,13 +1087,18 @@ where
                             returned_new,
                         ))));
                     }
+                    trace!(
+                        "retrying CAS on pid {} with same wts of {}",
+                        pid,
+                        old.wts
+                    );
                     old = PagePtr {
                         cached_ptr: actual_ptr,
                         wts: old.wts,
                     };
                     new = Some(returned_new);
                 }
-            }
+            } // match cas result
         } // loop
     }
 
@@ -1105,6 +1108,7 @@ where
         pid: PageId,
         tx: &'g Tx,
     ) -> Result<PageGet<'g, PM::PageFrag>> {
+        trace!("getting pid {}", pid);
         loop {
             let pte_ptr = match self.inner.get(pid, tx) {
                 None => {
@@ -1383,19 +1387,17 @@ where
 
                 return Ok(Some(PageGet::Materialized(mr, ptr)));
             }
-            Some(CacheEntry::Counter(counter, ..)) => {
+            Some(CacheEntry::Counter(counter, ts, ..)) => {
                 let ptr = PagePtr {
                     cached_ptr: head,
-                    // TODO feels bug-prone
-                    wts: 0,
+                    wts: *ts,
                 };
                 return Ok(Some(PageGet::Counter(*counter, ptr)));
             }
-            Some(CacheEntry::Meta(meta, ..)) => {
+            Some(CacheEntry::Meta(meta, ts, ..)) => {
                 let ptr = PagePtr {
                     cached_ptr: head,
-                    // TODO feels bug-prone
-                    wts: 0,
+                    wts: *ts,
                 };
                 return Ok(Some(PageGet::Meta(meta, ptr)));
             }
