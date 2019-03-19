@@ -173,9 +173,8 @@ fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
                     None
                 };
 
-                match tree.cas(&key, old, new) {
-                    Ok(_) | Err(sled::Error::CasFailed(_)) => {}
-                    other => panic!("operational error: {:?}", other),
+                if let Err(e) = tree.cas(&key, old, new) {
+                    panic!("operational error: {:?}", e);
                 }
             }
             v if v > cas_max && v <= scan_max => {
