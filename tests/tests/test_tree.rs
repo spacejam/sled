@@ -12,7 +12,7 @@ use log::{debug, warn};
 use quickcheck::{QuickCheck, StdGen};
 
 const N_THREADS: usize = 10;
-const N_PER_THREAD: usize = 1;
+const N_PER_THREAD: usize = 100;
 const N: usize = N_THREADS * N_PER_THREAD; // NB N should be multiple of N_THREADS
 const SPACE: usize = N;
 
@@ -562,7 +562,7 @@ fn recover_tree() {
     drop(t);
 
     let t = sled::Db::start(config.clone()).unwrap();
-    for i in 0..4 {
+    for i in 0..N_PER_THREAD {
         let k = kv(i as usize);
         assert_eq!(t.get(&*k).unwrap().unwrap(), k);
         t.del(&*k).unwrap();
@@ -570,7 +570,7 @@ fn recover_tree() {
     drop(t);
 
     let t = sled::Db::start(config.clone()).unwrap();
-    for i in 0..4 {
+    for i in 0..N_PER_THREAD {
         let k = kv(i as usize);
         assert_eq!(t.get(&*k), Ok(None));
     }
