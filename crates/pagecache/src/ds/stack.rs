@@ -11,7 +11,7 @@ use super::*;
 #[derive(Debug)]
 pub struct Node<T: Send + 'static> {
     pub(crate) inner: T,
-    next: Atomic<Node<T>>,
+    pub(crate) next: Atomic<Node<T>>,
 }
 
 impl<T: Send + 'static> Drop for Node<T> {
@@ -149,7 +149,7 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
         guard: &'g Guard,
     ) -> std::result::Result<
         Shared<'g, Node<T>>,
-        (Shared<'g, Node<T>>, T),
+        (Shared<'g, Node<T>>, Owned<Node<T>>),
     > {
         debug_delay();
         let node = Owned::new(Node {
@@ -157,22 +157,33 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
             next: Atomic::from(old),
         });
 
-        let node = node.into_shared(guard);
+        self.cap_node(old, node, guard)
+    }
 
+    /// compare and push
+    pub fn cap_node<'g>(
+        &self,
+        old: Shared<'_, Node<T>>,
+        mut node: Owned<Node<T>>,
+        guard: &'g Guard,
+    ) -> std::result::Result<
+        Shared<'g, Node<T>>,
+        (Shared<'g, Node<T>>, Owned<Node<T>>),
+    > {
+        // properly set next ptr
+        node.next = Atomic::from(old);
         let res = self.head.compare_and_set(old, node, SeqCst, guard);
 
         match res {
             Err(e) => {
-                unsafe {
-                    // we want to set next to null to prevent
-                    // the current shared head from being
-                    // dropped when we drop this node.
-                    node.deref().next.store(Shared::null(), SeqCst);
-                    let node_owned = node.into_owned();
-                    Err((e.current, node_owned.inner.clone()))
-                }
+                // we want to set next to null to prevent
+                // the current shared head from being
+                // dropped when we drop this node.
+                let mut returned = e.new;
+                returned.next = Atomic::null();
+                Err((e.current, returned))
             }
-            Ok(_) => Ok(node),
+            Ok(success) => Ok(success),
         }
     }
 
@@ -180,25 +191,25 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
     pub fn cas<'g>(
         &self,
         old: Shared<'g, Node<T>>,
-        new: Shared<'g, Node<T>>,
+        new: Owned<Node<T>>,
         guard: &'g Guard,
     ) -> std::result::Result<
         Shared<'g, Node<T>>,
-        (Shared<'g, Node<T>>, Shared<'g, Node<T>>),
+        (Shared<'g, Node<T>>, Owned<Node<T>>),
     > {
         debug_delay();
         let res = self.head.compare_and_set(old, new, SeqCst, guard);
 
         match res {
-            Ok(_) => {
+            Ok(success) => {
                 if !old.is_null() {
                     unsafe {
                         guard.defer_destroy(old);
                     };
                 }
-                Ok(new)
+                Ok(success)
             }
-            Err(e) => Err((e.current, new)),
+            Err(e) => Err((e.current, e.new)),
         }
     }
 

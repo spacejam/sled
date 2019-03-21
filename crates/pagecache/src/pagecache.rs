@@ -666,7 +666,15 @@ where
             measure(&M.serialize, || serialize(&prepend).unwrap());
 
         let mut new = if let Update::Append(new) = prepend.update {
-            Some(new)
+            let cache_entry =
+                CacheEntry::Resident(new, 0, 0, DiskPtr::Inline(0));
+
+            let node = Node {
+                inner: cache_entry,
+                next: Atomic::from(old.cached_ptr),
+            };
+
+            Some(Owned::new(node))
         } else {
             unreachable!();
         };
@@ -693,87 +701,97 @@ where
             // changing.
             let ts = old.wts + 1;
 
-            let cache_entry = CacheEntry::Resident(
-                new.take().unwrap(),
-                ts,
-                lsn,
-                ptr,
-            );
+            let mut cache_entry = new.take().unwrap();
+
+            match cache_entry.inner {
+                CacheEntry::Resident(
+                    _,
+                    ref mut ce_ts,
+                    ref mut ce_lsn,
+                    ref mut ce_ptr,
+                ) => {
+                    *ce_ts = ts;
+                    *ce_lsn = lsn;
+                    *ce_ptr = ptr;
+                }
+                _ => panic!(
+                    "should only be working with Resident entries"
+                ),
+            }
 
             debug_delay();
             let result = unsafe {
-                pte_ptr.deref().stack.cap(
+                pte_ptr.deref().stack.cap_node(
                     old.cached_ptr,
                     cache_entry,
                     tx,
                 )
             };
 
-            if result.is_err() {
-                trace!("link of pid {} failed", pid);
-                log_reservation.abort()?;
-            } else {
-                trace!("link of pid {} succeeded", pid);
-                let skip_mark = {
-                    // if the last update for this page was also
-                    // sent to this segment, we can skip marking it
-                    let previous_head_lsn = old.last_lsn();
-
-                    assert_ne!(previous_head_lsn, 0);
-
-                    let previous_lsn_segment = previous_head_lsn
-                        / self.config.io_buf_size as i64;
-                    let new_lsn_segment =
-                        lsn / self.config.io_buf_size as i64;
-
-                    previous_lsn_segment == new_lsn_segment
-                };
-                let to_clean = if skip_mark {
-                    self.log.with_sa(|sa| {
-                        sa.mark_link(pid, lsn, ptr);
-                        sa.clean(pid)
-                    })
-                } else {
-                    self.log.with_sa(|sa| {
-                        sa.mark_link(pid, lsn, ptr);
-                        sa.clean(pid)
-                    })
-                };
-
-                // NB complete must happen AFTER calls to SA, because
-                // when the iobuf's n_writers hits 0, we may transition
-                // the segment to inactive, resulting in a race otherwise.
-                // FIXME can result in deadlock if a node that holds SA
-                // is waiting to acquire a new reservation blocked by this?
-                log_reservation.complete()?;
-
-                if let Some(to_clean) = to_clean {
-                    self.rewrite_page(to_clean, tx)?;
-                }
-
-                let count = self.updates.fetch_add(1, SeqCst) + 1;
-                let should_snapshot =
-                    count % self.config.snapshot_after_ops == 0;
-                if should_snapshot {
-                    self.advance_snapshot()?;
-                }
-            }
-
             match result {
                 Ok(cached_ptr) => {
+                    trace!("link of pid {} succeeded", pid);
+                    let skip_mark = {
+                        // if the last update for this page was also
+                        // sent to this segment, we can skip marking it
+                        let previous_head_lsn = old.last_lsn();
+
+                        assert_ne!(previous_head_lsn, 0);
+
+                        let previous_lsn_segment = previous_head_lsn
+                            / self.config.io_buf_size as i64;
+                        let new_lsn_segment =
+                            lsn / self.config.io_buf_size as i64;
+
+                        previous_lsn_segment == new_lsn_segment
+                    };
+                    let to_clean = if skip_mark {
+                        self.log.with_sa(|sa| {
+                            sa.mark_link(pid, lsn, ptr);
+                            sa.clean(pid)
+                        })
+                    } else {
+                        self.log.with_sa(|sa| {
+                            sa.mark_link(pid, lsn, ptr);
+                            sa.clean(pid)
+                        })
+                    };
+
+                    // NB complete must happen AFTER calls to SA, because
+                    // when the iobuf's n_writers hits 0, we may transition
+                    // the segment to inactive, resulting in a race otherwise.
+                    // FIXME can result in deadlock if a node that holds SA
+                    // is waiting to acquire a new reservation blocked by this?
+                    log_reservation.complete()?;
+
+                    if let Some(to_clean) = to_clean {
+                        self.rewrite_page(to_clean, tx)?;
+                    }
+
+                    let count = self.updates.fetch_add(1, SeqCst) + 1;
+                    let should_snapshot =
+                        count % self.config.snapshot_after_ops == 0;
+                    if should_snapshot {
+                        self.advance_snapshot()?;
+                    }
+
                     return Ok(Ok(PagePtr {
                         cached_ptr,
                         wts: ts,
                     }));
                 }
                 Err((actual_ptr, returned_new)) => {
-                    let returned_new =
-                        if let CacheEntry::Resident(new, ..) =
-                            returned_new
+                    trace!("link of pid {} failed", pid);
+                    log_reservation.abort()?;
+                    let returned =
+                        if let CacheEntry::Resident(ref new, ..) =
+                            returned_new.deref().inner
                         {
                             new
                         } else {
-                            unreachable!()
+                            panic!(
+                                "should only return Resident entries"
+                            );
                         };
 
                     let actual_ts =
@@ -784,7 +802,7 @@ where
                                 cached_ptr: actual_ptr,
                                 wts: actual_ts,
                             },
-                            returned_new,
+                            returned.clone(),
                         ))));
                     }
                     new = Some(returned_new);
@@ -881,8 +899,7 @@ where
 
             *new_cache_entry.ptr_ref_mut() = new_ptr;
 
-            let node = node_from_frag_vec(vec![new_cache_entry])
-                .into_shared(tx);
+            let node = node_from_frag_vec(vec![new_cache_entry]);
 
             debug_delay();
             let result =
@@ -995,6 +1012,9 @@ where
             // Here, we only bump it up by 1 if the
             // update represents a fundamental change
             // that SHOULD cause CAS failures.
+            // Here, we only bump it up by 1 if the
+            // update represents a fundamental change
+            // that SHOULD cause CAS failures.
             let ts = if is_rewrite { old.wts } else { old.wts + 1 };
 
             let cache_entry = match new.take().unwrap() {
@@ -1013,8 +1033,7 @@ where
                 }
             };
 
-            let node =
-                node_from_frag_vec(vec![cache_entry]).into_shared(tx);
+            let node = node_from_frag_vec(vec![cache_entry]);
 
             debug_delay();
             let result = unsafe {
@@ -1043,27 +1062,22 @@ where
                     trace!("cas_page failed on pid {}", pid);
                     log_reservation.abort()?;
 
-                    let returned_new = match unsafe {
-                        returned_new
-                            .into_owned()
-                            .into_box()
-                            .inner
-                            .clone()
-                    } {
-                        CacheEntry::MergedResident(m, ..) => {
-                            Update::Compact(m)
-                        }
-                        CacheEntry::Free(..) => Update::Free,
-                        CacheEntry::Counter(counter, ..) => {
-                            Update::Counter(counter)
-                        }
-                        CacheEntry::Meta(meta, ..) => {
-                            Update::Meta(meta)
-                        }
-                        _ => panic!(
-                            "tried to cas a page using an Append"
-                        ),
-                    };
+                    let returned_new =
+                        match returned_new.into_box().inner.clone() {
+                            CacheEntry::MergedResident(m, ..) => {
+                                Update::Compact(m)
+                            }
+                            CacheEntry::Free(..) => Update::Free,
+                            CacheEntry::Counter(counter, ..) => {
+                                Update::Counter(counter)
+                            }
+                            CacheEntry::Meta(meta, ..) => {
+                                Update::Meta(meta)
+                            }
+                            _ => panic!(
+                                "tried to cas a page using an Append"
+                            ),
+                        };
                     let actual_ts =
                         unsafe { actual_ptr.deref().ts() };
 
@@ -1630,6 +1644,8 @@ where
                 ptrs_from_stack(node, tx),
             );
 
+            let node = unsafe { node.into_owned() };
+
             debug_delay();
             let res =
                 unsafe { pte_ptr.deref().stack.cas(head, node, tx) };
@@ -1683,7 +1699,7 @@ where
 
             // ensure the last entry is a Flush
             let last_ce = match cache_entries.pop() {
-                None => return Ok(()),
+                None => continue,
                 Some(c) => c,
             };
 
@@ -1706,7 +1722,7 @@ where
                     // a discrepency in the Lru perceived size
                     // and the real size, but this should be
                     // minimal in anticipated workloads.
-                    return Ok(());
+                    continue;
                 }
             };
 
@@ -1735,12 +1751,10 @@ where
 
             debug_delay();
             unsafe {
-                if pte_ptr
-                    .deref()
-                    .stack
-                    .cas(head, node.into_shared(tx), tx)
-                    .is_err()
-                {}
+                if pte_ptr.deref().stack.cas(head, node, tx).is_err()
+                {
+                    trace!("failed to page-out pid {}", pid)
+                }
             }
         }
         Ok(())
