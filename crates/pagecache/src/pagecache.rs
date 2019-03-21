@@ -771,7 +771,6 @@ where
                             returned_new,
                         ))));
                     }
-                    println!("retrying link with same wts...");
                     new = Some(returned_new);
                     old = PagePtr {
                         cached_ptr: actual_ptr,
