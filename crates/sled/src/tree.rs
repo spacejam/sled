@@ -323,11 +323,7 @@ impl Tree {
             ));
         }
 
-        let new_ivec = if let Some(ref n) = new {
-            Some(IVec::from(&**n))
-        } else {
-            None
-        };
+        let new = new.map(IVec::from);
 
         // we need to retry caps until old != cur, since just because
         // cap fails it doesn't mean our value was changed.
@@ -357,8 +353,8 @@ impl Tree {
                 let node: &Node = leaf_frag.unwrap_base();
                 (node.id, prefix_encode(&node.lo, key.as_ref()))
             };
-            let frag = if let Some(ref n) = new_ivec {
-                Frag::Set(encoded_key, n.clone())
+            let frag = if let Some(ref new) = new {
+                Frag::Set(encoded_key, new.clone())
             } else {
                 Frag::Del(encoded_key)
             };
@@ -372,7 +368,7 @@ impl Tree {
                     let event = if let Some(n) = new {
                         subscription::Event::Set(
                             key.as_ref().to_vec(),
-                            n.clone(),
+                            new,
                         )
                     } else {
                         subscription::Event::Del(
@@ -406,7 +402,7 @@ impl Tree {
             ));
         }
 
-        let val_ivec: IVec = IVec::from(&*value);
+        let value = IVec::from(value);
 
         loop {
             let tx = self.context.pagecache.begin()?;
@@ -422,7 +418,7 @@ impl Tree {
             let mut subscriber_reservation =
                 self.subscriptions.reserve(&key);
 
-            let frag = Frag::Set(encoded_key, val_ivec.clone());
+            let frag = Frag::Set(encoded_key, value.clone());
             let link = self.context.pagecache.link(
                 node.id,
                 leaf_ptr.clone(),
@@ -434,7 +430,7 @@ impl Tree {
                 if let Some(res) = subscriber_reservation.take() {
                     let event = subscription::Event::Set(
                         key.as_ref().to_vec(),
-                        value.clone(),
+                        value,
                     );
 
                     res.complete(event);
@@ -591,7 +587,7 @@ impl Tree {
             ));
         }
 
-        let val_ivec = IVec::from(&*value);
+        let value = IVec::from(value);
 
         loop {
             let tx = self.context.pagecache.begin()?;
@@ -607,7 +603,7 @@ impl Tree {
                 self.subscriptions.reserve(&key);
 
             let encoded_key = prefix_encode(&node.lo, key.as_ref());
-            let frag = Frag::Merge(encoded_key, val_ivec.clone());
+            let frag = Frag::Merge(encoded_key, value.clone());
 
             let link = self.context.pagecache.link(
                 node.id,
@@ -620,7 +616,7 @@ impl Tree {
                 if let Some(res) = subscriber_reservation.take() {
                     let event = subscription::Event::Merge(
                         key.as_ref().to_vec(),
-                        value.clone(),
+                        value,
                     );
 
                     res.complete(event);
