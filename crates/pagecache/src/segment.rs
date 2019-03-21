@@ -501,8 +501,7 @@ impl SegmentAccountant {
                         add(pid, lsn, ptr.lid(), &mut segments);
                     }
                 }
-                PageState::Allocated(lsn, ptr)
-                | PageState::Free(lsn, ptr) => {
+                PageState::Free(lsn, ptr) => {
                     add(pid, lsn, ptr.lid(), &mut segments);
                 }
             }

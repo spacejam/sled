@@ -132,7 +132,7 @@ impl Db {
         let leftmost_chain: Vec<PageId> = tree
             .path_for_key(b"", &tx)?
             .into_iter()
-            .map(|(frag, _tp)| frag.unwrap_base().id)
+            .map(|(id, _frag, _tp)| id)
             .collect();
 
         loop {

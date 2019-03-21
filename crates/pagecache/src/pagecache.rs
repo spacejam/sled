@@ -24,19 +24,6 @@ impl<'g, P> PagePtr<'g, P>
 where
     P: 'static + Send,
 {
-    /// Create a null `PagePtr`
-    pub fn allocated(wts: u64) -> PagePtr<'g, P> {
-        PagePtr {
-            cached_ptr: Shared::null(),
-            wts,
-        }
-    }
-
-    /// Whether this pointer is Allocated
-    pub fn is_allocated(&self) -> bool {
-        self.cached_ptr.is_null()
-    }
-
     /// The last Lsn number for the head of this page
     pub fn last_lsn(&self) -> Lsn {
         unsafe { self.cached_ptr.deref().deref().lsn() }
@@ -73,8 +60,6 @@ pub enum CacheEntry<M: Send> {
     Flush(u64, Lsn, DiskPtr),
     /// A freed page tombstone.
     Free(u64, Lsn, DiskPtr),
-    /// An allocated page that doesn't have user data linked/replaced into it yet
-    Allocated(u64, Lsn, DiskPtr),
     /// The persisted counter page
     Counter(usize, u64, Lsn, DiskPtr),
     /// The persisted meta page
@@ -91,7 +76,6 @@ impl<M: Send> CacheEntry<M> {
             | PartialFlush(.., ptr)
             | Flush(.., ptr)
             | Free(.., ptr)
-            | Allocated(.., ptr)
             | Counter(.., ptr)
             | Meta(.., ptr) => *ptr,
         }
@@ -106,7 +90,6 @@ impl<M: Send> CacheEntry<M> {
             | PartialFlush(_, lsn, ..)
             | Flush(_, lsn, ..)
             | Free(_, lsn, ..)
-            | Allocated(_, lsn, ..)
             | Counter(.., lsn, _)
             | Meta(.., lsn, _) => *lsn,
         }
@@ -121,7 +104,6 @@ impl<M: Send> CacheEntry<M> {
             | PartialFlush(ts, ..)
             | Flush(ts, ..)
             | Free(ts, ..)
-            | Allocated(ts, ..)
             | Counter(_, ts, ..)
             | Meta(_, ts, ..) => *ts,
         }
@@ -136,7 +118,6 @@ impl<M: Send> CacheEntry<M> {
             | PartialFlush(.., ptr)
             | Flush(.., ptr)
             | Free(.., ptr)
-            | Allocated(.., ptr)
             | Counter(.., ptr)
             | Meta(.., ptr) => ptr,
         }
@@ -164,7 +145,6 @@ where
     Append(PageFrag),
     Compact(PageFrag),
     Free,
-    Allocate,
     Counter(usize),
     Meta(Meta),
 }
@@ -205,11 +185,7 @@ where
     Materialized(&'a PageFrag, PagePtr<'a, PageFrag>),
     /// This page has been Freed
     Free(PagePtr<'a, PageFrag>),
-    /// This page has been allocated, but will become
-    /// Free after restarting the system unless some
-    /// data gets written to it.
-    Allocated(PagePtr<'a, PageFrag>),
-    /// This page was never allocated.
+    /// This page has not been allocated yet.
     Unallocated,
     /// This page contains the last persisted counter
     Counter(usize, PagePtr<'a, PageFrag>),
@@ -274,32 +250,11 @@ where
         }
     }
 
-    /// Returns true if the `PageGet` is `Allocated`.
-    pub fn is_allocated(&self) -> bool {
-        match *self {
-            PageGet::Allocated(_) => true,
-            _ => false,
-        }
-    }
-
     /// Returns true if the `PageGet` is `Unallocated`.
     pub fn is_unallocated(&self) -> bool {
         match *self {
             PageGet::Unallocated => true,
             _ => false,
-        }
-    }
-
-    fn into_ptr(self) -> PagePtr<'a, P> {
-        match self {
-            PageGet::Materialized(_, ptr)
-            | PageGet::Free(ptr)
-            | PageGet::Allocated(ptr)
-            | PageGet::Counter(_, ptr)
-            | PageGet::Meta(_, ptr) => ptr,
-            PageGet::Unallocated => {
-                panic!("into_ptr called on PageGet::Unallocated")
-            }
         }
     }
 }
@@ -351,25 +306,32 @@ where
 ///     let pc: pagecache::PageCache<TestMaterializer, _> =
 ///         pagecache::PageCache::start(config).unwrap();
 ///     {
+///         // We begin by initiating a new transaction, which
+///         // will prevent any witnessable memory from being
+///         // reclaimed before we drop this object.
 ///         let tx = pc.begin().unwrap();
-///         let id = pc.allocate(&tx).unwrap();
-///         let mut key = pagecache::PagePtr::allocated(0);
 ///
-///         // The first item in a page should be set using replace,
+///         // The first item in a page should be set using allocate,
 ///         // which signals that this is the beginning of a new
-///         // page history, and that any previous items associated
-///         // with this page should be forgotten.
-///         key = pc.replace(id, key, "a".to_owned(), &tx).unwrap();
+///         // page history.
+///         let (id, mut key) = pc.allocate("a".to_owned(), &tx).unwrap();
 ///
 ///         // Subsequent atomic updates should be added with link.
-///         key = pc.link(id, key, "b".to_owned(), &tx).unwrap();
-///         key = pc.link(id, key, "c".to_owned(), &tx).unwrap();
+///         key = pc.link(id, key, "b".to_owned(), &tx).unwrap().unwrap();
+///         key = pc.link(id, key, "c".to_owned(), &tx).unwrap().unwrap();
 ///
 ///         // When getting a page, the provided `Materializer` is
 ///         // used to merge all pages together.
-///         let (consolidated, key) = pc.get(id, &tx).unwrap().unwrap();
+///         let (consolidated, mut key) = pc.get(id, &tx).unwrap().unwrap();
 ///
 ///         assert_eq!(*consolidated, "abc".to_owned());
+///
+///         // You can completely rewrite a page by using `replace`:
+///         key = pc.replace(id, key, "d".into(), &tx).unwrap().unwrap();
+///
+///         let (consolidated, key) = pc.get(id, &tx).unwrap().unwrap();
+///
+///         assert_eq!(*consolidated, "d".to_owned());
 ///     }
 /// }
 /// ```
@@ -505,12 +467,15 @@ where
         pc.load_snapshot();
 
         let tx = pc.begin()?;
-        let was_recovered: bool;
+        let mut was_recovered = true;
 
-        // ensure counter and meta are initialized
         if pc.get(META_PID, &tx)?.is_unallocated() {
             // set up meta
-            let meta_id = pc.allocate(&tx)?;
+            was_recovered = false;
+
+            let meta_update = Update::Meta(Meta::default());
+
+            let (meta_id, _) = pc.allocate_inner(meta_update, &tx)?;
 
             assert_eq!(
                 meta_id,
@@ -521,21 +486,14 @@ where
             );
         }
 
-        if pc.get(META_PID, &tx)?.is_allocated() {
+        if pc.get(COUNTER_PID, &tx)?.is_unallocated() {
+            // set up idgen
             was_recovered = false;
 
-            let meta_update = Update::Meta(Meta::default());
-            pc.cas_page(
-                META_PID,
-                PagePtr::allocated(0),
-                meta_update,
-                None,
-                &tx,
-            )?
-            .expect("failed to install meta page");
+            let counter_update = Update::Counter(0);
 
-            // set up idgen
-            let counter_id = pc.allocate(&tx)?;
+            let (counter_id, _) =
+                pc.allocate_inner(counter_update, &tx)?;
 
             assert_eq!(
                 counter_id,
@@ -544,18 +502,6 @@ where
                 COUNTER_PID,
                 counter_id,
             );
-
-            let counter_update = Update::Counter(0);
-            pc.cas_page(
-                counter_id,
-                PagePtr::allocated(0),
-                counter_update,
-                None,
-                &tx,
-            )?
-            .expect("failed to install counter page");
-        } else {
-            was_recovered = true;
         }
 
         pc.was_recovered = was_recovered;
@@ -592,8 +538,22 @@ where
     }
 
     /// Create a new page, trying to reuse old freed pages if possible
-    /// to maximize underlying `Radix` pointer density.
-    pub fn allocate<'g>(&self, tx: &'g Tx) -> Result<PageId> {
+    /// to maximize underlying `PageTable` pointer density. Returns
+    /// the page ID and its pointer for use in future atomic `replace`
+    /// and `link` operations.
+    pub fn allocate<'g>(
+        &self,
+        new: P,
+        tx: &'g Tx,
+    ) -> Result<(PageId, PagePtr<'g, P>)> {
+        self.allocate_inner(Update::Compact(new), tx)
+    }
+
+    fn allocate_inner<'g>(
+        &self,
+        new: Update<P>,
+        tx: &'g Tx,
+    ) -> Result<(PageId, PagePtr<'g, P>)> {
         let (pid, key) = if let Some(pid) =
             self.free.lock().unwrap().pop()
         {
@@ -606,25 +566,13 @@ where
                 }
             };
 
-            (pid, key)
+            (pid, key.cached_ptr)
         } else {
             let pid = self.max_pid.fetch_add(1, SeqCst);
 
-            trace!("allocating pid {}", pid);
+            trace!("allocating pid {} for the first time", pid);
 
             let new_stack = Stack::default();
-            new_stack.push(CacheEntry::Allocated(
-                // we set the wts to 0 to force conflicts
-                0,
-                Lsn::max_value(),
-                DiskPtr::Inline(LogId::max_value()),
-            ));
-
-            let key = PagePtr {
-                cached_ptr: new_stack.head(tx),
-                wts: 0,
-            };
-
             let new_pte = PageTableEntry {
                 stack: new_stack,
                 rts: AtomicUsize::new(0),
@@ -632,16 +580,26 @@ where
 
             let pte_ptr = Owned::new(new_pte).into_shared(tx);
 
-            self.inner.cas(pid, Shared::null(), pte_ptr, tx)
-                .expect("allocating new page should never encounter existing data");
+            self.inner.cas(pid, Shared::null(), pte_ptr, tx).expect(
+                "allocating a fresh new page should \
+                 never conflict on existing data",
+            );
 
-            (pid, key)
+            (pid, Shared::null())
         };
 
-        self.cas_page(pid, key, Update::Allocate, None, tx)?
-            .expect("failed to install page allocation as expected");
+        let new_key = PagePtr {
+            cached_ptr: key,
+            wts: tx.ts,
+        };
 
-        Ok(pid)
+        let new_ptr =
+            self.cas_page(pid, new_key, new, None, tx)?.expect(
+                "should always be able to install \
+                 a new page during allocation",
+            );
+
+        Ok((pid, new_ptr))
     }
 
     /// Free a particular page.
@@ -692,11 +650,7 @@ where
         new: P,
         tx: &'g Tx,
     ) -> Result<CasResult<'g, P, P>> {
-        trace!("linking pid {}", pid);
-
-        if old.is_allocated() {
-            return self.replace(pid, old, new, tx);
-        }
+        trace!("linking pid {} with {:?}", pid, new);
 
         let pte_ptr = match self.inner.get(pid, tx) {
             None => return Ok(Err(None)),
@@ -817,6 +771,7 @@ where
                             returned_new,
                         ))));
                     }
+                    println!("retrying link with same wts...");
                     new = Some(returned_new);
                     old = PagePtr {
                         cached_ptr: actual_ptr,
@@ -839,7 +794,7 @@ where
         new: P,
         tx: &'g Tx,
     ) -> Result<CasResult<'g, P, P>> {
-        trace!("replacing pid {}", pid);
+        trace!("replacing pid {} with {:?}", pid, new);
 
         let result =
             self.cas_page(pid, old, Update::Compact(new), None, tx)?;
@@ -879,8 +834,16 @@ where
     ) -> Result<bool> {
         let _measure = Measure::new(&M.rewrite_page);
 
+        trace!("rewriting pid {}", pid);
+
         let pte_ptr = match self.inner.get(pid, tx) {
-            None => return Ok(false),
+            None => {
+                trace!(
+                    "rewriting pid {} failed (no longer exists)",
+                    pid
+                );
+                return Ok(false);
+            }
             Some(p) => p,
         };
 
@@ -923,9 +886,13 @@ where
                 // the segment to inactive, resulting in a race otherwise.
                 log_reservation.complete()?;
 
+                trace!("rewriting pid {} succeeded", pid);
+
                 Ok(true)
             } else {
                 log_reservation.abort()?;
+
+                trace!("rewriting pid {} failed", pid);
 
                 Ok(false)
             }
@@ -938,7 +905,6 @@ where
                     (key, Update::Compact(data.clone()))
                 }
                 PageGet::Free(key) => (key, Update::Free),
-                PageGet::Allocated(key) => (key, Update::Allocate),
                 PageGet::Counter(counter, key) => {
                     (key, Update::Counter(counter))
                 }
@@ -954,10 +920,16 @@ where
             };
 
             let wts = key.wts;
-            let res =
-                self.cas_page(pid, key, update, Some(wts), tx)?;
-
-            Ok(res.is_ok())
+            self.cas_page(pid, key, update, Some(wts), tx).map(
+                |res| {
+                    trace!(
+                        "rewriting pid {} success: {}",
+                        pid,
+                        res.is_ok()
+                    );
+                    res.is_ok()
+                },
+            )
         }
     }
 
@@ -970,7 +942,12 @@ where
         replace_ts: Option<u64>,
         tx: &'g Tx,
     ) -> Result<CasResult<'g, P, Update<P>>> {
-        trace!("cas_page called on pid {}", pid);
+        trace!(
+            "cas_page called on pid {} to {:?} with replace_ts {:?}",
+            pid,
+            new,
+            replace_ts
+        );
         let pte_ptr = match self.inner.get(pid, tx) {
             None => {
                 trace!(
@@ -980,17 +957,6 @@ where
             }
             Some(p) => p,
         };
-
-        if old.is_allocated() && old.wts == 0 {
-            match self.get(pid, tx)? {
-                PageGet::Allocated(current_key) => {
-                    old = current_key;
-                }
-                other => {
-                    return Ok(Err(Some((other.into_ptr(), new))));
-                }
-            }
-        }
 
         let replace: LoggedUpdate<P> =
             LoggedUpdate { pid, update: new };
@@ -1010,9 +976,6 @@ where
                     CacheEntry::MergedResident(m, ts, lsn, new_ptr)
                 }
                 Update::Free => CacheEntry::Free(ts, lsn, new_ptr),
-                Update::Allocate => {
-                    CacheEntry::Allocated(ts, lsn, new_ptr)
-                }
                 Update::Counter(counter) => {
                     CacheEntry::Counter(counter, ts, lsn, new_ptr)
                 }
@@ -1065,7 +1028,6 @@ where
                             Update::Compact(m)
                         }
                         CacheEntry::Free(..) => Update::Free,
-                        CacheEntry::Allocated(..) => Update::Allocate,
                         CacheEntry::Counter(counter, ..) => {
                             Update::Counter(counter)
                         }
@@ -1445,12 +1407,6 @@ where
                         wts: ts,
                     })));
                 }
-                CacheEntry::Allocated(ts, _, _) => {
-                    return Ok(Some(PageGet::Allocated(PagePtr {
-                        cached_ptr: head,
-                        wts: ts,
-                    })));
-                }
                 ref other => {
                     panic!("encountered unexpected CacheEntry in middle of page chain: {:?}", other);
                 }
@@ -1718,7 +1674,6 @@ where
                 }
                 CacheEntry::Meta(..)
                 | CacheEntry::Counter(..)
-                | CacheEntry::Allocated(..)
                 | CacheEntry::Free(..) => {
                     // don't actually evict this. this leads to
                     // a discrepency in the Lru perceived size
@@ -1740,7 +1695,6 @@ where
                         ));
                     }
                     CacheEntry::Flush(..)
-                    | CacheEntry::Allocated(..)
                     | CacheEntry::Free(..)
                     | CacheEntry::Counter(..)
                     | CacheEntry::Meta(..) => panic!(
@@ -1801,11 +1755,9 @@ where
         });
 
         match logged_update.update {
-            Update::Free | Update::Allocate => {
-                Err(Error::ReportableBug(
-                    "non-append/compact found in pull".to_owned(),
-                ))
-            }
+            Update::Free => Err(Error::ReportableBug(
+                "non-append/compact found in pull".to_owned(),
+            )),
             update => Ok(update),
         }
     }
@@ -1952,10 +1904,6 @@ where
                     self.free.lock().unwrap().push(*pid);
                     snapshot_free.remove(&pid);
                 }
-                PageState::Allocated(lsn, ptr) => {
-                    assert!(!snapshot.free.contains(pid));
-                    stack.push(CacheEntry::Allocated(0, lsn, ptr));
-                }
             }
 
             let guard = pin();
@@ -2025,7 +1973,6 @@ fn ptrs_from_stack<'g, P: Send + Sync>(
             | CacheEntry::PartialFlush(.., ref ptr)
             | CacheEntry::Free(.., ref ptr)
             | CacheEntry::Flush(.., ref ptr)
-            | CacheEntry::Allocated(.., ref ptr)
             | CacheEntry::Counter(.., ref ptr)
             | CacheEntry::Meta(.., ref ptr) => {
                 ptrs.push(*ptr);

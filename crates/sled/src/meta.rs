@@ -26,49 +26,41 @@ pub(crate) fn open_tree<'a>(
         }
 
         // set up empty leaf
-        let leaf_id = context.pagecache.allocate(&tx)?;
-        trace!(
-            "allocated pid {} for leaf in new_tree for namespace {:?}",
-            leaf_id,
-            name
-        );
-
         let leaf = Frag::Base(Node {
-            id: leaf_id,
             data: Data::Leaf(vec![]),
             next: None,
             lo: vec![].into(),
             hi: vec![].into(),
         });
 
-        let leaf_ptr = context
-            .pagecache
-            .replace(leaf_id, TreePtr::allocated(0), leaf, &tx)?
-            .expect("somehow could not install new leaf");
+        let (leaf_id, leaf_ptr) =
+            context.pagecache.allocate(leaf, &tx)?;
+
+        trace!(
+            "allocated pid {} for leaf in new_tree for namespace {:?}",
+            leaf_id,
+            name
+        );
 
         // set up root index
-        let root_id = context.pagecache.allocate(&tx)?;
-
-        debug!(
-            "allocated pid {} for root of new_tree {:?}",
-            root_id, name
-        );
 
         // vec![0] represents a prefix-encoded empty prefix
         let root_index_vec = vec![(vec![0].into(), leaf_id)];
 
         let root = Frag::Base(Node {
-            id: root_id,
             data: Data::Index(root_index_vec),
             next: None,
             lo: vec![].into(),
             hi: vec![].into(),
         });
 
-        let root_ptr = context
-            .pagecache
-            .replace(root_id, TreePtr::allocated(0), root, &tx)?
-            .expect("somehow could not install new root");
+        let (root_id, root_ptr) =
+            context.pagecache.allocate(root, &tx)?;
+
+        debug!(
+            "allocated pid {} for root of new_tree {:?}",
+            root_id, name
+        );
 
         let res = context.pagecache.cas_root_in_meta(
             name.clone(),

@@ -102,10 +102,10 @@ impl<'a> Iterator for Iter<'a> {
 
                 let path = path_res.unwrap();
 
-                let (last_frag, _tree_ptr) =
+                let (last_id, _last_frag, _tree_ptr) =
                     path.last().expect("path should never be empty");
-                let last_node = last_frag.unwrap_base();
-                self.last_id = Some(last_node.id);
+
+                self.last_id = Some(*last_id);
             }
 
             let last_id = self.last_id.unwrap();
@@ -264,7 +264,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
 
                 let path = path_res.unwrap();
 
-                let (last_frag, _tree_ptr) =
+                let (last_id, last_frag, _tree_ptr) =
                     path.last().expect("path should never be empty");
                 let mut last_node = last_frag.unwrap_base();
 
@@ -287,7 +287,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                     last_node = frag.unwrap_base();
                 }
 
-                self.last_id = Some(last_node.id);
+                self.last_id = Some(*last_id);
             }
 
             let last_id = self.last_id.unwrap();
@@ -383,10 +383,10 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 return None;
             }
 
-            let mut next_node = if split_detected {
+            let (mut next_id, mut next_node) = if split_detected {
                 // we need to skip ahead to get to the node
                 // where our last key resided
-                node
+                (last_id, node)
             } else {
                 // we need to get the node to the left of ours by
                 // guessing a key that might land on it, and then
@@ -399,7 +399,10 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                         self.done = true;
                         return Some(Err(e));
                     }
-                    Ok(path) => path.last().unwrap().0.unwrap_base(),
+                    Ok(path) => {
+                        let (id, base, _ptr) = path.last().unwrap();
+                        (*id, base.unwrap_base())
+                    }
                 }
             };
 
@@ -408,7 +411,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
             // If we detected a split, we need to seek until
             // the new node that contains our last key.
             while (!split_detected
-                && (next_node.next != Some(node.id))
+                && (next_node.next != Some(last_id))
                 && next_node.lo < node.lo)
                 || (split_detected && *next_node.hi < *split_key)
             {
@@ -425,6 +428,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                     return Some(Err(e));
                 }
                 let (frag, _ptr) = res.unwrap();
+                next_id = next_node.next.unwrap();
                 next_node = frag.unwrap_base();
             }
 
@@ -440,7 +444,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 self.last_key = Some(node.lo.to_vec());
             }
 
-            self.last_id = Some(next_node.id);
+            self.last_id = Some(next_id);
         }
     }
 }

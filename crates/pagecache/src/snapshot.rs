@@ -31,7 +31,6 @@ pub struct Snapshot {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum PageState {
     Present(Vec<(Lsn, DiskPtr)>),
-    Allocated(Lsn, DiskPtr),
     Free(Lsn, DiskPtr),
 }
 
@@ -39,9 +38,6 @@ impl PageState {
     fn push(&mut self, item: (Lsn, DiskPtr)) {
         match *self {
             PageState::Present(ref mut items) => items.push(item),
-            PageState::Allocated(_, _) => {
-                *self = PageState::Present(vec![item]);
-            }
             PageState::Free(_, _) => {
                 panic!("pushed items to a PageState::Free")
             }
@@ -54,8 +50,7 @@ impl PageState {
             PageState::Present(ref items) => {
                 Box::new(items.clone().into_iter())
             }
-            PageState::Allocated(lsn, ptr)
-            | PageState::Free(lsn, ptr) => {
+            PageState::Free(lsn, ptr) => {
                 Box::new(vec![(lsn, ptr)].into_iter())
             }
         }
@@ -134,16 +129,17 @@ impl Snapshot {
             * config.io_buf_size as Lsn;
 
         match prepend.update {
-            Update::Append(_) => {
+            Update::Append(append) => {
                 // Because we rewrite pages over time, we may have relocated
                 // a page's initial Compact to a later segment. We should skip
                 // over pages here unless we've encountered a Compact for them.
                 if let Some(lids) = self.pt.get_mut(&pid) {
                     trace!(
-                        "append of pid {} at lid {} lsn {}",
+                        "append of pid {} at lid {} lsn {}: {:?}",
                         pid,
                         disk_ptr,
-                        lsn
+                        lsn,
+                        append,
                     );
 
                     if lids.is_free() {
@@ -166,11 +162,11 @@ impl Snapshot {
             | Update::Counter(_)
             | Update::Compact(_) => {
                 trace!(
-                    "update {:?} of pid {} at ptr {} lsn {}",
-                    prepend.update,
+                    "compact of pid {} at ptr {} lsn {}: {:?}",
                     pid,
                     disk_ptr,
-                    lsn
+                    lsn,
+                    prepend.update,
                 );
 
                 self.replace_pid(
@@ -188,23 +184,6 @@ impl Snapshot {
                 } else {
                     assert!(!self.free.contains(&pid));
                 }
-            }
-            Update::Allocate => {
-                trace!(
-                    "allocate  of pid {} at ptr {} lsn {}",
-                    pid,
-                    disk_ptr,
-                    lsn
-                );
-                self.replace_pid(
-                    pid,
-                    replaced_at_segment_lsn,
-                    replaced_at_idx,
-                    config,
-                );
-                self.pt
-                    .insert(pid, PageState::Allocated(lsn, disk_ptr));
-                self.free.remove(&pid);
             }
             Update::Free => {
                 trace!(
@@ -278,8 +257,7 @@ impl Snapshot {
                     }
                 }
             }
-            Some(PageState::Allocated(_lsn, ptr))
-            | Some(PageState::Free(_lsn, ptr)) => {
+            Some(PageState::Free(_lsn, ptr)) => {
                 let old_idx =
                     ptr.lid() as SegmentId / config.io_buf_size;
                 if replaced_at_idx != old_idx {
