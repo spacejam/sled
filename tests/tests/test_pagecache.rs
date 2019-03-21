@@ -537,7 +537,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                 let (pid, _key) = pc.allocate(vec![], &tx).unwrap();
                 reference.insert(pid, P::Present(vec![]));
                 let get = pc.get(pid, &tx).unwrap();
-                if !get.is_unallocated() {
+                if get.is_unallocated() {
                     panic!(
                         "expected allocated page, instead got {:?}",
                         get
