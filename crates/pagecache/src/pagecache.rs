@@ -594,7 +594,7 @@ where
         };
 
         let new_ptr =
-            self.cas_page(pid, new_key, new, None, tx)?.expect(
+            self.cas_page(pid, new_key, new, false, tx)?.expect(
                 "should always be able to install \
                  a new page during allocation",
             );
@@ -622,7 +622,7 @@ where
         }
 
         let new_ptr =
-            self.cas_page(pid, old, Update::Free, None, tx)?;
+            self.cas_page(pid, old, Update::Free, false, tx)?;
 
         let free = self.free.clone();
         tx.defer(move || {
@@ -796,7 +796,7 @@ where
         trace!("replacing pid {} with {:?}", pid, new);
 
         let result =
-            self.cas_page(pid, old, Update::Compact(new), None, tx)?;
+            self.cas_page(pid, old, Update::Compact(new), false, tx)?;
 
         let to_clean = self.log.with_sa(|sa| sa.clean(pid));
 
@@ -918,17 +918,14 @@ where
                 }
             };
 
-            let wts = key.wts;
-            self.cas_page(pid, key, update, Some(wts), tx).map(
-                |res| {
-                    trace!(
-                        "rewriting pid {} success: {}",
-                        pid,
-                        res.is_ok()
-                    );
+            self.cas_page(pid, key, update, true, tx).map(|res| {
+                trace!(
+                    "rewriting pid {} success: {}",
+                    pid,
                     res.is_ok()
-                },
-            )
+                );
+                res.is_ok()
+            })
         }
     }
 
@@ -938,14 +935,14 @@ where
         pid: PageId,
         mut old: PagePtr<'g, P>,
         new: Update<P>,
-        replace_ts: Option<u64>,
+        is_rewrite: bool,
         tx: &'g Tx,
     ) -> Result<CasResult<'g, P, Update<P>>> {
         trace!(
-            "cas_page called on pid {} to {:?} with replace_ts {:?}",
+            "cas_page called on pid {} to {:?} with old ts {:?}",
             pid,
             new,
-            replace_ts
+            old.wts
         );
         let pte_ptr = match self.inner.get(pid, tx) {
             None => {
@@ -968,7 +965,7 @@ where
             let lsn = log_reservation.lsn();
             let new_ptr = log_reservation.ptr();
 
-            let ts = replace_ts.unwrap_or(tx.ts);
+            let ts = if is_rewrite { old.wts } else { tx.ts };
 
             let cache_entry = match new.take().unwrap() {
                 Update::Compact(m) => {
@@ -1206,7 +1203,7 @@ where
                     COUNTER_PID,
                     key.clone(),
                     counter_update,
-                    None,
+                    false,
                     &tx,
                 );
 
@@ -1308,7 +1305,7 @@ where
                 META_PID,
                 meta_key.clone(),
                 new_meta_frag,
-                None,
+                false,
                 &tx,
             )?;
 
@@ -1530,7 +1527,7 @@ where
                 cached_ptr: head,
                 wts: head_ts,
             };
-            match self.cas_page(pid, ptr, merged, Some(head_ts), tx) {
+            match self.cas_page(pid, ptr, merged, true, tx) {
                 Ok(Ok(new_head)) => head = new_head.cached_ptr,
                 Ok(Err(None)) => {
                     // This page was unallocated since we
