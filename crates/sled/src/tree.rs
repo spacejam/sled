@@ -365,7 +365,7 @@ impl Tree {
 
             if link.is_ok() {
                 if let Some(res) = subscriber_reservation.take() {
-                    let event = if let Some(n) = new {
+                    let event = if let Some(new) = new {
                         subscription::Event::Set(
                             key.as_ref().to_vec(),
                             new,
