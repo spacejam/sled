@@ -12,7 +12,7 @@ use log::{debug, warn};
 use quickcheck::{QuickCheck, StdGen};
 
 const N_THREADS: usize = 10;
-const N_PER_THREAD: usize = 100;
+const N_PER_THREAD: usize = 1;
 const N: usize = N_THREADS * N_PER_THREAD; // NB N should be multiple of N_THREADS
 const SPACE: usize = N;
 
@@ -20,7 +20,7 @@ const SPACE: usize = N;
 const INTENSITY: usize = 5;
 
 #[cfg(not(target_os = "macos"))]
-const INTENSITY: usize = 10;
+const INTENSITY: usize = 1;
 
 #[inline(always)]
 fn kv(i: usize) -> Vec<u8> {
