@@ -337,7 +337,7 @@ where
 /// ```
 pub struct PageCache<PM, P>
 where
-    P: 'static + Send + Sync,
+    P: Clone + 'static + Send + Sync,
 {
     t: Arc<PM>,
     config: Config,
@@ -365,21 +365,21 @@ where
 unsafe impl<PM, P> Send for PageCache<PM, P>
 where
     PM: Send + Sync,
-    P: 'static + Send + Sync,
+    P: Clone + 'static + Send + Sync,
 {
 }
 
 unsafe impl<PM, P> Sync for PageCache<PM, P>
 where
     PM: Send + Sync,
-    P: 'static + Send + Sync,
+    P: Clone + 'static + Send + Sync,
 {
 }
 
 impl<PM, P> Debug for PageCache<PM, P>
 where
     PM: Send + Sync,
-    P: Debug + Send + Sync,
+    P: Clone + Debug + Send + Sync,
 {
     fn fmt(
         &self,
@@ -396,7 +396,7 @@ where
 #[cfg(feature = "event_log")]
 impl<PM, P> Drop for PageCache<PM, P>
 where
-    P: 'static + Send + Sync,
+    P: Clone + 'static + Send + Sync,
 {
     fn drop(&mut self) {
         use std::collections::HashMap;
