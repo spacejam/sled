@@ -105,7 +105,7 @@ fn pagecache_caching() {
 fn parallel_pagecache() -> sled::Result<()> {
     tests::setup_logger();
     const N_THREADS: usize = 100;
-    const N_PER_THREAD: usize = 1;
+    const N_PER_THREAD: usize = 100;
 
     let config = ConfigBuilder::new()
         .temporary(true)

@@ -20,7 +20,7 @@ const SPACE: usize = N;
 const INTENSITY: usize = 5;
 
 #[cfg(not(target_os = "macos"))]
-const INTENSITY: usize = 1;
+const INTENSITY: usize = 10;
 
 #[inline(always)]
 fn kv(i: usize) -> Vec<u8> {
