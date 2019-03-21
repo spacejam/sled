@@ -27,6 +27,9 @@
 //! ```
 use std::sync::Arc;
 
+#[cfg(feature = "compression")]
+use zstd::block::compress;
+
 use super::*;
 
 /// A sequential store which allows users to create
@@ -198,10 +201,10 @@ impl Log {
         let mut _compressed: Option<Vec<u8>> = None;
 
         #[cfg(feature = "compression")]
-        let buf = if iobufs.config.use_compression {
+        let buf = if self.config.use_compression {
             let _measure = Measure::new(&M.compress);
             let compressed_buf =
-                compress(&*raw_buf, iobufs.config.compression_factor)
+                compress(&*raw_buf, self.config.compression_factor)
                     .unwrap();
             _compressed = Some(compressed_buf);
 
