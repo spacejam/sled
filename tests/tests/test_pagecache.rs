@@ -104,7 +104,7 @@ fn pagecache_caching() {
 #[test]
 fn parallel_pagecache() -> sled::Result<()> {
     tests::setup_logger();
-    const N_THREADS: usize = 100;
+    const N_THREADS: usize = 10;
     const N_PER_THREAD: usize = 100;
 
     let config = ConfigBuilder::new()
@@ -156,7 +156,11 @@ fn parallel_pagecache() -> sled::Result<()> {
                            pc.get(id, &tx)
                              .expect("we should read what we just wrote")
                              .expect("we should read what we just wrote");
-        assert_eq!(ptr[0], id);
+        assert_eq!(
+            ptr.get(0), Some(&id),
+            "we just linked our ID into the page, \
+                   but it seems not to be present"
+        );
     }};
 
     drop(p);

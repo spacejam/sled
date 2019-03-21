@@ -677,9 +677,25 @@ where
             let lsn = log_reservation.lsn();
             let ptr = log_reservation.ptr();
 
+            // NB the setting of the timestamp is quite
+            // correctness-critical! We use the wts to
+            // ensure that fundamentally new data causes
+            // high-level link and replace operations
+            // to fail when the data in the pagecache
+            // actually changes. When we just rewrite
+            // the page for the purposes of moving it
+            // to a new location on disk, however, we
+            // don't want to cause threads that are
+            // basing the correctness of their new
+            // writes on the unchanged state to fail.
+            // Here, we bump it by 1, to signal that
+            // the underlying state is fundamentally
+            // changing.
+            let ts = old.wts + 1;
+
             let cache_entry = CacheEntry::Resident(
                 new.take().unwrap(),
-                tx.ts,
+                ts,
                 lsn,
                 ptr,
             );
@@ -747,7 +763,7 @@ where
                 Ok(cached_ptr) => {
                     return Ok(Ok(PagePtr {
                         cached_ptr,
-                        wts: tx.ts,
+                        wts: ts,
                     }));
                 }
                 Err((actual_ptr, returned_new)) => {
@@ -965,7 +981,21 @@ where
             let lsn = log_reservation.lsn();
             let new_ptr = log_reservation.ptr();
 
-            let ts = if is_rewrite { old.wts } else { tx.ts };
+            // NB the setting of the timestamp is quite
+            // correctness-critical! We use the wts to
+            // ensure that fundamentally new data causes
+            // high-level link and replace operations
+            // to fail when the data in the pagecache
+            // actually changes. When we just rewrite
+            // the page for the purposes of moving it
+            // to a new location on disk, however, we
+            // don't want to cause threads that are
+            // basing the correctness of their new
+            // writes on the unchanged state to fail.
+            // Here, we only bump it up by 1 if the
+            // update represents a fundamental change
+            // that SHOULD cause CAS failures.
+            let ts = if is_rewrite { old.wts } else { old.wts + 1 };
 
             let cache_entry = match new.take().unwrap() {
                 Update::Compact(m) => {
@@ -1036,6 +1066,7 @@ where
                     };
                     let actual_ts =
                         unsafe { actual_ptr.deref().ts() };
+
                     if actual_ts != old.wts {
                         return Ok(Err(Some((
                             PagePtr {
