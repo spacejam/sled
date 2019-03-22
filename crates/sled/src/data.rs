@@ -1,4 +1,3 @@
-use std::fmt::Debug;
 use std::mem::size_of;
 
 use super::*;
@@ -62,33 +61,19 @@ impl Data {
             lhs_prefix: &[u8],
         ) -> (IVec, Vec<(IVec, T)>)
         where
-            T: Clone + Debug + Ord,
+            T: Clone + Ord,
         {
-            let mut decoded_xs: Vec<_> = xs
-                .iter()
-                .map(|&(ref k, ref v)| {
-                    let decoded_k = prefix_decode(lhs_prefix, &*k);
-                    (decoded_k, v.clone())
-                })
-                .collect();
-            decoded_xs.sort();
+            let (_lhs, rhs) = xs.split_at(xs.len() / 2 + 1);
+            let split = prefix_decode(lhs_prefix, &rhs[0].0);
 
-            let (_lhs, rhs) =
-                decoded_xs.split_at(decoded_xs.len() / 2 + 1);
-            let split = rhs
-                .first()
-                .expect("rhs should contain at least one element")
-                .0
-                .clone();
-            let rhs_data: Vec<_> = rhs
-                .iter()
-                .map(|&(ref k, ref v)| {
-                    let new_k = prefix_encode(&*split, k);
-                    (new_k, v.clone())
-                })
-                .collect();
+            let mut rhs_data = Vec::with_capacity(rhs.len());
+            for (k, v) in rhs {
+                let k = prefix_decode(lhs_prefix, k);
+                let k = prefix_encode(&split, &k);
+                rhs_data.push((k, v.clone()));
+            }
 
-            (split.into(), rhs_data)
+            (IVec::from(split), rhs_data)
         }
 
         match *self {
