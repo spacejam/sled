@@ -34,7 +34,6 @@ impl Deref for Config {
 /// let _config = pagecache::ConfigBuilder::default()
 ///     .path("/path/to/data".to_owned())
 ///     .cache_capacity(10_000_000_000)
-///     .use_compression(true)
 ///     .flush_every_ms(Some(1000))
 ///     .snapshot_after_ops(100_000);
 /// ```
@@ -106,7 +105,7 @@ impl Default for ConfigBuilder {
             read_only: false,
             cache_bits: 0,                      // 1 shard
             cache_capacity: 1024 * 1024 * 1024, // 1gb
-            use_compression: true,
+            use_compression: false,
             compression_factor: 5,
             flush_every_ms: Some(500),
             snapshot_after_ops: 1_000_000,
@@ -308,6 +307,12 @@ impl ConfigBuilder {
             self.segment_cleanup_skew < 99,
             "segment_cleanup_skew cannot be greater than 99%"
         );
+        if self.use_compression {
+            supported!(
+                cfg!(feature = "compression"),
+                "the compression feature must be enabled"
+            );
+        }
         supported!(
             self.compression_factor >= 1,
             "compression_factor must be >= 1"

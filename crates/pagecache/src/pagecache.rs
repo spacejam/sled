@@ -566,7 +566,7 @@ where
                 }
             };
 
-            (pid, key.cached_ptr)
+            (pid, key)
         } else {
             let pid = self.max_pid.fetch_add(1, SeqCst);
 
@@ -585,19 +585,25 @@ where
                  never conflict on existing data",
             );
 
-            (pid, Shared::null())
+            (
+                pid,
+                PagePtr {
+                    cached_ptr: Shared::null(),
+                    wts: 0,
+                },
+            )
         };
 
-        let new_key = PagePtr {
-            cached_ptr: key,
-            wts: tx.ts,
-        };
-
-        let new_ptr =
-            self.cas_page(pid, new_key, new, false, tx)?.expect(
-                "should always be able to install \
-                 a new page during allocation",
-            );
+        let new_ptr = self
+            .cas_page(pid, key, new, false, tx)?
+            .unwrap_or_else(|e| {
+                panic!(
+                    "should always be able to install \
+                     a new page during allocation, but \
+                     failed for pid {}: {:?}",
+                    pid, e
+                )
+            });
 
         Ok((pid, new_ptr))
     }
