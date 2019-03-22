@@ -91,16 +91,12 @@ impl Node {
     pub(crate) fn set_leaf(&mut self, key: IVec, val: IVec) {
         if let Data::Leaf(ref mut records) = self.data {
             let search =
-                records.binary_search_by(|&(ref k, ref _v)| {
-                    prefix_cmp(k, &*key)
+                records.binary_search_by(|(k, _)| {
+                    prefix_cmp(k, &key)
                 });
-            if let Ok(idx) = search {
-                records[idx] = (key, val);
-            } else {
-                records.push((key, val));
-                records.sort_unstable_by(|a, b| {
-                    prefix_cmp(&*a.0, &*b.0)
-                });
+            match search {
+                Ok(idx) => records[idx] = (key, val),
+                Err(idx) => records.insert(idx, (key, val)),
             }
         } else {
             panic!("tried to Set a value to an index");
@@ -115,29 +111,30 @@ impl Node {
     ) {
         if let Data::Leaf(ref mut records) = self.data {
             let search =
-                records.binary_search_by(|&(ref k, ref _v)| {
-                    prefix_cmp(k, &*key)
+                records.binary_search_by(|(k, _)| {
+                    prefix_cmp(k, &key)
                 });
 
             let decoded_k = prefix_decode(&self.lo, &key);
-            if let Ok(idx) = search {
-                let new = merge_fn(
-                    &*decoded_k,
-                    Some(&records[idx].1),
-                    &val,
-                );
-                if let Some(new) = new {
-                    records[idx] = (key, new.into());
-                } else {
-                    records.remove(idx);
-                }
-            } else {
-                let new = merge_fn(&*decoded_k, None, &val);
-                if let Some(new) = new {
-                    records.push((key, new.into()));
-                    records.sort_unstable_by(|a, b| {
-                        prefix_cmp(&*a.0, &*b.0)
-                    });
+
+            match search {
+                Ok(idx) => {
+                    let new = merge_fn(
+                        &*decoded_k,
+                        Some(&records[idx].1),
+                        &val,
+                    );
+                    if let Some(new) = new {
+                        records[idx] = (key, new.into());
+                    } else {
+                        records.remove(idx);
+                    }
+                },
+                Err(idx) => {
+                    let new = merge_fn(&*decoded_k, None, &val);
+                    if let Some(new) = new {
+                        records.insert(idx, (key, new.into()));
+                    }
                 }
             }
         } else {
@@ -154,8 +151,10 @@ impl Node {
     pub(crate) fn parent_split(&mut self, ps: &ParentSplit) {
         if let Data::Index(ref mut ptrs) = self.data {
             let encoded_sep = prefix_encode(&self.lo, &ps.at);
-            ptrs.push((encoded_sep, ps.to));
-            ptrs.sort_unstable_by(|a, b| prefix_cmp(&*a.0, &*b.0));
+            match ptrs.binary_search_by(|a| prefix_cmp(&a.0, &encoded_sep)) {
+                Ok(_) => panic!("must not have found ptr"),
+                Err(idx) => ptrs.insert(idx, (encoded_sep, ps.to)),
+            }
         } else {
             panic!("tried to attach a ParentSplit to a Leaf chain");
         }
