@@ -675,10 +675,14 @@ where
             let cache_entry =
                 CacheEntry::Resident(new, 0, 0, DiskPtr::Inline(0));
 
-            let node = Node {
-                inner: cache_entry,
-                next: Atomic::from(old.cached_ptr),
-            };
+                let node = Node {
+                    inner: cache_entry,
+                    // NB this must be null
+                    // to prevent double-frees
+                    // if we encounter an IO error
+                    // and fee our Owned version!
+                    next: Atomic::null(),
+                };
 
             Some(Owned::new(node))
         } else {
