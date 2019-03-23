@@ -68,8 +68,7 @@ impl Data {
 
             let mut rhs_data = Vec::with_capacity(rhs.len());
             for (k, v) in rhs {
-                let k = prefix_decode(lhs_prefix, k);
-                let k = prefix_encode(&split, &k);
+                let k = prefix_reencode(lhs_prefix, &split, k);
                 rhs_data.push((k, v.clone()));
             }
 

@@ -1,6 +1,6 @@
 use super::*;
 
-use std::cmp::Ordering;
+use std::cmp::{self, Ordering};
 
 pub(crate) fn prefix_encode(prefix: &[u8], buf: &[u8]) -> IVec {
     assert!(
@@ -33,6 +33,46 @@ pub(crate) fn prefix_decode(prefix: &[u8], buf: &[u8]) -> Vec<u8> {
     ret.extend_from_slice(&buf[1..]);
 
     ret
+}
+
+pub(crate) fn prefix_reencode(
+    old_prefix: &[u8],
+    new_prefix: &[u8],
+    buf: &[u8],
+) -> IVec
+{
+    assert!(!buf.is_empty());
+
+    let prefix_len = buf[0] as usize;
+    let old_prefix = &old_prefix[..prefix_len];
+    let buf = &buf[1..];
+
+    let mut output = Vec::with_capacity(old_prefix.len() + buf.len());
+
+    output.extend_from_slice(old_prefix);
+    output.extend_from_slice(buf);
+
+    assert!(
+        new_prefix <= &output,
+        "new prefix {:?} must be lexicographically <= to the encoded buf {:?}",
+        new_prefix,
+        buf
+    );
+
+    let max = u8::max_value() as usize;
+    let zip = new_prefix.iter().zip(&output);
+    let prefix_len = zip.take(max).take_while(|(a, b)| a == b).count();
+
+    let skip = prefix_len - cmp::min(old_prefix.len(), max);
+    let encoded_len = 1 + output.len() - prefix_len;
+
+    output.clear();
+    output.reserve(encoded_len);
+
+    output.push(prefix_len as u8);
+    output.extend_from_slice(&buf[skip..]);
+
+    IVec::from(output)
 }
 
 // NB: the correctness of this function depends on
