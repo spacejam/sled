@@ -25,21 +25,13 @@ pub(crate) fn prefix_encode(prefix: &[u8], buf: &[u8]) -> IVec {
 
 pub(crate) fn prefix_decode(prefix: &[u8], buf: &[u8]) -> Vec<u8> {
     assert!(!buf.is_empty());
+
     let prefix_len = buf[0] as usize;
     let mut ret = Vec::with_capacity(prefix_len + buf.len() - 1);
-    unsafe {
-        ret.set_len(prefix_len + buf.len() - 1);
-        std::ptr::copy_nonoverlapping(
-            prefix.as_ptr(),
-            ret.as_mut_ptr(),
-            prefix_len,
-        );
-        std::ptr::copy_nonoverlapping(
-            buf[1..].as_ptr(),
-            ret[prefix_len..].as_mut_ptr(),
-            buf.len() - 1,
-        );
-    }
+
+    ret.extend_from_slice(&prefix[..prefix_len]);
+    ret.extend_from_slice(&buf[1..]);
+
     ret
 }
 
