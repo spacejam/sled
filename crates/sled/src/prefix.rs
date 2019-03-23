@@ -9,30 +9,18 @@ pub(crate) fn prefix_encode(prefix: &[u8], buf: &[u8]) -> IVec {
         prefix,
         buf
     );
-    let mut prefix_len = 0_usize;
-    for (i, c) in
-        prefix.iter().take(u8::max_value() as usize).enumerate()
-    {
-        if buf[i] == *c {
-            prefix_len += 1;
-        } else {
-            break;
-        }
-    }
+
+    let max = u8::max_value() as usize;
+    let zip = prefix.iter().zip(buf);
+    let prefix_len = zip.take(max).take_while(|(a, b)| a == b).count();
 
     let encoded_len = 1 + buf.len() - prefix_len;
-    let mut ret = Vec::new();
-    ret.reserve_exact(encoded_len);
-    unsafe {
-        ret.set_len(encoded_len);
-        std::ptr::copy_nonoverlapping(
-            buf[prefix_len..].as_ptr(),
-            ret[1..].as_mut_ptr(),
-            encoded_len - 1,
-        );
-    }
-    ret[0] = prefix_len as u8;
-    ret.into()
+
+    let mut ret = Vec::with_capacity(encoded_len);
+    ret.push(prefix_len as u8);
+    ret.extend_from_slice(&buf[prefix_len..]);
+
+    IVec::from(ret)
 }
 
 pub(crate) fn prefix_decode(prefix: &[u8], buf: &[u8]) -> Vec<u8> {
