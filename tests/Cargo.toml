@@ -10,6 +10,7 @@ default = []
 all = ["event_log", "compression"]
 event_log = ["pagecache/event_log", "sled/event_log"]
 compression = ["pagecache/compression", "sled/compression"]
+no_jemalloc = []
 
 [dependencies.pagecache]
 features = ["failpoints", "lock_free_delays"]
@@ -28,4 +29,4 @@ libc = "0.2"
 fail = "0.2"
 lazy_static = "1.0"
 deterministic = "0.1"
-jemallocator = "0.3"
+jemallocator = "0.1"

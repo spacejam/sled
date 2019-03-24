@@ -4,7 +4,6 @@ use super::*;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Node {
-    pub(crate) id: PageId,
     pub(crate) data: Data,
     pub(crate) next: Option<PageId>,
     pub(crate) lo: IVec,
@@ -178,10 +177,9 @@ impl Node {
         self.data.len() > 2 && self.size_in_bytes() > max_sz
     }
 
-    pub(crate) fn split(&self, id: PageId) -> Node {
+    pub(crate) fn split(&self) -> Node {
         let (split, right_data) = self.data.split(&self.lo);
         Node {
-            id,
             data: right_data,
             next: self.next,
             lo: split,

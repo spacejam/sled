@@ -50,10 +50,7 @@ unsafe impl Send for Log {}
 impl Log {
     /// Start the log, open or create the configured file,
     /// and optionally start the periodic buffer flush thread.
-    pub fn start(
-        config: Config,
-        snapshot: Snapshot,
-    ) -> Result<Log, ()> {
+    pub fn start(config: Config, snapshot: Snapshot) -> Result<Log> {
         let iobufs =
             Arc::new(IoBufs::start(config.clone(), snapshot)?);
 
@@ -74,7 +71,7 @@ impl Log {
     }
 
     /// Starts a log for use without a materializer.
-    pub fn start_raw_log(config: Config) -> Result<Log, ()> {
+    pub fn start_raw_log(config: Config) -> Result<Log> {
         assert_eq!(config.segment_mode, SegmentMode::Linear);
         let log_iter = raw_segment_iter_from(0, &config)?;
 
@@ -89,13 +86,13 @@ impl Log {
 
     /// Flushes any pending IO buffers to disk to ensure durability.
     /// Returns the number of bytes written during this call.
-    pub fn flush(&self) -> Result<usize, ()> {
+    pub fn flush(&self) -> Result<usize> {
         iobuf::flush(&self.iobufs)
     }
 
     /// Write a buffer into the log. Returns the log sequence
     /// number and the file offset of the write.
-    pub fn write<B>(&self, buf: B) -> Result<(Lsn, DiskPtr), ()>
+    pub fn write<B>(&self, buf: B) -> Result<(Lsn, DiskPtr)>
     where
         B: AsRef<[u8]>,
     {
@@ -109,11 +106,7 @@ impl Log {
     }
 
     /// read a buffer from the disk
-    pub fn read(
-        &self,
-        lsn: Lsn,
-        ptr: DiskPtr,
-    ) -> Result<LogRead, ()> {
+    pub fn read(&self, lsn: Lsn, ptr: DiskPtr) -> Result<LogRead> {
         trace!("reading log lsn {} ptr {}", lsn, ptr);
 
         self.make_stable(lsn)?;
@@ -155,7 +148,7 @@ impl Log {
     /// blocks until the specified log sequence number has
     /// been made stable on disk. Returns the number of
     /// bytes written during this call.
-    pub fn make_stable(&self, lsn: Lsn) -> Result<usize, ()> {
+    pub fn make_stable(&self, lsn: Lsn) -> Result<usize> {
         iobuf::make_stable(&self.iobufs, lsn)
     }
 
@@ -175,7 +168,7 @@ impl Log {
     pub fn reserve<'a>(
         &'a self,
         raw_buf: &[u8],
-    ) -> Result<Reservation<'a>, ()> {
+    ) -> Result<Reservation<'a>> {
         self.reserve_inner(raw_buf, false)
     }
 
@@ -185,7 +178,7 @@ impl Log {
     pub(super) fn reserve_blob<'a>(
         &'a self,
         blob_ptr: BlobPointer,
-    ) -> Result<Reservation<'a>, ()> {
+    ) -> Result<Reservation<'a>> {
         let lsn_buf: [u8; std::mem::size_of::<BlobPointer>()] =
             u64_to_arr(blob_ptr as u64);
 
@@ -196,7 +189,7 @@ impl Log {
         &'a self,
         raw_buf: &[u8],
         is_blob_rewrite: bool,
-    ) -> Result<Reservation<'a>, ()> {
+    ) -> Result<Reservation<'a>> {
         let _measure = Measure::new(&M.reserve);
 
         let n_io_bufs = self.config.io_bufs;
@@ -471,10 +464,7 @@ impl Log {
     /// Called by Reservation on termination (completion or abort).
     /// Handles departure from shared state, and possibly writing
     /// the buffer to stable storage if necessary.
-    pub(super) fn exit_reservation(
-        &self,
-        idx: usize,
-    ) -> Result<(), ()> {
+    pub(super) fn exit_reservation(&self, idx: usize) -> Result<()> {
         let iobuf = &self.iobufs.bufs[idx];
         let mut header = iobuf.get_header();
 

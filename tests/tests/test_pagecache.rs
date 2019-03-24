@@ -10,9 +10,7 @@ use std::{
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::Rng;
 
-use pagecache::{
-    ConfigBuilder, Materializer, PageCache, PageGet, PagePtr,
-};
+use pagecache::{ConfigBuilder, Materializer, PageCache, PageGet};
 
 type PageId = usize;
 
@@ -91,23 +89,20 @@ fn pagecache_caching() {
     let mut keys = HashMap::new();
 
     for _ in 0..2 {
-        let id = pc.allocate(&tx).unwrap();
-        let key = pc
-            .replace(id, PagePtr::allocated(0), vec![0], &tx)
-            .unwrap();
+        let (id, key) = pc.allocate(vec![0], &tx).unwrap();
         keys.insert(id, key);
     }
 
     for i in 0..1000 {
         let id = 2 + (i as usize % 2);
         let (_, key) = pc.get(id, &tx).unwrap().unwrap();
-        let key = pc.link(id, key, vec![i], &tx).unwrap();
+        let key = pc.link(id, key, vec![i], &tx).unwrap().unwrap();
         keys.insert(id, key);
     }
 }
 
 #[test]
-fn parallel_pagecache() {
+fn parallel_pagecache() -> sled::Result<()> {
     tests::setup_logger();
     const N_THREADS: usize = 10;
     const N_PER_THREAD: usize = 100;
@@ -115,11 +110,11 @@ fn parallel_pagecache() {
     let config = ConfigBuilder::new()
         .temporary(true)
         .io_bufs(3)
+        .async_io(false)
         .flush_every_ms(Some(10))
         .snapshot_after_ops(100_000_000)
         .io_buf_size(250)
         .page_consolidation_threshold(3)
-        .print_profile_on_drop(true)
         .build();
 
     macro_rules! par {
@@ -139,7 +134,7 @@ fn parallel_pagecache() {
                     .expect("should be able to spawn thread");
                 threads.push(thread);
             }
-            while let Some(thread) = threads.pop() {
+            for thread in threads.into_iter() {
                 if let Err(e) = thread.join() {
                     panic!("thread failure: {:?}", e);
                 }
@@ -153,18 +148,19 @@ fn parallel_pagecache() {
 
     par! {p, |pc: &PageCache<_, _>, _i: usize| {
         let tx = pc.begin().unwrap();
-        let id = pc.allocate(&tx).unwrap();
-        let mut key = PagePtr::allocated(0);
-        while let Err(pagecache::Error::CasFailed(Some(k))) = pc
-            .replace(id, key, vec![id], &tx)
-        {
-            key = k;
-        }
+
+        let (id, key) = pc.allocate(vec![], &tx).unwrap();
+        pc.link(id, key, vec![id], &tx).unwrap().unwrap();
+
         let (ptr, _key): (&Vec<usize>, _) =
                            pc.get(id, &tx)
                              .expect("we should read what we just wrote")
-                             .unwrap();
-        assert_eq!(ptr[0], id);
+                             .expect("we should read what we just wrote");
+        assert_eq!(
+            ptr.get(0), Some(&id),
+            "we just linked our ID into the page, \
+                   but it seems not to be present"
+        );
     }};
 
     drop(p);
@@ -177,8 +173,8 @@ fn parallel_pagecache() {
         let tx = pc.begin().unwrap();
         let (ptr, _key): (&Vec<usize>, _) =
                            pc.get(i, &tx)
-                             .expect("we should read what we just wrote")
-                             .unwrap();
+                             .expect("failed to recover a page we previously wrote")
+                             .expect(&format!("failed to recover pid {} which we previously wrote", i));
         assert_eq!(*ptr, vec![i]);
     }};
 
@@ -225,6 +221,8 @@ fn parallel_pagecache() {
                              .unwrap();
         assert_eq!(*ptr, vec![i, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     }};
+
+    Ok(())
 }
 
 #[test]
@@ -245,17 +243,15 @@ fn pagecache_strange_crash_1() {
         let tx = pc.begin().unwrap();
         let mut keys = HashMap::new();
         for _ in 0..2 {
-            let id = pc.allocate(&tx).unwrap();
-            let key = pc
-                .replace(id, PagePtr::allocated(0), vec![0], &tx)
-                .unwrap();
+            let (id, key) = pc.allocate(vec![0], &tx).unwrap();
             keys.insert(id, key);
         }
 
         for i in 0..1000 {
             let id = 2 + (i as usize % 2);
             let (_, key) = pc.get(id, &tx).unwrap().unwrap();
-            let key = pc.link(id, key, vec![i], &tx).unwrap();
+            let key =
+                pc.link(id, key, vec![i], &tx).unwrap().unwrap();
             keys.insert(id, key);
         }
     }
@@ -286,18 +282,17 @@ fn pagecache_strange_crash_2() {
 
         let mut keys = HashMap::new();
         for _ in 0..2 {
-            let id = pc.allocate(&tx).unwrap();
-            let key = pc
-                .replace(id, PagePtr::allocated(0), vec![0], &tx)
-                .unwrap();
+            let (id, key) = pc.allocate(vec![0], &tx).unwrap();
             keys.insert(id, key);
         }
 
         for i in 0..1000 {
             let id = 2 + (i as usize % 2);
-            let (_, key) = pc.get(id, &tx).unwrap().unwrap();
-            assert!(!key.is_allocated());
-            let key_res = pc.link(id, key, vec![i], &tx);
+            let page_get = pc.get(id, &tx).unwrap();
+            assert!(!page_get.is_unallocated());
+            let (_, key) = page_get.unwrap();
+
+            let key_res = pc.link(id, key, vec![i], &tx).unwrap();
             if key_res.is_err() {
                 println!("failed linking pid {}", id);
             }
@@ -319,11 +314,9 @@ fn basic_pagecache_recovery() {
         PageCache::start(config.clone()).unwrap();
 
     let tx = pc.begin().unwrap();
-    let id = pc.allocate(&tx).unwrap();
-    let key =
-        pc.replace(id, PagePtr::allocated(0), vec![1], &tx).unwrap();
-    let key = pc.link(id, key, vec![2], &tx).unwrap();
-    let _key = pc.link(id, key, vec![3], &tx).unwrap();
+    let (id, key) = pc.allocate(vec![1], &tx).unwrap();
+    let key = pc.link(id, key, vec![2], &tx).unwrap().unwrap();
+    let _key = pc.link(id, key, vec![3], &tx).unwrap().unwrap();
     let (cv1_ref, _key) = pc.get(id, &tx).unwrap().unwrap();
     let cv1 = cv1_ref.clone();
     assert_eq!(cv1, vec![1, 2, 3]);
@@ -335,7 +328,7 @@ fn basic_pagecache_recovery() {
     let cv2 = cv2_ref.clone();
     assert_eq!(cv1, cv2);
 
-    pc2.link(id, consolidated2, vec![4], &tx).unwrap();
+    pc2.link(id, consolidated2, vec![4], &tx).unwrap().unwrap();
     drop(pc2);
 
     let pc3: PageCache<TestMaterializer, _> =
@@ -343,7 +336,7 @@ fn basic_pagecache_recovery() {
     let (cv3_ref, consolidated3) = pc3.get(id, &tx).unwrap().unwrap();
     let cv3 = cv3_ref.clone();
     assert_eq!(cv3, vec![1, 2, 3, 4]);
-    pc3.free(id, consolidated3, &tx).unwrap();
+    pc3.free(id, consolidated3, &tx).unwrap().unwrap();
     drop(pc3);
 
     let pc4: PageCache<TestMaterializer, _> =
@@ -418,7 +411,6 @@ impl Arbitrary for Op {
 #[derive(Debug)]
 enum P {
     Free,
-    Allocated,
     Unallocated,
     Present(Vec<usize>),
 }
@@ -459,19 +451,11 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                     reference.entry(pid).or_insert(P::Unallocated);
 
                 match *ref_get {
-                    P::Allocated => {
-                        if let PageGet::Allocated(ptr) = get {
-                            pc.replace(pid, ptr, vec![c], &tx)
-                                .unwrap();
-                            *ref_get = P::Present(vec![c]);
-                        } else {
-                            panic!("expected Allocated page get, instead got {:?}", get);
-                        }
-                    }
                     P::Present(ref mut existing) => {
                         let (v, old_key) = get.unwrap();
                         assert_eq!(v, existing);
                         pc.replace(pid, old_key, vec![c], &tx)
+                            .unwrap()
                             .unwrap();
                         existing.clear();
                         existing.push(c);
@@ -491,19 +475,11 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                     reference.entry(pid).or_insert(P::Unallocated);
 
                 match *ref_get {
-                    P::Allocated => {
-                        pc.link(
-                            pid,
-                            PagePtr::allocated(0),
-                            vec![c],
-                            &tx,
-                        )
-                        .unwrap();
-                        *ref_get = P::Present(vec![c]);
-                    }
                     P::Present(ref mut existing) => {
                         let (_, old_key) = get.unwrap();
-                        pc.link(pid, old_key, vec![c], &tx).unwrap();
+                        pc.link(pid, old_key, vec![c], &tx)
+                            .unwrap()
+                            .unwrap();
                         existing.push(c);
                     }
                     P::Free => {
@@ -519,9 +495,6 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                 let get = pc.get(pid, &tx).unwrap();
 
                 match reference.get(&pid) {
-                    Some(&P::Allocated) => {
-                        assert!(get.is_allocated());
-                    }
                     Some(&P::Present(ref existing)) => {
                         let (val, _cache_entry) = get.unwrap();
 
@@ -546,9 +519,8 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                 let pre_get = pc.get(pid, &tx).unwrap();
 
                 match pre_get {
-                    PageGet::Allocated(ptr)
-                    | PageGet::Materialized(_, ptr) => {
-                        pc.free(pid, ptr, &tx).unwrap()
+                    PageGet::Materialized(_, ptr) => {
+                        pc.free(pid, ptr, &tx).unwrap().unwrap();
                     }
                     _ => {}
                 }
@@ -556,8 +528,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                 let get = pc.get(pid, &tx).unwrap();
 
                 match reference.get(&pid) {
-                    Some(&P::Allocated) | Some(&P::Present(_))
-                    | Some(&P::Free) => {
+                    Some(&P::Present(_)) | Some(&P::Free) => {
                         reference.insert(pid, P::Free);
                         assert!(get.is_free())
                     }
@@ -567,10 +538,10 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                 }
             }
             Allocate => {
-                let pid = pc.allocate(&tx).unwrap();
-                reference.insert(pid, P::Allocated);
+                let (pid, _key) = pc.allocate(vec![], &tx).unwrap();
+                reference.insert(pid, P::Present(vec![]));
                 let get = pc.get(pid, &tx).unwrap();
-                if !get.is_allocated() {
+                if get.is_unallocated() {
                     panic!(
                         "expected allocated page, instead got {:?}",
                         get

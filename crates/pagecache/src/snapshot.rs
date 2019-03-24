@@ -31,7 +31,6 @@ pub struct Snapshot {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum PageState {
     Present(Vec<(Lsn, DiskPtr)>),
-    Allocated(Lsn, DiskPtr),
     Free(Lsn, DiskPtr),
 }
 
@@ -39,9 +38,6 @@ impl PageState {
     fn push(&mut self, item: (Lsn, DiskPtr)) {
         match *self {
             PageState::Present(ref mut items) => items.push(item),
-            PageState::Allocated(_, _) => {
-                *self = PageState::Present(vec![item]);
-            }
             PageState::Free(_, _) => {
                 panic!("pushed items to a PageState::Free")
             }
@@ -54,8 +50,7 @@ impl PageState {
             PageState::Present(ref items) => {
                 Box::new(items.clone().into_iter())
             }
-            PageState::Allocated(lsn, ptr)
-            | PageState::Free(lsn, ptr) => {
+            PageState::Free(lsn, ptr) => {
                 Box::new(vec![(lsn, ptr)].into_iter())
             }
         }
@@ -90,7 +85,7 @@ impl Snapshot {
         disk_ptr: DiskPtr,
         bytes: &[u8],
         config: &Config,
-    ) -> Result<(), ()>
+    ) -> Result<()>
     where
         P: 'static
             + Debug
@@ -134,16 +129,17 @@ impl Snapshot {
             * config.io_buf_size as Lsn;
 
         match prepend.update {
-            Update::Append(_) => {
+            Update::Append(append) => {
                 // Because we rewrite pages over time, we may have relocated
                 // a page's initial Compact to a later segment. We should skip
                 // over pages here unless we've encountered a Compact for them.
                 if let Some(lids) = self.pt.get_mut(&pid) {
                     trace!(
-                        "append of pid {} at lid {} lsn {}",
+                        "append of pid {} at lid {} lsn {}: {:?}",
                         pid,
                         disk_ptr,
-                        lsn
+                        lsn,
+                        append,
                     );
 
                     if lids.is_free() {
@@ -166,11 +162,11 @@ impl Snapshot {
             | Update::Counter(_)
             | Update::Compact(_) => {
                 trace!(
-                    "update {:?} of pid {} at ptr {} lsn {}",
-                    prepend.update,
+                    "compact of pid {} at ptr {} lsn {}: {:?}",
                     pid,
                     disk_ptr,
-                    lsn
+                    lsn,
+                    prepend.update,
                 );
 
                 self.replace_pid(
@@ -188,23 +184,6 @@ impl Snapshot {
                 } else {
                     assert!(!self.free.contains(&pid));
                 }
-            }
-            Update::Allocate => {
-                trace!(
-                    "allocate  of pid {} at ptr {} lsn {}",
-                    pid,
-                    disk_ptr,
-                    lsn
-                );
-                self.replace_pid(
-                    pid,
-                    replaced_at_segment_lsn,
-                    replaced_at_idx,
-                    config,
-                );
-                self.pt
-                    .insert(pid, PageState::Allocated(lsn, disk_ptr));
-                self.free.remove(&pid);
             }
             Update::Free => {
                 trace!(
@@ -278,8 +257,7 @@ impl Snapshot {
                     }
                 }
             }
-            Some(PageState::Allocated(_lsn, ptr))
-            | Some(PageState::Free(_lsn, ptr)) => {
+            Some(PageState::Free(_lsn, ptr)) => {
                 let old_idx =
                     ptr.lid() as SegmentId / config.io_buf_size;
                 if replaced_at_idx != old_idx {
@@ -301,7 +279,7 @@ pub(super) fn advance_snapshot<PM, P>(
     iter: LogIter,
     mut snapshot: Snapshot,
     config: &Config,
-) -> Result<Snapshot, ()>
+) -> Result<Snapshot>
 where
     PM: Materializer<PageFrag = P>,
     P: 'static
@@ -378,7 +356,7 @@ where
 /// the tip of the data file, if present.
 pub fn read_snapshot_or_default<PM, P>(
     config: &Config,
-) -> Result<Snapshot, ()>
+) -> Result<Snapshot>
 where
     PM: Materializer<PageFrag = P>,
     P: 'static
@@ -449,10 +427,10 @@ fn read_snapshot(
     Ok(deserialize::<Snapshot>(&*bytes).ok())
 }
 
-pub(crate) fn write_snapshot(
+fn write_snapshot(
     config: &Config,
     snapshot: &Snapshot,
-) -> Result<(), ()> {
+) -> Result<()> {
     let raw_bytes = serialize(&snapshot).unwrap();
     let decompressed_len = raw_bytes.len();
 
@@ -470,7 +448,7 @@ pub(crate) fn write_snapshot(
     let len_bytes: [u8; 8] = u64_to_arr(decompressed_len as u64);
 
     let path_1_suffix =
-        format!("snap.{:016X}.in___motion", snapshot.max_lsn);
+        format!("snap.{:016X}.generating", snapshot.max_lsn);
 
     let mut path_1 = config.snapshot_prefix();
     path_1.push(path_1_suffix);
@@ -480,7 +458,8 @@ pub(crate) fn write_snapshot(
     let mut path_2 = config.snapshot_prefix();
     path_2.push(path_2_suffix);
 
-    let _res = std::fs::create_dir_all(path_1.parent().unwrap());
+    let parent = path_1.parent().unwrap();
+    std::fs::create_dir_all(parent)?;
     let mut f = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -499,7 +478,7 @@ pub(crate) fn write_snapshot(
     trace!("wrote snapshot to {}", path_1.to_string_lossy());
 
     maybe_fail!("snap write mv");
-    std::fs::rename(path_1, &path_2)?;
+    std::fs::rename(&path_1, &path_2)?;
     maybe_fail!("snap write mv post");
 
     trace!("renamed snapshot to {}", path_2.to_string_lossy());

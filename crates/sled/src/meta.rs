@@ -8,7 +8,7 @@ pub(crate) fn open_tree<'a>(
     context: Arc<Context>,
     name: Vec<u8>,
     tx: &'a Tx,
-) -> Result<Tree, ()> {
+) -> Result<Tree> {
     // we loop because creating this Tree may race with
     // concurrent attempts to open the same one.
     loop {
@@ -26,93 +26,61 @@ pub(crate) fn open_tree<'a>(
         }
 
         // set up empty leaf
-        let leaf_id = context.pagecache.allocate(&tx)?;
-        trace!(
-            "allocated pid {} for leaf in new_tree for namespace {:?}",
-            leaf_id,
-            name
-        );
-
         let leaf = Frag::Base(Node {
-            id: leaf_id,
             data: Data::Leaf(vec![]),
             next: None,
             lo: vec![].into(),
             hi: vec![].into(),
         });
 
-        let leaf_ptr = context
-            .pagecache
-            .replace(leaf_id, TreePtr::allocated(0), leaf, &tx)
-            .map_err(|e| e.danger_cast())?;
+        let (leaf_id, leaf_ptr) =
+            context.pagecache.allocate(leaf, &tx)?;
+
+        trace!(
+            "allocated pid {} for leaf in new_tree for namespace {:?}",
+            leaf_id,
+            name
+        );
 
         // set up root index
-        let root_id = context.pagecache.allocate(&tx)?;
-
-        debug!(
-            "allocated pid {} for root of new_tree {:?}",
-            root_id, name
-        );
 
         // vec![0] represents a prefix-encoded empty prefix
         let root_index_vec = vec![(vec![0].into(), leaf_id)];
 
         let root = Frag::Base(Node {
-            id: root_id,
             data: Data::Index(root_index_vec),
             next: None,
             lo: vec![].into(),
             hi: vec![].into(),
         });
 
-        let root_ptr = context
-            .pagecache
-            .replace(root_id, TreePtr::allocated(0), root, &tx)
-            .map_err(|e| e.danger_cast())?;
+        let (root_id, root_ptr) =
+            context.pagecache.allocate(root, &tx)?;
+
+        debug!(
+            "allocated pid {} for root of new_tree {:?}",
+            root_id, name
+        );
 
         let res = context.pagecache.cas_root_in_meta(
             name.clone(),
             None,
             Some(root_id),
             tx,
-        );
+        )?;
 
         if res.is_err() {
             // clean up the tree we just created if we couldn't
             // install it.
-            let mut root_ptr = root_ptr;
-            loop {
-                match context.pagecache.free(root_id, root_ptr, tx) {
-                    Ok(_) => break,
-                    Err(Error::CasFailed(Some(actual_ptr))) => {
-                        root_ptr = actual_ptr.clone()
-                    }
-                    Err(Error::CasFailed(None)) => panic!(
-                        "somehow allocated child was already freed"
-                    ),
-                    Err(other) => return Err(other.danger_cast()),
-                }
-            }
-
-            let mut leaf_ptr = leaf_ptr;
-            loop {
-                match context.pagecache.free(leaf_id, leaf_ptr, tx) {
-                    Ok(_) => break,
-                    Err(Error::CasFailed(Some(actual_ptr))) => {
-                        leaf_ptr = actual_ptr.clone()
-                    }
-                    Err(Error::CasFailed(None)) => panic!(
-                        "somehow allocated child was already freed"
-                    ),
-                    Err(other) => return Err(other.danger_cast()),
-                }
-            }
-        }
-
-        match res {
-            Err(Error::CasFailed(..)) => continue,
-            Err(other) => return Err(other.danger_cast()),
-            Ok(_) => {}
+            context
+                .pagecache
+                .free(root_id, root_ptr, tx)?
+                .expect("could not free allocated page");
+            context
+                .pagecache
+                .free(leaf_id, leaf_ptr, tx)?
+                .expect("could not free allocated page");
+            continue;
         }
 
         return Ok(Tree {

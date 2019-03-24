@@ -163,7 +163,7 @@ impl LogIter {
         &mut self,
         lsn: Lsn,
         offset: LogId,
-    ) -> Result<(), ()> {
+    ) -> Result<()> {
         trace!(
             "LogIter::read_segment lsn: {:?} cur_lsn: {:?}",
             lsn,

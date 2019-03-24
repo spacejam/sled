@@ -39,7 +39,7 @@ impl Drop for Context {
 }
 
 impl Context {
-    pub(crate) fn start(config: Config) -> Result<Context, ()> {
+    pub(crate) fn start(config: Config) -> Result<Context> {
         #[cfg(any(test, feature = "check_snapshot_integrity"))]
         match config.verify_snapshot::<BLinkMaterializer, Frag>() {
             Ok(_) => {}
@@ -75,7 +75,7 @@ impl Context {
     /// previous persisted counter wasn't synced to disk yet, we will do
     /// a blocking flush to fsync the latest counter, ensuring
     /// that we will never give out the same counter twice.
-    pub fn generate_id(&self) -> Result<u64, ()> {
+    pub fn generate_id(&self) -> Result<u64> {
         self.pagecache.generate_id()
     }
 }

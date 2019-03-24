@@ -94,7 +94,7 @@ pub(super) struct SegmentAccountant {
     pause_rewriting: bool,
     safety_buffer: Vec<LogId>,
     ordering: BTreeMap<Lsn, LogId>,
-    async_truncations: Vec<Oneshot<Result<(), ()>>>,
+    async_truncations: Vec<Oneshot<Result<()>>>,
 }
 
 #[cfg(feature = "event_log")]
@@ -230,7 +230,7 @@ impl Segment {
         lsn: Lsn,
         from_recovery: bool,
         config: &Config,
-    ) -> Result<FastSet8<(PageId, usize)>, ()> {
+    ) -> Result<FastSet8<(PageId, usize)>> {
         trace!(
             "setting Segment with lsn {:?} to Inactive",
             self.lsn()
@@ -255,7 +255,7 @@ impl Segment {
                 ptr,
                 self.lsn,
             );
-            remove_blob(ptr, config).map_err(|e| e.danger_cast())?;
+            remove_blob(ptr, config)?;
         }
 
         let deferred_replacements = mem::replace(
@@ -376,7 +376,7 @@ impl Segment {
         &mut self,
         blob_ptr: BlobPointer,
         config: &Config,
-    ) -> Result<(), ()> {
+    ) -> Result<()> {
         match self.state {
             Active => {
                 // we have received a removal before
@@ -391,8 +391,7 @@ impl Segment {
                     or Draining.",
                     blob_ptr,
                 );
-                remove_blob(blob_ptr, config)
-                    .map_err(|e| e.danger_cast())?;
+                remove_blob(blob_ptr, config)?;
             }
             Free => panic!("remove_blob called on a Free Segment"),
         }
@@ -426,7 +425,7 @@ impl SegmentAccountant {
     pub(super) fn start(
         config: Config,
         snapshot: Snapshot,
-    ) -> Result<SegmentAccountant, ()> {
+    ) -> Result<SegmentAccountant> {
         let mut ret = SegmentAccountant {
             config,
             segments: vec![],
@@ -467,7 +466,7 @@ impl SegmentAccountant {
     fn initialize_from_snapshot(
         &mut self,
         snapshot: Snapshot,
-    ) -> Result<(), ()> {
+    ) -> Result<()> {
         let io_buf_size = self.config.io_buf_size;
 
         // generate segments from snapshot lids
@@ -502,8 +501,7 @@ impl SegmentAccountant {
                         add(pid, lsn, ptr.lid(), &mut segments);
                     }
                 }
-                PageState::Allocated(lsn, ptr)
-                | PageState::Free(lsn, ptr) => {
+                PageState::Free(lsn, ptr) => {
                     add(pid, lsn, ptr.lid(), &mut segments);
                 }
             }
@@ -551,7 +549,7 @@ impl SegmentAccountant {
     fn initialize_from_segments(
         &mut self,
         mut segments: Vec<Segment>,
-    ) -> Result<(), ()> {
+    ) -> Result<()> {
         // populate ordering from segments.
         // use last segment as active even if it's full
         let io_buf_size = self.config.io_buf_size;
@@ -707,7 +705,7 @@ impl SegmentAccountant {
     fn set_safety_buffer(
         &mut self,
         snapshot_max_lsn: Lsn,
-    ) -> Result<(), ()> {
+    ) -> Result<()> {
         self.ensure_ordering_initialized()?;
 
         // if our ordering contains anything higher than
@@ -822,7 +820,7 @@ impl SegmentAccountant {
         lsn: Lsn,
         old_ptrs: Vec<DiskPtr>,
         new_ptr: DiskPtr,
-    ) -> Result<(), ()> {
+    ) -> Result<()> {
         let _measure = Measure::new(&M.accountant_mark_replace);
 
         trace!(
@@ -1045,7 +1043,7 @@ impl SegmentAccountant {
     pub(super) fn deactivate_segment(
         &mut self,
         lsn: Lsn,
-    ) -> Result<(), ()> {
+    ) -> Result<()> {
         let lid = self.ordering[&lsn];
         let idx = self.lid_to_idx(lid);
 
@@ -1190,7 +1188,7 @@ impl SegmentAccountant {
     }
 
     /// Returns the next offset to write a new segment in.
-    pub(super) fn next(&mut self, lsn: Lsn) -> Result<LogId, ()> {
+    pub(super) fn next(&mut self, lsn: Lsn) -> Result<LogId> {
         let _measure = Measure::new(&M.accountant_next);
 
         assert_eq!(
@@ -1313,7 +1311,7 @@ impl SegmentAccountant {
     }
 
     // truncate the file to the desired length
-    fn truncate(&mut self, at: LogId) -> Result<(), ()> {
+    fn truncate(&mut self, at: LogId) -> Result<()> {
         assert_eq!(
             at % self.config.io_buf_size as LogId,
             0,
@@ -1363,7 +1361,7 @@ impl SegmentAccountant {
         }
     }
 
-    fn ensure_ordering_initialized(&mut self) -> Result<(), ()> {
+    fn ensure_ordering_initialized(&mut self) -> Result<()> {
         if !self.ordering.is_empty() {
             return Ok(());
         }
@@ -1396,7 +1394,7 @@ impl SegmentAccountant {
 fn scan_segment_lsns(
     min: Lsn,
     config: &Config,
-) -> Result<BTreeMap<Lsn, LogId>, ()> {
+) -> Result<BTreeMap<Lsn, LogId>> {
     let mut ordering = BTreeMap::new();
 
     let segment_len = config.io_buf_size as LogId;
@@ -1448,7 +1446,7 @@ fn clean_tail_tears(
     mut ordering: BTreeMap<Lsn, LogId>,
     config: &Config,
     f: &File,
-) -> Result<BTreeMap<Lsn, LogId>, ()> {
+) -> Result<BTreeMap<Lsn, LogId>> {
     let safety_buffer = config.io_bufs;
     let logical_tail: Vec<Lsn> = ordering
         .iter()
@@ -1592,7 +1590,7 @@ pub enum SegmentMode {
 pub(super) fn raw_segment_iter_from(
     lsn: Lsn,
     config: &Config,
-) -> Result<LogIter, ()> {
+) -> Result<LogIter> {
     let segment_len = config.io_buf_size as Lsn;
     let normalized_lsn = lsn / segment_len * segment_len;
 

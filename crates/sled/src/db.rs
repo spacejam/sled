@@ -31,13 +31,13 @@ impl Db {
     /// Load existing or create a new `Db` with a default configuration.
     pub fn start_default<P: AsRef<std::path::Path>>(
         path: P,
-    ) -> Result<Db, ()> {
+    ) -> Result<Db> {
         let config = ConfigBuilder::new().path(path).build();
         Self::start(config)
     }
 
     /// Load existing or create a new `Db`.
-    pub fn start(config: Config) -> Result<Db, ()> {
+    pub fn start(config: Config) -> Result<Db> {
         let _measure = Measure::new(&M.tree_start);
 
         let context = Arc::new(Context::start(config)?);
@@ -86,7 +86,7 @@ impl Db {
 
     /// Open or create a new disk-backed Tree with its own keyspace,
     /// accessible from the `Db` via the provided identifier.
-    pub fn open_tree(&self, name: Vec<u8>) -> Result<Arc<Tree>, ()> {
+    pub fn open_tree(&self, name: Vec<u8>) -> Result<Arc<Tree>> {
         let tenants = self.tenants.read().unwrap();
         if let Some(tree) = tenants.get(&name) {
             return Ok(tree.clone());
@@ -107,7 +107,7 @@ impl Db {
     }
 
     /// Remove a disk-backed collection.
-    pub fn drop_tree(&self, name: &[u8]) -> Result<bool, ()> {
+    pub fn drop_tree(&self, name: &[u8]) -> Result<bool> {
         if name == DEFAULT_TREE_ID {
             return Err(Error::Unsupported(
                 "cannot remove the core structures".into(),
@@ -125,31 +125,28 @@ impl Db {
 
         let tx = self.context.pagecache.begin()?;
 
-        let mut root_id =
-            self.context.pagecache.meta_pid_for_name(&name, &tx)?;
+        let mut root_id = Some(
+            self.context.pagecache.meta_pid_for_name(&name, &tx)?,
+        );
 
         let leftmost_chain: Vec<PageId> = tree
             .path_for_key(b"", &tx)?
             .into_iter()
-            .map(|(frag, _tp)| frag.unwrap_base().id)
+            .map(|(id, _frag, _tp)| id)
             .collect();
 
         loop {
-            let res = self
-                .context
-                .pagecache
-                .cas_root_in_meta(
-                    name.to_vec(),
-                    Some(root_id),
-                    None,
-                    &tx,
-                )
-                .map_err(|e| e.danger_cast());
+            let res = self.context.pagecache.cas_root_in_meta(
+                name.to_vec(),
+                root_id,
+                None,
+                &tx,
+            )?;
 
-            match res {
-                Ok(_) => break,
-                Err(Error::CasFailed(actual)) => root_id = actual,
-                Err(other) => return Err(other.danger_cast()),
+            if let Err(actual_root) = res {
+                root_id = actual_root;
+            } else {
+                break;
             }
         }
 
@@ -190,7 +187,7 @@ impl Db {
     /// previous persisted counter wasn't synced to disk yet, we will do
     /// a blocking flush to fsync the latest counter, ensuring
     /// that we will never give out the same counter twice.
-    pub fn generate_id(&self) -> Result<u64, ()> {
+    pub fn generate_id(&self) -> Result<u64> {
         self.context.generate_id()
     }
 }

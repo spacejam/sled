@@ -129,7 +129,7 @@ fn parallel_tree_ops() {
             let k1 = k.clone();
             let mut k2 = k.clone();
             k2.reverse();
-            tree.cas(&k1, Some(&*k1), Some(k2)).unwrap();
+            tree.cas(&k1, Some(&*k1), Some(k2)).unwrap().unwrap();
         }};
 
         drop(t);
@@ -169,7 +169,7 @@ fn parallel_tree_ops() {
 }
 
 #[test]
-fn parallel_tree_iterators() -> Result<(), ()> {
+fn parallel_tree_iterators() -> Result<()> {
     const N_FORWARD: usize = INTENSITY;
     const N_REVERSE: usize = INTENSITY;
 
@@ -206,7 +206,7 @@ fn parallel_tree_iterators() -> Result<(), ()> {
 
     let barrier = Arc::new(Barrier::new(N_FORWARD + N_REVERSE + 2));
 
-    let mut threads: Vec<thread::JoinHandle<Result<(), ()>>> = vec![];
+    let mut threads: Vec<thread::JoinHandle<Result<()>>> = vec![];
 
     for _ in 0..N_FORWARD {
         let t = thread::spawn({
@@ -404,7 +404,7 @@ fn tree_iterator() {
 }
 
 #[test]
-fn tree_subscriptions_and_keyspaces() -> Result<(), ()> {
+fn tree_subscriptions_and_keyspaces() -> Result<()> {
     let config = ConfigBuilder::new()
         .temporary(true)
         .blink_node_split_size(0)
@@ -547,13 +547,16 @@ fn tree_range() {
 
 #[test]
 fn recover_tree() {
+    tests::setup_logger();
+
     let config = ConfigBuilder::new()
         .temporary(true)
         .blink_node_split_size(0)
         .io_buf_size(5000)
         .flush_every_ms(None)
-        .snapshot_after_ops(100)
+        .snapshot_after_ops(N_PER_THREAD / 2)
         .build();
+
     let t = sled::Db::start(config.clone()).unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
@@ -562,7 +565,7 @@ fn recover_tree() {
     drop(t);
 
     let t = sled::Db::start(config.clone()).unwrap();
-    for i in 0..4 {
+    for i in 0..N_PER_THREAD {
         let k = kv(i as usize);
         assert_eq!(t.get(&*k).unwrap().unwrap(), k);
         t.del(&*k).unwrap();
@@ -570,7 +573,7 @@ fn recover_tree() {
     drop(t);
 
     let t = sled::Db::start(config.clone()).unwrap();
-    for i in 0..4 {
+    for i in 0..N_PER_THREAD {
         let k = kv(i as usize);
         assert_eq!(t.get(&*k), Ok(None));
     }

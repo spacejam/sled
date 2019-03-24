@@ -10,8 +10,8 @@ use super::*;
 /// A node in the lock-free `Stack`.
 #[derive(Debug)]
 pub struct Node<T: Send + 'static> {
-    inner: T,
-    next: Atomic<Node<T>>,
+    pub(crate) inner: T,
+    pub(crate) next: Atomic<Node<T>>,
 }
 
 impl<T: Send + 'static> Drop for Node<T> {
@@ -52,7 +52,7 @@ impl<T: Send + 'static> Drop for Stack<T> {
 
 impl<T> Debug for Stack<T>
 where
-    T: Debug + Send + 'static + Sync,
+    T: Clone + Debug + Send + 'static + Sync,
 {
     fn fmt(
         &self,
@@ -85,7 +85,7 @@ impl<T: Send + 'static> Deref for Node<T> {
     }
 }
 
-impl<T: Send + Sync + 'static> Stack<T> {
+impl<T: Clone + Send + Sync + 'static> Stack<T> {
     /// Add an item to the stack, spinning until successful.
     pub fn push(&self, inner: T) {
         debug_delay();
@@ -147,31 +147,43 @@ impl<T: Send + Sync + 'static> Stack<T> {
         old: Shared<'_, Node<T>>,
         new: T,
         guard: &'g Guard,
-    ) -> std::result::Result<Shared<'g, Node<T>>, Shared<'g, Node<T>>>
-    {
+    ) -> std::result::Result<
+        Shared<'g, Node<T>>,
+        (Shared<'g, Node<T>>, Owned<Node<T>>),
+    > {
         debug_delay();
         let node = Owned::new(Node {
             inner: new,
             next: Atomic::from(old),
         });
 
-        let node = node.into_shared(guard);
+        self.cap_node(old, node, guard)
+    }
 
+    /// compare and push
+    pub fn cap_node<'g>(
+        &self,
+        old: Shared<'_, Node<T>>,
+        mut node: Owned<Node<T>>,
+        guard: &'g Guard,
+    ) -> std::result::Result<
+        Shared<'g, Node<T>>,
+        (Shared<'g, Node<T>>, Owned<Node<T>>),
+    > {
+        // properly set next ptr
+        node.next = Atomic::from(old);
         let res = self.head.compare_and_set(old, node, SeqCst, guard);
 
         match res {
             Err(e) => {
-                unsafe {
-                    // we want to set next to null to prevent
-                    // the current shared head from being
-                    // dropped when we drop this node.
-                    node.deref().next.store(Shared::null(), SeqCst);
-                    let node_owned = node.into_owned();
-                    drop(node_owned)
-                }
-                Err(e.current)
+                // we want to set next to null to prevent
+                // the current shared head from being
+                // dropped when we drop this node.
+                let mut returned = e.new;
+                returned.next = Atomic::null();
+                Err((e.current, returned))
             }
-            Ok(_) => Ok(node),
+            Ok(success) => Ok(success),
         }
     }
 
@@ -179,32 +191,25 @@ impl<T: Send + Sync + 'static> Stack<T> {
     pub fn cas<'g>(
         &self,
         old: Shared<'g, Node<T>>,
-        new: Shared<'g, Node<T>>,
+        new: Owned<Node<T>>,
         guard: &'g Guard,
-    ) -> std::result::Result<Shared<'g, Node<T>>, Shared<'g, Node<T>>>
-    {
+    ) -> std::result::Result<
+        Shared<'g, Node<T>>,
+        (Shared<'g, Node<T>>, Owned<Node<T>>),
+    > {
         debug_delay();
         let res = self.head.compare_and_set(old, new, SeqCst, guard);
 
         match res {
-            Ok(_) => {
+            Ok(success) => {
                 if !old.is_null() {
                     unsafe {
                         guard.defer_destroy(old);
                     };
                 }
-                Ok(new)
+                Ok(success)
             }
-            Err(e) => {
-                if !new.is_null() {
-                    unsafe {
-                        let new_owned = new.into_owned();
-                        drop(new_owned)
-                    };
-                }
-
-                Err(e.current)
-            }
+            Err(e) => Err((e.current, e.new)),
         }
     }
 

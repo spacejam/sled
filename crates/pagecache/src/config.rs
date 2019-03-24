@@ -276,7 +276,7 @@ impl ConfigBuilder {
     );
 
     // panics if config options are outside of advised range
-    fn validate(&self) -> Result<(), ()> {
+    fn validate(&self) -> Result<()> {
         supported!(
             self.io_bufs <= 32,
             "too many configured io_bufs. please make <= 32"
@@ -289,8 +289,14 @@ impl ConfigBuilder {
             self.io_buf_size <= 1 << 24,
             "io_buf_size should be <= 16mb"
         );
-        supported!(self.page_consolidation_threshold >= 1, "must consolidate pages after a non-zero number of updates");
-        supported!(self.page_consolidation_threshold < 1 << 20, "must consolidate pages after fewer than 1 million updates");
+        supported!(
+            self.page_consolidation_threshold >= 1,
+            "must consolidate pages after a non-zero number of updates"
+        );
+        supported!(
+            self.page_consolidation_threshold < 1 << 20,
+            "must consolidate pages after fewer than 1 million updates"
+        );
         supported!(
             self.cache_bits <= 20,
             "# LRU shards = 2^cache_bits. set cache_bits to 20 or less."
@@ -328,7 +334,7 @@ impl ConfigBuilder {
         Ok(())
     }
 
-    fn open_file(&mut self) -> Result<fs::File, ()> {
+    fn open_file(&mut self) -> Result<fs::File> {
         let path = self.db_path();
 
         // panic if we can't parse the path
@@ -355,7 +361,7 @@ impl ConfigBuilder {
             let res: std::io::Result<()> =
                 std::fs::create_dir_all(dir);
             res.map_err(|e: std::io::Error| {
-                let ret: Error<()> = e.into();
+                let ret: Error = e.into();
                 ret
             })?;
         }
@@ -384,7 +390,7 @@ impl ConfigBuilder {
         }
     }
 
-    fn verify_config_changes_ok(&self) -> Result<(), ()> {
+    fn verify_config_changes_ok(&self) -> Result<()> {
         match self.read_config() {
             Ok(Some(old)) => {
                 if old.merge_operator.is_some() {
@@ -419,7 +425,7 @@ impl ConfigBuilder {
         }
     }
 
-    fn write_config(&self) -> Result<(), ()> {
+    fn write_config(&self) -> Result<()> {
         let bytes = serialize(&*self).unwrap();
         let crc: u32 = crc32(&*bytes);
         let crc_arr = u32_to_arr(crc);
@@ -466,10 +472,10 @@ impl ConfigBuilder {
         let mut buf = vec![];
         f.read_to_end(&mut buf).unwrap();
         let len = buf.len();
-        buf.split_off(len - 8);
+        buf.split_off(len - 4);
 
         let mut crc_arr = [0u8; 4];
-        f.seek(std::io::SeekFrom::End(-8)).unwrap();
+        f.seek(std::io::SeekFrom::End(-4)).unwrap();
         f.read_exact(&mut crc_arr).unwrap();
         let crc_expected = arr_to_u32(&crc_arr);
 
@@ -521,7 +527,7 @@ pub struct Config {
     pub(crate) thread_pool: Option<Arc<rayon::ThreadPool>>,
     threads: Arc<AtomicUsize>,
     refs: Arc<AtomicUsize>,
-    pub(crate) global_error: Arc<AtomicPtr<Error<()>>>,
+    pub(crate) global_error: Arc<AtomicPtr<Error>>,
     #[cfg(feature = "event_log")]
     /// an event log for concurrent debugging
     pub event_log: Arc<event_log::EventLog>,
@@ -583,7 +589,7 @@ impl Drop for Config {
 impl Config {
     /// Return the global error if one was encountered during
     /// an asynchronous IO operation.
-    pub fn global_error(&self) -> Option<Error<()>> {
+    pub fn global_error(&self) -> Option<Error> {
         let ge = self.global_error.load(Ordering::Relaxed);
         if ge.is_null() {
             None
@@ -592,11 +598,11 @@ impl Config {
         }
     }
 
-    pub(crate) fn set_global_error(&self, error: Error<()>) {
+    pub(crate) fn set_global_error(&self, error: Error) {
         let ptr = Box::into_raw(Box::new(error));
         let ret = self.global_error.compare_and_swap(
             std::ptr::null_mut(),
-            ptr as *mut Error<()>,
+            ptr as *mut Error,
             Ordering::Relaxed,
         );
 
@@ -664,7 +670,7 @@ impl Config {
     }
 
     #[doc(hidden)]
-    pub fn verify_snapshot<PM, P>(&self) -> Result<(), ()>
+    pub fn verify_snapshot<PM, P>(&self) -> Result<()>
     where
         PM: Materializer<PageFrag = P>,
         P: 'static

@@ -89,7 +89,7 @@ impl IoBufs {
     pub(crate) fn start(
         config: Config,
         mut snapshot: Snapshot,
-    ) -> Result<IoBufs, ()> {
+    ) -> Result<IoBufs> {
         // open file for writing
         let file = &config.file;
 
@@ -279,7 +279,7 @@ impl IoBufs {
         lsn: Lsn,
         over_blob_threshold: bool,
         is_blob_rewrite: bool,
-    ) -> Result<crc32fast::Hasher, ()> {
+    ) -> Result<crc32fast::Hasher> {
         let mut _blob_ptr = None;
 
         let to_reserve = if over_blob_threshold {
@@ -358,7 +358,7 @@ impl IoBufs {
 
     // Write an IO buffer's data to stable storage and set up the
     // next IO buffer for writing.
-    pub(crate) fn write_to_log(&self, idx: usize) -> Result<(), ()> {
+    pub(crate) fn write_to_log(&self, idx: usize) -> Result<()> {
         let _measure = Measure::new(&M.write_to_log);
         let iobuf = &self.bufs[idx];
         let header = iobuf.get_header();
@@ -639,7 +639,7 @@ impl IoBufs {
 pub(crate) fn make_stable(
     iobufs: &Arc<IoBufs>,
     lsn: Lsn,
-) -> Result<usize, ()> {
+) -> Result<usize> {
     let _measure = Measure::new(&M.make_stable);
 
     // NB before we write the 0th byte of the file, stable  is -1
@@ -683,7 +683,7 @@ pub(crate) fn make_stable(
 /// Called by users who wish to force the current buffer
 /// to flush some pending writes. Returns the number
 /// of bytes written during this call.
-pub(super) fn flush(iobufs: &Arc<IoBufs>) -> Result<usize, ()> {
+pub(super) fn flush(iobufs: &Arc<IoBufs>) -> Result<usize> {
     let max_reserved_lsn =
         iobufs.max_reserved_lsn.load(SeqCst) as Lsn;
     make_stable(iobufs, max_reserved_lsn)
@@ -697,7 +697,7 @@ pub(crate) fn maybe_seal_and_write_iobuf(
     idx: usize,
     header: Header,
     from_reserve: bool,
-) -> Result<(), ()> {
+) -> Result<()> {
     let iobuf = &iobufs.bufs[idx];
 
     if is_sealed(header) {

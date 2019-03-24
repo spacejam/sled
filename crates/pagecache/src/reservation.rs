@@ -27,7 +27,7 @@ impl<'a> Drop for Reservation<'a> {
 impl<'a> Reservation<'a> {
     /// Cancel the reservation, placing a failed flush on disk, returning
     /// the (cancelled) log sequence number and file offset.
-    pub fn abort(mut self) -> Result<(Lsn, DiskPtr), ()> {
+    pub fn abort(mut self) -> Result<(Lsn, DiskPtr)> {
         if self.ptr.is_blob() && !self.is_blob_rewrite {
             // we don't want to remove this blob if something
             // else may still be using it.
@@ -45,7 +45,7 @@ impl<'a> Reservation<'a> {
 
     /// Complete the reservation, placing the buffer on disk. returns
     /// the log sequence number of the write, and the file offset.
-    pub fn complete(mut self) -> Result<(Lsn, DiskPtr), ()> {
+    pub fn complete(mut self) -> Result<(Lsn, DiskPtr)> {
         self.flush(true)
     }
 
@@ -66,7 +66,7 @@ impl<'a> Reservation<'a> {
         self.ptr
     }
 
-    fn flush(&mut self, valid: bool) -> Result<(Lsn, DiskPtr), ()> {
+    fn flush(&mut self, valid: bool) -> Result<(Lsn, DiskPtr)> {
         if self.flushed {
             panic!("flushing already-flushed reservation!");
         }
