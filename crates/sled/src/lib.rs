@@ -70,7 +70,7 @@ use {
         node::Node,
         prefix::{
             prefix_cmp, prefix_cmp_encoded, prefix_decode,
-            prefix_encode,
+            prefix_encode, prefix_reencode,
         },
         subscription::Subscriptions,
     },

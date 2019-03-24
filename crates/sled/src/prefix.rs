@@ -1,6 +1,6 @@
 use super::*;
 
-use std::cmp::Ordering;
+use std::cmp::{self, Ordering};
 
 pub(crate) fn prefix_encode(prefix: &[u8], buf: &[u8]) -> IVec {
     assert!(
@@ -9,50 +9,70 @@ pub(crate) fn prefix_encode(prefix: &[u8], buf: &[u8]) -> IVec {
         prefix,
         buf
     );
-    let mut prefix_len = 0_usize;
-    for (i, c) in
-        prefix.iter().take(u8::max_value() as usize).enumerate()
-    {
-        if buf[i] == *c {
-            prefix_len += 1;
-        } else {
-            break;
-        }
-    }
+
+    let max = u8::max_value() as usize;
+    let zip = prefix.iter().zip(buf);
+    let prefix_len = zip.take(max).take_while(|(a, b)| a == b).count();
 
     let encoded_len = 1 + buf.len() - prefix_len;
-    let mut ret = Vec::new();
-    ret.reserve_exact(encoded_len);
-    unsafe {
-        ret.set_len(encoded_len);
-        std::ptr::copy_nonoverlapping(
-            buf[prefix_len..].as_ptr(),
-            ret[1..].as_mut_ptr(),
-            encoded_len - 1,
-        );
-    }
-    ret[0] = prefix_len as u8;
-    ret.into()
+
+    let mut ret = Vec::with_capacity(encoded_len);
+    ret.push(prefix_len as u8);
+    ret.extend_from_slice(&buf[prefix_len..]);
+
+    IVec::from(ret)
 }
 
 pub(crate) fn prefix_decode(prefix: &[u8], buf: &[u8]) -> Vec<u8> {
     assert!(!buf.is_empty());
+
     let prefix_len = buf[0] as usize;
     let mut ret = Vec::with_capacity(prefix_len + buf.len() - 1);
-    unsafe {
-        ret.set_len(prefix_len + buf.len() - 1);
-        std::ptr::copy_nonoverlapping(
-            prefix.as_ptr(),
-            ret.as_mut_ptr(),
-            prefix_len,
-        );
-        std::ptr::copy_nonoverlapping(
-            buf[1..].as_ptr(),
-            ret[prefix_len..].as_mut_ptr(),
-            buf.len() - 1,
-        );
-    }
+
+    ret.extend_from_slice(&prefix[..prefix_len]);
+    ret.extend_from_slice(&buf[1..]);
+
     ret
+}
+
+pub(crate) fn prefix_reencode(
+    old_prefix: &[u8],
+    new_prefix: &[u8],
+    buf: &[u8],
+) -> IVec
+{
+    assert!(!buf.is_empty());
+
+    let prefix_len = buf[0] as usize;
+    let old_prefix = &old_prefix[..prefix_len];
+    let buf = &buf[1..];
+
+    let mut output = Vec::with_capacity(old_prefix.len() + buf.len());
+
+    output.extend_from_slice(old_prefix);
+    output.extend_from_slice(buf);
+
+    assert!(
+        new_prefix <= &output,
+        "new prefix {:?} must be lexicographically <= to the encoded buf {:?}",
+        new_prefix,
+        buf
+    );
+
+    let max = u8::max_value() as usize;
+    let zip = new_prefix.iter().zip(&output);
+    let prefix_len = zip.take(max).take_while(|(a, b)| a == b).count();
+
+    let skip = prefix_len - cmp::min(old_prefix.len(), max);
+    let encoded_len = 1 + output.len() - prefix_len;
+
+    output.clear();
+    output.reserve(encoded_len);
+
+    output.push(prefix_len as u8);
+    output.extend_from_slice(&buf[skip..]);
+
+    IVec::from(output)
 }
 
 // NB: the correctness of this function depends on
