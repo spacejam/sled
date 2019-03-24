@@ -458,7 +458,8 @@ pub(crate) fn write_snapshot(
     let mut path_2 = config.snapshot_prefix();
     path_2.push(path_2_suffix);
 
-    std::fs::create_dir_all(path_1.parent().unwrap())?;
+    let parent = path_1.parent().unwrap();
+    std::fs::create_dir_all(parent)?;
     let mut f = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -473,11 +474,14 @@ pub(crate) fn write_snapshot(
     f.write_all(&crc32)?;
     f.sync_all()?;
     maybe_fail!("snap write post");
+    drop(f);
 
     // This is important to avoid a race condition encountered on macos APFS
     // where the rename below fails due to the metadata for path_1 not being
     // present yet.
-    drop(f);
+    let dir = std::fs::File::open(parent)?;
+    dir.sync_all()?;
+    drop(dir);
 
     trace!("wrote snapshot to {}", path_1.to_string_lossy());
 
