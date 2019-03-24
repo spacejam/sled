@@ -19,9 +19,9 @@ impl Materializer for BLinkMaterializer {
     {
         let mut frag_iter = frags.into_iter();
 
-        let possible_base = frag_iter.next().expect(
-            "merge should only be called on non-empty sets of Frag's",
-        );
+        let possible_base = frag_iter
+            .next()
+            .expect("merge should only be called on non-empty sets of Frag's");
 
         match possible_base {
             Frag::Base(ref base_node_ref) => {

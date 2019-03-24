@@ -125,8 +125,7 @@ fn parallel_pagecache() -> sled::Result<()> {
                 let thread = thread::Builder::new()
                     .name(format!("t({})", tn))
                     .spawn(move || {
-                        for i in (tn * N_PER_THREAD)
-                            ..((tn + 1) * N_PER_THREAD)
+                        for i in (tn * N_PER_THREAD)..((tn + 1) * N_PER_THREAD)
                         {
                             $f(&*tree, i + 2);
                         }
@@ -250,8 +249,7 @@ fn pagecache_strange_crash_1() {
         for i in 0..1000 {
             let id = 2 + (i as usize % 2);
             let (_, key) = pc.get(id, &tx).unwrap().unwrap();
-            let key =
-                pc.link(id, key, vec![i], &tx).unwrap().unwrap();
+            let key = pc.link(id, key, vec![i], &tx).unwrap().unwrap();
             keys.insert(id, key);
         }
     }
@@ -370,13 +368,8 @@ impl Arbitrary for Op {
         let pid = (g.gen::<u8>() % 8) as PageId;
 
         match choice {
-            0 => Op::Replace(
-                pid,
-                COUNTER.fetch_add(1, Ordering::Relaxed),
-            ),
-            1 => {
-                Op::Link(pid, COUNTER.fetch_add(1, Ordering::Relaxed))
-            }
+            0 => Op::Replace(pid, COUNTER.fetch_add(1, Ordering::Relaxed)),
+            1 => Op::Link(pid, COUNTER.fetch_add(1, Ordering::Relaxed)),
             2 => Op::Get(pid),
             3 => Op::Free(pid),
             4 => Op::Allocate,
@@ -447,8 +440,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
             Replace(pid, c) => {
                 let pid = pid + 2;
                 let get = pc.get(pid, &tx).unwrap();
-                let ref_get =
-                    reference.entry(pid).or_insert(P::Unallocated);
+                let ref_get = reference.entry(pid).or_insert(P::Unallocated);
 
                 match *ref_get {
                     P::Present(ref mut existing) => {
@@ -471,15 +463,12 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
             Link(pid, c) => {
                 let pid = pid + 2;
                 let get = pc.get(pid, &tx).unwrap();
-                let ref_get =
-                    reference.entry(pid).or_insert(P::Unallocated);
+                let ref_get = reference.entry(pid).or_insert(P::Unallocated);
 
                 match *ref_get {
                     P::Present(ref mut existing) => {
                         let (_, old_key) = get.unwrap();
-                        pc.link(pid, old_key, vec![c], &tx)
-                            .unwrap()
-                            .unwrap();
+                        pc.link(pid, old_key, vec![c], &tx).unwrap().unwrap();
                         existing.push(c);
                     }
                     P::Free => {
@@ -542,10 +531,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                 reference.insert(pid, P::Present(vec![]));
                 let get = pc.get(pid, &tx).unwrap();
                 if get.is_unallocated() {
-                    panic!(
-                        "expected allocated page, instead got {:?}",
-                        get
-                    );
+                    panic!("expected allocated page, instead got {:?}", get);
                 }
             }
             Restart => {
@@ -553,9 +539,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
 
                 println!("restarting pagecache in test");
 
-                config
-                    .verify_snapshot::<TestMaterializer, _>()
-                    .unwrap();
+                config.verify_snapshot::<TestMaterializer, _>().unwrap();
 
                 pc = PageCache::start(config.clone()).unwrap();
             }
@@ -575,9 +559,7 @@ fn quickcheck_pagecache_works() {
         .gen(StdGen::new(rand::thread_rng(), 100))
         .tests(1000)
         .max_tests(1_000_000)
-        .quickcheck(
-            prop_pagecache_works as fn(Vec<Op>, bool) -> bool,
-        );
+        .quickcheck(prop_pagecache_works as fn(Vec<Op>, bool) -> bool);
 }
 
 #[test]
@@ -624,10 +606,7 @@ fn pagecache_bug_5() {
 fn pagecache_bug_6() {
     // postmortem: the test wasn't actually recording changes to the reference page...
     use self::Op::*;
-    prop_pagecache_works(
-        vec![Allocate, Replace(0, 53), Replace(0, 54)],
-        true,
-    );
+    prop_pagecache_works(vec![Allocate, Replace(0, 53), Replace(0, 54)], true);
 }
 
 #[test]
@@ -686,13 +665,7 @@ fn pagecache_bug_10() {
     // rewritten.
     use self::Op::*;
     prop_pagecache_works(
-        vec![
-            Allocate,
-            Replace(0, 425),
-            Free(0),
-            Allocate,
-            Link(1, 427),
-        ],
+        vec![Allocate, Replace(0, 425), Free(0), Allocate, Link(1, 427)],
         true,
     );
 }
@@ -710,10 +683,7 @@ fn pagecache_bug_12() {
     // postmortem: refactor to add Free tombstones changed
     // the model.
     use self::Op::*;
-    prop_pagecache_works(
-        vec![Allocate, Free(0), Replace(0, 66)],
-        true,
-    );
+    prop_pagecache_works(vec![Allocate, Free(0), Replace(0, 66)], true);
 }
 
 #[test]
@@ -1270,10 +1240,7 @@ fn pagecache_bug_26() {
 fn pagecache_bug_27() {
     // postmortem: was using a bad pointer for recovery
     use self::Op::*;
-    prop_pagecache_works(
-        vec![Allocate, Free(0), Restart, Allocate],
-        true,
-    );
+    prop_pagecache_works(vec![Allocate, Free(0), Restart, Allocate], true);
 }
 
 #[test]

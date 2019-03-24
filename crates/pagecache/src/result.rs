@@ -49,10 +49,9 @@ use self::Error::*;
 impl Clone for Error {
     fn clone(&self) -> Error {
         match self {
-            Io(ioe) => Io(std::io::Error::new(
-                ioe.kind(),
-                format!("{:?}", ioe),
-            )),
+            Io(ioe) => {
+                Io(std::io::Error::new(ioe.kind(), format!("{:?}", ioe)))
+            }
             other => other.clone(),
         }
     }

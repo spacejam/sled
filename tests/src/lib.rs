@@ -35,12 +35,7 @@ pub fn setup_logger() {
                 "{:05} {:20} {:10} {}",
                 record.level(),
                 tn(),
-                record
-                    .module_path()
-                    .unwrap()
-                    .split("::")
-                    .last()
-                    .unwrap(),
+                record.module_path().unwrap().split("::").last().unwrap(),
                 record.args()
             )
         })

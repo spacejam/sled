@@ -39,8 +39,7 @@ pub(crate) fn prefix_reencode(
     old_prefix: &[u8],
     new_prefix: &[u8],
     buf: &[u8],
-) -> IVec
-{
+) -> IVec {
     assert!(!buf.is_empty());
 
     let prefix_len = buf[0] as usize;
@@ -126,47 +125,25 @@ pub(crate) fn prefix_cmp_encoded(
 #[test]
 fn test_prefix() {
     let prefix = b"cat";
-    assert_eq!(
-        prefix_encode(prefix, prefix),
-        vec![prefix.len() as u8]
-    );
+    assert_eq!(prefix_encode(prefix, prefix), vec![prefix.len() as u8]);
     assert_eq!(prefix_encode(prefix, b"catt"), vec![3, b't']);
     assert_eq!(prefix_encode(prefix, b"cb"), vec![1, b'b']);
     assert_eq!(prefix_encode(prefix, b"caz"), vec![2, b'z']);
-    assert_eq!(
-        prefix_encode(prefix, b"cvar"),
-        vec![1, b'v', b'a', b'r']
-    );
-    assert_eq!(
-        prefix_encode(prefix, b"zig"),
-        vec![0, b'z', b'i', b'g']
-    );
+    assert_eq!(prefix_encode(prefix, b"cvar"), vec![1, b'v', b'a', b'r']);
+    assert_eq!(prefix_encode(prefix, b"zig"), vec![0, b'z', b'i', b'g']);
 
     let prefix = b"";
-    assert_eq!(
-        prefix_encode(prefix, prefix),
-        vec![prefix.len() as u8]
-    );
+    assert_eq!(prefix_encode(prefix, prefix), vec![prefix.len() as u8]);
     assert_eq!(prefix_encode(prefix, b"ca"), vec![0, b'c', b'a']);
-    assert_eq!(
-        prefix_encode(prefix, b"cat"),
-        vec![0, b'c', b'a', b't']
-    );
-    assert_eq!(
-        prefix_encode(prefix, b"cab"),
-        vec![0, b'c', b'a', b'b']
-    );
+    assert_eq!(prefix_encode(prefix, b"cat"), vec![0, b'c', b'a', b't']);
+    assert_eq!(prefix_encode(prefix, b"cab"), vec![0, b'c', b'a', b'b']);
     assert_eq!(
         prefix_encode(prefix, b"cvar"),
         vec![0, b'c', b'v', b'a', b'r']
     );
-    assert_eq!(
-        prefix_encode(prefix, b"zig"),
-        vec![0, b'z', b'i', b'g']
-    );
+    assert_eq!(prefix_encode(prefix, b"zig"), vec![0, b'z', b'i', b'g']);
 
-    let rtt =
-        vec![b"" as &[u8], b"\x00cat", b"\x00", b"oyunwytounw\x00"];
+    let rtt = vec![b"" as &[u8], b"\x00cat", b"\x00", b"oyunwytounw\x00"];
     for item in rtt {
         assert_eq!(
             prefix_decode(prefix, &*prefix_encode(prefix, item)),
@@ -192,12 +169,7 @@ fn test_prefix_cmp() {
 
 #[test]
 fn test_prefix_cmp_encoded() {
-    fn assert_pce(
-        a: &[u8],
-        b: &[u8],
-        prefix: &[u8],
-        expected: Ordering,
-    ) {
+    fn assert_pce(a: &[u8], b: &[u8], prefix: &[u8], expected: Ordering) {
         assert_eq!(
             prefix_cmp_encoded(a, &prefix_decode(prefix, b), prefix),
             expected

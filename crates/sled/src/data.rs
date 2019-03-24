@@ -22,9 +22,7 @@ impl Data {
                         .saturating_add(size_of::<IVec>() as u64)
                         .saturating_add(size_of::<PageId>() as u64);
                 }
-                sz.saturating_add(
-                    size_of::<Vec<(IVec, PageId)>>() as u64
-                )
+                sz.saturating_add(size_of::<Vec<(IVec, PageId)>>() as u64)
             }
             Data::Leaf(ref v) => {
                 let mut sz = 0_u64;
@@ -35,9 +33,7 @@ impl Data {
                         .saturating_add(value.len() as u64)
                         .saturating_add(size_of::<IVec>() as u64);
                 }
-                sz.saturating_add(
-                    size_of::<Vec<(IVec, IVec)>>() as u64
-                )
+                sz.saturating_add(size_of::<Vec<(IVec, IVec)>>() as u64)
             }
         };
 
@@ -89,18 +85,12 @@ impl Data {
 
     pub(crate) fn drop_gte(&mut self, bound: &[u8], prefix: &[u8]) {
         match *self {
-            Data::Index(ref mut ptrs) => {
-                ptrs.retain(|&(ref k, _)| {
-                    prefix_cmp_encoded(k, bound, prefix)
-                        == std::cmp::Ordering::Less
-                })
-            }
-            Data::Leaf(ref mut items) => {
-                items.retain(|&(ref k, _)| {
-                    prefix_cmp_encoded(k, bound, prefix)
-                        == std::cmp::Ordering::Less
-                })
-            }
+            Data::Index(ref mut ptrs) => ptrs.retain(|&(ref k, _)| {
+                prefix_cmp_encoded(k, bound, prefix) == std::cmp::Ordering::Less
+            }),
+            Data::Leaf(ref mut items) => items.retain(|&(ref k, _)| {
+                prefix_cmp_encoded(k, bound, prefix) == std::cmp::Ordering::Less
+            }),
         }
     }
 

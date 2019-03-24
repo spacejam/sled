@@ -51,16 +51,11 @@ impl Log {
     /// Start the log, open or create the configured file,
     /// and optionally start the periodic buffer flush thread.
     pub fn start(config: Config, snapshot: Snapshot) -> Result<Log> {
-        let iobufs =
-            Arc::new(IoBufs::start(config.clone(), snapshot)?);
+        let iobufs = Arc::new(IoBufs::start(config.clone(), snapshot)?);
 
         let iobufs_flusher = iobufs.clone();
         let flusher = config.flush_every_ms.map(move |fem| {
-            flusher::Flusher::new(
-                "log flusher".to_owned(),
-                iobufs_flusher,
-                fem,
-            )
+            flusher::Flusher::new("log flusher".to_owned(), iobufs_flusher, fem)
         });
 
         Ok(Log {
@@ -165,10 +160,7 @@ impl Log {
     /// completed or aborted later. Useful for maintaining
     /// linearizability across CAS operations that may need to
     /// persist part of their operation.
-    pub fn reserve<'a>(
-        &'a self,
-        raw_buf: &[u8],
-    ) -> Result<Reservation<'a>> {
+    pub fn reserve<'a>(&'a self, raw_buf: &[u8]) -> Result<Reservation<'a>> {
         self.reserve_inner(raw_buf, false)
     }
 
@@ -204,8 +196,7 @@ impl Log {
         let buf = if self.config.use_compression {
             let _measure = Measure::new(&M.compress);
             let compressed_buf =
-                compress(&*raw_buf, self.config.compression_factor)
-                    .unwrap();
+                compress(&*raw_buf, self.config.compression_factor).unwrap();
             _compressed = Some(compressed_buf);
 
             _compressed.as_ref().unwrap()
@@ -218,8 +209,7 @@ impl Log {
 
         let total_buf_len = MSG_HEADER_LEN + buf.len();
 
-        let max_overhead =
-            std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN);
+        let max_overhead = std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN);
 
         let max_buf_size = (self.config.io_buf_size
             / MINIMUM_ITEMS_PER_SEGMENT)
@@ -279,25 +269,17 @@ impl Log {
             if current_buf - written_bufs >= n_io_bufs {
                 // if written is too far behind, we need to
                 // spin while it catches up to avoid overlap
-                trace_once!(
-                    "old io buffer not written yet, spinning"
-                );
+                trace_once!("old io buffer not written yet, spinning");
                 if backoff.is_completed() {
                     // use a condition variable to wait until
                     // we've updated the written_bufs counter.
                     let _measure =
                         Measure::new(&M.reserve_written_condvar_wait);
 
-                    let mut buf_mu =
-                        self.iobufs.buf_mu.lock().unwrap();
-                    while written_bufs
-                        == self.iobufs.written_bufs.load(SeqCst)
+                    let mut buf_mu = self.iobufs.buf_mu.lock().unwrap();
+                    while written_bufs == self.iobufs.written_bufs.load(SeqCst)
                     {
-                        buf_mu = self
-                            .iobufs
-                            .buf_updated
-                            .wait(buf_mu)
-                            .unwrap();
+                        buf_mu = self.iobufs.buf_updated.wait(buf_mu).unwrap();
                     }
                 } else {
                     backoff.snooze();
@@ -321,16 +303,9 @@ impl Log {
                     // we've updated the current_buf counter.
                     let _measure =
                         Measure::new(&M.reserve_current_condvar_wait);
-                    let mut buf_mu =
-                        self.iobufs.buf_mu.lock().unwrap();
-                    while current_buf
-                        == self.iobufs.current_buf.load(SeqCst)
-                    {
-                        buf_mu = self
-                            .iobufs
-                            .buf_updated
-                            .wait(buf_mu)
-                            .unwrap();
+                    let mut buf_mu = self.iobufs.buf_mu.lock().unwrap();
+                    while current_buf == self.iobufs.current_buf.load(SeqCst) {
+                        buf_mu = self.iobufs.buf_updated.wait(buf_mu).unwrap();
                     }
                 } else {
                     backoff.snooze();
@@ -341,10 +316,8 @@ impl Log {
 
             // try to claim space
             let buf_offset = iobuf::offset(header);
-            let prospective_size =
-                buf_offset as usize + inline_buf_len;
-            let would_overflow =
-                prospective_size > iobuf.get_capacity();
+            let prospective_size = buf_offset as usize + inline_buf_len;
+            let would_overflow = prospective_size > iobuf.get_capacity();
             if would_overflow {
                 // This buffer is too full to accept our write!
                 // Try to seal the buffer, and maybe write it if
@@ -361,10 +334,8 @@ impl Log {
             }
 
             // attempt to claim by incrementing an unsealed header
-            let bumped_offset = iobuf::bump_offset(
-                header,
-                inline_buf_len as iobuf::Header,
-            );
+            let bumped_offset =
+                iobuf::bump_offset(header, inline_buf_len as iobuf::Header);
 
             // check for maxed out IO buffer writers
             if iobuf::n_writers(bumped_offset) == iobuf::MAX_WRITERS {
@@ -380,9 +351,7 @@ impl Log {
 
             if iobuf.cas_header(header, claimed).is_err() {
                 // CAS failed, start over
-                trace_once!(
-                    "CAS failed while claiming buffer slot, spinning"
-                );
+                trace_once!("CAS failed while claiming buffer slot, spinning");
                 backoff.spin();
                 continue;
             }
@@ -409,8 +378,7 @@ impl Log {
                 self
             );
 
-            let out_buf =
-                unsafe { (*iobuf.buf.get()).as_mut_slice() };
+            let out_buf = unsafe { (*iobuf.buf.get()).as_mut_slice() };
 
             let res_start = buf_offset as usize;
             let res_end = res_start + inline_buf_len;
@@ -497,9 +465,9 @@ impl Log {
                 thread_pool.spawn(move || {
                     if let Err(e) = iobufs.write_to_log(idx) {
                         error!(
-                        "hit error while writing segment {}: {:?}",
-                        idx, e
-                    );
+                            "hit error while writing segment {}: {:?}",
+                            idx, e
+                        );
                         iobufs.config.set_global_error(e);
                     }
                 });
@@ -594,9 +562,7 @@ impl LogRead {
     /// None if the data was corrupt or this log entry was aborted.
     pub fn inline(self) -> Option<(Lsn, Vec<u8>, usize)> {
         match self {
-            LogRead::Inline(lsn, bytes, len) => {
-                Some((lsn, bytes, len))
-            }
+            LogRead::Inline(lsn, bytes, len) => Some((lsn, bytes, len)),
             _ => None,
         }
     }
@@ -662,9 +628,7 @@ impl LogRead {
     /// Return the underlying data read from a log read, if successful.
     pub fn into_data(self) -> Option<Vec<u8>> {
         match self {
-            LogRead::Blob(_, buf, _) | LogRead::Inline(_, buf, _) => {
-                Some(buf)
-            }
+            LogRead::Blob(_, buf, _) | LogRead::Inline(_, buf, _) => Some(buf),
             _ => None,
         }
     }
@@ -686,8 +650,7 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
         unsafe {
             let lsn = arr_to_u64(buf.get_unchecked(1..9)) as Lsn;
             let len = arr_to_u32(buf.get_unchecked(9..13));
-            let crc32 =
-                arr_to_u32(buf.get_unchecked(13..)) ^ 0xFFFF_FFFF;
+            let crc32 = arr_to_u32(buf.get_unchecked(13..)) ^ 0xFFFF_FFFF;
 
             MessageHeader {
                 kind,

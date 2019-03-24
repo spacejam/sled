@@ -82,11 +82,7 @@ impl Shard {
         }
     }
 
-    fn accessed(
-        &mut self,
-        rel_idx: PageId,
-        sz: usize,
-    ) -> Vec<PageId> {
+    fn accessed(&mut self, rel_idx: PageId, sz: usize) -> Vec<PageId> {
         if self.entries.len() <= rel_idx {
             self.entries.resize(rel_idx + 1, Entry::default());
         }

@@ -84,9 +84,7 @@ impl Arbitrary for Key {
 
             let space = g.gen_range(0, gs) + 1;
 
-            let inner = (0..len)
-                .map(|_| g.gen_range(0, space) as u8)
-                .collect();
+            let inner = (0..len).map(|_| g.gen_range(0, space) as u8).collect();
 
             Key(inner)
         } else {
@@ -108,9 +106,7 @@ impl Arbitrary for Key {
                 .len()
                 .shrink()
                 .zip(std::iter::repeat(self.0.clone()))
-                .map(|(len, underlying)| {
-                    Key(underlying[..len].to_vec())
-                }),
+                .map(|(len, underlying)| Key(underlying[..len].to_vec())),
         )
     }
 }
@@ -163,21 +159,15 @@ impl Arbitrary for Op {
 
     fn shrink(&self) -> Box<Iterator<Item = Op>> {
         match *self {
-            Set(ref k, v) => {
-                Box::new(k.shrink().map(move |sk| Set(sk, v)))
-            }
-            Merge(ref k, v) => {
-                Box::new(k.shrink().map(move |k| Merge(k, v)))
-            }
+            Set(ref k, v) => Box::new(k.shrink().map(move |sk| Set(sk, v))),
+            Merge(ref k, v) => Box::new(k.shrink().map(move |k| Merge(k, v))),
             Get(ref k) => Box::new(k.shrink().map(Get)),
             GetLt(ref k) => Box::new(k.shrink().map(GetLt)),
             GetGt(ref k) => Box::new(k.shrink().map(GetGt)),
             Cas(ref k, old, new) => {
                 Box::new(k.shrink().map(move |k| Cas(k, old, new)))
             }
-            Scan(ref k, len) => {
-                Box::new(k.shrink().map(move |k| Scan(k, len)))
-            }
+            Scan(ref k, len) => Box::new(k.shrink().map(move |k| Scan(k, len))),
             Del(ref k) => Box::new(k.shrink().map(Del)),
             Restart => Box::new(vec![].into_iter()),
         }
@@ -222,9 +212,7 @@ pub fn prop_tree_matches_btreemap(
         .snapshot_after_ops(snapshot_after as usize + 1)
         .flush_every_ms(if flusher { Some(1) } else { None })
         .io_buf_size(10000)
-        .blink_node_split_size(
-            1 << std::cmp::min(blink_node_exponent, 20),
-        )
+        .blink_node_split_size(1 << std::cmp::min(blink_node_exponent, 20))
         .cache_capacity(40)
         .cache_bits(0)
         .merge_operator(test_merge_operator)
@@ -246,18 +234,13 @@ pub fn prop_tree_matches_btreemap(
                 *entry += u16::from(v);
             }
             Get(k) => {
-                let res1 = tree
-                    .get(&*k.0)
-                    .unwrap()
-                    .map(|v| bytes_to_u16(&*v));
+                let res1 = tree.get(&*k.0).unwrap().map(|v| bytes_to_u16(&*v));
                 let res2 = reference.get(&k).cloned();
                 assert_eq!(res1, res2);
             }
             GetLt(k) => {
-                let res1 = tree
-                    .get_lt(&*k.0)
-                    .unwrap()
-                    .map(|v| bytes_to_u16(&*v.1));
+                let res1 =
+                    tree.get_lt(&*k.0).unwrap().map(|v| bytes_to_u16(&*v.1));
                 let res2 = reference
                     .iter()
                     .rev()
@@ -267,10 +250,8 @@ pub fn prop_tree_matches_btreemap(
                 assert_eq!(res1, res2);
             }
             GetGt(k) => {
-                let res1 = tree
-                    .get_gt(&*k.0)
-                    .unwrap()
-                    .map(|v| bytes_to_u16(&*v.1));
+                let res1 =
+                    tree.get_gt(&*k.0).unwrap().map(|v| bytes_to_u16(&*v.1));
                 let res2 = reference
                     .iter()
                     .filter(|(key, _)| **key > k)
@@ -296,10 +277,8 @@ pub fn prop_tree_matches_btreemap(
                 }
             }
             Scan(k, len) => {
-                let mut tree_iter = tree
-                    .scan(&*k.0)
-                    .take(len)
-                    .map(|res| res.unwrap());
+                let mut tree_iter =
+                    tree.scan(&*k.0).take(len).map(|res| res.unwrap());
                 let ref_iter = reference
                     .iter()
                     .filter(|&(ref rk, _rv)| **rk >= k)

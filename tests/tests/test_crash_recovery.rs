@@ -84,8 +84,7 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
 }
 
 fn u32_to_vec(u: u32) -> Vec<u8> {
-    let buf: [u8; size_of::<u32>()] =
-        unsafe { std::mem::transmute(u) };
+    let buf: [u8; size_of::<u32>()] = unsafe { std::mem::transmute(u) };
     buf.to_vec()
 }
 
@@ -108,8 +107,7 @@ fn spawn_killah() {
 
 fn run(config: Config) {
     // tests::setup_logger();
-    let crash_during_initialization =
-        rand::thread_rng().gen_bool(0.1);
+    let crash_during_initialization = rand::thread_rng().gen_bool(0.1);
 
     if crash_during_initialization {
         spawn_killah();
@@ -204,11 +202,7 @@ fn test_crash_recovery_with_runtime_snapshot() {
         } else {
             let mut status = 0;
             unsafe {
-                libc::waitpid(
-                    child,
-                    &mut status as *mut libc::c_int,
-                    0,
-                );
+                libc::waitpid(child, &mut status as *mut libc::c_int, 0);
             }
             if status != 9 {
                 cleanup();
@@ -230,11 +224,7 @@ fn test_crash_recovery_no_runtime_snapshot() {
         } else {
             let mut status = 0;
             unsafe {
-                libc::waitpid(
-                    child,
-                    &mut status as *mut libc::c_int,
-                    0,
-                );
+                libc::waitpid(child, &mut status as *mut libc::c_int, 0);
             }
             if status != 9 {
                 cleanup();

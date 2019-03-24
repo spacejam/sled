@@ -24,8 +24,7 @@ pub(crate) fn clock() -> f64 {
         0.
     } else {
         let u = uptime();
-        (u.as_secs() * 1_000_000_000) as f64
-            + f64::from(u.subsec_nanos())
+        (u.as_secs() * 1_000_000_000) as f64 + f64::from(u.subsec_nanos())
     }
 }
 
@@ -154,32 +153,19 @@ impl Metrics {
             "count",
             "sum (s)"
         );
-        println!(
-            "{}",
-            std::iter::repeat("-").take(134).collect::<String>()
-        );
+        println!("{}", std::iter::repeat("-").take(134).collect::<String>());
 
-        let p =
-            |mut tuples: Vec<(String, _, _, _, _, _, _, _, _, _)>| {
-                tuples.sort_by_key(|t| (t.9 * -1. * 1e3) as i64);
-                for v in tuples {
-                    println!(
+        let p = |mut tuples: Vec<(String, _, _, _, _, _, _, _, _, _)>| {
+            tuples.sort_by_key(|t| (t.9 * -1. * 1e3) as i64);
+            for v in tuples {
+                println!(
                     "{0: >17} | {1: >10.1} | {2: >10.1} | {3: >10.1} \
-                | {4: >10.1} | {5: >10.1} | {6: >10.1} | {7: >10.1} \
-                | {8: >10.1} | {9: >10.3}",
-                    v.0,
-                    v.1,
-                    v.2,
-                    v.3,
-                    v.4,
-                    v.5,
-                    v.6,
-                    v.7,
-                    v.8,
-                    v.9,
+                     | {4: >10.1} | {5: >10.1} | {6: >10.1} | {7: >10.1} \
+                     | {8: >10.1} | {9: >10.3}",
+                    v.0, v.1, v.2, v.3, v.4, v.5, v.6, v.7, v.8, v.9,
                 );
-                }
-            };
+            }
+        };
 
         let f = |name: &str, histo: &Histo| {
             (
@@ -207,15 +193,9 @@ impl Metrics {
             f("cas", &self.tree_cas),
             f("scan", &self.tree_scan),
         ]);
-        println!(
-            "tree contention loops: {}",
-            self.tree_loops.load(Acquire)
-        );
+        println!("tree contention loops: {}", self.tree_loops.load(Acquire));
 
-        println!(
-            "{}",
-            std::iter::repeat("-").take(134).collect::<String>()
-        );
+        println!("{}", std::iter::repeat("-").take(134).collect::<String>());
         println!("pagecache:");
         p(vec![
             f("snapshot", &self.advance_snapshot),
@@ -226,10 +206,7 @@ impl Metrics {
             f("page_out", &self.page_out),
         ]);
 
-        println!(
-            "{}",
-            std::iter::repeat("-").take(134).collect::<String>()
-        );
+        println!("{}", std::iter::repeat("-").take(134).collect::<String>());
         println!("serialization and compression:");
         p(vec![
             f("serialize", &self.serialize),
@@ -238,10 +215,7 @@ impl Metrics {
             f("decompress", &self.decompress),
         ]);
 
-        println!(
-            "{}",
-            std::iter::repeat("-").take(134).collect::<String>()
-        );
+        println!("{}", std::iter::repeat("-").take(134).collect::<String>());
         println!("log:");
         p(vec![
             f("make_stable", &self.make_stable),
@@ -254,19 +228,13 @@ impl Metrics {
             f("res cvar r", &self.reserve_current_condvar_wait),
             f("res cvar w", &self.reserve_written_condvar_wait),
         ]);
-        println!(
-            "log reservations: {}",
-            self.log_reservations.load(Acquire)
-        );
+        println!("log reservations: {}", self.log_reservations.load(Acquire));
         println!(
             "log res attempts: {}",
             self.log_reservation_attempts.load(Acquire)
         );
 
-        println!(
-            "{}",
-            std::iter::repeat("-").take(134).collect::<String>()
-        );
+        println!("{}", std::iter::repeat("-").take(134).collect::<String>());
         println!("segment accountant:");
         p(vec![
             f("acquire", &self.accountant_lock),

@@ -68,8 +68,7 @@ where
             if written {
                 formatter.write_str(", ")?;
             }
-            formatter
-                .write_str(&*format!("({:?}) ", &node as *const _))?;
+            formatter.write_str(&*format!("({:?}) ", &node as *const _))?;
             node.fmt(formatter)?;
             written = true;
         }
@@ -102,12 +101,7 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
                 node.deref().next.store(head, SeqCst);
                 if self
                     .head
-                    .compare_and_set(
-                        head,
-                        node,
-                        SeqCst,
-                        unprotected(),
-                    )
+                    .compare_and_set(head, node, SeqCst, unprotected())
                     .is_ok()
                 {
                     return;
@@ -125,9 +119,7 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
             match unsafe { head.as_ref() } {
                 Some(h) => {
                     let next = h.next.load(SeqCst, &guard);
-                    match self
-                        .head
-                        .compare_and_set(head, next, SeqCst, &guard)
+                    match self.head.compare_and_set(head, next, SeqCst, &guard)
                     {
                         Ok(_) => unsafe {
                             guard.defer_destroy(head);
@@ -254,8 +246,7 @@ where
         } else {
             unsafe {
                 let ret = &self.inner.deref().inner;
-                self.inner =
-                    self.inner.deref().next.load(SeqCst, self.guard);
+                self.inner = self.inner.deref().next.load(SeqCst, self.guard);
                 Some(ret)
             }
         }

@@ -29,9 +29,7 @@ impl Deref for Db {
 
 impl Db {
     /// Load existing or create a new `Db` with a default configuration.
-    pub fn start_default<P: AsRef<std::path::Path>>(
-        path: P,
-    ) -> Result<Db> {
+    pub fn start_default<P: AsRef<std::path::Path>>(path: P) -> Result<Db> {
         let config = ConfigBuilder::new().path(path).build();
         Self::start(config)
     }
@@ -58,9 +56,7 @@ impl Db {
 
         let mut tenants = ret.tenants.write().unwrap();
 
-        for (id, root) in
-            context.pagecache.meta(&tx)?.tenants().into_iter()
-        {
+        for (id, root) in context.pagecache.meta(&tx)?.tenants().into_iter() {
             let tree = Tree {
                 tree_id: id.clone(),
                 subscriptions: Arc::new(Subscriptions::default()),
@@ -96,11 +92,8 @@ impl Db {
         let tx = self.context.pagecache.begin()?;
 
         let mut tenants = self.tenants.write().unwrap();
-        let tree = Arc::new(meta::open_tree(
-            self.context.clone(),
-            name.clone(),
-            &tx,
-        )?);
+        let tree =
+            Arc::new(meta::open_tree(self.context.clone(), name.clone(), &tx)?);
         tenants.insert(name, tree.clone());
         drop(tenants);
         Ok(tree)
@@ -125,9 +118,8 @@ impl Db {
 
         let tx = self.context.pagecache.begin()?;
 
-        let mut root_id = Some(
-            self.context.pagecache.meta_pid_for_name(&name, &tx)?,
-        );
+        let mut root_id =
+            Some(self.context.pagecache.meta_pid_for_name(&name, &tx)?);
 
         let leftmost_chain: Vec<PageId> = tree
             .path_for_key(b"", &tx)?
@@ -150,10 +142,8 @@ impl Db {
             }
         }
 
-        tree.root.store(
-            usize::max_value(),
-            std::sync::atomic::Ordering::SeqCst,
-        );
+        tree.root
+            .store(usize::max_value(), std::sync::atomic::Ordering::SeqCst);
 
         // drop writer lock
         drop(tenants);

@@ -33,8 +33,7 @@ pub(crate) fn open_tree<'a>(
             hi: vec![].into(),
         });
 
-        let (leaf_id, leaf_ptr) =
-            context.pagecache.allocate(leaf, &tx)?;
+        let (leaf_id, leaf_ptr) = context.pagecache.allocate(leaf, &tx)?;
 
         trace!(
             "allocated pid {} for leaf in new_tree for namespace {:?}",
@@ -54,13 +53,9 @@ pub(crate) fn open_tree<'a>(
             hi: vec![].into(),
         });
 
-        let (root_id, root_ptr) =
-            context.pagecache.allocate(root, &tx)?;
+        let (root_id, root_ptr) = context.pagecache.allocate(root, &tx)?;
 
-        debug!(
-            "allocated pid {} for root of new_tree {:?}",
-            root_id, name
-        );
+        debug!("allocated pid {} for root of new_tree {:?}", root_id, name);
 
         let res = context.pagecache.cas_root_in_meta(
             name.clone(),

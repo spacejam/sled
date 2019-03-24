@@ -51,13 +51,10 @@ fn parallel_tree_ops() {
                 for tn in 0..N_THREADS {
                     let tree = $t.clone();
                     let thread = thread::Builder::new()
-                        .name(format!(
-                            "t(thread: {} test: {})",
-                            tn, i
-                        ))
+                        .name(format!("t(thread: {} test: {})", tn, i))
                         .spawn(move || {
-                            for i in (tn * N_PER_THREAD)
-                                ..((tn + 1) * N_PER_THREAD)
+                            for i in
+                                (tn * N_PER_THREAD)..((tn + 1) * N_PER_THREAD)
                             {
                                 let k = kv(i);
                                 $f(&*tree, k);
@@ -224,8 +221,8 @@ fn parallel_tree_iterators() -> Result<()> {
                             assert!(
                                 &*k <= *expect,
                                 "witnessed key is {:?} but we expected \
-                                one <= {:?}, so we overshot due to a \
-                                concurrent modification",
+                                 one <= {:?}, so we overshot due to a \
+                                 concurrent modification",
                                 k,
                                 expect,
                             );
@@ -258,8 +255,8 @@ fn parallel_tree_iterators() -> Result<()> {
                                 assert!(
                                     &*k >= *expect,
                                     "witnessed key is {:?} but we expected \
-                                    one >= {:?}, so we overshot due to a \
-                                    concurrent modification\n{:?}",
+                                     one >= {:?}, so we overshot due to a \
+                                     concurrent modification\n{:?}",
                                     k,
                                     expect,
                                     *t,
@@ -268,10 +265,7 @@ fn parallel_tree_iterators() -> Result<()> {
                                     break;
                                 }
                             } else {
-                                panic!(
-                                    "undershot key on tree: \n{:?}",
-                                    *t
-                                );
+                                panic!("undershot key on tree: \n{:?}", *t);
                             }
                         }
                     }
@@ -378,8 +372,7 @@ fn tree_iterator() {
         assert_eq!(should_be, &*v);
     }
 
-    for (i, (k, v)) in t.scan(b"").map(|res| res.unwrap()).enumerate()
-    {
+    for (i, (k, v)) in t.scan(b"").map(|res| res.unwrap()).enumerate() {
         let should_be = kv(i);
         assert_eq!(should_be, k);
         assert_eq!(should_be, &*v);
@@ -471,15 +464,9 @@ fn tree_subscriptions_and_keyspaces() -> Result<()> {
     db.drop_tree(b"1")?;
     db.drop_tree(b"2")?;
 
-    assert_eq!(
-        t1.get(b""),
-        Err(Error::CollectionNotFound(b"1".to_vec()))
-    );
+    assert_eq!(t1.get(b""), Err(Error::CollectionNotFound(b"1".to_vec())));
 
-    assert_eq!(
-        t2.get(b""),
-        Err(Error::CollectionNotFound(b"2".to_vec()))
-    );
+    assert_eq!(t2.get(b""), Err(Error::CollectionNotFound(b"2".to_vec())));
 
     let guard = pagecache::pin();
     guard.flush();
@@ -590,8 +577,7 @@ fn quickcheck_tree_matches_btreemap() {
         .tests(n_tests)
         .max_tests(1000)
         .quickcheck(
-            prop_tree_matches_btreemap
-                as fn(Vec<Op>, u8, u8, bool) -> bool,
+            prop_tree_matches_btreemap as fn(Vec<Op>, u8, u8, bool) -> bool,
         );
 }
 
@@ -1105,11 +1091,7 @@ fn tree_bug_22() {
 fn tree_bug_23() {
     // postmortem: when rewriting CRC handling code, mis-sized the blob crc
     prop_tree_matches_btreemap(
-        vec![
-            Set(Key(vec![6; 5120]), 92),
-            Restart,
-            Scan(Key(vec![]), 35),
-        ],
+        vec![Set(Key(vec![6; 5120]), 92), Restart, Scan(Key(vec![]), 35)],
         0,
         0,
         false,

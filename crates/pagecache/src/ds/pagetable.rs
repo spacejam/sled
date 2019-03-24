@@ -172,12 +172,10 @@ fn traverse<'g, T: 'static + Send>(
     let mut l2_ptr = l1[l1k].load(SeqCst, guard);
 
     if l2_ptr.is_null() {
-        let next_child =
-            Owned::new(Node2::default()).into_shared(guard);
+        let next_child = Owned::new(Node2::default()).into_shared(guard);
 
         debug_delay();
-        let ret = l1[l1k]
-            .compare_and_set(l2_ptr, next_child, SeqCst, guard);
+        let ret = l1[l1k].compare_and_set(l2_ptr, next_child, SeqCst, guard);
 
         match ret {
             Ok(_) => {
@@ -205,8 +203,7 @@ where
     fn drop(&mut self) {
         unsafe {
             let head =
-                self.head.load(Relaxed, &unprotected()).as_raw()
-                    as usize;
+                self.head.load(Relaxed, &unprotected()).as_raw() as usize;
             drop(Box::from_raw(head as *mut Node1<T>));
         }
     }

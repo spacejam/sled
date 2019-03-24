@@ -88,9 +88,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use atomic::{AtomicUsize, Ordering::SeqCst};
 
 #[doc(hidden)]
-use self::logger::{
-    MessageHeader, MessageKind, SegmentHeader, SegmentTrailer,
-};
+use self::logger::{MessageHeader, MessageKind, SegmentHeader, SegmentTrailer};
 
 #[cfg(not(unix))]
 use self::metrics::uptime;
@@ -111,13 +109,9 @@ use self::{
 pub use self::{
     config::{Config, ConfigBuilder},
     diskptr::DiskPtr,
-    ds::{
-        node_from_frag_vec, Lru, Node, PageTable, Stack, StackIter,
-    },
+    ds::{node_from_frag_vec, Lru, Node, PageTable, Stack, StackIter},
     logger::{Log, LogRead},
-    map::{
-        FastMap1, FastMap4, FastMap8, FastSet1, FastSet4, FastSet8,
-    },
+    map::{FastMap1, FastMap4, FastMap8, FastSet1, FastSet4, FastSet8},
     materializer::{Materializer, NullMaterializer},
     meta::Meta,
     metrics::M,
@@ -131,9 +125,9 @@ pub use self::{
 #[doc(hidden)]
 pub use self::{
     constants::{
-        BLOB_FLUSH, BLOB_INLINE_LEN, EVIL_BYTE, FAILED_FLUSH,
-        INLINE_FLUSH, MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN,
-        SEGMENT_PAD, SEG_HEADER_LEN, SEG_TRAILER_LEN,
+        BLOB_FLUSH, BLOB_INLINE_LEN, EVIL_BYTE, FAILED_FLUSH, INLINE_FLUSH,
+        MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEGMENT_PAD, SEG_HEADER_LEN,
+        SEG_TRAILER_LEN,
     },
     metrics::Measure,
     snapshot::{read_snapshot_or_default, Snapshot},

@@ -32,10 +32,7 @@ impl<'a> Reservation<'a> {
             // we don't want to remove this blob if something
             // else may still be using it.
 
-            trace!(
-                "removing blob for aborted reservation at lsn {}",
-                self.ptr
-            );
+            trace!("removing blob for aborted reservation at lsn {}", self.ptr);
 
             remove_blob(self.ptr.blob().1, &self.log.config)?;
         }

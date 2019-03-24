@@ -4,10 +4,7 @@ use pagecache::{Measure, M};
 
 use super::*;
 
-fn lower_bound_includes<'a>(
-    lb: &ops::Bound<Vec<u8>>,
-    item: &'a [u8],
-) -> bool {
+fn lower_bound_includes<'a>(lb: &ops::Bound<Vec<u8>>, item: &'a [u8]) -> bool {
     match lb {
         ops::Bound::Included(ref start) => start.as_slice() <= item,
         ops::Bound::Excluded(ref start) => start.as_slice() < item,
@@ -15,10 +12,7 @@ fn lower_bound_includes<'a>(
     }
 }
 
-fn upper_bound_includes<'a>(
-    ub: &ops::Bound<Vec<u8>>,
-    item: &'a [u8],
-) -> bool {
+fn upper_bound_includes<'a>(ub: &ops::Bound<Vec<u8>>, item: &'a [u8]) -> bool {
     match ub {
         ops::Bound::Included(ref end) => item <= end.as_ref(),
         ops::Bound::Excluded(ref end) => item < end.as_ref(),
@@ -42,16 +36,12 @@ pub struct Iter<'a> {
 
 impl<'a> Iter<'a> {
     /// Iterate over the keys of this Tree
-    pub fn keys(
-        self,
-    ) -> impl 'a + DoubleEndedIterator<Item = Result<Vec<u8>>> {
+    pub fn keys(self) -> impl 'a + DoubleEndedIterator<Item = Result<Vec<u8>>> {
         self.map(|r| r.map(|(k, _v)| k))
     }
 
     /// Iterate over the values of this Tree
-    pub fn values(
-        self,
-    ) -> impl 'a + DoubleEndedIterator<Item = Result<IVec>> {
+    pub fn values(self) -> impl 'a + DoubleEndedIterator<Item = Result<IVec>> {
         self.map(|r| r.map(|(_k, v)| v))
     }
 }
@@ -92,8 +82,7 @@ impl<'a> Iterator for Iter<'a> {
 
             if self.last_id.is_none() {
                 // initialize iterator based on valid bound
-                let path_res =
-                    self.tree.path_for_key(start, &self.tx);
+                let path_res = self.tree.path_for_key(start, &self.tx);
                 if let Err(e) = path_res {
                     error!("iteration failed: {:?}", e);
                     self.done = true;
@@ -111,9 +100,7 @@ impl<'a> Iterator for Iter<'a> {
             let last_id = self.last_id.unwrap();
 
             let inclusive = match self.lo {
-                ops::Bound::Unbounded | ops::Bound::Included(..) => {
-                    true
-                }
+                ops::Bound::Unbounded | ops::Bound::Included(..) => true,
                 ops::Bound::Excluded(..) => false,
             };
 
@@ -136,8 +123,7 @@ impl<'a> Iterator for Iter<'a> {
             // node again...
             let (frag, _ptr) = res.unwrap();
             let node = frag.unwrap_base();
-            let leaf =
-                node.data.leaf_ref().expect("node should be a leaf");
+            let leaf = node.data.leaf_ref().expect("node should be a leaf");
             let prefix = &node.lo;
 
             let search = if inclusive && self.last_key.is_none() {
@@ -179,8 +165,7 @@ impl<'a> Iterator for Iter<'a> {
                 return Some(ret);
             }
 
-            if !node.hi.is_empty()
-                && !upper_bound_includes(&self.hi, &node.hi)
+            if !node.hi.is_empty() && !upper_bound_includes(&self.hi, &node.hi)
             {
                 // we've overshot our bounds
                 return None;
@@ -223,17 +208,13 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
         let (end, unbounded): (&[u8], bool) = if self.is_scan {
             match start_bound {
                 ops::Bound::Included(ref start)
-                | ops::Bound::Excluded(ref start) => {
-                    (start.as_ref(), false)
-                }
+                | ops::Bound::Excluded(ref start) => (start.as_ref(), false),
                 ops::Bound::Unbounded => (&[255; 100], true),
             }
         } else {
             match end_bound {
                 ops::Bound::Included(ref start)
-                | ops::Bound::Excluded(ref start) => {
-                    (start.as_ref(), false)
-                }
+                | ops::Bound::Excluded(ref start) => (start.as_ref(), false),
                 ops::Bound::Unbounded => (&[255; 100], true),
             }
         };
@@ -293,9 +274,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
             let last_id = self.last_id.unwrap();
 
             let inclusive = match self.hi {
-                ops::Bound::Unbounded | ops::Bound::Included(..) => {
-                    true
-                }
+                ops::Bound::Unbounded | ops::Bound::Included(..) => true,
                 ops::Bound::Excluded(..) => false,
             };
 
@@ -318,8 +297,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
             // node again...
             let (frag, _ptr) = res.unwrap();
             let node = frag.unwrap_base();
-            let leaf =
-                node.data.leaf_ref().expect("node should be a leaf");
+            let leaf = node.data.leaf_ref().expect("node should be a leaf");
             let prefix = &node.lo;
             let mut split_detected = false;
             let mut split_key: &[u8] = &[];
@@ -363,8 +341,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 let (k, v) = &leaf[idx];
                 let decoded_k = prefix_decode(prefix, &k);
 
-                if !self.is_scan
-                    && !lower_bound_includes(&self.lo, &*decoded_k)
+                if !self.is_scan && !lower_bound_includes(&self.lo, &*decoded_k)
                 {
                     // we've overshot our bounds
                     return None;
@@ -376,9 +353,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 return Some(ret);
             }
 
-            if !self.is_scan
-                && !lower_bound_includes(&self.lo, &node.lo)
-            {
+            if !self.is_scan && !lower_bound_includes(&self.lo, &node.lo) {
                 // we've overshot our bounds
                 return None;
             }

@@ -21,9 +21,7 @@ pub fn debug_delay() {
     let mut rng = if let Some(rng) = try_thread_rng() {
         rng
     } else {
-        warn!(
-            "already destroyed TLS when this debug delay was called"
-        );
+        warn!("already destroyed TLS when this debug delay was called");
         return;
     };
 
@@ -77,10 +75,7 @@ impl RngCore for ThreadRng {
         unsafe { (*self.rng).fill_bytes(dest) }
     }
 
-    fn try_fill_bytes(
-        &mut self,
-        dest: &mut [u8],
-    ) -> Result<(), rand::Error> {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
         self.fill_bytes(dest);
         Ok(())
     }

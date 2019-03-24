@@ -77,8 +77,7 @@ fn concurrent_logging() {
             .io_buf_size(1000)
             .flush_every_ms(Some(50))
             .build();
-        let log =
-            Arc::new(Log::start_raw_log(config.clone()).unwrap());
+        let log = Arc::new(Log::start_raw_log(config.clone()).unwrap());
         let iobs2 = log.clone();
         let iobs3 = log.clone();
         let iobs4 = log.clone();
@@ -86,10 +85,8 @@ fn concurrent_logging() {
         let iobs6 = log.clone();
         let log7 = log.clone();
 
-        let seg_overhead =
-            std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN);
-        let buf_len = (config.io_buf_size
-            / MINIMUM_ITEMS_PER_SEGMENT)
+        let seg_overhead = std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN);
+        let buf_len = (config.io_buf_size / MINIMUM_ITEMS_PER_SEGMENT)
             - (MSG_HEADER_LEN + seg_overhead);
 
         let t1 = thread::Builder::new()
@@ -169,8 +166,7 @@ fn concurrent_logging_404() {
         .io_buf_size(1000)
         .flush_every_ms(Some(50))
         .build();
-    let log_arc =
-        Arc::new(Log::start_raw_log(config.clone()).unwrap());
+    let log_arc = Arc::new(Log::start_raw_log(config.clone()).unwrap());
 
     const ITERATIONS: i32 = 5000;
     const NUM_THREADS: i32 = 6;
@@ -183,8 +179,7 @@ fn concurrent_logging_404() {
             .name(format!("t_{}", t))
             .spawn(move || {
                 for i in 0..ITERATIONS {
-                    let current =
-                        SHARED_COUNTER.load(Ordering::SeqCst);
+                    let current = SHARED_COUNTER.load(Ordering::SeqCst);
                     let raw_value: [u8; size_of::<usize>()] =
                         unsafe { std::mem::transmute(current + 1) };
                     let res = log.reserve(&raw_value).unwrap();
@@ -195,13 +190,11 @@ fn concurrent_logging_404() {
                     ) {
                         // If the current value was returned, then CAS succeeded on AtomicUsize
                         c if c == current => {
-                            res.complete()
-                                .expect("reservation complete panic");
+                            res.complete().expect("reservation complete panic");
                         }
                         // Any other value is an error
                         _ => {
-                            res.abort()
-                                .expect("reservation abort panic");
+                            res.abort().expect("reservation abort panic");
                         }
                     }
                 }
@@ -335,8 +328,7 @@ fn log_chunky_iterator() {
                 - (MSG_HEADER_LEN + SEG_HEADER_LEN + SEG_TRAILER_LEN);
 
             for i in 0..1000 {
-                let len =
-                    thread_rng().gen_range(0, max_valid_size * 2);
+                let len = thread_rng().gen_range(0, max_valid_size * 2);
                 let item = thread_rng().gen::<u8>();
                 let buf = vec![item; len];
                 let abort = thread_rng().gen::<bool>();
@@ -348,9 +340,9 @@ fn log_chunky_iterator() {
                         assert!(len > max_valid_size);
                     }
                 } else {
-                    let (lsn, lid) = log.write(buf.clone()).expect(
-                        "should be able to write reservation",
-                    );
+                    let (lsn, lid) = log
+                        .write(buf.clone())
+                        .expect("should be able to write reservation");
                     reference.push((lsn, lid, buf));
                 }
             }
@@ -386,10 +378,8 @@ fn snapshot_with_out_of_order_buffers() {
         .snapshot_after_ops(5)
         .build();
 
-    let len = config.io_buf_size
-        - SEG_HEADER_LEN
-        - SEG_TRAILER_LEN
-        - MSG_HEADER_LEN;
+    let len =
+        config.io_buf_size - SEG_HEADER_LEN - SEG_TRAILER_LEN - MSG_HEADER_LEN;
 
     let log = Log::start_raw_log(config.clone()).unwrap();
 
@@ -488,9 +478,7 @@ impl Arbitrary for Op {
 
         if g.gen_bool(1. / 50.) {
             let len = LEN.load(Ordering::Relaxed);
-            return Op::Truncate(
-                thread_rng().gen_range(0, len as u64),
-            );
+            return Op::Truncate(thread_rng().gen_range(0, len as u64));
         }
 
         let choice = g.gen_range(0, 4);
@@ -550,8 +538,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
 
     let mut tip = 0;
     let mut log = Log::start_raw_log(config.clone()).unwrap();
-    let mut reference: Vec<(Lsn, DiskPtr, Option<Vec<u8>>, usize)> =
-        vec![];
+    let mut reference: Vec<(Lsn, DiskPtr, Option<Vec<u8>>, usize)> = vec![];
 
     for op in ops.into_iter() {
         match op {
@@ -559,15 +546,13 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
                 if reference.len() <= lid as usize {
                     continue;
                 }
-                let (lsn, ptr, ref expected, _len) =
-                    reference[lid as usize];
+                let (lsn, ptr, ref expected, _len) = reference[lid as usize];
                 // log.make_stable(lid);
                 let read_res = log.read(lsn, ptr);
                 // println!( "expected {:?} read_res {:?} tip {} lid {}", expected, read_res, tip, lid);
                 if expected.is_none() || tip as u64 <= ptr.lid() {
                     assert!(
-                        read_res.is_err()
-                            || !read_res.unwrap().is_successful()
+                        read_res.is_err() || !read_res.unwrap().is_successful()
                     );
                 } else {
                     let flush = read_res.unwrap().into_data();
@@ -597,8 +582,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
 
                 // on recovery, we will rewind over any aborted tip entries
                 while !reference.is_empty() {
-                    let should_pop =
-                        reference.last().unwrap().2.is_none();
+                    let should_pop = reference.last().unwrap().2.is_none();
                     if should_pop {
                         reference.pop();
                     } else {
@@ -622,11 +606,9 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
                     let path = config.get_path();
 
                     let mut sz_total = 0;
-                    for &mut (lsn, ptr, ref mut expected, sz) in
-                        &mut reference
+                    for &mut (lsn, ptr, ref mut expected, sz) in &mut reference
                     {
-                        let tip =
-                            ptr.lid() as usize + sz + MSG_HEADER_LEN;
+                        let tip = ptr.lid() as usize + sz + MSG_HEADER_LEN;
                         if new_len < tip as u64 {
                             *expected = None;
                         }
@@ -805,12 +787,7 @@ fn log_bug_14a() {
     // postmortem 2:
     use self::Op::*;
     prop_log_works(
-        vec![
-            AbortReservation(vec![12]),
-            Restart,
-            Write(vec![]),
-            Read(0),
-        ],
+        vec![AbortReservation(vec![12]), Restart, Write(vec![]), Read(0)],
         true,
     );
 }
@@ -909,10 +886,7 @@ fn log_bug_20() {
     // postmortem: message header length was not being included when
     // calculating the starting log offsets.
     use self::Op::*;
-    prop_log_works(
-        vec![Write(vec![]), Restart, Write(vec![2]), Read(1)],
-        true,
-    );
+    prop_log_works(vec![Write(vec![]), Restart, Write(vec![2]), Read(1)], true);
 }
 
 #[test]
@@ -931,12 +905,7 @@ fn log_bug_22() {
     // postmortem:
     use self::Op::*;
     prop_log_works(
-        vec![
-            Read(10),
-            Write(vec![75]),
-            Write(vec![]),
-            Write(vec![77]),
-        ],
+        vec![Read(10), Write(vec![75]), Write(vec![]), Write(vec![77])],
         true,
     );
 }
