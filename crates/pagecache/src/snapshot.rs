@@ -427,7 +427,7 @@ fn read_snapshot(
     Ok(deserialize::<Snapshot>(&*bytes).ok())
 }
 
-pub(crate) fn write_snapshot(
+fn write_snapshot(
     config: &Config,
     snapshot: &Snapshot,
 ) -> Result<()> {
@@ -448,7 +448,7 @@ pub(crate) fn write_snapshot(
     let len_bytes: [u8; 8] = u64_to_arr(decompressed_len as u64);
 
     let path_1_suffix =
-        format!("snap.{:016X}.in___motion", snapshot.max_lsn);
+        format!("snap.{:016X}.generating", snapshot.max_lsn);
 
     let mut path_1 = config.snapshot_prefix();
     path_1.push(path_1_suffix);
@@ -474,19 +474,11 @@ pub(crate) fn write_snapshot(
     f.write_all(&crc32)?;
     f.sync_all()?;
     maybe_fail!("snap write post");
-    drop(f);
-
-    // This is important to avoid a race condition encountered on macos APFS
-    // where the rename below fails due to the metadata for path_1 not being
-    // present yet.
-    let dir = std::fs::File::open(parent)?;
-    dir.sync_all()?;
-    drop(dir);
 
     trace!("wrote snapshot to {}", path_1.to_string_lossy());
 
     maybe_fail!("snap write mv");
-    std::fs::rename(path_1, &path_2)?;
+    std::fs::rename(&path_1, &path_2)?;
     maybe_fail!("snap write mv post");
 
     trace!("renamed snapshot to {}", path_2.to_string_lossy());

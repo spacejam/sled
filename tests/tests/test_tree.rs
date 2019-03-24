@@ -547,13 +547,16 @@ fn tree_range() {
 
 #[test]
 fn recover_tree() {
+    tests::setup_logger();
+
     let config = ConfigBuilder::new()
         .temporary(true)
         .blink_node_split_size(0)
         .io_buf_size(5000)
         .flush_every_ms(None)
-        .snapshot_after_ops(100)
+        .snapshot_after_ops(N_PER_THREAD / 2)
         .build();
+
     let t = sled::Db::start(config.clone()).unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);

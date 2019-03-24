@@ -289,8 +289,14 @@ impl ConfigBuilder {
             self.io_buf_size <= 1 << 24,
             "io_buf_size should be <= 16mb"
         );
-        supported!(self.page_consolidation_threshold >= 1, "must consolidate pages after a non-zero number of updates");
-        supported!(self.page_consolidation_threshold < 1 << 20, "must consolidate pages after fewer than 1 million updates");
+        supported!(
+            self.page_consolidation_threshold >= 1,
+            "must consolidate pages after a non-zero number of updates"
+        );
+        supported!(
+            self.page_consolidation_threshold < 1 << 20,
+            "must consolidate pages after fewer than 1 million updates"
+        );
         supported!(
             self.cache_bits <= 20,
             "# LRU shards = 2^cache_bits. set cache_bits to 20 or less."
