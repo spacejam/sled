@@ -1,22 +1,33 @@
-use super::*;
-
-use std::{fmt, ops::Deref, sync::Arc};
+use serde::{Serialize, Deserialize};
+use serde::{ser::Serializer, de::Deserializer};
+use std::{fmt, ops::Deref, sync::Arc, result::Result as StdResult};
 
 const CUTOFF: usize = std::mem::size_of::<&[u8]>() - 1;
 type Inner = [u8; CUTOFF];
 
 /// A buffer that may either be inline or remote and protected
 /// by an Arc
-#[derive(Clone, Ord, Eq, Serialize, Deserialize)]
+#[derive(Clone, Ord, Eq)]
 pub enum IVec {
     /// An inlined small value
     Inline(u8, Inner),
     /// A heap-allocated value protected by an Arc
     Remote {
-        #[serde(with = "ser")]
         /// The value protected by an Arc
         buf: Arc<[u8]>,
     },
+}
+
+impl Serialize for IVec {
+    fn serialize<S: Serializer>(&self, serializer: S) -> StdResult<S::Ok, S::Error> {
+        serde_bytes::serialize(self, serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for IVec {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> StdResult<Self, D::Error> {
+        serde_bytes::deserialize(deserializer)
+    }
 }
 
 impl IVec {
@@ -114,53 +125,6 @@ impl PartialEq<[u8]> for IVec {
 impl fmt::Debug for IVec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.as_ref().fmt(f)
-    }
-}
-
-pub(crate) mod ser {
-    use std::sync::Arc;
-
-    use serde::de::{Deserializer, Visitor};
-    use serde::ser::Serializer;
-
-    pub(crate) fn serialize<S>(
-        data: &Arc<[u8]>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_bytes(&**data)
-    }
-
-    struct IVecVisitor;
-
-    impl<'de> Visitor<'de> for IVecVisitor {
-        type Value = Arc<[u8]>;
-
-        fn expecting(
-            &self,
-            formatter: &mut std::fmt::Formatter,
-        ) -> std::fmt::Result {
-            formatter.write_str("a borrowed byte array")
-        }
-
-        #[inline]
-        fn visit_borrowed_bytes<E>(
-            self,
-            v: &'de [u8],
-        ) -> Result<Arc<[u8]>, E> {
-            Ok(v.into())
-        }
-    }
-
-    pub(crate) fn deserialize<'de, D>(
-        deserializer: D,
-    ) -> Result<Arc<[u8]>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserializer.deserialize_bytes(IVecVisitor)
     }
 }
 
