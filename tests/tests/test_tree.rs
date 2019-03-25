@@ -541,7 +541,8 @@ fn recover_tree() {
         .blink_node_split_size(0)
         .io_buf_size(5000)
         .flush_every_ms(None)
-        .snapshot_after_ops(N_PER_THREAD / 2)
+        .async_io(false)
+        .snapshot_after_ops(N_PER_THREAD)
         .build();
 
     let t = sled::Db::start(config.clone()).unwrap();
