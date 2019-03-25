@@ -180,10 +180,7 @@ impl Dll {
         }
     }
 
-    pub(crate) unsafe fn pop_ptr(
-        &mut self,
-        ptr: *mut Node,
-    ) -> PageId {
+    pub(crate) unsafe fn pop_ptr(&mut self, ptr: *mut Node) -> PageId {
         self.len -= 1;
 
         let mut node = Box::from_raw(ptr);

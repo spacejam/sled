@@ -98,30 +98,23 @@ impl IoBufs {
         let snapshot_max_lsn = snapshot.max_lsn;
         let snapshot_last_lid = snapshot.last_lid;
 
-        let (next_lsn, next_lid) = if snapshot_max_lsn
-            < SEG_HEADER_LEN as Lsn
-        {
+        let (next_lsn, next_lid) = if snapshot_max_lsn < SEG_HEADER_LEN as Lsn {
             snapshot.max_lsn = 0;
             snapshot.last_lid = 0;
             (0, 0)
         } else {
-            let width = match file
-                .read_message(snapshot_last_lid, &config)
-            {
+            let width = match file.read_message(snapshot_last_lid, &config) {
                 Ok(LogRead::Failed(_, len))
-                | Ok(LogRead::Inline(_, _, len)) => {
-                    len + MSG_HEADER_LEN
-                }
+                | Ok(LogRead::Inline(_, _, len)) => len + MSG_HEADER_LEN,
                 Ok(LogRead::Blob(_lsn, _buf, _blob_ptr)) => {
                     BLOB_INLINE_LEN + MSG_HEADER_LEN
                 }
                 other => {
                     // we can overwrite this non-flush
                     debug!(
-                            "got non-flush tip while recovering at {}: {:?}",
-                            snapshot_last_lid,
-                            other
-                        );
+                        "got non-flush tip while recovering at {}: {:?}",
+                        snapshot_last_lid, other
+                    );
                     0
                 }
             };
@@ -135,8 +128,7 @@ impl IoBufs {
         let mut segment_accountant: SegmentAccountant =
             SegmentAccountant::start(config.clone(), snapshot)?;
 
-        let bufs =
-            rep_no_copy![IoBuf::new(io_buf_size); config.io_bufs];
+        let bufs = rep_no_copy![IoBuf::new(io_buf_size); config.io_bufs];
 
         let current_buf = 0;
 
@@ -171,9 +163,7 @@ impl IoBufs {
             let iobuf = &bufs[current_buf];
             let offset = next_lid % io_buf_size as LogId;
             iobuf.set_lid(next_lid);
-            iobuf.set_capacity(
-                io_buf_size - offset as usize - SEG_TRAILER_LEN,
-            );
+            iobuf.set_capacity(io_buf_size - offset as usize - SEG_TRAILER_LEN);
             iobuf.set_lsn(next_lsn);
 
             debug!(
@@ -238,16 +228,14 @@ impl IoBufs {
     pub(crate) fn iter_from(&self, lsn: Lsn) -> LogIter {
         trace!("iterating from lsn {}", lsn);
         let io_buf_size = self.config.io_buf_size;
-        let segment_base_lsn =
-            lsn / io_buf_size as Lsn * io_buf_size as Lsn;
+        let segment_base_lsn = lsn / io_buf_size as Lsn * io_buf_size as Lsn;
         let min_lsn = segment_base_lsn + SEG_HEADER_LEN as Lsn;
 
         // corrected_lsn accounts for the segment header length
         let corrected_lsn = std::cmp::max(lsn, min_lsn);
 
-        let segment_iter = self.with_sa(|sa| {
-            sa.segment_snapshot_iter_from(corrected_lsn)
-        });
+        let segment_iter =
+            self.with_sa(|sa| sa.segment_snapshot_iter_from(corrected_lsn));
 
         LogIter {
             config: self.config.clone(),
@@ -337,8 +325,7 @@ impl IoBufs {
     // ensure self.max_reserved_lsn is set to this Lsn
     // or greater, for use in correct calls to flush.
     pub(crate) fn bump_max_reserved_lsn(&self, lsn: Lsn) {
-        let mut current =
-            self.max_reserved_lsn.load(SeqCst) as InnerLsn;
+        let mut current = self.max_reserved_lsn.load(SeqCst) as InnerLsn;
         loop {
             if current >= lsn as InnerLsn {
                 return;
@@ -413,8 +400,7 @@ impl IoBufs {
                 );
                 std::ptr::copy_nonoverlapping(
                     padding_bytes.as_ptr(),
-                    data.as_mut_ptr()
-                        .offset(offset + MSG_HEADER_LEN as isize),
+                    data.as_mut_ptr().offset(offset + MSG_HEADER_LEN as isize),
                     pad_len,
                 );
             }
@@ -450,11 +436,9 @@ impl IoBufs {
         if maxed {
             let segment_lsn =
                 base_lsn / io_buf_size as Lsn * io_buf_size as Lsn;
-            let segment_lid =
-                lid / io_buf_size as LogId * io_buf_size as LogId;
+            let segment_lid = lid / io_buf_size as LogId * io_buf_size as LogId;
 
-            let trailer_overhang =
-                io_buf_size as Lsn - SEG_TRAILER_LEN as Lsn;
+            let trailer_overhang = io_buf_size as Lsn - SEG_TRAILER_LEN as Lsn;
 
             let trailer_lid = segment_lid + trailer_overhang as LogId;
             let trailer_lsn = segment_lsn + trailer_overhang;
@@ -542,8 +526,7 @@ impl IoBufs {
     fn mark_interval(&self, whence: Lsn, len: usize) {
         trace!("mark_interval({}, {})", whence, len);
         assert_ne!(
-            len,
-            0,
+            len, 0,
             "mark_interval called with a zero-length range, starting from {}",
             whence
         );
@@ -580,9 +563,7 @@ impl IoBufs {
                 high
             );
             if cur_stable + 1 == low {
-                let old =
-                    self.stable_lsn.swap(high as InnerLsn, SeqCst)
-                        as Lsn;
+                let old = self.stable_lsn.swap(high as InnerLsn, SeqCst) as Lsn;
                 assert_eq!(
                     old, cur_stable,
                     "concurrent stable offset modification detected"
@@ -597,10 +578,7 @@ impl IoBufs {
         }
 
         if len_before - intervals.len() > 100 {
-            debug!(
-                "large merge of {} intervals",
-                len_before - intervals.len()
-            );
+            debug!("large merge of {} intervals", len_before - intervals.len());
         }
 
         if updated {
@@ -613,8 +591,7 @@ impl IoBufs {
         // in order of LSN.
         let logical_segment_before =
             lsn_before / self.config.io_buf_size as Lsn;
-        let logical_segment_after =
-            lsn_after / self.config.io_buf_size as Lsn;
+        let logical_segment_after = lsn_after / self.config.io_buf_size as Lsn;
         if logical_segment_before != logical_segment_after {
             self.with_sa(move |sa| {
                 for logical_segment in logical_segment_before..logical_segment_after {
@@ -636,10 +613,7 @@ impl IoBufs {
 /// Blocks until the specified log sequence number has
 /// been made stable on disk. Returns the number of
 /// bytes written.
-pub(crate) fn make_stable(
-    iobufs: &Arc<IoBufs>,
-    lsn: Lsn,
-) -> Result<usize> {
+pub(crate) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Result<usize> {
     let _measure = Measure::new(&M.make_stable);
 
     // NB before we write the 0th byte of the file, stable  is -1
@@ -669,8 +643,7 @@ pub(crate) fn make_stable(
             }
             trace!("waiting on cond var for make_stable({})", lsn);
 
-            let _waiter =
-                iobufs.interval_updated.wait(waiter).unwrap();
+            let _waiter = iobufs.interval_updated.wait(waiter).unwrap();
         } else {
             trace!("make_stable({}) returning", lsn);
             break;
@@ -684,8 +657,7 @@ pub(crate) fn make_stable(
 /// to flush some pending writes. Returns the number
 /// of bytes written during this call.
 pub(super) fn flush(iobufs: &Arc<IoBufs>) -> Result<usize> {
-    let max_reserved_lsn =
-        iobufs.max_reserved_lsn.load(SeqCst) as Lsn;
+    let max_reserved_lsn = iobufs.max_reserved_lsn.load(SeqCst) as Lsn;
     make_stable(iobufs, max_reserved_lsn)
 }
 
@@ -790,10 +762,10 @@ pub(crate) fn maybe_seal_and_write_iobuf(
         ret?
     } else {
         debug!(
-                "advancing offset within the current segment from {} to {}",
-                lid,
-                lid + res_len as LogId
-            );
+            "advancing offset within the current segment from {} to {}",
+            lid,
+            lid + res_len as LogId
+        );
         next_lsn += res_len as Lsn;
 
         lid + res_len as LogId
@@ -867,20 +839,23 @@ pub(crate) fn maybe_seal_and_write_iobuf(
             return Err(e);
         }
         if let Some(ref thread_pool) = iobufs.config.thread_pool {
-            trace!("asynchronously writing index {} to log from maybe_seal", idx);
+            trace!(
+                "asynchronously writing index {} to log from maybe_seal",
+                idx
+            );
             let iobufs = iobufs.clone();
             thread_pool.spawn(move || {
                 if let Err(e) = iobufs.write_to_log(idx) {
-                    error!(
-                        "hit error while writing segment {}: {:?}",
-                        idx, e
-                    );
+                    error!("hit error while writing segment {}: {:?}", idx, e);
                     iobufs.config.set_global_error(e);
                 }
             });
             Ok(())
         } else {
-            trace!("synchronously writing index {} to log from maybe_seal", idx);
+            trace!(
+                "synchronously writing index {} to log from maybe_seal",
+                idx
+            );
             iobufs.write_to_log(idx)
         }
     } else {
@@ -949,15 +924,9 @@ impl IoBuf {
     // We write a new segment header to the beginning of the buffer
     // for assistance during recovery. The caller is responsible
     // for ensuring that the IoBuf's capacity has been set properly.
-    pub(crate) fn store_segment_header(
-        &self,
-        last: Header,
-        lsn: Lsn,
-    ) {
+    pub(crate) fn store_segment_header(&self, last: Header, lsn: Lsn) {
         debug!("storing lsn {} in beginning of buffer", lsn);
-        assert!(
-            self.get_capacity() >= SEG_HEADER_LEN + SEG_TRAILER_LEN
-        );
+        assert!(self.get_capacity() >= SEG_HEADER_LEN + SEG_TRAILER_LEN);
 
         self.set_lsn(lsn);
 
@@ -1035,11 +1004,10 @@ impl IoBuf {
         new: Header,
     ) -> std::result::Result<Header, Header> {
         debug_delay();
-        let res = self.header.compare_and_swap(
-            old as usize,
-            new as usize,
-            SeqCst,
-        ) as Header;
+        let res =
+            self.header
+                .compare_and_swap(old as usize, new as usize, SeqCst)
+                as Header;
         if res == old {
             Ok(new)
         } else {
@@ -1053,11 +1021,10 @@ impl IoBuf {
         new: LogId,
     ) -> std::result::Result<LogId, LogId> {
         debug_delay();
-        let res = self.lid.compare_and_swap(
-            old as usize,
-            new as usize,
-            SeqCst,
-        ) as LogId;
+        let res = self
+            .lid
+            .compare_and_swap(old as usize, new as usize, SeqCst)
+            as LogId;
         if res == old {
             Ok(new)
         } else {

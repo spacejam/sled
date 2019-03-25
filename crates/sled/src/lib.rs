@@ -60,8 +60,7 @@ pub use {
 use {
     self::{
         binary_search::{
-            binary_search_gt, binary_search_lt, binary_search_lub,
-            leaf_search,
+            binary_search_gt, binary_search_lt, binary_search_lub, leaf_search,
         },
         context::Context,
         data::Data,
@@ -69,15 +68,15 @@ use {
         materializer::BLinkMaterializer,
         node::Node,
         prefix::{
-            prefix_cmp, prefix_cmp_encoded, prefix_decode,
-            prefix_encode, prefix_reencode,
+            prefix_cmp, prefix_cmp_encoded, prefix_decode, prefix_encode,
+            prefix_reencode,
         },
         subscription::Subscriptions,
     },
     log::{debug, error, trace},
     pagecache::{
-        debug_delay, Materializer, Measure, MergeOperator, PageCache,
-        PageGet, PageId, Tx, M,
+        debug_delay, Materializer, Measure, MergeOperator, PageCache, PageGet,
+        PageId, Tx, M,
     },
     serde::{Deserialize, Serialize},
 };

@@ -5,15 +5,7 @@ use super::LogReader;
 
 /// A pointer to a location on disk or an off-log blob.
 #[derive(
-    Debug,
-    Clone,
-    PartialOrd,
-    Ord,
-    Copy,
-    Eq,
-    PartialEq,
-    Serialize,
-    Deserialize,
+    Debug, Clone, PartialOrd, Ord, Copy, Eq, PartialEq, Serialize, Deserialize,
 )]
 pub enum DiskPtr {
     /// Points to a value stored in the single-file log.
@@ -48,9 +40,7 @@ impl DiskPtr {
     pub(crate) fn inline(&self) -> LogId {
         match self {
             DiskPtr::Inline(l) => *l,
-            DiskPtr::Blob(_, _) => {
-                panic!("inline called on Blob disk pointer")
-            }
+            DiskPtr::Blob(_, _) => panic!("inline called on Blob disk pointer"),
         }
     }
 

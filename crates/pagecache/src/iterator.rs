@@ -25,34 +25,26 @@ impl Iterator for LogIter {
                 self.config.io_buf_size,
             );
 
-            if self.trailer.is_none()
-                && remaining_seg_too_small_for_msg
-            {
+            if self.trailer.is_none() && remaining_seg_too_small_for_msg {
                 // We've read to the end of a torn
                 // segment and should stop now.
-                trace!(
-                    "trailer is none, ending iteration at {}",
-                    self.max_lsn
-                );
+                trace!("trailer is none, ending iteration at {}", self.max_lsn);
                 return None;
             } else if self.segment_base.is_none()
                 || remaining_seg_too_small_for_msg
             {
-                if let Some((next_lsn, next_lid)) =
-                    self.segment_iter.next()
-                {
+                if let Some((next_lsn, next_lid)) = self.segment_iter.next() {
                     assert!(
-                        next_lsn + (self.config.io_buf_size as Lsn) >= self.cur_lsn,
+                        next_lsn + (self.config.io_buf_size as Lsn)
+                            >= self.cur_lsn,
                         "caller is responsible for providing segments \
-                            that contain the initial cur_lsn value or higher"
+                         that contain the initial cur_lsn value or higher"
                     );
 
                     #[cfg(target_os = "linux")]
                     self.fadvise_willneed(next_lid);
 
-                    if let Err(e) =
-                        self.read_segment(next_lsn, next_lid)
-                    {
+                    if let Err(e) = self.read_segment(next_lsn, next_lid) {
                         debug!(
                             "hit snap while reading segments in \
                              iterator: {:?}",
@@ -73,8 +65,7 @@ impl Iterator for LogIter {
             }
 
             let lid = self.segment_base.unwrap()
-                + (self.cur_lsn % self.config.io_buf_size as Lsn)
-                    as LogId;
+                + (self.cur_lsn % self.config.io_buf_size as Lsn) as LogId;
 
             let f = &self.config.file;
             match f.read_message(lid, &self.config) {
@@ -84,13 +75,8 @@ impl Iterator for LogIter {
                         return None;
                     }
                     trace!("read blob flush in LogIter::next");
-                    self.cur_lsn +=
-                        (MSG_HEADER_LEN + BLOB_INLINE_LEN) as Lsn;
-                    return Some((
-                        lsn,
-                        DiskPtr::Blob(lid, blob_ptr),
-                        buf,
-                    ));
+                    self.cur_lsn += (MSG_HEADER_LEN + BLOB_INLINE_LEN) as Lsn;
+                    return Some((lsn, DiskPtr::Blob(lid, blob_ptr), buf));
                 }
                 Ok(LogRead::Inline(lsn, buf, on_disk_len)) => {
                     if lsn != self.cur_lsn {
@@ -98,8 +84,7 @@ impl Iterator for LogIter {
                         return None;
                     }
                     trace!("read inline flush in LogIter::next");
-                    self.cur_lsn +=
-                        (MSG_HEADER_LEN + on_disk_len) as Lsn;
+                    self.cur_lsn += (MSG_HEADER_LEN + on_disk_len) as Lsn;
                     return Some((lsn, DiskPtr::Inline(lid), buf));
                 }
                 Ok(LogRead::Failed(lsn, on_disk_len)) => {
@@ -108,12 +93,14 @@ impl Iterator for LogIter {
                         return None;
                     }
                     trace!("read zeroed in LogIter::next");
-                    self.cur_lsn +=
-                        (MSG_HEADER_LEN + on_disk_len) as Lsn;
+                    self.cur_lsn += (MSG_HEADER_LEN + on_disk_len) as Lsn;
                 }
                 Ok(LogRead::Corrupted(_len)) => {
-                    trace!("read corrupted msg in LogIter::next as lid {} lsn {}",
-                               lid, self.cur_lsn);
+                    trace!(
+                        "read corrupted msg in LogIter::next as lid {} lsn {}",
+                        lid,
+                        self.cur_lsn
+                    );
                     return None;
                 }
                 Ok(LogRead::Pad(lsn)) => {
@@ -139,8 +126,7 @@ impl Iterator for LogIter {
                          pointer at lsn {} ptr {}",
                         lsn, blob_ptr
                     );
-                    self.cur_lsn +=
-                        (MSG_HEADER_LEN + BLOB_INLINE_LEN) as Lsn;
+                    self.cur_lsn += (MSG_HEADER_LEN + BLOB_INLINE_LEN) as Lsn;
                     continue;
                 }
                 Err(e) => {
@@ -159,11 +145,7 @@ impl Iterator for LogIter {
 impl LogIter {
     /// read a segment of log messages. Only call after
     /// pausing segment rewriting on the segment accountant!
-    fn read_segment(
-        &mut self,
-        lsn: Lsn,
-        offset: LogId,
-    ) -> Result<()> {
+    fn read_segment(&mut self, lsn: Lsn, offset: LogId) -> Result<()> {
         trace!(
             "LogIter::read_segment lsn: {:?} cur_lsn: {:?}",
             lsn,
@@ -204,11 +186,9 @@ impl LogIter {
             .into());
         }
 
-        let trailer_offset = offset
-            + self.config.io_buf_size as LogId
+        let trailer_offset = offset + self.config.io_buf_size as LogId
             - SEG_TRAILER_LEN as LogId;
-        let trailer_lsn = segment_header.lsn
-            + self.config.io_buf_size as Lsn
+        let trailer_lsn = segment_header.lsn + self.config.io_buf_size as Lsn
             - SEG_TRAILER_LEN as Lsn;
 
         trace!("trying to read trailer from {}", trailer_offset);

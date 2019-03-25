@@ -60,9 +60,7 @@ fn run(
                 #[cfg(feature = "failpoints")]
                 {
                     if let Error::FailPoint = e {
-                        iobufs
-                            ._failpoint_crashing
-                            .store(true, SeqCst);
+                        iobufs._failpoint_crashing.store(true, SeqCst);
 
                         // wake up any waiting threads
                         // so they don't stall forever
@@ -70,17 +68,13 @@ fn run(
                     }
                 }
 
-                error!(
-                    "failed to flush from periodic flush thread: {}",
-                    e
-                );
+                error!("failed to flush from periodic flush thread: {}", e);
 
                 return;
             }
         }
 
-        shutdown =
-            sc.wait_timeout(shutdown, sleep_duration).unwrap().0;
+        shutdown = sc.wait_timeout(shutdown, sleep_duration).unwrap().0;
     }
 }
 

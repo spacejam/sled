@@ -22,8 +22,7 @@ pub struct Snapshot {
     /// the mapping from pages to (lsn, lid)
     pub pt: FastMap8<PageId, PageState>,
     /// replaced pages per segment index
-    pub replacements:
-        FastMap8<SegmentId, (Lsn, FastSet8<(PageId, SegmentId)>)>,
+    pub replacements: FastMap8<SegmentId, (Lsn, FastSet8<(PageId, SegmentId)>)>,
     /// the free pids
     pub free: FastSet8<PageId>,
 }
@@ -50,9 +49,7 @@ impl PageState {
             PageState::Present(ref items) => {
                 Box::new(items.clone().into_iter())
             }
-            PageState::Free(lsn, ptr) => {
-                Box::new(vec![(lsn, ptr)].into_iter())
-            }
+            PageState::Free(lsn, ptr) => Box::new(vec![(lsn, ptr)].into_iter()),
         }
     }
 
@@ -87,30 +84,18 @@ impl Snapshot {
         config: &Config,
     ) -> Result<()>
     where
-        P: 'static
-            + Debug
-            + Clone
-            + Serialize
-            + DeserializeOwned
-            + Send
-            + Sync,
+        P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
     {
         // unwrapping this because it's already passed the crc check
         // in the log iterator
-        trace!(
-            "trying to deserialize buf for ptr {} lsn {}",
-            disk_ptr,
-            lsn
-        );
+        trace!("trying to deserialize buf for ptr {} lsn {}", disk_ptr, lsn);
         let deserialization = deserialize::<LoggedUpdate<P>>(&*bytes);
 
         if let Err(e) = deserialization {
             error!(
                 "failed to deserialize buffer for item in log: lsn {} \
-                    ptr {}: {:?}",
-                lsn,
-                disk_ptr,
-                e
+                 ptr {}: {:?}",
+                lsn, disk_ptr, e
             );
             return Err(Error::Corruption { at: disk_ptr });
         }
@@ -122,11 +107,9 @@ impl Snapshot {
             self.max_pid = pid + 1;
         }
 
-        let replaced_at_idx =
-            disk_ptr.lid() as SegmentId / config.io_buf_size;
-        let replaced_at_segment_lsn = (lsn
-            / config.io_buf_size as Lsn)
-            * config.io_buf_size as Lsn;
+        let replaced_at_idx = disk_ptr.lid() as SegmentId / config.io_buf_size;
+        let replaced_at_segment_lsn =
+            (lsn / config.io_buf_size as Lsn) * config.io_buf_size as Lsn;
 
         match prepend.update {
             Update::Append(append) => {
@@ -158,9 +141,7 @@ impl Snapshot {
                 }
                 self.free.remove(&pid);
             }
-            Update::Meta(_)
-            | Update::Counter(_)
-            | Update::Compact(_) => {
+            Update::Meta(_) | Update::Counter(_) | Update::Compact(_) => {
                 trace!(
                     "compact of pid {} at ptr {} lsn {}: {:?}",
                     pid,
@@ -175,10 +156,8 @@ impl Snapshot {
                     replaced_at_idx,
                     config,
                 );
-                self.pt.insert(
-                    pid,
-                    PageState::Present(vec![(lsn, disk_ptr)]),
-                );
+                self.pt
+                    .insert(pid, PageState::Present(vec![(lsn, disk_ptr)]));
                 if prepend.update.is_compact() {
                     self.free.remove(&pid);
                 } else {
@@ -186,12 +165,7 @@ impl Snapshot {
                 }
             }
             Update::Free => {
-                trace!(
-                    "free of pid {} at ptr {} lsn {}",
-                    pid,
-                    disk_ptr,
-                    lsn
-                );
+                trace!("free of pid {} at ptr {} lsn {}", pid, disk_ptr, lsn);
                 self.replace_pid(
                     pid,
                     replaced_at_segment_lsn,
@@ -213,19 +187,17 @@ impl Snapshot {
         replaced_at_idx: usize,
         config: &Config,
     ) {
-        let replacements =
-            self.replacements.entry(replaced_at_idx).or_insert((
-                replaced_at_segment_lsn,
-                FastSet8::default(),
-            ));
+        let replacements = self
+            .replacements
+            .entry(replaced_at_idx)
+            .or_insert((replaced_at_segment_lsn, FastSet8::default()));
 
         assert_eq!(replaced_at_segment_lsn, replacements.0);
 
         match self.pt.remove(&pid) {
             Some(PageState::Present(coords)) => {
                 for (_lsn, ptr) in &coords {
-                    let old_idx =
-                        ptr.lid() as SegmentId / config.io_buf_size;
+                    let old_idx = ptr.lid() as SegmentId / config.io_buf_size;
                     if replaced_at_idx == old_idx {
                         continue;
                     }
@@ -258,8 +230,7 @@ impl Snapshot {
                 }
             }
             Some(PageState::Free(_lsn, ptr)) => {
-                let old_idx =
-                    ptr.lid() as SegmentId / config.io_buf_size;
+                let old_idx = ptr.lid() as SegmentId / config.io_buf_size;
                 if replaced_at_idx != old_idx {
                     replacements.1.insert((pid, old_idx));
                 }
@@ -282,13 +253,7 @@ pub(super) fn advance_snapshot<PM, P>(
 ) -> Result<Snapshot>
 where
     PM: Materializer<PageFrag = P>,
-    P: 'static
-        + Debug
-        + Clone
-        + Serialize
-        + DeserializeOwned
-        + Send
-        + Sync,
+    P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
 {
     let _measure = Measure::new(&M.advance_snapshot);
 
@@ -333,13 +298,8 @@ where
         }
 
         if !PM::is_null() {
-            if let Err(e) =
-                snapshot.apply::<P>(lsn, ptr, &*bytes, config)
-            {
-                error!(
-                    "encountered error while reading log message: {}",
-                    e
-                );
+            if let Err(e) = snapshot.apply::<P>(lsn, ptr, &*bytes, config) {
+                error!("encountered error while reading log message: {}", e);
                 break;
             }
         }
@@ -354,21 +314,12 @@ where
 
 /// Read a `Snapshot` or generate a default, then advance it to
 /// the tip of the data file, if present.
-pub fn read_snapshot_or_default<PM, P>(
-    config: &Config,
-) -> Result<Snapshot>
+pub fn read_snapshot_or_default<PM, P>(config: &Config) -> Result<Snapshot>
 where
     PM: Materializer<PageFrag = P>,
-    P: 'static
-        + Debug
-        + Clone
-        + Serialize
-        + DeserializeOwned
-        + Send
-        + Sync,
+    P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
 {
-    let last_snap =
-        read_snapshot(config)?.unwrap_or_else(Snapshot::default);
+    let last_snap = read_snapshot(config)?.unwrap_or_else(Snapshot::default);
 
     let log_iter = raw_segment_iter_from(last_snap.max_lsn, config)?;
 
@@ -376,9 +327,7 @@ where
 }
 
 /// Read a `Snapshot` from disk.
-fn read_snapshot(
-    config: &Config,
-) -> std::io::Result<Option<Snapshot>> {
+fn read_snapshot(config: &Config) -> std::io::Result<Option<Snapshot>> {
     let mut candidates = config.get_snapshot_files()?;
     if candidates.is_empty() {
         debug!("no previous snapshot found");
@@ -427,10 +376,7 @@ fn read_snapshot(
     Ok(deserialize::<Snapshot>(&*bytes).ok())
 }
 
-fn write_snapshot(
-    config: &Config,
-    snapshot: &Snapshot,
-) -> Result<()> {
+fn write_snapshot(config: &Config, snapshot: &Snapshot) -> Result<()> {
     let raw_bytes = serialize(&snapshot).unwrap();
     let decompressed_len = raw_bytes.len();
 
@@ -447,8 +393,7 @@ fn write_snapshot(
     let crc32: [u8; 4] = u32_to_arr(crc32(&bytes));
     let len_bytes: [u8; 8] = u64_to_arr(decompressed_len as u64);
 
-    let path_1_suffix =
-        format!("snap.{:016X}.generating", snapshot.max_lsn);
+    let path_1_suffix = format!("snap.{:016X}.generating", snapshot.max_lsn);
 
     let mut path_1 = config.snapshot_prefix();
     path_1.push(path_1_suffix);

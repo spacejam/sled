@@ -34,9 +34,7 @@ impl Event {
     /// Return a reference to the key that this `Event` refers to
     pub fn key(&self) -> &[u8] {
         match self {
-            Event::Set(k, ..)
-            | Event::Merge(k, ..)
-            | Event::Del(k) => &*k,
+            Event::Set(k, ..) | Event::Merge(k, ..) | Event::Del(k) => &*k,
         }
     }
 }
@@ -98,10 +96,7 @@ impl Subscriptions {
                 drop(r_mu);
                 let mut w_mu = self.watched.write().unwrap();
                 if !w_mu.contains_key(&prefix) {
-                    w_mu.insert(
-                        prefix.clone(),
-                        Arc::new(RwLock::new(vec![])),
-                    );
+                    w_mu.insert(prefix.clone(), Arc::new(RwLock::new(vec![])));
                 }
                 drop(w_mu);
                 self.watched.read().unwrap()
@@ -129,8 +124,7 @@ impl Subscriptions {
         key: R,
     ) -> Option<ReservedBroadcast> {
         let r_mu = self.watched.read().unwrap();
-        let prefixes =
-            r_mu.iter().filter(|(k, _)| key.as_ref().starts_with(k));
+        let prefixes = r_mu.iter().filter(|(k, _)| key.as_ref().starts_with(k));
 
         let mut subscribers = vec![];
 

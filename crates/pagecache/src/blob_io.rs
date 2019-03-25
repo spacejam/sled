@@ -2,18 +2,12 @@ use std::io::{Read, Write};
 
 use super::*;
 
-pub(crate) fn read_blob(
-    blob_ptr: Lsn,
-    config: &Config,
-) -> Result<Vec<u8>> {
+pub(crate) fn read_blob(blob_ptr: Lsn, config: &Config) -> Result<Vec<u8>> {
     let path = config.blob_path(blob_ptr);
     let f_res = std::fs::OpenOptions::new().read(true).open(&path);
 
     if let Err(e) = &f_res {
-        debug!(
-            "failed to open file for blob read at {}: {:?}",
-            blob_ptr, e
-        );
+        debug!("failed to open file for blob read at {}: {:?}", blob_ptr, e);
     }
 
     let mut f = f_res?;
@@ -23,8 +17,7 @@ pub(crate) fn read_blob(
     if let Err(e) = f.read_exact(&mut crc_expected_bytes) {
         debug!(
             "failed to read the initial CRC bytes in the blob at {}: {:?}",
-            blob_ptr,
-            e,
+            blob_ptr, e,
         );
         return Err(e.into());
     }
@@ -35,8 +28,7 @@ pub(crate) fn read_blob(
     if let Err(e) = f.read_to_end(&mut buf) {
         debug!(
             "failed to read data after the CRC bytes in blob at {}: {:?}",
-            blob_ptr,
-            e,
+            blob_ptr, e,
         );
         return Err(e.into());
     }
@@ -54,11 +46,7 @@ pub(crate) fn read_blob(
     }
 }
 
-pub(crate) fn write_blob(
-    config: &Config,
-    id: Lsn,
-    data: &[u8],
-) -> Result<()> {
+pub(crate) fn write_blob(config: &Config, id: Lsn, data: &[u8]) -> Result<()> {
     let path = config.blob_path(id);
     let mut f = std::fs::OpenOptions::new()
         .write(true)
@@ -76,10 +64,7 @@ pub(crate) fn write_blob(
         .map_err(|e| e.into())
 }
 
-pub(crate) fn gc_blobs(
-    config: &Config,
-    stable_lsn: Lsn,
-) -> Result<()> {
+pub(crate) fn gc_blobs(config: &Config, stable_lsn: Lsn) -> Result<()> {
     let stable = config.blob_path(stable_lsn);
     let blob_dir = stable.parent().unwrap();
     let blobs = std::fs::read_dir(blob_dir)?;

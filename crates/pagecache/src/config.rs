@@ -156,10 +156,7 @@ impl ConfigBuilder {
 
     /// Set the merge operator that can be relied on during merges in
     /// the `PageCache`.
-    pub fn merge_operator(
-        mut self,
-        mo: MergeOperator,
-    ) -> ConfigBuilder {
+    pub fn merge_operator(mut self, mo: MergeOperator) -> ConfigBuilder {
         self.merge_operator = Some(mo as usize);
         self
     }
@@ -176,23 +173,19 @@ impl ConfigBuilder {
         // only validate, setup directory, and open file once
         self.validate().unwrap();
 
-        if self.temporary && self.path == PathBuf::from(DEFAULT_PATH)
-        {
+        if self.temporary && self.path == PathBuf::from(DEFAULT_PATH) {
             #[cfg(unix)]
             let salt = {
-                static SALT_COUNTER: AtomicUsize =
-                    AtomicUsize::new(0);
+                static SALT_COUNTER: AtomicUsize = AtomicUsize::new(0);
                 let pid = unsafe { libc::getpid() };
                 ((pid as u64) << 32)
-                    + SALT_COUNTER.fetch_add(1, Ordering::SeqCst)
-                        as u64
+                    + SALT_COUNTER.fetch_add(1, Ordering::SeqCst) as u64
             };
 
             #[cfg(not(unix))]
             let salt = {
                 let now = uptime();
-                (now.as_secs() * 1_000_000_000)
-                    + u64::from(now.subsec_nanos())
+                (now.as_secs() * 1_000_000_000) + u64::from(now.subsec_nanos())
             };
 
             // use shared memory for temporary linux files
@@ -215,9 +208,7 @@ impl ConfigBuilder {
 
             let tp = rayon::ThreadPoolBuilder::new()
                 .num_threads(self.async_io_threads)
-                .thread_name(move |id| {
-                    format!("sled_io_{}_{:?}", id, path)
-                })
+                .thread_name(move |id| format!("sled_io_{}_{:?}", id, path))
                 .start_handler(move |_id| {
                     start_threads.fetch_add(1, SeqCst);
                 })
@@ -358,8 +349,7 @@ impl ConfigBuilder {
         }
 
         if !dir.exists() {
-            let res: std::io::Result<()> =
-                std::fs::create_dir_all(dir);
+            let res: std::io::Result<()> = std::fs::create_dir_all(dir);
             res.map_err(|e: std::io::Error| {
                 let ret: Error = e.into();
                 ret
@@ -394,19 +384,21 @@ impl ConfigBuilder {
         match self.read_config() {
             Ok(Some(old)) => {
                 if old.merge_operator.is_some() {
-                    supported!(self.merge_operator.is_some(),
+                    supported!(
+                        self.merge_operator.is_some(),
                         "this system was previously opened with a \
-                        merge operator. must supply one FOREVER after \
-                        choosing to do so once, BWAHAHAHAHAHAHA!!!!");
+                         merge operator. must supply one FOREVER after \
+                         choosing to do so once, BWAHAHAHAHAHAHA!!!!"
+                    );
                 }
 
                 supported!(
                     self.use_compression == old.use_compression,
-                    format!("cannot change compression values across restarts. \
-                        old value of use_compression loaded from disk: {}, \
-                        currently set value: {}.",
-                        old.use_compression,
-                        self.use_compression,
+                    format!(
+                        "cannot change compression values across restarts. \
+                         old value of use_compression loaded from disk: {}, \
+                         currently set value: {}.",
+                        old.use_compression, self.use_compression,
                     )
                 );
 
@@ -414,7 +406,7 @@ impl ConfigBuilder {
                     self.io_buf_size == old.io_buf_size,
                     format!(
                         "cannot change the io buffer size across restarts. \
-                        please change it back to {}",
+                         please change it back to {}",
                         old.io_buf_size
                     )
                 );
@@ -449,13 +441,10 @@ impl ConfigBuilder {
     fn read_config(&self) -> std::io::Result<Option<ConfigBuilder>> {
         let path = self.config_path();
 
-        let f_res =
-            std::fs::OpenOptions::new().read(true).open(&path);
+        let f_res = std::fs::OpenOptions::new().read(true).open(&path);
 
         let mut f = match f_res {
-            Err(ref e)
-                if e.kind() == std::io::ErrorKind::NotFound =>
-            {
+            Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(None);
             }
             Err(other) => {
@@ -562,9 +551,7 @@ impl Drop for Config {
             drop(thread_pool);
 
             while self.threads.load(SeqCst) != 0 {
-                std::thread::sleep(std::time::Duration::from_millis(
-                    50,
-                ));
+                std::thread::sleep(std::time::Duration::from_millis(50));
             }
             debug!("threadpool drained");
 
@@ -625,15 +612,12 @@ impl Config {
 
     // returns the snapshot file paths for this system
     #[doc(hidden)]
-    pub fn get_snapshot_files(
-        &self,
-    ) -> std::io::Result<Vec<PathBuf>> {
+    pub fn get_snapshot_files(&self) -> std::io::Result<Vec<PathBuf>> {
         let mut prefix = self.snapshot_prefix();
 
         prefix.push("snap.");
 
-        let abs_prefix: PathBuf = if Path::new(&prefix).is_absolute()
-        {
+        let abs_prefix: PathBuf = if Path::new(&prefix).is_absolute() {
             prefix
         } else {
             let mut abs_path = std::env::current_dir()?;
@@ -641,24 +625,22 @@ impl Config {
             abs_path
         };
 
-        let filter =
-            |dir_entry: std::io::Result<std::fs::DirEntry>| {
-                if let Ok(de) = dir_entry {
-                    let path_buf = de.path();
-                    let path = path_buf.as_path();
-                    let path_str = &*path.to_string_lossy();
-                    if path_str
-                        .starts_with(&*abs_prefix.to_string_lossy())
-                        && !path_str.ends_with(".in___motion")
-                    {
-                        Some(path.to_path_buf())
-                    } else {
-                        None
-                    }
+        let filter = |dir_entry: std::io::Result<std::fs::DirEntry>| {
+            if let Ok(de) = dir_entry {
+                let path_buf = de.path();
+                let path = path_buf.as_path();
+                let path_str = &*path.to_string_lossy();
+                if path_str.starts_with(&*abs_prefix.to_string_lossy())
+                    && !path_str.ends_with(".in___motion")
+                {
+                    Some(path.to_path_buf())
                 } else {
                     None
                 }
-            };
+            } else {
+                None
+            }
+        };
 
         let snap_dir = Path::new(&abs_prefix).parent().unwrap();
 
@@ -673,13 +655,7 @@ impl Config {
     pub fn verify_snapshot<PM, P>(&self) -> Result<()>
     where
         PM: Materializer<PageFrag = P>,
-        P: 'static
-            + Debug
-            + Clone
-            + Serialize
-            + DeserializeOwned
-            + Send
-            + Sync,
+        P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
     {
         debug!("generating incremental snapshot");
 

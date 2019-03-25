@@ -1,6 +1,6 @@
-use serde::{Serialize, Deserialize};
-use serde::{ser::Serializer, de::Deserializer};
-use std::{fmt, ops::Deref, sync::Arc, result::Result as StdResult};
+use serde::{de::Deserializer, ser::Serializer};
+use serde::{Deserialize, Serialize};
+use std::{fmt, ops::Deref, result::Result as StdResult, sync::Arc};
 
 const CUTOFF: usize = std::mem::size_of::<&[u8]>() - 1;
 type Inner = [u8; CUTOFF];
@@ -19,13 +19,18 @@ pub enum IVec {
 }
 
 impl Serialize for IVec {
-    fn serialize<S: Serializer>(&self, serializer: S) -> StdResult<S::Ok, S::Error> {
+    fn serialize<S: Serializer>(
+        &self,
+        serializer: S,
+    ) -> StdResult<S::Ok, S::Error> {
         serde_bytes::serialize(self, serializer)
     }
 }
 
 impl<'de> Deserialize<'de> for IVec {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> StdResult<Self, D::Error> {
+    fn deserialize<D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> StdResult<Self, D::Error> {
         serde_bytes::deserialize(deserializer)
     }
 }

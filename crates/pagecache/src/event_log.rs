@@ -134,10 +134,9 @@ impl EventLog {
 
                             panic!(
                                 "segments failed to recover properly. \n \
-                                before restart: \n{:?} \n \
-                                after restart: \n{:?}",
-                                only_before,
-                                only_after
+                                 before restart: \n{:?} \n \
+                                 after restart: \n{:?}",
+                                only_before, only_after
                             );
                         }
                     }

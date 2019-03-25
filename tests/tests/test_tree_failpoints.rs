@@ -62,10 +62,9 @@ impl Arbitrary for Op {
 
     fn shrink(&self) -> Box<Iterator<Item = Op>> {
         match *self {
-            Op::Del(ref lid) if *lid > 0 => Box::new(
-                vec![Op::Del(*lid / 2), Op::Del(*lid - 1)]
-                    .into_iter(),
-            ),
+            Op::Del(ref lid) if *lid > 0 => {
+                Box::new(vec![Op::Del(*lid / 2), Op::Del(*lid - 1)].into_iter())
+            }
             _ => Box::new(vec![].into_iter()),
         }
     }
@@ -84,8 +83,7 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
         static ref M: Mutex<()> = Mutex::new(());
     }
 
-    let _lock =
-        M.lock().expect("our test lock should not be poisoned");
+    let _lock = M.lock().expect("our test lock should not be poisoned");
 
     // clear all failpoints that may be left over from the last run
     fail::teardown();
@@ -106,10 +104,7 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
         }
         Ok(res) => {
             if !res {
-                println!(
-                    "failed with ops {:?} flusher: {}",
-                    ops, flusher
-                );
+                println!("failed with ops {:?} flusher: {}", ops, flusher);
             }
             res
         }
@@ -133,8 +128,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
         .idgen_persist_interval(1)
         .build();
 
-    let mut tree =
-        sled::Db::start(config.clone()).expect("tree should start");
+    let mut tree = sled::Db::start(config.clone()).expect("tree should start");
     let mut reference = BTreeMap::new();
     let mut fail_points = HashSet::new();
     let mut max_id: isize = -1;
@@ -301,9 +295,7 @@ fn quickcheck_tree_with_failpoints() {
         .gen(StdGen::new(rand::thread_rng(), generator_sz))
         .tests(n_tests)
         .max_tests(10000)
-        .quickcheck(
-            prop_tree_crashes_nicely as fn(Vec<Op>, bool) -> bool,
-        );
+        .quickcheck(prop_tree_crashes_nicely as fn(Vec<Op>, bool) -> bool);
 }
 
 #[test]

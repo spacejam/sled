@@ -24,11 +24,7 @@ impl Node {
             .saturating_add(data_sz)
     }
 
-    pub(crate) fn apply(
-        &mut self,
-        frag: &Frag,
-        merge_operator: Option<usize>,
-    ) {
+    pub(crate) fn apply(&mut self, frag: &Frag, merge_operator: Option<usize>) {
         use self::Frag::*;
 
         match *frag {
@@ -49,16 +45,12 @@ impl Node {
                     || prefix_cmp_encoded(k, &self.hi, &self.lo)
                         == std::cmp::Ordering::Less
                 {
-                    let merge_fn_ptr = merge_operator
-                        .expect("must have a merge operator set");
+                    let merge_fn_ptr =
+                        merge_operator.expect("must have a merge operator set");
                     unsafe {
                         let merge_fn: MergeOperator =
                             std::mem::transmute(merge_fn_ptr);
-                        self.merge_leaf(
-                            k.clone(),
-                            v.clone(),
-                            merge_fn,
-                        );
+                        self.merge_leaf(k.clone(), v.clone(), merge_fn);
                     }
                 } else {
                     panic!("tried to consolidate set at key <= hi")
@@ -81,18 +73,13 @@ impl Node {
                     panic!("tried to consolidate del at key <= hi")
                 }
             }
-            Base(_) => {
-                panic!("encountered base page in middle of chain")
-            }
+            Base(_) => panic!("encountered base page in middle of chain"),
         }
     }
 
     pub(crate) fn set_leaf(&mut self, key: IVec, val: IVec) {
         if let Data::Leaf(ref mut records) = self.data {
-            let search =
-                records.binary_search_by(|(k, _)| {
-                    prefix_cmp(k, &key)
-                });
+            let search = records.binary_search_by(|(k, _)| prefix_cmp(k, &key));
             match search {
                 Ok(idx) => records[idx] = (key, val),
                 Err(idx) => records.insert(idx, (key, val)),
@@ -109,26 +96,20 @@ impl Node {
         merge_fn: MergeOperator,
     ) {
         if let Data::Leaf(ref mut records) = self.data {
-            let search =
-                records.binary_search_by(|(k, _)| {
-                    prefix_cmp(k, &key)
-                });
+            let search = records.binary_search_by(|(k, _)| prefix_cmp(k, &key));
 
             let decoded_k = prefix_decode(&self.lo, &key);
 
             match search {
                 Ok(idx) => {
-                    let new = merge_fn(
-                        &*decoded_k,
-                        Some(&records[idx].1),
-                        &val,
-                    );
+                    let new =
+                        merge_fn(&*decoded_k, Some(&records[idx].1), &val);
                     if let Some(new) = new {
                         records[idx] = (key, new.into());
                     } else {
                         records.remove(idx);
                     }
-                },
+                }
                 Err(idx) => {
                     let new = merge_fn(&*decoded_k, None, &val);
                     if let Some(new) = new {
@@ -161,10 +142,8 @@ impl Node {
 
     pub(crate) fn del_leaf(&mut self, key: &IVec) {
         if let Data::Leaf(ref mut records) = self.data {
-            let search =
-                records.binary_search_by(|&(ref k, ref _v)| {
-                    prefix_cmp(k, &*key)
-                });
+            let search = records
+                .binary_search_by(|&(ref k, ref _v)| prefix_cmp(k, &*key));
             if let Ok(idx) = search {
                 records.remove(idx);
             }
