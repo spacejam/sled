@@ -30,7 +30,7 @@ pub const MSG_HEADER_LEN: usize = 17;
 pub const SEG_HEADER_LEN: usize = 12;
 
 /// Log segments have a trailer of this length.
-pub const SEG_TRAILER_LEN: usize = 12;
+pub const SEG_TRAILER_LEN: usize = 20;
 
 /// Log messages that are stored as external blobs
 /// contain a value (in addition to their header)

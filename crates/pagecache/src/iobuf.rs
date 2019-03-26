@@ -76,6 +76,7 @@ pub(super) struct IoBufs {
     // to stable storage due to interesting thread interleavings.
     pub(crate) stable_lsn: AtomicLsn,
     pub(crate) max_reserved_lsn: AtomicLsn,
+    pub(crate) max_recorded_stable_lsn: AtomicLsn,
     pub(crate) segment_accountant: Mutex<SegmentAccountant>,
 
     // used for signifying that we're simulating a crash
@@ -193,6 +194,7 @@ impl IoBufs {
 
             stable_lsn: AtomicLsn::new(stable as InnerLsn),
             max_reserved_lsn: AtomicLsn::new(stable as InnerLsn),
+            max_recorded_stable_lsn: AtomicLsn::new(0),
             segment_accountant: Mutex::new(segment_accountant),
 
             #[cfg(feature = "failpoints")]
@@ -343,6 +345,27 @@ impl IoBufs {
         }
     }
 
+    // ensure self.max_recorded_stable_lsn is set to this Lsn
+    // or greater
+    pub(crate) fn bump_max_recorded_stable_lsn(&self, lsn: Lsn) {
+        let mut current = self.max_recorded_stable_lsn.load(SeqCst) as InnerLsn;
+        loop {
+            if current >= lsn as InnerLsn {
+                return;
+            }
+            let last = self.max_recorded_stable_lsn.compare_and_swap(
+                current,
+                lsn as InnerLsn,
+                SeqCst,
+            );
+            if last == current {
+                // we succeeded.
+                return;
+            }
+            current = last;
+        }
+    }
+
     // Write an IO buffer's data to stable storage and set up the
     // next IO buffer for writing.
     pub(crate) fn write_to_log(&self, idx: usize) -> Result<()> {
@@ -442,9 +465,11 @@ impl IoBufs {
 
             let trailer_lid = segment_lid + trailer_overhang as LogId;
             let trailer_lsn = segment_lsn + trailer_overhang;
+            let stable_lsn = self.stable();
 
             let trailer = SegmentTrailer {
                 lsn: trailer_lsn,
+                highest_known_stable_lsn: stable_lsn,
                 ok: true,
             };
 
@@ -456,6 +481,8 @@ impl IoBufs {
             io_fail!(self, "trailer write post");
 
             M.written_bytes.measure(SEG_TRAILER_LEN as f64);
+
+            self.bump_max_recorded_stable_lsn(stable_lsn);
 
             iobuf.set_maxed(false);
 

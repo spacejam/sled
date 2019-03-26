@@ -543,6 +543,7 @@ pub(crate) struct SegmentHeader {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) struct SegmentTrailer {
     pub(crate) lsn: Lsn,
+    pub(crate) highest_known_stable_lsn: Lsn,
     pub(crate) ok: bool,
 }
 
@@ -753,10 +754,16 @@ impl From<[u8; SEG_TRAILER_LEN]> for SegmentTrailer {
             let xor_lsn = arr_to_u64(buf.get_unchecked(4..12)) as Lsn;
             let lsn = xor_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
 
-            let crc32_tested = crc32(&buf[4..12]);
+            let xor_highest_known_stable_lsn =
+                arr_to_u64(buf.get_unchecked(12..20)) as Lsn;
+            let highest_known_stable_lsn =
+                xor_highest_known_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
+
+            let crc32_tested = crc32(&buf[4..20]);
 
             SegmentTrailer {
                 lsn,
+                highest_known_stable_lsn,
                 ok: crc32_tested == crc32_header,
             }
         }
@@ -769,20 +776,16 @@ impl Into<[u8; SEG_TRAILER_LEN]> for SegmentTrailer {
 
         let xor_lsn = self.lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
         let lsn_arr = u64_to_arr(xor_lsn as u64);
-        let crc32 = u32_to_arr(crc32(&lsn_arr) ^ 0xFFFF_FFFF);
+        buf[4..12].copy_from_slice(&lsn_arr);
 
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                crc32.as_ptr(),
-                buf.as_mut_ptr(),
-                std::mem::size_of::<u32>(),
-            );
-            std::ptr::copy_nonoverlapping(
-                lsn_arr.as_ptr(),
-                buf.as_mut_ptr().offset(4),
-                std::mem::size_of::<u64>(),
-            );
-        }
+        let xor_highest_known_stable_lsn =
+            self.highest_known_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
+        let highest_known_stable_lsn_arr =
+            u64_to_arr(xor_highest_known_stable_lsn as u64);
+        buf[12..20].copy_from_slice(&highest_known_stable_lsn_arr);
+
+        let crc32 = u32_to_arr(crc32(&buf[4..]) ^ 0xFFFF_FFFF);
+        buf[..4].copy_from_slice(&crc32);
 
         buf
     }
