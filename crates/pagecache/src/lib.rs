@@ -11,7 +11,8 @@
 
 #[cfg(all(not(feature = "nightly"), target_pointer_width = "32"))]
 compile_error!(
-    "32 bit architectures require a nightly compiler for now. \
+    "32 bit architectures require a nightly compiler for now, \
+     with the \"nightly\" build feature enabled. \
      See https://github.com/spacejam/sled/issues/145"
 );
 
