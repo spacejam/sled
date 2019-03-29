@@ -7,6 +7,11 @@ use std::{
 
 use super::*;
 
+type CompareAndSwapResult<'g, T> = std::result::Result<
+    Shared<'g, Node<T>>,
+    (Shared<'g, Node<T>>, Owned<Node<T>>),
+>;
+
 /// A node in the lock-free `Stack`.
 #[derive(Debug)]
 pub struct Node<T: Send + 'static> {
@@ -139,10 +144,7 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
         old: Shared<'_, Node<T>>,
         new: T,
         guard: &'g Guard,
-    ) -> std::result::Result<
-        Shared<'g, Node<T>>,
-        (Shared<'g, Node<T>>, Owned<Node<T>>),
-    > {
+    ) -> CompareAndSwapResult<'g, T> {
         debug_delay();
         let node = Owned::new(Node {
             inner: new,
@@ -158,10 +160,7 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
         old: Shared<'_, Node<T>>,
         mut node: Owned<Node<T>>,
         guard: &'g Guard,
-    ) -> std::result::Result<
-        Shared<'g, Node<T>>,
-        (Shared<'g, Node<T>>, Owned<Node<T>>),
-    > {
+    ) -> CompareAndSwapResult<'g, T> {
         // properly set next ptr
         node.next = Atomic::from(old);
         let res = self.head.compare_and_set(old, node, SeqCst, guard);
@@ -185,10 +184,7 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
         old: Shared<'g, Node<T>>,
         new: Owned<Node<T>>,
         guard: &'g Guard,
-    ) -> std::result::Result<
-        Shared<'g, Node<T>>,
-        (Shared<'g, Node<T>>, Owned<Node<T>>),
-    > {
+    ) -> CompareAndSwapResult<'g, T> {
         debug_delay();
         let res = self.head.compare_and_set(old, new, SeqCst, guard);
 
