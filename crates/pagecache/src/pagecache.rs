@@ -588,7 +588,6 @@ where
     }
 
     /// Free a particular page.
-    #[allow(clippy::needless_pass_by_value)]
     pub fn free<'g>(
         &self,
         pid: PageId,
@@ -626,7 +625,6 @@ where
     /// Returns `Ok(new_key)` if the operation was successful. Returns
     /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
     /// if the atomic append fails.
-    #[allow(clippy::needless_pass_by_value)]
     pub fn link<'g>(
         &'g self,
         pid: PageId,
@@ -799,7 +797,6 @@ where
     /// Returns `Ok(new_key)` if the operation was successful. Returns
     /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
     /// if the atomic swap fails.
-    #[allow(clippy::needless_pass_by_value)]
     pub fn replace<'g>(
         &self,
         pid: PageId,
@@ -924,7 +921,6 @@ where
         }
     }
 
-    #[allow(clippy::needless_pass_by_value)]
     fn cas_page<'g>(
         &self,
         pid: PageId,
@@ -1292,7 +1288,7 @@ where
                         "replacing the META page has failed because \
                          the pagecache does not think it currently exists."
                             .into(),
-                    ))
+                    ));
                 }
             }
         }
@@ -1662,7 +1658,7 @@ where
         Ok(())
     }
 
-    fn pull<'g>(&self, lsn: Lsn, ptr: DiskPtr) -> Result<Update<P>> {
+    fn pull(&self, lsn: Lsn, ptr: DiskPtr) -> Result<Update<P>> {
         trace!("pulling lsn {} ptr {} from disk", lsn, ptr);
         let _measure = Measure::new(&M.pull);
         let bytes = match self.log.read(lsn, ptr).map_err(|_| ()) {
