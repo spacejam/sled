@@ -192,7 +192,7 @@ impl<'a> Iterator for Iter<'a> {
 
 impl<'a> DoubleEndedIterator for Iter<'a> {
     fn next_back(&mut self) -> Option<Self::Item> {
-        let _measure = Measure::new(&M.tree_scan);
+        let _measure = Measure::new(&M.tree_reverse_scan);
 
         if self.done {
             return None;
