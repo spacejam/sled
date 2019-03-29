@@ -861,7 +861,7 @@ impl Tree {
                     )?;
 
                     if !success {
-                        continue;
+                        return Ok(());
                     }
                 }
             }
@@ -1204,7 +1204,7 @@ impl Tree {
                         return Err(Error::ReportableBug(format!(
                             "got non-base node while GC'ing tree: {:?}",
                             broken
-                        )))
+                        )));
                     }
                 };
 
