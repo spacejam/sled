@@ -859,7 +859,7 @@ where
             trace!("rewriting blob with pid {}", pid);
             let blob_ptr = cache_entries[0].ptr().blob().1;
 
-            let log_reservation = self.log.reserve_blob(blob_ptr)?;
+            let log_reservation = self.log.rewrite_blob_ptr(blob_ptr)?;
 
             let new_ptr = log_reservation.ptr();
             let mut new_cache_entry = cache_entries[0].clone();
