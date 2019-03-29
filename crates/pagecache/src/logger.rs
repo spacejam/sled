@@ -437,7 +437,6 @@ impl Log {
         let mut header = iobuf.get_header();
 
         // Decrement writer count, retrying until successful.
-        let backoff = Backoff::new();
         loop {
             let new_hv = iobuf::decr_writers(header);
             match iobuf.cas_header(header, new_hv) {
@@ -448,7 +447,6 @@ impl Log {
                 Err(new) => {
                     // we failed to decr, retry
                     header = new;
-                    backoff.spin();
                 }
             }
         }
