@@ -91,6 +91,12 @@ pub struct Metrics {
     pub tree_merge: Histo,
     pub tree_start: Histo,
     pub tree_traverse: Histo,
+    pub tree_child_split_attempt: CachePadded<AtomicUsize>,
+    pub tree_child_split_success: CachePadded<AtomicUsize>,
+    pub tree_parent_split_attempt: CachePadded<AtomicUsize>,
+    pub tree_parent_split_success: CachePadded<AtomicUsize>,
+    pub tree_root_split_attempt: CachePadded<AtomicUsize>,
+    pub tree_root_split_success: CachePadded<AtomicUsize>,
     pub page_in: Histo,
     pub rewrite_page: Histo,
     pub merge_page: Histo,
@@ -136,6 +142,30 @@ impl Metrics {
 
     pub fn log_reservation_success(&self) {
         self.log_reservations.fetch_add(1, Relaxed);
+    }
+
+    pub fn tree_child_split_attempt(&self) {
+        self.tree_child_split_attempt.fetch_add(1, Relaxed);
+    }
+
+    pub fn tree_child_split_success(&self) {
+        self.tree_child_split_success.fetch_add(1, Relaxed);
+    }
+
+    pub fn tree_parent_split_attempt(&self) {
+        self.tree_parent_split_attempt.fetch_add(1, Relaxed);
+    }
+
+    pub fn tree_parent_split_success(&self) {
+        self.tree_parent_split_success.fetch_add(1, Relaxed);
+    }
+
+    pub fn tree_root_split_attempt(&self) {
+        self.tree_root_split_attempt.fetch_add(1, Relaxed);
+    }
+
+    pub fn tree_root_split_success(&self) {
+        self.tree_root_split_success.fetch_add(1, Relaxed);
     }
 
     pub fn print_profile(&self) {
@@ -194,6 +224,15 @@ impl Metrics {
             f("scan", &self.tree_scan),
         ]);
         println!("tree contention loops: {}", self.tree_loops.load(Acquire));
+        println!(
+            "tree split success rates: child({}/{}) parent({}/{}) root({}/{})",
+            self.tree_child_split_success.load(Acquire),
+            self.tree_child_split_attempt.load(Acquire),
+            self.tree_parent_split_success.load(Acquire),
+            self.tree_parent_split_attempt.load(Acquire),
+            self.tree_root_split_success.load(Acquire),
+            self.tree_root_split_attempt.load(Acquire),
+        );
 
         println!("{}", std::iter::repeat("-").take(134).collect::<String>());
         println!("pagecache:");
