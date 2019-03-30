@@ -88,6 +88,7 @@ pub struct Metrics {
     pub tree_del: Histo,
     pub tree_cas: Histo,
     pub tree_scan: Histo,
+    pub tree_reverse_scan: Histo,
     pub tree_merge: Histo,
     pub tree_start: Histo,
     pub tree_traverse: Histo,
@@ -222,6 +223,7 @@ impl Metrics {
             f("del", &self.tree_del),
             f("cas", &self.tree_cas),
             f("scan", &self.tree_scan),
+            f("rev scan", &self.tree_reverse_scan),
         ]);
         println!("tree contention loops: {}", self.tree_loops.load(Acquire));
         println!(
