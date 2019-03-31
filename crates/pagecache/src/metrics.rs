@@ -100,6 +100,8 @@ pub struct Metrics {
     pub tree_root_split_success: CachePadded<AtomicUsize>,
     pub page_in: Histo,
     pub rewrite_page: Histo,
+    pub replace_page: Histo,
+    pub link_page: Histo,
     pub merge_page: Histo,
     pub page_out: Histo,
     pub pull: Histo,
@@ -250,8 +252,10 @@ impl Metrics {
         p(vec![
             f("snapshot", &self.advance_snapshot),
             f("page_in", &self.page_in),
-            f("merge", &self.merge_page),
             f("rewrite", &self.rewrite_page),
+            f("replace", &self.replace_page),
+            f("link", &self.link_page),
+            f("merge", &self.merge_page),
             f("pull", &self.pull),
             f("page_out", &self.page_out),
         ]);

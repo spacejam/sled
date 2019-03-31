@@ -61,11 +61,7 @@
 //!    previous segment Lsn pointers don't match up, we know
 //!    we have encountered a lost segment, and we will not
 //!    continue the recovery past the detected gap.
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fs::File,
-    mem,
-};
+use std::{collections::BTreeMap, fs::File, mem};
 
 use self::reader::LogReader;
 
@@ -90,7 +86,7 @@ pub(super) struct SegmentAccountant {
     // and free!
     free: BTreeMap<LogId, bool>,
     tip: LogId,
-    to_clean: FastSet8<LogId>,
+    to_clean: VecSet<LogId>,
     pause_rewriting: bool,
     safety_buffer: Vec<LogId>,
     ordering: BTreeMap<Lsn, LogId>,
@@ -127,7 +123,12 @@ impl Drop for SegmentAccountant {
 /// overwritten for new data.
 #[derive(Default, Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct Segment {
-    present: BTreeSet<PageId>,
+    present: FastSet8<PageId>,
+    // a copy of present that lets us make decisions
+    // about draining without waiting for
+    // deferred_replacements to take effect during
+    // segment deactivation.
+    not_yet_replaced: FastSet8<PageId>,
     removed: FastSet8<PageId>,
     deferred_rm_blob: FastSet8<BlobPointer>,
     // set of pages that we replaced from other segments
@@ -151,8 +152,6 @@ struct Segment {
 pub(crate) enum SegmentState {
     /// the segment is marked for reuse, should never receive
     /// new pids,
-    /// TODO consider: but may receive removals for pids that were
-    /// already removed?
     Free,
 
     /// the segment is being written to or actively recovered, and
@@ -215,6 +214,7 @@ impl Segment {
         );
         assert_eq!(self.state, Free);
         self.present.clear();
+        self.not_yet_replaced.clear();
         self.removed.clear();
         self.deferred_rm_blob.clear();
         self.deferred_replacements.clear();
@@ -271,6 +271,7 @@ impl Segment {
         assert!(self.is_draining());
         assert!(lsn >= self.lsn());
         self.present.clear();
+        self.not_yet_replaced.clear();
         self.removed.clear();
         self.state = Free;
     }
@@ -307,6 +308,7 @@ impl Segment {
             lsn
         );
         assert!(!self.removed.contains(&pid));
+        self.not_yet_replaced.insert(pid);
         self.present.insert(pid);
     }
 
@@ -346,9 +348,7 @@ impl Segment {
         lsn: Lsn,
     ) {
         assert!(lsn >= self.lsn.unwrap());
-        for item in deferred.into_iter() {
-            self.deferred_replacements.insert(item);
-        }
+        self.deferred_replacements.extend(deferred);
     }
 
     fn remove_blob(
@@ -411,7 +411,7 @@ impl SegmentAccountant {
             clean_counter: 0,
             free: BTreeMap::default(),
             tip: 0,
-            to_clean: FastSet8::default(),
+            to_clean: Default::default(),
             pause_rewriting: false,
             safety_buffer: vec![],
             ordering: BTreeMap::new(),
@@ -597,6 +597,7 @@ impl SegmentAccountant {
                 }
 
                 self.to_clean.remove(&segment_start);
+
                 trace!(
                     "freeing segment {} from initialize_from_snapshot, tip: {}",
                     segment_start,
@@ -801,13 +802,6 @@ impl SegmentAccountant {
         for old_ptr in old_ptrs {
             let old_lid = old_ptr.lid();
 
-            if old_lid == LogId::max_value() {
-                // this is used as a special value for initial
-                // Allocations before they are logged and
-                // fully installed with cas_page
-                continue;
-            }
-
             if schedule_rm_blob && old_ptr.is_blob() {
                 trace!(
                     "queueing blob removal for {} in our own segment",
@@ -845,6 +839,8 @@ impl SegmentAccountant {
                 );
             }
 
+            self.segments[old_idx].not_yet_replaced.remove(&pid);
+
             deferred_replacements.insert((pid, old_idx));
         }
 
@@ -863,6 +859,7 @@ impl SegmentAccountant {
             self.segments[idx].len(),
             &self.config,
         ) && self.segments[idx].is_inactive();
+
         let segment_start = (idx * self.config.io_buf_size) as LogId;
 
         if can_drain {
@@ -898,13 +895,16 @@ impl SegmentAccountant {
             self.clean_counter % self.to_clean.len()
         };
 
-        let item = self.to_clean.iter().nth(seg_offset).cloned();
+        let item = self.to_clean.get(seg_offset).map(|i| *i);
+
         if let Some(lid) = item {
             let idx = self.lid_to_idx(lid);
             let segment = &self.segments[idx];
             assert!(segment.state == Draining || segment.state == Inactive);
 
-            if segment.present.is_empty() {
+            let present = &segment.not_yet_replaced;
+
+            if present.is_empty() {
                 // This could legitimately be empty if it's completely
                 // filled with failed flushes.
                 return None;
@@ -912,13 +912,13 @@ impl SegmentAccountant {
 
             self.clean_counter += 1;
 
-            let offset = if segment.present.len() == 1 {
+            let offset = if present.len() == 1 {
                 0
             } else {
-                self.clean_counter % segment.present.len()
+                self.clean_counter % present.len()
             };
 
-            let pid = segment.present.iter().nth(offset).unwrap();
+            let pid = present.iter().nth(offset).unwrap();
             if *pid == ignore_pid {
                 return None;
             }
@@ -975,8 +975,13 @@ impl SegmentAccountant {
         let replacements =
             self.segments[idx].active_to_inactive(lsn, false, &self.config)?;
 
+        let mut old_segments = FastSet8::default();
+
         for &(pid, old_idx) in &replacements {
+            old_segments.insert(old_idx);
+
             let old_segment = &mut self.segments[old_idx];
+
             assert_ne!(
                 old_segment.state,
                 Active,
@@ -991,6 +996,7 @@ impl SegmentAccountant {
                     .filter(|(p, _)| p == &pid)
                     .collect::<Vec<_>>()
             );
+
             assert_ne!(
                 old_segment.state,
                 Free,
@@ -1005,6 +1011,7 @@ impl SegmentAccountant {
                     .filter(|(p, _)| p == &pid)
                     .collect::<Vec<_>>()
             );
+
             debug_assert!(
                 old_segment.present.contains(&pid),
                 "we expect deferred replacements to provide \
@@ -1027,7 +1034,9 @@ impl SegmentAccountant {
             old_segment.remove_pid(pid, lsn, false);
         }
 
-        self.possibly_clean_or_free_segment(idx, lsn);
+        for old_idx in old_segments.into_iter() {
+            self.possibly_clean_or_free_segment(old_idx, lsn);
+        }
 
         // if we have a lot of free segments in our whole file,
         // let's start relocating the current tip to boil it down
@@ -1041,8 +1050,10 @@ impl SegmentAccountant {
         {
             let last_index =
                 self.segments.iter().rposition(|s| s.is_inactive()).unwrap();
-            let segment_start = last_index * self.config.io_buf_size;
-            self.to_clean.insert(segment_start as LogId);
+
+            let segment_start = (last_index * self.config.io_buf_size) as LogId;
+
+            self.to_clean.insert(segment_start);
         }
 
         Ok(())
@@ -1284,7 +1295,6 @@ impl SegmentAccountant {
     }
 
     fn lid_to_idx(&mut self, lid: LogId) -> usize {
-        assert_ne!(lid, LogId::max_value());
         let idx = lid as usize / self.config.io_buf_size;
 
         // TODO never resize like this, make it a single

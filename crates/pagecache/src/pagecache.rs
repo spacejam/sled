@@ -632,6 +632,8 @@ where
         new: P,
         tx: &'g Tx,
     ) -> Result<CasResult<'g, P, P>> {
+        let _measure = Measure::new(&M.link_page);
+
         trace!("linking pid {} with {:?}", pid, new);
 
         let pte_ptr = match self.inner.get(pid, tx) {
@@ -728,10 +730,7 @@ where
                         previous_lsn_segment == new_lsn_segment
                     };
                     let to_clean = if skip_mark {
-                        self.log.with_sa(|sa| {
-                            sa.mark_link(pid, lsn, ptr);
-                            sa.clean(pid)
-                        })
+                        self.log.with_sa(|sa| sa.clean(pid))
                     } else {
                         self.log.with_sa(|sa| {
                             sa.mark_link(pid, lsn, ptr);
@@ -804,6 +803,8 @@ where
         new: P,
         tx: &'g Tx,
     ) -> Result<CasResult<'g, P, P>> {
+        let _measure = Measure::new(&M.replace_page);
+
         trace!("replacing pid {} with {:?}", pid, new);
 
         let result =
@@ -836,7 +837,7 @@ where
     // (at least partially) located in. This happens when a
     // segment has had enough resident page fragments moved
     // away to trigger the `segment_cleanup_threshold`.
-    fn rewrite_page<'g>(&self, pid: PageId, tx: &'g Tx) -> Result<bool> {
+    fn rewrite_page<'g>(&self, pid: PageId, tx: &'g Tx) -> Result<()> {
         let _measure = Measure::new(&M.rewrite_page);
 
         trace!("rewriting pid {}", pid);
@@ -844,7 +845,7 @@ where
         let pte_ptr = match self.inner.get(pid, tx) {
             None => {
                 trace!("rewriting pid {} failed (no longer exists)", pid);
-                return Ok(false);
+                return Ok(());
             }
             Some(p) => p,
         };
@@ -885,17 +886,18 @@ where
 
                 trace!("rewriting pid {} succeeded", pid);
 
-                Ok(true)
+                Ok(())
             } else {
                 log_reservation.abort()?;
 
                 trace!("rewriting pid {} failed", pid);
 
-                Ok(false)
+                Ok(())
             }
         } else {
             trace!("rewriting page with pid {}", pid);
 
+            // page-in whole page with a get
             // page-in whole page with a get,
             let (key, update) = match self.get(pid, tx)? {
                 PageGet::Materialized(data, key) => {
@@ -910,13 +912,13 @@ where
                     // TODO when merge functionality is added,
                     // this may break
                     warn!("page stack deleted from pagetable before page could be rewritten");
-                    return Ok(false);
+                    return Ok(());
                 }
             };
 
             self.cas_page(pid, key, update, true, tx).map(|res| {
                 trace!("rewriting pid {} success: {}", pid, res.is_ok());
-                res.is_ok()
+                ()
             })
         }
     }
