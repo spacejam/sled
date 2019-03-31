@@ -133,38 +133,47 @@ pub struct Metrics {
 
 #[cfg(not(feature = "no_metrics"))]
 impl Metrics {
+    #[inline]
     pub fn tree_looped(&self) {
         self.tree_loops.fetch_add(1, Relaxed);
     }
 
+    #[inline]
     pub fn log_reservation_attempted(&self) {
         self.log_reservation_attempts.fetch_add(1, Relaxed);
     }
 
+    #[inline]
     pub fn log_reservation_success(&self) {
         self.log_reservations.fetch_add(1, Relaxed);
     }
 
+    #[inline]
     pub fn tree_child_split_attempt(&self) {
         self.tree_child_split_attempt.fetch_add(1, Relaxed);
     }
 
+    #[inline]
     pub fn tree_child_split_success(&self) {
         self.tree_child_split_success.fetch_add(1, Relaxed);
     }
 
+    #[inline]
     pub fn tree_parent_split_attempt(&self) {
         self.tree_parent_split_attempt.fetch_add(1, Relaxed);
     }
 
+    #[inline]
     pub fn tree_parent_split_success(&self) {
         self.tree_parent_split_success.fetch_add(1, Relaxed);
     }
 
+    #[inline]
     pub fn tree_root_split_attempt(&self) {
         self.tree_root_split_attempt.fetch_add(1, Relaxed);
     }
 
+    #[inline]
     pub fn tree_root_split_success(&self) {
         self.tree_root_split_success.fetch_add(1, Relaxed);
     }
@@ -309,6 +318,18 @@ impl Metrics {
     pub fn log_reservation_attempted(&self) {}
 
     pub fn log_reservation_success(&self) {}
+
+    pub fn tree_child_split_attempt(&self) {}
+
+    pub fn tree_child_split_success(&self) {}
+
+    pub fn tree_parent_split_attempt(&self) {}
+
+    pub fn tree_parent_split_success(&self) {}
+
+    pub fn tree_root_split_attempt(&self) {}
+
+    pub fn tree_root_split_success(&self) {}
 
     pub fn tree_looped(&self) {}
 
