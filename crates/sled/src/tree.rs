@@ -843,26 +843,20 @@ impl Tree {
             self.context.blink_node_split_size as u64 * multiplier
         };
 
-        for (height, window) in path.windows(2).rev().enumerate() {
-            let (parent_id, _parent_frag, parent_ptr) = &window[0];
-            let (node_id, node_frag, node_ptr) = &window[1];
+        for (height, node_parts) in path.iter().skip(1).rev().enumerate() {
+            let (node_id, node_frag, node_ptr) = &node_parts;
             let node: &Node = node_frag.unwrap_base();
             if node.should_split(adjusted_max(height)) {
                 // try to child split
-                if let Some(parent_split) =
-                    self.child_split(*node_id, node, node_ptr.clone(), tx)?
-                {
-                    // now try to parent split
-                    let success = self.parent_split(
-                        *parent_id,
-                        parent_ptr.clone(),
-                        parent_split.clone(),
-                        tx,
-                    )?;
+                M.tree_child_split_attempt();
 
-                    if !success {
-                        return Ok(());
-                    }
+                if self
+                    .child_split(*node_id, node, node_ptr.clone(), tx)?
+                    .is_some()
+                {
+                    M.tree_child_split_success();
+                } else {
+                    return Ok(());
                 }
             }
         }
@@ -871,17 +865,21 @@ impl Tree {
         let root_node: &Node = root_frag.unwrap_base();
 
         if root_node.should_split(adjusted_max(path.len())) {
+            M.tree_root_split_attempt();
             if let Some(parent_split) =
                 self.child_split(*root_id, &root_node, root_ptr.clone(), tx)?
             {
-                return self
+                if self
                     .root_hoist(
                         *root_id,
                         parent_split.to,
                         parent_split.at.clone(),
                         tx,
                     )
-                    .map(|_| ());
+                    .is_ok()
+                {
+                    M.tree_root_split_success();
+                }
             }
         }
 
@@ -938,25 +936,6 @@ impl Tree {
         Ok(Some(parent_split))
     }
 
-    fn parent_split<'g>(
-        &self,
-        parent_node_id: usize,
-        parent_cas_key: TreePtr<'g>,
-        parent_split: ParentSplit,
-        tx: &'g Tx,
-    ) -> Result<bool> {
-        // install parent split
-        self.context
-            .pagecache
-            .link(
-                parent_node_id,
-                parent_cas_key,
-                Frag::ParentSplit(parent_split.clone()),
-                tx,
-            )
-            .map(|r| r.is_ok())
-    }
-
     fn root_hoist<'g>(
         &self,
         from: PageId,
@@ -990,7 +969,7 @@ impl Tree {
             Some(from),
             Some(new_root_pid),
             tx,
-        );
+        )?;
         if cas.is_ok() {
             debug!("root hoist from {} to {} successful", from, new_root_pid);
 
@@ -1132,6 +1111,7 @@ impl Tree {
                     to: cursor,
                 });
 
+                M.tree_parent_split_attempt();
                 let link = self.context.pagecache.link(
                     *parent_id,
                     parent_ptr.clone(),
@@ -1143,6 +1123,7 @@ impl Tree {
                     // new_key in the path, along with updating the
                     // parent's node in the path vec. if we don't do
                     // both, we lose the newly appended parent split.
+                    M.tree_parent_split_success();
                 }
             }
 
