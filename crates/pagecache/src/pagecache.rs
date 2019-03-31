@@ -632,6 +632,8 @@ where
         new: P,
         tx: &'g Tx,
     ) -> Result<CasResult<'g, P, P>> {
+        let _measure = Measure::new(&M.link_page);
+
         trace!("linking pid {} with {:?}", pid, new);
 
         let pte_ptr = match self.inner.get(pid, tx) {
@@ -804,6 +806,8 @@ where
         new: P,
         tx: &'g Tx,
     ) -> Result<CasResult<'g, P, P>> {
+        let _measure = Measure::new(&M.replace_page);
+
         trace!("replacing pid {} with {:?}", pid, new);
 
         let result =
