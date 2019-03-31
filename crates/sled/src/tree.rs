@@ -972,7 +972,7 @@ impl Tree {
             Some(from),
             Some(new_root_pid),
             tx,
-        );
+        )?;
         if cas.is_ok() {
             debug!("root hoist from {} to {} successful", from, new_root_pid);
 
