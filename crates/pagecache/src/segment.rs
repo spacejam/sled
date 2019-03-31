@@ -966,8 +966,13 @@ impl SegmentAccountant {
         let replacements =
             self.segments[idx].active_to_inactive(lsn, false, &self.config)?;
 
+        let mut old_segments = FastSet8::default();
+
         for &(pid, old_idx) in &replacements {
+            old_segments.insert(old_idx);
+
             let old_segment = &mut self.segments[old_idx];
+
             assert_ne!(
                 old_segment.state,
                 Active,
@@ -1020,7 +1025,9 @@ impl SegmentAccountant {
             old_segment.remove_pid(pid, lsn, false);
         }
 
-        self.possibly_clean_or_free_segment(idx, lsn);
+        for old_idx in old_segments.into_iter() {
+            self.possibly_clean_or_free_segment(old_idx, lsn);
+        }
 
         // if we have a lot of free segments in our whole file,
         // let's start relocating the current tip to boil it down
