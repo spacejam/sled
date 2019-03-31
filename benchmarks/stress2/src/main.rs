@@ -111,8 +111,7 @@ fn concatenate_merge(
     merged_bytes: &[u8],      // the new bytes being merged in
 ) -> Option<Vec<u8>> {
     // set the new value, return None to delete
-    let mut ret =
-        old_value.map(|ov| ov.to_vec()).unwrap_or_else(|| vec![]);
+    let mut ret = old_value.map(|ov| ov.to_vec()).unwrap_or_else(|| vec![]);
 
     ret.extend_from_slice(merged_bytes);
 
@@ -196,9 +195,7 @@ fn main() {
 
     let args = unsafe {
         ARGS = Docopt::new(USAGE)
-            .and_then(|d| {
-                d.argv(std::env::args().into_iter()).deserialize()
-            })
+            .and_then(|d| d.argv(std::env::args().into_iter()).deserialize())
             .unwrap_or_else(|e| e.exit());
         ARGS.clone()
     };
@@ -290,12 +287,7 @@ pub fn setup_logger() {
                 "{:05} {:25} {:10} {}",
                 record.level(),
                 tn(),
-                record
-                    .module_path()
-                    .unwrap()
-                    .split("::")
-                    .last()
-                    .unwrap(),
+                record.module_path().unwrap().split("::").last().unwrap(),
                 record.args()
             )
         })

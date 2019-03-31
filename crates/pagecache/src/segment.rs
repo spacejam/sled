@@ -346,9 +346,7 @@ impl Segment {
         lsn: Lsn,
     ) {
         assert!(lsn >= self.lsn.unwrap());
-        for item in deferred.into_iter() {
-            self.deferred_replacements.insert(item);
-        }
+        self.deferred_replacements.extend(deferred);
     }
 
     fn remove_blob(
@@ -411,7 +409,7 @@ impl SegmentAccountant {
             clean_counter: 0,
             free: BTreeMap::default(),
             tip: 0,
-            to_clean: FastSet8::default(),
+            to_clean: Default::default(),
             pause_rewriting: false,
             safety_buffer: vec![],
             ordering: BTreeMap::new(),
@@ -801,13 +799,6 @@ impl SegmentAccountant {
         for old_ptr in old_ptrs {
             let old_lid = old_ptr.lid();
 
-            if old_lid == LogId::max_value() {
-                // this is used as a special value for initial
-                // Allocations before they are logged and
-                // fully installed with cas_page
-                continue;
-            }
-
             if schedule_rm_blob && old_ptr.is_blob() {
                 trace!(
                     "queueing blob removal for {} in our own segment",
@@ -991,6 +982,7 @@ impl SegmentAccountant {
                     .filter(|(p, _)| p == &pid)
                     .collect::<Vec<_>>()
             );
+
             assert_ne!(
                 old_segment.state,
                 Free,
@@ -1005,6 +997,7 @@ impl SegmentAccountant {
                     .filter(|(p, _)| p == &pid)
                     .collect::<Vec<_>>()
             );
+
             debug_assert!(
                 old_segment.present.contains(&pid),
                 "we expect deferred replacements to provide \
@@ -1284,7 +1277,6 @@ impl SegmentAccountant {
     }
 
     fn lid_to_idx(&mut self, lid: LogId) -> usize {
-        assert_ne!(lid, LogId::max_value());
         let idx = lid as usize / self.config.io_buf_size;
 
         // TODO never resize like this, make it a single
