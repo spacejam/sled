@@ -904,11 +904,8 @@ impl Tree {
         };
 
         // install the new right side
-        let (new_pid, new_ptr) = self
-            .context
-            .pagecache
-            .allocate(Frag::Base(rhs), tx)
-            .unwrap();
+        let (new_pid, new_ptr) =
+            self.context.pagecache.allocate(Frag::Base(rhs), tx)?;
 
         trace!("allocated pid {} in child_split", new_pid);
 
