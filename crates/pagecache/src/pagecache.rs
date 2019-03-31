@@ -730,10 +730,7 @@ where
                         previous_lsn_segment == new_lsn_segment
                     };
                     let to_clean = if skip_mark {
-                        self.log.with_sa(|sa| {
-                            sa.mark_link(pid, lsn, ptr);
-                            sa.clean(pid)
-                        })
+                        self.log.with_sa(|sa| sa.clean(pid))
                     } else {
                         self.log.with_sa(|sa| {
                             sa.mark_link(pid, lsn, ptr);
