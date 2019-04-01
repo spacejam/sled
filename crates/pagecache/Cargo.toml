@@ -7,14 +7,15 @@ license = "MIT/Apache-2.0"
 homepage = "https://github.com/spacejam/sled/tree/master/crates/pagecache"
 repository = "https://github.com/spacejam/sled"
 keywords = ["database", "embedded", "concurrent", "persistent", "lock-free"]
+categories = ["database-implementations", "concurrency", "data-structures", "algorithms", "caching"]
 documentation = "https://docs.rs/pagecache/"
 readme = "README.md"
 edition = "2018"
 
 [features]
 default = []
-compression = ["zstd"]
 lock_free_delays = ["rand", "rand_hc"]
+compression = ["zstd"]
 failpoints = ["fail", "rand"]
 no_metrics = ["historian/disable"]
 no_logs = ["log/max_level_off"]
@@ -23,11 +24,17 @@ no_inline = []
 event_log = []
 measure_allocs = []
 
+[dependencies.serde]
+version = "1.0"
+features = ["derive"]
+
+[target.'cfg(any(target_os = "linux", target_os = "macos", target_os="windows"))'.dependencies]
+fs2 = "0.4.3"
+
 [dependencies]
 crossbeam-utils = "0.6.5"
 crossbeam-epoch = "0.7.1"
 bincode = "1.1.2"
-fs2 = "0.4.3"
 fxhash = "0.2.1"
 futures = "0.1.25"
 hashbrown = { version = "0.1.8", features = ["serde"] }
@@ -41,10 +48,6 @@ rand_hc = { version = "0.1.0", optional = true }
 crc32fast = "1.2.0"
 log = "0.4.6"
 historian = "4.0"
-
-[dependencies.serde]
-version = "1.0.89"
-features = ["derive"]
 
 [dev-dependencies]
 rand = "0.6.5"

@@ -202,9 +202,8 @@ where
 {
     fn drop(&mut self) {
         unsafe {
-            let head =
-                self.head.load(Relaxed, &unprotected()).as_raw() as usize;
-            drop(Box::from_raw(head as *mut Node1<T>));
+            let head = self.head.load(Relaxed, &unprotected()).into_owned();
+            drop(head);
         }
     }
 }
