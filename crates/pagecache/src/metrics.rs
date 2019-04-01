@@ -88,11 +88,20 @@ pub struct Metrics {
     pub tree_del: Histo,
     pub tree_cas: Histo,
     pub tree_scan: Histo,
+    pub tree_reverse_scan: Histo,
     pub tree_merge: Histo,
     pub tree_start: Histo,
     pub tree_traverse: Histo,
+    pub tree_child_split_attempt: CachePadded<AtomicUsize>,
+    pub tree_child_split_success: CachePadded<AtomicUsize>,
+    pub tree_parent_split_attempt: CachePadded<AtomicUsize>,
+    pub tree_parent_split_success: CachePadded<AtomicUsize>,
+    pub tree_root_split_attempt: CachePadded<AtomicUsize>,
+    pub tree_root_split_success: CachePadded<AtomicUsize>,
     pub page_in: Histo,
     pub rewrite_page: Histo,
+    pub replace_page: Histo,
+    pub link_page: Histo,
     pub merge_page: Histo,
     pub page_out: Histo,
     pub pull: Histo,
@@ -126,16 +135,49 @@ pub struct Metrics {
 
 #[cfg(not(feature = "no_metrics"))]
 impl Metrics {
+    #[inline]
     pub fn tree_looped(&self) {
         self.tree_loops.fetch_add(1, Relaxed);
     }
 
+    #[inline]
     pub fn log_reservation_attempted(&self) {
         self.log_reservation_attempts.fetch_add(1, Relaxed);
     }
 
+    #[inline]
     pub fn log_reservation_success(&self) {
         self.log_reservations.fetch_add(1, Relaxed);
+    }
+
+    #[inline]
+    pub fn tree_child_split_attempt(&self) {
+        self.tree_child_split_attempt.fetch_add(1, Relaxed);
+    }
+
+    #[inline]
+    pub fn tree_child_split_success(&self) {
+        self.tree_child_split_success.fetch_add(1, Relaxed);
+    }
+
+    #[inline]
+    pub fn tree_parent_split_attempt(&self) {
+        self.tree_parent_split_attempt.fetch_add(1, Relaxed);
+    }
+
+    #[inline]
+    pub fn tree_parent_split_success(&self) {
+        self.tree_parent_split_success.fetch_add(1, Relaxed);
+    }
+
+    #[inline]
+    pub fn tree_root_split_attempt(&self) {
+        self.tree_root_split_attempt.fetch_add(1, Relaxed);
+    }
+
+    #[inline]
+    pub fn tree_root_split_success(&self) {
+        self.tree_root_split_success.fetch_add(1, Relaxed);
     }
 
     pub fn print_profile(&self) {
@@ -192,16 +234,28 @@ impl Metrics {
             f("del", &self.tree_del),
             f("cas", &self.tree_cas),
             f("scan", &self.tree_scan),
+            f("rev scan", &self.tree_reverse_scan),
         ]);
         println!("tree contention loops: {}", self.tree_loops.load(Acquire));
+        println!(
+            "tree split success rates: child({}/{}) parent({}/{}) root({}/{})",
+            self.tree_child_split_success.load(Acquire),
+            self.tree_child_split_attempt.load(Acquire),
+            self.tree_parent_split_success.load(Acquire),
+            self.tree_parent_split_attempt.load(Acquire),
+            self.tree_root_split_success.load(Acquire),
+            self.tree_root_split_attempt.load(Acquire),
+        );
 
         println!("{}", std::iter::repeat("-").take(134).collect::<String>());
         println!("pagecache:");
         p(vec![
             f("snapshot", &self.advance_snapshot),
             f("page_in", &self.page_in),
-            f("merge", &self.merge_page),
             f("rewrite", &self.rewrite_page),
+            f("replace", &self.replace_page),
+            f("link", &self.link_page),
+            f("merge", &self.merge_page),
             f("pull", &self.pull),
             f("page_out", &self.page_out),
         ]);
@@ -268,6 +322,18 @@ impl Metrics {
     pub fn log_reservation_attempted(&self) {}
 
     pub fn log_reservation_success(&self) {}
+
+    pub fn tree_child_split_attempt(&self) {}
+
+    pub fn tree_child_split_success(&self) {}
+
+    pub fn tree_parent_split_attempt(&self) {}
+
+    pub fn tree_parent_split_success(&self) {}
+
+    pub fn tree_root_split_attempt(&self) {}
+
+    pub fn tree_root_split_success(&self) {}
 
     pub fn tree_looped(&self) {}
 

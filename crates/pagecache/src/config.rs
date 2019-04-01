@@ -11,7 +11,10 @@ use std::{
 };
 
 use bincode::{deserialize, serialize};
+
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use fs2::FileExt;
+
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
@@ -110,7 +113,7 @@ impl Default for ConfigBuilder {
             flush_every_ms: Some(500),
             snapshot_after_ops: 1_000_000,
             snapshot_path: None,
-            segment_cleanup_threshold: 0.4,
+            segment_cleanup_threshold: 0.40,
             segment_cleanup_skew: 10,
             temporary: false,
             segment_mode: SegmentMode::Gc,
@@ -256,7 +259,7 @@ impl ConfigBuilder {
         (compression_factor, i32, "the compression factor to use with zstd compression"),
         (flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
         (snapshot_after_ops, usize, "number of operations between page table snapshots"),
-        (segment_cleanup_threshold, f64, "the proportion of remaining valid pages in the segment"),
+        (segment_cleanup_threshold, f64, "the proportion of remaining valid pages in the segment before GC defragments it"),
         (segment_cleanup_skew, usize, "the cleanup threshold skew in percentage points between the first and last segments"),
         (segment_mode, SegmentMode, "the file segment selection mode"),
         (snapshot_path, Option<PathBuf>, "snapshot file location"),
@@ -367,11 +370,14 @@ impl ConfigBuilder {
         match options.open(&path) {
             Ok(file) => {
                 // try to exclusively lock the file
-                if file.try_lock_exclusive().is_err() {
-                    return Err(Error::Io(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "could not acquire exclusive file lock",
-                    )));
+                #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+                {
+                    if file.try_lock_exclusive().is_err() {
+                        return Err(Error::Io(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            "could not acquire exclusive file lock",
+                        )));
+                    }
                 }
 
                 Ok(file)

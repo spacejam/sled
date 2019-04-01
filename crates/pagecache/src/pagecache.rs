@@ -588,7 +588,6 @@ where
     }
 
     /// Free a particular page.
-    #[allow(clippy::needless_pass_by_value)]
     pub fn free<'g>(
         &self,
         pid: PageId,
@@ -626,7 +625,6 @@ where
     /// Returns `Ok(new_key)` if the operation was successful. Returns
     /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
     /// if the atomic append fails.
-    #[allow(clippy::needless_pass_by_value)]
     pub fn link<'g>(
         &'g self,
         pid: PageId,
@@ -634,6 +632,8 @@ where
         new: P,
         tx: &'g Tx,
     ) -> Result<CasResult<'g, P, P>> {
+        let _measure = Measure::new(&M.link_page);
+
         trace!("linking pid {} with {:?}", pid, new);
 
         let pte_ptr = match self.inner.get(pid, tx) {
@@ -730,10 +730,7 @@ where
                         previous_lsn_segment == new_lsn_segment
                     };
                     let to_clean = if skip_mark {
-                        self.log.with_sa(|sa| {
-                            sa.mark_link(pid, lsn, ptr);
-                            sa.clean(pid)
-                        })
+                        self.log.with_sa(|sa| sa.clean(pid))
                     } else {
                         self.log.with_sa(|sa| {
                             sa.mark_link(pid, lsn, ptr);
@@ -799,7 +796,6 @@ where
     /// Returns `Ok(new_key)` if the operation was successful. Returns
     /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
     /// if the atomic swap fails.
-    #[allow(clippy::needless_pass_by_value)]
     pub fn replace<'g>(
         &self,
         pid: PageId,
@@ -807,6 +803,8 @@ where
         new: P,
         tx: &'g Tx,
     ) -> Result<CasResult<'g, P, P>> {
+        let _measure = Measure::new(&M.replace_page);
+
         trace!("replacing pid {} with {:?}", pid, new);
 
         let result =
@@ -839,7 +837,7 @@ where
     // (at least partially) located in. This happens when a
     // segment has had enough resident page fragments moved
     // away to trigger the `segment_cleanup_threshold`.
-    fn rewrite_page<'g>(&self, pid: PageId, tx: &'g Tx) -> Result<bool> {
+    fn rewrite_page<'g>(&self, pid: PageId, tx: &'g Tx) -> Result<()> {
         let _measure = Measure::new(&M.rewrite_page);
 
         trace!("rewriting pid {}", pid);
@@ -847,7 +845,7 @@ where
         let pte_ptr = match self.inner.get(pid, tx) {
             None => {
                 trace!("rewriting pid {} failed (no longer exists)", pid);
-                return Ok(false);
+                return Ok(());
             }
             Some(p) => p,
         };
@@ -862,7 +860,7 @@ where
             trace!("rewriting blob with pid {}", pid);
             let blob_ptr = cache_entries[0].ptr().blob().1;
 
-            let log_reservation = self.log.reserve_blob(blob_ptr)?;
+            let log_reservation = self.log.rewrite_blob_ptr(blob_ptr)?;
 
             let new_ptr = log_reservation.ptr();
             let mut new_cache_entry = cache_entries[0].clone();
@@ -888,17 +886,18 @@ where
 
                 trace!("rewriting pid {} succeeded", pid);
 
-                Ok(true)
+                Ok(())
             } else {
                 log_reservation.abort()?;
 
                 trace!("rewriting pid {} failed", pid);
 
-                Ok(false)
+                Ok(())
             }
         } else {
             trace!("rewriting page with pid {}", pid);
 
+            // page-in whole page with a get
             // page-in whole page with a get,
             let (key, update) = match self.get(pid, tx)? {
                 PageGet::Materialized(data, key) => {
@@ -913,18 +912,17 @@ where
                     // TODO when merge functionality is added,
                     // this may break
                     warn!("page stack deleted from pagetable before page could be rewritten");
-                    return Ok(false);
+                    return Ok(());
                 }
             };
 
             self.cas_page(pid, key, update, true, tx).map(|res| {
                 trace!("rewriting pid {} success: {}", pid, res.is_ok());
-                res.is_ok()
+                ()
             })
         }
     }
 
-    #[allow(clippy::needless_pass_by_value)]
     fn cas_page<'g>(
         &self,
         pid: PageId,
@@ -1292,7 +1290,7 @@ where
                         "replacing the META page has failed because \
                          the pagecache does not think it currently exists."
                             .into(),
-                    ))
+                    ));
                 }
             }
         }
@@ -1662,7 +1660,7 @@ where
         Ok(())
     }
 
-    fn pull<'g>(&self, lsn: Lsn, ptr: DiskPtr) -> Result<Update<P>> {
+    fn pull(&self, lsn: Lsn, ptr: DiskPtr) -> Result<Update<P>> {
         trace!("pulling lsn {} ptr {} from disk", lsn, ptr);
         let _measure = Measure::new(&M.pull);
         let bytes = match self.log.read(lsn, ptr).map_err(|_| ()) {

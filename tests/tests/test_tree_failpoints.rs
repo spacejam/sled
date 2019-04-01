@@ -1093,3 +1093,12 @@ fn failpoints_bug_22() {
         false,
     ))
 }
+
+#[test]
+fn failpoints_bug_23() {
+    // postmortem 1: failed to handle allocation failures
+    assert!(prop_tree_crashes_nicely(
+        vec![Set, FailPoint("blob blob write"), Set, Set, Set],
+        false,
+    ))
+}

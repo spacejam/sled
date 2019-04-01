@@ -52,7 +52,7 @@ pub(crate) fn prefix_reencode(
     output.extend_from_slice(buf);
 
     assert!(
-        new_prefix <= &output,
+        *new_prefix <= *output,
         "new prefix {:?} must be lexicographically <= to the encoded buf {:?}",
         new_prefix,
         buf

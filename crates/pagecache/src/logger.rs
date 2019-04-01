@@ -155,19 +155,10 @@ impl Log {
         self.iobufs.with_sa(f)
     }
 
-    /// Tries to claim a reservation for writing a buffer to a
-    /// particular location in stable storge, which may either be
-    /// completed or aborted later. Useful for maintaining
-    /// linearizability across CAS operations that may need to
-    /// persist part of their operation.
-    pub fn reserve<'a>(&'a self, raw_buf: &[u8]) -> Result<Reservation<'a>> {
-        self.reserve_inner(raw_buf, false)
-    }
-
     /// Reserve a replacement buffer for a previously written
     /// blob write. This ensures the message header has the
     /// proper blob flag set.
-    pub(super) fn reserve_blob<'a>(
+    pub(super) fn rewrite_blob_ptr<'a>(
         &'a self,
         blob_ptr: BlobPointer,
     ) -> Result<Reservation<'a>> {
@@ -175,6 +166,15 @@ impl Log {
             u64_to_arr(blob_ptr as u64);
 
         self.reserve_inner(&lsn_buf, true)
+    }
+
+    /// Tries to claim a reservation for writing a buffer to a
+    /// particular location in stable storge, which may either be
+    /// completed or aborted later. Useful for maintaining
+    /// linearizability across CAS operations that may need to
+    /// persist part of their operation.
+    pub fn reserve<'a>(&'a self, raw_buf: &[u8]) -> Result<Reservation<'a>> {
+        self.reserve_inner(raw_buf, false)
     }
 
     fn reserve_inner<'a>(
@@ -233,7 +233,8 @@ impl Log {
                 if !printed {
                     trace!($($msg),*);
                     printed = true;
-                }};
+                }
+            };
         }
 
         let backoff = Backoff::new();
@@ -437,7 +438,6 @@ impl Log {
         let mut header = iobuf.get_header();
 
         // Decrement writer count, retrying until successful.
-        let backoff = Backoff::new();
         loop {
             let new_hv = iobuf::decr_writers(header);
             match iobuf.cas_header(header, new_hv) {
@@ -448,7 +448,6 @@ impl Log {
                 Err(new) => {
                     // we failed to decr, retry
                     header = new;
-                    backoff.spin();
                 }
             }
         }
