@@ -449,7 +449,7 @@ impl SegmentAccountant {
 
         let add = |pid, lsn, lid: LogId, segments: &mut Vec<Segment>| {
             // add pid to segment
-            let idx = lid as usize / io_buf_size;
+            let idx = assert_usize(lid / io_buf_size as LogId);
             if segments.len() < idx + 1 {
                 segments.resize(idx + 1, Segment::default());
             }
@@ -643,7 +643,8 @@ impl SegmentAccountant {
                 .ordering
                 .iter()
                 .map(|(&lsn, &lid)| {
-                    let id = lid as usize / self.config.io_buf_size;
+                    let id =
+                        assert_usize(lid / self.config.io_buf_size as LogId);
                     let segment = &self.segments[id];
                     let live = segment.live_pct();
                     let state = segment.state.clone();
@@ -783,7 +784,8 @@ impl SegmentAccountant {
             lsn
         );
 
-        let new_idx = new_ptr.lid() as usize / self.config.io_buf_size;
+        let new_idx =
+            assert_usize(new_ptr.lid() / self.config.io_buf_size as LogId);
 
         // make sure we're not actively trying to replace the destination
         let new_segment_start =
@@ -1295,7 +1297,7 @@ impl SegmentAccountant {
     }
 
     fn lid_to_idx(&mut self, lid: LogId) -> usize {
-        let idx = lid as usize / self.config.io_buf_size;
+        let idx = assert_usize(lid / self.config.io_buf_size as LogId);
 
         // TODO never resize like this, make it a single
         // responsibility when the tip is bumped / truncated.

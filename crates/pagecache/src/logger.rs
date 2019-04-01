@@ -256,7 +256,7 @@ impl Log {
             let written_bufs = self.iobufs.written_bufs.load(SeqCst);
             debug_delay();
             let current_buf = self.iobufs.current_buf.load(SeqCst);
-            let idx = current_buf % n_io_bufs;
+            let idx = assert_usize(current_buf % n_io_bufs as u64);
 
             if written_bufs > current_buf {
                 // This can happen because a reservation can finish up
@@ -267,7 +267,7 @@ impl Log {
                 continue;
             }
 
-            if current_buf - written_bufs >= n_io_bufs {
+            if assert_usize(current_buf - written_bufs) >= n_io_bufs {
                 // if written is too far behind, we need to
                 // spin while it catches up to avoid overlap
                 trace_once!("old io buffer not written yet, spinning");
@@ -317,7 +317,7 @@ impl Log {
 
             // try to claim space
             let buf_offset = iobuf::offset(header);
-            let prospective_size = buf_offset as usize + inline_buf_len;
+            let prospective_size = buf_offset + inline_buf_len;
             let would_overflow = prospective_size > iobuf.get_capacity();
             if would_overflow {
                 // This buffer is too full to accept our write!
@@ -335,8 +335,7 @@ impl Log {
             }
 
             // attempt to claim by incrementing an unsealed header
-            let bumped_offset =
-                iobuf::bump_offset(header, inline_buf_len as iobuf::Header);
+            let bumped_offset = iobuf::bump_offset(header, inline_buf_len);
 
             // check for maxed out IO buffer writers
             if iobuf::n_writers(bumped_offset) == iobuf::MAX_WRITERS {
@@ -372,8 +371,8 @@ impl Log {
             // used to choose this IO buffer
             // were incremented in a racy way.
             assert_ne!(
-                lid as usize,
-                std::usize::MAX,
+                lid,
+                LogId::max_value(),
                 "fucked up on idx {}\n{:?}",
                 idx,
                 self
@@ -381,11 +380,11 @@ impl Log {
 
             let out_buf = unsafe { (*iobuf.buf.get()).as_mut_slice() };
 
-            let res_start = buf_offset as usize;
+            let res_start = buf_offset;
             let res_end = res_start + inline_buf_len;
 
             let destination = &mut (out_buf)[res_start..res_end];
-            let reservation_offset = lid + buf_offset;
+            let reservation_offset = lid + buf_offset as LogId;
 
             let reservation_lsn = iobuf.get_lsn() + buf_offset as Lsn;
 
@@ -648,13 +647,13 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
 
         unsafe {
             let lsn = arr_to_u64(buf.get_unchecked(1..9)) as Lsn;
-            let len = arr_to_u32(buf.get_unchecked(9..13));
+            let len = assert_usize(arr_to_u32(buf.get_unchecked(9..13)));
             let crc32 = arr_to_u32(buf.get_unchecked(13..)) ^ 0xFFFF_FFFF;
 
             MessageHeader {
                 kind,
                 lsn,
-                len: len as usize,
+                len,
                 crc32,
             }
         }
@@ -672,7 +671,7 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
             MessageKind::Corrupted => EVIL_BYTE,
         };
 
-        assert!(self.len <= std::u32::MAX as usize);
+        assert!(self.len <= assert_usize(std::u32::MAX));
         let lsn_arr = u64_to_arr(self.lsn as u64);
         let len_arr = u32_to_arr(self.len as u32);
         let crc32_arr = u32_to_arr(self.crc32 ^ 0xFFFF_FFFF);
@@ -680,17 +679,17 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
         unsafe {
             std::ptr::copy_nonoverlapping(
                 lsn_arr.as_ptr(),
-                buf.as_mut_ptr().offset(1),
+                buf.as_mut_ptr().add(1),
                 std::mem::size_of::<u64>(),
             );
             std::ptr::copy_nonoverlapping(
                 len_arr.as_ptr(),
-                buf.as_mut_ptr().offset(9),
+                buf.as_mut_ptr().add(9),
                 std::mem::size_of::<u32>(),
             );
             std::ptr::copy_nonoverlapping(
                 crc32_arr.as_ptr(),
-                buf.as_mut_ptr().offset(13),
+                buf.as_mut_ptr().add(13),
                 std::mem::size_of::<u32>(),
             );
         }
@@ -734,7 +733,7 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
             );
             std::ptr::copy_nonoverlapping(
                 lsn_arr.as_ptr(),
-                buf.as_mut_ptr().offset(4),
+                buf.as_mut_ptr().add(4),
                 std::mem::size_of::<u64>(),
             );
         }
@@ -778,7 +777,7 @@ impl Into<[u8; SEG_TRAILER_LEN]> for SegmentTrailer {
             );
             std::ptr::copy_nonoverlapping(
                 lsn_arr.as_ptr(),
-                buf.as_mut_ptr().offset(4),
+                buf.as_mut_ptr().add(4),
                 std::mem::size_of::<u64>(),
             );
         }
