@@ -1,13 +1,7 @@
-#[cfg(windows)]
-use std::sync::Mutex;
-
 use super::*;
 
 #[cfg(unix)]
 use std::os::unix::fs::FileExt;
-
-#[cfg(windows)]
-use std::os::windows::fs::FileExt;
 
 /// Multithreaded IO support for Files
 pub(crate) trait Pio {
@@ -71,27 +65,30 @@ impl Pio for std::fs::File {
     }
 }
 
-// HACK HACK HACK get this working with real parallel IO
-#[cfg(windows)]
+#[cfg(not(unix))]
+use std::{
+    io::{Read, Seek, Write},
+    sync::Mutex,
+};
+
+#[cfg(not(unix))]
 lazy_static! {
     pub(crate) static ref GLOBAL_FILE_LOCK: Mutex<()> = Mutex::new(());
 }
 
-#[cfg(windows)]
+#[cfg(not(unix))]
 impl Pio for std::fs::File {
-    fn pread_exact(
-        &self,
-        mut buf: &mut [u8],
-        mut offset: LogId,
-    ) -> io::Result<()> {
-        // HACK HACK HACK get this working with real parallel IO
+    fn pread_exact(&self, mut buf: &mut [u8], offset: LogId) -> io::Result<()> {
         let _lock = GLOBAL_FILE_LOCK.lock().unwrap();
 
+        let mut f = self.try_clone()?;
+
+        f.seek(std::io::SeekFrom::Start(offset))?;
+
         while !buf.is_empty() {
-            match self.seek_read(buf, offset) {
+            match f.read(buf) {
                 Ok(0) => break,
                 Ok(n) => {
-                    offset += n as LogId;
                     let tmp = buf;
                     buf = &mut tmp[n..];
                 }
@@ -109,22 +106,22 @@ impl Pio for std::fs::File {
         }
     }
 
-    fn pwrite_all(&self, mut buf: &[u8], mut offset: LogId) -> io::Result<()> {
-        // HACK HACK HACK get this working with real parallel IO
+    fn pwrite_all(&self, mut buf: &[u8], offset: LogId) -> io::Result<()> {
         let _lock = GLOBAL_FILE_LOCK.lock().unwrap();
 
+        let mut f = self.try_clone()?;
+
+        f.seek(std::io::SeekFrom::Start(offset))?;
+
         while !buf.is_empty() {
-            match self.seek_write(buf, offset) {
+            match f.write(buf) {
                 Ok(0) => {
                     return Err(io::Error::new(
                         io::ErrorKind::WriteZero,
                         "failed to write whole buffer",
                     ));
                 }
-                Ok(n) => {
-                    offset += n as LogId;
-                    buf = &buf[n..]
-                }
+                Ok(n) => buf = &buf[n..],
                 Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
                 Err(e) => return Err(e),
             }

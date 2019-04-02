@@ -112,7 +112,8 @@ pub struct Metrics {
     pub make_stable: Histo,
     pub assign_offset: Histo,
     pub assign_spinloop: Histo,
-    pub reserve: Histo,
+    pub reserve_lat: Histo,
+    pub reserve_sz: Histo,
     pub reserve_current_condvar_wait: Histo,
     pub reserve_written_condvar_wait: Histo,
     pub write_to_log: Histo,
@@ -209,7 +210,7 @@ impl Metrics {
             }
         };
 
-        let f = |name: &str, histo: &Histo| {
+        let lat = |name: &str, histo: &Histo| {
             (
                 name.to_string(),
                 histo.percentile(0.) / 1e3,
@@ -224,17 +225,32 @@ impl Metrics {
             )
         };
 
+        let sz = |name: &str, histo: &Histo| {
+            (
+                name.to_string(),
+                histo.percentile(0.),
+                histo.percentile(50.),
+                histo.percentile(90.),
+                histo.percentile(99.),
+                histo.percentile(99.9),
+                histo.percentile(99.99),
+                histo.percentile(100.),
+                histo.count(),
+                histo.sum() as f64,
+            )
+        };
+
         println!("tree:");
         p(vec![
-            f("start", &self.tree_start),
-            f("traverse", &self.tree_traverse),
-            f("get", &self.tree_get),
-            f("set", &self.tree_set),
-            f("merge", &self.tree_merge),
-            f("del", &self.tree_del),
-            f("cas", &self.tree_cas),
-            f("scan", &self.tree_scan),
-            f("rev scan", &self.tree_reverse_scan),
+            lat("start", &self.tree_start),
+            lat("traverse", &self.tree_traverse),
+            lat("get", &self.tree_get),
+            lat("set", &self.tree_set),
+            lat("merge", &self.tree_merge),
+            lat("del", &self.tree_del),
+            lat("cas", &self.tree_cas),
+            lat("scan", &self.tree_scan),
+            lat("rev scan", &self.tree_reverse_scan),
         ]);
         println!("tree contention loops: {}", self.tree_loops.load(Acquire));
         println!(
@@ -250,37 +266,38 @@ impl Metrics {
         println!("{}", std::iter::repeat("-").take(134).collect::<String>());
         println!("pagecache:");
         p(vec![
-            f("snapshot", &self.advance_snapshot),
-            f("page_in", &self.page_in),
-            f("rewrite", &self.rewrite_page),
-            f("replace", &self.replace_page),
-            f("link", &self.link_page),
-            f("merge", &self.merge_page),
-            f("pull", &self.pull),
-            f("page_out", &self.page_out),
+            lat("snapshot", &self.advance_snapshot),
+            lat("page_in", &self.page_in),
+            lat("rewrite", &self.rewrite_page),
+            lat("replace", &self.replace_page),
+            lat("link", &self.link_page),
+            lat("merge", &self.merge_page),
+            lat("pull", &self.pull),
+            lat("page_out", &self.page_out),
         ]);
 
         println!("{}", std::iter::repeat("-").take(134).collect::<String>());
         println!("serialization and compression:");
         p(vec![
-            f("serialize", &self.serialize),
-            f("deserialize", &self.deserialize),
-            f("compress", &self.compress),
-            f("decompress", &self.decompress),
+            lat("serialize", &self.serialize),
+            lat("deserialize", &self.deserialize),
+            lat("compress", &self.compress),
+            lat("decompress", &self.decompress),
         ]);
 
         println!("{}", std::iter::repeat("-").take(134).collect::<String>());
         println!("log:");
         p(vec![
-            f("make_stable", &self.make_stable),
-            f("read", &self.read),
-            f("write", &self.write_to_log),
-            f("written bytes", &self.written_bytes),
-            f("assign offset", &self.assign_offset),
-            f("assign spinloop", &self.assign_spinloop),
-            f("reserve", &self.reserve),
-            f("res cvar r", &self.reserve_current_condvar_wait),
-            f("res cvar w", &self.reserve_written_condvar_wait),
+            lat("make_stable", &self.make_stable),
+            lat("read", &self.read),
+            lat("write", &self.write_to_log),
+            sz("written bytes", &self.written_bytes),
+            lat("assign offset", &self.assign_offset),
+            lat("assign spinloop", &self.assign_spinloop),
+            lat("reserve lat", &self.reserve_lat),
+            sz("reserve sz", &self.reserve_sz),
+            lat("res cvar r", &self.reserve_current_condvar_wait),
+            lat("res cvar w", &self.reserve_written_condvar_wait),
         ]);
         println!("log reservations: {}", self.log_reservations.load(Acquire));
         println!(
@@ -291,11 +308,11 @@ impl Metrics {
         println!("{}", std::iter::repeat("-").take(134).collect::<String>());
         println!("segment accountant:");
         p(vec![
-            f("acquire", &self.accountant_lock),
-            f("hold", &self.accountant_hold),
-            f("next", &self.accountant_next),
-            f("replace", &self.accountant_mark_replace),
-            f("link", &self.accountant_mark_link),
+            lat("acquire", &self.accountant_lock),
+            lat("hold", &self.accountant_hold),
+            lat("next", &self.accountant_next),
+            lat("replace", &self.accountant_mark_replace),
+            lat("link", &self.accountant_mark_link),
         ]);
 
         #[cfg(feature = "measure_allocs")]
