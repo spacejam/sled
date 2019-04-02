@@ -182,7 +182,7 @@ impl Log {
         raw_buf: &[u8],
         is_blob_rewrite: bool,
     ) -> Result<Reservation<'a>> {
-        let _measure = Measure::new(&M.reserve);
+        let _measure = Measure::new(&M.reserve_lat);
 
         let n_io_bufs = self.config.io_bufs;
 
@@ -208,6 +208,8 @@ impl Log {
         let buf = raw_buf;
 
         let total_buf_len = MSG_HEADER_LEN + buf.len();
+
+        M.reserve_sz.measure(total_buf_len as f64);
 
         let max_overhead = std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN);
 
