@@ -194,7 +194,11 @@ impl IoBufs {
 
             stable_lsn: AtomicLsn::new(stable as InnerLsn),
             max_reserved_lsn: AtomicLsn::new(stable as InnerLsn),
-            max_recorded_stable_lsn: AtomicLsn::new(0),
+            // TODO max_recorded_stable_lsn should be recovered
+            // from actual trailers during snapshot generation,
+            // and once we start having a dynamic unstable tail,
+            // this will cause bugs.
+            max_recorded_stable_lsn: AtomicLsn::new(stable as InnerLsn),
             segment_accountant: Mutex::new(segment_accountant),
 
             #[cfg(feature = "failpoints")]
@@ -348,7 +352,16 @@ impl IoBufs {
     // ensure self.max_recorded_stable_lsn is set to this Lsn
     // or greater
     pub(crate) fn bump_max_recorded_stable_lsn(&self, lsn: Lsn) {
-        let mut current = self.max_recorded_stable_lsn.load(SeqCst) as InnerLsn;
+        // NB we hold the intervals mutex for
+        // our calls to the segment accountant below so
+        // that we guarantee that we deactivate segments
+        // in order of LSN.
+        let _ = self.intervals.lock().unwrap();
+
+        let lsn = lsn as InnerLsn;
+        let mut current = self.max_recorded_stable_lsn.load(SeqCst);
+        let lsn_before = current;
+
         loop {
             if current >= lsn as InnerLsn {
                 return;
@@ -360,9 +373,32 @@ impl IoBufs {
             );
             if last == current {
                 // we succeeded.
-                return;
+                break;
             }
             current = last;
+        }
+
+        let lsn_after = lsn;
+
+        let logical_segment_before =
+            lsn_before / self.config.io_buf_size as InnerLsn;
+        let logical_segment_after =
+            lsn_after / self.config.io_buf_size as InnerLsn;
+        if logical_segment_before != logical_segment_after {
+            self.with_sa(move |sa| {
+                for logical_segment in logical_segment_before..logical_segment_after {
+                    let segment_lsn = logical_segment as Lsn * self.config.io_buf_size as Lsn;
+                    // transition this segment into deplete-only mode
+                    trace!(
+                        "deactivating segment with lsn {}",
+                        segment_lsn,
+                    );
+                    if let Err(e) = sa.deactivate_segment(segment_lsn) {
+                        error!("segment accountant failed to deactivate segment: {}", e);
+                        self.config.set_global_error(e);
+                    }
+                }
+            });
         }
     }
 
@@ -558,7 +594,6 @@ impl IoBufs {
             whence
         );
         let mut intervals = self.intervals.lock().unwrap();
-        let lsn_before = self.stable_lsn.load(SeqCst) as Lsn;
 
         let interval = (whence, whence + len as Lsn - 1);
 
@@ -576,7 +611,6 @@ impl IoBufs {
         let mut updated = false;
 
         let len_before = intervals.len();
-        let mut lsn_after = lsn_before;
 
         while let Some(&(low, high)) = intervals.last() {
             assert_ne!(low, high);
@@ -598,7 +632,6 @@ impl IoBufs {
                 debug!("new highest interval: {} - {}", low, high);
                 intervals.pop();
                 updated = true;
-                lsn_after = high;
             } else {
                 break;
             }
@@ -610,29 +643,6 @@ impl IoBufs {
 
         if updated {
             self.interval_updated.notify_all();
-        }
-
-        // NB we continue to hold the intervals mutex for
-        // our calls to the segment accountant below so
-        // that we guarantee that we deactivate segments
-        // in order of LSN.
-        let logical_segment_before =
-            lsn_before / self.config.io_buf_size as Lsn;
-        let logical_segment_after = lsn_after / self.config.io_buf_size as Lsn;
-        if logical_segment_before != logical_segment_after {
-            self.with_sa(move |sa| {
-                for logical_segment in logical_segment_before..logical_segment_after {
-                    let segment_lsn = logical_segment * self.config.io_buf_size as Lsn;
-                    // transition this segment into deplete-only mode
-                    trace!(
-                        "deactivating segment with lsn {}",
-                        segment_lsn,
-                    );
-                    if let Err(e) = sa.deactivate_segment(segment_lsn) {
-                        error!("segment accountant failed to deactivate segment: {}", e);
-                    }
-                }
-            });
         }
     }
 }
