@@ -155,6 +155,12 @@ impl Db {
         Ok(true)
     }
 
+    /// Returns the trees names saved in this Db.
+    pub fn tree_names(&self) -> Vec<Vec<u8>> {
+        let tenants = self.tenants.read().unwrap();
+        tenants.iter().map(|(name, _)| name.clone()).collect()
+    }
+
     /// Returns `true` if the database was
     /// recovered from a previous process.
     /// Note that database state is only
