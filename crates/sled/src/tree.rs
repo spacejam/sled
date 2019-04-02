@@ -109,6 +109,11 @@ impl Tree {
         Ok(())
     }
 
+    /// Returns the name of the tree.
+    pub fn name(&self) -> Vec<u8> {
+        self.tree_id.clone()
+    }
+
     /// Flushes all dirty IO buffers and calls fsync.
     /// If this succeeds, it is guaranteed that
     /// all previous writes will be recovered if
