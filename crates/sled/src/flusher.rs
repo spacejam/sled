@@ -63,6 +63,10 @@ fn run(
                                 "failed to clean file from async flush thread: {}",
                                 e
                             );
+
+                            #[cfg(feature = "failpoints")]
+                            context.pagecache.set_failpoint(e);
+
                             return;
                         }
                         Ok(false) => break,
