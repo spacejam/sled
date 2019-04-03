@@ -557,6 +557,34 @@ where
         self.allocate_inner(Update::Compact(new), tx)
     }
 
+    /// Attempt to opportunistically rewrite data from a Draining
+    /// segment of the file to help with space amplification.
+    /// Returns Ok(true) if we had the opportunity to attempt to
+    /// move a page. Returns Ok(false) if there were no pages
+    /// to GC. Returns an Err if we encountered an IO problem
+    /// while performing this GC.
+    pub fn attempt_gc(&self) -> Result<bool> {
+        let tx = Tx::new(0);
+        let to_clean = self.log.with_sa(|sa| sa.clean(COUNTER_PID));
+        if let Some(to_clean) = to_clean {
+            self.rewrite_page(to_clean, &tx).map(|_| true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    #[doc(hidden)]
+    #[cfg(feature = "failpoints")]
+    pub fn set_failpoint(&self, e: Error) {
+        if let Error::FailPoint = e {
+            self.log.iobufs._failpoint_crashing.store(true, SeqCst);
+
+            // wake up any waiting threads
+            // so they don't stall forever
+            self.log.iobufs.interval_updated.notify_all();
+        }
+    }
+
     fn allocate_inner<'g>(
         &self,
         new: Update<P>,

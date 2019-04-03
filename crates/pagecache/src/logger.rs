@@ -41,8 +41,6 @@ pub struct Log {
     /// iobufs is the underlying lock-free IO write buffer.
     pub(super) iobufs: Arc<IoBufs>,
     pub(crate) config: Config,
-    /// Periodically flushes `iobufs`.
-    _flusher: Option<flusher::Flusher>,
 }
 
 unsafe impl Send for Log {}
@@ -53,16 +51,7 @@ impl Log {
     pub fn start(config: Config, snapshot: Snapshot) -> Result<Log> {
         let iobufs = Arc::new(IoBufs::start(config.clone(), snapshot)?);
 
-        let iobufs_flusher = iobufs.clone();
-        let flusher = config.flush_every_ms.map(move |fem| {
-            flusher::Flusher::new("log flusher".to_owned(), iobufs_flusher, fem)
-        });
-
-        Ok(Log {
-            iobufs,
-            config,
-            _flusher: flusher,
-        })
+        Ok(Log { iobufs, config })
     }
 
     /// Starts a log for use without a materializer.

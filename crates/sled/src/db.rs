@@ -13,6 +13,8 @@ pub struct Db {
     context: Arc<Context>,
     default: Arc<Tree>,
     tenants: Arc<RwLock<FastMap8<Vec<u8>, Arc<Tree>>>>,
+    /// Periodically flushes dirty data.
+    _flusher: Option<flusher::Flusher>,
 }
 
 unsafe impl Send for Db {}
@@ -48,10 +50,20 @@ impl Db {
             &tx,
         )?);
 
+        let flusher_context = context.clone();
+        let flusher = context.flush_every_ms.map(move |fem| {
+            flusher::Flusher::new(
+                "log flusher".to_owned(),
+                flusher_context,
+                fem,
+            )
+        });
+
         let ret = Db {
             context: context.clone(),
             default,
             tenants: Arc::new(RwLock::new(FastMap8::default())),
+            _flusher: flusher,
         };
 
         let mut tenants = ret.tenants.write().unwrap();
