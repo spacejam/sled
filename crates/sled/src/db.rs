@@ -94,9 +94,10 @@ impl Db {
 
     /// Open or create a new disk-backed Tree with its own keyspace,
     /// accessible from the `Db` via the provided identifier.
-    pub fn open_tree(&self, name: Vec<u8>) -> Result<Arc<Tree>> {
+    pub fn open_tree<V: AsRef<[u8]>>(&self, name: V) -> Result<Arc<Tree>> {
+        let name = name.as_ref();
         let tenants = self.tenants.read().unwrap();
-        if let Some(tree) = tenants.get(&name) {
+        if let Some(tree) = tenants.get(name) {
             return Ok(tree.clone());
         }
         drop(tenants);
@@ -104,9 +105,12 @@ impl Db {
         let tx = self.context.pagecache.begin()?;
 
         let mut tenants = self.tenants.write().unwrap();
-        let tree =
-            Arc::new(meta::open_tree(self.context.clone(), name.clone(), &tx)?);
-        tenants.insert(name, tree.clone());
+        let tree = Arc::new(meta::open_tree(
+            self.context.clone(),
+            name.to_vec(),
+            &tx,
+        )?);
+        tenants.insert(name.to_vec(), tree.clone());
         drop(tenants);
         Ok(tree)
     }
