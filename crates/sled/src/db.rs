@@ -14,7 +14,7 @@ pub struct Db {
     default: Arc<Tree>,
     tenants: Arc<RwLock<FastMap8<Vec<u8>, Arc<Tree>>>>,
     /// Periodically flushes dirty data.
-    _flusher: Option<flusher::Flusher>,
+    _flusher: Option<Arc<flusher::Flusher>>,
 }
 
 unsafe impl Send for Db {}
@@ -52,11 +52,11 @@ impl Db {
 
         let flusher_context = context.clone();
         let flusher = context.flush_every_ms.map(move |fem| {
-            flusher::Flusher::new(
+            Arc::new(flusher::Flusher::new(
                 "log flusher".to_owned(),
                 flusher_context,
                 fem,
-            )
+            ))
         });
 
         let ret = Db {
