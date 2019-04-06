@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use super::*;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct Flusher {
     shutdown: Arc<Mutex<bool>>,
     sc: Arc<Condvar>,
