@@ -1098,3 +1098,28 @@ fn tree_bug_23() {
         false,
     );
 }
+
+#[test]
+fn tree_bug_24() {
+    use std::{thread, time};
+
+    // postmortem: when inserting key, it must have been flushed by the flusher
+    let config = ConfigBuilder::new()
+        .path("/tmp/aaa.db")
+        .flush_every_ms(Some(100))
+        .build();
+
+    let db = sled::Db::start(config.clone()).unwrap();
+
+    db.set("my-key", b"my-value".to_vec()).unwrap();
+
+    // wait for the flusher to flush
+    thread::sleep(time::Duration::from_millis(300));
+
+    // try to reopen the db without dropping it (do not trigger the drop flushing)
+    let db = sled::Db::start(config.clone()).unwrap();
+
+    let value = db.get("my-key").unwrap();
+
+    assert_eq!(value.map(|v| v.to_vec()), Some(b"my-value".to_vec()));
+}
