@@ -4,6 +4,7 @@ use std::{
 };
 
 use pagecache::FastMap8;
+use flusher::Flusher;
 
 use super::*;
 
@@ -14,7 +15,7 @@ pub struct Db {
     default: Arc<Tree>,
     tenants: Arc<RwLock<FastMap8<Vec<u8>, Arc<Tree>>>>,
     /// Periodically flushes dirty data.
-    _flusher: Option<flusher::Flusher>,
+    _flusher: Option<Flusher>,
 }
 
 unsafe impl Send for Db {}
@@ -50,14 +51,14 @@ impl Db {
             &tx,
         )?);
 
-        let flusher_context = context.clone();
-        let flusher = context.flush_every_ms.map(move |fem| {
-            flusher::Flusher::new(
+        let flusher = match context.flush_every_ms {
+            None => None,
+            Some(fem) => Some(Flusher::new(
                 "log flusher".to_owned(),
-                flusher_context,
+                context.clone(),
                 fem,
-            )
-        });
+            ))
+        };
 
         let ret = Db {
             context: context.clone(),

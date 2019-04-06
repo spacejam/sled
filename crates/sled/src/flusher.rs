@@ -1,14 +1,14 @@
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::*;
 
 #[derive(Debug, Clone)]
 pub(crate) struct Flusher {
-    shutdown: Arc<Mutex<bool>>,
+    waiter: Arc<Mutex<()>>,
     sc: Arc<Condvar>,
-    join_handle: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
+    join_handle: Arc<Mutex<Option<thread::JoinHandle<()>>>>,
 }
 
 impl Flusher {
@@ -19,20 +19,20 @@ impl Flusher {
         flush_every_ms: u64,
     ) -> Flusher {
         #[allow(clippy::mutex_atomic)] // mutex used in CondVar below
-        let shutdown = Arc::new(Mutex::new(false));
+        let waiter = Arc::new(Mutex::new(()));
         let sc = Arc::new(Condvar::new());
 
         let join_handle = thread::Builder::new()
             .name(name)
             .spawn({
-                let shutdown = shutdown.clone();
+                let waiter = waiter.clone();
                 let sc = sc.clone();
-                move || run(shutdown, sc, context, flush_every_ms)
+                move || run(waiter, sc, context, flush_every_ms)
             })
             .unwrap();
 
         Flusher {
-            shutdown,
+            waiter,
             sc,
             join_handle: Arc::new(Mutex::new(Some(join_handle))),
         }
@@ -40,15 +40,16 @@ impl Flusher {
 }
 
 fn run(
-    shutdown: Arc<Mutex<bool>>,
+    waiter: Arc<Mutex<()>>,
     sc: Arc<Condvar>,
     context: Arc<Context>,
     flush_every_ms: u64,
 ) {
     let flush_every = Duration::from_millis(flush_every_ms);
-    let mut shutdown = shutdown.lock().unwrap();
-    while !*shutdown {
-        let before = std::time::Instant::now();
+    let mut guard = waiter.lock().unwrap();
+
+    loop {
+        let before = Instant::now();
         match context.pagecache.flush() {
             Ok(0) => {
                 // we had no dirty data to flush,
@@ -94,16 +95,13 @@ fn run(
             .checked_sub(before.elapsed())
             .unwrap_or(Duration::from_millis(1));
 
-        shutdown = sc.wait_timeout(shutdown, sleep_duration).unwrap().0;
+        guard = sc.wait_timeout(guard, sleep_duration).unwrap().0;
     }
 }
 
 impl Drop for Flusher {
     fn drop(&mut self) {
-        let mut shutdown = self.shutdown.lock().unwrap();
-        *shutdown = true;
         self.sc.notify_all();
-        drop(shutdown);
 
         let mut join_handle_opt = self.join_handle.lock().unwrap();
         if let Some(join_handle) = join_handle_opt.take() {
