@@ -33,7 +33,7 @@ impl ShutdownState {
 pub(crate) struct Flusher {
     shutdown: Arc<Mutex<ShutdownState>>,
     sc: Arc<Condvar>,
-    join_handle: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
+    join_handle: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl Flusher {
@@ -69,7 +69,7 @@ impl Flusher {
         Flusher {
             shutdown,
             sc,
-            join_handle: Arc::new(Mutex::new(Some(join_handle))),
+            join_handle: Mutex::new(Some(join_handle)),
         }
     }
 }
@@ -171,8 +171,10 @@ fn run<PM, P>(
 impl Drop for Flusher {
     fn drop(&mut self) {
         let mut shutdown = self.shutdown.lock().unwrap();
-        *shutdown = ShutdownState::ShuttingDown;
-        self.sc.notify_all();
+        if shutdown.is_running() {
+            *shutdown = ShutdownState::ShuttingDown;
+            self.sc.notify_all();
+        }
 
         while !shutdown.is_shutdown() {
             shutdown = self.sc.wait(shutdown).unwrap();
