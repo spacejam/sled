@@ -6,7 +6,13 @@ use super::*;
 pub(crate) struct Context {
     // TODO file from config should be in here
     config: Config,
-    /// Periodically flushes dirty data.
+    /// Periodically flushes dirty data. We keep this in an
+    /// Arc separate from the PageCache below to separate
+    /// "high-level" references from Db, Tree etc... from
+    /// "low-level" references like background threads.
+    /// When the last high-level reference is dropped, it
+    /// should trigger all background threads to clean
+    /// up synchronously.
     pub(crate) _flusher: Arc<Mutex<Option<flusher::Flusher>>>,
     pub(crate) pagecache: Arc<PageCache<BLinkMaterializer, Frag>>,
 }

@@ -40,10 +40,7 @@ impl Db {
 
         let context = Context::start(config)?;
 
-        // start a flusher thread with a weak reference
-        // to this context. we use a Weak to avoid a
-        // reference cycle, since this is self-referential.
-        let flusher_pagecache = Arc::downgrade(&context.pagecache);
+        let flusher_pagecache = context.pagecache.clone();
         let flusher = context.flush_every_ms.map(move |fem| {
             flusher::Flusher::new(
                 "log flusher".to_owned(),
