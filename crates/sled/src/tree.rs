@@ -48,7 +48,7 @@ impl<'a> IntoIterator for &'a Tree {
 #[derive(Clone)]
 pub struct Tree {
     pub(crate) tree_id: Vec<u8>,
-    pub(crate) context: Arc<Context>,
+    pub(crate) context: Context,
     pub(crate) subscriptions: Arc<Subscriptions>,
     pub(crate) root: Arc<AtomicUsize>,
 }

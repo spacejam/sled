@@ -1,13 +1,14 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use super::*;
 
+#[derive(Clone)]
 pub(crate) struct Context {
     // TODO file from config should be in here
     config: Config,
     /// Periodically flushes dirty data.
-    pub(crate) _flusher: Mutex<Option<flusher::Flusher>>,
-    pub(crate) pagecache: PageCache<BLinkMaterializer, Frag>,
+    pub(crate) _flusher: Arc<Mutex<Option<flusher::Flusher>>>,
+    pub(crate) pagecache: Arc<PageCache<BLinkMaterializer, Frag>>,
 }
 
 impl std::ops::Deref for Context {
@@ -52,12 +53,12 @@ impl Context {
             other => panic!("failed to verify snapshot: {:?}", other),
         }
 
-        let pagecache = PageCache::start(config.clone())?;
+        let pagecache = Arc::new(PageCache::start(config.clone())?);
 
         Ok(Context {
             config,
             pagecache,
-            _flusher: Mutex::new(None),
+            _flusher: Arc::new(Mutex::new(None)),
         })
     }
 

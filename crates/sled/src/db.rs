@@ -10,7 +10,7 @@ use super::*;
 /// The `sled` embedded database!
 #[derive(Clone)]
 pub struct Db {
-    context: Arc<Context>,
+    context: Context,
     default: Arc<Tree>,
     tenants: Arc<RwLock<FastMap8<Vec<u8>, Arc<Tree>>>>,
 }
@@ -38,16 +38,16 @@ impl Db {
     pub fn start(config: Config) -> Result<Db> {
         let _measure = Measure::new(&M.tree_start);
 
-        let context = Arc::new(Context::start(config)?);
+        let context = Context::start(config)?;
 
         // start a flusher thread with a weak reference
         // to this context. we use a Weak to avoid a
         // reference cycle, since this is self-referential.
-        let flusher_context = Arc::downgrade(&context);
+        let flusher_pagecache = Arc::downgrade(&context.pagecache);
         let flusher = context.flush_every_ms.map(move |fem| {
             flusher::Flusher::new(
                 "log flusher".to_owned(),
-                flusher_context,
+                flusher_pagecache,
                 fem,
             )
         });

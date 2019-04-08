@@ -5,7 +5,7 @@ use super::*;
 /// Open or create a new disk-backed Tree with its own keyspace,
 /// accessible from the `Db` via the provided identifier.
 pub(crate) fn open_tree<'a>(
-    context: Arc<Context>,
+    context: Context,
     name: Vec<u8>,
     tx: &'a Tx,
 ) -> Result<Tree> {
