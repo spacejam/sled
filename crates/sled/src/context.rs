@@ -1,8 +1,12 @@
+use std::sync::Mutex;
+
 use super::*;
 
 pub(crate) struct Context {
     // TODO file from config should be in here
     config: Config,
+    /// Periodically flushes dirty data.
+    pub(crate) _flusher: Mutex<Option<flusher::Flusher>>,
     pub(crate) pagecache: PageCache<BLinkMaterializer, Frag>,
 }
 
@@ -50,7 +54,11 @@ impl Context {
 
         let pagecache = PageCache::start(config.clone())?;
 
-        Ok(Context { config, pagecache })
+        Ok(Context {
+            config,
+            pagecache,
+            _flusher: Mutex::new(None),
+        })
     }
 
     /// Returns `true` if the database was

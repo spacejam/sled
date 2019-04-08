@@ -1,4 +1,4 @@
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::thread;
 use std::time::Duration;
 
@@ -15,7 +15,7 @@ impl Flusher {
     /// Spawns a thread that periodically calls `callback` until dropped.
     pub(crate) fn new(
         name: String,
-        context: Arc<Context>,
+        context: Weak<Context>,
         flush_every_ms: u64,
     ) -> Flusher {
         #[allow(clippy::mutex_atomic)] // mutex used in CondVar below
@@ -42,12 +42,17 @@ impl Flusher {
 fn run(
     shutdown: Arc<Mutex<bool>>,
     sc: Arc<Condvar>,
-    context: Arc<Context>,
+    context: Weak<Context>,
     flush_every_ms: u64,
 ) {
     let flush_every = Duration::from_millis(flush_every_ms);
     let mut shutdown = shutdown.lock().unwrap();
     while !*shutdown {
+        let context = match context.upgrade() {
+            Some(c) => c,
+            None => return,
+        };
+
         let before = std::time::Instant::now();
         match context.pagecache.flush() {
             Ok(0) => {
