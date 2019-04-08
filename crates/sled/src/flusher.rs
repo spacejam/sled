@@ -1,4 +1,4 @@
-use std::sync::{Arc, Condvar, Mutex, Weak};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -40,7 +40,7 @@ impl Flusher {
     /// Spawns a thread that periodically calls `callback` until dropped.
     pub(crate) fn new<PM, P>(
         name: String,
-        pagecache: Weak<PageCache<PM, P>>,
+        pagecache: Arc<PageCache<PM, P>>,
         flush_every_ms: u64,
     ) -> Flusher
     where
@@ -77,7 +77,7 @@ impl Flusher {
 fn run<PM, P>(
     shutdown: Arc<Mutex<ShutdownState>>,
     sc: Arc<Condvar>,
-    pagecache: Weak<PageCache<PM, P>>,
+    pagecache: Arc<PageCache<PM, P>>,
     flush_every_ms: u64,
 ) where
     PM: 'static + Send + Sync + pagecache::Materializer<PageFrag = P>,
@@ -93,18 +93,6 @@ fn run<PM, P>(
     let mut shutdown = shutdown.lock().unwrap();
     let mut wrote_data = false;
     while shutdown.is_running() || wrote_data {
-        // write data until the shutdown flag
-        // is triggered, and we have nothing left
-        // to flush.
-        let pagecache = match pagecache.upgrade() {
-            Some(c) => c,
-            None => {
-                *shutdown = ShutdownState::ShutDown;
-                sc.notify_all();
-                return;
-            }
-        };
-
         let before = std::time::Instant::now();
         match pagecache.flush() {
             Ok(0) => {
@@ -155,8 +143,6 @@ fn run<PM, P>(
                 return;
             }
         }
-
-        drop(pagecache);
 
         let sleep_duration = flush_every
             .checked_sub(before.elapsed())
