@@ -10,11 +10,9 @@ use super::*;
 /// The `sled` embedded database!
 #[derive(Clone)]
 pub struct Db {
-    context: Arc<Context>,
+    context: Context,
     default: Arc<Tree>,
     tenants: Arc<RwLock<FastMap8<Vec<u8>, Arc<Tree>>>>,
-    /// Periodically flushes dirty data.
-    _flusher: Option<flusher::Flusher>,
 }
 
 unsafe impl Send for Db {}
@@ -40,30 +38,33 @@ impl Db {
     pub fn start(config: Config) -> Result<Db> {
         let _measure = Measure::new(&M.tree_start);
 
-        let context = Arc::new(Context::start(config)?);
+        let context = Context::start(config)?;
 
+        // start a flusher thread with a weak reference
+        // to this context. we use a Weak to avoid a
+        // reference cycle, since this is self-referential.
+        let flusher_pagecache = Arc::downgrade(&context.pagecache);
+        let flusher = context.flush_every_ms.map(move |fem| {
+            flusher::Flusher::new(
+                "log flusher".to_owned(),
+                flusher_pagecache,
+                fem,
+            )
+        });
+        *context._flusher.lock().unwrap() = flusher;
+
+        // create or open the default tree
         let tx = context.pagecache.begin()?;
-
         let default = Arc::new(meta::open_tree(
             context.clone(),
             DEFAULT_TREE_ID.to_vec(),
             &tx,
         )?);
 
-        let flusher_context = context.clone();
-        let flusher = context.flush_every_ms.map(move |fem| {
-            flusher::Flusher::new(
-                "log flusher".to_owned(),
-                flusher_context,
-                fem,
-            )
-        });
-
         let ret = Db {
             context: context.clone(),
             default,
             tenants: Arc::new(RwLock::new(FastMap8::default())),
-            _flusher: flusher,
         };
 
         let mut tenants = ret.tenants.write().unwrap();
