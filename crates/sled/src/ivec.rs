@@ -73,6 +73,12 @@ impl From<&[u8]> for IVec {
     }
 }
 
+impl From<&IVec> for IVec {
+    fn from(v: &IVec) -> IVec {
+        v.clone()
+    }
+}
+
 impl From<Vec<u8>> for IVec {
     fn from(v: Vec<u8>) -> IVec {
         if v.len() <= CUTOFF {
