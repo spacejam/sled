@@ -60,11 +60,11 @@ unsafe impl Sync for Tree {}
 impl Tree {
     /// Set a key to a new value, returning the old value if it
     /// was set.
-    pub fn set<K: AsRef<[u8]>>(
-        &self,
-        key: K,
-        value: Value,
-    ) -> Result<Option<IVec>> {
+    pub fn set<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
+    where
+        K: AsRef<[u8]>,
+        IVec: From<V>,
+    {
         trace!("setting key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_set);
 
@@ -219,12 +219,16 @@ impl Tree {
     /// assert_eq!(t.cas(&[1], Some(&[2]), None), Ok(Ok(())));
     /// assert_eq!(t.get(&[1]), Ok(None));
     /// ```
-    pub fn cas<K: AsRef<[u8]>>(
+    pub fn cas<K, V>(
         &self,
         key: K,
         old: Option<&[u8]>,
-        new: Option<Value>,
-    ) -> Result<std::result::Result<(), Option<IVec>>> {
+        new: Option<V>,
+    ) -> Result<std::result::Result<(), Option<IVec>>>
+    where
+        K: AsRef<[u8]>,
+        IVec: From<V>,
+    {
         trace!("casing key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_cas);
 
@@ -524,7 +528,11 @@ impl Tree {
     /// tree.merge(k, vec![4]);
     /// // assert_eq!(tree.get(k).unwrap().unwrap(), vec![4]);
     /// ```
-    pub fn merge<K: AsRef<[u8]>>(&self, key: K, value: Value) -> Result<()> {
+    pub fn merge<K, V>(&self, key: K, value: V) -> Result<()>
+    where
+        K: AsRef<[u8]>,
+        IVec: From<V>,
+    {
         trace!("merging key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_merge);
 
