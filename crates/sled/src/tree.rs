@@ -48,7 +48,7 @@ impl<'a> IntoIterator for &'a Tree {
 #[derive(Clone)]
 pub struct Tree {
     pub(crate) tree_id: Vec<u8>,
-    pub(crate) context: Arc<Context>,
+    pub(crate) context: Context,
     pub(crate) subscriptions: Arc<Subscriptions>,
     pub(crate) root: Arc<AtomicUsize>,
 }
@@ -58,6 +58,241 @@ unsafe impl Send for Tree {}
 unsafe impl Sync for Tree {}
 
 impl Tree {
+    /// Set a key to a new value, returning the old value if it
+    /// was set.
+    pub fn set<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
+    where
+        K: AsRef<[u8]>,
+        IVec: From<V>,
+    {
+        trace!("setting key {:?}", key.as_ref());
+        let _measure = Measure::new(&M.tree_set);
+
+        if self.context.read_only {
+            return Err(Error::Unsupported(
+                "the database is in read-only mode".to_owned(),
+            ));
+        }
+
+        let value = IVec::from(value);
+
+        loop {
+            let tx = self.context.pagecache.begin()?;
+            let (mut path, existing_val) =
+                self.get_internal(key.as_ref(), &tx)?;
+            let (leaf_id, leaf_frag, leaf_ptr) = path.pop().expect(
+                "path_for_key should always return a path \
+                 of length >= 2 (root + leaf)",
+            );
+            let node: &Node = leaf_frag.unwrap_base();
+            let encoded_key = prefix_encode(&node.lo, key.as_ref());
+
+            let mut subscriber_reservation = self.subscriptions.reserve(&key);
+
+            let frag = Frag::Set(encoded_key, value.clone());
+            let link = self.context.pagecache.link(
+                leaf_id,
+                leaf_ptr.clone(),
+                frag.clone(),
+                &tx,
+            )?;
+            if let Ok(new_cas_key) = link {
+                // success
+                if let Some(res) = subscriber_reservation.take() {
+                    let event =
+                        subscription::Event::Set(key.as_ref().to_vec(), value);
+
+                    res.complete(event);
+                }
+
+                if node.should_split(self.context.blink_node_split_size as u64)
+                {
+                    let mut path2 = path
+                        .iter()
+                        .map(|&(id, f, ref p)| {
+                            (id, Cow::Borrowed(f), p.clone())
+                        })
+                        .collect::<Vec<(PageId, Cow<'_, Frag>, _)>>();
+                    let mut node2 = node.clone();
+                    node2.apply(&frag, self.context.merge_operator);
+                    let frag2 = Cow::Owned(Frag::Base(node2));
+                    path2.push((leaf_id, frag2, new_cas_key));
+                    self.recursive_split(path2, &tx)?;
+                }
+
+                tx.flush();
+
+                return Ok(existing_val.cloned());
+            }
+            M.tree_looped();
+        }
+    }
+
+    /// Retrieve a value from the `Tree` if it exists.
+    pub fn get<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
+        let _measure = Measure::new(&M.tree_get);
+
+        let tx = self.context.pagecache.begin()?;
+
+        let (_, ret) = self.get_internal(key.as_ref(), &tx)?;
+
+        tx.flush();
+
+        Ok(ret.cloned())
+    }
+
+    /// Delete a value, returning the last result if it existed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let config = sled::ConfigBuilder::new().temporary(true).build();
+    /// let t = sled::Db::start(config).unwrap();
+    /// t.set(&[1], vec![1]);
+    /// assert_eq!(t.del(&*vec![1]).unwrap().unwrap(), vec![1]);
+    /// assert_eq!(t.del(&*vec![1]), Ok(None));
+    /// ```
+    pub fn del<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
+        let _measure = Measure::new(&M.tree_del);
+
+        if self.context.read_only {
+            return Ok(None);
+        }
+
+        loop {
+            let tx = self.context.pagecache.begin()?;
+
+            let (mut path, existing_val) =
+                self.get_internal(key.as_ref(), &tx)?;
+
+            let mut subscriber_reservation = self.subscriptions.reserve(&key);
+
+            let (leaf_id, leaf_frag, leaf_ptr) = path.pop().expect(
+                "path_for_key should always return a path \
+                 of length >= 2 (root + leaf)",
+            );
+            let node: &Node = leaf_frag.unwrap_base();
+            let encoded_key = prefix_encode(&node.lo, key.as_ref());
+
+            let frag = Frag::Del(encoded_key);
+            let link = self.context.pagecache.link(
+                leaf_id,
+                leaf_ptr.clone(),
+                frag,
+                &tx,
+            )?;
+
+            if link.is_ok() {
+                // success
+                if let Some(res) = subscriber_reservation.take() {
+                    let event = subscription::Event::Del(key.as_ref().to_vec());
+
+                    res.complete(event);
+                }
+
+                tx.flush();
+                return Ok(existing_val.cloned());
+            }
+        }
+    }
+
+    /// Compare and swap. Capable of unique creation, conditional modification,
+    /// or deletion. If old is None, this will only set the value if it doesn't
+    /// exist yet. If new is None, will delete the value if old is correct.
+    /// If both old and new are Some, will modify the value if old is correct.
+    /// If Tree is read-only, will do nothing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sled::{ConfigBuilder, Error};
+    /// let config = ConfigBuilder::new().temporary(true).build();
+    /// let t = sled::Db::start(config).unwrap();
+    ///
+    /// // unique creation
+    /// assert_eq!(t.cas(&[1], None as Option<&[u8]>, Some("1")), Ok(Ok(())));
+    ///
+    /// // conditional modification
+    /// assert_eq!(t.cas(&[1], Some("1"), Some("2")), Ok(Ok(())));
+    ///
+    /// // conditional deletion
+    /// assert_eq!(t.cas(&[1], Some("2"), None as Option<&[u8]>), Ok(Ok(())));
+    /// assert_eq!(t.get(&[1]), Ok(None));
+    /// ```
+    pub fn cas<K, OV, NV>(
+        &self,
+        key: K,
+        old: Option<OV>,
+        new: Option<NV>,
+    ) -> Result<std::result::Result<(), Option<IVec>>>
+    where
+        K: AsRef<[u8]>,
+        OV: AsRef<[u8]>,
+        IVec: From<NV>,
+    {
+        trace!("casing key {:?}", key.as_ref());
+        let _measure = Measure::new(&M.tree_cas);
+
+        if self.context.read_only {
+            return Err(Error::Unsupported(
+                "can not perform a cas on a read-only Tree".into(),
+            ));
+        }
+
+        let new = new.map(IVec::from);
+
+        // we need to retry caps until old != cur, since just because
+        // cap fails it doesn't mean our value was changed.
+        loop {
+            let tx = self.context.pagecache.begin()?;
+            let (mut path, cur) = self.get_internal(key.as_ref(), &tx)?;
+
+            let matches = match (&old, &cur) {
+                (None, None) => true,
+                (Some(ref o), Some(ref c)) => o.as_ref() == &***c,
+                _ => false,
+            };
+
+            if !matches {
+                return Ok(Err(cur.cloned()));
+            }
+
+            let mut subscriber_reservation = self.subscriptions.reserve(&key);
+
+            let (leaf_id, leaf_frag, leaf_ptr) = path
+                .pop()
+                .expect("get_internal somehow returned a path of length zero");
+
+            let (node_id, encoded_key) = {
+                let node: &Node = leaf_frag.unwrap_base();
+                (leaf_id, prefix_encode(&node.lo, key.as_ref()))
+            };
+            let frag = if let Some(ref new) = new {
+                Frag::Set(encoded_key, new.clone())
+            } else {
+                Frag::Del(encoded_key)
+            };
+            let link =
+                self.context.pagecache.link(node_id, leaf_ptr, frag, &tx)?;
+
+            if link.is_ok() {
+                if let Some(res) = subscriber_reservation.take() {
+                    let event = if let Some(new) = new {
+                        subscription::Event::Set(key.as_ref().to_vec(), new)
+                    } else {
+                        subscription::Event::Del(key.as_ref().to_vec())
+                    };
+
+                    res.complete(event);
+                }
+
+                tx.flush();
+                return Ok(Ok(()));
+            }
+            M.tree_looped();
+        }
+    }
+
     /// Subscribe to `Event`s that happen to keys that have
     /// the specified prefix. Events for particular keys are
     /// guaranteed to be witnessed in the same order by all
@@ -98,17 +333,6 @@ impl Tree {
         self.subscriptions.register(prefix)
     }
 
-    /// Clears the `Tree`, removing all values.
-    ///
-    /// Note that this is not atomic.
-    pub fn clear(&self) -> Result<()> {
-        for k in self.keys(b"") {
-            let key = k?;
-            self.del(key)?;
-        }
-        Ok(())
-    }
-
     /// Flushes all dirty IO buffers and calls fsync.
     /// If this succeeds, it is guaranteed that
     /// all previous writes will be recovered if
@@ -122,19 +346,6 @@ impl Tree {
     /// the specified key.
     pub fn contains_key<K: AsRef<[u8]>>(&self, key: K) -> Result<bool> {
         self.get(key).map(|v| v.is_some())
-    }
-
-    /// Retrieve a value from the `Tree` if it exists.
-    pub fn get<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
-        let _measure = Measure::new(&M.tree_get);
-
-        let tx = self.context.pagecache.begin()?;
-
-        let (_, ret) = self.get_internal(key.as_ref(), &tx)?;
-
-        tx.flush();
-
-        Ok(ret.cloned())
     }
 
     /// Retrieve the key and value before the provided key,
@@ -266,223 +477,6 @@ impl Tree {
         Ok(ret)
     }
 
-    /// Compare and swap. Capable of unique creation, conditional modification,
-    /// or deletion. If old is None, this will only set the value if it doesn't
-    /// exist yet. If new is None, will delete the value if old is correct.
-    /// If both old and new are Some, will modify the value if old is correct.
-    /// If Tree is read-only, will do nothing.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use sled::{ConfigBuilder, Error};
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Db::start(config).unwrap();
-    ///
-    /// // unique creation
-    /// assert_eq!(t.cas(&[1], None, Some(vec![1])), Ok(Ok(())));
-    ///
-    /// // conditional modification
-    /// assert_eq!(t.cas(&[1], Some(&*vec![1]), Some(vec![2])), Ok(Ok(())));
-    ///
-    /// // conditional deletion
-    /// assert_eq!(t.cas(&[1], Some(&[2]), None), Ok(Ok(())));
-    /// assert_eq!(t.get(&[1]), Ok(None));
-    /// ```
-    pub fn cas<K: AsRef<[u8]>>(
-        &self,
-        key: K,
-        old: Option<&[u8]>,
-        new: Option<Value>,
-    ) -> Result<std::result::Result<(), Option<IVec>>> {
-        trace!("casing key {:?}", key.as_ref());
-        let _measure = Measure::new(&M.tree_cas);
-
-        if self.context.read_only {
-            return Err(Error::Unsupported(
-                "can not perform a cas on a read-only Tree".into(),
-            ));
-        }
-
-        let new = new.map(IVec::from);
-
-        // we need to retry caps until old != cur, since just because
-        // cap fails it doesn't mean our value was changed.
-        loop {
-            let tx = self.context.pagecache.begin()?;
-            let (mut path, cur) = self.get_internal(key.as_ref(), &tx)?;
-
-            let matches = match (old, &cur) {
-                (None, None) => true,
-                (Some(o), Some(ref c)) => o == &***c,
-                _ => false,
-            };
-
-            if !matches {
-                return Ok(Err(cur.cloned()));
-            }
-
-            let mut subscriber_reservation = self.subscriptions.reserve(&key);
-
-            let (leaf_id, leaf_frag, leaf_ptr) = path
-                .pop()
-                .expect("get_internal somehow returned a path of length zero");
-
-            let (node_id, encoded_key) = {
-                let node: &Node = leaf_frag.unwrap_base();
-                (leaf_id, prefix_encode(&node.lo, key.as_ref()))
-            };
-            let frag = if let Some(ref new) = new {
-                Frag::Set(encoded_key, new.clone())
-            } else {
-                Frag::Del(encoded_key)
-            };
-            let link =
-                self.context.pagecache.link(node_id, leaf_ptr, frag, &tx)?;
-
-            if link.is_ok() {
-                if let Some(res) = subscriber_reservation.take() {
-                    let event = if let Some(new) = new {
-                        subscription::Event::Set(key.as_ref().to_vec(), new)
-                    } else {
-                        subscription::Event::Del(key.as_ref().to_vec())
-                    };
-
-                    res.complete(event);
-                }
-
-                tx.flush();
-                return Ok(Ok(()));
-            }
-            M.tree_looped();
-        }
-    }
-
-    /// Set a key to a new value, returning the old value if it
-    /// was set.
-    pub fn set<K: AsRef<[u8]>>(
-        &self,
-        key: K,
-        value: Value,
-    ) -> Result<Option<IVec>> {
-        trace!("setting key {:?}", key.as_ref());
-        let _measure = Measure::new(&M.tree_set);
-
-        if self.context.read_only {
-            return Err(Error::Unsupported(
-                "the database is in read-only mode".to_owned(),
-            ));
-        }
-
-        let value = IVec::from(value);
-
-        loop {
-            let tx = self.context.pagecache.begin()?;
-            let (mut path, existing_val) =
-                self.get_internal(key.as_ref(), &tx)?;
-            let (leaf_id, leaf_frag, leaf_ptr) = path.pop().expect(
-                "path_for_key should always return a path \
-                 of length >= 2 (root + leaf)",
-            );
-            let node: &Node = leaf_frag.unwrap_base();
-            let encoded_key = prefix_encode(&node.lo, key.as_ref());
-
-            let mut subscriber_reservation = self.subscriptions.reserve(&key);
-
-            let frag = Frag::Set(encoded_key, value.clone());
-            let link = self.context.pagecache.link(
-                leaf_id,
-                leaf_ptr.clone(),
-                frag.clone(),
-                &tx,
-            )?;
-            if let Ok(new_cas_key) = link {
-                // success
-                if let Some(res) = subscriber_reservation.take() {
-                    let event =
-                        subscription::Event::Set(key.as_ref().to_vec(), value);
-
-                    res.complete(event);
-                }
-
-                if node.should_split(self.context.blink_node_split_size as u64)
-                {
-                    let mut path2 = path
-                        .iter()
-                        .map(|&(id, f, ref p)| {
-                            (id, Cow::Borrowed(f), p.clone())
-                        })
-                        .collect::<Vec<(PageId, Cow<'_, Frag>, _)>>();
-                    let mut node2 = node.clone();
-                    node2.apply(&frag, self.context.merge_operator);
-                    let frag2 = Cow::Owned(Frag::Base(node2));
-                    path2.push((leaf_id, frag2, new_cas_key));
-                    self.recursive_split(path2, &tx)?;
-                }
-
-                tx.flush();
-
-                return Ok(existing_val.cloned());
-            }
-            M.tree_looped();
-        }
-    }
-
-    /// Delete a value, returning the last result if it existed.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let config = sled::ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Db::start(config).unwrap();
-    /// t.set(&[1], vec![1]);
-    /// assert_eq!(t.del(&*vec![1]).unwrap().unwrap(), vec![1]);
-    /// assert_eq!(t.del(&*vec![1]), Ok(None));
-    /// ```
-    pub fn del<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
-        let _measure = Measure::new(&M.tree_del);
-
-        if self.context.read_only {
-            return Ok(None);
-        }
-
-        loop {
-            let tx = self.context.pagecache.begin()?;
-
-            let (mut path, existing_val) =
-                self.get_internal(key.as_ref(), &tx)?;
-
-            let mut subscriber_reservation = self.subscriptions.reserve(&key);
-
-            let (leaf_id, leaf_frag, leaf_ptr) = path.pop().expect(
-                "path_for_key should always return a path \
-                 of length >= 2 (root + leaf)",
-            );
-            let node: &Node = leaf_frag.unwrap_base();
-            let encoded_key = prefix_encode(&node.lo, key.as_ref());
-
-            let frag = Frag::Del(encoded_key);
-            let link = self.context.pagecache.link(
-                leaf_id,
-                leaf_ptr.clone(),
-                frag,
-                &tx,
-            )?;
-
-            if link.is_ok() {
-                // success
-                if let Some(res) = subscriber_reservation.take() {
-                    let event = subscription::Event::Del(key.as_ref().to_vec());
-
-                    res.complete(event);
-                }
-
-                tx.flush();
-                return Ok(existing_val.cloned());
-            }
-        }
-    }
-
     /// Merge state directly into a given key's value using the
     /// configured merge operator. This allows state to be written
     /// into a value directly, without any read-modify-write steps.
@@ -535,7 +529,11 @@ impl Tree {
     /// tree.merge(k, vec![4]);
     /// // assert_eq!(tree.get(k).unwrap().unwrap(), vec![4]);
     /// ```
-    pub fn merge<K: AsRef<[u8]>>(&self, key: K, value: Value) -> Result<()> {
+    pub fn merge<K, V>(&self, key: K, value: V) -> Result<()>
+    where
+        K: AsRef<[u8]>,
+        IVec: From<V>,
+    {
         trace!("merging key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_merge);
 
@@ -808,6 +806,22 @@ impl Tree {
     /// Returns `true` if the `Tree` contains no elements.
     pub fn is_empty(&self) -> bool {
         self.iter().next().is_none()
+    }
+
+    /// Clears the `Tree`, removing all values.
+    ///
+    /// Note that this is not atomic.
+    pub fn clear(&self) -> Result<()> {
+        for k in self.keys(b"") {
+            let key = k?;
+            self.del(key)?;
+        }
+        Ok(())
+    }
+
+    /// Returns the name of the tree.
+    pub fn name(&self) -> Vec<u8> {
+        self.tree_id.clone()
     }
 
     fn recursive_split<'g>(

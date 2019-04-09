@@ -1,9 +1,20 @@
+use std::sync::{Arc, Mutex};
+
 use super::*;
 
+#[derive(Clone)]
 pub(crate) struct Context {
     // TODO file from config should be in here
     config: Config,
-    pub(crate) pagecache: PageCache<BLinkMaterializer, Frag>,
+    /// Periodically flushes dirty data. We keep this in an
+    /// Arc separate from the PageCache below to separate
+    /// "high-level" references from Db, Tree etc... from
+    /// "low-level" references like background threads.
+    /// When the last high-level reference is dropped, it
+    /// should trigger all background threads to clean
+    /// up synchronously.
+    pub(crate) _flusher: Arc<Mutex<Option<flusher::Flusher>>>,
+    pub(crate) pagecache: Arc<PageCache<BLinkMaterializer, Frag>>,
 }
 
 impl std::ops::Deref for Context {
@@ -48,9 +59,13 @@ impl Context {
             other => panic!("failed to verify snapshot: {:?}", other),
         }
 
-        let pagecache = PageCache::start(config.clone())?;
+        let pagecache = Arc::new(PageCache::start(config.clone())?);
 
-        Ok(Context { config, pagecache })
+        Ok(Context {
+            config,
+            pagecache,
+            _flusher: Arc::new(Mutex::new(None)),
+        })
     }
 
     /// Returns `true` if the database was
