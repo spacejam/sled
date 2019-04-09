@@ -73,6 +73,12 @@ impl From<&[u8]> for IVec {
     }
 }
 
+impl From<&str> for IVec {
+    fn from(v: &str) -> IVec {
+        v.as_bytes().into()
+    }
+}
+
 impl From<&IVec> for IVec {
     fn from(v: &IVec) -> IVec {
         v.clone()

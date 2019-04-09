@@ -210,24 +210,25 @@ impl Tree {
     /// let t = sled::Db::start(config).unwrap();
     ///
     /// // unique creation
-    /// assert_eq!(t.cas(&[1], None, Some(vec![1])), Ok(Ok(())));
+    /// assert_eq!(t.cas(&[1], None as Option<&[u8]>, Some("1")), Ok(Ok(())));
     ///
     /// // conditional modification
-    /// assert_eq!(t.cas(&[1], Some(&*vec![1]), Some(vec![2])), Ok(Ok(())));
+    /// assert_eq!(t.cas(&[1], Some("1"), Some("2")), Ok(Ok(())));
     ///
     /// // conditional deletion
-    /// assert_eq!(t.cas(&[1], Some(&[2]), None), Ok(Ok(())));
+    /// assert_eq!(t.cas(&[1], Some("2"), None as Option<&[u8]>), Ok(Ok(())));
     /// assert_eq!(t.get(&[1]), Ok(None));
     /// ```
-    pub fn cas<K, V>(
+    pub fn cas<K, OV, NV>(
         &self,
         key: K,
-        old: Option<&[u8]>,
-        new: Option<V>,
+        old: Option<OV>,
+        new: Option<NV>,
     ) -> Result<std::result::Result<(), Option<IVec>>>
     where
         K: AsRef<[u8]>,
-        IVec: From<V>,
+        OV: AsRef<[u8]>,
+        IVec: From<NV>,
     {
         trace!("casing key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_cas);
@@ -246,9 +247,9 @@ impl Tree {
             let tx = self.context.pagecache.begin()?;
             let (mut path, cur) = self.get_internal(key.as_ref(), &tx)?;
 
-            let matches = match (old, &cur) {
+            let matches = match (&old, &cur) {
                 (None, None) => true,
-                (Some(o), Some(ref c)) => o == &***c,
+                (Some(ref o), Some(ref c)) => o.as_ref() == &***c,
                 _ => false,
             };
 
