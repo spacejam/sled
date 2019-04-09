@@ -27,7 +27,7 @@ pub(crate) fn open_tree<'a>(
 
         // set up empty leaf
         let leaf = Frag::Base(Node {
-            data: Data::Leaf(vec![]),
+            data: Data::Leaf(Default::default()),
             next: None,
             lo: vec![].into(),
             hi: vec![].into(),
@@ -44,7 +44,7 @@ pub(crate) fn open_tree<'a>(
         // set up root index
 
         // vec![0] represents a prefix-encoded empty prefix
-        let root_index_vec = vec![(vec![0].into(), leaf_id)];
+        let root_index_vec = vec![(vec![0].into(), leaf_id)].into();
 
         let root = Frag::Base(Node {
             data: Data::Index(root_index_vec),

@@ -1,11 +1,13 @@
 use std::mem::size_of;
 
+use im::Vector;
+
 use super::*;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) enum Data {
-    Index(Vec<(IVec, PageId)>),
-    Leaf(Vec<(IVec, IVec)>),
+    Index(Vector<(IVec, PageId)>),
+    Leaf(Vector<(IVec, IVec)>),
 }
 
 impl Data {
@@ -53,19 +55,19 @@ impl Data {
 
     pub(crate) fn split(&self, lhs_prefix: &[u8]) -> (IVec, Data) {
         fn split_inner<T>(
-            xs: &[(IVec, T)],
+            xs: &Vector<(IVec, T)>,
             lhs_prefix: &[u8],
-        ) -> (IVec, Vec<(IVec, T)>)
+        ) -> (IVec, Vector<(IVec, T)>)
         where
             T: Clone + Ord,
         {
-            let (_lhs, rhs) = xs.split_at(xs.len() / 2 + 1);
+            let (_lhs, rhs) = xs.clone().split_at(xs.len() / 2 + 1);
             let split = prefix_decode(lhs_prefix, &rhs[0].0);
 
-            let mut rhs_data = Vec::with_capacity(rhs.len());
+            let mut rhs_data = Vector::new();
             for (k, v) in rhs {
-                let k = prefix_reencode(lhs_prefix, &split, k);
-                rhs_data.push((k, v.clone()));
+                let k = prefix_reencode(lhs_prefix, &split, &k);
+                rhs_data.push_back((k, v.clone()));
             }
 
             (IVec::from(split), rhs_data)
@@ -94,7 +96,7 @@ impl Data {
         }
     }
 
-    pub(crate) fn leaf_ref(&self) -> Option<&Vec<(IVec, IVec)>> {
+    pub(crate) fn leaf_ref(&self) -> Option<&Vector<(IVec, IVec)>> {
         match *self {
             Data::Index(_) => None,
             Data::Leaf(ref items) => Some(items),

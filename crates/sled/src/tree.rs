@@ -957,7 +957,7 @@ impl Tree {
         new_root_vec.push((encoded_at, to));
 
         let new_root = Frag::Base(Node {
-            data: Data::Index(new_root_vec),
+            data: Data::Index(new_root_vec.into()),
             next: None,
             lo: vec![].into(),
             hi: vec![].into(),
@@ -1255,7 +1255,7 @@ impl Debug for Tree {
 
                 match &left_node.data {
                     Data::Index(ptrs) => {
-                        if let Some(&(ref _sep, ref next_pid)) = ptrs.first() {
+                        if let Some(&(ref _sep, ref next_pid)) = ptrs.front() {
                             pid = *next_pid;
                             left_most = *next_pid;
                             level += 1;

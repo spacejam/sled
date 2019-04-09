@@ -32,6 +32,10 @@ features = ["derive"]
 [dependencies.log]
 version = "0.4"
 
+[dependencies.im]
+version = "12.3.4"
+features = ["serde"]
+
 [dependencies]
 pagecache = { path = "../pagecache", version = "0.15" }
 futures = "0.1"
