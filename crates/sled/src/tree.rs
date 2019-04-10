@@ -309,10 +309,15 @@ impl Tree {
     ///
     /// assert_eq!(t.update_and_fetch(b"hello", |_old| Some(vec![1])), Ok(Some(IVec::from(vec![1]))));
     /// ```
-    pub fn update_and_fetch<K, V, F>(&self, key: K, f: F) -> Result<Option<IVec>>
-    where K: AsRef<[u8]>,
-          F: Fn(Option<&[u8]>) -> Option<V>,
-          IVec: From<V>,
+    pub fn update_and_fetch<K, V, F>(
+        &self,
+        key: K,
+        f: F,
+    ) -> Result<Option<IVec>>
+    where
+        K: AsRef<[u8]>,
+        F: Fn(Option<&[u8]>) -> Option<V>,
+        IVec: From<V>,
     {
         let key = key.as_ref();
         let mut current = self.get(key)?;
@@ -343,18 +348,23 @@ impl Tree {
     ///
     /// assert_eq!(t.fetch_and_update(b"hello", |_old| Some(vec![1])), Ok(None));
     /// ```
-    pub fn fetch_and_update<K, V, F>(&self, key: K, f: F) -> Result<Option<IVec>>
-    where K: AsRef<[u8]>,
-          F: Fn(Option<&[u8]>) -> Option<V>,
-          IVec: From<V>,
+    pub fn fetch_and_update<K, V, F>(
+        &self,
+        key: K,
+        f: F,
+    ) -> Result<Option<IVec>>
+    where
+        K: AsRef<[u8]>,
+        F: Fn(Option<&[u8]>) -> Option<V>,
+        IVec: From<V>,
     {
         let key = key.as_ref();
         let mut current = self.get(key)?;
 
         loop {
             let tmp = current.as_ref().map(AsRef::as_ref);
-            let next = f(tmp).map(IVec::from);
-            match self.cas::<_, _, IVec>(key, tmp, next)? {
+            let next = f(tmp);
+            match self.cas(key, tmp, next)? {
                 Ok(()) => return Ok(current),
                 Err(new_current) => current = new_current,
             }
