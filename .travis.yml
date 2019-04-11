@@ -14,8 +14,13 @@ install:
     sh -s -- -y --default-toolchain $TRAVIS_RUST_VERSION &&
     rustup component add clippy-preview
   - bash -c 'if [ "$TEST" = "sanitizers-and-cross-build" ]; then
+      rustup target add aarch64-fuchsia;
+      rustup target add aarch64-linux-android;
+      rustup target add i686-linux-android;
       rustup target add i686-unknown-linux-gnu;
       rustup target add x86_64-pc-windows-gnu;
+      rustup target add x86_64-linux-android;
+      rustup target add x86_64-fuchsia;
     fi'
   - source ~/.cargo/env
 
@@ -107,10 +112,20 @@ script:
 
                  echo "cross build" &&
                  echo "https://github.com/rust-lang/cargo/issues/4753" &&
+                 pushd crates/sled      && cargo check --target aarch64-fuchsia --features=nightly && popd &&
+                 pushd crates/sled      && cargo check --target aarch64-linux-android --features=nightly && popd &&
+                 pushd crates/sled      && cargo check --target i686-linux-android --features=nightly && popd &&
                  pushd crates/sled      && cargo check --target i686-unknown-linux-gnu --features=nightly && popd &&
                  pushd crates/sled      && cargo check --target x86_64-pc-windows-gnu  --features=nightly && popd &&
+                 pushd crates/sled      && cargo check --target x86_64-linux-android  --features=nightly && popd &&
+                 pushd crates/sled      && cargo check --target x86_64-fuchsia --features=nightly && popd &&
+                 pushd crates/pagecache && cargo check --target aarch64-fuchsia --features=nightly && popd &&
+                 pushd crates/pagecache && cargo check --target aarch64-linux-android --features=nightly && popd &&
+                 pushd crates/pagecache && cargo check --target i686-linux-android --features=nightly && popd &&
                  pushd crates/pagecache && cargo check --target i686-unknown-linux-gnu --features=nightly && popd &&
-                 pushd crates/pagecache && cargo check --target x86_64-pc-windows-gnu  --features=nightly && popd
+                 pushd crates/pagecache && cargo check --target x86_64-pc-windows-gnu  --features=nightly && popd &&
+                 pushd crates/pagecache && cargo check --target x86_64-linux-android --features=nightly && popd &&
+                 pushd crates/pagecache && cargo check --target x86_64-fuchsia --features=nightly && popd
                  ;;
                crash)
                  pushd tests &&

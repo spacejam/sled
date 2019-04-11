@@ -329,10 +329,13 @@ fn parallel_tree_iterators() -> Result<()> {
 
 #[test]
 fn tree_subdir() {
+    let _ = std::fs::remove_dir_all("/tmp/test_tree_subdir");
+
     let config = ConfigBuilder::new()
         .async_io(false)
         .path("/tmp/test_tree_subdir/test_subdir".to_owned())
         .build();
+
     let t = sled::Db::start(config).unwrap();
 
     t.set(&[1], vec![1]).unwrap();

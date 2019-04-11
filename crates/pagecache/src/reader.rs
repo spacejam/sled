@@ -142,6 +142,11 @@ impl LogReader for File {
                             id,
                         );
 
+                        let buf = if config.use_compression {
+                            maybe_decompress(buf)?
+                        } else {
+                            buf
+                        };
                         Ok(LogRead::Blob(header.lsn, buf, id))
                     }
                     Err(Error::Io(ref e))
@@ -161,18 +166,9 @@ impl LogReader for File {
             }
             MessageKind::Inline => {
                 trace!("read a successful inline message");
-                let buf = {
-                    #[cfg(feature = "compression")]
-                    {
-                        if config.use_compression {
-                            let _measure = Measure::new(&M.decompress);
-                            decompress(&*buf, segment_len).unwrap()
-                        } else {
-                            buf
-                        }
-                    }
-
-                    #[cfg(not(feature = "compression"))]
+                let buf = if config.use_compression {
+                    maybe_decompress(buf)?
+                } else {
                     buf
                 };
 
@@ -184,4 +180,37 @@ impl LogReader for File {
             ),
         }
     }
+}
+
+fn maybe_decompress(buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
+    #[cfg(feature = "compression")]
+    {
+        static MAX_COMPRESSION_RATIO: AtomicUsize = AtomicUsize::new(1);
+        use std::sync::atomic::Ordering::{Acquire, Release};
+
+        let _measure = Measure::new(&M.decompress);
+        loop {
+            let ratio = MAX_COMPRESSION_RATIO.load(Acquire);
+            match decompress(&*buf, buf.len() * ratio) {
+                Err(ref e) if e.kind() == io::ErrorKind::Other => {
+                    debug!(
+                        "bumping expected compression \
+                         ratio up from {} to {}: {:?}",
+                        ratio,
+                        ratio + 1,
+                        e
+                    );
+                    MAX_COMPRESSION_RATIO.compare_and_swap(
+                        ratio,
+                        ratio + 1,
+                        Release,
+                    );
+                }
+                other => return other,
+            }
+        }
+    }
+
+    #[cfg(not(feature = "compression"))]
+    Ok(buf)
 }

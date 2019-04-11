@@ -34,6 +34,7 @@ mod binary_search;
 mod context;
 mod data;
 mod db;
+mod flusher;
 mod frag;
 mod iter;
 mod ivec;
@@ -82,6 +83,5 @@ use {
 };
 
 type Key = Vec<u8>;
-type Value = Vec<u8>;
 
 type TreePtr<'g> = pagecache::PagePtr<'g, Frag>;

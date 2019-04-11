@@ -10,7 +10,7 @@ use super::*;
 /// The `sled` embedded database!
 #[derive(Clone)]
 pub struct Db {
-    context: Arc<Context>,
+    context: Context,
     default: Arc<Tree>,
     tenants: Arc<RwLock<FastMap8<Vec<u8>, Arc<Tree>>>>,
 }
@@ -38,10 +38,20 @@ impl Db {
     pub fn start(config: Config) -> Result<Db> {
         let _measure = Measure::new(&M.tree_start);
 
-        let context = Arc::new(Context::start(config)?);
+        let context = Context::start(config)?;
 
+        let flusher_pagecache = context.pagecache.clone();
+        let flusher = context.flush_every_ms.map(move |fem| {
+            flusher::Flusher::new(
+                "log flusher".to_owned(),
+                flusher_pagecache,
+                fem,
+            )
+        });
+        *context._flusher.lock().unwrap() = flusher;
+
+        // create or open the default tree
         let tx = context.pagecache.begin()?;
-
         let default = Arc::new(meta::open_tree(
             context.clone(),
             DEFAULT_TREE_ID.to_vec(),
@@ -82,9 +92,10 @@ impl Db {
 
     /// Open or create a new disk-backed Tree with its own keyspace,
     /// accessible from the `Db` via the provided identifier.
-    pub fn open_tree(&self, name: Vec<u8>) -> Result<Arc<Tree>> {
+    pub fn open_tree<V: AsRef<[u8]>>(&self, name: V) -> Result<Arc<Tree>> {
+        let name = name.as_ref();
         let tenants = self.tenants.read().unwrap();
-        if let Some(tree) = tenants.get(&name) {
+        if let Some(tree) = tenants.get(name) {
             return Ok(tree.clone());
         }
         drop(tenants);
@@ -92,9 +103,12 @@ impl Db {
         let tx = self.context.pagecache.begin()?;
 
         let mut tenants = self.tenants.write().unwrap();
-        let tree =
-            Arc::new(meta::open_tree(self.context.clone(), name.clone(), &tx)?);
-        tenants.insert(name, tree.clone());
+        let tree = Arc::new(meta::open_tree(
+            self.context.clone(),
+            name.to_vec(),
+            &tx,
+        )?);
+        tenants.insert(name.to_vec(), tree.clone());
         drop(tenants);
         Ok(tree)
     }
@@ -153,6 +167,12 @@ impl Db {
         tx.flush();
 
         Ok(true)
+    }
+
+    /// Returns the trees names saved in this Db.
+    pub fn tree_names(&self) -> Vec<Vec<u8>> {
+        let tenants = self.tenants.read().unwrap();
+        tenants.iter().map(|(name, _)| name.clone()).collect()
     }
 
     /// Returns `true` if the database was

@@ -897,7 +897,7 @@ impl SegmentAccountant {
             self.clean_counter % self.to_clean.len()
         };
 
-        let item = self.to_clean.get(seg_offset).map(|i| *i);
+        let item = self.to_clean.get(seg_offset).cloned();
 
         if let Some(lid) = item {
             let idx = self.lid_to_idx(lid);

@@ -41,8 +41,6 @@ pub struct Log {
     /// iobufs is the underlying lock-free IO write buffer.
     pub(super) iobufs: Arc<IoBufs>,
     pub(crate) config: Config,
-    /// Periodically flushes `iobufs`.
-    _flusher: Option<flusher::Flusher>,
 }
 
 unsafe impl Send for Log {}
@@ -53,16 +51,7 @@ impl Log {
     pub fn start(config: Config, snapshot: Snapshot) -> Result<Log> {
         let iobufs = Arc::new(IoBufs::start(config.clone(), snapshot)?);
 
-        let iobufs_flusher = iobufs.clone();
-        let flusher = config.flush_every_ms.map(move |fem| {
-            flusher::Flusher::new("log flusher".to_owned(), iobufs_flusher, fem)
-        });
-
-        Ok(Log {
-            iobufs,
-            config,
-            _flusher: flusher,
-        })
+        Ok(Log { iobufs, config })
     }
 
     /// Starts a log for use without a materializer.
@@ -182,7 +171,7 @@ impl Log {
         raw_buf: &[u8],
         is_blob_rewrite: bool,
     ) -> Result<Reservation<'a>> {
-        let _measure = Measure::new(&M.reserve);
+        let _measure = Measure::new(&M.reserve_lat);
 
         let n_io_bufs = self.config.io_bufs;
 
@@ -208,6 +197,8 @@ impl Log {
         let buf = raw_buf;
 
         let total_buf_len = MSG_HEADER_LEN + buf.len();
+
+        M.reserve_sz.measure(total_buf_len as f64);
 
         let max_overhead = std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN);
 

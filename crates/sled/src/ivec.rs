@@ -23,7 +23,7 @@ impl Serialize for IVec {
         &self,
         serializer: S,
     ) -> StdResult<S::Ok, S::Error> {
-        serde_bytes::serialize(self, serializer)
+        serde_bytes::serialize(self.as_ref(), serializer)
     }
 }
 
@@ -31,7 +31,9 @@ impl<'de> Deserialize<'de> for IVec {
     fn deserialize<D: Deserializer<'de>>(
         deserializer: D,
     ) -> StdResult<Self, D::Error> {
-        serde_bytes::deserialize(deserializer)
+        let bytes: StdResult<Box<[u8]>, D::Error> =
+            serde_bytes::deserialize(deserializer);
+        bytes.map(IVec::from)
     }
 }
 
@@ -67,24 +69,42 @@ impl IVec {
     }
 }
 
+impl From<Box<[u8]>> for IVec {
+    fn from(v: Box<[u8]>) -> IVec {
+        if v.len() <= CUTOFF {
+            IVec::new(&v)
+        } else {
+            IVec::Remote {
+                // rely on the Arc From specialization
+                // for Box<T>, which may improve
+                // over time
+                buf: v.into(),
+            }
+        }
+    }
+}
+
 impl From<&[u8]> for IVec {
     fn from(v: &[u8]) -> IVec {
         IVec::new(v)
     }
 }
 
+impl From<&str> for IVec {
+    fn from(v: &str) -> IVec {
+        v.as_bytes().into()
+    }
+}
+
+impl From<&IVec> for IVec {
+    fn from(v: &IVec) -> IVec {
+        v.clone()
+    }
+}
+
 impl From<Vec<u8>> for IVec {
     fn from(v: Vec<u8>) -> IVec {
-        if v.len() <= CUTOFF {
-            IVec::new(&v)
-        } else {
-            IVec::Remote {
-                // rely on the Arc From specialization
-                // for Vec<[T]>, which may improve
-                // over time for T's that are Copy
-                buf: v.into(),
-            }
-        }
+        v.into_boxed_slice().into()
     }
 }
 

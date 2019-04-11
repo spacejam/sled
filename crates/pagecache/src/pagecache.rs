@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::BinaryHeap,
     ops::Deref,
     sync::{Arc, Mutex},
@@ -33,12 +34,7 @@ where
     where
         P: Debug,
     {
-        match self.cached_ptr.deref().deref() {
-            CacheEntry::MergedResident(m, ..) => m,
-            other => {
-                panic!("called deref_merged_resident on {:?}", other);
-            }
-        }
+        self.cached_ptr.deref().deref().deref_merged_resident()
     }
 }
 
@@ -122,6 +118,26 @@ impl<M: Send> CacheEntry<M> {
             | Meta(.., ptr) => ptr,
         }
     }
+
+    fn is_free(&self) -> bool {
+        if let CacheEntry::Free(..) = self {
+            true
+        } else {
+            false
+        }
+    }
+
+    unsafe fn deref_merged_resident(&self) -> &M
+    where
+        M: Debug,
+    {
+        match self {
+            CacheEntry::MergedResident(m, ..) => m,
+            other => {
+                panic!("called deref_merged_resident on {:?}", other);
+            }
+        }
+    }
 }
 
 /// `LoggedUpdate` is for writing blocks of `Update`'s to disk
@@ -159,6 +175,15 @@ where
             true
         } else {
             false
+        }
+    }
+
+    fn into_frag(self) -> P {
+        match self {
+            Update::Append(frag) | Update::Compact(frag) => frag,
+            other => {
+                panic!("called into_frag on non-Append/Compact: {:?}", other)
+            }
         }
     }
 
@@ -532,6 +557,34 @@ where
         self.allocate_inner(Update::Compact(new), tx)
     }
 
+    /// Attempt to opportunistically rewrite data from a Draining
+    /// segment of the file to help with space amplification.
+    /// Returns Ok(true) if we had the opportunity to attempt to
+    /// move a page. Returns Ok(false) if there were no pages
+    /// to GC. Returns an Err if we encountered an IO problem
+    /// while performing this GC.
+    pub fn attempt_gc(&self) -> Result<bool> {
+        let tx = Tx::new(0);
+        let to_clean = self.log.with_sa(|sa| sa.clean(COUNTER_PID));
+        if let Some(to_clean) = to_clean {
+            self.rewrite_page(to_clean, &tx).map(|_| true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    #[doc(hidden)]
+    #[cfg(feature = "failpoints")]
+    pub fn set_failpoint(&self, e: Error) {
+        if let Error::FailPoint = e {
+            self.log.iobufs._failpoint_crashing.store(true, SeqCst);
+
+            // wake up any waiting threads
+            // so they don't stall forever
+            self.log.iobufs.interval_updated.notify_all();
+        }
+    }
+
     fn allocate_inner<'g>(
         &self,
         new: Update<P>,
@@ -898,7 +951,6 @@ where
             trace!("rewriting page with pid {}", pid);
 
             // page-in whole page with a get
-            // page-in whole page with a get,
             let (key, update) = match self.get(pid, tx)? {
                 PageGet::Materialized(data, key) => {
                     (key, Update::Compact(data.clone()))
@@ -918,7 +970,6 @@ where
 
             self.cas_page(pid, key, update, true, tx).map(|res| {
                 trace!("rewriting pid {} success: {}", pid, res.is_ok());
-                ()
             })
         }
     }
@@ -1053,12 +1104,11 @@ where
         } // loop
     }
 
-    /// Try to retrieve a page by its logical ID.
-    pub fn get<'g>(
-        &self,
-        pid: PageId,
-        tx: &'g Tx,
-    ) -> Result<PageGet<'g, PM::PageFrag>> {
+    /// Try to retrieve a page by its logical ID,
+    /// using the provided `Materializer` to consolidate
+    /// the fragments in-memory and returning the single
+    /// consolidated page.
+    pub fn get<'g>(&self, pid: PageId, tx: &'g Tx) -> Result<PageGet<'g, P>> {
         trace!("getting pid {}", pid);
         loop {
             let pte_ptr = match self.inner.get(pid, tx) {
@@ -1073,6 +1123,205 @@ where
                 return Ok(res);
             }
             // loop until we succeed
+        }
+    }
+
+    /// Try to retrieve a page by its logical ID.
+    pub fn get_page_frags<'g>(
+        &'g self,
+        pid: PageId,
+        tx: &'g Tx,
+    ) -> Result<(PagePtr<'g, P>, Vec<&'g P>)> {
+        trace!("getting page iter for pid {}", pid);
+
+        let pte_ptr = match self.inner.get(pid, tx) {
+            None => panic!(
+                "tried to get page with \
+                 pid {} that doesn't exist",
+                pid
+            ),
+            Some(p) => p,
+        };
+
+        let head = unsafe { pte_ptr.deref().stack.head(tx) };
+
+        let entries: Vec<_> = StackIter::from_ptr(head, tx).collect();
+
+        let valid = entries.iter().all(|ce| match ce {
+            CacheEntry::Counter(..) | CacheEntry::Meta(..) => false,
+            _ => true,
+        });
+
+        if !valid {
+            return Err(Error::Unsupported(
+                "you are not able to iterate over \
+                 the first couple pages, which are \
+                 reserved for storing metadata and \
+                 monotonic ID generator info"
+                    .into(),
+            ));
+        }
+
+        if entries.is_empty() || entries[0].is_free() {
+            return Ok((
+                PagePtr {
+                    cached_ptr: head,
+                    wts: 0,
+                },
+                vec![],
+            ));
+        }
+
+        if let CacheEntry::MergedResident(mr, ts, ..) = entries[0] {
+            // short circuit
+
+            return Ok((
+                PagePtr {
+                    cached_ptr: head,
+                    wts: *ts,
+                },
+                vec![mr],
+            ));
+        }
+
+        let pulled = entries.iter().map(|ce| match ce {
+            CacheEntry::MergedResident(mr, ts, lsn, ptr) => {
+                Ok((Cow::Borrowed(mr), *ts, *lsn, *ptr))
+            }
+            CacheEntry::Resident(r, ts, lsn, ptr) => {
+                Ok((Cow::Borrowed(r), *ts, *lsn, *ptr))
+            }
+            CacheEntry::Flush(ts, lsn, ptr) => {
+                let res = self.pull(*lsn, *ptr).map(|pg| pg)?;
+                Ok((Cow::Owned(res.into_frag()), *ts, *lsn, *ptr))
+            }
+            CacheEntry::PartialFlush(ts, lsn, ptr) => {
+                let res = self.pull(*lsn, *ptr).map(|pg| pg)?;
+                Ok((Cow::Owned(res.into_frag()), *ts, *lsn, *ptr))
+            }
+            other => {
+                panic!("iterating over unexpected CacheEntry: {:?}", other);
+            }
+        });
+
+        // if any of our pulls failed, bail here
+        let mut successes: Vec<(Cow<P>, u64, Lsn, DiskPtr)> =
+            match pulled.collect() {
+                Ok(s) => s,
+                Err(e) => return Err(e),
+            };
+
+        if successes.len() > self.config.page_consolidation_threshold {
+            trace!("consolidating pid {} with len {}!", pid, successes.len());
+            let update = {
+                let _measure = Measure::new(&M.merge_page);
+
+                let combined_iter = successes.iter().map(|(c, ..)| &**c).rev();
+
+                Update::Compact(self.t.merge(combined_iter))
+            };
+
+            let ptr = PagePtr {
+                cached_ptr: head,
+                wts: successes[0].1,
+            };
+
+            match self.cas_page(pid, ptr, update, true, tx)? {
+                Ok(new_head) => {
+                    let head = new_head.cached_ptr;
+
+                    return Ok((new_head, unsafe {
+                        vec![head.deref().deref().deref_merged_resident()]
+                    }));
+                }
+                Err(None) => {
+                    // This page was unallocated since we
+                    // read the head pointer.
+                    return Ok((
+                        PagePtr {
+                            cached_ptr: head,
+                            wts: 0,
+                        },
+                        vec![],
+                    ));
+                }
+                Err(Some(_)) => {
+                    // our consolidation failed, recurse
+                    // TODO don't recurse in the released version
+                    return self.get_page_frags(pid, tx);
+                }
+            }
+        }
+
+        let pulled = successes.iter().any(|(c, ..)| {
+            if let Cow::Owned(_) = c {
+                true
+            } else {
+                false
+            }
+        });
+
+        if pulled {
+            // fix up the stack to include our pulled items
+            let (tail_frag, ts, lsn, ptr) = successes.pop().unwrap();
+            let tail = CacheEntry::MergedResident(
+                tail_frag.into_owned(),
+                ts,
+                lsn,
+                ptr,
+            );
+
+            let mut frags = Vec::with_capacity(successes.len() + 1);
+
+            for (item, ts, lsn, ptr) in successes.into_iter() {
+                frags.push(CacheEntry::Resident(
+                    item.into_owned(),
+                    ts,
+                    lsn,
+                    ptr,
+                ));
+            }
+
+            frags.push(tail);
+
+            let node = node_from_frag_vec(frags).into_shared(tx);
+
+            debug_assert_eq!(
+                ptrs_from_stack(head, tx),
+                ptrs_from_stack(node, tx),
+            );
+
+            let node = unsafe { node.into_owned() };
+
+            debug_delay();
+            let res = unsafe { pte_ptr.deref().stack.cas(head, node, tx) };
+            if res.is_ok() {
+                trace!("fix-up for pid {} succeeded", pid);
+            } else {
+                trace!("fix-up for pid {} failed", pid);
+            }
+            self.get_page_frags(pid, tx)
+        } else {
+            let wts = successes[0].1;
+
+            let refs = successes
+                .into_iter()
+                .map(|(item, ..)| {
+                    if let Cow::Borrowed(i) = item {
+                        i
+                    } else {
+                        panic!("somehow got Cow::Owned");
+                    }
+                })
+                .collect();
+
+            Ok((
+                PagePtr {
+                    cached_ptr: head,
+                    wts,
+                },
+                refs,
+            ))
         }
     }
 
@@ -1301,7 +1550,7 @@ where
         pid: PageId,
         pte_ptr: Shared<'g, PageTableEntry<P>>,
         tx: &'g Tx,
-    ) -> Result<Option<PageGet<'g, PM::PageFrag>>> {
+    ) -> Result<Option<PageGet<'g, P>>> {
         let _measure = Measure::new(&M.page_in);
 
         debug_delay();

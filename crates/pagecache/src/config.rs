@@ -11,7 +11,10 @@ use std::{
 };
 
 use bincode::{deserialize, serialize};
+
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use fs2::FileExt;
+
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
@@ -223,10 +226,10 @@ impl ConfigBuilder {
             None
         };
 
-        let file = self.open_file().unwrap_or_else(|_| {
+        let file = self.open_file().unwrap_or_else(|e| {
             panic!(
-                "should be able to open configured file at {:?}",
-                self.db_path()
+                "should be able to open configured file at {:?}; {}",
+                self.db_path(), e,
             );
         });
 
@@ -367,11 +370,14 @@ impl ConfigBuilder {
         match options.open(&path) {
             Ok(file) => {
                 // try to exclusively lock the file
-                if file.try_lock_exclusive().is_err() {
-                    return Err(Error::Io(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "could not acquire exclusive file lock",
-                    )));
+                #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+                {
+                    if file.try_lock_exclusive().is_err() {
+                        return Err(Error::Io(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            "could not acquire exclusive file lock",
+                        )));
+                    }
                 }
 
                 Ok(file)

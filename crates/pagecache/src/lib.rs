@@ -33,7 +33,6 @@ mod config;
 mod constants;
 mod diskptr;
 mod ds;
-mod flusher;
 mod iobuf;
 mod iterator;
 mod map;
