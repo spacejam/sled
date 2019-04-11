@@ -293,6 +293,84 @@ impl Tree {
         }
     }
 
+    /// Fetch the value, apply a function to it and return the result.
+    ///
+    /// # Note
+    ///
+    /// This may call the function multiple times if the value has been
+    /// changed from other threads in the meantime.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sled::{ConfigBuilder, IVec, Error};
+    /// let config = ConfigBuilder::new().temporary(true).build();
+    /// let t = sled::Db::start(config).unwrap();
+    ///
+    /// assert_eq!(t.update_and_fetch(b"hello", |_old| Some(vec![1])), Ok(Some(IVec::from(vec![1]))));
+    /// ```
+    pub fn update_and_fetch<K, V, F>(
+        &self,
+        key: K,
+        f: F,
+    ) -> Result<Option<IVec>>
+    where
+        K: AsRef<[u8]>,
+        F: Fn(Option<&[u8]>) -> Option<V>,
+        IVec: From<V>,
+    {
+        let key = key.as_ref();
+        let mut current = self.get(key)?;
+
+        loop {
+            let tmp = current.as_ref().map(AsRef::as_ref);
+            let next = f(tmp).map(IVec::from);
+            match self.cas::<_, _, IVec>(key, tmp, next.clone())? {
+                Ok(()) => return Ok(next),
+                Err(new_current) => current = new_current,
+            }
+        }
+    }
+
+    /// Fetch the value, apply a function to it and return the previous value.
+    ///
+    /// # Note
+    ///
+    /// This may call the function multiple times if the value has been
+    /// changed from other threads in the meantime.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sled::{ConfigBuilder, Error};
+    /// let config = ConfigBuilder::new().temporary(true).build();
+    /// let t = sled::Db::start(config).unwrap();
+    ///
+    /// assert_eq!(t.fetch_and_update(b"hello", |_old| Some(vec![1])), Ok(None));
+    /// ```
+    pub fn fetch_and_update<K, V, F>(
+        &self,
+        key: K,
+        f: F,
+    ) -> Result<Option<IVec>>
+    where
+        K: AsRef<[u8]>,
+        F: Fn(Option<&[u8]>) -> Option<V>,
+        IVec: From<V>,
+    {
+        let key = key.as_ref();
+        let mut current = self.get(key)?;
+
+        loop {
+            let tmp = current.as_ref().map(AsRef::as_ref);
+            let next = f(tmp);
+            match self.cas(key, tmp, next)? {
+                Ok(()) => return Ok(current),
+                Err(new_current) => current = new_current,
+            }
+        }
+    }
+
     /// Subscribe to `Event`s that happen to keys that have
     /// the specified prefix. Events for particular keys are
     /// guaranteed to be witnessed in the same order by all
