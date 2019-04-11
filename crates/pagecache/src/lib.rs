@@ -1,6 +1,5 @@
 //! `pagecache` is a lock-free pagecache and log for building high-performance databases.
 #![deny(missing_docs)]
-#![cfg_attr(feature = "nightly", feature(integer_atomics))]
 #![cfg_attr(test, deny(clippy::warnings))]
 #![cfg_attr(test, deny(clippy::bad_style))]
 #![cfg_attr(test, deny(clippy::future_incompatible))]
@@ -8,13 +7,6 @@
 #![cfg_attr(test, deny(clippy::rust_2018_compatibility))]
 #![cfg_attr(test, deny(clippy::rust_2018_idioms))]
 #![cfg_attr(test, deny(clippy::unused))]
-
-#[cfg(all(not(feature = "nightly"), target_pointer_width = "32"))]
-compile_error!(
-    "32 bit architectures require a nightly compiler for now, \
-     with the \"nightly\" build feature enabled. \
-     See https://github.com/spacejam/sled/issues/145"
-);
 
 #[cfg(feature = "failpoints")]
 use fail::fail_point;
@@ -76,6 +68,7 @@ pub mod logger;
 
 use std::{
     cell::UnsafeCell,
+    convert::TryFrom,
     fmt::{self, Debug},
     io,
 };
@@ -181,3 +174,10 @@ pub use crossbeam_epoch::{
 pub use crossbeam_utils::{Backoff, CachePadded};
 
 pub use std::sync::atomic;
+
+fn assert_usize<T>(from: T) -> usize
+where
+    usize: std::convert::TryFrom<T, Error = std::num::TryFromIntError>,
+{
+    usize::try_from(from).expect("lost data cast while converting to usize")
+}

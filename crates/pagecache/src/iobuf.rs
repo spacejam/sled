@@ -1,12 +1,9 @@
-#[cfg(target_pointer_width = "32")]
-use std::sync::atomic::AtomicI64 as AtomicLsn;
-#[cfg(target_pointer_width = "64")]
-use std::sync::atomic::AtomicIsize as AtomicLsn;
-
 use std::{
     mem::size_of,
     sync::atomic::Ordering::SeqCst,
-    sync::atomic::{AtomicBool, AtomicUsize},
+    sync::atomic::{
+        AtomicBool, AtomicI64 as AtomicLsn, AtomicU64, AtomicUsize,
+    },
     sync::{Arc, Condvar, Mutex},
 };
 
@@ -23,12 +20,6 @@ pub(crate) const MAX_WRITERS: Header = 127;
 
 pub(crate) type Header = u64;
 
-/// A logical sequence number.
-#[cfg(target_pointer_width = "64")]
-type InnerLsn = isize;
-#[cfg(target_pointer_width = "32")]
-type InnerLsn = i64;
-
 macro_rules! io_fail {
     ($self:expr, $e:expr) => {
         #[cfg(feature = "failpoints")]
@@ -43,9 +34,9 @@ macro_rules! io_fail {
 
 pub(crate) struct IoBuf {
     pub(crate) buf: UnsafeCell<Vec<u8>>,
-    header: CachePadded<AtomicUsize>,
-    lid: AtomicUsize,
-    lsn: AtomicUsize,
+    header: CachePadded<AtomicU64>,
+    lid: AtomicU64,
+    lsn: AtomicLsn,
     capacity: AtomicUsize,
     maxed: AtomicBool,
     linearizer: Mutex<()>,
@@ -63,8 +54,8 @@ pub(super) struct IoBufs {
     pub(crate) buf_mu: Mutex<()>,
     pub(crate) buf_updated: Condvar,
     pub(crate) bufs: Vec<IoBuf>,
-    pub(crate) current_buf: AtomicUsize,
-    pub(crate) written_bufs: AtomicUsize,
+    pub(crate) current_buf: AtomicU64,
+    pub(crate) written_bufs: AtomicU64,
 
     // Pending intervals that have been written to stable storage, but may be
     // higher than the current value of `stable` due to interesting thread
@@ -134,8 +125,6 @@ impl IoBufs {
 
         let bufs = rep_no_copy![IoBuf::new(io_buf_size); config.io_bufs];
 
-        let current_buf = 0;
-
         trace!(
             "starting IoBufs with next_lsn: {} \
              next_lid: {}",
@@ -146,7 +135,7 @@ impl IoBufs {
         if next_lsn == 0 {
             // initializing new system
             assert_eq!(next_lid, next_lsn as LogId);
-            let iobuf = &bufs[current_buf];
+            let iobuf = &bufs[0];
             let lid = segment_accountant.next(next_lsn)?;
 
             iobuf.set_lid(lid);
@@ -164,10 +153,10 @@ impl IoBufs {
             );
         } else {
             // the tip offset is not completely full yet, reuse it
-            let iobuf = &bufs[current_buf];
-            let offset = next_lid % io_buf_size as LogId;
+            let iobuf = &bufs[0];
+            let offset = assert_usize(next_lid % io_buf_size as LogId);
             iobuf.set_lid(next_lid);
-            iobuf.set_capacity(io_buf_size - offset as usize - SEG_TRAILER_LEN);
+            iobuf.set_capacity(io_buf_size - offset - SEG_TRAILER_LEN);
             iobuf.set_lsn(next_lsn);
 
             debug!(
@@ -207,16 +196,16 @@ impl IoBufs {
             buf_updated: Condvar::new(),
             buf_mu: Mutex::new(()),
             bufs,
-            current_buf: AtomicUsize::new(current_buf),
-            written_bufs: AtomicUsize::new(0),
+            current_buf: Default::default(),
+            written_bufs: Default::default(),
 
             intervals: Mutex::new(vec![]),
             interval_updated: Condvar::new(),
 
-            stable_lsn: AtomicLsn::new(stable as InnerLsn),
-            max_reserved_lsn: AtomicLsn::new(stable as InnerLsn),
+            stable_lsn: AtomicLsn::new(stable),
+            max_reserved_lsn: AtomicLsn::new(stable),
             max_recorded_stable_lsn: AtomicLsn::new(
-                max_trailer_stable_lsn as InnerLsn,
+                max_trailer_stable_lsn,
             ),
             segment_accountant: Mutex::new(segment_accountant),
 
@@ -275,7 +264,7 @@ impl IoBufs {
     fn idx(&self) -> usize {
         debug_delay();
         let current_buf = self.current_buf.load(SeqCst);
-        current_buf % self.config.io_bufs
+        assert_usize(current_buf % self.config.io_bufs as u64)
     }
 
     /// Returns the last stable offset in storage.
@@ -350,16 +339,13 @@ impl IoBufs {
     // ensure self.max_reserved_lsn is set to this Lsn
     // or greater, for use in correct calls to flush.
     pub(crate) fn bump_max_reserved_lsn(&self, lsn: Lsn) {
-        let mut current = self.max_reserved_lsn.load(SeqCst) as InnerLsn;
+        let mut current = self.max_reserved_lsn.load(SeqCst);
         loop {
-            if current >= lsn as InnerLsn {
+            if current >= lsn {
                 return;
             }
-            let last = self.max_reserved_lsn.compare_and_swap(
-                current,
-                lsn as InnerLsn,
-                SeqCst,
-            );
+            let last =
+                self.max_reserved_lsn.compare_and_swap(current, lsn, SeqCst);
             if last == current {
                 // we succeeded.
                 return;
@@ -439,23 +425,22 @@ impl IoBufs {
         );
 
         assert_ne!(
-            lid as usize,
-            std::usize::MAX,
+            lid,
+            LogId::max_value(),
             "created reservation for uninitialized slot",
         );
 
         assert!(is_sealed(header));
 
-        let res_len = offset(header) as usize;
+        let bytes_to_write = offset(header);
 
         let maxed = iobuf.linearized(|| iobuf.get_maxed());
-        let unused_space = capacity - res_len;
+        let unused_space = capacity - bytes_to_write;
         let should_pad = unused_space >= MSG_HEADER_LEN;
 
         let total_len = if maxed && should_pad {
-            let offset = offset(header) as isize;
             let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
-            let pad_len = capacity - offset as usize - MSG_HEADER_LEN;
+            let pad_len = capacity - bytes_to_write - MSG_HEADER_LEN;
 
             // take the crc of the random bytes already after where we
             // would place our header.
@@ -463,7 +448,7 @@ impl IoBufs {
 
             let header = MessageHeader {
                 kind: MessageKind::Pad,
-                lsn: base_lsn + offset as Lsn,
+                lsn: base_lsn + bytes_to_write as Lsn,
                 len: pad_len,
                 crc32: 0,
             };
@@ -473,12 +458,12 @@ impl IoBufs {
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     header_bytes.as_ptr(),
-                    data.as_mut_ptr().offset(offset),
+                    data.as_mut_ptr().add(bytes_to_write),
                     MSG_HEADER_LEN,
                 );
                 std::ptr::copy_nonoverlapping(
                     padding_bytes.as_ptr(),
-                    data.as_mut_ptr().offset(offset + MSG_HEADER_LEN as isize),
+                    data.as_mut_ptr().add(bytes_to_write + MSG_HEADER_LEN),
                     pad_len,
                 );
             }
@@ -492,14 +477,14 @@ impl IoBufs {
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     crc32_arr.as_ptr(),
-                    data.as_mut_ptr().offset(offset + 13),
+                    data.as_mut_ptr().add(bytes_to_write + 13),
                     std::mem::size_of::<u32>(),
                 );
             }
 
             capacity
         } else {
-            res_len
+            bytes_to_write
         };
 
         let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
@@ -554,9 +539,9 @@ impl IoBufs {
 
         if total_len > 0 || maxed {
             let complete_len = if maxed {
-                let lsn_idx = base_lsn as usize / io_buf_size;
-                let next_seg_beginning = (lsn_idx + 1) * io_buf_size;
-                next_seg_beginning - base_lsn as usize
+                let lsn_idx = base_lsn / io_buf_size as Lsn;
+                let next_seg_beginning = (lsn_idx + 1) * io_buf_size as Lsn;
+                assert_usize(next_seg_beginning - base_lsn)
             } else {
                 total_len
             };
@@ -588,7 +573,7 @@ impl IoBufs {
         // communicate to other threads that we have written an IO buffer.
         debug_delay();
         let _written_bufs = self.written_bufs.fetch_add(1, SeqCst);
-        trace!("{} written", _written_bufs % self.config.io_bufs);
+        trace!("{} written", _written_bufs % self.config.io_bufs as u64);
 
         // let any threads that are blocked on buf_mu know about the
         // updated counter.
@@ -633,7 +618,7 @@ impl IoBufs {
 
         while let Some(&(low, high)) = intervals.last() {
             assert_ne!(low, high);
-            let cur_stable = self.stable_lsn.load(SeqCst) as Lsn;
+            let cur_stable = self.stable_lsn.load(SeqCst);
             assert!(
                 low > cur_stable,
                 "somehow, we marked offset {} stable while \
@@ -643,7 +628,7 @@ impl IoBufs {
                 high
             );
             if cur_stable + 1 == low {
-                let old = self.stable_lsn.swap(high as InnerLsn, SeqCst) as Lsn;
+                let old = self.stable_lsn.swap(high, SeqCst);
                 assert_eq!(
                     old, cur_stable,
                     "concurrent stable offset modification detected"
@@ -706,7 +691,7 @@ pub(crate) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Result<usize> {
         }
     }
 
-    Ok((stable - first_stable) as usize)
+    Ok(assert_usize(stable - first_stable))
 }
 
 /// Called by users who wish to force the current buffer
@@ -740,13 +725,13 @@ pub(crate) fn maybe_seal_and_write_iobuf(
     let capacity = iobuf.get_capacity();
     let io_buf_size = iobufs.config.io_buf_size;
 
-    if offset(header) as usize > capacity {
+    if offset(header) > capacity {
         // a race happened, nothing we can do
         return Ok(());
     }
 
     let sealed = mk_sealed(header);
-    let res_len = offset(sealed) as usize;
+    let res_len = offset(sealed);
 
     let maxed = res_len == capacity;
 
@@ -780,7 +765,7 @@ pub(crate) fn maybe_seal_and_write_iobuf(
         capacity
     );
 
-    let max = std::usize::MAX as LogId;
+    let max = LogId::max_value();
 
     assert_ne!(
         lid, max,
@@ -880,7 +865,10 @@ pub(crate) fn maybe_seal_and_write_iobuf(
     // communicate to other threads that we have advanced an IO buffer.
     debug_delay();
     let _current_buf = iobufs.current_buf.fetch_add(1, SeqCst) + 1;
-    trace!("{} current_buf", _current_buf % iobufs.config.io_bufs);
+    trace!(
+        "{} current_buf",
+        _current_buf % iobufs.config.io_bufs as u64
+    );
 
     // let any threads that are blocked on buf_mu know about the
     // updated counter.
@@ -957,9 +945,9 @@ impl IoBuf {
     pub(crate) fn new(buf_size: usize) -> IoBuf {
         IoBuf {
             buf: UnsafeCell::new(vec![0; buf_size]),
-            header: CachePadded::new(AtomicUsize::new(0)),
-            lid: AtomicUsize::new(std::usize::MAX),
-            lsn: AtomicUsize::new(0),
+            header: CachePadded::new(AtomicU64::new(0)),
+            lid: AtomicU64::new(std::u64::MAX),
+            lsn: AtomicLsn::new(0),
             capacity: AtomicUsize::new(0),
             maxed: AtomicBool::new(false),
             linearizer: Mutex::new(()),
@@ -1000,7 +988,7 @@ impl IoBuf {
         // ensure writes to the buffer land after our header.
         let last_salt = salt(last);
         let new_salt = bump_salt(last_salt);
-        let bumped = bump_offset(new_salt, SEG_HEADER_LEN as Header);
+        let bumped = bump_offset(new_salt, SEG_HEADER_LEN);
         self.set_header(bumped);
     }
 
@@ -1016,7 +1004,7 @@ impl IoBuf {
 
     pub(crate) fn set_lsn(&self, lsn: Lsn) {
         debug_delay();
-        self.lsn.store(lsn as usize, SeqCst);
+        self.lsn.store(lsn, SeqCst);
     }
 
     pub(crate) fn set_maxed(&self, maxed: bool) {
@@ -1031,27 +1019,27 @@ impl IoBuf {
 
     pub(crate) fn get_lsn(&self) -> Lsn {
         debug_delay();
-        self.lsn.load(SeqCst) as Lsn
+        self.lsn.load(SeqCst)
     }
 
     pub(crate) fn set_lid(&self, offset: LogId) {
         debug_delay();
-        self.lid.store(offset as usize, SeqCst);
+        self.lid.store(offset, SeqCst);
     }
 
     pub(crate) fn get_lid(&self) -> LogId {
         debug_delay();
-        self.lid.load(SeqCst) as LogId
+        self.lid.load(SeqCst)
     }
 
     pub(crate) fn get_header(&self) -> Header {
         debug_delay();
-        self.header.load(SeqCst) as Header
+        self.header.load(SeqCst)
     }
 
     pub(crate) fn set_header(&self, new: Header) {
         debug_delay();
-        self.header.store(new as usize, SeqCst);
+        self.header.store(new, SeqCst);
     }
 
     pub(crate) fn cas_header(
@@ -1060,10 +1048,7 @@ impl IoBuf {
         new: Header,
     ) -> std::result::Result<Header, Header> {
         debug_delay();
-        let res =
-            self.header
-                .compare_and_swap(old as usize, new as usize, SeqCst)
-                as Header;
+        let res = self.header.compare_and_swap(old, new, SeqCst);
         if res == old {
             Ok(new)
         } else {
@@ -1077,10 +1062,7 @@ impl IoBuf {
         new: LogId,
     ) -> std::result::Result<LogId, LogId> {
         debug_delay();
-        let res = self
-            .lid
-            .compare_and_swap(old as usize, new as usize, SeqCst)
-            as LogId;
+        let res = self.lid.compare_and_swap(old, new, SeqCst);
         if res == old {
             Ok(new)
         } else {
@@ -1113,14 +1095,15 @@ pub(crate) fn decr_writers(v: Header) -> Header {
     v - (1 << 24)
 }
 
-pub(crate) const fn offset(v: Header) -> Header {
-    v << 40 >> 40
+pub(crate) const fn offset(v: Header) -> usize {
+    let ret = v << 40 >> 40;
+    ret as usize
 }
 
 #[cfg_attr(not(feature = "no_inline"), inline)]
-pub(crate) fn bump_offset(v: Header, by: Header) -> Header {
+pub(crate) fn bump_offset(v: Header, by: usize) -> Header {
     assert_eq!(by >> 24, 0);
-    v + by
+    v + (by as Header)
 }
 
 pub(crate) const fn bump_salt(v: Header) -> Header {

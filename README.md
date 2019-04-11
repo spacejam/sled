@@ -84,7 +84,6 @@ Want to prioritize a specific feature or get commercial help with using sled in 
 * quite young, should be considered unstable for the time being
 * the C API is likely to change rapidly
 * writepath is not well optimized yet. readpath is essentially wait-free and zero-copy.
-* 32 bit architectures [require Rust nightly with the `nightly` feature enabled](https://github.com/spacejam/sled/issues/145).
 
 # contribution welcome!
 

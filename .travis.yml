@@ -27,7 +27,7 @@ install:
 matrix:
   include:
     - os: linux
-      rust: nightly-2019-03-15
+      rust: nightly-2019-04-11
       env:
         - TEST=sanitizers-and-cross-build
     - os: osx
@@ -112,20 +112,20 @@ script:
 
                  echo "cross build" &&
                  echo "https://github.com/rust-lang/cargo/issues/4753" &&
-                 pushd crates/sled      && cargo check --target aarch64-fuchsia --features=nightly && popd &&
-                 pushd crates/sled      && cargo check --target aarch64-linux-android --features=nightly && popd &&
-                 pushd crates/sled      && cargo check --target i686-linux-android --features=nightly && popd &&
-                 pushd crates/sled      && cargo check --target i686-unknown-linux-gnu --features=nightly && popd &&
-                 pushd crates/sled      && cargo check --target x86_64-pc-windows-gnu  --features=nightly && popd &&
-                 pushd crates/sled      && cargo check --target x86_64-linux-android  --features=nightly && popd &&
-                 pushd crates/sled      && cargo check --target x86_64-fuchsia --features=nightly && popd &&
-                 pushd crates/pagecache && cargo check --target aarch64-fuchsia --features=nightly && popd &&
-                 pushd crates/pagecache && cargo check --target aarch64-linux-android --features=nightly && popd &&
-                 pushd crates/pagecache && cargo check --target i686-linux-android --features=nightly && popd &&
-                 pushd crates/pagecache && cargo check --target i686-unknown-linux-gnu --features=nightly && popd &&
-                 pushd crates/pagecache && cargo check --target x86_64-pc-windows-gnu  --features=nightly && popd &&
-                 pushd crates/pagecache && cargo check --target x86_64-linux-android --features=nightly && popd &&
-                 pushd crates/pagecache && cargo check --target x86_64-fuchsia --features=nightly && popd
+                 pushd crates/sled      && cargo check --target aarch64-fuchsia && popd &&
+                 pushd crates/sled      && cargo check --target aarch64-linux-android && popd &&
+                 pushd crates/sled      && cargo check --target i686-linux-android && popd &&
+                 pushd crates/sled      && cargo check --target i686-unknown-linux-gnu && popd &&
+                 pushd crates/sled      && cargo check --target x86_64-pc-windows-gnu  && popd &&
+                 pushd crates/sled      && cargo check --target x86_64-linux-android  && popd &&
+                 pushd crates/sled      && cargo check --target x86_64-fuchsia && popd &&
+                 pushd crates/pagecache && cargo check --target aarch64-fuchsia && popd &&
+                 pushd crates/pagecache && cargo check --target aarch64-linux-android && popd &&
+                 pushd crates/pagecache && cargo check --target i686-linux-android && popd &&
+                 pushd crates/pagecache && cargo check --target i686-unknown-linux-gnu && popd &&
+                 pushd crates/pagecache && cargo check --target x86_64-pc-windows-gnu  && popd &&
+                 pushd crates/pagecache && cargo check --target x86_64-linux-android && popd &&
+                 pushd crates/pagecache && cargo check --target x86_64-fuchsia && popd
                  ;;
                crash)
                  pushd tests &&
