@@ -47,7 +47,7 @@ impl LogReader for File {
         // in the header.
         unsafe {
             std::ptr::write_bytes(
-                msg_header_buf.as_mut_ptr().offset(13),
+                msg_header_buf.as_mut_ptr().add(13),
                 0xFF,
                 std::mem::size_of::<u32>(),
             );
@@ -68,7 +68,7 @@ impl LogReader for File {
 
         assert!(lid + MSG_HEADER_LEN as LogId <= ceiling);
 
-        if header.lsn as usize % segment_len != lid as usize % segment_len {
+        if header.lsn % segment_len as Lsn != lid as Lsn % segment_len as Lsn {
             let _hb: [u8; MSG_HEADER_LEN] = header.into();
             // our message lsn was not aligned to our segment offset
             trace!(
@@ -77,14 +77,14 @@ impl LogReader for File {
                  within its segment. header: {:?} \
                  expected: relative offset {} bytes: {:?}",
                 header,
-                lid as usize % segment_len,
+                lid % segment_len as LogId,
                 _hb
             );
             return Ok(LogRead::Corrupted(header.len));
         }
 
         let max_possible_len =
-            (ceiling - lid - MSG_HEADER_LEN as LogId) as usize;
+            assert_usize(ceiling - lid - MSG_HEADER_LEN as LogId);
         if header.len > max_possible_len {
             trace!(
                 "read a corrupted message with impossibly long length of {}",
