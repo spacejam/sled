@@ -521,12 +521,13 @@ impl SegmentAccountant {
             }
         }
 
-        self.initialize_from_segments(segments)
+        self.initialize_from_segments(segments, snapshot.max_trailer_stable_lsn)
     }
 
     fn initialize_from_segments(
         &mut self,
         mut segments: Vec<Segment>,
+        max_trailer_stable_lsn: Lsn,
     ) -> Result<()> {
         // populate ordering from segments.
         // use last segment as active even if it's full
@@ -560,6 +561,10 @@ impl SegmentAccountant {
         }
 
         debug!("set self.tip to {} based on safety buffer", self.tip);
+        debug!(
+            "dynamic unstable tail begins after lsn {}",
+            max_trailer_stable_lsn
+        );
 
         let segments_len = segments.len();
 
@@ -577,7 +582,10 @@ impl SegmentAccountant {
             }
 
             if let Some(lsn) = segment.lsn {
-                if lsn != highest_lsn && segment.state == Active {
+                if lsn != highest_lsn
+                    && (lsn + io_buf_size as Lsn) < max_trailer_stable_lsn
+                    && segment.state == Active
+                {
                     segment.active_to_inactive(lsn, true, &self.config)?;
                 }
 
@@ -585,15 +593,30 @@ impl SegmentAccountant {
             }
 
             // can we transition these segments?
-            let can_free = segment.lsn.is_none() || segment.is_empty();
+            let in_unstable_tail = segment.lsn.unwrap_or(Lsn::max_value())
+                < max_trailer_stable_lsn + io_buf_size as Lsn;
 
-            let can_drain = segment_is_drainable(
-                idx,
-                segments_len,
-                segment.live_pct(),
-                segment.len(),
-                &self.config,
+            debug!(
+                "segment lsn: {:?}, unwrapped: {}, in_unstable_tail: {}, \
+                 max_trailer_stable_lsn: {}, io_buf_size: {}",
+                segment.lsn,
+                segment.lsn.unwrap_or(Lsn::max_value()),
+                in_unstable_tail,
+                max_trailer_stable_lsn,
+                io_buf_size
             );
+
+            let can_free = (!in_unstable_tail)
+                && (segment.lsn.is_none() || segment.is_empty());
+
+            let can_drain = (!in_unstable_tail)
+                && segment_is_drainable(
+                    idx,
+                    segments_len,
+                    segment.live_pct(),
+                    segment.len(),
+                    &self.config,
+                );
 
             // populate free and to_clean if the segment has seen
             if self.pause_rewriting || segment.lsn == Some(highest_lsn) {
