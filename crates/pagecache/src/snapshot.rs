@@ -314,6 +314,14 @@ where
         .max()
         .unwrap_or(0);
 
+    assert!(
+        max_trailer_stable_lsn >= snapshot.max_trailer_stable_lsn,
+        "somehow the snapshot max_trailer_stable_lsn went \
+         down over time from {} before to {} after",
+        snapshot.max_trailer_stable_lsn,
+        max_trailer_stable_lsn
+    );
+
     snapshot.max_trailer_stable_lsn = max_trailer_stable_lsn;
 
     write_snapshot(config, &snapshot)?;
