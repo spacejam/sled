@@ -1,15 +1,6 @@
 #[inline]
-pub(crate) fn u64_to_arr(u: u64) -> [u8; 8] {
-    [
-        u as u8,
-        (u >> 8) as u8,
-        (u >> 16) as u8,
-        (u >> 24) as u8,
-        (u >> 32) as u8,
-        (u >> 40) as u8,
-        (u >> 48) as u8,
-        (u >> 56) as u8,
-    ]
+pub(crate) fn u64_to_arr(number: u64) -> [u8; 8] {
+    number.to_le_bytes()
 }
 
 #[inline]
@@ -35,6 +26,6 @@ pub(crate) fn arr_to_u32(arr: &[u8]) -> u32 {
 }
 
 #[inline]
-pub(crate) fn u32_to_arr(u: u32) -> [u8; 4] {
-    [u as u8, (u >> 8) as u8, (u >> 16) as u8, (u >> 24) as u8]
+pub(crate) fn u32_to_arr(number: u32) -> [u8; 4] {
+    number.to_le_bytes()
 }
