@@ -64,7 +64,7 @@ script:
                osx)
                  pushd tests &&
                  cargo check &&
-                 cargo check --features=all &&
+                 cargo check --all-features &&
                  cargo test tree --release
                  ;;
                qc)
@@ -134,7 +134,7 @@ script:
                standard)
                  pushd tests &&
                  cargo check &&
-                 cargo check --features=all &&
+                 cargo check --all-features &&
                  popd &&
                  cargo test --release
                  ;;
