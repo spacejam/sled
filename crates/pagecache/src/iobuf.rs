@@ -67,6 +67,7 @@ pub(super) struct IoBufs {
     // to stable storage due to interesting thread interleavings.
     pub(crate) stable_lsn: AtomicLsn,
     pub(crate) max_reserved_lsn: AtomicLsn,
+    pub(crate) max_recorded_stable_lsn: AtomicLsn,
     pub(crate) segment_accountant: Mutex<SegmentAccountant>,
 
     // used for signifying that we're simulating a crash
@@ -88,6 +89,7 @@ impl IoBufs {
 
         let snapshot_max_lsn = snapshot.max_lsn;
         let snapshot_last_lid = snapshot.last_lid;
+        let snapshot_max_trailer_stable_lsn = snapshot.max_trailer_stable_lsn;
 
         let (next_lsn, next_lid) = if snapshot_max_lsn < SEG_HEADER_LEN as Lsn {
             snapshot.max_lsn = 0;
@@ -182,6 +184,9 @@ impl IoBufs {
 
             stable_lsn: AtomicLsn::new(stable),
             max_reserved_lsn: AtomicLsn::new(stable),
+            max_recorded_stable_lsn: AtomicLsn::new(
+                snapshot_max_trailer_stable_lsn,
+            ),
             segment_accountant: Mutex::new(segment_accountant),
 
             #[cfg(feature = "failpoints")]
@@ -427,9 +432,11 @@ impl IoBufs {
 
             let trailer_lid = segment_lid + trailer_overhang as LogId;
             let trailer_lsn = segment_lsn + trailer_overhang;
+            let stable_lsn = self.stable();
 
             let trailer = SegmentTrailer {
                 lsn: trailer_lsn,
+                highest_known_stable_lsn: stable_lsn,
                 ok: true,
             };
 

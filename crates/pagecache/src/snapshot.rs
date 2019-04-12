@@ -1,5 +1,7 @@
 use std::io::{Read, Write};
 
+use rayon::prelude::*;
+
 #[cfg(feature = "zstd")]
 use zstd::block::{compress, decompress};
 
@@ -9,10 +11,12 @@ use super::*;
 /// the `PageCache` and `SegmentAccountant`.
 /// TODO consider splitting `Snapshot` into separate
 /// snapshots for PC, SA, Materializer.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Snapshot {
     /// the last lsn included in the `Snapshot`
     pub max_lsn: Lsn,
+    /// the highest LSN persisted to a segment trailer
+    pub max_trailer_stable_lsn: Lsn,
     /// the last lid included in the `Snapshot`
     pub last_lid: LogId,
     /// the highest lid observed while generating the `Snapshot`
@@ -57,20 +61,6 @@ impl PageState {
         match *self {
             PageState::Free(_, _) => true,
             _ => false,
-        }
-    }
-}
-
-impl Default for Snapshot {
-    fn default() -> Snapshot {
-        Snapshot {
-            max_lsn: 0,
-            max_lid: 0,
-            last_lid: 0,
-            max_pid: 0,
-            pt: FastMap8::default(),
-            replacements: FastMap8::default(),
-            free: FastSet8::default(),
         }
     }
 }
@@ -304,6 +294,35 @@ where
             }
         }
     }
+
+    // read the max stable lsn written into all trailers
+    let max_segment =
+        config.file.metadata()?.len() / config.io_buf_size as LogId;
+    let max_trailer_stable_lsn = (0..max_segment)
+        .into_par_iter()
+        .flat_map(|idx| {
+            let base = idx * config.io_buf_size as LogId;
+            let trailer_offset =
+                base + (config.io_buf_size - SEG_TRAILER_LEN) as LogId;
+            match config.file.read_segment_trailer(trailer_offset) {
+                Ok(trailer) if trailer.ok => {
+                    Some(trailer.highest_known_stable_lsn)
+                }
+                _ => None,
+            }
+        })
+        .max()
+        .unwrap_or(0);
+
+    assert!(
+        max_trailer_stable_lsn >= snapshot.max_trailer_stable_lsn,
+        "somehow the snapshot max_trailer_stable_lsn went \
+         down over time from {} before to {} after",
+        snapshot.max_trailer_stable_lsn,
+        max_trailer_stable_lsn
+    );
+
+    snapshot.max_trailer_stable_lsn = max_trailer_stable_lsn;
 
     write_snapshot(config, &snapshot)?;
 
