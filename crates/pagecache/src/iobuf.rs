@@ -343,19 +343,16 @@ impl IoBufs {
         // in order of LSN.
         let _ = self.intervals.lock().unwrap();
 
-        let lsn = lsn as InnerLsn;
         let mut current = self.max_recorded_stable_lsn.load(SeqCst);
         let lsn_before = current;
 
         loop {
-            if current >= lsn as InnerLsn {
+            if current >= lsn {
                 return;
             }
-            let last = self.max_recorded_stable_lsn.compare_and_swap(
-                current,
-                lsn as InnerLsn,
-                SeqCst,
-            );
+            let last = self
+                .max_recorded_stable_lsn
+                .compare_and_swap(current, lsn, SeqCst);
             if last == current {
                 // we succeeded.
                 break;
@@ -366,9 +363,8 @@ impl IoBufs {
         let lsn_after = lsn;
 
         let logical_segment_before =
-            lsn_before / self.config.io_buf_size as InnerLsn;
-        let logical_segment_after =
-            lsn_after / self.config.io_buf_size as InnerLsn;
+            lsn_before / self.config.io_buf_size as Lsn;
+        let logical_segment_after = lsn_after / self.config.io_buf_size as Lsn;
         if logical_segment_before != logical_segment_after {
             self.with_sa(move |sa| {
                 for logical_segment in logical_segment_before..logical_segment_after {

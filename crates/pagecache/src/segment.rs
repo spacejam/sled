@@ -232,7 +232,13 @@ impl Segment {
         config: &Config,
     ) -> Result<FastSet8<(PageId, usize)>> {
         trace!("setting Segment with lsn {:?} to Inactive", self.lsn());
-        assert_eq!(self.state, Active);
+        assert_eq!(
+            self.state,
+            Active,
+            "segment {} should have been \
+             Active before deactivating",
+            self.lsn()
+        );
         if from_recovery {
             assert!(lsn >= self.lsn());
         } else {
@@ -261,7 +267,12 @@ impl Segment {
 
     fn inactive_to_draining(&mut self, lsn: Lsn) {
         trace!("setting Segment with lsn {:?} to Draining", self.lsn());
-        assert_eq!(self.state, Inactive);
+        assert_eq!(
+            self.state, Inactive,
+            "segment with lsn {:?} should have been \
+             Inactive before draining",
+            self.lsn
+        );
         assert!(lsn >= self.lsn());
         self.state = Draining;
     }
