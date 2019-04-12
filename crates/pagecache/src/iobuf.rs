@@ -9,8 +9,6 @@ use std::{
 
 use self::reader::LogReader;
 
-use rayon::prelude::*;
-
 use super::*;
 
 // This is the most writers in a single IO buffer
@@ -91,7 +89,7 @@ impl IoBufs {
 
         let snapshot_max_lsn = snapshot.max_lsn;
         let snapshot_last_lid = snapshot.last_lid;
-        let snapshot_max_lid = snapshot.max_lid;
+        let snapshot_max_trailer_stable_lsn = snapshot.max_trailer_stable_lsn;
 
         let (next_lsn, next_lid) = if snapshot_max_lsn < SEG_HEADER_LEN as Lsn {
             snapshot.max_lsn = 0;
@@ -169,24 +167,6 @@ impl IoBufs {
         // of our file has not yet been written.
         let stable = if next_lsn == 0 { -1 } else { next_lsn - 1 };
 
-        // read the max stable lsn written into all trailers
-        let max_segment = snapshot_max_lid / config.io_buf_size as LogId;
-        let max_trailer_stable_lsn = (0..max_segment)
-            .into_par_iter()
-            .flat_map(|idx| {
-                let base = idx * config.io_buf_size as LogId;
-                let trailer_offset =
-                    base + (config.io_buf_size - SEG_TRAILER_LEN) as LogId;
-                match config.file.read_segment_trailer(trailer_offset) {
-                    Ok(trailer) if trailer.ok => {
-                        Some(trailer.highest_known_stable_lsn)
-                    }
-                    _ => None,
-                }
-            })
-            .max()
-            .unwrap_or(0);
-
         // remove all blob files larger than our stable offset
         gc_blobs(&config, stable)?;
 
@@ -205,7 +185,7 @@ impl IoBufs {
             stable_lsn: AtomicLsn::new(stable),
             max_reserved_lsn: AtomicLsn::new(stable),
             max_recorded_stable_lsn: AtomicLsn::new(
-                max_trailer_stable_lsn,
+                snapshot_max_trailer_stable_lsn,
             ),
             segment_accountant: Mutex::new(segment_accountant),
 
