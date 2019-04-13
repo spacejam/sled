@@ -7,15 +7,13 @@ type Inner = [u8; CUTOFF];
 
 /// A buffer that may either be inline or remote and protected
 /// by an Arc
-#[derive(Clone, Ord, Eq)]
-pub enum IVec {
-    /// An inlined small value
+#[derive(Clone)]
+pub struct IVec(IVecInner);
+
+#[derive(Clone)]
+enum IVecInner {
     Inline(u8, Inner),
-    /// A heap-allocated value protected by an Arc
-    Remote {
-        /// The value protected by an Arc
-        buf: Arc<[u8]>,
-    },
+    Remote(Arc<[u8]>),
 }
 
 impl Serialize for IVec {
@@ -52,15 +50,15 @@ impl IVec {
                 );
             }
 
-            IVec::Inline(sz, data)
+            IVec(IVecInner::Inline(sz, data))
         } else {
-            IVec::Remote { buf: v.into() }
+            IVec(IVecInner::Remote(v.into()))
         }
     }
 
     #[inline]
     pub(crate) fn size_in_bytes(&self) -> u64 {
-        if let IVec::Inline(..) = self {
+        if let IVecInner::Inline(..) = self.0 {
             std::mem::size_of::<IVec>() as u64
         } else {
             let sz = std::mem::size_of::<IVec>() as u64;
@@ -74,12 +72,10 @@ impl From<Box<[u8]>> for IVec {
         if v.len() <= CUTOFF {
             IVec::new(&v)
         } else {
-            IVec::Remote {
-                // rely on the Arc From specialization
-                // for Box<T>, which may improve
-                // over time
-                buf: v.into(),
-            }
+            // rely on the Arc From specialization
+            // for Box<T>, which may improve
+            // over time
+            IVec(IVecInner::Remote(Arc::from(v)))
         }
     }
 }
@@ -120,18 +116,24 @@ impl Deref for IVec {
 impl AsRef<[u8]> for IVec {
     #[inline]
     fn as_ref(&self) -> &[u8] {
-        match self {
-            IVec::Inline(sz, buf) => unsafe {
+        match &self.0 {
+            IVecInner::Inline(sz, buf) => unsafe {
                 buf.get_unchecked(..*sz as usize)
             },
-            IVec::Remote { buf } => buf,
+            IVecInner::Remote(buf) => buf,
         }
+    }
+}
+
+impl Ord for IVec {
+    fn cmp(&self, other: &IVec) -> std::cmp::Ordering {
+        self.as_ref().cmp(other.as_ref())
     }
 }
 
 impl PartialOrd for IVec {
     fn partial_cmp(&self, other: &IVec) -> Option<std::cmp::Ordering> {
-        Some(self.as_ref().cmp(other.as_ref()))
+        Some(self.cmp(other))
     }
 }
 
@@ -146,6 +148,8 @@ impl PartialEq<[u8]> for IVec {
         self.as_ref() == other
     }
 }
+
+impl Eq for IVec { }
 
 impl fmt::Debug for IVec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
