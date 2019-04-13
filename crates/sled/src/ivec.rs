@@ -125,6 +125,15 @@ impl From<Vec<u8>> for IVec {
     }
 }
 
+impl Into<Arc<[u8]>> for IVec {
+    fn into(self) -> Arc<[u8]> {
+        match self.0 {
+            IVecInner::Inline(..) => Arc::from(self.as_ref()),
+            IVecInner::Remote(arc) => arc,
+        }
+    }
+}
+
 impl Deref for IVec {
     type Target = [u8];
 
