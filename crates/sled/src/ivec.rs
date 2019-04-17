@@ -7,15 +7,13 @@ type Inner = [u8; CUTOFF];
 
 /// A buffer that may either be inline or remote and protected
 /// by an Arc
-#[derive(Clone, Ord, Eq)]
-pub enum IVec {
-    /// An inlined small value
+#[derive(Clone)]
+pub struct IVec(IVecInner);
+
+#[derive(Clone)]
+enum IVecInner {
     Inline(u8, Inner),
-    /// A heap-allocated value protected by an Arc
-    Remote {
-        /// The value protected by an Arc
-        buf: Arc<[u8]>,
-    },
+    Remote(Arc<[u8]>),
 }
 
 impl Serialize for IVec {
@@ -37,30 +35,34 @@ impl<'de> Deserialize<'de> for IVec {
     }
 }
 
+const fn is_inline_candidate(length: usize) -> bool {
+    length <= CUTOFF
+}
+
 impl IVec {
-    pub(crate) fn new(v: &[u8]) -> IVec {
-        if v.len() <= CUTOFF {
-            let sz = v.len() as u8;
+    fn inline(slice: &[u8]) -> IVec {
+        assert!(is_inline_candidate(slice.len()));
 
-            let mut data: Inner = [0u8; CUTOFF];
+        let mut data = Inner::default();
 
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    v.as_ptr(),
-                    data.as_mut_ptr(),
-                    v.len(),
-                );
-            }
-
-            IVec::Inline(sz, data)
-        } else {
-            IVec::Remote { buf: v.into() }
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                slice.as_ptr(),
+                data.as_mut_ptr(),
+                slice.len(),
+            );
         }
+
+        IVec(IVecInner::Inline(slice.len() as u8, data))
+    }
+
+    fn remote(arc: Arc<[u8]>) -> IVec {
+        IVec(IVecInner::Remote(arc))
     }
 
     #[inline]
     pub(crate) fn size_in_bytes(&self) -> u64 {
-        if let IVec::Inline(..) = self {
+        if let IVecInner::Inline(..) = self.0 {
             std::mem::size_of::<IVec>() as u64
         } else {
             let sz = std::mem::size_of::<IVec>() as u64;
@@ -70,29 +72,37 @@ impl IVec {
 }
 
 impl From<Box<[u8]>> for IVec {
-    fn from(v: Box<[u8]>) -> IVec {
-        if v.len() <= CUTOFF {
-            IVec::new(&v)
+    fn from(b: Box<[u8]>) -> IVec {
+        if is_inline_candidate(b.len()) {
+            IVec::inline(&b)
         } else {
-            IVec::Remote {
-                // rely on the Arc From specialization
-                // for Box<T>, which may improve
-                // over time
-                buf: v.into(),
-            }
+            // rely on the Arc From specialization
+            // for Box<T>, which may improve
+            // over time
+            IVec::remote(Arc::from(b))
         }
     }
 }
 
 impl From<&[u8]> for IVec {
-    fn from(v: &[u8]) -> IVec {
-        IVec::new(v)
+    fn from(slice: &[u8]) -> IVec {
+        if is_inline_candidate(slice.len()) {
+            IVec::inline(slice)
+        } else {
+            IVec::remote(Arc::from(slice))
+        }
+    }
+}
+
+impl From<Arc<[u8]>> for IVec {
+    fn from(arc: Arc<[u8]>) -> IVec {
+        IVec::remote(arc)
     }
 }
 
 impl From<&str> for IVec {
-    fn from(v: &str) -> IVec {
-        v.as_bytes().into()
+    fn from(s: &str) -> IVec {
+        IVec::from(s.as_bytes())
     }
 }
 
@@ -104,7 +114,23 @@ impl From<&IVec> for IVec {
 
 impl From<Vec<u8>> for IVec {
     fn from(v: Vec<u8>) -> IVec {
-        v.into_boxed_slice().into()
+        if is_inline_candidate(v.len()) {
+            IVec::inline(&v)
+        } else {
+            // rely on the Arc From specialization
+            // for Vec<T>, which may improve
+            // over time
+            IVec::remote(Arc::from(v))
+        }
+    }
+}
+
+impl Into<Arc<[u8]>> for IVec {
+    fn into(self) -> Arc<[u8]> {
+        match self.0 {
+            IVecInner::Inline(..) => Arc::from(self.as_ref()),
+            IVecInner::Remote(arc) => arc,
+        }
     }
 }
 
@@ -120,18 +146,24 @@ impl Deref for IVec {
 impl AsRef<[u8]> for IVec {
     #[inline]
     fn as_ref(&self) -> &[u8] {
-        match self {
-            IVec::Inline(sz, buf) => unsafe {
-                buf.get_unchecked(..*sz as usize)
+        match &self.0 {
+            IVecInner::Inline(sz, buf) => {
+                unsafe { buf.get_unchecked(..*sz as usize) }
             },
-            IVec::Remote { buf } => buf,
+            IVecInner::Remote(buf) => buf,
         }
+    }
+}
+
+impl Ord for IVec {
+    fn cmp(&self, other: &IVec) -> std::cmp::Ordering {
+        self.as_ref().cmp(other.as_ref())
     }
 }
 
 impl PartialOrd for IVec {
     fn partial_cmp(&self, other: &IVec) -> Option<std::cmp::Ordering> {
-        Some(self.as_ref().cmp(other.as_ref()))
+        Some(self.cmp(other))
     }
 }
 
@@ -147,6 +179,8 @@ impl PartialEq<[u8]> for IVec {
     }
 }
 
+impl Eq for IVec { }
+
 impl fmt::Debug for IVec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.as_ref().fmt(f)
@@ -155,8 +189,8 @@ impl fmt::Debug for IVec {
 
 #[test]
 fn ivec_usage() {
-    let iv1: IVec = vec![1, 2, 3].into();
+    let iv1 = IVec::from(vec![1, 2, 3]);
     assert_eq!(iv1, vec![1, 2, 3]);
-    let iv2 = IVec::new(&[4; 128]);
+    let iv2 = IVec::from(&[4; 128][..]);
     assert_eq!(iv2, vec![4; 128]);
 }
