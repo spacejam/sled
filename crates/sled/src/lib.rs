@@ -9,7 +9,7 @@
 //! let t = Db::start(config).unwrap();
 //!
 //! t.set(b"yo!", b"v1".to_vec());
-//! assert_eq!(t.get(b"yo!"), Ok(Some(IVec::from(&b"v1"[..]))));
+//! assert_eq!(t.get(b"yo!"), Ok(Some(IVec::from(b"v1"))));
 //!
 //! // Atomic compare-and-swap.
 //! t.cas(
@@ -20,7 +20,7 @@
 //!
 //! // Iterates over key-value pairs, starting at the given key.
 //! let mut iter = t.scan(b"a non-present key before yo!");
-//! assert_eq!(iter.next().unwrap(), Ok((b"yo!".to_vec(), IVec::from(&b"v2"[..]))));
+//! assert_eq!(iter.next().unwrap(), Ok((b"yo!".to_vec(), IVec::from(b"v2"))));
 //! assert_eq!(iter.next(), None);
 //!
 //! t.del(b"yo!");
