@@ -17,20 +17,15 @@ pub trait Materializer {
         false
     }
 
-    /// Create a new `Materializer` with the previously recovered
-    /// state if any existed.
-    fn new(config: Config) -> Self
-    where
-        Self: Sized;
-
     /// Used to merge chains of partial pages into a form
     /// that is useful for the `PageCache` owner.
-    fn merge<'a, I>(&'a self, frags: I) -> Self::PageFrag
+    fn merge<'a, I>(frags: I, config: &Config) -> Self::PageFrag
     where
-        I: IntoIterator<Item = &'a Self::PageFrag>;
+        I: IntoIterator<Item = &'a Self::PageFrag>,
+        Self::PageFrag: 'a;
 
     /// Used to determine the size of the value for caching purposes.
-    fn size_in_bytes(&self, frag: &Self::PageFrag) -> usize;
+    fn size_in_bytes(frag: &Self::PageFrag) -> usize;
 }
 
 /// A materializer for things that have nothing to
@@ -46,17 +41,13 @@ impl Materializer for NullMaterializer {
         true
     }
 
-    fn new(_: Config) -> Self {
-        NullMaterializer
-    }
-
-    fn merge<'a, I>(&'a self, _frags: I) -> Self::PageFrag
+    fn merge<'a, I>(_frags: I, _config: &Config) -> Self::PageFrag
     where
         I: IntoIterator<Item = &'a Self::PageFrag>,
     {
     }
 
-    fn size_in_bytes(&self, _: &Self::PageFrag) -> usize {
+    fn size_in_bytes(_: &Self::PageFrag) -> usize {
         0
     }
 }

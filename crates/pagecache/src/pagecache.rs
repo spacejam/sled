@@ -1,4 +1,5 @@
 use std::{
+    marker::PhantomData,
     borrow::Cow,
     collections::BinaryHeap,
     ops::Deref,
@@ -360,7 +361,7 @@ pub struct PageCache<PM, P>
 where
     P: Clone + 'static + Send + Sync,
 {
-    t: Arc<PM>,
+    _materializer: PhantomData<PM>,
     config: Config,
     inner: Arc<PageTable<PageTableEntry<P>>>,
     max_pid: AtomicUsize,
@@ -459,10 +460,8 @@ where
         // snapshot before loading it.
         let snapshot = read_snapshot_or_default::<PM, P>(&config)?;
 
-        let materializer = Arc::new(PM::new(config.clone()));
-
         let mut pc = PageCache {
-            t: materializer,
+            _materializer: PhantomData,
             config: config.clone(),
             inner: Arc::new(PageTable::default()),
             max_pid: AtomicUsize::new(0),
@@ -578,6 +577,7 @@ where
     pub fn set_failpoint(&self, e: Error) {
         if let Error::FailPoint = e {
             self.log.iobufs._failpoint_crashing.store(true, SeqCst);
+            self.config.set_global_error(e);
 
             // wake up any waiting threads
             // so they don't stall forever
@@ -1218,7 +1218,7 @@ where
 
                 let combined_iter = successes.iter().map(|(c, ..)| &**c).rev();
 
-                Update::Compact(self.t.merge(combined_iter))
+                Update::Compact(PM::merge(combined_iter, &self.config))
             };
 
             let ptr = PagePtr {
@@ -1710,11 +1710,11 @@ where
                 .chain(fetched.iter().map(|u| u.as_frag()))
                 .rev();
 
-            Update::Compact(self.t.merge(combined_iter))
+            Update::Compact(PM::merge(combined_iter, &self.config))
         };
 
         let size = match &merged {
-            Update::Compact(compact) => self.t.size_in_bytes(compact),
+            Update::Compact(compact) => PM::size_in_bytes(compact),
             Update::Counter(_) => 0,
             Update::Meta(_) => 0,
             other => panic!(
