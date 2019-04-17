@@ -1,9 +1,6 @@
 use super::*;
 
-#[derive(Debug)]
-pub(crate) struct BLinkMaterializer {
-    config: Config,
-}
+pub(crate) struct BLinkMaterializer;
 
 impl Materializer for BLinkMaterializer {
     type PageFrag = Frag;
