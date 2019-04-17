@@ -287,7 +287,7 @@ where
 /// # Working with the `PageCache`
 ///
 /// ```
-/// use pagecache::{pin, Materializer};
+/// use pagecache::{pin, Materializer, Config};
 ///
 /// pub struct TestMaterializer;
 ///
@@ -298,15 +298,9 @@ where
 ///     // at read time, and possibly cached.
 ///     type PageFrag = String;
 ///
-///     // Create a new `Materializer` with the previously recovered
-///     // state if any existed.
-///     fn new(config: pagecache::Config) -> Self {
-///         TestMaterializer
-///     }
-///
 ///     // Used to merge chains of partial pages into a form
 ///     // that is useful for the `PageCache` owner.
-///     fn merge<'a, I>(&'a self, frags: I) -> Self::PageFrag
+///     fn merge<'a, I>(frags: I, _config: &Config) -> Self::PageFrag
 ///     where
 ///         I: IntoIterator<Item = &'a Self::PageFrag>,
 ///     {
@@ -317,7 +311,7 @@ where
 ///     }
 ///
 ///     // Used to determine the resident size for this item in cache.
-///     fn size_in_bytes(&self, frag: &String) -> usize {
+///     fn size_in_bytes(frag: &String) -> usize {
 ///         std::mem::size_of::<String>() + frag.as_bytes().len()
 ///     }
 ///
