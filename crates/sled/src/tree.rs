@@ -27,19 +27,17 @@ impl<'a> IntoIterator for &'a Tree {
 /// # Examples
 ///
 /// ```
-/// use sled::{ConfigBuilder, Db, IVec};
+/// use sled::{Db, IVec};
 ///
-/// let config = ConfigBuilder::new().temporary(true).build();
-/// let t = Db::start(config).unwrap();
-///
+/// let t = Db::start_default("db").unwrap();
 /// t.set(b"yo!", b"v1".to_vec());
 /// assert_eq!(t.get(b"yo!"), Ok(Some(IVec::from(b"v1"))));
 ///
 /// // Atomic compare-and-swap.
 /// t.cas(
-///     b"yo!",                // key
-///     Some(b"v1"),           // old value, None for not present
-///     Some(b"v2".to_vec()),  // new value, None for delete
+///     b"yo!",      // key
+///     Some(b"v1"), // old value, None for not present
+///     Some(b"v2"), // new value, None for delete
 /// ).unwrap();
 ///
 /// // Iterates over key-value pairs, starting at the given key.
@@ -237,13 +235,13 @@ impl Tree {
     /// let t = sled::Db::start(config).unwrap();
     ///
     /// // unique creation
-    /// assert_eq!(t.cas(&[1], None as Option<&[u8]>, Some(vec![1])), Ok(Ok(())));
+    /// assert_eq!(t.cas(&[1], None as Option<&[u8]>, Some(&[10])), Ok(Ok(())));
     ///
     /// // conditional modification
-    /// assert_eq!(t.cas(&[1], Some(&[1]), Some(vec![2])), Ok(Ok(())));
+    /// assert_eq!(t.cas(&[1], Some(&[10]), Some(&[20])), Ok(Ok(())));
     ///
     /// // conditional deletion
-    /// assert_eq!(t.cas(&[1], Some(&[2]), None as Option<&[u8]>), Ok(Ok(())));
+    /// assert_eq!(t.cas(&[1], Some(&[20]), None as Option<&[u8]>), Ok(Ok(())));
     /// assert_eq!(t.get(&[1]), Ok(None));
     /// ```
     pub fn cas<K, OV, NV>(

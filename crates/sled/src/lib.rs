@@ -3,19 +3,17 @@
 //! # Examples
 //!
 //! ```
-//! use sled::{ConfigBuilder, Db, IVec};
+//! use sled::{Db, IVec};
 //!
-//! let config = ConfigBuilder::new().temporary(true).build();
-//! let t = Db::start(config).unwrap();
-//!
+//! let t = Db::start_default("my_db").unwrap();
 //! t.set(b"yo!", b"v1".to_vec());
 //! assert_eq!(t.get(b"yo!"), Ok(Some(IVec::from(b"v1"))));
 //!
 //! // Atomic compare-and-swap.
 //! t.cas(
-//!     b"yo!",                // key
-//!     Some(b"v1"),           // old value, None for not present
-//!     Some(b"v2".to_vec()),  // new value, None for delete
+//!     b"yo!",       // key
+//!     Some(b"v1"),  // old value, None for not present
+//!     Some(b"v2"),  // new value, None for delete
 //! ).unwrap();
 //!
 //! // Iterates over key-value pairs, starting at the given key.
