@@ -57,7 +57,7 @@ impl Clone for Error {
             ReportableBug(what) => ReportableBug(what.clone()),
             Corruption { at } => Corruption { at: at.clone() },
             #[cfg(feature = "failpoints")]
-            FailPoint => Failpoint,
+            FailPoint => FailPoint,
         }
     }
 }
