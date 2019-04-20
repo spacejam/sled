@@ -125,6 +125,21 @@ impl From<Vec<u8>> for IVec {
     }
 }
 
+macro_rules! from_array {
+    ($($s:expr)*) => {
+        $(
+            impl From<&[u8; $s]> for IVec {
+                fn from(v: &[u8; $s]) -> IVec {
+                    IVec::from(&v[..])
+                }
+            }
+        )*
+    }
+}
+
+from_array!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15);
+from_array!(16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32);
+
 impl Into<Arc<[u8]>> for IVec {
     fn into(self) -> Arc<[u8]> {
         match self.0 {
