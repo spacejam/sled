@@ -1,7 +1,7 @@
 use std::{
-    marker::PhantomData,
     borrow::Cow,
     collections::BinaryHeap,
+    marker::PhantomData,
     ops::Deref,
     sync::{Arc, Mutex},
 };
@@ -570,7 +570,6 @@ where
     #[cfg(feature = "failpoints")]
     pub fn set_failpoint(&self, e: Error) {
         if let Error::FailPoint = e {
-            self.log.iobufs._failpoint_crashing.store(true, SeqCst);
             self.config.set_global_error(e);
 
             // wake up any waiting threads
@@ -2012,7 +2011,8 @@ where
             }
         };
 
-        if let Some(e) = self.log.iobufs.config.global_error() {
+        if let Err(e) = self.config.global_error() {
+            self.log.iobufs.interval_updated.notify_all();
             return Err(e);
         }
 

@@ -583,13 +583,18 @@ impl Drop for Config {
 impl Config {
     /// Return the global error if one was encountered during
     /// an asynchronous IO operation.
-    pub fn global_error(&self) -> Option<Error> {
+    pub fn global_error(&self) -> Result<()> {
         let ge = self.global_error.load(Ordering::Relaxed);
         if ge.is_null() {
-            None
+            Ok(())
         } else {
-            unsafe { Some((*ge).clone()) }
+            unsafe { Err((*ge).clone()) }
         }
+    }
+
+    pub(crate) fn reset_global_error(&self) {
+        self.global_error
+            .store(std::ptr::null_mut(), Ordering::SeqCst);
     }
 
     pub(crate) fn set_global_error(&self, error: Error) {
