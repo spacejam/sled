@@ -229,7 +229,8 @@ impl ConfigBuilder {
         let file = self.open_file().unwrap_or_else(|e| {
             panic!(
                 "should be able to open configured file at {:?}; {}",
-                self.db_path(), e,
+                self.db_path(),
+                e,
             );
         });
 
