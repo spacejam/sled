@@ -3,20 +3,23 @@
 //! # Examples
 //!
 //! ```
-//! let t = sled::Db::start_default("my_db").unwrap();
+//! use sled::{Db, IVec};
 //!
+//! let t = Db::start_default("my_db").unwrap();
 //! t.set(b"yo!", b"v1".to_vec());
-//! assert!(t.get(b"yo!").unwrap().unwrap() == &*b"v1".to_vec());
+//! assert_eq!(t.get(b"yo!"), Ok(Some(IVec::from(b"v1"))));
 //!
+//! // Atomic compare-and-swap.
 //! t.cas(
-//!     b"yo!",                // key
-//!     Some(b"v1"),           // old value, None for not present
-//!     Some(b"v2".to_vec()),  // new value, None for delete
+//!     b"yo!",       // key
+//!     Some(b"v1"),  // old value, None for not present
+//!     Some(b"v2"),  // new value, None for delete
 //! ).unwrap();
 //!
+//! // Iterates over key-value pairs, starting at the given key.
 //! let mut iter = t.scan(b"a non-present key before yo!");
-//! // assert_eq!(iter.next(), Some(Ok((b"yo!".to_vec(), b"v2".to_vec()))));
-//! // assert_eq!(iter.next(), None);
+//! assert_eq!(iter.next().unwrap(), Ok((b"yo!".to_vec(), IVec::from(b"v2"))));
+//! assert_eq!(iter.next(), None);
 //!
 //! t.del(b"yo!");
 //! assert_eq!(t.get(b"yo!"), Ok(None));
