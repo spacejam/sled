@@ -255,7 +255,6 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
             }
             Id => {
                 let id = fp_crash!(tree.generate_id());
-                println!("got id of {}", id);
                 assert!(
                     id as isize > max_id,
                     "generated id of {} is not larger \
@@ -1099,6 +1098,19 @@ fn failpoints_bug_23() {
     // postmortem 1: failed to handle allocation failures
     assert!(prop_tree_crashes_nicely(
         vec![Set, FailPoint("blob blob write"), Set, Set, Set],
+        false,
+    ))
+}
+
+#[test]
+fn failpoints_bug_24() {
+    // postmortem 1: was incorrectly setting global
+    // errors, and they were being used-after-free
+    assert!(prop_tree_crashes_nicely(
+        vec![
+            FailPoint("buffer write"),
+            Id,
+        ],
         false,
     ))
 }

@@ -52,7 +52,12 @@ impl Clone for Error {
             Io(ioe) => {
                 Io(std::io::Error::new(ioe.kind(), format!("{:?}", ioe)))
             }
-            other => other.clone(),
+            CollectionNotFound(name) => CollectionNotFound(name.clone()),
+            Unsupported(why) => Unsupported(why.clone()),
+            ReportableBug(what) => ReportableBug(what.clone()),
+            Corruption { at } => Corruption { at: at.clone() },
+            #[cfg(feature = "failpoints")]
+            FailPoint => FailPoint,
         }
     }
 }
