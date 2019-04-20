@@ -78,8 +78,6 @@ impl IoBufs {
         config: Config,
         mut snapshot: Snapshot,
     ) -> Result<IoBufs> {
-        config.reset_global_error();
-
         // open file for writing
         let file = &config.file;
 

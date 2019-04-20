@@ -1101,3 +1101,16 @@ fn failpoints_bug_23() {
         false,
     ))
 }
+
+#[test]
+fn failpoints_bug_24() {
+    // postmortem 1: was incorrectly setting global
+    // errors, and they were being used-after-free
+    assert!(prop_tree_crashes_nicely(
+        vec![
+            FailPoint("buffer write"),
+            Id,
+        ],
+        false,
+    ))
+}

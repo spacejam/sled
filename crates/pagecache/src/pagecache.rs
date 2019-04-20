@@ -445,6 +445,8 @@ where
 {
     /// Instantiate a new `PageCache`.
     pub fn start(config: Config) -> Result<PageCache<PM, P>> {
+        config.reset_global_error();
+
         let cache_capacity = config.cache_capacity;
         let cache_shard_bits = config.cache_bits;
         let lru = Lru::new(cache_capacity, cache_shard_bits);

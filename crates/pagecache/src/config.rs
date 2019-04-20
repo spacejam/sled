@@ -599,13 +599,16 @@ impl Config {
 
     pub(crate) fn set_global_error(&self, error: Error) {
         let ptr = Box::into_raw(Box::new(error));
+
+        let expected_old = std::ptr::null_mut();
+
         let ret = self.global_error.compare_and_swap(
-            std::ptr::null_mut(),
+            expected_old,
             ptr as *mut Error,
-            Ordering::Relaxed,
+            Ordering::Release,
         );
 
-        if ret.is_null() {
+        if ret != expected_old {
             // CAS failed, reclaim memory
             unsafe {
                 drop(Box::from_raw(ptr));
