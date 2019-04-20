@@ -255,7 +255,6 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
             }
             Id => {
                 let id = fp_crash!(tree.generate_id());
-                println!("got id of {}", id);
                 assert!(
                     id as isize > max_id,
                     "generated id of {} is not larger \
