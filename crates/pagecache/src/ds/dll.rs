@@ -10,16 +10,6 @@ pub(crate) struct Node {
     prev: *mut Node,
 }
 
-impl Drop for Node {
-    fn drop(&mut self) {
-        if !self.prev.is_null() {
-            unsafe {
-                drop(Box::from_raw(self.prev));
-            }
-        }
-    }
-}
-
 impl Node {
     fn unwire(&mut self) {
         unsafe {
@@ -49,9 +39,14 @@ pub struct Dll {
 
 impl Drop for Dll {
     fn drop(&mut self) {
-        if !self.head.is_null() {
+        let mut cursor = self.head;
+        while !cursor.is_null() {
             unsafe {
-                drop(Box::from_raw(self.head));
+                let node = Box::from_raw(cursor);
+                cursor = node.prev;
+            }
+            if cursor == self.head {
+                break;
             }
         }
     }
