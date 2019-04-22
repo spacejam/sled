@@ -229,7 +229,8 @@ impl ConfigBuilder {
         let file = self.open_file().unwrap_or_else(|e| {
             panic!(
                 "should be able to open configured file at {:?}; {}",
-                self.db_path(), e,
+                self.db_path(),
+                e,
             );
         });
 
@@ -582,24 +583,32 @@ impl Drop for Config {
 impl Config {
     /// Return the global error if one was encountered during
     /// an asynchronous IO operation.
-    pub fn global_error(&self) -> Option<Error> {
+    pub fn global_error(&self) -> Result<()> {
         let ge = self.global_error.load(Ordering::Relaxed);
         if ge.is_null() {
-            None
+            Ok(())
         } else {
-            unsafe { Some((*ge).clone()) }
+            unsafe { Err((*ge).clone()) }
         }
+    }
+
+    pub(crate) fn reset_global_error(&self) {
+        self.global_error
+            .store(std::ptr::null_mut(), Ordering::SeqCst);
     }
 
     pub(crate) fn set_global_error(&self, error: Error) {
         let ptr = Box::into_raw(Box::new(error));
+
+        let expected_old = std::ptr::null_mut();
+
         let ret = self.global_error.compare_and_swap(
-            std::ptr::null_mut(),
+            expected_old,
             ptr as *mut Error,
-            Ordering::Relaxed,
+            Ordering::Release,
         );
 
-        if ret.is_null() {
+        if ret != expected_old {
             // CAS failed, reclaim memory
             unsafe {
                 drop(Box::from_raw(ptr));

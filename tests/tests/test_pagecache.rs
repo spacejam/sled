@@ -10,7 +10,7 @@ use std::{
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::Rng;
 
-use pagecache::{ConfigBuilder, Materializer, PageCache, PageGet};
+use pagecache::{ConfigBuilder, Config, Materializer, PageCache, PageGet};
 
 type PageId = usize;
 
@@ -20,11 +20,7 @@ pub struct TestMaterializer;
 impl Materializer for TestMaterializer {
     type PageFrag = Vec<usize>;
 
-    fn new(_config: pagecache::Config) -> TestMaterializer {
-        TestMaterializer
-    }
-
-    fn merge<'a, I>(&'a self, frags: I) -> Self::PageFrag
+    fn merge<'a, I>(frags: I, _config: &Config) -> Self::PageFrag
     where
         I: IntoIterator<Item = &'a Self::PageFrag>,
     {
@@ -37,7 +33,7 @@ impl Materializer for TestMaterializer {
         consolidated
     }
 
-    fn size_in_bytes(&self, frag: &Vec<usize>) -> usize {
+    fn size_in_bytes(frag: &Vec<usize>) -> usize {
         std::mem::size_of::<Vec<usize>>() + frag.len()
     }
 }

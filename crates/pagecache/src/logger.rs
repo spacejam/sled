@@ -232,15 +232,12 @@ impl Log {
 
         loop {
             M.log_reservation_attempted();
-            #[cfg(feature = "failpoints")]
-            {
-                if self
-                    .iobufs
-                    ._failpoint_crashing
-                    .load(std::sync::atomic::Ordering::Relaxed)
-                {
-                    return Err(Error::FailPoint);
-                }
+
+            // don't continue if the system
+            // has encountered an issue.
+            if let Err(e) = self.config.global_error() {
+                self.iobufs.interval_updated.notify_all();
+                return Err(e);
             }
 
             debug_delay();
@@ -445,9 +442,11 @@ impl Log {
         // Succeeded in decrementing writers, if we decremented writn
         // to 0 and it's sealed then we should write it to storage.
         if iobuf::n_writers(header) == 0 && iobuf::is_sealed(header) {
-            if let Some(e) = self.config.global_error() {
+            if let Err(e) = self.config.global_error() {
+                self.iobufs.interval_updated.notify_all();
                 return Err(e);
             }
+
             if let Some(ref thread_pool) = self.config.thread_pool {
                 trace!("asynchronously writing index {} to log from exit_reservation", idx);
                 let iobufs = self.iobufs.clone();
@@ -481,12 +480,9 @@ impl Drop for Log {
             let _ = self.iobufs.buf_mu.lock().unwrap();
         }
 
-        // don't do any more IO if we're simulating a crash
-        #[cfg(feature = "failpoints")]
-        {
-            if self.iobufs._failpoint_crashing.load(SeqCst) {
-                return;
-            }
+        // don't do any more IO if we're crashing
+        if self.config.global_error().is_err() {
+            return;
         }
 
         if let Err(e) = iobuf::flush(&self.iobufs) {

@@ -22,7 +22,7 @@ macro_rules! io_fail {
     ($self:expr, $e:expr) => {
         #[cfg(feature = "failpoints")]
         fail_point!($e, |_| {
-            $self._failpoint_crashing.store(true, SeqCst);
+            $self.config.set_global_error(Error::FailPoint);
             // wake up any waiting threads so they don't stall forever
             $self.interval_updated.notify_all();
             Err(Error::FailPoint)
@@ -69,10 +69,6 @@ pub(super) struct IoBufs {
     pub(crate) max_reserved_lsn: AtomicLsn,
     pub(crate) max_recorded_stable_lsn: AtomicLsn,
     pub(crate) segment_accountant: Mutex<SegmentAccountant>,
-
-    // used for signifying that we're simulating a crash
-    #[cfg(feature = "failpoints")]
-    pub(super) _failpoint_crashing: AtomicBool,
 }
 
 /// `IoBufs` is a set of lock-free buffers for coordinating
@@ -188,9 +184,6 @@ impl IoBufs {
                 snapshot_max_trailer_stable_lsn,
             ),
             segment_accountant: Mutex::new(segment_accountant),
-
-            #[cfg(feature = "failpoints")]
-            _failpoint_crashing: AtomicBool::new(false),
         })
     }
 
@@ -652,12 +645,11 @@ pub(crate) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Result<usize> {
 
         stable = iobufs.stable();
         if stable < lsn {
-            #[cfg(feature = "failpoints")]
-            {
-                if iobufs._failpoint_crashing.load(SeqCst) {
-                    return Err(Error::FailPoint);
-                }
+            if let Err(e) = iobufs.config.global_error() {
+                iobufs.interval_updated.notify_all();
+                return Err(e);
             }
+
             trace!("waiting on cond var for make_stable({})", lsn);
 
             let _waiter = iobufs.interval_updated.wait(waiter).unwrap();
@@ -768,14 +760,12 @@ pub(crate) fn maybe_seal_and_write_iobuf(
         );
 
         let ret = iobufs.with_sa(|sa| sa.next(next_lsn));
-        #[cfg(feature = "failpoints")]
-        {
-            if let Err(Error::FailPoint) = ret {
-                iobufs._failpoint_crashing.store(true, SeqCst);
-                // wake up any waiting threads so they don't stall forever
-                iobufs.interval_updated.notify_all();
-            }
+
+        if let Err(e) = iobufs.config.global_error() {
+            iobufs.interval_updated.notify_all();
+            return Err(e);
         }
+
         ret?
     } else {
         debug!(
@@ -799,15 +789,9 @@ pub(crate) fn maybe_seal_and_write_iobuf(
     while next_iobuf.cas_lid(max, next_offset).is_err() {
         backoff.snooze();
 
-        #[cfg(feature = "failpoints")]
-        {
-            if iobufs
-                ._failpoint_crashing
-                .load(std::sync::atomic::Ordering::Relaxed)
-            {
-                // panic!("propagating failpoint");
-                return Err(Error::FailPoint);
-            }
+        if let Err(e) = iobufs.config.global_error() {
+            iobufs.interval_updated.notify_all();
+            return Err(e);
         }
     }
     drop(measure_assign_spinloop);
@@ -855,7 +839,8 @@ pub(crate) fn maybe_seal_and_write_iobuf(
 
     // if writers is 0, it's our responsibility to write the buffer.
     if n_writers(sealed) == 0 {
-        if let Some(e) = iobufs.config.global_error() {
+        if let Err(e) = iobufs.config.global_error() {
+            iobufs.interval_updated.notify_all();
             return Err(e);
         }
         if let Some(ref thread_pool) = iobufs.config.thread_pool {

@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     collections::BinaryHeap,
+    marker::PhantomData,
     ops::Deref,
     sync::{Arc, Mutex},
 };
@@ -286,7 +287,7 @@ where
 /// # Working with the `PageCache`
 ///
 /// ```
-/// use pagecache::{pin, Materializer};
+/// use pagecache::{pin, Materializer, Config};
 ///
 /// pub struct TestMaterializer;
 ///
@@ -297,15 +298,9 @@ where
 ///     // at read time, and possibly cached.
 ///     type PageFrag = String;
 ///
-///     // Create a new `Materializer` with the previously recovered
-///     // state if any existed.
-///     fn new(config: pagecache::Config) -> Self {
-///         TestMaterializer
-///     }
-///
 ///     // Used to merge chains of partial pages into a form
 ///     // that is useful for the `PageCache` owner.
-///     fn merge<'a, I>(&'a self, frags: I) -> Self::PageFrag
+///     fn merge<'a, I>(frags: I, _config: &Config) -> Self::PageFrag
 ///     where
 ///         I: IntoIterator<Item = &'a Self::PageFrag>,
 ///     {
@@ -316,7 +311,7 @@ where
 ///     }
 ///
 ///     // Used to determine the resident size for this item in cache.
-///     fn size_in_bytes(&self, frag: &String) -> usize {
+///     fn size_in_bytes(frag: &String) -> usize {
 ///         std::mem::size_of::<String>() + frag.as_bytes().len()
 ///     }
 ///
@@ -360,7 +355,7 @@ pub struct PageCache<PM, P>
 where
     P: Clone + 'static + Send + Sync,
 {
-    t: Arc<PM>,
+    _materializer: PhantomData<PM>,
     config: Config,
     inner: Arc<PageTable<PageTableEntry<P>>>,
     max_pid: AtomicUsize,
@@ -450,6 +445,8 @@ where
 {
     /// Instantiate a new `PageCache`.
     pub fn start(config: Config) -> Result<PageCache<PM, P>> {
+        config.reset_global_error();
+
         let cache_capacity = config.cache_capacity;
         let cache_shard_bits = config.cache_bits;
         let lru = Lru::new(cache_capacity, cache_shard_bits);
@@ -459,10 +456,8 @@ where
         // snapshot before loading it.
         let snapshot = read_snapshot_or_default::<PM, P>(&config)?;
 
-        let materializer = Arc::new(PM::new(config.clone()));
-
         let mut pc = PageCache {
-            t: materializer,
+            _materializer: PhantomData,
             config: config.clone(),
             inner: Arc::new(PageTable::default()),
             max_pid: AtomicUsize::new(0),
@@ -577,7 +572,7 @@ where
     #[cfg(feature = "failpoints")]
     pub fn set_failpoint(&self, e: Error) {
         if let Error::FailPoint = e {
-            self.log.iobufs._failpoint_crashing.store(true, SeqCst);
+            self.config.set_global_error(e);
 
             // wake up any waiting threads
             // so they don't stall forever
@@ -1218,7 +1213,7 @@ where
 
                 let combined_iter = successes.iter().map(|(c, ..)| &**c).rev();
 
-                Update::Compact(self.t.merge(combined_iter))
+                Update::Compact(PM::merge(combined_iter, &self.config))
             };
 
             let ptr = PagePtr {
@@ -1710,11 +1705,11 @@ where
                 .chain(fetched.iter().map(|u| u.as_frag()))
                 .rev();
 
-            Update::Compact(self.t.merge(combined_iter))
+            Update::Compact(PM::merge(combined_iter, &self.config))
         };
 
         let size = match &merged {
-            Update::Compact(compact) => self.t.size_in_bytes(compact),
+            Update::Compact(compact) => PM::size_in_bytes(compact),
             Update::Counter(_) => 0,
             Update::Meta(_) => 0,
             other => panic!(
@@ -2018,7 +2013,8 @@ where
             }
         };
 
-        if let Some(e) = self.log.iobufs.config.global_error() {
+        if let Err(e) = self.config.global_error() {
+            self.log.iobufs.interval_updated.notify_all();
             return Err(e);
         }
 

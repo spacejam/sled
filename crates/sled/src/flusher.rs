@@ -163,7 +163,11 @@ impl Drop for Flusher {
         }
 
         while !shutdown.is_shutdown() {
-            shutdown = self.sc.wait(shutdown).unwrap();
+            shutdown = self
+                .sc
+                .wait_timeout(shutdown, Duration::from_millis(100))
+                .unwrap()
+                .0;
         }
 
         let mut join_handle_opt = self.join_handle.lock().unwrap();

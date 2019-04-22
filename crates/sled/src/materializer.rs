@@ -1,19 +1,11 @@
 use super::*;
 
-#[derive(Debug)]
-pub(crate) struct BLinkMaterializer {
-    config: Config,
-}
+pub(crate) struct BLinkMaterializer;
 
 impl Materializer for BLinkMaterializer {
     type PageFrag = Frag;
 
-    // a vector of (root, prev root, max counter) for deterministic recovery
-    fn new(config: Config) -> Self {
-        BLinkMaterializer { config }
-    }
-
-    fn merge<'a, I>(&'a self, frags: I) -> Self::PageFrag
+    fn merge<'a, I>(frags: I, config: &Config) -> Self::PageFrag
     where
         I: IntoIterator<Item = &'a Self::PageFrag>,
     {
@@ -27,7 +19,7 @@ impl Materializer for BLinkMaterializer {
             Frag::Base(ref base_node_ref) => {
                 let mut base_node = base_node_ref.clone();
                 for frag in frag_iter {
-                    base_node.apply(frag, self.config.merge_operator);
+                    base_node.apply(frag, config.merge_operator);
                 }
 
                 Frag::Base(base_node)
@@ -36,7 +28,7 @@ impl Materializer for BLinkMaterializer {
         }
     }
 
-    fn size_in_bytes(&self, frag: &Frag) -> usize {
+    fn size_in_bytes(frag: &Frag) -> usize {
         match *frag {
             Frag::Base(ref node) => std::mem::size_of::<Frag>()
                 .saturating_add(node.size_in_bytes() as usize),
