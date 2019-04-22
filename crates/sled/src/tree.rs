@@ -328,11 +328,38 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use sled::{ConfigBuilder, IVec, Error};
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Db::start(config).unwrap();
+    /// use std::convert::TryInto;
+    /// use sled::{ConfigBuilder, Error, IVec};
     ///
-    /// assert_eq!(t.update_and_fetch(b"hello", |_old| Some(vec![1])), Ok(Some(IVec::from(vec![1]))));
+    /// let config = ConfigBuilder::new().temporary(true).build();
+    /// let tree = sled::Db::start(config).unwrap();
+    ///
+    /// fn u64_to_ivec(number: u64) -> IVec {
+    ///     IVec::from(number.to_be_bytes().to_vec())
+    /// }
+    ///
+    /// let zero = u64_to_ivec(0);
+    /// let one = u64_to_ivec(1);
+    /// let two = u64_to_ivec(2);
+    /// let three = u64_to_ivec(3);
+    ///
+    /// fn increment(old: Option<&[u8]>) -> Option<Vec<u8>> {
+    ///     let number = match old {
+    ///         Some(bytes) => {
+    ///             let array: [u8; 8] = bytes.try_into().unwrap();
+    ///             let number = u64::from_be_bytes(array);
+    ///             number + 1
+    ///         },
+    ///         None => 0,
+    ///     };
+    ///
+    ///     Some(number.to_be_bytes().to_vec())
+    /// }
+    ///
+    /// assert_eq!(tree.update_and_fetch("counter", increment), Ok(Some(zero)));
+    /// assert_eq!(tree.update_and_fetch("counter", increment), Ok(Some(one)));
+    /// assert_eq!(tree.update_and_fetch("counter", increment), Ok(Some(two)));
+    /// assert_eq!(tree.update_and_fetch("counter", increment), Ok(Some(three)));
     /// ```
     pub fn update_and_fetch<K, V, F>(
         &self,
@@ -367,11 +394,37 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use sled::{ConfigBuilder, Error};
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Db::start(config).unwrap();
+    /// use std::convert::TryInto;
+    /// use sled::{ConfigBuilder, Error, IVec};
     ///
-    /// assert_eq!(t.fetch_and_update(b"hello", |_old| Some(vec![1])), Ok(None));
+    /// let config = ConfigBuilder::new().temporary(true).build();
+    /// let tree = sled::Db::start(config).unwrap();
+    ///
+    /// fn u64_to_ivec(number: u64) -> IVec {
+    ///     IVec::from(number.to_be_bytes().to_vec())
+    /// }
+    ///
+    /// let zero = u64_to_ivec(0);
+    /// let one = u64_to_ivec(1);
+    /// let two = u64_to_ivec(2);
+    ///
+    /// fn increment(old: Option<&[u8]>) -> Option<Vec<u8>> {
+    ///     let number = match old {
+    ///         Some(bytes) => {
+    ///             let array: [u8; 8] = bytes.try_into().unwrap();
+    ///             let number = u64::from_be_bytes(array);
+    ///             number + 1
+    ///         },
+    ///         None => 0,
+    ///     };
+    ///
+    ///     Some(number.to_be_bytes().to_vec())
+    /// }
+    ///
+    /// assert_eq!(tree.fetch_and_update("counter", increment), Ok(None));
+    /// assert_eq!(tree.fetch_and_update("counter", increment), Ok(Some(zero)));
+    /// assert_eq!(tree.fetch_and_update("counter", increment), Ok(Some(one)));
+    /// assert_eq!(tree.fetch_and_update("counter", increment), Ok(Some(two)));
     /// ```
     pub fn fetch_and_update<K, V, F>(
         &self,
