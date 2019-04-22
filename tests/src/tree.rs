@@ -48,6 +48,8 @@ impl RngCore for SledGen {
 }
 
 pub fn fuzz_then_shrink(buf: &[u8]) {
+    let use_compression = buf.get(0).unwrap_or(&0) % 2 == 0;
+
     let ops: Vec<Op> = buf
         .chunks(2)
         .map(|chunk| {
@@ -61,7 +63,7 @@ pub fn fuzz_then_shrink(buf: &[u8]) {
         .collect();
 
     match panic::catch_unwind(move || {
-        prop_tree_matches_btreemap(ops, 0, 100, false)
+        prop_tree_matches_btreemap(ops, 0, 100, false, use_compression)
     }) {
         Ok(_) => {}
         Err(_e) => panic!("TODO"),
@@ -202,6 +204,7 @@ pub fn prop_tree_matches_btreemap(
     blink_node_exponent: u8,
     snapshot_after: u8,
     flusher: bool,
+    use_compression: bool,
 ) -> bool {
     super::setup_logger();
 
@@ -209,6 +212,7 @@ pub fn prop_tree_matches_btreemap(
     let config = ConfigBuilder::new()
         .async_io(false)
         .temporary(true)
+        .use_compression(use_compression)
         .snapshot_after_ops(snapshot_after as usize + 1)
         .flush_every_ms(if flusher { Some(1) } else { None })
         .io_buf_size(10000)
