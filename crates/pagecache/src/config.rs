@@ -18,7 +18,8 @@ use fs2::FileExt;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use super::*;
+// explicitly bring LogReader in to be tool-friendly
+use super::{*, LogReader};
 
 const DEFAULT_PATH: &str = "default.sled";
 
@@ -698,7 +699,7 @@ impl Config {
                 k
             );
             for (lsn, ptr) in v.iter() {
-                let read = ptr.read(&self);
+                let read = self.file.read_message(ptr.lid(), lsn, &self);
                 if let Err(e) = read {
                     panic!(
                         "could not read log data for \
@@ -724,7 +725,7 @@ impl Config {
                 k
             );
             for (lsn, ptr) in v.iter() {
-                let read = ptr.read(&self);
+                let read = self.file.read_message(ptr.lid(), lsn, &self);
                 if let Err(e) = read {
                     panic!(
                         "could not read log data for \

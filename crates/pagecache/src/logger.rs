@@ -96,28 +96,14 @@ impl Log {
         self.make_stable(lsn)?;
 
         if ptr.is_inline() {
-            let lid = ptr.inline();
+            let lid = ptr.lid();
             let f = &self.config.file;
 
-            let read = f.read_message(lid, &self.config);
-
-            read.and_then(|log_read| match log_read {
-                LogRead::Inline(read_lsn, _, _)
-                | LogRead::Blob(read_lsn, _, _) => {
-                    if lsn != read_lsn {
-                        debug!(
-                            "lsn of disk read is {} but we expected it to be {}",
-                            read_lsn,
-                            lsn,
-                        );
-                        Err(Error::Corruption { at: ptr })
-                    } else {
-                        Ok(log_read)
-                    }
-                }
-                _ => Ok(log_read),
-            })
+            f.read_message(lid, lsn, &self.config)
         } else {
+            // we short-circuit the inline read
+            // here because it might not still
+            // exist in the inline log.
             let (_lid, blob_ptr) = ptr.blob();
             read_blob(blob_ptr, &self.config)
                 .map(|buf| LogRead::Blob(lsn, buf, blob_ptr))

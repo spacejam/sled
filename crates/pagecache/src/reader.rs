@@ -9,7 +9,7 @@ pub(crate) trait LogReader {
 
     fn read_segment_trailer(&self, id: LogId) -> Result<SegmentTrailer>;
 
-    fn read_message(&self, lid: LogId, config: &Config) -> Result<LogRead>;
+    fn read_message(&self, lid: LogId, expected_lsn: Lsn, config: &Config) -> Result<LogRead>;
 }
 
 impl LogReader for File {
@@ -32,7 +32,7 @@ impl LogReader for File {
     }
 
     /// read a buffer from the disk
-    fn read_message(&self, lid: LogId, config: &Config) -> Result<LogRead> {
+    fn read_message(&self, lid: LogId, expected_lsn: Lsn, config: &Config) -> Result<LogRead> {
         let mut msg_header_buf = [0u8; MSG_HEADER_LEN];
 
         self.pread_exact(&mut msg_header_buf, lid)?;
@@ -77,6 +77,10 @@ impl LogReader for File {
                 lid % segment_len as LogId,
                 _hb
             );
+            return Ok(LogRead::Corrupted(header.len));
+        }
+
+        if header.lsn != expected_lsn {
             return Ok(LogRead::Corrupted(header.len));
         }
 

@@ -42,6 +42,11 @@ pub(crate) fn read_blob(blob_ptr: Lsn, config: &Config) -> Result<Vec<u8>> {
             at: DiskPtr::Blob(0, blob_ptr),
         })
     } else {
+        let buf = if config.use_compression {
+            maybe_decompress(buf)?
+        } else {
+            buf
+        };
         Ok(buf)
     }
 }

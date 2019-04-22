@@ -71,14 +71,13 @@ use std::{
     convert::TryFrom,
     fmt::{self, Debug},
     io,
+    sync::atomic::{AtomicUsize, Ordering::SeqCst},
 };
 
 use bincode::{deserialize, serialize};
 use lazy_static::lazy_static;
 use log::{debug, error, trace, warn};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-
-use atomic::{AtomicUsize, Ordering::SeqCst};
 
 #[doc(hidden)]
 use self::logger::{MessageHeader, MessageKind, SegmentHeader, SegmentTrailer};
@@ -96,7 +95,7 @@ use self::{
     reader::LogReader,
     segment::{raw_segment_iter_from, SegmentAccountant},
     snapshot::{advance_snapshot, PageState},
-    util::{arr_to_u32, arr_to_u64, u32_to_arr, u64_to_arr},
+    util::{arr_to_u32, arr_to_u64, maybe_decompress, u32_to_arr, u64_to_arr},
 };
 
 pub use self::{
@@ -172,8 +171,6 @@ pub use crossbeam_epoch::{
 };
 
 pub use crossbeam_utils::{Backoff, CachePadded};
-
-pub use std::sync::atomic;
 
 fn assert_usize<T>(from: T) -> usize
 where
