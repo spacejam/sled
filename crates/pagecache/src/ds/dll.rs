@@ -27,10 +27,10 @@ impl Node {
     }
 }
 
-/// A simple doubly-linked list where
-/// items can be efficiently removed
-/// from the middle, for the purposes
-/// of backing a Lru cache.
+/// A simple non-cyclical doubly-linked
+/// list where items can be efficiently
+/// removed from the middle, for the purposes
+/// of backing an Lru cache.
 pub struct Dll {
     head: *mut Node,
     tail: *mut Node,
@@ -43,10 +43,14 @@ impl Drop for Dll {
         while !cursor.is_null() {
             unsafe {
                 let node = Box::from_raw(cursor);
+
+                // don't need to check for cycles
+                // because this Dll is non-cyclical
                 cursor = node.prev;
-            }
-            if cursor == self.head {
-                break;
+
+                // this happens without the manual drop,
+                // but we keep it for explicitness
+                drop(node);
             }
         }
     }
