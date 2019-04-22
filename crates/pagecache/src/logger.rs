@@ -96,28 +96,14 @@ impl Log {
         self.make_stable(lsn)?;
 
         if ptr.is_inline() {
-            let lid = ptr.inline();
+            let lid = ptr.lid();
             let f = &self.config.file;
 
-            let read = f.read_message(lid, &self.config);
-
-            read.and_then(|log_read| match log_read {
-                LogRead::Inline(read_lsn, _, _)
-                | LogRead::Blob(read_lsn, _, _) => {
-                    if lsn != read_lsn {
-                        debug!(
-                            "lsn of disk read is {} but we expected it to be {}",
-                            read_lsn,
-                            lsn,
-                        );
-                        Err(Error::Corruption { at: ptr })
-                    } else {
-                        Ok(log_read)
-                    }
-                }
-                _ => Ok(log_read),
-            })
+            f.read_message(lid, lsn, &self.config)
         } else {
+            // we short-circuit the inline read
+            // here because it might not still
+            // exist in the inline log.
             let (_lid, blob_ptr) = ptr.blob();
             read_blob(blob_ptr, &self.config)
                 .map(|buf| LogRead::Blob(lsn, buf, blob_ptr))
@@ -182,7 +168,7 @@ impl Log {
         let mut _compressed: Option<Vec<u8>> = None;
 
         #[cfg(feature = "compression")]
-        let buf = if self.config.use_compression {
+        let buf = if self.config.use_compression  && ! is_blob_rewrite {
             let _measure = Measure::new(&M.compress);
             let compressed_buf =
                 compress(&*raw_buf, self.config.compression_factor).unwrap();

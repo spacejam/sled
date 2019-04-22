@@ -92,7 +92,11 @@ impl IoBufs {
             snapshot.last_lid = 0;
             (0, 0)
         } else {
-            let width = match file.read_message(snapshot_last_lid, &config) {
+            let width = match file.read_message(
+                snapshot_last_lid,
+                snapshot_max_lsn,
+                &config,
+            ) {
                 Ok(LogRead::Failed(_, len))
                 | Ok(LogRead::Inline(_, _, len)) => len + MSG_HEADER_LEN,
                 Ok(LogRead::Blob(_lsn, _buf, _blob_ptr)) => {

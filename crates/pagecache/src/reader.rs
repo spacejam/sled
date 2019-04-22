@@ -1,8 +1,5 @@
 use std::fs::File;
 
-#[cfg(feature = "compression")]
-use zstd::block::decompress;
-
 use super::Pio;
 
 use super::*;
@@ -12,7 +9,7 @@ pub(crate) trait LogReader {
 
     fn read_segment_trailer(&self, id: LogId) -> Result<SegmentTrailer>;
 
-    fn read_message(&self, lid: LogId, config: &Config) -> Result<LogRead>;
+    fn read_message(&self, lid: LogId, expected_lsn: Lsn, config: &Config) -> Result<LogRead>;
 }
 
 impl LogReader for File {
@@ -35,7 +32,7 @@ impl LogReader for File {
     }
 
     /// read a buffer from the disk
-    fn read_message(&self, lid: LogId, config: &Config) -> Result<LogRead> {
+    fn read_message(&self, lid: LogId, expected_lsn: Lsn, config: &Config) -> Result<LogRead> {
         let mut msg_header_buf = [0u8; MSG_HEADER_LEN];
 
         self.pread_exact(&mut msg_header_buf, lid)?;
@@ -80,6 +77,10 @@ impl LogReader for File {
                 lid % segment_len as LogId,
                 _hb
             );
+            return Ok(LogRead::Corrupted(header.len));
+        }
+
+        if header.lsn != expected_lsn {
             return Ok(LogRead::Corrupted(header.len));
         }
 
@@ -142,11 +143,6 @@ impl LogReader for File {
                             id,
                         );
 
-                        let buf = if config.use_compression {
-                            maybe_decompress(buf)?
-                        } else {
-                            buf
-                        };
                         Ok(LogRead::Blob(header.lsn, buf, id))
                     }
                     Err(Error::Io(ref e))
@@ -182,35 +178,3 @@ impl LogReader for File {
     }
 }
 
-fn maybe_decompress(buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
-    #[cfg(feature = "compression")]
-    {
-        static MAX_COMPRESSION_RATIO: AtomicUsize = AtomicUsize::new(1);
-        use std::sync::atomic::Ordering::{Acquire, Release};
-
-        let _measure = Measure::new(&M.decompress);
-        loop {
-            let ratio = MAX_COMPRESSION_RATIO.load(Acquire);
-            match decompress(&*buf, buf.len() * ratio) {
-                Err(ref e) if e.kind() == io::ErrorKind::Other => {
-                    debug!(
-                        "bumping expected compression \
-                         ratio up from {} to {}: {:?}",
-                        ratio,
-                        ratio + 1,
-                        e
-                    );
-                    MAX_COMPRESSION_RATIO.compare_and_swap(
-                        ratio,
-                        ratio + 1,
-                        Release,
-                    );
-                }
-                other => return other,
-            }
-        }
-    }
-
-    #[cfg(not(feature = "compression"))]
-    Ok(buf)
-}

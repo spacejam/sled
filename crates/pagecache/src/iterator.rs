@@ -68,30 +68,18 @@ impl Iterator for LogIter {
                 + (self.cur_lsn % self.config.io_buf_size as Lsn) as LogId;
 
             let f = &self.config.file;
-            match f.read_message(lid, &self.config) {
+            match f.read_message(lid, self.cur_lsn, &self.config) {
                 Ok(LogRead::Blob(lsn, buf, blob_ptr)) => {
-                    if lsn != self.cur_lsn {
-                        debug!("read Flush with bad lsn");
-                        return None;
-                    }
                     trace!("read blob flush in LogIter::next");
                     self.cur_lsn += (MSG_HEADER_LEN + BLOB_INLINE_LEN) as Lsn;
                     return Some((lsn, DiskPtr::Blob(lid, blob_ptr), buf));
                 }
                 Ok(LogRead::Inline(lsn, buf, on_disk_len)) => {
-                    if lsn != self.cur_lsn {
-                        debug!("read Flush with bad lsn");
-                        return None;
-                    }
                     trace!("read inline flush in LogIter::next");
                     self.cur_lsn += (MSG_HEADER_LEN + on_disk_len) as Lsn;
                     return Some((lsn, DiskPtr::Inline(lid), buf));
                 }
-                Ok(LogRead::Failed(lsn, on_disk_len)) => {
-                    if lsn != self.cur_lsn {
-                        debug!("read Failed with bad lsn");
-                        return None;
-                    }
+                Ok(LogRead::Failed(_lsn, on_disk_len)) => {
                     trace!("read zeroed in LogIter::next");
                     self.cur_lsn += (MSG_HEADER_LEN + on_disk_len) as Lsn;
                 }
@@ -103,12 +91,7 @@ impl Iterator for LogIter {
                     );
                     return None;
                 }
-                Ok(LogRead::Pad(lsn)) => {
-                    if lsn != self.cur_lsn {
-                        debug!("read Pad with bad lsn");
-                        return None;
-                    }
-
+                Ok(LogRead::Pad(_lsn)) => {
                     if self.trailer.is_none() {
                         // This segment was torn, nothing left to read.
                         trace!("no segment trailer found, ending iteration");
