@@ -182,7 +182,7 @@ impl Log {
         let mut _compressed: Option<Vec<u8>> = None;
 
         #[cfg(feature = "compression")]
-        let buf = if self.config.use_compression {
+        let buf = if self.config.use_compression  && ! is_blob_rewrite {
             let _measure = Measure::new(&M.compress);
             let compressed_buf =
                 compress(&*raw_buf, self.config.compression_factor).unwrap();
