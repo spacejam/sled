@@ -71,7 +71,8 @@ impl<'a> Reservation<'a> {
     ///
     /// Will panic if the reservation is not the correct
     /// size to hold a serialized Lsn.
-    pub(crate) fn mark_writebatch(&mut self, lsn: Lsn) {
+    #[doc(hidden)]
+    pub fn mark_writebatch(&mut self, lsn: Lsn) {
         self.buf[0] = BATCH_MANIFEST;
 
         let buf = u64_to_arr(u64::try_from(lsn).unwrap());
