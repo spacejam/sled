@@ -46,6 +46,7 @@ fn log_writebatch() -> pagecache::Result<()> {
     log.write(b"9")?;
     batch_res.mark_writebatch(Lsn::max_value() / 2);
     batch_res.complete()?;
+    log.write(b"10")?;
 
     drop(log);
     let log = Log::start_raw_log(config.clone())?;
