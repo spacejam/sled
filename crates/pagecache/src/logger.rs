@@ -168,17 +168,29 @@ impl Log {
         self.reserve_inner(buf, false)
     }
 
-    /// Writes a sequence of buffers to a particular location
-    /// in stable storge, stored contiguously.
+    /// Writes a sequence of buffers to stable storge,
+    /// leaving a batch marker beforehand to ensure
+    /// atomic recovery of the entire batch. If
+    /// during recovery the batch is only partially
+    /// recoverable, the entire recovery process will
+    /// stop before any updates are processed.
     pub fn write_batch<'a, 'b>(
         &'a self,
         bufs: &'b [&'b [u8]],
     ) -> Result<Vec<(Lsn, DiskPtr)>> {
-        // reserve space for
+        // reserve space for pointer
+        let mut batch_res = self.reserve(&[0; std::mem::size_of::<Lsn>()])?;
         let mut pointers = Vec::with_capacity(bufs.len());
         for buf in bufs {
             pointers.push(self.write(buf)?);
         }
+        if let Some((last_lsn, _last_ptr)) = pointers.last() {
+            batch_res.mark_writebatch(*last_lsn);
+            batch_res.complete()?;
+        } else {
+            batch_res.abort()?;
+        }
+
         Ok(pointers)
     }
 

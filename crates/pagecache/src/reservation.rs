@@ -62,6 +62,25 @@ impl<'a> Reservation<'a> {
         self.ptr
     }
 
+    /// Refills the reservation buffer with new data.
+    /// Must supply a buffer of an identical length
+    /// as the one initially provided. Don't use this
+    /// on messages subject to compression etc...
+    ///
+    /// # Panics
+    ///
+    /// Will panic if the reservation is not the correct
+    /// size to hold a serialized Lsn.
+    pub(crate) fn mark_writebatch(&mut self, lsn: Lsn) {
+        self.buf[0] = BATCH_MANIFEST;
+
+        let buf = u64_to_arr(u64::try_from(lsn).unwrap());
+
+        let dst = &mut self.buf[MSG_HEADER_LEN..];
+
+        dst.copy_from_slice(&buf);
+    }
+
     fn flush(&mut self, valid: bool) -> Result<(Lsn, DiskPtr)> {
         if self.flushed {
             panic!("flushing already-flushed reservation!");
