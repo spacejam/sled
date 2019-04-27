@@ -79,7 +79,15 @@ impl Iterator for LogIter {
                     self.cur_lsn += (MSG_HEADER_LEN + on_disk_len) as Lsn;
                     return Some((lsn, DiskPtr::Inline(lid), buf));
                 }
-                Ok(LogRead::BatchManifest(max_lsn)) => unimplemented!(),
+                Ok(LogRead::BatchManifest(last_lsn_in_batch)) => {
+                    if last_lsn_in_batch > self.max_lsn {
+                        return None;
+                    } else {
+                        self.cur_lsn +=
+                            (MSG_HEADER_LEN + BATCH_MANIFEST_INLINE_LEN) as Lsn;
+                        continue;
+                    }
+                }
                 Ok(LogRead::Failed(_, on_disk_len)) => {
                     trace!("read zeroed in LogIter::next");
                     self.cur_lsn += (MSG_HEADER_LEN + on_disk_len) as Lsn;

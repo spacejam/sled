@@ -20,8 +20,7 @@ pub const BLOB_FLUSH: u8 = 2;
 pub const SEGMENT_PAD: u8 = 3;
 
 /// Indicates that the following buffer contains
-/// a manifest for a number of future writes
-/// which are to atomically "commit" at this point
+/// an Lsn for the last write in an atomic writebatch.
 pub const BATCH_MANIFEST: u8 = 4;
 
 /// The EVIL_BYTE is written as a canary to help
@@ -41,6 +40,10 @@ pub const SEG_TRAILER_LEN: usize = 20;
 /// contain a value (in addition to their header)
 /// of this length.
 pub const BLOB_INLINE_LEN: usize = std::mem::size_of::<Lsn>();
+
+/// The batch manifest stores the last Lsn
+/// needed to recover a writebatch atomically.
+pub const BATCH_MANIFEST_INLINE_LEN: usize = std::mem::size_of::<Lsn>();
 
 /// The minimum number of items per segment.
 /// Items larger than this fraction of an io_buf
