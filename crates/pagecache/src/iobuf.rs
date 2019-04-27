@@ -258,7 +258,7 @@ impl IoBufs {
         lsn: Lsn,
         over_blob_threshold: bool,
         is_blob_rewrite: bool,
-    ) -> Result<crc32fast::Hasher> {
+    ) -> Result<()> {
         let mut _blob_ptr = None;
 
         let to_reserve = if over_blob_threshold {
@@ -304,13 +304,7 @@ impl IoBufs {
             );
         }
 
-        // apply the crc32 to the buffer, as we will
-        // calculate the rest for the header later in
-        // Reservation::flush
-        let mut hasher = crc32fast::Hasher::new();
-        hasher.update(to_reserve);
-
-        Ok(hasher)
+        Ok(())
     }
 
     // ensure self.max_reserved_lsn is set to this Lsn

@@ -27,9 +27,6 @@
 //! ```
 use std::sync::Arc;
 
-#[cfg(feature = "compression")]
-use zstd::block::compress;
-
 use super::*;
 
 /// A sequential store which allows users to create
@@ -148,39 +145,51 @@ impl Log {
     /// completed or aborted later. Useful for maintaining
     /// linearizability across CAS operations that may need to
     /// persist part of their operation.
+    #[allow(unused)]
     pub fn reserve<'a>(&'a self, raw_buf: &[u8]) -> Result<Reservation<'a>> {
-        self.reserve_inner(raw_buf, false)
+        let mut _compressed: Option<Vec<u8>> = None;
+        let mut buf = raw_buf;
+
+        #[cfg(feature = "compression")]
+        {
+            if self.config.use_compression {
+                use zstd::block::compress;
+
+                let _measure = Measure::new(&M.compress);
+
+                let compressed_buf =
+                    compress(buf, self.config.compression_factor).unwrap();
+                _compressed = Some(compressed_buf);
+
+                buf = _compressed.as_ref().unwrap();
+            }
+        }
+
+        self.reserve_inner(buf, false)
+    }
+
+    /// Writes a sequence of buffers to a particular location
+    /// in stable storge, stored contiguously.
+    pub fn write_batch<'a, 'b>(
+        &'a self,
+        bufs: &'b [&'b [u8]],
+    ) -> Result<Vec<(Lsn, DiskPtr)>> {
+        // reserve space for
+        let mut pointers = Vec::with_capacity(bufs.len());
+        for buf in bufs {
+            pointers.push(self.write(buf)?);
+        }
+        Ok(pointers)
     }
 
     fn reserve_inner<'a>(
         &'a self,
-        raw_buf: &[u8],
+        buf: &[u8],
         is_blob_rewrite: bool,
     ) -> Result<Reservation<'a>> {
         let _measure = Measure::new(&M.reserve_lat);
 
         let n_io_bufs = self.config.io_bufs;
-
-        // right shift 32 on 32-bit pointer systems panics
-        #[cfg(target_pointer_width = "64")]
-        assert_eq!((raw_buf.len() + MSG_HEADER_LEN) >> 32, 0);
-
-        let mut _compressed: Option<Vec<u8>> = None;
-
-        #[cfg(feature = "compression")]
-        let buf = if self.config.use_compression  && ! is_blob_rewrite {
-            let _measure = Measure::new(&M.compress);
-            let compressed_buf =
-                compress(&*raw_buf, self.config.compression_factor).unwrap();
-            _compressed = Some(compressed_buf);
-
-            _compressed.as_ref().unwrap()
-        } else {
-            raw_buf
-        };
-
-        #[cfg(not(feature = "compression"))]
-        let buf = raw_buf;
 
         let total_buf_len = MSG_HEADER_LEN + buf.len();
 
@@ -371,13 +380,13 @@ impl Log {
 
             self.iobufs.bump_max_reserved_lsn(reservation_lsn);
 
-            let partial_checksum = Some(self.iobufs.encapsulate(
+            self.iobufs.encapsulate(
                 &*buf,
                 destination,
                 reservation_lsn,
                 over_blob_threshold,
                 is_blob_rewrite,
-            )?);
+            )?;
 
             M.log_reservation_success();
 
@@ -394,7 +403,6 @@ impl Log {
                 idx,
                 log: &self,
                 buf: destination,
-                partial_checksum,
                 flushed: false,
                 lsn: reservation_lsn,
                 ptr,

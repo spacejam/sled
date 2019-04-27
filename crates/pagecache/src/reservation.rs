@@ -8,7 +8,6 @@ pub struct Reservation<'a> {
     pub(super) log: &'a Log,
     pub(super) idx: usize,
     pub(super) buf: &'a mut [u8],
-    pub(super) partial_checksum: Option<crc32fast::Hasher>,
     pub(super) flushed: bool,
     pub(super) ptr: DiskPtr,
     pub(super) lsn: Lsn,
@@ -76,8 +75,12 @@ impl<'a> Reservation<'a> {
             self.buf[0] = FAILED_FLUSH;
         }
 
-        let mut hasher = self.partial_checksum.take().unwrap();
-        hasher.update(self.buf);
+        // the order of hashing must be the
+        // same here as during calls to
+        // LogReader::read_message
+        let mut hasher = crc32fast::Hasher::new();
+        hasher.update(&self.buf[MSG_HEADER_LEN..]);
+        hasher.update(&self.buf[..MSG_HEADER_LEN]);
         let crc32 = hasher.finalize();
         let crc32_arr = u32_to_arr(crc32 ^ 0xFFFF_FFFF);
 
