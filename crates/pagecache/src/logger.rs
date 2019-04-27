@@ -393,7 +393,7 @@ impl Log {
             return Ok(Reservation {
                 idx,
                 log: &self,
-                header_buf: &mut destination[..MSG_HEADER_LEN],
+                buf: destination,
                 partial_checksum,
                 flushed: false,
                 lsn: reservation_lsn,
@@ -489,6 +489,7 @@ pub(crate) enum MessageKind {
     Failed,
     Pad,
     Corrupted,
+    BatchManifest,
 }
 
 /// All log messages are prepended with this header
@@ -527,6 +528,7 @@ pub enum LogRead {
     Pad(Lsn),
     Corrupted(usize),
     DanglingBlob(Lsn, BlobPointer),
+    BatchManifest(Lsn),
 }
 
 impl LogRead {
@@ -616,6 +618,7 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
             BLOB_FLUSH => MessageKind::Blob,
             FAILED_FLUSH => MessageKind::Failed,
             SEGMENT_PAD => MessageKind::Pad,
+            BATCH_MANIFEST => MessageKind::BatchManifest,
             _ => MessageKind::Corrupted,
         };
 
@@ -642,6 +645,7 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
             MessageKind::Blob => BLOB_FLUSH,
             MessageKind::Failed => FAILED_FLUSH,
             MessageKind::Pad => SEGMENT_PAD,
+            MessageKind::BatchManifest => BATCH_MANIFEST,
             MessageKind::Corrupted => EVIL_BYTE,
         };
 

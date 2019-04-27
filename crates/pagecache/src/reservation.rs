@@ -7,7 +7,7 @@ use super::*;
 pub struct Reservation<'a> {
     pub(super) log: &'a Log,
     pub(super) idx: usize,
-    pub(super) header_buf: &'a mut [u8],
+    pub(super) buf: &'a mut [u8],
     pub(super) partial_checksum: Option<crc32fast::Hasher>,
     pub(super) flushed: bool,
     pub(super) ptr: DiskPtr,
@@ -73,18 +73,18 @@ impl<'a> Reservation<'a> {
         if !valid {
             // don't actually zero the message, still check its hash
             // on recovery to find corruption.
-            self.header_buf[0] = FAILED_FLUSH;
+            self.buf[0] = FAILED_FLUSH;
         }
 
         let mut hasher = self.partial_checksum.take().unwrap();
-        hasher.update(self.header_buf);
+        hasher.update(self.buf);
         let crc32 = hasher.finalize();
         let crc32_arr = u32_to_arr(crc32 ^ 0xFFFF_FFFF);
 
         unsafe {
             std::ptr::copy_nonoverlapping(
                 crc32_arr.as_ptr(),
-                self.header_buf.as_mut_ptr().add(13),
+                self.buf.as_mut_ptr().add(13),
                 std::mem::size_of::<u32>(),
             );
         }

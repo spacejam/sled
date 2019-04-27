@@ -170,6 +170,11 @@ impl LogReader for File {
 
                 Ok(LogRead::Inline(header.lsn, buf, header.len))
             }
+            MessageKind::BatchManifest => {
+                assert_eq!(buf.len(), std::mem::size_of::<Lsn>());
+                let max_lsn = Lsn::try_from(arr_to_u64(&buf)).unwrap();
+                Ok(LogRead::BatchManifest(max_lsn))
+            }
             MessageKind::Corrupted => panic!(
                 "corrupted should have been handled \
                  before reading message length above"
