@@ -67,7 +67,7 @@ pub(super) struct IoBufs {
     // to stable storage due to interesting thread interleavings.
     pub(crate) stable_lsn: AtomicLsn,
     pub(crate) max_reserved_lsn: AtomicLsn,
-    pub(crate) max_recorded_stable_lsn: AtomicLsn,
+    pub(crate) max_trailer_stable_lsn: AtomicLsn,
     pub(crate) segment_accountant: Mutex<SegmentAccountant>,
 }
 
@@ -184,7 +184,7 @@ impl IoBufs {
 
             stable_lsn: AtomicLsn::new(stable),
             max_reserved_lsn: AtomicLsn::new(stable),
-            max_recorded_stable_lsn: AtomicLsn::new(
+            max_trailer_stable_lsn: AtomicLsn::new(
                 snapshot_max_trailer_stable_lsn,
             ),
             segment_accountant: Mutex::new(segment_accountant),
@@ -258,7 +258,7 @@ impl IoBufs {
         lsn: Lsn,
         over_blob_threshold: bool,
         is_blob_rewrite: bool,
-    ) -> Result<crc32fast::Hasher> {
+    ) -> Result<()> {
         let mut _blob_ptr = None;
 
         let to_reserve = if over_blob_threshold {
@@ -304,13 +304,7 @@ impl IoBufs {
             );
         }
 
-        // apply the crc32 to the buffer, as we will
-        // calculate the rest for the header later in
-        // Reservation::flush
-        let mut hasher = crc32fast::Hasher::new();
-        hasher.update(to_reserve);
-
-        Ok(hasher)
+        Ok(())
     }
 
     // ensure self.max_reserved_lsn is set to this Lsn

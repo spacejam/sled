@@ -24,6 +24,46 @@ type Lsn = i64;
 type LogId = u64;
 
 #[test]
+fn log_writebatch() -> pagecache::Result<()> {
+    let config = ConfigBuilder::new()
+        .temporary(true)
+        .segment_mode(SegmentMode::Linear)
+        .build();
+    let log = Log::start_raw_log(config.clone())?;
+
+    log.write(b"1")?;
+    log.write_batch(&[b"2", b"3", b"4", b"5"])?;
+
+    // simulate a torn batch by
+    // writing an LSN higher than
+    // is possible to recover into
+    // a batch manifest before
+    // some writes.
+    let mut batch_res = log.reserve(&[0; std::mem::size_of::<Lsn>()])?;
+    log.write(b"6")?;
+    log.write(b"7")?;
+    log.write(b"8")?;
+    log.write(b"9")?;
+    batch_res.mark_writebatch(Lsn::max_value() / 2);
+    batch_res.complete()?;
+    log.write(b"10")?;
+
+    drop(log);
+    let log = Log::start_raw_log(config.clone())?;
+
+    let mut iter = log.iter_from(0);
+
+    assert_eq!(iter.next().unwrap().2, b"1");
+    assert_eq!(iter.next().unwrap().2, b"2");
+    assert_eq!(iter.next().unwrap().2, b"3");
+    assert_eq!(iter.next().unwrap().2, b"4");
+    assert_eq!(iter.next().unwrap().2, b"5");
+    assert_eq!(iter.next(), None);
+
+    Ok(())
+}
+
+#[test]
 fn more_log_reservations_than_buffers() {
     let config = ConfigBuilder::new()
         .temporary(true)
