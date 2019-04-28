@@ -209,7 +209,7 @@ fn main() {
         .async_io_threads(3)
         .blink_node_split_size(4096)
         .page_consolidation_threshold(10)
-        .cache_bits(0)
+        .cache_bits(8)
         .cache_capacity(1_000_000_000)
         .flush_every_ms(Some(200))
         .snapshot_after_ops(100_000_000_000)

@@ -107,7 +107,7 @@ impl Default for ConfigBuilder {
             page_consolidation_threshold: 10,
             path: PathBuf::from(DEFAULT_PATH),
             read_only: false,
-            cache_bits: 0,                      // 1 shard
+            cache_bits: 8,                      // 256 shards
             cache_capacity: 1024 * 1024 * 1024, // 1gb
             use_compression: false,
             compression_factor: 5,
