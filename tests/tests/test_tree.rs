@@ -251,21 +251,29 @@ fn parallel_tree_iterators() -> Result<()> {
 
                     for expect in expected {
                         loop {
-                            if let Some(Ok(k)) = keys.next() {
-                                assert!(
-                                    &*k >= *expect,
-                                    "witnessed key is {:?} but we expected \
-                                     one >= {:?}, so we overshot due to a \
-                                     concurrent modification\n{:?}",
-                                    k,
-                                    expect,
-                                    *t,
-                                );
-                                if &*k == *expect {
-                                    break;
-                                }
-                            } else {
-                                panic!("undershot key on tree: \n{:?}", *t);
+
+                            match keys.next() {
+                                Some(Ok(k)) => {
+                                    assert!(
+                                        &*k >= *expect,
+                                        "witnessed key is {:?} but we expected \
+                                         one >= {:?}, so we overshot due to a \
+                                         concurrent modification\n{:?}",
+                                        k,
+                                        expect,
+                                        *t,
+                                    );
+                                    if &*k == *expect {
+                                        break;
+                                    }
+                                },
+                                Some(Err(e)) => panic!("{:?}", e),
+                                None => {
+                                    panic!("expected {:?}, undershot key on tree: \n{:?}",
+                                        expect,
+                                        *t,
+                                    );
+                                },
                             }
                         }
                     }

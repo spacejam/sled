@@ -20,10 +20,9 @@ pub(crate) enum Frag {
 
 impl Frag {
     pub(super) fn unwrap_base(&self) -> &Node {
-        if let Frag::Base(base, ..) = self {
-            base
-        } else {
-            panic!("called unwrap_base_ptr on non-Base Frag!")
+        match self {
+            Frag::Base(node) => node,
+            _ => panic!("called unwrap_base_ptr on non-Base Frag!"),
         }
     }
 }

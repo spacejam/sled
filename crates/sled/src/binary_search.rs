@@ -87,7 +87,7 @@ where
 #[inline]
 pub(crate) fn binary_search_lub<'a, T, F>(s: &'a [T], f: F) -> Option<usize>
 where
-    F: FnMut(&'a T) -> ::std::cmp::Ordering,
+    F: FnMut(&'a T) -> Ordering,
 {
     match s.binary_search_by(f) {
         Ok(i) => Some(i),

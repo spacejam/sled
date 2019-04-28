@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     cmp::Ordering::{Greater, Less},
     fmt::{self, Debug},
-    ops::{self, RangeBounds},
+    ops::{RangeBounds, Bound::{Included, Excluded, Unbounded}},
     sync::{
         atomic::{AtomicU64, Ordering::SeqCst},
         Arc,
@@ -829,9 +829,9 @@ impl Tree {
     where
         K: AsRef<[u8]>,
     {
-        let mut iter = self.range(key..);
-        iter.is_scan = true;
-        iter
+        let is_scan = true;
+        let key = key.as_ref().to_vec();
+        Iter::new(self, Included(key), Unbounded, is_scan)
     }
 
     /// Create a double-ended iterator over tuples of keys and values,
@@ -870,53 +870,20 @@ impl Tree {
     {
         let _measure = Measure::new(&M.tree_scan);
 
-        let tx = match self.context.pagecache.begin() {
-            Ok(tx) => tx,
-            Err(e) => {
-                return Iter {
-                    tree: &self,
-                    tx: Tx::new(0),
-                    broken: Some(e),
-                    done: false,
-                    hi: ops::Bound::Unbounded,
-                    lo: ops::Bound::Unbounded,
-                    is_scan: false,
-                    last_key: None,
-                    last_id: None,
-                };
-            }
-        };
-
         let lo = match range.start_bound() {
-            ops::Bound::Included(ref end) => {
-                ops::Bound::Included(end.as_ref().to_vec())
-            }
-            ops::Bound::Excluded(ref end) => {
-                ops::Bound::Excluded(end.as_ref().to_vec())
-            }
-            ops::Bound::Unbounded => ops::Bound::Unbounded,
-        };
-        let hi = match range.end_bound() {
-            ops::Bound::Included(ref end) => {
-                ops::Bound::Included(end.as_ref().to_vec())
-            }
-            ops::Bound::Excluded(ref end) => {
-                ops::Bound::Excluded(end.as_ref().to_vec())
-            }
-            ops::Bound::Unbounded => ops::Bound::Unbounded,
+            Included(ref end) => Included(end.as_ref().to_vec()),
+            Excluded(ref end) => Excluded(end.as_ref().to_vec()),
+            Unbounded => Unbounded,
         };
 
-        Iter {
-            tree: &self,
-            hi,
-            lo,
-            last_id: None,
-            last_key: None,
-            broken: None,
-            done: false,
-            is_scan: false,
-            tx,
-        }
+        let hi = match range.end_bound() {
+            Included(ref end) => Included(end.as_ref().to_vec()),
+            Excluded(ref end) => Excluded(end.as_ref().to_vec()),
+            Unbounded => Unbounded,
+        };
+
+        let is_scan = false;
+        Iter::new(self, lo, hi, is_scan)
     }
 
     /// Create a double-ended iterator over keys, starting at the provided key.

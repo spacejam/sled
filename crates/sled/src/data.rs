@@ -41,14 +41,17 @@ impl Data {
     }
 
     pub(crate) fn len(&self) -> usize {
-        match *self {
-            Data::Index(ref ptrs) => ptrs.len(),
-            Data::Leaf(ref items) => items.len(),
+        match self {
+            Data::Index(ptrs) => ptrs.len(),
+            Data::Leaf(items) => items.len(),
         }
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.len() == 0
+        match self {
+            Data::Index(ptrs) => ptrs.is_empty(),
+            Data::Leaf(items) => items.is_empty(),
+        }
     }
 
     pub(crate) fn split(&self, lhs_prefix: &[u8]) -> (IVec, Data) {
@@ -94,7 +97,7 @@ impl Data {
         }
     }
 
-    pub(crate) fn leaf_ref(&self) -> Option<&Vec<(IVec, IVec)>> {
+    pub(crate) fn leaf_ref(&self) -> Option<&[(IVec, IVec)]> {
         match *self {
             Data::Index(_) => None,
             Data::Leaf(ref items) => Some(items),
