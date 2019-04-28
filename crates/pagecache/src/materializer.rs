@@ -25,7 +25,7 @@ pub trait Materializer {
         Self::PageFrag: 'a;
 
     /// Used to determine the size of the value for caching purposes.
-    fn size_in_bytes(frag: &Self::PageFrag) -> usize;
+    fn size_in_bytes(frag: &Self::PageFrag) -> u64;
 }
 
 /// A materializer for things that have nothing to
@@ -47,7 +47,7 @@ impl Materializer for NullMaterializer {
     {
     }
 
-    fn size_in_bytes(_: &Self::PageFrag) -> usize {
+    fn size_in_bytes(_: &Self::PageFrag) -> u64 {
         0
     }
 }

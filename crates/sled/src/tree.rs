@@ -4,7 +4,7 @@ use std::{
     fmt::{self, Debug},
     ops::{self, RangeBounds},
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicU64, Ordering::SeqCst},
         Arc,
     },
 };
@@ -53,7 +53,7 @@ pub struct Tree {
     pub(crate) tree_id: Vec<u8>,
     pub(crate) context: Context,
     pub(crate) subscriptions: Arc<Subscriptions>,
-    pub(crate) root: Arc<AtomicUsize>,
+    pub(crate) root: Arc<AtomicU64>,
 }
 
 unsafe impl Send for Tree {}
@@ -1245,7 +1245,7 @@ impl Tree {
 
         let mut not_found_loops = 0;
         loop {
-            if cursor == usize::max_value() {
+            if cursor == u64::max_value() {
                 // this collection has been explicitly removed
                 return Err(Error::CollectionNotFound(self.tree_id.clone()));
             }

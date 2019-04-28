@@ -71,7 +71,7 @@ use std::{
     convert::TryFrom,
     fmt::{self, Debug},
     io,
-    sync::atomic::{AtomicUsize, Ordering::SeqCst},
+    sync::atomic::{AtomicI64 as AtomicLsn, AtomicU64, Ordering::SeqCst},
 };
 
 use bincode::{deserialize, serialize};
@@ -138,7 +138,7 @@ pub type BlobPointer = Lsn;
 pub type Lsn = i64;
 
 /// A page identifier.
-pub type PageId = usize;
+pub type PageId = u64;
 
 /// Allows arbitrary logic to be injected into mere operations of the `PageCache`.
 pub type MergeOperator = fn(

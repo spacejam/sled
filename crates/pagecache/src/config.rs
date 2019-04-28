@@ -19,7 +19,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 // explicitly bring LogReader in to be tool-friendly
-use super::{*, LogReader};
+use super::{LogReader, *};
 
 const DEFAULT_PATH: &str = "default.sled";
 
@@ -55,7 +55,7 @@ pub struct ConfigBuilder {
     #[doc(hidden)]
     pub cache_bits: usize,
     #[doc(hidden)]
-    pub cache_capacity: usize,
+    pub cache_capacity: u64,
     #[doc(hidden)]
     pub flush_every_ms: Option<u64>,
     #[doc(hidden)]
@@ -75,7 +75,7 @@ pub struct ConfigBuilder {
     #[doc(hidden)]
     pub segment_mode: SegmentMode,
     #[doc(hidden)]
-    pub snapshot_after_ops: usize,
+    pub snapshot_after_ops: u64,
     #[doc(hidden)]
     pub snapshot_path: Option<PathBuf>,
     #[doc(hidden)]
@@ -89,7 +89,7 @@ pub struct ConfigBuilder {
     #[doc(hidden)]
     pub print_profile_on_drop: bool,
     #[doc(hidden)]
-    pub idgen_persist_interval: usize,
+    pub idgen_persist_interval: u64,
     #[doc(hidden)]
     pub async_io: bool,
     #[doc(hidden)]
@@ -256,17 +256,17 @@ impl ConfigBuilder {
         (temporary, bool, "deletes the database after drop. if no path is set, uses /dev/shm on linux"),
         (read_only, bool, "whether to run in read-only mode"),
         (cache_bits, usize, "log base 2 of the number of cache shards"),
-        (cache_capacity, usize, "maximum size for the system page cache"),
+        (cache_capacity, u64, "maximum size for the system page cache"),
         (use_compression, bool, "whether to use zstd compression"),
         (compression_factor, i32, "the compression factor to use with zstd compression"),
         (flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
-        (snapshot_after_ops, usize, "number of operations between page table snapshots"),
+        (snapshot_after_ops, u64, "number of operations between page table snapshots"),
         (segment_cleanup_threshold, f64, "the proportion of remaining valid pages in the segment before GC defragments it"),
         (segment_cleanup_skew, usize, "the cleanup threshold skew in percentage points between the first and last segments"),
         (segment_mode, SegmentMode, "the file segment selection mode"),
         (snapshot_path, Option<PathBuf>, "snapshot file location"),
         (print_profile_on_drop, bool, "print a performance profile when the Config is dropped"),
-        (idgen_persist_interval, usize, "generated IDs are persisted at this interval. during recovery we skip twice this number"),
+        (idgen_persist_interval, u64, "generated IDs are persisted at this interval. during recovery we skip twice this number"),
         (async_io, bool, "perform IO operations on a threadpool"),
         (async_io_threads, usize, "set the number of threads in the IO threadpool. defaults to # logical CPUs.")
     );

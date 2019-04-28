@@ -1,6 +1,6 @@
 use std::{
     ops::Deref,
-    sync::{atomic::AtomicUsize, Arc, RwLock},
+    sync::{atomic::AtomicU64, Arc, RwLock},
 };
 
 use pagecache::FastMap8;
@@ -71,7 +71,7 @@ impl Db {
                 tree_id: id.clone(),
                 subscriptions: Arc::new(Subscriptions::default()),
                 context: context.clone(),
-                root: Arc::new(AtomicUsize::new(root)),
+                root: Arc::new(AtomicU64::new(root)),
             };
             tenants.insert(id, Arc::new(tree));
         }
@@ -157,7 +157,7 @@ impl Db {
         }
 
         tree.root
-            .store(usize::max_value(), std::sync::atomic::Ordering::SeqCst);
+            .store(u64::max_value(), std::sync::atomic::Ordering::SeqCst);
 
         // drop writer lock
         drop(tenants);
