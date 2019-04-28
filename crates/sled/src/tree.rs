@@ -957,10 +957,7 @@ impl Tree {
     /// assert_eq!(iter.next().unwrap(), Ok(IVec::from(vec![3])));
     /// assert_eq!(iter.next(), None);
     /// ```
-    pub fn values<'a, K>(
-        &'a self,
-        key: K,
-    ) -> impl 'a + DoubleEndedIterator<Item = Result<IVec>>
+    pub fn values<'a, K>(&'a self, key: K) -> Values<'a>
     where
         K: AsRef<[u8]>,
     {

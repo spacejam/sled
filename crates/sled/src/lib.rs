@@ -53,7 +53,7 @@ const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
 pub use {
     self::{
         db::Db,
-        iter::{Iter, Keys},
+        iter::{Iter, Keys, Values},
         ivec::IVec,
         subscription::{Event, Subscriber},
         tree::Tree,

@@ -41,8 +41,8 @@ impl<'a> Iter<'a> {
     }
 
     /// Iterate over the values of this Tree
-    pub fn values(self) -> impl 'a + DoubleEndedIterator<Item = Result<IVec>> {
-        self.map(|r| r.map(|(_k, v)| v))
+    pub fn values(self) -> Values<'a> {
+        Values(self)
     }
 }
 
@@ -438,6 +438,31 @@ impl<'a> DoubleEndedIterator for Keys<'a> {
     fn next_back(&mut self) -> Option<Self::Item> {
         match self.0.next_back() {
             Some(Ok((key, _))) => Some(Ok(key)),
+            Some(Err(err)) => Some(Err(err)),
+            None => None,
+        }
+    }
+}
+
+/// An iterator over values in a `Tree`.
+pub struct Values<'a>(Iter<'a>);
+
+impl<'a> Iterator for Values<'a> {
+    type Item = Result<IVec>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.0.next() {
+            Some(Ok((_, value))) => Some(Ok(value)),
+            Some(Err(err)) => Some(Err(err)),
+            None => None,
+        }
+    }
+}
+
+impl<'a> DoubleEndedIterator for Values<'a> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        match self.0.next_back() {
+            Some(Ok((_, value))) => Some(Ok(value)),
             Some(Err(err)) => Some(Err(err)),
             None => None,
         }
