@@ -281,6 +281,40 @@ where
     }
 }
 
+/// Ensures that any operations that
+/// are written to disk between the
+/// creation of this guard and its
+/// destruction will be recovered
+/// atomically. When this guard is
+/// dropped, it marks in an earlier
+/// reservation where the stable
+/// tip must be in order to perform
+/// recovery. If this is beyond
+/// where the system successfully
+/// wrote before crashing, then
+/// the recovery will stop immediately
+/// before any of the atomic batch
+/// can be partially recovered.
+///
+/// Must call `seal_batch` to complete
+/// the atomic batch operation.
+pub struct RecoveryGuard<'a> {
+    batch_res: Reservation<'a>,
+}
+
+impl<'a> RecoveryGuard<'a> {
+    fn seal_batch(mut self) -> Result<()> {
+        let max_reserved = self
+            .batch_res
+            .log
+            .iobufs
+            .max_reserved_lsn
+            .load(std::sync::atomic::Ordering::Acquire);
+        self.batch_res.mark_writebatch(max_reserved);
+        self.batch_res.complete().map(|_| ())
+    }
+}
+
 /// A lock-free pagecache which supports fragmented pages
 /// for dramatically improving write throughput.
 ///
@@ -566,6 +600,23 @@ where
         } else {
             Ok(false)
         }
+    }
+
+    /// Initiate an atomic sequence of writes to the
+    /// underlying log. Returns a `RecoveryGuard` which,
+    /// when dropped, will record the current max reserved
+    /// LSN into an earlier log reservation. During recovery,
+    /// when we hit this early atomic LSN marker, if the
+    /// specified LSN is beyond the contiguous tip of the log,
+    /// we immediately halt recovery, preventing the recovery
+    /// of partial transactions or write batches. This is
+    /// a relatively low-level primitive that can be used
+    /// to facilitate transactions and write batches when
+    /// combined with a concurrency control system in another
+    /// component.
+    pub fn pin_log<'a>(&'a self) -> Result<RecoveryGuard<'a>> {
+        let batch_res = self.log.reserve(&[0; std::mem::size_of::<Lsn>()])?;
+        Ok(RecoveryGuard { batch_res })
     }
 
     #[doc(hidden)]
