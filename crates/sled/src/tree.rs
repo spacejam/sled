@@ -934,10 +934,7 @@ impl Tree {
     /// assert_eq!(iter.next().unwrap(), Ok(vec![3]));
     /// assert_eq!(iter.next(), None);
     /// ```
-    pub fn keys<'a, K>(
-        &'a self,
-        key: K,
-    ) -> impl 'a + DoubleEndedIterator<Item = Result<Vec<u8>>>
+    pub fn keys<'a, K>(&'a self, key: K) -> Keys<'a>
     where
         K: AsRef<[u8]>,
     {

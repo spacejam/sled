@@ -36,8 +36,8 @@ pub struct Iter<'a> {
 
 impl<'a> Iter<'a> {
     /// Iterate over the keys of this Tree
-    pub fn keys(self) -> impl 'a + DoubleEndedIterator<Item = Result<Vec<u8>>> {
-        self.map(|r| r.map(|(k, _v)| k))
+    pub fn keys(self) -> Keys<'a> {
+        Keys(self)
     }
 
     /// Iterate over the values of this Tree
@@ -415,6 +415,31 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
             }
 
             self.last_id = Some(next_id);
+        }
+    }
+}
+
+/// An iterator over keys in a `Tree`.
+pub struct Keys<'a>(Iter<'a>);
+
+impl<'a> Iterator for Keys<'a> {
+    type Item = Result<Vec<u8>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.0.next() {
+            Some(Ok((key, _))) => Some(Ok(key)),
+            Some(Err(err)) => Some(Err(err)),
+            None => None,
+        }
+    }
+}
+
+impl<'a> DoubleEndedIterator for Keys<'a> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        match self.0.next_back() {
+            Some(Ok((key, _))) => Some(Ok(key)),
+            Some(Err(err)) => Some(Err(err)),
+            None => None,
         }
     }
 }
