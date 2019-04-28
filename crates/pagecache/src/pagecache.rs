@@ -1388,7 +1388,7 @@ where
 
     /// Increase a page's associated transactional read
     /// timestamp (RTS) to as high as the specified timestamp.
-    pub fn bump_page_rts(&self, pid: PageId, ts: u64, tx: &Tx) {
+    pub fn bump_page_rts(&self, pid: PageId, ts: Lsn, tx: &Tx) {
         let pte_ptr = if let Some(p) = self.inner.get(pid, tx) {
             p
         } else {
