@@ -281,23 +281,15 @@ where
     }
 }
 
-/// Ensures that any operations that
-/// are written to disk between the
-/// creation of this guard and its
-/// destruction will be recovered
-/// atomically. When this guard is
-/// dropped, it marks in an earlier
-/// reservation where the stable
-/// tip must be in order to perform
-/// recovery. If this is beyond
-/// where the system successfully
-/// wrote before crashing, then
-/// the recovery will stop immediately
-/// before any of the atomic batch
-/// can be partially recovered.
+/// Ensures that any operations that are written to disk between the
+/// creation of this guard and its destruction will be recovered
+/// atomically. When this guard is dropped, it marks in an earlier
+/// reservation where the stable tip must be in order to perform
+/// recovery. If this is beyond where the system successfully
+/// wrote before crashing, then the recovery will stop immediately
+/// before any of the atomic batch can be partially recovered.
 ///
-/// Must call `seal_batch` to complete
-/// the atomic batch operation.
+/// Must call `seal_batch` to complete the atomic batch operation.
 pub struct RecoveryGuard<'a> {
     batch_res: Reservation<'a>,
 }

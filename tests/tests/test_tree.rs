@@ -545,7 +545,7 @@ fn recover_tree() {
         .io_buf_size(5000)
         .flush_every_ms(None)
         .async_io(false)
-        .snapshot_after_ops(N_PER_THREAD)
+        .snapshot_after_ops(N_PER_THREAD as u64)
         .build();
 
     let t = sled::Db::start(config.clone()).unwrap();
@@ -581,7 +581,8 @@ fn quickcheck_tree_matches_btreemap() {
         .tests(n_tests)
         .max_tests(1000)
         .quickcheck(
-            prop_tree_matches_btreemap as fn(Vec<Op>, u8, u8, bool, bool) -> bool,
+            prop_tree_matches_btreemap
+                as fn(Vec<Op>, u8, u8, bool, bool) -> bool,
         );
 }
 

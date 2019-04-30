@@ -213,7 +213,7 @@ pub fn prop_tree_matches_btreemap(
         .async_io(false)
         .temporary(true)
         .use_compression(use_compression)
-        .snapshot_after_ops(snapshot_after as usize + 1)
+        .snapshot_after_ops(snapshot_after as u64 + 1)
         .flush_every_ms(if flusher { Some(1) } else { None })
         .io_buf_size(10000)
         .blink_node_split_size(1 << std::cmp::min(blink_node_exponent, 20))
