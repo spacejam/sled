@@ -1,4 +1,4 @@
-use std::sync::{atomic::AtomicUsize, Arc};
+use std::sync::{atomic::AtomicU64, Arc};
 
 use super::*;
 
@@ -18,7 +18,7 @@ pub(crate) fn open_tree<'a>(
                     tree_id: name,
                     context: context.clone(),
                     subscriptions: Arc::new(Subscriptions::default()),
-                    root: Arc::new(AtomicUsize::new(root_id)),
+                    root: Arc::new(AtomicU64::new(root_id)),
                 });
             }
             Err(Error::CollectionNotFound(_)) => {}
@@ -82,7 +82,7 @@ pub(crate) fn open_tree<'a>(
             tree_id: name,
             subscriptions: Arc::new(Subscriptions::default()),
             context: context.clone(),
-            root: Arc::new(AtomicUsize::new(root_id)),
+            root: Arc::new(AtomicU64::new(root_id)),
         });
     }
 }

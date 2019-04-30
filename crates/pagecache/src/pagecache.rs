@@ -58,7 +58,7 @@ pub enum CacheEntry<M: Send> {
     /// A freed page tombstone.
     Free(u64, Lsn, DiskPtr),
     /// The persisted counter page
-    Counter(usize, u64, Lsn, DiskPtr),
+    Counter(u64, u64, Lsn, DiskPtr),
     /// The persisted meta page
     Meta(Meta, u64, Lsn, DiskPtr),
 }
@@ -162,7 +162,7 @@ where
     Append(PageFrag),
     Compact(PageFrag),
     Free,
-    Counter(usize),
+    Counter(u64),
     Meta(Meta),
 }
 
@@ -213,7 +213,7 @@ where
     /// This page has not been allocated yet.
     Unallocated,
     /// This page contains the last persisted counter
-    Counter(usize, PagePtr<'a, PageFrag>),
+    Counter(u64, PagePtr<'a, PageFrag>),
     /// This is the Meta page
     Meta(&'a Meta, PagePtr<'a, PageFrag>),
 }
@@ -281,29 +281,23 @@ where
     }
 }
 
-/// Ensures that any operations that
-/// are written to disk between the
-/// creation of this guard and its
-/// destruction will be recovered
-/// atomically. When this guard is
-/// dropped, it marks in an earlier
-/// reservation where the stable
-/// tip must be in order to perform
-/// recovery. If this is beyond
-/// where the system successfully
-/// wrote before crashing, then
-/// the recovery will stop immediately
-/// before any of the atomic batch
-/// can be partially recovered.
+/// Ensures that any operations that are written to disk between the
+/// creation of this guard and its destruction will be recovered
+/// atomically. When this guard is dropped, it marks in an earlier
+/// reservation where the stable tip must be in order to perform
+/// recovery. If this is beyond where the system successfully
+/// wrote before crashing, then the recovery will stop immediately
+/// before any of the atomic batch can be partially recovered.
 ///
-/// Must call `seal_batch` to complete
-/// the atomic batch operation.
+/// Must call `seal_batch` to complete the atomic batch operation.
 pub struct RecoveryGuard<'a> {
     batch_res: Reservation<'a>,
 }
 
 impl<'a> RecoveryGuard<'a> {
-    fn seal_batch(mut self) -> Result<()> {
+    /// Writes the last LSN for a batch into an earlier
+    /// reservation, releasing it.
+    pub fn seal_batch(mut self) -> Result<()> {
         let max_reserved = self
             .batch_res
             .log
@@ -312,6 +306,12 @@ impl<'a> RecoveryGuard<'a> {
             .load(std::sync::atomic::Ordering::Acquire);
         self.batch_res.mark_writebatch(max_reserved);
         self.batch_res.complete().map(|_| ())
+    }
+
+    /// Returns the LSN representing the beginning of this
+    /// batch.
+    pub fn lsn(&self) -> Lsn {
+        self.batch_res.lsn()
     }
 }
 
@@ -345,8 +345,8 @@ impl<'a> RecoveryGuard<'a> {
 ///     }
 ///
 ///     // Used to determine the resident size for this item in cache.
-///     fn size_in_bytes(frag: &String) -> usize {
-///         std::mem::size_of::<String>() + frag.as_bytes().len()
+///     fn size_in_bytes(frag: &String) -> u64 {
+///         (std::mem::size_of::<String>() + frag.as_bytes().len()) as u64
 ///     }
 ///
 /// }
@@ -392,14 +392,14 @@ where
     _materializer: PhantomData<PM>,
     config: Config,
     inner: Arc<PageTable<PageTableEntry<P>>>,
-    max_pid: AtomicUsize,
+    max_pid: AtomicU64,
     free: Arc<Mutex<BinaryHeap<PageId>>>,
     log: Log,
     lru: Lru,
-    updates: AtomicUsize,
+    updates: AtomicU64,
     last_snapshot: Arc<Mutex<Option<Snapshot>>>,
-    idgen: Arc<AtomicUsize>,
-    idgen_persists: Arc<AtomicUsize>,
+    idgen: Arc<AtomicU64>,
+    idgen_persists: Arc<AtomicU64>,
     idgen_persist_mu: Arc<Mutex<()>>,
     was_recovered: bool,
 }
@@ -409,7 +409,8 @@ where
     P: 'static + Send + Sync,
 {
     stack: Stack<CacheEntry<P>>,
-    rts: AtomicUsize,
+    rts: AtomicLsn,
+    pending: AtomicLsn,
 }
 
 unsafe impl<PM, P> Send for PageCache<PM, P>
@@ -494,15 +495,15 @@ where
             _materializer: PhantomData,
             config: config.clone(),
             inner: Arc::new(PageTable::default()),
-            max_pid: AtomicUsize::new(0),
+            max_pid: AtomicU64::new(0),
             free: Arc::new(Mutex::new(BinaryHeap::new())),
             log: Log::start(config, snapshot.clone())?,
             lru,
-            updates: AtomicUsize::new(0),
+            updates: AtomicU64::new(0),
             last_snapshot: Arc::new(Mutex::new(Some(snapshot))),
             idgen_persist_mu: Arc::new(Mutex::new(())),
-            idgen: Arc::new(AtomicUsize::new(0)),
-            idgen_persists: Arc::new(AtomicUsize::new(0)),
+            idgen: Arc::new(AtomicU64::new(0)),
+            idgen_persists: Arc::new(AtomicU64::new(0)),
             was_recovered: false,
         };
 
@@ -653,7 +654,8 @@ where
             let new_stack = Stack::default();
             let new_pte = PageTableEntry {
                 stack: new_stack,
-                rts: AtomicUsize::new(0),
+                rts: AtomicLsn::new(0),
+                pending: AtomicLsn::new(0),
             };
 
             let pte_ptr = Owned::new(new_pte).into_shared(tx);
@@ -1386,7 +1388,7 @@ where
 
     /// Increase a page's associated transactional read
     /// timestamp (RTS) to as high as the specified timestamp.
-    pub fn bump_page_rts(&self, pid: PageId, ts: u64, tx: &Tx) {
+    pub fn bump_page_rts(&self, pid: PageId, ts: Lsn, tx: &Tx) {
         let pte_ptr = if let Some(p) = self.inner.get(pid, tx) {
             p
         } else {
@@ -1397,10 +1399,10 @@ where
 
         let mut current = pte.rts.load(SeqCst);
         loop {
-            if current as u64 >= ts {
+            if current >= ts {
                 return;
             }
-            let last = pte.rts.compare_and_swap(current, ts as usize, SeqCst);
+            let last = pte.rts.compare_and_swap(current, ts, SeqCst);
             if last == current {
                 // we succeeded.
                 return;
@@ -1527,7 +1529,7 @@ where
     /// sled's `Tree` root tracking for an example of
     /// avoiding this in a lock-free way that handles
     /// various race conditions.
-    pub fn meta_pid_for_name(&self, name: &[u8], tx: &Tx) -> Result<usize> {
+    pub fn meta_pid_for_name(&self, name: &[u8], tx: &Tx) -> Result<PageId> {
         let m = self.meta(tx)?;
         if let Some(root) = m.get_root(name) {
             Ok(root)
@@ -1541,10 +1543,10 @@ where
     pub fn cas_root_in_meta<'g>(
         &self,
         name: Vec<u8>,
-        old: Option<usize>,
-        new: Option<usize>,
+        old: Option<PageId>,
+        new: Option<PageId>,
         tx: &'g Tx,
-    ) -> Result<std::result::Result<(), Option<usize>>> {
+    ) -> Result<std::result::Result<(), Option<PageId>>> {
         loop {
             let meta_page_get = self.get(META_PID, tx)?;
 
@@ -1759,7 +1761,7 @@ where
             Update::Compact(PM::merge(combined_iter, &self.config))
         };
 
-        let size = match &merged {
+        let size: u64 = match &merged {
             Update::Compact(compact) => PM::size_in_bytes(compact),
             Update::Counter(_) => 0,
             Update::Meta(_) => 0,
@@ -2134,7 +2136,8 @@ where
 
             let pte = PageTableEntry {
                 stack,
-                rts: AtomicUsize::new(0),
+                rts: AtomicLsn::new(0),
+                pending: AtomicLsn::new(0),
             };
 
             let new_pte = Owned::new(pte).into_shared(&guard);

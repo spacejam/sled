@@ -1,9 +1,7 @@
 use std::{
     mem::size_of,
     sync::atomic::Ordering::SeqCst,
-    sync::atomic::{
-        AtomicBool, AtomicI64 as AtomicLsn, AtomicU64, AtomicUsize,
-    },
+    sync::atomic::{AtomicBool, AtomicUsize},
     sync::{Arc, Condvar, Mutex},
 };
 

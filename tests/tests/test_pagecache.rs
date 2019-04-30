@@ -10,9 +10,9 @@ use std::{
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::Rng;
 
-use pagecache::{ConfigBuilder, Config, Materializer, PageCache, PageGet};
+use pagecache::{Config, ConfigBuilder, Materializer, PageCache, PageGet};
 
-type PageId = usize;
+type PageId = u64;
 
 #[derive(Clone)]
 pub struct TestMaterializer;
@@ -33,8 +33,8 @@ impl Materializer for TestMaterializer {
         consolidated
     }
 
-    fn size_in_bytes(frag: &Vec<usize>) -> usize {
-        std::mem::size_of::<Vec<usize>>() + frag.len()
+    fn size_in_bytes(frag: &Vec<usize>) -> u64 {
+        (std::mem::size_of::<Vec<usize>>() + frag.len()) as u64
     }
 }
 
@@ -90,9 +90,9 @@ fn pagecache_caching() {
     }
 
     for i in 0..1000 {
-        let id = 2 + (i as usize % 2);
+        let id = 2 + (i % 2);
         let (_, key) = pc.get(id, &tx).unwrap().unwrap();
-        let key = pc.link(id, key, vec![i], &tx).unwrap().unwrap();
+        let key = pc.link(id, key, vec![i as usize], &tx).unwrap().unwrap();
         keys.insert(id, key);
     }
 }
@@ -145,14 +145,14 @@ fn parallel_pagecache() -> sled::Result<()> {
         let tx = pc.begin().unwrap();
 
         let (id, key) = pc.allocate(vec![], &tx).unwrap();
-        pc.link(id, key, vec![id], &tx).unwrap().unwrap();
+        pc.link(id, key, vec![id as usize], &tx).unwrap().unwrap();
 
         let (ptr, _key): (&Vec<usize>, _) =
                            pc.get(id, &tx)
                              .expect("we should read what we just wrote")
                              .expect("we should read what we just wrote");
         assert_eq!(
-            ptr.get(0), Some(&id),
+            ptr.get(0), Some(&(id as usize)),
             "we just linked our ID into the page, \
                    but it seems not to be present"
         );
@@ -167,7 +167,7 @@ fn parallel_pagecache() -> sled::Result<()> {
     par! {p, |pc: &PageCache<_, _>, i: usize| {
         let tx = pc.begin().unwrap();
         let (ptr, _key): (&Vec<usize>, _) =
-                           pc.get(i, &tx)
+                           pc.get(i as PageId, &tx)
                              .expect("failed to recover a page we previously wrote")
                              .expect(&format!("failed to recover pid {} which we previously wrote", i));
         assert_eq!(*ptr, vec![i]);
@@ -184,10 +184,10 @@ fn parallel_pagecache() -> sled::Result<()> {
 
         while success <= 10 {
             let tx = pc.begin().unwrap();
-            let (_ptr, key) = pc.get(i, &tx)
+            let (_ptr, key) = pc.get(i as PageId, &tx)
                 .expect("we should read what we just wrote")
                 .unwrap();
-            match pc.link(i, key, vec![success], &tx) {
+            match pc.link(i as PageId, key, vec![success], &tx) {
                 Err(_) => {},
                 Ok(_) => {
                     success += 1;
@@ -196,10 +196,10 @@ fn parallel_pagecache() -> sled::Result<()> {
         }
         let tx = pc.begin().unwrap();
         let (ptr, _key): (&Vec<usize>, _) =
-                           pc.get(i, &tx)
+                           pc.get(i as PageId, &tx)
                              .expect("we should read what we just wrote")
                              .unwrap();
-        assert_eq!(*ptr, vec![i, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        assert_eq!(*ptr, vec![i as usize, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     }};
 
     drop(p);
@@ -211,7 +211,7 @@ fn parallel_pagecache() -> sled::Result<()> {
     par! {p, |pc: &PageCache<_, _>, i: usize| {
         let tx = pc.begin().unwrap();
         let (ptr, _key): (&Vec<usize>, _) =
-                           pc.get(i, &tx)
+                           pc.get(i as PageId, &tx)
                              .expect("we should read what we just wrote")
                              .unwrap();
         assert_eq!(*ptr, vec![i, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
@@ -243,9 +243,9 @@ fn pagecache_strange_crash_1() {
         }
 
         for i in 0..1000 {
-            let id = 2 + (i as usize % 2);
+            let id = 2 + (i % 2);
             let (_, key) = pc.get(id, &tx).unwrap().unwrap();
-            let key = pc.link(id, key, vec![i], &tx).unwrap().unwrap();
+            let key = pc.link(id, key, vec![i as usize], &tx).unwrap().unwrap();
             keys.insert(id, key);
         }
     }
@@ -281,12 +281,12 @@ fn pagecache_strange_crash_2() {
         }
 
         for i in 0..1000 {
-            let id = 2 + (i as usize % 2);
+            let id = 2 + (i % 2);
             let page_get = pc.get(id, &tx).unwrap();
             assert!(!page_get.is_unallocated());
             let (_, key) = page_get.unwrap();
 
-            let key_res = pc.link(id, key, vec![i], &tx).unwrap();
+            let key_res = pc.link(id, key, vec![i as usize], &tx).unwrap();
             if key_res.is_err() {
                 println!("failed linking pid {}", id);
             }

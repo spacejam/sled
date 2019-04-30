@@ -4,11 +4,11 @@ use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 
 use super::*;
 
-const FANFACTOR: usize = 18;
-const FANOUT: usize = 1 << FANFACTOR;
-const FAN_MASK: usize = FANOUT - 1;
+const FANFACTOR: u64 = 18;
+const FANOUT: u64 = 1 << FANFACTOR;
+const FAN_MASK: u64 = FANOUT - 1;
 
-pub type PageId = usize;
+pub type PageId = u64;
 
 macro_rules! rep_no_copy {
     ($e:expr; $n:expr) => {{
@@ -23,7 +23,7 @@ macro_rules! rep_no_copy {
 }
 
 #[inline(always)]
-fn split_fanout(i: usize) -> (usize, usize) {
+fn split_fanout(i: u64) -> (u64, u64) {
     // right shift 32 on 32-bit pointer systems panics
     #[cfg(target_pointer_width = "64")]
     assert!(
@@ -49,14 +49,14 @@ struct Node2<T: Send + 'static> {
 
 impl<T: Send + 'static> Default for Node1<T> {
     fn default() -> Node1<T> {
-        let children = rep_no_copy!(Atomic::null(); FANOUT);
+        let children = rep_no_copy!(Atomic::null(); FANOUT as usize);
         Node1 { children }
     }
 }
 
 impl<T: Send + 'static> Default for Node2<T> {
     fn default() -> Node2<T> {
-        let children = rep_no_copy!(Atomic::null(); FANOUT);
+        let children = rep_no_copy!(Atomic::null(); FANOUT as usize);
         Node2 { children }
     }
 }
@@ -169,13 +169,14 @@ fn traverse<'g, T: 'static + Send>(
     let l1 = unsafe { &head.deref().children };
 
     debug_delay();
-    let mut l2_ptr = l1[l1k].load(SeqCst, guard);
+    let mut l2_ptr = l1[usize::try_from(l1k).unwrap()].load(SeqCst, guard);
 
     if l2_ptr.is_null() {
         let next_child = Owned::new(Node2::default()).into_shared(guard);
 
         debug_delay();
-        let ret = l1[l1k].compare_and_set(l2_ptr, next_child, SeqCst, guard);
+        let ret = l1[usize::try_from(l1k).unwrap()]
+            .compare_and_set(l2_ptr, next_child, SeqCst, guard);
 
         match ret {
             Ok(_) => {
@@ -193,7 +194,7 @@ fn traverse<'g, T: 'static + Send>(
     debug_delay();
     let l2 = unsafe { &l2_ptr.deref().children };
 
-    &l2[l2k]
+    &l2[usize::try_from(l2k).unwrap()]
 }
 
 impl<T> Drop for PageTable<T>
@@ -292,7 +293,7 @@ fn test_model() {
     model! {
         Model => let mut m = std::collections::HashMap::new(),
         Implementation => let i = PageTable::default(),
-        Insert((usize, usize))((k, new) in (0usize..4, 0usize..4)) => {
+        Insert((u64, u64))((k, new) in (0u64..4, 0u64..4)) => {
             if !m.contains_key(&k) {
                 m.insert(k, new);
 
@@ -301,13 +302,13 @@ fn test_model() {
                 i.cas(k, EpochShared::null(), v, &guard ).expect("should be able to insert a value");
             }
         },
-        Get(usize)(k in 0usize..4) => {
+        Get(u64)(k in 0u64..4) => {
             let guard = pin();
             let expected = m.get(&k);
             let actual = i.get(k, &guard).map(|s| unsafe { s.deref() });
             assert_eq!(expected, actual);
         },
-        Cas((usize, usize, usize))((k, old, new) in (0usize..4, 0usize..4, 0usize..4)) => {
+        Cas((u64, u64, u64))((k, old, new) in (0u64..4, 0u64..4, 0u64..4)) => {
             let guard = pin();
             let expected_current = m.get(&k).cloned();
             let actual_current = i.get(k, &guard);
@@ -335,20 +336,20 @@ fn test_linearizability() {
 
     linearizable! {
         Implementation => let i = Shared::new(PageTable::default()),
-        Get(usize)(k in 0usize..4) -> Option<usize> {
+        Get(u64)(k in 0u64..4) -> Option<u64> {
             let guard = pin();
             unsafe {
                 i.get(k, &guard).map(|s| *s.deref())
             }
         },
-        Insert((usize, usize))((k, new) in (0usize..4, 0usize..4)) -> bool {
+        Insert((u64, u64))((k, new) in (0u64..4, 0u64..4)) -> bool {
             let guard = pin();
             let v = Owned::new(new).into_shared(&guard);
             i.cas(k, EpochShared::null(), v, &guard).is_err()
         },
-        Cas((usize, usize, usize))((k, old, new)
-            in (0usize..4, 0usize..4, 0usize..4))
-            -> std::result::Result<(), usize> {
+        Cas((u64, u64, u64))((k, old, new)
+            in (0u64..4, 0u64..4, 0u64..4))
+            -> std::result::Result<(), u64> {
             let guard = pin();
             i.cas(k, Owned::new(old).into_shared(&guard), Owned::new(new).into_shared(&guard), &guard)
                 .map(|_| ())

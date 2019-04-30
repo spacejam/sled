@@ -25,6 +25,7 @@ type LogId = u64;
 
 #[test]
 fn log_writebatch() -> pagecache::Result<()> {
+    tests::setup_logger();
     let config = ConfigBuilder::new()
         .temporary(true)
         .segment_mode(SegmentMode::Linear)

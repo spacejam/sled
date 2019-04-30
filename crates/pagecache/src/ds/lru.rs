@@ -12,26 +12,29 @@ unsafe impl Sync for Lru {}
 
 impl Lru {
     /// Instantiates a new `Lru` cache.
-    pub fn new(cache_capacity: usize, cache_bits: usize) -> Lru {
+    pub fn new(cache_capacity: u64, cache_bits: usize) -> Lru {
         assert!(
             cache_bits <= 20,
             "way too many shards. use a smaller number of cache_bits"
         );
-        let size = 1 << cache_bits;
-        let shard_capacity = cache_capacity / size;
+        let size: usize = 1 << cache_bits;
+        let shard_capacity = cache_capacity / size as u64;
 
         Lru {
-            shards: rep_no_copy![Mutex::new(Shard::new(shard_capacity)); size],
+            shards: rep_no_copy![
+                Mutex::new(Shard::new(shard_capacity));
+                size
+            ],
         }
     }
 
     /// Called when a page is accessed. Returns a Vec of pages to
     /// try to page-out. For each one of these, the caller is expected
     /// to call `page_out_succeeded` if the page-out succeeded.
-    pub fn accessed(&self, pid: PageId, sz: usize) -> Vec<PageId> {
-        let shard_idx = pid % self.shards.len();
-        let rel_idx = pid / self.shards.len();
-        let shard_mu = &self.shards[shard_idx];
+    pub fn accessed(&self, pid: PageId, sz: u64) -> Vec<PageId> {
+        let shard_idx = pid % self.shards.len() as u64;
+        let rel_idx = pid / self.shards.len() as u64;
+        let shard_mu = &self.shards[usize::try_from(shard_idx).unwrap()];
         let mut shard = shard_mu.lock().expect(
             "Lru was poisoned by a \
              thread that panicked \
@@ -40,7 +43,7 @@ impl Lru {
         let mut rel_ids = shard.accessed(rel_idx, sz);
 
         for rel_id in &mut rel_ids {
-            let real_id = (*rel_id * self.shards.len()) + shard_idx;
+            let real_id = (*rel_id * self.shards.len() as u64) + shard_idx;
             *rel_id = real_id;
         }
 
@@ -51,7 +54,7 @@ impl Lru {
 #[derive(Clone)]
 struct Entry {
     ptr: *mut dll::Node,
-    sz: usize,
+    sz: u64,
 }
 
 impl Default for Entry {
@@ -66,12 +69,12 @@ impl Default for Entry {
 struct Shard {
     list: Dll,
     entries: Vec<Entry>,
-    capacity: usize,
-    sz: usize,
+    capacity: u64,
+    sz: u64,
 }
 
 impl Shard {
-    fn new(capacity: usize) -> Shard {
+    fn new(capacity: u64) -> Shard {
         assert!(capacity > 0, "shard capacity must be non-zero");
 
         Shard {
@@ -82,13 +85,16 @@ impl Shard {
         }
     }
 
-    fn accessed(&mut self, rel_idx: PageId, sz: usize) -> Vec<PageId> {
-        if self.entries.len() <= rel_idx {
-            self.entries.resize(rel_idx + 1, Entry::default());
+    fn accessed(&mut self, rel_idx: PageId, sz: u64) -> Vec<PageId> {
+        if PageId::try_from(self.entries.len()).unwrap() <= rel_idx {
+            self.entries.resize(
+                usize::try_from(rel_idx).unwrap() + 1,
+                Entry::default(),
+            );
         }
 
         {
-            let entry = &mut self.entries[rel_idx];
+            let entry = &mut self.entries[usize::try_from(rel_idx).unwrap()];
 
             self.sz -= entry.sz;
             entry.sz = sz;
@@ -109,12 +115,13 @@ impl Shard {
             }
 
             let min_pid = self.list.pop_tail().unwrap();
-            self.entries[min_pid].ptr = ptr::null_mut();
+            self.entries[usize::try_from(min_pid).unwrap()].ptr =
+                ptr::null_mut();
 
             to_evict.push(min_pid);
 
-            self.sz -= self.entries[min_pid].sz;
-            self.entries[min_pid].sz = 0;
+            self.sz -= self.entries[usize::try_from(min_pid).unwrap()].sz;
+            self.entries[usize::try_from(min_pid).unwrap()].sz = 0;
         }
 
         to_evict
