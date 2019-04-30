@@ -345,8 +345,8 @@ impl<'a> RecoveryGuard<'a> {
 ///     }
 ///
 ///     // Used to determine the resident size for this item in cache.
-///     fn size_in_bytes(frag: &String) -> usize {
-///         std::mem::size_of::<String>() + frag.as_bytes().len()
+///     fn size_in_bytes(frag: &String) -> u64 {
+///         (std::mem::size_of::<String>() + frag.as_bytes().len()) as u64
 ///     }
 ///
 /// }
