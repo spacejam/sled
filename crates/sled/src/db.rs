@@ -201,3 +201,14 @@ impl Db {
         self.context.generate_id()
     }
 }
+
+pub trait OpenDb {
+    /// Load existing or create a new `Db` with a default configuration.
+    fn start_default(self) -> Result<Db>;
+}
+
+impl<P: AsRef<std::path::Path>> OpenDb for P {
+    fn start_default(self) -> Result<Db> {
+        Db::start_default(self)
+    }
+}
