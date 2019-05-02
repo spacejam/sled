@@ -202,8 +202,9 @@ impl Db {
     }
 }
 
+/// Load or create a new database `Db` with default configuration from `self`.
 pub trait OpenDb {
-    /// Load existing or create a new `Db` with a default configuration.
+    /// Loads or creates the `Db`.
     fn open_db(self) -> Result<Db>;
 }
 
