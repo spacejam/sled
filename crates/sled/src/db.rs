@@ -204,11 +204,11 @@ impl Db {
 
 pub trait OpenDb {
     /// Load existing or create a new `Db` with a default configuration.
-    fn start_default(self) -> Result<Db>;
+    fn open_db(self) -> Result<Db>;
 }
 
 impl<P: AsRef<std::path::Path>> OpenDb for P {
-    fn start_default(self) -> Result<Db> {
+    fn open_db(self) -> Result<Db> {
         Db::start_default(self)
     }
 }
