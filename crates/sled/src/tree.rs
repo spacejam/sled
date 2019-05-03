@@ -92,21 +92,15 @@ impl Tree {
 
         loop {
             let tx = self.context.pagecache.begin()?;
-            let (mut path, existing_val) =
-                self.get_internal(key.as_ref(), &tx)?;
-            let (leaf_id, leaf_frag, leaf_ptr) = path.pop().expect(
-                "path_for_key should always return a path \
-                 of length >= 2 (root + leaf)",
-            );
-            let node: &Node = leaf_frag.unwrap_base();
-            let encoded_key = prefix_encode(&node.lo, key.as_ref());
+            let view = self.view_for_key(key.as_ref(), &tx)?;
+            let encoded_key = prefix_encode(view.lo, key.as_ref());
 
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
 
             let frag = Frag::Set(encoded_key, value.clone());
             let link = self.context.pagecache.link(
-                leaf_id,
-                leaf_ptr.clone(),
+                view.pid,
+                view.ptr,
                 frag.clone(),
                 &tx,
             )?;
@@ -119,7 +113,7 @@ impl Tree {
                     res.complete(event);
                 }
 
-                if node.should_split(self.context.blink_node_split_size as u64)
+                if view.should_split(self.context.blink_node_split_size as u64)
                 {
                     let mut path2 = path
                         .iter()
@@ -1233,6 +1227,69 @@ impl Tree {
         tx.flush();
 
         ret
+    }
+
+    /// returns the traversal path, completing any observed
+    /// partially complete splits or merges along the way.
+    pub(crate) fn view_for_key<'g, K>(
+        &self,
+        key: K,
+        tx: &'g Tx,
+    ) -> Result<View<'g>>
+    where
+        K: AsRef<[u8]>,
+    {
+        let _measure = Measure::new(&M.tree_traverse);
+
+        let mut cursor = self.root.load(SeqCst);
+        let mut last_view = None;
+
+        let mut not_found_loops = 0;
+        loop {
+            if cursor == u64::max_value() {
+                // this collection has been explicitly removed
+                return Err(Error::CollectionNotFound(self.tree_id.clone()));
+            }
+            let (tree_ptr, frags) =
+                self.context.pagecache.get_page_frags(cursor, tx)?;
+            let view = View::new(cursor, tree_ptr, frags);
+
+            if view.is_free() {
+                // restart search from the tree's root
+                not_found_loops += 1;
+                debug_assert_ne!(
+                    not_found_loops, 10_000,
+                    "cannot find pid {} in view_for_key",
+                    cursor
+                );
+                cursor = self.root.load(SeqCst);
+                last_view = None;
+                continue;
+            }
+
+            if view.should_split() && last_view.is_some() {
+                let parent = last_view.unwrap();
+
+                let ps = Frag::ParentSplit(ParentSplit {
+                    at: node.lo.clone(),
+                    to: cursor,
+                });
+
+                let link = self
+                    .context
+                    .pagecache
+                    .link(parent.pid, parent.ptr, ps, tx)?;
+            }
+
+            // TODO this may need to change when handling (half) merges
+            assert!(view.lo <= key.as_ref(), "overshot key somehow");
+            if view.is_index {
+                cursor = view.index_next_node(key.as_ref());
+                last_view = Some(view);
+            } else {
+                return Ok(view);
+            }
+        }
     }
 
     /// returns the traversal path, completing any observed

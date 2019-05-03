@@ -1176,7 +1176,7 @@ where
 
     /// Try to retrieve a page by its logical ID.
     pub fn get_page_frags<'g>(
-        &'g self,
+        &self,
         pid: PageId,
         tx: &'g Tx,
     ) -> Result<(PagePtr<'g, P>, Vec<&'g P>)> {

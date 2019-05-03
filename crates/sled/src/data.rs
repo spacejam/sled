@@ -100,4 +100,11 @@ impl Data {
             Data::Leaf(ref items) => Some(items),
         }
     }
+
+    pub(crate) fn index_ref(&self) -> Option<&Vec<(IVec, PageId)>> {
+        match *self {
+            Data::Index(ref ptrs) => Some(ptrs),
+            Data::Leaf(_) => None,
+        }
+    }
 }
