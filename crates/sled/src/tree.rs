@@ -97,14 +97,15 @@ impl Tree {
 
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
 
+            let last_value = view.leaf_value_for_key(&encoded_key).cloned();
             let frag = Frag::Set(encoded_key, value.clone());
             let link = self.context.pagecache.link(
                 view.pid,
-                view.ptr,
+                view.ptr.clone(),
                 frag.clone(),
                 &tx,
             )?;
-            if let Ok(new_cas_key) = link {
+            if let Ok(_new_cas_key) = link {
                 // success
                 if let Some(res) = subscriber_reservation.take() {
                     let event =
@@ -113,24 +114,9 @@ impl Tree {
                     res.complete(event);
                 }
 
-                if view.should_split(self.context.blink_node_split_size as u64)
-                {
-                    let mut path2 = path
-                        .iter()
-                        .map(|&(id, f, ref p)| {
-                            (id, Cow::Borrowed(f), p.clone())
-                        })
-                        .collect::<Vec<(PageId, Cow<'_, Frag>, _)>>();
-                    let mut node2 = node.clone();
-                    node2.apply(&frag, self.context.merge_operator);
-                    let frag2 = Cow::Owned(Frag::Base(node2));
-                    path2.push((leaf_id, frag2, new_cas_key));
-                    self.recursive_split(path2, &tx)?;
-                }
-
                 tx.flush();
 
-                return Ok(existing_val.cloned());
+                return Ok(last_value);
             }
             M.tree_looped();
         }
@@ -1267,6 +1253,7 @@ impl Tree {
                 continue;
             }
 
+            /*
             if view.should_split() && last_view.is_some() {
                 let parent = last_view.unwrap();
 
@@ -1280,6 +1267,7 @@ impl Tree {
                     .pagecache
                     .link(parent.pid, parent.ptr, ps, tx)?;
             }
+            */
 
             // TODO this may need to change when handling (half) merges
             assert!(view.lo <= key.as_ref(), "overshot key somehow");
