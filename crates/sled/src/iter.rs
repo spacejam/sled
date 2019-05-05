@@ -1,4 +1,5 @@
 use std::ops::{Bound, Bound::{Included, Excluded, Unbounded}};
+use std::iter::FusedIterator;
 
 use pagecache::{Measure, M};
 
@@ -486,6 +487,8 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
     }
 }
 
+impl<'a> FusedIterator for Iter<'a> { }
+
 /// An iterator over keys in a `Tree`.
 pub struct Keys<'a>(Iter<'a>);
 
@@ -511,6 +514,8 @@ impl<'a> DoubleEndedIterator for Keys<'a> {
     }
 }
 
+impl<'a> FusedIterator for Keys<'a> { }
+
 /// An iterator over values in a `Tree`.
 pub struct Values<'a>(Iter<'a>);
 
@@ -535,6 +540,8 @@ impl<'a> DoubleEndedIterator for Values<'a> {
         }
     }
 }
+
+impl<'a> FusedIterator for Values<'a> { }
 
 #[cfg(test)]
 mod tests {
