@@ -195,6 +195,12 @@ impl<'a> Iterator for Iter<'a> {
             },
         };
 
+        if let (Some(forward), Some(backward)) = (&iter.last_forward_key, &iter.last_backward_key) {
+            if forward >= backward {
+                return None
+            }
+        }
+
         let start = match &iter.lo {
             Included(start) | Excluded(start) => start.as_slice(),
             Unbounded => b"",
@@ -279,6 +285,13 @@ impl<'a> Iterator for Iter<'a> {
                 }
 
                 iter.last_forward_key = Some(decoded_k.clone());
+
+                if let Some(backward) = &iter.last_backward_key {
+                    if &decoded_k >= backward {
+                        return None
+                    }
+                }
+
                 return Some(Ok((decoded_k, v.clone())));
             }
 
@@ -318,6 +331,12 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 }
             },
         };
+
+        if let (Some(forward), Some(backward)) = (&iter.last_forward_key, &iter.last_backward_key) {
+            if forward >= backward {
+                return None
+            }
+        }
 
         let mut spins = 0;
 
@@ -406,6 +425,13 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 }
 
                 iter.last_backward_key = Some(decoded_k.clone());
+
+                if let Some(forward) = &iter.last_forward_key {
+                    if &decoded_k <= forward {
+                        return None
+                    }
+                }
+
                 return Some(Ok((decoded_k, v.clone())));
             }
 
