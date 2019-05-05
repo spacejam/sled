@@ -408,6 +408,41 @@ fn tree_iterator() {
 }
 
 #[test]
+fn tree_iterator_dont_cross() -> Result<()> {
+    let config = ConfigBuilder::new()
+        .temporary(true)
+        .blink_node_split_size(0)
+        .flush_every_ms(None)
+        .build();
+
+    let t = sled::Db::start(config).unwrap();
+
+    for item in 0..6 {
+        t.set(vec![item], vec![])?;
+    }
+
+    let mut iter = t.iter().keys();
+
+    assert_eq!(iter.next(), Some(Ok(vec![0])));
+    assert_eq!(iter.next(), Some(Ok(vec![1])));
+
+    assert_eq!(iter.next_back(), Some(Ok(vec![5])));
+    assert_eq!(iter.next_back(), Some(Ok(vec![4])));
+
+    assert_eq!(iter.next(), Some(Ok(vec![2])));
+    assert_eq!(iter.next(), Some(Ok(vec![3])));
+
+    assert_eq!(iter.next_back(), None);
+    assert_eq!(iter.next(), None);
+
+    // just check if this is a fused iterator
+    assert_eq!(iter.next_back(), None);
+    assert_eq!(iter.next(), None);
+
+    Ok(())
+}
+
+#[test]
 fn tree_subscriptions_and_keyspaces() -> Result<()> {
     let config = ConfigBuilder::new()
         .temporary(true)
