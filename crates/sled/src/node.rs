@@ -36,7 +36,11 @@ impl Node {
                 {
                     self.set_leaf(k.clone(), v.clone());
                 } else {
-                    panic!("tried to consolidate set at key <= hi")
+                    panic!(
+                        "tried to consolidate set at key <= hi.\
+                         Set({:?}, {:?}) to node {:?}",
+                        k, v, self
+                    )
                 }
             }
             Merge(ref k, ref v) => {
@@ -56,12 +60,6 @@ impl Node {
                     panic!("tried to consolidate set at key <= hi")
                 }
             }
-            ChildSplit(ref child_split) => {
-                self.child_split(child_split);
-            }
-            ParentSplit(ref parent_split) => {
-                self.parent_split(parent_split);
-            }
             Del(ref k) => {
                 // (when hi is empty, it means it's unbounded)
                 if self.hi.is_empty()
@@ -73,7 +71,10 @@ impl Node {
                     panic!("tried to consolidate del at key <= hi")
                 }
             }
-            Base(_) => panic!("encountered base page in middle of chain"),
+            ref otha => panic!(
+                "encountered unexpected bullshit in middle of chain: {:?}",
+                otha
+            ),
         }
     }
 
@@ -128,12 +129,12 @@ impl Node {
         self.next = Some(cs.to);
     }
 
-    pub(crate) fn parent_split(&mut self, ps: &ParentSplit) {
+    pub(crate) fn parent_split(&mut self, at: &[u8], to: PageId) {
         if let Data::Index(ref mut ptrs) = self.data {
-            let encoded_sep = prefix_encode(&self.lo, &ps.at);
+            let encoded_sep = prefix_encode(&self.lo, at);
             match ptrs.binary_search_by(|a| prefix_cmp(&a.0, &encoded_sep)) {
                 Ok(_) => panic!("must not have found ptr"),
-                Err(idx) => ptrs.insert(idx, (encoded_sep, ps.to)),
+                Err(idx) => ptrs.insert(idx, (encoded_sep, to)),
             }
         } else {
             panic!("tried to attach a ParentSplit to a Leaf chain");

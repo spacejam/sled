@@ -59,6 +59,8 @@ impl<'a> View<'a> {
     }
 
     pub(crate) fn leaf_value_for_key(&self, key: &[u8]) -> Option<&IVec> {
+        assert!(!self.is_index);
+
         for frag in self.frags[..self.base_offset + 1].iter() {
             match frag {
                 Frag::Set(k, val) if k == key => return Some(val),
@@ -87,6 +89,8 @@ impl<'a> View<'a> {
     }
 
     pub(crate) fn index_next_node(&self, key: &[u8]) -> PageId {
+        assert!(self.is_index);
+
         for frag in self.frags[..self.base_offset + 1].iter() {
             match frag {
                 Frag::Set(key, val) => unimplemented!(),
@@ -116,29 +120,43 @@ impl<'a> View<'a> {
         panic!("no index found")
     }
 
-    pub(crate) fn should_split(&'a mut self, max_sz: u64) -> bool {
+    pub(crate) fn should_split(&self, max_sz: u64) -> bool {
         self.size_in_bytes() > max_sz
     }
 
-    /*
-    pub(crate) fn split(&'a mut self) -> Node {
-        let (split, right_data) = self.data().split(self.lo());
-        Node {
-            data: right_data,
-            next: self.next(),
-            lo: split,
-            hi: self.hi.into(),
+    pub(crate) fn compact(&self, config: &Config) -> Node {
+        let mut lhs = self.frags[self.base_offset].unwrap_base().clone();
+        for offset in (0..self.base_offset).rev() {
+            let frag = self.frags[offset];
+            lhs.apply(frag, config.merge_operator);
         }
+        lhs
     }
-    */
+
+    pub(crate) fn split(&self, config: &Config) -> (Node, Node) {
+        let mut lhs = self.compact(config);
+        let rhs = lhs.split();
+
+        lhs.data.drop_gte(&rhs.lo, &lhs.lo);
+        lhs.hi = rhs.lo.clone();
+
+        // intentionally make this the end to make
+        // any issues pop out with setting it
+        // correctly after the split.
+        lhs.next = None;
+
+        (lhs, rhs)
+    }
 
     #[inline]
-    pub(crate) fn size_in_bytes(&'a mut self) -> u64 {
-        self.frags
-            .last()
-            .unwrap()
-            .unwrap_base()
-            .data
-            .size_in_bytes()
+    pub(crate) fn size_in_bytes(&self) -> u64 {
+        // TODO needs to better account for
+        // sizes that don't actually fall under
+        // a merge threshold once we support one.
+        self.frags[..self.base_offset + 1]
+            .iter()
+            .take_while(|f| !f.is_child_split())
+            .map(|f| f.size_in_bytes())
+            .sum()
     }
 }

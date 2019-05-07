@@ -988,6 +988,72 @@ impl Tree {
         self.tree_id.clone()
     }
 
+    fn split_node<'g>(
+        &self,
+        node_view: &View<'g>,
+        parent_view: &Option<View<'g>>,
+        root_pid: Option<PageId>,
+        tx: &'g Tx,
+    ) -> Result<()> {
+        // split node
+        let (mut lhs, rhs) = node_view.split(&self.context);
+        let rhs_lo = rhs.lo.clone();
+
+        // install right side
+        let (rhs_pid, rhs_ptr) =
+            self.context.pagecache.allocate(Frag::Base(rhs), tx)?;
+
+        // replace node, pointing next to installed right
+        lhs.next = Some(rhs_pid);
+        let replace = self.context.pagecache.replace(
+            node_view.pid,
+            node_view.ptr.clone(),
+            Frag::Base(lhs),
+            tx,
+        )?;
+        M.tree_child_split_attempt();
+        if replace.is_err() {
+            // if we failed, don't follow through with the
+            // parent split or root hoist.
+            self.context
+                .pagecache
+                .free(rhs_pid, rhs_ptr, tx)?
+                .expect("could not free allocated page");
+            return Ok(());
+        }
+        M.tree_child_split_success();
+
+        // either install parent split or hoist root
+        if let Some(parent_view) = parent_view {
+            M.tree_parent_split_attempt();
+            let mut parent = parent_view.compact(&self.context);
+            parent.parent_split(&rhs_lo, rhs_pid);
+            let replace = self.context.pagecache.replace(
+                parent_view.pid,
+                parent_view.ptr.clone(),
+                Frag::Base(parent),
+                tx,
+            )?;
+            if replace.is_ok() {
+                M.tree_parent_split_success();
+            } else {
+                // Parent splits are an optimization
+                // so we don't need to care if we
+                // failed.
+            }
+        } else {
+            M.tree_root_split_attempt();
+            if self
+                .root_hoist(root_pid.unwrap(), rhs_pid, rhs_lo, tx)
+                .is_ok()
+            {
+                M.tree_root_split_success();
+            }
+        }
+
+        Ok(())
+    }
+
     fn recursive_split<'g>(
         &self,
         path: Vec<(PageId, Cow<'g, Frag>, TreePtr<'g>)>,
@@ -1228,6 +1294,7 @@ impl Tree {
         let _measure = Measure::new(&M.tree_traverse);
 
         let mut cursor = self.root.load(SeqCst);
+        let mut root_pid = Some(cursor);
         let mut last_view = None;
 
         let mut not_found_loops = 0;
@@ -1240,7 +1307,7 @@ impl Tree {
                 self.context.pagecache.get_page_frags(cursor, tx)?;
             let view = View::new(cursor, tree_ptr, frags);
 
-            if view.is_free() {
+            if view.is_free() || view.lo > key.as_ref() {
                 // restart search from the tree's root
                 not_found_loops += 1;
                 debug_assert_ne!(
@@ -1249,25 +1316,14 @@ impl Tree {
                     cursor
                 );
                 cursor = self.root.load(SeqCst);
+                root_pid = Some(cursor);
                 last_view = None;
                 continue;
             }
 
-            /*
-            if view.should_split() && last_view.is_some() {
-                let parent = last_view.unwrap();
-
-                let ps = Frag::ParentSplit(ParentSplit {
-                    at: node.lo.clone(),
-                    to: cursor,
-                });
-
-                let link = self
-                    .context
-                    .pagecache
-                    .link(parent.pid, parent.ptr, ps, tx)?;
+            if view.should_split(self.context.blink_node_split_size as u64) {
+                self.split_node(&view, &last_view, root_pid, tx)?;
             }
-            */
 
             // TODO this may need to change when handling (half) merges
             assert!(view.lo <= key.as_ref(), "overshot key somehow");
