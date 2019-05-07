@@ -137,7 +137,6 @@ struct ValidIter<'a> {
     last_backward_id: Option<PageId>,
     last_backward_key: Option<Key>,
     tx: Tx,
-    is_scan: bool,
     // TODO we have to refactor this in light of pages being deleted
 }
 
@@ -146,9 +145,10 @@ impl<'a> Iter<'a> {
         tree: &'a Tree,
         lo: Bound<Vec<u8>>,
         hi: Bound<Vec<u8>>,
-        is_scan: bool,
     ) -> Iter<'a>
     {
+        let _measure = Measure::new(&M.tree_scan);
+
         let tx = match tree.context.pagecache.begin() {
             Ok(tx) => tx,
             Err(e) => return Iter(InnerIter::Errorneous(Some(e))),
@@ -162,7 +162,6 @@ impl<'a> Iter<'a> {
             last_forward_key: None,
             last_backward_id: None,
             last_backward_key: None,
-            is_scan,
             tx,
         };
 
@@ -170,12 +169,12 @@ impl<'a> Iter<'a> {
     }
 
     /// Iterate over the keys of this Tree
-    pub fn keys(self) -> Keys<'a> {
+    pub fn keys(self) -> Keys<Iter<'a>> {
         Keys(self)
     }
 
     /// Iterate over the values of this Tree
-    pub fn values(self) -> Values<'a> {
+    pub fn values(self) -> Values<Iter<'a>> {
         Values(self)
     }
 }
@@ -489,10 +488,12 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
 
 impl<'a> FusedIterator for Iter<'a> { }
 
-/// An iterator over keys in a `Tree`.
-pub struct Keys<'a>(Iter<'a>);
+/// An iterator over keys.
+pub struct Keys<I>(I);
 
-impl<'a> Iterator for Keys<'a> {
+impl<I> Iterator for Keys<I>
+where I: Iterator<Item=Result<(Vec<u8>, IVec)>>,
+{
     type Item = Result<Vec<u8>>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -504,7 +505,9 @@ impl<'a> Iterator for Keys<'a> {
     }
 }
 
-impl<'a> DoubleEndedIterator for Keys<'a> {
+impl<I> DoubleEndedIterator for Keys<I>
+where I: DoubleEndedIterator<Item=Result<(Vec<u8>, IVec)>>,
+{
     fn next_back(&mut self) -> Option<Self::Item> {
         match self.0.next_back() {
             Some(Ok((key, _))) => Some(Ok(key)),
@@ -514,12 +517,16 @@ impl<'a> DoubleEndedIterator for Keys<'a> {
     }
 }
 
-impl<'a> FusedIterator for Keys<'a> { }
+impl<I> FusedIterator for Keys<I>
+where I: Iterator<Item=Result<(Vec<u8>, IVec)>> + FusedIterator,
+{ }
 
-/// An iterator over values in a `Tree`.
-pub struct Values<'a>(Iter<'a>);
+/// An iterator over values.
+pub struct Values<I>(I);
 
-impl<'a> Iterator for Values<'a> {
+impl<I> Iterator for Values<I>
+where I: Iterator<Item=Result<(Vec<u8>, IVec)>>,
+{
     type Item = Result<IVec>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -531,7 +538,9 @@ impl<'a> Iterator for Values<'a> {
     }
 }
 
-impl<'a> DoubleEndedIterator for Values<'a> {
+impl<I> DoubleEndedIterator for Values<I>
+where I: DoubleEndedIterator<Item=Result<(Vec<u8>, IVec)>>,
+{
     fn next_back(&mut self) -> Option<Self::Item> {
         match self.0.next_back() {
             Some(Ok((_, value))) => Some(Ok(value)),
@@ -541,7 +550,9 @@ impl<'a> DoubleEndedIterator for Values<'a> {
     }
 }
 
-impl<'a> FusedIterator for Values<'a> { }
+impl<I> FusedIterator for Values<I>
+where I: Iterator<Item=Result<(Vec<u8>, IVec)>> + FusedIterator,
+{ }
 
 #[cfg(test)]
 mod tests {

@@ -2,6 +2,7 @@ use std::{
     borrow::Cow,
     cmp::Ordering::{Greater, Less},
     fmt::{self, Debug},
+    iter::Rev,
     ops::{RangeBounds, Bound::{Included, Excluded, Unbounded}},
     sync::{
         atomic::{AtomicU64, Ordering::SeqCst},
@@ -791,12 +792,12 @@ impl Tree {
     /// assert_eq!(iter.next().unwrap(), Ok((vec![3], vec![30].into())));
     /// assert_eq!(iter.next(), None);
     /// ```
-    pub fn iter(&self) -> Iter<'_> {
-        self.range::<Vec<u8>, _>(..)
+    pub fn iter(&self) -> Iter {
+        Iter::new(self, Unbounded, Unbounded)
     }
 
     /// Create a double-ended iterator over tuples of keys and values,
-    /// starting at the provided key.
+    /// going *forward* from the provided key.
     ///
     /// # Examples
     ///
@@ -819,19 +820,56 @@ impl Tree {
     /// assert_eq!(r.next().unwrap(), Ok((vec![5], IVec::from(vec![50]))));
     /// assert_eq!(r.next(), None);
     ///
-    /// let mut r = t.scan(&[2]).rev();
+    /// let mut r = t.scan(&[3]).rev();
+    /// assert_eq!(r.next().unwrap(), Ok((vec![5], IVec::from(vec![50]))));
+    /// assert_eq!(r.next().unwrap(), Ok((vec![4], IVec::from(vec![40]))));
+    /// assert_eq!(r.next().unwrap(), Ok((vec![3], IVec::from(vec![30]))));
+    /// assert_eq!(r.next(), None);
+    /// ```
+    pub fn scan<K>(&self, key: K) -> Iter
+    where
+        K: AsRef<[u8]>,
+    {
+        let key = key.as_ref().to_vec();
+        Iter::new(self, Included(key), Unbounded)
+    }
+
+    /// Create a double-ended iterator over tuples of keys and values,
+    /// going *backward* from the provided key.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sled::{ConfigBuilder, Db, IVec};
+    /// let config = ConfigBuilder::new().temporary(true).build();
+    /// let t = Db::start(config).unwrap();
+    ///
+    /// t.set(&[0], vec![0]).unwrap();
+    /// t.set(&[1], vec![10]).unwrap();
+    /// t.set(&[2], vec![20]).unwrap();
+    /// t.set(&[3], vec![30]).unwrap();
+    /// t.set(&[4], vec![40]).unwrap();
+    /// t.set(&[5], vec![50]).unwrap();
+    ///
+    /// let mut r = t.backward_scan(&[3]);
+    /// assert_eq!(r.next().unwrap(), Ok((vec![3], IVec::from(vec![30]))));
     /// assert_eq!(r.next().unwrap(), Ok((vec![2], IVec::from(vec![20]))));
     /// assert_eq!(r.next().unwrap(), Ok((vec![1], IVec::from(vec![10]))));
     /// assert_eq!(r.next().unwrap(), Ok((vec![0], IVec::from(vec![0]))));
     /// assert_eq!(r.next(), None);
+    ///
+    /// let mut r = t.backward_scan(&[2]).rev();
+    /// assert_eq!(r.next().unwrap(), Ok((vec![0], IVec::from(vec![0]))));
+    /// assert_eq!(r.next().unwrap(), Ok((vec![1], IVec::from(vec![10]))));
+    /// assert_eq!(r.next().unwrap(), Ok((vec![2], IVec::from(vec![20]))));
+    /// assert_eq!(r.next(), None);
     /// ```
-    pub fn scan<K>(&self, key: K) -> Iter<'_>
+    pub fn backward_scan<K>(&self, key: K) -> Rev<Iter>
     where
         K: AsRef<[u8]>,
     {
-        let is_scan = true;
         let key = key.as_ref().to_vec();
-        Iter::new(self, Included(key), Unbounded, is_scan)
+        Iter::new(self, Unbounded, Included(key)).rev()
     }
 
     /// Create a double-ended iterator over tuples of keys and values,
@@ -863,13 +901,11 @@ impl Tree {
     /// assert_eq!(r.next().unwrap(), Ok((vec![2], IVec::from(vec![20]))));
     /// assert_eq!(r.next(), None);
     /// ```
-    pub fn range<K, R>(&self, range: R) -> Iter<'_>
+    pub fn range<K, R>(&self, range: R) -> Iter
     where
         K: AsRef<[u8]>,
         R: RangeBounds<K>,
     {
-        let _measure = Measure::new(&M.tree_scan);
-
         let lo = match range.start_bound() {
             Included(ref end) => Included(end.as_ref().to_vec()),
             Excluded(ref end) => Excluded(end.as_ref().to_vec()),
@@ -882,8 +918,7 @@ impl Tree {
             Unbounded => Unbounded,
         };
 
-        let is_scan = false;
-        Iter::new(self, lo, hi, is_scan)
+        Iter::new(self, lo, hi)
     }
 
     /// Create a double-ended iterator over keys, starting at the provided key.
@@ -901,11 +936,11 @@ impl Tree {
     /// assert_eq!(iter.next().unwrap(), Ok(vec![3]));
     /// assert_eq!(iter.next(), None);
     /// ```
-    pub fn keys<'a, K>(&'a self, key: K) -> Keys<'a>
+    pub fn keys<K>(&self, key: K) -> Keys<Iter>
     where
         K: AsRef<[u8]>,
     {
-        self.scan(key).keys()
+        self.range(key..).keys()
     }
 
     /// Create a double-ended iterator over values, starting at the provided key.
@@ -924,11 +959,11 @@ impl Tree {
     /// assert_eq!(iter.next().unwrap(), Ok(IVec::from(vec![3])));
     /// assert_eq!(iter.next(), None);
     /// ```
-    pub fn values<'a, K>(&'a self, key: K) -> Values<'a>
+    pub fn values<K>(&self, key: K) -> Values<Iter>
     where
         K: AsRef<[u8]>,
     {
-        self.scan(key).values()
+        self.range(key..).values()
     }
 
     /// Returns the number of elements in this tree.

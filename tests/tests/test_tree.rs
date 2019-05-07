@@ -571,7 +571,7 @@ fn tree_range() {
     assert_eq!(r.next().unwrap().unwrap().0, b"5");
     assert_eq!(r.next(), None);
 
-    let mut r = t.scan(b"2").rev();
+    let mut r = t.backward_scan(b"2");
     assert_eq!(r.next().unwrap().unwrap().0, b"2");
     assert_eq!(r.next().unwrap().unwrap().0, b"1");
     assert_eq!(r.next().unwrap().unwrap().0, b"0");
