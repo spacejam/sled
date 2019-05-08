@@ -711,6 +711,14 @@ impl Tree {
             ));
         }
 
+        if self.context.merge_operator.is_none() {
+            return Err(Error::Unsupported(
+                "must set a merge_operator on config \
+                 before calling merge"
+                    .to_owned(),
+            ));
+        }
+
         let value = IVec::from(value);
 
         loop {
