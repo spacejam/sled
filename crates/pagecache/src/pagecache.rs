@@ -387,7 +387,7 @@ impl<'a> RecoveryGuard<'a> {
 /// ```
 pub struct PageCache<PM, P>
 where
-    P: Clone + 'static + Send + Sync,
+    P: Clone + 'static + Send + Sync + Serialize + DeserializeOwned,
 {
     _materializer: PhantomData<PM>,
     config: Config,
@@ -406,7 +406,7 @@ where
 
 struct PageTableEntry<P>
 where
-    P: 'static + Send + Sync,
+    P: 'static + Send + Sync + Serialize + DeserializeOwned,
 {
     stack: Stack<CacheEntry<P>>,
     rts: AtomicLsn,
@@ -416,21 +416,21 @@ where
 unsafe impl<PM, P> Send for PageCache<PM, P>
 where
     PM: Send + Sync,
-    P: Clone + 'static + Send + Sync,
+    P: Clone + 'static + Send + Sync + Serialize + DeserializeOwned,
 {
 }
 
 unsafe impl<PM, P> Sync for PageCache<PM, P>
 where
     PM: Send + Sync,
-    P: Clone + 'static + Send + Sync,
+    P: Clone + 'static + Send + Sync + Serialize + DeserializeOwned,
 {
 }
 
 impl<PM, P> Debug for PageCache<PM, P>
 where
     PM: Send + Sync,
-    P: Clone + Debug + Send + Sync,
+    P: Clone + Debug + Send + Sync + Serialize + DeserializeOwned,
 {
     fn fmt(
         &self,
@@ -447,7 +447,7 @@ where
 #[cfg(feature = "event_log")]
 impl<PM, P> Drop for PageCache<PM, P>
 where
-    P: Clone + 'static + Send + Sync,
+    P: Clone + 'static + Send + Sync + Serialize + DeserializeOwned,
 {
     fn drop(&mut self) {
         use std::collections::HashMap;
