@@ -5,12 +5,17 @@ use std::{
 
 use super::*;
 
+/// A transaction-related Result
 pub type TxResult<A> = std::result::Result<A, TxError>;
 
+/// A transaction-related error
 #[derive(Debug, Clone)]
 pub enum TxError {
+    /// An error in the underlying IO and Caching system
     PageCache(Error),
+    /// An intentionally-aborted transaction
     Abort,
+    /// Another transaction interfered with this one
     Conflict,
 }
 
