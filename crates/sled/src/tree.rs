@@ -1003,7 +1003,7 @@ impl Tree {
     fn recursive_split<'g>(
         &self,
         path: Vec<(PageId, Cow<'g, Frag>, TreePtr<'g>)>,
-        tx: &'g Tx,
+        tx: &'g Tx<Frag>,
     ) -> Result<()> {
         // to split, we pop the path, see if it's in need of split, recurse up
         // two-phase: (in prep for lock-free, not necessary for single threaded)
@@ -1081,7 +1081,7 @@ impl Tree {
         node_id: PageId,
         node: &Node,
         node_cas_key: TreePtr<'g>,
-        tx: &'g Tx,
+        tx: &'g Tx<Frag>,
     ) -> Result<Option<ParentSplit>> {
         // split the node in half
         let rhs = node.split();
@@ -1131,7 +1131,7 @@ impl Tree {
         from: PageId,
         to: PageId,
         at: IVec,
-        tx: &'g Tx,
+        tx: &'g Tx<Frag>,
     ) -> Result<()> {
         // hoist new root, pointing to lhs & rhs
         let root_lo = b"";
@@ -1189,7 +1189,7 @@ impl Tree {
     fn get_internal<'g, K: AsRef<[u8]>>(
         &self,
         key: K,
-        tx: &'g Tx,
+        tx: &'g Tx<Frag>,
     ) -> Result<(Path<'g>, Option<&'g IVec>)> {
         let path = self.path_for_key(key.as_ref(), tx)?;
 
@@ -1232,7 +1232,7 @@ impl Tree {
     pub(crate) fn path_for_key<'g, K: AsRef<[u8]>>(
         &self,
         key: K,
-        tx: &'g Tx,
+        tx: &'g Tx<Frag>,
     ) -> Result<Path<'g>> {
         let _measure = Measure::new(&M.tree_traverse);
 

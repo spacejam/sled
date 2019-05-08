@@ -111,7 +111,7 @@ pub use self::{
     reservation::Reservation,
     result::{CasResult, Error, Result},
     segment::SegmentMode,
-    tx::Tx,
+    tx::{Tx, TxError, TxResult},
 };
 
 #[doc(hidden)]
