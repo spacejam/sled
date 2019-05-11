@@ -387,7 +387,7 @@ impl<'a> RecoveryGuard<'a> {
 /// ```
 pub struct PageCache<PM, P>
 where
-    P: Clone + 'static + Send + Sync,
+    P: Clone + 'static + Send + Sync + Serialize + DeserializeOwned,
 {
     _materializer: PhantomData<PM>,
     config: Config,
@@ -406,7 +406,7 @@ where
 
 struct PageTableEntry<P>
 where
-    P: 'static + Send + Sync,
+    P: 'static + Send + Sync + Serialize + DeserializeOwned,
 {
     stack: Stack<CacheEntry<P>>,
     rts: AtomicLsn,
@@ -416,21 +416,21 @@ where
 unsafe impl<PM, P> Send for PageCache<PM, P>
 where
     PM: Send + Sync,
-    P: Clone + 'static + Send + Sync,
+    P: Clone + 'static + Send + Sync + Serialize + DeserializeOwned,
 {
 }
 
 unsafe impl<PM, P> Sync for PageCache<PM, P>
 where
     PM: Send + Sync,
-    P: Clone + 'static + Send + Sync,
+    P: Clone + 'static + Send + Sync + Serialize + DeserializeOwned,
 {
 }
 
 impl<PM, P> Debug for PageCache<PM, P>
 where
     PM: Send + Sync,
-    P: Clone + Debug + Send + Sync,
+    P: Clone + Debug + Send + Sync + Serialize + DeserializeOwned,
 {
     fn fmt(
         &self,
@@ -447,7 +447,7 @@ where
 #[cfg(feature = "event_log")]
 impl<PM, P> Drop for PageCache<PM, P>
 where
-    P: Clone + 'static + Send + Sync,
+    P: Clone + 'static + Send + Sync + Serialize + DeserializeOwned,
 {
     fn drop(&mut self) {
         use std::collections::HashMap;
@@ -571,7 +571,7 @@ where
     }
 
     /// Begins a transaction.
-    pub fn begin(&self) -> Result<Tx> {
+    pub fn begin(&self) -> Result<Tx<P>> {
         Ok(Tx::new(self.generate_id()?))
     }
 
@@ -582,7 +582,7 @@ where
     pub fn allocate<'g>(
         &self,
         new: P,
-        tx: &'g Tx,
+        tx: &'g Tx<P>,
     ) -> Result<(PageId, PagePtr<'g, P>)> {
         self.allocate_inner(Update::Compact(new), tx)
     }
@@ -635,7 +635,7 @@ where
     fn allocate_inner<'g>(
         &self,
         new: Update<P>,
-        tx: &'g Tx,
+        tx: &'g Tx<P>,
     ) -> Result<(PageId, PagePtr<'g, P>)> {
         let (pid, key) = if let Some(pid) = self.free.lock().unwrap().pop() {
             trace!("re-allocating pid {}", pid);
@@ -693,7 +693,7 @@ where
         &self,
         pid: PageId,
         old: PagePtr<'g, P>,
-        tx: &'g Tx,
+        tx: &'g Tx<P>,
     ) -> Result<CasResult<'g, P, ()>> {
         trace!("attempting to free pid {}", pid);
 
@@ -731,7 +731,7 @@ where
         pid: PageId,
         mut old: PagePtr<'g, P>,
         new: P,
-        tx: &'g Tx,
+        tx: &'g Tx<P>,
     ) -> Result<CasResult<'g, P, P>> {
         let _measure = Measure::new(&M.link_page);
 
@@ -902,7 +902,7 @@ where
         pid: PageId,
         old: PagePtr<'g, P>,
         new: P,
-        tx: &'g Tx,
+        tx: &'g Tx<P>,
     ) -> Result<CasResult<'g, P, P>> {
         let _measure = Measure::new(&M.replace_page);
 
@@ -938,7 +938,7 @@ where
     // (at least partially) located in. This happens when a
     // segment has had enough resident page fragments moved
     // away to trigger the `segment_cleanup_threshold`.
-    fn rewrite_page<'g>(&self, pid: PageId, tx: &'g Tx) -> Result<()> {
+    fn rewrite_page<'g>(&self, pid: PageId, tx: &'g Tx<P>) -> Result<()> {
         let _measure = Measure::new(&M.rewrite_page);
 
         trace!("rewriting pid {}", pid);
@@ -1028,7 +1028,7 @@ where
         mut old: PagePtr<'g, P>,
         new: Update<P>,
         is_rewrite: bool,
-        tx: &'g Tx,
+        tx: &'g Tx<P>,
     ) -> Result<CasResult<'g, P, Update<P>>> {
         trace!(
             "cas_page called on pid {} to {:?} with old ts {:?}",
@@ -1156,7 +1156,7 @@ where
     /// using the provided `Materializer` to consolidate
     /// the fragments in-memory and returning the single
     /// consolidated page.
-    pub fn get<'g>(&self, pid: PageId, tx: &'g Tx) -> Result<PageGet<'g, P>> {
+    pub fn get<'g>(&self, pid: PageId, tx: &'g Tx<P>) -> Result<PageGet<'g, P>> {
         trace!("getting pid {}", pid);
         loop {
             let pte_ptr = match self.inner.get(pid, tx) {
@@ -1178,7 +1178,7 @@ where
     pub fn get_page_frags<'g>(
         &'g self,
         pid: PageId,
-        tx: &'g Tx,
+        tx: &'g Tx<P>,
     ) -> Result<(PagePtr<'g, P>, Vec<&'g P>)> {
         trace!("getting page iter for pid {}", pid);
 
@@ -1388,7 +1388,7 @@ where
 
     /// Increase a page's associated transactional read
     /// timestamp (RTS) to as high as the specified timestamp.
-    pub fn bump_page_rts(&self, pid: PageId, ts: Lsn, tx: &Tx) {
+    pub fn bump_page_rts(&self, pid: PageId, ts: Lsn, tx: &Tx<P>) {
         let pte_ptr = if let Some(p) = self.inner.get(pid, tx) {
             p
         } else {
@@ -1413,7 +1413,7 @@ where
 
     /// Retrieves the current transactional read timestamp
     /// for a page.
-    pub fn get_page_rts(&self, pid: PageId, tx: &Tx) -> Option<u64> {
+    pub fn get_page_rts(&self, pid: PageId, tx: &Tx<P>) -> Option<u64> {
         let pte_ptr = if let Some(p) = self.inner.get(pid, tx) {
             p
         } else {
@@ -1513,7 +1513,7 @@ where
     /// mapping from identifiers to PageId's that the `PageCache`
     /// owner may use for storing metadata about their higher-level
     /// collections.
-    pub fn meta<'a>(&self, tx: &'a Tx) -> Result<&'a Meta> {
+    pub fn meta<'a>(&self, tx: &'a Tx<P>) -> Result<&'a Meta> {
         let meta_page_get = self.get(META_PID, tx)?;
 
         match meta_page_get {
@@ -1529,7 +1529,7 @@ where
     /// sled's `Tree` root tracking for an example of
     /// avoiding this in a lock-free way that handles
     /// various race conditions.
-    pub fn meta_pid_for_name(&self, name: &[u8], tx: &Tx) -> Result<PageId> {
+    pub fn meta_pid_for_name(&self, name: &[u8], tx: &Tx<P>) -> Result<PageId> {
         let m = self.meta(tx)?;
         if let Some(root) = m.get_root(name) {
             Ok(root)
@@ -1545,7 +1545,7 @@ where
         name: Vec<u8>,
         old: Option<PageId>,
         new: Option<PageId>,
-        tx: &'g Tx,
+        tx: &'g Tx<P>,
     ) -> Result<std::result::Result<(), Option<PageId>>> {
         loop {
             let meta_page_get = self.get(META_PID, tx)?;
@@ -1597,7 +1597,7 @@ where
         &self,
         pid: PageId,
         pte_ptr: Shared<'g, PageTableEntry<P>>,
-        tx: &'g Tx,
+        tx: &'g Tx<P>,
     ) -> Result<Option<PageGet<'g, P>>> {
         let _measure = Measure::new(&M.page_in);
 
@@ -1884,7 +1884,7 @@ where
         }
     }
 
-    fn page_out<'g>(&self, to_evict: Vec<PageId>, tx: &'g Tx) -> Result<()> {
+    fn page_out<'g>(&self, to_evict: Vec<PageId>, tx: &'g Tx<P>) -> Result<()> {
         let _measure = Measure::new(&M.page_out);
         for pid in to_evict {
             let pte_ptr = match self.inner.get(pid, tx) {
@@ -2180,9 +2180,9 @@ where
     }
 }
 
-fn ptrs_from_stack<'g, P: Send + Sync>(
+fn ptrs_from_stack<'g, P: Send + Sync + DeserializeOwned + Serialize>(
     head_ptr: PagePtrInner<'g, P>,
-    tx: &'g Tx,
+    tx: &'g Tx<P>,
 ) -> Vec<DiskPtr> {
     // generate a list of the old log ID's
     let stack_iter = StackIter::from_ptr(head_ptr, tx);
