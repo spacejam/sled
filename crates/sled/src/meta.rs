@@ -86,3 +86,112 @@ pub(crate) fn open_tree<'a>(
         });
     }
 }
+
+pub struct TreeOpenOptions<'a> {
+    context: Context,
+    tx: &'a Tx<Frag>,
+    create: bool,
+    create_new: bool,
+}
+
+impl<'a> TreeOpenOptions<'a> {
+    pub(crate) fn new(context: Context, tx: &'a Tx<Frag>) -> TreeOpenOptions<'a> {
+        TreeOpenOptions { context, tx, create: false, create_new: false }
+    }
+
+    pub fn create(&mut self, create: bool) -> &mut TreeOpenOptions<'a> {
+        self.create = create; self
+    }
+
+    pub fn create_new(&mut self, create_new: bool) -> &mut TreeOpenOptions<'a> {
+        self.create_new = create_new; self
+    }
+
+    pub fn open<P: AsRef<[u8]>>(&self, name: P) -> Result<Tree> {
+        let name = name.as_ref().to_vec();
+
+        // we loop because creating this Tree may race with
+        // concurrent attempts to open the same one.
+        loop {
+            match self.context.pagecache.meta_pid_for_name(&name, self.tx) {
+                Ok(root_id) => {
+                    if self.create_new {
+                        unimplemented!("tree already exist but `create_new` is `true`");
+                    }
+                    return Ok(Tree {
+                        tree_id: name,
+                        context: self.context.clone(),
+                        subscriptions: Arc::new(Subscriptions::default()),
+                        root: Arc::new(AtomicU64::new(root_id)),
+                    });
+                }
+                Err(Error::CollectionNotFound(_)) => {
+                    if !self.create_new && !self.create {
+                        unimplemented!("tree does not exist but `create` and `create_new` are `false`")
+                    }
+                },
+                Err(other) => return Err(other),
+            }
+
+            // set up empty leaf
+            let leaf = Frag::Base(Node {
+                data: Data::Leaf(vec![]),
+                next: None,
+                lo: vec![].into(),
+                hi: vec![].into(),
+            });
+
+            let (leaf_id, leaf_ptr) = self.context.pagecache.allocate(leaf, &self.tx)?;
+
+            trace!(
+                "allocated pid {} for leaf in new_tree for namespace {:?}",
+                leaf_id,
+                name
+            );
+
+            // set up root index
+
+            // vec![0] represents a prefix-encoded empty prefix
+            let root_index_vec = vec![(vec![0].into(), leaf_id)];
+
+            let root = Frag::Base(Node {
+                data: Data::Index(root_index_vec),
+                next: None,
+                lo: vec![].into(),
+                hi: vec![].into(),
+            });
+
+            let (root_id, root_ptr) = self.context.pagecache.allocate(root, &self.tx)?;
+
+            debug!("allocated pid {} for root of new_tree {:?}", root_id, name);
+
+            let res = self.context.pagecache.cas_root_in_meta(
+                name.clone(),
+                None,
+                Some(root_id),
+                self.tx,
+            )?;
+
+            if res.is_err() {
+                // clean up the tree we just created if we couldn't
+                // install it.
+                self.context
+                    .pagecache
+                    .free(root_id, root_ptr, self.tx)?
+                    .expect("could not free allocated page");
+                self.context
+                    .pagecache
+                    .free(leaf_id, leaf_ptr, self.tx)?
+                    .expect("could not free allocated page");
+                continue;
+            }
+
+            return Ok(Tree {
+                tree_id: name,
+                subscriptions: Arc::new(Subscriptions::default()),
+                context: self.context.clone(),
+                root: Arc::new(AtomicU64::new(root_id)),
+            });
+        }
+    }
+}
