@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use std::{
     error::Error as StdError,
     fmt::{self, Display},
@@ -59,27 +61,33 @@ impl StdError for TxError {
 /// that any state which is removed from a shared in-memory
 /// data structure is not destroyed until all possible
 /// readers have concluded.
-pub struct Tx<P>
+pub struct Tx<'a, PM, P>
 where
-    P: DeserializeOwned + Serialize,
+    P: 'static + Clone + Send + Sync + DeserializeOwned + Serialize,
 {
-    #[doc(hidden)]
-    pub guard: Guard,
-    #[doc(hidden)]
-    pub ts: u64,
+    pagecache: &'a PageCache<PM, P>,
+    pub(crate) guard: Guard,
+    pub(crate) ts: u64,
     pub(crate) pending: FastMap8<PageId, Update<P>>,
+    cache: FastMap8<PageId, Vec<&'a P>>,
+    read_set: FastMap8<PageId, u64>,
+    write_set: FastSet8<PageId>,
 }
 
-impl<P> Tx<P>
+impl<'a, PM, P> Tx<'a, PM, P>
 where
-    P: DeserializeOwned + Serialize + Send + Sync,
+    P: Clone + Send + Sync + DeserializeOwned + Serialize,
 {
     /// Creates a new Tx with a given timestamp.
-    pub fn new(ts: u64) -> Self {
-        Self {
-            guard: pin(),
+    pub fn new(pagecache: &'a PageCache<PM, P>, ts: u64) -> Tx<'a, PM, P> {
+        Tx {
+            pagecache,
             ts,
-            pending: FastMap8::default(),
+            guard: pin(),
+            pending: Default::default(),
+            cache: Default::default(),
+            read_set: Default::default(),
+            write_set: Default::default(),
         }
     }
 
@@ -153,15 +161,9 @@ where
     ) -> TxResult<(PagePtr<'g, P>, Vec<&'g P>)> {
         unimplemented!()
     }
-}
 
-impl<P> std::ops::Deref for Tx<P>
-where
-    P: DeserializeOwned + Serialize,
-{
-    type Target = Guard;
-
-    fn deref(&self) -> &Guard {
-        &self.guard
+    /// Flushes the underlying EBR guard
+    pub fn flush(&self) {
+        self.guard.flush()
     }
 }

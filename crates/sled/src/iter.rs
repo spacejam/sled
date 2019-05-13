@@ -29,7 +29,7 @@ pub struct Iter<'a> {
     pub(super) last_key: Option<Key>,
     pub(super) broken: Option<Error>,
     pub(super) done: bool,
-    pub(super) tx: Tx<Frag>,
+    pub(super) tx: Tx<'a, BLinkMaterializer, Frag>,
     pub(super) is_scan: bool,
     // TODO we have to refactor this in light of pages being deleted
 }
