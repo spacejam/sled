@@ -474,7 +474,7 @@ impl IoBufs {
         M.written_bytes.measure(total_len as f64);
 
         // signal that this IO buffer is now uninitialized
-        let max = std::usize::MAX as LogId;
+        let max = LogId::max_value();
         iobuf.set_lid(max);
         trace!("{} log <- MAX", idx);
 
