@@ -87,6 +87,11 @@ pub(crate) fn open_tree<'a>(
     }
 }
 
+/// Options and flags which can be used to configure how a tree is opened.
+///
+/// This builder exposes the ability to configure how a [`Tree`] is opened.
+/// The `Db::open_tree` and `Db::create_tree` methods are aliases for commonly
+/// used options using this builder.
 pub struct TreeOpenOptions<'a> {
     context: Context,
     tx: &'a Tx<Frag>,
@@ -99,17 +104,32 @@ impl<'a> TreeOpenOptions<'a> {
         TreeOpenOptions { context, tx, create: false, create_new: false }
     }
 
+    /// Sets the option for creating a new tree.
+    ///
+    /// This option indicates whether a new tree will be created
+    /// if the tree does not yet already exist.
     pub fn create(&mut self, create: bool) -> &mut TreeOpenOptions<'a> {
         self.create = create; self
     }
 
+    /// Sets the option to always create a new tree.
+    ///
+    /// This option indicates whether a new tree will be created. No tree is allowed to exist.
     pub fn create_new(&mut self, create_new: bool) -> &mut TreeOpenOptions<'a> {
         self.create_new = create_new; self
     }
 
-    pub fn open<P: AsRef<[u8]>>(&self, name: P) -> Result<Tree> {
-        let name = name.as_ref().to_vec();
-
+    /// Opens a tree with the given `name` and the options specified by `self`.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error under a number of different
+    /// circumstances.
+    ///
+    /// * [`CollectionNotFound`]: The specified tree does not exist and neither `create`
+    ///   or `create_new` is set.
+    /// * [`AlreadyExists`]: `create_new` was specified and the tree already exists.
+    pub fn open(&self, name: Vec<u8>) -> Result<Tree> {
         // we loop because creating this Tree may race with
         // concurrent attempts to open the same one.
         loop {
