@@ -314,27 +314,33 @@ fn basic_pagecache_recovery() {
     let (cv1_ref, _key) = pc.get(id, &tx).unwrap().unwrap();
     let cv1 = cv1_ref.clone();
     assert_eq!(cv1, vec![1, 2, 3]);
+    drop(tx);
     drop(pc);
 
     let pc2: PageCache<TestMaterializer, _> =
         PageCache::start(config.clone()).unwrap();
+    let tx = pc2.begin().unwrap();
     let (cv2_ref, consolidated2) = pc2.get(id, &tx).unwrap().unwrap();
     let cv2 = cv2_ref.clone();
     assert_eq!(cv1, cv2);
 
     pc2.link(id, consolidated2, vec![4], &tx).unwrap().unwrap();
+    drop(tx);
     drop(pc2);
 
     let pc3: PageCache<TestMaterializer, _> =
         PageCache::start(config.clone()).unwrap();
+    let tx = pc3.begin().unwrap();
     let (cv3_ref, consolidated3) = pc3.get(id, &tx).unwrap().unwrap();
     let cv3 = cv3_ref.clone();
     assert_eq!(cv3, vec![1, 2, 3, 4]);
     pc3.free(id, consolidated3, &tx).unwrap().unwrap();
+    drop(tx);
     drop(pc3);
 
     let pc4: PageCache<TestMaterializer, _> =
         PageCache::start(config.clone()).unwrap();
+    let tx = pc4.begin().unwrap();
     let res = pc4.get(id, &tx).unwrap();
     assert!(res.is_free());
 }
@@ -424,7 +430,6 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
     // TODO use returned pointers, cleared on restart, with caching set to
     // a large amount, to test linkage.
     for op in ops.into_iter() {
-        let tx = pc.begin().unwrap();
         match op {
             GenId => {
                 let id = pc.generate_id().unwrap();
@@ -434,6 +439,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                 highest_id = id;
             }
             Replace(pid, c) => {
+                let tx = pc.begin().unwrap();
                 let pid = pid + 2;
                 let get = pc.get(pid, &tx).unwrap();
                 let ref_get = reference.entry(pid).or_insert(P::Unallocated);
@@ -455,8 +461,10 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                         assert_eq!(get, PageGet::Unallocated);
                     }
                 }
+                tx.flush();
             }
             Link(pid, c) => {
+                let tx = pc.begin().unwrap();
                 let pid = pid + 2;
                 let get = pc.get(pid, &tx).unwrap();
                 let ref_get = reference.entry(pid).or_insert(P::Unallocated);
@@ -474,8 +482,10 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                         assert_eq!(get, PageGet::Unallocated);
                     }
                 }
+                tx.flush();
             }
             Get(pid) => {
+                let tx = pc.begin().unwrap();
                 let pid = pid + 2;
                 let get = pc.get(pid, &tx).unwrap();
 
@@ -498,8 +508,10 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                         assert_eq!(get, PageGet::Unallocated);
                     }
                 }
+                tx.flush();
             }
             Free(pid) => {
+                let tx = pc.begin().unwrap();
                 let pid = pid + 2;
                 let pre_get = pc.get(pid, &tx).unwrap();
 
@@ -521,14 +533,17 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                         assert!(get.is_unallocated())
                     }
                 }
+                tx.flush();
             }
             Allocate => {
+                let tx = pc.begin().unwrap();
                 let (pid, _key) = pc.allocate(vec![], &tx).unwrap();
                 reference.insert(pid, P::Present(vec![]));
                 let get = pc.get(pid, &tx).unwrap();
                 if get.is_unallocated() {
                     panic!("expected allocated page, instead got {:?}", get);
                 }
+                tx.flush();
             }
             Restart => {
                 drop(pc);
@@ -540,8 +555,6 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                 pc = PageCache::start(config.clone()).unwrap();
             }
         }
-        tx.flush();
-        drop(tx);
     }
 
     true
