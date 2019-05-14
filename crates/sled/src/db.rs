@@ -112,13 +112,15 @@ impl Db {
     }
 
     /// Remove a disk-backed collection.
-    pub fn drop_tree(&self, name: &[u8]) -> Result<bool> {
+    pub fn drop_tree<V: AsRef<[u8]>>(&self, name: V) -> Result<bool> {
+        let name = name.as_ref();
+
         if name == DEFAULT_TREE_ID {
             return Err(Error::Unsupported(
                 "cannot remove the core structures".into(),
             ));
         }
-        trace!("dropping tree {:?}", name,);
+        trace!("dropping tree {:?}", name);
 
         let mut tenants = self.tenants.write().unwrap();
 
