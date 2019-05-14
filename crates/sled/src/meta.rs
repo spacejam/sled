@@ -128,7 +128,7 @@ impl<'a> TreeOpenOptions<'a> {
     ///
     /// * [`CollectionNotFound`]: The specified tree does not exist and neither `create`
     ///   or `create_new` is set.
-    /// * [`AlreadyExists`]: `create_new` was specified and the tree already exists.
+    /// * [`CollectionAlreadyExists`]: `create_new` was specified and the tree already exists.
     pub fn open(&self, name: Vec<u8>) -> Result<Tree> {
         // we loop because creating this Tree may race with
         // concurrent attempts to open the same one.
@@ -136,7 +136,8 @@ impl<'a> TreeOpenOptions<'a> {
             match self.context.pagecache.meta_pid_for_name(&name, self.tx) {
                 Ok(root_id) => {
                     if self.create_new {
-                        unimplemented!("tree already exist but `create_new` is `true`");
+                        // tree exist but `create_new` is `true`
+                        return Err(Error::CollectionAlreadyExists(name))
                     }
                     return Ok(Tree {
                         tree_id: name,
@@ -145,9 +146,10 @@ impl<'a> TreeOpenOptions<'a> {
                         root: Arc::new(AtomicU64::new(root_id)),
                     });
                 }
-                Err(Error::CollectionNotFound(_)) => {
+                Err(Error::CollectionNotFound(name)) => {
                     if !self.create_new && !self.create {
-                        unimplemented!("tree does not exist but `create` and `create_new` are `false`")
+                        // tree does not exist but `create` and `create_new` are `false`
+                        return Err(Error::CollectionNotFound(name))
                     }
                 },
                 Err(other) => return Err(other),

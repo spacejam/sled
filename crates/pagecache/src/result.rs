@@ -27,6 +27,8 @@ pub type CasResult<'a, P, R> =
 pub enum Error {
     /// The underlying collection no longer exists.
     CollectionNotFound(Vec<u8>),
+    /// The underlying collection already exists.
+    CollectionAlreadyExists(Vec<u8>),
     /// The system has been used in an unsupported way.
     Unsupported(String),
     /// An unexpected bug has happened. Please open an issue on github!
@@ -53,6 +55,7 @@ impl Clone for Error {
                 Io(std::io::Error::new(ioe.kind(), format!("{:?}", ioe)))
             }
             CollectionNotFound(name) => CollectionNotFound(name.clone()),
+            CollectionAlreadyExists(name) => CollectionAlreadyExists(name.clone()),
             Unsupported(why) => Unsupported(why.clone()),
             ReportableBug(what) => ReportableBug(what.clone()),
             Corruption { at } => Corruption { at: at.clone() },
@@ -69,6 +72,13 @@ impl PartialEq for Error {
         match *self {
             CollectionNotFound(ref l) => {
                 if let CollectionNotFound(ref r) = *other {
+                    l == r
+                } else {
+                    false
+                }
+            }
+            CollectionAlreadyExists(ref l) => {
+                if let CollectionAlreadyExists(ref r) = *other {
                     l == r
                 } else {
                     false
@@ -119,6 +129,7 @@ impl StdError for Error {
     fn description(&self) -> &str {
         match *self {
             CollectionNotFound(_) => "Collection does not exist.",
+            CollectionAlreadyExists(_) => "Collection already exists.",
             Unsupported(ref e) => &*e,
             ReportableBug(ref e) => &*e,
             #[cfg(feature = "failpoints")]
@@ -136,7 +147,10 @@ impl Display for Error {
     ) -> std::result::Result<(), fmt::Error> {
         match *self {
             CollectionNotFound(ref name) => {
-                write!(f, "Collection {:?} does not exist", name,)
+                write!(f, "Collection {:?} does not exist", name)
+            }
+            CollectionAlreadyExists(ref name) => {
+                write!(f, "Collection {:?} already exists", name)
             }
             Unsupported(ref e) => write!(f, "Unsupported: {}", e),
             ReportableBug(ref e) => write!(
