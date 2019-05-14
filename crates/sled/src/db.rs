@@ -52,11 +52,10 @@ impl Db {
 
         // create or open the default tree
         let tx = context.pagecache.begin()?;
-        let default = Arc::new(meta::open_tree(
-            context.clone(),
-            DEFAULT_TREE_ID.to_vec(),
-            &tx,
-        )?);
+        let tree = meta::TreeOpenOptions::new(context.clone(), &tx)
+            .create(true)
+            .open(DEFAULT_TREE_ID.to_vec())?;
+        let default = Arc::new(tree);
 
         let ret = Db {
             context: context.clone(),
@@ -103,11 +102,10 @@ impl Db {
         let tx = self.context.pagecache.begin()?;
 
         let mut tenants = self.tenants.write().unwrap();
-        let tree = Arc::new(meta::open_tree(
-            self.context.clone(),
-            name.to_vec(),
-            &tx,
-        )?);
+        let tree = meta::TreeOpenOptions::new(self.context.clone(), &tx)
+            .create(true)
+            .open(name.to_vec())?;
+        let tree = Arc::new(tree);
         tenants.insert(name.to_vec(), tree.clone());
         drop(tenants);
         Ok(tree)
