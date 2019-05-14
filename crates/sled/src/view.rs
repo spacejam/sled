@@ -121,7 +121,8 @@ impl<'a> View<'a> {
     }
 
     pub(crate) fn should_split(&self, max_sz: u64) -> bool {
-        self.size_in_bytes() > max_sz
+        let children = self.base_data.len();
+        children > 2 && self.size_in_bytes() > max_sz
     }
 
     pub(crate) fn compact(&self, config: &Config) -> Node {
