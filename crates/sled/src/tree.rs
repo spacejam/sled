@@ -1047,6 +1047,7 @@ impl Tree {
                 .root_hoist(root_pid.unwrap(), rhs_pid, rhs_lo, tx)
                 .is_ok()
             {
+                println!("hoisted root!");
                 M.tree_root_split_success();
             }
         }
@@ -1295,7 +1296,8 @@ impl Tree {
 
         let mut cursor = self.root.load(SeqCst);
         let mut root_pid = Some(cursor);
-        let mut last_view = None;
+        let mut parent_view = None;
+        let mut unsplit_parent = None;
 
         let mut not_found_loops = 0;
         loop {
@@ -1317,19 +1319,63 @@ impl Tree {
                 );
                 cursor = self.root.load(SeqCst);
                 root_pid = Some(cursor);
-                last_view = None;
+                parent_view = None;
                 continue;
             }
 
             if view.should_split(self.context.blink_node_split_size as u64) {
-                self.split_node(&view, &last_view, root_pid, tx)?;
+                self.split_node(&view, &parent_view, root_pid, tx)?;
+            } else if !view.hi.is_empty() && view.hi <= key.as_ref() {
+                // half-complete split detect & completion
+                cursor = view.next.expect(
+                    "if our hi bound is not Inf (inity), \
+                     we should have a right sibling",
+                );
+                if unsplit_parent.is_none() && parent_view.is_some() {
+                    unsplit_parent = parent_view.clone();
+                } else if parent_view.is_none() && view.lo.is_empty() {
+                    assert_eq!(view.pid, root_pid.unwrap());
+                    // we have found a partially-split root
+                    if self
+                        .root_hoist(
+                            root_pid.unwrap(),
+                            view.next.unwrap(),
+                            view.hi.into(),
+                            tx,
+                        )
+                        .is_ok()
+                    {
+                        println!("hoisted root!");
+                        M.tree_root_split_success();
+                        cursor = self.root.load(SeqCst);
+                        root_pid = Some(cursor);
+                        parent_view = None;
+                    }
+                }
+                continue;
+            } else if let Some(unsplit_parent) = unsplit_parent.take() {
+                // we have found the proper page for
+                // our cooperative parent split
+                let mut parent = unsplit_parent.compact(&self.context);
+                parent.parent_split(view.lo.into(), cursor);
+
+                M.tree_parent_split_attempt();
+                let link = self.context.pagecache.replace(
+                    unsplit_parent.pid,
+                    unsplit_parent.ptr.clone(),
+                    Frag::Base(parent),
+                    tx,
+                )?;
+                if link.is_ok() {
+                    M.tree_parent_split_success();
+                }
             }
 
             // TODO this may need to change when handling (half) merges
             assert!(view.lo <= key.as_ref(), "overshot key somehow");
             if view.is_index {
                 cursor = view.index_next_node(key.as_ref());
-                last_view = Some(view);
+                parent_view = Some(view);
             } else {
                 return Ok(view);
             }

@@ -1,5 +1,6 @@
 use super::*;
 
+#[derive(Clone)]
 pub(crate) struct View<'a> {
     pub(crate) pid: PageId,
     pub(crate) lo: &'a [u8],
