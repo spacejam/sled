@@ -20,11 +20,35 @@ fn upper_bound_includes<'a>(ub: &ops::Bound<Vec<u8>>, item: &'a [u8]) -> bool {
     }
 }
 
+fn possible_predecessor(s: &[u8]) -> Option<Vec<u8>> {
+    let mut ret = s.to_vec();
+    match ret.pop() {
+        None => None,
+        Some(i) if i == 0 => Some(ret),
+        Some(i) => {
+            ret.push(i - 1);
+            for _ in 0..4 {
+                ret.push(255);
+            }
+            Some(ret)
+        }
+    }
+}
+
+macro_rules! iter_try {
+    ($e:expr) => {
+        match $e {
+            Ok(item) => item,
+            Err(e) => return Some(Err(e)),
+        }
+    };
+}
+
 /// An iterator over keys and values in a `Tree`.
 pub struct Iter<'a> {
     pub(super) tree: &'a Tree,
-    pub(super) hi: ops::Bound<Vec<u8>>,
-    pub(super) lo: ops::Bound<Vec<u8>>,
+    pub(super) hi: ops::Bound<IVec>,
+    pub(super) lo: ops::Bound<IVec>,
     pub(super) last_id: Option<PageId>,
 }
 
@@ -45,6 +69,14 @@ impl<'a> Iterator for Iter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let _measure = Measure::new(&M.tree_scan);
+
+        let tx = iter_try!(self.tree.context.pagecache.begin());
+
+        let cached_view = if let Some(last_id) = self.last_id {
+            Some(iter_try!(self.tree.view_for_pid(last_id, &tx)))
+        } else {
+            None
+        };
 
         None
     }
@@ -431,21 +463,6 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
     }
 }
 */
-
-fn possible_predecessor(s: &[u8]) -> Option<Vec<u8>> {
-    let mut ret = s.to_vec();
-    match ret.pop() {
-        None => None,
-        Some(i) if i == 0 => Some(ret),
-        Some(i) => {
-            ret.push(i - 1);
-            for _ in 0..4 {
-                ret.push(255);
-            }
-            Some(ret)
-        }
-    }
-}
 
 #[test]
 fn test_possible_predecessor() {
