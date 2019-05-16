@@ -135,11 +135,22 @@ impl Db {
         let mut root_id =
             Some(self.context.pagecache.meta_pid_for_name(&name, &tx)?);
 
-        let leftmost_chain: Vec<PageId> = tree
-            .path_for_key(b"", &tx)?
-            .into_iter()
-            .map(|(id, _frag, _tp)| id)
-            .collect();
+        let mut leftmost_chain: Vec<PageId> = vec![root_id.unwrap()];
+        let mut cursor = root_id.unwrap();
+        loop {
+            let (tree_ptr, frags) =
+                self.context.pagecache.get_page_frags(cursor, &tx)?;
+            let view = View::new(cursor, tree_ptr, frags);
+            let node = view.compact(&self.context);
+
+            if let Some(index) = node.data.index_ref() {
+                let leftmost_child = index[0].1;
+                leftmost_chain.push(leftmost_child);
+                cursor = leftmost_child;
+            } else {
+                break;
+            }
+        }
 
         loop {
             let res = self.context.pagecache.cas_root_in_meta(

@@ -1,5 +1,4 @@
 use std::{
-    borrow::Cow,
     cmp::Ordering::{Greater, Less},
     fmt::{self, Debug},
     ops::{self, RangeBounds},
@@ -168,22 +167,19 @@ impl Tree {
         loop {
             let tx = self.context.pagecache.begin()?;
 
-            let (mut path, existing_val) =
-                self.get_internal(key.as_ref(), &tx)?;
+            let view = self.view_for_key(key.as_ref(), &tx)?;
+            let existing_val =
+                view.leaf_value_for_key(key.as_ref(), &self.context);
 
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
 
-            let (leaf_id, leaf_frag, leaf_ptr) = path.pop().expect(
-                "path_for_key should always return a path \
-                 of length >= 2 (root + leaf)",
-            );
-            let node: &Node = leaf_frag.unwrap_base();
-            let encoded_key = prefix_encode(&node.lo, key.as_ref());
+            let encoded_key = prefix_encode(view.lo, key.as_ref());
 
             let frag = Frag::Del(encoded_key);
+
             let link = self.context.pagecache.link(
-                leaf_id,
-                leaf_ptr.clone(),
+                view.pid,
+                view.ptr.clone(),
                 frag,
                 &tx,
             )?;
@@ -250,35 +246,29 @@ impl Tree {
         // cap fails it doesn't mean our value was changed.
         loop {
             let tx = self.context.pagecache.begin()?;
-            let (mut path, cur) = self.get_internal(key.as_ref(), &tx)?;
+            let view = self.view_for_key(key.as_ref(), &tx)?;
+            let cur = view.leaf_value_for_key(key.as_ref(), &self.context);
 
             let matches = match (&old, &cur) {
                 (None, None) => true,
-                (Some(ref o), Some(ref c)) => o.as_ref() == &***c,
+                (Some(ref o), Some(ref c)) => o.as_ref() == &**c,
                 _ => false,
             };
 
             if !matches {
-                return Ok(Err(cur.cloned()));
+                return Ok(Err(cur));
             }
 
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
 
-            let (leaf_id, leaf_frag, leaf_ptr) = path
-                .pop()
-                .expect("get_internal somehow returned a path of length zero");
-
-            let (node_id, encoded_key) = {
-                let node: &Node = leaf_frag.unwrap_base();
-                (leaf_id, prefix_encode(&node.lo, key.as_ref()))
-            };
+            let encoded_key = prefix_encode(view.lo, key.as_ref());
             let frag = if let Some(ref new) = new {
                 Frag::Set(encoded_key, new.clone())
             } else {
                 Frag::Del(encoded_key)
             };
             let link =
-                self.context.pagecache.link(node_id, leaf_ptr, frag, &tx)?;
+                self.context.pagecache.link(view.pid, view.ptr, frag, &tx)?;
 
             if link.is_ok() {
                 if let Some(res) = subscriber_reservation.take() {
@@ -526,16 +516,12 @@ impl Tree {
         // correctness of the ret value
         let tx = self.context.pagecache.begin()?;
 
-        let path = self.path_for_key(key.as_ref(), &tx)?;
-        let (_last_id, last_frag, _tree_ptr) = path
-            .last()
-            .expect("path should always contain a last element");
+        let view = self.view_for_key(key.as_ref(), &tx)?;
+        let data = &view.base_data;
 
-        let last_node = last_frag.unwrap_base();
-        let data = &last_node.data;
         let items = data.leaf_ref().expect("last_node should be a leaf");
         let search = leaf_search(Less, items, |&(ref k, ref _v)| {
-            prefix_cmp_encoded(k, key.as_ref(), &last_node.lo)
+            prefix_cmp_encoded(k, key.as_ref(), view.lo)
         });
 
         let ret = if search.is_none() {
@@ -588,16 +574,12 @@ impl Tree {
 
         let tx = self.context.pagecache.begin()?;
 
-        let path = self.path_for_key(key.as_ref(), &tx)?;
-        let (_last_id, last_frag, _tree_ptr) = path
-            .last()
-            .expect("path should always contain a last element");
+        let view = self.view_for_key(key.as_ref(), &tx)?;
+        let data = &view.base_data;
 
-        let last_node = last_frag.unwrap_base();
-        let data = &last_node.data;
         let items = data.leaf_ref().expect("last_node should be a leaf");
         let search = leaf_search(Greater, items, |&(ref k, ref _v)| {
-            prefix_cmp_encoded(k, key.as_ref(), &last_node.lo)
+            prefix_cmp_encoded(k, key.as_ref(), view.lo)
         });
 
         let ret = if search.is_none() {
@@ -704,21 +686,16 @@ impl Tree {
         loop {
             let tx = self.context.pagecache.begin()?;
 
-            let mut path = self.path_for_key(key.as_ref(), &tx)?;
-            let (leaf_id, leaf_frag, leaf_ptr) = path.pop().expect(
-                "path_for_key should always return a path \
-                 of length >= 2 (root + leaf)",
-            );
-            let node: &Node = leaf_frag.unwrap_base();
+            let view = self.view_for_key(key.as_ref(), &tx)?;
 
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
 
-            let encoded_key = prefix_encode(&node.lo, key.as_ref());
+            let encoded_key = prefix_encode(view.lo, key.as_ref());
             let frag = Frag::Merge(encoded_key, value.clone());
 
             let link = self.context.pagecache.link(
-                leaf_id,
-                leaf_ptr.clone(),
+                view.pid,
+                view.ptr.clone(),
                 frag.clone(),
                 &tx,
             )?;
@@ -731,20 +708,6 @@ impl Tree {
                     );
 
                     res.complete(event);
-                }
-                if node.should_split(self.context.blink_node_split_size as u64)
-                {
-                    let mut path2 = path
-                        .iter()
-                        .map(|&(id, f, ref p)| {
-                            (id, Cow::Borrowed(f), p.clone())
-                        })
-                        .collect::<Vec<(PageId, Cow<'_, Frag>, _)>>();
-                    let mut node2 = node.clone();
-                    node2.apply(&frag, self.context.merge_operator);
-                    let frag2 = Cow::Owned(Frag::Base(node2));
-                    path2.push((leaf_id, frag2, new_cas_key));
-                    self.recursive_split(path2, &tx)?;
                 }
                 tx.flush();
                 return Ok(());
@@ -960,132 +923,6 @@ impl Tree {
         Ok(())
     }
 
-    fn recursive_split<'g>(
-        &self,
-        path: Vec<(PageId, Cow<'g, Frag>, TreePtr<'g>)>,
-        tx: &'g Tx<'g, BLinkMaterializer, Frag>,
-    ) -> Result<()> {
-        // to split, we pop the path, see if it's in need of split, recurse up
-        // two-phase: (in prep for lock-free, not necessary for single threaded)
-        //  1. half-split: install split on child, P
-        //      a. allocate new right sibling page, Q
-        //      b. locate split point
-        //      c. create new consolidated pages for both sides
-        //      d. add new node to pagetable
-        //      e. merge split delta to original page P with physical pointer to Q
-        //      f. if failed, free the new page
-        //  2. parent update: install new index term on parent
-        //      a. merge "index term delta record" to parent, containing:
-        //          i. new bounds for P & Q
-        //          ii. logical pointer to Q
-        //
-        //      (it's possible parent was merged in the mean-time, so if that's the
-        //      case, we need to go up the path to the grandparent then down again
-        //      or higher until it works)
-        //  3. any traversing nodes that witness #1 but not #2 try to complete it
-        //
-        //  root is special case, where we need to hoist a new root
-
-        let adjusted_max = |height| {
-            // nodes toward the root are larger
-            let threshold = std::cmp::min(height, 8) as u32;
-            let multiplier = 2_u64.pow(threshold);
-            self.context.blink_node_split_size as u64 * multiplier
-        };
-
-        for (height, node_parts) in path.iter().skip(1).rev().enumerate() {
-            let (node_id, node_frag, node_ptr) = &node_parts;
-            let node: &Node = node_frag.unwrap_base();
-            if node.should_split(adjusted_max(height)) {
-                // try to child split
-                M.tree_child_split_attempt();
-
-                if self
-                    .child_split(*node_id, node, node_ptr.clone(), tx)?
-                    .is_some()
-                {
-                    M.tree_child_split_success();
-                } else {
-                    return Ok(());
-                }
-            }
-        }
-
-        let (ref root_id, ref root_frag, ref root_ptr) = path[0];
-        let root_node: &Node = root_frag.unwrap_base();
-
-        if root_node.should_split(adjusted_max(path.len())) {
-            M.tree_root_split_attempt();
-            if let Some(parent_split) =
-                self.child_split(*root_id, &root_node, root_ptr.clone(), tx)?
-            {
-                if self
-                    .root_hoist(
-                        *root_id,
-                        parent_split.to,
-                        parent_split.at.clone(),
-                        tx,
-                    )
-                    .is_ok()
-                {
-                    M.tree_root_split_success();
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn child_split<'g>(
-        &self,
-        node_id: PageId,
-        node: &Node,
-        node_cas_key: TreePtr<'g>,
-        tx: &'g Tx<BLinkMaterializer, Frag>,
-    ) -> Result<Option<ParentSplit>> {
-        // split the node in half
-        let rhs = node.split();
-
-        let rhs_lo = rhs.lo.clone();
-
-        let mut child_split = ChildSplit {
-            at: rhs_lo.clone(),
-            to: 0,
-        };
-
-        // install the new right side
-        let (new_pid, new_ptr) =
-            self.context.pagecache.allocate(Frag::Base(rhs), tx)?;
-
-        trace!("allocated pid {} in child_split", new_pid);
-
-        child_split.to = new_pid;
-
-        let parent_split = ParentSplit {
-            at: rhs_lo,
-            to: new_pid,
-        };
-
-        // try to install a child split on the left side
-        let link = self.context.pagecache.link(
-            node_id,
-            node_cas_key,
-            Frag::ChildSplit(child_split),
-            tx,
-        )?;
-
-        if link.is_err() {
-            // if we failed, don't follow through with the parent split
-            self.context
-                .pagecache
-                .free(new_pid, new_ptr, tx)?
-                .expect("could not free allocated page");
-            return Ok(None);
-        }
-
-        Ok(Some(parent_split))
-    }
-
     fn root_hoist<'g>(
         &self,
         from: PageId,
@@ -1144,47 +981,6 @@ impl Tree {
 
             Ok(())
         }
-    }
-
-    fn get_internal<'g, K: AsRef<[u8]>>(
-        &self,
-        key: K,
-        tx: &'g Tx<BLinkMaterializer, Frag>,
-    ) -> Result<(Path<'g>, Option<&'g IVec>)> {
-        let path = self.path_for_key(key.as_ref(), tx)?;
-
-        let ret = path.last().and_then(|(_last_id, last_frag, _tree_ptr)| {
-            let last_node = last_frag.unwrap_base();
-            let data = &last_node.data;
-            let items = data.leaf_ref().expect("last_node should be a leaf");
-            let search = items
-                .binary_search_by(|&(ref k, ref _v)| {
-                    prefix_cmp_encoded(k, key.as_ref(), &last_node.lo)
-                })
-                .ok();
-
-            search.map(|idx| &items[idx].1)
-        });
-
-        Ok((path, ret))
-    }
-
-    #[doc(hidden)]
-    pub fn key_debug_str<K: AsRef<[u8]>>(&self, key: K) -> String {
-        let tx = self.context.pagecache.begin().unwrap();
-
-        let path = self.path_for_key(key.as_ref(), &tx).expect(
-            "path_for_key should always return at least 2 nodes, \
-             even if the key being searched for is not present",
-        );
-        let mut ret = String::new();
-        for (id, node, _ptr) in &path {
-            ret.push_str(&*format!("\n{}: {:?}", id, node));
-        }
-
-        tx.flush();
-
-        ret
     }
 
     /// returns the traversal path, completing any observed
@@ -1250,7 +1046,6 @@ impl Tree {
                         )
                         .is_ok()
                     {
-                        println!("hoisted root!");
                         M.tree_root_split_success();
                         cursor = self.root.load(SeqCst);
                         root_pid = Some(cursor);
@@ -1285,131 +1080,6 @@ impl Tree {
                 return Ok(view);
             }
         }
-    }
-
-    /// returns the traversal path, completing any observed
-    /// partially complete splits or merges along the way.
-    pub(crate) fn path_for_key<'g, K: AsRef<[u8]>>(
-        &self,
-        key: K,
-        tx: &'g Tx<BLinkMaterializer, Frag>,
-    ) -> Result<Path<'g>> {
-        let _measure = Measure::new(&M.tree_traverse);
-
-        let mut cursor = self.root.load(SeqCst);
-        let mut path: Vec<(PageId, &'g Frag, TreePtr<'g>)> = vec![];
-
-        // unsplit_parent is used for tracking need
-        // to complete partial splits.
-        let mut unsplit_parent: Option<usize> = None;
-
-        let mut not_found_loops = 0;
-        loop {
-            if cursor == u64::max_value() {
-                // this collection has been explicitly removed
-                return Err(Error::CollectionNotFound(self.tree_id.clone()));
-            }
-            let get_cursor = self.context.pagecache.get(cursor, tx)?;
-
-            if get_cursor.is_free() {
-                // restart search from the tree's root
-                not_found_loops += 1;
-                debug_assert_ne!(
-                    not_found_loops, 10_000,
-                    "cannot find pid {} in path_for_key",
-                    cursor
-                );
-                cursor = self.root.load(SeqCst);
-                continue;
-            }
-
-            let (frag, cas_key) = match get_cursor {
-                PageGet::Materialized(node, cas_key) => (node, cas_key),
-                broken => {
-                    return Err(Error::ReportableBug(format!(
-                        "got non-base node while traversing tree: {:?}",
-                        broken
-                    )));
-                }
-            };
-
-            let node = frag.unwrap_base();
-
-            // TODO this may need to change when handling (half) merges
-            assert!(node.lo.as_ref() <= key.as_ref(), "overshot key somehow");
-
-            // half-complete split detect & completion
-            // (when hi is empty, it means it's unbounded)
-            if !node.hi.is_empty() && node.hi.as_ref() <= key.as_ref() {
-                // we have encountered a child split, without
-                // having hit the parent split above.
-                cursor = node.next.expect(
-                    "if our hi bound is not Inf (inity), \
-                     we should have a right sibling",
-                );
-                if unsplit_parent.is_none() && !path.is_empty() {
-                    unsplit_parent = Some(path.len() - 1);
-                }
-                continue;
-            } else if let Some(idx) = unsplit_parent.take() {
-                // we have found the proper page for
-                // our split.
-                let (parent_id, _parent_frag, parent_ptr) = &path[idx];
-
-                let ps = Frag::ParentSplit(ParentSplit {
-                    at: node.lo.clone(),
-                    to: cursor,
-                });
-
-                M.tree_parent_split_attempt();
-                let link = self.context.pagecache.link(
-                    *parent_id,
-                    parent_ptr.clone(),
-                    ps,
-                    tx,
-                )?;
-                if let Ok(_new_key) = link {
-                    // TODO set parent's cas_key (not this cas_key) to
-                    // new_key in the path, along with updating the
-                    // parent's node in the path vec. if we don't do
-                    // both, we lose the newly appended parent split.
-                    M.tree_parent_split_success();
-                }
-            }
-
-            path.push((cursor, frag, cas_key.clone()));
-
-            match path
-                .last()
-                .expect("we just pushed to path, so it's not empty")
-                .1
-                .unwrap_base()
-                .data
-            {
-                Data::Index(ref ptrs) => {
-                    let old_cursor = cursor;
-
-                    let search = binary_search_lub(ptrs, |&(ref k, ref _v)| {
-                        prefix_cmp_encoded(k, key.as_ref(), &node.lo)
-                    });
-
-                    // This might be none if ord is Less and we're
-                    // searching for the empty key
-                    let index = search.expect("failed to traverse index");
-
-                    cursor = ptrs[index].1;
-
-                    if cursor == old_cursor {
-                        panic!("stuck in page traversal loop");
-                    }
-                }
-                Data::Leaf(_) => {
-                    break;
-                }
-            }
-        }
-
-        Ok(path)
     }
 
     // Remove all pages for this tree from the underlying
