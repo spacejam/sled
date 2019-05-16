@@ -14,8 +14,6 @@ pub(crate) enum Frag {
     Del(IVec),
     Merge(IVec, IVec),
     Base(Node),
-    ChildSplit(ChildSplit),
-    ParentSplit(ParentSplit),
 }
 
 impl Frag {
@@ -24,14 +22,6 @@ impl Frag {
             base
         } else {
             panic!("called unwrap_base_ptr on non-Base Frag!")
-        }
-    }
-
-    pub(crate) fn is_child_split(&self) -> bool {
-        if let Frag::ChildSplit(_) = self {
-            true
-        } else {
-            false
         }
     }
 
@@ -44,20 +34,6 @@ impl Frag {
                 Del(k) => k.len() as u64,
                 Merge(k, v) => (k.len() + v.len()) as u64,
                 Base(node) => node.size_in_bytes(),
-                ChildSplit(_cs) => 0,
-                ParentSplit(_ps) => 0,
             }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct ParentSplit {
-    pub(crate) at: IVec,
-    pub(crate) to: PageId,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct ChildSplit {
-    pub(crate) at: IVec,
-    pub(crate) to: PageId,
 }

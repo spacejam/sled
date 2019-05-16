@@ -123,12 +123,6 @@ impl Node {
         }
     }
 
-    pub(crate) fn child_split(&mut self, cs: &ChildSplit) {
-        self.data.drop_gte(&cs.at, &self.lo);
-        self.hi = cs.at.clone();
-        self.next = Some(cs.to);
-    }
-
     pub(crate) fn parent_split(&mut self, at: &[u8], to: PageId) {
         if let Data::Index(ref mut ptrs) = self.data {
             let encoded_sep = prefix_encode(&self.lo, at);

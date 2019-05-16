@@ -10,7 +10,7 @@ pub(crate) struct View<'a> {
     pub(crate) ptr: TreePtr<'a>,
     frags: Vec<&'a Frag>,
     base_offset: usize,
-    base_data: &'a Data,
+    pub(crate) base_data: &'a Data,
 }
 
 impl<'a> View<'a> {
@@ -33,10 +33,6 @@ impl<'a> View<'a> {
 
         for (offset, frag) in view.frags.iter().enumerate() {
             match frag {
-                Frag::ChildSplit(cs) => {
-                    view.next = Some(cs.to);
-                    view.hi = cs.at.as_ref();
-                }
                 Frag::Base(node) => {
                     if view.hi.is_empty() {
                         view.hi = node.hi.as_ref();
@@ -59,18 +55,28 @@ impl<'a> View<'a> {
         self.frags.is_empty()
     }
 
-    pub(crate) fn leaf_value_for_key(&self, key: &[u8]) -> Option<&IVec> {
+    pub(crate) fn leaf_value_for_key(
+        &self,
+        key: &[u8],
+        config: &Config,
+    ) -> Option<IVec> {
         assert!(!self.is_index);
+
+        let mut merge_base = None;
+        let mut merges = vec![];
 
         for frag in self.frags[..self.base_offset + 1].iter() {
             match frag {
-                Frag::Set(k, val) if k == key => return Some(val),
-                Frag::Del(k) if k == key => return None,
-                Frag::Merge(_key, _val) => unimplemented!(),
-                Frag::ChildSplit(cs) => {
-                    assert!(&*cs.at > key);
+                Frag::Set(k, val) if self.key_eq(k, key) => {
+                    if merges.is_empty() {
+                        return Some(val.clone());
+                    } else {
+                        merge_base = Some(val);
+                        break;
+                    }
                 }
-                Frag::ParentSplit(_ps) => unimplemented!(),
+                Frag::Del(k) if self.key_eq(k, key) => return None,
+                Frag::Merge(k, val) if self.key_eq(k, key) => merges.push(val),
                 Frag::Base(node) => {
                     let data = &node.data;
                     let items =
@@ -81,12 +87,50 @@ impl<'a> View<'a> {
                         })
                         .ok();
 
-                    return search.map(|idx| &items[idx].1);
+                    let val = search.map(|idx| &items[idx].1);
+                    if merges.is_empty() {
+                        return val.cloned();
+                    } else {
+                        merge_base = val;
+                    }
                 }
                 _ => {}
             }
         }
-        None
+
+        if merges.is_empty() {
+            None
+        } else {
+            let merge_fn_ptr = config
+                .merge_operator
+                .expect("must have a merge operator set");
+
+            unsafe {
+                let merge_fn: MergeOperator = std::mem::transmute(merge_fn_ptr);
+
+                let mut ret = merge_fn(
+                    key,
+                    merge_base.map(|iv| &**iv),
+                    &merges.pop().unwrap(),
+                );
+                                       ;
+                for merge in merges.into_iter().rev() {
+                    if let Some(v) = ret {
+                        ret = merge_fn(key, Some(&*v), merge);
+                    } else {
+                        ret = merge_fn(key, None, merge);
+                    }
+                }
+
+                ret.map(IVec::from)
+            }
+        }
+    }
+
+    #[inline]
+    fn key_eq(&self, encoded: &[u8], not_encoded: &[u8]) -> bool {
+        prefix_cmp_encoded(encoded, not_encoded, self.lo)
+            == std::cmp::Ordering::Equal
     }
 
     pub(crate) fn index_next_node(&self, key: &[u8]) -> PageId {
@@ -94,13 +138,9 @@ impl<'a> View<'a> {
 
         for frag in self.frags[..self.base_offset + 1].iter() {
             match frag {
-                Frag::Set(key, val) => unimplemented!(),
-                Frag::Del(key) => unimplemented!(),
-                Frag::Merge(_key, _val) => unimplemented!(),
-                Frag::ChildSplit(cs) => {
-                    assert!(&*cs.at > key);
-                }
-                Frag::ParentSplit(ps) => {}
+                Frag::Set(..) => unimplemented!(),
+                Frag::Del(..) => unimplemented!(),
+                Frag::Merge(..) => unimplemented!(),
                 Frag::Base(node) => {
                     let data = &node.data;
                     let items =
@@ -157,7 +197,6 @@ impl<'a> View<'a> {
         // a merge threshold once we support one.
         self.frags[..self.base_offset + 1]
             .iter()
-            .take_while(|f| !f.is_child_split())
             .map(|f| f.size_in_bytes())
             .sum()
     }

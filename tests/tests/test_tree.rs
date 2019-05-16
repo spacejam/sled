@@ -107,7 +107,6 @@ fn parallel_tree_ops() {
         par! {t, |tree: &Tree, k: Vec<u8>| {
             if let Some(v) =  tree.get(&*k).unwrap() {
                 if v != k {
-                    debug!("test {} failed: {}", i, tree.key_debug_str(&*k.clone()));
                     panic!("expected key {:?} not found", k);
                 }
             } else {

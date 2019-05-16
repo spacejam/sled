@@ -139,11 +139,11 @@ impl Tree {
 
         let tx = self.context.pagecache.begin()?;
 
-        let (_, ret) = self.get_internal(key.as_ref(), &tx)?;
+        let view = self.view_for_key(key.as_ref(), &tx)?;
 
         tx.flush();
 
-        Ok(ret.cloned())
+        Ok(view.leaf_value_for_key(key.as_ref(), &self.context))
     }
 
     /// Delete a value, returning the old value if it existed.
