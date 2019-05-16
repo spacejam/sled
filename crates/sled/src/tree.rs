@@ -10,8 +10,6 @@ use std::{
 
 use super::*;
 
-type Path<'g> = Vec<(PageId, &'g Frag, TreePtr<'g>)>;
-
 impl<'a> IntoIterator for &'a Tree {
     type Item = Result<(Vec<u8>, IVec)>;
     type IntoIter = Iter<'a>;
@@ -507,10 +505,10 @@ impl Tree {
     /// assert_eq!(tree.get_lt(&[10]), Ok(Some((vec![9], IVec::from(vec![9])))));
     /// assert_eq!(tree.get_lt(&[255]), Ok(Some((vec![9], IVec::from(vec![9])))));
     /// ```
-    pub fn get_lt<K: AsRef<[u8]>>(
-        &self,
-        key: K,
-    ) -> Result<Option<(Key, IVec)>> {
+    pub fn get_lt<K>(&self, key: K) -> Result<Option<(Key, IVec)>>
+    where
+        K: AsRef<[u8]>,
+    {
         let _measure = Measure::new(&M.tree_get);
 
         // the double tx is a hack that maintains
@@ -567,10 +565,10 @@ impl Tree {
     /// assert_eq!(tree.get_gt(&[8]), Ok(Some((vec![9], IVec::from(vec![9])))));
     /// assert_eq!(tree.get_gt(&[9]), Ok(None));
     /// ```
-    pub fn get_gt<K: AsRef<[u8]>>(
-        &self,
-        key: K,
-    ) -> Result<Option<(Key, IVec)>> {
+    pub fn get_gt<K>(&self, key: K) -> Result<Option<(Key, IVec)>>
+    where
+        K: AsRef<[u8]>,
+    {
         let _measure = Measure::new(&M.tree_get);
 
         let tx = self.context.pagecache.begin()?;
@@ -777,20 +775,20 @@ impl Tree {
 
         let lo = match range.start_bound() {
             ops::Bound::Included(ref end) => {
-                ops::Bound::Included(end.as_ref().to_vec())
+                ops::Bound::Included(IVec::from(end.as_ref()))
             }
             ops::Bound::Excluded(ref end) => {
-                ops::Bound::Excluded(end.as_ref().to_vec())
+                ops::Bound::Excluded(IVec::from(end.as_ref()))
             }
             ops::Bound::Unbounded => ops::Bound::Unbounded,
         };
 
         let hi = match range.end_bound() {
             ops::Bound::Included(ref end) => {
-                ops::Bound::Included(end.as_ref().to_vec())
+                ops::Bound::Included(IVec::from(end.as_ref()))
             }
             ops::Bound::Excluded(ref end) => {
-                ops::Bound::Excluded(end.as_ref().to_vec())
+                ops::Bound::Excluded(IVec::from(end.as_ref()))
             }
             ops::Bound::Unbounded => ops::Bound::Unbounded,
         };
@@ -967,6 +965,16 @@ impl Tree {
         }
     }
 
+    pub(crate) fn view_for_pid<'g>(
+        &self,
+        pid: PageId,
+        tx: &'g Tx<BLinkMaterializer, Frag>,
+    ) -> Result<View<'g>> {
+        let (tree_ptr, frags) =
+            self.context.pagecache.get_page_frags(pid, tx)?;
+        Ok(View::new(pid, tree_ptr, frags))
+    }
+
     /// returns the traversal path, completing any observed
     /// partially complete splits or merges along the way.
     pub(crate) fn view_for_key<'g, K>(
@@ -990,9 +998,8 @@ impl Tree {
                 // this collection has been explicitly removed
                 return Err(Error::CollectionNotFound(self.tree_id.clone()));
             }
-            let (tree_ptr, frags) =
-                self.context.pagecache.get_page_frags(cursor, tx)?;
-            let view = View::new(cursor, tree_ptr, frags);
+
+            let view = self.view_for_pid(cursor, tx)?;
 
             if view.is_free() || view.lo > key.as_ref() {
                 // restart search from the tree's root
