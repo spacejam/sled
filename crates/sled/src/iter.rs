@@ -26,12 +26,6 @@ pub struct Iter<'a> {
     pub(super) hi: ops::Bound<Vec<u8>>,
     pub(super) lo: ops::Bound<Vec<u8>>,
     pub(super) last_id: Option<PageId>,
-    pub(super) last_key: Option<Key>,
-    pub(super) broken: Option<Error>,
-    pub(super) done: bool,
-    pub(super) tx: Tx<'a, BLinkMaterializer, Frag>,
-    pub(super) is_scan: bool,
-    // TODO we have to refactor this in light of pages being deleted
 }
 
 impl<'a> Iter<'a> {
@@ -45,6 +39,26 @@ impl<'a> Iter<'a> {
         self.map(|r| r.map(|(_k, v)| v))
     }
 }
+
+impl<'a> Iterator for Iter<'a> {
+    type Item = Result<(Vec<u8>, IVec)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let _measure = Measure::new(&M.tree_scan);
+
+        None
+    }
+}
+
+impl<'a> DoubleEndedIterator for Iter<'a> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let _measure = Measure::new(&M.tree_reverse_scan);
+
+        None
+    }
+}
+
+/*
 
 impl<'a> Iterator for Iter<'a> {
     type Item = Result<(Vec<u8>, IVec)>;
@@ -82,19 +96,16 @@ impl<'a> Iterator for Iter<'a> {
 
             if self.last_id.is_none() {
                 // initialize iterator based on valid bound
-                let path_res = self.tree.path_for_key(start, &self.tx);
-                if let Err(e) = path_res {
-                    error!("iteration failed: {:?}", e);
-                    self.done = true;
-                    return Some(Err(e));
-                }
+                let view = match self.tree.view_for_key(start, &self.tx) {
+                    Ok(view) => view,
+                    Err(e) => {
+                        error!("iteration failed: {:?}", e);
+                        self.done = true;
+                        return Some(Err(e));
+                    }
+                };
 
-                let path = path_res.unwrap();
-
-                let (last_id, _last_frag, _tree_ptr) =
-                    path.last().expect("path should never be empty");
-
-                self.last_id = Some(*last_id);
+                self.last_id = Some(view.pid);
             }
 
             let last_id = self.last_id.unwrap();
@@ -236,39 +247,38 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
             if self.last_id.is_none() {
                 // initialize iterator based on valid bound
 
-                let path_res = self.tree.path_for_key(end, &self.tx);
-                if let Err(e) = path_res {
-                    error!("iteration failed: {:?}", e);
-                    self.done = true;
-                    return Some(Err(e));
-                }
-
-                let path = path_res.unwrap();
-
-                let (last_id, last_frag, _tree_ptr) =
-                    path.last().expect("path should never be empty");
-                let mut last_node = last_frag.unwrap_base();
-
-                // (when hi is empty, it means it's the rightmost node)
-                while unbounded && !last_node.hi.is_empty() {
-                    // if we're unbounded, scan to the end
-                    let res = self
-                        .tree
-                        .context
-                        .pagecache
-                        .get(last_node.next.unwrap(), &self.tx)
-                        .map(|page_get| page_get.unwrap());
-
-                    if let Err(e) = res {
+                let mut view = match self.tree.view_for_key(end, &self.tx) {
+                    Ok(view) => view,
+                    Err(e) => {
                         error!("iteration failed: {:?}", e);
                         self.done = true;
                         return Some(Err(e));
                     }
-                    let (frag, _ptr) = res.unwrap();
-                    last_node = frag.unwrap_base();
+                };
+
+                // (when hi is empty, it means it's the rightmost node)
+                while unbounded && !view.hi.is_empty() {
+                    // if we're unbounded, scan to the end
+                    let next_pid = view.next.unwrap();
+
+                    view = match self
+                        .tree
+                        .context
+                        .pagecache
+                        .get_page_frags(next_pid, &self.tx)
+                    {
+                        Ok((tree_ptr, frags)) => {
+                            View::new(next_pid, tree_ptr, frags)
+                        }
+                        Err(e) => {
+                            error!("iteration failed: {:?}", e);
+                            self.done = true;
+                            return Some(Err(e));
+                        }
+                    };
                 }
 
-                self.last_id = Some(*last_id);
+                self.last_id = Some(view.pid);
             }
 
             let last_id = self.last_id.unwrap();
@@ -358,26 +368,23 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 return None;
             }
 
-            let (mut next_id, mut next_node) = if split_detected {
+            let mut next_view = if split_detected {
                 // we need to skip ahead to get to the node
                 // where our last key resided
-                (last_id, node)
+                view
             } else {
                 // we need to get the node to the left of ours by
                 // guessing a key that might land on it, and then
                 // fast-forwarding through the right child pointers
                 // if we went too far to the left.
                 let pred = possible_predecessor(prefix)?;
-                match self.tree.path_for_key(pred, &self.tx) {
+                match self.tree.view_for_key(pred, &self.tx) {
                     Err(e) => {
                         error!("next_back iteration failed: {:?}", e);
                         self.done = true;
                         return Some(Err(e));
                     }
-                    Ok(path) => {
-                        let (id, base, _ptr) = path.last().unwrap();
-                        (*id, base.unwrap_base())
-                    }
+                    Ok(view) => (view.pid, view),
                 }
             };
 
@@ -423,6 +430,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
         }
     }
 }
+*/
 
 fn possible_predecessor(s: &[u8]) -> Option<Vec<u8>> {
     let mut ret = s.to_vec();

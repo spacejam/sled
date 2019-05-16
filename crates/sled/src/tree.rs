@@ -775,23 +775,6 @@ impl Tree {
     {
         let _measure = Measure::new(&M.tree_scan);
 
-        let tx = match self.context.pagecache.begin() {
-            Ok(tx) => tx,
-            Err(e) => {
-                return Iter {
-                    tree: &self,
-                    tx: Tx::new(&self.context.pagecache, 0),
-                    broken: Some(e),
-                    done: false,
-                    hi: ops::Bound::Unbounded,
-                    lo: ops::Bound::Unbounded,
-                    is_scan: false,
-                    last_key: None,
-                    last_id: None,
-                };
-            }
-        };
-
         let lo = match range.start_bound() {
             ops::Bound::Included(ref end) => {
                 ops::Bound::Included(end.as_ref().to_vec())
@@ -801,6 +784,7 @@ impl Tree {
             }
             ops::Bound::Unbounded => ops::Bound::Unbounded,
         };
+
         let hi = match range.end_bound() {
             ops::Bound::Included(ref end) => {
                 ops::Bound::Included(end.as_ref().to_vec())
