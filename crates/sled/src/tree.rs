@@ -96,7 +96,8 @@ impl Tree {
 
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
 
-            let last_value = view.leaf_value_for_key(&encoded_key).cloned();
+            let last_value =
+                view.leaf_value_for_key(&encoded_key, &self.context);
             let frag = Frag::Set(encoded_key, value.clone());
             let link = self.context.pagecache.link(
                 view.pid,
@@ -193,7 +194,7 @@ impl Tree {
                 }
 
                 tx.flush();
-                return Ok(existing_val.cloned());
+                return Ok(existing_val);
             }
         }
     }
@@ -538,7 +539,7 @@ impl Tree {
         } else {
             let idx = search.unwrap();
             let (encoded_key, v) = &items[idx];
-            Some((prefix_decode(&last_node.lo, &*encoded_key), v.clone()))
+            Some((prefix_decode(view.lo, &*encoded_key), v.clone()))
         };
 
         tx.flush();
@@ -596,7 +597,7 @@ impl Tree {
         } else {
             let idx = search.unwrap();
             let (encoded_key, v) = &items[idx];
-            Some((prefix_decode(&last_node.lo, &*encoded_key), v.clone()))
+            Some((prefix_decode(view.lo, &*encoded_key), v.clone()))
         };
 
         tx.flush();
@@ -915,7 +916,6 @@ impl Tree {
                 .root_hoist(root_pid.unwrap(), rhs_pid, rhs_lo, tx)
                 .is_ok()
             {
-                println!("hoisted root!");
                 M.tree_root_split_success();
             }
         }
