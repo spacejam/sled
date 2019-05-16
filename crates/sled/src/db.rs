@@ -138,9 +138,7 @@ impl Db {
         let mut leftmost_chain: Vec<PageId> = vec![root_id.unwrap()];
         let mut cursor = root_id.unwrap();
         loop {
-            let (tree_ptr, frags) =
-                self.context.pagecache.get_page_frags(cursor, &tx)?;
-            let view = View::new(cursor, tree_ptr, frags);
+            let view = self.view_for_pid(cursor, &tx)?;
             let node = view.compact(&self.context);
 
             if let Some(index) = node.data.index_ref() {
