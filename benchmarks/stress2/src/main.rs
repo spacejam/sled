@@ -178,7 +178,7 @@ fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
             }
             v if v > cas_max && v <= scan_max => {
                 let _ = tree
-                    .scan(&key)
+                    .range(key..)
                     .take(rng.gen_range(0, 15))
                     .map(|res| res.unwrap())
                     .collect::<Vec<_>>();

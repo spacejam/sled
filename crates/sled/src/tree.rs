@@ -776,45 +776,6 @@ impl Tree {
     }
 
     /// Create a double-ended iterator over tuples of keys and values,
-    /// starting at the provided key.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use sled::{ConfigBuilder, Db, IVec};
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let t = Db::start(config).unwrap();
-    ///
-    /// t.set(&[0], vec![0]).unwrap();
-    /// t.set(&[1], vec![10]).unwrap();
-    /// t.set(&[2], vec![20]).unwrap();
-    /// t.set(&[3], vec![30]).unwrap();
-    /// t.set(&[4], vec![40]).unwrap();
-    /// t.set(&[5], vec![50]).unwrap();
-    ///
-    /// let mut r = t.scan(&[2]);
-    /// assert_eq!(r.next().unwrap(), Ok((vec![2], IVec::from(vec![20]))));
-    /// assert_eq!(r.next().unwrap(), Ok((vec![3], IVec::from(vec![30]))));
-    /// assert_eq!(r.next().unwrap(), Ok((vec![4], IVec::from(vec![40]))));
-    /// assert_eq!(r.next().unwrap(), Ok((vec![5], IVec::from(vec![50]))));
-    /// assert_eq!(r.next(), None);
-    ///
-    /// let mut r = t.scan(&[2]).rev();
-    /// assert_eq!(r.next().unwrap(), Ok((vec![2], IVec::from(vec![20]))));
-    /// assert_eq!(r.next().unwrap(), Ok((vec![1], IVec::from(vec![10]))));
-    /// assert_eq!(r.next().unwrap(), Ok((vec![0], IVec::from(vec![0]))));
-    /// assert_eq!(r.next(), None);
-    /// ```
-    pub fn scan<K>(&self, key: K) -> Iter<'_>
-    where
-        K: AsRef<[u8]>,
-    {
-        let mut iter = self.range(key..);
-        iter.is_scan = true;
-        iter
-    }
-
-    /// Create a double-ended iterator over tuples of keys and values,
     /// where the keys fall within the specified range.
     ///
     /// # Examples
@@ -891,63 +852,7 @@ impl Tree {
             hi,
             lo,
             last_id: None,
-            last_key: None,
-            broken: None,
-            done: false,
-            is_scan: false,
-            tx,
         }
-    }
-
-    /// Create a double-ended iterator over keys, starting at the provided key.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let config = sled::ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Db::start(config).unwrap();
-    /// t.set(&[1], vec![10]);
-    /// t.set(&[2], vec![20]);
-    /// t.set(&[3], vec![30]);
-    /// let mut iter = t.keys(&[2]);
-    /// assert_eq!(iter.next().unwrap(), Ok(vec![2]));
-    /// assert_eq!(iter.next().unwrap(), Ok(vec![3]));
-    /// assert_eq!(iter.next(), None);
-    /// ```
-    pub fn keys<'a, K>(
-        &'a self,
-        key: K,
-    ) -> impl 'a + DoubleEndedIterator<Item = Result<Vec<u8>>>
-    where
-        K: AsRef<[u8]>,
-    {
-        self.scan(key).keys()
-    }
-
-    /// Create a double-ended iterator over values, starting at the provided key.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use sled::{ConfigBuilder, Db, IVec};
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let t = Db::start(config).unwrap();
-    /// t.set(b"a", vec![1]);
-    /// t.set(b"b", vec![2]);
-    /// t.set(b"c", vec![3]);
-    /// let mut iter = t.values(b"b");
-    /// assert_eq!(iter.next().unwrap(), Ok(IVec::from(vec![2])));
-    /// assert_eq!(iter.next().unwrap(), Ok(IVec::from(vec![3])));
-    /// assert_eq!(iter.next(), None);
-    /// ```
-    pub fn values<'a, K>(
-        &'a self,
-        key: K,
-    ) -> impl 'a + DoubleEndedIterator<Item = Result<IVec>>
-    where
-        K: AsRef<[u8]>,
-    {
-        self.scan(key).values()
     }
 
     /// Returns the number of elements in this tree.
@@ -976,7 +881,7 @@ impl Tree {
     ///
     /// Note that this is not atomic.
     pub fn clear(&self) -> Result<()> {
-        for k in self.keys(b"") {
+        for k in self.iter().keys() {
             let key = k?;
             self.del(key)?;
         }
