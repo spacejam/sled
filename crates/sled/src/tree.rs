@@ -1404,35 +1404,52 @@ impl Tree {
         let index = parent.data.index_ref().unwrap();
         let merge_index = index.iter().position(|(_, pid)| pid == &child_pid).unwrap();
 
-        let cursor_page_get = self.context.pagecache.get((index[merge_index - 1]).1, tx)?;
+        let mut cursor_pid = (index[merge_index - 1]).1;
 
-        // The only way this child could have been freed is if the original merge has
-        // already been handled. Only in that case can this child have been freed
-        if cursor_page_get.is_free() {
-            return Ok(());
-        }
+        loop {
+            let cursor_page_get = self.context.pagecache.get(cursor_pid, tx)?;
 
-        let (cursor_frag, _cursor_cas_key) = match cursor_page_get {
-            PageGet::Materialized(node, cas_key) => (node, cas_key),
-            broken => {
-                return Err(Error::ReportableBug(format!(
-                    "got non-base node while traversing tree: {:?}",
-                    broken
-                )));
+            // The only way this child could have been freed is if the original merge has
+            // already been handled. Only in that case can this child have been freed
+            if cursor_page_get.is_free() {
+                return Ok(());
             }
-        };
 
-        let mut cursor_node = cursor_frag.unwrap_base();
+            let (cursor_frag, cursor_cas_key) = match cursor_page_get {
+                PageGet::Materialized(node, cas_key) => (node, cas_key),
+                broken => {
+                    return Err(Error::ReportableBug(format!(
+                        "got non-base node while traversing tree: {:?}",
+                        broken
+                    )));
+                }
+            };
 
-        // ...
-        while cursor_node.lo < child_node.lo {
+            let cursor_node = cursor_frag.unwrap_base();
+
+            // Make sure we don't overseek cursor
+            if cursor_node.lo >= child_node.lo {
+                return Ok(());
+            }
 
             // This means that `cursor_node` is the node we want to replace
             if cursor_node.next == Some(child_pid) {
-
+                let replacement = cursor_node.receive_merge(child_node);
+                let replace_frag = self.context.pagecache.replace(cursor_pid, cursor_cas_key, Frag::Base(replacement), tx)?;
+                match replace_frag {
+                    Ok(_) => break,
+                    Err(None) => return Ok(()),
+                    Err(_) => continue,
+                }
+            } else {
+                // In case we didn't find the child, we get the next cursor node
+                if let Some(next) = cursor_node.next {
+                    cursor_pid = next;
+                } else {
+                    return Ok(());
+                }
             }
         }
-
 
         Ok(())
     }
