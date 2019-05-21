@@ -1287,7 +1287,7 @@ impl Tree {
 
             // When we encounter a merge intention, we collaboratively help out
             if let Some(_) = node.merging_child {
-                self.merge_node(cursor, node, tx)?;
+                self.merge_node(cursor, cas_key.clone(), node, tx)?;
             }
 
             // TODO this may need to change when handling (half) merges
@@ -1367,7 +1367,7 @@ impl Tree {
         Ok(path)
     }
 
-    pub(crate) fn merge_node<'g>(&self, pid_parent: PageId, parent: &Node, tx: &'g Tx<Frag>) -> Result<()> {
+    pub(crate) fn merge_node<'g>(&self, parent_pid: PageId, parent_cas_key: TreePtr<'g>, parent: &Node, tx: &'g Tx<Frag>) -> Result<()> {
         let child_pid = parent.merging_child.unwrap();
 
         // Get the child node and try to install a `MergeCap` frag.
@@ -1428,8 +1428,11 @@ impl Tree {
             let cursor_node = cursor_frag.unwrap_base();
 
             // Make sure we don't overseek cursor
+            // We break instead of returning because otherwise a thread that
+            // collaboratively wants to complete the merge could never reach
+            // the point where it can install the merge confirmation frag.
             if cursor_node.lo >= child_node.lo {
-                return Ok(());
+                break;
             }
 
             // This means that `cursor_node` is the node we want to replace
@@ -1448,6 +1451,40 @@ impl Tree {
                 } else {
                     return Ok(());
                 }
+            }
+        }
+
+        let mut parent_cas_key = parent_cas_key;
+
+        loop {
+            let linked = self.context.pagecache.link(parent_pid, parent_cas_key, Frag::ParentMergeConfirm, tx)?;
+            match linked {
+                Ok(_) => break,
+                Err(None) => break,
+                Err(_) => {
+                    let parent_page_get = self.context.pagecache.get(parent_pid, tx)?;
+                    if parent_page_get.is_free() {
+                        break;
+                    }
+
+                    let (parent_frag, new_parent_cas_key) = match parent_page_get {
+                        PageGet::Materialized(node, cas_key) => (node, cas_key),
+                        broken => {
+                            return Err(Error::ReportableBug(format!(
+                                "got non-base node while traversing tree: {:?}",
+                                broken
+                            )));
+                        }
+                    };
+
+                    let parent_node = parent_frag.unwrap_base();
+
+                    if parent_node.merging_child != Some(child_pid) {
+                        break;
+                    }
+
+                    parent_cas_key = new_parent_cas_key;
+                },
             }
         }
 
