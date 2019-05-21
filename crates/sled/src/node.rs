@@ -76,9 +76,18 @@ impl Node {
                 }
             }
             Base(_) => panic!("encountered base page in middle of chain"),
-            ParentMergeIntention(_pid) => unimplemented!(),
-            ParentMergeConfirm => unimplemented!(),
-            ChildMergeCap => unimplemented!(),
+            ParentMergeIntention(pid) => {
+                assert!(self.merging_child.is_none());
+                self.merging_child = Some(pid);
+            }
+            ParentMergeConfirm => {
+                assert!(self.merging_child.is_some());
+                self.merging_child = None;
+            },
+            ChildMergeCap => {
+                assert!(!self.merging);
+                self.merging = true;
+            },
         }
     }
 
