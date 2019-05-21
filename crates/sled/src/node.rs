@@ -172,4 +172,11 @@ impl Node {
             merging: false,
         }
     }
+
+    pub(crate) fn receive_merge(&self, rhs: &Node) -> Node {
+        let mut merged = self.clone();
+        merged.hi = rhs.hi.clone();
+        merged.data.receive_merge(rhs.lo.as_ref(), merged.lo.as_ref(), &rhs.data);
+        merged
+    }
 }

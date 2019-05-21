@@ -1401,7 +1401,37 @@ impl Tree {
             }
         };
 
+        let index = parent.data.index_ref().unwrap();
+        let merge_index = index.iter().position(|(_, pid)| pid == &child_pid).unwrap();
 
+        let cursor_page_get = self.context.pagecache.get((index[merge_index - 1]).1, tx)?;
+
+        // The only way this child could have been freed is if the original merge has
+        // already been handled. Only in that case can this child have been freed
+        if cursor_page_get.is_free() {
+            return Ok(());
+        }
+
+        let (cursor_frag, _cursor_cas_key) = match cursor_page_get {
+            PageGet::Materialized(node, cas_key) => (node, cas_key),
+            broken => {
+                return Err(Error::ReportableBug(format!(
+                    "got non-base node while traversing tree: {:?}",
+                    broken
+                )));
+            }
+        };
+
+        let mut cursor_node = cursor_frag.unwrap_base();
+
+        // ...
+        while cursor_node.lo < child_node.lo {
+
+            // This means that `cursor_node` is the node we want to replace
+            if cursor_node.next == Some(child_pid) {
+
+            }
+        }
 
 
         Ok(())
