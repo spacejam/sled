@@ -53,6 +53,8 @@ pub struct ConfigBuilder {
     #[doc(hidden)]
     pub blink_node_split_size: usize,
     #[doc(hidden)]
+    pub blink_node_merge_ratio: usize,
+    #[doc(hidden)]
     pub cache_bits: usize,
     #[doc(hidden)]
     pub cache_capacity: u64,
@@ -104,6 +106,7 @@ impl Default for ConfigBuilder {
             io_bufs: 3,
             io_buf_size: 2 << 22, // 8mb
             blink_node_split_size: 4096,
+            blink_node_merge_ratio: 4,
             page_consolidation_threshold: 10,
             path: PathBuf::from(DEFAULT_PATH),
             read_only: false,

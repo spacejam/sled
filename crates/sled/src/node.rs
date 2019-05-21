@@ -161,6 +161,10 @@ impl Node {
         self.data.len() > 2 && self.size_in_bytes() > max_sz && self.merging_child.is_none() && !self.merging
     }
 
+    pub(crate) fn should_merge(&self, min_sz: u64) -> bool {
+        self.size_in_bytes() < min_sz && self.merging_child.is_none() && !self.merging
+    }
+
     pub(crate) fn split(&self) -> Node {
         let (split, right_data) = self.data.split(&self.lo);
         Node {
