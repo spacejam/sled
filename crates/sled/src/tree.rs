@@ -113,8 +113,7 @@ impl Tree {
             if let Ok(new_cas_key) = link {
                 // success
                 if let Some(res) = subscriber_reservation.take() {
-                    let event =
-                        subscription::Event::Set(key.as_ref().to_vec(), value);
+                    let event = subscription::Event::Set(key.as_ref().to_vec(), value);
 
                     res.complete(event);
                 }
@@ -1367,7 +1366,13 @@ impl Tree {
         Ok(path)
     }
 
-    pub(crate) fn merge_node<'g>(&self, parent_pid: PageId, parent_cas_key: TreePtr<'g>, parent: &Node, tx: &'g Tx<Frag>) -> Result<()> {
+    pub(crate) fn merge_node<'g>(
+        &self,
+        parent_pid: PageId,
+        parent_cas_key: TreePtr<'g>,
+        parent: &Node,
+        tx: &'g Tx<Frag>,
+    ) -> Result<()> {
         let child_pid = parent.merging_child.unwrap();
 
         // Get the child node and try to install a `MergeCap` frag.
@@ -1393,7 +1398,12 @@ impl Tree {
                 break child_node;
             }
 
-            let install_frag = self.context.pagecache.link(child_pid, child_cas_key, Frag::ChildMergeCap, tx)?;
+            let install_frag = self.context.pagecache.link(
+                child_pid,
+                child_cas_key,
+                Frag::ChildMergeCap,
+                tx,
+            )?;
             match install_frag {
                 Ok(_) => break child_node,
                 Err(Some((_, _))) => continue,
@@ -1402,7 +1412,8 @@ impl Tree {
         };
 
         let index = parent.data.index_ref().unwrap();
-        let merge_index = index.iter().position(|(_, pid)| pid == &child_pid).unwrap();
+        let merge_index =
+            index.iter().position(|(_, pid)| pid == &child_pid).unwrap();
 
         let mut cursor_pid = (index[merge_index - 1]).1;
 
@@ -1438,7 +1449,12 @@ impl Tree {
             // This means that `cursor_node` is the node we want to replace
             if cursor_node.next == Some(child_pid) {
                 let replacement = cursor_node.receive_merge(child_node);
-                let replace_frag = self.context.pagecache.replace(cursor_pid, cursor_cas_key, Frag::Base(replacement), tx)?;
+                let replace_frag = self.context.pagecache.replace(
+                    cursor_pid,
+                    cursor_cas_key,
+                    Frag::Base(replacement),
+                    tx,
+                )?;
                 match replace_frag {
                     Ok(_) => break,
                     Err(None) => return Ok(()),
@@ -1457,25 +1473,34 @@ impl Tree {
         let mut parent_cas_key = parent_cas_key;
 
         loop {
-            let linked = self.context.pagecache.link(parent_pid, parent_cas_key, Frag::ParentMergeConfirm, tx)?;
+            let linked = self.context.pagecache.link(
+                parent_pid,
+                parent_cas_key,
+                Frag::ParentMergeConfirm,
+                tx,
+            )?;
             match linked {
                 Ok(_) => break,
                 Err(None) => break,
                 Err(_) => {
-                    let parent_page_get = self.context.pagecache.get(parent_pid, tx)?;
+                    let parent_page_get =
+                        self.context.pagecache.get(parent_pid, tx)?;
                     if parent_page_get.is_free() {
                         break;
                     }
 
-                    let (parent_frag, new_parent_cas_key) = match parent_page_get {
-                        PageGet::Materialized(node, cas_key) => (node, cas_key),
-                        broken => {
-                            return Err(Error::ReportableBug(format!(
+                    let (parent_frag, new_parent_cas_key) =
+                        match parent_page_get {
+                            PageGet::Materialized(node, cas_key) => {
+                                (node, cas_key)
+                            }
+                            broken => {
+                                return Err(Error::ReportableBug(format!(
                                 "got non-base node while traversing tree: {:?}",
                                 broken
                             )));
-                        }
-                    };
+                            }
+                        };
 
                     let parent_node = parent_frag.unwrap_base();
 
@@ -1484,7 +1509,7 @@ impl Tree {
                     }
 
                     parent_cas_key = new_parent_cas_key;
-                },
+                }
             }
         }
 

@@ -83,11 +83,11 @@ impl Node {
             ParentMergeConfirm => {
                 assert!(self.merging_child.is_some());
                 self.merging_child = None;
-            },
+            }
             ChildMergeCap => {
                 assert!(!self.merging);
                 self.merging = true;
-            },
+            }
         }
     }
 
@@ -167,11 +167,16 @@ impl Node {
     }
 
     pub(crate) fn should_split(&self, max_sz: u64) -> bool {
-        self.data.len() > 2 && self.size_in_bytes() > max_sz && self.merging_child.is_none() && !self.merging
+        self.data.len() > 2
+            && self.size_in_bytes() > max_sz
+            && self.merging_child.is_none()
+            && !self.merging
     }
 
     pub(crate) fn should_merge(&self, min_sz: u64) -> bool {
-        self.size_in_bytes() < min_sz && self.merging_child.is_none() && !self.merging
+        self.size_in_bytes() < min_sz
+            && self.merging_child.is_none()
+            && !self.merging
     }
 
     pub(crate) fn split(&self) -> Node {
@@ -189,7 +194,11 @@ impl Node {
     pub(crate) fn receive_merge(&self, rhs: &Node) -> Node {
         let mut merged = self.clone();
         merged.hi = rhs.hi.clone();
-        merged.data.receive_merge(rhs.lo.as_ref(), merged.lo.as_ref(), &rhs.data);
+        merged.data.receive_merge(
+            rhs.lo.as_ref(),
+            merged.lo.as_ref(),
+            &rhs.data,
+        );
         merged
     }
 }

@@ -83,10 +83,19 @@ impl Data {
         }
     }
 
-    pub(crate) fn receive_merge(&mut self, old_prefix: &[u8], new_prefix: &[u8], rhs_data: &Data) {
-        fn receive_merge_inner<T>(old_prefix: &[u8], new_prefix: &[u8], lhs_data: &mut Vec<(IVec, T)>, rhs_data: &[(IVec, T)])
-        where
-            T: Clone
+    pub(crate) fn receive_merge(
+        &mut self,
+        old_prefix: &[u8],
+        new_prefix: &[u8],
+        rhs_data: &Data,
+    ) {
+        fn receive_merge_inner<T>(
+            old_prefix: &[u8],
+            new_prefix: &[u8],
+            lhs_data: &mut Vec<(IVec, T)>,
+            rhs_data: &[(IVec, T)],
+        ) where
+            T: Clone,
         {
             for (k, v) in rhs_data {
                 let k = prefix_reencode(old_prefix, new_prefix, k);
@@ -96,12 +105,22 @@ impl Data {
 
         match (self, rhs_data) {
             (Data::Index(ref mut lh_ptrs), Data::Index(ref rh_ptrs)) => {
-                receive_merge_inner(old_prefix, new_prefix, lh_ptrs, rh_ptrs.as_ref());
+                receive_merge_inner(
+                    old_prefix,
+                    new_prefix,
+                    lh_ptrs,
+                    rh_ptrs.as_ref(),
+                );
             }
             (Data::Leaf(ref mut lh_items), Data::Leaf(ref rh_items)) => {
-                receive_merge_inner(old_prefix, new_prefix, lh_items, rh_items.as_ref());
+                receive_merge_inner(
+                    old_prefix,
+                    new_prefix,
+                    lh_items,
+                    rh_items.as_ref(),
+                );
             }
-            _ => panic!("Can't merge incompatible Data!")
+            _ => panic!("Can't merge incompatible Data!"),
         }
     }
 
