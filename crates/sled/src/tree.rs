@@ -1154,6 +1154,8 @@ impl Tree {
             next: None,
             lo: vec![].into(),
             hi: vec![].into(),
+            merging_child: None,
+            merging: false,
         });
 
         let (new_root_pid, new_root_ptr) =
@@ -1283,6 +1285,11 @@ impl Tree {
 
             let node = frag.unwrap_base();
 
+            // When we encounter a merge intention, we collaboratively help out
+            if let Some(_) = node.merging_child {
+                self.merge_node(cursor, node, tx)?;
+            }
+
             // TODO this may need to change when handling (half) merges
             assert!(node.lo.as_ref() <= key.as_ref(), "overshot key somehow");
 
@@ -1358,6 +1365,46 @@ impl Tree {
         }
 
         Ok(path)
+    }
+
+    pub(crate) fn merge_node<'g>(&self, pid_parent: PageId, parent: &Node, tx: &'g Tx<Frag>) -> Result<()> {
+        let child_pid = parent.merging_child.unwrap();
+
+        // Get the child node and try to install a `MergeCap` frag.
+        // In case we succeed, we break, otherwise we try from the start.
+        let child_node = loop {
+            let get_cursor = self.context.pagecache.get(child_pid, tx)?;
+            if get_cursor.is_free() {
+                return Ok(());
+            }
+
+            let (child_frag, child_cas_key) = match get_cursor {
+                PageGet::Materialized(node, cas_key) => (node, cas_key),
+                broken => {
+                    return Err(Error::ReportableBug(format!(
+                        "got non-base node while traversing tree: {:?}",
+                        broken
+                    )));
+                }
+            };
+
+            let mut child_node = child_frag.unwrap_base();
+            if child_node.merging {
+                break child_node;
+            }
+
+            let install_frag = self.context.pagecache.link(child_pid, child_cas_key, Frag::ChildMergeCap, tx)?;
+            match install_frag {
+                Ok(_) => break child_node,
+                Err(Some((ptr, frag))) => continue,
+                Err(None) => return Ok(()),
+            }
+        };
+
+
+
+
+        Ok(())
     }
 
     // Remove all pages for this tree from the underlying

@@ -8,6 +8,8 @@ pub(crate) struct Node {
     pub(crate) next: Option<PageId>,
     pub(crate) lo: IVec,
     pub(crate) hi: IVec,
+    pub(crate) merging_child: Option<PageId>,
+    pub(crate) merging: bool,
 }
 
 impl Node {
@@ -74,6 +76,9 @@ impl Node {
                 }
             }
             Base(_) => panic!("encountered base page in middle of chain"),
+            ParentMergeIntention(_pid) => unimplemented!(),
+            ParentMergeConfirm => unimplemented!(),
+            ChildMergeCap => unimplemented!(),
         }
     }
 
@@ -153,7 +158,7 @@ impl Node {
     }
 
     pub(crate) fn should_split(&self, max_sz: u64) -> bool {
-        self.data.len() > 2 && self.size_in_bytes() > max_sz
+        self.data.len() > 2 && self.size_in_bytes() > max_sz && self.merging_child.is_none() && !self.merging
     }
 
     pub(crate) fn split(&self) -> Node {
@@ -163,6 +168,8 @@ impl Node {
             next: self.next,
             lo: split,
             hi: self.hi.clone(),
+            merging_child: None,
+            merging: false,
         }
     }
 }
