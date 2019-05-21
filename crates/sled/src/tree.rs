@@ -113,8 +113,7 @@ impl Tree {
             if let Ok(new_cas_key) = link {
                 // success
                 if let Some(res) = subscriber_reservation.take() {
-                    let event =
-                        subscription::Event::Set(key.as_ref().to_vec(), value);
+                    let event = subscription::Event::Set(key.as_ref().to_vec(), value);
 
                     res.complete(event);
                 }
@@ -1154,6 +1153,8 @@ impl Tree {
             next: None,
             lo: vec![].into(),
             hi: vec![].into(),
+            merging_child: None,
+            merging: false,
         });
 
         let (new_root_pid, new_root_ptr) =
@@ -1283,6 +1284,11 @@ impl Tree {
 
             let node = frag.unwrap_base();
 
+            // When we encounter a merge intention, we collaboratively help out
+            if let Some(_) = node.merging_child {
+                self.merge_node(cursor, cas_key.clone(), node, tx)?;
+            }
+
             // TODO this may need to change when handling (half) merges
             assert!(node.lo.as_ref() <= key.as_ref(), "overshot key somehow");
 
@@ -1358,6 +1364,156 @@ impl Tree {
         }
 
         Ok(path)
+    }
+
+    pub(crate) fn merge_node<'g>(
+        &self,
+        parent_pid: PageId,
+        parent_cas_key: TreePtr<'g>,
+        parent: &Node,
+        tx: &'g Tx<Frag>,
+    ) -> Result<()> {
+        let child_pid = parent.merging_child.unwrap();
+
+        // Get the child node and try to install a `MergeCap` frag.
+        // In case we succeed, we break, otherwise we try from the start.
+        let child_node = loop {
+            let get_cursor = self.context.pagecache.get(child_pid, tx)?;
+            if get_cursor.is_free() {
+                return Ok(());
+            }
+
+            let (child_frag, child_cas_key) = match get_cursor {
+                PageGet::Materialized(node, cas_key) => (node, cas_key),
+                broken => {
+                    return Err(Error::ReportableBug(format!(
+                        "got non-base node while traversing tree: {:?}",
+                        broken
+                    )));
+                }
+            };
+
+            let child_node = child_frag.unwrap_base();
+            if child_node.merging {
+                break child_node;
+            }
+
+            let install_frag = self.context.pagecache.link(
+                child_pid,
+                child_cas_key,
+                Frag::ChildMergeCap,
+                tx,
+            )?;
+            match install_frag {
+                Ok(_) => break child_node,
+                Err(Some((_, _))) => continue,
+                Err(None) => return Ok(()),
+            }
+        };
+
+        let index = parent.data.index_ref().unwrap();
+        let merge_index =
+            index.iter().position(|(_, pid)| pid == &child_pid).unwrap();
+
+        let mut cursor_pid = (index[merge_index - 1]).1;
+
+        loop {
+            let cursor_page_get = self.context.pagecache.get(cursor_pid, tx)?;
+
+            // The only way this child could have been freed is if the original merge has
+            // already been handled. Only in that case can this child have been freed
+            if cursor_page_get.is_free() {
+                return Ok(());
+            }
+
+            let (cursor_frag, cursor_cas_key) = match cursor_page_get {
+                PageGet::Materialized(node, cas_key) => (node, cas_key),
+                broken => {
+                    return Err(Error::ReportableBug(format!(
+                        "got non-base node while traversing tree: {:?}",
+                        broken
+                    )));
+                }
+            };
+
+            let cursor_node = cursor_frag.unwrap_base();
+
+            // Make sure we don't overseek cursor
+            // We break instead of returning because otherwise a thread that
+            // collaboratively wants to complete the merge could never reach
+            // the point where it can install the merge confirmation frag.
+            if cursor_node.lo >= child_node.lo {
+                break;
+            }
+
+            // This means that `cursor_node` is the node we want to replace
+            if cursor_node.next == Some(child_pid) {
+                let replacement = cursor_node.receive_merge(child_node);
+                let replace_frag = self.context.pagecache.replace(
+                    cursor_pid,
+                    cursor_cas_key,
+                    Frag::Base(replacement),
+                    tx,
+                )?;
+                match replace_frag {
+                    Ok(_) => break,
+                    Err(None) => return Ok(()),
+                    Err(_) => continue,
+                }
+            } else {
+                // In case we didn't find the child, we get the next cursor node
+                if let Some(next) = cursor_node.next {
+                    cursor_pid = next;
+                } else {
+                    return Ok(());
+                }
+            }
+        }
+
+        let mut parent_cas_key = parent_cas_key;
+
+        loop {
+            let linked = self.context.pagecache.link(
+                parent_pid,
+                parent_cas_key,
+                Frag::ParentMergeConfirm,
+                tx,
+            )?;
+            match linked {
+                Ok(_) => break,
+                Err(None) => break,
+                Err(_) => {
+                    let parent_page_get =
+                        self.context.pagecache.get(parent_pid, tx)?;
+                    if parent_page_get.is_free() {
+                        break;
+                    }
+
+                    let (parent_frag, new_parent_cas_key) =
+                        match parent_page_get {
+                            PageGet::Materialized(node, cas_key) => {
+                                (node, cas_key)
+                            }
+                            broken => {
+                                return Err(Error::ReportableBug(format!(
+                                "got non-base node while traversing tree: {:?}",
+                                broken
+                            )));
+                            }
+                        };
+
+                    let parent_node = parent_frag.unwrap_base();
+
+                    if parent_node.merging_child != Some(child_pid) {
+                        break;
+                    }
+
+                    parent_cas_key = new_parent_cas_key;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     // Remove all pages for this tree from the underlying

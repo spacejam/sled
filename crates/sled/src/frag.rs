@@ -16,6 +16,9 @@ pub(crate) enum Frag {
     Base(Node),
     ChildSplit(ChildSplit),
     ParentSplit(ParentSplit),
+    ParentMergeIntention(PageId),
+    ParentMergeConfirm,
+    ChildMergeCap,
 }
 
 impl Frag {
