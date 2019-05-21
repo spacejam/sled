@@ -1388,7 +1388,7 @@ impl Tree {
                 }
             };
 
-            let mut child_node = child_frag.unwrap_base();
+            let child_node = child_frag.unwrap_base();
             if child_node.merging {
                 break child_node;
             }
@@ -1396,7 +1396,7 @@ impl Tree {
             let install_frag = self.context.pagecache.link(child_pid, child_cas_key, Frag::ChildMergeCap, tx)?;
             match install_frag {
                 Ok(_) => break child_node,
-                Err(Some((ptr, frag))) => continue,
+                Err(Some((_, _))) => continue,
                 Err(None) => return Ok(()),
             }
         };
