@@ -38,7 +38,7 @@ impl<'a> IntoIterator for &'a Tree {
 /// ).unwrap();
 ///
 /// // Iterates over key-value pairs, starting at the given key.
-/// let mut iter = t.scan(b"a non-present key before yo!");
+/// let mut iter = t.range(b"a non-present key before yo!"..);
 /// assert_eq!(iter.next().unwrap(), Ok((b"yo!".to_vec(), IVec::from(b"v2"))));
 /// assert_eq!(iter.next(), None);
 ///
@@ -969,10 +969,13 @@ impl Tree {
         &self,
         pid: PageId,
         tx: &'g Tx<BLinkMaterializer, Frag>,
-    ) -> Result<View<'g>> {
-        let (tree_ptr, frags) =
-            self.context.pagecache.get_page_frags(pid, tx)?;
-        Ok(View::new(pid, tree_ptr, frags))
+    ) -> Result<Option<View<'g>>> {
+        let frag_opt = self.context.pagecache.get_page_frags(pid, tx)?;
+        if let Some((tree_ptr, frags)) = frag_opt {
+            Ok(Some(View::new(pid, tree_ptr, frags)))
+        } else {
+            Ok(None)
+        }
     }
 
     /// returns the traversal path, completing any observed
@@ -999,7 +1002,21 @@ impl Tree {
                 return Err(Error::CollectionNotFound(self.tree_id.clone()));
             }
 
-            let view = self.view_for_pid(cursor, tx)?;
+            let view_opt = self.view_for_pid(cursor, tx)?;
+            let view = if let Some(view) = view_opt {
+                view
+            } else {
+                not_found_loops += 1;
+                debug_assert_ne!(
+                    not_found_loops, 10_000,
+                    "cannot find pid {} in view_for_key",
+                    cursor
+                );
+                cursor = self.root.load(SeqCst);
+                root_pid = Some(cursor);
+                parent_view = None;
+                continue;
+            };
 
             if view.is_free() || view.lo > key.as_ref() {
                 // restart search from the tree's root

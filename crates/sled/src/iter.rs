@@ -1,22 +1,22 @@
-use std::ops;
+use std::ops::Bound;
 
 use pagecache::{Measure, M};
 
 use super::*;
 
-fn lower_bound_includes<'a>(lb: &ops::Bound<Vec<u8>>, item: &'a [u8]) -> bool {
+fn lower_bound_includes<'a>(lb: &Bound<IVec>, item: &'a [u8]) -> bool {
     match lb {
-        ops::Bound::Included(ref start) => start.as_slice() <= item,
-        ops::Bound::Excluded(ref start) => start.as_slice() < item,
-        ops::Bound::Unbounded => true,
+        Bound::Included(ref start) => start.as_ref() <= item,
+        Bound::Excluded(ref start) => start.as_ref() < item,
+        Bound::Unbounded => true,
     }
 }
 
-fn upper_bound_includes<'a>(ub: &ops::Bound<Vec<u8>>, item: &'a [u8]) -> bool {
+fn upper_bound_includes<'a>(ub: &Bound<IVec>, item: &'a [u8]) -> bool {
     match ub {
-        ops::Bound::Included(ref end) => item <= end.as_ref(),
-        ops::Bound::Excluded(ref end) => item < end.as_ref(),
-        ops::Bound::Unbounded => true,
+        Bound::Included(ref end) => item <= end.as_ref(),
+        Bound::Excluded(ref end) => item < end.as_ref(),
+        Bound::Unbounded => true,
     }
 }
 
@@ -47,8 +47,8 @@ macro_rules! iter_try {
 /// An iterator over keys and values in a `Tree`.
 pub struct Iter<'a> {
     pub(super) tree: &'a Tree,
-    pub(super) hi: ops::Bound<IVec>,
-    pub(super) lo: ops::Bound<IVec>,
+    pub(super) hi: Bound<IVec>,
+    pub(super) lo: Bound<IVec>,
     pub(super) last_id: Option<PageId>,
 }
 
@@ -62,6 +62,38 @@ impl<'a> Iter<'a> {
     pub fn values(self) -> impl 'a + DoubleEndedIterator<Item = Result<IVec>> {
         self.map(|r| r.map(|(_k, v)| v))
     }
+
+    fn finished(&self) -> bool {
+        match (&self.lo, &self.hi) {
+            (Bound::Included(ref start), Bound::Included(ref end))
+            | (Bound::Included(ref start), Bound::Excluded(ref end))
+            | (Bound::Excluded(ref start), Bound::Included(ref end))
+            | (Bound::Excluded(ref start), Bound::Excluded(ref end)) => {
+                start > end
+            }
+            _ => false,
+        }
+    }
+
+    fn cached_view<'b>(
+        &self,
+        tx: &'b Tx<BLinkMaterializer, Frag>,
+    ) -> Result<Option<View<'b>>> {
+        if self.last_id.is_none() {
+            return Ok(None);
+        }
+
+        let last_id = self.last_id.unwrap();
+
+        self.tree.view_for_pid(last_id, &tx)
+    }
+
+    fn low_key(&self) -> &[u8] {
+        match self.lo {
+            Bound::Unbounded => &[],
+            Bound::Excluded(ref lo) | Bound::Included(ref lo) => lo.as_ref(),
+        }
+    }
 }
 
 impl<'a> Iterator for Iter<'a> {
@@ -70,21 +102,33 @@ impl<'a> Iterator for Iter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let _measure = Measure::new(&M.tree_scan);
 
+        if self.finished() {
+            return None;
+        }
+
         let tx = iter_try!(self.tree.context.pagecache.begin());
 
-        let cached_view = if let Some(last_id) = self.last_id {
-            Some(iter_try!(self.tree.view_for_pid(last_id, &tx)))
+        let cached_view = iter_try!(self.cached_view(&tx));
+
+        let mut view = if let Some(view) = cached_view {
+            view
         } else {
-            None
+            iter_try!(self.tree.view_for_key(self.low_key(), &tx))
         };
 
-        None
+        loop {
+            return None;
+        }
     }
 }
 
 impl<'a> DoubleEndedIterator for Iter<'a> {
     fn next_back(&mut self) -> Option<Self::Item> {
         let _measure = Measure::new(&M.tree_reverse_scan);
+
+        if self.finished() {
+            return None;
+        }
 
         None
     }
@@ -107,9 +151,9 @@ impl<'a> Iterator for Iter<'a> {
 
         let start_bound = &self.lo;
         let start: &[u8] = match start_bound {
-            ops::Bound::Included(ref start)
-            | ops::Bound::Excluded(ref start) => start.as_ref(),
-            ops::Bound::Unbounded => b"",
+            Bound::Included(ref start)
+            | Bound::Excluded(ref start) => start.as_ref(),
+            Bound::Unbounded => b"",
         };
 
         let mut spins = 0;
@@ -143,8 +187,8 @@ impl<'a> Iterator for Iter<'a> {
             let last_id = self.last_id.unwrap();
 
             let inclusive = match self.lo {
-                ops::Bound::Unbounded | ops::Bound::Included(..) => true,
-                ops::Bound::Excluded(..) => false,
+                Bound::Unbounded | Bound::Included(..) => true,
+                Bound::Excluded(..) => false,
             };
 
             let res = self
@@ -250,15 +294,15 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
 
         let (end, unbounded): (&[u8], bool) = if self.is_scan {
             match start_bound {
-                ops::Bound::Included(ref start)
-                | ops::Bound::Excluded(ref start) => (start.as_ref(), false),
-                ops::Bound::Unbounded => (&[255; 100], true),
+                Bound::Included(ref start)
+                | Bound::Excluded(ref start) => (start.as_ref(), false),
+                Bound::Unbounded => (&[255; 100], true),
             }
         } else {
             match end_bound {
-                ops::Bound::Included(ref start)
-                | ops::Bound::Excluded(ref start) => (start.as_ref(), false),
-                ops::Bound::Unbounded => (&[255; 100], true),
+                Bound::Included(ref start)
+                | Bound::Excluded(ref start) => (start.as_ref(), false),
+                Bound::Unbounded => (&[255; 100], true),
             }
         };
 
@@ -316,8 +360,8 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
             let last_id = self.last_id.unwrap();
 
             let inclusive = match self.hi {
-                ops::Bound::Unbounded | ops::Bound::Included(..) => true,
-                ops::Bound::Excluded(..) => false,
+                Bound::Unbounded | Bound::Included(..) => true,
+                Bound::Excluded(..) => false,
             };
 
             let res = self

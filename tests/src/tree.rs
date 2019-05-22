@@ -282,7 +282,7 @@ pub fn prop_tree_matches_btreemap(
             }
             Scan(k, len) => {
                 let mut tree_iter =
-                    tree.scan(&*k.0).take(len).map(|res| res.unwrap());
+                    tree.range(&*k.0..).take(len).map(|res| res.unwrap());
                 let ref_iter = reference
                     .iter()
                     .filter(|&(ref rk, _rv)| **rk >= k)

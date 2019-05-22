@@ -1,5 +1,12 @@
 use super::*;
 
+pub(crate) enum Nav<'a> {
+    Restart,
+    Right(PageId),
+    Down(PageId),
+    Value(Option<&'a IVec>),
+}
+
 #[derive(Clone)]
 pub(crate) struct View<'a> {
     pub(crate) pid: PageId,
@@ -49,6 +56,40 @@ impl<'a> View<'a> {
         }
 
         view
+    }
+
+    pub(crate) fn key_range(
+        &self,
+    ) -> Option<impl std::ops::RangeBounds<std::ops::Bound<&[u8]>>> {
+        if self.is_index {
+            return None;
+        }
+
+        let lo = if self.lo.is_empty() {
+            std::ops::Bound::Unbounded
+        } else {
+            std::ops::Bound::Included(self.lo)
+        };
+
+        let hi = if self.hi.is_empty() {
+            std::ops::Bound::Unbounded
+        } else {
+            std::ops::Bound::Excluded(self.hi)
+        };
+
+        Some(lo..hi)
+    }
+
+    pub(crate) fn nav_key(&self, key: &[u8]) -> Nav {
+        unimplemented!()
+    }
+
+    pub(crate) fn nav_predecessor(&self, key: &[u8]) -> Nav {
+        unimplemented!()
+    }
+
+    pub(crate) fn nav_successor(&self, key: &[u8]) -> Nav {
+        unimplemented!()
     }
 
     pub(crate) fn is_free(&self) -> bool {
@@ -159,6 +200,10 @@ impl<'a> View<'a> {
             }
         }
         panic!("no index found")
+    }
+
+    pub(crate) fn predecessor(&self, key: &[u8]) -> Option<&IVec> {
+        unimplemented!()
     }
 
     pub(crate) fn should_split(&self, max_sz: u64) -> bool {

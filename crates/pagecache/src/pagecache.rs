@@ -1193,15 +1193,11 @@ where
         &self,
         pid: PageId,
         tx: &'g Tx<PM, P>,
-    ) -> Result<(PagePtr<'g, P>, Vec<&'g P>)> {
+    ) -> Result<Option<(PagePtr<'g, P>, Vec<&'g P>)>> {
         trace!("getting page iter for pid {}", pid);
 
         let pte_ptr = match self.inner.get(pid, &tx.guard) {
-            None => panic!(
-                "tried to get page with \
-                 pid {} that doesn't exist",
-                pid
-            ),
+            None => return Ok(None),
             Some(p) => p,
         };
 
@@ -1225,25 +1221,25 @@ where
         }
 
         if entries.is_empty() || entries[0].is_free() {
-            return Ok((
+            return Ok(Some((
                 PagePtr {
                     cached_ptr: head,
                     wts: 0,
                 },
                 vec![],
-            ));
+            )));
         }
 
         if let CacheEntry::MergedResident(mr, ts, ..) = entries[0] {
             // short circuit
 
-            return Ok((
+            return Ok(Some((
                 PagePtr {
                     cached_ptr: head,
                     wts: *ts,
                 },
                 vec![mr],
-            ));
+            )));
         }
 
         let pulled = entries.iter().map(|ce| match ce {
@@ -1292,20 +1288,20 @@ where
                 Ok(new_head) => {
                     let head = new_head.cached_ptr;
 
-                    return Ok((new_head, unsafe {
+                    return Ok(Some((new_head, unsafe {
                         vec![head.deref().deref().deref_merged_resident()]
-                    }));
+                    })));
                 }
                 Err(None) => {
                     // This page was unallocated since we
                     // read the head pointer.
-                    return Ok((
+                    return Ok(Some((
                         PagePtr {
                             cached_ptr: head,
                             wts: 0,
                         },
                         vec![],
-                    ));
+                    )));
                 }
                 Err(Some(_)) => {
                     // our consolidation failed, recurse
@@ -1378,13 +1374,13 @@ where
                 })
                 .collect();
 
-            Ok((
+            Ok(Some((
                 PagePtr {
                     cached_ptr: head,
                     wts,
                 },
                 refs,
-            ))
+            )))
         }
     }
 
