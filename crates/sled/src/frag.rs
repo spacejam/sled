@@ -14,6 +14,9 @@ pub(crate) enum Frag {
     Del(IVec),
     Merge(IVec, IVec),
     Base(Node),
+    ParentMergeIntention(PageId),
+    ParentMergeConfirm,
+    ChildMergeCap,
 }
 
 impl Frag {
@@ -34,6 +37,9 @@ impl Frag {
                 Del(k) => k.len() as u64,
                 Merge(k, v) => (k.len() + v.len()) as u64,
                 Base(node) => node.size_in_bytes(),
+                ParentMergeIntention(_) => 0,
+                ParentMergeConfirm => 0,
+                ChildMergeCap => 0,
             }
     }
 }

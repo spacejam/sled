@@ -31,6 +31,8 @@ pub(crate) fn open_tree<'a>(
             next: None,
             lo: vec![].into(),
             hi: vec![].into(),
+            merging_child: None,
+            merging: false,
         });
 
         let (leaf_id, leaf_ptr) = context.pagecache.allocate(leaf, &tx)?;
@@ -51,6 +53,8 @@ pub(crate) fn open_tree<'a>(
             next: None,
             lo: vec![].into(),
             hi: vec![].into(),
+            merging_child: None,
+            merging: false,
         });
 
         let (root_id, root_ptr) = context.pagecache.allocate(root, &tx)?;

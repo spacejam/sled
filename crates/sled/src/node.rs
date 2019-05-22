@@ -8,6 +8,8 @@ pub(crate) struct Node {
     pub(crate) next: Option<PageId>,
     pub(crate) lo: IVec,
     pub(crate) hi: IVec,
+    pub(crate) merging_child: Option<PageId>,
+    pub(crate) merging: bool,
 }
 
 impl Node {
@@ -71,10 +73,19 @@ impl Node {
                     panic!("tried to consolidate del at key <= hi")
                 }
             }
-            ref otha => panic!(
-                "encountered unexpected bullshit in middle of chain: {:?}",
-                otha
-            ),
+            Base(_) => panic!("encountered base page in middle of chain"),
+            ParentMergeIntention(pid) => {
+                assert!(self.merging_child.is_none());
+                self.merging_child = Some(pid);
+            }
+            ParentMergeConfirm => {
+                assert!(self.merging_child.is_some());
+                self.merging_child = None;
+            }
+            ChildMergeCap => {
+                assert!(!self.merging);
+                self.merging = true;
+            }
         }
     }
 
@@ -148,7 +159,16 @@ impl Node {
     }
 
     pub(crate) fn should_split(&self, max_sz: u64) -> bool {
-        self.data.len() > 2 && self.size_in_bytes() > max_sz
+        self.data.len() > 2
+            && self.size_in_bytes() > max_sz
+            && self.merging_child.is_none()
+            && !self.merging
+    }
+
+    pub(crate) fn should_merge(&self, min_sz: u64) -> bool {
+        self.size_in_bytes() < min_sz
+            && self.merging_child.is_none()
+            && !self.merging
     }
 
     pub(crate) fn split(&self) -> Node {
@@ -158,6 +178,19 @@ impl Node {
             next: self.next,
             lo: split,
             hi: self.hi.clone(),
+            merging_child: None,
+            merging: false,
         }
+    }
+
+    pub(crate) fn receive_merge(&self, rhs: &Node) -> Node {
+        let mut merged = self.clone();
+        merged.hi = rhs.hi.clone();
+        merged.data.receive_merge(
+            rhs.lo.as_ref(),
+            merged.lo.as_ref(),
+            &rhs.data,
+        );
+        merged
     }
 }

@@ -18,6 +18,8 @@ pub(crate) struct View<'a> {
     frags: Vec<&'a Frag>,
     base_offset: usize,
     pub(crate) base_data: &'a Data,
+    pub(crate) merging_child: Option<PageId>,
+    pub(crate) merging: bool,
 }
 
 impl<'a> View<'a> {
@@ -36,7 +38,11 @@ impl<'a> View<'a> {
             base_offset: 0,
             base_data: unsafe { std::mem::uninitialized() },
             next: None,
+            merging_child: None,
+            merging: false,
         };
+
+        let mut merge_confirmed = false;
 
         for (offset, frag) in view.frags.iter().enumerate() {
             match frag {
@@ -50,6 +56,23 @@ impl<'a> View<'a> {
                     view.base_offset = offset;
                     view.base_data = &node.data;
                     break;
+                }
+                Frag::ParentMergeIntention(pid) => {
+                    if merge_confirmed {
+                        merge_confirmed = false;
+                    } else {
+                        assert!(view.merging_child.is_none());
+                        view.merging_child = Some(*pid);
+                    }
+                }
+                Frag::ParentMergeConfirm => {
+                    assert!(!merge_confirmed);
+                    merge_confirmed = true;
+                }
+                Frag::ChildMergeCap => {
+                    assert!(!view.merging);
+                    assert_eq!(offset, 0);
+                    view.merging = true;
                 }
                 _ => {}
             }
@@ -197,6 +220,9 @@ impl<'a> View<'a> {
 
                     return items[index].1;
                 }
+                Frag::ParentMergeIntention(ref pid) => unimplemented!(),
+                Frag::ParentMergeConfirm => unimplemented!(),
+                Frag::ChildMergeCap => unimplemented!(),
             }
         }
         panic!("no index found")
