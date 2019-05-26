@@ -1039,22 +1039,17 @@ impl Tree {
                 retry!();
             }
 
-            /*
             // When we encounter a merge intention, we collaboratively help out
             if let Some(_) = view.merging_child {
-                self.merge_node(cursor, view.cas_key.clone(), view, tx)?;
+                self.merge_node(view.pid, view.ptr.clone(), &view, tx)?;
+                retry!();
             }
 
-            // TODO this may need to change when handling (half) merges
-            assert!(view.lo <= key.as_ref(), "overshot key somehow");
-
-            // half-complete split detect & completion
-            // (when hi is empty, it means it's unbounded)
-            if !node.hi.is_empty() && node.hi.as_ref() <= key.as_ref() {
-                // we have encountered a child split, without
-                // having hit the parent split above.
-                cursor = node.next.expect(
-            */
+            if view.lo.as_ref() > key.as_ref() {
+                // merge interfered, reload root and retry
+                trace!("restarting traversal due to merge interference");
+                retry!();
+            }
 
             if view.should_split(self.context.blink_node_split_size as u64) {
                 self.split_node(&view, &parent_view, root_pid, tx)?;
@@ -1099,12 +1094,6 @@ impl Tree {
                 if link.is_ok() {
                     M.tree_parent_split_success();
                 }
-            }
-
-            if view.lo.as_ref() > key.as_ref() {
-                // merge interfered, reload root and retry
-                trace!("restarting traversal due to merge interference");
-                retry!();
             }
 
             if view.is_index {
