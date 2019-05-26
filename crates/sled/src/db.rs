@@ -33,7 +33,10 @@ impl std::fmt::Debug for Db {
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::result::Result<(), std::fmt::Error> {
         let tenants = self.tenants.read().unwrap();
-        for (name, tree) in tenants.iter() {
+        for (raw_name, tree) in tenants.iter() {
+            let name = std::str::from_utf8(&raw_name)
+                .map(String::from)
+                .unwrap_or_else(|_| format!("{:?}", raw_name));
             write!(f, "tree: {:?} contents: {:?}", name, tree)?;
         }
         Ok(())
