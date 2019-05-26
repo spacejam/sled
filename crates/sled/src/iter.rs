@@ -51,6 +51,7 @@ pub struct Iter<'a> {
     pub(super) lo: Bound<IVec>,
     pub(super) cached_view: Option<View<'a>>,
     pub(super) tx: Result<Tx<'a, BLinkMaterializer, Frag>>,
+    pub(super) going_forward: bool,
 }
 
 impl<'a> Iter<'a> {
@@ -98,10 +99,9 @@ impl<'a> Iterator for Iter<'a> {
             Err(ref e) => return Some(Err(e.clone())),
         };
 
-        let mut view = if let Some(view) = self.cached_view.take() {
-            view
-        } else {
-            iter_try!(self.tree.view_for_key(self.low_key(), &tx))
+        let mut view = match (self.going_forward, self.cached_view.take()) {
+            (true, Some(view)) => view,
+            _ => iter_try!(self.tree.view_for_key(self.low_key(), &tx)),
         };
 
         loop {
@@ -128,6 +128,7 @@ impl<'a> Iterator for Iter<'a> {
             if let Some((key, value)) = view.successor(&self.lo) {
                 self.lo = Bound::Excluded(key.clone());
                 self.cached_view = Some(view);
+                self.going_forward = true;
                 return Some(Ok((key, value)));
             } else {
                 self.lo = Bound::Included(view.hi.clone());
@@ -141,11 +142,50 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
     fn next_back(&mut self) -> Option<Self::Item> {
         let _measure = Measure::new(&M.tree_reverse_scan);
 
-        if self.bounds_collapsed() {
-            return None;
-        }
+        let tx: &'a Tx<'a, _, _> = match self.tx {
+            Ok(ref tx) => {
+                let tx_ref = tx as *const Tx<'a, _, _>;
+                unsafe { &*tx_ref as &'a Tx<'a, _, _> }
+            }
+            Err(ref e) => return Some(Err(e.clone())),
+        };
 
-        None
+        let mut view = match (self.going_forward, self.cached_view.take()) {
+            (false, Some(view)) => view,
+            _ => iter_try!(self.tree.view_for_key(self.low_key(), &tx)),
+        };
+
+        loop {
+            if self.bounds_collapsed() {
+                return None;
+            }
+
+            if !view.contains_upper_bound(&self.lo) {
+                // view too low (maybe merged, maybe exhausted?)
+                let next_pid = view.next?;
+                if let Some(v) =
+                    iter_try!(self.tree.view_for_pid(next_pid, &tx))
+                {
+                    view = v;
+                }
+                continue;
+            } else if !view.contains_lower_bound(&self.lo) {
+                // view too high (maybe split, maybe exhausted?)
+                let seek_key = possible_predecessor(view.lo)?;
+                view = iter_try!(self.tree.view_for_key(seek_key, &tx));
+                continue;
+            }
+
+            if let Some((key, value)) = view.successor(&self.lo) {
+                self.lo = Bound::Excluded(key.clone());
+                self.cached_view = Some(view);
+                self.going_forward = false;
+                return Some(Ok((key, value)));
+            } else {
+                self.lo = Bound::Included(view.hi.clone());
+                continue;
+            }
+        }
     }
 }
 

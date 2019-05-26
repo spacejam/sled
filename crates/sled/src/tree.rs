@@ -799,6 +799,7 @@ impl Tree {
             lo,
             cached_view: None,
             tx: self.context.pagecache.begin(),
+            going_forward: true,
         }
     }
 
