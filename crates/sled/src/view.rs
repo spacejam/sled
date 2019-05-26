@@ -250,7 +250,16 @@ impl<'a> View<'a> {
 
     pub(crate) fn should_split(&self, max_sz: u64) -> bool {
         let children = self.base_data.len();
-        children > 2 && self.size_in_bytes() > max_sz
+        children > 2
+            && self.size_in_bytes() > max_sz
+            && self.merging_child.is_none()
+            && !self.merging
+    }
+
+    pub(crate) fn should_merge(&self, min_sz: u64) -> bool {
+        self.size_in_bytes() < min_sz
+            && self.merging_child.is_none()
+            && !self.merging
     }
 
     pub(crate) fn compact(&self, config: &Config) -> Node {
