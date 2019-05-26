@@ -27,6 +27,19 @@ impl Deref for Db {
     }
 }
 
+impl std::fmt::Debug for Db {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::result::Result<(), std::fmt::Error> {
+        let tenants = self.tenants.read().unwrap();
+        for (name, tree) in tenants.iter() {
+            write!(f, "tree: {:?} contents: {:?}", name, tree)?;
+        }
+        Ok(())
+    }
+}
+
 impl Db {
     /// Load existing or create a new `Db` with a default configuration.
     pub fn start_default<P: AsRef<std::path::Path>>(path: P) -> Result<Db> {
