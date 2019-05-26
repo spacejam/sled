@@ -2,7 +2,7 @@ use super::*;
 
 use std::{collections::BTreeSet, ops::Bound};
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct View<'a> {
     pub(crate) pid: PageId,
     pub(crate) lo: &'a IVec,
@@ -87,8 +87,8 @@ impl<'a> View<'a> {
     pub(crate) fn contains_upper_bound(&self, bound: &Bound<IVec>) -> bool {
         match bound {
             Bound::Unbounded => self.hi.is_empty(),
-            Bound::Included(bound) => self.hi > bound,
-            Bound::Excluded(bound) => self.hi >= bound,
+            Bound::Included(bound) => self.hi > bound || self.hi.is_empty(),
+            Bound::Excluded(bound) => self.hi >= bound || self.hi.is_empty(),
         }
     }
 
