@@ -64,9 +64,7 @@ pub use {
 
 use {
     self::{
-        binary_search::{
-            binary_search_gt, binary_search_lt, binary_search_lub, leaf_search,
-        },
+        binary_search::{binary_search_lub, leaf_search},
         context::Context,
         data::Data,
         frag::Frag,
@@ -86,7 +84,5 @@ use {
     },
     serde::{Deserialize, Serialize},
 };
-
-type Key = Vec<u8>;
 
 type TreePtr<'g> = pagecache::PagePtr<'g, Frag>;

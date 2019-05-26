@@ -47,10 +47,6 @@ impl Data {
         }
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
     pub(crate) fn split(&self, lhs_prefix: &[u8]) -> (IVec, Data) {
         fn split_inner<T>(
             xs: &[(IVec, T)],

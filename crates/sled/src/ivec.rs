@@ -1,8 +1,12 @@
-use serde::{de::Deserializer, ser::Serializer};
-use serde::{Deserialize, Serialize};
 use std::{fmt, ops::Deref, result::Result as StdResult, sync::Arc};
 
+use serde::{
+    Deserialize, Serialize,
+    {de::Deserializer, ser::Serializer},
+};
+
 const CUTOFF: usize = std::mem::size_of::<&[u8]>() - 1;
+
 type Inner = [u8; CUTOFF];
 
 /// A buffer that may either be inline or remote and protected
@@ -125,8 +129,20 @@ impl From<Vec<u8>> for IVec {
     }
 }
 
+impl std::borrow::Borrow<[u8]> for IVec {
+    fn borrow(&self) -> &[u8] {
+        self.as_ref()
+    }
+}
+
+impl std::borrow::Borrow<[u8]> for &IVec {
+    fn borrow(&self) -> &[u8] {
+        self.as_ref()
+    }
+}
+
 macro_rules! from_array {
-    ($($s:expr)*) => {
+    ($($s:expr),*) => {
         $(
             impl From<&[u8; $s]> for IVec {
                 fn from(v: &[u8; $s]) -> IVec {
@@ -137,8 +153,10 @@ macro_rules! from_array {
     }
 }
 
-from_array!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15);
-from_array!(16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32);
+from_array!(
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32
+);
 
 impl Into<Arc<[u8]>> for IVec {
     fn into(self) -> Arc<[u8]> {
@@ -162,8 +180,8 @@ impl AsRef<[u8]> for IVec {
     #[inline]
     fn as_ref(&self) -> &[u8] {
         match &self.0 {
-            IVecInner::Inline(sz, buf) => {
-                unsafe { buf.get_unchecked(..*sz as usize) }
+            IVecInner::Inline(sz, buf) => unsafe {
+                buf.get_unchecked(..*sz as usize)
             },
             IVecInner::Remote(buf) => buf,
         }
@@ -194,7 +212,7 @@ impl PartialEq<[u8]> for IVec {
     }
 }
 
-impl Eq for IVec { }
+impl Eq for IVec {}
 
 impl fmt::Debug for IVec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

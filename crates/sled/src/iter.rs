@@ -69,8 +69,9 @@ impl<'a> Iter<'a> {
     }
 
     fn high_key(&self) -> &[u8] {
+        const MAX_KEY: &'static [u8] = &[255; 1024 * 1024];
         match self.hi {
-            Bound::Unbounded => &[255; 1024 * 1024],
+            Bound::Unbounded => MAX_KEY,
             Bound::Excluded(ref hi) | Bound::Included(ref hi) => hi.as_ref(),
         }
     }
@@ -116,7 +117,9 @@ impl<'a> Iterator for Iter<'a> {
                 continue;
             }
 
-            if let Some((key, value)) = view.successor(&self.lo) {
+            if let Some((key, value)) =
+                view.successor(&self.lo, &self.tree.context)
+            {
                 self.lo = Bound::Excluded(key.clone());
                 self.cached_view = Some(view);
                 self.going_forward = true;
@@ -167,7 +170,9 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 continue;
             }
 
-            if let Some((key, value)) = view.predecessor(&self.hi) {
+            if let Some((key, value)) =
+                view.predecessor(&self.hi, &self.tree.context)
+            {
                 self.hi = Bound::Excluded(key.clone());
                 self.cached_view = Some(view);
                 self.going_forward = false;

@@ -1,6 +1,6 @@
 use super::*;
 
-use std::ops::Bound;
+use std::{collections::BTreeSet, ops::Bound};
 
 #[derive(Clone)]
 pub(crate) struct View<'a> {
@@ -100,30 +100,138 @@ impl<'a> View<'a> {
         }
     }
 
+    fn keys(&self) -> BTreeSet<&IVec> {
+        let mut keys: BTreeSet<&IVec> = self
+            .base_data
+            .leaf_ref()
+            .unwrap()
+            .iter()
+            .map(|(k, _v)| k)
+            .collect();
+
+        for offset in (0..self.base_offset).rev() {
+            match self.frags[offset] {
+                Frag::Set(k, _) => {
+                    keys.insert(k);
+                }
+                Frag::Del(k) => {
+                    keys.remove(k);
+                }
+                Frag::Merge(k, _) => {
+                    keys.insert(k);
+                }
+                Frag::Base(_) => {
+                    panic!(
+                        "somehow hit 2 base nodes while \
+                         searching for a successor"
+                    );
+                }
+                Frag::ChildMergeCap => {}
+                Frag::ParentMergeIntention(_) | Frag::ParentMergeConfirm => {
+                    panic!(
+                        "somehow hit parent merge \
+                         frags while searching for a \
+                         successor"
+                    )
+                }
+            }
+        }
+
+        keys
+    }
+
     pub(crate) fn successor(
         &self,
         bound: &Bound<IVec>,
+        config: &Config,
     ) -> Option<(IVec, IVec)> {
         assert!(!self.is_index);
 
-        if let Bound::Unbounded = bound {
-            if !self.lo.is_empty() {}
+        // This encoding happens this way because
+        // keys cannot be lower than the node's lo key.
+        let predecessor_key = match bound {
+            Bound::Unbounded => prefix_encode(self.lo, self.lo),
+            Bound::Included(b) => {
+                let max = std::cmp::max(b, self.lo);
+                prefix_encode(self.lo, max)
+            }
+            Bound::Excluded(b) => {
+                let max = std::cmp::max(b, self.lo);
+                prefix_encode(self.lo, max)
+            }
+        };
 
-            // return the first element or GoRight
+        let keys = self.keys();
+
+        let successor_keys = keys.range(predecessor_key..);
+
+        for encoded_key in successor_keys {
+            let decoded_key = prefix_decode(self.lo, &encoded_key);
+
+            if let Bound::Excluded(e) = bound {
+                if &*e == &decoded_key {
+                    // skip this excluded key
+                    continue;
+                }
+            }
+
+            // try to get this key until it works
+            if let Some(value) = self.leaf_value_for_key(&decoded_key, config) {
+                return Some((IVec::from(decoded_key), value));
+            }
         }
 
-        /*
-        let last_key = match bound {
-            Bound::Included(k
-            */
         None
     }
 
     pub(crate) fn predecessor(
         &self,
-        _bound: &Bound<IVec>,
+        bound: &Bound<IVec>,
+        config: &Config,
     ) -> Option<(IVec, IVec)> {
         assert!(!self.is_index);
+
+        // This encoding happens this way because
+        // the rightmost (unbounded) node has
+        // a hi key represented by the empty slice
+        let successor_key = match bound {
+            Bound::Unbounded => {
+                if self.hi.is_empty() {
+                    prefix_encode(self.lo, &[255; 1024 * 1024])
+                } else {
+                    prefix_encode(self.lo, self.hi)
+                }
+            }
+            Bound::Included(b) => {
+                let min = std::cmp::min(b, self.hi);
+                prefix_encode(self.lo, min)
+            }
+            Bound::Excluded(b) => {
+                let min = std::cmp::min(b, self.hi);
+                prefix_encode(self.lo, min)
+            }
+        };
+
+        let keys = self.keys();
+
+        let predecessor_keys = keys.range(..=successor_key).rev();
+
+        for encoded_key in predecessor_keys {
+            let decoded_key = prefix_decode(self.lo, &encoded_key);
+
+            if let Bound::Excluded(e) = bound {
+                if &*e == &decoded_key {
+                    // skip this excluded key
+                    continue;
+                }
+            }
+
+            // try to get this key until it works
+            if let Some(value) = self.leaf_value_for_key(&decoded_key, config) {
+                return Some((IVec::from(decoded_key), value));
+            }
+        }
+
         None
     }
 
@@ -232,9 +340,11 @@ impl<'a> View<'a> {
 
                     return items[index].1;
                 }
-                Frag::ParentMergeIntention(ref _pid) => unimplemented!(),
-                Frag::ParentMergeConfirm => unimplemented!(),
-                Frag::ChildMergeCap => unimplemented!(),
+                Frag::ParentMergeIntention(_)
+                | Frag::ParentMergeConfirm
+                | Frag::ChildMergeCap => {
+                    // nothing to do for these frags
+                }
             }
         }
         panic!("no index found")
