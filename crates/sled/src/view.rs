@@ -42,7 +42,7 @@ impl<'a> View<'a> {
         for (offset, frag) in view.frags.iter().enumerate() {
             match frag {
                 Frag::Base(node) => {
-                    if view.hi.is_empty() {
+                    if view.base_offset == usize::max_value() {
                         // hi and next may be changed via a
                         // parent split if we re-add that frag
                         view.hi = &node.hi;
