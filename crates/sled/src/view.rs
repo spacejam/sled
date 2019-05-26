@@ -127,14 +127,6 @@ impl<'a> View<'a> {
         None
     }
 
-    pub(crate) fn contains(&self, key: &[u8]) -> bool {
-        self.lo.as_ref() <= key
-            && (match self.hi.as_ref() {
-                [] => true, // Unbounded
-                end => key < end,
-            })
-    }
-
     pub(crate) fn is_free(&self) -> bool {
         self.frags.is_empty()
     }
@@ -260,6 +252,10 @@ impl<'a> View<'a> {
         self.size_in_bytes() < min_sz
             && self.merging_child.is_none()
             && !self.merging
+    }
+
+    pub(crate) fn can_merge_child(&self) -> bool {
+        self.merging_child.is_none() && !self.merging
     }
 
     pub(crate) fn compact(&self, config: &Config) -> Node {

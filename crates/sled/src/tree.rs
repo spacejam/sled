@@ -996,7 +996,7 @@ impl Tree {
 
         let mut cursor = self.root.load(SeqCst);
         let mut root_pid = Some(cursor);
-        let mut parent_view = None;
+        let mut parent_view: Option<View> = None;
         let mut unsplit_parent = None;
 
         macro_rules! retry {
@@ -1041,8 +1041,34 @@ impl Tree {
 
             // When we encounter a merge intention, we collaboratively help out
             if let Some(_) = view.merging_child {
-                self.merge_node(view.pid, view.ptr.clone(), &view, tx)?;
+                self.merge_node(&view, tx)?;
                 retry!();
+            }
+
+            if view.should_merge(
+                (self.context.blink_node_split_size
+                    / self.context.blink_node_merge_ratio)
+                    as u64,
+            ) {
+                if let Some(ref mut parent_view) = parent_view {
+                    if parent_view.can_merge_child() {
+                        let frag = Frag::ParentMergeIntention(view.pid);
+
+                        let link = self.context.pagecache.link(
+                            parent_view.pid,
+                            parent_view.ptr.clone(),
+                            frag,
+                            tx,
+                        )?;
+
+                        if let Ok(new_parent_ptr) = link {
+                            parent_view.ptr = new_parent_ptr;
+                            parent_view.merging_child = Some(view.pid);
+                            self.merge_node(&parent_view, tx)?;
+                            retry!();
+                        }
+                    }
+                }
             }
 
             if view.lo.as_ref() > key.as_ref() {
@@ -1107,8 +1133,6 @@ impl Tree {
 
     pub(crate) fn merge_node<'g>(
         &self,
-        parent_pid: PageId,
-        parent_cas_key: TreePtr<'g>,
         parent: &View,
         tx: &'g Tx<BLinkMaterializer, Frag>,
     ) -> Result<()> {
@@ -1209,11 +1233,11 @@ impl Tree {
             }
         }
 
-        let mut parent_cas_key = parent_cas_key;
+        let mut parent_cas_key = parent.ptr.clone();
 
         loop {
             let linked = self.context.pagecache.link(
-                parent_pid,
+                parent.pid,
                 parent_cas_key,
                 Frag::ParentMergeConfirm,
                 tx,
@@ -1223,7 +1247,7 @@ impl Tree {
                 Err(None) => break,
                 Err(_) => {
                     let parent_page_get =
-                        self.context.pagecache.get(parent_pid, tx)?;
+                        self.context.pagecache.get(parent.pid, tx)?;
                     if parent_page_get.is_free() {
                         break;
                     }
