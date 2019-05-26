@@ -202,11 +202,19 @@ impl<'a> View<'a> {
                 }
             }
             Bound::Included(b) => {
-                let min = std::cmp::min(b, self.hi);
+                let min = if self.hi.is_empty() {
+                    b
+                } else {
+                    std::cmp::min(b, self.hi)
+                };
                 prefix_encode(self.lo, min)
             }
             Bound::Excluded(b) => {
-                let min = std::cmp::min(b, self.hi);
+                let min = if self.hi.is_empty() {
+                    b
+                } else {
+                    std::cmp::min(b, self.hi)
+                };
                 prefix_encode(self.lo, min)
             }
         };
