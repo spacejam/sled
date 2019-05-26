@@ -999,6 +999,15 @@ impl Tree {
         let mut parent_view = None;
         let mut unsplit_parent = None;
 
+        macro_rules! retry {
+            () => {
+                cursor = self.root.load(SeqCst);
+                root_pid = Some(cursor);
+                parent_view = None;
+                continue;
+            };
+        }
+
         let mut not_found_loops = 0;
         loop {
             if cursor == u64::max_value() {
@@ -1016,10 +1025,7 @@ impl Tree {
                     "cannot find pid {} in view_for_key",
                     cursor
                 );
-                cursor = self.root.load(SeqCst);
-                root_pid = Some(cursor);
-                parent_view = None;
-                continue;
+                retry!();
             };
 
             if view.is_free() || view.lo.as_ref() > key.as_ref() {
@@ -1030,10 +1036,7 @@ impl Tree {
                     "cannot find pid {} in view_for_key",
                     cursor
                 );
-                cursor = self.root.load(SeqCst);
-                root_pid = Some(cursor);
-                parent_view = None;
-                continue;
+                retry!();
             }
 
             /*
@@ -1076,9 +1079,7 @@ impl Tree {
                         .is_ok()
                     {
                         M.tree_root_split_success();
-                        cursor = self.root.load(SeqCst);
-                        root_pid = Some(cursor);
-                        parent_view = None;
+                        retry!();
                     }
                 }
                 continue;
@@ -1100,8 +1101,12 @@ impl Tree {
                 }
             }
 
-            // TODO this may need to change when handling (half) merges
-            assert!(view.lo.as_ref() <= key.as_ref(), "overshot key somehow");
+            if view.lo.as_ref() > key.as_ref() {
+                // merge interfered, reload root and retry
+                trace!("restarting traversal due to merge interference");
+                retry!();
+            }
+
             if view.is_index {
                 cursor = view.index_next_node(key.as_ref());
                 parent_view = Some(view);
