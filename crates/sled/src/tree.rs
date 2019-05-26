@@ -11,7 +11,7 @@ use std::{
 use super::*;
 
 impl<'a> IntoIterator for &'a Tree {
-    type Item = Result<(Vec<u8>, IVec)>;
+    type Item = Result<(IVec, IVec)>;
     type IntoIter = Iter<'a>;
 
     fn into_iter(self) -> Iter<'a> {
@@ -505,7 +505,7 @@ impl Tree {
     /// assert_eq!(tree.get_lt(&[10]), Ok(Some((vec![9], IVec::from(vec![9])))));
     /// assert_eq!(tree.get_lt(&[255]), Ok(Some((vec![9], IVec::from(vec![9])))));
     /// ```
-    pub fn get_lt<K>(&self, key: K) -> Result<Option<(Key, IVec)>>
+    pub fn get_lt<K>(&self, key: K) -> Result<Option<(IVec, IVec)>>
     where
         K: AsRef<[u8]>,
     {
@@ -537,7 +537,7 @@ impl Tree {
         } else {
             let idx = search.unwrap();
             let (encoded_key, v) = &items[idx];
-            Some((prefix_decode(view.lo, &*encoded_key), v.clone()))
+            Some((IVec::from(prefix_decode(view.lo, &*encoded_key)), v.clone()))
         };
 
         tx.flush();
@@ -565,7 +565,7 @@ impl Tree {
     /// assert_eq!(tree.get_gt(&[8]), Ok(Some((vec![9], IVec::from(vec![9])))));
     /// assert_eq!(tree.get_gt(&[9]), Ok(None));
     /// ```
-    pub fn get_gt<K>(&self, key: K) -> Result<Option<(Key, IVec)>>
+    pub fn get_gt<K>(&self, key: K) -> Result<Option<(IVec, IVec)>>
     where
         K: AsRef<[u8]>,
     {
@@ -595,7 +595,7 @@ impl Tree {
         } else {
             let idx = search.unwrap();
             let (encoded_key, v) = &items[idx];
-            Some((prefix_decode(view.lo, &*encoded_key), v.clone()))
+            Some((IVec::from(prefix_decode(view.lo, &*encoded_key)), v.clone()))
         };
 
         tx.flush();
@@ -698,7 +698,7 @@ impl Tree {
                 frag.clone(),
                 &tx,
             )?;
-            if let Ok(new_cas_key) = link {
+            if let Ok(_new_cas_key) = link {
                 // success
                 if let Some(res) = subscriber_reservation.take() {
                     let event = subscription::Event::Merge(
@@ -766,7 +766,7 @@ impl Tree {
     /// assert_eq!(r.next().unwrap(), Ok((vec![2], IVec::from(vec![20]))));
     /// assert_eq!(r.next(), None);
     /// ```
-    pub fn range<K, R>(&self, range: R) -> Iter<'_>
+    pub fn range<'a, K, R>(&'a self, range: R) -> Iter<'a>
     where
         K: AsRef<[u8]>,
         R: RangeBounds<K>,
@@ -774,13 +774,13 @@ impl Tree {
         let _measure = Measure::new(&M.tree_scan);
 
         let lo = match range.start_bound() {
-            ops::Bound::Included(ref end) => {
-                ops::Bound::Included(IVec::from(end.as_ref()))
+            ops::Bound::Included(ref start) => {
+                ops::Bound::Included(IVec::from(start.as_ref()))
             }
-            ops::Bound::Excluded(ref end) => {
-                ops::Bound::Excluded(IVec::from(end.as_ref()))
+            ops::Bound::Excluded(ref start) => {
+                ops::Bound::Excluded(IVec::from(start.as_ref()))
             }
-            ops::Bound::Unbounded => ops::Bound::Unbounded,
+            ops::Bound::Unbounded => ops::Bound::Included(IVec::from(&[])),
         };
 
         let hi = match range.end_bound() {
@@ -797,7 +797,8 @@ impl Tree {
             tree: &self,
             hi,
             lo,
-            last_id: None,
+            cached_view: None,
+            tx: self.context.pagecache.begin(),
         }
     }
 
@@ -1020,7 +1021,7 @@ impl Tree {
                 continue;
             };
 
-            if view.is_free() || view.lo > key.as_ref() {
+            if view.is_free() || view.lo.as_ref() > key.as_ref() {
                 // restart search from the tree's root
                 not_found_loops += 1;
                 debug_assert_ne!(
@@ -1053,7 +1054,7 @@ impl Tree {
 
             if view.should_split(self.context.blink_node_split_size as u64) {
                 self.split_node(&view, &parent_view, root_pid, tx)?;
-            } else if !view.hi.is_empty() && view.hi <= key.as_ref() {
+            } else if !view.hi.is_empty() && view.hi.as_ref() <= key.as_ref() {
                 // half-complete split detect & completion
                 cursor = view.next.expect(
                     "if our hi bound is not Inf (inity), \
@@ -1084,7 +1085,7 @@ impl Tree {
                 // we have found the proper page for
                 // our cooperative parent split
                 let mut parent = unsplit_parent.compact(&self.context);
-                parent.parent_split(view.lo.into(), cursor);
+                parent.parent_split(view.lo.as_ref(), cursor);
 
                 M.tree_parent_split_attempt();
                 let link = self.context.pagecache.replace(
@@ -1099,7 +1100,7 @@ impl Tree {
             }
 
             // TODO this may need to change when handling (half) merges
-            assert!(view.lo <= key.as_ref(), "overshot key somehow");
+            assert!(view.lo.as_ref() <= key.as_ref(), "overshot key somehow");
             if view.is_index {
                 cursor = view.index_next_node(key.as_ref());
                 parent_view = Some(view);
@@ -1113,7 +1114,7 @@ impl Tree {
         &self,
         parent_pid: PageId,
         parent_cas_key: TreePtr<'g>,
-        parent: &Node,
+        parent: &View,
         tx: &'g Tx<BLinkMaterializer, Frag>,
     ) -> Result<()> {
         let child_pid = parent.merging_child.unwrap();
@@ -1154,7 +1155,7 @@ impl Tree {
             }
         };
 
-        let index = parent.data.index_ref().unwrap();
+        let index = parent.base_data.index_ref().unwrap();
         let merge_index =
             index.iter().position(|(_, pid)| pid == &child_pid).unwrap();
 

@@ -216,7 +216,7 @@ fn parallel_tree_iterators() -> Result<()> {
 
                     for expect in expected {
                         loop {
-                            let k: Vec<u8> = keys.next().unwrap()?;
+                            let k = keys.next().unwrap()?;
                             assert!(
                                 &*k <= *expect,
                                 "witnessed key is {:?} but we expected \
@@ -370,31 +370,31 @@ fn tree_iterator() {
 
     for (i, (k, v)) in t.iter().map(|res| res.unwrap()).enumerate() {
         let should_be = kv(i);
-        assert_eq!(should_be, k);
+        assert_eq!(should_be, &*k);
         assert_eq!(should_be, &*v);
     }
 
-    for (i, (k, v)) in t.scan(b"").map(|res| res.unwrap()).enumerate() {
+    for (i, (k, v)) in t.iter().map(|res| res.unwrap()).enumerate() {
         let should_be = kv(i);
-        assert_eq!(should_be, k);
+        assert_eq!(should_be, &*k);
         assert_eq!(should_be, &*v);
     }
 
     let half_way = N_PER_THREAD / 2;
     let half_key = kv(half_way);
-    let mut tree_scan = t.scan(&*half_key);
+    let mut tree_scan = t.range(&*half_key..);
     let r1 = tree_scan.next().unwrap().unwrap();
-    assert_eq!((r1.0, &*r1.1), (half_key.clone(), &*half_key));
+    assert_eq!((r1.0.as_ref(), &*r1.1), (half_key.as_ref(), &*half_key));
 
     let first_key = kv(0);
-    let mut tree_scan = t.scan(&*first_key);
+    let mut tree_scan = t.range(&*first_key..);
     let r2 = tree_scan.next().unwrap().unwrap();
-    assert_eq!((r2.0, &*r2.1), (first_key.clone(), &*first_key));
+    assert_eq!((r2.0.as_ref(), &*r2.1), (first_key.as_ref(), &*first_key));
 
     let last_key = kv(N_PER_THREAD - 1);
-    let mut tree_scan = t.scan(&*last_key);
+    let mut tree_scan = t.range(&*last_key..);
     let r3 = tree_scan.next().unwrap().unwrap();
-    assert_eq!((r3.0, &*r3.1), (last_key.clone(), &*last_key));
+    assert_eq!((r3.0.as_ref(), &*r3.1), (last_key.as_ref(), &*last_key));
     assert_eq!(tree_scan.next(), None);
 }
 
@@ -520,14 +520,16 @@ fn tree_range() {
     assert_eq!(r.next().unwrap().unwrap().0, b"2");
     assert_eq!(r.next(), None);
 
-    let mut r = t.scan(b"2");
+    let start = b"2".to_vec();
+    let mut r = t.range(start..);
     assert_eq!(r.next().unwrap().unwrap().0, b"2");
     assert_eq!(r.next().unwrap().unwrap().0, b"3");
     assert_eq!(r.next().unwrap().unwrap().0, b"4");
     assert_eq!(r.next().unwrap().unwrap().0, b"5");
     assert_eq!(r.next(), None);
 
-    let mut r = t.scan(b"2").rev();
+    let start = b"2".to_vec();
+    let mut r = t.range(start..).rev();
     assert_eq!(r.next().unwrap().unwrap().0, b"2");
     assert_eq!(r.next().unwrap().unwrap().0, b"1");
     assert_eq!(r.next().unwrap().unwrap().0, b"0");

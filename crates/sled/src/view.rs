@@ -1,17 +1,12 @@
 use super::*;
 
-pub(crate) enum Nav<'a> {
-    Restart,
-    Right(PageId),
-    Down(PageId),
-    Value(Option<&'a IVec>),
-}
+use std::ops::Bound;
 
 #[derive(Clone)]
 pub(crate) struct View<'a> {
     pub(crate) pid: PageId,
-    pub(crate) lo: &'a [u8],
-    pub(crate) hi: &'a [u8],
+    pub(crate) lo: &'a IVec,
+    pub(crate) hi: &'a IVec,
     pub(crate) is_index: bool,
     pub(crate) next: Option<PageId>,
     pub(crate) ptr: TreePtr<'a>,
@@ -32,10 +27,10 @@ impl<'a> View<'a> {
             pid,
             ptr,
             frags,
-            lo: &[],
-            hi: &[],
+            lo: unsafe { std::mem::uninitialized() },
+            hi: unsafe { std::mem::uninitialized() },
             is_index: false,
-            base_offset: 0,
+            base_offset: usize::max_value(),
             base_data: unsafe { std::mem::uninitialized() },
             next: None,
             merging_child: None,
@@ -48,10 +43,12 @@ impl<'a> View<'a> {
             match frag {
                 Frag::Base(node) => {
                     if view.hi.is_empty() {
-                        view.hi = node.hi.as_ref();
+                        // hi and next may be changed via a
+                        // parent split if we re-add that frag
+                        view.hi = &node.hi;
                         view.next = node.next;
                     }
-                    view.lo = node.lo.as_ref();
+                    view.lo = &node.lo;
                     view.is_index = node.data.index_ref().is_some();
                     view.base_offset = offset;
                     view.base_data = &node.data;
@@ -78,41 +75,64 @@ impl<'a> View<'a> {
             }
         }
 
+        assert_ne!(
+            view.base_offset,
+            usize::max_value(),
+            "view was never initialized with a base"
+        );
+
         view
     }
 
-    pub(crate) fn key_range(
+    pub(crate) fn contains_upper_bound(&self, bound: &Bound<IVec>) -> bool {
+        match bound {
+            Bound::Unbounded => self.hi.is_empty(),
+            Bound::Included(bound) => self.hi > bound,
+            Bound::Excluded(bound) => self.hi >= bound,
+        }
+    }
+
+    pub(crate) fn contains_lower_bound(&self, bound: &Bound<IVec>) -> bool {
+        match bound {
+            Bound::Unbounded => self.lo.is_empty(),
+            Bound::Included(bound) => self.lo <= bound,
+            Bound::Excluded(bound) => self.lo < bound,
+        }
+    }
+
+    pub(crate) fn successor(
         &self,
-    ) -> Option<impl std::ops::RangeBounds<std::ops::Bound<&[u8]>>> {
-        if self.is_index {
-            return None;
+        bound: &Bound<IVec>,
+    ) -> Option<(IVec, IVec)> {
+        assert!(!self.is_index);
+
+        if let Bound::Unbounded = bound {
+            if !self.lo.is_empty() {}
+
+            // return the first element or GoRight
         }
 
-        let lo = if self.lo.is_empty() {
-            std::ops::Bound::Unbounded
-        } else {
-            std::ops::Bound::Included(self.lo)
-        };
-
-        let hi = if self.hi.is_empty() {
-            std::ops::Bound::Unbounded
-        } else {
-            std::ops::Bound::Excluded(self.hi)
-        };
-
-        Some(lo..hi)
+        /*
+        let last_key = match bound {
+            Bound::Included(k
+            */
+        None
     }
 
-    pub(crate) fn nav_key(&self, key: &[u8]) -> Nav {
-        unimplemented!()
+    pub(crate) fn predecessor(
+        &self,
+        _bound: &Bound<IVec>,
+    ) -> Option<(IVec, IVec)> {
+        assert!(!self.is_index);
+        None
     }
 
-    pub(crate) fn nav_predecessor(&self, key: &[u8]) -> Nav {
-        unimplemented!()
-    }
-
-    pub(crate) fn nav_successor(&self, key: &[u8]) -> Nav {
-        unimplemented!()
+    pub(crate) fn contains(&self, key: &[u8]) -> bool {
+        self.lo.as_ref() <= key
+            && (match self.hi.as_ref() {
+                [] => true, // Unbounded
+                end => key < end,
+            })
     }
 
     pub(crate) fn is_free(&self) -> bool {
@@ -220,16 +240,12 @@ impl<'a> View<'a> {
 
                     return items[index].1;
                 }
-                Frag::ParentMergeIntention(ref pid) => unimplemented!(),
+                Frag::ParentMergeIntention(ref _pid) => unimplemented!(),
                 Frag::ParentMergeConfirm => unimplemented!(),
                 Frag::ChildMergeCap => unimplemented!(),
             }
         }
         panic!("no index found")
-    }
-
-    pub(crate) fn predecessor(&self, key: &[u8]) -> Option<&IVec> {
-        unimplemented!()
     }
 
     pub(crate) fn should_split(&self, max_sz: u64) -> bool {

@@ -49,12 +49,13 @@ pub struct Iter<'a> {
     pub(super) tree: &'a Tree,
     pub(super) hi: Bound<IVec>,
     pub(super) lo: Bound<IVec>,
-    pub(super) last_id: Option<PageId>,
+    pub(super) cached_view: Option<View<'a>>,
+    pub(super) tx: Result<Tx<'a, BLinkMaterializer, Frag>>,
 }
 
 impl<'a> Iter<'a> {
     /// Iterate over the keys of this Tree
-    pub fn keys(self) -> impl 'a + DoubleEndedIterator<Item = Result<Vec<u8>>> {
+    pub fn keys(self) -> impl 'a + DoubleEndedIterator<Item = Result<IVec>> {
         self.map(|r| r.map(|(k, _v)| k))
     }
 
@@ -63,7 +64,7 @@ impl<'a> Iter<'a> {
         self.map(|r| r.map(|(_k, v)| v))
     }
 
-    fn finished(&self) -> bool {
+    fn bounds_collapsed(&self) -> bool {
         match (&self.lo, &self.hi) {
             (Bound::Included(ref start), Bound::Included(ref end))
             | (Bound::Included(ref start), Bound::Excluded(ref end))
@@ -75,19 +76,6 @@ impl<'a> Iter<'a> {
         }
     }
 
-    fn cached_view<'b>(
-        &self,
-        tx: &'b Tx<BLinkMaterializer, Frag>,
-    ) -> Result<Option<View<'b>>> {
-        if self.last_id.is_none() {
-            return Ok(None);
-        }
-
-        let last_id = self.last_id.unwrap();
-
-        self.tree.view_for_pid(last_id, &tx)
-    }
-
     fn low_key(&self) -> &[u8] {
         match self.lo {
             Bound::Unbounded => &[],
@@ -97,27 +85,54 @@ impl<'a> Iter<'a> {
 }
 
 impl<'a> Iterator for Iter<'a> {
-    type Item = Result<(Vec<u8>, IVec)>;
+    type Item = Result<(IVec, IVec)>;
 
-    fn next(&mut self) -> Option<Self::Item> {
+    fn next<'b>(&mut self) -> Option<Self::Item> {
         let _measure = Measure::new(&M.tree_scan);
 
-        if self.finished() {
-            return None;
-        }
+        let tx: &'a Tx<'a, _, _> = match self.tx {
+            Ok(ref tx) => {
+                let tx_ref = tx as *const Tx<'a, _, _>;
+                unsafe { &*tx_ref as &'a Tx<'a, _, _> }
+            }
+            Err(ref e) => return Some(Err(e.clone())),
+        };
 
-        let tx = iter_try!(self.tree.context.pagecache.begin());
-
-        let cached_view = iter_try!(self.cached_view(&tx));
-
-        let mut view = if let Some(view) = cached_view {
+        let mut view = if let Some(view) = self.cached_view.take() {
             view
         } else {
             iter_try!(self.tree.view_for_key(self.low_key(), &tx))
         };
 
         loop {
-            return None;
+            if self.bounds_collapsed() {
+                return None;
+            }
+
+            if !view.contains_upper_bound(&self.lo) {
+                // view too low (maybe merged, maybe exhausted?)
+                let next_pid = view.next?;
+                if let Some(v) =
+                    iter_try!(self.tree.view_for_pid(next_pid, &tx))
+                {
+                    view = v;
+                }
+                continue;
+            } else if !view.contains_lower_bound(&self.lo) {
+                // view too high (maybe split, maybe exhausted?)
+                let seek_key = possible_predecessor(view.lo)?;
+                view = iter_try!(self.tree.view_for_key(seek_key, &tx));
+                continue;
+            }
+
+            if let Some((key, value)) = view.successor(&self.lo) {
+                self.lo = Bound::Excluded(key.clone());
+                self.cached_view = Some(view);
+                return Some(Ok((key, value)));
+            } else {
+                self.lo = Bound::Included(view.hi.clone());
+                continue;
+            }
         }
     }
 }
@@ -126,7 +141,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
     fn next_back(&mut self) -> Option<Self::Item> {
         let _measure = Measure::new(&M.tree_reverse_scan);
 
-        if self.finished() {
+        if self.bounds_collapsed() {
             return None;
         }
 
@@ -136,7 +151,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
 
 /*
 
-impl<'a> Iterator for Iter<'a> {
+impl<'a, > Iterator for Iter<'a, > {
     type Item = Result<(Vec<u8>, IVec)>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -277,7 +292,7 @@ impl<'a> Iterator for Iter<'a> {
     }
 }
 
-impl<'a> DoubleEndedIterator for Iter<'a> {
+impl<'a, 'b> DoubleEndedIterator for Iter<'a, 'b> {
     fn next_back(&mut self) -> Option<Self::Item> {
         let _measure = Measure::new(&M.tree_reverse_scan);
 

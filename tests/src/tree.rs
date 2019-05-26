@@ -294,7 +294,8 @@ pub fn prop_tree_matches_btreemap(
                     let lhs = (tree_next.0, &*tree_next.1);
                     let rhs = (r.0.clone(), &*u16_to_bytes(r.1));
                     assert_eq!(
-                        lhs, rhs,
+                        (lhs.0.as_ref(), lhs.1),
+                        (rhs.0.as_ref(), rhs.1),
                         "expected iteration over the Tree \
                          to match our BTreeMap model"
                     );
