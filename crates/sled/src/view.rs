@@ -95,8 +95,7 @@ impl<'a> View<'a> {
     pub(crate) fn contains_lower_bound(&self, bound: &Bound<IVec>) -> bool {
         match bound {
             Bound::Unbounded => self.lo.is_empty(),
-            Bound::Included(bound) => self.lo <= bound,
-            Bound::Excluded(bound) => self.lo < bound,
+            Bound::Included(bound) | Bound::Excluded(bound) => self.lo <= bound,
         }
     }
 
