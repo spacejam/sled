@@ -235,7 +235,7 @@ impl<'a> View<'a> {
             ord == std::cmp::Ordering::Less || ord == std::cmp::Ordering::Equal
         });
 
-        for encoded_key in predecessor_keys {
+        for encoded_key in predecessor_keys.rev() {
             let decoded_key = prefix_decode(self.lo, &encoded_key);
 
             if let Bound::Excluded(e) = bound {

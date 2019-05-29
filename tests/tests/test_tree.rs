@@ -1088,6 +1088,8 @@ fn tree_bug_21() {
     // postmortem: more split woes while implementing get_lt
     // postmortem 2: failed to properly account for node hi key
     // being empty in the view predecessor function
+    // postmortem 3: when rewriting Iter, failed to account for
+    // direction of iteration
     prop_tree_matches_btreemap(
         vec![
             Set(Key(vec![176]), 163),
