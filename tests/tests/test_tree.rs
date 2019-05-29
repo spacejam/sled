@@ -622,6 +622,9 @@ fn tree_bug_02() {
     // then the second time (triggered by a snapshot)
     // would not pick up on the importance of seeing
     // the new root set.
+    // portmortem 2: when refactoring iterators, failed
+    // to account for node.hi being empty on the infinity
+    // shard
     prop_tree_matches_btreemap(
         vec![
             Restart,
@@ -1083,6 +1086,8 @@ fn tree_bug_20() {
 #[test]
 fn tree_bug_21() {
     // postmortem: more split woes while implementing get_lt
+    // postmortem 2: failed to properly account for node hi key
+    // being empty in the view predecessor function
     prop_tree_matches_btreemap(
         vec![
             Set(Key(vec![176]), 163),
@@ -1102,6 +1107,7 @@ fn tree_bug_21() {
 fn tree_bug_22() {
     // postmortem: inclusivity wasn't being properly flipped off after
     // the first result during iteration
+    // postmortem 2: failed to properly check bounds while iterating
     prop_tree_matches_btreemap(
         vec![
             Merge(Key(vec![]), 155),

@@ -43,7 +43,7 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
     let mut contiguous: u32 = 0;
     let mut lowest = 0;
     for res in iter {
-        let (k, v) = res.unwrap();
+        let (_k, v) = res.unwrap();
         if &v[..4] == &highest_vec[..4] {
             contiguous += 1;
         } else {
