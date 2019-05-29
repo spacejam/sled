@@ -10,18 +10,6 @@ const FAN_MASK: u64 = FANOUT - 1;
 
 pub type PageId = u64;
 
-macro_rules! rep_no_copy {
-    ($e:expr; $n:expr) => {{
-        let mut v = Vec::with_capacity($n);
-
-        for _ in 0..$n {
-            v.push($e);
-        }
-
-        v
-    }};
-}
-
 #[inline(always)]
 fn split_fanout(i: u64) -> (u64, u64) {
     // right shift 32 on 32-bit pointer systems panics
@@ -40,24 +28,32 @@ fn split_fanout(i: u64) -> (u64, u64) {
 }
 
 struct Node1<T: Send + 'static> {
-    children: Vec<Atomic<Node2<T>>>,
+    children: [Atomic<Node2<T>>; FANOUT as usize],
 }
 
 struct Node2<T: Send + 'static> {
-    children: Vec<Atomic<T>>,
+    children: [Atomic<T>; FANOUT as usize],
 }
 
-impl<T: Send + 'static> Default for Node1<T> {
-    fn default() -> Node1<T> {
-        let children = rep_no_copy!(Atomic::null(); FANOUT as usize);
-        Node1 { children }
+impl<T: Send + 'static> Node1<T> {
+    fn new() -> Box<Node1<T>> {
+        let mut node: Box<Node1<T>> =
+            unsafe { Box::new(std::mem::uninitialized()) };
+        for i in 0..FANOUT as usize {
+            node.children[i] = Atomic::null();
+        }
+        node
     }
 }
 
-impl<T: Send + 'static> Default for Node2<T> {
-    fn default() -> Node2<T> {
-        let children = rep_no_copy!(Atomic::null(); FANOUT as usize);
-        Node2 { children }
+impl<T: Send + 'static> Node2<T> {
+    fn new() -> Owned<Node2<T>> {
+        let mut node: Box<Node2<T>> =
+            unsafe { Box::new(std::mem::uninitialized()) };
+        for i in 0..FANOUT as usize {
+            node.children[i] = Atomic::null();
+        }
+        Owned::from(node)
     }
 }
 
@@ -74,7 +70,7 @@ where
     T: 'static + Send + Sync,
 {
     fn default() -> PageTable<T> {
-        let head = Owned::new(Node1::default());
+        let head = Node1::new();
         PageTable {
             head: Atomic::from(head),
         }
@@ -172,7 +168,7 @@ fn traverse<'g, T: 'static + Send>(
     let mut l2_ptr = l1[usize::try_from(l1k).unwrap()].load(SeqCst, guard);
 
     if l2_ptr.is_null() {
-        let next_child = Owned::new(Node2::default()).into_shared(guard);
+        let next_child = Node2::new().into_shared(guard);
 
         debug_delay();
         let ret = l1[usize::try_from(l1k).unwrap()]
