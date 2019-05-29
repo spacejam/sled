@@ -1,5 +1,4 @@
 use std::{
-    collections::hash_map::DefaultHasher,
     fmt,
     hash::{Hash, Hasher},
     ops::Deref,
