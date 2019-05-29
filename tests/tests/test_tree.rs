@@ -165,7 +165,7 @@ fn parallel_tree_ops() {
 }
 
 #[test]
-fn parallel_tree_iterators() -> Result<()> {
+fn parallel_tree_iter() -> Result<()> {
     const N_FORWARD: usize = INTENSITY;
     const N_REVERSE: usize = INTENSITY;
 

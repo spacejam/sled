@@ -125,6 +125,9 @@ impl<'a> Iterator for Iter<'a> {
                 self.going_forward = true;
                 return Some(Ok((key, value)));
             } else {
+                if view.hi.is_empty() {
+                    return None;
+                }
                 self.lo = Bound::Included(view.hi.clone());
                 continue;
             }
@@ -178,6 +181,9 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 self.going_forward = false;
                 return Some(Ok((key, value)));
             } else {
+                if view.lo.is_empty() {
+                    return None;
+                }
                 self.hi = Bound::Excluded(view.lo.clone());
                 continue;
             }
