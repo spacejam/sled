@@ -243,15 +243,20 @@ pub fn prop_tree_matches_btreemap(
                 assert_eq!(res1, res2);
             }
             GetLt(k) => {
-                let res1 =
-                    tree.get_lt(&*k.0).unwrap().map(|v| bytes_to_u16(&*v.1));
+                let res1 = tree.get_lt(&*k.0).unwrap().map(|v| v.0);
                 let res2 = reference
                     .iter()
                     .rev()
                     .filter(|(key, _)| **key < k)
                     .nth(0)
-                    .map(|(_, v)| *v);
-                assert_eq!(res1, res2);
+                    .map(|(k, _v)| IVec::from(&*k.0));
+                assert_eq!(
+                    res1, res2,
+                    "get_lt({:?}) should have returned {:?} \
+                     but it returned {:?} instead. \
+                     \n Db: {:?}",
+                    k, res2, res1, tree
+                );
             }
             GetGt(k) => {
                 let res1 =
