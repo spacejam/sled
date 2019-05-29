@@ -1039,6 +1039,7 @@ impl Tree {
                 retry!();
             }
 
+            /*
             // When we encounter a merge intention, we collaboratively help out
             if let Some(_) = view.merging_child {
                 self.merge_node(&view, tx)?;
@@ -1070,6 +1071,7 @@ impl Tree {
                     }
                 }
             }
+            */
 
             if view.lo.as_ref() > key.as_ref() {
                 // merge interfered, reload root and retry
