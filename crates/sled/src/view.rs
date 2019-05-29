@@ -1,6 +1,6 @@
 use super::*;
 
-use std::{collections::BTreeSet, ops::Bound};
+use std::{collections::HashSet, ops::Bound};
 
 #[derive(Debug, Clone)]
 pub(crate) struct View<'a> {
@@ -99,8 +99,8 @@ impl<'a> View<'a> {
         }
     }
 
-    fn keys(&self) -> BTreeSet<&IVec> {
-        let mut keys: BTreeSet<&IVec> = self
+    fn keys(&self) -> Vec<&IVec> {
+        let mut keys: HashSet<&IVec> = self
             .base_data
             .leaf_ref()
             .unwrap()
@@ -136,6 +136,9 @@ impl<'a> View<'a> {
             }
         }
 
+        let mut keys: Vec<_> = keys.into_iter().collect();
+        keys.sort_by(|a, b| prefix_cmp(&a, &b));
+
         keys
     }
 
@@ -162,7 +165,12 @@ impl<'a> View<'a> {
 
         let keys = self.keys();
 
-        let successor_keys = keys.range(predecessor_key..);
+        let successor_keys = keys.iter().filter(|k| {
+            let ord = prefix_cmp(k, &predecessor_key);
+
+            ord == std::cmp::Ordering::Greater
+                || ord == std::cmp::Ordering::Equal
+        });
 
         for encoded_key in successor_keys {
             let decoded_key = prefix_decode(self.lo, &encoded_key);
@@ -221,7 +229,11 @@ impl<'a> View<'a> {
 
         let keys = self.keys();
 
-        let predecessor_keys = keys.range(..=successor_key).rev();
+        let predecessor_keys = keys.iter().filter(|k| {
+            let ord = prefix_cmp(k, &successor_key);
+
+            ord == std::cmp::Ordering::Less || ord == std::cmp::Ordering::Equal
+        });
 
         for encoded_key in predecessor_keys {
             let decoded_key = prefix_decode(self.lo, &encoded_key);
