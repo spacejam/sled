@@ -40,6 +40,25 @@ impl Data {
         self_sz.saturating_add(inner_sz)
     }
 
+    pub(crate) fn fmt_keys(&self, prefix: &[u8]) -> Data {
+        fn fmt_inner<T>(prefix: &[u8], xs: &[(IVec, T)]) -> Vec<(IVec, T)>
+        where
+            T: Clone + Ord,
+        {
+            let mut data = Vec::with_capacity(xs.len());
+            for (k, v) in xs {
+                let k = prefix_decode(prefix, k).into();
+                data.push((k, v.clone()));
+            }
+            data
+        }
+
+        match self {
+            Data::Index(ref ptrs) => Data::Index(fmt_inner(prefix, ptrs)),
+            Data::Leaf(ref items) => Data::Leaf(fmt_inner(prefix, items)),
+        }
+    }
+
     pub(crate) fn len(&self) -> usize {
         match *self {
             Data::Index(ref ptrs) => ptrs.len(),

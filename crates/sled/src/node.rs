@@ -1,8 +1,8 @@
-use std::mem::size_of;
+use std::{fmt, mem::size_of};
 
 use super::*;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Node {
     pub(crate) data: Data,
     pub(crate) next: Option<PageId>,
@@ -10,6 +10,27 @@ pub(crate) struct Node {
     pub(crate) hi: IVec,
     pub(crate) merging_child: Option<PageId>,
     pub(crate) merging: bool,
+}
+
+impl fmt::Debug for Node {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> std::result::Result<(), fmt::Error> {
+        let data = self.data.fmt_keys(&self.lo);
+
+        write!(
+            f,
+            "Node {{ \
+             lo: {:?} \
+             hi: {:?} \
+             next: {:?} \
+             merging_child: {:?} \
+             merging: {} \
+             data: {:?} }}",
+            self.lo, self.hi, self.next, self.merging_child, self.merging, data
+        )
+    }
 }
 
 impl Node {
