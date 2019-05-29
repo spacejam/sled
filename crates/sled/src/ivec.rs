@@ -1,4 +1,11 @@
-use std::{fmt, ops::Deref, result::Result as StdResult, sync::Arc};
+use std::{
+    collections::hash_map::DefaultHasher,
+    fmt,
+    hash::{Hash, Hasher},
+    ops::Deref,
+    result::Result as StdResult,
+    sync::Arc,
+};
 
 use serde::{
     Deserialize, Serialize,
@@ -18,6 +25,12 @@ pub struct IVec(IVecInner);
 enum IVecInner {
     Inline(u8, Inner),
     Remote(Arc<[u8]>),
+}
+
+impl Hash for IVec {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.deref().hash(state);
+    }
 }
 
 impl Serialize for IVec {
