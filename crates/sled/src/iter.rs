@@ -123,7 +123,17 @@ impl<'a> Iterator for Iter<'a> {
                 self.lo = Bound::Excluded(key.clone());
                 self.cached_view = Some(view);
                 self.going_forward = true;
-                return Some(Ok((key, value)));
+
+                match self.hi {
+                    Bound::Unbounded => return Some(Ok((key, value))),
+                    Bound::Included(ref h) if h >= &key => {
+                        return Some(Ok((key, value)))
+                    }
+                    Bound::Excluded(ref h) if h > &key => {
+                        return Some(Ok((key, value)))
+                    }
+                    _ => return None,
+                }
             } else {
                 if view.hi.is_empty() {
                     return None;
@@ -179,7 +189,17 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 self.hi = Bound::Excluded(key.clone());
                 self.cached_view = Some(view);
                 self.going_forward = false;
-                return Some(Ok((key, value)));
+
+                match self.lo {
+                    Bound::Unbounded => return Some(Ok((key, value))),
+                    Bound::Included(ref l) if l <= &key => {
+                        return Some(Ok((key, value)))
+                    }
+                    Bound::Excluded(ref l) if l < &key => {
+                        return Some(Ok((key, value)))
+                    }
+                    _ => return None,
+                }
             } else {
                 if view.lo.is_empty() {
                     return None;
