@@ -1,5 +1,4 @@
 use std::{
-    cmp::Ordering::{Greater, Less},
     fmt::{self, Debug},
     ops::{self, RangeBounds},
     sync::{
@@ -706,7 +705,7 @@ impl Tree {
     /// assert_eq!(r.next().unwrap(), Ok((vec![2], IVec::from(vec![20]))));
     /// assert_eq!(r.next(), None);
     /// ```
-    pub fn range<'a, K, R>(&'a self, range: R) -> Iter<'a>
+    pub fn range<K, R>(&self, range: R) -> Iter<'_>
     where
         K: AsRef<[u8]>,
         R: RangeBounds<K>,
@@ -981,7 +980,7 @@ impl Tree {
 
             /*
             // When we encounter a merge intention, we collaboratively help out
-            if let Some(_) = view.merging_child {
+            if view.merging_child.is_some() {
                 self.merge_node(&view, tx)?;
                 retry!();
             }
