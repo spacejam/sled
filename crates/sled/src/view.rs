@@ -137,7 +137,7 @@ impl<'a> View<'a> {
         }
 
         let mut keys: Vec<_> = keys.into_iter().collect();
-        keys.sort_by(|a, b| prefix_cmp(&a, &b));
+        keys.sort_unstable_by(|a, b| prefix_cmp(&a, &b));
 
         keys
     }
