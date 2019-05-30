@@ -1134,3 +1134,41 @@ fn tree_bug_23() {
         false,
     );
 }
+
+#[test]
+fn tree_bug_24() {
+    // postmortem: get_gt diverged with the Iter impl
+    prop_tree_matches_btreemap(
+        vec![
+            Merge(Key(vec![]), 193),
+            Del(Key(vec![])),
+            Del(Key(vec![])),
+            Set(Key(vec![]), 55),
+            Set(Key(vec![]), 212),
+            Merge(Key(vec![]), 236),
+            Del(Key(vec![])),
+            Set(Key(vec![]), 192),
+            Del(Key(vec![])),
+            Set(Key(vec![94]), 115),
+            Merge(Key(vec![62]), 34),
+            GetGt(Key(vec![])),
+        ],
+        0,
+        0,
+        false,
+        false,
+    );
+}
+
+#[test]
+fn tree_bug_25() {
+    // postmortem: was not accounting for merges when traversing
+    // the frag chain and a Del was encountered
+    prop_tree_matches_btreemap(
+        vec![Del(Key(vec![])), Merge(Key(vec![]), 84), Get(Key(vec![]))],
+        0,
+        0,
+        false,
+        false,
+    );
+}

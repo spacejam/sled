@@ -278,7 +278,13 @@ impl<'a> View<'a> {
                         break;
                     }
                 }
-                Frag::Del(k) if self.key_eq(k, key) => return None,
+                Frag::Del(k) if self.key_eq(k, key) => {
+                    // we should ignore "earlier" Frag's for
+                    // this key, but still need to handle
+                    // merges we encountered "after" this
+                    // deletion
+                    break;
+                }
                 Frag::Merge(k, val) if self.key_eq(k, key) => merges.push(val),
                 Frag::Base(node) => {
                     let data = &node.data;
@@ -286,7 +292,7 @@ impl<'a> View<'a> {
                         data.leaf_ref().expect("last_node should be a leaf");
                     let search = items
                         .binary_search_by(|&(ref k, ref _v)| {
-                            prefix_cmp_encoded(k, key.as_ref(), &node.lo)
+                            prefix_cmp_encoded(k, key.as_ref(), &self.lo)
                         })
                         .ok();
 
