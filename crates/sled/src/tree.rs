@@ -510,39 +510,7 @@ impl Tree {
         K: AsRef<[u8]>,
     {
         let _measure = Measure::new(&M.tree_get);
-
-        // the double tx is a hack that maintains
-        // correctness of the ret value
-        let tx = self.context.pagecache.begin()?;
-
-        let view = self.view_for_key(key.as_ref(), &tx)?;
-        let data = &view.base_data;
-
-        let items = data.leaf_ref().expect("last_node should be a leaf");
-        let search = leaf_search(Less, items, |&(ref k, ref _v)| {
-            prefix_cmp_encoded(k, key.as_ref(), view.lo)
-        });
-
-        let ret = if search.is_none() {
-            let mut iter = self.range((
-                std::ops::Bound::Unbounded,
-                std::ops::Bound::Excluded(key),
-            ));
-
-            match iter.next_back() {
-                Some(Err(e)) => return Err(e),
-                Some(Ok(pair)) => Some(pair),
-                None => None,
-            }
-        } else {
-            let idx = search.unwrap();
-            let (encoded_key, v) = &items[idx];
-            Some((IVec::from(prefix_decode(view.lo, &*encoded_key)), v.clone()))
-        };
-
-        tx.flush();
-
-        Ok(ret)
+        self.range(..key).next_back().transpose()
     }
 
     /// Retrieve the next key and value from the `Tree` after the
@@ -570,37 +538,9 @@ impl Tree {
         K: AsRef<[u8]>,
     {
         let _measure = Measure::new(&M.tree_get);
-
-        let tx = self.context.pagecache.begin()?;
-
-        let view = self.view_for_key(key.as_ref(), &tx)?;
-        let data = &view.base_data;
-
-        let items = data.leaf_ref().expect("last_node should be a leaf");
-        let search = leaf_search(Greater, items, |&(ref k, ref _v)| {
-            prefix_cmp_encoded(k, key.as_ref(), view.lo)
-        });
-
-        let ret = if search.is_none() {
-            let mut iter = self.range((
-                std::ops::Bound::Excluded(key),
-                std::ops::Bound::Unbounded,
-            ));
-
-            match iter.next() {
-                Some(Err(e)) => return Err(e),
-                Some(Ok(pair)) => Some(pair),
-                None => None,
-            }
-        } else {
-            let idx = search.unwrap();
-            let (encoded_key, v) = &items[idx];
-            Some((IVec::from(prefix_decode(view.lo, &*encoded_key)), v.clone()))
-        };
-
-        tx.flush();
-
-        Ok(ret)
+        self.range((ops::Bound::Excluded(key), ops::Bound::Unbounded))
+            .next()
+            .transpose()
     }
 
     /// Merge state directly into a given key's value using the
