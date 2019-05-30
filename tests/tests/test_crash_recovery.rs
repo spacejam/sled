@@ -59,16 +59,14 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
         }
     }
 
-    let lowest_vec = u32_to_vec(lowest);
-
     // ensure nothing changes after this point
     let low_beginning = u32_to_vec(contiguous + 1);
 
     for res in tree.range(&*low_beginning..) {
         let (k, v): (sled::IVec, _) = res.unwrap();
         assert_eq!(
-            v,
-            lowest_vec,
+            slice_to_u32(&*v),
+            lowest,
             "expected key {} to have value {}, instead it had value {}",
             slice_to_u32(&*k),
             lowest,
