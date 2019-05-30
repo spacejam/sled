@@ -23,43 +23,37 @@ impl<'a> View<'a> {
         ptr: TreePtr<'a>,
         frags: Vec<&'a Frag>,
     ) -> View<'a> {
-        let mut view = View {
-            pid,
-            ptr,
-            frags,
-            lo: unsafe { std::mem::uninitialized() },
-            hi: unsafe { std::mem::uninitialized() },
-            is_index: false,
-            base_offset: usize::max_value(),
-            base_data: unsafe { std::mem::uninitialized() },
-            next: None,
-            merging_child: None,
-            merging: false,
-        };
-
+        let mut merging = false;
+        let mut merging_child = None;
         let mut merge_confirmed = false;
 
-        for (offset, frag) in view.frags.iter().enumerate() {
+        for (offset, frag) in frags.iter().enumerate() {
             match frag {
                 Frag::Base(node) => {
-                    if view.base_offset == usize::max_value() {
-                        // hi and next may be changed via a
-                        // parent split if we re-add that frag
-                        view.hi = &node.hi;
-                        view.next = node.next;
-                    }
-                    view.lo = &node.lo;
-                    view.is_index = node.data.index_ref().is_some();
-                    view.base_offset = offset;
-                    view.base_data = &node.data;
-                    break;
+                    // NB if we re-add ParentSplit, we must
+                    // handle the hi & next members differently
+                    // here
+
+                    return View {
+                        hi: &node.hi,
+                        lo: &node.lo,
+                        is_index: node.data.index_ref().is_some(),
+                        next: node.next,
+                        base_offset: offset,
+                        base_data: &node.data,
+                        pid,
+                        ptr,
+                        frags,
+                        merging,
+                        merging_child,
+                    };
                 }
                 Frag::ParentMergeIntention(pid) => {
                     if merge_confirmed {
                         merge_confirmed = false;
                     } else {
-                        assert!(view.merging_child.is_none());
-                        view.merging_child = Some(*pid);
+                        assert!(merging_child.is_none());
+                        merging_child = Some(*pid);
                     }
                 }
                 Frag::ParentMergeConfirm => {
@@ -67,21 +61,15 @@ impl<'a> View<'a> {
                     merge_confirmed = true;
                 }
                 Frag::ChildMergeCap => {
-                    assert!(!view.merging);
+                    assert!(!merging);
                     assert_eq!(offset, 0);
-                    view.merging = true;
+                    merging = true;
                 }
                 _ => {}
             }
         }
 
-        assert_ne!(
-            view.base_offset,
-            usize::max_value(),
-            "view was never initialized with a base"
-        );
-
-        view
+        panic!("view was never initialized with a base")
     }
 
     pub(crate) fn contains_upper_bound(&self, bound: &Bound<IVec>) -> bool {
@@ -176,7 +164,7 @@ impl<'a> View<'a> {
             let decoded_key = prefix_decode(self.lo, &encoded_key);
 
             if let Bound::Excluded(e) = bound {
-                if &*e == &decoded_key {
+                if e == &decoded_key {
                     // skip this excluded key
                     continue;
                 }
@@ -239,7 +227,7 @@ impl<'a> View<'a> {
             let decoded_key = prefix_decode(self.lo, &encoded_key);
 
             if let Bound::Excluded(e) = bound {
-                if &*e == &decoded_key {
+                if e == &decoded_key {
                     // skip this excluded key
                     continue;
                 }
@@ -268,7 +256,7 @@ impl<'a> View<'a> {
         let mut merge_base = None;
         let mut merges = vec![];
 
-        for frag in self.frags[..self.base_offset + 1].iter() {
+        for frag in self.frags[..=self.base_offset].iter() {
             match frag {
                 Frag::Set(k, val) if self.key_eq(k, key) => {
                     if merges.is_empty() {
@@ -292,7 +280,7 @@ impl<'a> View<'a> {
                         data.leaf_ref().expect("last_node should be a leaf");
                     let search = items
                         .binary_search_by(|&(ref k, ref _v)| {
-                            prefix_cmp_encoded(k, key.as_ref(), &self.lo)
+                            prefix_cmp_encoded(k, key, &self.lo)
                         })
                         .ok();
 
@@ -345,7 +333,7 @@ impl<'a> View<'a> {
     pub(crate) fn index_next_node(&self, key: &[u8]) -> PageId {
         assert!(self.is_index);
 
-        for frag in self.frags[..self.base_offset + 1].iter() {
+        for frag in self.frags[..=self.base_offset].iter() {
             match frag {
                 Frag::Set(..) => unimplemented!(),
                 Frag::Del(..) => unimplemented!(),
@@ -356,7 +344,7 @@ impl<'a> View<'a> {
                         data.index_ref().expect("last_node should be a leaf");
                     let search =
                         binary_search_lub(items, |&(ref k, ref _v)| {
-                            prefix_cmp_encoded(k, key.as_ref(), &node.lo)
+                            prefix_cmp_encoded(k, key, &node.lo)
                         });
 
                     // This might be none if ord is Less and we're
@@ -422,7 +410,7 @@ impl<'a> View<'a> {
         // TODO needs to better account for
         // sizes that don't actually fall under
         // a merge threshold once we support one.
-        self.frags[..self.base_offset + 1]
+        self.frags[..=self.base_offset]
             .iter()
             .map(|f| f.size_in_bytes())
             .sum()
