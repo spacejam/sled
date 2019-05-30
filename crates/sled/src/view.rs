@@ -330,7 +330,7 @@ impl<'a> View<'a> {
             == std::cmp::Ordering::Equal
     }
 
-    pub(crate) fn index_next_node(&self, key: &[u8]) -> PageId {
+    pub(crate) fn index_next_node(&self, key: &[u8]) -> (usize, PageId) {
         assert!(self.is_index);
 
         for frag in self.frags[..=self.base_offset].iter() {
@@ -351,7 +351,7 @@ impl<'a> View<'a> {
                     // searching for the empty key
                     let index = search.expect("failed to traverse index");
 
-                    return items[index].1;
+                    return (index, items[index].1);
                 }
                 Frag::ParentMergeIntention(_)
                 | Frag::ParentMergeConfirm

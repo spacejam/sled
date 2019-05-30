@@ -937,12 +937,14 @@ impl Tree {
         let mut root_pid = Some(cursor);
         let mut parent_view: Option<View> = None;
         let mut unsplit_parent = None;
+        let mut last_branch = 0;
 
         macro_rules! retry {
             () => {
                 cursor = self.root.load(SeqCst);
                 root_pid = Some(cursor);
                 parent_view = None;
+                last_branch = 0;
                 continue;
             };
         }
@@ -985,7 +987,7 @@ impl Tree {
                 retry!();
             }
 
-            if view.should_merge(
+            if last_branch != 0 && view.should_merge(
                 (self.context.blink_node_split_size
                     / self.context.blink_node_merge_ratio)
                     as u64,
@@ -1064,7 +1066,9 @@ impl Tree {
             }
 
             if view.is_index {
-                cursor = view.index_next_node(key.as_ref());
+                let next = view.index_next_node(key.as_ref());
+                last_branch = next.0;
+                cursor = next.1;
                 parent_view = Some(view);
             } else {
                 return Ok(view);
