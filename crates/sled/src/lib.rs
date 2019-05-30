@@ -64,7 +64,7 @@ pub use {
 
 use {
     self::{
-        binary_search::{binary_search_lub, leaf_search},
+        binary_search::binary_search_lub,
         context::Context,
         data::Data,
         frag::Frag,

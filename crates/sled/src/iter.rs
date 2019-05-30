@@ -69,7 +69,7 @@ impl<'a> Iter<'a> {
     }
 
     fn high_key(&self) -> &[u8] {
-        const MAX_KEY: &'static [u8] = &[255; 1024 * 1024];
+        const MAX_KEY: &[u8] = &[255; 1024 * 1024];
         match self.hi {
             Bound::Unbounded => MAX_KEY,
             Bound::Excluded(ref hi) | Bound::Included(ref hi) => hi.as_ref(),
@@ -80,7 +80,7 @@ impl<'a> Iter<'a> {
 impl<'a> Iterator for Iter<'a> {
     type Item = Result<(IVec, IVec)>;
 
-    fn next<'b>(&mut self) -> Option<Self::Item> {
+    fn next(&mut self) -> Option<Self::Item> {
         let _measure = Measure::new(&M.tree_scan);
 
         let tx: &'a Tx<'a, _, _> = match self.tx {
@@ -126,10 +126,10 @@ impl<'a> Iterator for Iter<'a> {
 
                 match self.hi {
                     Bound::Unbounded => return Some(Ok((key, value))),
-                    Bound::Included(ref h) if h >= &key => {
+                    Bound::Included(ref h) if *h >= key => {
                         return Some(Ok((key, value)))
                     }
-                    Bound::Excluded(ref h) if h > &key => {
+                    Bound::Excluded(ref h) if *h > key => {
                         return Some(Ok((key, value)))
                     }
                     _ => return None,
@@ -192,10 +192,10 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
 
                 match self.lo {
                     Bound::Unbounded => return Some(Ok((key, value))),
-                    Bound::Included(ref l) if l <= &key => {
+                    Bound::Included(ref l) if *l <= key => {
                         return Some(Ok((key, value)))
                     }
-                    Bound::Excluded(ref l) if l < &key => {
+                    Bound::Excluded(ref l) if *l < key => {
                         return Some(Ok((key, value)))
                     }
                     _ => return None,

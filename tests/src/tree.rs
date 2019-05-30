@@ -213,7 +213,7 @@ pub fn prop_tree_matches_btreemap(
         .async_io(false)
         .temporary(true)
         .use_compression(use_compression)
-        .snapshot_after_ops(snapshot_after as u64 + 1)
+        .snapshot_after_ops(u64::from(snapshot_after) + 1)
         .flush_every_ms(if flusher { Some(1) } else { None })
         .io_buf_size(10000)
         .blink_node_split_size(1 << std::cmp::min(blink_node_exponent, 20))
@@ -266,7 +266,7 @@ pub fn prop_tree_matches_btreemap(
                     .filter(|(key, _)| **key > k)
                     .nth(0)
                     .map(|(_, v)| *v);
-                assert_eq!(res1, res2);
+                assert_eq!(res1, res2, "{:?}", tree);
             }
             Del(k) => {
                 tree.del(&*k.0).unwrap();
