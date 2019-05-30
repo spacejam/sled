@@ -20,6 +20,12 @@ type Inner = [u8; CUTOFF];
 #[derive(Clone)]
 pub struct IVec(IVecInner);
 
+impl Default for IVec {
+    fn default() -> IVec {
+        IVec::from(&[])
+    }
+}
+
 #[derive(Clone)]
 enum IVecInner {
     Inline(u8, Inner),
