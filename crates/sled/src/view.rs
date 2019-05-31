@@ -1,6 +1,6 @@
 use super::*;
 
-use std::{collections::HashSet, ops::Bound};
+use std::{collections::HashSet, convert::TryFrom, ops::Bound};
 
 #[derive(Debug, Clone)]
 pub(crate) struct View<'a> {
@@ -15,6 +15,7 @@ pub(crate) struct View<'a> {
     pub(crate) base_data: &'a Data,
     pub(crate) merging_child: Option<PageId>,
     pub(crate) merging: bool,
+    min_children: usize,
 }
 
 impl<'a> View<'a> {
@@ -26,6 +27,7 @@ impl<'a> View<'a> {
         let mut merging = false;
         let mut merging_child = None;
         let mut merge_confirmed = false;
+        let mut min_children: isize = 0;
 
         for (offset, frag) in frags.iter().enumerate() {
             match frag {
@@ -33,6 +35,8 @@ impl<'a> View<'a> {
                     // NB if we re-add ParentSplit, we must
                     // handle the hi & next members differently
                     // here
+
+                    min_children += node.data.len() as isize;
 
                     return View {
                         hi: &node.hi,
@@ -46,6 +50,11 @@ impl<'a> View<'a> {
                         frags,
                         merging,
                         merging_child,
+                        min_children: usize::try_from(std::cmp::max(
+                            0,
+                            min_children,
+                        ))
+                        .unwrap(),
                     };
                 }
                 Frag::ParentMergeIntention(pid) => {
@@ -65,6 +74,7 @@ impl<'a> View<'a> {
                     assert_eq!(offset, 0);
                     merging = true;
                 }
+                Frag::Del(..) => min_children -= 1,
                 _ => {}
             }
         }
@@ -377,8 +387,7 @@ impl<'a> View<'a> {
     }
 
     pub(crate) fn should_split(&self, max_sz: u64) -> bool {
-        let children = self.base_data.len();
-        children > 2
+        self.min_children > 2
             && self.size_in_bytes() > max_sz
             && self.merging_child.is_none()
             && !self.merging
