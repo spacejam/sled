@@ -6,14 +6,12 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use rayon::prelude::*;
-
 use super::*;
 
 type PagePtrInner<'g, P> = Shared<'g, Node<CacheEntry<P>>>;
 
 /// A pointer to shared lock-free state bound by a pinned epoch's lifetime.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Copy)]
 pub struct PagePtr<'g, P>
 where
     P: 'static + Send,
@@ -194,89 +192,6 @@ where
             other => {
                 panic!("called as_frag on non-Append/Compact: {:?}", other)
             }
-        }
-    }
-}
-
-/// The result of a `get` call in the `PageCache`.
-#[derive(Clone, Debug, PartialEq)]
-pub enum PageGet<'a, PageFrag>
-where
-    PageFrag: 'static + DeserializeOwned + Serialize + Send + Sync,
-{
-    /// This page contains data and has been prepared
-    /// for presentation to the caller by the `PageCache`'s
-    /// `Materializer`.
-    Materialized(&'a PageFrag, PagePtr<'a, PageFrag>),
-    /// This page has been Freed
-    Free(PagePtr<'a, PageFrag>),
-    /// This page has not been allocated yet.
-    Unallocated,
-    /// This page contains the last persisted counter
-    Counter(u64, PagePtr<'a, PageFrag>),
-    /// This is the Meta page
-    Meta(&'a Meta, PagePtr<'a, PageFrag>),
-}
-
-unsafe impl<'a, P> Send for PageGet<'a, P> where
-    P: DeserializeOwned + Serialize + Send + Sync
-{
-}
-
-unsafe impl<'a, P> Sync for PageGet<'a, P> where
-    P: DeserializeOwned + Serialize + Send + Sync
-{
-}
-
-impl<'a, P> PageGet<'a, P>
-where
-    P: std::fmt::Debug + DeserializeOwned + Serialize + Send + Sync,
-{
-    /// unwraps the `PageGet` into its inner `Materialized`
-    /// form.
-    ///
-    /// # Panics
-    /// Panics if it is a variant other than Materialized.
-    pub fn unwrap(self) -> (&'a P, PagePtr<'a, P>) {
-        match self {
-            PageGet::Materialized(pr, hptr) => (pr, hptr),
-            _ => panic!("unwrap called on non-Materialized: {:?}", self),
-        }
-    }
-
-    /// unwraps the `PageGet` into its inner `Materialized`
-    /// form, or panics with the specified error message.
-    ///
-    /// # Panics
-    /// Panics if it is a variant other than Materialized.
-    pub fn expect(self, msg: &str) -> (&'a P, PagePtr<'a, P>) {
-        match self {
-            PageGet::Materialized(pr, hptr) => (pr, hptr),
-            _ => panic!("{}", msg),
-        }
-    }
-
-    /// Returns true if the `PageGet` is `Materialized`.
-    pub fn is_materialized(&self) -> bool {
-        match *self {
-            PageGet::Materialized(..) => true,
-            _ => false,
-        }
-    }
-
-    /// Returns true if the `PageGet` is `Free`.
-    pub fn is_free(&self) -> bool {
-        match *self {
-            PageGet::Free(_) => true,
-            _ => false,
-        }
-    }
-
-    /// Returns true if the `PageGet` is `Unallocated`.
-    pub fn is_unallocated(&self) -> bool {
-        match *self {
-            PageGet::Unallocated => true,
-            _ => false,
         }
     }
 }
@@ -517,7 +432,7 @@ where
 
             let tx = pc.begin()?;
 
-            if pc.get(META_PID, &tx)?.is_unallocated() {
+            if pc.get(META_PID, &tx)?.is_none() {
                 // set up meta
                 was_recovered = false;
 
@@ -534,7 +449,7 @@ where
                 );
             }
 
-            if pc.get(COUNTER_PID, &tx)?.is_unallocated() {
+            if pc.get(COUNTER_PID, &tx)?.is_none() {
                 // set up idgen
                 was_recovered = false;
 
@@ -551,17 +466,14 @@ where
                 );
             }
 
-            if let PageGet::Counter(counter, _) = pc.get(COUNTER_PID, &tx)? {
-                let idgen_recovery =
-                    counter + (2 * pc.config.idgen_persist_interval);
-                let idgen_persists = counter / pc.config.idgen_persist_interval
-                    * pc.config.idgen_persist_interval;
+            let (_, counter) = pc.get_idgen(&tx)?;
+            let idgen_recovery =
+                counter + (2 * pc.config.idgen_persist_interval);
+            let idgen_persists = counter / pc.config.idgen_persist_interval
+                * pc.config.idgen_persist_interval;
 
-                pc.idgen.store(idgen_recovery, SeqCst);
-                pc.idgen_persists.store(idgen_persists, SeqCst);
-            } else {
-                panic!("got non-Counter PageGet when recovering PageCache");
-            }
+            pc.idgen.store(idgen_recovery, SeqCst);
+            pc.idgen_persists.store(idgen_persists, SeqCst);
         }
 
         pc.was_recovered = was_recovered;
@@ -646,7 +558,7 @@ where
             trace!("re-allocating pid {}", pid);
 
             let key = match self.get(pid, tx)? {
-                PageGet::Free(key) => key,
+                Some((ref key, ref v)) if v.is_empty() => key.clone(),
                 other => panic!("reallocating page set to {:?}", other),
             };
 
@@ -1008,20 +920,35 @@ where
             trace!("rewriting page with pid {}", pid);
 
             // page-in whole page with a get
-            let (key, update) = match self.get(pid, tx)? {
-                PageGet::Materialized(data, key) => {
-                    (key, Update::Compact(data.clone()))
-                }
-                PageGet::Free(key) => (key, Update::Free),
-                PageGet::Counter(counter, key) => {
-                    (key, Update::Counter(counter))
-                }
-                PageGet::Meta(meta, key) => (key, Update::Meta(meta.clone())),
-                PageGet::Unallocated => {
-                    // TODO when merge functionality is added,
-                    // this may break
-                    warn!("page stack deleted from pagetable before page could be rewritten");
-                    return Ok(());
+            let (key, update) = if pid == META_PID {
+                let (key, meta) = self.get_meta(tx)?;
+                (key, Update::Meta(meta.clone()))
+            } else if pid == COUNTER_PID {
+                let (key, counter) = self.get_idgen(tx)?;
+                (key, Update::Counter(counter))
+            } else {
+                match self.get(pid, tx)? {
+                    Some((ref key, ref entries)) if entries.is_empty() => {
+                        (key.clone(), Update::Free)
+                    }
+                    Some((key, entries)) => {
+                        let _measure = Measure::new(&M.merge_page);
+
+                        let combined_iter = entries.into_iter().rev();
+
+                        let merged = PM::merge(combined_iter, &self.config);
+
+                        (key, Update::Compact(merged))
+                    }
+                    None => {
+                        // TODO when merge functionality is added,
+                        // this may break
+                        warn!(
+                            "page stack deleted from pagetable \
+                             before page could be rewritten"
+                        );
+                        return Ok(());
+                    }
                 }
             };
 
@@ -1162,34 +1089,80 @@ where
         } // loop
     }
 
-    /// Try to retrieve a page by its logical ID,
-    /// using the provided `Materializer` to consolidate
-    /// the fragments in-memory and returning the single
-    /// consolidated page.
-    pub fn get<'g>(
+    /// Retrieve the current meta page
+    pub(crate) fn get_meta<'g>(
         &self,
-        pid: PageId,
         tx: &'g Tx<PM, P>,
-    ) -> Result<PageGet<'g, P>> {
-        trace!("getting pid {}", pid);
-        loop {
-            let pte_ptr = match self.inner.get(pid, &tx.guard) {
-                None => {
-                    return Ok(PageGet::Unallocated);
-                }
-                Some(p) => p,
-            };
+    ) -> Result<(PagePtr<'g, P>, &'g Meta)> {
+        trace!("getting page iter for META");
 
-            let inner_res = self.page_in(pid, pte_ptr, tx)?;
-            if let Some(res) = inner_res {
-                return Ok(res);
+        let pte_ptr = match self.inner.get(META_PID, &tx.guard) {
+            None => {
+                return Err(Error::ReportableBug(
+                    "failed to retrieve META page \
+                     which should always be present"
+                        .into(),
+                ));
             }
-            // loop until we succeed
+            Some(p) => p,
+        };
+
+        let head = unsafe { pte_ptr.deref().stack.head(&tx.guard) };
+
+        match StackIter::from_ptr(head, &tx.guard).next() {
+            Some(CacheEntry::Meta(m, wts, ..)) => Ok((
+                PagePtr {
+                    cached_ptr: head,
+                    wts: *wts,
+                },
+                m,
+            )),
+            _ => Err(Error::ReportableBug(
+                "failed to retrieve META page \
+                 which should always be present"
+                    .into(),
+            )),
+        }
+    }
+
+    /// Retrieve the current persisted IDGEN value
+    pub(crate) fn get_idgen<'g>(
+        &self,
+        tx: &'g Tx<PM, P>,
+    ) -> Result<(PagePtr<'g, P>, u64)> {
+        trace!("getting page iter for idgen");
+
+        let pte_ptr = match self.inner.get(COUNTER_PID, &tx.guard) {
+            None => {
+                return Err(Error::ReportableBug(
+                    "failed to retrieve idgen page \
+                     which should always be present"
+                        .into(),
+                ))
+            }
+            Some(p) => p,
+        };
+
+        let head = unsafe { pte_ptr.deref().stack.head(&tx.guard) };
+
+        match StackIter::from_ptr(head, &tx.guard).next() {
+            Some(CacheEntry::Counter(counter, wts, ..)) => Ok((
+                PagePtr {
+                    cached_ptr: head,
+                    wts: *wts,
+                },
+                *counter,
+            )),
+            _ => Err(Error::ReportableBug(
+                "failed to retrieve idgen page \
+                 which should always be present"
+                    .into(),
+            )),
         }
     }
 
     /// Try to retrieve a page by its logical ID.
-    pub fn get_page_frags<'g>(
+    pub fn get<'g>(
         &self,
         pid: PageId,
         tx: &'g Tx<PM, P>,
@@ -1306,7 +1279,7 @@ where
                 Err(Some(_)) => {
                     // our consolidation failed, recurse
                     // TODO don't recurse in the released version
-                    return self.get_page_frags(pid, tx);
+                    return self.get(pid, tx);
                 }
             }
         }
@@ -1359,7 +1332,7 @@ where
             } else {
                 trace!("fix-up for pid {} failed", pid);
             }
-            self.get_page_frags(pid, tx)
+            self.get(pid, tx)
         } else {
             let wts = successes[0].1;
 
@@ -1471,15 +1444,7 @@ where
             if persisted < necessary_persists {
                 // it's our responsibility to persist up to our ID
                 let tx = Tx::new(&self, u64::max_value());
-                let page_get = self.get(COUNTER_PID, &tx)?;
-
-                let (current, key) = if let PageGet::Counter(current, key) =
-                    page_get
-                {
-                    (current, key)
-                } else {
-                    panic!("counter pid contained non-Counter: {:?}", page_get);
-                };
+                let (key, current) = self.get_idgen(&tx)?;
 
                 assert_eq!(current, persisted);
 
@@ -1525,12 +1490,7 @@ where
     /// owner may use for storing metadata about their higher-level
     /// collections.
     pub fn meta<'a>(&self, tx: &'a Tx<PM, P>) -> Result<&'a Meta> {
-        let meta_page_get = self.get(META_PID, tx)?;
-
-        match meta_page_get {
-            PageGet::Meta(ref meta, ref _ptr) => Ok(meta),
-            broken => panic!("pagecache returned non-base node: {:?}", broken),
-        }
+        self.get_meta(tx).map(|(_k, m)| m)
     }
 
     /// Look up a PageId for a given identifier in the `Meta`
@@ -1563,14 +1523,7 @@ where
         tx: &'g Tx<PM, P>,
     ) -> Result<std::result::Result<(), Option<PageId>>> {
         loop {
-            let meta_page_get = self.get(META_PID, tx)?;
-
-            let (meta_key, meta) = match meta_page_get {
-                PageGet::Meta(ref meta, ref key) => (key, meta),
-                broken => {
-                    panic!("pagecache returned non-base node: {:?}", broken)
-                }
-            };
+            let (meta_key, meta) = self.get_meta(tx)?;
 
             let actual = meta.get_root(&name);
             if actual != old {
@@ -1604,298 +1557,6 @@ where
                             .into(),
                     ));
                 }
-            }
-        }
-    }
-
-    fn page_in<'g>(
-        &self,
-        pid: PageId,
-        pte_ptr: Shared<'g, PageTableEntry<P>>,
-        tx: &'g Tx<PM, P>,
-    ) -> Result<Option<PageGet<'g, P>>> {
-        let _measure = Measure::new(&M.page_in);
-
-        debug_delay();
-        let mut head = unsafe { pte_ptr.deref().stack.head(&tx.guard) };
-
-        let mut stack_iter = StackIter::from_ptr(head, &tx.guard).peekable();
-
-        // Short circuit merging and fix-up if we only
-        // have one of the core base frags
-        match stack_iter.peek() {
-            Some(CacheEntry::MergedResident(_, ts, ..)) => {
-                let ptr = PagePtr {
-                    cached_ptr: head,
-                    wts: *ts,
-                };
-                let mr = unsafe { ptr.deref_merged_resident() };
-
-                return Ok(Some(PageGet::Materialized(mr, ptr)));
-            }
-            Some(CacheEntry::Counter(counter, ts, ..)) => {
-                let ptr = PagePtr {
-                    cached_ptr: head,
-                    wts: *ts,
-                };
-                return Ok(Some(PageGet::Counter(*counter, ptr)));
-            }
-            Some(CacheEntry::Meta(meta, ts, ..)) => {
-                let ptr = PagePtr {
-                    cached_ptr: head,
-                    wts: *ts,
-                };
-                return Ok(Some(PageGet::Meta(meta, ptr)));
-            }
-            _ => {}
-        }
-
-        let mut to_merge = vec![];
-        let mut merged_resident = false;
-        let mut ptrs =
-            Vec::with_capacity(self.config.page_consolidation_threshold + 2);
-        let mut fix_up_length = 0;
-
-        let head_ts = stack_iter.peek().map(|ce| ce.ts()).unwrap_or(0);
-
-        for cache_entry_ptr in stack_iter {
-            match *cache_entry_ptr {
-                CacheEntry::Resident(ref page_frag, ts, lsn, ptr) => {
-                    if !merged_resident {
-                        to_merge.push(page_frag);
-                    }
-                    ptrs.push((ts, lsn, ptr));
-                }
-                CacheEntry::MergedResident(ref page_frag, ts, lsn, ptr) => {
-                    if !merged_resident {
-                        to_merge.push(page_frag);
-                        merged_resident = true;
-                        fix_up_length = ptrs.len();
-                    }
-                    ptrs.push((ts, lsn, ptr));
-                }
-                CacheEntry::PartialFlush(ts, lsn, ptr)
-                | CacheEntry::Flush(ts, lsn, ptr) => {
-                    ptrs.push((ts, lsn, ptr));
-                }
-                CacheEntry::Free(ts, _, _) => {
-                    return Ok(Some(PageGet::Free(PagePtr {
-                        cached_ptr: head,
-                        wts: ts,
-                    })));
-                }
-                ref other => {
-                    panic!("encountered unexpected CacheEntry in middle of page chain: {:?}", other);
-                }
-            }
-        }
-
-        if ptrs.is_empty() {
-            return Ok(Some(PageGet::Unallocated));
-        }
-
-        let mut fetched = Vec::with_capacity(ptrs.len());
-
-        // Did not find a previously merged value in memory,
-        // may need to go to disk.
-        if !merged_resident {
-            let to_pull = &ptrs[to_merge.len()..];
-
-            let pulled_res: Vec<_> = to_pull
-                .par_iter()
-                .map(|&(_ts, lsn, ptr)| self.pull(lsn, ptr))
-                .collect();
-
-            for item_res in pulled_res {
-                if item_res.is_err() {
-                    // check to see if the page head pointer is the same.
-                    // if not, we may have failed our pull because a blob
-                    // is no longer present that was replaced by another
-                    // thread and removed.
-
-                    let current_head =
-                        unsafe { pte_ptr.deref().stack.head(&tx.guard) };
-                    if current_head != head {
-                        debug!(
-                            "pull failed for item for pid {}, but we'll \
-                             retry because the stack has changed",
-                            pid,
-                        );
-                        return Ok(None);
-                    }
-
-                    let current_pte_ptr = match self.inner.get(pid, &tx.guard) {
-                        None => {
-                            debug!(
-                                "pull failed for item for pid {}, but we'll \
-                                 just return Unallocated because the pid is \
-                                 no longer present in the pagetable.",
-                                pid,
-                            );
-                            return Ok(Some(PageGet::Unallocated));
-                        }
-                        Some(p) => p,
-                    };
-
-                    if current_pte_ptr != pte_ptr {
-                        panic!(
-                            "pull failed for item for pid {}, and somehow \
-                             the page's entire stack has changed due to \
-                             being reallocated while we were still \
-                             witnessing it. This is probably a failure in the \
-                             way that EBR is being used to handle page frees.",
-                            pid,
-                        );
-                    }
-
-                    debug!(
-                        "pull failed for item for pid {}, but our stack of \
-                        items has remained intact since we initially observed it, \
-                        so there is probably a corruption issue or race condition.",
-                        pid,
-                    );
-                }
-
-                fetched.push(item_res?);
-            }
-        }
-
-        let merged = if to_merge.is_empty() && fetched.len() == 1 {
-            // don't perform any merging logic if we have
-            // no found `Resident`s and only a single fetched
-            // `Frag`.
-            fetched.pop().unwrap()
-        } else {
-            let _measure = Measure::new(&M.merge_page);
-
-            let combined_iter = to_merge
-                .into_iter()
-                .chain(fetched.iter().map(|u| u.as_frag()))
-                .rev();
-
-            Update::Compact(PM::merge(combined_iter, &self.config))
-        };
-
-        let size: u64 = match &merged {
-            Update::Compact(compact) => PM::size_in_bytes(compact),
-            Update::Counter(_) => 0,
-            Update::Meta(_) => 0,
-            other => panic!(
-                "trying to calculate the size on a non-base update {:?}",
-                other
-            ),
-        };
-
-        let to_evict = self.lru.accessed(pid, size);
-        trace!("accessed pid {} -> paging out pids {:?}", pid, to_evict);
-
-        trace!("accessed page: {:?}", merged);
-        self.page_out(to_evict, tx)?;
-
-        if ptrs.len() > self.config.page_consolidation_threshold {
-            trace!("consolidating pid {} with len {}!", pid, ptrs.len());
-            let ptr = PagePtr {
-                cached_ptr: head,
-                wts: head_ts,
-            };
-            match self.cas_page(pid, ptr, merged, true, tx) {
-                Ok(Ok(new_head)) => head = new_head.cached_ptr,
-                Ok(Err(None)) => {
-                    // This page was unallocated since we
-                    // read the head pointer.
-                    return Ok(Some(PageGet::Unallocated));
-                }
-                Ok(Err(Some(_))) => {
-                    // our consolidation failed,
-                    // so we communicate to the
-                    // caller that they should retry
-                    return Ok(None);
-                }
-                Err(other) => {
-                    // we need to propagate this error
-                    // beyond the caller
-                    return Err(other);
-                }
-            }
-        } else {
-            trace!(
-                "fixing up pid {} with {} traversed frags",
-                pid,
-                fix_up_length
-            );
-            let mut new_entries = Vec::with_capacity(ptrs.len());
-
-            let (head_ts, head_lsn, head_ptr) = ptrs.remove(0);
-            let head_entry = match merged {
-                Update::Meta(meta) => {
-                    CacheEntry::Meta(meta, head_ts, head_lsn, head_ptr)
-                }
-                Update::Counter(counter) => {
-                    CacheEntry::Counter(counter, head_ts, head_lsn, head_ptr)
-                }
-                Update::Compact(compact) => CacheEntry::MergedResident(
-                    compact, head_ts, head_lsn, head_ptr,
-                ),
-                other => {
-                    panic!("trying to replace head of stack with {:?}", other)
-                }
-            };
-            new_entries.push(head_entry);
-
-            let mut tail = if let Some((tail_ts, lsn, ptr)) = ptrs.pop() {
-                Some(CacheEntry::Flush(tail_ts, lsn, ptr))
-            } else {
-                None
-            };
-
-            for (entry_ts, lsn, ptr) in ptrs {
-                new_entries.push(CacheEntry::PartialFlush(entry_ts, lsn, ptr));
-            }
-
-            if let Some(tail) = tail.take() {
-                new_entries.push(tail);
-            }
-
-            let node = node_from_frag_vec(new_entries).into_shared(&tx.guard);
-
-            debug_assert_eq!(
-                ptrs_from_stack(head, tx),
-                ptrs_from_stack(node, tx),
-            );
-
-            let node = unsafe { node.into_owned() };
-
-            debug_delay();
-            let res =
-                unsafe { pte_ptr.deref().stack.cas(head, node, &tx.guard) };
-            if let Ok(new_head) = res {
-                head = new_head;
-            } else {
-                // we're out of date, retry
-                return Ok(None);
-            }
-        }
-
-        let ret_ptr = PagePtr {
-            cached_ptr: head,
-            wts: head_ts,
-        };
-
-        unsafe {
-            match ret_ptr.cached_ptr.deref().deref() {
-                CacheEntry::MergedResident(mr, ..) => {
-                    Ok(Some(PageGet::Materialized(mr, ret_ptr)))
-                }
-                CacheEntry::Counter(counter, ..) => {
-                    Ok(Some(PageGet::Counter(*counter, ret_ptr)))
-                }
-                CacheEntry::Meta(meta, ..) => {
-                    Ok(Some(PageGet::Meta(meta, ret_ptr)))
-                }
-                other => panic!(
-                    "found non-base type of node after paging in node {}: {:?}",
-                    pid, other
-                ),
             }
         }
     }
