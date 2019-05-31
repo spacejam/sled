@@ -432,7 +432,7 @@ where
 
             let tx = pc.begin()?;
 
-            if pc.get(META_PID, &tx)?.is_none() {
+            if let Err(Error::ReportableBug(..)) = pc.get_meta(&tx) {
                 // set up meta
                 was_recovered = false;
 
@@ -449,7 +449,7 @@ where
                 );
             }
 
-            if pc.get(COUNTER_PID, &tx)?.is_none() {
+            if let Err(Error::ReportableBug(..)) = pc.get_idgen(&tx) {
                 // set up idgen
                 was_recovered = false;
 
@@ -1117,6 +1117,15 @@ where
                 },
                 m,
             )),
+            Some(CacheEntry::Flush(wts, lsn, disk_ptr)) => {
+                let update = self.pull(*lsn, *disk_ptr)?;
+                let ptr = PagePtr {
+                    cached_ptr: head,
+                    wts: *wts,
+                };
+                let _ = self.cas_page(META_PID, ptr, update, false, tx)?;
+                self.get_meta(tx)
+            }
             _ => Err(Error::ReportableBug(
                 "failed to retrieve META page \
                  which should always be present"
@@ -1153,6 +1162,15 @@ where
                 },
                 *counter,
             )),
+            Some(CacheEntry::Flush(wts, lsn, disk_ptr)) => {
+                let update = self.pull(*lsn, *disk_ptr)?;
+                let ptr = PagePtr {
+                    cached_ptr: head,
+                    wts: *wts,
+                };
+                let _ = self.cas_page(COUNTER_PID, ptr, update, false, tx)?;
+                self.get_idgen(tx)
+            }
             _ => Err(Error::ReportableBug(
                 "failed to retrieve idgen page \
                  which should always be present"
@@ -1169,21 +1187,7 @@ where
     ) -> Result<Option<(PagePtr<'g, P>, Vec<&'g P>)>> {
         trace!("getting page iter for pid {}", pid);
 
-        let pte_ptr = match self.inner.get(pid, &tx.guard) {
-            None => return Ok(None),
-            Some(p) => p,
-        };
-
-        let head = unsafe { pte_ptr.deref().stack.head(&tx.guard) };
-
-        let entries: Vec<_> = StackIter::from_ptr(head, &tx.guard).collect();
-
-        let valid = entries.iter().all(|ce| match ce {
-            CacheEntry::Counter(..) | CacheEntry::Meta(..) => false,
-            _ => true,
-        });
-
-        if !valid {
+        if pid == COUNTER_PID || pid == META_PID {
             return Err(Error::Unsupported(
                 "you are not able to iterate over \
                  the first couple pages, which are \
@@ -1192,6 +1196,15 @@ where
                     .into(),
             ));
         }
+
+        let pte_ptr = match self.inner.get(pid, &tx.guard) {
+            None => return Ok(None),
+            Some(p) => p,
+        };
+
+        let head = unsafe { pte_ptr.deref().stack.head(&tx.guard) };
+
+        let entries: Vec<_> = StackIter::from_ptr(head, &tx.guard).collect();
 
         if entries.is_empty() || entries[0].is_free() {
             return Ok(Some((
@@ -1823,9 +1836,11 @@ where
 
             let new_pte = Owned::new(pte).into_shared(&guard);
 
+            trace!("installing stack for pid {}", pid);
+
             self.inner
                 .cas(*pid, Shared::null(), new_pte, &guard)
-                .unwrap();
+                .expect("should be able to install initial stack");
         }
 
         assert!(
