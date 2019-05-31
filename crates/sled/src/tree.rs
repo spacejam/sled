@@ -913,7 +913,7 @@ impl Tree {
         pid: PageId,
         tx: &'g Tx<BLinkMaterializer, Frag>,
     ) -> Result<Option<View<'g>>> {
-        let frag_opt = self.context.pagecache.get_page_frags(pid, tx)?;
+        let frag_opt = self.context.pagecache.get(pid, tx)?;
         if let Some((tree_ptr, frags)) = frag_opt {
             Ok(Some(View::new(pid, tree_ptr, frags)))
         } else {
@@ -1086,29 +1086,25 @@ impl Tree {
         // Get the child node and try to install a `MergeCap` frag.
         // In case we succeed, we break, otherwise we try from the start.
         let child_node = loop {
-            let get_cursor = self.context.pagecache.get(child_pid, tx)?;
-            if get_cursor.is_free() {
-                return Ok(());
-            }
+            let child_view =
+                if let Some(child_view) = self.view_for_pid(child_pid, tx)? {
+                    if child_view.is_free() {
+                        return Ok(());
+                    }
+                    child_view
+                } else {
+                    return Ok(());
+                };
 
-            let (child_frag, child_cas_key) = match get_cursor {
-                PageGet::Materialized(node, cas_key) => (node, cas_key),
-                broken => {
-                    return Err(Error::ReportableBug(format!(
-                        "got non-base node while traversing tree: {:?}",
-                        broken
-                    )));
-                }
-            };
+            let child_node = child_view.compact(&self.context);
 
-            let child_node = child_frag.unwrap_base();
             if child_node.merging {
                 break child_node;
             }
 
             let install_frag = self.context.pagecache.link(
                 child_pid,
-                child_cas_key,
+                child_view.ptr,
                 Frag::ChildMergeCap,
                 tx,
             )?;
@@ -1126,37 +1122,32 @@ impl Tree {
         let mut cursor_pid = (index[merge_index - 1]).1;
 
         loop {
-            let cursor_page_get = self.context.pagecache.get(cursor_pid, tx)?;
-
             // The only way this child could have been freed is if the original merge has
             // already been handled. Only in that case can this child have been freed
-            if cursor_page_get.is_free() {
-                return Ok(());
-            }
-
-            let (cursor_frag, cursor_cas_key) = match cursor_page_get {
-                PageGet::Materialized(node, cas_key) => (node, cas_key),
-                broken => {
-                    return Err(Error::ReportableBug(format!(
-                        "got non-base node while traversing tree: {:?}",
-                        broken
-                    )));
-                }
-            };
-
-            let cursor_node = cursor_frag.unwrap_base();
+            let cursor_view =
+                if let Some(cursor_view) = self.view_for_pid(cursor_pid, tx)? {
+                    if cursor_view.is_free() {
+                        return Ok(());
+                    }
+                    cursor_view
+                } else {
+                    return Ok(());
+                };
 
             // Make sure we don't overseek cursor
             // We break instead of returning because otherwise a thread that
             // collaboratively wants to complete the merge could never reach
             // the point where it can install the merge confirmation frag.
-            if cursor_node.lo >= child_node.lo {
+            if cursor_view.lo >= &child_node.lo {
                 break;
             }
 
             // This means that `cursor_node` is the node we want to replace
-            if cursor_node.next == Some(child_pid) {
-                let replacement = cursor_node.receive_merge(child_node);
+            if cursor_view.next == Some(child_pid) {
+                let cursor_node = cursor_view.compact(&self.context);
+                let cursor_cas_key = cursor_view.ptr;
+
+                let replacement = cursor_node.receive_merge(&child_node);
                 let replace = self.context.pagecache.replace(
                     cursor_pid,
                     cursor_cas_key,
@@ -1170,7 +1161,7 @@ impl Tree {
                 }
             } else {
                 // In case we didn't find the child, we get the next cursor node
-                if let Some(next) = cursor_node.next {
+                if let Some(next) = cursor_view.next {
                     cursor_pid = next;
                 } else {
                     return Ok(());
@@ -1191,32 +1182,22 @@ impl Tree {
                 Ok(_) => break,
                 Err(None) => break,
                 Err(_) => {
-                    let parent_page_get =
-                        self.context.pagecache.get(parent.pid, tx)?;
-                    if parent_page_get.is_free() {
+                    let parent_view = if let Some(parent_view) =
+                        self.view_for_pid(parent.pid, tx)?
+                    {
+                        if parent_view.is_free() {
+                            break;
+                        }
+                        parent_view
+                    } else {
+                        break;
+                    };
+
+                    if parent_view.merging_child != Some(child_pid) {
                         break;
                     }
 
-                    let (parent_frag, new_parent_cas_key) =
-                        match parent_page_get {
-                            PageGet::Materialized(node, cas_key) => {
-                                (node, cas_key)
-                            }
-                            broken => {
-                                return Err(Error::ReportableBug(format!(
-                                "got non-base node while traversing tree: {:?}",
-                                broken
-                            )));
-                            }
-                        };
-
-                    let parent_node = parent_frag.unwrap_base();
-
-                    if parent_node.merging_child != Some(child_pid) {
-                        break;
-                    }
-
-                    parent_cas_key = new_parent_cas_key;
+                    parent_cas_key = parent_view.ptr;
                 }
             }
         }
@@ -1235,29 +1216,27 @@ impl Tree {
 
         while let Some(mut pid) = leftmost_chain.pop() {
             loop {
-                let get_cursor = self.context.pagecache.get(pid, &tx)?;
-
-                let (node, key) = match get_cursor {
-                    PageGet::Materialized(node, key) => (node, key),
-                    PageGet::Free(_) => {
+                let cursor_view =
+                    if let Some(view) = self.view_for_pid(pid, &tx)? {
+                        if view.is_free() {
+                            error!("encountered Free node while GC'ing tree");
+                            break;
+                        }
+                        view
+                    } else {
                         error!("encountered Free node while GC'ing tree");
                         break;
-                    }
-                    broken => {
-                        return Err(Error::ReportableBug(format!(
-                            "got non-base node while GC'ing tree: {:?}",
-                            broken
-                        )));
-                    }
-                };
+                    };
 
-                let ret = self.context.pagecache.free(pid, key.clone(), &tx)?;
+                let ret =
+                    self.context.pagecache.free(pid, cursor_view.ptr, &tx)?;
 
                 if ret.is_ok() {
-                    let next_pid = node.unwrap_base().next.unwrap_or(0);
-                    if next_pid == 0 {
+                    let next_pid = if let Some(next_pid) = cursor_view.next {
+                        next_pid
+                    } else {
                         break;
-                    }
+                    };
                     assert_ne!(pid, next_pid);
                     pid = next_pid;
                 }
@@ -1284,10 +1263,10 @@ impl Debug for Tree {
         f.write_str("\tlevel 0:\n")?;
 
         loop {
-            let get_res = self.context.pagecache.get(pid, &tx);
+            let get_res = self.view_for_pid(pid, &tx);
             let node = match get_res {
-                Ok(PageGet::Materialized(ref frag, ref _ptr)) => {
-                    frag.unwrap_base()
+                Ok(Some(ref view)) if !view.is_free() => {
+                    view.compact(&self.context)
                 }
                 broken => {
                     panic!("pagecache returned non-base node: {:?}", broken)
@@ -1302,9 +1281,11 @@ impl Debug for Tree {
                 pid = next_pid;
             } else {
                 // we've traversed our level, time to bump down
-                let left_get_res = self.context.pagecache.get(left_most, &tx);
+                let left_get_res = self.view_for_pid(left_most, &tx);
                 let left_node = match left_get_res {
-                    Ok(PageGet::Materialized(mf, ..)) => mf.unwrap_base(),
+                    Ok(Some(ref view)) if !view.is_free() => {
+                        view.compact(&self.context)
+                    }
                     broken => {
                         panic!("pagecache returned non-base node: {:?}", broken)
                     }

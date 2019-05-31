@@ -79,8 +79,8 @@ use {
     },
     log::{debug, error, trace},
     pagecache::{
-        debug_delay, Materializer, Measure, MergeOperator, PageCache, PageGet,
-        PageId, Tx, M,
+        debug_delay, Materializer, Measure, MergeOperator, PageCache, PageId,
+        Tx, M,
     },
     serde::{Deserialize, Serialize},
 };
