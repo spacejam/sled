@@ -1172,3 +1172,28 @@ fn tree_bug_25() {
         false,
     );
 }
+
+#[test]
+fn tree_bug_26() {
+    // postmortem:
+    prop_tree_matches_btreemap(
+        vec![
+            Merge(Key(vec![]), 194),
+            Merge(Key(vec![62]), 114),
+            Merge(Key(vec![80]), 202),
+            Merge(Key(vec![]), 169),
+            Set(Key(vec![]), 197),
+            Del(Key(vec![])),
+            Del(Key(vec![])),
+            Set(Key(vec![]), 215),
+            Set(Key(vec![]), 164),
+            Merge(Key(vec![]), 150),
+            GetGt(Key(vec![])),
+            GetLt(Key(vec![80])),
+        ],
+        0,
+        0,
+        false,
+        false,
+    );
+}

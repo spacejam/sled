@@ -72,18 +72,31 @@ impl<'a> View<'a> {
         panic!("view was never initialized with a base")
     }
 
-    pub(crate) fn contains_upper_bound(&self, bound: &Bound<IVec>) -> bool {
+    pub(crate) fn contains_upper_bound(
+        &self,
+        bound: &Bound<IVec>,
+        is_forward: bool,
+    ) -> bool {
         match bound {
-            Bound::Unbounded => self.hi.is_empty(),
-            Bound::Included(bound) => self.hi > bound || self.hi.is_empty(),
-            Bound::Excluded(bound) => self.hi >= bound || self.hi.is_empty(),
+            Bound::Excluded(bound) if self.hi >= bound => true,
+            Bound::Included(bound) if self.hi > bound => true,
+            _ => self.hi.is_empty(),
         }
     }
 
-    pub(crate) fn contains_lower_bound(&self, bound: &Bound<IVec>) -> bool {
+    pub(crate) fn contains_lower_bound(
+        &self,
+        bound: &Bound<IVec>,
+        is_forward: bool,
+    ) -> bool {
         match bound {
-            Bound::Unbounded => self.lo.is_empty(),
-            Bound::Included(bound) | Bound::Excluded(bound) => self.lo <= bound,
+            Bound::Excluded(bound)
+                if self.lo < bound || (is_forward && bound == self.lo) =>
+            {
+                true
+            }
+            Bound::Included(bound) if self.lo <= bound => true,
+            _ => self.lo.is_empty(),
         }
     }
 

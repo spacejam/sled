@@ -101,7 +101,7 @@ impl<'a> Iterator for Iter<'a> {
                 return None;
             }
 
-            if !view.contains_upper_bound(&self.lo) {
+            if !view.contains_upper_bound(&self.lo, true) {
                 // view too low (maybe merged, maybe exhausted?)
                 let next_pid = view.next?;
                 if let Some(v) =
@@ -110,7 +110,7 @@ impl<'a> Iterator for Iter<'a> {
                     view = v;
                 }
                 continue;
-            } else if !view.contains_lower_bound(&self.lo) {
+            } else if !view.contains_lower_bound(&self.lo, true) {
                 // view too high (maybe split, maybe exhausted?)
                 let seek_key = possible_predecessor(view.lo)?;
                 view = iter_try!(self.tree.view_for_key(seek_key, &tx));
@@ -127,10 +127,10 @@ impl<'a> Iterator for Iter<'a> {
                 match self.hi {
                     Bound::Unbounded => return Some(Ok((key, value))),
                     Bound::Included(ref h) if *h >= key => {
-                        return Some(Ok((key, value)))
+                        return Some(Ok((key, value)));
                     }
                     Bound::Excluded(ref h) if *h > key => {
-                        return Some(Ok((key, value)))
+                        return Some(Ok((key, value)));
                     }
                     _ => return None,
                 }
@@ -162,12 +162,16 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
             _ => iter_try!(self.tree.view_for_key(self.high_key(), &tx)),
         };
 
+        let mut _debug_loops = 0;
         loop {
+            _debug_loops += 1;
+            assert!(_debug_loops < 10000);
+
             if self.bounds_collapsed() {
                 return None;
             }
 
-            if !view.contains_upper_bound(&self.hi) {
+            if !view.contains_upper_bound(&self.hi, false) {
                 // view too low (maybe merged, maybe exhausted?)
                 let next_pid = view.next?;
                 if let Some(v) =
@@ -176,7 +180,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                     view = v;
                 }
                 continue;
-            } else if !view.contains_lower_bound(&self.hi) {
+            } else if !view.contains_lower_bound(&self.hi, false) {
                 // view too high (maybe split, maybe exhausted?)
                 let seek_key = possible_predecessor(view.lo)?;
                 view = iter_try!(self.tree.view_for_key(seek_key, &tx));
@@ -193,12 +197,14 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 match self.lo {
                     Bound::Unbounded => return Some(Ok((key, value))),
                     Bound::Included(ref l) if *l <= key => {
-                        return Some(Ok((key, value)))
+                        return Some(Ok((key, value)));
                     }
                     Bound::Excluded(ref l) if *l < key => {
-                        return Some(Ok((key, value)))
+                        return Some(Ok((key, value)));
                     }
-                    _ => return None,
+                    _ => {
+                        return None;
+                    }
                 }
             } else {
                 if view.lo.is_empty() {

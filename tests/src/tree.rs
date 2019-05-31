@@ -259,14 +259,17 @@ pub fn prop_tree_matches_btreemap(
                 );
             }
             GetGt(k) => {
-                let res1 =
-                    tree.get_gt(&*k.0).unwrap().map(|v| bytes_to_u16(&*v.1));
+                let res1 = tree.get_gt(&*k.0).unwrap().map(|v| v.0);
                 let res2 = reference
                     .iter()
                     .filter(|(key, _)| **key > k)
                     .nth(0)
-                    .map(|(_, v)| *v);
-                assert_eq!(res1, res2, "{:?}", tree);
+                    .map(|(k, _v)| IVec::from(&*k.0));
+                assert_eq!(
+                    res1, res2,
+                    "get_gt({:?}) expected {:?} in tree {:?}",
+                    k, res2, tree
+                );
             }
             Del(k) => {
                 tree.del(&*k.0).unwrap();
@@ -301,8 +304,10 @@ pub fn prop_tree_matches_btreemap(
                     assert_eq!(
                         (lhs.0.as_ref(), lhs.1),
                         (rhs.0.as_ref(), rhs.1),
-                        "expected iteration over the Tree \
-                         to match our BTreeMap model"
+                        "expected {:?} while iterating from {:?} on tree: {:?}",
+                        rhs,
+                        k,
+                        tree
                     );
                 }
             }

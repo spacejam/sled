@@ -1054,13 +1054,13 @@ impl Tree {
                 parent.parent_split(view.lo.as_ref(), cursor);
 
                 M.tree_parent_split_attempt();
-                let link = self.context.pagecache.replace(
+                let replace = self.context.pagecache.replace(
                     unsplit_parent.pid,
                     unsplit_parent.ptr.clone(),
                     Frag::Base(parent),
                     tx,
                 )?;
-                if link.is_ok() {
+                if replace.is_ok() {
                     M.tree_parent_split_success();
                 }
             }
@@ -1157,13 +1157,13 @@ impl Tree {
             // This means that `cursor_node` is the node we want to replace
             if cursor_node.next == Some(child_pid) {
                 let replacement = cursor_node.receive_merge(child_node);
-                let replace_frag = self.context.pagecache.replace(
+                let replace = self.context.pagecache.replace(
                     cursor_pid,
                     cursor_cas_key,
                     Frag::Base(replacement),
                     tx,
                 )?;
-                match replace_frag {
+                match replace {
                     Ok(_) => break,
                     Err(None) => return Ok(()),
                     Err(_) => continue,
