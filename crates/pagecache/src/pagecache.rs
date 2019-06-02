@@ -6,6 +6,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use rayon::prelude::*;
+
 use super::*;
 
 type PagePtrInner<'g, P> = Shared<'g, Node<CacheEntry<P>>>;
@@ -1228,7 +1230,7 @@ where
             )));
         }
 
-        let pulled = entries.iter().map(|ce| match ce {
+        let pulled = entries.par_iter().map(|ce| match ce {
             CacheEntry::MergedResident(mr, ts, lsn, ptr) => {
                 Ok((Cow::Borrowed(mr), *ts, *lsn, *ptr))
             }
