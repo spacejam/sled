@@ -951,11 +951,10 @@ where
                 (key, Update::Counter(counter))
             } else {
                 match self.get(pid, tx)? {
-                    Some((ref key, ref entries)) if entries.is_empty() => {
-                        (key.clone(), Update::Free)
-                    }
                     Some((key, entries)) => {
                         let _measure = Measure::new(&M.merge_page);
+
+                        assert!(!entries.is_empty());
 
                         let combined_iter = entries.into_iter().rev();
 
@@ -964,13 +963,43 @@ where
                         (key, Update::Compact(merged))
                     }
                     None => {
-                        // TODO when merge functionality is added,
-                        // this may break
-                        warn!(
-                            "page stack deleted from pagetable \
-                             before page could be rewritten"
-                        );
-                        return Ok(());
+                        let pte_ptr = match self.inner.get(pid, &tx.guard) {
+                            None => panic!(
+                                "expected to find existing stack \
+                                 for freed pid {}",
+                                pid
+                            ),
+                            Some(p) => p,
+                        };
+
+                        let head =
+                            unsafe { pte_ptr.deref().stack.head(&tx.guard) };
+
+                        let mut stack_iter =
+                            StackIter::from_ptr(head, &tx.guard);
+
+                        match stack_iter.next() {
+                            Some(CacheEntry::Free(wts, _lsn, _ptr)) => (
+                                PagePtr {
+                                    cached_ptr: head,
+                                    wts: *wts,
+                                },
+                                Update::Free,
+                            ),
+                            other => {
+                                debug!(
+                                    "when rewriting pid {} \
+                                     we encountered a rewritten \
+                                     node with a frag {:?} that \
+                                     we previously witnessed a Free \
+                                     for (PageCache::get returned None), \
+                                     assuming we can just return now since \
+                                     the Free was replace'd",
+                                    pid, other
+                                );
+                                return Ok(());
+                            }
+                        }
                     }
                 }
             };
