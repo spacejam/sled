@@ -580,7 +580,7 @@ fn quickcheck_tree_matches_btreemap() {
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 1000))
         .tests(n_tests)
-        .max_tests(1000)
+        .max_tests(n_tests * 10)
         .quickcheck(
             prop_tree_matches_btreemap
                 as fn(Vec<Op>, u8, u8, bool, bool) -> bool,
