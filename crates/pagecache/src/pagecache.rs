@@ -30,13 +30,6 @@ where
     pub fn last_lsn(&self) -> Lsn {
         unsafe { self.cached_ptr.deref().deref().lsn() }
     }
-
-    unsafe fn deref_merged_resident(&self) -> &'g P
-    where
-        P: Debug,
-    {
-        self.cached_ptr.deref().deref().deref_merged_resident()
-    }
 }
 
 unsafe impl<'g, P> Send for PagePtr<'g, P> where P: Send {}
