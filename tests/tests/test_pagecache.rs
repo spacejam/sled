@@ -346,9 +346,7 @@ fn basic_pagecache_recovery() {
         PageCache::start(config.clone()).unwrap();
     let tx = pc4.begin().unwrap();
     let res = pc4.get(id, &tx).unwrap();
-    if let Some((_p, frags)) = res {
-        assert!(frags.is_empty());
-    }
+    assert!(res.is_none());
 }
 
 #[derive(Debug, Clone)]
@@ -462,9 +460,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                         existing.push(c);
                     }
                     P::Free => {
-                        if let Some((_p, frags)) = get {
-                            assert!(frags.is_empty());
-                        }
+                        assert!(get.is_none());
                     }
                     P::Unallocated => {
                         assert_eq!(get, None);
@@ -485,9 +481,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                         existing.push(c);
                     }
                     P::Free => {
-                        if let Some((_p, frags)) = get {
-                            assert!(frags.is_empty());
-                        }
+                        assert!(get.is_none());
                     }
                     P::Unallocated => {
                         assert_eq!(get, None);
@@ -514,9 +508,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                         });
                     }
                     Some(&P::Free) => {
-                        if let Some((_p, frags)) = get {
-                            assert!(frags.is_empty());
-                        }
+                        assert!(get.is_none());
                     }
                     Some(&P::Unallocated) | None => {
                         assert_eq!(get, None);
@@ -527,6 +519,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
             Free(pid) => {
                 let tx = pc.begin().unwrap();
                 let pid = pid + 2;
+
                 let pre_get = pc.get(pid, &tx).unwrap();
 
                 if let Some((ptr, _frags)) = pre_get {
@@ -538,7 +531,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                 match reference.get(&pid) {
                     Some(&P::Present(_)) | Some(&P::Free) => {
                         reference.insert(pid, P::Free);
-                        assert!(get.unwrap().1.is_empty())
+                        assert!(get.is_none())
                     }
                     Some(&P::Unallocated) | None => assert!(get.is_none()),
                 }

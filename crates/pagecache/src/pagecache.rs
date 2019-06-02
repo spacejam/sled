@@ -559,12 +559,33 @@ where
         let (pid, key) = if let Some(pid) = self.free.lock().unwrap().pop() {
             trace!("re-allocating pid {}", pid);
 
-            let key = match self.get(pid, tx)? {
-                Some((ref key, ref v)) if v.is_empty() => key.clone(),
-                other => panic!("reallocating page set to {:?}", other),
+            let pte_ptr = match self.inner.get(pid, &tx.guard) {
+                None => panic!(
+                    "expected to find existing stack \
+                     for re-allocated pid {}",
+                    pid
+                ),
+                Some(p) => p,
             };
 
-            (pid, key)
+            let head = unsafe { pte_ptr.deref().stack.head(&tx.guard) };
+
+            let mut stack_iter = StackIter::from_ptr(head, &tx.guard);
+
+            match stack_iter.next() {
+                Some(CacheEntry::Free(wts, _lsn, _ptr)) => (
+                    pid,
+                    PagePtr {
+                        cached_ptr: head,
+                        wts: *wts,
+                    },
+                ),
+                other => panic!(
+                    "failed to re-allocate pid {} which \
+                     contained unexpected state {:?}",
+                    pid, other
+                ),
+            }
         } else {
             let pid = self.max_pid.fetch_add(1, SeqCst);
 
@@ -1209,13 +1230,7 @@ where
         let entries: Vec<_> = StackIter::from_ptr(head, &tx.guard).collect();
 
         if entries.is_empty() || entries[0].is_free() {
-            return Ok(Some((
-                PagePtr {
-                    cached_ptr: head,
-                    wts: 0,
-                },
-                vec![],
-            )));
+            return Ok(None);
         }
 
         if let CacheEntry::MergedResident(mr, ts, ..) = entries[0] {

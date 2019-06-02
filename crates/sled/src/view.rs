@@ -265,10 +265,6 @@ impl<'a> View<'a> {
         None
     }
 
-    pub(crate) fn is_free(&self) -> bool {
-        self.frags.is_empty()
-    }
-
     pub(crate) fn leaf_value_for_key(
         &self,
         key: &[u8],

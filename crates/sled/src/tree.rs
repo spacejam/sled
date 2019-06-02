@@ -969,7 +969,7 @@ impl Tree {
                 retry!();
             };
 
-            if view.is_free() || view.lo.as_ref() > key.as_ref() {
+            if view.lo.as_ref() > key.as_ref() {
                 // restart search from the tree's root
                 not_found_loops += 1;
                 debug_assert_ne!(
@@ -1088,9 +1088,6 @@ impl Tree {
         let child_node = loop {
             let child_view =
                 if let Some(child_view) = self.view_for_pid(child_pid, tx)? {
-                    if child_view.is_free() {
-                        return Ok(());
-                    }
                     child_view
                 } else {
                     return Ok(());
@@ -1126,9 +1123,6 @@ impl Tree {
             // already been handled. Only in that case can this child have been freed
             let cursor_view =
                 if let Some(cursor_view) = self.view_for_pid(cursor_pid, tx)? {
-                    if cursor_view.is_free() {
-                        return Ok(());
-                    }
                     cursor_view
                 } else {
                     return Ok(());
@@ -1185,9 +1179,6 @@ impl Tree {
                     let parent_view = if let Some(parent_view) =
                         self.view_for_pid(parent.pid, tx)?
                     {
-                        if parent_view.is_free() {
-                            break;
-                        }
                         parent_view
                     } else {
                         break;
@@ -1218,10 +1209,6 @@ impl Tree {
             loop {
                 let cursor_view =
                     if let Some(view) = self.view_for_pid(pid, &tx)? {
-                        if view.is_free() {
-                            error!("encountered Free node while GC'ing tree");
-                            break;
-                        }
                         view
                     } else {
                         error!("encountered Free node while GC'ing tree");
@@ -1265,9 +1252,7 @@ impl Debug for Tree {
         loop {
             let get_res = self.view_for_pid(pid, &tx);
             let node = match get_res {
-                Ok(Some(ref view)) if !view.is_free() => {
-                    view.compact(&self.context)
-                }
+                Ok(Some(ref view)) => view.compact(&self.context),
                 broken => {
                     panic!("pagecache returned non-base node: {:?}", broken)
                 }
@@ -1283,9 +1268,7 @@ impl Debug for Tree {
                 // we've traversed our level, time to bump down
                 let left_get_res = self.view_for_pid(left_most, &tx);
                 let left_node = match left_get_res {
-                    Ok(Some(ref view)) if !view.is_free() => {
-                        view.compact(&self.context)
-                    }
+                    Ok(Some(ref view)) => view.compact(&self.context),
                     broken => {
                         panic!("pagecache returned non-base node: {:?}", broken)
                     }
