@@ -149,7 +149,7 @@ fn parallel_pagecache() -> sled::Result<()> {
         let tx = pc.begin().unwrap();
 
         let (id, key) = pc.allocate(vec![], &tx).unwrap();
-        pc.link(id, key, vec![id as usize], &tx).unwrap().unwrap();
+        pc.replace(id, key, vec![id as usize], &tx).unwrap().unwrap();
 
         let (_key, frags) = pc.get(id, &tx)
                              .expect("no io issues")
