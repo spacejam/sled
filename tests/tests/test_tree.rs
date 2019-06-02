@@ -76,7 +76,9 @@ fn parallel_tree_ops() {
         par! {t, |tree: &Tree, k: Vec<u8>| {
             assert_eq!(tree.get(&*k), Ok(None));
             tree.set(&k, k.clone()).expect("we should write successfully");
-            assert_eq!(tree.get(&*k).unwrap().expect("we should read what we just wrote"), k);
+            assert_eq!(tree.get(&*k).unwrap(), Some(k.clone().into()),
+                "failed to read key {:?} that we just wrote from tree {:?}",
+                k, tree);
         }};
 
         let n_scanned = t.iter().count();
@@ -110,7 +112,8 @@ fn parallel_tree_ops() {
                     panic!("expected key {:?} not found", k);
                 }
             } else {
-                panic!("could not read key {:?}, which we just wrote", k);
+                panic!("could not read key {:?}, which we \
+                       just wrote to tree {:?}", k, tree);
             }
         }};
 

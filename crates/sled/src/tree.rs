@@ -134,6 +134,7 @@ impl Tree {
     /// ```
     pub fn get<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
         let _measure = Measure::new(&M.tree_get);
+        trace!("getting key {:?}", key.as_ref());
 
         let tx = self.context.pagecache.begin()?;
 
