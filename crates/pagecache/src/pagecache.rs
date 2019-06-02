@@ -1276,18 +1276,22 @@ where
 
         let pulled = entries.par_iter().map(|ce| match ce {
             CacheEntry::MergedResident(mr, ts, lsn, ptr) => {
-                Ok((Cow::Borrowed(mr), *ts, *lsn, *ptr))
+                let sz = PM::size_in_bytes(mr);
+                Ok((Cow::Borrowed(mr), *ts, *lsn, *ptr, sz))
             }
             CacheEntry::Resident(r, ts, lsn, ptr) => {
-                Ok((Cow::Borrowed(r), *ts, *lsn, *ptr))
+                let sz = PM::size_in_bytes(r);
+                Ok((Cow::Borrowed(r), *ts, *lsn, *ptr, sz))
             }
             CacheEntry::Flush(ts, lsn, ptr) => {
                 let res = self.pull(*lsn, *ptr).map(|pg| pg)?;
-                Ok((Cow::Owned(res.into_frag()), *ts, *lsn, *ptr))
+                let sz = PM::size_in_bytes(res.as_frag());
+                Ok((Cow::Owned(res.into_frag()), *ts, *lsn, *ptr, sz))
             }
             CacheEntry::PartialFlush(ts, lsn, ptr) => {
                 let res = self.pull(*lsn, *ptr).map(|pg| pg)?;
-                Ok((Cow::Owned(res.into_frag()), *ts, *lsn, *ptr))
+                let sz = PM::size_in_bytes(res.as_frag());
+                Ok((Cow::Owned(res.into_frag()), *ts, *lsn, *ptr, sz))
             }
             other => {
                 panic!("iterating over unexpected CacheEntry: {:?}", other);
@@ -1295,7 +1299,7 @@ where
         });
 
         // if any of our pulls failed, bail here
-        let mut successes: Vec<(Cow<P>, u64, Lsn, DiskPtr)> =
+        let mut successes: Vec<(Cow<P>, u64, Lsn, DiskPtr, u64)> =
             match pulled.collect() {
                 Ok(s) => s,
                 Err(e) => return Err(e),
@@ -1353,7 +1357,8 @@ where
 
         if pulled {
             // fix up the stack to include our pulled items
-            let (tail_frag, ts, lsn, ptr) = successes.pop().unwrap();
+            let (tail_frag, ts, lsn, ptr, mut total_page_size) =
+                successes.pop().unwrap();
             let tail = CacheEntry::MergedResident(
                 tail_frag.into_owned(),
                 ts,
@@ -1363,7 +1368,8 @@ where
 
             let mut frags = Vec::with_capacity(successes.len() + 1);
 
-            for (item, ts, lsn, ptr) in successes.into_iter() {
+            for (item, ts, lsn, ptr, sz) in successes.into_iter() {
+                total_page_size += sz;
                 frags.push(CacheEntry::Resident(
                     item.into_owned(),
                     ts,
@@ -1388,6 +1394,15 @@ where
                 unsafe { pte_ptr.deref().stack.cas(head, node, &tx.guard) };
             if res.is_ok() {
                 trace!("fix-up for pid {} succeeded", pid);
+
+                // possibly evict an item now that our cache has grown
+                let to_evict = self.lru.accessed(pid, total_page_size);
+                trace!(
+                    "accessed pid {} -> paging out pids {:?}",
+                    pid,
+                    to_evict
+                );
+                self.page_out(to_evict, tx)?;
             } else {
                 trace!("fix-up for pid {} failed", pid);
             }
