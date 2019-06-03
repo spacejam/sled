@@ -1259,7 +1259,7 @@ impl Debug for Tree {
                 }
             };
 
-            f.write_str("\t\t")?;
+            write!(f, "\t\t{}: ", pid)?;
             node.fmt(f)?;
             f.write_str("\n")?;
 
