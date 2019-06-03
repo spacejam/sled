@@ -82,11 +82,7 @@ impl<'a> View<'a> {
         panic!("view was never initialized with a base")
     }
 
-    pub(crate) fn contains_upper_bound(
-        &self,
-        bound: &Bound<IVec>,
-        is_forward: bool,
-    ) -> bool {
+    pub(crate) fn contains_upper_bound(&self, bound: &Bound<IVec>) -> bool {
         match bound {
             Bound::Excluded(bound) if self.hi >= bound => true,
             Bound::Included(bound) if self.hi > bound => true,

@@ -101,7 +101,7 @@ impl<'a> Iterator for Iter<'a> {
                 return None;
             }
 
-            if !view.contains_upper_bound(&self.lo, true) {
+            if !view.contains_upper_bound(&self.lo) {
                 // view too low (maybe merged, maybe exhausted?)
                 let next_pid = view.next?;
                 if let Some(v) =
@@ -171,7 +171,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 return None;
             }
 
-            if !view.contains_upper_bound(&self.hi, false) {
+            if !view.contains_upper_bound(&self.hi) {
                 // view too low (maybe merged, maybe exhausted?)
                 let next_pid = view.next?;
                 if let Some(v) =
