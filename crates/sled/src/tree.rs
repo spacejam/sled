@@ -936,7 +936,7 @@ impl Tree {
 
         let mut cursor = self.root.load(SeqCst);
         let mut root_pid = Some(cursor);
-        let mut parent_view: Option<View> = None;
+        let mut parent_view = None;
         let mut unsplit_parent = None;
         let mut last_branch = 0;
 
@@ -945,6 +945,7 @@ impl Tree {
                 cursor = self.root.load(SeqCst);
                 root_pid = Some(cursor);
                 parent_view = None;
+                unsplit_parent = None;
                 last_branch = 0;
                 continue;
             };
