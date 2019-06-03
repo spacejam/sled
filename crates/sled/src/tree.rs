@@ -953,70 +953,31 @@ impl Tree {
 
         let mut not_found_loops = 0;
         loop {
+            debug_assert_ne!(
+                not_found_loops, 10_000,
+                "cannot find pid {} in view_for_key",
+                cursor
+            );
+
             if cursor == u64::max_value() {
                 // this collection has been explicitly removed
                 return Err(Error::CollectionNotFound(self.tree_id.clone()));
             }
 
             let view_opt = self.view_for_pid(cursor, tx)?;
+
             let view = if let Some(view) = view_opt {
                 view
             } else {
                 not_found_loops += 1;
-                debug_assert_ne!(
-                    not_found_loops, 10_000,
-                    "cannot find pid {} in view_for_key",
-                    cursor
-                );
                 retry!();
             };
 
-            if view.lo.as_ref() > key.as_ref() {
-                // restart search from the tree's root
-                not_found_loops += 1;
-                debug_assert_ne!(
-                    not_found_loops, 10_000,
-                    "cannot find pid {} in view_for_key",
-                    cursor
-                );
-                retry!();
-            }
+            let overshot =
+                !(view.hi.as_ref() > key.as_ref() || view.hi.is_empty());
+            let undershot = view.lo.as_ref() > key.as_ref();
 
-            /*
-            // When we encounter a merge intention, we collaboratively help out
-            if view.merging_child.is_some() {
-                self.merge_node(&view, tx)?;
-                retry!();
-            }
-
-            if last_branch != 0 && view.should_merge(
-                (self.context.blink_node_split_size
-                    / self.context.blink_node_merge_ratio)
-                    as u64,
-            ) {
-                if let Some(ref mut parent_view) = parent_view {
-                    if parent_view.can_merge_child() {
-                        let frag = Frag::ParentMergeIntention(view.pid);
-
-                        let link = self.context.pagecache.link(
-                            parent_view.pid,
-                            parent_view.ptr.clone(),
-                            frag,
-                            tx,
-                        )?;
-
-                        if let Ok(new_parent_ptr) = link {
-                            parent_view.ptr = new_parent_ptr;
-                            parent_view.merging_child = Some(view.pid);
-                            self.merge_node(&parent_view, tx)?;
-                            retry!();
-                        }
-                    }
-                }
-            }
-            */
-
-            if view.lo.as_ref() > key.as_ref() {
+            if overshot {
                 // merge interfered, reload root and retry
                 trace!("restarting traversal due to merge interference");
                 retry!();
@@ -1024,7 +985,7 @@ impl Tree {
 
             if view.should_split(self.context.blink_node_split_size as u64) {
                 self.split_node(&view, &parent_view, root_pid, tx)?;
-            } else if !view.hi.is_empty() && view.hi.as_ref() <= key.as_ref() {
+            } else if undershot {
                 // half-complete split detect & completion
                 cursor = view.next.expect(
                     "if our hi bound is not Inf (inity), \
@@ -1067,12 +1028,47 @@ impl Tree {
                 }
             }
 
+            /*
+            // When we encounter a merge intention, we collaboratively help out
+            if view.merging_child.is_some() {
+                self.merge_node(&view, tx)?;
+                retry!();
+            }
+
+            if last_branch != 0 && view.should_merge(
+                (self.context.blink_node_split_size
+                    / self.context.blink_node_merge_ratio)
+                    as u64,
+            ) {
+                if let Some(ref mut parent_view) = parent_view {
+                    if parent_view.can_merge_child() {
+                        let frag = Frag::ParentMergeIntention(view.pid);
+
+                        let link = self.context.pagecache.link(
+                            parent_view.pid,
+                            parent_view.ptr.clone(),
+                            frag,
+                            tx,
+                        )?;
+
+                        if let Ok(new_parent_ptr) = link {
+                            parent_view.ptr = new_parent_ptr;
+                            parent_view.merging_child = Some(view.pid);
+                            self.merge_node(&parent_view, tx)?;
+                            retry!();
+                        }
+                    }
+                }
+            }
+            */
+
             if view.is_index {
                 let next = view.index_next_node(key.as_ref());
                 last_branch = next.0;
                 cursor = next.1;
                 parent_view = Some(view);
             } else {
+                assert!(!overshot && !undershot);
                 return Ok(view);
             }
         }
