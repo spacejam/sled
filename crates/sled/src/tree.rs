@@ -976,7 +976,7 @@ impl Tree {
 
             let overshot = key.as_ref() < view.lo.as_ref();
             let undershot =
-                key.as_ref() > view.hi.as_ref() && !view.hi.is_empty();
+                key.as_ref() >= view.hi.as_ref() && !view.hi.is_empty();
 
             if overshot {
                 // merge interfered, reload root and retry
