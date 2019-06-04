@@ -1,6 +1,6 @@
 use super::*;
 
-use std::{collections::HashSet, convert::TryFrom, ops::Bound};
+use std::{collections::HashSet, ops::Bound};
 
 #[derive(Debug, Clone)]
 pub(crate) struct View<'a> {
@@ -16,6 +16,8 @@ pub(crate) struct View<'a> {
     pub(crate) merging_child: Option<PageId>,
     pub(crate) merging: bool,
     min_children: usize,
+    max_children: usize,
+    size: u64,
 }
 
 impl<'a> View<'a> {
@@ -28,8 +30,11 @@ impl<'a> View<'a> {
         let mut merging_child = None;
         let mut merge_confirmed = false;
         let mut min_children: isize = 0;
+        let mut max_children = 0;
+        let mut size = 0;
 
         for (offset, frag) in frags.iter().enumerate() {
+            size += frag.size_in_bytes();
             match frag {
                 Frag::Base(node) => {
                     // NB if we re-add ParentSplit, we must
@@ -37,6 +42,7 @@ impl<'a> View<'a> {
                     // here
 
                     min_children += node.data.len() as isize;
+                    max_children += node.data.len();
 
                     return View {
                         hi: &node.hi,
@@ -50,11 +56,9 @@ impl<'a> View<'a> {
                         frags,
                         merging,
                         merging_child,
-                        min_children: usize::try_from(std::cmp::max(
-                            0,
-                            min_children,
-                        ))
-                        .unwrap(),
+                        min_children: std::cmp::max(0, min_children) as usize,
+                        max_children,
+                        size,
                     };
                 }
                 Frag::ParentMergeIntention(pid) => {
@@ -75,7 +79,7 @@ impl<'a> View<'a> {
                     merging = true;
                 }
                 Frag::Del(..) => min_children -= 1,
-                _ => {}
+                Frag::Set(..) | Frag::Merge(..) => max_children += 1,
             }
         }
 
@@ -380,16 +384,17 @@ impl<'a> View<'a> {
     }
 
     pub(crate) fn should_split(&self, max_sz: u64) -> bool {
-        self.min_children > 2
-            && self.size_in_bytes() > max_sz
-            && self.merging_child.is_none()
-            && !self.merging
+        let size_checks = self.min_children > 2 && self.size > max_sz;
+        let safety_checks = self.merging_child.is_none() && !self.merging;
+
+        size_checks && safety_checks
     }
 
     pub(crate) fn should_merge(&self, min_sz: u64) -> bool {
-        self.size_in_bytes() < min_sz
-            && self.merging_child.is_none()
-            && !self.merging
+        let size_checks = self.max_children < 2 || self.size < min_sz;
+        let safety_checks = self.merging_child.is_none() && !self.merging;
+
+        size_checks && safety_checks
     }
 
     pub(crate) fn can_merge_child(&self) -> bool {
@@ -418,16 +423,5 @@ impl<'a> View<'a> {
         lhs.next = None;
 
         (lhs, rhs)
-    }
-
-    #[inline]
-    pub(crate) fn size_in_bytes(&self) -> u64 {
-        // TODO needs to better account for
-        // sizes that don't actually fall under
-        // a merge threshold once we support one.
-        self.frags[..=self.base_offset]
-            .iter()
-            .map(|f| f.size_in_bytes())
-            .sum()
     }
 }
