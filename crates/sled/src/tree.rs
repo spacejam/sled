@@ -980,18 +980,15 @@ impl Tree {
 
             if overshot {
                 // merge interfered, reload root and retry
-                println!("restarting traversal due to merge interference");
                 retry!();
             }
 
             if view.should_split(self.context.blink_node_split_size as u64) {
                 self.split_node(&view, &parent_view, root_pid, tx)?;
-                println!("crates/sled/src/tree.rs:992");
                 retry!();
             }
 
             if undershot {
-                println!("crates/sled/src/tree.rs:996");
                 // half-complete split detect & completion
                 cursor = view.next.expect(
                     "if our hi bound is not Inf (inity), \
@@ -1012,15 +1009,11 @@ impl Tree {
                         .is_ok()
                     {
                         M.tree_root_split_success();
-                        println!("retry on successful root hoist");
                         retry!();
                     }
-                    println!("failed root hoist");
                 }
-                println!("crates/sled/src/tree.rs:1020");
                 continue;
             } else if let Some(unsplit_parent) = unsplit_parent.take() {
-                println!("crates/sled/src/tree.rs:1024");
                 // we have found the proper page for
                 // our cooperative parent split
                 let mut parent = unsplit_parent.compact(&self.context);
@@ -1077,10 +1070,8 @@ impl Tree {
                 last_branch = next.0;
                 cursor = next.1;
                 parent_view = Some(view);
-                print!(".");
             } else {
                 assert!(!overshot && !undershot);
-                println!("actually found something!!!");
                 return Ok(view);
             }
         }
