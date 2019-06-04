@@ -974,6 +974,12 @@ impl Tree {
                 retry!();
             };
 
+            // When we encounter a merge intention, we collaboratively help out
+            if view.merging_child.is_some() {
+                self.merge_node(&view, tx)?;
+                retry!();
+            }
+
             let overshot = key.as_ref() < view.lo.as_ref();
             let undershot =
                 key.as_ref() >= view.hi.as_ref() && !view.hi.is_empty();
@@ -1031,18 +1037,20 @@ impl Tree {
                 }
             }
 
-            /*
-            // When we encounter a merge intention, we collaboratively help out
-            if view.merging_child.is_some() {
-                self.merge_node(&view, tx)?;
-                retry!();
-            }
-
-            if last_branch != 0 && view.should_merge(
+            // detect whether a node is mergable, and begin
+            // the merge process.
+            // NB we can never begin merging a node that is
+            // the leftmost child of an index, because it
+            // would be merged into a different index, which
+            // would add considerable complexity to this already
+            // fairly complex implementation.
+            if view.should_merge(
                 (self.context.blink_node_split_size
                     / self.context.blink_node_merge_ratio)
                     as u64,
-            ) {
+            ) && !took_leftmost_branch
+                && parent_view.is_some()
+            {
                 if let Some(ref mut parent_view) = parent_view {
                     if parent_view.can_merge_child() {
                         let frag = Frag::ParentMergeIntention(view.pid);
@@ -1063,7 +1071,6 @@ impl Tree {
                     }
                 }
             }
-            */
 
             if view.is_index {
                 let next = view.index_next_node(key.as_ref());
