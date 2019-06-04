@@ -1231,6 +1231,7 @@ where
         tx: &'g Tx<PM, P>,
     ) -> Result<Option<(PagePtr<'g, P>, Vec<&'g P>)>> {
         trace!("getting page iter for pid {}", pid);
+        let _measure = Measure::new(&M.page_in);
 
         if pid == COUNTER_PID || pid == META_PID {
             return Err(Error::Unsupported(
