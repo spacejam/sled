@@ -953,10 +953,11 @@ impl Tree {
 
         let mut not_found_loops = 0;
         loop {
+            not_found_loops += 1;
             debug_assert_ne!(
-                not_found_loops, 10_000,
-                "cannot find pid {} in view_for_key",
-                cursor
+                not_found_loops, 1000,
+                "cannot find pid {} in view_for_key, looking for key {:?} in tree {:?}",
+                cursor, key.as_ref(), self
             );
 
             if cursor == u64::max_value() {
@@ -969,23 +970,28 @@ impl Tree {
             let view = if let Some(view) = view_opt {
                 view
             } else {
-                not_found_loops += 1;
+                println!("didn't find view for pid {}", cursor);
                 retry!();
             };
 
-            let overshot =
-                !(view.hi.as_ref() > key.as_ref() || view.hi.is_empty());
-            let undershot = view.lo.as_ref() > key.as_ref();
+            let overshot = key.as_ref() < view.lo.as_ref();
+            let undershot =
+                key.as_ref() > view.hi.as_ref() && !view.hi.is_empty();
 
             if overshot {
                 // merge interfered, reload root and retry
-                trace!("restarting traversal due to merge interference");
+                println!("restarting traversal due to merge interference");
                 retry!();
             }
 
             if view.should_split(self.context.blink_node_split_size as u64) {
                 self.split_node(&view, &parent_view, root_pid, tx)?;
-            } else if undershot {
+                println!("crates/sled/src/tree.rs:992");
+                retry!();
+            }
+
+            if undershot {
+                println!("crates/sled/src/tree.rs:996");
                 // half-complete split detect & completion
                 cursor = view.next.expect(
                     "if our hi bound is not Inf (inity), \
@@ -1006,11 +1012,15 @@ impl Tree {
                         .is_ok()
                     {
                         M.tree_root_split_success();
+                        println!("retry on successful root hoist");
                         retry!();
                     }
+                    println!("failed root hoist");
                 }
+                println!("crates/sled/src/tree.rs:1020");
                 continue;
             } else if let Some(unsplit_parent) = unsplit_parent.take() {
+                println!("crates/sled/src/tree.rs:1024");
                 // we have found the proper page for
                 // our cooperative parent split
                 let mut parent = unsplit_parent.compact(&self.context);
@@ -1067,8 +1077,10 @@ impl Tree {
                 last_branch = next.0;
                 cursor = next.1;
                 parent_view = Some(view);
+                print!(".");
             } else {
                 assert!(!overshot && !undershot);
+                println!("actually found something!!!");
                 return Ok(view);
             }
         }
