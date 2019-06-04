@@ -1323,13 +1323,7 @@ where
                 Err(None) => {
                     // This page was unallocated since we
                     // read the head pointer.
-                    return Ok(Some((
-                        PagePtr {
-                            cached_ptr: head,
-                            wts: 0,
-                        },
-                        vec![],
-                    )));
+                    return Ok(None);
                 }
                 Err(Some(_)) => {
                     // our consolidation failed, recurse
