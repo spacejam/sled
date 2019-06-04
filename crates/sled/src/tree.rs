@@ -938,7 +938,7 @@ impl Tree {
         let mut root_pid = Some(cursor);
         let mut parent_view = None;
         let mut unsplit_parent = None;
-        let mut last_branch = 0;
+        let mut took_leftmost_branch = false;
 
         macro_rules! retry {
             () => {
@@ -946,7 +946,7 @@ impl Tree {
                 root_pid = Some(cursor);
                 parent_view = None;
                 unsplit_parent = None;
-                last_branch = 0;
+                took_leftmost_branch = false;
                 continue;
             };
         }
@@ -1067,7 +1067,7 @@ impl Tree {
 
             if view.is_index {
                 let next = view.index_next_node(key.as_ref());
-                last_branch = next.0;
+                took_leftmost_branch = next.0 == 0;
                 cursor = next.1;
                 parent_view = Some(view);
             } else {
