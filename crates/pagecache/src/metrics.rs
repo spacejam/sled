@@ -98,7 +98,7 @@ pub struct Metrics {
     pub tree_parent_split_success: CachePadded<AtomicUsize>,
     pub tree_root_split_attempt: CachePadded<AtomicUsize>,
     pub tree_root_split_success: CachePadded<AtomicUsize>,
-    pub page_in: Histo,
+    pub get_page: Histo,
     pub rewrite_page: Histo,
     pub replace_page: Histo,
     pub link_page: Histo,
@@ -267,7 +267,7 @@ impl Metrics {
         println!("pagecache:");
         p(vec![
             lat("snapshot", &self.advance_snapshot),
-            lat("page_in", &self.page_in),
+            lat("get", &self.get_page),
             lat("rewrite", &self.rewrite_page),
             lat("replace", &self.replace_page),
             lat("link", &self.link_page),
