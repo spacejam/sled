@@ -102,6 +102,7 @@ impl<'a> View<'a> {
                 true
             }
             Bound::Included(bound) if self.lo <= bound => true,
+            Bound::Unbounded if !is_forward => self.hi.is_empty(),
             _ => self.lo.is_empty(),
         }
     }
