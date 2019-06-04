@@ -4,6 +4,8 @@ use pagecache::{Measure, M};
 
 use super::*;
 
+const MAX_LOOPS: usize = 10_000;
+
 fn possible_predecessor(s: &[u8]) -> Option<Vec<u8>> {
     let mut ret = s.to_vec();
     match ret.pop() {
@@ -96,7 +98,7 @@ impl<'a> Iterator for Iter<'a> {
             _ => iter_try!(self.tree.view_for_key(self.low_key(), &tx)),
         };
 
-        loop {
+        for _ in 0..MAX_LOOPS {
             if self.bounds_collapsed() {
                 return None;
             }
@@ -142,6 +144,10 @@ impl<'a> Iterator for Iter<'a> {
                 continue;
             }
         }
+        panic!(
+            "fucked up tree traversal next({:?}) on {:?}",
+            self.lo, self.tree
+        );
     }
 }
 
@@ -162,11 +168,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
             _ => iter_try!(self.tree.view_for_key(self.high_key(), &tx)),
         };
 
-        let mut _debug_loops = 0;
-        loop {
-            _debug_loops += 1;
-            assert!(_debug_loops < 10000);
-
+        for _ in 0..MAX_LOOPS {
             if self.bounds_collapsed() {
                 return None;
             }
@@ -214,6 +216,10 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 continue;
             }
         }
+        panic!(
+            "fucked up tree traversal next_back({:?}) on {:?}",
+            self.hi, self.tree
+        );
     }
 }
 
