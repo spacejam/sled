@@ -1053,7 +1053,6 @@ impl Tree {
                     / self.context.blink_node_merge_ratio)
                     as u64,
             ) && !took_leftmost_branch
-                && parent_view.is_some()
             {
                 if let Some(ref mut parent_view) = parent_view {
                     if parent_view.can_merge_child() {
