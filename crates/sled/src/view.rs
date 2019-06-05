@@ -352,6 +352,7 @@ impl<'a> View<'a> {
 
     pub(crate) fn index_next_node(&self, key: &[u8]) -> (usize, PageId) {
         assert!(self.is_index);
+        let mut removed = vec![];
 
         for frag in self.frags[..=self.base_offset].iter() {
             match frag {
@@ -369,13 +370,17 @@ impl<'a> View<'a> {
 
                     // This might be none if ord is Less and we're
                     // searching for the empty key
-                    let index = search.expect("failed to traverse index");
+                    let mut index = search.expect("failed to traverse index");
+                    while removed.contains(&items[index].1) {
+                        index -= 1;
+                    }
 
                     return (index, items[index].1);
                 }
-                Frag::ParentMergeIntention(_)
-                | Frag::ParentMergeConfirm
-                | Frag::ChildMergeCap => {
+                Frag::ParentMergeIntention(child_pid) => {
+                    removed.push(*child_pid);
+                }
+                Frag::ParentMergeConfirm | Frag::ChildMergeCap => {
                     // nothing to do for these frags
                 }
             }
