@@ -389,7 +389,7 @@ impl<'a> View<'a> {
     }
 
     pub(crate) fn should_split(&self, max_sz: u64) -> bool {
-        let size_checks = self.min_children > 2 && self.size > max_sz;
+        let size_checks = self.min_children > 4 && self.size > max_sz;
         let safety_checks = self.merging_child.is_none() && !self.merging;
 
         size_checks && safety_checks
