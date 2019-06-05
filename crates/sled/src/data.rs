@@ -139,6 +139,19 @@ impl Data {
         }
     }
 
+    pub(crate) fn parent_merge_confirm(&mut self, merged_child_pid: PageId) {
+        match self {
+            Data::Index(ref mut ptrs) => {
+                let idx = ptrs
+                    .iter()
+                    .position(|(_k, c)| *c == merged_child_pid)
+                    .unwrap();
+                ptrs.remove(idx);
+            }
+            _ => panic!("parent_merge_confirm called on leaf data"),
+        }
+    }
+
     pub(crate) fn drop_gte(&mut self, bound: &[u8], prefix: &[u8]) {
         match *self {
             Data::Index(ref mut ptrs) => ptrs.retain(|&(ref k, _)| {

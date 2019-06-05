@@ -101,7 +101,12 @@ impl Node {
             }
             ParentMergeConfirm => {
                 assert!(self.merging_child.is_some());
-                self.merging_child = None;
+                let merged_child = self.merging_child.take().expect(
+                    "we should have a specific \
+                     child that was merged if this \
+                     frag appears here",
+                );
+                self.data.parent_merge_confirm(merged_child);
             }
             ChildMergeCap => {
                 assert!(!self.merging);
@@ -199,6 +204,7 @@ impl Node {
             merged.lo.as_ref(),
             &rhs.data,
         );
+        merged.next = rhs.next;
         merged
     }
 }
