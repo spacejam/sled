@@ -978,6 +978,10 @@ impl Tree {
             if view.merging_child.is_some() {
                 self.merge_node(&view, tx)?;
                 retry!();
+            } else if view.merging {
+                // we missed the parent merge intention due to a benign race,
+                // so go around again and try to help out if necessary
+                retry!();
             }
 
             let overshot = key.as_ref() < view.lo.as_ref();
