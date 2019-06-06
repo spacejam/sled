@@ -75,7 +75,7 @@ impl<'a> View<'a> {
                 }
                 Frag::ChildMergeCap => {
                     assert!(!merging);
-                    assert_eq!(offset, 0);
+                    assert_eq!(offset, 0, "frags: {:?}", frags);
                     merging = true;
                 }
                 Frag::Del(..) => min_children -= 1,

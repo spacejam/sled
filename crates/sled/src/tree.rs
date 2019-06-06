@@ -951,15 +951,8 @@ impl Tree {
             };
         }
 
-        let mut not_found_loops = 0;
-        loop {
-            not_found_loops += 1;
-            debug_assert_ne!(
-                not_found_loops, 1000,
-                "cannot find pid {} in view_for_key, looking for key {:?} in tree {:?}",
-                cursor, key.as_ref(), self
-            );
-
+        const MAX_LOOPS: usize = 1_000_000;
+        for _ in 0..MAX_LOOPS {
             if cursor == u64::max_value() {
                 // this collection has been explicitly removed
                 return Err(Error::CollectionNotFound(self.tree_id.clone()));
@@ -970,7 +963,6 @@ impl Tree {
             let view = if let Some(view) = view_opt {
                 view
             } else {
-                println!("didn't find view for pid {}", cursor);
                 retry!();
             };
 
@@ -1085,6 +1077,12 @@ impl Tree {
                 return Ok(view);
             }
         }
+        panic!(
+            "cannot find pid {} in view_for_key, looking for key {:?} in tree {:?}",
+            cursor,
+            key.as_ref(),
+            self
+        );
     }
 
     pub(crate) fn merge_node<'g>(
