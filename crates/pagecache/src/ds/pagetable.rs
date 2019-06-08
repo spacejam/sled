@@ -28,22 +28,59 @@ fn split_fanout(i: u64) -> (u64, u64) {
 }
 
 struct Node1<T: Send + 'static> {
-    children: Box<[Atomic<Node2<T>> /* FANOUT */]>,
+    children: Box<[Atomic<Node2<T>>; FANOUT as usize]>,
 }
 
 struct Node2<T: Send + 'static> {
-    children: Box<[Atomic<T> /* FANOUT */]>,
+    children: Box<[Atomic<T>; FANOUT as usize]>,
 }
 
 impl<T: Send + 'static> Node1<T> {
     fn new() -> Node1<T> {
-        Node1 { children: vec![Atomic::null(); FANOUT as usize].into_boxed_slice() }
+        use std::mem::{size_of, align_of};
+        use std::alloc::{Layout, alloc};
+
+        let size = FANOUT as usize * size_of::<Atomic<Node2<T>>>();
+        let align = align_of::<Atomic<Node2<T>>>();
+
+        let heap = unsafe {
+            let layout = Layout::from_size_align_unchecked(size, align);
+            let ptr = alloc(layout) as *mut [Atomic<Node2<T>>; FANOUT as usize];
+            let mut heap = Box::from_raw(ptr);
+
+            for x in heap.iter_mut() {
+                *x = Atomic::null();
+            }
+
+            heap
+        };
+
+        Node1 { children: heap }
     }
 }
 
 impl<T: Send + 'static> Node2<T> {
     fn new() -> Owned<Node2<T>> {
-        let node2 = Node2 { children: vec![Atomic::null(); FANOUT as usize].into_boxed_slice() };
+
+        use std::mem::{size_of, align_of};
+        use std::alloc::{Layout, alloc};
+
+        let size = FANOUT as usize * size_of::<Atomic<T>>();
+        let align = align_of::<Atomic<T>>();
+
+        let heap = unsafe {
+            let layout = Layout::from_size_align_unchecked(size, align);
+            let ptr = alloc(layout) as *mut [Atomic<T>; FANOUT as usize];
+            let mut heap = Box::from_raw(ptr);
+
+            for x in heap.iter_mut() {
+                *x = Atomic::null();
+            }
+
+            heap
+        };
+
+        let node2 = Node2 { children: heap };
         Owned::from(node2)
     }
 }
