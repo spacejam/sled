@@ -118,8 +118,15 @@ fn parallel_pagecache() -> sled::Result<()> {
             let mut threads = vec![];
             for tn in 0..N_THREADS {
                 let tree = $t.clone();
+
+                // we create a thread with a reduced
+                // stack size below to ensure a stack
+                // overflow happens if we accidentally
+                // allocate pagetable nodes on the stack
+                // instead of directly on the heap.
                 let thread = thread::Builder::new()
                     .name(format!("t({})", tn))
+                    .stack_size(pagecache::PAGETABLE_NODE_SZ)
                     .spawn(move || {
                         for i in (tn * N_PER_THREAD)..((tn + 1) * N_PER_THREAD)
                         {

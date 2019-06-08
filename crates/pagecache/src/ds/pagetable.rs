@@ -12,6 +12,9 @@ const FANFACTOR: u64 = 18;
 const FANOUT: u64 = 1 << FANFACTOR;
 const FAN_MASK: u64 = FANOUT - 1;
 
+#[doc(hidden)]
+pub const PAGETABLE_NODE_SZ: usize = size_of::<Node1<()>>();
+
 pub type PageId = u64;
 
 #[inline(always)]
