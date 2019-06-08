@@ -28,32 +28,23 @@ fn split_fanout(i: u64) -> (u64, u64) {
 }
 
 struct Node1<T: Send + 'static> {
-    children: [Atomic<Node2<T>>; FANOUT as usize],
+    children: Box<[Atomic<Node2<T>> /* FANOUT */]>,
 }
 
 struct Node2<T: Send + 'static> {
-    children: [Atomic<T>; FANOUT as usize],
+    children: Box<[Atomic<T> /* FANOUT */]>,
 }
 
 impl<T: Send + 'static> Node1<T> {
-    fn new() -> Box<Node1<T>> {
-        let mut node: Box<Node1<T>> =
-            unsafe { Box::new(std::mem::uninitialized()) };
-        for i in 0..FANOUT as usize {
-            node.children[i] = Atomic::null();
-        }
-        node
+    fn new() -> Node1<T> {
+        Node1 { children: vec![Atomic::null(); FANOUT as usize].into_boxed_slice() }
     }
 }
 
 impl<T: Send + 'static> Node2<T> {
     fn new() -> Owned<Node2<T>> {
-        let mut node: Box<Node2<T>> =
-            unsafe { Box::new(std::mem::uninitialized()) };
-        for i in 0..FANOUT as usize {
-            node.children[i] = Atomic::null();
-        }
-        Owned::from(node)
+        let node2 = Node2 { children: vec![Atomic::null(); FANOUT as usize].into_boxed_slice() };
+        Owned::from(node2)
     }
 }
 
