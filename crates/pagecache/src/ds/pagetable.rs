@@ -1,12 +1,19 @@
 //! A simple wait-free, grow-only pagetable, assumes a dense keyspace.
 
-use std::sync::atomic::Ordering::{Relaxed, SeqCst};
+use std::{
+    alloc::{alloc, Layout},
+    mem::{align_of, size_of},
+    sync::atomic::Ordering::{Relaxed, SeqCst},
+};
 
 use super::*;
 
 const FANFACTOR: u64 = 18;
 const FANOUT: u64 = 1 << FANFACTOR;
 const FAN_MASK: u64 = FANOUT - 1;
+
+#[doc(hidden)]
+pub const PAGETABLE_NODE_SZ: usize = size_of::<Node1<()>>();
 
 pub type PageId = u64;
 
@@ -37,8 +44,14 @@ struct Node2<T: Send + 'static> {
 
 impl<T: Send + 'static> Node1<T> {
     fn new() -> Box<Node1<T>> {
-        let mut node: Box<Node1<T>> =
-            unsafe { Box::new(std::mem::uninitialized()) };
+        let size = size_of::<Node1<T>>();
+        let align = align_of::<Node1<T>>();
+        let mut node = unsafe {
+            let layout = Layout::from_size_align_unchecked(size, align);
+            let ptr = alloc(layout) as *mut Node1<T>;
+            Box::from_raw(ptr)
+        };
+
         for i in 0..FANOUT as usize {
             node.children[i] = Atomic::null();
         }
@@ -48,8 +61,13 @@ impl<T: Send + 'static> Node1<T> {
 
 impl<T: Send + 'static> Node2<T> {
     fn new() -> Owned<Node2<T>> {
-        let mut node: Box<Node2<T>> =
-            unsafe { Box::new(std::mem::uninitialized()) };
+        let size = size_of::<Node2<T>>();
+        let align = align_of::<Node2<T>>();
+        let mut node = unsafe {
+            let layout = Layout::from_size_align_unchecked(size, align);
+            let ptr = alloc(layout) as *mut Node2<T>;
+            Box::from_raw(ptr)
+        };
         for i in 0..FANOUT as usize {
             node.children[i] = Atomic::null();
         }
