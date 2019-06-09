@@ -837,10 +837,7 @@ impl Tree {
             }
         } else {
             M.tree_root_split_attempt();
-            if self
-                .root_hoist(root_pid.unwrap(), rhs_pid, rhs_lo, tx)
-                .is_ok()
-            {
+            if self.root_hoist(root_pid.unwrap(), rhs_pid, rhs_lo, tx)? {
                 M.tree_root_split_success();
             }
         }
@@ -854,7 +851,7 @@ impl Tree {
         to: PageId,
         at: IVec,
         tx: &'g Tx<BLinkMaterializer, Frag>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         // hoist new root, pointing to lhs & rhs
         let root_lo = b"";
         let mut new_root_vec = vec![];
@@ -895,7 +892,7 @@ impl Tree {
             {
             }
 
-            Ok(())
+            Ok(true)
         } else {
             debug!(
                 "root hoist from {} to {} failed: {:?}",
@@ -906,7 +903,7 @@ impl Tree {
                 .free(new_root_pid, new_root_ptr, tx)?
                 .expect("could not free allocated page");
 
-            Ok(())
+            Ok(false)
         }
     }
 
@@ -1007,15 +1004,12 @@ impl Tree {
                 } else if parent_view.is_none() && view.lo.is_empty() {
                     assert_eq!(view.pid, root_pid.unwrap());
                     // we have found a partially-split root
-                    if self
-                        .root_hoist(
-                            root_pid.unwrap(),
-                            view.next.unwrap(),
-                            view.hi.into(),
-                            tx,
-                        )
-                        .is_ok()
-                    {
+                    if self.root_hoist(
+                        root_pid.unwrap(),
+                        view.next.unwrap(),
+                        view.hi.into(),
+                        tx,
+                    )? {
                         M.tree_root_split_success();
                         retry!();
                     }
