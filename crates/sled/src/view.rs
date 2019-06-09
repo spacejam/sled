@@ -30,7 +30,7 @@ impl<'a> View<'a> {
         let mut merging_child = None;
         let mut merge_confirmed = false;
         let mut min_children: isize = 0;
-        let mut max_children = 0;
+        let mut max_children: isize = 0;
         let mut size = 0;
 
         for (offset, frag) in frags.iter().enumerate() {
@@ -42,7 +42,7 @@ impl<'a> View<'a> {
                     // here
 
                     min_children += node.data.len() as isize;
-                    max_children += node.data.len();
+                    max_children += node.data.len() as isize;
 
                     return View {
                         hi: &node.hi,
@@ -57,7 +57,7 @@ impl<'a> View<'a> {
                         merging,
                         merging_child,
                         min_children: std::cmp::max(0, min_children) as usize,
-                        max_children,
+                        max_children: std::cmp::max(0, max_children) as usize,
                         size,
                     };
                 }
@@ -78,7 +78,10 @@ impl<'a> View<'a> {
                     assert_eq!(offset, 0, "frags: {:?}", frags);
                     merging = true;
                 }
-                Frag::Del(..) => min_children -= 1,
+                Frag::Del(..) => {
+                    min_children -= 1;
+                    max_children -= 1;
+                }
                 Frag::Set(..) | Frag::Merge(..) => max_children += 1,
             }
         }
@@ -396,7 +399,7 @@ impl<'a> View<'a> {
     }
 
     pub(crate) fn should_merge(&self, min_sz: u64) -> bool {
-        let size_checks = self.max_children < 2 || self.size < min_sz;
+        let size_checks = self.max_children < 2 && self.size < min_sz;
         let safety_checks = self.merging_child.is_none() && !self.merging;
 
         size_checks && safety_checks

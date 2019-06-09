@@ -1047,6 +1047,7 @@ impl Tree {
             ) && !took_leftmost_branch
             {
                 if let Some(ref mut parent_view) = parent_view {
+                    assert!(parent_view.merging_child.is_none());
                     if parent_view.can_merge_child() {
                         let frag = Frag::ParentMergeIntention(view.pid);
 
