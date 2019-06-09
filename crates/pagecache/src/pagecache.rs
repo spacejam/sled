@@ -1294,6 +1294,11 @@ where
         let mut successes: Vec<(Cow<P>, u64, Lsn, DiskPtr, u64)> =
             match pulled.collect() {
                 Ok(s) => s,
+                Err(Error::Io(ref e))
+                    if e.kind() == std::io::ErrorKind::NotFound =>
+                {
+                    return Ok(None)
+                }
                 Err(e) => return Err(e),
             };
 
@@ -1701,7 +1706,7 @@ where
     fn pull(&self, lsn: Lsn, ptr: DiskPtr) -> Result<Update<P>> {
         trace!("pulling lsn {} ptr {} from disk", lsn, ptr);
         let _measure = Measure::new(&M.pull);
-        let bytes = match self.log.read(lsn, ptr).map_err(|_| ()) {
+        let bytes = match self.log.read(lsn, ptr) {
             Ok(LogRead::Inline(read_lsn, buf, _len)) => {
                 assert_eq!(
                     read_lsn, lsn,
@@ -1721,9 +1726,13 @@ where
 
                 Ok(buf)
             }
-            other => {
-                debug!("failed to read page: {:?}", other);
+            Ok(other) => {
+                debug!("read unexpected page: {:?}", other);
                 Err(Error::Corruption { at: ptr })
+            }
+            Err(e) => {
+                debug!("failed to read page: {:?}", e);
+                Err(e)
             }
         }?;
 
