@@ -209,54 +209,59 @@ fn parallel_tree_iter() -> Result<()> {
 
     let mut threads: Vec<thread::JoinHandle<Result<()>>> = vec![];
 
-    for _ in 0..N_FORWARD {
-        let t = thread::spawn({
-            let t = t.clone();
-            let barrier = barrier.clone();
-            move || {
-                barrier.wait();
-                for _ in 0..100 {
-                    let expected = INDELIBLE.iter();
-                    let mut keys = t.iter().keys();
+    for i in 0..N_FORWARD {
+        let t = thread::Builder::new()
+            .name(format!("forward({})", i))
+            .spawn({
+                let t = t.clone();
+                let barrier = barrier.clone();
+                move || {
+                    barrier.wait();
+                    for _ in 0..100 {
+                        let expected = INDELIBLE.iter();
+                        let mut keys = t.iter().keys();
 
-                    for expect in expected {
-                        loop {
-                            let k = keys.next().unwrap()?;
-                            assert!(
-                                &*k <= *expect,
-                                "witnessed key is {:?} but we expected \
-                                 one <= {:?}, so we overshot due to a \
-                                 concurrent modification",
-                                k,
-                                expect,
-                            );
-                            if &*k == *expect {
-                                break;
+                        for expect in expected {
+                            loop {
+                                let k = keys.next().unwrap()?;
+                                assert!(
+                                    &*k <= *expect,
+                                    "witnessed key is {:?} but we expected \
+                                     one <= {:?}, so we overshot due to a \
+                                     concurrent modification",
+                                    k,
+                                    expect,
+                                );
+                                if &*k == *expect {
+                                    break;
+                                }
                             }
                         }
                     }
-                }
 
-                Ok(())
-            }
-        });
+                    Ok(())
+                }
+            })
+            .unwrap();
         threads.push(t);
     }
 
-    for _ in 0..N_REVERSE {
-        let t = thread::spawn({
-            let t = t.clone();
-            let barrier = barrier.clone();
-            move || {
-                barrier.wait();
-                for _ in 0..100 {
-                    let expected = INDELIBLE.iter().rev();
-                    let mut keys = t.iter().keys().rev();
+    for i in 0..N_REVERSE {
+        let t = thread::Builder::new()
+            .name(format!("reverse({})", i))
+            .spawn({
+                let t = t.clone();
+                let barrier = barrier.clone();
+                move || {
+                    barrier.wait();
+                    for _ in 0..100 {
+                        let expected = INDELIBLE.iter().rev();
+                        let mut keys = t.iter().keys().rev();
 
-                    for expect in expected {
-                        loop {
-                            if let Some(Ok(k)) = keys.next() {
-                                assert!(
+                        for expect in expected {
+                            loop {
+                                if let Some(Ok(k)) = keys.next() {
+                                    assert!(
                                     &*k >= *expect,
                                     "witnessed key is {:?} but we expected \
                                      one >= {:?}, so we overshot due to a \
@@ -265,62 +270,69 @@ fn parallel_tree_iter() -> Result<()> {
                                     expect,
                                     *t,
                                 );
-                                if &*k == *expect {
-                                    break;
+                                    if &*k == *expect {
+                                        break;
+                                    }
+                                } else {
+                                    panic!("undershot key on tree: \n{:?}", *t);
                                 }
-                            } else {
-                                panic!("undershot key on tree: \n{:?}", *t);
                             }
                         }
                     }
-                }
 
-                Ok(())
-            }
-        });
+                    Ok(())
+                }
+            })
+            .unwrap();
 
         threads.push(t);
     }
 
-    let inserter = thread::spawn({
-        let t = t.clone();
-        let barrier = barrier.clone();
-        move || {
-            barrier.wait();
+    let inserter = thread::Builder::new()
+        .name("inserter".into())
+        .spawn({
+            let t = t.clone();
+            let barrier = barrier.clone();
+            move || {
+                barrier.wait();
 
-            for i in 0..(16 * 16 * 8) {
-                let major = i / (16 * 8);
-                let minor = i % 16;
+                for i in 0..(16 * 16 * 8) {
+                    let major = i / (16 * 8);
+                    let minor = i % 16;
 
-                let mut base = INDELIBLE[major].to_vec();
-                base.push(minor as u8);
-                t.set(base.clone(), base.clone())?;
+                    let mut base = INDELIBLE[major].to_vec();
+                    base.push(minor as u8);
+                    t.set(base.clone(), base.clone())?;
+                }
+
+                Ok(())
             }
-
-            Ok(())
-        }
-    });
+        })
+        .unwrap();
 
     threads.push(inserter);
 
-    let deleter = thread::spawn({
-        let t = t.clone();
-        let barrier = barrier.clone();
-        move || {
-            barrier.wait();
+    let deleter = thread::Builder::new()
+        .name("deleter".into())
+        .spawn({
+            let t = t.clone();
+            let barrier = barrier.clone();
+            move || {
+                barrier.wait();
 
-            for i in 0..(16 * 16 * 8) {
-                let major = i / (16 * 8);
-                let minor = i % 16;
+                for i in 0..(16 * 16 * 8) {
+                    let major = i / (16 * 8);
+                    let minor = i % 16;
 
-                let mut base = INDELIBLE[major].to_vec();
-                base.push(minor as u8);
-                t.del(&base)?;
+                    let mut base = INDELIBLE[major].to_vec();
+                    base.push(minor as u8);
+                    t.del(&base)?;
+                }
+
+                Ok(())
             }
-
-            Ok(())
-        }
-    });
+        })
+        .unwrap();
 
     threads.push(deleter);
 
