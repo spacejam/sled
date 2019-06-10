@@ -1,7 +1,7 @@
 //! A simple wait-free, grow-only pagetable, assumes a dense keyspace.
 
 use std::{
-    alloc::{alloc, Layout},
+    alloc::{alloc_zeroed, Layout},
     mem::{align_of, size_of},
     sync::atomic::Ordering::{Relaxed, SeqCst},
 };
@@ -46,15 +46,16 @@ impl<T: Send + 'static> Node1<T> {
     fn new() -> Box<Node1<T>> {
         let size = size_of::<Node1<T>>();
         let align = align_of::<Node1<T>>();
-        let mut node = unsafe {
+
+        let node = unsafe {
             let layout = Layout::from_size_align_unchecked(size, align);
-            let ptr = alloc(layout) as *mut Node1<T>;
+
+            #[allow(clippy::cast_ptr_alignment)]
+            let ptr = alloc_zeroed(layout) as *mut Node1<T>;
+
             Box::from_raw(ptr)
         };
 
-        for i in 0..FANOUT as usize {
-            node.children[i] = Atomic::null();
-        }
         node
     }
 }
@@ -63,14 +64,16 @@ impl<T: Send + 'static> Node2<T> {
     fn new() -> Owned<Node2<T>> {
         let size = size_of::<Node2<T>>();
         let align = align_of::<Node2<T>>();
-        let mut node = unsafe {
+
+        let node = unsafe {
             let layout = Layout::from_size_align_unchecked(size, align);
-            let ptr = alloc(layout) as *mut Node2<T>;
+
+            #[allow(clippy::cast_ptr_alignment)]
+            let ptr = alloc_zeroed(layout) as *mut Node2<T>;
+
             Box::from_raw(ptr)
         };
-        for i in 0..FANOUT as usize {
-            node.children[i] = Atomic::null();
-        }
+
         Owned::from(node)
     }
 }
