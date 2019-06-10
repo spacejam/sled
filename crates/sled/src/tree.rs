@@ -363,11 +363,11 @@ impl Tree {
     pub fn update_and_fetch<K, V, F>(
         &self,
         key: K,
-        f: F,
+        mut f: F,
     ) -> Result<Option<IVec>>
     where
         K: AsRef<[u8]>,
-        F: Fn(Option<&[u8]>) -> Option<V>,
+        F: FnMut(Option<&[u8]>) -> Option<V>,
         IVec: From<V>,
     {
         let key = key.as_ref();
@@ -428,11 +428,11 @@ impl Tree {
     pub fn fetch_and_update<K, V, F>(
         &self,
         key: K,
-        f: F,
+        mut f: F,
     ) -> Result<Option<IVec>>
     where
         K: AsRef<[u8]>,
-        F: Fn(Option<&[u8]>) -> Option<V>,
+        F: FnMut(Option<&[u8]>) -> Option<V>,
         IVec: From<V>,
     {
         let key = key.as_ref();
@@ -607,7 +607,7 @@ impl Tree {
     /// assert_eq!(tree.get_gt(&[9]), Ok(None));
     ///
     /// tree.set(500u16.to_be_bytes(), vec![10] );
-    /// assert_eq!(tree.get_gt(&499u16.to_be_bytes()), 
+    /// assert_eq!(tree.get_gt(&499u16.to_be_bytes()),
     ///            Ok(Some((500u16.to_be_bytes().to_vec(), IVec::from(vec![10] )))));
     /// ```
     pub fn get_gt<K: AsRef<[u8]>>(
