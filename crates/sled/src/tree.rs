@@ -37,8 +37,9 @@ impl<'a> IntoIterator for &'a Tree {
 /// ).unwrap();
 ///
 /// // Iterates over key-value pairs, starting at the given key.
-/// let mut iter = t.range(b"a non-present key before yo!"..);
-/// assert_eq!(iter.next().unwrap(), Ok((b"yo!".to_vec(), IVec::from(b"v2"))));
+/// let scan_key: &[u8] = b"a non-present key before yo!";
+/// let mut iter = t.range(scan_key..);
+/// assert_eq!(iter.next().unwrap(), Ok((IVec::from(b"yo!"), IVec::from(b"v2"))));
 /// assert_eq!(iter.next(), None);
 ///
 /// t.del(b"yo!");
@@ -67,8 +68,8 @@ impl Tree {
     /// let config = ConfigBuilder::new().temporary(true).build();
     /// let t = Db::start(config).unwrap();
     ///
-    /// assert_eq!(t.set(&[0], vec![0]), Ok(None));
-    /// assert_eq!(t.set(&[0], vec![1]), Ok(Some(IVec::from(vec![0]))));
+    /// assert_eq!(t.set(&[1,2,3], vec![0]), Ok(None));
+    /// assert_eq!(t.set(&[1,2,3], vec![1]), Ok(Some(IVec::from(&[0]))));
     /// ```
     pub fn set<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
     where
@@ -500,10 +501,10 @@ impl Tree {
     ///
     /// assert_eq!(tree.get_lt(&[]), Ok(None));
     /// assert_eq!(tree.get_lt(&[0]), Ok(None));
-    /// assert_eq!(tree.get_lt(&[1]), Ok(Some((vec![0], IVec::from(vec![0])))));
-    /// assert_eq!(tree.get_lt(&[9]), Ok(Some((vec![8], IVec::from(vec![8])))));
-    /// assert_eq!(tree.get_lt(&[10]), Ok(Some((vec![9], IVec::from(vec![9])))));
-    /// assert_eq!(tree.get_lt(&[255]), Ok(Some((vec![9], IVec::from(vec![9])))));
+    /// assert_eq!(tree.get_lt(&[1]), Ok(Some((IVec::from(&[0]), IVec::from(&[0])))));
+    /// assert_eq!(tree.get_lt(&[9]), Ok(Some((IVec::from(&[8]), IVec::from(&[8])))));
+    /// assert_eq!(tree.get_lt(&[10]), Ok(Some((IVec::from(&[9]), IVec::from(&[9])))));
+    /// assert_eq!(tree.get_lt(&[255]), Ok(Some((IVec::from(&[9]), IVec::from(&[9])))));
     /// ```
     pub fn get_lt<K>(&self, key: K) -> Result<Option<(IVec, IVec)>>
     where
@@ -534,15 +535,15 @@ impl Tree {
     ///     tree.set(&[i], vec![i]).expect("should write successfully");
     /// }
     ///
-    /// assert_eq!(tree.get_gt(&[]), Ok(Some((vec![0], IVec::from(vec![0])))));
-    /// assert_eq!(tree.get_gt(&[0]), Ok(Some((vec![1], IVec::from(vec![1])))));
-    /// assert_eq!(tree.get_gt(&[1]), Ok(Some((vec![2], IVec::from(vec![2])))));
-    /// assert_eq!(tree.get_gt(&[8]), Ok(Some((vec![9], IVec::from(vec![9])))));
+    /// assert_eq!(tree.get_gt(&[]), Ok(Some((IVec::from(&[0]), IVec::from(&[0])))));
+    /// assert_eq!(tree.get_gt(&[0]), Ok(Some((IVec::from(&[1]), IVec::from(&[1])))));
+    /// assert_eq!(tree.get_gt(&[1]), Ok(Some((IVec::from(&[2]), IVec::from(&[2])))));
+    /// assert_eq!(tree.get_gt(&[8]), Ok(Some((IVec::from(&[9]), IVec::from(&[9])))));
     /// assert_eq!(tree.get_gt(&[9]), Ok(None));
     ///
     /// tree.set(500u16.to_be_bytes(), vec![10] );
     /// assert_eq!(tree.get_gt(&499u16.to_be_bytes()),
-    ///            Ok(Some((500u16.to_be_bytes().to_vec(), IVec::from(vec![10] )))));
+    ///            Ok(Some((IVec::from(&500u16.to_be_bytes()), IVec::from(&[10])))));
     /// ```
     pub fn get_gt<K>(&self, key: K) -> Result<Option<(IVec, IVec)>>
     where
@@ -679,9 +680,9 @@ impl Tree {
     /// t.set(&[2], vec![20]);
     /// t.set(&[3], vec![30]);
     /// let mut iter = t.iter();
-    /// assert_eq!(iter.next().unwrap(), Ok((vec![1], vec![10].into())));
-    /// assert_eq!(iter.next().unwrap(), Ok((vec![2], vec![20].into())));
-    /// assert_eq!(iter.next().unwrap(), Ok((vec![3], vec![30].into())));
+    /// assert_eq!(iter.next().unwrap(), Ok((IVec::from(&[1]), IVec::from(&[10]))));
+    /// assert_eq!(iter.next().unwrap(), Ok((IVec::from(&[2]), IVec::from(&[20]))));
+    /// assert_eq!(iter.next().unwrap(), Ok((IVec::from(&[3]), IVec::from(&[30]))));
     /// assert_eq!(iter.next(), None);
     /// ```
     pub fn iter(&self) -> Iter<'_> {
@@ -708,13 +709,13 @@ impl Tree {
     /// let start: &[u8] = &[2];
     /// let end: &[u8] = &[4];
     /// let mut r = t.range(start..end);
-    /// assert_eq!(r.next().unwrap(), Ok((vec![2], IVec::from(vec![20]))));
-    /// assert_eq!(r.next().unwrap(), Ok((vec![3], IVec::from(vec![30]))));
+    /// assert_eq!(r.next().unwrap(), Ok((IVec::from(&[2]), IVec::from(&[20]))));
+    /// assert_eq!(r.next().unwrap(), Ok((IVec::from(&[3]), IVec::from(&[30]))));
     /// assert_eq!(r.next(), None);
     ///
     /// let mut r = t.range(start..end).rev();
-    /// assert_eq!(r.next().unwrap(), Ok((vec![3], IVec::from(vec![30]))));
-    /// assert_eq!(r.next().unwrap(), Ok((vec![2], IVec::from(vec![20]))));
+    /// assert_eq!(r.next().unwrap(), Ok((IVec::from(&[3]), IVec::from(&[30]))));
+    /// assert_eq!(r.next().unwrap(), Ok((IVec::from(&[2]), IVec::from(&[20]))));
     /// assert_eq!(r.next(), None);
     /// ```
     pub fn range<K, R>(&self, range: R) -> Iter<'_>

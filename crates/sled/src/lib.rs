@@ -17,8 +17,9 @@
 //! ).unwrap();
 //!
 //! // Iterates over key-value pairs, starting at the given key.
-//! let mut iter = t.scan(b"a non-present key before yo!");
-//! assert_eq!(iter.next().unwrap(), Ok((b"yo!".to_vec(), IVec::from(b"v2"))));
+//! let scan_key: &[u8] = b"a non-present key before yo!";
+//! let mut iter = t.range(scan_key..);
+//! assert_eq!(iter.next().unwrap(), Ok((IVec::from(b"yo!"), IVec::from(b"v2"))));
 //! assert_eq!(iter.next(), None);
 //!
 //! t.del(b"yo!");
