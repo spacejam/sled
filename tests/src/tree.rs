@@ -213,7 +213,7 @@ pub fn prop_tree_matches_btreemap(
         .async_io(false)
         .temporary(true)
         .use_compression(use_compression)
-        .snapshot_after_ops(snapshot_after as u64 + 1)
+        .snapshot_after_ops(u64::from(snapshot_after) + 1)
         .flush_every_ms(if flusher { Some(1) } else { None })
         .io_buf_size(10000)
         .blink_node_split_size(1 << std::cmp::min(blink_node_exponent, 20))
@@ -243,25 +243,33 @@ pub fn prop_tree_matches_btreemap(
                 assert_eq!(res1, res2);
             }
             GetLt(k) => {
-                let res1 =
-                    tree.get_lt(&*k.0).unwrap().map(|v| bytes_to_u16(&*v.1));
+                let res1 = tree.get_lt(&*k.0).unwrap().map(|v| v.0);
                 let res2 = reference
                     .iter()
                     .rev()
                     .filter(|(key, _)| **key < k)
                     .nth(0)
-                    .map(|(_, v)| *v);
-                assert_eq!(res1, res2);
+                    .map(|(k, _v)| IVec::from(&*k.0));
+                assert_eq!(
+                    res1, res2,
+                    "get_lt({:?}) should have returned {:?} \
+                     but it returned {:?} instead. \
+                     \n Db: {:?}",
+                    k, res2, res1, tree
+                );
             }
             GetGt(k) => {
-                let res1 =
-                    tree.get_gt(&*k.0).unwrap().map(|v| bytes_to_u16(&*v.1));
+                let res1 = tree.get_gt(&*k.0).unwrap().map(|v| v.0);
                 let res2 = reference
                     .iter()
                     .filter(|(key, _)| **key > k)
                     .nth(0)
-                    .map(|(_, v)| *v);
-                assert_eq!(res1, res2);
+                    .map(|(k, _v)| IVec::from(&*k.0));
+                assert_eq!(
+                    res1, res2,
+                    "get_gt({:?}) expected {:?} in tree {:?}",
+                    k, res2, tree
+                );
             }
             Del(k) => {
                 tree.del(&*k.0).unwrap();
@@ -282,7 +290,7 @@ pub fn prop_tree_matches_btreemap(
             }
             Scan(k, len) => {
                 let mut tree_iter =
-                    tree.scan(&*k.0).take(len).map(|res| res.unwrap());
+                    tree.range(&*k.0..).take(len).map(|res| res.unwrap());
                 let ref_iter = reference
                     .iter()
                     .filter(|&(ref rk, _rv)| **rk >= k)
@@ -294,9 +302,12 @@ pub fn prop_tree_matches_btreemap(
                     let lhs = (tree_next.0, &*tree_next.1);
                     let rhs = (r.0.clone(), &*u16_to_bytes(r.1));
                     assert_eq!(
-                        lhs, rhs,
-                        "expected iteration over the Tree \
-                         to match our BTreeMap model"
+                        (lhs.0.as_ref(), lhs.1),
+                        (rhs.0.as_ref(), rhs.1),
+                        "expected {:?} while iterating from {:?} on tree: {:?}",
+                        rhs,
+                        k,
+                        tree
                     );
                 }
             }

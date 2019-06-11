@@ -1,8 +1,8 @@
-use std::mem::size_of;
+use std::{fmt, mem::size_of};
 
 use super::*;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Node {
     pub(crate) data: Data,
     pub(crate) next: Option<PageId>,
@@ -10,6 +10,27 @@ pub(crate) struct Node {
     pub(crate) hi: IVec,
     pub(crate) merging_child: Option<PageId>,
     pub(crate) merging: bool,
+}
+
+impl fmt::Debug for Node {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> std::result::Result<(), fmt::Error> {
+        let data = self.data.fmt_keys(&self.lo);
+
+        write!(
+            f,
+            "Node {{ \
+             lo: {:?} \
+             hi: {:?} \
+             next: {:?} \
+             merging_child: {:?} \
+             merging: {} \
+             data: {:?} }}",
+            self.lo, self.hi, self.next, self.merging_child, self.merging, data
+        )
+    }
 }
 
 impl Node {
@@ -38,7 +59,11 @@ impl Node {
                 {
                     self.set_leaf(k.clone(), v.clone());
                 } else {
-                    panic!("tried to consolidate set at key <= hi")
+                    panic!(
+                        "tried to consolidate set at key <= hi.\
+                         Set({:?}, {:?}) to node {:?}",
+                        k, v, self
+                    )
                 }
             }
             Merge(ref k, ref v) => {
@@ -58,12 +83,6 @@ impl Node {
                     panic!("tried to consolidate set at key <= hi")
                 }
             }
-            ChildSplit(ref child_split) => {
-                self.child_split(child_split);
-            }
-            ParentSplit(ref parent_split) => {
-                self.parent_split(parent_split);
-            }
             Del(ref k) => {
                 // (when hi is empty, it means it's unbounded)
                 if self.hi.is_empty()
@@ -82,7 +101,12 @@ impl Node {
             }
             ParentMergeConfirm => {
                 assert!(self.merging_child.is_some());
-                self.merging_child = None;
+                let merged_child = self.merging_child.take().expect(
+                    "we should have a specific \
+                     child that was merged if this \
+                     frag appears here",
+                );
+                self.data.parent_merge_confirm(merged_child);
             }
             ChildMergeCap => {
                 assert!(!self.merging);
@@ -136,18 +160,12 @@ impl Node {
         }
     }
 
-    pub(crate) fn child_split(&mut self, cs: &ChildSplit) {
-        self.data.drop_gte(&cs.at, &self.lo);
-        self.hi = cs.at.clone();
-        self.next = Some(cs.to);
-    }
-
-    pub(crate) fn parent_split(&mut self, ps: &ParentSplit) {
+    pub(crate) fn parent_split(&mut self, at: &[u8], to: PageId) {
         if let Data::Index(ref mut ptrs) = self.data {
-            let encoded_sep = prefix_encode(&self.lo, &ps.at);
+            let encoded_sep = prefix_encode(&self.lo, at);
             match ptrs.binary_search_by(|a| prefix_cmp(&a.0, &encoded_sep)) {
                 Ok(_) => panic!("must not have found ptr"),
-                Err(idx) => ptrs.insert(idx, (encoded_sep, ps.to)),
+                Err(idx) => ptrs.insert(idx, (encoded_sep, to)),
             }
         } else {
             panic!("tried to attach a ParentSplit to a Leaf chain");
@@ -164,19 +182,6 @@ impl Node {
         } else {
             panic!("tried to attach a Del to an Index chain");
         }
-    }
-
-    pub(crate) fn should_split(&self, max_sz: u64) -> bool {
-        self.data.len() > 2
-            && self.size_in_bytes() > max_sz
-            && self.merging_child.is_none()
-            && !self.merging
-    }
-
-    pub(crate) fn should_merge(&self, min_sz: u64) -> bool {
-        self.size_in_bytes() < min_sz
-            && self.merging_child.is_none()
-            && !self.merging
     }
 
     pub(crate) fn split(&self) -> Node {
@@ -199,6 +204,7 @@ impl Node {
             merged.lo.as_ref(),
             &rhs.data,
         );
+        merged.next = rhs.next;
         merged
     }
 }

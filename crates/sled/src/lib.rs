@@ -17,8 +17,9 @@
 //! ).unwrap();
 //!
 //! // Iterates over key-value pairs, starting at the given key.
-//! let mut iter = t.scan(b"a non-present key before yo!");
-//! assert_eq!(iter.next().unwrap(), Ok((b"yo!".to_vec(), IVec::from(b"v2"))));
+//! let scan_key: &[u8] = b"a non-present key before yo!";
+//! let mut iter = t.range(scan_key..);
+//! assert_eq!(iter.next().unwrap(), Ok((IVec::from(b"yo!"), IVec::from(b"v2"))));
 //! assert_eq!(iter.next(), None);
 //!
 //! t.del(b"yo!");
@@ -47,6 +48,7 @@ mod node;
 mod prefix;
 mod subscription;
 mod tree;
+mod view;
 
 const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
 
@@ -63,12 +65,10 @@ pub use {
 
 use {
     self::{
-        binary_search::{
-            binary_search_gt, binary_search_lt, binary_search_lub, leaf_search,
-        },
+        binary_search::binary_search_lub,
         context::Context,
         data::Data,
-        frag::{ChildSplit, Frag, ParentSplit},
+        frag::Frag,
         materializer::BLinkMaterializer,
         node::Node,
         prefix::{
@@ -76,15 +76,14 @@ use {
             prefix_reencode,
         },
         subscription::Subscriptions,
+        view::View,
     },
     log::{debug, error, trace},
     pagecache::{
-        debug_delay, Materializer, Measure, MergeOperator, PageCache, PageGet,
-        PageId, Tx, M,
+        debug_delay, Materializer, Measure, MergeOperator, PageCache, PageId,
+        Tx, M,
     },
     serde::{Deserialize, Serialize},
 };
-
-type Key = Vec<u8>;
 
 type TreePtr<'g> = pagecache::PagePtr<'g, Frag>;

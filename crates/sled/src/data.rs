@@ -40,15 +40,30 @@ impl Data {
         self_sz.saturating_add(inner_sz)
     }
 
+    pub(crate) fn fmt_keys(&self, prefix: &[u8]) -> Data {
+        fn fmt_inner<T>(prefix: &[u8], xs: &[(IVec, T)]) -> Vec<(IVec, T)>
+        where
+            T: Clone + Ord,
+        {
+            let mut data = Vec::with_capacity(xs.len());
+            for (k, v) in xs {
+                let k = prefix_decode(prefix, k).into();
+                data.push((k, v.clone()));
+            }
+            data
+        }
+
+        match self {
+            Data::Index(ref ptrs) => Data::Index(fmt_inner(prefix, ptrs)),
+            Data::Leaf(ref items) => Data::Leaf(fmt_inner(prefix, items)),
+        }
+    }
+
     pub(crate) fn len(&self) -> usize {
         match *self {
             Data::Index(ref ptrs) => ptrs.len(),
             Data::Leaf(ref items) => items.len(),
         }
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.len() == 0
     }
 
     pub(crate) fn split(&self, lhs_prefix: &[u8]) -> (IVec, Data) {
@@ -124,6 +139,19 @@ impl Data {
         }
     }
 
+    pub(crate) fn parent_merge_confirm(&mut self, merged_child_pid: PageId) {
+        match self {
+            Data::Index(ref mut ptrs) => {
+                let idx = ptrs
+                    .iter()
+                    .position(|(_k, c)| *c == merged_child_pid)
+                    .unwrap();
+                ptrs.remove(idx);
+            }
+            _ => panic!("parent_merge_confirm called on leaf data"),
+        }
+    }
+
     pub(crate) fn drop_gte(&mut self, bound: &[u8], prefix: &[u8]) {
         match *self {
             Data::Index(ref mut ptrs) => ptrs.retain(|&(ref k, _)| {
@@ -144,7 +172,7 @@ impl Data {
 
     pub(crate) fn index_ref(&self) -> Option<&Vec<(IVec, PageId)>> {
         match *self {
-            Data::Index(ref items) => Some(items),
+            Data::Index(ref ptrs) => Some(ptrs),
             Data::Leaf(_) => None,
         }
     }

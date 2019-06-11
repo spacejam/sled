@@ -27,6 +27,24 @@ impl Deref for Db {
     }
 }
 
+impl std::fmt::Debug for Db {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::result::Result<(), std::fmt::Error> {
+        let tenants = self.tenants.read().unwrap();
+        write!(f, "Db {{")?;
+        for (raw_name, tree) in tenants.iter() {
+            let name = std::str::from_utf8(&raw_name)
+                .map(String::from)
+                .unwrap_or_else(|_| format!("{:?}", raw_name));
+            write!(f, "tree: {:?} contents: {:?}", name, tree)?;
+        }
+        write!(f, "}}")?;
+        Ok(())
+    }
+}
+
 impl Db {
     /// Load existing or create a new `Db` with a default configuration.
     pub fn start_default<P: AsRef<std::path::Path>>(path: P) -> Result<Db> {
@@ -135,11 +153,26 @@ impl Db {
         let mut root_id =
             Some(self.context.pagecache.meta_pid_for_name(&name, &tx)?);
 
-        let leftmost_chain: Vec<PageId> = tree
-            .path_for_key(b"", &tx)?
-            .into_iter()
-            .map(|(id, _frag, _tp)| id)
-            .collect();
+        let mut leftmost_chain: Vec<PageId> = vec![root_id.unwrap()];
+        let mut cursor = root_id.unwrap();
+        loop {
+            let view_opt = self.view_for_pid(cursor, &tx)?;
+            let view = if let Some(view) = view_opt {
+                view
+            } else {
+                break;
+            };
+
+            let node = view.compact(&self.context);
+
+            if let Some(index) = node.data.index_ref() {
+                let leftmost_child = index[0].1;
+                leftmost_chain.push(leftmost_child);
+                cursor = leftmost_child;
+            } else {
+                break;
+            }
+        }
 
         loop {
             let res = self.context.pagecache.cas_root_in_meta(

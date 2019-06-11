@@ -156,7 +156,18 @@ fn run<PM, P>(
 
 impl Drop for Flusher {
     fn drop(&mut self) {
-        let mut shutdown = self.shutdown.lock().unwrap();
+        let mut shutdown = match self.shutdown.lock() {
+            Ok(guard) => guard,
+            Err(poison) => {
+                error!(
+                    "encountered poisoned guard when dropping \
+                     Flusher: {:?}. data may not have been flushed \
+                     to disk before crashing.",
+                    poison
+                );
+                return;
+            }
+        };
         if shutdown.is_running() {
             *shutdown = ShutdownState::ShuttingDown;
             self.sc.notify_all();

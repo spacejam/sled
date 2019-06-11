@@ -1,4 +1,3 @@
-// lock-free stack
 use std::{
     fmt::{self, Debug},
     ops::Deref,
