@@ -121,6 +121,7 @@ pub use self::{
         EVIL_BYTE, FAILED_FLUSH, INLINE_FLUSH, MINIMUM_ITEMS_PER_SEGMENT,
         MSG_HEADER_LEN, SEGMENT_PAD, SEG_HEADER_LEN, SEG_TRAILER_LEN,
     },
+    ds::PAGETABLE_NODE_SZ,
     metrics::Measure,
     snapshot::{read_snapshot_or_default, Snapshot},
 };

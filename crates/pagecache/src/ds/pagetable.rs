@@ -1,6 +1,10 @@
 //! A simple wait-free, grow-only pagetable, assumes a dense keyspace.
 
-use std::sync::atomic::Ordering::{Relaxed, SeqCst};
+use std::{
+    alloc::{alloc_zeroed, Layout},
+    mem::{align_of, size_of},
+    sync::atomic::Ordering::{Relaxed, SeqCst},
+};
 
 use super::*;
 
@@ -8,19 +12,10 @@ const FANFACTOR: u64 = 18;
 const FANOUT: u64 = 1 << FANFACTOR;
 const FAN_MASK: u64 = FANOUT - 1;
 
+#[doc(hidden)]
+pub const PAGETABLE_NODE_SZ: usize = size_of::<Node1<()>>();
+
 pub type PageId = u64;
-
-macro_rules! rep_no_copy {
-    ($e:expr; $n:expr) => {{
-        let mut v = Vec::with_capacity($n);
-
-        for _ in 0..$n {
-            v.push($e);
-        }
-
-        v
-    }};
-}
 
 #[inline(always)]
 fn split_fanout(i: u64) -> (u64, u64) {
@@ -40,24 +35,46 @@ fn split_fanout(i: u64) -> (u64, u64) {
 }
 
 struct Node1<T: Send + 'static> {
-    children: Vec<Atomic<Node2<T>>>,
+    children: [Atomic<Node2<T>>; FANOUT as usize],
 }
 
 struct Node2<T: Send + 'static> {
-    children: Vec<Atomic<T>>,
+    children: [Atomic<T>; FANOUT as usize],
 }
 
-impl<T: Send + 'static> Default for Node1<T> {
-    fn default() -> Node1<T> {
-        let children = rep_no_copy!(Atomic::null(); FANOUT as usize);
-        Node1 { children }
+impl<T: Send + 'static> Node1<T> {
+    fn new() -> Box<Node1<T>> {
+        let size = size_of::<Node1<T>>();
+        let align = align_of::<Node1<T>>();
+
+        let node = unsafe {
+            let layout = Layout::from_size_align_unchecked(size, align);
+
+            #[allow(clippy::cast_ptr_alignment)]
+            let ptr = alloc_zeroed(layout) as *mut Node1<T>;
+
+            Box::from_raw(ptr)
+        };
+
+        node
     }
 }
 
-impl<T: Send + 'static> Default for Node2<T> {
-    fn default() -> Node2<T> {
-        let children = rep_no_copy!(Atomic::null(); FANOUT as usize);
-        Node2 { children }
+impl<T: Send + 'static> Node2<T> {
+    fn new() -> Owned<Node2<T>> {
+        let size = size_of::<Node2<T>>();
+        let align = align_of::<Node2<T>>();
+
+        let node = unsafe {
+            let layout = Layout::from_size_align_unchecked(size, align);
+
+            #[allow(clippy::cast_ptr_alignment)]
+            let ptr = alloc_zeroed(layout) as *mut Node2<T>;
+
+            Box::from_raw(ptr)
+        };
+
+        Owned::from(node)
     }
 }
 
@@ -74,7 +91,7 @@ where
     T: 'static + Send + Sync,
 {
     fn default() -> PageTable<T> {
-        let head = Owned::new(Node1::default());
+        let head = Node1::new();
         PageTable {
             head: Atomic::from(head),
         }
@@ -172,7 +189,7 @@ fn traverse<'g, T: 'static + Send>(
     let mut l2_ptr = l1[usize::try_from(l1k).unwrap()].load(SeqCst, guard);
 
     if l2_ptr.is_null() {
-        let next_child = Owned::new(Node2::default()).into_shared(guard);
+        let next_child = Node2::new().into_shared(guard);
 
         debug_delay();
         let ret = l1[usize::try_from(l1k).unwrap()]
