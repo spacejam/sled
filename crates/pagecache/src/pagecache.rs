@@ -362,14 +362,14 @@ where
         let mut pages_before_restart: HashMap<PageId, Vec<DiskPtr>> =
             HashMap::new();
 
-        let tx = Tx::new(0);
+        let tx = Tx::new(&self, 0);
 
         for pid in 0..self.max_pid.load(SeqCst) {
-            let pte = self.inner.get(pid, &tx);
+            let pte = self.inner.get(pid, &tx.guard);
             if pte.is_none() {
                 continue;
             }
-            let head = unsafe { pte.unwrap().deref().stack.head(&tx) };
+            let head = unsafe { pte.unwrap().deref().stack.head(&tx.guard) };
             let ptrs = ptrs_from_stack(head, &tx);
             pages_before_restart.insert(pid, ptrs);
         }
@@ -1913,14 +1913,15 @@ where
             let mut pages_after_restart: HashMap<PageId, Vec<DiskPtr>> =
                 HashMap::new();
 
-            let tx = Tx::new(0);
+            let tx = Tx::new(&self, 0);
 
             for pid in 0..self.max_pid.load(SeqCst) {
-                let pte = self.inner.get(pid, &tx);
+                let pte = self.inner.get(pid, &tx.guard);
                 if pte.is_none() {
                     continue;
                 }
-                let head = unsafe { pte.unwrap().deref().stack.head(&tx) };
+                let head =
+                    unsafe { pte.unwrap().deref().stack.head(&tx.guard) };
                 let ptrs = ptrs_from_stack(head, &tx);
                 pages_after_restart.insert(pid, ptrs);
             }
