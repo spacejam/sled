@@ -47,16 +47,14 @@ impl<T: Send + 'static> Node1<T> {
         let size = size_of::<Node1<T>>();
         let align = align_of::<Node1<T>>();
 
-        let node = unsafe {
+        unsafe {
             let layout = Layout::from_size_align_unchecked(size, align);
 
             #[allow(clippy::cast_ptr_alignment)]
             let ptr = alloc_zeroed(layout) as *mut Node1<T>;
 
             Box::from_raw(ptr)
-        };
-
-        node
+        }
     }
 }
 
@@ -65,16 +63,14 @@ impl<T: Send + 'static> Node2<T> {
         let size = size_of::<Node2<T>>();
         let align = align_of::<Node2<T>>();
 
-        let node = unsafe {
+        unsafe {
             let layout = Layout::from_size_align_unchecked(size, align);
 
             #[allow(clippy::cast_ptr_alignment)]
             let ptr = alloc_zeroed(layout) as *mut Node2<T>;
 
-            Box::from_raw(ptr)
-        };
-
-        Owned::from(node)
+            Owned::from_raw(ptr)
+        }
     }
 }
 

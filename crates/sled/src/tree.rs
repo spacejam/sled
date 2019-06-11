@@ -1217,7 +1217,7 @@ impl Tree {
                         continue;
                     }
                 }
-            } else if cursor_view.hi >= &child_view.lo {
+            } else if cursor_view.hi >= child_view.lo {
                 // Make sure we don't overseek cursor
                 // We break instead of returning because otherwise a thread that
                 // collaboratively wants to complete the merge could never reach

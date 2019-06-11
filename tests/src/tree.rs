@@ -229,8 +229,12 @@ pub fn prop_tree_matches_btreemap(
     for op in ops.into_iter() {
         match op {
             Set(k, v) => {
-                tree.set(&k.0, vec![0, v]).unwrap();
-                reference.insert(k.clone(), u16::from(v));
+                let old_actual = tree.set(&k.0, vec![0, v]).unwrap();
+                let old_reference = reference.insert(k.clone(), u16::from(v));
+                assert_eq!(
+                    old_actual.map(|v| bytes_to_u16(&*v)),
+                    old_reference
+                );
             }
             Merge(k, v) => {
                 tree.merge(&k.0, vec![v]).unwrap();
