@@ -94,7 +94,7 @@ impl Tree {
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
 
             let last_value =
-                view.leaf_value_for_key(&encoded_key, &self.context);
+                view.leaf_value_for_key(key.as_ref(), &self.context);
             let frag = Frag::Set(encoded_key, value.clone());
             let link = self.context.pagecache.link(
                 view.pid,
