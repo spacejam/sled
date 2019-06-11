@@ -232,8 +232,8 @@ pub fn prop_tree_matches_btreemap(
                 let old_actual = tree.set(&k.0, vec![0, v]).unwrap();
                 let old_reference = reference.insert(k.clone(), u16::from(v));
                 assert_eq!(
-                    old_actual.map(|v| v[1] as u8),
-                    old_reference.map(|v| v as u8)
+                    old_actual.map(|v| bytes_to_u16(&*v)),
+                    old_reference
                 );
             }
             Merge(k, v) => {
