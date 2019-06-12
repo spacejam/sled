@@ -1400,52 +1400,6 @@ fn clean_tail_tears(
         }
     }
 
-    // if any segment doesn't have a proper trailer, invalidate
-    // everything after it, since we can't preserve linearizability
-    // for segments after a tear.
-    for (&lsn, &lid) in &ordering {
-        let trailer_lid = lid + io_buf_size as LogId - SEG_TRAILER_LEN as LogId;
-        let expected_trailer_lsn =
-            lsn + io_buf_size as Lsn - SEG_TRAILER_LEN as Lsn;
-        let trailer_res = f.read_segment_trailer(trailer_lid);
-
-        if trailer_res.is_err() {
-            // trailer could not be read
-            debug!("could not read trailer of segment starting at {}", lid);
-            if let Some(existing_tear) = tear_at {
-                if existing_tear > lsn {
-                    tear_at = Some(lsn);
-                }
-            } else {
-                tear_at = Some(lsn);
-            }
-            break;
-        }
-
-        let trailer = trailer_res.unwrap();
-
-        if !trailer.ok
-            || trailer.lsn != expected_trailer_lsn
-            || (lsn == 0 && lid != 0)
-        {
-            // trailer's checksum failed, or
-            // the lsn is outdated, or
-            // the lsn is 0 but the lid isn't 0 (zeroed segment)
-            debug!(
-                "tear detected at expected trailer lsn {} header lsn {} \
-                 lid {} for trailer {:?}",
-                expected_trailer_lsn, lsn, lid, trailer
-            );
-            if let Some(existing_tear) = tear_at {
-                if existing_tear > lsn {
-                    tear_at = Some(lsn);
-                }
-            } else {
-                tear_at = Some(lsn);
-            }
-        }
-    }
-
     if let Some(tear) = tear_at {
         // we need to chop off the elements after the tear
         debug!("filtering out segments after detected tear at {}", tear);
@@ -1533,7 +1487,6 @@ pub(super) fn raw_segment_iter_from(
         cur_lsn: SEG_HEADER_LEN as Lsn,
         segment_base: None,
         segment_iter,
-        trailer: None,
     })
 }
 

@@ -6,7 +6,6 @@ use {
     pagecache::{
         ConfigBuilder, DiskPtr, Log, LogRead, SegmentMode,
         MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
-        SEG_TRAILER_LEN,
     },
     quickcheck::{Arbitrary, Gen, QuickCheck, StdGen},
     rand::{thread_rng, Rng},
@@ -73,7 +72,7 @@ fn more_log_reservations_than_buffers() {
     let log = Log::start_raw_log(config.clone()).unwrap();
     let mut reservations = vec![];
 
-    let total_seg_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;
+    let total_seg_overhead = SEG_HEADER_LEN;
     let big_msg_overhead = MSG_HEADER_LEN + total_seg_overhead;
     let big_msg_sz = config.io_buf_size - big_msg_overhead;
 
@@ -95,7 +94,7 @@ fn non_contiguous_log_flush() {
         .build();
     let log = Log::start_raw_log(config.clone()).unwrap();
 
-    let seg_overhead = std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN);
+    let seg_overhead = SEG_HEADER_LEN;
     let buf_len = (config.io_buf_size / MINIMUM_ITEMS_PER_SEGMENT)
         - (MSG_HEADER_LEN + seg_overhead);
 
@@ -110,6 +109,7 @@ fn non_contiguous_log_flush() {
 
 #[test]
 fn concurrent_logging() {
+    tests::setup_logger();
     // TODO linearize res bufs, verify they are correct
     for i in 0..10 {
         let config = ConfigBuilder::new()
@@ -126,7 +126,7 @@ fn concurrent_logging() {
         let iobs6 = log.clone();
         let log7 = log.clone();
 
-        let seg_overhead = std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN);
+        let seg_overhead = SEG_HEADER_LEN;
         let buf_len = (config.io_buf_size / MINIMUM_ITEMS_PER_SEGMENT)
             - (MSG_HEADER_LEN + seg_overhead);
 
@@ -365,8 +365,8 @@ fn log_chunky_iterator() {
 
             let mut reference = vec![];
 
-            let max_valid_size = config.io_buf_size
-                - (MSG_HEADER_LEN + SEG_HEADER_LEN + SEG_TRAILER_LEN);
+            let max_valid_size =
+                config.io_buf_size - (MSG_HEADER_LEN + SEG_HEADER_LEN);
 
             for i in 0..1000 {
                 let len = thread_rng().gen_range(0, max_valid_size * 2);
@@ -419,8 +419,7 @@ fn snapshot_with_out_of_order_buffers() {
         .snapshot_after_ops(5)
         .build();
 
-    let len =
-        config.io_buf_size - SEG_HEADER_LEN - SEG_TRAILER_LEN - MSG_HEADER_LEN;
+    let len = config.io_buf_size - SEG_HEADER_LEN - MSG_HEADER_LEN;
 
     let log = Log::start_raw_log(config.clone()).unwrap();
 
@@ -460,7 +459,7 @@ fn multi_segment_log_iteration() {
         .io_buf_size(500)
         .build();
 
-    let total_seg_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;
+    let total_seg_overhead = SEG_HEADER_LEN;
     let big_msg_overhead = MSG_HEADER_LEN + total_seg_overhead;
     let big_msg_sz = (config.io_buf_size - big_msg_overhead) / 64;
 

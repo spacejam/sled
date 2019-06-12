@@ -9,7 +9,6 @@ pub struct LogIter {
     pub segment_base: Option<LogId>,
     pub max_lsn: Lsn,
     pub cur_lsn: Lsn,
-    pub trailer: Option<Lsn>,
 }
 
 impl Iterator for LogIter {
@@ -25,14 +24,7 @@ impl Iterator for LogIter {
                 self.config.io_buf_size,
             );
 
-            if self.trailer.is_none() && remaining_seg_too_small_for_msg {
-                // We've read to the end of a torn
-                // segment and should stop now.
-                trace!("trailer is none, ending iteration at {}", self.max_lsn);
-                return None;
-            } else if self.segment_base.is_none()
-                || remaining_seg_too_small_for_msg
-            {
+            if self.segment_base.is_none() || remaining_seg_too_small_for_msg {
                 if let Some((next_lsn, next_lid)) = self.segment_iter.next() {
                     assert!(
                         next_lsn + (self.config.io_buf_size as Lsn)
@@ -101,15 +93,8 @@ impl Iterator for LogIter {
                     return None;
                 }
                 Ok(LogRead::Pad(_lsn)) => {
-                    if self.trailer.is_none() {
-                        // This segment was torn, nothing left to read.
-                        trace!("no segment trailer found, ending iteration");
-                        return None;
-                    }
-
                     self.segment_base.take();
 
-                    self.trailer.take();
                     continue;
                 }
                 Ok(LogRead::DanglingBlob(lsn, blob_ptr)) => {
@@ -178,27 +163,8 @@ impl LogIter {
             .into());
         }
 
-        let trailer_offset = offset + self.config.io_buf_size as LogId
-            - SEG_TRAILER_LEN as LogId;
-        let trailer_lsn = segment_header.lsn + self.config.io_buf_size as Lsn
-            - SEG_TRAILER_LEN as Lsn;
-
-        trace!("trying to read trailer from {}", trailer_offset);
-        let segment_trailer = f.read_segment_trailer(trailer_offset);
-
         trace!("read segment header {:?}", segment_header);
-        trace!("read segment trailer {:?}", segment_trailer);
 
-        let trailer_lsn = segment_trailer.ok().and_then(|st| {
-            if st.ok && st.lsn == trailer_lsn {
-                Some(st.lsn)
-            } else {
-                trace!("segment trailer corrupted, not reading next segment");
-                None
-            }
-        });
-
-        self.trailer = trailer_lsn;
         self.cur_lsn = segment_header.lsn + SEG_HEADER_LEN as Lsn;
         self.segment_base = Some(offset);
 
@@ -230,9 +196,7 @@ impl LogIter {
 fn valid_entry_offset(lid: LogId, segment_len: usize) -> bool {
     let seg_start = lid / segment_len as LogId * segment_len as LogId;
 
-    let max_lid = seg_start + segment_len as LogId
-        - SEG_TRAILER_LEN as LogId
-        - MSG_HEADER_LEN as LogId;
+    let max_lid = seg_start + segment_len as LogId - MSG_HEADER_LEN as LogId;
 
     let min_lid = seg_start + SEG_HEADER_LEN as LogId;
 

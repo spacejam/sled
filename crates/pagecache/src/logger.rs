@@ -207,11 +207,9 @@ impl Log {
 
         M.reserve_sz.measure(total_buf_len as f64);
 
-        let max_overhead = std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN);
-
         let max_buf_size = (self.config.io_buf_size
             / MINIMUM_ITEMS_PER_SEGMENT)
-            - max_overhead;
+            - SEG_HEADER_LEN;
 
         let over_blob_threshold = total_buf_len > max_buf_size;
 
@@ -526,15 +524,6 @@ pub(crate) struct MessageHeader {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) struct SegmentHeader {
     pub(crate) lsn: Lsn,
-    pub(crate) ok: bool,
-}
-
-/// A segment's trailer contains the base Lsn for the segment.
-/// It is written after the rest of the segment has been fsync'd,
-/// and helps us indicate if a segment has been torn.
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub(crate) struct SegmentTrailer {
-    pub(crate) lsn: Lsn,
     pub(crate) highest_known_stable_lsn: Lsn,
     pub(crate) ok: bool,
 }
@@ -705,10 +694,16 @@ impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
             let xor_lsn = arr_to_u64(buf.get_unchecked(4..12)) as Lsn;
             let lsn = xor_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
 
-            let crc32_tested = crc32(&buf[4..12]);
+            let xor_highest_stable_lsn =
+                arr_to_u64(buf.get_unchecked(12..20)) as Lsn;
+            let highest_known_stable_lsn =
+                xor_highest_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
+
+            let crc32_tested = crc32(&buf[4..20]);
 
             SegmentHeader {
                 lsn,
+                highest_known_stable_lsn,
                 ok: crc32_tested == crc32_header,
             }
         }
@@ -720,8 +715,25 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
         let mut buf = [0u8; SEG_HEADER_LEN];
 
         let xor_lsn = self.lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
+        let xor_highest_stable_lsn =
+            self.highest_known_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
         let lsn_arr = u64_to_arr(xor_lsn as u64);
-        let crc32 = u32_to_arr(crc32(&lsn_arr) ^ 0xFFFF_FFFF);
+        let highest_stable_lsn_arr = u64_to_arr(xor_highest_stable_lsn as u64);
+
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                lsn_arr.as_ptr(),
+                buf.as_mut_ptr().add(4),
+                std::mem::size_of::<u64>(),
+            );
+            std::ptr::copy_nonoverlapping(
+                highest_stable_lsn_arr.as_ptr(),
+                buf.as_mut_ptr().add(12),
+                std::mem::size_of::<u64>(),
+            );
+        }
+
+        let crc32 = u32_to_arr(crc32(&buf[4..20]) ^ 0xFFFF_FFFF);
 
         unsafe {
             std::ptr::copy_nonoverlapping(
@@ -729,58 +741,7 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
                 buf.as_mut_ptr(),
                 std::mem::size_of::<u32>(),
             );
-            std::ptr::copy_nonoverlapping(
-                lsn_arr.as_ptr(),
-                buf.as_mut_ptr().add(4),
-                std::mem::size_of::<u64>(),
-            );
         }
-
-        buf
-    }
-}
-
-impl From<[u8; SEG_TRAILER_LEN]> for SegmentTrailer {
-    fn from(buf: [u8; SEG_TRAILER_LEN]) -> SegmentTrailer {
-        unsafe {
-            let crc32_header =
-                arr_to_u32(buf.get_unchecked(0..4)) ^ 0xFFFF_FFFF;
-
-            let xor_lsn = arr_to_u64(buf.get_unchecked(4..12)) as Lsn;
-            let lsn = xor_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
-
-            let xor_highest_known_stable_lsn =
-                arr_to_u64(buf.get_unchecked(12..20)) as Lsn;
-            let highest_known_stable_lsn =
-                xor_highest_known_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
-
-            let crc32_tested = crc32(&buf[4..20]);
-
-            SegmentTrailer {
-                lsn,
-                highest_known_stable_lsn,
-                ok: crc32_tested == crc32_header,
-            }
-        }
-    }
-}
-
-impl Into<[u8; SEG_TRAILER_LEN]> for SegmentTrailer {
-    fn into(self) -> [u8; SEG_TRAILER_LEN] {
-        let mut buf = [0u8; SEG_TRAILER_LEN];
-
-        let xor_lsn = self.lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
-        let lsn_arr = u64_to_arr(xor_lsn as u64);
-        buf[4..12].copy_from_slice(&lsn_arr);
-
-        let xor_highest_known_stable_lsn =
-            self.highest_known_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
-        let highest_known_stable_lsn_arr =
-            u64_to_arr(xor_highest_known_stable_lsn as u64);
-        buf[12..20].copy_from_slice(&highest_known_stable_lsn_arr);
-
-        let crc32 = u32_to_arr(crc32(&buf[4..]) ^ 0xFFFF_FFFF);
-        buf[..4].copy_from_slice(&crc32);
 
         buf
     }
