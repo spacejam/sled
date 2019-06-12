@@ -645,16 +645,18 @@ where
 
         let new_ptr = self.cas_page(pid, old, Update::Free, false, tx)?;
 
-        let free = self.free.clone();
-        tx.guard.defer(move || {
-            let mut free = free.lock().unwrap();
-            // panic if we double-freed a page
-            if free.iter().any(|e| e == &pid) {
-                panic!("page {} was double-freed", pid);
-            }
+        if new_ptr.is_ok() {
+            let free = self.free.clone();
+            tx.guard.defer(move || {
+                let mut free = free.lock().unwrap();
+                // panic if we double-freed a page
+                if free.iter().any(|e| e == &pid) {
+                    panic!("page {} was double-freed", pid);
+                }
 
-            free.push(pid);
-        });
+                free.push(pid);
+            });
+        }
 
         Ok(new_ptr.map_err(|o| o.map(|(ptr, _)| (ptr, ()))))
     }
