@@ -1148,15 +1148,24 @@ impl Tree {
 
         trace!(
             "merging child pid {} of parent pid {}",
-            child_pid,
-            parent.pid
+            child_pid, parent.pid
         );
 
         let index = parent.base_data.index_ref().unwrap();
-        let merge_index =
+        let child_index =
             index.iter().position(|(_, pid)| pid == &child_pid).unwrap();
+        assert_ne!(
+            child_index, 0,
+            "merging child must not be the \
+             leftmost child of its parent"
+        );
 
-        let mut cursor_pid = (index[merge_index - 1]).1;
+        let mut merge_index = child_index - 1;
+
+        // we assume caller only merges when
+        // the node to be merged is not the
+        // leftmost child.
+        let mut cursor_pid = index[merge_index].1;
 
         // searching for the left sibling to merge the target page into
         loop {
@@ -1168,18 +1177,31 @@ impl Tree {
                 } else {
                     trace!(
                         "couldn't retrieve frags for freed \
-                         prospective left sibling with pid {}",
+                         (possibly outdated) prospective left \
+                         sibling with pid {}",
                         cursor_pid
                     );
-                    return Ok(());
+
+                    if merge_index > 0 {
+                        merge_index -= 1;
+                        cursor_pid = index[merge_index].1;
+                        continue;
+                    } else {
+                        error!(
+                            "failed to find any left sibling for \
+                             merging pid {}, which means this merge \
+                             must have already completed.",
+                            child_pid
+                        );
+                        return Ok(());
+                    }
                 };
 
             // This means that `cursor_node` is the node we want to replace
             if cursor_view.next == Some(child_pid) {
                 trace!(
                     "found left sibling pid {} points to merging node pid {}",
-                    cursor_view.pid,
-                    child_pid
+                    cursor_view.pid, child_pid
                 );
                 let cursor_node = cursor_view.compact(&self.context);
                 let cursor_cas_key = cursor_view.ptr;
@@ -1279,15 +1301,14 @@ impl Tree {
                     trace!(
                         "ParentMergeConfirm succeeded on parent pid {}, \
                          now freeing child pid {}",
-                        parent.pid,
-                        child_pid
+                        parent.pid, child_pid
                     );
                     break;
                 }
                 Err(None) => {
                     trace!(
                         "ParentMergeConfirm \
-                         failed on (now freed) parent {}",
+                         failed on (now freed) parent pid {}",
                         parent.pid
                     );
                     break;
