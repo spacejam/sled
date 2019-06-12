@@ -1115,7 +1115,7 @@ impl Tree {
                 };
 
             if child_view.merging {
-                trace!("child page {} already merging", child_pid);
+                trace!("child pid {} already merging", child_pid);
                 break child_view;
             }
 
@@ -1127,26 +1127,30 @@ impl Tree {
             )?;
             match install_frag {
                 Ok(new_ptr) => {
-                    trace!("child page {} merge capped", child_pid);
+                    trace!("child pid {} merge capped", child_pid);
                     child_view.merging = true;
                     child_view.ptr = new_ptr;
                     break child_view;
                 }
                 Err(Some((_, _))) => {
                     trace!(
-                        "child page {} merge cap failed, retrying",
+                        "child pid {} merge cap failed, retrying",
                         child_pid
                     );
                     continue;
                 }
                 Err(None) => {
-                    trace!("child page {} already freed", child_pid);
+                    trace!("child pid {} already freed", child_pid);
                     return Ok(());
                 }
             }
         };
 
-        trace!("merging child {} of parent {}", child_pid, parent.pid);
+        trace!(
+            "merging child pid {} of parent pid {}",
+            child_pid,
+            parent.pid
+        );
 
         let index = parent.base_data.index_ref().unwrap();
         let merge_index =
@@ -1163,8 +1167,9 @@ impl Tree {
                     cursor_view
                 } else {
                     trace!(
-                        "early return from merge_node, view \
-                         not found for prospective sibling"
+                        "couldn't retrieve frags for freed \
+                         prospective left sibling with pid {}",
+                        cursor_pid
                     );
                     return Ok(());
                 };
@@ -1172,7 +1177,7 @@ impl Tree {
             // This means that `cursor_node` is the node we want to replace
             if cursor_view.next == Some(child_pid) {
                 trace!(
-                    "found node {} points to merging node {}",
+                    "found left sibling pid {} points to merging node pid {}",
                     cursor_view.pid,
                     child_pid
                 );
@@ -1190,7 +1195,7 @@ impl Tree {
                 match replace {
                     Ok(_) => {
                         trace!(
-                            "merged node {} into left sibling {}",
+                            "merged node pid {} into left sibling pid {}",
                             child_pid,
                             cursor_pid
                         );
@@ -1198,8 +1203,8 @@ impl Tree {
                     }
                     Err(None) => {
                         trace!(
-                            "failed to merge {} into \
-                             {} since {} doesn't exist anymore",
+                            "failed to merge pid {} into \
+                             pid {} since pid {} doesn't exist anymore",
                             child_pid,
                             cursor_pid,
                             cursor_pid
@@ -1208,8 +1213,8 @@ impl Tree {
                     }
                     Err(_) => {
                         trace!(
-                            "failed to merge {} into \
-                             {} due to cas failure",
+                            "failed to merge pid {} into \
+                             pid {} due to cas failure",
                             child_pid,
                             cursor_pid
                         );
@@ -1221,13 +1226,20 @@ impl Tree {
                 // We break instead of returning because otherwise a thread that
                 // collaboratively wants to complete the merge could never reach
                 // the point where it can install the merge confirmation frag.
-                trace!("overshot merging child's view, breaking",);
+                trace!(
+                    "cursor pid {} has hi key {:?}, which is \
+                     >= merging child pid {}'s lo key of {:?}, breaking",
+                    cursor_pid,
+                    cursor_view.hi,
+                    child_pid,
+                    child_view.lo
+                );
                 break;
             } else {
                 // In case we didn't find the child, we get the next cursor node
                 if let Some(next) = cursor_view.next {
                     trace!(
-                        "traversing from cursor {} to right sibling {}",
+                        "traversing from cursor pid {} to right sibling pid {}",
                         cursor_pid,
                         next
                     );
@@ -1247,13 +1259,13 @@ impl Tree {
 
         trace!(
             "trying to install parent merge \
-             confirmation of merged child {} for parent {}",
+             confirmation of merged child pid {} for parent pid {}",
             child_pid,
             parent.pid
         );
         loop {
             trace!(
-                "trying to link ParentMergeConfirm to parent {}",
+                "trying to link ParentMergeConfirm to parent pid {}",
                 parent.pid
             );
             let linked = self.context.pagecache.link(
@@ -1265,8 +1277,8 @@ impl Tree {
             match linked {
                 Ok(_) => {
                     trace!(
-                        "ParentMergeConfirm succeeded on parent {}, \
-                         now freeing child {}",
+                        "ParentMergeConfirm succeeded on parent pid {}, \
+                         now freeing child pid {}",
                         parent.pid,
                         child_pid
                     );
@@ -1286,14 +1298,14 @@ impl Tree {
                     {
                         trace!(
                             "failed to confirm merge \
-                             on parent {}, trying again",
+                             on parent pid {}, trying again",
                             parent.pid
                         );
                         parent_view
                     } else {
                         trace!(
                             "failed to confirm merge \
-                             on parent {}, which was freed",
+                             on parent pid {}, which was freed",
                             parent.pid
                         );
                         break;
@@ -1303,7 +1315,7 @@ impl Tree {
                         trace!(
                             "someone else must have already \
                              completed the merge, and now the \
-                             merging child for parent {} is {:?}",
+                             merging child for parent pid {} is {:?}",
                             parent.pid,
                             parent_view.merging_child
                         );
@@ -1319,11 +1331,17 @@ impl Tree {
         match self.context.pagecache.free(child_pid, child_view.ptr, tx)? {
             Ok(_) => {
                 // we freed it
+                trace!("freed merged pid {}", child_pid);
             }
             Err(None) => {
                 // someone else freed it
+                trace!("someone else freed merged pid {}", child_pid);
             }
             Err(Some(_)) => {
+                trace!(
+                    "someone was able to reuse freed merged pid {}",
+                    child_pid
+                );
                 // it was reused somehow after we
                 // observed it as in the merging state
                 panic!(
@@ -1334,7 +1352,7 @@ impl Tree {
             }
         }
 
-        trace!("finished with merge of {}", child_pid);
+        trace!("finished with merge of pid {}", child_pid);
         Ok(())
     }
 
@@ -1396,7 +1414,12 @@ impl Debug for Tree {
             let node = match get_res {
                 Ok(Some(ref view)) => view.compact(&self.context),
                 broken => {
-                    panic!("pagecache returned non-base node: {:?}", broken)
+                    error!(
+                        "Tree::fmt failed to read node {} \
+                         that has been freed: {:?}",
+                        pid, broken
+                    );
+                    break;
                 }
             };
 
