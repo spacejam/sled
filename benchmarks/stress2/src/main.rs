@@ -235,9 +235,15 @@ fn main() {
         let shutdown = shutdown.clone();
 
         let t = if i == 0 {
-            thread::spawn(move || report(shutdown))
+            thread::Builder::new()
+                .name("reporter".into())
+                .spawn(move || report(shutdown))
+                .unwrap()
         } else {
-            thread::spawn(move || run(tree, shutdown))
+            thread::Builder::new()
+                .name(format!("t({})", i))
+                .spawn(move || run(tree, shutdown))
+                .unwrap()
         };
 
         threads.push(t);
