@@ -177,11 +177,16 @@ fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
                 }
             }
             v if v > cas_max && v <= scan_max => {
-                let _ = tree
-                    .range(key..)
-                    .take(rng.gen_range(0, 15))
-                    .map(|res| res.unwrap())
-                    .collect::<Vec<_>>();
+                let iter = tree.range(key..).map(|res| res.unwrap());
+
+                if v % 2 == 0 {
+                    let _ = iter.take(rng.gen_range(0, 15)).collect::<Vec<_>>();
+                } else {
+                    let _ = iter
+                        .rev()
+                        .take(rng.gen_range(0, 15))
+                        .collect::<Vec<_>>();
+                }
             }
             _ => {
                 tree.merge(&key, bytes(args.flag_val_len)).unwrap();
