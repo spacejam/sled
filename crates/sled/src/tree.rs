@@ -1112,6 +1112,8 @@ impl Tree {
                 if let Some(child_view) = self.view_for_pid(child_pid, tx)? {
                     child_view
                 } else {
+                    // the child was already freed, meaning
+                    // somebody completed this whole loop already
                     return Ok(());
                 };
 

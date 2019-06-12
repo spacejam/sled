@@ -40,27 +40,24 @@
 //! To do this, we must detect "torn segments" that
 //! were not able to be fully written before a crash
 //! happened. We detect torn individual segments by
-//! writing a `SegmentTrailer` to the end of the
-//! segment AFTER we have sync'd it. If the trailer
-//! is not present during recovery, the recovery
-//! process will not continue to a segment that
-//! may contain logically later data.
+//! writing a lsn-tagged pad to the end of the
+//! segment, filling any unused space.
 //!
-//! But what if we wrote a later segment, and its
-//! trailer, before we were able to write its
-//! immediate predecessor segment, and then a
-//! crash happened? We must preserve linearizability,
-//! so we can not accidentally recover the later
+//! But what if we wrote a later segment before we
+//! were able to write its immediate predecessor segment,
+//! and then a crash happened? We must preserve
+//! linearizability, so we must not recover the later
 //! segment when its predecessor was lost in the crash.
 //!
-//! 3. This case is solved again by having used
-//!    <# io buffers> segments before reuse. We guarantee
-//!    that the last <# io buffers> segments will be
-//!    present, from which can deduce the "previous log
-//!    sequence number pointer". During recovery, if these
-//!    previous segment Lsn pointers don't match up, we know
-//!    we have encountered a lost segment, and we will not
-//!    continue the recovery past the detected gap.
+//! 3. This case is solved again by having a concept of
+//!    an "unstable tail" of segments that, during recovery,
+//!    must appear consecutively among the recovered
+//!    segments with the highest LSN numbers. We
+//!    prevent reuse of segments while they remain in
+//!    this "unstable tail" by only allowing them to be
+//!    reallocated after another later segment has written
+//!    a "stable consecutive lsn" into its own header
+//!    that is higher than ours.
 use std::{collections::BTreeMap, fs::File, mem};
 
 use self::reader::LogReader;
