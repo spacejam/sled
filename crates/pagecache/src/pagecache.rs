@@ -1105,7 +1105,7 @@ where
                             CacheEntry::MergedResident(m, ..) => {
                                 Update::Compact(m)
                             }
-                            CacheEntry::Free(..) => Update::Free,
+                            CacheEntry::Free(..) => return Ok(Err(None)),
                             CacheEntry::Counter(counter, ..) => {
                                 Update::Counter(counter)
                             }
