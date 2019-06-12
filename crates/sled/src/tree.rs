@@ -1091,10 +1091,9 @@ impl Tree {
             }
         }
         panic!(
-            "cannot find pid {} in view_for_key, looking for key {:?} in tree {:?}",
+            "cannot find pid {} in view_for_key, looking for key {:?} in tree",
             cursor,
             key.as_ref(),
-            self
         );
     }
 
