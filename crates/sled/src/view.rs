@@ -140,7 +140,9 @@ impl<'a> View<'a> {
                          searching for a successor"
                     );
                 }
-                Frag::ChildMergeCap => {}
+                Frag::ChildMergeCap => {
+                    assert_eq!(offset, 0);
+                }
                 Frag::ParentMergeIntention(_) | Frag::ParentMergeConfirm => {
                     panic!(
                         "somehow hit parent merge \

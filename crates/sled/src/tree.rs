@@ -1148,7 +1148,8 @@ impl Tree {
 
         trace!(
             "merging child pid {} of parent pid {}",
-            child_pid, parent.pid
+            child_pid,
+            parent.pid
         );
 
         let index = parent.base_data.index_ref().unwrap();
@@ -1187,7 +1188,7 @@ impl Tree {
                         cursor_pid = index[merge_index].1;
                         continue;
                     } else {
-                        error!(
+                        trace!(
                             "failed to find any left sibling for \
                              merging pid {}, which means this merge \
                              must have already completed.",
@@ -1201,7 +1202,8 @@ impl Tree {
             if cursor_view.next == Some(child_pid) {
                 trace!(
                     "found left sibling pid {} points to merging node pid {}",
-                    cursor_view.pid, child_pid
+                    cursor_view.pid,
+                    child_pid
                 );
                 let cursor_node = cursor_view.compact(&self.context);
                 let cursor_cas_key = cursor_view.ptr;
@@ -1244,10 +1246,7 @@ impl Tree {
                     }
                 }
             } else if cursor_view.hi >= child_view.lo {
-                // Make sure we don't overseek cursor
-                // We break instead of returning because otherwise a thread that
-                // collaboratively wants to complete the merge could never reach
-                // the point where it can install the merge confirmation frag.
+                // we overshot the node being merged,
                 trace!(
                     "cursor pid {} has hi key {:?}, which is \
                      >= merging child pid {}'s lo key of {:?}, breaking",
@@ -1272,7 +1271,7 @@ impl Tree {
                          a left sibling for merging child pid {}",
                         child_pid
                     );
-                    return Ok(());
+                    break;
                 }
             }
         }
@@ -1301,7 +1300,8 @@ impl Tree {
                     trace!(
                         "ParentMergeConfirm succeeded on parent pid {}, \
                          now freeing child pid {}",
-                        parent.pid, child_pid
+                        parent.pid,
+                        child_pid
                     );
                     break;
                 }
@@ -1311,7 +1311,7 @@ impl Tree {
                          failed on (now freed) parent pid {}",
                         parent.pid
                     );
-                    break;
+                    return Ok(());
                 }
                 Err(_) => {
                     let parent_view = if let Some(parent_view) =
@@ -1329,7 +1329,7 @@ impl Tree {
                              on parent pid {}, which was freed",
                             parent.pid
                         );
-                        break;
+                        return Ok(());
                     };
 
                     if parent_view.merging_child != Some(child_pid) {
@@ -1340,7 +1340,7 @@ impl Tree {
                             parent.pid,
                             parent_view.merging_child
                         );
-                        break;
+                        return Ok(());
                     }
 
                     parent_cas_key = parent_view.ptr;
