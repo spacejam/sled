@@ -4,7 +4,11 @@ use pagecache::{Measure, M};
 
 use super::*;
 
-const MAX_LOOPS: usize = 10_000;
+#[cfg(feature = "lock_free_delays")]
+const MAX_LOOPS: usize = usize::max_value();
+
+#[cfg(not(feature = "lock_free_delays"))]
+const MAX_LOOPS: usize = 1_000_000;
 
 fn possible_predecessor(s: &[u8]) -> Option<Vec<u8>> {
     let mut ret = s.to_vec();

@@ -25,6 +25,7 @@ rand = "0.4"
 sled = { path = "../../crates/sled" }
 jemallocator = "0.1"
 log = "0.4"
+color-backtrace = "0.1.3"
 
 [dependencies.serde]
 version = "1.0"
