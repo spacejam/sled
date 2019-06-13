@@ -312,14 +312,15 @@ where
         .max()
         .unwrap_or(-1);
 
-    assert!(
-        max_header_stable_lsn == -1
-            || max_header_stable_lsn >= snapshot.max_header_stable_lsn,
-        "somehow the snapshot max_header_stable_lsn went \
-         down over time from {} before to {} after",
-        snapshot.max_header_stable_lsn,
-        max_header_stable_lsn
-    );
+    if max_header_stable_lsn != -1
+        && max_header_stable_lsn < snapshot.max_header_stable_lsn
+    {
+        debug!(
+            "the snapshot max_header_stable_lsn went \
+             down over time from {} before to {} after",
+            snapshot.max_header_stable_lsn, max_header_stable_lsn
+        );
+    }
 
     snapshot.max_header_stable_lsn = max_header_stable_lsn;
 

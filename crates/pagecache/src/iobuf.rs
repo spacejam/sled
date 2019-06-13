@@ -81,43 +81,50 @@ impl IoBufs {
 
         let io_buf_size = config.io_buf_size;
 
+        if snapshot.max_lsn < SEG_HEADER_LEN as Lsn {
+            debug!(
+                "setting snapshot to default as max_lsn < {}",
+                SEG_HEADER_LEN
+            );
+            snapshot = Snapshot::default();
+        }
+
         let snapshot_max_lsn = snapshot.max_lsn;
         let snapshot_last_lid = snapshot.last_lid;
         let snapshot_max_header_stable_lsn = snapshot.max_header_stable_lsn;
 
-        let (next_lsn, next_lid) = if snapshot_max_lsn < SEG_HEADER_LEN as Lsn {
-            snapshot.max_lsn = 0;
-            snapshot.last_lid = 0;
-            (0, 0)
-        } else {
-            let width = match file.read_message(
-                snapshot_last_lid,
-                snapshot_max_lsn,
-                &config,
-            ) {
-                Ok(LogRead::Failed(_, len))
-                | Ok(LogRead::Inline(_, _, len)) => len + MSG_HEADER_LEN,
-                Ok(LogRead::Blob(_lsn, _buf, _blob_ptr)) => {
-                    BLOB_INLINE_LEN + MSG_HEADER_LEN
-                }
-                other => {
-                    // we can overwrite this non-flush
-                    debug!(
-                        "got non-flush tip while recovering at {}: {:?}",
-                        snapshot_last_lid, other
-                    );
-                    0
-                }
-            };
-
-            (
-                snapshot_max_lsn + width as Lsn,
-                snapshot_last_lid + width as LogId,
-            )
-        };
-
         let mut segment_accountant: SegmentAccountant =
             SegmentAccountant::start(config.clone(), snapshot)?;
+
+        let (next_lsn, next_lid) =
+            if snapshot_max_lsn % config.io_buf_size as Lsn == 0 {
+                (snapshot_max_lsn, snapshot_last_lid)
+            } else {
+                let width = match file.read_message(
+                    snapshot_last_lid,
+                    snapshot_max_lsn,
+                    &config,
+                ) {
+                    Ok(LogRead::Failed(_, len))
+                    | Ok(LogRead::Inline(_, _, len)) => len + MSG_HEADER_LEN,
+                    Ok(LogRead::Blob(_lsn, _buf, _blob_ptr)) => {
+                        BLOB_INLINE_LEN + MSG_HEADER_LEN
+                    }
+                    other => {
+                        // we can overwrite this non-flush
+                        debug!(
+                            "got non-flush tip while recovering at {}: {:?}",
+                            snapshot_last_lid, other
+                        );
+                        0
+                    }
+                };
+
+                (
+                    snapshot_max_lsn + width as Lsn,
+                    snapshot_last_lid + width as LogId,
+                )
+            };
 
         let bufs = rep_no_copy![IoBuf::new(io_buf_size); config.io_bufs];
 
@@ -132,9 +139,12 @@ impl IoBufs {
         // of our file has not yet been written.
         let stable = next_lsn - 1;
 
-        if next_lsn == 0 {
-            // initializing new system
-            assert_eq!(next_lid, next_lsn as LogId);
+        if next_lsn % config.io_buf_size as Lsn == 0 {
+            // allocate new segment for data
+
+            if next_lsn == 0 {
+                assert_eq!(next_lid, 0);
+            }
             let iobuf = &bufs[0];
             let lid = segment_accountant.next(next_lsn)?;
 
@@ -368,9 +378,11 @@ impl IoBufs {
 
         let maxed = iobuf.linearized(|| iobuf.get_maxed());
         let unused_space = capacity - bytes_to_write;
-        let should_pad = unused_space >= MSG_HEADER_LEN;
+        let should_pad = maxed && unused_space >= MSG_HEADER_LEN;
 
-        let total_len = if maxed && should_pad {
+        // a pad is a null message written to the end of a buffer
+        // to signify that nothing else will be written into it
+        if should_pad {
             let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
             let pad_len = capacity - bytes_to_write - MSG_HEADER_LEN;
 
@@ -413,11 +425,9 @@ impl IoBufs {
                     std::mem::size_of::<u32>(),
                 );
             }
+        }
 
-            capacity
-        } else {
-            bytes_to_write
-        };
+        let total_len = if maxed { capacity } else { bytes_to_write };
 
         let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
 
@@ -427,7 +437,7 @@ impl IoBufs {
         f.sync_all()?;
         io_fail!(self, "buffer write post");
 
-        if total_len > 0 || maxed {
+        if total_len > 0 {
             let complete_len = if maxed {
                 let lsn_idx = base_lsn / io_buf_size as Lsn;
                 let next_seg_beginning = (lsn_idx + 1) * io_buf_size as Lsn;
@@ -512,7 +522,7 @@ impl IoBufs {
         let mut lsn_after = lsn_before;
 
         while let Some(&(low, high)) = intervals.last() {
-            assert_ne!(low, high);
+            assert!(low <= high);
             let cur_stable = self.stable_lsn.load(SeqCst);
             assert!(
                 low > cur_stable,
