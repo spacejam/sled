@@ -792,8 +792,7 @@ impl SegmentAccountant {
             lsn
         );
 
-        let new_idx =
-            assert_usize(new_ptr.lid() / self.config.io_buf_size as LogId);
+        let new_idx = self.lid_to_idx(new_ptr.lid());
 
         // make sure we're not actively trying to replace the destination
         let new_segment_start =
