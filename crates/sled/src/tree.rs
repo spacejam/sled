@@ -1045,7 +1045,16 @@ impl Tree {
                 // we have found the proper page for
                 // our cooperative parent split
                 let mut parent = unsplit_parent.compact(&self.context);
-                parent.parent_split(view.lo.as_ref(), cursor);
+                let split_applied =
+                    parent.parent_split(view.lo.as_ref(), cursor);
+
+                if !split_applied {
+                    // due to deep races, it's possible for the
+                    // parent to already have a node for this lo key.
+                    // if this is the case, we can skip the parent split
+                    // because it's probably going to fail anyway.
+                    retry!();
+                }
 
                 M.tree_parent_split_attempt();
                 let replace = self.context.pagecache.replace(
