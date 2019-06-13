@@ -283,6 +283,8 @@ fn main() {
 pub fn setup_logger() {
     use std::io::Write;
 
+    color_backtrace::install();
+
     fn tn() -> String {
         std::thread::current()
             .name()
