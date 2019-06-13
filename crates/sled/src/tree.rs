@@ -966,7 +966,12 @@ impl Tree {
             };
         }
 
+        #[cfg(feature = "lock_free_delays")]
+        const MAX_LOOPS: usize = usize::max_value();
+
+        #[cfg(not(feature = "lock_free_delays"))]
         const MAX_LOOPS: usize = 1_000_000;
+
         for _ in 0..MAX_LOOPS {
             if cursor == u64::max_value() {
                 // this collection has been explicitly removed
