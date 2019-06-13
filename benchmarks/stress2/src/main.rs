@@ -177,11 +177,16 @@ fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
                 }
             }
             v if v > cas_max && v <= scan_max => {
-                let _ = tree
-                    .range(key..)
-                    .take(rng.gen_range(0, 15))
-                    .map(|res| res.unwrap())
-                    .collect::<Vec<_>>();
+                let iter = tree.range(key..).map(|res| res.unwrap());
+
+                if v % 2 == 0 {
+                    let _ = iter.take(rng.gen_range(0, 15)).collect::<Vec<_>>();
+                } else {
+                    let _ = iter
+                        .rev()
+                        .take(rng.gen_range(0, 15))
+                        .collect::<Vec<_>>();
+                }
             }
             _ => {
                 tree.merge(&key, bytes(args.flag_val_len)).unwrap();
@@ -230,9 +235,15 @@ fn main() {
         let shutdown = shutdown.clone();
 
         let t = if i == 0 {
-            thread::spawn(move || report(shutdown))
+            thread::Builder::new()
+                .name("reporter".into())
+                .spawn(move || report(shutdown))
+                .unwrap()
         } else {
-            thread::spawn(move || run(tree, shutdown))
+            thread::Builder::new()
+                .name(format!("t({})", i))
+                .spawn(move || run(tree, shutdown))
+                .unwrap()
         };
 
         threads.push(t);
@@ -271,6 +282,8 @@ fn main() {
 
 pub fn setup_logger() {
     use std::io::Write;
+
+    color_backtrace::install();
 
     fn tn() -> String {
         std::thread::current()

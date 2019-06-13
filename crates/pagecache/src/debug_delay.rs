@@ -25,8 +25,16 @@ pub fn debug_delay() {
         return;
     };
 
+    let intensity: f64 = std::env::var("SLED_LOCK_FREE_DELAY_INTENSITY")
+        .unwrap_or("100.0".into())
+        .parse()
+        .expect(
+            "SLED_LOCK_FREE_DELAY_INTENSITY must be set to a \
+             float (ideally between 1-1,000,000)",
+        );
+
     if rng.gen_bool(1. / 1000.) {
-        let gamma = Gamma::new(0.3, 100_000.0);
+        let gamma = Gamma::new(0.3, 1_000.0 * intensity);
         let duration = gamma.sample(&mut try_thread_rng().unwrap());
         thread::sleep(Duration::from_micros(duration as u64));
     }
