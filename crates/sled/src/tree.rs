@@ -833,7 +833,16 @@ impl Tree {
         if let Some(parent_view) = parent_view {
             M.tree_parent_split_attempt();
             let mut parent = parent_view.compact(&self.context);
-            parent.parent_split(&rhs_lo, rhs_pid);
+            let split_applied = parent.parent_split(&rhs_lo, rhs_pid);
+
+            if !split_applied {
+                // due to deep races, it's possible for the
+                // parent to already have a node for this lo key.
+                // if this is the case, we can skip the parent split
+                // because it's probably going to fail anyway.
+                return Ok(());
+            }
+
             let replace = self.context.pagecache.replace(
                 parent_view.pid,
                 parent_view.ptr.clone(),

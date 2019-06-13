@@ -164,16 +164,25 @@ impl Node {
         }
     }
 
-    pub(crate) fn parent_split(&mut self, at: &[u8], to: PageId) {
+    pub(crate) fn parent_split(&mut self, at: &[u8], to: PageId) -> bool {
         if let Data::Index(ref mut ptrs) = self.data {
             let encoded_sep = prefix_encode(&self.lo, at);
             match ptrs.binary_search_by(|a| prefix_cmp(&a.0, &encoded_sep)) {
-                Ok(_) => panic!("must not have found ptr"),
+                Ok(_) => {
+                    debug!(
+                        "parent_split skipped because \
+                         parent already contains child at split point \
+                         due to deep race"
+                    );
+                    return false;
+                }
                 Err(idx) => ptrs.insert(idx, (encoded_sep, to)),
             }
         } else {
             panic!("tried to attach a ParentSplit to a Leaf chain");
         }
+
+        true
     }
 
     pub(crate) fn del_leaf(&mut self, key: &IVec) {
