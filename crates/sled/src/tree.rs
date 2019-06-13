@@ -1386,7 +1386,6 @@ impl Tree {
             }
         }
 
-        // we loop here because
         match self.context.pagecache.free(child_pid, child_view.ptr, tx)? {
             Ok(_) => {
                 // we freed it
