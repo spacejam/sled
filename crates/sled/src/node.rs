@@ -50,6 +50,11 @@ impl Node {
     pub(crate) fn apply(&mut self, frag: &Frag, merge_operator: Option<usize>) {
         use self::Frag::*;
 
+        assert!(
+            !self.merging,
+            "somehow a frag was applied to a node after it was merged"
+        );
+
         match *frag {
             Set(ref k, ref v) => {
                 // (when hi is empty, it means it's unbounded)
@@ -109,7 +114,6 @@ impl Node {
                 self.data.parent_merge_confirm(merged_child);
             }
             ChildMergeCap => {
-                assert!(!self.merging);
                 self.merging = true;
             }
         }

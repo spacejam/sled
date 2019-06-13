@@ -1152,9 +1152,13 @@ impl Tree {
             parent.pid
         );
 
+        // the index may contain children that have since
+        // been removed by merges
+        let removed_children = parent.removed_children();
         let index = parent.base_data.index_ref().unwrap();
         let child_index =
             index.iter().position(|(_, pid)| pid == &child_pid).unwrap();
+
         assert_ne!(
             child_index, 0,
             "merging child must not be the \
@@ -1168,10 +1172,19 @@ impl Tree {
         // leftmost child.
         let mut cursor_pid = index[merge_index].1;
 
+        while merge_index > 0 && removed_children.contains(&cursor_pid) {
+            merge_index -= 1;
+            cursor_pid = index[merge_index].1;
+        }
+
         // searching for the left sibling to merge the target page into
         loop {
             // The only way this child could have been freed is if the original merge has
             // already been handled. Only in that case can this child have been freed
+            trace!(
+                "cursor_pid is {} while looking for left sibling",
+                cursor_pid
+            );
             let cursor_view =
                 if let Some(cursor_view) = self.view_for_pid(cursor_pid, tx)? {
                     cursor_view
@@ -1183,11 +1196,7 @@ impl Tree {
                         cursor_pid
                     );
 
-                    if merge_index > 0 {
-                        merge_index -= 1;
-                        cursor_pid = index[merge_index].1;
-                        continue;
-                    } else {
+                    if merge_index == 0 {
                         trace!(
                             "failed to find any left sibling for \
                              merging pid {}, which means this merge \
@@ -1196,6 +1205,16 @@ impl Tree {
                         );
                         return Ok(());
                     }
+
+                    while merge_index > 0 {
+                        merge_index -= 1;
+                        cursor_pid = index[merge_index].1;
+                        if !removed_children.contains(&cursor_pid) {
+                            break;
+                        }
+                    }
+
+                    continue;
                 };
 
             // This means that `cursor_node` is the node we want to replace
@@ -1285,10 +1304,6 @@ impl Tree {
             parent.pid
         );
         loop {
-            trace!(
-                "trying to link ParentMergeConfirm to parent pid {}",
-                parent.pid
-            );
             let linked = self.context.pagecache.link(
                 parent.pid,
                 parent_cas_key,
@@ -1392,7 +1407,7 @@ impl Tree {
                     if let Some(view) = self.view_for_pid(pid, &tx)? {
                         view
                     } else {
-                        error!("encountered Free node while GC'ing tree");
+                        trace!("encountered Free node while GC'ing tree");
                         break;
                     };
 

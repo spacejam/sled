@@ -357,40 +357,39 @@ impl<'a> View<'a> {
 
     pub(crate) fn index_next_node(&self, key: &[u8]) -> (usize, PageId) {
         assert!(self.is_index);
-        let mut removed = vec![];
+        let removed = self.removed_children();
 
-        for frag in self.frags[..=self.base_offset].iter() {
-            match frag {
-                Frag::Set(..) => unimplemented!(),
-                Frag::Del(..) => unimplemented!(),
-                Frag::Merge(..) => unimplemented!(),
-                Frag::Base(node) => {
-                    let data = &node.data;
-                    let items =
-                        data.index_ref().expect("last_node should be a leaf");
-                    let search =
-                        binary_search_lub(items, |&(ref k, ref _v)| {
-                            prefix_cmp_encoded(k, key, &node.lo)
-                        });
+        let items = self
+            .base_data
+            .index_ref()
+            .expect("last_node should be a leaf");
 
-                    // This might be none if ord is Less and we're
-                    // searching for the empty key
-                    let mut index = search.expect("failed to traverse index");
-                    while removed.contains(&items[index].1) {
-                        index -= 1;
-                    }
+        let search = binary_search_lub(items, |&(ref k, ref _v)| {
+            prefix_cmp_encoded(k, key, &self.lo)
+        });
 
-                    return (index, items[index].1);
-                }
-                Frag::ParentMergeIntention(child_pid) => {
-                    removed.push(*child_pid);
-                }
-                Frag::ParentMergeConfirm | Frag::ChildMergeCap => {
-                    // nothing to do for these frags
-                }
-            }
+        // This might be none if ord is Less and we're
+        // searching for the empty key
+        let mut index = search.expect("failed to traverse index");
+
+        while removed.contains(&items[index].1) {
+            index = index
+                .checked_sub(1)
+                .expect("leftmost child should never have been merged");
         }
-        panic!("no index found")
+
+        return (index, items[index].1);
+    }
+
+    pub(crate) fn removed_children(&self) -> Vec<PageId> {
+        self.frags[..=self.base_offset]
+            .iter()
+            .filter_map(|frag| match frag {
+                Frag::ParentMergeIntention(child_pid) => Some(*child_pid),
+                Frag::Base(node) => node.merging_child,
+                _ => None,
+            })
+            .collect()
     }
 
     pub(crate) fn should_split(&self, max_sz: u64) -> bool {
