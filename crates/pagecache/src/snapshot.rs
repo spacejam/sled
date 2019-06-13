@@ -16,7 +16,7 @@ pub struct Snapshot {
     /// the last lsn included in the `Snapshot`
     pub max_lsn: Lsn,
     /// the highest LSN persisted to a segment trailer
-    pub max_trailer_stable_lsn: Lsn,
+    pub max_header_stable_lsn: Lsn,
     /// the last lid included in the `Snapshot`
     pub last_lid: LogId,
     /// the highest lid observed while generating the `Snapshot`
@@ -298,31 +298,31 @@ where
     // read the max stable lsn written into all trailers
     let max_segment =
         config.file.metadata()?.len() / config.io_buf_size as LogId;
-    let max_trailer_stable_lsn = (0..max_segment)
+    let max_header_stable_lsn = (0..max_segment)
         .into_par_iter()
         .flat_map(|idx| {
             let base = idx * config.io_buf_size as LogId;
-            let trailer_offset =
-                base + (config.io_buf_size - SEG_TRAILER_LEN) as LogId;
-            match config.file.read_segment_trailer(trailer_offset) {
-                Ok(trailer) if trailer.ok => {
-                    Some(trailer.highest_known_stable_lsn)
+            match config.file.read_segment_header(base) {
+                Ok(header) if header.ok => {
+                    Some(header.highest_known_stable_lsn)
                 }
                 _ => None,
             }
         })
         .max()
-        .unwrap_or(0);
+        .unwrap_or(-1);
 
-    assert!(
-        max_trailer_stable_lsn >= snapshot.max_trailer_stable_lsn,
-        "somehow the snapshot max_trailer_stable_lsn went \
-         down over time from {} before to {} after",
-        snapshot.max_trailer_stable_lsn,
-        max_trailer_stable_lsn
-    );
+    if max_header_stable_lsn != -1
+        && max_header_stable_lsn < snapshot.max_header_stable_lsn
+    {
+        debug!(
+            "the snapshot max_header_stable_lsn went \
+             down over time from {} before to {} after",
+            snapshot.max_header_stable_lsn, max_header_stable_lsn
+        );
+    }
 
-    snapshot.max_trailer_stable_lsn = max_trailer_stable_lsn;
+    snapshot.max_header_stable_lsn = max_header_stable_lsn;
 
     write_snapshot(config, &snapshot)?;
 

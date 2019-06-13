@@ -80,7 +80,7 @@ use log::{debug, error, trace, warn};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 #[doc(hidden)]
-use self::logger::{MessageHeader, MessageKind, SegmentHeader, SegmentTrailer};
+use self::logger::{MessageHeader, MessageKind, SegmentHeader};
 
 #[cfg(not(unix))]
 use self::metrics::uptime;
@@ -119,7 +119,7 @@ pub use self::{
     constants::{
         BATCH_MANIFEST, BATCH_MANIFEST_INLINE_LEN, BLOB_FLUSH, BLOB_INLINE_LEN,
         EVIL_BYTE, FAILED_FLUSH, INLINE_FLUSH, MINIMUM_ITEMS_PER_SEGMENT,
-        MSG_HEADER_LEN, SEGMENT_PAD, SEG_HEADER_LEN, SEG_TRAILER_LEN,
+        MSG_HEADER_LEN, SEGMENT_PAD, SEG_HEADER_LEN,
     },
     ds::PAGETABLE_NODE_SZ,
     metrics::Measure,

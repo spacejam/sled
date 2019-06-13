@@ -7,8 +7,6 @@ use super::*;
 pub(crate) trait LogReader {
     fn read_segment_header(&self, id: LogId) -> Result<SegmentHeader>;
 
-    fn read_segment_trailer(&self, id: LogId) -> Result<SegmentTrailer>;
-
     fn read_message(
         &self,
         lid: LogId,
@@ -25,15 +23,6 @@ impl LogReader for File {
         self.pread_exact(&mut seg_header_buf, lid)?;
 
         Ok(seg_header_buf.into())
-    }
-
-    fn read_segment_trailer(&self, lid: LogId) -> Result<SegmentTrailer> {
-        trace!("reading segment trailer at {}", lid);
-
-        let mut seg_trailer_buf = [0u8; SEG_TRAILER_LEN];
-        self.pread_exact(&mut seg_trailer_buf, lid)?;
-
-        Ok(seg_trailer_buf.into())
     }
 
     /// read a buffer from the disk
@@ -70,8 +59,7 @@ impl LogReader for File {
         );
         assert!(seg_start + SEG_HEADER_LEN as LogId <= lid);
 
-        let ceiling =
-            seg_start + segment_len as LogId - SEG_TRAILER_LEN as LogId;
+        let ceiling = seg_start + segment_len as LogId;
 
         assert!(lid + MSG_HEADER_LEN as LogId <= ceiling);
 
