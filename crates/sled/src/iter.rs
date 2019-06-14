@@ -110,10 +110,14 @@ impl<'a> Iterator for Iter<'a> {
             if !view.contains_upper_bound(&self.lo) {
                 // view too low (maybe merged, maybe exhausted?)
                 let next_pid = view.next?;
+                assert_ne!(view.pid, next_pid);
                 if let Some(v) =
                     iter_try!(self.tree.view_for_pid(next_pid, &tx))
                 {
                     view = v;
+                } else {
+                    view =
+                        iter_try!(self.tree.view_for_key(self.low_key(), &tx));
                 }
                 continue;
             } else if !view.contains_lower_bound(&self.lo, true) {
@@ -180,10 +184,14 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
             if !view.contains_upper_bound(&self.hi) {
                 // view too low (maybe merged, maybe exhausted?)
                 let next_pid = view.next?;
+                assert_ne!(view.pid, next_pid);
                 if let Some(v) =
                     iter_try!(self.tree.view_for_pid(next_pid, &tx))
                 {
                     view = v;
+                } else {
+                    view =
+                        iter_try!(self.tree.view_for_key(self.high_key(), &tx));
                 }
                 continue;
             } else if !view.contains_lower_bound(&self.hi, false) {
