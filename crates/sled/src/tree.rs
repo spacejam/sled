@@ -933,11 +933,18 @@ impl Tree {
         pid: PageId,
         tx: &'g Tx<BLinkMaterializer, Frag>,
     ) -> Result<Option<View<'g>>> {
-        let frag_opt = self.context.pagecache.get(pid, tx)?;
-        if let Some((tree_ptr, frags)) = frag_opt {
-            Ok(Some(View::new(pid, tree_ptr, frags)))
-        } else {
-            Ok(None)
+        loop {
+            let frag_opt = self.context.pagecache.get(pid, tx)?;
+            if let Some((tree_ptr, frags)) = frag_opt {
+                let view = View::new(pid, tree_ptr, frags);
+                if view.merging_child.is_some() {
+                    self.merge_node(&view, tx)?;
+                } else {
+                    return Ok(Some(view));
+                }
+            } else {
+                return Ok(None);
+            }
         }
     }
 

@@ -101,7 +101,13 @@ impl Node {
             }
             Base(_) => panic!("encountered base page in middle of chain"),
             ParentMergeIntention(pid) => {
-                assert!(self.merging_child.is_none());
+                assert!(
+                    self.merging_child.is_none(),
+                    "trying to merge {:?} into node {:?} which \
+                     is already merging another child",
+                    frag,
+                    self
+                );
                 self.merging_child = Some(pid);
             }
             ParentMergeConfirm => {
