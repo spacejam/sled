@@ -416,6 +416,12 @@ impl<'a> View<'a> {
             let frag = self.frags[offset];
             lhs.apply(frag, config.merge_operator);
         }
+
+        assert_eq!(lhs.merging, self.merging);
+        assert_eq!(lhs.merging_child, self.merging_child);
+        assert_eq!(lhs.hi, self.hi);
+        assert_eq!(lhs.lo, self.lo);
+
         lhs
     }
 
