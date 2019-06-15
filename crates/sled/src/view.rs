@@ -415,18 +415,17 @@ impl<'a> View<'a> {
     }
 
     pub(crate) fn compact(&self, config: &Config) -> Node {
-        let mut lhs = self.frags[self.base_offset].unwrap_base().clone();
+        let mut merged = self.frags[self.base_offset].unwrap_base().clone();
         for offset in (0..self.base_offset).rev() {
             let frag = self.frags[offset];
-            lhs.apply(frag, config.merge_operator);
+            merged.apply(frag, config.merge_operator);
         }
 
-        assert_eq!(lhs.merging, self.merging);
-        assert_eq!(lhs.merging_child, self.merging_child);
-        assert_eq!(lhs.hi, self.hi);
-        assert_eq!(lhs.lo, self.lo);
+        assert_eq!(merged.merging_child, self.merging_child);
+        assert_eq!(merged.hi, self.hi);
+        assert_eq!(merged.lo, self.lo);
 
-        lhs
+        merged
     }
 
     pub(crate) fn split(&self, config: &Config) -> (Node, Node) {
