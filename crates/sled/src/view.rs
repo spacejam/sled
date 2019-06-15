@@ -28,7 +28,7 @@ impl<'a> View<'a> {
     ) -> View<'a> {
         let mut merging = false;
         let mut merging_child = None;
-        let mut merge_confirmed = false;
+        let mut last_merge_confirmed = false;
         let mut min_children: isize = 0;
         let mut max_children: isize = 0;
         let mut size = 0;
@@ -43,6 +43,12 @@ impl<'a> View<'a> {
 
                     min_children += node.data.len() as isize;
                     max_children += node.data.len() as isize;
+
+                    if !last_merge_confirmed {
+                        merging_child = merging_child.or(node.merging_child);
+                    }
+
+                    merging |= node.merging;
 
                     return View {
                         hi: &node.hi,
@@ -62,16 +68,14 @@ impl<'a> View<'a> {
                     };
                 }
                 Frag::ParentMergeIntention(pid) => {
-                    if merge_confirmed {
-                        merge_confirmed = false;
-                    } else {
-                        assert!(merging_child.is_none());
-                        merging_child = Some(*pid);
+                    if !last_merge_confirmed {
+                        merging_child = merging_child.or(Some(*pid));
                     }
                 }
                 Frag::ParentMergeConfirm => {
-                    assert!(!merge_confirmed);
-                    merge_confirmed = true;
+                    if merging_child.is_none() {
+                        last_merge_confirmed = true;
+                    }
                 }
                 Frag::ChildMergeCap => {
                     assert!(!merging);
