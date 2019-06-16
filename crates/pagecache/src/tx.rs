@@ -63,7 +63,9 @@ impl StdError for TxError {
 /// readers have concluded.
 pub struct Tx<'a, PM, P>
 where
-    P: 'static + Clone + Send + Sync + DeserializeOwned + Serialize,
+    PM: Materializer<PageFrag = P>,
+    PM: 'static + Send + Sync,
+    P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
 {
     pagecache: &'a PageCache<PM, P>,
     pub(crate) guard: Guard,
@@ -76,7 +78,9 @@ where
 
 impl<'a, PM, P> Tx<'a, PM, P>
 where
-    P: Clone + Send + Sync + DeserializeOwned + Serialize,
+    PM: Materializer<PageFrag = P>,
+    PM: 'static + Send + Sync,
+    P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
 {
     /// Creates a new Tx with a given timestamp.
     pub fn new(pagecache: &'a PageCache<PM, P>, ts: u64) -> Tx<'a, PM, P> {

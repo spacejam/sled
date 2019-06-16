@@ -29,4 +29,13 @@ impl Meta {
     pub fn tenants(&self) -> BTreeMap<Vec<u8>, PageId> {
         self.inner.clone()
     }
+
+    pub(crate) fn size_in_bytes(&self) -> u64 {
+        self.inner
+            .iter()
+            .map(|(k, _pid)| {
+                k.len() as u64 + std::mem::size_of::<PageId>() as u64
+            })
+            .sum()
+    }
 }
