@@ -977,7 +977,8 @@ impl SegmentAccountant {
                     .collect::<Vec<_>>()
             );
 
-            debug_assert!(
+            #[cfg(feature = "event_log")]
+            assert!(
                 old_segment.present.contains(&pid),
                 "we expect deferred replacements to provide \
                  all previous segments so we can clean them. \

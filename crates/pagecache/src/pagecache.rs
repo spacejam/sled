@@ -370,29 +370,35 @@ where
 {
     fn drop(&mut self) {
         trace!("dropping pagecache");
-        use std::collections::HashMap;
-        let mut pages_before_restart: HashMap<PageId, Vec<DiskPtr>> =
-            HashMap::new();
 
-        let tx = Tx::new(&self, 0);
+        // we can't as easily assert recovery
+        // invariants across failpoints for now
+        if self.log.iobufs.config.global_error().is_ok() {
+            use std::collections::HashMap;
+            let mut pages_before_restart: HashMap<PageId, Vec<DiskPtr>> =
+                HashMap::new();
 
-        self.config.event_log.meta_before_restart(
-            self.meta(&tx).expect("should get meta under test").clone(),
-        );
+            let tx = Tx::new(&self, 0);
 
-        for pid in 0..self.max_pid.load(SeqCst) {
-            let pte = self.inner.get(pid, &tx.guard);
-            if pte.is_none() {
-                continue;
+            self.config.event_log.meta_before_restart(
+                self.meta(&tx).expect("should get meta under test").clone(),
+            );
+
+            for pid in 0..self.max_pid.load(SeqCst) {
+                let pte = self.inner.get(pid, &tx.guard);
+                if pte.is_none() {
+                    continue;
+                }
+                let head =
+                    unsafe { pte.unwrap().deref().stack.head(&tx.guard) };
+                let ptrs = ptrs_from_stack(head, &tx);
+                pages_before_restart.insert(pid, ptrs);
             }
-            let head = unsafe { pte.unwrap().deref().stack.head(&tx.guard) };
-            let ptrs = ptrs_from_stack(head, &tx);
-            pages_before_restart.insert(pid, ptrs);
-        }
 
-        self.config
-            .event_log
-            .pages_before_restart(pages_before_restart);
+            self.config
+                .event_log
+                .pages_before_restart(pages_before_restart);
+        }
 
         trace!("pagecache dropped");
     }
@@ -1477,10 +1483,8 @@ where
 
             let node = node_from_frag_vec(frags).into_shared(&tx.guard);
 
-            debug_assert_eq!(
-                ptrs_from_stack(head, tx),
-                ptrs_from_stack(node, tx),
-            );
+            #[cfg(feature = "event_log")]
+            assert_eq!(ptrs_from_stack(head, tx), ptrs_from_stack(node, tx),);
 
             let node = unsafe { node.into_owned() };
 
