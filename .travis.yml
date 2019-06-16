@@ -64,8 +64,7 @@ script:
                osx)
                  pushd tests &&
                  cargo check &&
-                 cargo check --features=all &&
-                 cargo test tree --release
+                 cargo test tree
                  ;;
                qc)
                  pushd tests &&
@@ -133,12 +132,18 @@ script:
                  ;;
                standard)
                  pushd tests &&
-                 cargo check &&
-                 cargo check --features=all &&
+                 cargo test --release &&
                  popd &&
-                 cargo test --release
+                 pushd crates/sled &&
+                 echo "testing sled doctests" &&
+                 cargo test &&
+                 popd &&
+                 pushd crates/pagecache &&
+                 echo "testing pagecache doctests" &&
+                 cargo test
                  ;;
                concurrent)
+                 pushd tests &&
                  cargo test concurrent --release -- --ignored --nocapture
                  ;;
                *)

@@ -369,36 +369,38 @@ where
     P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
 {
     fn drop(&mut self) {
-        use std::collections::HashMap;
-        let mut pages_before_restart: HashMap<PageId, Vec<DiskPtr>> =
-            HashMap::new();
+        trace!("dropping pagecache");
 
-        let tx = Tx::new(&self, 0);
+        // we can't as easily assert recovery
+        // invariants across failpoints for now
+        if self.log.iobufs.config.global_error().is_ok() {
+            use std::collections::HashMap;
+            let mut pages_before_restart: HashMap<PageId, Vec<DiskPtr>> =
+                HashMap::new();
 
-        for pid in 0..self.max_pid.load(SeqCst) {
-            let pte = self.inner.get(pid, &tx.guard);
-            if pte.is_none() {
-                continue;
+            let tx = Tx::new(&self, 0);
+
+            self.config.event_log.meta_before_restart(
+                self.meta(&tx).expect("should get meta under test").clone(),
+            );
+
+            for pid in 0..self.max_pid.load(SeqCst) {
+                let pte = self.inner.get(pid, &tx.guard);
+                if pte.is_none() {
+                    continue;
+                }
+                let head =
+                    unsafe { pte.unwrap().deref().stack.head(&tx.guard) };
+                let ptrs = ptrs_from_stack(head, &tx);
+                pages_before_restart.insert(pid, ptrs);
             }
-            let head = unsafe { pte.unwrap().deref().stack.head(&tx.guard) };
-            let ptrs = ptrs_from_stack(head, &tx);
-            pages_before_restart.insert(pid, ptrs);
+
+            self.config
+                .event_log
+                .pages_before_restart(pages_before_restart);
         }
 
-        self.config
-            .event_log
-            .pages_before_restart(pages_before_restart);
-
-        let space_amplification = self
-            .space_amplification()
-            .expect("should be able to read files and pages");
-        assert!(
-            space_amplification < MAX_SPACE_AMPLIFICATION,
-            "space amplification was measured to be {}, \
-             which is higher than the maximum of {}",
-            space_amplification,
-            MAX_SPACE_AMPLIFICATION
-        );
+        trace!("pagecache dropped");
     }
 }
 
@@ -410,6 +412,8 @@ where
 {
     /// Instantiate a new `PageCache`.
     pub fn start(config: Config) -> Result<PageCache<PM, P>> {
+        trace!("starting pagecache");
+
         config.reset_global_error();
 
         let cache_capacity = config.cache_capacity;
@@ -439,6 +443,30 @@ where
 
         // now we read it back in
         pc.load_snapshot();
+
+        #[cfg(feature = "event_log")]
+        {
+            // NB this must be before idgen/meta are initialized
+            // because they may cas_page on initial page-in.
+            let tx = Tx::new(&pc, 0);
+
+            use std::collections::HashMap;
+            let mut pages_after_restart: HashMap<PageId, Vec<DiskPtr>> =
+                HashMap::new();
+
+            for pid in 0..pc.max_pid.load(SeqCst) {
+                let pte = pc.inner.get(pid, &tx.guard);
+                if pte.is_none() {
+                    continue;
+                }
+                let head =
+                    unsafe { pte.unwrap().deref().stack.head(&tx.guard) };
+                let ptrs = ptrs_from_stack(head, &tx);
+                pages_after_restart.insert(pid, ptrs);
+            }
+
+            pc.config.event_log.pages_after_restart(pages_after_restart);
+        }
 
         let mut was_recovered = true;
 
@@ -492,6 +520,19 @@ where
         }
 
         pc.was_recovered = was_recovered;
+
+        #[cfg(feature = "event_log")]
+        {
+            let tx = Tx::new(&pc, 0);
+
+            pc.config.event_log.meta_after_restart(
+                pc.meta(&tx)
+                    .expect("should be able to get meta under test")
+                    .clone(),
+            );
+        }
+
+        trace!("pagecache started");
 
         Ok(pc)
     }
@@ -1057,7 +1098,7 @@ where
 
     fn logical_size_of_all_pages(&self) -> Result<u64> {
         let tx = self.begin()?;
-        let meta_size = self.get_meta(&tx)?.1.size_in_bytes();
+        let meta_size = self.meta(&tx)?.size_in_bytes();
         let idgen_size = std::mem::size_of::<u64>() as u64;
 
         let mut ret = meta_size + idgen_size;
@@ -1442,10 +1483,8 @@ where
 
             let node = node_from_frag_vec(frags).into_shared(&tx.guard);
 
-            debug_assert_eq!(
-                ptrs_from_stack(head, tx),
-                ptrs_from_stack(node, tx),
-            );
+            #[cfg(feature = "event_log")]
+            assert_eq!(ptrs_from_stack(head, tx), ptrs_from_stack(node, tx),);
 
             let node = unsafe { node.into_owned() };
 
@@ -1975,30 +2014,6 @@ where
                 not found in recovered page table",
             snapshot_free
         );
-
-        #[cfg(feature = "event_log")]
-        {
-            use std::collections::HashMap;
-            let mut pages_after_restart: HashMap<PageId, Vec<DiskPtr>> =
-                HashMap::new();
-
-            let tx = Tx::new(&self, 0);
-
-            for pid in 0..self.max_pid.load(SeqCst) {
-                let pte = self.inner.get(pid, &tx.guard);
-                if pte.is_none() {
-                    continue;
-                }
-                let head =
-                    unsafe { pte.unwrap().deref().stack.head(&tx.guard) };
-                let ptrs = ptrs_from_stack(head, &tx);
-                pages_after_restart.insert(pid, ptrs);
-            }
-
-            self.config
-                .event_log
-                .pages_after_restart(pages_after_restart);
-        }
     }
 }
 

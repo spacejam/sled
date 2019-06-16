@@ -507,7 +507,8 @@ impl IoBufs {
 
         intervals.push(interval);
 
-        debug_assert!(
+        #[cfg(feature = "event_log")]
+        assert!(
             intervals.len() < 1000,
             "intervals is getting crazy... {:?}",
             *intervals

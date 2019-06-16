@@ -22,7 +22,7 @@
 //! 4.
 #![allow(missing_docs)]
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 
 use super::*;
 
@@ -51,12 +51,6 @@ enum Event {
         pid: PageId,
         lsn: Lsn,
         lid: LogId,
-    },
-    SegmentsBeforeRestart {
-        segments: HashMap<Lsn, (segment::SegmentState, u8, LogId)>,
-    },
-    SegmentsAfterRestart {
-        segments: HashMap<Lsn, (segment::SegmentState, u8, LogId)>,
     },
     PagesBeforeRestart {
         pages: HashMap<PageId, Vec<DiskPtr>>,
@@ -92,7 +86,6 @@ impl EventLog {
         // compare it to any subsequent `PagesBeforeRestart`
 
         let mut recovered_pages = None;
-        let mut recovered_segments = None;
         let mut recovered_meta = None;
 
         for event in iter {
@@ -102,43 +95,30 @@ impl EventLog {
                 }
                 Event::PagesBeforeRestart { pages } => {
                     if let Some(ref par) = recovered_pages {
-                        assert_eq!(pages, par);
-                    }
-                }
-                Event::SegmentsAfterRestart { segments } => {
-                    recovered_segments = Some(segments.clone());
-                }
-                Event::SegmentsBeforeRestart { segments } => {
-                    if let Some(ref segs) = recovered_segments {
-                        if segments != segs {
-                            let before: BTreeSet<_> = segments
-                                .iter()
-                                .map(|(lsn, (state, live, lid))| {
-                                    (*lsn, (*state, *live, *lid))
-                                })
-                                .collect();
-                            let after: BTreeSet<(
-                                Lsn,
-                                (segment::SegmentState, u8, LogId),
-                            )> = segs
-                                .iter()
-                                .map(|(lsn, (state, live, lid))| {
-                                    (*lsn, (*state, *live, *lid))
-                                })
-                                .collect();
+                        let pids = par
+                            .iter()
+                            .map(|(pid, _frag_locations)| *pid)
+                            .chain(
+                                pages.iter().map(|(pid, _frag_locations)| *pid),
+                            )
+                            .collect::<std::collections::HashSet<_>>()
+                            .into_iter();
 
-                            let only_before: Vec<_> =
-                                before.difference(&after).collect();
-                            let only_after: Vec<_> =
-                                after.difference(&before).collect();
-
-                            panic!(
-                                "segments failed to recover properly. \n \
-                                 before restart: \n{:?} \n \
-                                 after restart: \n{:?}",
-                                only_before, only_after
+                        for pid in pids {
+                            let locations_before_restart = pages.get(&pid);
+                            let locations_after_restart = par.get(&pid);
+                            assert_eq!(
+                                locations_before_restart,
+                                locations_after_restart,
+                                "page {} had frag locations {:?} before \
+                                 restart, but {:?} after restart",
+                                pid,
+                                locations_before_restart,
+                                locations_after_restart
                             );
                         }
+
+                        assert_eq!(pages, par);
                     }
                 }
                 Event::MetaAfterRestart { meta } => {
@@ -166,20 +146,6 @@ impl EventLog {
         pages: HashMap<PageId, Vec<DiskPtr>>,
     ) {
         self.inner.push(Event::PagesAfterRestart { pages });
-    }
-
-    pub(crate) fn segments_before_restart(
-        &self,
-        segments: HashMap<Lsn, (segment::SegmentState, u8, LogId)>,
-    ) {
-        self.inner.push(Event::SegmentsBeforeRestart { segments });
-    }
-
-    pub(crate) fn segments_after_restart(
-        &self,
-        segments: HashMap<Lsn, (segment::SegmentState, u8, LogId)>,
-    ) {
-        self.inner.push(Event::SegmentsAfterRestart { segments });
     }
 
     pub fn meta_before_restart(&self, meta: Meta) {

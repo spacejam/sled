@@ -96,15 +96,6 @@ impl Db {
 
         drop(tenants);
 
-        #[cfg(feature = "event_log")]
-        context.event_log.meta_after_restart(
-            context
-                .pagecache
-                .meta(&tx)
-                .expect("should be able to get meta under test")
-                .clone(),
-        );
-
         Ok(ret)
     }
 

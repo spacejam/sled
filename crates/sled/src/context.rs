@@ -34,23 +34,13 @@ impl Drop for Context {
                 e
             );
         }
-
-        #[cfg(feature = "event_log")]
-        {
-            let tx = Tx::new(&self.pagecache, 0);
-
-            self.config.event_log.meta_before_restart(
-                self.pagecache
-                    .meta(&tx)
-                    .expect("should get meta under test")
-                    .clone(),
-            );
-        }
     }
 }
 
 impl Context {
     pub(crate) fn start(config: Config) -> Result<Context> {
+        trace!("starting context");
+
         #[cfg(any(test, feature = "check_snapshot_integrity"))]
         match config.verify_snapshot::<BLinkMaterializer, Frag>() {
             Ok(_) => {}
