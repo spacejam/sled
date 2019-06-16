@@ -233,4 +233,13 @@ impl Db {
     pub fn generate_id(&self) -> Result<u64> {
         self.context.generate_id()
     }
+
+    /// Traverses all files and calculates their total physical
+    /// size, then traverses all pages and calculates their
+    /// total logical size, then divides the physical size
+    /// by the logical size.
+    #[doc(hidden)]
+    pub fn space_amplification(&self) -> Result<f64> {
+        self.context.pagecache.space_amplification()
+    }
 }
