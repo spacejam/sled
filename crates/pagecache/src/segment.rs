@@ -90,29 +90,6 @@ pub(super) struct SegmentAccountant {
     async_truncations: Vec<Oneshot<Result<()>>>,
 }
 
-#[cfg(feature = "event_log")]
-impl Drop for SegmentAccountant {
-    fn drop(&mut self) {
-        let segments: std::collections::HashMap<
-            Lsn,
-            (SegmentState, u8, LogId),
-        > = self
-            .ordering
-            .clone()
-            .into_iter()
-            .map(|(lsn, lid)| {
-                let id = self.lid_to_idx(lid);
-                let segment = &self.segments[id];
-                let live = segment.live_pct();
-                let state = segment.state.clone();
-                (lsn, (state, live, lid))
-            })
-            .collect();
-
-        self.config.event_log.segments_before_restart(segments);
-    }
-}
-
 /// A `Segment` holds the bookkeeping information for
 /// a contiguous block of the disk. It may contain many
 /// fragments from different pages. Over time, we track
@@ -640,27 +617,6 @@ impl SegmentAccountant {
             // this is basically just for when we recover with a single
             // empty-yet-initialized segment
             debug!("recovered no segments so not initializing from any",);
-        }
-
-        #[cfg(feature = "event_log")]
-        {
-            let segments: std::collections::HashMap<
-                Lsn,
-                (SegmentState, u8, LogId),
-            > = self
-                .ordering
-                .iter()
-                .map(|(&lsn, &lid)| {
-                    let id =
-                        assert_usize(lid / self.config.io_buf_size as LogId);
-                    let segment = &self.segments[id];
-                    let live = segment.live_pct();
-                    let state = segment.state.clone();
-                    (lsn, (state, live, lid))
-                })
-                .collect();
-
-            self.config.event_log.segments_after_restart(segments);
         }
 
         Ok(())
