@@ -10,7 +10,9 @@ use std::{
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::Rng;
 
-use pagecache::{Config, ConfigBuilder, Materializer, PageCache};
+use pagecache::{
+    Config, ConfigBuilder, Materializer, PageCache, MAX_SPACE_AMPLIFICATION,
+};
 
 type PageId = u64;
 
@@ -565,6 +567,18 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
             }
         }
     }
+
+    let space_amplification = pc
+        .space_amplification()
+        .expect("should be able to read files and pages");
+
+    assert!(
+        space_amplification < MAX_SPACE_AMPLIFICATION,
+        "space amplification was measured to be {}, \
+         which is higher than the maximum of {}",
+        space_amplification,
+        MAX_SPACE_AMPLIFICATION
+    );
 
     true
 }

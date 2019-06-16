@@ -4,6 +4,7 @@ use quickcheck::{Arbitrary, Gen, RngCore};
 use rand::distributions::{Distribution, Gamma};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
+use pagecache::MAX_SPACE_AMPLIFICATION;
 use sled::*;
 
 #[derive(Clone, Ord, PartialOrd, Eq, PartialEq)]
@@ -321,6 +322,18 @@ pub fn prop_tree_matches_btreemap(
             }
         }
     }
+
+    let space_amplification = tree
+        .space_amplification()
+        .expect("should be able to read files and pages");
+
+    assert!(
+        space_amplification < MAX_SPACE_AMPLIFICATION,
+        "space amplification was measured to be {}, \
+         which is higher than the maximum of {}",
+        space_amplification,
+        MAX_SPACE_AMPLIFICATION
+    );
 
     true
 }
