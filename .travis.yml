@@ -132,7 +132,15 @@ script:
                  ;;
                standard)
                  pushd tests &&
-                 cargo test --release
+                 cargo test --release &&
+                 popd &&
+                 pushd crates/sled &&
+                 echo "testing sled doctests" &&
+                 cargo test &&
+                 popd &&
+                 pushd crates/pagecache &&
+                 echo "testing pagecache doctests" &&
+                 cargo test
                  ;;
                concurrent)
                  pushd tests &&
