@@ -299,7 +299,9 @@ impl<'a> RecoveryGuard<'a> {
 /// ```
 pub struct PageCache<PM, P>
 where
-    P: Clone + 'static + Send + Sync + Serialize + DeserializeOwned,
+    PM: Materializer<PageFrag = P>,
+    PM: 'static + Send + Sync,
+    P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
 {
     _materializer: PhantomData<PM>,
     config: Config,
@@ -327,22 +329,25 @@ where
 
 unsafe impl<PM, P> Send for PageCache<PM, P>
 where
-    PM: Send + Sync,
-    P: Clone + 'static + Send + Sync + Serialize + DeserializeOwned,
+    PM: Materializer<PageFrag = P>,
+    PM: 'static + Send + Sync,
+    P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
 {
 }
 
 unsafe impl<PM, P> Sync for PageCache<PM, P>
 where
-    PM: Send + Sync,
-    P: Clone + 'static + Send + Sync + Serialize + DeserializeOwned,
+    PM: Materializer<PageFrag = P>,
+    PM: 'static + Send + Sync,
+    P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
 {
 }
 
 impl<PM, P> Debug for PageCache<PM, P>
 where
-    PM: Send + Sync,
-    P: Clone + Debug + Send + Sync + Serialize + DeserializeOwned,
+    PM: Materializer<PageFrag = P>,
+    PM: 'static + Send + Sync,
+    P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
 {
     fn fmt(
         &self,
@@ -359,7 +364,9 @@ where
 #[cfg(feature = "event_log")]
 impl<PM, P> Drop for PageCache<PM, P>
 where
-    P: Clone + 'static + Send + Sync + Serialize + DeserializeOwned,
+    PM: Materializer<PageFrag = P>,
+    PM: 'static + Send + Sync,
+    P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
 {
     fn drop(&mut self) {
         use std::collections::HashMap;
@@ -381,6 +388,17 @@ where
         self.config
             .event_log
             .pages_before_restart(pages_before_restart);
+
+        let space_amplification = self
+            .space_amplification()
+            .expect("should be able to read files and pages");
+        assert!(
+            space_amplification < MAX_SPACE_AMPLIFICATION,
+            "space amplification was measured to be {}, \
+             which is higher than the maximum of {}",
+            space_amplification,
+            MAX_SPACE_AMPLIFICATION
+        );
     }
 }
 
@@ -1005,6 +1023,51 @@ where
                 trace!("rewriting pid {} success: {}", pid, res.is_ok());
             })
         }
+    }
+
+    /// Traverses all files and calculates their total physical
+    /// size, then traverses all pages and calculates their
+    /// total logical size, then divides the physical size
+    /// by the logical size.
+    #[doc(hidden)]
+    pub fn space_amplification(&self) -> Result<f64> {
+        let on_disk_bytes = self.size_on_disk()? as f64;
+        let logical_size = self.logical_size_of_all_pages()? as f64;
+
+        Ok(on_disk_bytes / logical_size)
+    }
+
+    fn size_on_disk(&self) -> Result<u64> {
+        let mut size = self.config.file.metadata()?.len();
+
+        let stable = self.config.blob_path(0);
+        let blob_dir = stable.parent().unwrap();
+        let blob_files = std::fs::read_dir(blob_dir)?;
+
+        for blob_file in blob_files {
+            size += blob_file?.metadata()?.len();
+        }
+
+        let discount =
+            self.config.io_buf_size as u64 * self.config.io_bufs as u64;
+        let ret = std::cmp::max(discount, size) - discount + 1;
+
+        Ok(ret)
+    }
+
+    fn logical_size_of_all_pages(&self) -> Result<u64> {
+        let tx = self.begin()?;
+        let meta_size = self.get_meta(&tx)?.1.size_in_bytes();
+        let idgen_size = std::mem::size_of::<u64>() as u64;
+
+        let mut ret = meta_size + idgen_size;
+        let max_pid = self.max_pid.load(SeqCst);
+        for pid in 2..max_pid {
+            if let Some((_, frags)) = self.get(pid, &tx)? {
+                ret += frags.iter().map(|f| PM::size_in_bytes(*f)).sum::<u64>();
+            }
+        }
+        Ok(ret)
     }
 
     fn cas_page<'g>(
@@ -1944,7 +2007,9 @@ fn ptrs_from_stack<'g, PM, P>(
     tx: &'g Tx<'g, PM, P>,
 ) -> Vec<DiskPtr>
 where
-    P: Clone + Send + Sync + DeserializeOwned + Serialize,
+    PM: Materializer<PageFrag = P>,
+    PM: 'static + Send + Sync,
+    P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
 {
     // generate a list of the old log ID's
     let stack_iter = StackIter::from_ptr(head_ptr, &tx.guard);

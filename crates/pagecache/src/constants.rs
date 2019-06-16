@@ -46,3 +46,6 @@ pub const BATCH_MANIFEST_INLINE_LEN: usize = std::mem::size_of::<Lsn>();
 /// Items larger than this fraction of an io_buf
 /// will be stored as an off-log blob.
 pub const MINIMUM_ITEMS_PER_SEGMENT: usize = 4;
+
+/// During testing, this should never be exceeded.
+pub const MAX_SPACE_AMPLIFICATION: f64 = 20.;
