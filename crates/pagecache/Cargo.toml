@@ -14,7 +14,7 @@ edition = "2018"
 
 [features]
 default = []
-lock_free_delays = ["rand", "rand_hc"]
+lock_free_delays = ["rand", "rand_chacha"]
 compression = ["zstd"]
 failpoints = ["fail", "rand"]
 no_metrics = ["historian/disable"]
@@ -35,8 +35,8 @@ libc = "0.2.51"
 rayon = "1.0.3"
 zstd = { version = "0.4.23", optional = true }
 fail = { version = "0.2.1", optional = true }
-rand = { version = "0.6.5", optional = true }
-rand_hc = { version = "0.2.0", optional = true }
+rand = { version = "0.7.0-pre.1", optional = true }
+rand_chacha = { version = "0.2.0", optional = true }
 crc32fast = "1.2.0"
 log = "0.4.6"
 historian = "4.0.3"
@@ -51,4 +51,4 @@ fs2 = "0.4.3"
 [dev-dependencies]
 rand = "0.6.5"
 model = "0.1.2"
-rand_hc = "0.2.0"
+rand_chacha = "0.2.0"
