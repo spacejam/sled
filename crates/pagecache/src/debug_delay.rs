@@ -5,10 +5,10 @@ use {
     log::warn,
     rand::{
         distributions::{Distribution, Gamma},
-        rngs::EntropyRng,
-        ReseedingRng, Rng, RngCore, SeedableRng,
+        rngs::{adapter::ReseedingRng, OsRng},
+        CryptoRng, Rng, RngCore, SeedableRng,
     },
-    rand_hc::Hc128Core,
+    rand_chacha::ChaCha20Core as Core,
 };
 
 /// This function is useful for inducing random jitter into our atomic
@@ -44,27 +44,27 @@ pub fn debug_delay() {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct ThreadRng {
-    rng: *mut ReseedingRng<Hc128Core, EntropyRng>,
+    // use of raw pointer implies type is neither Send nor Sync
+    rng: *mut ReseedingRng<Core, OsRng>,
 }
 
-const THREAD_RNG_RESEED_THRESHOLD: u64 = 32 * 1024 * 1024; // 32 MiB
+const THREAD_RNG_RESEED_THRESHOLD: u64 = 1024 * 64;
 
 thread_local!(
-    static THREAD_RNG_KEY: Rc<UnsafeCell<ReseedingRng<Hc128Core, EntropyRng>>> = {
-        let mut entropy_source = EntropyRng::new();
-        let r = Hc128Core::from_rng(&mut entropy_source).unwrap_or_else(|err|
+    static THREAD_RNG_KEY: UnsafeCell<ReseedingRng<Core, OsRng>> = {
+        let r = Core::from_rng(OsRng).unwrap_or_else(|err|
                 panic!("could not initialize thread_rng: {}", err));
         let rng = ReseedingRng::new(r,
                                     THREAD_RNG_RESEED_THRESHOLD,
-                                    entropy_source);
-        Rc::new(UnsafeCell::new(rng))
+                                    OsRng);
+        UnsafeCell::new(rng)
     }
 );
 
 /// Access a thread-rng that may have been destroyed.
-pub fn try_thread_rng() -> Option<ThreadRng> {
+fn try_thread_rng() -> Option<ThreadRng> {
     THREAD_RNG_KEY.try_with(|t| ThreadRng { rng: t.get() }).ok()
 }
 
@@ -88,3 +88,5 @@ impl RngCore for ThreadRng {
         Ok(())
     }
 }
+
+impl CryptoRng for ThreadRng {}
