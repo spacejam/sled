@@ -23,7 +23,7 @@ fn basic() -> Result<()> {
     }
 
     // scan forward
-    let mut iter = db.scan(&*k);
+    let mut iter = db.range(k.as_slice()..);
     let (k1, v1) = iter.next().unwrap().unwrap();
     assert_eq!(v1, v2.clone());
     assert_eq!(k1, k.clone());
