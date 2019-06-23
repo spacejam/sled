@@ -85,6 +85,8 @@ fn more_log_reservations_than_buffers() {
         // abort in reverse order
         res.abort();
     }
+
+    log.flush();
 }
 
 #[test]

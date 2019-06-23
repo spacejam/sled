@@ -493,7 +493,7 @@ impl IoBufs {
 
         #[cfg(feature = "event_log")]
         assert!(
-            intervals.len() < 1000,
+            intervals.len() < 10000,
             "intervals is getting crazy... {:?}",
             *intervals
         );
