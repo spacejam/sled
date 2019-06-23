@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::*;
 
 /// A pending log reservation which can be aborted or completed.
@@ -6,7 +8,7 @@ use super::*;
 /// buffer to become blocked.
 pub struct Reservation<'a> {
     pub(super) log: &'a Log,
-    pub(super) idx: usize,
+    pub(super) iobuf: Arc<IoBuf>,
     pub(super) buf: &'a mut [u8],
     pub(super) flushed: bool,
     pub(super) ptr: DiskPtr,
@@ -111,7 +113,7 @@ impl<'a> Reservation<'a> {
                 std::mem::size_of::<u32>(),
             );
         }
-        self.log.exit_reservation(self.idx)?;
+        self.log.exit_reservation(&self.iobuf)?;
 
         Ok((self.lsn(), self.ptr()))
     }

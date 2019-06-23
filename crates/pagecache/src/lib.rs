@@ -87,7 +87,7 @@ use self::metrics::uptime;
 
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
-    iobuf::IoBufs,
+    iobuf::{IoBuf, IoBufs},
     iterator::LogIter,
     metrics::{clock, measure},
     pagecache::{LoggedUpdate, Update},

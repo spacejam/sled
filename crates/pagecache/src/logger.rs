@@ -245,45 +245,8 @@ impl Log {
                 return Err(e);
             }
 
-            debug_delay();
-            let written_bufs = self.iobufs.written_bufs.load(SeqCst);
-            debug_delay();
-            let current_buf = self.iobufs.current_buf.load(SeqCst);
-            let idx = assert_usize(current_buf % n_io_bufs as u64);
-
-            if written_bufs > current_buf {
-                // This can happen because a reservation can finish up
-                // before the sealing thread gets around to bumping
-                // current_buf.
-                trace_once!("written ahead of sealed, spinning");
-                backoff.spin();
-                continue;
-            }
-
-            if assert_usize(current_buf - written_bufs) >= n_io_bufs {
-                // if written is too far behind, we need to
-                // spin while it catches up to avoid overlap
-                trace_once!("old io buffer not written yet, spinning");
-                if backoff.is_completed() {
-                    // use a condition variable to wait until
-                    // we've updated the written_bufs counter.
-                    let _measure =
-                        Measure::new(&M.reserve_written_condvar_wait);
-
-                    let mut buf_mu = self.iobufs.buf_mu.lock().unwrap();
-                    while written_bufs == self.iobufs.written_bufs.load(SeqCst)
-                    {
-                        buf_mu = self.iobufs.buf_updated.wait(buf_mu).unwrap();
-                    }
-                } else {
-                    backoff.snooze();
-                }
-
-                continue;
-            }
-
             // load current header value
-            let iobuf = &self.iobufs.bufs[idx];
+            let iobuf = self.iobufs.current_iobuf();
             let header = iobuf.get_header();
 
             // skip if already sealed
@@ -298,9 +261,7 @@ impl Log {
                     let _measure =
                         Measure::new(&M.reserve_current_condvar_wait);
                     let mut buf_mu = self.iobufs.buf_mu.lock().unwrap();
-                    while current_buf == self.iobufs.current_buf.load(SeqCst) {
-                        buf_mu = self.iobufs.buf_updated.wait(buf_mu).unwrap();
-                    }
+                    buf_mu = self.iobufs.buf_updated.wait(buf_mu).unwrap();
                 } else {
                     backoff.snooze();
                 }
@@ -319,7 +280,7 @@ impl Log {
                 trace_once!("io buffer too full, spinning");
                 iobuf::maybe_seal_and_write_iobuf(
                     &self.iobufs,
-                    idx,
+                    &iobuf,
                     header,
                     true,
                 )?;
@@ -358,6 +319,8 @@ impl Log {
             // should never have claimed a sealed buffer
             assert!(!iobuf::is_sealed(claimed));
 
+            let reservation_lsn = iobuf.get_lsn() + buf_offset as Lsn;
+
             // MAX is used to signify unreadiness of
             // the underlying IO buffer, and if it's
             // still set here, the buffer counters
@@ -366,8 +329,8 @@ impl Log {
             assert_ne!(
                 lid,
                 LogId::max_value(),
-                "fucked up on idx {}\n{:?}",
-                idx,
+                "fucked up on iobuf with lsn {}\n{:?}",
+                reservation_lsn,
                 self
             );
 
@@ -378,8 +341,6 @@ impl Log {
 
             let destination = &mut (out_buf)[res_start..res_end];
             let reservation_offset = lid + buf_offset as LogId;
-
-            let reservation_lsn = iobuf.get_lsn() + buf_offset as Lsn;
 
             trace!(
                 "reserved {} bytes at lsn {} lid {}",
@@ -410,7 +371,7 @@ impl Log {
             };
 
             return Ok(Reservation {
-                idx,
+                iobuf,
                 log: &self,
                 buf: destination,
                 flushed: false,
@@ -424,8 +385,7 @@ impl Log {
     /// Called by Reservation on termination (completion or abort).
     /// Handles departure from shared state, and possibly writing
     /// the buffer to stable storage if necessary.
-    pub(super) fn exit_reservation(&self, idx: usize) -> Result<()> {
-        let iobuf = &self.iobufs.bufs[idx];
+    pub(super) fn exit_reservation(&self, iobuf: &Arc<IoBuf>) -> Result<()> {
         let mut header = iobuf.get_header();
 
         // Decrement writer count, retrying until successful.
@@ -451,22 +411,32 @@ impl Log {
                 return Err(e);
             }
 
+            let lsn = iobuf.get_lsn();
             if let Some(ref thread_pool) = self.config.thread_pool {
-                trace!("asynchronously writing index {} to log from exit_reservation", idx);
+                trace!(
+                    "asynchronously writing iobuf with lsn {} \
+                     to log from exit_reservation",
+                    lsn
+                );
                 let iobufs = self.iobufs.clone();
+                let iobuf = iobuf.clone();
                 thread_pool.spawn(move || {
-                    if let Err(e) = iobufs.write_to_log(idx) {
+                    if let Err(e) = iobufs.write_to_log(&iobuf) {
                         error!(
-                            "hit error while writing segment {}: {:?}",
-                            idx, e
+                            "hit error while writing iobuf with lsn {}: {:?}",
+                            lsn, e
                         );
                         iobufs.config.set_global_error(e);
                     }
                 });
                 Ok(())
             } else {
-                trace!("synchronously writing index {} to log from exit_reservation", idx);
-                self.iobufs.write_to_log(idx)
+                trace!(
+                    "synchronously writing iobuf with \
+                     lsn {} to log from exit_reservation",
+                    lsn
+                );
+                self.iobufs.write_to_log(iobuf)
             }
         } else {
             Ok(())
