@@ -90,6 +90,7 @@ impl Db {
                 subscriptions: Arc::new(Subscriptions::default()),
                 context: context.clone(),
                 root: Arc::new(AtomicU64::new(root)),
+                concurrency_control: Arc::new(RwLock::new(())),
             };
             tenants.insert(id, Arc::new(tree));
         }

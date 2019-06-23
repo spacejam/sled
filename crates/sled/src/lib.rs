@@ -34,6 +34,7 @@
 #![cfg_attr(test, deny(clippy::rust_2018_compatibility))]
 #![cfg_attr(test, deny(clippy::rust_2018_idioms))]
 
+mod batch;
 mod binary_search;
 mod context;
 mod data;
@@ -54,6 +55,7 @@ const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
 
 pub use {
     self::{
+        batch::Batch,
         db::Db,
         iter::Iter,
         ivec::IVec,
@@ -81,7 +83,7 @@ use {
     log::{debug, error, trace},
     pagecache::{
         debug_delay, Materializer, Measure, MergeOperator, PageCache, PageId,
-        Tx, M,
+        RecoveryGuard, Tx, M,
     },
     serde::{Deserialize, Serialize},
 };
