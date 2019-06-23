@@ -36,6 +36,7 @@ pub(crate) struct IoBuf {
     capacity: AtomicUsize,
     maxed: AtomicBool,
     linearizer: Mutex<()>,
+    stored_max_stable_lsn: AtomicLsn,
 }
 
 unsafe impl Sync for IoBuf {}
@@ -451,6 +452,10 @@ impl IoBufs {
         let max = LogId::max_value();
         iobuf.set_lid(max);
 
+        self.bump_max_header_stable_lsn(
+            iobuf.stored_max_stable_lsn.load(SeqCst),
+        );
+
         // we acquire this mutex to guarantee that any threads that
         // are going to wait on the condition variable will observe
         // the change.
@@ -826,6 +831,7 @@ impl IoBuf {
             capacity: AtomicUsize::new(0),
             maxed: AtomicBool::new(false),
             linearizer: Mutex::new(()),
+            stored_max_stable_lsn: AtomicLsn::new(0),
         }
     }
 
@@ -851,6 +857,9 @@ impl IoBuf {
     ) {
         debug!("storing lsn {} in beginning of buffer", lsn);
         assert!(self.get_capacity() >= SEG_HEADER_LEN);
+
+        self.stored_max_stable_lsn
+            .store(highest_known_stable_lsn, SeqCst);
 
         self.set_lsn(lsn);
 
