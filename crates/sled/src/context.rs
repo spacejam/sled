@@ -83,4 +83,8 @@ impl Context {
     pub fn generate_id(&self) -> Result<u64> {
         self.pagecache.generate_id()
     }
+
+    pub(crate) fn pin_log<'a>(&'a self) -> Result<RecoveryGuard<'a>> {
+        self.pagecache.pin_log()
+    }
 }

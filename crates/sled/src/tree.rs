@@ -3,7 +3,7 @@ use std::{
     ops::{self, RangeBounds},
     sync::{
         atomic::{AtomicU64, Ordering::SeqCst},
-        Arc,
+        Arc, RwLock,
     },
 };
 
@@ -51,6 +51,7 @@ pub struct Tree {
     pub(crate) context: Context,
     pub(crate) subscriptions: Arc<Subscriptions>,
     pub(crate) root: Arc<AtomicU64>,
+    pub(crate) concurrency_control: Arc<RwLock<()>>,
 }
 
 unsafe impl Send for Tree {}
@@ -72,6 +73,19 @@ impl Tree {
     /// assert_eq!(t.set(&[1,2,3], vec![1]), Ok(Some(IVec::from(&[0]))));
     /// ```
     pub fn set<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
+    where
+        K: AsRef<[u8]>,
+        IVec: From<V>,
+    {
+        let _ = self.concurrency_control.read().unwrap();
+        self.set_inner(key, value)
+    }
+
+    pub(crate) fn set_inner<K, V>(
+        &self,
+        key: K,
+        value: V,
+    ) -> Result<Option<IVec>>
     where
         K: AsRef<[u8]>,
         IVec: From<V>,
@@ -120,6 +134,32 @@ impl Tree {
         }
     }
 
+    /// Create a new batched update that can be
+    /// atomically applied.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sled::Db;
+    ///
+    /// let db = Db::start_default("batch_db").unwrap();
+    /// db.set("key_0", "val_0").unwrap();
+    /// let mut batch = db.batch();
+    /// batch.set("key_a", "val_a");
+    /// batch.set("key_b", "val_b");
+    /// batch.set("key_c", "val_c");
+    /// batch.del("key_0");
+    /// batch.apply().unwrap();
+    /// // key_0 no longer exists, and key_a, key_b, and key_c
+    /// // now do exist.
+    /// ```
+    pub fn batch(&self) -> Batch {
+        Batch {
+            tree: self,
+            writes: std::collections::HashMap::default(),
+        }
+    }
+
     /// Retrieve a value from the `Tree` if it exists.
     ///
     /// # Examples
@@ -158,6 +198,14 @@ impl Tree {
     /// assert_eq!(t.del(&[1]), Ok(None));
     /// ```
     pub fn del<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
+        let _ = self.concurrency_control.read().unwrap();
+        self.del_inner(key)
+    }
+
+    pub(crate) fn del_inner<K: AsRef<[u8]>>(
+        &self,
+        key: K,
+    ) -> Result<Option<IVec>> {
         let _measure = Measure::new(&M.tree_del);
 
         if self.context.read_only {
@@ -611,6 +659,15 @@ impl Tree {
     /// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![4]))));
     /// ```
     pub fn merge<K, V>(&self, key: K, value: V) -> Result<()>
+    where
+        K: AsRef<[u8]>,
+        IVec: From<V>,
+    {
+        let _ = self.concurrency_control.read().unwrap();
+        self.merge_inner(key, value)
+    }
+
+    pub(crate) fn merge_inner<K, V>(&self, key: K, value: V) -> Result<()>
     where
         K: AsRef<[u8]>,
         IVec: From<V>,
