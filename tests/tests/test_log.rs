@@ -67,6 +67,8 @@ fn log_writebatch() -> pagecache::Result<()> {
 fn more_log_reservations_than_buffers() {
     let config = ConfigBuilder::new()
         .temporary(true)
+        .io_buf_size(100)
+        .io_bufs(3)
         .segment_mode(SegmentMode::Linear)
         .build();
     let log = Log::start_raw_log(config.clone()).unwrap();
@@ -76,7 +78,7 @@ fn more_log_reservations_than_buffers() {
     let big_msg_overhead = MSG_HEADER_LEN + total_seg_overhead;
     let big_msg_sz = config.io_buf_size - big_msg_overhead;
 
-    for _ in 0..=config.io_bufs {
+    for _ in 0..=config.io_bufs * 1000 {
         reservations.push(log.reserve(&vec![0; big_msg_sz]).unwrap())
     }
     for res in reservations.into_iter().rev() {
