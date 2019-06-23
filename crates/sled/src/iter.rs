@@ -88,6 +88,7 @@ impl<'a> Iterator for Iter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let _measure = Measure::new(&M.tree_scan);
+        let _ = self.tree.concurrency_control.read().unwrap();
 
         let tx: &'a Tx<'a, _, _> = match self.tx {
             Ok(ref tx) => {
@@ -162,6 +163,7 @@ impl<'a> Iterator for Iter<'a> {
 impl<'a> DoubleEndedIterator for Iter<'a> {
     fn next_back(&mut self) -> Option<Self::Item> {
         let _measure = Measure::new(&M.tree_reverse_scan);
+        let _ = self.tree.concurrency_control.read().unwrap();
 
         let tx: &'a Tx<'a, _, _> = match self.tx {
             Ok(ref tx) => {

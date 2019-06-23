@@ -174,6 +174,7 @@ impl Tree {
     /// assert_eq!(t.get(&[1]), Ok(None));
     /// ```
     pub fn get<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
+        let _ = self.concurrency_control.read().unwrap();
         let _measure = Measure::new(&M.tree_get);
         trace!("getting key {:?}", key.as_ref());
 
@@ -281,6 +282,8 @@ impl Tree {
     {
         trace!("casing key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_cas);
+
+        let _ = self.concurrency_control.read().unwrap();
 
         if self.context.read_only {
             return Err(Error::Unsupported(
@@ -559,6 +562,7 @@ impl Tree {
         K: AsRef<[u8]>,
     {
         let _measure = Measure::new(&M.tree_get);
+        let _ = self.concurrency_control.read().unwrap();
         self.range(..key).next_back().transpose()
     }
 
@@ -598,6 +602,7 @@ impl Tree {
         K: AsRef<[u8]>,
     {
         let _measure = Measure::new(&M.tree_get);
+        let _ = self.concurrency_control.read().unwrap();
         self.range((ops::Bound::Excluded(key), ops::Bound::Unbounded))
             .next()
             .transpose()

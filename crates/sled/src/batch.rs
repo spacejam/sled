@@ -29,7 +29,7 @@ impl<'a> Batch<'a> {
     }
 
     /// Atomically apply the `Batch`
-    pub fn apply_batch(self) -> Result<()> {
+    pub fn apply(self) -> Result<()> {
         let peg = self.tree.context.pin_log()?;
         let cc = self.tree.concurrency_control.write().unwrap();
         for (k, v_opt) in self.writes.into_iter() {
