@@ -270,7 +270,7 @@ impl Log {
             // try to claim space
             let buf_offset = iobuf::offset(header);
             let prospective_size = buf_offset + inline_buf_len;
-            let would_overflow = prospective_size > iobuf.get_capacity();
+            let would_overflow = prospective_size > iobuf.capacity;
             if would_overflow {
                 // This buffer is too full to accept our write!
                 // Try to seal the buffer, and maybe write it if
@@ -308,7 +308,7 @@ impl Log {
                 continue;
             }
 
-            let lid = iobuf.get_lid();
+            let lid = iobuf.lid;
 
             // if we're giving out a reservation,
             // the writer count should be positive
@@ -317,7 +317,7 @@ impl Log {
             // should never have claimed a sealed buffer
             assert!(!iobuf::is_sealed(claimed));
 
-            let reservation_lsn = iobuf.get_lsn() + buf_offset as Lsn;
+            let reservation_lsn = iobuf.lsn + buf_offset as Lsn;
 
             // MAX is used to signify unreadiness of
             // the underlying IO buffer, and if it's
@@ -409,7 +409,7 @@ impl Log {
                 return Err(e);
             }
 
-            let lsn = iobuf.get_lsn();
+            let lsn = iobuf.lsn;
             if let Some(ref thread_pool) = self.config.thread_pool {
                 trace!(
                     "asynchronously writing iobuf with lsn {} \

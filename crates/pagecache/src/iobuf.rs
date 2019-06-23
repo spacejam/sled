@@ -1,7 +1,7 @@
 use std::{
     mem::size_of,
+    sync::atomic::AtomicBool,
     sync::atomic::Ordering::SeqCst,
-    sync::atomic::{AtomicBool, AtomicUsize},
     sync::{Arc, Condvar, Mutex, RwLock},
 };
 
@@ -31,12 +31,12 @@ macro_rules! io_fail {
 pub(crate) struct IoBuf {
     pub(crate) buf: UnsafeCell<Vec<u8>>,
     header: CachePadded<AtomicU64>,
-    lid: AtomicU64,
-    lsn: AtomicLsn,
-    capacity: AtomicUsize,
+    pub(super) lid: LogId,
+    pub(super) lsn: Lsn,
+    pub(super) capacity: usize,
     maxed: AtomicBool,
     linearizer: Mutex<()>,
-    stored_max_stable_lsn: AtomicLsn,
+    stored_max_stable_lsn: Lsn,
 }
 
 unsafe impl Sync for IoBuf {}
@@ -125,7 +125,7 @@ impl IoBufs {
                 )
             };
 
-        let iobuf = IoBuf::new(io_buf_size);
+        let mut iobuf = IoBuf::new(io_buf_size);
 
         trace!(
             "starting IoBufs with next_lsn: {} \
@@ -146,8 +146,8 @@ impl IoBufs {
             }
             let lid = segment_accountant.next(next_lsn)?;
 
-            iobuf.set_lid(lid);
-            iobuf.set_capacity(io_buf_size);
+            iobuf.lid = lid;
+            iobuf.capacity = io_buf_size;
             iobuf.store_segment_header(0, next_lsn, stable);
 
             maybe_fail!("initial allocation");
@@ -162,9 +162,9 @@ impl IoBufs {
         } else {
             // the tip offset is not completely full yet, reuse it
             let offset = assert_usize(next_lid % io_buf_size as LogId);
-            iobuf.set_lid(next_lid);
-            iobuf.set_capacity(io_buf_size - offset);
-            iobuf.set_lsn(next_lsn);
+            iobuf.lid = next_lid;
+            iobuf.capacity = io_buf_size - offset;
+            iobuf.lsn = next_lsn;
 
             debug!(
                 "starting log at split offset {}, recovered lsn {}",
@@ -343,9 +343,9 @@ impl IoBufs {
     pub(crate) fn write_to_log(&self, iobuf: &IoBuf) -> Result<()> {
         let _measure = Measure::new(&M.write_to_log);
         let header = iobuf.get_header();
-        let lid = iobuf.get_lid();
-        let base_lsn = iobuf.get_lsn();
-        let capacity = iobuf.get_capacity();
+        let lid = iobuf.lid;
+        let base_lsn = iobuf.lsn;
+        let capacity = iobuf.capacity;
 
         let io_buf_size = self.config.io_buf_size;
 
@@ -635,9 +635,9 @@ pub(crate) fn maybe_seal_and_write_iobuf(
 
     // NB need to do this before CAS because it can get
     // written and reset by another thread afterward
-    let lid = iobuf.get_lid();
-    let lsn = iobuf.get_lsn();
-    let capacity = iobuf.get_capacity();
+    let lid = iobuf.lid;
+    let lsn = iobuf.lsn;
+    let capacity = iobuf.capacity;
     let io_buf_size = iobufs.config.io_buf_size;
 
     if offset(header) > capacity {
@@ -680,13 +680,13 @@ pub(crate) fn maybe_seal_and_write_iobuf(
         capacity
     );
 
-    let max = LogId::max_value();
-
     assert_ne!(
-        lid, max,
+        lid,
+        LogId::max_value(),
         "sealing something that should never have \
          been claimed (iobuf lsn {})\n{:?}",
-        lsn, iobufs
+        lsn,
+        iobufs
     );
 
     // open new slot
@@ -724,21 +724,21 @@ pub(crate) fn maybe_seal_and_write_iobuf(
         lid + res_len as LogId
     };
 
-    let next_iobuf = IoBuf::new(io_buf_size);
-    next_iobuf.set_lid(next_offset);
+    let mut next_iobuf = IoBuf::new(io_buf_size);
+    next_iobuf.lid = next_offset;
 
     // NB as soon as the "sealed" bit is 0, this allows new threads
     // to start writing into this buffer, so do that after it's all
     // set up. expect this thread to block until the buffer completes
     // its entire lifecycle as soon as we do that.
     if maxed {
-        next_iobuf.set_capacity(io_buf_size);
+        next_iobuf.capacity = io_buf_size;
         next_iobuf.store_segment_header(sealed, next_lsn, iobufs.stable());
     } else {
         let new_cap = capacity - res_len;
         assert_ne!(new_cap, 0);
-        next_iobuf.set_capacity(new_cap);
-        next_iobuf.set_lsn(next_lsn);
+        next_iobuf.capacity = new_cap;
+        next_iobuf.lsn = next_lsn;
         let last_salt = salt(sealed);
         let new_salt = bump_salt(last_salt);
         next_iobuf.set_header(new_salt);
@@ -813,7 +813,7 @@ impl Debug for IoBuf {
         formatter.write_fmt(format_args!(
             "\n\tIoBuf {{ lid: {}, n_writers: {}, offset: \
              {}, sealed: {} }}",
-            self.get_lid(),
+            self.lid,
             n_writers(header),
             offset(header),
             is_sealed(header)
@@ -826,12 +826,12 @@ impl IoBuf {
         IoBuf {
             buf: UnsafeCell::new(vec![0; buf_size]),
             header: CachePadded::new(AtomicU64::new(0)),
-            lid: AtomicU64::new(std::u64::MAX),
-            lsn: AtomicLsn::new(0),
-            capacity: AtomicUsize::new(0),
+            lid: LogId::max_value(),
+            lsn: 0,
+            capacity: 0,
             maxed: AtomicBool::new(false),
             linearizer: Mutex::new(()),
-            stored_max_stable_lsn: AtomicLsn::new(0),
+            stored_max_stable_lsn: 0,
         }
     }
 
@@ -850,18 +850,17 @@ impl IoBuf {
     // for assistance during recovery. The caller is responsible
     // for ensuring that the IoBuf's capacity has been set properly.
     pub(crate) fn store_segment_header(
-        &self,
+        &mut self,
         last: Header,
         lsn: Lsn,
         highest_known_stable_lsn: Lsn,
     ) {
         debug!("storing lsn {} in beginning of buffer", lsn);
-        assert!(self.get_capacity() >= SEG_HEADER_LEN);
+        assert!(self.capacity >= SEG_HEADER_LEN);
 
-        self.stored_max_stable_lsn
-            .store(highest_known_stable_lsn, SeqCst);
+        self.stored_max_stable_lsn = highest_known_stable_lsn;
 
-        self.set_lsn(lsn);
+        self.lsn = lsn;
 
         let header = SegmentHeader {
             lsn,
@@ -885,21 +884,6 @@ impl IoBuf {
         self.set_header(bumped);
     }
 
-    pub(crate) fn set_capacity(&self, cap: usize) {
-        debug_delay();
-        self.capacity.store(cap, SeqCst);
-    }
-
-    pub(crate) fn get_capacity(&self) -> usize {
-        debug_delay();
-        self.capacity.load(SeqCst)
-    }
-
-    pub(crate) fn set_lsn(&self, lsn: Lsn) {
-        debug_delay();
-        self.lsn.store(lsn, SeqCst);
-    }
-
     pub(crate) fn set_maxed(&self, maxed: bool) {
         debug_delay();
         self.maxed.store(maxed, SeqCst);
@@ -908,21 +892,6 @@ impl IoBuf {
     pub(crate) fn get_maxed(&self) -> bool {
         debug_delay();
         self.maxed.load(SeqCst)
-    }
-
-    pub(crate) fn get_lsn(&self) -> Lsn {
-        debug_delay();
-        self.lsn.load(SeqCst)
-    }
-
-    pub(crate) fn set_lid(&self, offset: LogId) {
-        debug_delay();
-        self.lid.store(offset, SeqCst);
-    }
-
-    pub(crate) fn get_lid(&self) -> LogId {
-        debug_delay();
-        self.lid.load(SeqCst)
     }
 
     pub(crate) fn get_header(&self) -> Header {
