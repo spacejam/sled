@@ -134,6 +134,12 @@ script:
                  pushd tests &&
                  cargo test --release &&
                  popd &&
+                 pushd examples/playground &&
+                 cargo check &&
+                 popd &&
+                 pushd examples/crdt_merge_store &&
+                 cargo check &&
+                 popd &&
                  pushd crates/sled &&
                  echo "testing sled doctests" &&
                  cargo test &&
