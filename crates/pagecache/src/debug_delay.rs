@@ -1,14 +1,13 @@
 use std::cell::UnsafeCell;
-use std::rc::Rc;
 
 use {
     log::warn,
     rand::{
-        distributions::{Distribution, Gamma},
         rngs::{adapter::ReseedingRng, OsRng},
         CryptoRng, Rng, RngCore, SeedableRng,
     },
     rand_chacha::ChaCha20Core as Core,
+    rand_distr::{Distribution, Gamma},
 };
 
 /// This function is useful for inducing random jitter into our atomic
@@ -34,7 +33,7 @@ pub fn debug_delay() {
         );
 
     if rng.gen_bool(1. / 1000.) {
-        let gamma = Gamma::new(0.3, 1_000.0 * intensity);
+        let gamma = Gamma::new(0.3, 1_000.0 * intensity).unwrap();
         let duration = gamma.sample(&mut try_thread_rng().unwrap());
         thread::sleep(Duration::from_micros(duration as u64));
     }
