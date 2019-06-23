@@ -25,7 +25,7 @@ pub fn debug_delay() {
     };
 
     let intensity: f64 = std::env::var("SLED_LOCK_FREE_DELAY_INTENSITY")
-        .unwrap_or("100.0".into())
+        .unwrap_or_else(|_| "100.0".into())
         .parse()
         .expect(
             "SLED_LOCK_FREE_DELAY_INTENSITY must be set to a \

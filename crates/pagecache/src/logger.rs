@@ -201,8 +201,6 @@ impl Log {
     ) -> Result<Reservation<'a>> {
         let _measure = Measure::new(&M.reserve_lat);
 
-        let n_io_bufs = self.config.io_bufs;
-
         let total_buf_len = MSG_HEADER_LEN + buf.len();
 
         M.reserve_sz.measure(total_buf_len as f64);
@@ -260,8 +258,8 @@ impl Log {
                     // we've updated the current_buf counter.
                     let _measure =
                         Measure::new(&M.reserve_current_condvar_wait);
-                    let mut buf_mu = self.iobufs.buf_mu.lock().unwrap();
-                    buf_mu = self.iobufs.buf_updated.wait(buf_mu).unwrap();
+                    let buf_mu = self.iobufs.buf_mu.lock().unwrap();
+                    let _ = self.iobufs.buf_updated.wait(buf_mu).unwrap();
                 } else {
                     backoff.snooze();
                 }

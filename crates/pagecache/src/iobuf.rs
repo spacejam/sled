@@ -939,20 +939,6 @@ impl IoBuf {
             Err(res)
         }
     }
-
-    pub(crate) fn cas_lid(
-        &self,
-        old: LogId,
-        new: LogId,
-    ) -> std::result::Result<LogId, LogId> {
-        debug_delay();
-        let res = self.lid.compare_and_swap(old, new, SeqCst);
-        if res == old {
-            Ok(new)
-        } else {
-            Err(res)
-        }
-    }
 }
 
 pub(crate) const fn is_sealed(v: Header) -> bool {
