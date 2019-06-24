@@ -14,3 +14,8 @@ race:crossbeam_epoch::internal::Global::collect
 # Rayon relies on crossbeam stuff which uses raw fences, which are
 # not detected by TSAN.
 race:rayon
+
+# Arc::drop is not properly detected by TSAN due to the use
+# of a raw atomic Acquire fence after the strong-count
+# atomic subtraction with a Release fence in the Drop impl.
+race:Arc*drop
