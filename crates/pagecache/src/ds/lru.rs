@@ -20,12 +20,10 @@ impl Lru {
         let size: usize = 1 << cache_bits;
         let shard_capacity = cache_capacity / size as u64;
 
-        Lru {
-            shards: rep_no_copy![
-                Mutex::new(Shard::new(shard_capacity));
-                size
-            ],
-        }
+        let mut shards = Vec::with_capacity(size);
+        shards.resize_with(size, || Mutex::new(Shard::new(shard_capacity)));
+
+        Lru { shards }
     }
 
     /// Called when a page is accessed. Returns a Vec of pages to

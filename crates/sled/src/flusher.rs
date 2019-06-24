@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use super::*;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) enum ShutdownState {
     Running,
     ShuttingDown,

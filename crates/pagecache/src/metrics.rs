@@ -43,7 +43,7 @@ pub(crate) fn uptime() -> Duration {
 
 /// Measure the duration of an event, and call `Histo::measure()`.
 pub struct Measure<'h> {
-    start: f64,
+    _start: f64,
     #[cfg(not(feature = "no_metrics"))]
     histo: &'h Histo,
     #[cfg(feature = "no_metrics")]
@@ -53,13 +53,13 @@ pub struct Measure<'h> {
 impl<'h> Measure<'h> {
     /// The time delta from ctor to dtor is recorded in `histo`.
     #[inline(always)]
-    pub fn new(histo: &'h Histo) -> Measure<'h> {
+    pub fn new(_histo: &'h Histo) -> Measure<'h> {
         Measure {
             #[cfg(feature = "no_metrics")]
             _pd: PhantomData,
             #[cfg(not(feature = "no_metrics"))]
-            histo,
-            start: clock(),
+            histo: _histo,
+            _start: clock(),
         }
     }
 }
@@ -68,15 +68,15 @@ impl<'h> Drop for Measure<'h> {
     #[inline(always)]
     fn drop(&mut self) {
         #[cfg(not(feature = "no_metrics"))]
-        self.histo.measure(clock() - self.start);
+        self.histo.measure(clock() - self._start);
     }
 }
 
 /// Measure the time spent on calling a given function in a given `Histo`.
 #[cfg_attr(not(feature = "no_inline"), inline)]
-pub(crate) fn measure<F: FnOnce() -> R, R>(histo: &Histo, f: F) -> R {
+pub(crate) fn measure<F: FnOnce() -> R, R>(_histo: &Histo, f: F) -> R {
     #[cfg(not(feature = "no_metrics"))]
-    let _measure = Measure::new(histo);
+    let _measure = Measure::new(_histo);
     f()
 }
 

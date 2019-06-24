@@ -18,16 +18,6 @@ macro_rules! maybe_fail {
     };
 }
 
-macro_rules! rep_no_copy {
-    ($e:expr; $n:expr) => {{
-        let mut v = Vec::with_capacity($n);
-        for _ in 0..$n {
-            v.push($e);
-        }
-        v
-    }};
-}
-
 mod blob_io;
 mod config;
 mod constants;
@@ -87,7 +77,7 @@ use self::metrics::uptime;
 
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
-    iobuf::IoBufs,
+    iobuf::{IoBuf, IoBufs},
     iterator::LogIter,
     metrics::{clock, measure},
     pagecache::{LoggedUpdate, Update},

@@ -69,7 +69,7 @@ impl<'a> View<'a> {
                 }
                 Frag::ParentMergeIntention(pid) => {
                     if !last_merge_confirmed {
-                        merging_child = merging_child.or(Some(*pid));
+                        merging_child = merging_child.or_else(|| Some(*pid));
                     }
                 }
                 Frag::ParentMergeConfirm => {
@@ -382,7 +382,7 @@ impl<'a> View<'a> {
                 .expect("leftmost child should never have been merged");
         }
 
-        return (index, items[index].1);
+        (index, items[index].1)
     }
 
     pub(crate) fn removed_children(&self) -> Vec<PageId> {
