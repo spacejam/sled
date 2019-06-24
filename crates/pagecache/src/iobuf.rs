@@ -48,8 +48,6 @@ pub(super) struct IoBufs {
     // full, and in order to prevent threads from having to spin in
     // the reserve function, we can have them block until a buffer becomes
     // available.
-    pub(crate) buf_mu: Mutex<()>,
-    pub(crate) buf_updated: Condvar,
     pub(crate) iobuf: RwLock<Arc<IoBuf>>,
 
     // Pending intervals that have been written to stable storage, but may be
@@ -178,8 +176,6 @@ impl IoBufs {
         Ok(IoBufs {
             config,
 
-            buf_updated: Condvar::new(),
-            buf_mu: Mutex::new(()),
             iobuf: RwLock::new(Arc::new(iobuf)),
 
             intervals: Mutex::new(vec![]),
@@ -448,24 +444,7 @@ impl IoBufs {
 
         M.written_bytes.measure(total_len as f64);
 
-        // signal that this IO buffer is now uninitialized
-        let max = LogId::max_value();
-        iobuf.set_lid(max);
-
-        self.bump_max_header_stable_lsn(
-            iobuf.stored_max_stable_lsn.load(SeqCst),
-        );
-
-        // we acquire this mutex to guarantee that any threads that
-        // are going to wait on the condition variable will observe
-        // the change.
-        debug_delay();
-        let _ = self.buf_mu.lock().unwrap();
-
-        // let any threads that are blocked on buf_mu know about the
-        // updated counter.
-        debug_delay();
-        self.buf_updated.notify_all();
+        self.bump_max_header_stable_lsn(iobuf.stored_max_stable_lsn);
 
         Ok(())
     }
@@ -577,16 +556,25 @@ pub(crate) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Result<usize> {
 
     // NB before we write the 0th byte of the file, stable  is -1
     let first_stable = iobufs.stable();
+    if first_stable >= lsn {
+        return Ok(0);
+    }
+
     let mut stable = first_stable;
+
     while stable < lsn {
+        if let Err(e) = iobufs.config.global_error() {
+            iobufs.interval_updated.notify_all();
+            return Err(e);
+        }
+
         let iobuf = iobufs.current_iobuf();
         let header = iobuf.get_header();
-        if offset(header) == 0 || is_sealed(header) {
+        if offset(header) == 0 || is_sealed(header) || iobuf.lsn > lsn {
             // nothing to write, don't bother sealing
             // current IO buffer.
         } else {
             maybe_seal_and_write_iobuf(iobufs, &iobuf, header, false)?;
-            continue;
         }
 
         // block until another thread updates the stable lsn
@@ -594,14 +582,9 @@ pub(crate) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Result<usize> {
 
         stable = iobufs.stable();
         if stable < lsn {
-            if let Err(e) = iobufs.config.global_error() {
-                iobufs.interval_updated.notify_all();
-                return Err(e);
-            }
-
             trace!("waiting on cond var for make_stable({})", lsn);
 
-            let _waiter = iobufs.interval_updated.wait(waiter).unwrap();
+            let _ = iobufs.interval_updated.wait(waiter).unwrap();
         } else {
             trace!("make_stable({}) returning", lsn);
             break;
@@ -748,15 +731,9 @@ pub(crate) fn maybe_seal_and_write_iobuf(
     // are going to wait on the condition variable will observe
     // the change.
     debug_delay();
-    let _ = iobufs.buf_mu.lock().unwrap();
     let mut mu = iobufs.iobuf.write().unwrap();
     *mu = Arc::new(next_iobuf);
     drop(mu);
-
-    // let any threads that are blocked on buf_mu know about the
-    // updated counter.
-    debug_delay();
-    iobufs.buf_updated.notify_all();
 
     drop(measure_assign_offset);
 

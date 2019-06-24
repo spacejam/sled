@@ -253,16 +253,7 @@ impl Log {
                 // has already been bumped by sealer.
                 trace_once!("io buffer already sealed, spinning");
 
-                if backoff.is_completed() {
-                    // use a condition variable to wait until
-                    // we've updated the current_buf counter.
-                    let _measure =
-                        Measure::new(&M.reserve_current_condvar_wait);
-                    let buf_mu = self.iobufs.buf_mu.lock().unwrap();
-                    let _ = self.iobufs.buf_updated.wait(buf_mu).unwrap();
-                } else {
-                    backoff.snooze();
-                }
+                backoff.snooze();
 
                 continue;
             }
@@ -444,14 +435,6 @@ impl Log {
 
 impl Drop for Log {
     fn drop(&mut self) {
-        {
-            // this is a hack to let TSAN know
-            // that it's safe to destroy our inner
-            // members, since it doesn't pick up on
-            // the implicit barriers used elsewhere.
-            let _ = self.iobufs.buf_mu.lock().unwrap();
-        }
-
         // don't do any more IO if we're crashing
         if self.config.global_error().is_err() {
             return;
