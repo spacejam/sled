@@ -15,15 +15,17 @@ use futures::{
     },
 };
 
+use crate::ivec::IVec;
+
 static ID_GEN: AtomicUsize = AtomicUsize::new(0);
 
 /// An event that happened to a key that a subscriber is interested in.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Event {
     /// A new complete (key, value) pair
-    Set(Vec<u8>, Vec<u8>),
+    Set(Vec<u8>, IVec),
     /// A new partial (key, merged value) pair
-    Merge(Vec<u8>, Vec<u8>),
+    Merge(Vec<u8>, IVec),
     /// A deleted key
     Del(Vec<u8>),
 }
@@ -32,9 +34,7 @@ impl Event {
     /// Return a reference to the key that this `Event` refers to
     pub fn key(&self) -> &[u8] {
         match self {
-            Event::Set(k, ..)
-            | Event::Merge(k, ..)
-            | Event::Del(k) => &*k,
+            Event::Set(k, ..) | Event::Merge(k, ..) | Event::Del(k) => &*k,
         }
     }
 }
@@ -96,10 +96,7 @@ impl Subscriptions {
                 drop(r_mu);
                 let mut w_mu = self.watched.write().unwrap();
                 if !w_mu.contains_key(&prefix) {
-                    w_mu.insert(
-                        prefix.clone(),
-                        Arc::new(RwLock::new(vec![])),
-                    );
+                    w_mu.insert(prefix.clone(), Arc::new(RwLock::new(vec![])));
                 }
                 drop(w_mu);
                 self.watched.read().unwrap()
@@ -127,8 +124,7 @@ impl Subscriptions {
         key: R,
     ) -> Option<ReservedBroadcast> {
         let r_mu = self.watched.read().unwrap();
-        let prefixes =
-            r_mu.iter().filter(|(k, _)| key.as_ref().starts_with(k));
+        let prefixes = r_mu.iter().filter(|(k, _)| key.as_ref().starts_with(k));
 
         let mut subscribers = vec![];
 
@@ -191,11 +187,11 @@ fn basic_subscription() {
 
     let k2 = vec![];
     let r2 = subs.reserve(&k2).unwrap();
-    r2.complete(Event::Set(k2.clone(), k2.clone()));
+    r2.complete(Event::Set(k2.clone(), IVec::from(k2.clone())));
 
     let k3 = vec![0];
     let r3 = subs.reserve(&k3).unwrap();
-    r3.complete(Event::Set(k3.clone(), k3.clone()));
+    r3.complete(Event::Set(k3.clone(), IVec::from(k3.clone())));
 
     let k4 = vec![0, 1];
     let r4 = subs.reserve(&k4).unwrap();
@@ -203,7 +199,7 @@ fn basic_subscription() {
 
     let k5 = vec![0, 1, 2];
     let r5 = subs.reserve(&k5).unwrap();
-    r5.complete(Event::Merge(k5.clone(), k5.clone()));
+    r5.complete(Event::Merge(k5.clone(), IVec::from(k5.clone())));
 
     let k6 = vec![1, 1, 2];
     let r6 = subs.reserve(&k6).unwrap();
@@ -215,7 +211,7 @@ fn basic_subscription() {
 
     let k8 = vec![1, 2, 2];
     let r8 = subs.reserve(&k8).unwrap();
-    r8.complete(Event::Set(k8.clone(), k8.clone()));
+    r8.complete(Event::Set(k8.clone(), IVec::from(k8.clone())));
 
     assert_eq!(s1.next().unwrap().key(), &*k2);
     assert_eq!(s1.next().unwrap().key(), &*k3);

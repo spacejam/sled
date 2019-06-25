@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT},
+        atomic::{AtomicUsize, Ordering},
         Arc,
     },
     thread,
@@ -11,26 +11,22 @@ use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::Rng;
 
 use pagecache::{
-    pin, ConfigBuilder, Materializer, PageCache, PageGet, PagePtr,
+    Config, ConfigBuilder, Materializer, PageCache, MAX_SPACE_AMPLIFICATION,
 };
 
-type PageId = usize;
+type PageId = u64;
+
+fn frags_to_vec(frags: Vec<&Vec<usize>>) -> Vec<usize> {
+    frags.into_iter().rev().cloned().flatten().collect()
+}
 
 #[derive(Clone)]
 pub struct TestMaterializer;
 
 impl Materializer for TestMaterializer {
     type PageFrag = Vec<usize>;
-    type Recovery = ();
 
-    fn new(
-        _config: pagecache::Config,
-        _recovery: &Option<()>,
-    ) -> TestMaterializer {
-        TestMaterializer
-    }
-
-    fn merge<'a, I>(&'a self, frags: I) -> Self::PageFrag
+    fn merge<'a, I>(frags: I, _config: &Config) -> Self::PageFrag
     where
         I: IntoIterator<Item = &'a Self::PageFrag>,
     {
@@ -43,13 +39,38 @@ impl Materializer for TestMaterializer {
         consolidated
     }
 
-    fn recover(&self, _: &Vec<usize>) -> Option<()> {
-        None
+    fn size_in_bytes(frag: &Vec<usize>) -> u64 {
+        (std::mem::size_of::<Vec<usize>>() + frag.len()) as u64
     }
+}
 
-    fn size_in_bytes(&self, frag: &Vec<usize>) -> usize {
-        std::mem::size_of::<Vec<usize>>() + frag.len()
-    }
+#[test]
+fn pagecache_monotonic_idgen() {
+    let config = ConfigBuilder::new()
+        .temporary(true)
+        .cache_capacity(40)
+        .cache_bits(0)
+        .flush_every_ms(None)
+        .snapshot_after_ops(1_000_000)
+        .io_buf_size(20000)
+        .build();
+
+    let pc: PageCache<TestMaterializer, _> =
+        PageCache::start(config.clone()).unwrap();
+
+    let id1 = pc.generate_id().unwrap();
+
+    drop(pc);
+
+    let pc: PageCache<TestMaterializer, _> =
+        PageCache::start(config.clone()).unwrap();
+
+    let id2 = pc.generate_id().unwrap();
+
+    assert!(
+        id1 < id2,
+        "idgen is expected to issue monotonically increasing IDs"
+    );
 }
 
 #[test]
@@ -63,42 +84,39 @@ fn pagecache_caching() {
         .io_buf_size(20000)
         .build();
 
-    let pc: PageCache<TestMaterializer, _, _> =
+    let pc: PageCache<TestMaterializer, _> =
         PageCache::start(config.clone()).unwrap();
 
-    let guard = pin();
+    let tx = pc.begin().unwrap();
     let mut keys = HashMap::new();
 
     for _ in 0..2 {
-        let id = pc.allocate(&guard).unwrap();
-        let key = pc
-            .replace(id, PagePtr::allocated(), vec![0], &guard)
-            .unwrap();
+        let (id, key) = pc.allocate(vec![0], &tx).unwrap();
         keys.insert(id, key);
     }
 
     for i in 0..1000 {
-        let id = i as usize % 2;
-        let (_, key) = pc.get(id, &guard).unwrap().unwrap();
-        let key = pc.link(id, key, vec![i], &guard).unwrap();
+        let id = 2 + (i % 2);
+        let (key, _) = pc.get(id, &tx).unwrap().unwrap();
+        let key = pc.link(id, key, vec![i as usize], &tx).unwrap().unwrap();
         keys.insert(id, key);
     }
 }
 
 #[test]
-fn parallel_pagecache() {
+fn parallel_pagecache() -> sled::Result<()> {
     tests::setup_logger();
     const N_THREADS: usize = 10;
-    const N_PER_THREAD: usize = 1000;
+    const N_PER_THREAD: usize = 100;
 
     let config = ConfigBuilder::new()
         .temporary(true)
         .io_bufs(3)
+        .async_io(false)
         .flush_every_ms(Some(10))
         .snapshot_after_ops(100_000_000)
         .io_buf_size(250)
         .page_consolidation_threshold(3)
-        .print_profile_on_drop(true)
         .build();
 
     macro_rules! par {
@@ -106,19 +124,25 @@ fn parallel_pagecache() {
             let mut threads = vec![];
             for tn in 0..N_THREADS {
                 let tree = $t.clone();
+
+                // we create a thread with a reduced
+                // stack size below to ensure a stack
+                // overflow happens if we accidentally
+                // allocate pagetable nodes on the stack
+                // instead of directly on the heap.
                 let thread = thread::Builder::new()
                     .name(format!("t({})", tn))
+                    .stack_size(pagecache::PAGETABLE_NODE_SZ)
                     .spawn(move || {
-                        for i in (tn * N_PER_THREAD)
-                            ..((tn + 1) * N_PER_THREAD)
+                        for i in (tn * N_PER_THREAD)..((tn + 1) * N_PER_THREAD)
                         {
-                            $f(&*tree, i);
+                            $f(&*tree, i + 2);
                         }
                     })
                     .expect("should be able to spawn thread");
                 threads.push(thread);
             }
-            while let Some(thread) = threads.pop() {
+            for thread in threads.into_iter() {
                 if let Err(e) = thread.join() {
                     panic!("thread failure: {:?}", e);
                 }
@@ -127,83 +151,86 @@ fn parallel_pagecache() {
     }
 
     println!("========== sets ==========");
-    let p: Arc<PageCache<TestMaterializer, Vec<usize>, ()>> =
+    let p: Arc<PageCache<TestMaterializer, Vec<usize>>> =
         Arc::new(PageCache::start(config.clone()).unwrap());
 
-    par! {p, |pc: &PageCache<_, _, _>, _i: usize| {
-        let guard = pin();
-        let id = pc.allocate(&guard).unwrap();
-        let mut key = PagePtr::allocated();
-        while let Err(pagecache::Error::CasFailed(Some(k))) = pc
-            .replace(id, key, vec![id], &guard)
-        {
-            key = k;
-        }
-        let (ptr, _key): (&Vec<usize>, _) =
-                           pc.get(id, &guard)
-                             .expect("we should read what we just wrote")
-                             .unwrap();
-        assert_eq!(ptr[0], id);
+    par! {p, |pc: &PageCache<_, _>, _i: usize| {
+        let tx = pc.begin().unwrap();
+
+        let (id, key) = pc.allocate(vec![], &tx).unwrap();
+        pc.replace(id, key, vec![id as usize], &tx).unwrap().unwrap();
+
+        let (_key, frags) = pc.get(id, &tx)
+                             .expect("no io issues")
+                             .expect("should not be None since we just wrote it");
+        assert_eq!(
+            frags.get(0), Some(&&(vec![id as usize])),
+            "we just linked our ID into the page, \
+                   but it seems not to be present"
+        );
     }};
 
     drop(p);
 
     println!("========== gets ==========");
-    let p: Arc<PageCache<TestMaterializer, Vec<usize>, ()>> =
+    let p: Arc<PageCache<TestMaterializer, Vec<usize>>> =
         Arc::new(PageCache::start(config.clone()).unwrap());
 
-    par! {p, |pc: &PageCache<_, _, _>, i: usize| {
-        let guard = pin();
-        let (ptr, _key): (&Vec<usize>, _) =
-                           pc.get(i, &guard)
-                             .expect("we should read what we just wrote")
-                             .unwrap();
-        assert_eq!(*ptr, vec![i]);
+    par! {p, |pc: &PageCache<_, _>, i: usize| {
+        let tx = pc.begin().unwrap();
+        let (_key, frags) = pc.get(i as PageId, &tx)
+                             .expect("failed to recover a page we previously wrote")
+                             .expect(&format!("failed to recover pid {} which we previously wrote", i));
+        assert_eq!(frags, vec![&vec![i]]);
     }};
 
     drop(p);
 
     println!("========== links ==========");
-    let p: Arc<PageCache<TestMaterializer, Vec<usize>, ()>> =
+    let p: Arc<PageCache<TestMaterializer, Vec<usize>>> =
         Arc::new(PageCache::start(config.clone()).unwrap());
 
-    par! {p, |pc: &PageCache<_, _, _>, i: usize| {
+    par! {p, |pc: &PageCache<_, _>, i: usize| {
         let mut success = 0;
 
         while success <= 10 {
-            let guard = pin();
-            let (_ptr, key) = pc.get(i, &guard)
+            let tx = pc.begin().unwrap();
+            let (key, _frags) = pc.get(i as PageId, &tx)
                 .expect("we should read what we just wrote")
                 .unwrap();
-            match pc.link(i, key, vec![success], &guard) {
+            match pc.link(i as PageId, key, vec![success], &tx) {
                 Err(_) => {},
                 Ok(_) => {
                     success += 1;
                 }
             }
         }
-        let guard = pin();
-        let (ptr, _key): (&Vec<usize>, _) =
-                           pc.get(i, &guard)
+        let tx = pc.begin().unwrap();
+        let (_key, frags) = pc.get(i as PageId, &tx)
                              .expect("we should read what we just wrote")
                              .unwrap();
-        assert_eq!(*ptr, vec![i, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        let v = frags_to_vec(frags);
+
+        assert_eq!(v, vec![i as usize, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     }};
 
     drop(p);
 
     println!("========== gets ==========");
-    let p: Arc<PageCache<TestMaterializer, Vec<usize>, ()>> =
+    let p: Arc<PageCache<TestMaterializer, Vec<usize>>> =
         Arc::new(PageCache::start(config.clone()).unwrap());
 
-    par! {p, |pc: &PageCache<_, _, _>, i: usize| {
-        let guard = pin();
-        let (ptr, _key): (&Vec<usize>, _) =
-                           pc.get(i, &guard)
+    par! {p, |pc: &PageCache<_, _>, i: usize| {
+        let tx = pc.begin().unwrap();
+        let (_key, frags) = pc.get(i as PageId, &tx)
                              .expect("we should read what we just wrote")
                              .unwrap();
-        assert_eq!(*ptr, vec![i, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        let v = frags_to_vec(frags);
+
+        assert_eq!(v, vec![i, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     }};
+
+    Ok(())
 }
 
 #[test]
@@ -218,27 +245,24 @@ fn pagecache_strange_crash_1() {
         .build();
 
     {
-        let pc: PageCache<TestMaterializer, _, _> =
+        let pc: PageCache<TestMaterializer, _> =
             PageCache::start(config.clone()).unwrap();
 
-        let guard = pin();
+        let tx = pc.begin().unwrap();
         let mut keys = HashMap::new();
         for _ in 0..2 {
-            let id = pc.allocate(&guard).unwrap();
-            let key = pc
-                .replace(id, PagePtr::allocated(), vec![0], &guard)
-                .unwrap();
+            let (id, key) = pc.allocate(vec![0], &tx).unwrap();
             keys.insert(id, key);
         }
 
         for i in 0..1000 {
-            let id = i as usize % 2;
-            let (_, key) = pc.get(id, &guard).unwrap().unwrap();
-            let key = pc.link(id, key, vec![i], &guard).unwrap();
+            let id = 2 + (i % 2);
+            let (key, _frags) = pc.get(id, &tx).unwrap().unwrap();
+            let key = pc.link(id, key, vec![i as usize], &tx).unwrap().unwrap();
             keys.insert(id, key);
         }
     }
-    let _pc: PageCache<TestMaterializer, _, _> =
+    let _pc: PageCache<TestMaterializer, _> =
         PageCache::start(config.clone()).unwrap();
     // TODO test no eaten lsn's on recovery
     // TODO test that we don't skip multiple segments ahead on recovery (confusing Lsn & Lid)
@@ -247,7 +271,6 @@ fn pagecache_strange_crash_1() {
 #[test]
 fn pagecache_strange_crash_2() {
     for _ in 0..10 {
-        let guard = pin();
         let config = ConfigBuilder::new()
             .temporary(true)
             .cache_capacity(40)
@@ -257,25 +280,26 @@ fn pagecache_strange_crash_2() {
             .io_buf_size(20000)
             .build();
 
-        config.verify_snapshot::<TestMaterializer, _, _>().unwrap();
+        config.verify_snapshot::<TestMaterializer, _>().unwrap();
 
-        let pc: PageCache<TestMaterializer, _, _> =
+        let pc: PageCache<TestMaterializer, _> =
             PageCache::start(config.clone()).unwrap();
+
+        let tx = pc.begin().unwrap();
 
         let mut keys = HashMap::new();
         for _ in 0..2 {
-            let id = pc.allocate(&guard).unwrap();
-            let key = pc
-                .replace(id, PagePtr::allocated(), vec![0], &guard)
-                .unwrap();
+            let (id, key) = pc.allocate(vec![0], &tx).unwrap();
             keys.insert(id, key);
         }
 
         for i in 0..1000 {
-            let id = i as usize % 2;
-            let (_, key) = pc.get(id, &guard).unwrap().unwrap();
-            assert!(!key.is_allocated());
-            let key_res = pc.link(id, key, vec![i], &guard);
+            let id = 2 + (i % 2);
+            let page_get = pc.get(id, &tx).unwrap();
+            assert!(!page_get.is_none());
+            let (key, _frags) = page_get.unwrap();
+
+            let key_res = pc.link(id, key, vec![i as usize], &tx).unwrap();
             if key_res.is_err() {
                 println!("failed linking pid {}", id);
             }
@@ -293,44 +317,45 @@ fn basic_pagecache_recovery() {
         .io_buf_size(1000)
         .build();
 
-    let pc: PageCache<TestMaterializer, _, _> =
+    let pc: PageCache<TestMaterializer, _> =
         PageCache::start(config.clone()).unwrap();
 
-    let guard = pin();
-    let id = pc.allocate(&guard).unwrap();
-    let key = pc
-        .replace(id, PagePtr::allocated(), vec![1], &guard)
-        .unwrap();
-    let key = pc.link(id, key, vec![2], &guard).unwrap();
-    let _key = pc.link(id, key, vec![3], &guard).unwrap();
-    let (cv1_ref, _key) = pc.get(id, &guard).unwrap().unwrap();
-    let cv1 = cv1_ref.clone();
+    let tx = pc.begin().unwrap();
+    let (id, key) = pc.allocate(vec![1], &tx).unwrap();
+    let key = pc.link(id, key, vec![2], &tx).unwrap().unwrap();
+    let _key = pc.link(id, key, vec![3], &tx).unwrap().unwrap();
+    let (_key, frags1) = pc.get(id, &tx).unwrap().unwrap();
+    let cv1 = frags_to_vec(frags1);
     assert_eq!(cv1, vec![1, 2, 3]);
+    drop(tx);
     drop(pc);
 
-    let pc2: PageCache<TestMaterializer, _, _> =
+    let pc2: PageCache<TestMaterializer, _> =
         PageCache::start(config.clone()).unwrap();
-    let (cv2_ref, consolidated2) =
-        pc2.get(id, &guard).unwrap().unwrap();
-    let cv2 = cv2_ref.clone();
+    let tx = pc2.begin().unwrap();
+    let (consolidated2, frags2) = pc2.get(id, &tx).unwrap().unwrap();
+    let cv2 = frags_to_vec(frags2);
     assert_eq!(cv1, cv2);
 
-    pc2.link(id, consolidated2, vec![4], &guard).unwrap();
+    pc2.link(id, consolidated2, vec![4], &tx).unwrap().unwrap();
+    drop(tx);
     drop(pc2);
 
-    let pc3: PageCache<TestMaterializer, _, _> =
+    let pc3: PageCache<TestMaterializer, _> =
         PageCache::start(config.clone()).unwrap();
-    let (cv3_ref, consolidated3) =
-        pc3.get(id, &guard).unwrap().unwrap();
-    let cv3 = cv3_ref.clone();
+    let tx = pc3.begin().unwrap();
+    let (consolidated3, frags3) = pc3.get(id, &tx).unwrap().unwrap();
+    let cv3 = frags_to_vec(frags3);
     assert_eq!(cv3, vec![1, 2, 3, 4]);
-    pc3.free(id, consolidated3, &guard).unwrap();
+    pc3.free(id, consolidated3, &tx).unwrap().unwrap();
+    drop(tx);
     drop(pc3);
 
-    let pc4: PageCache<TestMaterializer, _, _> =
+    let pc4: PageCache<TestMaterializer, _> =
         PageCache::start(config.clone()).unwrap();
-    let res = pc4.get(id, &guard).unwrap();
-    assert!(res.is_free());
+    let tx = pc4.begin().unwrap();
+    let res = pc4.get(id, &tx).unwrap();
+    assert!(res.is_none());
 }
 
 #[derive(Debug, Clone)]
@@ -340,6 +365,7 @@ enum Op {
     Get(PageId),
     Free(PageId),
     Allocate,
+    GenId,
     Restart,
 }
 
@@ -349,24 +375,20 @@ impl Arbitrary for Op {
             return Op::Restart;
         }
 
-        let choice = g.gen_range(0, 5);
+        let choice = g.gen_range(0, 6);
 
-        static COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
         COUNTER.compare_and_swap(0, 1, Ordering::SeqCst);
 
         let pid = (g.gen::<u8>() % 8) as PageId;
 
         match choice {
-            0 => Op::Replace(
-                pid,
-                COUNTER.fetch_add(1, Ordering::Relaxed),
-            ),
-            1 => {
-                Op::Link(pid, COUNTER.fetch_add(1, Ordering::Relaxed))
-            }
+            0 => Op::Replace(pid, COUNTER.fetch_add(1, Ordering::Relaxed)),
+            1 => Op::Link(pid, COUNTER.fetch_add(1, Ordering::Relaxed)),
             2 => Op::Get(pid),
             3 => Op::Free(pid),
             4 => Op::Allocate,
+            5 => Op::GenId,
             _ => panic!("impossible choice"),
         }
     }
@@ -397,7 +419,6 @@ impl Arbitrary for Op {
 #[derive(Debug)]
 enum P {
     Free,
-    Allocated,
     Unallocated,
     Present(Vec<usize>),
 }
@@ -413,89 +434,82 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
         .cache_bits(0)
         .build();
 
-    let mut pc: PageCache<TestMaterializer, _, _> =
+    let mut pc: PageCache<TestMaterializer, _> =
         PageCache::start(config.clone()).unwrap();
 
     let mut reference: HashMap<PageId, P> = HashMap::new();
+    let mut highest_id: u64 = 0;
 
     // TODO use returned pointers, cleared on restart, with caching set to
     // a large amount, to test linkage.
     for op in ops.into_iter() {
-        let guard = pin();
         match op {
+            GenId => {
+                let id = pc.generate_id().unwrap();
+                if id < highest_id {
+                    panic!("generated id {} is not higher than previous value of {}", id, highest_id);
+                }
+                highest_id = id;
+            }
             Replace(pid, c) => {
-                let get = pc.get(pid, &guard).unwrap();
-                let ref_get =
-                    reference.entry(pid).or_insert(P::Unallocated);
+                let tx = pc.begin().unwrap();
+                let pid = pid + 2;
+                let get = pc.get(pid, &tx).unwrap();
+                let ref_get = reference.entry(pid).or_insert(P::Unallocated);
 
                 match *ref_get {
-                    P::Allocated => {
-                        if let PageGet::Allocated(ptr) = get {
-                            pc.replace(pid, ptr, vec![c], &guard)
-                                .unwrap();
-                            *ref_get = P::Present(vec![c]);
-                        } else {
-                            panic!("expected Allocated page get, instead got {:?}", get);
-                        }
-                    }
                     P::Present(ref mut existing) => {
-                        let (v, old_key) = get.unwrap();
-                        assert_eq!(v, existing);
-                        pc.replace(pid, old_key, vec![c], &guard)
+                        let (old_key, frags) = get.unwrap();
+                        let v = frags_to_vec(frags);
+                        assert_eq!(&v, existing);
+                        pc.replace(pid, old_key, vec![c], &tx)
+                            .unwrap()
                             .unwrap();
                         existing.clear();
                         existing.push(c);
                     }
                     P::Free => {
-                        assert!(get.is_free());
+                        assert!(get.is_none());
                     }
                     P::Unallocated => {
-                        assert_eq!(get, PageGet::Unallocated);
+                        assert_eq!(get, None);
                     }
                 }
+                tx.flush();
             }
             Link(pid, c) => {
-                let get = pc.get(pid, &guard).unwrap();
-                let ref_get =
-                    reference.entry(pid).or_insert(P::Unallocated);
+                let tx = pc.begin().unwrap();
+                let pid = pid + 2;
+                let get = pc.get(pid, &tx).unwrap();
+                let ref_get = reference.entry(pid).or_insert(P::Unallocated);
 
                 match *ref_get {
-                    P::Allocated => {
-                        pc.link(
-                            pid,
-                            PagePtr::allocated(),
-                            vec![c],
-                            &guard,
-                        )
-                        .unwrap();
-                        *ref_get = P::Present(vec![c]);
-                    }
                     P::Present(ref mut existing) => {
-                        let (_, old_key) = get.unwrap();
-                        pc.link(pid, old_key, vec![c], &guard)
-                            .unwrap();
+                        let (old_key, _) = get.unwrap();
+                        pc.link(pid, old_key, vec![c], &tx).unwrap().unwrap();
                         existing.push(c);
                     }
                     P::Free => {
-                        assert!(get.is_free());
+                        assert!(get.is_none());
                     }
                     P::Unallocated => {
-                        assert_eq!(get, PageGet::Unallocated);
+                        assert_eq!(get, None);
                     }
                 }
+                tx.flush();
             }
             Get(pid) => {
-                let get = pc.get(pid, &guard).unwrap();
+                let tx = pc.begin().unwrap();
+                let pid = pid + 2;
+                let get = pc.get(pid, &tx).unwrap();
 
                 match reference.get(&pid) {
-                    Some(&P::Allocated) => {
-                        assert!(get.is_allocated());
-                    }
                     Some(&P::Present(ref existing)) => {
-                        let (val, _cache_entry) = get.unwrap();
+                        let (_key, frags) = get.unwrap();
+                        let v = frags_to_vec(frags);
 
-                        assert_eq!(existing, val);
-                        val.iter().fold(0, |acc, cur| {
+                        assert_eq!(&v, existing);
+                        v.iter().fold(0, |acc, cur| {
                             if *cur <= acc {
                                 panic!("out of order page fragments in page!");
                             }
@@ -503,63 +517,68 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
                         });
                     }
                     Some(&P::Free) => {
-                        assert!(get.is_free());
+                        assert!(get.is_none());
                     }
                     Some(&P::Unallocated) | None => {
-                        assert_eq!(get, PageGet::Unallocated);
+                        assert_eq!(get, None);
                     }
                 }
+                tx.flush();
             }
             Free(pid) => {
-                let pre_get = pc.get(pid, &guard).unwrap();
+                let tx = pc.begin().unwrap();
+                let pid = pid + 2;
 
-                match pre_get {
-                    PageGet::Allocated(ptr)
-                    | PageGet::Materialized(_, ptr) => {
-                        pc.free(pid, ptr, &guard).unwrap()
-                    }
-                    _ => {}
+                let pre_get = pc.get(pid, &tx).unwrap();
+
+                if let Some((ptr, _frags)) = pre_get {
+                    pc.free(pid, ptr, &tx).unwrap().unwrap();
                 }
 
-                let get = pc.get(pid, &guard).unwrap();
+                let get = pc.get(pid, &tx).unwrap();
 
                 match reference.get(&pid) {
-                    Some(&P::Allocated) | Some(&P::Present(_))
-                    | Some(&P::Free) => {
+                    Some(&P::Present(_)) | Some(&P::Free) => {
                         reference.insert(pid, P::Free);
-                        assert!(get.is_free())
+                        assert!(get.is_none())
                     }
-                    Some(&P::Unallocated) | None => {
-                        assert!(get.is_unallocated())
-                    }
+                    Some(&P::Unallocated) | None => assert!(get.is_none()),
                 }
+                tx.flush();
             }
             Allocate => {
-                let pid = pc.allocate(&guard).unwrap();
-                reference.insert(pid, P::Allocated);
-                let get = pc.get(pid, &guard).unwrap();
-                if !get.is_allocated() {
-                    panic!(
-                        "expected allocated page, instead got {:?}",
-                        get
-                    );
+                let tx = pc.begin().unwrap();
+                let (pid, _key) = pc.allocate(vec![], &tx).unwrap();
+                reference.insert(pid, P::Present(vec![]));
+                let get = pc.get(pid, &tx).unwrap();
+                if get.is_none() {
+                    panic!("expected allocated page, instead got {:?}", get);
                 }
+                tx.flush();
             }
             Restart => {
                 drop(pc);
 
                 println!("restarting pagecache in test");
 
-                config
-                    .verify_snapshot::<TestMaterializer, _, _>()
-                    .unwrap();
+                config.verify_snapshot::<TestMaterializer, _>().unwrap();
 
                 pc = PageCache::start(config.clone()).unwrap();
             }
         }
-        guard.flush();
-        drop(guard);
     }
+
+    let space_amplification = pc
+        .space_amplification()
+        .expect("should be able to read files and pages");
+
+    assert!(
+        space_amplification < MAX_SPACE_AMPLIFICATION,
+        "space amplification was measured to be {}, \
+         which is higher than the maximum of {}",
+        space_amplification,
+        MAX_SPACE_AMPLIFICATION
+    );
 
     true
 }
@@ -572,9 +591,7 @@ fn quickcheck_pagecache_works() {
         .gen(StdGen::new(rand::thread_rng(), 100))
         .tests(1000)
         .max_tests(1_000_000)
-        .quickcheck(
-            prop_pagecache_works as fn(Vec<Op>, bool) -> bool,
-        );
+        .quickcheck(prop_pagecache_works as fn(Vec<Op>, bool) -> bool);
 }
 
 #[test]
@@ -596,14 +613,14 @@ fn pagecache_bug_02() {
 }
 
 #[test]
-fn pagecache_bug_3() {
+fn pagecache_bug_03() {
     // postmortem: this was a mismatch in semantics in the test harness itself
     use self::Op::*;
     prop_pagecache_works(vec![Allocate, Get(0)], true);
 }
 
 #[test]
-fn pagecache_bug_4() {
+fn pagecache_bug_04() {
     // postmortem: previously this caused a panic, we shouldn't break
     // when the user asks us to mutate non-existant pages!
     use self::Op::*;
@@ -611,24 +628,21 @@ fn pagecache_bug_4() {
 }
 
 #[test]
-fn pagecache_bug_5() {
+fn pagecache_bug_05() {
     // postmortem: this was a mismatch in semantics in the test harness itself
     use self::Op::*;
     prop_pagecache_works(vec![Link(132, 1), Replace(132, 1)], true);
 }
 
 #[test]
-fn pagecache_bug_6() {
+fn pagecache_bug_06() {
     // postmortem: the test wasn't actually recording changes to the reference page...
     use self::Op::*;
-    prop_pagecache_works(
-        vec![Allocate, Replace(0, 53), Replace(0, 54)],
-        true,
-    );
+    prop_pagecache_works(vec![Allocate, Replace(0, 53), Replace(0, 54)], true);
 }
 
 #[test]
-fn pagecache_bug_7() {
+fn pagecache_bug_07() {
     // postmortem: the test wasn't correctly recording the replacement effect of a replace
     // in the reference page
     use self::Op::*;
@@ -639,7 +653,7 @@ fn pagecache_bug_7() {
 }
 
 #[test]
-fn pagecache_bug_8() {
+fn pagecache_bug_08() {
     // postmortem: page_in messed up the stack ordering when storing a linked stack
     use self::Op::*;
     prop_pagecache_works(
@@ -658,7 +672,7 @@ fn pagecache_bug_8() {
 }
 
 #[test]
-fn pagecache_bug_9() {
+fn pagecache_bug_09() {
     // postmortem: this started failing in the giant refactor for log structured storage,
     // and was possibly fixed by properly handling intervals in mark_interval
     use self::Op::*;
@@ -683,13 +697,7 @@ fn pagecache_bug_10() {
     // rewritten.
     use self::Op::*;
     prop_pagecache_works(
-        vec![
-            Allocate,
-            Replace(0, 425),
-            Free(0),
-            Allocate,
-            Link(1, 427),
-        ],
+        vec![Allocate, Replace(0, 425), Free(0), Allocate, Link(1, 427)],
         true,
     );
 }
@@ -707,10 +715,7 @@ fn pagecache_bug_12() {
     // postmortem: refactor to add Free tombstones changed
     // the model.
     use self::Op::*;
-    prop_pagecache_works(
-        vec![Allocate, Free(0), Replace(0, 66)],
-        true,
-    );
+    prop_pagecache_works(vec![Allocate, Free(0), Replace(0, 66)], true);
 }
 
 #[test]
@@ -1267,10 +1272,7 @@ fn pagecache_bug_26() {
 fn pagecache_bug_27() {
     // postmortem: was using a bad pointer for recovery
     use self::Op::*;
-    prop_pagecache_works(
-        vec![Allocate, Free(0), Restart, Allocate],
-        true,
-    );
+    prop_pagecache_works(vec![Allocate, Free(0), Restart, Allocate], true);
 }
 
 #[test]

@@ -6,21 +6,28 @@ cache:
   cargo: true
   directories:
     - ~/.rustup
+    - ~/.cargo
+    - $TRAVIS_BUILD_DIR/target
 
 install:
   - curl https://sh.rustup.rs -sSf |
     sh -s -- -y --default-toolchain $TRAVIS_RUST_VERSION &&
     rustup component add clippy-preview
   - bash -c 'if [ "$TEST" = "sanitizers-and-cross-build" ]; then
+      rustup target add aarch64-fuchsia;
+      rustup target add aarch64-linux-android;
+      rustup target add i686-linux-android;
       rustup target add i686-unknown-linux-gnu;
       rustup target add x86_64-pc-windows-gnu;
+      rustup target add x86_64-linux-android;
+      rustup target add x86_64-fuchsia;
     fi'
   - source ~/.cargo/env
 
 matrix:
   include:
     - os: linux
-      rust: nightly-2018-10-26
+      rust: nightly-2019-04-11
       env:
         - TEST=sanitizers-and-cross-build
     - os: osx
@@ -57,9 +64,7 @@ script:
                osx)
                  pushd tests &&
                  cargo check &&
-                 cargo check --features=all &&
-                 cargo test test_crash_recovery --release -- --ignored --nocapture &&
-                 cargo test tree --release
+                 cargo test tree
                  ;;
                qc)
                  pushd tests &&
@@ -106,10 +111,20 @@ script:
 
                  echo "cross build" &&
                  echo "https://github.com/rust-lang/cargo/issues/4753" &&
-                 pushd crates/sled      && cargo check --target i686-unknown-linux-gnu --features=nightly && popd &&
-                 pushd crates/sled      && cargo check --target x86_64-pc-windows-gnu  --features=nightly && popd &&
-                 pushd crates/pagecache && cargo check --target i686-unknown-linux-gnu --features=nightly && popd &&
-                 pushd crates/pagecache && cargo check --target x86_64-pc-windows-gnu  --features=nightly && popd
+                 pushd crates/sled      && cargo check --target aarch64-fuchsia && popd &&
+                 pushd crates/sled      && cargo check --target aarch64-linux-android && popd &&
+                 pushd crates/sled      && cargo check --target i686-linux-android && popd &&
+                 pushd crates/sled      && cargo check --target i686-unknown-linux-gnu && popd &&
+                 pushd crates/sled      && cargo check --target x86_64-pc-windows-gnu  && popd &&
+                 pushd crates/sled      && cargo check --target x86_64-linux-android  && popd &&
+                 pushd crates/sled      && cargo check --target x86_64-fuchsia && popd &&
+                 pushd crates/pagecache && cargo check --target aarch64-fuchsia && popd &&
+                 pushd crates/pagecache && cargo check --target aarch64-linux-android && popd &&
+                 pushd crates/pagecache && cargo check --target i686-linux-android && popd &&
+                 pushd crates/pagecache && cargo check --target i686-unknown-linux-gnu && popd &&
+                 pushd crates/pagecache && cargo check --target x86_64-pc-windows-gnu  && popd &&
+                 pushd crates/pagecache && cargo check --target x86_64-linux-android && popd &&
+                 pushd crates/pagecache && cargo check --target x86_64-fuchsia && popd
                  ;;
                crash)
                  pushd tests &&
@@ -117,12 +132,24 @@ script:
                  ;;
                standard)
                  pushd tests &&
-                 cargo check &&
-                 cargo check --features=all &&
+                 cargo test --release &&
                  popd &&
-                 cargo test --release
+                 pushd examples/playground &&
+                 cargo check &&
+                 popd &&
+                 pushd examples/crdt_merge_store &&
+                 cargo check &&
+                 popd &&
+                 pushd crates/sled &&
+                 echo "testing sled doctests" &&
+                 cargo test &&
+                 popd &&
+                 pushd crates/pagecache &&
+                 echo "testing pagecache doctests" &&
+                 cargo test
                  ;;
                concurrent)
+                 pushd tests &&
                  cargo test concurrent --release -- --ignored --nocapture
                  ;;
                *)

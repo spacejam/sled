@@ -62,10 +62,9 @@ impl Arbitrary for Op {
 
     fn shrink(&self) -> Box<Iterator<Item = Op>> {
         match *self {
-            Op::Del(ref lid) if *lid > 0 => Box::new(
-                vec![Op::Del(*lid / 2), Op::Del(*lid - 1)]
-                    .into_iter(),
-            ),
+            Op::Del(ref lid) if *lid > 0 => {
+                Box::new(vec![Op::Del(*lid / 2), Op::Del(*lid - 1)].into_iter())
+            }
             _ => Box::new(vec![].into_iter()),
         }
     }
@@ -84,8 +83,7 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
         static ref M: Mutex<()> = Mutex::new(());
     }
 
-    let _lock =
-        M.lock().expect("our test lock should not be poisoned");
+    let _lock = M.lock().expect("our test lock should not be poisoned");
 
     // clear all failpoints that may be left over from the last run
     fail::teardown();
@@ -106,10 +104,7 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
         }
         Ok(res) => {
             if !res {
-                println!(
-                    "failed with ops {:?} flusher: {}",
-                    ops, flusher
-                );
+                println!("failed with ops {:?} flusher: {}", ops, flusher);
             }
             res
         }
@@ -133,8 +128,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
         .idgen_persist_interval(1)
         .build();
 
-    let mut tree =
-        sled::Db::start(config.clone()).expect("tree should start");
+    let mut tree = sled::Db::start(config.clone()).expect("tree should start");
     let mut reference = BTreeMap::new();
     let mut fail_points = HashSet::new();
     let mut max_id: isize = -1;
@@ -261,7 +255,13 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
             }
             Id => {
                 let id = fp_crash!(tree.generate_id());
-                assert!(id as isize > max_id);
+                assert!(
+                    id as isize > max_id,
+                    "generated id of {} is not larger \
+                     than previous max id of {}",
+                    id,
+                    max_id,
+                );
                 max_id = id as isize;
             }
             Restart => {
@@ -294,9 +294,7 @@ fn quickcheck_tree_with_failpoints() {
         .gen(StdGen::new(rand::thread_rng(), generator_sz))
         .tests(n_tests)
         .max_tests(10000)
-        .quickcheck(
-            prop_tree_crashes_nicely as fn(Vec<Op>, bool) -> bool,
-        );
+        .quickcheck(prop_tree_crashes_nicely as fn(Vec<Op>, bool) -> bool);
 }
 
 #[test]
@@ -1081,6 +1079,170 @@ fn failpoints_bug_21() {
             Id,
             FailPoint("trailer write post"),
             Restart,
+        ],
+        false,
+    ))
+}
+
+#[test]
+fn failpoints_bug_22() {
+    // postmortem 1:
+    assert!(prop_tree_crashes_nicely(
+        vec![Id, FailPoint("buffer write"), Set, Id],
+        false,
+    ))
+}
+
+#[test]
+fn failpoints_bug_23() {
+    // postmortem 1: failed to handle allocation failures
+    assert!(prop_tree_crashes_nicely(
+        vec![Set, FailPoint("blob blob write"), Set, Set, Set],
+        false,
+    ))
+}
+
+#[test]
+fn failpoints_bug_24() {
+    // postmortem 1: was incorrectly setting global
+    // errors, and they were being used-after-free
+    assert!(prop_tree_crashes_nicely(
+        vec![FailPoint("buffer write"), Id,],
+        false,
+    ))
+}
+
+#[test]
+fn failpoints_bug_25() {
+    // postmortem 1: after removing segment trailers, we
+    // no longer have the invariant that a write
+    // must be more than one byte
+    assert!(prop_tree_crashes_nicely(
+        vec![
+            Del(103),
+            Restart,
+            Del(242),
+            Del(125),
+            Restart,
+            Set,
+            Restart,
+            Id,
+            Del(183),
+            Id,
+            FailPoint("snap write crc"),
+            Del(141),
+            Del(8),
+            Del(188),
+            Set,
+            Set,
+            FailPoint("trailer write"),
+            Restart,
+            Id,
+            Id,
+            Id,
+            Set,
+            Id,
+            Id,
+            Set,
+            Del(65),
+            Del(6),
+            Del(198),
+            Del(57),
+            Id,
+            FailPoint("snap write mv"),
+            Set,
+            Del(164),
+            Del(43),
+            Del(161),
+            Id,
+            Restart,
+            Set,
+            Id,
+            Id,
+            Set,
+            Set,
+            Restart,
+            Restart,
+            Set,
+            Set,
+            FailPoint("trailer write post"),
+            Del(252),
+            Set,
+            Del(111),
+            Id,
+            Del(55)
+        ],
+        false,
+    ))
+}
+
+#[test]
+fn failpoints_bug_26() {
+    // postmortem 1: after removing segment trailers, we
+    // no longer handled maxed segment recovery properly
+    assert!(prop_tree_crashes_nicely(
+        vec![
+            Id,
+            Set,
+            Set,
+            Del(167),
+            Del(251),
+            Del(24),
+            Set,
+            Del(111),
+            Id,
+            Del(133),
+            Del(187),
+            Restart,
+            Set,
+            Del(52),
+            Set,
+            Restart,
+            Set,
+            Set,
+            Id,
+            Set,
+            Set,
+            Id,
+            Id,
+            Set,
+            Set,
+            Del(95),
+            Set,
+            Id,
+            Del(59),
+            Del(133),
+            Del(209),
+            Id,
+            Del(89),
+            Id,
+            Set,
+            Del(46),
+            Set,
+            Del(246),
+            Restart,
+            Set,
+            Restart,
+            Restart,
+            Del(28),
+            Set,
+            Del(9),
+            Del(101),
+            Id,
+            Del(73),
+            Del(192),
+            Set,
+            Set,
+            Set,
+            Id,
+            Set,
+            Set,
+            Set,
+            Id,
+            Restart,
+            Del(92),
+            Del(212),
+            Del(215)
         ],
         false,
     ))

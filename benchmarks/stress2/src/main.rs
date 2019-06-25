@@ -1,12 +1,3 @@
-#[macro_use]
-extern crate serde_derive;
-extern crate docopt;
-extern crate env_logger;
-extern crate jemallocator;
-extern crate log;
-extern crate rand;
-extern crate sled;
-
 use std::{
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -17,8 +8,16 @@ use std::{
 
 use docopt::Docopt;
 use rand::{thread_rng, Rng};
+use serde::Deserialize;
 
-#[cfg_attr(not(feature = "no_jemalloc"), global_allocator)]
+#[cfg_attr(
+    // only enable jemalloc on linux and macos by default
+    all(
+        any(target_os = "linux", target_os = "macos"),
+        not(feature = "no_jemalloc"),
+    ),
+    global_allocator
+)]
 static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 static TOTAL: AtomicUsize = AtomicUsize::new(0);
@@ -34,7 +33,9 @@ Usage: stress [--threads=<#>] [--burn-in] [--duration=<s>] \
     [--scan-prop=<p>] \
     [--merge-prop=<p>] \
     [--entries=<n>] \
-    [--sequential]
+    [--sequential] \
+    [--total-ops=<n>] \
+    [--async]
 
 Options:
     --threads=<#>      Number of threads [default: 4].
@@ -50,6 +51,8 @@ Options:
     --merge-prop=<p>   The relative proportion of merge requests [default: 1].
     --entries=<n>      The total keyspace [default: 100000].
     --sequential       Run the test in sequential mode instead of random.
+    --total-ops=<n>    Stop test after executing a total number of operations.
+    --async            Use a threadpool to perform disk IO in the background.
 ";
 
 #[derive(Deserialize, Clone)]
@@ -67,6 +70,8 @@ struct Args {
     flag_merge_prop: usize,
     flag_entries: usize,
     flag_sequential: bool,
+    flag_total_ops: Option<usize>,
+    flag_async: bool,
 }
 
 // defaults will be applied later based on USAGE above
@@ -84,6 +89,8 @@ static mut ARGS: Args = Args {
     flag_merge_prop: 0,
     flag_entries: 0,
     flag_sequential: false,
+    flag_total_ops: None,
+    flag_async: false,
 };
 
 fn report(shutdown: Arc<AtomicBool>) {
@@ -104,8 +111,7 @@ fn concatenate_merge(
     merged_bytes: &[u8],      // the new bytes being merged in
 ) -> Option<Vec<u8>> {
     // set the new value, return None to delete
-    let mut ret =
-        old_value.map(|ov| ov.to_vec()).unwrap_or_else(|| vec![]);
+    let mut ret = old_value.map(|ov| ov.to_vec()).unwrap_or_else(|| vec![]);
 
     ret.extend_from_slice(merged_bytes);
 
@@ -166,17 +172,21 @@ fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
                     None
                 };
 
-                match tree.cas(&key, old, new) {
-                    Ok(_) | Err(sled::Error::CasFailed(_)) => {}
-                    other => panic!("operational error: {:?}", other),
+                if let Err(e) = tree.cas(&key, old, new) {
+                    panic!("operational error: {:?}", e);
                 }
             }
             v if v > cas_max && v <= scan_max => {
-                let _ = tree
-                    .scan(&key)
-                    .take(rng.gen_range(0, 15))
-                    .map(|res| res.unwrap())
-                    .collect::<Vec<_>>();
+                let iter = tree.range(key..).map(|res| res.unwrap());
+
+                if v % 2 == 0 {
+                    let _ = iter.take(rng.gen_range(0, 15)).collect::<Vec<_>>();
+                } else {
+                    let _ = iter
+                        .rev()
+                        .take(rng.gen_range(0, 15))
+                        .collect::<Vec<_>>();
+                }
             }
             _ => {
                 tree.merge(&key, bytes(args.flag_val_len)).unwrap();
@@ -190,9 +200,7 @@ fn main() {
 
     let args = unsafe {
         ARGS = Docopt::new(USAGE)
-            .and_then(|d| {
-                d.argv(std::env::args().into_iter()).deserialize()
-            })
+            .and_then(|d| d.argv(std::env::args().into_iter()).deserialize())
             .unwrap_or_else(|e| e.exit());
         ARGS.clone()
     };
@@ -202,13 +210,13 @@ fn main() {
     let config = sled::ConfigBuilder::new()
         .io_bufs(16)
         .io_buf_size(8_000_000)
-        .async_io(true)
-        .async_io_threads(32)
+        .async_io(args.flag_async)
+        .async_io_threads(3)
         .blink_node_split_size(4096)
         .page_consolidation_threshold(10)
-        .cache_bits(6)
+        .cache_bits(8)
         .cache_capacity(1_000_000_000)
-        .flush_every_ms(Some(500))
+        .flush_every_ms(Some(200))
         .snapshot_after_ops(100_000_000_000)
         .print_profile_on_drop(true)
         .merge_operator(concatenate_merge)
@@ -227,15 +235,30 @@ fn main() {
         let shutdown = shutdown.clone();
 
         let t = if i == 0 {
-            thread::spawn(move || report(shutdown))
+            thread::Builder::new()
+                .name("reporter".into())
+                .spawn(move || report(shutdown))
+                .unwrap()
         } else {
-            thread::spawn(move || run(tree, shutdown))
+            thread::Builder::new()
+                .name(format!("t({})", i))
+                .spawn(move || run(tree, shutdown))
+                .unwrap()
         };
 
         threads.push(t);
     }
 
-    if !args.flag_burn_in {
+    if let Some(ops) = args.flag_total_ops {
+        assert!(
+            !args.flag_burn_in,
+            "don't set both --burn-in and --total-ops"
+        );
+        while TOTAL.load(Ordering::Relaxed) < ops {
+            thread::sleep(std::time::Duration::from_millis(50));
+        }
+        shutdown.store(true, Ordering::SeqCst);
+    } else if !args.flag_burn_in {
         thread::sleep(std::time::Duration::from_secs(unsafe {
             ARGS.flag_duration
         }));
@@ -260,6 +283,8 @@ fn main() {
 pub fn setup_logger() {
     use std::io::Write;
 
+    color_backtrace::install();
+
     fn tn() -> String {
         std::thread::current()
             .name()
@@ -275,12 +300,7 @@ pub fn setup_logger() {
                 "{:05} {:25} {:10} {}",
                 record.level(),
                 tn(),
-                record
-                    .module_path()
-                    .unwrap()
-                    .split("::")
-                    .last()
-                    .unwrap(),
+                record.module_path().unwrap().split("::").last().unwrap(),
                 record.args()
             )
         })

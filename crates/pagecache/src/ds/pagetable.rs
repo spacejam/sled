@@ -1,37 +1,32 @@
-/// A simple wait-free, grow-only pagetable, assumes a dense keyspace.
-use std::sync::atomic::Ordering::SeqCst;
+//! A simple wait-free, grow-only pagetable, assumes a dense keyspace.
 
-use sled_sync::{
-    debug_delay, unprotected, Atomic, Guard, Owned, Shared,
+use std::{
+    alloc::{alloc_zeroed, Layout},
+    mem::{align_of, size_of},
+    sync::atomic::Ordering::{Relaxed, SeqCst},
 };
 
-const FANFACTOR: usize = 18;
-const FANOUT: usize = 1 << FANFACTOR;
-const FAN_MASK: usize = FANOUT - 1;
+use super::*;
 
-pub type PageId = usize;
+const FANFACTOR: u64 = 18;
+const FANOUT: u64 = 1 << FANFACTOR;
+const FAN_MASK: u64 = FANOUT - 1;
 
-macro_rules! rep_no_copy {
-    ($e:expr; $n:expr) => {{
-        let mut v = Vec::with_capacity($n);
+#[doc(hidden)]
+pub const PAGETABLE_NODE_SZ: usize = size_of::<Node1<()>>();
 
-        for _ in 0..$n {
-            v.push($e);
-        }
-
-        v
-    }};
-}
+pub type PageId = u64;
 
 #[inline(always)]
-fn split_fanout(i: usize) -> (usize, usize) {
+fn split_fanout(i: u64) -> (u64, u64) {
     // right shift 32 on 32-bit pointer systems panics
     #[cfg(target_pointer_width = "64")]
     assert!(
         i <= 1 << (FANFACTOR * 2),
         "trying to access key of {}, which is \
-         higher than 2 ^ 36",
-        i
+         higher than 2 ^ {}",
+        i,
+        (FANFACTOR * 2)
     );
 
     let left = i >> FANFACTOR;
@@ -40,24 +35,42 @@ fn split_fanout(i: usize) -> (usize, usize) {
 }
 
 struct Node1<T: Send + 'static> {
-    children: Vec<Atomic<Node2<T>>>,
+    children: [Atomic<Node2<T>>; FANOUT as usize],
 }
 
 struct Node2<T: Send + 'static> {
-    children: Vec<Atomic<T>>,
+    children: [Atomic<T>; FANOUT as usize],
 }
 
-impl<T: Send + 'static> Default for Node1<T> {
-    fn default() -> Node1<T> {
-        let children = rep_no_copy!(Atomic::null(); FANOUT);
-        Node1 { children }
+impl<T: Send + 'static> Node1<T> {
+    fn new() -> Box<Node1<T>> {
+        let size = size_of::<Node1<T>>();
+        let align = align_of::<Node1<T>>();
+
+        unsafe {
+            let layout = Layout::from_size_align_unchecked(size, align);
+
+            #[allow(clippy::cast_ptr_alignment)]
+            let ptr = alloc_zeroed(layout) as *mut Node1<T>;
+
+            Box::from_raw(ptr)
+        }
     }
 }
 
-impl<T: Send + 'static> Default for Node2<T> {
-    fn default() -> Node2<T> {
-        let children = rep_no_copy!(Atomic::null(); FANOUT);
-        Node2 { children }
+impl<T: Send + 'static> Node2<T> {
+    fn new() -> Owned<Node2<T>> {
+        let size = size_of::<Node2<T>>();
+        let align = align_of::<Node2<T>>();
+
+        unsafe {
+            let layout = Layout::from_size_align_unchecked(size, align);
+
+            #[allow(clippy::cast_ptr_alignment)]
+            let ptr = alloc_zeroed(layout) as *mut Node2<T>;
+
+            Owned::from_raw(ptr)
+        }
     }
 }
 
@@ -74,7 +87,7 @@ where
     T: 'static + Send + Sync,
 {
     fn default() -> PageTable<T> {
-        let head = Owned::new(Node1::default());
+        let head = Node1::new();
         PageTable {
             head: Atomic::from(head),
         }
@@ -104,24 +117,22 @@ where
         old: Shared<'g, T>,
         new: Shared<'g, T>,
         guard: &'g Guard,
-    ) -> Result<Shared<'g, T>, Shared<'g, T>> {
+    ) -> std::result::Result<Shared<'g, T>, Shared<'g, T>> {
         debug_delay();
         let tip = traverse(self.head.load(SeqCst, guard), pid, guard);
 
         debug_delay();
 
-        match tip.compare_and_set(old, new, SeqCst, guard) {
-            Ok(_) => {
-                if !old.is_null() {
-                    unsafe {
-                        let old_owned = old.into_owned();
-                        guard.defer(move || old_owned);
-                    }
-                }
-                Ok(new)
+        let _ = tip
+            .compare_and_set(old, new, SeqCst, guard)
+            .map_err(|e| e.current)?;
+
+        if !old.is_null() {
+            unsafe {
+                guard.defer_destroy(old);
             }
-            Err(e) => Err(e.current),
         }
+        Ok(new)
     }
 
     /// Try to get a value from the tree.
@@ -151,8 +162,7 @@ where
         let old = self.swap(pid, Shared::null(), guard);
         if !old.is_null() {
             unsafe {
-                let old_owned = old.into_owned();
-                guard.defer(move || old_owned);
+                guard.defer_destroy(old);
             }
             Some(old)
         } else {
@@ -172,14 +182,13 @@ fn traverse<'g, T: 'static + Send>(
     let l1 = unsafe { &head.deref().children };
 
     debug_delay();
-    let mut l2_ptr = l1[l1k].load(SeqCst, guard);
+    let mut l2_ptr = l1[usize::try_from(l1k).unwrap()].load(SeqCst, guard);
 
     if l2_ptr.is_null() {
-        let next_child =
-            Owned::new(Node2::default()).into_shared(guard);
+        let next_child = Node2::new().into_shared(guard);
 
         debug_delay();
-        let ret = l1[l1k]
+        let ret = l1[usize::try_from(l1k).unwrap()]
             .compare_and_set(l2_ptr, next_child, SeqCst, guard);
 
         match ret {
@@ -198,7 +207,7 @@ fn traverse<'g, T: 'static + Send>(
     debug_delay();
     let l2 = unsafe { &l2_ptr.deref().children };
 
-    &l2[l2k]
+    &l2[usize::try_from(l2k).unwrap()]
 }
 
 impl<T> Drop for PageTable<T>
@@ -207,9 +216,8 @@ where
 {
     fn drop(&mut self) {
         unsafe {
-            let head = self.head.load(SeqCst, &unprotected()).as_raw()
-                as usize;
-            drop(Box::from_raw(head as *mut Node1<T>));
+            let head = self.head.load(Relaxed, &unprotected()).into_owned();
+            drop(head);
         }
     }
 }
@@ -220,7 +228,7 @@ impl<T: Send + 'static> Drop for Node1<T> {
             let children: Vec<*const Node2<T>> = self
                 .children
                 .iter()
-                .map(|c| c.load(SeqCst, &unprotected()).as_raw())
+                .map(|c| c.load(Relaxed, &unprotected()).as_raw())
                 .filter(|c| !c.is_null())
                 .collect();
 
@@ -237,7 +245,7 @@ impl<T: Send + 'static> Drop for Node2<T> {
             let children: Vec<*const T> = self
                 .children
                 .iter()
-                .map(|c| c.load(SeqCst, &unprotected()).as_raw())
+                .map(|c| c.load(Relaxed, &unprotected()).as_raw())
                 .filter(|c| !c.is_null())
                 .collect();
 
@@ -263,7 +271,7 @@ fn test_split_fanout() {
 #[test]
 fn basic_functionality() {
     unsafe {
-        let guard = sled_sync::pin();
+        let guard = pin();
         let rt = PageTable::default();
         let v1 = Owned::new(5).into_shared(&guard);
         rt.cas(0, Shared::null(), v1, &guard).unwrap();
@@ -286,5 +294,83 @@ fn basic_functionality() {
         rt.cas(k3, Shared::null(), v3, &guard).unwrap();
         assert_eq!(rt.get(k3, &guard).unwrap().deref(), &3);
         assert_eq!(rt.get(k2, &guard).unwrap().deref(), &2);
+    }
+}
+
+#[test]
+#[ignore]
+fn test_model() {
+    use self::Shared as EpochShared;
+    use model::{model, prop_oneof};
+
+    model! {
+        Model => let mut m = std::collections::HashMap::new(),
+        Implementation => let i = PageTable::default(),
+        Insert((u64, u64))((k, new) in (0u64..4, 0u64..4)) => {
+            if !m.contains_key(&k) {
+                m.insert(k, new);
+
+                let guard = pin();
+                let v = Owned::new(new).into_shared(&guard);
+                i.cas(k, EpochShared::null(), v, &guard ).expect("should be able to insert a value");
+            }
+        },
+        Get(u64)(k in 0u64..4) => {
+            let guard = pin();
+            let expected = m.get(&k);
+            let actual = i.get(k, &guard).map(|s| unsafe { s.deref() });
+            assert_eq!(expected, actual);
+        },
+        Cas((u64, u64, u64))((k, old, new) in (0u64..4, 0u64..4, 0u64..4)) => {
+            let guard = pin();
+            let expected_current = m.get(&k).cloned();
+            let actual_current = i.get(k, &guard);
+            assert_eq!(expected_current, actual_current.map(|s| unsafe { *s.deref() }));
+            if expected_current.is_none() {
+                continue;
+            }
+
+            let new_v = Owned::new(new).into_shared(&guard);
+
+            if expected_current == Some(old) {
+                m.insert(k, new);
+                let cas_res = i.cas(k, actual_current.unwrap(), new_v, &guard);
+                assert!(cas_res.is_ok());
+            };
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn test_linearizability() {
+    use self::Shared as EpochShared;
+    use model::{linearizable, prop_oneof, Shared};
+
+    linearizable! {
+        Implementation => let i = Shared::new(PageTable::default()),
+        Get(u64)(k in 0u64..4) -> Option<u64> {
+            let guard = pin();
+            unsafe {
+                i.get(k, &guard).map(|s| *s.deref())
+            }
+        },
+        Insert((u64, u64))((k, new) in (0u64..4, 0u64..4)) -> bool {
+            let guard = pin();
+            let v = Owned::new(new).into_shared(&guard);
+            i.cas(k, EpochShared::null(), v, &guard).is_err()
+        },
+        Cas((u64, u64, u64))((k, old, new)
+            in (0u64..4, 0u64..4, 0u64..4))
+            -> std::result::Result<(), u64> {
+            let guard = pin();
+            i.cas(k, Owned::new(old).into_shared(&guard), Owned::new(new).into_shared(&guard), &guard)
+                .map(|_| ())
+                .map_err(|s| if s.is_null() {
+                    0
+                } else {
+                    unsafe { *s.deref() }
+                })
+        }
     }
 }

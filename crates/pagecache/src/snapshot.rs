@@ -1,4 +1,6 @@
-use std::io::{Read, Seek, Write};
+use std::io::{Read, Write};
+
+use rayon::prelude::*;
 
 #[cfg(feature = "zstd")]
 use zstd::block::{compress, decompress};
@@ -9,10 +11,12 @@ use super::*;
 /// the `PageCache` and `SegmentAccountant`.
 /// TODO consider splitting `Snapshot` into separate
 /// snapshots for PC, SA, Materializer.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Snapshot<R> {
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Snapshot {
     /// the last lsn included in the `Snapshot`
     pub max_lsn: Lsn,
+    /// the highest LSN persisted to a segment trailer
+    pub max_header_stable_lsn: Lsn,
     /// the last lid included in the `Snapshot`
     pub last_lid: LogId,
     /// the highest lid observed while generating the `Snapshot`
@@ -22,18 +26,14 @@ pub struct Snapshot<R> {
     /// the mapping from pages to (lsn, lid)
     pub pt: FastMap8<PageId, PageState>,
     /// replaced pages per segment index
-    pub replacements:
-        FastMap8<SegmentId, (Lsn, FastSet8<(PageId, SegmentId)>)>,
+    pub replacements: FastMap8<SegmentId, (Lsn, FastSet8<(PageId, SegmentId)>)>,
     /// the free pids
     pub free: FastSet8<PageId>,
-    /// the `Materializer`-specific recovered state
-    pub recovery: Option<R>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum PageState {
     Present(Vec<(Lsn, DiskPtr)>),
-    Allocated(Lsn, DiskPtr),
     Free(Lsn, DiskPtr),
 }
 
@@ -41,9 +41,6 @@ impl PageState {
     fn push(&mut self, item: (Lsn, DiskPtr)) {
         match *self {
             PageState::Present(ref mut items) => items.push(item),
-            PageState::Allocated(_, _) => {
-                *self = PageState::Present(vec![item]);
-            }
             PageState::Free(_, _) => {
                 panic!("pushed items to a PageState::Free")
             }
@@ -56,10 +53,7 @@ impl PageState {
             PageState::Present(ref items) => {
                 Box::new(items.clone().into_iter())
             }
-            PageState::Allocated(lsn, ptr)
-            | PageState::Free(lsn, ptr) => {
-                Box::new(vec![(lsn, ptr)].into_iter())
-            }
+            PageState::Free(lsn, ptr) => Box::new(vec![(lsn, ptr)].into_iter()),
         }
     }
 
@@ -71,57 +65,27 @@ impl PageState {
     }
 }
 
-impl<R> Default for Snapshot<R> {
-    fn default() -> Snapshot<R> {
-        Snapshot {
-            max_lsn: 0,
-            max_lid: 0,
-            last_lid: 0,
-            max_pid: 0,
-            pt: FastMap8::default(),
-            replacements: FastMap8::default(),
-            free: FastSet8::default(),
-            recovery: None,
-        }
-    }
-}
-
-impl<R> Snapshot<R> {
-    fn apply<P, M>(
+impl Snapshot {
+    fn apply<P>(
         &mut self,
-        materializer: &M,
         lsn: Lsn,
         disk_ptr: DiskPtr,
         bytes: &[u8],
         config: &Config,
-    ) -> Result<(), ()>
+    ) -> Result<()>
     where
-        P: 'static
-            + Debug
-            + Clone
-            + Serialize
-            + DeserializeOwned
-            + Send
-            + Sync,
-        R: Debug + Clone + Serialize + DeserializeOwned + Send,
-        M: Materializer<PageFrag = P, Recovery = R>,
+        P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
     {
         // unwrapping this because it's already passed the crc check
         // in the log iterator
-        trace!(
-            "trying to deserialize buf for ptr {} lsn {}",
-            disk_ptr,
-            lsn
-        );
+        trace!("trying to deserialize buf for ptr {} lsn {}", disk_ptr, lsn);
         let deserialization = deserialize::<LoggedUpdate<P>>(&*bytes);
 
         if let Err(e) = deserialization {
             error!(
                 "failed to deserialize buffer for item in log: lsn {} \
-                    ptr {}: {:?}",
-                lsn,
-                disk_ptr,
-                e
+                 ptr {}: {:?}",
+                lsn, disk_ptr, e
             );
             return Err(Error::Corruption { at: disk_ptr });
         }
@@ -133,23 +97,22 @@ impl<R> Snapshot<R> {
             self.max_pid = pid + 1;
         }
 
-        let replaced_at_idx =
-            disk_ptr.lid() as SegmentId / config.io_buf_size;
-        let replaced_at_segment_lsn = (lsn
-            / config.io_buf_size as Lsn)
-            * config.io_buf_size as Lsn;
+        let replaced_at_idx = disk_ptr.lid() as SegmentId / config.io_buf_size;
+        let replaced_at_segment_lsn =
+            (lsn / config.io_buf_size as Lsn) * config.io_buf_size as Lsn;
 
         match prepend.update {
-            Update::Append(partial_page) => {
+            Update::Append(append) => {
                 // Because we rewrite pages over time, we may have relocated
                 // a page's initial Compact to a later segment. We should skip
                 // over pages here unless we've encountered a Compact for them.
                 if let Some(lids) = self.pt.get_mut(&pid) {
                     trace!(
-                        "append of pid {} at lid {} lsn {}",
+                        "append of pid {} at lid {} lsn {}: {:?}",
                         pid,
                         disk_ptr,
-                        lsn
+                        lsn,
+                        append,
                     );
 
                     if lids.is_free() {
@@ -164,46 +127,19 @@ impl<R> Snapshot<R> {
                         return Ok(());
                     }
 
-                    if let Some(r) =
-                        materializer.recover(&partial_page)
-                    {
-                        self.recovery = Some(r);
-                    }
-
                     lids.push((lsn, disk_ptr));
                 }
                 self.free.remove(&pid);
             }
-            Update::Compact(partial_page) => {
+            Update::Meta(_) | Update::Counter(_) | Update::Compact(_) => {
                 trace!(
-                    "compact of pid {} at ptr {} lsn {}",
+                    "compact of pid {} at ptr {} lsn {}: {:?}",
                     pid,
                     disk_ptr,
-                    lsn
+                    lsn,
+                    prepend.update,
                 );
-                if let Some(r) = materializer.recover(&partial_page) {
-                    self.recovery = Some(r);
-                }
 
-                self.replace_pid(
-                    pid,
-                    replaced_at_segment_lsn,
-                    replaced_at_idx,
-                    config,
-                );
-                self.pt.insert(
-                    pid,
-                    PageState::Present(vec![(lsn, disk_ptr)]),
-                );
-                self.free.remove(&pid);
-            }
-            Update::Allocate => {
-                trace!(
-                    "allocate  of pid {} at ptr {} lsn {}",
-                    pid,
-                    disk_ptr,
-                    lsn
-                );
                 self.replace_pid(
                     pid,
                     replaced_at_segment_lsn,
@@ -211,16 +147,15 @@ impl<R> Snapshot<R> {
                     config,
                 );
                 self.pt
-                    .insert(pid, PageState::Allocated(lsn, disk_ptr));
-                self.free.remove(&pid);
+                    .insert(pid, PageState::Present(vec![(lsn, disk_ptr)]));
+                if prepend.update.is_compact() {
+                    self.free.remove(&pid);
+                } else {
+                    assert!(!self.free.contains(&pid));
+                }
             }
             Update::Free => {
-                trace!(
-                    "free of pid {} at ptr {} lsn {}",
-                    pid,
-                    disk_ptr,
-                    lsn
-                );
+                trace!("free of pid {} at ptr {} lsn {}", pid, disk_ptr, lsn);
                 self.replace_pid(
                     pid,
                     replaced_at_segment_lsn,
@@ -252,8 +187,7 @@ impl<R> Snapshot<R> {
         match self.pt.remove(&pid) {
             Some(PageState::Present(coords)) => {
                 for (_lsn, ptr) in &coords {
-                    let old_idx =
-                        ptr.lid() as SegmentId / config.io_buf_size;
+                    let old_idx = ptr.lid() as SegmentId / config.io_buf_size;
                     if replaced_at_idx == old_idx {
                         continue;
                     }
@@ -285,10 +219,8 @@ impl<R> Snapshot<R> {
                     }
                 }
             }
-            Some(PageState::Allocated(_lsn, ptr))
-            | Some(PageState::Free(_lsn, ptr)) => {
-                let old_idx =
-                    ptr.lid() as SegmentId / config.io_buf_size;
+            Some(PageState::Free(_lsn, ptr)) => {
+                let old_idx = ptr.lid() as SegmentId / config.io_buf_size;
                 if replaced_at_idx != old_idx {
                     replacements.1.insert((pid, old_idx));
                 }
@@ -304,27 +236,18 @@ impl<R> Snapshot<R> {
     }
 }
 
-pub(super) fn advance_snapshot<PM, P, R>(
+pub(super) fn advance_snapshot<PM, P>(
     iter: LogIter,
-    mut snapshot: Snapshot<R>,
+    mut snapshot: Snapshot,
     config: &Config,
-) -> Result<Snapshot<R>, ()>
+) -> Result<Snapshot>
 where
-    PM: Materializer<Recovery = R, PageFrag = P>,
-    P: 'static
-        + Debug
-        + Clone
-        + Serialize
-        + DeserializeOwned
-        + Send
-        + Sync,
-    R: Debug + Clone + Serialize + DeserializeOwned + Send,
+    PM: Materializer<PageFrag = P>,
+    P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
 {
     let _measure = Measure::new(&M.advance_snapshot);
 
     trace!("building on top of old snapshot: {:?}", snapshot);
-
-    let materializer = PM::new(config.clone(), &snapshot.recovery);
 
     let io_buf_size = config.io_buf_size;
 
@@ -365,21 +288,41 @@ where
         }
 
         if !PM::is_null() {
-            if let Err(e) = snapshot.apply(
-                &materializer,
-                lsn,
-                ptr,
-                &*bytes,
-                config,
-            ) {
-                error!(
-                    "encountered error while reading log message: {}",
-                    e
-                );
+            if let Err(e) = snapshot.apply::<P>(lsn, ptr, &*bytes, config) {
+                error!("encountered error while reading log message: {}", e);
                 break;
             }
         }
     }
+
+    // read the max stable lsn written into all trailers
+    let max_segment =
+        config.file.metadata()?.len() / config.io_buf_size as LogId;
+    let max_header_stable_lsn = (0..max_segment)
+        .into_par_iter()
+        .flat_map(|idx| {
+            let base = idx * config.io_buf_size as LogId;
+            match config.file.read_segment_header(base) {
+                Ok(header) if header.ok => {
+                    Some(header.highest_known_stable_lsn)
+                }
+                _ => None,
+            }
+        })
+        .max()
+        .unwrap_or(-1);
+
+    if max_header_stable_lsn != -1
+        && max_header_stable_lsn < snapshot.max_header_stable_lsn
+    {
+        debug!(
+            "the snapshot max_header_stable_lsn went \
+             down over time from {} before to {} after",
+            snapshot.max_header_stable_lsn, max_header_stable_lsn
+        );
+    }
+
+    snapshot.max_header_stable_lsn = max_header_stable_lsn;
 
     write_snapshot(config, &snapshot)?;
 
@@ -390,35 +333,20 @@ where
 
 /// Read a `Snapshot` or generate a default, then advance it to
 /// the tip of the data file, if present.
-pub fn read_snapshot_or_default<PM, P, R>(
-    config: &Config,
-) -> Result<Snapshot<R>, ()>
+pub fn read_snapshot_or_default<PM, P>(config: &Config) -> Result<Snapshot>
 where
-    PM: Materializer<Recovery = R, PageFrag = P>,
-    P: 'static
-        + Debug
-        + Clone
-        + Serialize
-        + DeserializeOwned
-        + Send
-        + Sync,
-    R: Debug + Clone + Serialize + DeserializeOwned + Send,
+    PM: Materializer<PageFrag = P>,
+    P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
 {
-    let last_snap =
-        read_snapshot(config)?.unwrap_or_else(Snapshot::default);
+    let last_snap = read_snapshot(config)?.unwrap_or_else(Snapshot::default);
 
     let log_iter = raw_segment_iter_from(last_snap.max_lsn, config)?;
 
-    advance_snapshot::<PM, P, R>(log_iter, last_snap, config)
+    advance_snapshot::<PM, P>(log_iter, last_snap, config)
 }
 
 /// Read a `Snapshot` from disk.
-fn read_snapshot<R>(
-    config: &Config,
-) -> std::io::Result<Option<Snapshot<R>>>
-where
-    R: Debug + Clone + Serialize + DeserializeOwned + Send,
-{
+fn read_snapshot(config: &Config) -> std::io::Result<Option<Snapshot>> {
     let mut candidates = config.get_snapshot_files()?;
     if candidates.is_empty() {
         debug!("no previous snapshot found");
@@ -430,7 +358,7 @@ where
     let path = candidates.pop().unwrap();
 
     let mut f = std::fs::OpenOptions::new().read(true).open(&path)?;
-    if f.metadata()?.len() <= 16 {
+    if f.metadata()?.len() <= 12 {
         warn!("empty/corrupt snapshot file found");
         return Ok(None);
     }
@@ -438,29 +366,24 @@ where
     let mut buf = vec![];
     f.read_to_end(&mut buf)?;
     let len = buf.len();
-    buf.split_off(len - 16);
-
     let mut len_expected_bytes = [0u8; 8];
-    f.seek(std::io::SeekFrom::End(-16)).unwrap();
-    f.read_exact(&mut len_expected_bytes).unwrap();
+    len_expected_bytes.copy_from_slice(&buf[len - 12..len - 4]);
 
-    let mut crc_expected_bytes = [0u8; 8];
-    f.seek(std::io::SeekFrom::End(-8)).unwrap();
-    f.read_exact(&mut crc_expected_bytes).unwrap();
-    let crc_expected: u64 =
-        unsafe { std::mem::transmute(crc_expected_bytes) };
+    let mut crc_expected_bytes = [0u8; 4];
+    crc_expected_bytes.copy_from_slice(&buf[len - 4..]);
 
-    let crc_actual = crc64(&*buf);
+    buf.split_off(len - 12);
+    let crc_expected: u32 = arr_to_u32(&crc_expected_bytes);
+
+    let crc_actual = crc32(&buf);
 
     if crc_expected != crc_actual {
-        error!("crc for snapshot file {:?} failed!", path);
         return Ok(None);
     }
 
     #[cfg(feature = "zstd")]
     let bytes = if config.use_compression {
-        let len_expected: u64 =
-            unsafe { std::mem::transmute(len_expected_bytes) };
+        let len_expected: u64 = arr_to_u64(&len_expected_bytes);
         decompress(&*buf, len_expected as usize).unwrap()
     } else {
         buf
@@ -469,16 +392,10 @@ where
     #[cfg(not(feature = "zstd"))]
     let bytes = buf;
 
-    Ok(deserialize::<Snapshot<R>>(&*bytes).ok())
+    Ok(deserialize::<Snapshot>(&*bytes).ok())
 }
 
-pub(crate) fn write_snapshot<R>(
-    config: &Config,
-    snapshot: &Snapshot<R>,
-) -> Result<(), ()>
-where
-    R: Debug + Clone + Serialize + DeserializeOwned + Send,
-{
+fn write_snapshot(config: &Config, snapshot: &Snapshot) -> Result<()> {
     let raw_bytes = serialize(&snapshot).unwrap();
     let decompressed_len = raw_bytes.len();
 
@@ -492,13 +409,10 @@ where
     #[cfg(not(feature = "zstd"))]
     let bytes = raw_bytes;
 
-    let crc64: [u8; 8] =
-        unsafe { std::mem::transmute(crc64(&*bytes)) };
-    let len_bytes: [u8; 8] =
-        unsafe { std::mem::transmute(decompressed_len as u64) };
+    let crc32: [u8; 4] = u32_to_arr(crc32(&bytes));
+    let len_bytes: [u8; 8] = u64_to_arr(decompressed_len as u64);
 
-    let path_1_suffix =
-        format!("snap.{:016X}.in___motion", snapshot.max_lsn);
+    let path_1_suffix = format!("snap.{:016X}.generating", snapshot.max_lsn);
 
     let mut path_1 = config.snapshot_prefix();
     path_1.push(path_1_suffix);
@@ -508,7 +422,8 @@ where
     let mut path_2 = config.snapshot_prefix();
     path_2.push(path_2_suffix);
 
-    let _res = std::fs::create_dir_all(path_1.parent().unwrap());
+    let parent = path_1.parent().unwrap();
+    std::fs::create_dir_all(parent)?;
     let mut f = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -520,14 +435,14 @@ where
     maybe_fail!("snap write len");
     f.write_all(&len_bytes)?;
     maybe_fail!("snap write crc");
-    f.write_all(&crc64)?;
+    f.write_all(&crc32)?;
     f.sync_all()?;
     maybe_fail!("snap write post");
 
     trace!("wrote snapshot to {}", path_1.to_string_lossy());
 
     maybe_fail!("snap write mv");
-    std::fs::rename(path_1, &path_2)?;
+    std::fs::rename(&path_1, &path_2)?;
     maybe_fail!("snap write mv post");
 
     trace!("renamed snapshot to {}", path_2.to_string_lossy());

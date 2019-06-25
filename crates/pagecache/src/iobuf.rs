@@ -1,19 +1,9 @@
-#[cfg(target_pointer_width = "32")]
-use std::sync::atomic::AtomicI64 as AtomicLsn;
-#[cfg(target_pointer_width = "64")]
-use std::sync::atomic::AtomicIsize as AtomicLsn;
-
 use std::{
     mem::size_of,
+    sync::atomic::AtomicBool,
     sync::atomic::Ordering::SeqCst,
-    sync::atomic::{AtomicBool, AtomicUsize},
-    sync::{Arc, Condvar, Mutex},
+    sync::{Arc, Condvar, Mutex, RwLock},
 };
-
-#[cfg(feature = "compression")]
-use zstd::block::compress;
-
-use sled_sync::Backoff;
 
 use self::reader::LogReader;
 
@@ -22,131 +12,118 @@ use super::*;
 // This is the most writers in a single IO buffer
 // that we have space to accomodate in the counter
 // for writers in the IO buffer header.
-const MAX_WRITERS: Header = 127;
+pub(crate) const MAX_WRITERS: Header = 127;
 
-type Header = u64;
-
-/// A logical sequence number.
-#[cfg(target_pointer_width = "64")]
-type InnerLsn = isize;
-#[cfg(target_pointer_width = "32")]
-type InnerLsn = i64;
+pub(crate) type Header = u64;
 
 macro_rules! io_fail {
     ($self:expr, $e:expr) => {
         #[cfg(feature = "failpoints")]
         fail_point!($e, |_| {
-            $self.0._failpoint_crashing.store(true, SeqCst);
+            $self.config.set_global_error(Error::FailPoint);
             // wake up any waiting threads so they don't stall forever
-            $self.0.interval_updated.notify_all();
+            $self.interval_updated.notify_all();
             Err(Error::FailPoint)
         });
     };
 }
 
-struct IoBuf {
-    buf: UnsafeCell<Vec<u8>>,
-    header: AtomicUsize,
-    lid: AtomicUsize,
-    lsn: AtomicUsize,
-    capacity: AtomicUsize,
+pub(crate) struct IoBuf {
+    pub(crate) buf: UnsafeCell<Vec<u8>>,
+    header: CachePadded<AtomicU64>,
+    pub(super) lid: LogId,
+    pub(super) lsn: Lsn,
+    pub(super) capacity: usize,
     maxed: AtomicBool,
     linearizer: Mutex<()>,
+    stored_max_stable_lsn: Lsn,
 }
 
 unsafe impl Sync for IoBuf {}
 
-#[derive(Clone)]
-pub(super) struct IoBufs(pub(super) Arc<IoBufsInner>);
-
-pub(super) struct IoBufsInner {
+pub(super) struct IoBufs {
     pub(super) config: Config,
 
     // We have a fixed number of io buffers. Sometimes they will all be
     // full, and in order to prevent threads from having to spin in
     // the reserve function, we can have them block until a buffer becomes
     // available.
-    buf_mu: Mutex<()>,
-    buf_updated: Condvar,
-    bufs: Vec<IoBuf>,
-    current_buf: AtomicUsize,
-    written_bufs: AtomicUsize,
+    pub(crate) iobuf: RwLock<Arc<IoBuf>>,
 
     // Pending intervals that have been written to stable storage, but may be
     // higher than the current value of `stable` due to interesting thread
     // interleavings.
-    intervals: Mutex<Vec<(Lsn, Lsn)>>,
+    pub(crate) intervals: Mutex<Vec<(Lsn, Lsn)>>,
     pub(super) interval_updated: Condvar,
 
     // The highest CONTIGUOUS log sequence number that has been written to
     // stable storage. This may be lower than the length of the underlying
     // file, and there may be buffers that have been written out-of-order
     // to stable storage due to interesting thread interleavings.
-    stable_lsn: AtomicLsn,
-    max_reserved_lsn: AtomicLsn,
-    segment_accountant: Mutex<SegmentAccountant>,
-
-    // used for signifying that we're simulating a crash
-    #[cfg(feature = "failpoints")]
-    pub(super) _failpoint_crashing: AtomicBool,
+    pub(crate) stable_lsn: AtomicLsn,
+    pub(crate) max_reserved_lsn: AtomicLsn,
+    pub(crate) max_header_stable_lsn: AtomicLsn,
+    pub(crate) segment_accountant: Mutex<SegmentAccountant>,
 }
 
 /// `IoBufs` is a set of lock-free buffers for coordinating
 /// writes to underlying storage.
 impl IoBufs {
-    pub(crate) fn start<R>(
+    pub(crate) fn start(
         config: Config,
-        mut snapshot: Snapshot<R>,
-    ) -> Result<IoBufs, ()> {
+        mut snapshot: Snapshot,
+    ) -> Result<IoBufs> {
         // open file for writing
         let file = &config.file;
 
         let io_buf_size = config.io_buf_size;
 
+        if snapshot.max_lsn < SEG_HEADER_LEN as Lsn {
+            debug!(
+                "setting snapshot to default as max_lsn < {}",
+                SEG_HEADER_LEN
+            );
+            snapshot = Snapshot::default();
+        }
+
         let snapshot_max_lsn = snapshot.max_lsn;
         let snapshot_last_lid = snapshot.last_lid;
+        let snapshot_max_header_stable_lsn = snapshot.max_header_stable_lsn;
 
-        let (next_lsn, next_lid) = if snapshot_max_lsn
-            < SEG_HEADER_LEN as Lsn
-        {
-            snapshot.max_lsn = 0;
-            snapshot.last_lid = 0;
-            (0, 0)
-        } else {
-            let width = match file
-                .read_message(snapshot_last_lid, &config)
-            {
-                Ok(LogRead::Failed(_, len))
-                | Ok(LogRead::Inline(_, _, len)) => {
-                    len + MSG_HEADER_LEN
-                }
-                Ok(LogRead::Blob(_lsn, _buf, _blob_ptr)) => {
-                    BLOB_INLINE_LEN + MSG_HEADER_LEN
-                }
-                other => {
-                    // we can overwrite this non-flush
-                    debug!(
-                            "got non-flush tip while recovering at {}: {:?}",
-                            snapshot_last_lid,
-                            other
-                        );
-                    0
-                }
-            };
-
-            (
-                snapshot_max_lsn + width as Lsn,
-                snapshot_last_lid + width as LogId,
-            )
-        };
-
-        let mut segment_accountant =
+        let mut segment_accountant: SegmentAccountant =
             SegmentAccountant::start(config.clone(), snapshot)?;
 
-        let bufs =
-            rep_no_copy![IoBuf::new(io_buf_size); config.io_bufs];
+        let (next_lsn, next_lid) =
+            if snapshot_max_lsn % config.io_buf_size as Lsn == 0 {
+                (snapshot_max_lsn, snapshot_last_lid)
+            } else {
+                let width = match file.read_message(
+                    snapshot_last_lid,
+                    snapshot_max_lsn,
+                    &config,
+                ) {
+                    Ok(LogRead::Failed(_, len))
+                    | Ok(LogRead::Inline(_, _, len)) => len + MSG_HEADER_LEN,
+                    Ok(LogRead::Blob(_lsn, _buf, _blob_ptr)) => {
+                        BLOB_INLINE_LEN + MSG_HEADER_LEN
+                    }
+                    other => {
+                        // we can overwrite this non-flush
+                        debug!(
+                            "got non-flush tip while recovering at {}: {:?}",
+                            snapshot_last_lid, other
+                        );
+                        0
+                    }
+                };
 
-        let current_buf = 0;
+                (
+                    snapshot_max_lsn + width as Lsn,
+                    snapshot_last_lid + width as LogId,
+                )
+            };
+
+        let mut iobuf = IoBuf::new(io_buf_size);
 
         trace!(
             "starting IoBufs with next_lsn: {} \
@@ -155,15 +132,21 @@ impl IoBufs {
             next_lid
         );
 
-        if next_lsn == 0 {
-            // initializing new system
-            assert_eq!(next_lid, next_lsn as LogId);
-            let iobuf = &bufs[current_buf];
+        // we want stable to begin at -1 if the 0th byte
+        // of our file has not yet been written.
+        let stable = next_lsn - 1;
+
+        if next_lsn % config.io_buf_size as Lsn == 0 {
+            // allocate new segment for data
+
+            if next_lsn == 0 {
+                assert_eq!(next_lid, 0);
+            }
             let lid = segment_accountant.next(next_lsn)?;
 
-            iobuf.set_lid(lid);
-            iobuf.set_capacity(io_buf_size - SEG_TRAILER_LEN);
-            iobuf.store_segment_header(0, next_lsn);
+            iobuf.lid = lid;
+            iobuf.capacity = io_buf_size;
+            iobuf.store_segment_header(0, next_lsn, stable);
 
             maybe_fail!("initial allocation");
             file.pwrite_all(&*vec![0; config.io_buf_size], lid)?;
@@ -176,13 +159,10 @@ impl IoBufs {
             );
         } else {
             // the tip offset is not completely full yet, reuse it
-            let iobuf = &bufs[current_buf];
-            let offset = next_lid % io_buf_size as LogId;
-            iobuf.set_lid(next_lid);
-            iobuf.set_capacity(
-                io_buf_size - offset as usize - SEG_TRAILER_LEN,
-            );
-            iobuf.set_lsn(next_lsn);
+            let offset = assert_usize(next_lid % io_buf_size as LogId);
+            iobuf.lid = next_lid;
+            iobuf.capacity = io_buf_size - offset;
+            iobuf.lsn = next_lsn;
 
             debug!(
                 "starting log at split offset {}, recovered lsn {}",
@@ -190,32 +170,24 @@ impl IoBufs {
             );
         }
 
-        // we want stable to begin at -1, since the 0th byte
-        // of our file has not yet been written.
-        let stable = if next_lsn == 0 { -1 } else { next_lsn - 1 };
-
         // remove all blob files larger than our stable offset
         gc_blobs(&config, stable)?;
 
-        Ok(IoBufs(Arc::new(IoBufsInner {
+        Ok(IoBufs {
             config,
 
-            buf_mu: Mutex::new(()),
-            buf_updated: Condvar::new(),
-            bufs,
-            current_buf: AtomicUsize::new(current_buf),
-            written_bufs: AtomicUsize::new(0),
+            iobuf: RwLock::new(Arc::new(iobuf)),
 
             intervals: Mutex::new(vec![]),
             interval_updated: Condvar::new(),
 
-            stable_lsn: AtomicLsn::new(stable as InnerLsn),
-            max_reserved_lsn: AtomicLsn::new(stable as InnerLsn),
+            stable_lsn: AtomicLsn::new(stable),
+            max_reserved_lsn: AtomicLsn::new(stable),
+            max_header_stable_lsn: AtomicLsn::new(
+                snapshot_max_header_stable_lsn,
+            ),
             segment_accountant: Mutex::new(segment_accountant),
-
-            #[cfg(feature = "failpoints")]
-            _failpoint_crashing: AtomicBool::new(false),
-        })))
+        })
     }
 
     /// SegmentAccountant access for coordination with the `PageCache`
@@ -226,7 +198,7 @@ impl IoBufs {
         let start = clock();
 
         debug_delay();
-        let mut sa = self.0.segment_accountant.lock().unwrap();
+        let mut sa = self.segment_accountant.lock().unwrap();
 
         let locked_at = clock();
 
@@ -245,64 +217,58 @@ impl IoBufs {
     /// a specified offset.
     pub(crate) fn iter_from(&self, lsn: Lsn) -> LogIter {
         trace!("iterating from lsn {}", lsn);
-        let iobufs = &self.0;
-        let io_buf_size = iobufs.config.io_buf_size;
-        let segment_base_lsn =
-            lsn / io_buf_size as Lsn * io_buf_size as Lsn;
+        let io_buf_size = self.config.io_buf_size;
+        let segment_base_lsn = lsn / io_buf_size as Lsn * io_buf_size as Lsn;
         let min_lsn = segment_base_lsn + SEG_HEADER_LEN as Lsn;
 
         // corrected_lsn accounts for the segment header length
         let corrected_lsn = std::cmp::max(lsn, min_lsn);
 
-        let segment_iter = self.with_sa(|sa| {
-            sa.segment_snapshot_iter_from(corrected_lsn)
-        });
+        let segment_iter =
+            self.with_sa(|sa| sa.segment_snapshot_iter_from(corrected_lsn));
 
         LogIter {
-            config: iobufs.config.clone(),
+            config: self.config.clone(),
             max_lsn: self.stable(),
             cur_lsn: corrected_lsn,
             segment_base: None,
             segment_iter,
-            trailer: None,
         }
-    }
-
-    fn idx(&self) -> usize {
-        let iobufs = &self.0;
-        debug_delay();
-        let current_buf = iobufs.current_buf.load(SeqCst);
-        current_buf % iobufs.config.io_bufs
     }
 
     /// Returns the last stable offset in storage.
     pub(super) fn stable(&self) -> Lsn {
         debug_delay();
-        self.0.stable_lsn.load(SeqCst) as Lsn
+        self.stable_lsn.load(SeqCst) as Lsn
     }
 
     // Adds a header to the front of the buffer
-    fn encapsulate(
+    pub(crate) fn encapsulate(
         &self,
-        raw_buf: Vec<u8>,
+        in_buf: &[u8],
+        out_buf: &mut [u8],
         lsn: Lsn,
         over_blob_threshold: bool,
         is_blob_rewrite: bool,
-    ) -> Result<Vec<u8>, ()> {
-        let buf = if over_blob_threshold {
+    ) -> Result<()> {
+        let mut _blob_ptr = None;
+
+        let to_reserve = if over_blob_threshold {
             // write blob to file
             io_fail!(self, "blob blob write");
-            write_blob(&self.0.config, lsn, raw_buf)?;
+            write_blob(&self.config, lsn, in_buf)?;
 
             let lsn_buf: [u8; size_of::<BlobPointer>()] =
                 u64_to_arr(lsn as u64);
 
-            lsn_buf.to_vec()
+            _blob_ptr = Some(lsn_buf);
+
+            _blob_ptr.as_mut().unwrap()
         } else {
-            raw_buf
+            in_buf
         };
 
-        let crc16 = crc16_arr(&buf);
+        assert_eq!(out_buf.len(), to_reserve.len() + MSG_HEADER_LEN);
 
         let header = MessageHeader {
             kind: if over_blob_threshold || is_blob_rewrite {
@@ -311,94 +277,37 @@ impl IoBufs {
                 MessageKind::Inline
             },
             lsn,
-            len: buf.len(),
-            crc16,
+            len: to_reserve.len(),
+            crc32: 0,
         };
 
         let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
 
-        let mut out = vec![0; MSG_HEADER_LEN + buf.len()];
         unsafe {
             std::ptr::copy_nonoverlapping(
                 header_bytes.as_ptr(),
-                out.as_mut_ptr(),
+                out_buf.as_mut_ptr(),
                 MSG_HEADER_LEN,
             );
             std::ptr::copy_nonoverlapping(
-                buf.as_ptr(),
-                out[MSG_HEADER_LEN..].as_mut_ptr(),
-                buf.len(),
+                to_reserve.as_ptr(),
+                out_buf.as_mut_ptr().add(MSG_HEADER_LEN),
+                to_reserve.len(),
             );
-        }
-        Ok(out)
-    }
-
-    /// blocks until the specified log sequence number has
-    /// been made stable on disk
-    pub(crate) fn make_stable(&self, lsn: Lsn) -> Result<(), ()> {
-        let _measure = Measure::new(&M.make_stable);
-        let iobufs = &self.0;
-
-        // NB before we write the 0th byte of the file, stable  is -1
-        while self.stable() < lsn {
-            let idx = self.idx();
-            let header = iobufs.bufs[idx].get_header();
-            if offset(header) == 0 || is_sealed(header) {
-                // nothing to write, don't bother sealing
-                // current IO buffer.
-            } else {
-                self.maybe_seal_and_write_iobuf(idx, header, false)?;
-                continue;
-            }
-
-            // block until another thread updates the stable lsn
-            let waiter = iobufs.intervals.lock().unwrap();
-
-            if self.stable() < lsn {
-                #[cfg(feature = "failpoints")]
-                {
-                    if iobufs._failpoint_crashing.load(SeqCst) {
-                        return Err(Error::FailPoint);
-                    }
-                }
-                trace!(
-                    "waiting on cond var for make_stable({})",
-                    lsn
-                );
-
-                let _waiter =
-                    iobufs.interval_updated.wait(waiter).unwrap();
-            } else {
-                trace!("make_stable({}) returning", lsn);
-                break;
-            }
         }
 
         Ok(())
     }
 
-    /// Called by users who wish to force the current buffer
-    /// to flush some pending writes.
-    pub(super) fn flush(&self) -> Result<(), ()> {
-        let max_reserved_lsn =
-            self.0.max_reserved_lsn.load(SeqCst) as Lsn;
-        self.make_stable(max_reserved_lsn)
-    }
-
-    // ensure self.max_reserved_lsn is set to this Lsn
-    // or greater, for use in correct calls to flush.
-    fn bump_max_reserved_lsn(&self, lsn: Lsn) {
-        let mut current =
-            self.0.max_reserved_lsn.load(SeqCst) as InnerLsn;
+    // ensure self.max_reserved_lsn is set to this Lsn or greater
+    pub(crate) fn bump_max_reserved_lsn(&self, lsn: Lsn) {
+        let mut current = self.max_reserved_lsn.load(SeqCst);
         loop {
-            if current >= lsn as InnerLsn {
+            if current >= lsn {
                 return;
             }
-            let last = self.0.max_reserved_lsn.compare_and_swap(
-                current,
-                lsn as InnerLsn,
-                SeqCst,
-            );
+            let last =
+                self.max_reserved_lsn.compare_and_swap(current, lsn, SeqCst);
             if last == current {
                 // we succeeded.
                 return;
@@ -407,543 +316,34 @@ impl IoBufs {
         }
     }
 
-    /// Called by Reservation on termination (completion or abort).
-    /// Handles departure from shared state, and possibly writing
-    /// the buffer to stable storage if necessary.
-    pub(super) fn exit_reservation(
-        &self,
-        idx: usize,
-    ) -> Result<(), ()> {
-        let iobufs = &self.0;
-        let iobuf = &iobufs.bufs[idx];
-        let mut header = iobuf.get_header();
-
-        // Decrement writer count, retrying until successful.
-        let backoff = Backoff::new();
+    // ensure self.max_header_stable_lsn is set to this Lsn or greater
+    pub(crate) fn bump_max_header_stable_lsn(&self, lsn: Lsn) {
+        let mut current = self.max_header_stable_lsn.load(SeqCst);
         loop {
-            let new_hv = decr_writers(header);
-            match iobuf.cas_header(header, new_hv) {
-                Ok(new) => {
-                    header = new;
-                    break;
-                }
-                Err(new) => {
-                    // we failed to decr, retry
-                    header = new;
-                    backoff.spin();
-                }
+            if current >= lsn {
+                return;
             }
-        }
-
-        // Succeeded in decrementing writers, if we decremented writn
-        // to 0 and it's sealed then we should write it to storage.
-        if n_writers(header) == 0 && is_sealed(header) {
-            if let Some(e) = self.0.config.global_error() {
-                return Err(e);
+            let last = self
+                .max_header_stable_lsn
+                .compare_and_swap(current, lsn, SeqCst);
+            if last == current {
+                // we succeeded.
+                return;
             }
-            if let Some(ref thread_pool) = iobufs.config.thread_pool {
-                trace!("asynchronously writing index {} to log from exit_reservation", idx);
-                let iobufs = self.clone();
-                thread_pool.spawn(move || {
-                    if let Err(e) = iobufs.write_to_log(idx) {
-                        error!("hit error while writing segment {}: {:?}", idx, e);
-                        iobufs.0.config.set_global_error(e);
-                    }
-                });
-                Ok(())
-            } else {
-                trace!("synchronously writing index {} to log from exit_reservation", idx);
-                self.write_to_log(idx)
-            }
-        } else {
-            Ok(())
-        }
-    }
-
-    // Attempt to seal the current IO buffer, possibly
-    // writing it to disk if there are no other writers
-    // operating on it.
-    fn maybe_seal_and_write_iobuf(
-        &self,
-        idx: usize,
-        header: Header,
-        from_reserve: bool,
-    ) -> Result<(), ()> {
-        let iobufs = &self.0;
-        let iobuf = &iobufs.bufs[idx];
-
-        if is_sealed(header) {
-            // this buffer is already sealed. nothing to do here.
-            return Ok(());
-        }
-
-        // NB need to do this before CAS because it can get
-        // written and reset by another thread afterward
-        let lid = iobuf.get_lid();
-        let lsn = iobuf.get_lsn();
-        let capacity = iobuf.get_capacity();
-        let io_buf_size = iobufs.config.io_buf_size;
-
-        if offset(header) as usize > capacity {
-            // a race happened, nothing we can do
-            return Ok(());
-        }
-
-        let sealed = mk_sealed(header);
-        let res_len = offset(sealed) as usize;
-
-        let maxed = res_len == capacity;
-
-        let worked = iobuf.linearized(|| {
-            if iobuf.cas_header(header, sealed).is_err() {
-                // cas failed, don't try to continue
-                return false;
-            }
-
-            trace!("{} sealed", idx);
-
-            if from_reserve || maxed {
-                // NB we linearize this together with sealing
-                // the header here to guarantee that in write_to_log,
-                // which may be executing as soon as the seal is set
-                // by another thread, the thread that calls
-                // iobuf.get_maxed() is linearized with this one!
-                trace!("setting maxed to true for idx {}", idx);
-                iobuf.set_maxed(true);
-            }
-            true
-        });
-        if !worked {
-            return Ok(());
-        }
-
-        assert!(
-            capacity + SEG_HEADER_LEN >= res_len,
-            "res_len of {} higher than buffer capacity {}",
-            res_len,
-            capacity
-        );
-
-        let max = std::usize::MAX as LogId;
-
-        assert_ne!(
-            lid, max,
-            "sealing something that should never have \
-             been claimed (idx {})\n{:?}",
-            idx, self
-        );
-
-        // open new slot
-        let mut next_lsn = lsn;
-
-        let measure_assign_offset = Measure::new(&M.assign_offset);
-
-        let next_offset = if from_reserve || maxed {
-            // roll lsn to the next offset
-            let lsn_idx = lsn / io_buf_size as Lsn;
-            next_lsn = (lsn_idx + 1) * io_buf_size as Lsn;
-
-            // mark unused as clear
-            debug!(
-                "rolling to new segment after clearing {}-{}",
-                lid,
-                lid + res_len as LogId,
-            );
-
-            let ret = self.with_sa(|sa| sa.next(next_lsn));
-            #[cfg(feature = "failpoints")]
-            {
-                if let Err(Error::FailPoint) = ret {
-                    iobufs._failpoint_crashing.store(true, SeqCst);
-                    // wake up any waiting threads so they don't stall forever
-                    iobufs.interval_updated.notify_all();
-                }
-            }
-            ret?
-        } else {
-            debug!(
-                "advancing offset within the current segment from {} to {}",
-                lid,
-                lid + res_len as LogId
-            );
-            next_lsn += res_len as Lsn;
-
-            lid + res_len as LogId
-        };
-
-        let next_idx = (idx + 1) % iobufs.config.io_bufs;
-        let next_iobuf = &iobufs.bufs[next_idx];
-
-        // NB we spin on this CAS because the next iobuf may not actually
-        // be written to disk yet! (we've lapped the writer in the iobuf
-        // ring buffer)
-        let measure_assign_spinloop =
-            Measure::new(&M.assign_spinloop);
-        let backoff = Backoff::new();
-        while next_iobuf.cas_lid(max, next_offset).is_err() {
-            backoff.snooze();
-
-            #[cfg(feature = "failpoints")]
-            {
-                if self
-                    .0
-                    ._failpoint_crashing
-                    .load(std::sync::atomic::Ordering::Relaxed)
-                {
-                    // panic!("propagating failpoint");
-                    return Err(Error::FailPoint);
-                }
-            }
-        }
-        drop(measure_assign_spinloop);
-        trace!("{} log set to {}", next_idx, next_offset);
-
-        // NB as soon as the "sealed" bit is 0, this allows new threads
-        // to start writing into this buffer, so do that after it's all
-        // set up. expect this thread to block until the buffer completes
-        // its entire lifecycle as soon as we do that.
-        if from_reserve || maxed {
-            next_iobuf.set_capacity(io_buf_size - SEG_TRAILER_LEN);
-            next_iobuf.store_segment_header(sealed, next_lsn);
-        } else {
-            let new_cap = capacity - res_len;
-            assert_ne!(new_cap, 0);
-            next_iobuf.set_capacity(new_cap);
-            next_iobuf.set_lsn(next_lsn);
-            let last_salt = salt(sealed);
-            let new_salt = bump_salt(last_salt);
-            next_iobuf.set_header(new_salt);
-        }
-
-        trace!("{} zeroed header", next_idx);
-
-        // we acquire this mutex to guarantee that any threads that
-        // are going to wait on the condition variable will observe
-        // the change.
-        debug_delay();
-        let _ = iobufs.buf_mu.lock().unwrap();
-
-        // communicate to other threads that we have advanced an IO buffer.
-        debug_delay();
-        let _current_buf =
-            iobufs.current_buf.fetch_add(1, SeqCst) + 1;
-        trace!(
-            "{} current_buf",
-            _current_buf % iobufs.config.io_bufs
-        );
-
-        // let any threads that are blocked on buf_mu know about the
-        // updated counter.
-        debug_delay();
-        iobufs.buf_updated.notify_all();
-
-        drop(measure_assign_offset);
-
-        // if writers is 0, it's our responsibility to write the buffer.
-        if n_writers(sealed) == 0 {
-            if let Some(e) = self.0.config.global_error() {
-                return Err(e);
-            }
-            if let Some(ref thread_pool) = iobufs.config.thread_pool {
-                trace!("asynchronously writing index {} to log from maybe_seal", idx);
-                let iobufs = self.clone();
-                thread_pool.spawn(move || {
-                    if let Err(e) = iobufs.write_to_log(idx) {
-                        error!("hit error while writing segment {}: {:?}", idx, e);
-                        iobufs.0.config.set_global_error(e);
-                    }
-                });
-                Ok(())
-            } else {
-                trace!("synchronously writing index {} to log from maybe_seal", idx);
-                self.write_to_log(idx)
-            }
-        } else {
-            Ok(())
-        }
-    }
-
-    /// Tries to claim a reservation for writing a buffer to a
-    /// particular location in stable storge, which may either be
-    /// completed or aborted later. Useful for maintaining
-    /// linearizability across CAS operations that may need to
-    /// persist part of their operation.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the desired reservation is greater than the
-    /// io buffer size minus the size of a segment header +
-    /// a segment footer + a message header.
-    pub(super) fn reserve<'a>(
-        &'a self,
-        raw_buf: Vec<u8>,
-    ) -> Result<Reservation<'a>, ()> {
-        self.reserve_inner(raw_buf, false)
-    }
-
-    /// Reserve a replacement buffer for a previously written
-    /// blob write. This ensures the message header has the
-    /// proper blob flag set.
-    pub(super) fn reserve_blob<'a>(
-        &'a self,
-        blob_ptr: BlobPointer,
-    ) -> Result<Reservation<'a>, ()> {
-        let lsn_buf: [u8; size_of::<BlobPointer>()] =
-            u64_to_arr(blob_ptr as u64);
-
-        self.reserve_inner(lsn_buf.to_vec(), true)
-    }
-
-    fn reserve_inner<'a>(
-        &'a self,
-        raw_buf: Vec<u8>,
-        is_blob_rewrite: bool,
-    ) -> Result<Reservation<'a>, ()> {
-        let _measure = Measure::new(&M.reserve);
-
-        let iobufs = &self.0;
-        let n_io_bufs = iobufs.config.io_bufs;
-
-        // right shift 32 on 32-bit pointer systems panics
-        #[cfg(target_pointer_width = "64")]
-        assert_eq!((raw_buf.len() + MSG_HEADER_LEN) >> 32, 0);
-
-        #[cfg(feature = "compression")]
-        let buf = if iobufs.config.use_compression {
-            let _measure = Measure::new(&M.compress);
-            compress(&*raw_buf, iobufs.config.compression_factor)
-                .unwrap()
-        } else {
-            raw_buf
-        };
-
-        #[cfg(not(feature = "compression"))]
-        let buf = raw_buf;
-
-        let total_buf_len = MSG_HEADER_LEN + buf.len();
-
-        let max_overhead =
-            std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN);
-
-        let max_buf_size = (iobufs.config.io_buf_size
-            / MINIMUM_ITEMS_PER_SEGMENT)
-            - max_overhead;
-
-        let over_blob_threshold = total_buf_len > max_buf_size;
-
-        let inline_buf_len = if over_blob_threshold {
-            MSG_HEADER_LEN + size_of::<Lsn>()
-        } else {
-            total_buf_len
-        };
-
-        trace!("reserving buf of len {}", inline_buf_len);
-
-        let mut printed = false;
-        macro_rules! trace_once {
-            ($($msg:expr),*) => {
-                if !printed {
-                    trace!($($msg),*);
-                    printed = true;
-                }};
-        }
-
-        let backoff = Backoff::new();
-
-        loop {
-            M.log_reservation_attempted();
-            #[cfg(feature = "failpoints")]
-            {
-                if self
-                    .0
-                    ._failpoint_crashing
-                    .load(std::sync::atomic::Ordering::Relaxed)
-                {
-                    return Err(Error::FailPoint);
-                }
-            }
-
-            debug_delay();
-            let written_bufs = iobufs.written_bufs.load(SeqCst);
-            debug_delay();
-            let current_buf = iobufs.current_buf.load(SeqCst);
-            let idx = current_buf % n_io_bufs;
-
-            if written_bufs > current_buf {
-                // This can happen because a reservation can finish up
-                // before the sealing thread gets around to bumping
-                // current_buf.
-                trace_once!("written ahead of sealed, spinning");
-                backoff.spin();
-                continue;
-            }
-
-            if current_buf - written_bufs >= n_io_bufs {
-                // if written is too far behind, we need to
-                // spin while it catches up to avoid overlap
-                trace_once!(
-                    "old io buffer not written yet, spinning"
-                );
-                if backoff.is_completed() {
-                    // use a condition variable to wait until
-                    // we've updated the written_bufs counter.
-                    let _measure =
-                        Measure::new(&M.reserve_written_condvar_wait);
-
-                    let mut buf_mu = iobufs.buf_mu.lock().unwrap();
-                    while written_bufs
-                        == iobufs.written_bufs.load(SeqCst)
-                    {
-                        buf_mu =
-                            iobufs.buf_updated.wait(buf_mu).unwrap();
-                    }
-                } else {
-                    backoff.snooze();
-                }
-
-                continue;
-            }
-
-            // load current header value
-            let iobuf = &iobufs.bufs[idx];
-            let header = iobuf.get_header();
-
-            // skip if already sealed
-            if is_sealed(header) {
-                // already sealed, start over and hope cur
-                // has already been bumped by sealer.
-                trace_once!("io buffer already sealed, spinning");
-
-                if backoff.is_completed() {
-                    // use a condition variable to wait until
-                    // we've updated the current_buf counter.
-                    let _measure =
-                        Measure::new(&M.reserve_current_condvar_wait);
-                    let mut buf_mu = iobufs.buf_mu.lock().unwrap();
-                    while current_buf
-                        == iobufs.current_buf.load(SeqCst)
-                    {
-                        buf_mu =
-                            iobufs.buf_updated.wait(buf_mu).unwrap();
-                    }
-                } else {
-                    backoff.snooze();
-                }
-
-                continue;
-            }
-
-            // try to claim space
-            let buf_offset = offset(header);
-            let prospective_size =
-                buf_offset as usize + inline_buf_len;
-            let would_overflow =
-                prospective_size > iobuf.get_capacity();
-            if would_overflow {
-                // This buffer is too full to accept our write!
-                // Try to seal the buffer, and maybe write it if
-                // there are zero writers.
-                trace_once!("io buffer too full, spinning");
-                self.maybe_seal_and_write_iobuf(idx, header, true)?;
-                backoff.spin();
-                continue;
-            }
-
-            // attempt to claim by incrementing an unsealed header
-            let bumped_offset =
-                bump_offset(header, inline_buf_len as Header);
-
-            // check for maxed out IO buffer writers
-            if n_writers(bumped_offset) == MAX_WRITERS {
-                trace_once!(
-                "spinning because our buffer has {} writers already",
-                MAX_WRITERS
-            );
-                backoff.snooze();
-                continue;
-            }
-
-            let claimed = incr_writers(bumped_offset);
-            assert!(!is_sealed(claimed));
-
-            if iobuf.cas_header(header, claimed).is_err() {
-                // CAS failed, start over
-                trace_once!(
-                    "CAS failed while claiming buffer slot, spinning"
-                );
-                backoff.spin();
-                continue;
-            }
-
-            // if we're giving out a reservation,
-            // the writer count should be positive
-            assert_ne!(n_writers(claimed), 0);
-
-            let lid = iobuf.get_lid();
-            assert_ne!(
-                lid as usize,
-                std::usize::MAX,
-                "fucked up on idx {}\n{:?}",
-                idx,
-                self
-            );
-
-            let out_buf =
-                unsafe { (*iobuf.buf.get()).as_mut_slice() };
-
-            let res_start = buf_offset as usize;
-            let res_end = res_start + inline_buf_len;
-            let destination = &mut (out_buf)[res_start..res_end];
-
-            let reservation_offset = lid + buf_offset;
-            let reservation_lsn = iobuf.get_lsn() + buf_offset as Lsn;
-
-            trace!(
-                "reserved {} bytes at lsn {} lid {}",
-                inline_buf_len,
-                reservation_lsn,
-                reservation_offset,
-            );
-
-            self.bump_max_reserved_lsn(reservation_lsn);
-
-            assert!(!(over_blob_threshold && is_blob_rewrite));
-
-            let encapsulated_buf = self.encapsulate(
-                buf,
-                reservation_lsn,
-                over_blob_threshold,
-                is_blob_rewrite,
-            )?;
-
-            M.log_reservation_success();
-
-            return Ok(Reservation {
-                idx,
-                iobufs: &self,
-                data: encapsulated_buf,
-                destination,
-                flushed: false,
-                lsn: reservation_lsn,
-                lid: reservation_offset,
-                is_blob: over_blob_threshold || is_blob_rewrite,
-                is_blob_rewrite,
-            });
+            current = last;
         }
     }
 
     // Write an IO buffer's data to stable storage and set up the
     // next IO buffer for writing.
-    fn write_to_log(&self, idx: usize) -> Result<(), ()> {
-        let iobufs = &self.0;
+    pub(crate) fn write_to_log(&self, iobuf: &IoBuf) -> Result<()> {
         let _measure = Measure::new(&M.write_to_log);
-        let iobuf = &iobufs.bufs[idx];
         let header = iobuf.get_header();
-        let lid = iobuf.get_lid();
-        let base_lsn = iobuf.get_lsn();
-        let capacity = iobuf.get_capacity();
+        let lid = iobuf.lid;
+        let base_lsn = iobuf.lsn;
+        let capacity = iobuf.capacity;
 
-        let io_buf_size = iobufs.config.io_buf_size;
+        let io_buf_size = self.config.io_buf_size;
 
         assert_eq!(
             (lid % io_buf_size as LogId) as Lsn,
@@ -951,34 +351,34 @@ impl IoBufs {
         );
 
         assert_ne!(
-            lid as usize,
-            std::usize::MAX,
+            lid,
+            LogId::max_value(),
             "created reservation for uninitialized slot",
         );
 
         assert!(is_sealed(header));
 
-        let res_len = offset(header) as usize;
+        let bytes_to_write = offset(header);
 
         let maxed = iobuf.linearized(|| iobuf.get_maxed());
-        let unused_space = capacity - res_len;
-        let should_pad = unused_space >= MSG_HEADER_LEN;
+        let unused_space = capacity - bytes_to_write;
+        let should_pad = maxed && unused_space >= MSG_HEADER_LEN;
 
-        let total_len = if maxed && should_pad {
-            let offset = offset(header) as usize;
+        // a pad is a null message written to the end of a buffer
+        // to signify that nothing else will be written into it
+        if should_pad {
             let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
-            let pad_len = capacity - offset - MSG_HEADER_LEN;
+            let pad_len = capacity - bytes_to_write - MSG_HEADER_LEN;
 
             // take the crc of the random bytes already after where we
             // would place our header.
             let padding_bytes = vec![EVIL_BYTE; pad_len];
-            let crc16 = crc16_arr(&*padding_bytes);
 
             let header = MessageHeader {
                 kind: MessageKind::Pad,
-                lsn: base_lsn + offset as Lsn,
+                lsn: base_lsn + bytes_to_write as Lsn,
                 len: pad_len,
-                crc16,
+                crc32: 0,
             };
 
             let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
@@ -986,111 +386,65 @@ impl IoBufs {
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     header_bytes.as_ptr(),
-                    data[offset..].as_mut_ptr(),
+                    data.as_mut_ptr().add(bytes_to_write),
                     MSG_HEADER_LEN,
                 );
                 std::ptr::copy_nonoverlapping(
                     padding_bytes.as_ptr(),
-                    data[offset + MSG_HEADER_LEN..].as_mut_ptr(),
+                    data.as_mut_ptr().add(bytes_to_write + MSG_HEADER_LEN),
                     pad_len,
                 );
             }
 
-            capacity
-        } else {
-            res_len
-        };
+            let mut hasher = crc32fast::Hasher::new();
+            hasher.update(&padding_bytes);
+            hasher.update(&header_bytes);
+            let crc32 = hasher.finalize();
+            let crc32_arr = u32_to_arr(crc32 ^ 0xFFFF_FFFF);
+
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    crc32_arr.as_ptr(),
+                    data.as_mut_ptr().add(bytes_to_write + 13),
+                    std::mem::size_of::<u32>(),
+                );
+            }
+        }
+
+        let total_len = if maxed { capacity } else { bytes_to_write };
 
         let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
 
-        let f = &iobufs.config.file;
+        let f = &self.config.file;
         io_fail!(self, "buffer write");
         f.pwrite_all(&data[..total_len], lid)?;
         f.sync_all()?;
         io_fail!(self, "buffer write post");
 
-        // write a trailer if we're maxed
-        if maxed {
-            let segment_lsn =
-                base_lsn / io_buf_size as Lsn * io_buf_size as Lsn;
-            let segment_lid =
-                lid / io_buf_size as LogId * io_buf_size as LogId;
-
-            let trailer_overhang =
-                io_buf_size as Lsn - SEG_TRAILER_LEN as Lsn;
-
-            let trailer_lid = segment_lid + trailer_overhang as LogId;
-            let trailer_lsn = segment_lsn + trailer_overhang;
-
-            let trailer = SegmentTrailer {
-                lsn: trailer_lsn,
-                ok: true,
-            };
-
-            let trailer_bytes: [u8; SEG_TRAILER_LEN] = trailer.into();
-
-            io_fail!(self, "trailer write");
-            f.pwrite_all(&trailer_bytes, trailer_lid)?;
-            f.sync_all()?;
-            io_fail!(self, "trailer write post");
-
-            M.written_bytes.measure(SEG_TRAILER_LEN as f64);
-
-            iobuf.set_maxed(false);
-
-            debug!(
-                "wrote trailer at lid {} for lsn {}",
-                trailer_lid, trailer_lsn
-            );
-        } else {
-            trace!(
-                "not deactivating segment with lsn {}",
-                base_lsn / io_buf_size as Lsn * io_buf_size as Lsn
-            );
-        }
-
-        if total_len > 0 || maxed {
+        if total_len > 0 {
             let complete_len = if maxed {
-                let lsn_idx = base_lsn as usize / io_buf_size;
-                let next_seg_beginning = (lsn_idx + 1) * io_buf_size;
-                next_seg_beginning - base_lsn as usize
+                let lsn_idx = base_lsn / io_buf_size as Lsn;
+                let next_seg_beginning = (lsn_idx + 1) * io_buf_size as Lsn;
+                assert_usize(next_seg_beginning - base_lsn)
             } else {
                 total_len
             };
 
             debug!(
-                "wrote lsns {}-{} to disk at offsets {}-{} in buffer {}",
+                "wrote lsns {}-{} to disk at offsets {}-{}, maxed {} complete_len {}",
                 base_lsn,
                 base_lsn + total_len as Lsn - 1,
                 lid,
                 lid + total_len as LogId - 1,
-                idx
+                maxed,
+                complete_len
             );
             self.mark_interval(base_lsn, complete_len);
         }
 
         M.written_bytes.measure(total_len as f64);
 
-        // signal that this IO buffer is now uninitialized
-        let max = std::usize::MAX as LogId;
-        iobuf.set_lid(max);
-        trace!("{} log <- MAX", idx);
-
-        // we acquire this mutex to guarantee that any threads that
-        // are going to wait on the condition variable will observe
-        // the change.
-        debug_delay();
-        let _ = iobufs.buf_mu.lock().unwrap();
-
-        // communicate to other threads that we have written an IO buffer.
-        debug_delay();
-        let _written_bufs = iobufs.written_bufs.fetch_add(1, SeqCst);
-        trace!("{} written", _written_bufs % iobufs.config.io_bufs);
-
-        // let any threads that are blocked on buf_mu know about the
-        // updated counter.
-        debug_delay();
-        iobufs.buf_updated.notify_all();
+        self.bump_max_header_stable_lsn(iobuf.stored_max_stable_lsn);
 
         Ok(())
     }
@@ -1103,23 +457,22 @@ impl IoBufs {
     // been written yet! It's OK to use a mutex here because it is pretty
     // fast, compared to the other operations on shared state.
     fn mark_interval(&self, whence: Lsn, len: usize) {
-        trace!("mark_interval({}, {})", whence, len);
-        let iobufs = &self.0;
-        assert_ne!(
-            len,
-            0,
-            "mark_interval called with a zero-length range, starting from {}",
+        debug!("mark_interval({}, {})", whence, len);
+        assert!(
+            len > 0,
+            "mark_interval called with an empty length at {}",
             whence
         );
-        let mut intervals = iobufs.intervals.lock().unwrap();
-        let lsn_before = iobufs.stable_lsn.load(SeqCst) as Lsn;
+        let mut intervals = self.intervals.lock().unwrap();
+        let lsn_before = self.stable_lsn.load(SeqCst) as Lsn;
 
         let interval = (whence, whence + len as Lsn - 1);
 
         intervals.push(interval);
 
-        debug_assert!(
-            intervals.len() < 1000,
+        #[cfg(feature = "event_log")]
+        assert!(
+            intervals.len() < 10000,
             "intervals is getting crazy... {:?}",
             *intervals
         );
@@ -1133,8 +486,8 @@ impl IoBufs {
         let mut lsn_after = lsn_before;
 
         while let Some(&(low, high)) = intervals.last() {
-            assert_ne!(low, high);
-            let cur_stable = iobufs.stable_lsn.load(SeqCst) as Lsn;
+            assert!(low <= high);
+            let cur_stable = self.stable_lsn.load(SeqCst);
             assert!(
                 low > cur_stable,
                 "somehow, we marked offset {} stable while \
@@ -1144,9 +497,7 @@ impl IoBufs {
                 high
             );
             if cur_stable + 1 == low {
-                let old =
-                    iobufs.stable_lsn.swap(high as InnerLsn, SeqCst)
-                        as Lsn;
+                let old = self.stable_lsn.swap(high, SeqCst);
                 assert_eq!(
                     old, cur_stable,
                     "concurrent stable offset modification detected"
@@ -1161,14 +512,11 @@ impl IoBufs {
         }
 
         if len_before - intervals.len() > 100 {
-            debug!(
-                "large merge of {} intervals",
-                len_before - intervals.len()
-            );
+            debug!("large merge of {} intervals", len_before - intervals.len());
         }
 
         if updated {
-            iobufs.interval_updated.notify_all();
+            self.interval_updated.notify_all();
         }
 
         // NB we continue to hold the intervals mutex for
@@ -1176,13 +524,12 @@ impl IoBufs {
         // that we guarantee that we deactivate segments
         // in order of LSN.
         let logical_segment_before =
-            lsn_before / iobufs.config.io_buf_size as Lsn;
-        let logical_segment_after =
-            lsn_after / iobufs.config.io_buf_size as Lsn;
+            lsn_before / self.config.io_buf_size as Lsn;
+        let logical_segment_after = lsn_after / self.config.io_buf_size as Lsn;
         if logical_segment_before != logical_segment_after {
             self.with_sa(move |sa| {
                 for logical_segment in logical_segment_before..logical_segment_after {
-                    let segment_lsn = logical_segment * iobufs.config.io_buf_size as Lsn;
+                    let segment_lsn = logical_segment * self.config.io_buf_size as Lsn;
                     // transition this segment into deplete-only mode
                     trace!(
                         "deactivating segment with lsn {}",
@@ -1195,25 +542,233 @@ impl IoBufs {
             });
         }
     }
+
+    pub(super) fn current_iobuf(&self) -> Arc<IoBuf> {
+        self.iobuf.read().unwrap().clone()
+    }
 }
 
-impl Drop for IoBufs {
-    fn drop(&mut self) {
-        // don't do any more IO if we're simulating a crash
-        #[cfg(feature = "failpoints")]
-        {
-            if self.0._failpoint_crashing.load(SeqCst) {
-                return;
+/// Blocks until the specified log sequence number has
+/// been made stable on disk. Returns the number of
+/// bytes written.
+pub(crate) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Result<usize> {
+    let _measure = Measure::new(&M.make_stable);
+
+    // NB before we write the 0th byte of the file, stable  is -1
+    let first_stable = iobufs.stable();
+    if first_stable >= lsn {
+        return Ok(0);
+    }
+
+    let mut stable = first_stable;
+
+    while stable < lsn {
+        if let Err(e) = iobufs.config.global_error() {
+            iobufs.interval_updated.notify_all();
+            return Err(e);
+        }
+
+        let iobuf = iobufs.current_iobuf();
+        let header = iobuf.get_header();
+        if offset(header) == 0 || is_sealed(header) || iobuf.lsn > lsn {
+            // nothing to write, don't bother sealing
+            // current IO buffer.
+        } else {
+            maybe_seal_and_write_iobuf(iobufs, &iobuf, header, false)?;
+        }
+
+        // block until another thread updates the stable lsn
+        let waiter = iobufs.intervals.lock().unwrap();
+
+        stable = iobufs.stable();
+        if stable < lsn {
+            trace!("waiting on cond var for make_stable({})", lsn);
+
+            let _ = iobufs.interval_updated.wait(waiter).unwrap();
+        } else {
+            trace!("make_stable({}) returning", lsn);
+            break;
+        }
+    }
+
+    Ok(assert_usize(stable - first_stable))
+}
+
+/// Called by users who wish to force the current buffer
+/// to flush some pending writes. Returns the number
+/// of bytes written during this call.
+pub(super) fn flush(iobufs: &Arc<IoBufs>) -> Result<usize> {
+    let max_reserved_lsn = iobufs.max_reserved_lsn.load(SeqCst) as Lsn;
+    make_stable(iobufs, max_reserved_lsn)
+}
+
+/// Attempt to seal the current IO buffer, possibly
+/// writing it to disk if there are no other writers
+/// operating on it.
+pub(crate) fn maybe_seal_and_write_iobuf(
+    iobufs: &Arc<IoBufs>,
+    iobuf: &Arc<IoBuf>,
+    header: Header,
+    from_reserve: bool,
+) -> Result<()> {
+    if is_sealed(header) {
+        // this buffer is already sealed. nothing to do here.
+        return Ok(());
+    }
+
+    // NB need to do this before CAS because it can get
+    // written and reset by another thread afterward
+    let lid = iobuf.lid;
+    let lsn = iobuf.lsn;
+    let capacity = iobuf.capacity;
+    let io_buf_size = iobufs.config.io_buf_size;
+
+    if offset(header) > capacity {
+        // a race happened, nothing we can do
+        return Ok(());
+    }
+
+    let sealed = mk_sealed(header);
+    let res_len = offset(sealed);
+
+    let maxed = from_reserve || capacity - res_len < MSG_HEADER_LEN;
+
+    let worked = iobuf.linearized(|| {
+        if iobuf.cas_header(header, sealed).is_err() {
+            // cas failed, don't try to continue
+            return false;
+        }
+
+        trace!("sealed iobuf with lsn {}", lsn);
+
+        if maxed {
+            // NB we linearize this together with sealing
+            // the header here to guarantee that in write_to_log,
+            // which may be executing as soon as the seal is set
+            // by another thread, the thread that calls
+            // iobuf.get_maxed() is linearized with this one!
+            trace!("setting maxed to true for iobuf with lsn {}", lsn);
+            iobuf.set_maxed(true);
+        }
+        true
+    });
+    if !worked {
+        return Ok(());
+    }
+
+    assert!(
+        capacity + SEG_HEADER_LEN >= res_len,
+        "res_len of {} higher than buffer capacity {}",
+        res_len,
+        capacity
+    );
+
+    assert_ne!(
+        lid,
+        LogId::max_value(),
+        "sealing something that should never have \
+         been claimed (iobuf lsn {})\n{:?}",
+        lsn,
+        iobufs
+    );
+
+    // open new slot
+    let mut next_lsn = lsn;
+
+    let measure_assign_offset = Measure::new(&M.assign_offset);
+
+    let next_offset = if maxed {
+        // roll lsn to the next offset
+        let lsn_idx = lsn / io_buf_size as Lsn;
+        next_lsn = (lsn_idx + 1) * io_buf_size as Lsn;
+
+        // mark unused as clear
+        debug!(
+            "rolling to new segment after clearing {}-{}",
+            lid,
+            lid + res_len as LogId,
+        );
+
+        match iobufs.with_sa(|sa| sa.next(next_lsn)) {
+            Ok(ret) => ret,
+            Err(e) => {
+                iobufs.interval_updated.notify_all();
+                return Err(e);
             }
         }
+    } else {
+        debug!(
+            "advancing offset within the current segment from {} to {}",
+            lid,
+            lid + res_len as LogId
+        );
+        next_lsn += res_len as Lsn;
 
-        if let Err(e) = self.flush() {
-            error!("failed to flush from IoBufs::drop: {}", e);
+        lid + res_len as LogId
+    };
+
+    let mut next_iobuf = IoBuf::new(io_buf_size);
+    next_iobuf.lid = next_offset;
+
+    // NB as soon as the "sealed" bit is 0, this allows new threads
+    // to start writing into this buffer, so do that after it's all
+    // set up. expect this thread to block until the buffer completes
+    // its entire lifecycle as soon as we do that.
+    if maxed {
+        next_iobuf.capacity = io_buf_size;
+        next_iobuf.store_segment_header(sealed, next_lsn, iobufs.stable());
+    } else {
+        let new_cap = capacity - res_len;
+        assert_ne!(new_cap, 0);
+        next_iobuf.capacity = new_cap;
+        next_iobuf.lsn = next_lsn;
+        let last_salt = salt(sealed);
+        let new_salt = bump_salt(last_salt);
+        next_iobuf.set_header(new_salt);
+    }
+
+    // we acquire this mutex to guarantee that any threads that
+    // are going to wait on the condition variable will observe
+    // the change.
+    debug_delay();
+    let mut mu = iobufs.iobuf.write().unwrap();
+    *mu = Arc::new(next_iobuf);
+    drop(mu);
+
+    drop(measure_assign_offset);
+
+    // if writers is 0, it's our responsibility to write the buffer.
+    if n_writers(sealed) == 0 {
+        if let Err(e) = iobufs.config.global_error() {
+            iobufs.interval_updated.notify_all();
+            return Err(e);
         }
-
-        self.0.config.file.sync_all().unwrap();
-
-        debug!("IoBufs dropped");
+        if let Some(ref thread_pool) = iobufs.config.thread_pool {
+            trace!(
+                "asynchronously writing iobuf with lsn {} to log from maybe_seal",
+                lsn
+            );
+            let iobufs = iobufs.clone();
+            let iobuf = iobuf.clone();
+            thread_pool.spawn(move || {
+                if let Err(e) = iobufs.write_to_log(&iobuf) {
+                    error!(
+                        "hit error while writing iobuf with lsn {}: {:?}",
+                        lsn, e
+                    );
+                    iobufs.config.set_global_error(e);
+                }
+            });
+            Ok(())
+        } else {
+            trace!(
+                "synchronously writing iobuf with lsn {} to log from maybe_seal",
+                lsn
+            );
+            iobufs.write_to_log(iobuf)
+        }
+    } else {
+        Ok(())
     }
 }
 
@@ -1222,16 +777,7 @@ impl Debug for IoBufs {
         &self,
         formatter: &mut fmt::Formatter<'_>,
     ) -> std::result::Result<(), fmt::Error> {
-        let iobufs = &self.0;
-        debug_delay();
-        let current_buf = iobufs.current_buf.load(SeqCst);
-        debug_delay();
-        let written_bufs = iobufs.written_bufs.load(SeqCst);
-
-        formatter.write_fmt(format_args!(
-            "IoBufs {{ sealed: {}, written: {}, bufs: {:?} }}",
-            current_buf, written_bufs, iobufs.bufs
-        ))
+        formatter.write_fmt(format_args!("IoBufs {{ buf: {:?} }}", self.iobuf))
     }
 }
 
@@ -1244,7 +790,7 @@ impl Debug for IoBuf {
         formatter.write_fmt(format_args!(
             "\n\tIoBuf {{ lid: {}, n_writers: {}, offset: \
              {}, sealed: {} }}",
-            self.get_lid(),
+            self.lid,
             n_writers(header),
             offset(header),
             is_sealed(header)
@@ -1253,21 +799,22 @@ impl Debug for IoBuf {
 }
 
 impl IoBuf {
-    fn new(buf_size: usize) -> IoBuf {
+    pub(crate) fn new(buf_size: usize) -> IoBuf {
         IoBuf {
             buf: UnsafeCell::new(vec![0; buf_size]),
-            header: AtomicUsize::new(0),
-            lid: AtomicUsize::new(std::usize::MAX),
-            lsn: AtomicUsize::new(0),
-            capacity: AtomicUsize::new(0),
+            header: CachePadded::new(AtomicU64::new(0)),
+            lid: LogId::max_value(),
+            lsn: 0,
+            capacity: 0,
             maxed: AtomicBool::new(false),
             linearizer: Mutex::new(()),
+            stored_max_stable_lsn: 0,
         }
     }
 
     // use this for operations on an IoBuf that must be
     // linearized together, and can't fit in the header!
-    fn linearized<F, B>(&self, f: F) -> B
+    pub(crate) fn linearized<F, B>(&self, f: F) -> B
     where
         F: FnOnce() -> B,
     {
@@ -1279,15 +826,24 @@ impl IoBuf {
     // We write a new segment header to the beginning of the buffer
     // for assistance during recovery. The caller is responsible
     // for ensuring that the IoBuf's capacity has been set properly.
-    fn store_segment_header(&self, last: Header, lsn: Lsn) {
+    pub(crate) fn store_segment_header(
+        &mut self,
+        last: Header,
+        lsn: Lsn,
+        highest_known_stable_lsn: Lsn,
+    ) {
         debug!("storing lsn {} in beginning of buffer", lsn);
-        assert!(
-            self.get_capacity() >= SEG_HEADER_LEN + SEG_TRAILER_LEN
-        );
+        assert!(self.capacity >= SEG_HEADER_LEN);
 
-        self.set_lsn(lsn);
+        self.stored_max_stable_lsn = highest_known_stable_lsn;
 
-        let header = SegmentHeader { lsn, ok: true };
+        self.lsn = lsn;
+
+        let header = SegmentHeader {
+            lsn,
+            highest_known_stable_lsn,
+            ok: true,
+        };
         let header_bytes: [u8; SEG_HEADER_LEN] = header.into();
 
         unsafe {
@@ -1301,89 +857,37 @@ impl IoBuf {
         // ensure writes to the buffer land after our header.
         let last_salt = salt(last);
         let new_salt = bump_salt(last_salt);
-        let bumped = bump_offset(new_salt, SEG_HEADER_LEN as Header);
+        let bumped = bump_offset(new_salt, SEG_HEADER_LEN);
         self.set_header(bumped);
     }
 
-    fn set_capacity(&self, cap: usize) {
-        debug_delay();
-        self.capacity.store(cap, SeqCst);
-    }
-
-    fn get_capacity(&self) -> usize {
-        debug_delay();
-        self.capacity.load(SeqCst)
-    }
-
-    fn set_lsn(&self, lsn: Lsn) {
-        debug_delay();
-        self.lsn.store(lsn as usize, SeqCst);
-    }
-
-    fn set_maxed(&self, maxed: bool) {
+    pub(crate) fn set_maxed(&self, maxed: bool) {
         debug_delay();
         self.maxed.store(maxed, SeqCst);
     }
 
-    fn get_maxed(&self) -> bool {
+    pub(crate) fn get_maxed(&self) -> bool {
         debug_delay();
         self.maxed.load(SeqCst)
     }
 
-    fn get_lsn(&self) -> Lsn {
+    pub(crate) fn get_header(&self) -> Header {
         debug_delay();
-        self.lsn.load(SeqCst) as Lsn
+        self.header.load(SeqCst)
     }
 
-    fn set_lid(&self, offset: LogId) {
+    pub(crate) fn set_header(&self, new: Header) {
         debug_delay();
-        self.lid.store(offset as usize, SeqCst);
+        self.header.store(new, SeqCst);
     }
 
-    fn get_lid(&self) -> LogId {
-        debug_delay();
-        self.lid.load(SeqCst) as LogId
-    }
-
-    fn get_header(&self) -> Header {
-        debug_delay();
-        self.header.load(SeqCst) as Header
-    }
-
-    fn set_header(&self, new: Header) {
-        debug_delay();
-        self.header.store(new as usize, SeqCst);
-    }
-
-    fn cas_header(
+    pub(crate) fn cas_header(
         &self,
         old: Header,
         new: Header,
     ) -> std::result::Result<Header, Header> {
         debug_delay();
-        let res = self.header.compare_and_swap(
-            old as usize,
-            new as usize,
-            SeqCst,
-        ) as Header;
-        if res == old {
-            Ok(new)
-        } else {
-            Err(res)
-        }
-    }
-
-    fn cas_lid(
-        &self,
-        old: LogId,
-        new: LogId,
-    ) -> std::result::Result<LogId, LogId> {
-        debug_delay();
-        let res = self.lid.compare_and_swap(
-            old as usize,
-            new as usize,
-            SeqCst,
-        ) as LogId;
+        let res = self.header.compare_and_swap(old, new, SeqCst);
         if res == old {
             Ok(new)
         } else {
@@ -1392,50 +896,45 @@ impl IoBuf {
     }
 }
 
-#[cfg_attr(not(feature = "no_inline"), inline)]
-fn is_sealed(v: Header) -> bool {
+pub(crate) const fn is_sealed(v: Header) -> bool {
     v & 1 << 31 == 1 << 31
 }
 
-#[cfg_attr(not(feature = "no_inline"), inline)]
-fn mk_sealed(v: Header) -> Header {
+pub(crate) const fn mk_sealed(v: Header) -> Header {
     v | 1 << 31
 }
 
-#[cfg_attr(not(feature = "no_inline"), inline)]
-fn n_writers(v: Header) -> Header {
+pub(crate) const fn n_writers(v: Header) -> Header {
     v << 33 >> 57
 }
 
 #[cfg_attr(not(feature = "no_inline"), inline)]
-fn incr_writers(v: Header) -> Header {
+pub(crate) fn incr_writers(v: Header) -> Header {
     assert_ne!(n_writers(v), MAX_WRITERS);
     v + (1 << 24)
 }
 
 #[cfg_attr(not(feature = "no_inline"), inline)]
-fn decr_writers(v: Header) -> Header {
+pub(crate) fn decr_writers(v: Header) -> Header {
     assert_ne!(n_writers(v), 0);
     v - (1 << 24)
 }
 
-#[cfg_attr(not(feature = "no_inline"), inline)]
-fn offset(v: Header) -> Header {
-    v << 40 >> 40
+pub(crate) const fn offset(v: Header) -> usize {
+    let ret = v << 40 >> 40;
+    ret as usize
 }
 
 #[cfg_attr(not(feature = "no_inline"), inline)]
-fn bump_offset(v: Header, by: Header) -> Header {
+pub(crate) fn bump_offset(v: Header, by: usize) -> Header {
     assert_eq!(by >> 24, 0);
-    v + by
+    v + (by as Header)
 }
 
-#[cfg_attr(not(feature = "no_inline"), inline)]
-fn bump_salt(v: Header) -> Header {
+pub(crate) const fn bump_salt(v: Header) -> Header {
     (v + (1 << 32)) & 0xFFFF_FFFF_0000_0000
 }
 
-#[cfg_attr(not(feature = "no_inline"), inline)]
-fn salt(v: Header) -> Header {
+pub(crate) const fn salt(v: Header) -> Header {
     v >> 32 << 32
 }

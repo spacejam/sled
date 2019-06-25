@@ -1,19 +1,8 @@
 use super::*;
 
-// Explicitly use this so its use is tool-friendly.
-use super::LogReader;
-
 /// A pointer to a location on disk or an off-log blob.
 #[derive(
-    Debug,
-    Clone,
-    PartialOrd,
-    Ord,
-    Copy,
-    Eq,
-    PartialEq,
-    Serialize,
-    Deserialize,
+    Debug, Clone, PartialOrd, Ord, Copy, Eq, PartialEq, Serialize, Deserialize,
 )]
 pub enum DiskPtr {
     /// Points to a value stored in the single-file log.
@@ -45,15 +34,6 @@ impl DiskPtr {
         }
     }
 
-    pub(crate) fn inline(&self) -> LogId {
-        match self {
-            DiskPtr::Inline(l) => *l,
-            DiskPtr::Blob(_, _) => {
-                panic!("inline called on Blob disk pointer")
-            }
-        }
-    }
-
     pub(crate) fn blob(&self) -> (LogId, BlobPointer) {
         match self {
             DiskPtr::Blob(lid, ptr) => (*lid, *ptr),
@@ -67,31 +47,6 @@ impl DiskPtr {
     pub fn lid(&self) -> LogId {
         match self {
             DiskPtr::Blob(lid, _) | DiskPtr::Inline(lid) => *lid,
-        }
-    }
-
-    pub(crate) fn read(
-        &self,
-        config: &Config,
-    ) -> Result<Vec<u8>, ()> {
-        match self {
-            DiskPtr::Blob(_lid, ptr) => read_blob(*ptr, &config),
-            DiskPtr::Inline(lid) => {
-                let f = &config.file;
-
-                f.read_message(*lid, &config).map(|log_read| {
-                    log_read
-                        .inline()
-                        .expect(
-                            "call to DiskPtr::read with \
-                             an Inline pointer should result \
-                             in a valid Inline read. It's \
-                             possible the DiskPtr outlived \
-                             an outer guard.",
-                        )
-                        .1
-                })
-            }
         }
     }
 }

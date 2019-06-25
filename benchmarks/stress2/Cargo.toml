@@ -3,8 +3,10 @@ name = "stress2"
 version = "0.1.0"
 authors = ["Tyler Neely <t@jujit.su>"]
 publish = false
+edition = "2018"
 
 [profile.release]
+panic = 'abort'
 debug = true
 
 [features]
@@ -18,11 +20,14 @@ measure_allocs = ["sled/measure_allocs"]
 no_jemalloc = []
 
 [dependencies]
-serde = "1.0"
-serde_derive = "1.0"
 docopt = "1.0"
 env_logger = "0.5"
 rand = "0.4"
 sled = { path = "../../crates/sled" }
 jemallocator = "0.1"
 log = "0.4"
+color-backtrace = "0.1.3"
+
+[dependencies.serde]
+version = "1.0"
+features = ["derive"]

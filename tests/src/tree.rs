@@ -4,6 +4,7 @@ use quickcheck::{Arbitrary, Gen, RngCore};
 use rand::distributions::{Distribution, Gamma};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
+use pagecache::MAX_SPACE_AMPLIFICATION;
 use sled::*;
 
 #[derive(Clone, Ord, PartialOrd, Eq, PartialEq)]
@@ -48,6 +49,8 @@ impl RngCore for SledGen {
 }
 
 pub fn fuzz_then_shrink(buf: &[u8]) {
+    let use_compression = buf.get(0).unwrap_or(&0) % 2 == 0;
+
     let ops: Vec<Op> = buf
         .chunks(2)
         .map(|chunk| {
@@ -61,7 +64,7 @@ pub fn fuzz_then_shrink(buf: &[u8]) {
         .collect();
 
     match panic::catch_unwind(move || {
-        prop_tree_matches_btreemap(ops, 0, 100, false)
+        prop_tree_matches_btreemap(ops, 0, 100, false, use_compression)
     }) {
         Ok(_) => {}
         Err(_e) => panic!("TODO"),
@@ -84,9 +87,7 @@ impl Arbitrary for Key {
 
             let space = g.gen_range(0, gs) + 1;
 
-            let inner = (0..len)
-                .map(|_| g.gen_range(0, space) as u8)
-                .collect();
+            let inner = (0..len).map(|_| g.gen_range(0, space) as u8).collect();
 
             Key(inner)
         } else {
@@ -108,9 +109,7 @@ impl Arbitrary for Key {
                 .len()
                 .shrink()
                 .zip(std::iter::repeat(self.0.clone()))
-                .map(|(len, underlying)| {
-                    Key(underlying[..len].to_vec())
-                }),
+                .map(|(len, underlying)| Key(underlying[..len].to_vec())),
         )
     }
 }
@@ -163,21 +162,15 @@ impl Arbitrary for Op {
 
     fn shrink(&self) -> Box<Iterator<Item = Op>> {
         match *self {
-            Set(ref k, v) => {
-                Box::new(k.shrink().map(move |sk| Set(sk, v)))
-            }
-            Merge(ref k, v) => {
-                Box::new(k.shrink().map(move |k| Merge(k, v)))
-            }
+            Set(ref k, v) => Box::new(k.shrink().map(move |sk| Set(sk, v))),
+            Merge(ref k, v) => Box::new(k.shrink().map(move |k| Merge(k, v))),
             Get(ref k) => Box::new(k.shrink().map(Get)),
             GetLt(ref k) => Box::new(k.shrink().map(GetLt)),
             GetGt(ref k) => Box::new(k.shrink().map(GetGt)),
             Cas(ref k, old, new) => {
                 Box::new(k.shrink().map(move |k| Cas(k, old, new)))
             }
-            Scan(ref k, len) => {
-                Box::new(k.shrink().map(move |k| Scan(k, len)))
-            }
+            Scan(ref k, len) => Box::new(k.shrink().map(move |k| Scan(k, len))),
             Del(ref k) => Box::new(k.shrink().map(Del)),
             Restart => Box::new(vec![].into_iter()),
         }
@@ -212,6 +205,7 @@ pub fn prop_tree_matches_btreemap(
     blink_node_exponent: u8,
     snapshot_after: u8,
     flusher: bool,
+    use_compression: bool,
 ) -> bool {
     super::setup_logger();
 
@@ -219,15 +213,15 @@ pub fn prop_tree_matches_btreemap(
     let config = ConfigBuilder::new()
         .async_io(false)
         .temporary(true)
-        .snapshot_after_ops(snapshot_after as usize + 1)
+        .use_compression(use_compression)
+        .snapshot_after_ops(u64::from(snapshot_after) + 1)
         .flush_every_ms(if flusher { Some(1) } else { None })
         .io_buf_size(10000)
-        .blink_node_split_size(
-            1 << std::cmp::min(blink_node_exponent, 20),
-        )
+        .blink_node_split_size(1 << std::cmp::min(blink_node_exponent, 20))
         .cache_capacity(40)
         .cache_bits(0)
         .merge_operator(test_merge_operator)
+        .idgen_persist_interval(1)
         .build();
 
     let mut tree = sled::Db::start(config.clone()).unwrap();
@@ -236,8 +230,12 @@ pub fn prop_tree_matches_btreemap(
     for op in ops.into_iter() {
         match op {
             Set(k, v) => {
-                tree.set(&k.0, vec![0, v]).unwrap();
-                reference.insert(k.clone(), u16::from(v));
+                let old_actual = tree.set(&k.0, vec![0, v]).unwrap();
+                let old_reference = reference.insert(k.clone(), u16::from(v));
+                assert_eq!(
+                    old_actual.map(|v| bytes_to_u16(&*v)),
+                    old_reference
+                );
             }
             Merge(k, v) => {
                 tree.merge(&k.0, vec![v]).unwrap();
@@ -245,37 +243,38 @@ pub fn prop_tree_matches_btreemap(
                 *entry += u16::from(v);
             }
             Get(k) => {
-                let res1 = tree
-                    .get(&*k.0)
-                    .unwrap()
-                    .map(|v| bytes_to_u16(&*v));
+                let res1 = tree.get(&*k.0).unwrap().map(|v| bytes_to_u16(&*v));
                 let res2 = reference.get(&k).cloned();
                 assert_eq!(res1, res2);
             }
             GetLt(k) => {
-                let res1 = tree
-                    .get_lt(&*k.0)
-                    .unwrap()
-                    .map(|v| bytes_to_u16(&*v.1));
+                let res1 = tree.get_lt(&*k.0).unwrap().map(|v| v.0);
                 let res2 = reference
                     .iter()
                     .rev()
                     .filter(|(key, _)| **key < k)
                     .nth(0)
-                    .map(|(_, v)| *v);
-                assert_eq!(res1, res2);
+                    .map(|(k, _v)| IVec::from(&*k.0));
+                assert_eq!(
+                    res1, res2,
+                    "get_lt({:?}) should have returned {:?} \
+                     but it returned {:?} instead. \
+                     \n Db: {:?}",
+                    k, res2, res1, tree
+                );
             }
             GetGt(k) => {
-                let res1 = tree
-                    .get_gt(&*k.0)
-                    .unwrap()
-                    .map(|v| bytes_to_u16(&*v.1));
+                let res1 = tree.get_gt(&*k.0).unwrap().map(|v| v.0);
                 let res2 = reference
                     .iter()
                     .filter(|(key, _)| **key > k)
                     .nth(0)
-                    .map(|(_, v)| *v);
-                assert_eq!(res1, res2);
+                    .map(|(k, _v)| IVec::from(&*k.0));
+                assert_eq!(
+                    res1, res2,
+                    "get_gt({:?}) expected {:?} in tree {:?}",
+                    k, res2, tree
+                );
             }
             Del(k) => {
                 tree.del(&*k.0).unwrap();
@@ -295,10 +294,8 @@ pub fn prop_tree_matches_btreemap(
                 }
             }
             Scan(k, len) => {
-                let mut tree_iter = tree
-                    .scan(&*k.0)
-                    .take(len)
-                    .map(|res| res.unwrap());
+                let mut tree_iter =
+                    tree.range(&*k.0..).take(len).map(|res| res.unwrap());
                 let ref_iter = reference
                     .iter()
                     .filter(|&(ref rk, _rv)| **rk >= k)
@@ -310,9 +307,12 @@ pub fn prop_tree_matches_btreemap(
                     let lhs = (tree_next.0, &*tree_next.1);
                     let rhs = (r.0.clone(), &*u16_to_bytes(r.1));
                     assert_eq!(
-                        lhs, rhs,
-                        "expected iteration over the Tree \
-                         to match our BTreeMap model"
+                        (lhs.0.as_ref(), lhs.1),
+                        (rhs.0.as_ref(), rhs.1),
+                        "expected {:?} while iterating from {:?} on tree: {:?}",
+                        rhs,
+                        k,
+                        tree
                     );
                 }
             }
@@ -322,6 +322,18 @@ pub fn prop_tree_matches_btreemap(
             }
         }
     }
+
+    let space_amplification = tree
+        .space_amplification()
+        .expect("should be able to read files and pages");
+
+    assert!(
+        space_amplification < MAX_SPACE_AMPLIFICATION,
+        "space amplification was measured to be {}, \
+         which is higher than the maximum of {}",
+        space_amplification,
+        MAX_SPACE_AMPLIFICATION
+    );
 
     true
 }

@@ -1,18 +1,18 @@
 #![cfg_attr(test, allow(unused))]
 
+use std::mem::size_of;
 use {
     lazy_static::lazy_static,
     pagecache::{
         ConfigBuilder, DiskPtr, Log, LogRead, SegmentMode,
         MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
-        SEG_TRAILER_LEN,
     },
     quickcheck::{Arbitrary, Gen, QuickCheck, StdGen},
     rand::{thread_rng, Rng},
     std::{
         fs,
         sync::{
-            atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT},
+            atomic::{AtomicUsize, Ordering},
             {Arc, Mutex},
         },
         thread,
@@ -23,26 +23,70 @@ type Lsn = i64;
 type LogId = u64;
 
 #[test]
-#[ignore]
+fn log_writebatch() -> pagecache::Result<()> {
+    tests::setup_logger();
+    let config = ConfigBuilder::new()
+        .temporary(true)
+        .segment_mode(SegmentMode::Linear)
+        .build();
+    let log = Log::start_raw_log(config.clone())?;
+
+    log.write(b"1")?;
+    log.write_batch(&[b"2", b"3", b"4", b"5"])?;
+
+    // simulate a torn batch by
+    // writing an LSN higher than
+    // is possible to recover into
+    // a batch manifest before
+    // some writes.
+    let mut batch_res = log.reserve(&[0; std::mem::size_of::<Lsn>()])?;
+    log.write(b"6")?;
+    log.write(b"7")?;
+    log.write(b"8")?;
+    log.write(b"9")?;
+    batch_res.mark_writebatch(Lsn::max_value() / 2);
+    batch_res.complete()?;
+    log.write(b"10")?;
+
+    drop(log);
+    let log = Log::start_raw_log(config.clone())?;
+
+    let mut iter = log.iter_from(0);
+
+    assert_eq!(iter.next().unwrap().2, b"1");
+    assert_eq!(iter.next().unwrap().2, b"2");
+    assert_eq!(iter.next().unwrap().2, b"3");
+    assert_eq!(iter.next().unwrap().2, b"4");
+    assert_eq!(iter.next().unwrap().2, b"5");
+    assert_eq!(iter.next(), None);
+
+    Ok(())
+}
+
+#[test]
 fn more_log_reservations_than_buffers() {
     let config = ConfigBuilder::new()
         .temporary(true)
+        .io_buf_size(100)
+        .io_bufs(3)
         .segment_mode(SegmentMode::Linear)
         .build();
     let log = Log::start_raw_log(config.clone()).unwrap();
     let mut reservations = vec![];
 
-    let total_seg_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;
+    let total_seg_overhead = SEG_HEADER_LEN;
     let big_msg_overhead = MSG_HEADER_LEN + total_seg_overhead;
     let big_msg_sz = config.io_buf_size - big_msg_overhead;
 
-    for _ in 0..=config.io_bufs {
-        reservations.push(log.reserve(vec![0; big_msg_sz]).unwrap())
+    for _ in 0..=config.io_bufs * 1000 {
+        reservations.push(log.reserve(&vec![0; big_msg_sz]).unwrap())
     }
     for res in reservations.into_iter().rev() {
         // abort in reverse order
         res.abort();
     }
+
+    log.flush();
 }
 
 #[test]
@@ -54,12 +98,12 @@ fn non_contiguous_log_flush() {
         .build();
     let log = Log::start_raw_log(config.clone()).unwrap();
 
-    let seg_overhead = std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN);
+    let seg_overhead = SEG_HEADER_LEN;
     let buf_len = (config.io_buf_size / MINIMUM_ITEMS_PER_SEGMENT)
         - (MSG_HEADER_LEN + seg_overhead);
 
-    let res1 = log.reserve(vec![0; buf_len]).unwrap();
-    let res2 = log.reserve(vec![0; buf_len]).unwrap();
+    let res1 = log.reserve(&vec![0; buf_len]).unwrap();
+    let res2 = log.reserve(&vec![0; buf_len]).unwrap();
     let id = res2.lid();
     let lsn = res2.lsn();
     res2.abort();
@@ -69,6 +113,7 @@ fn non_contiguous_log_flush() {
 
 #[test]
 fn concurrent_logging() {
+    tests::setup_logger();
     // TODO linearize res bufs, verify they are correct
     for i in 0..10 {
         let config = ConfigBuilder::new()
@@ -77,8 +122,7 @@ fn concurrent_logging() {
             .io_buf_size(1000)
             .flush_every_ms(Some(50))
             .build();
-        let log =
-            Arc::new(Log::start_raw_log(config.clone()).unwrap());
+        let log = Arc::new(Log::start_raw_log(config.clone()).unwrap());
         let iobs2 = log.clone();
         let iobs3 = log.clone();
         let iobs4 = log.clone();
@@ -86,10 +130,8 @@ fn concurrent_logging() {
         let iobs6 = log.clone();
         let log7 = log.clone();
 
-        let seg_overhead =
-            std::cmp::max(SEG_HEADER_LEN, SEG_TRAILER_LEN);
-        let buf_len = (config.io_buf_size
-            / MINIMUM_ITEMS_PER_SEGMENT)
+        let seg_overhead = SEG_HEADER_LEN;
+        let buf_len = (config.io_buf_size / MINIMUM_ITEMS_PER_SEGMENT)
             - (MSG_HEADER_LEN + seg_overhead);
 
         let t1 = thread::Builder::new()
@@ -161,9 +203,80 @@ fn concurrent_logging() {
     }
 }
 
+#[test]
+fn concurrent_logging_404() {
+    let config = ConfigBuilder::new()
+        .temporary(true)
+        .segment_mode(SegmentMode::Linear)
+        .io_buf_size(1000)
+        .flush_every_ms(Some(50))
+        .build();
+    let log_arc = Arc::new(Log::start_raw_log(config.clone()).unwrap());
+
+    const ITERATIONS: i32 = 5000;
+    const NUM_THREADS: i32 = 6;
+
+    static SHARED_COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let mut handles = Vec::new();
+    for t in 0..NUM_THREADS {
+        let log = log_arc.clone();
+        let h = thread::Builder::new()
+            .name(format!("t_{}", t))
+            .spawn(move || {
+                for i in 0..ITERATIONS {
+                    let current = SHARED_COUNTER.load(Ordering::SeqCst);
+                    let raw_value: [u8; size_of::<usize>()] =
+                        unsafe { std::mem::transmute(current + 1) };
+                    let res = log.reserve(&raw_value).unwrap();
+                    match SHARED_COUNTER.compare_and_swap(
+                        current,
+                        current + 1,
+                        Ordering::SeqCst,
+                    ) {
+                        // If the current value was returned, then CAS succeeded on AtomicUsize
+                        c if c == current => {
+                            res.complete().expect("reservation complete panic");
+                        }
+                        // Any other value is an error
+                        _ => {
+                            res.abort().expect("reservation abort panic");
+                        }
+                    }
+                }
+            })
+            .unwrap();
+        handles.push(h);
+    }
+
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    drop(log_arc);
+
+    let log = Log::start_raw_log(config).unwrap();
+    let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
+    let successfuls = SHARED_COUNTER.load(Ordering::SeqCst);
+    for i in 0..successfuls {
+        let val = iter.next().expect("expected some log entry");
+        let mut raw_value = [0_u8; size_of::<usize>()];
+        raw_value.copy_from_slice(&*val.2);
+
+        let read: usize = unsafe { std::mem::transmute(raw_value) };
+        assert_eq!(
+            i + 1,
+            read,
+            "failed to read expected value at log coordinate {}",
+            val.1
+        );
+    }
+    // Assert that there is nothing left in the log.
+    assert_eq!(iter.next(), None);
+}
+
 fn write(log: &Log) {
     let data_bytes = b"yoyoyoyo";
-    let (lsn, ptr) = log.write(data_bytes.to_vec()).unwrap();
+    let (lsn, ptr) = log.write(data_bytes).unwrap();
     let read_buf = log.read(lsn, ptr).unwrap().into_data().unwrap();
     assert_eq!(
         read_buf, data_bytes,
@@ -172,7 +285,7 @@ fn write(log: &Log) {
 }
 
 fn abort(log: &Log) {
-    let res = log.reserve(vec![0; 5]).unwrap();
+    let res = log.reserve(&[0; 5]).unwrap();
     let (lsn, ptr) = res.abort().unwrap();
     match log.read(lsn, ptr) {
         Ok(LogRead::Failed(_, _)) => {}
@@ -210,21 +323,20 @@ fn log_iterator() {
         .io_buf_size(1000)
         .build();
     let log = Log::start_raw_log(config.clone()).unwrap();
-    let (first_lsn, _) = log.write(b"".to_vec()).unwrap();
-    log.write(b"1".to_vec());
-    log.write(b"22".to_vec());
-    log.write(b"333".to_vec());
+    let (first_lsn, _) = log.write(b"").unwrap();
+    log.write(b"1");
+    log.write(b"22");
+    log.write(b"333");
 
     // stick an abort in the middle, which should not be
     // returned
     {
-        let res =
-            log.reserve(b"never_gonna_hit_disk".to_vec()).unwrap();
+        let res = log.reserve(b"never_gonna_hit_disk").unwrap();
         res.abort().unwrap();
     }
 
-    log.write(b"4444".to_vec());
-    let (last_lsn, _) = log.write(b"55555".to_vec()).unwrap();
+    log.write(b"4444");
+    let (last_lsn, _) = log.write(b"55555").unwrap();
     log.make_stable(last_lsn).unwrap();
 
     drop(log);
@@ -232,12 +344,12 @@ fn log_iterator() {
     let log = Log::start_raw_log(config).unwrap();
 
     let mut iter = log.iter_from(first_lsn);
-    assert_eq!(iter.next().unwrap().2, b"".to_vec());
-    assert_eq!(iter.next().unwrap().2, b"1".to_vec());
-    assert_eq!(iter.next().unwrap().2, b"22".to_vec());
-    assert_eq!(iter.next().unwrap().2, b"333".to_vec());
-    assert_eq!(iter.next().unwrap().2, b"4444".to_vec());
-    assert_eq!(iter.next().unwrap().2, b"55555".to_vec());
+    assert_eq!(iter.next().unwrap().2, b"");
+    assert_eq!(iter.next().unwrap().2, b"1");
+    assert_eq!(iter.next().unwrap().2, b"22");
+    assert_eq!(iter.next().unwrap().2, b"333");
+    assert_eq!(iter.next().unwrap().2, b"4444");
+    assert_eq!(iter.next().unwrap().2, b"55555");
     assert_eq!(iter.next(), None);
 }
 
@@ -257,26 +369,25 @@ fn log_chunky_iterator() {
 
             let mut reference = vec![];
 
-            let max_valid_size = config.io_buf_size
-                - (MSG_HEADER_LEN + SEG_HEADER_LEN + SEG_TRAILER_LEN);
+            let max_valid_size =
+                config.io_buf_size - (MSG_HEADER_LEN + SEG_HEADER_LEN);
 
             for i in 0..1000 {
-                let len =
-                    thread_rng().gen_range(0, max_valid_size * 2);
+                let len = thread_rng().gen_range(0, max_valid_size * 2);
                 let item = thread_rng().gen::<u8>();
                 let buf = vec![item; len];
                 let abort = thread_rng().gen::<bool>();
 
                 if abort {
-                    if let Ok(res) = log.reserve(buf) {
+                    if let Ok(res) = log.reserve(&buf) {
                         res.abort().unwrap();
                     } else {
                         assert!(len > max_valid_size);
                     }
                 } else {
-                    let (lsn, lid) = log.write(buf.clone()).expect(
-                        "should be able to write reservation",
-                    );
+                    let (lsn, lid) = log
+                        .write(buf.clone())
+                        .expect("should be able to write reservation");
                     reference.push((lsn, lid, buf));
                 }
             }
@@ -303,7 +414,6 @@ fn log_chunky_iterator() {
 }
 
 #[test]
-#[ignore]
 fn snapshot_with_out_of_order_buffers() {
     let config = ConfigBuilder::new()
         .temporary(true)
@@ -313,10 +423,7 @@ fn snapshot_with_out_of_order_buffers() {
         .snapshot_after_ops(5)
         .build();
 
-    let len = config.io_buf_size
-        - SEG_HEADER_LEN
-        - SEG_TRAILER_LEN
-        - MSG_HEADER_LEN;
+    let len = config.io_buf_size - SEG_HEADER_LEN - MSG_HEADER_LEN;
 
     let log = Log::start_raw_log(config.clone()).unwrap();
 
@@ -356,7 +463,7 @@ fn multi_segment_log_iteration() {
         .io_buf_size(500)
         .build();
 
-    let total_seg_overhead = SEG_HEADER_LEN + SEG_TRAILER_LEN;
+    let total_seg_overhead = SEG_HEADER_LEN;
     let big_msg_overhead = MSG_HEADER_LEN + total_seg_overhead;
     let big_msg_sz = (config.io_buf_size - big_msg_overhead) / 64;
 
@@ -379,8 +486,8 @@ fn multi_segment_log_iteration() {
 
     for i in 0..config.io_bufs * 16 {
         let expected = vec![i as u8; big_msg_sz * i];
-        let (_lsn, _lid, buf) = iter.next()
-            .expect("");
+        let (_lsn, _lid, buf) =
+            iter.next().expect("expected to read another message");
         assert_eq!(expected, buf);
     }
 }
@@ -396,8 +503,8 @@ enum Op {
 
 impl Arbitrary for Op {
     fn arbitrary<G: Gen>(g: &mut G) -> Op {
-        static COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
-        static LEN: AtomicUsize = ATOMIC_USIZE_INIT;
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        static LEN: AtomicUsize = AtomicUsize::new(0);
 
         // ensure len never is loaded at 0, as it will crash
         // the call to gen_range below if low >= high
@@ -415,9 +522,7 @@ impl Arbitrary for Op {
 
         if g.gen_bool(1. / 50.) {
             let len = LEN.load(Ordering::Relaxed);
-            return Op::Truncate(
-                thread_rng().gen_range(0, len as u64),
-            );
+            return Op::Truncate(thread_rng().gen_range(0, len as u64));
         }
 
         let choice = g.gen_range(0, 4);
@@ -477,8 +582,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
 
     let mut tip = 0;
     let mut log = Log::start_raw_log(config.clone()).unwrap();
-    let mut reference: Vec<(Lsn, DiskPtr, Option<Vec<u8>>, usize)> =
-        vec![];
+    let mut reference: Vec<(Lsn, DiskPtr, Option<Vec<u8>>, usize)> = vec![];
 
     for op in ops.into_iter() {
         match op {
@@ -486,15 +590,13 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
                 if reference.len() <= lid as usize {
                     continue;
                 }
-                let (lsn, ptr, ref expected, _len) =
-                    reference[lid as usize];
+                let (lsn, ptr, ref expected, _len) = reference[lid as usize];
                 // log.make_stable(lid);
                 let read_res = log.read(lsn, ptr);
                 // println!( "expected {:?} read_res {:?} tip {} lid {}", expected, read_res, tip, lid);
                 if expected.is_none() || tip as u64 <= ptr.lid() {
                     assert!(
-                        read_res.is_err()
-                            || !read_res.unwrap().is_successful()
+                        read_res.is_err() || !read_res.unwrap().is_successful()
                     );
                 } else {
                     let flush = read_res.unwrap().into_data();
@@ -509,7 +611,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
             }
             AbortReservation(buf) => {
                 let len = buf.len();
-                let res = log.reserve(buf.clone()).unwrap();
+                let res = log.reserve(&buf).unwrap();
                 let lsn = res.lsn();
                 let lid = res.lid();
                 let ptr = res.ptr();
@@ -524,8 +626,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
 
                 // on recovery, we will rewind over any aborted tip entries
                 while !reference.is_empty() {
-                    let should_pop =
-                        reference.last().unwrap().2.is_none();
+                    let should_pop = reference.last().unwrap().2.is_none();
                     if should_pop {
                         reference.pop();
                     } else {
@@ -549,11 +650,9 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
                     let path = config.get_path();
 
                     let mut sz_total = 0;
-                    for &mut (lsn, ptr, ref mut expected, sz) in
-                        &mut reference
+                    for &mut (lsn, ptr, ref mut expected, sz) in &mut reference
                     {
-                        let tip =
-                            ptr.lid() as usize + sz + MSG_HEADER_LEN;
+                        let tip = ptr.lid() as usize + sz + MSG_HEADER_LEN;
                         if new_len < tip as u64 {
                             *expected = None;
                         }
@@ -732,12 +831,7 @@ fn log_bug_14a() {
     // postmortem 2:
     use self::Op::*;
     prop_log_works(
-        vec![
-            AbortReservation(vec![12]),
-            Restart,
-            Write(vec![]),
-            Read(0),
-        ],
+        vec![AbortReservation(vec![12]), Restart, Write(vec![]), Read(0)],
         true,
     );
 }
@@ -836,10 +930,7 @@ fn log_bug_20() {
     // postmortem: message header length was not being included when
     // calculating the starting log offsets.
     use self::Op::*;
-    prop_log_works(
-        vec![Write(vec![]), Restart, Write(vec![2]), Read(1)],
-        true,
-    );
+    prop_log_works(vec![Write(vec![]), Restart, Write(vec![2]), Read(1)], true);
 }
 
 #[test]
@@ -858,12 +949,7 @@ fn log_bug_22() {
     // postmortem:
     use self::Op::*;
     prop_log_works(
-        vec![
-            Read(10),
-            Write(vec![75]),
-            Write(vec![]),
-            Write(vec![77]),
-        ],
+        vec![Read(10), Write(vec![75]), Write(vec![]), Write(vec![77])],
         true,
     );
 }
@@ -894,6 +980,15 @@ fn log_bug_24() {
         ],
         false,
     );
+}
+
+#[test]
+fn log_bug_25() {
+    // postmortem: we were making assertions
+    // about invalid segments during our initial
+    // segment scan
+    use self::Op::*;
+    prop_log_works(vec![Restart], false);
 }
 
 fn _log_bug_() {

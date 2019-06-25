@@ -1,6 +1,5 @@
 //! `pagecache` is a lock-free pagecache and log for building high-performance databases.
 #![deny(missing_docs)]
-#![cfg_attr(feature = "nightly", feature(integer_atomics))]
 #![cfg_attr(test, deny(clippy::warnings))]
 #![cfg_attr(test, deny(clippy::bad_style))]
 #![cfg_attr(test, deny(clippy::future_incompatible))]
@@ -8,12 +7,6 @@
 #![cfg_attr(test, deny(clippy::rust_2018_compatibility))]
 #![cfg_attr(test, deny(clippy::rust_2018_idioms))]
 #![cfg_attr(test, deny(clippy::unused))]
-
-#[cfg(all(not(feature = "nightly"), target_pointer_width = "32"))]
-compile_error!(
-    "32 bit architectures require a nightly compiler for now. \
-     See https://github.com/spacejam/sled/issues/145"
-);
 
 #[cfg(feature = "failpoints")]
 use fail::fail_point;
@@ -25,25 +18,14 @@ macro_rules! maybe_fail {
     };
 }
 
-macro_rules! rep_no_copy {
-    ($e:expr; $n:expr) => {{
-        let mut v = Vec::with_capacity($n);
-        for _ in 0..$n {
-            v.push($e);
-        }
-        v
-    }};
-}
-
 mod blob_io;
 mod config;
 mod constants;
 mod diskptr;
 mod ds;
-mod flusher;
-mod hash;
 mod iobuf;
 mod iterator;
+mod map;
 mod materializer;
 mod meta;
 mod metrics;
@@ -60,6 +42,9 @@ mod util;
 #[cfg(feature = "measure_allocs")]
 mod measure_allocs;
 
+const META_PID: PageId = 0;
+const COUNTER_PID: PageId = 1;
+
 #[cfg(feature = "measure_allocs")]
 #[global_allocator]
 static ALLOCATOR: measure_allocs::TrackingAllocator =
@@ -73,8 +58,10 @@ pub mod logger;
 
 use std::{
     cell::UnsafeCell,
+    convert::TryFrom,
     fmt::{self, Debug},
     io,
+    sync::atomic::{AtomicI64 as AtomicLsn, AtomicU64, Ordering::SeqCst},
 };
 
 use bincode::{deserialize, serialize};
@@ -82,21 +69,15 @@ use lazy_static::lazy_static;
 use log::{debug, error, trace, warn};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use sled_sync::atomic::{AtomicUsize, Ordering::SeqCst};
-
 #[doc(hidden)]
-use self::logger::{
-    MessageHeader, MessageKind, SegmentHeader, SegmentTrailer,
-};
+use self::logger::{MessageHeader, MessageKind, SegmentHeader};
 
 #[cfg(not(unix))]
 use self::metrics::uptime;
 
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
-    ds::{node_from_frag_vec, Lru, Node, Stack, StackIter},
-    hash::{crc16_arr, crc64},
-    iobuf::IoBufs,
+    iobuf::{IoBuf, IoBufs},
     iterator::LogIter,
     metrics::{clock, measure},
     pagecache::{LoggedUpdate, Update},
@@ -104,35 +85,33 @@ use self::{
     reader::LogReader,
     segment::{raw_segment_iter_from, SegmentAccountant},
     snapshot::{advance_snapshot, PageState},
-    util::{arr_to_u32, arr_to_u64, u32_to_arr, u64_to_arr},
+    util::{arr_to_u32, arr_to_u64, maybe_decompress, u32_to_arr, u64_to_arr},
 };
 
 pub use self::{
     config::{Config, ConfigBuilder},
     diskptr::DiskPtr,
-    hash::map::{
-        FastMap1, FastMap4, FastMap8, FastSet1, FastSet4, FastSet8,
-    },
+    ds::{node_from_frag_vec, Lru, Node, PageTable, Stack, StackIter, VecSet},
     logger::{Log, LogRead},
+    map::{FastMap1, FastMap4, FastMap8, FastSet1, FastSet4, FastSet8},
     materializer::{Materializer, NullMaterializer},
     meta::Meta,
     metrics::M,
-    pagecache::{CacheEntry, PageCache, PageGet, PagePtr},
+    pagecache::{CacheEntry, PageCache, PagePtr, RecoveryGuard},
     reservation::Reservation,
-    result::{Error, Result},
+    result::{CasResult, Error, Result},
     segment::SegmentMode,
-    tx::Tx,
+    tx::{Tx, TxError, TxResult},
 };
-
-pub use sled_sync::{debug_delay, pin, unprotected, Guard};
 
 #[doc(hidden)]
 pub use self::{
     constants::{
-        BLOB_FLUSH, BLOB_INLINE_LEN, EVIL_BYTE, FAILED_FLUSH,
-        INLINE_FLUSH, MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN,
-        SEGMENT_PAD, SEG_HEADER_LEN, SEG_TRAILER_LEN,
+        BATCH_MANIFEST, BATCH_MANIFEST_INLINE_LEN, BLOB_FLUSH, BLOB_INLINE_LEN,
+        EVIL_BYTE, FAILED_FLUSH, INLINE_FLUSH, MAX_SPACE_AMPLIFICATION,
+        MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEGMENT_PAD, SEG_HEADER_LEN,
     },
+    ds::PAGETABLE_NODE_SZ,
     metrics::Measure,
     snapshot::{read_snapshot_or_default, Snapshot},
 };
@@ -150,7 +129,7 @@ pub type BlobPointer = Lsn;
 pub type Lsn = i64;
 
 /// A page identifier.
-pub type PageId = usize;
+pub type PageId = u64;
 
 /// Allows arbitrary logic to be injected into mere operations of the `PageCache`.
 pub type MergeOperator = fn(
@@ -158,3 +137,35 @@ pub type MergeOperator = fn(
     last_value: Option<&[u8]>,
     new_merge: &[u8],
 ) -> Option<Vec<u8>>;
+
+pub(crate) fn crc32(buf: &[u8]) -> u32 {
+    let mut hasher = crc32fast::Hasher::new();
+    hasher.update(&buf);
+    hasher.finalize()
+}
+
+#[cfg(any(test, feature = "lock_free_delays"))]
+mod debug_delay;
+
+#[cfg(any(test, feature = "lock_free_delays"))]
+pub use self::debug_delay::debug_delay;
+
+/// This function is useful for inducing random jitter into our atomic
+/// operations, shaking out more possible interleavings quickly. It gets
+/// fully elliminated by the compiler in non-test code.
+#[cfg(not(any(test, feature = "lock_free_delays")))]
+pub fn debug_delay() {}
+
+pub use crossbeam_epoch::{
+    pin, unprotected, Atomic, Collector, CompareAndSetError, Guard,
+    LocalHandle, Owned, Shared,
+};
+
+pub use crossbeam_utils::{Backoff, CachePadded};
+
+fn assert_usize<T>(from: T) -> usize
+where
+    usize: std::convert::TryFrom<T, Error = std::num::TryFromIntError>,
+{
+    usize::try_from(from).expect("lost data cast while converting to usize")
+}

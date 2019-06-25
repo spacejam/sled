@@ -1,6 +1,6 @@
 [package]
 name = "sled"
-version = "0.18.1"
+version = "0.24.1"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "a modern embedded database"
 license = "MIT/Apache-2.0"
@@ -14,16 +14,15 @@ edition = "2018"
 
 [features]
 default = []
-lock_free_delays = ["pagecache/lock_free_delays", "sled_sync/lock_free_delays"]
-failpoints = ["pagecache/failpoints"]
-check_snapshot_integrity = []
-no_logs = ["log/max_level_off", "pagecache/no_logs"]
-no_metrics = ["pagecache/no_metrics"]
+lock_free_delays = ["pagecache/lock_free_delays"]
 compression = ["pagecache/compression"]
-nightly = ["pagecache/nightly"]
+failpoints = ["pagecache/failpoints"]
+no_metrics = ["pagecache/no_metrics"]
+no_logs = ["log/max_level_off", "pagecache/no_logs"]
 no_inline = ["pagecache/no_inline"]
 event_log = ["pagecache/event_log"]
 measure_allocs = ["pagecache/measure_allocs"]
+check_snapshot_integrity = []
 
 [dependencies.serde]
 version = "1.0"
@@ -33,6 +32,6 @@ features = ["derive"]
 version = "0.4"
 
 [dependencies]
-pagecache = { path = "../pagecache", version = "0.10" }
-sled_sync = { version = "0.3", path = "../sled_sync" }
+pagecache = { path = "../pagecache", version = "0.17" }
 futures = "0.1"
+serde_bytes = "0.11"

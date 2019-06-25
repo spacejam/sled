@@ -3,20 +3,24 @@
 //! # Examples
 //!
 //! ```
-//! let t = sled::Db::start_default("my_db").unwrap();
+//! use sled::{Db, IVec};
 //!
+//! let t = Db::start_default("my_db").unwrap();
 //! t.set(b"yo!", b"v1".to_vec());
-//! assert!(t.get(b"yo!").unwrap().unwrap() == &*b"v1".to_vec());
+//! assert_eq!(t.get(b"yo!"), Ok(Some(IVec::from(b"v1"))));
 //!
+//! // Atomic compare-and-swap.
 //! t.cas(
-//!     b"yo!",                // key
-//!     Some(b"v1"),           // old value, None for not present
-//!     Some(b"v2".to_vec()),  // new value, None for delete
+//!     b"yo!",       // key
+//!     Some(b"v1"),  // old value, None for not present
+//!     Some(b"v2"),  // new value, None for delete
 //! ).unwrap();
 //!
-//! let mut iter = t.scan(b"a non-present key before yo!");
-//! // assert_eq!(iter.next(), Some(Ok((b"yo!".to_vec(), b"v2".to_vec()))));
-//! // assert_eq!(iter.next(), None);
+//! // Iterates over key-value pairs, starting at the given key.
+//! let scan_key: &[u8] = b"a non-present key before yo!";
+//! let mut iter = t.range(scan_key..);
+//! assert_eq!(iter.next().unwrap(), Ok((IVec::from(b"yo!"), IVec::from(b"v2"))));
+//! assert_eq!(iter.next(), None);
 //!
 //! t.del(b"yo!");
 //! assert_eq!(t.get(b"yo!"), Ok(None));
@@ -30,32 +34,31 @@
 #![cfg_attr(test, deny(clippy::rust_2018_compatibility))]
 #![cfg_attr(test, deny(clippy::rust_2018_idioms))]
 
+mod batch;
 mod binary_search;
+mod context;
 mod data;
 mod db;
+mod flusher;
 mod frag;
 mod iter;
 mod ivec;
 mod materializer;
 mod meta;
 mod node;
-mod pinned_value;
 mod prefix;
-mod recovery;
 mod subscription;
 mod tree;
-
-const META_PID: PageId = 0;
-const COUNTER_PID: PageId = 1;
+mod view;
 
 const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
-const TX_TREE_ID: &[u8] = b"__sled__transactions";
 
 pub use {
     self::{
+        batch::Batch,
         db::Db,
         iter::Iter,
-        pinned_value::PinnedValue,
+        ivec::IVec,
         subscription::{Event, Subscriber},
         tree::Tree,
     },
@@ -64,32 +67,25 @@ pub use {
 
 use {
     self::{
-        binary_search::{
-            binary_search_gt, binary_search_lt, binary_search_lub,
-            leaf_search,
-        },
+        binary_search::binary_search_lub,
+        context::Context,
         data::Data,
-        frag::{ChildSplit, Frag, ParentSplit},
-        ivec::IVec,
+        frag::Frag,
         materializer::BLinkMaterializer,
         node::Node,
         prefix::{
-            prefix_cmp, prefix_cmp_encoded, prefix_decode,
-            prefix_encode,
+            prefix_cmp, prefix_cmp_encoded, prefix_decode, prefix_encode,
+            prefix_reencode,
         },
-        recovery::Recovery,
         subscription::Subscriptions,
+        view::View,
     },
     log::{debug, error, trace},
     pagecache::{
-        Materializer, Measure, MergeOperator, Meta, PageCache,
-        PageGet, PageId, M,
+        debug_delay, Materializer, Measure, MergeOperator, PageCache, PageId,
+        RecoveryGuard, Tx, M,
     },
     serde::{Deserialize, Serialize},
-    sled_sync::{debug_delay, pin, Guard},
 };
-
-type Key = Vec<u8>;
-type Value = Vec<u8>;
 
 type TreePtr<'g> = pagecache::PagePtr<'g, Frag>;

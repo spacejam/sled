@@ -1,6 +1,6 @@
 *db
 *conf
-*snap*
+*snap.*
 *grind.out*
 vgcore*
 *.bk
@@ -20,3 +20,4 @@ Cargo.lock
 *.proptest-regressions
 corpus
 artifacts
+.idea

@@ -1,7 +1,7 @@
 use std::{
     cmp::PartialEq,
     error::Error as StdError,
-    fmt::{self, Debug, Display},
+    fmt::{self, Display},
     io,
 };
 
@@ -9,14 +9,22 @@ use super::*;
 
 /// The top-level result type for dealing with
 /// the PageCache.
-pub type Result<T, Actual> = std::result::Result<T, Error<Actual>>;
+pub type Result<T> = std::result::Result<T, Error>;
+
+/// A compare and swap result.
+/// If the CAS is successful, the
+/// new `PagePtr` will be returned as `Ok`.
+/// If the CAS is not successful, the
+/// `Err` will contain a tuple of
+/// the current `PagePtr` and the old
+/// value that could not be set atomically.
+pub type CasResult<'a, P, R> =
+    std::result::Result<PagePtr<'a, P>, Option<(PagePtr<'a, P>, R)>>;
 
 /// An Error type encapsulating various issues that may come up
 /// in both the expected and unexpected operation of a PageCache.
 #[derive(Debug)]
-pub enum Error<Actual> {
-    /// An atomic operation has failed, and the current value is provided.
-    CasFailed(Actual),
+pub enum Error {
     /// The underlying collection no longer exists.
     CollectionNotFound(Vec<u8>),
     /// The system has been used in an unsupported way.
@@ -38,33 +46,27 @@ pub enum Error<Actual> {
 
 use self::Error::*;
 
-impl<Actual> Clone for Error<Actual> {
-    fn clone(&self) -> Error<Actual> {
+impl Clone for Error {
+    fn clone(&self) -> Error {
         match self {
-            Io(ioe) => Io(std::io::Error::new(
-                ioe.kind(),
-                format!("{:?}", ioe),
-            )),
-            other => other.clone(),
+            Io(ioe) => {
+                Io(std::io::Error::new(ioe.kind(), format!("{:?}", ioe)))
+            }
+            CollectionNotFound(name) => CollectionNotFound(name.clone()),
+            Unsupported(why) => Unsupported(why.clone()),
+            ReportableBug(what) => ReportableBug(what.clone()),
+            Corruption { at } => Corruption { at: *at },
+            #[cfg(feature = "failpoints")]
+            FailPoint => FailPoint,
         }
     }
 }
 
-impl<A> Eq for Error<A> where A: Eq {}
+impl Eq for Error {}
 
-impl<A> PartialEq for Error<A>
-where
-    A: PartialEq,
-{
-    fn eq(&self, other: &Error<A>) -> bool {
+impl PartialEq for Error {
+    fn eq(&self, other: &Error) -> bool {
         match *self {
-            CasFailed(ref l) => {
-                if let CasFailed(ref r) = *other {
-                    l == r
-                } else {
-                    false
-                }
-            }
             CollectionNotFound(ref l) => {
                 if let CollectionNotFound(ref r) = *other {
                     l == r
@@ -106,22 +108,16 @@ where
     }
 }
 
-impl<T> From<io::Error> for Error<T> {
+impl From<io::Error> for Error {
     #[inline]
-    fn from(io_error: io::Error) -> Error<T> {
+    fn from(io_error: io::Error) -> Error {
         Error::Io(io_error)
     }
 }
 
-impl<T> StdError for Error<T>
-where
-    T: Debug,
-{
+impl StdError for Error {
     fn description(&self) -> &str {
         match *self {
-            CasFailed(_) => {
-                "Compare and swap failed to successfully compare."
-            }
             CollectionNotFound(_) => "Collection does not exist.",
             Unsupported(ref e) => &*e,
             ReportableBug(ref e) => &*e,
@@ -133,21 +129,12 @@ where
     }
 }
 
-impl<A> Display for Error<A>
-where
-    A: Debug,
-{
+impl Display for Error {
     fn fmt(
         &self,
         f: &mut fmt::Formatter<'_>,
     ) -> std::result::Result<(), fmt::Error> {
         match *self {
-            CasFailed(ref e) => write!(
-                f,
-                "Compare and swap failed to successfully compare \
-                 with actual value {:?}",
-                e
-            ),
             CollectionNotFound(ref name) => {
                 write!(f, "Collection {:?} does not exist", name,)
             }
@@ -164,52 +151,6 @@ where
             Corruption { at } => {
                 write!(f, "Read corrupted data at file offset {}", at)
             }
-        }
-    }
-}
-
-// TODO wrangle Into conflicts to handle these with that, if possible
-impl<T> Error<T> {
-    /// Turns an `Error<A>` into an `Error<B>`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the Error is of type `Error::CasFailed`
-    pub fn danger_cast<Other>(self) -> Error<Other> {
-        match self {
-            CasFailed(_) => {
-                panic!(
-                    "trying to cast CasFailed(()) into a different Error type"
-                )
-            }
-            CollectionNotFound(n) => CollectionNotFound(n),
-            Unsupported(s) => Unsupported(s),
-            ReportableBug(s) => ReportableBug(s),
-            #[cfg(feature = "failpoints")]
-            FailPoint => FailPoint,
-            Io(e) => Io(e),
-            Corruption {
-                at,
-            } => Corruption {
-                at,
-            },
-        }
-    }
-
-    /// Turns an `Error<A>` into an `Error<B>`.
-    pub fn cast<Other>(self) -> Error<Other>
-    where
-        T: Into<Other>,
-    {
-        match self {
-            CasFailed(other) => CasFailed(other.into()),
-            CollectionNotFound(n) => CollectionNotFound(n),
-            Unsupported(s) => Unsupported(s),
-            ReportableBug(s) => ReportableBug(s),
-            #[cfg(feature = "failpoints")]
-            FailPoint => FailPoint,
-            Io(e) => Io(e),
-            Corruption { at } => Corruption { at },
         }
     }
 }

@@ -1,19 +1,21 @@
-// lock-free stack
 use std::{
     fmt::{self, Debug},
     ops::Deref,
     sync::atomic::Ordering::SeqCst,
 };
 
-use sled_sync::{
-    debug_delay, pin, unprotected, Atomic, Guard, Owned, Shared,
-};
+use super::*;
+
+type CompareAndSwapResult<'g, T> = std::result::Result<
+    Shared<'g, Node<T>>,
+    (Shared<'g, Node<T>>, Owned<Node<T>>),
+>;
 
 /// A node in the lock-free `Stack`.
 #[derive(Debug)]
-pub(crate) struct Node<T: Send + 'static> {
-    inner: T,
-    next: Atomic<Node<T>>,
+pub struct Node<T: Send + 'static> {
+    pub(crate) inner: T,
+    pub(crate) next: Atomic<Node<T>>,
 }
 
 impl<T: Send + 'static> Drop for Node<T> {
@@ -29,7 +31,7 @@ impl<T: Send + 'static> Drop for Node<T> {
 
 /// A simple lock-free stack, with the ability to atomically
 /// append or entirely swap-out entries.
-pub(crate) struct Stack<T: Send + 'static> {
+pub struct Stack<T: Send + 'static> {
     head: Atomic<Node<T>>,
 }
 
@@ -54,12 +56,12 @@ impl<T: Send + 'static> Drop for Stack<T> {
 
 impl<T> Debug for Stack<T>
 where
-    T: Debug + Send + 'static + Sync,
+    T: Clone + Debug + Send + 'static + Sync,
 {
     fn fmt(
         &self,
         formatter: &mut fmt::Formatter<'_>,
-    ) -> Result<(), fmt::Error> {
+    ) -> std::result::Result<(), fmt::Error> {
         let guard = pin();
         let head = self.head(&guard);
         let iter = StackIter::from_ptr(head, &guard);
@@ -70,8 +72,7 @@ where
             if written {
                 formatter.write_str(", ")?;
             }
-            formatter
-                .write_str(&*format!("({:?}) ", &node as *const _))?;
+            formatter.write_str(&*format!("({:?}) ", &node as *const _))?;
             node.fmt(formatter)?;
             written = true;
         }
@@ -87,9 +88,9 @@ impl<T: Send + 'static> Deref for Node<T> {
     }
 }
 
-impl<T: Send + Sync + 'static> Stack<T> {
+impl<T: Clone + Send + Sync + 'static> Stack<T> {
     /// Add an item to the stack, spinning until successful.
-    pub(crate) fn push(&self, inner: T) {
+    pub fn push(&self, inner: T) {
         debug_delay();
         let node = Owned::new(Node {
             inner,
@@ -104,12 +105,7 @@ impl<T: Send + Sync + 'static> Stack<T> {
                 node.deref().next.store(head, SeqCst);
                 if self
                     .head
-                    .compare_and_set(
-                        head,
-                        node,
-                        SeqCst,
-                        unprotected(),
-                    )
+                    .compare_and_set(head, node, SeqCst, unprotected())
                     .is_ok()
                 {
                     return;
@@ -127,13 +123,10 @@ impl<T: Send + Sync + 'static> Stack<T> {
             match unsafe { head.as_ref() } {
                 Some(h) => {
                     let next = h.next.load(SeqCst, &guard);
-                    match self
-                        .head
-                        .compare_and_set(head, next, SeqCst, &guard)
+                    match self.head.compare_and_set(head, next, SeqCst, &guard)
                     {
                         Ok(_) => unsafe {
-                            let head_owned = head.into_owned();
-                            guard.defer(move || head_owned);
+                            guard.defer_destroy(head);
                             return Some(ptr::read(&h.inner));
                         },
                         Err(h) => head = h.current,
@@ -145,83 +138,77 @@ impl<T: Send + Sync + 'static> Stack<T> {
     }
 
     /// compare and push
-    pub(crate) fn cap<'g>(
+    pub fn cap<'g>(
         &self,
         old: Shared<'_, Node<T>>,
         new: T,
         guard: &'g Guard,
-    ) -> Result<Shared<'g, Node<T>>, Shared<'g, Node<T>>> {
+    ) -> CompareAndSwapResult<'g, T> {
         debug_delay();
         let node = Owned::new(Node {
             inner: new,
             next: Atomic::from(old),
         });
 
-        let node = node.into_shared(guard);
+        self.cap_node(old, node, guard)
+    }
 
+    /// compare and push
+    pub fn cap_node<'g>(
+        &self,
+        old: Shared<'_, Node<T>>,
+        mut node: Owned<Node<T>>,
+        guard: &'g Guard,
+    ) -> CompareAndSwapResult<'g, T> {
+        // properly set next ptr
+        node.next = Atomic::from(old);
         let res = self.head.compare_and_set(old, node, SeqCst, guard);
 
         match res {
             Err(e) => {
-                unsafe {
-                    // we want to set next to null to prevent
-                    // the current shared head from being
-                    // dropped when we drop this node.
-                    node.deref().next.store(Shared::null(), SeqCst);
-                    let node_owned = node.into_owned();
-                    drop(node_owned)
-                }
-                Err(e.current)
+                // we want to set next to null to prevent
+                // the current shared head from being
+                // dropped when we drop this node.
+                let mut returned = e.new;
+                returned.next = Atomic::null();
+                Err((e.current, returned))
             }
-            Ok(_) => Ok(node),
+            Ok(success) => Ok(success),
         }
     }
 
     /// compare and swap
-    pub(crate) fn cas<'g>(
+    pub fn cas<'g>(
         &self,
         old: Shared<'g, Node<T>>,
-        new: Shared<'g, Node<T>>,
+        new: Owned<Node<T>>,
         guard: &'g Guard,
-    ) -> Result<Shared<'g, Node<T>>, Shared<'g, Node<T>>> {
+    ) -> CompareAndSwapResult<'g, T> {
         debug_delay();
         let res = self.head.compare_and_set(old, new, SeqCst, guard);
 
         match res {
-            Ok(_) => {
+            Ok(success) => {
                 if !old.is_null() {
                     unsafe {
-                        let old_owned = old.into_owned();
-                        guard.defer(move || old_owned)
+                        guard.defer_destroy(old);
                     };
                 }
-                Ok(new)
+                Ok(success)
             }
-            Err(e) => {
-                if !new.is_null() {
-                    unsafe {
-                        let new_owned = new.into_owned();
-                        drop(new_owned)
-                    };
-                }
-
-                Err(e.current)
-            }
+            Err(e) => Err((e.current, e.new)),
         }
     }
 
     /// Returns the current head pointer of the stack, which can
     /// later be used as the key for cas and cap operations.
-    pub(crate) fn head<'g>(
-        &self,
-        guard: &'g Guard,
-    ) -> Shared<'g, Node<T>> {
+    pub fn head<'g>(&self, guard: &'g Guard) -> Shared<'g, Node<T>> {
         self.head.load(SeqCst, guard)
     }
 }
 
 /// An iterator over nodes in a lock-free stack.
-pub(crate) struct StackIter<'a, T>
+pub struct StackIter<'a, T>
 where
     T: Send + 'static + Sync,
 {
@@ -234,7 +221,7 @@ where
     T: 'a + Send + 'static + Sync,
 {
     /// Creates a StackIter from a pointer to one.
-    pub(crate) fn from_ptr<'b>(
+    pub fn from_ptr<'b>(
         ptr: Shared<'b, Node<T>>,
         guard: &'b Guard,
     ) -> StackIter<'b, T> {
@@ -254,8 +241,7 @@ where
         } else {
             unsafe {
                 let ret = &self.inner.deref().inner;
-                self.inner =
-                    self.inner.deref().next.load(SeqCst, self.guard);
+                self.inner = self.inner.deref().next.load(SeqCst, self.guard);
                 Some(ret)
             }
         }
@@ -264,7 +250,7 @@ where
 
 /// Turns a vector of elements into a lock-free stack
 /// of them, and returns the head of the stack.
-pub(crate) fn node_from_frag_vec<T>(from: Vec<T>) -> Owned<Node<T>>
+pub fn node_from_frag_vec<T>(from: Vec<T>) -> Owned<Node<T>>
 where
     T: Send + 'static + Sync,
 {

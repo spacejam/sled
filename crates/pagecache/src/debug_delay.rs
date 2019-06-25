@@ -1,14 +1,13 @@
 use std::cell::UnsafeCell;
-use std::rc::Rc;
 
 use {
     log::warn,
     rand::{
-        distributions::{Distribution, Gamma},
-        rngs::EntropyRng,
-        ReseedingRng, Rng, RngCore, SeedableRng,
+        rngs::{adapter::ReseedingRng, OsRng},
+        CryptoRng, Rng, RngCore, SeedableRng,
     },
-    rand_hc::Hc128Core,
+    rand_chacha::ChaCha20Core as Core,
+    rand_distr::{Distribution, Gamma},
 };
 
 /// This function is useful for inducing random jitter into our atomic
@@ -21,14 +20,20 @@ pub fn debug_delay() {
     let mut rng = if let Some(rng) = try_thread_rng() {
         rng
     } else {
-        warn!(
-            "already destroyed TLS when this debug delay was called"
-        );
+        warn!("already destroyed TLS when this debug delay was called");
         return;
     };
 
+    let intensity: f64 = std::env::var("SLED_LOCK_FREE_DELAY_INTENSITY")
+        .unwrap_or_else(|_| "100.0".into())
+        .parse()
+        .expect(
+            "SLED_LOCK_FREE_DELAY_INTENSITY must be set to a \
+             float (ideally between 1-1,000,000)",
+        );
+
     if rng.gen_bool(1. / 1000.) {
-        let gamma = Gamma::new(0.3, 100_000.0);
+        let gamma = Gamma::new(0.3, 1_000.0 * intensity).unwrap();
         let duration = gamma.sample(&mut try_thread_rng().unwrap());
         thread::sleep(Duration::from_micros(duration as u64));
     }
@@ -38,27 +43,27 @@ pub fn debug_delay() {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct ThreadRng {
-    rng: *mut ReseedingRng<Hc128Core, EntropyRng>,
+    // use of raw pointer implies type is neither Send nor Sync
+    rng: *mut ReseedingRng<Core, OsRng>,
 }
 
-const THREAD_RNG_RESEED_THRESHOLD: u64 = 32 * 1024 * 1024; // 32 MiB
+const THREAD_RNG_RESEED_THRESHOLD: u64 = 1024 * 64;
 
 thread_local!(
-    static THREAD_RNG_KEY: Rc<UnsafeCell<ReseedingRng<Hc128Core, EntropyRng>>> = {
-        let mut entropy_source = EntropyRng::new();
-        let r = Hc128Core::from_rng(&mut entropy_source).unwrap_or_else(|err|
+    static THREAD_RNG_KEY: UnsafeCell<ReseedingRng<Core, OsRng>> = {
+        let r = Core::from_rng(OsRng).unwrap_or_else(|err|
                 panic!("could not initialize thread_rng: {}", err));
         let rng = ReseedingRng::new(r,
                                     THREAD_RNG_RESEED_THRESHOLD,
-                                    entropy_source);
-        Rc::new(UnsafeCell::new(rng))
+                                    OsRng);
+        UnsafeCell::new(rng)
     }
 );
 
 /// Access a thread-rng that may have been destroyed.
-pub fn try_thread_rng() -> Option<ThreadRng> {
+fn try_thread_rng() -> Option<ThreadRng> {
     THREAD_RNG_KEY.try_with(|t| ThreadRng { rng: t.get() }).ok()
 }
 
@@ -77,11 +82,10 @@ impl RngCore for ThreadRng {
         unsafe { (*self.rng).fill_bytes(dest) }
     }
 
-    fn try_fill_bytes(
-        &mut self,
-        dest: &mut [u8],
-    ) -> Result<(), rand::Error> {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
         self.fill_bytes(dest);
         Ok(())
     }
 }
+
+impl CryptoRng for ThreadRng {}

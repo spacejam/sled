@@ -1,14 +1,36 @@
-use std::mem::size_of;
+use std::{fmt, mem::size_of};
 
 use super::*;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Node {
-    pub(crate) id: PageId,
     pub(crate) data: Data,
     pub(crate) next: Option<PageId>,
     pub(crate) lo: IVec,
     pub(crate) hi: IVec,
+    pub(crate) merging_child: Option<PageId>,
+    pub(crate) merging: bool,
+}
+
+impl fmt::Debug for Node {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> std::result::Result<(), fmt::Error> {
+        let data = self.data.fmt_keys(&self.lo);
+
+        write!(
+            f,
+            "Node {{ \
+             lo: {:?} \
+             hi: {:?} \
+             next: {:?} \
+             merging_child: {:?} \
+             merging: {} \
+             data: {:?} }}",
+            self.lo, self.hi, self.next, self.merging_child, self.merging, data
+        )
+    }
 }
 
 impl Node {
@@ -25,12 +47,13 @@ impl Node {
             .saturating_add(data_sz)
     }
 
-    pub(crate) fn apply(
-        &mut self,
-        frag: &Frag,
-        merge_operator: Option<usize>,
-    ) {
+    pub(crate) fn apply(&mut self, frag: &Frag, merge_operator: Option<usize>) {
         use self::Frag::*;
+
+        assert!(
+            !self.merging,
+            "somehow a frag was applied to a node after it was merged"
+        );
 
         match *frag {
             Set(ref k, ref v) => {
@@ -39,9 +62,13 @@ impl Node {
                     || prefix_cmp_encoded(k, &self.hi, &self.lo)
                         == std::cmp::Ordering::Less
                 {
-                    self.set_leaf(k.clone().into(), v.clone().into());
+                    self.set_leaf(k.clone(), v.clone());
                 } else {
-                    panic!("tried to consolidate set at key <= hi")
+                    panic!(
+                        "tried to consolidate set at key <= hi.\
+                         Set({:?}, {:?}) to node {:?}",
+                        k, v, self
+                    )
                 }
             }
             Merge(ref k, ref v) => {
@@ -50,26 +77,16 @@ impl Node {
                     || prefix_cmp_encoded(k, &self.hi, &self.lo)
                         == std::cmp::Ordering::Less
                 {
-                    let merge_fn_ptr = merge_operator
-                        .expect("must have a merge operator set");
+                    let merge_fn_ptr =
+                        merge_operator.expect("must have a merge operator set");
                     unsafe {
                         let merge_fn: MergeOperator =
                             std::mem::transmute(merge_fn_ptr);
-                        self.merge_leaf(
-                            k.clone(),
-                            v.clone(),
-                            merge_fn,
-                        );
+                        self.merge_leaf(k.clone(), v.clone(), merge_fn);
                     }
                 } else {
                     panic!("tried to consolidate set at key <= hi")
                 }
-            }
-            ChildSplit(ref child_split) => {
-                self.child_split(child_split);
-            }
-            ParentSplit(ref parent_split) => {
-                self.parent_split(parent_split);
             }
             Del(ref k) => {
                 // (when hi is empty, it means it's unbounded)
@@ -82,27 +99,38 @@ impl Node {
                     panic!("tried to consolidate del at key <= hi")
                 }
             }
-            Base(_) => {
-                panic!("encountered base page in middle of chain")
+            Base(_) => panic!("encountered base page in middle of chain"),
+            ParentMergeIntention(pid) => {
+                assert!(
+                    self.merging_child.is_none(),
+                    "trying to merge {:?} into node {:?} which \
+                     is already merging another child",
+                    frag,
+                    self
+                );
+                self.merging_child = Some(pid);
             }
-            Counter(_) => unimplemented!(),
-            Meta(_) => unimplemented!(),
+            ParentMergeConfirm => {
+                assert!(self.merging_child.is_some());
+                let merged_child = self.merging_child.take().expect(
+                    "we should have a specific \
+                     child that was merged if this \
+                     frag appears here",
+                );
+                self.data.parent_merge_confirm(merged_child);
+            }
+            ChildMergeCap => {
+                self.merging = true;
+            }
         }
     }
 
     pub(crate) fn set_leaf(&mut self, key: IVec, val: IVec) {
         if let Data::Leaf(ref mut records) = self.data {
-            let search =
-                records.binary_search_by(|&(ref k, ref _v)| {
-                    prefix_cmp(k, &*key)
-                });
-            if let Ok(idx) = search {
-                records[idx] = (key, val);
-            } else {
-                records.push((key, val));
-                records.sort_unstable_by(|a, b| {
-                    prefix_cmp(&*a.0, &*b.0)
-                });
+            let search = records.binary_search_by(|(k, _)| prefix_cmp(k, &key));
+            match search {
+                Ok(idx) => records[idx] = (key, val),
+                Err(idx) => records.insert(idx, (key, val)),
             }
         } else {
             panic!("tried to Set a value to an index");
@@ -116,30 +144,25 @@ impl Node {
         merge_fn: MergeOperator,
     ) {
         if let Data::Leaf(ref mut records) = self.data {
-            let search =
-                records.binary_search_by(|&(ref k, ref _v)| {
-                    prefix_cmp(k, &*key)
-                });
+            let search = records.binary_search_by(|(k, _)| prefix_cmp(k, &key));
 
             let decoded_k = prefix_decode(&self.lo, &key);
-            if let Ok(idx) = search {
-                let new = merge_fn(
-                    &*decoded_k,
-                    Some(&records[idx].1),
-                    &val,
-                );
-                if let Some(new) = new {
-                    records[idx] = (key, new.into());
-                } else {
-                    records.remove(idx);
+
+            match search {
+                Ok(idx) => {
+                    let new =
+                        merge_fn(&*decoded_k, Some(&records[idx].1), &val);
+                    if let Some(new) = new {
+                        records[idx] = (key, new.into());
+                    } else {
+                        records.remove(idx);
+                    }
                 }
-            } else {
-                let new = merge_fn(&*decoded_k, None, &val);
-                if let Some(new) = new {
-                    records.push((key, new.into()));
-                    records.sort_unstable_by(|a, b| {
-                        prefix_cmp(&*a.0, &*b.0)
-                    });
+                Err(idx) => {
+                    let new = merge_fn(&*decoded_k, None, &val);
+                    if let Some(new) = new {
+                        records.insert(idx, (key, new.into()));
+                    }
                 }
             }
         } else {
@@ -147,28 +170,31 @@ impl Node {
         }
     }
 
-    pub(crate) fn child_split(&mut self, cs: &ChildSplit) {
-        self.data.drop_gte(&cs.at, &self.lo);
-        self.hi = cs.at.clone();
-        self.next = Some(cs.to);
-    }
-
-    pub(crate) fn parent_split(&mut self, ps: &ParentSplit) {
+    pub(crate) fn parent_split(&mut self, at: &[u8], to: PageId) -> bool {
         if let Data::Index(ref mut ptrs) = self.data {
-            let encoded_sep = prefix_encode(&self.lo, &ps.at);
-            ptrs.push((encoded_sep.into(), ps.to));
-            ptrs.sort_unstable_by(|a, b| prefix_cmp(&*a.0, &*b.0));
+            let encoded_sep = prefix_encode(&self.lo, at);
+            match ptrs.binary_search_by(|a| prefix_cmp(&a.0, &encoded_sep)) {
+                Ok(_) => {
+                    debug!(
+                        "parent_split skipped because \
+                         parent already contains child at split point \
+                         due to deep race"
+                    );
+                    return false;
+                }
+                Err(idx) => ptrs.insert(idx, (encoded_sep, to)),
+            }
         } else {
             panic!("tried to attach a ParentSplit to a Leaf chain");
         }
+
+        true
     }
 
     pub(crate) fn del_leaf(&mut self, key: &IVec) {
         if let Data::Leaf(ref mut records) = self.data {
-            let search =
-                records.binary_search_by(|&(ref k, ref _v)| {
-                    prefix_cmp(k, &*key)
-                });
+            let search = records
+                .binary_search_by(|&(ref k, ref _v)| prefix_cmp(k, &*key));
             if let Ok(idx) = search {
                 records.remove(idx);
             }
@@ -177,18 +203,27 @@ impl Node {
         }
     }
 
-    pub(crate) fn should_split(&self, max_sz: u64) -> bool {
-        self.data.len() > 2 && self.size_in_bytes() > max_sz
-    }
-
-    pub(crate) fn split(&self, id: PageId) -> Node {
+    pub(crate) fn split(&self) -> Node {
         let (split, right_data) = self.data.split(&self.lo);
         Node {
-            id,
             data: right_data,
             next: self.next,
             lo: split,
             hi: self.hi.clone(),
+            merging_child: None,
+            merging: false,
         }
+    }
+
+    pub(crate) fn receive_merge(&self, rhs: &Node) -> Node {
+        let mut merged = self.clone();
+        merged.hi = rhs.hi.clone();
+        merged.data.receive_merge(
+            rhs.lo.as_ref(),
+            merged.lo.as_ref(),
+            &rhs.data,
+        );
+        merged.next = rhs.next;
+        merged
     }
 }

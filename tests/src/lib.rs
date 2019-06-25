@@ -6,10 +6,20 @@ extern crate sled;
 
 pub mod tree;
 
-#[cfg_attr(not(feature = "no_jemalloc"), global_allocator)]
+#[cfg_attr(
+    // only enable jemalloc on linux and macos by default
+    // for fast tests
+    all(
+        any(target_os = "linux", target_os = "macos"),
+        not(feature = "no_jemalloc"),
+    ),
+    global_allocator
+)]
 static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 pub fn setup_logger() {
+    color_backtrace::install();
+
     use std::io::Write;
 
     fn tn() -> String {
@@ -27,19 +37,14 @@ pub fn setup_logger() {
                 "{:05} {:20} {:10} {}",
                 record.level(),
                 tn(),
-                record
-                    .module_path()
-                    .unwrap()
-                    .split("::")
-                    .last()
-                    .unwrap(),
+                record.module_path().unwrap().split("::").last().unwrap(),
                 record.args()
             )
         })
         .filter(None, log::LevelFilter::Info);
 
     if std::env::var("RUST_LOG").is_ok() {
-        builder.parse(&std::env::var("RUST_LOG").unwrap());
+        builder.parse_filters(&std::env::var("RUST_LOG").unwrap());
     }
 
     let _r = builder.try_init();

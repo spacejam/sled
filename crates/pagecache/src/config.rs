@@ -11,11 +11,15 @@ use std::{
 };
 
 use bincode::{deserialize, serialize};
+
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use fs2::FileExt;
+
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use super::*;
+// explicitly bring LogReader in to be tool-friendly
+use super::{LogReader, *};
 
 const DEFAULT_PATH: &str = "default.sled";
 
@@ -34,7 +38,6 @@ impl Deref for Config {
 /// let _config = pagecache::ConfigBuilder::default()
 ///     .path("/path/to/data".to_owned())
 ///     .cache_capacity(10_000_000_000)
-///     .use_compression(true)
 ///     .flush_every_ms(Some(1000))
 ///     .snapshot_after_ops(100_000);
 /// ```
@@ -50,9 +53,11 @@ pub struct ConfigBuilder {
     #[doc(hidden)]
     pub blink_node_split_size: usize,
     #[doc(hidden)]
+    pub blink_node_merge_ratio: usize,
+    #[doc(hidden)]
     pub cache_bits: usize,
     #[doc(hidden)]
-    pub cache_capacity: usize,
+    pub cache_capacity: u64,
     #[doc(hidden)]
     pub flush_every_ms: Option<u64>,
     #[doc(hidden)]
@@ -72,7 +77,7 @@ pub struct ConfigBuilder {
     #[doc(hidden)]
     pub segment_mode: SegmentMode,
     #[doc(hidden)]
-    pub snapshot_after_ops: usize,
+    pub snapshot_after_ops: u64,
     #[doc(hidden)]
     pub snapshot_path: Option<PathBuf>,
     #[doc(hidden)]
@@ -86,7 +91,7 @@ pub struct ConfigBuilder {
     #[doc(hidden)]
     pub print_profile_on_drop: bool,
     #[doc(hidden)]
-    pub idgen_persist_interval: usize,
+    pub idgen_persist_interval: u64,
     #[doc(hidden)]
     pub async_io: bool,
     #[doc(hidden)]
@@ -101,25 +106,26 @@ impl Default for ConfigBuilder {
             io_bufs: 3,
             io_buf_size: 2 << 22, // 8mb
             blink_node_split_size: 4096,
+            blink_node_merge_ratio: 4,
             page_consolidation_threshold: 10,
             path: PathBuf::from(DEFAULT_PATH),
             read_only: false,
-            cache_bits: 6, // 64 shards
+            cache_bits: 8,                      // 256 shards
             cache_capacity: 1024 * 1024 * 1024, // 1gb
-            use_compression: true,
+            use_compression: false,
             compression_factor: 5,
             flush_every_ms: Some(500),
             snapshot_after_ops: 1_000_000,
             snapshot_path: None,
-            segment_cleanup_threshold: 0.4,
+            segment_cleanup_threshold: 0.40,
             segment_cleanup_skew: 10,
             temporary: false,
             segment_mode: SegmentMode::Gc,
             merge_operator: None,
             print_profile_on_drop: false,
             idgen_persist_interval: 1_000_000,
-            async_io: false,
-            async_io_threads: 0,
+            async_io: true,
+            async_io_threads: 3,
         }
     }
 }
@@ -157,10 +163,7 @@ impl ConfigBuilder {
 
     /// Set the merge operator that can be relied on during merges in
     /// the `PageCache`.
-    pub fn merge_operator(
-        mut self,
-        mo: MergeOperator,
-    ) -> ConfigBuilder {
+    pub fn merge_operator(mut self, mo: MergeOperator) -> ConfigBuilder {
         self.merge_operator = Some(mo as usize);
         self
     }
@@ -177,23 +180,19 @@ impl ConfigBuilder {
         // only validate, setup directory, and open file once
         self.validate().unwrap();
 
-        if self.temporary && self.path == PathBuf::from(DEFAULT_PATH)
-        {
+        if self.temporary && self.path == PathBuf::from(DEFAULT_PATH) {
             #[cfg(unix)]
             let salt = {
-                static SALT_COUNTER: AtomicUsize =
-                    AtomicUsize::new(0);
+                static SALT_COUNTER: AtomicUsize = AtomicUsize::new(0);
                 let pid = unsafe { libc::getpid() };
                 ((pid as u64) << 32)
-                    + SALT_COUNTER.fetch_add(1, Ordering::SeqCst)
-                        as u64
+                    + SALT_COUNTER.fetch_add(1, Ordering::SeqCst) as u64
             };
 
             #[cfg(not(unix))]
             let salt = {
                 let now = uptime();
-                (now.as_secs() * 1_000_000_000)
-                    + u64::from(now.subsec_nanos())
+                (now.as_secs() * 1_000_000_000) + u64::from(now.subsec_nanos())
             };
 
             // use shared memory for temporary linux files
@@ -216,9 +215,7 @@ impl ConfigBuilder {
 
             let tp = rayon::ThreadPoolBuilder::new()
                 .num_threads(self.async_io_threads)
-                .thread_name(move |id| {
-                    format!("sled_io_{}_{:?}", id, path)
-                })
+                .thread_name(move |id| format!("sled_io_{}_{:?}", id, path))
                 .start_handler(move |_id| {
                     start_threads.fetch_add(1, SeqCst);
                 })
@@ -233,10 +230,13 @@ impl ConfigBuilder {
             None
         };
 
-        let file = self.open_file().expect(&format!(
-            "should be able to open configured file at {:?}",
-            self.db_path(),
-        ));
+        let file = self.open_file().unwrap_or_else(|e| {
+            panic!(
+                "should be able to open configured file at {:?}; {}",
+                self.db_path(),
+                e,
+            );
+        });
 
         // seal config in a Config
         Config {
@@ -259,23 +259,23 @@ impl ConfigBuilder {
         (temporary, bool, "deletes the database after drop. if no path is set, uses /dev/shm on linux"),
         (read_only, bool, "whether to run in read-only mode"),
         (cache_bits, usize, "log base 2 of the number of cache shards"),
-        (cache_capacity, usize, "maximum size for the system page cache"),
+        (cache_capacity, u64, "maximum size for the system page cache"),
         (use_compression, bool, "whether to use zstd compression"),
         (compression_factor, i32, "the compression factor to use with zstd compression"),
         (flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
-        (snapshot_after_ops, usize, "number of operations between page table snapshots"),
-        (segment_cleanup_threshold, f64, "the proportion of remaining valid pages in the segment"),
+        (snapshot_after_ops, u64, "number of operations between page table snapshots"),
+        (segment_cleanup_threshold, f64, "the proportion of remaining valid pages in the segment before GC defragments it"),
         (segment_cleanup_skew, usize, "the cleanup threshold skew in percentage points between the first and last segments"),
         (segment_mode, SegmentMode, "the file segment selection mode"),
         (snapshot_path, Option<PathBuf>, "snapshot file location"),
         (print_profile_on_drop, bool, "print a performance profile when the Config is dropped"),
-        (idgen_persist_interval, usize, "generated IDs are persisted at this interval. during recovery we skip twice this number"),
+        (idgen_persist_interval, u64, "generated IDs are persisted at this interval. during recovery we skip twice this number"),
         (async_io, bool, "perform IO operations on a threadpool"),
         (async_io_threads, usize, "set the number of threads in the IO threadpool. defaults to # logical CPUs.")
     );
 
     // panics if config options are outside of advised range
-    fn validate(&self) -> Result<(), ()> {
+    fn validate(&self) -> Result<()> {
         supported!(
             self.io_bufs <= 32,
             "too many configured io_bufs. please make <= 32"
@@ -288,8 +288,14 @@ impl ConfigBuilder {
             self.io_buf_size <= 1 << 24,
             "io_buf_size should be <= 16mb"
         );
-        supported!(self.page_consolidation_threshold >= 1, "must consolidate pages after a non-zero number of updates");
-        supported!(self.page_consolidation_threshold < 1 << 20, "must consolidate pages after fewer than 1 million updates");
+        supported!(
+            self.page_consolidation_threshold >= 1,
+            "must consolidate pages after a non-zero number of updates"
+        );
+        supported!(
+            self.page_consolidation_threshold < 1 << 20,
+            "must consolidate pages after fewer than 1 million updates"
+        );
         supported!(
             self.cache_bits <= 20,
             "# LRU shards = 2^cache_bits. set cache_bits to 20 or less."
@@ -306,6 +312,12 @@ impl ConfigBuilder {
             self.segment_cleanup_skew < 99,
             "segment_cleanup_skew cannot be greater than 99%"
         );
+        if self.use_compression {
+            supported!(
+                cfg!(feature = "compression"),
+                "the compression feature must be enabled"
+            );
+        }
         supported!(
             self.compression_factor >= 1,
             "compression_factor must be >= 1"
@@ -321,7 +333,7 @@ impl ConfigBuilder {
         Ok(())
     }
 
-    fn open_file(&mut self) -> Result<fs::File, ()> {
+    fn open_file(&mut self) -> Result<fs::File> {
         let path = self.db_path();
 
         // panic if we can't parse the path
@@ -345,10 +357,9 @@ impl ConfigBuilder {
         }
 
         if !dir.exists() {
-            let res: std::io::Result<()> =
-                std::fs::create_dir_all(dir);
+            let res: std::io::Result<()> = std::fs::create_dir_all(dir);
             res.map_err(|e: std::io::Error| {
-                let ret: Error<()> = e.into();
+                let ret: Error = e.into();
                 ret
             })?;
         }
@@ -364,11 +375,14 @@ impl ConfigBuilder {
         match options.open(&path) {
             Ok(file) => {
                 // try to exclusively lock the file
-                if file.try_lock_exclusive().is_err() {
-                    return Err(Error::Io(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "could not acquire exclusive file lock",
-                    )));
+                #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+                {
+                    if file.try_lock_exclusive().is_err() {
+                        return Err(Error::Io(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            "could not acquire exclusive file lock",
+                        )));
+                    }
                 }
 
                 Ok(file)
@@ -377,23 +391,25 @@ impl ConfigBuilder {
         }
     }
 
-    fn verify_config_changes_ok(&self) -> Result<(), ()> {
+    fn verify_config_changes_ok(&self) -> Result<()> {
         match self.read_config() {
             Ok(Some(old)) => {
                 if old.merge_operator.is_some() {
-                    supported!(self.merge_operator.is_some(),
+                    supported!(
+                        self.merge_operator.is_some(),
                         "this system was previously opened with a \
-                        merge operator. must supply one FOREVER after \
-                        choosing to do so once, BWAHAHAHAHAHAHA!!!!");
+                         merge operator. must supply one FOREVER after \
+                         choosing to do so once, BWAHAHAHAHAHAHA!!!!"
+                    );
                 }
 
                 supported!(
                     self.use_compression == old.use_compression,
-                    format!("cannot change compression values across restarts. \
-                        old value of use_compression loaded from disk: {}, \
-                        currently set value: {}.",
-                        old.use_compression,
-                        self.use_compression,
+                    format!(
+                        "cannot change compression values across restarts. \
+                         old value of use_compression loaded from disk: {}, \
+                         currently set value: {}.",
+                        old.use_compression, self.use_compression,
                     )
                 );
 
@@ -401,7 +417,7 @@ impl ConfigBuilder {
                     self.io_buf_size == old.io_buf_size,
                     format!(
                         "cannot change the io buffer size across restarts. \
-                        please change it back to {}",
+                         please change it back to {}",
                         old.io_buf_size
                     )
                 );
@@ -412,10 +428,10 @@ impl ConfigBuilder {
         }
     }
 
-    fn write_config(&self) -> Result<(), ()> {
+    fn write_config(&self) -> Result<()> {
         let bytes = serialize(&*self).unwrap();
-        let crc: u64 = crc64(&*bytes);
-        let crc_arr = u64_to_arr(crc);
+        let crc: u32 = crc32(&*bytes);
+        let crc_arr = u32_to_arr(crc);
 
         let path = self.config_path();
 
@@ -436,13 +452,10 @@ impl ConfigBuilder {
     fn read_config(&self) -> std::io::Result<Option<ConfigBuilder>> {
         let path = self.config_path();
 
-        let f_res =
-            std::fs::OpenOptions::new().read(true).open(&path);
+        let f_res = std::fs::OpenOptions::new().read(true).open(&path);
 
         let mut f = match f_res {
-            Err(ref e)
-                if e.kind() == std::io::ErrorKind::NotFound =>
-            {
+            Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(None);
             }
             Err(other) => {
@@ -459,14 +472,14 @@ impl ConfigBuilder {
         let mut buf = vec![];
         f.read_to_end(&mut buf).unwrap();
         let len = buf.len();
-        buf.split_off(len - 8);
+        buf.split_off(len - 4);
 
-        let mut crc_arr = [0u8; 8];
-        f.seek(std::io::SeekFrom::End(-8)).unwrap();
+        let mut crc_arr = [0u8; 4];
+        f.seek(std::io::SeekFrom::End(-4)).unwrap();
         f.read_exact(&mut crc_arr).unwrap();
-        let crc_expected = arr_to_u64(&crc_arr);
+        let crc_expected = arr_to_u32(&crc_arr);
 
-        let crc_actual = crc64(&*buf);
+        let crc_actual = crc32(&*buf);
 
         if crc_expected != crc_actual {
             warn!(
@@ -514,7 +527,7 @@ pub struct Config {
     pub(crate) thread_pool: Option<Arc<rayon::ThreadPool>>,
     threads: Arc<AtomicUsize>,
     refs: Arc<AtomicUsize>,
-    pub(crate) global_error: Arc<AtomicPtr<Error<()>>>,
+    pub(crate) global_error: Arc<AtomicPtr<Error>>,
     #[cfg(feature = "event_log")]
     /// an event log for concurrent debugging
     pub event_log: Arc<event_log::EventLog>,
@@ -549,9 +562,7 @@ impl Drop for Config {
             drop(thread_pool);
 
             while self.threads.load(SeqCst) != 0 {
-                std::thread::sleep(std::time::Duration::from_millis(
-                    50,
-                ));
+                std::thread::sleep(std::time::Duration::from_millis(50));
             }
             debug!("threadpool drained");
 
@@ -564,7 +575,7 @@ impl Drop for Config {
             }
 
             // Our files are temporary, so nuke them.
-            warn!(
+            debug!(
                 "removing temporary storage file {}",
                 self.inner.path.to_string_lossy()
             );
@@ -576,24 +587,32 @@ impl Drop for Config {
 impl Config {
     /// Return the global error if one was encountered during
     /// an asynchronous IO operation.
-    pub fn global_error(&self) -> Option<Error<()>> {
+    pub fn global_error(&self) -> Result<()> {
         let ge = self.global_error.load(Ordering::Relaxed);
         if ge.is_null() {
-            None
+            Ok(())
         } else {
-            unsafe { Some((*ge).clone()) }
+            unsafe { Err((*ge).clone()) }
         }
     }
 
-    pub(crate) fn set_global_error(&self, error: Error<()>) {
+    pub(crate) fn reset_global_error(&self) {
+        self.global_error
+            .store(std::ptr::null_mut(), Ordering::SeqCst);
+    }
+
+    pub(crate) fn set_global_error(&self, error: Error) {
         let ptr = Box::into_raw(Box::new(error));
+
+        let expected_old = std::ptr::null_mut();
+
         let ret = self.global_error.compare_and_swap(
-            std::ptr::null_mut(),
-            ptr as *mut Error<()>,
-            Ordering::Relaxed,
+            expected_old,
+            ptr as *mut Error,
+            Ordering::Release,
         );
 
-        if ret.is_null() {
+        if ret != expected_old {
             // CAS failed, reclaim memory
             unsafe {
                 drop(Box::from_raw(ptr));
@@ -612,15 +631,12 @@ impl Config {
 
     // returns the snapshot file paths for this system
     #[doc(hidden)]
-    pub fn get_snapshot_files(
-        &self,
-    ) -> std::io::Result<Vec<PathBuf>> {
+    pub fn get_snapshot_files(&self) -> std::io::Result<Vec<PathBuf>> {
         let mut prefix = self.snapshot_prefix();
 
         prefix.push("snap.");
 
-        let abs_prefix: PathBuf = if Path::new(&prefix).is_absolute()
-        {
+        let abs_prefix: PathBuf = if Path::new(&prefix).is_absolute() {
             prefix
         } else {
             let mut abs_path = std::env::current_dir()?;
@@ -628,24 +644,22 @@ impl Config {
             abs_path
         };
 
-        let filter =
-            |dir_entry: std::io::Result<std::fs::DirEntry>| {
-                if let Ok(de) = dir_entry {
-                    let path_buf = de.path();
-                    let path = path_buf.as_path();
-                    let path_str = &*path.to_string_lossy();
-                    if path_str
-                        .starts_with(&*abs_prefix.to_string_lossy())
-                        && !path_str.ends_with(".in___motion")
-                    {
-                        Some(path.to_path_buf())
-                    } else {
-                        None
-                    }
+        let filter = |dir_entry: std::io::Result<std::fs::DirEntry>| {
+            if let Ok(de) = dir_entry {
+                let path_buf = de.path();
+                let path = path_buf.as_path();
+                let path_str = &*path.to_string_lossy();
+                if path_str.starts_with(&*abs_prefix.to_string_lossy())
+                    && !path_str.ends_with(".in___motion")
+                {
+                    Some(path.to_path_buf())
                 } else {
                     None
                 }
-            };
+            } else {
+                None
+            }
+        };
 
         let snap_dir = Path::new(&abs_prefix).parent().unwrap();
 
@@ -657,35 +671,21 @@ impl Config {
     }
 
     #[doc(hidden)]
-    pub fn verify_snapshot<PM, P, R>(&self) -> Result<(), ()>
+    pub fn verify_snapshot<PM, P>(&self) -> Result<()>
     where
-        PM: Materializer<Recovery = R, PageFrag = P>,
-        P: 'static
-            + Debug
-            + Clone
-            + Serialize
-            + DeserializeOwned
-            + Send
-            + Sync,
-        R: Debug
-            + Clone
-            + Serialize
-            + DeserializeOwned
-            + Send
-            + PartialEq,
+        PM: Materializer<PageFrag = P>,
+        P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
     {
         debug!("generating incremental snapshot");
 
-        let incremental =
-            read_snapshot_or_default::<PM, P, R>(&self)?;
+        let incremental = read_snapshot_or_default::<PM, P>(&self)?;
 
         for snapshot_path in self.get_snapshot_files()? {
             std::fs::remove_file(snapshot_path)?;
         }
 
         debug!("generating snapshot without the previous one");
-        let regenerated =
-            read_snapshot_or_default::<PM, P, R>(&self)?;
+        let regenerated = read_snapshot_or_default::<PM, P>(&self)?;
 
         for (k, v) in &regenerated.pt {
             if !incremental.pt.contains_key(&k) {
@@ -702,7 +702,7 @@ impl Config {
                 k
             );
             for (lsn, ptr) in v.iter() {
-                let read = ptr.read(&self);
+                let read = self.file.read_message(ptr.lid(), lsn, &self);
                 if let Err(e) = read {
                     panic!(
                         "could not read log data for \
@@ -728,7 +728,7 @@ impl Config {
                 k
             );
             for (lsn, ptr) in v.iter() {
-                let read = ptr.read(&self);
+                let read = self.file.read_message(ptr.lid(), lsn, &self);
                 if let Err(e) = read {
                     panic!(
                         "could not read log data for \
@@ -758,10 +758,6 @@ impl Config {
         assert_eq!(
             incremental.free, regenerated.free,
             "snapshot free list diverged"
-        );
-        assert_eq!(
-            incremental.recovery, regenerated.recovery,
-            "snapshot recovery diverged"
         );
 
         /*

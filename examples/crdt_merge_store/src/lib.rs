@@ -1,14 +1,14 @@
 #[macro_use]
 extern crate serde_derive;
-extern crate serde;
 extern crate bincode;
-extern crate sled;
 extern crate crdts;
+extern crate serde;
+extern crate sled;
 
 use std::path::Path;
 
+use bincode::{deserialize, serialize, Infinite};
 use crdts::{Orswot, VClock};
-use bincode::{Infinite, deserialize, serialize};
 
 const KEY: &'static [u8] = b"dat orswot";
 
@@ -37,9 +37,7 @@ impl OrswotStore {
     }
 
     pub fn merge(&self, other: Orswot<Vec<u8>, DeviceID>) {
-        self.apply(Merge {
-            other,
-        });
+        self.apply(Merge { other });
     }
 
     pub fn add(&self, device: DeviceID, item: Vec<u8>) {
@@ -66,12 +64,17 @@ type DeviceID = Vec<u8>;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 enum OrswotOp {
-    Add { device: DeviceID, item: Vec<u8> },
+    Add {
+        device: DeviceID,
+        item: Vec<u8>,
+    },
     Remove {
         context: VClock<DeviceID>,
         item: Vec<u8>,
     },
-    Merge { other: Orswot<Vec<u8>, DeviceID> },
+    Merge {
+        other: Orswot<Vec<u8>, DeviceID>,
+    },
 }
 
 use OrswotOp::*;
@@ -88,17 +91,9 @@ fn orswot_merge(
     let op = deserialize(merged_bytes).unwrap();
 
     match op {
-        Add {
-            device,
-            item,
-        } => ret.add(item, device),
-        Remove {
-            context,
-            item,
-        } => ret.remove_with_context(item, &context),
-        Merge {
-            other,
-        } => ret.merge(other),
+        Add { device, item } => ret.add(item, device),
+        Remove { context, item } => ret.remove_with_context(item, &context),
+        Merge { other } => ret.merge(other),
     }
 
     Some(serialize(&ret, Infinite).unwrap())

@@ -1,7 +1,8 @@
 #![cfg(all(
     not(target_os = "fuchsia"),
     not(target_os = "android"),
-    not(target_os = "windows")
+    not(target_os = "windows"),
+    not(target_os = "macos")
 ))]
 
 extern crate libc;
@@ -42,11 +43,10 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
     let mut contiguous: u32 = 0;
     let mut lowest = 0;
     for res in iter {
-        let (mut k, v) = res.unwrap();
+        let (_k, v) = res.unwrap();
         if &v[..4] == &highest_vec[..4] {
             contiguous += 1;
         } else {
-            k.reverse();
             let expected = if highest == 0 {
                 CYCLE as u32 - 1
             } else {
@@ -59,19 +59,14 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
         }
     }
 
-    let lowest_vec = u32_to_vec(lowest);
-
     // ensure nothing changes after this point
     let low_beginning = u32_to_vec(contiguous + 1);
 
-    for res in tree.scan(&*low_beginning) {
-        let (mut k, v) = res.unwrap();
-        if v != lowest_vec {
-            k.reverse();
-        }
+    for res in tree.range(&*low_beginning..) {
+        let (k, v): (sled::IVec, _) = res.unwrap();
         assert_eq!(
-            v,
-            lowest_vec,
+            slice_to_u32(&*v),
+            lowest,
             "expected key {} to have value {}, instead it had value {}",
             slice_to_u32(&*k),
             lowest,
@@ -83,8 +78,7 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
 }
 
 fn u32_to_vec(u: u32) -> Vec<u8> {
-    let buf: [u8; size_of::<u32>()] =
-        unsafe { std::mem::transmute(u) };
+    let buf: [u8; size_of::<u32>()] = u.to_be_bytes();
     buf.to_vec()
 }
 
@@ -92,7 +86,7 @@ fn slice_to_u32(b: &[u8]) -> u32 {
     let mut buf = [0u8; size_of::<u32>()];
     buf.copy_from_slice(&b[..size_of::<u32>()]);
 
-    unsafe { std::mem::transmute(buf) }
+    u32::from_be_bytes(buf)
 }
 
 fn spawn_killah() {
@@ -107,8 +101,7 @@ fn spawn_killah() {
 
 fn run(config: Config) {
     // tests::setup_logger();
-    let crash_during_initialization =
-        rand::thread_rng().gen_bool(0.1);
+    let crash_during_initialization = rand::thread_rng().gen_bool(0.1);
 
     if crash_during_initialization {
         spawn_killah();
@@ -133,8 +126,7 @@ fn run(config: Config) {
             hu = 0;
         }
 
-        let mut key = u32_to_vec((hu % CYCLE) as u32);
-        key.reverse();
+        let key = u32_to_vec((hu % CYCLE) as u32);
 
         let mut value = u32_to_vec((hu / CYCLE) as u32);
         let additional_len = rand::thread_rng().gen_range(0, 100_000);
@@ -203,11 +195,7 @@ fn test_crash_recovery_with_runtime_snapshot() {
         } else {
             let mut status = 0;
             unsafe {
-                libc::waitpid(
-                    child,
-                    &mut status as *mut libc::c_int,
-                    0,
-                );
+                libc::waitpid(child, &mut status as *mut libc::c_int, 0);
             }
             if status != 9 {
                 cleanup();
@@ -229,11 +217,7 @@ fn test_crash_recovery_no_runtime_snapshot() {
         } else {
             let mut status = 0;
             unsafe {
-                libc::waitpid(
-                    child,
-                    &mut status as *mut libc::c_int,
-                    0,
-                );
+                libc::waitpid(child, &mut status as *mut libc::c_int, 0);
             }
             if status != 9 {
                 cleanup();

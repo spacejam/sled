@@ -2,46 +2,38 @@ use std::io::{Read, Write};
 
 use super::*;
 
-pub(crate) fn read_blob(
-    blob_ptr: Lsn,
-    config: &Config,
-) -> Result<Vec<u8>, ()> {
+pub(crate) fn read_blob(blob_ptr: Lsn, config: &Config) -> Result<Vec<u8>> {
     let path = config.blob_path(blob_ptr);
     let f_res = std::fs::OpenOptions::new().read(true).open(&path);
 
     if let Err(e) = &f_res {
-        debug!(
-            "failed to open file for blob read at {}: {:?}",
-            blob_ptr, e
-        );
+        debug!("failed to open file for blob read at {}: {:?}", blob_ptr, e);
     }
 
     let mut f = f_res?;
 
-    let mut crc_expected_bytes = [0u8; BLOB_INLINE_LEN];
+    let mut crc_expected_bytes = [0u8; std::mem::size_of::<u32>()];
 
     if let Err(e) = f.read_exact(&mut crc_expected_bytes) {
         debug!(
             "failed to read the initial CRC bytes in the blob at {}: {:?}",
-            blob_ptr,
-            e,
+            blob_ptr, e,
         );
         return Err(e.into());
     }
 
-    let crc_expected = arr_to_u64(&crc_expected_bytes);
+    let crc_expected = arr_to_u32(&crc_expected_bytes);
 
     let mut buf = vec![];
     if let Err(e) = f.read_to_end(&mut buf) {
         debug!(
             "failed to read data after the CRC bytes in blob at {}: {:?}",
-            blob_ptr,
-            e,
+            blob_ptr, e,
         );
         return Err(e.into());
     }
 
-    let crc_actual = crc64(&*buf);
+    let crc_actual = crc32(&buf);
 
     if crc_expected != crc_actual {
         warn!("blob {} failed crc check!", blob_ptr);
@@ -50,25 +42,26 @@ pub(crate) fn read_blob(
             at: DiskPtr::Blob(0, blob_ptr),
         })
     } else {
+        let buf = if config.use_compression {
+            maybe_decompress(buf)?
+        } else {
+            buf
+        };
         Ok(buf)
     }
 }
 
-pub(crate) fn write_blob(
-    config: &Config,
-    id: Lsn,
-    data: Vec<u8>,
-) -> Result<(), ()> {
+pub(crate) fn write_blob(config: &Config, id: Lsn, data: &[u8]) -> Result<()> {
     let path = config.blob_path(id);
     let mut f = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&path)?;
 
-    let crc = u64_to_arr(crc64(&*data));
+    let crc = u32_to_arr(crc32(data));
 
     f.write_all(&crc)
-        .and_then(|_| f.write_all(&data))
+        .and_then(|_| f.write_all(data))
         .map(|r| {
             trace!("successfully wrote blob at {:?}", path);
             r
@@ -76,10 +69,7 @@ pub(crate) fn write_blob(
         .map_err(|e| e.into())
 }
 
-pub(crate) fn gc_blobs(
-    config: &Config,
-    stable_lsn: Lsn,
-) -> Result<(), ()> {
+pub(crate) fn gc_blobs(config: &Config, stable_lsn: Lsn) -> Result<()> {
     let stable = config.blob_path(stable_lsn);
     let blob_dir = stable.parent().unwrap();
     let blobs = std::fs::read_dir(blob_dir)?;
@@ -117,10 +107,7 @@ pub(crate) fn gc_blobs(
     Ok(())
 }
 
-pub(crate) fn remove_blob(
-    id: Lsn,
-    config: &Config,
-) -> Result<(), ()> {
+pub(crate) fn remove_blob(id: Lsn, config: &Config) -> Result<()> {
     let path = config.blob_path(id);
 
     if let Err(e) = std::fs::remove_file(&path) {

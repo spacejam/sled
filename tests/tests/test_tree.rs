@@ -51,13 +51,10 @@ fn parallel_tree_ops() {
                 for tn in 0..N_THREADS {
                     let tree = $t.clone();
                     let thread = thread::Builder::new()
-                        .name(format!(
-                            "t(thread: {} test: {})",
-                            tn, i
-                        ))
+                        .name(format!("t(thread: {} test: {})", tn, i))
                         .spawn(move || {
-                            for i in (tn * N_PER_THREAD)
-                                ..((tn + 1) * N_PER_THREAD)
+                            for i in
+                                (tn * N_PER_THREAD)..((tn + 1) * N_PER_THREAD)
                             {
                                 let k = kv(i);
                                 $f(&*tree, k);
@@ -79,7 +76,9 @@ fn parallel_tree_ops() {
         par! {t, |tree: &Tree, k: Vec<u8>| {
             assert_eq!(tree.get(&*k), Ok(None));
             tree.set(&k, k.clone()).expect("we should write successfully");
-            assert_eq!(tree.get(&*k).unwrap().expect("we should read what we just wrote"), k);
+            assert_eq!(tree.get(&*k).unwrap(), Some(k.clone().into()),
+                "failed to read key {:?} that we just wrote from tree {:?}",
+                k, tree);
         }};
 
         let n_scanned = t.iter().count();
@@ -110,11 +109,11 @@ fn parallel_tree_ops() {
         par! {t, |tree: &Tree, k: Vec<u8>| {
             if let Some(v) =  tree.get(&*k).unwrap() {
                 if v != k {
-                    debug!("test {} failed: {}", i, tree.key_debug_str(&*k.clone()));
                     panic!("expected key {:?} not found", k);
                 }
             } else {
-                panic!("could not read key {:?}, which we just wrote", k);
+                panic!("could not read key {:?}, which we \
+                       just wrote to tree {:?}", k, tree);
             }
         }};
 
@@ -129,7 +128,7 @@ fn parallel_tree_ops() {
             let k1 = k.clone();
             let mut k2 = k.clone();
             k2.reverse();
-            tree.cas(&k1, Some(&*k1), Some(k2)).unwrap();
+            tree.cas(&k1, Some(&*k1), Some(k2)).unwrap().unwrap();
         }};
 
         drop(t);
@@ -169,7 +168,9 @@ fn parallel_tree_ops() {
 }
 
 #[test]
-fn parallel_tree_iterators() -> Result<(), ()> {
+fn parallel_tree_iter() -> Result<()> {
+    tests::setup_logger();
+
     const N_FORWARD: usize = INTENSITY;
     const N_REVERSE: usize = INTENSITY;
 
@@ -206,123 +207,132 @@ fn parallel_tree_iterators() -> Result<(), ()> {
 
     let barrier = Arc::new(Barrier::new(N_FORWARD + N_REVERSE + 2));
 
-    let mut threads: Vec<thread::JoinHandle<Result<(), ()>>> = vec![];
+    let mut threads: Vec<thread::JoinHandle<Result<()>>> = vec![];
 
-    for _ in 0..N_FORWARD {
-        let t = thread::spawn({
-            let t = t.clone();
-            let barrier = barrier.clone();
-            move || {
-                barrier.wait();
-                for _ in 0..100 {
-                    let expected = INDELIBLE.iter();
-                    let mut keys = t.iter().keys();
+    for i in 0..N_FORWARD {
+        let t = thread::Builder::new()
+            .name(format!("forward({})", i))
+            .spawn({
+                let t = t.clone();
+                let barrier = barrier.clone();
+                move || {
+                    barrier.wait();
+                    for _ in 0..100 {
+                        let expected = INDELIBLE.iter();
+                        let mut keys = t.iter().keys();
 
-                    for expect in expected {
-                        loop {
-                            let k: Vec<u8> = keys.next().unwrap()?;
-                            assert!(
-                                &*k <= *expect,
-                                "witnessed key is {:?} but we expected \
-                                one <= {:?}, so we overshot due to a \
-                                concurrent modification",
-                                k,
-                                expect,
-                            );
-                            if &*k == *expect {
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                Ok(())
-            }
-        });
-        threads.push(t);
-    }
-
-    for _ in 0..N_REVERSE {
-        let t = thread::spawn({
-            let t = t.clone();
-            let barrier = barrier.clone();
-            move || {
-                barrier.wait();
-                for _ in 0..100 {
-                    let expected = INDELIBLE.iter().rev();
-                    let mut keys = t.iter().keys().rev();
-
-                    for expect in expected {
-                        loop {
-                            if let Some(Ok(k)) = keys.next() {
+                        for expect in expected {
+                            loop {
+                                let k = keys.next().unwrap()?;
                                 assert!(
-                                    &*k >= *expect,
+                                    &*k <= *expect,
                                     "witnessed key is {:?} but we expected \
-                                    one >= {:?}, so we overshot due to a \
-                                    concurrent modification\n{:?}",
+                                     one <= {:?}, so we overshot due to a \
+                                     concurrent modification",
                                     k,
                                     expect,
-                                    *t,
                                 );
                                 if &*k == *expect {
                                     break;
                                 }
-                            } else {
-                                panic!(
-                                    "undershot key on tree: \n{:?}",
-                                    *t
-                                );
                             }
                         }
                     }
-                }
 
-                Ok(())
-            }
-        });
+                    Ok(())
+                }
+            })
+            .unwrap();
+        threads.push(t);
+    }
+
+    for i in 0..N_REVERSE {
+        let t = thread::Builder::new()
+            .name(format!("reverse({})", i))
+            .spawn({
+                let t = t.clone();
+                let barrier = barrier.clone();
+                move || {
+                    barrier.wait();
+                    for _ in 0..100 {
+                        let expected = INDELIBLE.iter().rev();
+                        let mut keys = t.iter().keys().rev();
+
+                        for expect in expected {
+                            loop {
+                                if let Some(Ok(k)) = keys.next() {
+                                    assert!(
+                                    &*k >= *expect,
+                                    "witnessed key is {:?} but we expected \
+                                     one >= {:?}, so we overshot due to a \
+                                     concurrent modification\n{:?}",
+                                    k,
+                                    expect,
+                                    *t,
+                                );
+                                    if &*k == *expect {
+                                        break;
+                                    }
+                                } else {
+                                    panic!("undershot key on tree: \n{:?}", *t);
+                                }
+                            }
+                        }
+                    }
+
+                    Ok(())
+                }
+            })
+            .unwrap();
 
         threads.push(t);
     }
 
-    let inserter = thread::spawn({
-        let t = t.clone();
-        let barrier = barrier.clone();
-        move || {
-            barrier.wait();
+    let inserter = thread::Builder::new()
+        .name("inserter".into())
+        .spawn({
+            let t = t.clone();
+            let barrier = barrier.clone();
+            move || {
+                barrier.wait();
 
-            for i in 0..(16 * 16 * 8) {
-                let major = i / (16 * 8);
-                let minor = i % 16;
+                for i in 0..(16 * 16 * 8) {
+                    let major = i / (16 * 8);
+                    let minor = i % 16;
 
-                let mut base = INDELIBLE[major].to_vec();
-                base.push(minor as u8);
-                t.set(base.clone(), base.clone())?;
+                    let mut base = INDELIBLE[major].to_vec();
+                    base.push(minor as u8);
+                    t.set(base.clone(), base.clone())?;
+                }
+
+                Ok(())
             }
-
-            Ok(())
-        }
-    });
+        })
+        .unwrap();
 
     threads.push(inserter);
 
-    let deleter = thread::spawn({
-        let t = t.clone();
-        let barrier = barrier.clone();
-        move || {
-            barrier.wait();
+    let deleter = thread::Builder::new()
+        .name("deleter".into())
+        .spawn({
+            let t = t.clone();
+            let barrier = barrier.clone();
+            move || {
+                barrier.wait();
 
-            for i in 0..(16 * 16 * 8) {
-                let major = i / (16 * 8);
-                let minor = i % 16;
+                for i in 0..(16 * 16 * 8) {
+                    let major = i / (16 * 8);
+                    let minor = i % 16;
 
-                let mut base = INDELIBLE[major].to_vec();
-                base.push(minor as u8);
-                t.del(&base)?;
+                    let mut base = INDELIBLE[major].to_vec();
+                    base.push(minor as u8);
+                    t.del(&base)?;
+                }
+
+                Ok(())
             }
-
-            Ok(())
-        }
-    });
+        })
+        .unwrap();
 
     threads.push(deleter);
 
@@ -335,10 +345,13 @@ fn parallel_tree_iterators() -> Result<(), ()> {
 
 #[test]
 fn tree_subdir() {
+    let _ = std::fs::remove_dir_all("/tmp/test_tree_subdir");
+
     let config = ConfigBuilder::new()
         .async_io(false)
         .path("/tmp/test_tree_subdir/test_subdir".to_owned())
         .build();
+
     let t = sled::Db::start(config).unwrap();
 
     t.set(&[1], vec![1]).unwrap();
@@ -374,37 +387,36 @@ fn tree_iterator() {
 
     for (i, (k, v)) in t.iter().map(|res| res.unwrap()).enumerate() {
         let should_be = kv(i);
-        assert_eq!(should_be, k);
+        assert_eq!(should_be, &*k);
         assert_eq!(should_be, &*v);
     }
 
-    for (i, (k, v)) in t.scan(b"").map(|res| res.unwrap()).enumerate()
-    {
+    for (i, (k, v)) in t.iter().map(|res| res.unwrap()).enumerate() {
         let should_be = kv(i);
-        assert_eq!(should_be, k);
+        assert_eq!(should_be, &*k);
         assert_eq!(should_be, &*v);
     }
 
     let half_way = N_PER_THREAD / 2;
     let half_key = kv(half_way);
-    let mut tree_scan = t.scan(&*half_key);
+    let mut tree_scan = t.range(&*half_key..);
     let r1 = tree_scan.next().unwrap().unwrap();
-    assert_eq!((r1.0, &*r1.1), (half_key.clone(), &*half_key));
+    assert_eq!((r1.0.as_ref(), &*r1.1), (half_key.as_ref(), &*half_key));
 
     let first_key = kv(0);
-    let mut tree_scan = t.scan(&*first_key);
+    let mut tree_scan = t.range(&*first_key..);
     let r2 = tree_scan.next().unwrap().unwrap();
-    assert_eq!((r2.0, &*r2.1), (first_key.clone(), &*first_key));
+    assert_eq!((r2.0.as_ref(), &*r2.1), (first_key.as_ref(), &*first_key));
 
     let last_key = kv(N_PER_THREAD - 1);
-    let mut tree_scan = t.scan(&*last_key);
+    let mut tree_scan = t.range(&*last_key..);
     let r3 = tree_scan.next().unwrap().unwrap();
-    assert_eq!((r3.0, &*r3.1), (last_key.clone(), &*last_key));
+    assert_eq!((r3.0.as_ref(), &*r3.1), (last_key.as_ref(), &*last_key));
     assert_eq!(tree_scan.next(), None);
 }
 
 #[test]
-fn tree_subscriptions_and_keyspaces() -> Result<(), ()> {
+fn tree_subscriptions_and_keyspaces() -> Result<()> {
     let config = ConfigBuilder::new()
         .temporary(true)
         .blink_node_split_size(0)
@@ -471,15 +483,9 @@ fn tree_subscriptions_and_keyspaces() -> Result<(), ()> {
     db.drop_tree(b"1")?;
     db.drop_tree(b"2")?;
 
-    assert_eq!(
-        t1.get(b""),
-        Err(Error::CollectionNotFound(b"1".to_vec()))
-    );
+    assert_eq!(t1.get(b""), Err(Error::CollectionNotFound(b"1".to_vec())));
 
-    assert_eq!(
-        t2.get(b""),
-        Err(Error::CollectionNotFound(b"2".to_vec()))
-    );
+    assert_eq!(t2.get(b""), Err(Error::CollectionNotFound(b"2".to_vec())));
 
     let guard = pagecache::pin();
     guard.flush();
@@ -531,14 +537,16 @@ fn tree_range() {
     assert_eq!(r.next().unwrap().unwrap().0, b"2");
     assert_eq!(r.next(), None);
 
-    let mut r = t.scan(b"2");
+    let start = b"2".to_vec();
+    let mut r = t.range(start..);
     assert_eq!(r.next().unwrap().unwrap().0, b"2");
     assert_eq!(r.next().unwrap().unwrap().0, b"3");
     assert_eq!(r.next().unwrap().unwrap().0, b"4");
     assert_eq!(r.next().unwrap().unwrap().0, b"5");
     assert_eq!(r.next(), None);
 
-    let mut r = t.scan(b"2").rev();
+    let start = b"2".to_vec();
+    let mut r = t.range(..=start).rev();
     assert_eq!(r.next().unwrap().unwrap().0, b"2");
     assert_eq!(r.next().unwrap().unwrap().0, b"1");
     assert_eq!(r.next().unwrap().unwrap().0, b"0");
@@ -547,13 +555,17 @@ fn tree_range() {
 
 #[test]
 fn recover_tree() {
+    tests::setup_logger();
+
     let config = ConfigBuilder::new()
         .temporary(true)
         .blink_node_split_size(0)
         .io_buf_size(5000)
         .flush_every_ms(None)
-        .snapshot_after_ops(100)
+        .async_io(false)
+        .snapshot_after_ops(N_PER_THREAD as u64)
         .build();
+
     let t = sled::Db::start(config.clone()).unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
@@ -562,7 +574,7 @@ fn recover_tree() {
     drop(t);
 
     let t = sled::Db::start(config.clone()).unwrap();
-    for i in 0..4 {
+    for i in 0..N_PER_THREAD {
         let k = kv(i as usize);
         assert_eq!(t.get(&*k).unwrap().unwrap(), k);
         t.del(&*k).unwrap();
@@ -570,7 +582,7 @@ fn recover_tree() {
     drop(t);
 
     let t = sled::Db::start(config.clone()).unwrap();
-    for i in 0..4 {
+    for i in 0..N_PER_THREAD {
         let k = kv(i as usize);
         assert_eq!(t.get(&*k), Ok(None));
     }
@@ -585,10 +597,10 @@ fn quickcheck_tree_matches_btreemap() {
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 1000))
         .tests(n_tests)
-        .max_tests(1000)
+        .max_tests(n_tests * 10)
         .quickcheck(
             prop_tree_matches_btreemap
-                as fn(Vec<Op>, u8, u8, bool) -> bool,
+                as fn(Vec<Op>, u8, u8, bool, bool) -> bool,
         );
 }
 
@@ -613,6 +625,7 @@ fn tree_bug_01() {
         0,
         0,
         true,
+        false,
     );
 }
 
@@ -626,6 +639,9 @@ fn tree_bug_02() {
     // then the second time (triggered by a snapshot)
     // would not pick up on the importance of seeing
     // the new root set.
+    // portmortem 2: when refactoring iterators, failed
+    // to account for node.hi being empty on the infinity
+    // shard
     prop_tree_matches_btreemap(
         vec![
             Restart,
@@ -637,6 +653,7 @@ fn tree_bug_02() {
         0,
         0,
         true,
+        false,
     );
 }
 
@@ -660,6 +677,7 @@ fn tree_bug_3() {
         0,
         0,
         true,
+        false,
     );
 }
 
@@ -685,6 +703,7 @@ fn tree_bug_4() {
         0,
         0,
         true,
+        false,
     );
 }
 
@@ -706,6 +725,7 @@ fn tree_bug_5() {
         0,
         0,
         true,
+        false,
     );
 }
 
@@ -728,6 +748,7 @@ fn tree_bug_6() {
         0,
         0,
         true,
+        false,
     );
 }
 
@@ -750,6 +771,7 @@ fn tree_bug_7() {
         0,
         0,
         true,
+        false,
     );
 }
 
@@ -772,6 +794,7 @@ fn tree_bug_8() {
         0,
         0,
         true,
+        false,
     );
 }
 
@@ -797,6 +820,7 @@ fn tree_bug_9() {
         0,
         0,
         true,
+        false,
     );
 }
 
@@ -834,6 +858,7 @@ fn tree_bug_10() {
         0,
         0,
         true,
+        false,
     );
 }
 
@@ -859,6 +884,7 @@ fn tree_bug_11() {
         0,
         0,
         true,
+        false,
     );
 }
 
@@ -909,6 +935,7 @@ fn tree_bug_12() {
         0,
         0,
         true,
+        false,
     );
 }
 
@@ -939,6 +966,7 @@ fn tree_bug_13() {
         0,
         0,
         true,
+        false,
     );
 }
 
@@ -959,6 +987,7 @@ fn tree_bug_14() {
         1,
         0,
         true,
+        false,
     );
 }
 
@@ -977,6 +1006,7 @@ fn tree_bug_15() {
         0,
         0,
         true,
+        false,
     );
 }
 
@@ -987,6 +1017,7 @@ fn tree_bug_16() {
         vec![Merge(Key(vec![247]), 162), Scan(Key(vec![209]), 31)],
         0,
         0,
+        false,
         false,
     );
 }
@@ -1003,6 +1034,7 @@ fn tree_bug_17() {
         ],
         0,
         0,
+        false,
         false,
     );
 }
@@ -1023,6 +1055,7 @@ fn tree_bug_18() {
         0,
         0,
         false,
+        false,
     );
 }
 
@@ -1041,6 +1074,7 @@ fn tree_bug_19() {
         ],
         0,
         0,
+        false,
         false,
     );
 }
@@ -1062,12 +1096,17 @@ fn tree_bug_20() {
         0,
         0,
         false,
+        false,
     );
 }
 
 #[test]
 fn tree_bug_21() {
     // postmortem: more split woes while implementing get_lt
+    // postmortem 2: failed to properly account for node hi key
+    // being empty in the view predecessor function
+    // postmortem 3: when rewriting Iter, failed to account for
+    // direction of iteration
     prop_tree_matches_btreemap(
         vec![
             Set(Key(vec![176]), 163),
@@ -1079,6 +1118,7 @@ fn tree_bug_21() {
         0,
         0,
         false,
+        false,
     );
 }
 
@@ -1086,6 +1126,7 @@ fn tree_bug_21() {
 fn tree_bug_22() {
     // postmortem: inclusivity wasn't being properly flipped off after
     // the first result during iteration
+    // postmortem 2: failed to properly check bounds while iterating
     prop_tree_matches_btreemap(
         vec![
             Merge(Key(vec![]), 155),
@@ -1094,6 +1135,319 @@ fn tree_bug_22() {
         ],
         0,
         0,
+        false,
+        false,
+    );
+}
+
+#[test]
+fn tree_bug_23() {
+    // postmortem: when rewriting CRC handling code, mis-sized the blob crc
+    prop_tree_matches_btreemap(
+        vec![Set(Key(vec![6; 5120]), 92), Restart, Scan(Key(vec![]), 35)],
+        0,
+        0,
+        false,
+        false,
+    );
+}
+
+#[test]
+fn tree_bug_24() {
+    // postmortem: get_gt diverged with the Iter impl
+    prop_tree_matches_btreemap(
+        vec![
+            Merge(Key(vec![]), 193),
+            Del(Key(vec![])),
+            Del(Key(vec![])),
+            Set(Key(vec![]), 55),
+            Set(Key(vec![]), 212),
+            Merge(Key(vec![]), 236),
+            Del(Key(vec![])),
+            Set(Key(vec![]), 192),
+            Del(Key(vec![])),
+            Set(Key(vec![94]), 115),
+            Merge(Key(vec![62]), 34),
+            GetGt(Key(vec![])),
+        ],
+        0,
+        0,
+        false,
+        false,
+    );
+}
+
+#[test]
+fn tree_bug_25() {
+    // postmortem: was not accounting for merges when traversing
+    // the frag chain and a Del was encountered
+    prop_tree_matches_btreemap(
+        vec![Del(Key(vec![])), Merge(Key(vec![]), 84), Get(Key(vec![]))],
+        0,
+        0,
+        false,
+        false,
+    );
+}
+
+#[test]
+fn tree_bug_26() {
+    // postmortem:
+    prop_tree_matches_btreemap(
+        vec![
+            Merge(Key(vec![]), 194),
+            Merge(Key(vec![62]), 114),
+            Merge(Key(vec![80]), 202),
+            Merge(Key(vec![]), 169),
+            Set(Key(vec![]), 197),
+            Del(Key(vec![])),
+            Del(Key(vec![])),
+            Set(Key(vec![]), 215),
+            Set(Key(vec![]), 164),
+            Merge(Key(vec![]), 150),
+            GetGt(Key(vec![])),
+            GetLt(Key(vec![80])),
+        ],
+        0,
+        0,
+        false,
+        false,
+    );
+}
+
+#[test]
+fn tree_bug_27() {
+    // postmortem: was not accounting for the fact that deletions reduce the
+    // chances of being able to split successfully.
+    prop_tree_matches_btreemap(
+        vec![
+            Del(Key(vec![])),
+            Merge(
+                Key(vec![
+                    74, 117, 68, 37, 89, 16, 84, 130, 133, 78, 74, 59, 44, 109,
+                    34, 5, 36, 74, 131, 100, 79, 86, 87, 107, 87, 27, 1, 85,
+                    53, 112, 89, 75, 67, 78, 58, 121, 0, 105, 8, 117, 79, 40,
+                    94, 123, 83, 72, 78, 23, 23, 35, 50, 77, 59, 75, 54, 92,
+                    89, 12, 27, 48, 64, 21, 42, 97, 45, 28, 122, 13, 4, 32, 51,
+                    25, 26, 18, 65, 12, 54, 104, 106, 80, 75, 91, 111, 9, 5,
+                    130, 43, 40, 3, 72, 0, 58, 92, 64, 112, 97, 75, 130, 11,
+                    135, 19, 107, 40, 17, 25, 49, 48, 119, 82, 54, 35, 113, 91,
+                    68, 12, 118, 123, 62, 108, 88, 67, 43, 33, 119, 132, 124,
+                    1, 62, 133, 110, 25, 62, 129, 117, 117, 107, 123, 94, 127,
+                    80, 0, 116, 101, 9, 9, 54, 134, 70, 66, 79, 50, 124, 115,
+                    85, 42, 120, 24, 15, 81, 100, 72, 71, 40, 58, 22, 6, 34,
+                    54, 69, 110, 18, 74, 111, 80, 52, 90, 44, 4, 29, 84, 95,
+                    21, 25, 10, 10, 60, 18, 78, 23, 21, 114, 92, 96, 17, 127,
+                    53, 86, 2, 60, 104, 8, 132, 44, 115, 6, 25, 80, 46, 12, 20,
+                    44, 67, 136, 127, 50, 55, 70, 41, 90, 16, 10, 44, 32, 24,
+                    106, 13, 104,
+                ]),
+                219,
+            ),
+            Merge(Key(vec![]), 71),
+            Del(Key(vec![])),
+            Set(Key(vec![0]), 146),
+            Merge(Key(vec![13]), 155),
+            Merge(Key(vec![]), 14),
+            Del(Key(vec![])),
+            Set(Key(vec![]), 150),
+            Set(
+                Key(vec![
+                    13, 8, 3, 6, 9, 14, 3, 13, 7, 12, 13, 7, 13, 13, 1, 13, 5,
+                    4, 3, 2, 6, 16, 17, 10, 0, 16, 12, 0, 16, 1, 0, 15, 15, 4,
+                    1, 6, 9, 9, 11, 16, 7, 6, 10, 1, 11, 10, 4, 9, 9, 14, 4,
+                    12, 16, 10, 15, 2, 1, 8, 4,
+                ]),
+                247,
+            ),
+            Del(Key(vec![154])),
+            Del(Key(vec![])),
+            Del(Key(vec![
+                0, 24, 24, 31, 40, 23, 10, 30, 16, 41, 30, 23, 14, 25, 21, 19,
+                18, 7, 17, 41, 11, 5, 14, 42, 11, 22, 4, 8, 4, 38, 33, 31, 3,
+                30, 40, 22, 40, 39, 5, 40, 1, 41, 11, 26, 25, 33, 12, 38, 4,
+                35, 30, 42, 19, 26, 23, 22, 39, 18, 29, 4, 1, 24, 14, 38, 0,
+                36, 27, 11, 27, 34, 16, 15, 38, 0, 20, 37, 22, 31, 12, 26, 16,
+                4, 22, 25, 4, 34, 4, 33, 37, 28, 18, 4, 41, 15, 8, 16, 27, 3,
+                20, 26, 40, 31, 15, 15, 17, 15, 5, 13, 22, 37, 7, 13, 35, 14,
+                6, 28, 21, 26, 13, 35, 1, 10, 8, 34, 23, 27, 29, 8, 14, 42, 36,
+                31, 34, 12, 31, 24, 5, 8, 11, 36, 29, 24, 38, 8, 12, 18, 22,
+                36, 21, 28, 11, 24, 0, 41, 37, 39, 42, 25, 13, 41, 27, 8, 24,
+                22, 30, 17, 2, 4, 20, 33, 5, 24, 33, 6, 29, 5, 0, 17, 9, 20,
+                26, 15, 23, 22, 16, 23, 16, 1, 20, 0, 28, 16, 34, 30, 19, 5,
+                36, 40, 28, 6, 39,
+            ])),
+            Merge(Key(vec![]), 50),
+        ],
+        10,
+        0,
+        false,
+        false,
+    );
+}
+
+#[test]
+fn tree_bug_28() {
+    // postmortem:
+    prop_tree_matches_btreemap(
+        vec![
+            Del(Key(vec![])),
+            Set(Key(vec![]), 65),
+            Del(Key(vec![])),
+            Del(Key(vec![])),
+            Merge(Key(vec![]), 50),
+            Merge(Key(vec![]), 2),
+            Del(Key(vec![197])),
+            Merge(Key(vec![5]), 146),
+            Set(Key(vec![222]), 224),
+            Merge(Key(vec![149]), 60),
+            Scan(Key(vec![178]), 18),
+        ],
+        0,
+        0,
+        false,
+        false,
+    );
+}
+
+#[test]
+fn tree_bug_29() {
+    // postmortem: tree merge and split thresholds caused an infinite
+    // loop while performing updates
+    prop_tree_matches_btreemap(
+        vec![
+            Set(Key(vec![]), 142),
+            Merge(
+                Key(vec![
+                    45, 47, 6, 67, 16, 12, 62, 35, 69, 80, 49, 61, 29, 82, 9,
+                    47, 25, 78, 47, 64, 29, 74, 45, 0, 37, 44, 21, 82, 55, 44,
+                    31, 60, 86, 18, 45, 67, 55, 21, 35, 46, 25, 51, 5, 32, 33,
+                    36, 1, 81, 28, 28, 79, 76, 80, 89, 80, 62, 8, 85, 50, 15,
+                    4, 11, 76, 72, 73, 47, 30, 50, 85, 67, 84, 13, 82, 84, 78,
+                    70, 42, 83, 8, 7, 50, 77, 85, 37, 47, 82, 86, 46, 30, 27,
+                    5, 39, 70, 26, 59, 16, 6, 34, 56, 40, 40, 67, 16, 61, 63,
+                    56, 64, 31, 15, 81, 84, 19, 61, 66, 3, 7, 40, 56, 13, 40,
+                    64, 50, 88, 47, 88, 50, 63, 65, 79, 62, 1, 44, 59, 27, 12,
+                    60, 3, 36, 89, 45, 18, 4, 68, 48, 61, 30, 48, 26, 84, 49,
+                    3, 74, 51, 53, 30, 57, 50, 35, 74, 59, 30, 73, 19, 30, 82,
+                    78, 3, 5, 62, 17, 48, 29, 67, 52, 45, 61, 74, 52, 29, 61,
+                    63, 11, 89, 76, 34, 8, 50, 75, 42, 12, 5, 55, 0, 59, 44,
+                    68, 26, 76, 37, 50, 53, 73, 53, 76, 57, 40, 30, 52, 0, 41,
+                    21, 8, 79, 79, 38, 37, 50, 56, 43, 9, 85, 21, 60, 64, 13,
+                    54, 60, 83, 1, 2, 37, 75, 42, 0, 83, 81, 80, 87, 12, 15,
+                    75, 55, 41, 59, 9, 80, 66, 27, 65, 26, 48, 29, 37, 38, 9,
+                    76, 31, 39, 35, 22, 73, 59, 28, 33, 35, 63, 78, 17, 22, 82,
+                    12, 60, 49, 26, 54, 19, 60, 29, 39, 37, 10, 50, 12, 19, 29,
+                    1, 74, 12, 5, 38, 49, 41, 19, 88, 3, 27, 77, 81, 72, 42,
+                    71, 86, 82, 11, 79, 40, 35, 26, 35, 64, 4, 33, 87, 31, 84,
+                    81, 74, 31, 49, 0, 29, 73, 14, 55, 78, 21, 23, 20, 83, 48,
+                    89, 88, 62, 64, 73, 7, 20, 70, 81, 64, 3, 79, 38, 75, 13,
+                    40, 29, 82, 40, 14, 66, 56, 54, 52, 37, 14, 67, 8, 37, 1,
+                    5, 73, 14, 35, 63, 48, 46, 22, 84, 71, 2, 60, 63, 88, 14,
+                    15, 69, 88, 2, 43, 57, 43, 52, 18, 78, 75, 75, 74, 13, 35,
+                    50, 35, 17, 13, 64, 82, 55, 32, 14, 57, 35, 77, 65, 22, 40,
+                    27, 39, 80, 23, 20, 41, 50, 48, 22, 84, 37, 59, 45, 64, 10,
+                    3, 69, 56, 24, 4, 25, 76, 65, 47, 52, 64, 88, 3, 23, 37,
+                    16, 56, 69, 71, 27, 87, 65, 74, 23, 82, 41, 60, 78, 75, 22,
+                    51, 15, 57, 80, 46, 73, 7, 1, 36, 64, 0, 56, 83, 74, 62,
+                    73, 81, 68, 71, 63, 31, 5, 23, 11, 15, 39, 2, 10, 23, 18,
+                    74, 3, 43, 25, 68, 54, 11, 21, 14, 58, 10, 73, 0, 66, 28,
+                    73, 25, 40, 55, 56, 33, 81, 67, 43, 35, 65, 38, 21, 48, 81,
+                    4, 77, 68, 51, 38, 36, 49, 43, 33, 51, 28, 43, 60, 71, 78,
+                    48, 49, 76, 21, 0, 72, 0, 32, 78, 12, 87, 5, 80, 62, 40,
+                    85, 26, 70, 58, 56, 78, 7, 53, 30, 16, 22, 12, 23, 37, 83,
+                    45, 33, 41, 83, 78, 87, 44, 0, 65, 51, 3, 8, 72, 38, 14,
+                    24, 64, 77, 45, 5, 1, 7, 27, 82, 7, 6, 70, 25, 67, 22, 8,
+                    30, 76, 41, 11, 14, 1, 65, 85, 60, 80, 0, 30, 31, 79, 43,
+                    89, 33, 84, 22, 7, 67, 45, 39, 74, 75, 12, 61, 19, 71, 66,
+                    83, 57, 38, 45, 21, 18, 37, 54, 36, 14, 54, 63, 81, 12, 7,
+                    10, 39, 16, 40, 10, 7, 81, 45, 12, 22, 20, 29, 85, 40, 41,
+                    72, 79, 58, 50, 41, 59, 64, 41, 32, 56, 35, 8, 60, 17, 14,
+                    89, 17, 7, 48, 6, 35, 9, 34, 54, 6, 44, 87, 76, 50, 1, 67,
+                    70, 15, 8, 4, 45, 67, 86, 32, 69, 3, 88, 85, 72, 66, 21,
+                    89, 11, 77, 1, 50, 75, 56, 41, 74, 6, 4, 51, 65, 39, 50,
+                    45, 56, 3, 19, 80, 86, 55, 48, 81, 17, 3, 89, 7, 9, 63, 58,
+                    80, 39, 34, 85, 55, 71, 41, 55, 8, 63, 38, 51, 47, 49, 83,
+                    2, 73, 22, 39, 18, 45, 77, 56, 80, 54, 13, 23, 81, 54, 15,
+                    48, 57, 83, 71, 41, 32, 64, 1, 9, 46, 27, 16, 21, 7, 28,
+                    55, 17, 71, 68, 17, 74, 46, 38, 84, 3, 12, 71, 63, 16, 23,
+                    48, 12, 29, 28, 5, 21, 61, 14, 77, 66, 62, 57, 18, 30, 63,
+                    14, 41, 37, 30, 73, 16, 12, 74, 8, 82, 67, 53, 10, 5, 37,
+                    36, 39, 52, 37, 72, 76, 21, 35, 40, 42, 55, 47, 50, 41, 19,
+                    40, 86, 26, 54, 23, 74, 46, 66, 59, 80, 26, 81, 61, 80, 88,
+                    55, 40, 30, 45, 7, 46, 21, 3, 20, 46, 63, 18, 9, 34, 67, 9,
+                    19, 52, 53, 29, 69, 78, 65, 39, 71, 40, 38, 57, 80, 27, 34,
+                    30, 27, 55, 8, 65, 31, 37, 33, 25, 39, 46, 9, 83, 6, 27,
+                    28, 61, 9, 21, 58, 21, 10, 69, 24, 5, 31, 32, 44, 26, 84,
+                    73, 73, 9, 64, 26, 21, 85, 12, 39, 81, 38, 49, 24, 35, 3,
+                    88, 15, 15, 76, 64, 70, 9, 30, 51, 26, 16, 70, 60, 15, 7,
+                    54, 36, 32, 9, 10, 18, 66, 19, 25, 77, 46, 51, 51, 14, 41,
+                    56, 65, 41, 87, 26, 10, 2, 73, 2, 71, 26, 56, 10, 68, 15,
+                    53, 10, 43, 15, 22, 45, 2, 15, 16, 69, 80, 83, 18, 22, 70,
+                    77, 52, 48, 24, 17, 40, 56, 22, 17, 3, 36, 46, 37, 41, 22,
+                    0, 41, 45, 14, 15, 73, 18, 42, 34, 5, 87, 6, 2, 7, 58, 3,
+                    86, 87, 7, 79, 88, 33, 30, 48, 3, 66, 27, 34, 58, 48, 71,
+                    40, 1, 46, 84, 32, 63, 79, 0, 21, 71, 1, 59, 39, 77, 51,
+                    14, 20, 58, 83, 19, 0, 2, 2, 57, 73, 79, 42, 59, 33, 50,
+                    15, 11, 48, 25, 14, 39, 36, 88, 71, 28, 45, 15, 59, 39, 60,
+                    78, 18, 18, 45, 50, 29, 66, 86, 5, 76, 85, 55, 17, 28, 8,
+                    39, 75, 33, 9, 73, 71, 59, 56, 57, 86, 6, 75, 26, 43, 68,
+                    34, 82, 88, 76, 17, 86, 63, 2, 38, 63, 13, 44, 8, 25, 0,
+                    63, 54, 73, 52, 3, 72,
+                ]),
+                9,
+            ),
+            Set(Key(vec![]), 35),
+            Set(
+                Key(vec![
+                    165, 64, 99, 55, 152, 102, 148, 35, 59, 10, 198, 191, 71,
+                    129, 170, 155, 7, 106, 171, 93, 126,
+                ]),
+                212,
+            ),
+            Del(Key(vec![])),
+            Merge(Key(vec![]), 177),
+            Merge(
+                Key(vec![
+                    20, 55, 154, 104, 10, 68, 64, 3, 31, 78, 232, 227, 169,
+                    161, 13, 50, 16, 239, 87, 0, 9, 85, 248, 32, 156, 106, 11,
+                    18, 57, 13, 177, 36, 69, 176, 101, 92, 119, 38, 218, 26, 4,
+                    154, 185, 135, 75, 167, 101, 107, 206, 76, 153, 213, 70,
+                    52, 205, 95, 55, 116, 242, 68, 77, 90, 249, 142, 93, 135,
+                    118, 127, 116, 121, 235, 183, 215, 2, 118, 193, 146, 185,
+                    4, 129, 167, 164, 178, 105, 149, 47, 73, 121, 95, 23, 216,
+                    153, 23, 108, 141, 190, 250, 121, 98, 229, 33, 106, 89,
+                    117, 122, 145, 47, 242, 81, 88, 141, 38, 177, 170, 167, 56,
+                    24, 196, 61, 97, 83, 91, 202, 181, 75, 112, 3, 169, 61, 17,
+                    100, 81, 111, 178, 122, 176, 95, 185, 169, 146, 239, 40,
+                    168, 32, 170, 34, 172, 89, 59, 188, 170, 186, 61, 7, 177,
+                    230, 130, 155, 208, 171, 82, 153, 20, 72, 74, 111, 147,
+                    178, 164, 157, 71, 114, 216, 40, 85, 91, 20, 145, 149, 95,
+                    36, 114, 24, 129, 144, 229, 14, 133, 77, 92, 139, 167, 48,
+                    18, 178, 4, 15, 171, 171, 88, 74, 104, 157, 2, 121, 13,
+                    141, 6, 107, 118, 228, 147, 152, 28, 206, 128, 102, 150, 1,
+                    129, 84, 171, 119, 110, 198, 72, 100, 166, 153, 98, 66,
+                    128, 79, 41, 126,
+                ]),
+                103,
+            ),
+            Del(Key(vec![])),
+            Merge(
+                Key(vec![
+                    117, 48, 90, 153, 149, 191, 229, 73, 3, 6, 73, 52, 73, 186,
+                    42, 53, 94, 17, 61, 11, 153, 118, 219, 188, 184, 89, 13,
+                    124, 138, 40, 238, 9, 46, 45, 38, 115, 153, 106, 166, 56,
+                    134, 206, 140, 57, 95, 244, 27, 135, 43, 13, 143, 137, 56,
+                    122, 243, 205, 52, 116, 130, 35, 80, 167, 58, 93,
+                ]),
+                8,
+            ),
+            Set(Key(vec![145]), 43),
+            GetLt(Key(vec![229])),
+        ],
+        11,
+        0,
+        false,
         false,
     );
 }

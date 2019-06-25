@@ -5,13 +5,13 @@
 </p>
 
 
-# sled
+# sled - ~~it's all downhill from here!!!~~
 [![Build Status](https://travis-ci.org/spacejam/sled.svg?branch=master)](https://travis-ci.org/spacejam/sled)
 [![crates.io](https://meritbadge.herokuapp.com/sled)](https://crates.io/crates/sled)
 [![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled)
 [![chat](https://img.shields.io/discord/509773073294295082.svg?logo=discord)](https://discord.gg/Z6VsXds)
 
-An (alpha) modern embedded database.
+An (alpha) modern embedded database. Doesn't your data deserve an (alpha) beautiful new home?
 
 ```rust
 use sled::Db;
@@ -53,6 +53,15 @@ We also support [merge operators](https://github.com/spacejam/sled/wiki/merge-op
 * cpu-scalable lock-free implementation
 * SSD-optimized log-structured storage
 
+# architecture
+
+lock-free tree on a lock-free pagecache on a lock-free log. the pagecache scatters
+partial page fragments across the log, rather than rewriting entire pages at a time
+as B+ trees for spinning disks historically have. on page reads, we concurrently
+scatter-gather reads across the log to materialize the page from its fragments.
+check out the [architectural outlook](https://github.com/spacejam/sled/wiki/sled-architectural-outlook)
+for a more detailed overview of where we're at and where we see things going!
+
 # goals
 
 1. don't make the user think. the interface should be obvious.
@@ -67,14 +76,28 @@ We also support [merge operators](https://github.com/spacejam/sled/wiki/merge-op
 * MVCC, serializable transactions, and snapshots
 * forward-compatible binary format
 * concurrent snapshot delta generation and recovery
-* first-class access to replication stream
+* first-class programmatic access to replication stream
 * consensus protocol for [PC/EC](https://en.wikipedia.org/wiki/PACELC_theorem) systems
 * pluggable conflict detection and resolution strategies for [PA/EL](https://en.wikipedia.org/wiki/PACELC_theorem) systems
-* multiple collection types like tables, BKD trees, Merkle trees, bloom filters, etc... unified under a single transactional and operational domain
+* multiple collection types like tables, queues, Merkle trees, bloom filters, etc... unified under a single transactional and operational domain
 
-Want to prioritize a specific feature or get commercial help with using sled in your project? [Ferrous Systems](https://ferrous-systems.com) provides commercial support for sled, and can work with you to solve a wide variety of storage problems across the latency-throughput, consistency, and price performance spectra. [Get in touch!](mailto:sled@ferrous-systems.com)
+# fund feature development and get commercial support
 
-[![Ferrous Systems](https://ferrous-systems.com/images/ferrous-logo-text.svg)](https://ferrous-systems.com/)
+Want to support the project, prioritize a specific feature, or get commercial help with using sled in your project? [Ferrous Systems](https://ferrous-systems.com) provides commercial support for sled, and can work with you to solve a wide variety of storage problems across the latency-throughput, consistency, and price performance spectra. [Get in touch!](mailto:sled@ferrous-systems.com)
+
+[![Ferrous Systems](https://ferrous-systems.com/images/ferrous-systems-mono-pos.svg)](https://ferrous-systems.com/)
+
+# special thanks
+
+[![Meili](https://avatars3.githubusercontent.com/u/43250847?s=200&v=4)](https://www.meilisearch.com/)
+
+Special thanks to [Meili](https://www.meilisearch.com/) for providing engineering effort and other support to the sled project. They are building [an event store](https://blog.meilisearch.com/meilies-release/) backed by sled, and they offer [a full-text search system](https://github.com/meilisearch/MeiliDB) which has been a valuable case study helping to focus the sled roadmap for the future.
+
+<p>
+  <img src="https://user-images.githubusercontent.com/7989673/29498525-38a33f36-85cc-11e7-938d-ef6f10ba6fb3.png" width="20%" height="auto" />
+</p>
+
+Additional thanks to [Arm](https://www.arm.com/), [Works on Arm](https://www.worksonarm.com/) and [Packet](https://www.packet.com/), who have generously donated a 96 core monster machine to assist with intensive concurrency testing of sled. Each second that sled does not crash while running your critical stateful workloads, you are encouraged to thank these wonderful organizations. Each time sled does crash and lose your data, blame Intel.
 
 # known issues, warnings
 
@@ -84,21 +107,11 @@ Want to prioritize a specific feature or get commercial help with using sled in 
 * quite young, should be considered unstable for the time being
 * the C API is likely to change rapidly
 * writepath is not well optimized yet. readpath is essentially wait-free and zero-copy.
-* 32 bit architectures [require Rust nightly with the `nightly` feature enabled](https://github.com/spacejam/sled/issues/145).
 
 # contribution welcome!
 
 want to help advance the state of the art in open source embedded
 databases? check out [CONTRIBUTING.md](CONTRIBUTING.md)!
-
-# architecture
-
-lock-free tree on a lock-free pagecache on a lock-free log. the pagecache scatters
-partial page fragments across the log, rather than rewriting entire pages at a time
-as B+ trees for spinning disks historically have. on page reads, we concurrently
-scatter-gather reads across the log to materialize the page from its fragments.
-check out the [architectural outlook](https://github.com/spacejam/sled/wiki/sled-architectural-outlook)
-for a more detailed overview of where we're at and where we see things going!
 
 # References
 

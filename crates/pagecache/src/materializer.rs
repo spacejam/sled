@@ -9,10 +9,6 @@ pub trait Materializer {
     /// at read time, and possibly cached.
     type PageFrag;
 
-    /// The higher-level recovery state, as
-    /// described by `Materializer::recover`
-    type Recovery;
-
     #[doc(hidden)]
     fn is_null() -> bool
     where
@@ -21,31 +17,15 @@ pub trait Materializer {
         false
     }
 
-    /// Create a new `Materializer` with the previously recovered
-    /// state if any existed.
-    fn new(
-        config: Config,
-        recovered_state: &Option<Self::Recovery>,
-    ) -> Self
-    where
-        Self: Sized;
-
     /// Used to merge chains of partial pages into a form
     /// that is useful for the `PageCache` owner.
-    fn merge<'a, I>(&'a self, frags: I) -> Self::PageFrag
+    fn merge<'a, I>(frags: I, config: &Config) -> Self::PageFrag
     where
-        I: IntoIterator<Item = &'a Self::PageFrag>;
-
-    /// Used to feed custom recovery information back to a higher-level abstraction
-    /// during startup. For example, a B-Link tree must know what the current
-    /// root node is before it can start serving requests.
-    fn recover(
-        &self,
-        frag: &Self::PageFrag,
-    ) -> Option<Self::Recovery>;
+        I: IntoIterator<Item = &'a Self::PageFrag>,
+        Self::PageFrag: 'a;
 
     /// Used to determine the size of the value for caching purposes.
-    fn size_in_bytes(&self, frag: &Self::PageFrag) -> usize;
+    fn size_in_bytes(frag: &Self::PageFrag) -> u64;
 }
 
 /// A materializer for things that have nothing to
@@ -55,28 +35,19 @@ pub struct NullMaterializer;
 
 impl Materializer for NullMaterializer {
     type PageFrag = ();
-    type Recovery = ();
 
     #[doc(hidden)]
     fn is_null() -> bool {
         true
     }
 
-    fn new(_: Config, _: &Option<Self::Recovery>) -> Self {
-        NullMaterializer
-    }
-
-    fn merge<'a, I>(&'a self, _frags: I) -> Self::PageFrag
+    fn merge<'a, I>(_frags: I, _config: &Config) -> Self::PageFrag
     where
         I: IntoIterator<Item = &'a Self::PageFrag>,
     {
     }
 
-    fn recover(&self, _: &Self::PageFrag) -> Option<Self::Recovery> {
-        None
-    }
-
-    fn size_in_bytes(&self, _: &Self::PageFrag) -> usize {
+    fn size_in_bytes(_: &Self::PageFrag) -> u64 {
         0
     }
 }

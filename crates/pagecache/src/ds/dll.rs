@@ -10,16 +10,6 @@ pub(crate) struct Node {
     prev: *mut Node,
 }
 
-impl Drop for Node {
-    fn drop(&mut self) {
-        if !self.prev.is_null() {
-            unsafe {
-                drop(Box::from_raw(self.prev));
-            }
-        }
-    }
-}
-
 impl Node {
     fn unwire(&mut self) {
         unsafe {
@@ -37,7 +27,11 @@ impl Node {
     }
 }
 
-pub(crate) struct Dll {
+/// A simple non-cyclical doubly-linked
+/// list where items can be efficiently
+/// removed from the middle, for the purposes
+/// of backing an Lru cache.
+pub struct Dll {
     head: *mut Node,
     tail: *mut Node,
     len: usize,
@@ -45,9 +39,18 @@ pub(crate) struct Dll {
 
 impl Drop for Dll {
     fn drop(&mut self) {
-        if !self.head.is_null() {
+        let mut cursor = self.head;
+        while !cursor.is_null() {
             unsafe {
-                drop(Box::from_raw(self.head));
+                let node = Box::from_raw(cursor);
+
+                // don't need to check for cycles
+                // because this Dll is non-cyclical
+                cursor = node.prev;
+
+                // this happens without the manual drop,
+                // but we keep it for explicitness
+                drop(node);
             }
         }
     }
@@ -176,10 +179,7 @@ impl Dll {
         }
     }
 
-    pub(crate) unsafe fn pop_ptr(
-        &mut self,
-        ptr: *mut Node,
-    ) -> PageId {
+    pub(crate) unsafe fn pop_ptr(&mut self, ptr: *mut Node) -> PageId {
         self.len -= 1;
 
         let mut node = Box::from_raw(ptr);
