@@ -13,7 +13,7 @@ use bincode::{Infinite, deserialize, serialize};
 const KEY: &'static [u8] = b"dat orswot";
 
 pub struct OrswotStore {
-    db: sled::Tree,
+    db: sled::Db,
 }
 
 impl OrswotStore {
@@ -24,7 +24,7 @@ impl OrswotStore {
             .build();
 
         OrswotStore {
-            db: sled::Tree::start(config).unwrap(),
+            db: sled::Db::start(config).unwrap(),
         }
     }
 
