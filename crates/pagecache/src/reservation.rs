@@ -109,7 +109,9 @@ impl<'a> Reservation<'a> {
         unsafe {
             std::ptr::copy_nonoverlapping(
                 crc32_arr.as_ptr(),
-                self.buf.as_mut_ptr().add(13),
+                self.buf
+                    .as_mut_ptr()
+                    .add(MSG_HEADER_LEN - std::mem::size_of::<u32>()),
                 std::mem::size_of::<u32>(),
             );
         }

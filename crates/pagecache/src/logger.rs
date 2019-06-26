@@ -73,11 +73,12 @@ impl Log {
 
     /// Write a buffer into the log. Returns the log sequence
     /// number and the file offset of the write.
-    pub fn write<B>(&self, buf: B) -> Result<(Lsn, DiskPtr)>
+    pub fn write<B>(&self, pid: PageId, buf: B) -> Result<(Lsn, DiskPtr)>
     where
         B: AsRef<[u8]>,
     {
-        self.reserve(buf.as_ref()).and_then(|res| res.complete())
+        self.reserve(pid, buf.as_ref())
+            .and_then(|res| res.complete())
     }
 
     /// Return an iterator over the log, starting with
@@ -87,7 +88,7 @@ impl Log {
     }
 
     /// read a buffer from the disk
-    pub fn read(&self, lsn: Lsn, ptr: DiskPtr) -> Result<LogRead> {
+    pub fn read(&self, pid: PageId, lsn: Lsn, ptr: DiskPtr) -> Result<LogRead> {
         trace!("reading log lsn {} ptr {}", lsn, ptr);
 
         self.make_stable(lsn)?;
@@ -103,7 +104,7 @@ impl Log {
             // exist in the inline log.
             let (_lid, blob_ptr) = ptr.blob();
             read_blob(blob_ptr, &self.config)
-                .map(|buf| LogRead::Blob(lsn, buf, blob_ptr))
+                .map(|buf| LogRead::Blob(pid, lsn, buf, blob_ptr))
         }
     }
 
@@ -132,12 +133,13 @@ impl Log {
     /// proper blob flag set.
     pub(super) fn rewrite_blob_ptr<'a>(
         &'a self,
+        pid: PageId,
         blob_ptr: BlobPointer,
     ) -> Result<Reservation<'a>> {
         let lsn_buf: [u8; std::mem::size_of::<BlobPointer>()] =
             u64_to_arr(blob_ptr as u64);
 
-        self.reserve_inner(&lsn_buf, true)
+        self.reserve_inner(pid, &lsn_buf, true)
     }
 
     /// Tries to claim a reservation for writing a buffer to a
@@ -146,7 +148,11 @@ impl Log {
     /// linearizability across CAS operations that may need to
     /// persist part of their operation.
     #[allow(unused)]
-    pub fn reserve<'a>(&'a self, raw_buf: &[u8]) -> Result<Reservation<'a>> {
+    pub fn reserve<'a>(
+        &'a self,
+        pid: PageId,
+        raw_buf: &[u8],
+    ) -> Result<Reservation<'a>> {
         let mut _compressed: Option<Vec<u8>> = None;
         let mut buf = raw_buf;
 
@@ -165,7 +171,7 @@ impl Log {
             }
         }
 
-        self.reserve_inner(buf, false)
+        self.reserve_inner(pid, buf, false)
     }
 
     /// Writes a sequence of buffers to stable storge,
@@ -176,15 +182,17 @@ impl Log {
     /// stop before any updates are processed.
     pub fn write_batch<'a, 'b>(
         &'a self,
-        bufs: &'b [&'b [u8]],
-    ) -> Result<Vec<(Lsn, DiskPtr)>> {
+        bufs: &'b [(PageId, &'b [u8])],
+    ) -> Result<Vec<(PageId, Lsn, DiskPtr)>> {
         // reserve space for pointer
-        let mut batch_res = self.reserve(&[0; std::mem::size_of::<Lsn>()])?;
+        let mut batch_res = self
+            .reserve(PageId::max_value(), &[0; std::mem::size_of::<Lsn>()])?;
         let mut pointers = Vec::with_capacity(bufs.len());
-        for buf in bufs {
-            pointers.push(self.write(buf)?);
+        for (pid, buf) in bufs {
+            let (lsn, diskptr) = self.write(*pid, buf)?;
+            pointers.push((*pid, lsn, diskptr));
         }
-        if let Some((last_lsn, _last_ptr)) = pointers.last() {
+        if let Some((_last_pid, last_lsn, _last_ptr)) = pointers.last() {
             batch_res.mark_writebatch(*last_lsn);
             batch_res.complete()?;
         } else {
@@ -196,6 +204,7 @@ impl Log {
 
     fn reserve_inner<'a>(
         &'a self,
+        pid: PageId,
         buf: &[u8],
         is_blob_rewrite: bool,
     ) -> Result<Reservation<'a>> {
@@ -343,6 +352,7 @@ impl Log {
             self.iobufs.encapsulate(
                 &*buf,
                 destination,
+                pid,
                 reservation_lsn,
                 over_blob_threshold,
                 is_blob_rewrite,
@@ -466,7 +476,8 @@ pub(crate) enum MessageKind {
 pub(crate) struct MessageHeader {
     pub(crate) kind: MessageKind,
     pub(crate) lsn: Lsn,
-    pub(crate) len: usize,
+    pub(crate) pid: PageId,
+    pub(crate) len: u32,
     pub(crate) crc32: u32,
 }
 
@@ -482,21 +493,23 @@ pub(crate) struct SegmentHeader {
 #[doc(hidden)]
 #[derive(Debug)]
 pub enum LogRead {
-    Inline(Lsn, Vec<u8>, usize),
-    Blob(Lsn, Vec<u8>, BlobPointer),
-    Failed(Lsn, usize),
+    Inline(PageId, Lsn, Vec<u8>, u32),
+    Blob(PageId, Lsn, Vec<u8>, BlobPointer),
+    Failed(Lsn, u32),
     Pad(Lsn),
-    Corrupted(usize),
-    DanglingBlob(Lsn, BlobPointer),
+    Corrupted(u32),
+    DanglingBlob(PageId, Lsn, BlobPointer),
     BatchManifest(Lsn),
 }
 
 impl LogRead {
     /// Optionally return successfully read inline bytes, or
     /// None if the data was corrupt or this log entry was aborted.
-    pub fn inline(self) -> Option<(Lsn, Vec<u8>, usize)> {
+    pub fn inline(self) -> Option<(PageId, Lsn, Vec<u8>, u32)> {
         match self {
-            LogRead::Inline(lsn, bytes, len) => Some((lsn, bytes, len)),
+            LogRead::Inline(pid, lsn, bytes, len) => {
+                Some((pid, lsn, bytes, len))
+            }
             _ => None,
         }
     }
@@ -504,7 +517,7 @@ impl LogRead {
     /// Return true if this is an Inline value..
     pub fn is_inline(&self) -> bool {
         match *self {
-            LogRead::Inline(_, _, _) => true,
+            LogRead::Inline(..) => true,
             _ => false,
         }
     }
@@ -512,9 +525,9 @@ impl LogRead {
     /// Optionally return a successfully read pointer to an
     /// blob value, or None if the data was corrupt or
     /// this log entry was aborted.
-    pub fn blob(self) -> Option<(Lsn, Vec<u8>, BlobPointer)> {
+    pub fn blob(self) -> Option<(PageId, Lsn, Vec<u8>, BlobPointer)> {
         match self {
-            LogRead::Blob(lsn, buf, ptr) => Some((lsn, buf, ptr)),
+            LogRead::Blob(pid, lsn, buf, ptr) => Some((pid, lsn, buf, ptr)),
             _ => None,
         }
     }
@@ -538,7 +551,7 @@ impl LogRead {
     /// Return true if we read a successful Inline or Blob value.
     pub fn is_successful(&self) -> bool {
         match *self {
-            LogRead::Inline(_, _, _) | LogRead::Blob(_, _, _) => true,
+            LogRead::Inline(..) | LogRead::Blob(..) => true,
             _ => false,
         }
     }
@@ -562,7 +575,9 @@ impl LogRead {
     /// Return the underlying data read from a log read, if successful.
     pub fn into_data(self) -> Option<Vec<u8>> {
         match self {
-            LogRead::Blob(_, buf, _) | LogRead::Inline(_, buf, _) => Some(buf),
+            LogRead::Blob(_, _, buf, _) | LogRead::Inline(_, _, buf, _) => {
+                Some(buf)
+            }
             _ => None,
         }
     }
@@ -583,12 +598,14 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
         };
 
         unsafe {
-            let lsn = arr_to_u64(buf.get_unchecked(1..9)) as Lsn;
-            let len = assert_usize(arr_to_u32(buf.get_unchecked(9..13)));
-            let crc32 = arr_to_u32(buf.get_unchecked(13..)) ^ 0xFFFF_FFFF;
+            let pid = arr_to_u64(buf.get_unchecked(1..9));
+            let lsn = arr_to_u64(buf.get_unchecked(9..17)) as Lsn;
+            let len = arr_to_u32(buf.get_unchecked(17..21));
+            let crc32 = arr_to_u32(buf.get_unchecked(21..)) ^ 0xFFFF_FFFF;
 
             MessageHeader {
                 kind,
+                pid,
                 lsn,
                 len,
                 crc32,
@@ -609,25 +626,31 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
             MessageKind::Corrupted => EVIL_BYTE,
         };
 
-        assert!(self.len <= assert_usize(std::u32::MAX));
+        assert!(self.len <= std::u32::MAX);
+        let pid_arr = u64_to_arr(self.pid);
         let lsn_arr = u64_to_arr(self.lsn as u64);
         let len_arr = u32_to_arr(self.len as u32);
         let crc32_arr = u32_to_arr(self.crc32 ^ 0xFFFF_FFFF);
 
         unsafe {
             std::ptr::copy_nonoverlapping(
-                lsn_arr.as_ptr(),
+                pid_arr.as_ptr(),
                 buf.as_mut_ptr().add(1),
                 std::mem::size_of::<u64>(),
             );
             std::ptr::copy_nonoverlapping(
-                len_arr.as_ptr(),
+                lsn_arr.as_ptr(),
                 buf.as_mut_ptr().add(9),
+                std::mem::size_of::<u64>(),
+            );
+            std::ptr::copy_nonoverlapping(
+                len_arr.as_ptr(),
+                buf.as_mut_ptr().add(17),
                 std::mem::size_of::<u32>(),
             );
             std::ptr::copy_nonoverlapping(
                 crc32_arr.as_ptr(),
-                buf.as_mut_ptr().add(13),
+                buf.as_mut_ptr().add(21),
                 std::mem::size_of::<u32>(),
             );
         }

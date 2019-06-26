@@ -27,8 +27,13 @@ pub const BATCH_MANIFEST: u8 = 4;
 /// detect torn writes.
 pub const EVIL_BYTE: u8 = 6;
 
+// kind: u8 1
+// pid: u64 8
+// lsn: i64 8
+// len: u32 4
+// crc: u32 4
 /// Log messages have a header of this length.
-pub const MSG_HEADER_LEN: usize = 17;
+pub const MSG_HEADER_LEN: usize = 25;
 
 /// Log segments have a header of this length.
 pub const SEG_HEADER_LEN: usize = 20;
@@ -49,3 +54,6 @@ pub const MINIMUM_ITEMS_PER_SEGMENT: usize = 4;
 
 /// During testing, this should never be exceeded.
 pub const MAX_SPACE_AMPLIFICATION: f64 = 20.;
+
+pub(crate) const META_PID: PageId = 0;
+pub(crate) const COUNTER_PID: PageId = 1;

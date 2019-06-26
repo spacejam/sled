@@ -12,7 +12,7 @@ pub struct LogIter {
 }
 
 impl Iterator for LogIter {
-    type Item = (Lsn, DiskPtr, Vec<u8>);
+    type Item = (PageId, Lsn, DiskPtr, Vec<u8>);
 
     fn next(&mut self) -> Option<Self::Item> {
         // If segment is None, get next on segment_iter, panic
@@ -61,15 +61,16 @@ impl Iterator for LogIter {
 
             let f = &self.config.file;
             match f.read_message(lid, self.cur_lsn, &self.config) {
-                Ok(LogRead::Blob(lsn, buf, blob_ptr)) => {
+                Ok(LogRead::Blob(pid, lsn, buf, blob_ptr)) => {
                     trace!("read blob flush in LogIter::next");
                     self.cur_lsn += (MSG_HEADER_LEN + BLOB_INLINE_LEN) as Lsn;
-                    return Some((lsn, DiskPtr::Blob(lid, blob_ptr), buf));
+                    return Some((pid, lsn, DiskPtr::Blob(lid, blob_ptr), buf));
                 }
-                Ok(LogRead::Inline(lsn, buf, on_disk_len)) => {
+                Ok(LogRead::Inline(pid, lsn, buf, on_disk_len)) => {
                     trace!("read inline flush in LogIter::next");
-                    self.cur_lsn += (MSG_HEADER_LEN + on_disk_len) as Lsn;
-                    return Some((lsn, DiskPtr::Inline(lid), buf));
+                    self.cur_lsn +=
+                        (MSG_HEADER_LEN as u32 + on_disk_len) as Lsn;
+                    return Some((pid, lsn, DiskPtr::Inline(lid), buf));
                 }
                 Ok(LogRead::BatchManifest(last_lsn_in_batch)) => {
                     if last_lsn_in_batch > self.max_lsn {
@@ -82,7 +83,8 @@ impl Iterator for LogIter {
                 }
                 Ok(LogRead::Failed(_, on_disk_len)) => {
                     trace!("read zeroed in LogIter::next");
-                    self.cur_lsn += (MSG_HEADER_LEN + on_disk_len) as Lsn;
+                    self.cur_lsn +=
+                        (MSG_HEADER_LEN as u32 + on_disk_len) as Lsn;
                 }
                 Ok(LogRead::Corrupted(_len)) => {
                     trace!(
@@ -97,7 +99,7 @@ impl Iterator for LogIter {
 
                     continue;
                 }
-                Ok(LogRead::DanglingBlob(lsn, blob_ptr)) => {
+                Ok(LogRead::DanglingBlob(_pid, lsn, blob_ptr)) => {
                     debug!(
                         "encountered dangling blob \
                          pointer at lsn {} ptr {}",

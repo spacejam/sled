@@ -132,18 +132,6 @@ impl<M: Send> CacheEntry<M> {
     }
 }
 
-/// `LoggedUpdate` is for writing blocks of `Update`'s to disk
-/// sequentially, to reduce IO during page reads.
-#[serde(bound(deserialize = ""))]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(super) struct LoggedUpdate<PageFrag>
-where
-    PageFrag: Serialize + DeserializeOwned,
-{
-    pub(super) pid: PageId,
-    pub(super) update: Update<PageFrag>,
-}
-
 #[serde(bound(deserialize = ""))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(super) enum Update<PageFrag>
@@ -589,7 +577,9 @@ where
     /// combined with a concurrency control system in another
     /// component.
     pub fn pin_log<'a>(&'a self) -> Result<RecoveryGuard<'a>> {
-        let batch_res = self.log.reserve(&[0; std::mem::size_of::<Lsn>()])?;
+        let batch_res = self
+            .log
+            .reserve(PageId::max_value(), &[0; std::mem::size_of::<Lsn>()])?;
         Ok(RecoveryGuard { batch_res })
     }
 
@@ -740,14 +730,11 @@ where
             Some(p) => p,
         };
 
-        let prepend: LoggedUpdate<P> = LoggedUpdate {
-            pid,
-            update: Update::Append(new),
-        };
+        let update = Update::Append(new);
 
-        let bytes = measure(&M.serialize, || serialize(&prepend).unwrap());
+        let bytes = measure(&M.serialize, || serialize(&update).unwrap());
 
-        let mut new = if let Update::Append(new) = prepend.update {
+        let mut new = if let Update::Append(new) = update {
             let cache_entry =
                 CacheEntry::Resident(new, 0, 0, DiskPtr::Inline(0));
 
@@ -766,7 +753,7 @@ where
         };
 
         loop {
-            let log_reservation = self.log.reserve(&bytes)?;
+            let log_reservation = self.log.reserve(pid, &bytes)?;
 
             let lsn = log_reservation.lsn();
             let ptr = log_reservation.ptr();
@@ -960,7 +947,7 @@ where
             trace!("rewriting blob with pid {}", pid);
             let blob_ptr = cache_entries[0].ptr().blob().1;
 
-            let log_reservation = self.log.rewrite_blob_ptr(blob_ptr)?;
+            let log_reservation = self.log.rewrite_blob_ptr(pid, blob_ptr)?;
 
             let new_ptr = log_reservation.ptr();
             let mut new_cache_entry = cache_entries[0].clone();
@@ -1115,14 +1102,14 @@ where
         &self,
         pid: PageId,
         mut old: PagePtr<'g, P>,
-        new: Update<P>,
+        update: Update<P>,
         is_rewrite: bool,
         tx: &'g Tx<PM, P>,
     ) -> Result<CasResult<'g, P, Update<P>>> {
         trace!(
             "cas_page called on pid {} to {:?} with old ts {:?}",
             pid,
-            new,
+            update,
             old.wts
         );
         let pte_ptr = match self.inner.get(pid, &tx.guard) {
@@ -1133,12 +1120,11 @@ where
             Some(p) => p,
         };
 
-        let replace: LoggedUpdate<P> = LoggedUpdate { pid, update: new };
-        let bytes = measure(&M.serialize, || serialize(&replace).unwrap());
-        let mut new = Some(replace.update);
+        let bytes = measure(&M.serialize, || serialize(&update).unwrap());
+        let mut update_opt = Some(update);
 
         loop {
-            let log_reservation = self.log.reserve(&bytes)?;
+            let log_reservation = self.log.reserve(pid, &bytes)?;
             let lsn = log_reservation.lsn();
             let new_ptr = log_reservation.ptr();
 
@@ -1161,7 +1147,7 @@ where
             // that SHOULD cause CAS failures.
             let ts = if is_rewrite { old.wts } else { old.wts + 1 };
 
-            let cache_entry = match new.take().unwrap() {
+            let cache_entry = match update_opt.take().unwrap() {
                 Update::Compact(m) => {
                     CacheEntry::MergedResident(m, ts, lsn, new_ptr)
                 }
@@ -1200,12 +1186,12 @@ where
                         wts: ts,
                     }));
                 }
-                Err((actual_ptr, returned_new)) => {
+                Err((actual_ptr, returned_entry)) => {
                     trace!("cas_page failed on pid {}", pid);
                     log_reservation.abort()?;
 
-                    let returned_new =
-                        match returned_new.into_box().inner.clone() {
+                    let returned_update =
+                        match returned_entry.into_box().inner.clone() {
                             CacheEntry::MergedResident(m, ..) => {
                                 Update::Compact(m)
                             }
@@ -1224,7 +1210,7 @@ where
                                 cached_ptr: actual_ptr,
                                 wts: actual_ts,
                             },
-                            returned_new,
+                            returned_update,
                         ))));
                     }
                     trace!(
@@ -1236,7 +1222,7 @@ where
                         cached_ptr: actual_ptr,
                         wts: old.wts,
                     };
-                    new = Some(returned_new);
+                    update_opt = Some(returned_update);
                 }
             } // match cas result
         } // loop
@@ -1271,7 +1257,7 @@ where
                 m,
             )),
             Some(CacheEntry::Flush(wts, lsn, disk_ptr)) => {
-                let update = self.pull(*lsn, *disk_ptr)?;
+                let update = self.pull(META_PID, *lsn, *disk_ptr)?;
                 let ptr = PagePtr {
                     cached_ptr: head,
                     wts: *wts,
@@ -1316,7 +1302,7 @@ where
                 *counter,
             )),
             Some(CacheEntry::Flush(wts, lsn, disk_ptr)) => {
-                let update = self.pull(*lsn, *disk_ptr)?;
+                let update = self.pull(COUNTER_PID, *lsn, *disk_ptr)?;
                 let ptr = PagePtr {
                     cached_ptr: head,
                     wts: *wts,
@@ -1386,12 +1372,12 @@ where
                 Ok((Cow::Borrowed(r), *ts, *lsn, *ptr, sz))
             }
             CacheEntry::Flush(ts, lsn, ptr) => {
-                let res = self.pull(*lsn, *ptr).map(|pg| pg)?;
+                let res = self.pull(pid, *lsn, *ptr).map(|pg| pg)?;
                 let sz = PM::size_in_bytes(res.as_frag());
                 Ok((Cow::Owned(res.into_frag()), *ts, *lsn, *ptr, sz))
             }
             CacheEntry::PartialFlush(ts, lsn, ptr) => {
-                let res = self.pull(*lsn, *ptr).map(|pg| pg)?;
+                let res = self.pull(pid, *lsn, *ptr).map(|pg| pg)?;
                 let sz = PM::size_in_bytes(res.as_frag());
                 Ok((Cow::Owned(res.into_frag()), *ts, *lsn, *ptr, sz))
             }
@@ -1811,11 +1797,17 @@ where
         Ok(())
     }
 
-    fn pull(&self, lsn: Lsn, ptr: DiskPtr) -> Result<Update<P>> {
+    fn pull(&self, pid: PageId, lsn: Lsn, ptr: DiskPtr) -> Result<Update<P>> {
         trace!("pulling lsn {} ptr {} from disk", lsn, ptr);
         let _measure = Measure::new(&M.pull);
-        let bytes = match self.log.read(lsn, ptr) {
-            Ok(LogRead::Inline(read_lsn, buf, _len)) => {
+        let bytes = match self.log.read(pid, lsn, ptr) {
+            Ok(LogRead::Inline(read_pid, read_lsn, buf, _len)) => {
+                assert_eq!(
+                    read_pid, pid,
+                    "expected pid {} on pull of ptr {}, \
+                     but got {} instead",
+                    pid, ptr, read_pid
+                );
                 assert_eq!(
                     read_lsn, lsn,
                     "expected lsn {} on pull of ptr {}, \
@@ -1824,7 +1816,13 @@ where
                 );
                 Ok(buf)
             }
-            Ok(LogRead::Blob(read_lsn, buf, _blob_pointer)) => {
+            Ok(LogRead::Blob(read_pid, read_lsn, buf, _blob_pointer)) => {
+                assert_eq!(
+                    read_pid, pid,
+                    "expected pid {} on pull of ptr {}, \
+                     but got {} instead",
+                    pid, ptr, read_pid
+                );
                 assert_eq!(
                     read_lsn, lsn,
                     "expected lsn {} on pull of ptr {}, \
@@ -1844,13 +1842,13 @@ where
             }
         }?;
 
-        let logged_update = measure(&M.deserialize, || {
-            deserialize::<LoggedUpdate<P>>(&*bytes)
+        let update = measure(&M.deserialize, || {
+            deserialize::<Update<P>>(&*bytes)
                 .map_err(|_| ())
                 .expect("failed to deserialize data")
         });
 
-        match logged_update.update {
+        match update {
             Update::Free => Err(Error::ReportableBug(
                 "non-append/compact found in pull".to_owned(),
             )),

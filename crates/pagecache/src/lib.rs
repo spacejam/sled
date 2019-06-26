@@ -42,9 +42,6 @@ mod util;
 #[cfg(feature = "measure_allocs")]
 mod measure_allocs;
 
-const META_PID: PageId = 0;
-const COUNTER_PID: PageId = 1;
-
 #[cfg(feature = "measure_allocs")]
 #[global_allocator]
 static ALLOCATOR: measure_allocs::TrackingAllocator =
@@ -77,10 +74,11 @@ use self::metrics::uptime;
 
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
+    constants::{COUNTER_PID, META_PID},
     iobuf::{IoBuf, IoBufs},
     iterator::LogIter,
     metrics::{clock, measure},
-    pagecache::{LoggedUpdate, Update},
+    pagecache::Update,
     parallel_io::Pio,
     reader::LogReader,
     segment::{raw_segment_iter_from, SegmentAccountant},

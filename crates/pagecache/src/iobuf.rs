@@ -103,9 +103,11 @@ impl IoBufs {
                     &config,
                 ) {
                     Ok(LogRead::Failed(_, len))
-                    | Ok(LogRead::Inline(_, _, len)) => len + MSG_HEADER_LEN,
-                    Ok(LogRead::Blob(_lsn, _buf, _blob_ptr)) => {
-                        BLOB_INLINE_LEN + MSG_HEADER_LEN
+                    | Ok(LogRead::Inline(_, _, _, len)) => {
+                        len + MSG_HEADER_LEN as u32
+                    }
+                    Ok(LogRead::Blob(_pid, _lsn, _buf, _blob_ptr)) => {
+                        (BLOB_INLINE_LEN + MSG_HEADER_LEN) as u32
                     }
                     other => {
                         // we can overwrite this non-flush
@@ -247,6 +249,7 @@ impl IoBufs {
         &self,
         in_buf: &[u8],
         out_buf: &mut [u8],
+        pid: PageId,
         lsn: Lsn,
         over_blob_threshold: bool,
         is_blob_rewrite: bool,
@@ -276,8 +279,9 @@ impl IoBufs {
             } else {
                 MessageKind::Inline
             },
+            pid,
             lsn,
-            len: to_reserve.len(),
+            len: u32::try_from(to_reserve.len()).unwrap(),
             crc32: 0,
         };
 
@@ -376,8 +380,9 @@ impl IoBufs {
 
             let header = MessageHeader {
                 kind: MessageKind::Pad,
+                pid: PageId::max_value(),
                 lsn: base_lsn + bytes_to_write as Lsn,
-                len: pad_len,
+                len: u32::try_from(pad_len).unwrap(),
                 crc32: 0,
             };
 
@@ -405,7 +410,10 @@ impl IoBufs {
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     crc32_arr.as_ptr(),
-                    data.as_mut_ptr().add(bytes_to_write + 13),
+                    data.as_mut_ptr().add(
+                        bytes_to_write + MSG_HEADER_LEN
+                            - std::mem::size_of::<u32>(),
+                    ),
                     std::mem::size_of::<u32>(),
                 );
             }

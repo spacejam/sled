@@ -43,7 +43,9 @@ impl LogReader for File {
         // in the header.
         unsafe {
             std::ptr::write_bytes(
-                msg_header_buf.as_mut_ptr().add(13),
+                msg_header_buf
+                    .as_mut_ptr()
+                    .add(MSG_HEADER_LEN - std::mem::size_of::<u32>()),
                 0xFF,
                 std::mem::size_of::<u32>(),
             );
@@ -84,7 +86,8 @@ impl LogReader for File {
 
         let max_possible_len =
             assert_usize(ceiling - lid - MSG_HEADER_LEN as LogId);
-        if header.len > max_possible_len {
+
+        if usize::try_from(header.len).unwrap() > max_possible_len {
             trace!(
                 "read a corrupted message with impossibly long length of {}",
                 header.len
@@ -98,10 +101,9 @@ impl LogReader for File {
         }
 
         // perform crc check on everything that isn't Corrupted
-
-        let mut buf = Vec::with_capacity(header.len);
+        let mut buf = Vec::with_capacity(usize::try_from(header.len).unwrap());
         unsafe {
-            buf.set_len(header.len);
+            buf.set_len(usize::try_from(header.len).unwrap());
         }
         self.pread_exact(&mut buf, lid + MSG_HEADER_LEN as LogId)?;
 
@@ -141,7 +143,7 @@ impl LogReader for File {
                             id,
                         );
 
-                        Ok(LogRead::Blob(header.lsn, buf, id))
+                        Ok(LogRead::Blob(header.pid, header.lsn, buf, id))
                     }
                     Err(Error::Io(ref e))
                         if e.kind() == std::io::ErrorKind::NotFound =>
@@ -150,7 +152,7 @@ impl LogReader for File {
                             "underlying blob file not found for Blob({}, {})",
                             header.lsn, id,
                         );
-                        Ok(LogRead::DanglingBlob(header.lsn, id))
+                        Ok(LogRead::DanglingBlob(header.pid, header.lsn, id))
                     }
                     Err(other_e) => {
                         debug!("failed to read blob: {:?}", other_e);
@@ -166,7 +168,7 @@ impl LogReader for File {
                     buf
                 };
 
-                Ok(LogRead::Inline(header.lsn, buf, header.len))
+                Ok(LogRead::Inline(header.pid, header.lsn, buf, header.len))
             }
             MessageKind::BatchManifest => {
                 assert_eq!(buf.len(), std::mem::size_of::<Lsn>());

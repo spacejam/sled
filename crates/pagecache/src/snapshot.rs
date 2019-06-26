@@ -68,6 +68,7 @@ impl PageState {
 impl Snapshot {
     fn apply<P>(
         &mut self,
+        pid: PageId,
         lsn: Lsn,
         disk_ptr: DiskPtr,
         bytes: &[u8],
@@ -79,7 +80,7 @@ impl Snapshot {
         // unwrapping this because it's already passed the crc check
         // in the log iterator
         trace!("trying to deserialize buf for ptr {} lsn {}", disk_ptr, lsn);
-        let deserialization = deserialize::<LoggedUpdate<P>>(&*bytes);
+        let deserialization = deserialize::<Update<P>>(&*bytes);
 
         if let Err(e) = deserialization {
             error!(
@@ -90,8 +91,7 @@ impl Snapshot {
             return Err(Error::Corruption { at: disk_ptr });
         }
 
-        let prepend = deserialization.unwrap();
-        let pid = prepend.pid;
+        let update = deserialization.unwrap();
 
         if pid >= self.max_pid {
             self.max_pid = pid + 1;
@@ -101,7 +101,7 @@ impl Snapshot {
         let replaced_at_segment_lsn =
             (lsn / config.io_buf_size as Lsn) * config.io_buf_size as Lsn;
 
-        match prepend.update {
+        match update {
             Update::Append(append) => {
                 // Because we rewrite pages over time, we may have relocated
                 // a page's initial Compact to a later segment. We should skip
@@ -137,7 +137,7 @@ impl Snapshot {
                     pid,
                     disk_ptr,
                     lsn,
-                    prepend.update,
+                    update,
                 );
 
                 self.replace_pid(
@@ -148,7 +148,7 @@ impl Snapshot {
                 );
                 self.pt
                     .insert(pid, PageState::Present(vec![(lsn, disk_ptr)]));
-                if prepend.update.is_compact() {
+                if update.is_compact() {
                     self.free.remove(&pid);
                 } else {
                     assert!(!self.free.contains(&pid));
@@ -253,7 +253,7 @@ where
 
     let mut last_seg_lsn = snapshot.max_lsn / io_buf_size as Lsn;
 
-    for (lsn, ptr, bytes) in iter {
+    for (pid, lsn, ptr, bytes) in iter {
         trace!(
             "in advance_snapshot looking at item with lsn {} ptr {}",
             lsn,
@@ -288,7 +288,8 @@ where
         }
 
         if !PM::is_null() {
-            if let Err(e) = snapshot.apply::<P>(lsn, ptr, &*bytes, config) {
+            if let Err(e) = snapshot.apply::<P>(pid, lsn, ptr, &*bytes, config)
+            {
                 error!("encountered error while reading log message: {}", e);
                 break;
             }
