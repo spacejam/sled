@@ -6,23 +6,27 @@
 //!     .segment_mode(pagecache::SegmentMode::Linear)
 //!     .build();
 //! let log = pagecache::Log::start_raw_log(config).unwrap();
-//! let (first_lsn, _first_offset) = log.write(b"1").unwrap();
-//! log.write(b"22").unwrap();
-//! log.write(b"333").unwrap();
+//!
+//! // all log messages have an associated page ID
+//! let pid = pagecache::PageId::max_value();
+//!
+//! let (first_lsn, _first_offset) = log.write(pid, b"1").unwrap();
+//! log.write(pid, b"22").unwrap();
+//! log.write(pid, b"333").unwrap();
 //!
 //! // stick an abort in the middle, which should not be returned
-//! let res = log.reserve(b"never_gonna_hit_disk").unwrap();
+//! let res = log.reserve(pid, b"never_gonna_hit_disk").unwrap();
 //! res.abort().unwrap();
 //!
-//! log.write(b"4444");
-//! let (last_lsn, _last_offset) = log.write(b"55555").unwrap();
+//! log.write(pid, b"4444");
+//! let (last_lsn, _last_offset) = log.write(pid, b"55555").unwrap();
 //! log.make_stable(last_lsn).unwrap();
 //! let mut iter = log.iter_from(first_lsn);
-//! assert_eq!(iter.next().unwrap().2, b"1");
-//! assert_eq!(iter.next().unwrap().2, b"22");
-//! assert_eq!(iter.next().unwrap().2, b"333");
-//! assert_eq!(iter.next().unwrap().2, b"4444");
-//! assert_eq!(iter.next().unwrap().2, b"55555");
+//! assert_eq!(iter.next().unwrap().3, b"1");
+//! assert_eq!(iter.next().unwrap().3, b"22");
+//! assert_eq!(iter.next().unwrap().3, b"333");
+//! assert_eq!(iter.next().unwrap().3, b"4444");
+//! assert_eq!(iter.next().unwrap().3, b"55555");
 //! assert_eq!(iter.next(), None);
 //! ```
 use std::sync::Arc;
