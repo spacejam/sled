@@ -1012,6 +1012,9 @@ where
             } else if pid == COUNTER_PID {
                 let (key, counter) = self.get_idgen(tx)?;
                 (key, Update::Counter(counter))
+            } else if pid == CONFIG_PID {
+                let (key, config) = self.get_persisted_config(tx)?;
+                (key, Update::Config(config.clone()))
             } else {
                 match self.get(pid, tx)? {
                     Some((key, entries)) => {
