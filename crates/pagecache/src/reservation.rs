@@ -75,7 +75,7 @@ impl<'a> Reservation<'a> {
     /// size to hold a serialized Lsn.
     #[doc(hidden)]
     pub fn mark_writebatch(&mut self, lsn: Lsn) {
-        self.buf[0] = BATCH_MANIFEST;
+        self.buf[0] = MessageKind::BatchManifest.into();
 
         let buf = u64_to_arr(u64::try_from(lsn).unwrap());
 
@@ -94,7 +94,7 @@ impl<'a> Reservation<'a> {
         if !valid {
             // don't actually zero the message, still check its hash
             // on recovery to find corruption.
-            self.buf[0] = FAILED_FLUSH;
+            self.buf[0] = MessageKind::Cancelled.into();
         }
 
         // the order of hashing must be the
@@ -109,7 +109,9 @@ impl<'a> Reservation<'a> {
         unsafe {
             std::ptr::copy_nonoverlapping(
                 crc32_arr.as_ptr(),
-                self.buf.as_mut_ptr().add(13),
+                self.buf
+                    .as_mut_ptr()
+                    .add(MSG_HEADER_LEN - std::mem::size_of::<u32>()),
                 std::mem::size_of::<u32>(),
             );
         }

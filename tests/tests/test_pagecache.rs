@@ -96,7 +96,7 @@ fn pagecache_caching() {
     }
 
     for i in 0..1000 {
-        let id = 2 + (i % 2);
+        let id = 3 + (i % 2);
         let (key, _) = pc.get(id, &tx).unwrap().unwrap();
         let key = pc.link(id, key, vec![i as usize], &tx).unwrap().unwrap();
         keys.insert(id, key);
@@ -136,7 +136,7 @@ fn parallel_pagecache() -> sled::Result<()> {
                     .spawn(move || {
                         for i in (tn * N_PER_THREAD)..((tn + 1) * N_PER_THREAD)
                         {
-                            $f(&*tree, i + 2);
+                            $f(&*tree, i + 3);
                         }
                     })
                     .expect("should be able to spawn thread");
@@ -256,7 +256,7 @@ fn pagecache_strange_crash_1() {
         }
 
         for i in 0..1000 {
-            let id = 2 + (i % 2);
+            let id = 3 + (i % 2);
             let (key, _frags) = pc.get(id, &tx).unwrap().unwrap();
             let key = pc.link(id, key, vec![i as usize], &tx).unwrap().unwrap();
             keys.insert(id, key);
@@ -294,7 +294,7 @@ fn pagecache_strange_crash_2() {
         }
 
         for i in 0..1000 {
-            let id = 2 + (i % 2);
+            let id = 3 + (i % 2);
             let page_get = pc.get(id, &tx).unwrap();
             assert!(!page_get.is_none());
             let (key, _frags) = page_get.unwrap();
@@ -453,7 +453,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
             }
             Replace(pid, c) => {
                 let tx = pc.begin().unwrap();
-                let pid = pid + 2;
+                let pid = pid + 3;
                 let get = pc.get(pid, &tx).unwrap();
                 let ref_get = reference.entry(pid).or_insert(P::Unallocated);
 
@@ -479,7 +479,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
             }
             Link(pid, c) => {
                 let tx = pc.begin().unwrap();
-                let pid = pid + 2;
+                let pid = pid + 3;
                 let get = pc.get(pid, &tx).unwrap();
                 let ref_get = reference.entry(pid).or_insert(P::Unallocated);
 
@@ -500,7 +500,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
             }
             Get(pid) => {
                 let tx = pc.begin().unwrap();
-                let pid = pid + 2;
+                let pid = pid + 3;
                 let get = pc.get(pid, &tx).unwrap();
 
                 match reference.get(&pid) {
@@ -527,7 +527,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
             }
             Free(pid) => {
                 let tx = pc.begin().unwrap();
-                let pid = pid + 2;
+                let pid = pid + 3;
 
                 let pre_get = pc.get(pid, &tx).unwrap();
 

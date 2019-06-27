@@ -66,32 +66,17 @@ impl PageState {
 }
 
 impl Snapshot {
-    fn apply<P>(
+    fn apply(
         &mut self,
+        log_kind: LogKind,
+        pid: PageId,
         lsn: Lsn,
         disk_ptr: DiskPtr,
-        bytes: &[u8],
         config: &Config,
-    ) -> Result<()>
-    where
-        P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
-    {
+    ) {
         // unwrapping this because it's already passed the crc check
         // in the log iterator
         trace!("trying to deserialize buf for ptr {} lsn {}", disk_ptr, lsn);
-        let deserialization = deserialize::<LoggedUpdate<P>>(&*bytes);
-
-        if let Err(e) = deserialization {
-            error!(
-                "failed to deserialize buffer for item in log: lsn {} \
-                 ptr {}: {:?}",
-                lsn, disk_ptr, e
-            );
-            return Err(Error::Corruption { at: disk_ptr });
-        }
-
-        let prepend = deserialization.unwrap();
-        let pid = prepend.pid;
 
         if pid >= self.max_pid {
             self.max_pid = pid + 1;
@@ -101,18 +86,37 @@ impl Snapshot {
         let replaced_at_segment_lsn =
             (lsn / config.io_buf_size as Lsn) * config.io_buf_size as Lsn;
 
-        match prepend.update {
-            Update::Append(append) => {
+        match log_kind {
+            LogKind::Replace => {
+                trace!(
+                    "compact of pid {} at ptr {} lsn {}",
+                    pid,
+                    disk_ptr,
+                    lsn,
+                );
+
+                self.replace_pid(
+                    pid,
+                    replaced_at_segment_lsn,
+                    replaced_at_idx,
+                    config,
+                );
+
+                self.pt
+                    .insert(pid, PageState::Present(vec![(lsn, disk_ptr)]));
+
+                self.free.remove(&pid);
+            }
+            LogKind::Append => {
                 // Because we rewrite pages over time, we may have relocated
                 // a page's initial Compact to a later segment. We should skip
                 // over pages here unless we've encountered a Compact for them.
                 if let Some(lids) = self.pt.get_mut(&pid) {
                     trace!(
-                        "append of pid {} at lid {} lsn {}: {:?}",
+                        "append of pid {} at lid {} lsn {}",
                         pid,
                         disk_ptr,
                         lsn,
-                        append,
                     );
 
                     if lids.is_free() {
@@ -124,37 +128,14 @@ impl Snapshot {
                              allocation of this page, skipping push"
                         );
 
-                        return Ok(());
+                        return;
                     }
 
                     lids.push((lsn, disk_ptr));
                 }
                 self.free.remove(&pid);
             }
-            Update::Meta(_) | Update::Counter(_) | Update::Compact(_) => {
-                trace!(
-                    "compact of pid {} at ptr {} lsn {}: {:?}",
-                    pid,
-                    disk_ptr,
-                    lsn,
-                    prepend.update,
-                );
-
-                self.replace_pid(
-                    pid,
-                    replaced_at_segment_lsn,
-                    replaced_at_idx,
-                    config,
-                );
-                self.pt
-                    .insert(pid, PageState::Present(vec![(lsn, disk_ptr)]));
-                if prepend.update.is_compact() {
-                    self.free.remove(&pid);
-                } else {
-                    assert!(!self.free.contains(&pid));
-                }
-            }
-            Update::Free => {
+            LogKind::Free => {
                 trace!("free of pid {} at ptr {} lsn {}", pid, disk_ptr, lsn);
                 self.replace_pid(
                     pid,
@@ -165,9 +146,11 @@ impl Snapshot {
                 self.pt.insert(pid, PageState::Free(lsn, disk_ptr));
                 self.free.insert(pid);
             }
+            LogKind::Corrupted | LogKind::Skip => panic!(
+                "unexppected messagekind in snapshot application: {:?}",
+                log_kind
+            ),
         }
-
-        Ok(())
     }
 
     fn replace_pid(
@@ -253,7 +236,7 @@ where
 
     let mut last_seg_lsn = snapshot.max_lsn / io_buf_size as Lsn;
 
-    for (lsn, ptr, bytes) in iter {
+    for (log_kind, pid, lsn, ptr, _sz) in iter {
         trace!(
             "in advance_snapshot looking at item with lsn {} ptr {}",
             lsn,
@@ -287,12 +270,7 @@ where
             last_seg_lsn = lsn / (io_buf_size as Lsn);
         }
 
-        if !PM::is_null() {
-            if let Err(e) = snapshot.apply::<P>(lsn, ptr, &*bytes, config) {
-                error!("encountered error while reading log message: {}", e);
-                break;
-            }
-        }
+        snapshot.apply(log_kind, pid, lsn, ptr, config);
     }
 
     // read the max stable lsn written into all trailers

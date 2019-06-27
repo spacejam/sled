@@ -644,7 +644,10 @@ impl SegmentAccountant {
             to_zero.push(lsn);
             let f = &self.config.file;
             maybe_fail!("zero garbage segment");
-            f.pwrite_all(&*vec![EVIL_BYTE; SEG_HEADER_LEN], lid)?;
+            f.pwrite_all(
+                &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
+                lid,
+            )?;
             f.sync_all()?;
             maybe_fail!("zero garbage segment post");
         }
@@ -1379,7 +1382,11 @@ fn clean_tail_tears(
             if lsn > tear {
                 error!("filtering out segment with lsn {} at lid {}", lsn, lid);
 
-                f.pwrite_all(&*vec![EVIL_BYTE; SEG_HEADER_LEN], lid).expect(
+                f.pwrite_all(
+                    &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
+                    lid,
+                )
+                .expect(
                     "should be able to mark a linear-orphan \
                      segment as invalid",
                 );

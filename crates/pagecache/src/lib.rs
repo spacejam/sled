@@ -42,9 +42,6 @@ mod util;
 #[cfg(feature = "measure_allocs")]
 mod measure_allocs;
 
-const META_PID: PageId = 0;
-const COUNTER_PID: PageId = 1;
-
 #[cfg(feature = "measure_allocs")]
 #[global_allocator]
 static ALLOCATOR: measure_allocs::TrackingAllocator =
@@ -70,17 +67,19 @@ use log::{debug, error, trace, warn};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 #[doc(hidden)]
-use self::logger::{MessageHeader, MessageKind, SegmentHeader};
+use self::logger::{MessageHeader, SegmentHeader};
 
 #[cfg(not(unix))]
 use self::metrics::uptime;
 
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
+    config::PersistedConfig,
+    constants::{BATCH_MANIFEST_PID, CONFIG_PID, COUNTER_PID, META_PID},
     iobuf::{IoBuf, IoBufs},
     iterator::LogIter,
     metrics::{clock, measure},
-    pagecache::{LoggedUpdate, Update},
+    pagecache::Update,
     parallel_io::Pio,
     reader::LogReader,
     segment::{raw_segment_iter_from, SegmentAccountant},
@@ -107,9 +106,8 @@ pub use self::{
 #[doc(hidden)]
 pub use self::{
     constants::{
-        BATCH_MANIFEST, BATCH_MANIFEST_INLINE_LEN, BLOB_FLUSH, BLOB_INLINE_LEN,
-        EVIL_BYTE, FAILED_FLUSH, INLINE_FLUSH, MAX_SPACE_AMPLIFICATION,
-        MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEGMENT_PAD, SEG_HEADER_LEN,
+        BATCH_MANIFEST_INLINE_LEN, BLOB_INLINE_LEN, MAX_SPACE_AMPLIFICATION,
+        MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
     },
     ds::PAGETABLE_NODE_SZ,
     metrics::Measure,
@@ -130,6 +128,129 @@ pub type Lsn = i64;
 
 /// A page identifier.
 pub type PageId = u64;
+
+#[doc(hidden)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+enum MessageKind {
+    /// The EVIL_BYTE is written as a canary to help
+    /// detect torn writes.
+    Corrupted = 0,
+    /// Indicates that the following buffer corresponds
+    /// to a reservation for an in-memory operation that
+    /// failed to complete. It should be skipped during
+    /// recovery.
+    Cancelled = 1,
+    /// Indicates that the following buffer is used
+    /// as padding to fill out the rest of the segment
+    /// before sealing it.
+    Pad = 2,
+    /// Indicates that the following buffer contains
+    /// an Lsn for the last write in an atomic writebatch.
+    BatchManifest = 3,
+    /// Indicates that this page was freed from the pagetable.
+    Free = 4,
+    /// Indicates that the last persisted ID was at least
+    /// this high.
+    Counter = 5,
+    /// The meta page, stored inline
+    InlineMeta = 6,
+    /// The meta page, stored blobly
+    BlobMeta = 7,
+    /// The config page, stored inline
+    InlineConfig = 8,
+    /// The config page, stored blobly
+    BlobConfig = 9,
+    /// A consolidated page replacement, stored inline
+    InlineReplace = 10,
+    /// A consolidated page replacement, stored blobly
+    BlobReplace = 11,
+    /// A partial page update, stored inline
+    InlineAppend = 12,
+    /// A partial page update, stored blobly
+    BlobAppend = 13,
+}
+
+impl MessageKind {
+    pub(crate) const fn into(self) -> u8 {
+        self as u8
+    }
+}
+
+impl From<u8> for MessageKind {
+    fn from(byte: u8) -> MessageKind {
+        use MessageKind::*;
+        match byte {
+            0 => Corrupted,
+            1 => Cancelled,
+            2 => Pad,
+            3 => BatchManifest,
+            4 => Free,
+            5 => Counter,
+            6 => InlineMeta,
+            7 => BlobMeta,
+            8 => InlineConfig,
+            9 => BlobConfig,
+            10 => InlineReplace,
+            11 => BlobReplace,
+            12 => InlineAppend,
+            13 => BlobAppend,
+            other => {
+                error!("encountered unexpected message kind byte {}", other);
+                Corrupted
+            }
+        }
+    }
+}
+
+/// The high-level types of stored information
+/// about pages and their mutations
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LogKind {
+    /// Persisted data containing a page replacement
+    Replace,
+    /// Persisted immutable update
+    Append,
+    /// Freeing of a page
+    Free,
+    /// Some state indicating this should be skipped
+    Skip,
+    /// Unexpected corruption
+    Corrupted,
+}
+
+fn log_kind_from_update<PageFrag>(update: &Update<PageFrag>) -> LogKind
+where
+    PageFrag: DeserializeOwned + Serialize,
+{
+    use Update::*;
+
+    match update {
+        Update::Free => LogKind::Free,
+        Append(..) => LogKind::Append,
+        Compact(..) | Counter(..) | Meta(..) | Config(..) => LogKind::Replace,
+    }
+}
+
+impl From<MessageKind> for LogKind {
+    fn from(kind: MessageKind) -> LogKind {
+        use MessageKind::*;
+        match kind {
+            Free => LogKind::Free,
+
+            InlineReplace | Counter | BlobReplace | InlineMeta | BlobMeta
+            | InlineConfig | BlobConfig => LogKind::Replace,
+
+            InlineAppend | BlobAppend => LogKind::Append,
+
+            Cancelled | Pad | BatchManifest => LogKind::Skip,
+            other => {
+                error!("encountered unexpected message kind byte {:?}", other);
+                LogKind::Corrupted
+            }
+        }
+    }
+}
 
 /// Allows arbitrary logic to be injected into mere operations of the `PageCache`.
 pub type MergeOperator = fn(

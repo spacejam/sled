@@ -12,7 +12,7 @@ pub(crate) enum ShutdownState {
 }
 
 impl ShutdownState {
-    fn is_running(&self) -> bool {
+    fn is_running(self) -> bool {
         if let ShutdownState::Running = self {
             true
         } else {
@@ -20,7 +20,7 @@ impl ShutdownState {
         }
     }
 
-    fn is_shutdown(&self) -> bool {
+    fn is_shutdown(self) -> bool {
         if let ShutdownState::ShutDown = self {
             true
         } else {
