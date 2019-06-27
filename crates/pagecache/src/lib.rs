@@ -196,7 +196,7 @@ impl From<u8> for MessageKind {
             12 => InlineAppend,
             13 => BlobAppend,
             other => {
-                error!("encountered unexpected message kind byte {}", other);
+                debug!("encountered unexpected message kind byte {}", other);
                 Corrupted
             }
         }
@@ -245,7 +245,7 @@ impl From<MessageKind> for LogKind {
 
             Cancelled | Pad | BatchManifest => LogKind::Skip,
             other => {
-                error!("encountered unexpected message kind byte {:?}", other);
+                debug!("encountered unexpected message kind byte {:?}", other);
                 LogKind::Corrupted
             }
         }
