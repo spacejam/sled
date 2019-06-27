@@ -7,26 +7,27 @@
 //!     .build();
 //! let log = pagecache::Log::start_raw_log(config).unwrap();
 //!
-//! // all log messages have an associated page ID
+//! // all log messages have an associated kind and page ID
+//! let kind = pagecache::LogKind::Replace;
 //! let pid = pagecache::PageId::max_value();
 //!
-//! let (first_lsn, _first_offset) = log.write(pid, b"1").unwrap();
-//! log.write(pid, b"22").unwrap();
-//! log.write(pid, b"333").unwrap();
+//! let (first_lsn, _first_offset) = log.reserve(kind, pid, b"1").unwrap().complete().unwrap();
+//! log.reserve(kind, pid, b"22").unwrap().complete().unwrap();
+//! log.reserve(kind, pid, b"333").unwrap().complete().unwrap();
 //!
 //! // stick an abort in the middle, which should not be returned
-//! let res = log.reserve(pid, b"never_gonna_hit_disk").unwrap();
+//! let res = log.reserve(kind, pid, b"never_gonna_hit_disk").unwrap();
 //! res.abort().unwrap();
 //!
-//! log.write(pid, b"4444");
-//! let (last_lsn, _last_offset) = log.write(pid, b"55555").unwrap();
+//! log.reserve(kind, pid, b"4444").unwrap().complete().unwrap();
+//! let (last_lsn, _last_offset) = log.reserve(kind, pid, b"55555").unwrap().complete().unwrap();
 //! log.make_stable(last_lsn).unwrap();
 //! let mut iter = log.iter_from(first_lsn);
-//! assert_eq!(iter.next().unwrap().3, b"1");
-//! assert_eq!(iter.next().unwrap().3, b"22");
-//! assert_eq!(iter.next().unwrap().3, b"333");
-//! assert_eq!(iter.next().unwrap().3, b"4444");
-//! assert_eq!(iter.next().unwrap().3, b"55555");
+//! assert!(iter.next().is_some());
+//! assert!(iter.next().is_some());
+//! assert!(iter.next().is_some());
+//! assert!(iter.next().is_some());
+//! assert!(iter.next().is_some());
 //! assert_eq!(iter.next(), None);
 //! ```
 use std::sync::Arc;
@@ -75,16 +76,6 @@ impl Log {
         iobuf::flush(&self.iobufs)
     }
 
-    /// Write a buffer into the log. Returns the log sequence
-    /// number and the file offset of the write.
-    pub fn write<B>(&self, pid: PageId, buf: B) -> Result<(Lsn, DiskPtr)>
-    where
-        B: AsRef<[u8]>,
-    {
-        self.reserve(pid, buf.as_ref())
-            .and_then(|res| res.complete())
-    }
-
     /// Return an iterator over the log, starting with
     /// a specified offset.
     pub fn iter_from(&self, lsn: Lsn) -> LogIter {
@@ -107,8 +98,17 @@ impl Log {
             // here because it might not still
             // exist in the inline log.
             let (_lid, blob_ptr) = ptr.blob();
-            read_blob(blob_ptr, &self.config)
-                .map(|buf| LogRead::Blob(pid, lsn, buf, blob_ptr))
+            read_blob(blob_ptr, &self.config).map(|(kind, buf)| {
+                let sz = MSG_HEADER_LEN + BLOB_INLINE_LEN;
+                let header = MessageHeader {
+                    kind,
+                    pid,
+                    lsn,
+                    crc32: 0,
+                    len: sz as u32,
+                };
+                LogRead::Blob(header, buf, blob_ptr)
+            })
         }
     }
 
@@ -143,7 +143,7 @@ impl Log {
         let lsn_buf: [u8; std::mem::size_of::<BlobPointer>()] =
             u64_to_arr(blob_ptr as u64);
 
-        self.reserve_inner(pid, &lsn_buf, true)
+        self.reserve_inner(LogKind::Replace, pid, &lsn_buf, true)
     }
 
     /// Tries to claim a reservation for writing a buffer to a
@@ -154,6 +154,7 @@ impl Log {
     #[allow(unused)]
     pub fn reserve<'a>(
         &'a self,
+        log_kind: LogKind,
         pid: PageId,
         raw_buf: &[u8],
     ) -> Result<Reservation<'a>> {
@@ -175,39 +176,12 @@ impl Log {
             }
         }
 
-        self.reserve_inner(pid, buf, false)
-    }
-
-    /// Writes a sequence of buffers to stable storge,
-    /// leaving a batch marker beforehand to ensure
-    /// atomic recovery of the entire batch. If
-    /// during recovery the batch is only partially
-    /// recoverable, the entire recovery process will
-    /// stop before any updates are processed.
-    pub fn write_batch<'a, 'b>(
-        &'a self,
-        bufs: &'b [(PageId, &'b [u8])],
-    ) -> Result<Vec<(PageId, Lsn, DiskPtr)>> {
-        // reserve space for pointer
-        let mut batch_res = self
-            .reserve(PageId::max_value(), &[0; std::mem::size_of::<Lsn>()])?;
-        let mut pointers = Vec::with_capacity(bufs.len());
-        for (pid, buf) in bufs {
-            let (lsn, diskptr) = self.write(*pid, buf)?;
-            pointers.push((*pid, lsn, diskptr));
-        }
-        if let Some((_last_pid, last_lsn, _last_ptr)) = pointers.last() {
-            batch_res.mark_writebatch(*last_lsn);
-            batch_res.complete()?;
-        } else {
-            batch_res.abort()?;
-        }
-
-        Ok(pointers)
+        self.reserve_inner(log_kind, pid, buf, false)
     }
 
     fn reserve_inner<'a>(
         &'a self,
+        log_kind: LogKind,
         pid: PageId,
         buf: &[u8],
         is_blob_rewrite: bool,
@@ -245,6 +219,27 @@ impl Log {
         }
 
         let backoff = Backoff::new();
+
+        let kind = match (pid, log_kind, over_blob_threshold || is_blob_rewrite)
+        {
+            (COUNTER_PID, LogKind::Replace, false) => MessageKind::Counter,
+            (META_PID, LogKind::Replace, true) => MessageKind::BlobMeta,
+            (META_PID, LogKind::Replace, false) => MessageKind::InlineMeta,
+            (CONFIG_PID, LogKind::Replace, true) => MessageKind::BlobConfig,
+            (CONFIG_PID, LogKind::Replace, false) => MessageKind::InlineConfig,
+            (BATCH_MANIFEST_PID, LogKind::Skip, false) => {
+                MessageKind::BatchManifest
+            }
+            (_, LogKind::Replace, true) => MessageKind::BlobReplace,
+            (_, LogKind::Replace, false) => MessageKind::InlineReplace,
+            (_, LogKind::Append, true) => MessageKind::BlobAppend,
+            (_, LogKind::Append, false) => MessageKind::InlineAppend,
+            other => panic!(
+                "unexpected combination of PageId, \
+                 LogKind, and blob status: {:?}",
+                other
+            ),
+        };
 
         loop {
             M.log_reservation_attempted();
@@ -356,10 +351,10 @@ impl Log {
             self.iobufs.encapsulate(
                 &*buf,
                 destination,
+                kind,
                 pid,
                 reservation_lsn,
                 over_blob_threshold,
-                is_blob_rewrite,
             )?;
 
             M.log_reservation_success();
@@ -464,20 +459,9 @@ impl Drop for Log {
     }
 }
 
-/// Represents the kind of message written to the log
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub(crate) enum MessageKind {
-    Inline,
-    Blob,
-    Failed,
-    Pad,
-    Corrupted,
-    BatchManifest,
-}
-
 /// All log messages are prepended with this header
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub(crate) struct MessageHeader {
+pub struct MessageHeader {
     pub(crate) kind: MessageKind,
     pub(crate) lsn: Lsn,
     pub(crate) pid: PageId,
@@ -497,42 +481,21 @@ pub(crate) struct SegmentHeader {
 #[doc(hidden)]
 #[derive(Debug)]
 pub enum LogRead {
-    Inline(PageId, Lsn, Vec<u8>, u32),
-    Blob(PageId, Lsn, Vec<u8>, BlobPointer),
+    Inline(MessageHeader, Vec<u8>, u32),
+    Blob(MessageHeader, Vec<u8>, BlobPointer),
     Failed(Lsn, u32),
     Pad(Lsn),
     Corrupted(u32),
-    DanglingBlob(PageId, Lsn, BlobPointer),
+    DanglingBlob(MessageHeader, BlobPointer),
     BatchManifest(Lsn),
 }
 
 impl LogRead {
-    /// Optionally return successfully read inline bytes, or
-    /// None if the data was corrupt or this log entry was aborted.
-    pub fn inline(self) -> Option<(PageId, Lsn, Vec<u8>, u32)> {
-        match self {
-            LogRead::Inline(pid, lsn, bytes, len) => {
-                Some((pid, lsn, bytes, len))
-            }
-            _ => None,
-        }
-    }
-
     /// Return true if this is an Inline value..
     pub fn is_inline(&self) -> bool {
         match *self {
             LogRead::Inline(..) => true,
             _ => false,
-        }
-    }
-
-    /// Optionally return a successfully read pointer to an
-    /// blob value, or None if the data was corrupt or
-    /// this log entry was aborted.
-    pub fn blob(self) -> Option<(PageId, Lsn, Vec<u8>, BlobPointer)> {
-        match self {
-            LogRead::Blob(pid, lsn, buf, ptr) => Some((pid, lsn, buf, ptr)),
-            _ => None,
         }
     }
 
@@ -579,9 +542,7 @@ impl LogRead {
     /// Return the underlying data read from a log read, if successful.
     pub fn into_data(self) -> Option<Vec<u8>> {
         match self {
-            LogRead::Blob(_, _, buf, _) | LogRead::Inline(_, _, buf, _) => {
-                Some(buf)
-            }
+            LogRead::Blob(_, buf, _) | LogRead::Inline(_, buf, _) => Some(buf),
             _ => None,
         }
     }
@@ -592,14 +553,7 @@ impl LogRead {
 
 impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
     fn from(buf: [u8; MSG_HEADER_LEN]) -> MessageHeader {
-        let kind = match buf[0] {
-            INLINE_FLUSH => MessageKind::Inline,
-            BLOB_FLUSH => MessageKind::Blob,
-            FAILED_FLUSH => MessageKind::Failed,
-            SEGMENT_PAD => MessageKind::Pad,
-            BATCH_MANIFEST => MessageKind::BatchManifest,
-            _ => MessageKind::Corrupted,
-        };
+        let kind = MessageKind::from(buf[0]);
 
         unsafe {
             let pid = arr_to_u64(buf.get_unchecked(1..9));
@@ -621,14 +575,7 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
 impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
     fn into(self) -> [u8; MSG_HEADER_LEN] {
         let mut buf = [0u8; MSG_HEADER_LEN];
-        buf[0] = match self.kind {
-            MessageKind::Inline => INLINE_FLUSH,
-            MessageKind::Blob => BLOB_FLUSH,
-            MessageKind::Failed => FAILED_FLUSH,
-            MessageKind::Pad => SEGMENT_PAD,
-            MessageKind::BatchManifest => BATCH_MANIFEST,
-            MessageKind::Corrupted => EVIL_BYTE,
-        };
+        buf[0] = self.kind.into();
 
         assert!(self.len <= std::u32::MAX);
         let pid_arr = u64_to_arr(self.pid);

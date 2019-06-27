@@ -124,7 +124,7 @@ impl LogReader for File {
         }
 
         match header.kind {
-            MessageKind::Failed => {
+            MessageKind::Cancelled => {
                 trace!("read failed of len {}", header.len);
                 Ok(LogRead::Failed(header.lsn, header.len))
             }
@@ -132,18 +132,22 @@ impl LogReader for File {
                 trace!("read pad at lsn {}", header.lsn);
                 Ok(LogRead::Pad(header.lsn))
             }
-            MessageKind::Blob => {
+            MessageKind::BlobAppend
+            | MessageKind::BlobReplace
+            | MessageKind::BlobMeta
+            | MessageKind::BlobConfig => {
                 let id = arr_to_u64(&buf) as Lsn;
 
                 match read_blob(id, config) {
-                    Ok(buf) => {
+                    Ok((kind, buf)) => {
+                        assert_eq!(header.kind, kind);
                         trace!(
                             "read a successful blob message for Blob({}, {})",
                             header.lsn,
                             id,
                         );
 
-                        Ok(LogRead::Blob(header.pid, header.lsn, buf, id))
+                        Ok(LogRead::Blob(header, buf, id))
                     }
                     Err(Error::Io(ref e))
                         if e.kind() == std::io::ErrorKind::NotFound =>
@@ -152,7 +156,7 @@ impl LogReader for File {
                             "underlying blob file not found for Blob({}, {})",
                             header.lsn, id,
                         );
-                        Ok(LogRead::DanglingBlob(header.pid, header.lsn, id))
+                        Ok(LogRead::DanglingBlob(header, id))
                     }
                     Err(other_e) => {
                         debug!("failed to read blob: {:?}", other_e);
@@ -160,7 +164,12 @@ impl LogReader for File {
                     }
                 }
             }
-            MessageKind::Inline => {
+            MessageKind::InlineAppend
+            | MessageKind::InlineReplace
+            | MessageKind::InlineMeta
+            | MessageKind::InlineConfig
+            | MessageKind::Free
+            | MessageKind::Counter => {
                 trace!("read a successful inline message");
                 let buf = if config.use_compression {
                     maybe_decompress(buf)?
@@ -168,7 +177,7 @@ impl LogReader for File {
                     buf
                 };
 
-                Ok(LogRead::Inline(header.pid, header.lsn, buf, header.len))
+                Ok(LogRead::Inline(header, buf, header.len))
             }
             MessageKind::BatchManifest => {
                 assert_eq!(buf.len(), std::mem::size_of::<Lsn>());

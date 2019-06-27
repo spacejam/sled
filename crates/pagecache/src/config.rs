@@ -23,6 +23,11 @@ use super::{LogReader, *};
 
 const DEFAULT_PATH: &str = "default.sled";
 
+/// A persisted configuration about high-level
+/// storage file information
+#[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
+pub struct PersistedConfig;
+
 impl Deref for Config {
     type Target = ConfigBuilder;
     fn deref(&self) -> &Self::Target {

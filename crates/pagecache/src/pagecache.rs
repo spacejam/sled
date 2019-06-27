@@ -52,6 +52,8 @@ pub enum CacheEntry<M: Send> {
     Counter(u64, u64, Lsn, DiskPtr),
     /// The persisted meta page
     Meta(Meta, u64, Lsn, DiskPtr),
+    /// The persisted config page
+    Config(PersistedConfig, u64, Lsn, DiskPtr),
 }
 
 impl<M: Send> CacheEntry<M> {
@@ -65,7 +67,8 @@ impl<M: Send> CacheEntry<M> {
             | Flush(.., ptr)
             | Free(.., ptr)
             | Counter(.., ptr)
-            | Meta(.., ptr) => *ptr,
+            | Meta(.., ptr)
+            | Config(.., ptr) => *ptr,
         }
     }
 
@@ -79,7 +82,8 @@ impl<M: Send> CacheEntry<M> {
             | Flush(_, lsn, ..)
             | Free(_, lsn, ..)
             | Counter(.., lsn, _)
-            | Meta(.., lsn, _) => *lsn,
+            | Meta(.., lsn, _)
+            | Config(.., lsn, _) => *lsn,
         }
     }
 
@@ -93,7 +97,8 @@ impl<M: Send> CacheEntry<M> {
             | Flush(ts, ..)
             | Free(ts, ..)
             | Counter(_, ts, ..)
-            | Meta(_, ts, ..) => *ts,
+            | Meta(_, ts, ..)
+            | Config(_, ts, ..) => *ts,
         }
     }
 
@@ -107,7 +112,8 @@ impl<M: Send> CacheEntry<M> {
             | Flush(.., ptr)
             | Free(.., ptr)
             | Counter(.., ptr)
-            | Meta(.., ptr) => ptr,
+            | Meta(.., ptr)
+            | Config(.., ptr) => ptr,
         }
     }
 
@@ -143,6 +149,7 @@ where
     Free,
     Counter(u64),
     Meta(Meta),
+    Config(PersistedConfig),
 }
 
 impl<P> Update<P>
@@ -150,14 +157,6 @@ where
     P: DeserializeOwned + Serialize,
     Self: Debug,
 {
-    pub(crate) fn is_compact(&self) -> bool {
-        if let Update::Compact(_) = self {
-            true
-        } else {
-            false
-        }
-    }
-
     fn into_frag(self) -> P {
         match self {
             Update::Append(frag) | Update::Compact(frag) => frag,
@@ -497,6 +496,24 @@ where
                 );
             }
 
+            if let Err(Error::ReportableBug(..)) = pc.get_persisted_config(&tx)
+            {
+                // set up idgen
+                was_recovered = false;
+
+                let config_update = Update::Config(PersistedConfig);
+
+                let (config_id, _) = pc.allocate_inner(config_update, &tx)?;
+
+                assert_eq!(
+                    config_id,
+                    CONFIG_PID,
+                    "we expect the counter to have pid {}, but it had pid {} instead",
+                    CONFIG_PID,
+                    config_id,
+                );
+            }
+
             let (_, counter) = pc.get_idgen(&tx)?;
             let idgen_recovery =
                 counter + (2 * pc.config.idgen_persist_interval);
@@ -577,9 +594,11 @@ where
     /// combined with a concurrency control system in another
     /// component.
     pub fn pin_log<'a>(&'a self) -> Result<RecoveryGuard<'a>> {
-        let batch_res = self
-            .log
-            .reserve(PageId::max_value(), &[0; std::mem::size_of::<Lsn>()])?;
+        let batch_res = self.log.reserve(
+            LogKind::Skip,
+            BATCH_MANIFEST_PID,
+            &[0; std::mem::size_of::<Lsn>()],
+        )?;
         Ok(RecoveryGuard { batch_res })
     }
 
@@ -753,7 +772,8 @@ where
         };
 
         loop {
-            let log_reservation = self.log.reserve(pid, &bytes)?;
+            let log_reservation =
+                self.log.reserve(LogKind::Append, pid, &bytes)?;
 
             let lsn = log_reservation.lsn();
             let ptr = log_reservation.ptr();
@@ -1120,11 +1140,12 @@ where
             Some(p) => p,
         };
 
+        let log_kind = log_kind_from_update(&update);
         let bytes = measure(&M.serialize, || serialize(&update).unwrap());
         let mut update_opt = Some(update);
 
         loop {
-            let log_reservation = self.log.reserve(pid, &bytes)?;
+            let log_reservation = self.log.reserve(log_kind, pid, &bytes)?;
             let lsn = log_reservation.lsn();
             let new_ptr = log_reservation.ptr();
 
@@ -1156,6 +1177,9 @@ where
                     CacheEntry::Counter(counter, ts, lsn, new_ptr)
                 }
                 Update::Meta(meta) => CacheEntry::Meta(meta, ts, lsn, new_ptr),
+                Update::Config(config) => {
+                    CacheEntry::Config(config, ts, lsn, new_ptr)
+                }
                 Update::Append(_) => {
                     panic!("tried to cas a page using an Append")
                 }
@@ -1239,6 +1263,51 @@ where
             None => {
                 return Err(Error::ReportableBug(
                     "failed to retrieve META page \
+                     which should always be present"
+                        .into(),
+                ));
+            }
+            Some(p) => p,
+        };
+
+        let head = unsafe { pte_ptr.deref().stack.head(&tx.guard) };
+
+        match StackIter::from_ptr(head, &tx.guard).next() {
+            Some(CacheEntry::Meta(m, wts, ..)) => Ok((
+                PagePtr {
+                    cached_ptr: head,
+                    wts: *wts,
+                },
+                m,
+            )),
+            Some(CacheEntry::Flush(wts, lsn, disk_ptr)) => {
+                let update = self.pull(META_PID, *lsn, *disk_ptr)?;
+                let ptr = PagePtr {
+                    cached_ptr: head,
+                    wts: *wts,
+                };
+                let _ = self.cas_page(META_PID, ptr, update, false, tx)?;
+                self.get_meta(tx)
+            }
+            _ => Err(Error::ReportableBug(
+                "failed to retrieve META page \
+                 which should always be present"
+                    .into(),
+            )),
+        }
+    }
+
+    /// Retrieve the current meta page
+    pub(crate) fn get_persisted_config<'g>(
+        &self,
+        tx: &'g Tx<PM, P>,
+    ) -> Result<(PagePtr<'g, P>, &'g Meta)> {
+        trace!("getting page iter for persisted config");
+
+        let pte_ptr = match self.inner.get(CONFIG_PID, &tx.guard) {
+            None => {
+                return Err(Error::ReportableBug(
+                    "failed to retrieve persisted config page \
                      which should always be present"
                         .into(),
                 ));
@@ -1757,7 +1826,8 @@ where
                 CacheEntry::PartialFlush(..) => {
                     panic!("got PartialFlush at end of stack...")
                 }
-                CacheEntry::Meta(..)
+                CacheEntry::Config(..)
+                | CacheEntry::Meta(..)
                 | CacheEntry::Counter(..)
                 | CacheEntry::Free(..) => {
                     // don't actually evict this. this leads to
@@ -1779,7 +1849,8 @@ where
                     CacheEntry::Flush(..)
                     | CacheEntry::Free(..)
                     | CacheEntry::Counter(..)
-                    | CacheEntry::Meta(..) => {
+                    | CacheEntry::Meta(..)
+                    | CacheEntry::Config(..) => {
                         panic!("encountered {:?} in middle of stack...", entry)
                     }
                 }
@@ -1801,33 +1872,33 @@ where
         trace!("pulling lsn {} ptr {} from disk", lsn, ptr);
         let _measure = Measure::new(&M.pull);
         let bytes = match self.log.read(pid, lsn, ptr) {
-            Ok(LogRead::Inline(read_pid, read_lsn, buf, _len)) => {
+            Ok(LogRead::Inline(header, buf, _len)) => {
                 assert_eq!(
-                    read_pid, pid,
+                    header.pid, pid,
                     "expected pid {} on pull of ptr {}, \
                      but got {} instead",
-                    pid, ptr, read_pid
+                    pid, ptr, header.pid
                 );
                 assert_eq!(
-                    read_lsn, lsn,
+                    header.lsn, lsn,
                     "expected lsn {} on pull of ptr {}, \
                      but got lsn {} instead",
-                    lsn, ptr, read_lsn
+                    lsn, ptr, header.lsn
                 );
                 Ok(buf)
             }
-            Ok(LogRead::Blob(read_pid, read_lsn, buf, _blob_pointer)) => {
+            Ok(LogRead::Blob(header, buf, _blob_pointer)) => {
                 assert_eq!(
-                    read_pid, pid,
+                    header.pid, pid,
                     "expected pid {} on pull of ptr {}, \
                      but got {} instead",
-                    pid, ptr, read_pid
+                    pid, ptr, header.pid
                 );
                 assert_eq!(
-                    read_lsn, lsn,
+                    header.lsn, lsn,
                     "expected lsn {} on pull of ptr {}, \
                      but got lsn {} instead",
-                    lsn, ptr, read_lsn
+                    lsn, ptr, header.lsn
                 );
 
                 Ok(buf)
@@ -2036,7 +2107,8 @@ where
             | CacheEntry::Free(.., ref ptr)
             | CacheEntry::Flush(.., ref ptr)
             | CacheEntry::Counter(.., ref ptr)
-            | CacheEntry::Meta(.., ref ptr) => {
+            | CacheEntry::Meta(.., ref ptr)
+            | CacheEntry::Config(.., ref ptr) => {
                 ptrs.push(*ptr);
             }
         }

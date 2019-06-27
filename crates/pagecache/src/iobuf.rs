@@ -93,37 +93,37 @@ impl IoBufs {
         let mut segment_accountant: SegmentAccountant =
             SegmentAccountant::start(config.clone(), snapshot)?;
 
-        let (next_lsn, next_lid) =
-            if snapshot_max_lsn % config.io_buf_size as Lsn == 0 {
-                (snapshot_max_lsn, snapshot_last_lid)
-            } else {
-                let width = match file.read_message(
-                    snapshot_last_lid,
-                    snapshot_max_lsn,
-                    &config,
-                ) {
-                    Ok(LogRead::Failed(_, len))
-                    | Ok(LogRead::Inline(_, _, _, len)) => {
-                        len + MSG_HEADER_LEN as u32
-                    }
-                    Ok(LogRead::Blob(_pid, _lsn, _buf, _blob_ptr)) => {
-                        (BLOB_INLINE_LEN + MSG_HEADER_LEN) as u32
-                    }
-                    other => {
-                        // we can overwrite this non-flush
-                        debug!(
-                            "got non-flush tip while recovering at {}: {:?}",
-                            snapshot_last_lid, other
-                        );
-                        0
-                    }
-                };
-
-                (
-                    snapshot_max_lsn + width as Lsn,
-                    snapshot_last_lid + width as LogId,
-                )
+        let (next_lsn, next_lid) = if snapshot_max_lsn
+            % config.io_buf_size as Lsn
+            == 0
+        {
+            (snapshot_max_lsn, snapshot_last_lid)
+        } else {
+            let width = match file.read_message(
+                snapshot_last_lid,
+                snapshot_max_lsn,
+                &config,
+            ) {
+                Ok(LogRead::Failed(_, len))
+                | Ok(LogRead::Inline(_, _, len)) => len + MSG_HEADER_LEN as u32,
+                Ok(LogRead::Blob(_header, _buf, _blob_ptr)) => {
+                    (BLOB_INLINE_LEN + MSG_HEADER_LEN) as u32
+                }
+                other => {
+                    // we can overwrite this non-flush
+                    debug!(
+                        "got non-flush tip while recovering at {}: {:?}",
+                        snapshot_last_lid, other
+                    );
+                    0
+                }
             };
+
+            (
+                snapshot_max_lsn + width as Lsn,
+                snapshot_last_lid + width as LogId,
+            )
+        };
 
         let mut iobuf = IoBuf::new(io_buf_size);
 
@@ -249,17 +249,17 @@ impl IoBufs {
         &self,
         in_buf: &[u8],
         out_buf: &mut [u8],
+        kind: MessageKind,
         pid: PageId,
         lsn: Lsn,
         over_blob_threshold: bool,
-        is_blob_rewrite: bool,
     ) -> Result<()> {
         let mut _blob_ptr = None;
 
         let to_reserve = if over_blob_threshold {
             // write blob to file
             io_fail!(self, "blob blob write");
-            write_blob(&self.config, lsn, in_buf)?;
+            write_blob(&self.config, kind, lsn, in_buf)?;
 
             let lsn_buf: [u8; size_of::<BlobPointer>()] =
                 u64_to_arr(lsn as u64);
@@ -274,11 +274,7 @@ impl IoBufs {
         assert_eq!(out_buf.len(), to_reserve.len() + MSG_HEADER_LEN);
 
         let header = MessageHeader {
-            kind: if over_blob_threshold || is_blob_rewrite {
-                MessageKind::Blob
-            } else {
-                MessageKind::Inline
-            },
+            kind,
             pid,
             lsn,
             len: u32::try_from(to_reserve.len()).unwrap(),
@@ -376,7 +372,7 @@ impl IoBufs {
 
             // take the crc of the random bytes already after where we
             // would place our header.
-            let padding_bytes = vec![EVIL_BYTE; pad_len];
+            let padding_bytes = vec![MessageKind::Corrupted.into(); pad_len];
 
             let header = MessageHeader {
                 kind: MessageKind::Pad,

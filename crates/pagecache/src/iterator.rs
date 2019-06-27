@@ -12,7 +12,7 @@ pub struct LogIter {
 }
 
 impl Iterator for LogIter {
-    type Item = (PageId, Lsn, DiskPtr, Vec<u8>);
+    type Item = (LogKind, PageId, Lsn, DiskPtr, usize);
 
     fn next(&mut self) -> Option<Self::Item> {
         // If segment is None, get next on segment_iter, panic
@@ -60,17 +60,33 @@ impl Iterator for LogIter {
                 + (self.cur_lsn % self.config.io_buf_size as Lsn) as LogId;
 
             let f = &self.config.file;
+
             match f.read_message(lid, self.cur_lsn, &self.config) {
-                Ok(LogRead::Blob(pid, lsn, buf, blob_ptr)) => {
+                Ok(LogRead::Blob(header, _buf, blob_ptr)) => {
                     trace!("read blob flush in LogIter::next");
-                    self.cur_lsn += (MSG_HEADER_LEN + BLOB_INLINE_LEN) as Lsn;
-                    return Some((pid, lsn, DiskPtr::Blob(lid, blob_ptr), buf));
+                    let sz = MSG_HEADER_LEN + BLOB_INLINE_LEN;
+                    self.cur_lsn += sz as Lsn;
+
+                    return Some((
+                        LogKind::from(header.kind),
+                        header.pid,
+                        header.lsn,
+                        DiskPtr::Blob(lid, blob_ptr),
+                        sz,
+                    ));
                 }
-                Ok(LogRead::Inline(pid, lsn, buf, on_disk_len)) => {
+                Ok(LogRead::Inline(header, _buf, on_disk_len)) => {
                     trace!("read inline flush in LogIter::next");
-                    self.cur_lsn +=
-                        (MSG_HEADER_LEN as u32 + on_disk_len) as Lsn;
-                    return Some((pid, lsn, DiskPtr::Inline(lid), buf));
+                    let sz = MSG_HEADER_LEN + on_disk_len as usize;
+                    self.cur_lsn += sz as Lsn;
+
+                    return Some((
+                        LogKind::from(header.kind),
+                        header.pid,
+                        header.lsn,
+                        DiskPtr::Inline(lid),
+                        sz,
+                    ));
                 }
                 Ok(LogRead::BatchManifest(last_lsn_in_batch)) => {
                     if last_lsn_in_batch > self.max_lsn {
@@ -99,11 +115,11 @@ impl Iterator for LogIter {
 
                     continue;
                 }
-                Ok(LogRead::DanglingBlob(_pid, lsn, blob_ptr)) => {
+                Ok(LogRead::DanglingBlob(header, blob_ptr)) => {
                     debug!(
                         "encountered dangling blob \
                          pointer at lsn {} ptr {}",
-                        lsn, blob_ptr
+                        header.lsn, blob_ptr
                     );
                     self.cur_lsn += (MSG_HEADER_LEN + BLOB_INLINE_LEN) as Lsn;
                     continue;
