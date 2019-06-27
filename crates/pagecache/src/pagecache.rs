@@ -1229,6 +1229,9 @@ where
                                 Update::Counter(counter)
                             }
                             CacheEntry::Meta(meta, ..) => Update::Meta(meta),
+                            CacheEntry::Config(config, ..) => {
+                                Update::Config(config)
+                            }
                             _ => panic!("tried to cas a page using an Append"),
                         };
                     let actual_ts = unsafe { actual_ptr.deref().ts() };
