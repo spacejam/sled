@@ -578,7 +578,6 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
         let mut buf = [0u8; MSG_HEADER_LEN];
         buf[0] = self.kind.into();
 
-        assert!(self.len <= std::u32::MAX);
         let pid_arr = u64_to_arr(self.pid);
         let lsn_arr = u64_to_arr(self.lsn as u64);
         let len_arr = u32_to_arr(self.len as u32);

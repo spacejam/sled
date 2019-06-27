@@ -120,8 +120,8 @@ impl IoBufs {
             };
 
             (
-                snapshot_max_lsn + width as Lsn,
-                snapshot_last_lid + width as LogId,
+                snapshot_max_lsn + Lsn::from(width),
+                snapshot_last_lid + LogId::from(width),
             )
         };
 
