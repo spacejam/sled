@@ -28,6 +28,12 @@ const DEFAULT_PATH: &str = "default.sled";
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
 pub struct PersistedConfig;
 
+impl PersistedConfig {
+    pub fn size_in_bytes(&self) -> u64 {
+        0
+    }
+}
+
 impl Deref for Config {
     type Target = ConfigBuilder;
     fn deref(&self) -> &Self::Target {

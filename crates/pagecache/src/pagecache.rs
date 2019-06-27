@@ -1107,10 +1107,12 @@ where
         let tx = self.begin()?;
         let meta_size = self.meta(&tx)?.size_in_bytes();
         let idgen_size = std::mem::size_of::<u64>() as u64;
+        let config_size = self.get_persisted_config(&tx)?.1.size_in_bytes();
 
-        let mut ret = meta_size + idgen_size;
+        let mut ret = meta_size + idgen_size + config_size;
+        let min_pid = CONFIG_PID + 1;
         let max_pid = self.max_pid.load(SeqCst);
-        for pid in 2..max_pid {
+        for pid in min_pid..max_pid {
             if let Some((_, frags)) = self.get(pid, &tx)? {
                 ret += frags.iter().map(|f| PM::size_in_bytes(*f)).sum::<u64>();
             }
@@ -1301,7 +1303,7 @@ where
     pub(crate) fn get_persisted_config<'g>(
         &self,
         tx: &'g Tx<PM, P>,
-    ) -> Result<(PagePtr<'g, P>, &'g Meta)> {
+    ) -> Result<(PagePtr<'g, P>, &'g PersistedConfig)> {
         trace!("getting page iter for persisted config");
 
         let pte_ptr = match self.inner.get(CONFIG_PID, &tx.guard) {
@@ -1318,24 +1320,24 @@ where
         let head = unsafe { pte_ptr.deref().stack.head(&tx.guard) };
 
         match StackIter::from_ptr(head, &tx.guard).next() {
-            Some(CacheEntry::Meta(m, wts, ..)) => Ok((
+            Some(CacheEntry::Config(c, wts, ..)) => Ok((
                 PagePtr {
                     cached_ptr: head,
                     wts: *wts,
                 },
-                m,
+                c,
             )),
             Some(CacheEntry::Flush(wts, lsn, disk_ptr)) => {
-                let update = self.pull(META_PID, *lsn, *disk_ptr)?;
+                let update = self.pull(CONFIG_PID, *lsn, *disk_ptr)?;
                 let ptr = PagePtr {
                     cached_ptr: head,
                     wts: *wts,
                 };
-                let _ = self.cas_page(META_PID, ptr, update, false, tx)?;
-                self.get_meta(tx)
+                let _ = self.cas_page(CONFIG_PID, ptr, update, false, tx)?;
+                self.get_persisted_config(tx)
             }
             _ => Err(Error::ReportableBug(
-                "failed to retrieve META page \
+                "failed to retrieve CONFIG page \
                  which should always be present"
                     .into(),
             )),
@@ -1396,7 +1398,11 @@ where
         trace!("getting page iter for pid {}", pid);
         let _measure = Measure::new(&M.get_page);
 
-        if pid == COUNTER_PID || pid == META_PID {
+        if pid == COUNTER_PID
+            || pid == META_PID
+            || pid == CONFIG_PID
+            || pid == BATCH_MANIFEST_PID
+        {
             return Err(Error::Unsupported(
                 "you are not able to iterate over \
                  the first couple pages, which are \

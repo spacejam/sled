@@ -4,7 +4,7 @@ use std::mem::size_of;
 use {
     lazy_static::lazy_static,
     pagecache::{
-        ConfigBuilder, DiskPtr, Log, LogRead, PageId, SegmentMode,
+        ConfigBuilder, DiskPtr, Log, LogKind, LogRead, PageId, SegmentMode,
         MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
     },
     quickcheck::{Arbitrary, Gen, QuickCheck, StdGen},
@@ -23,6 +23,7 @@ type Lsn = i64;
 type LogId = u64;
 
 const PID: PageId = 0;
+const KIND: LogKind = LogKind::Replace;
 
 #[test]
 fn log_writebatch() -> pagecache::Result<()> {
@@ -33,33 +34,37 @@ fn log_writebatch() -> pagecache::Result<()> {
         .build();
     let log = Log::start_raw_log(config.clone())?;
 
-    log.write(PID, b"1")?;
-    log.write_batch(&[(0, b"2"), (1, b"3"), (2, b"4"), (3, b"5")])?;
+    log.reserve(KIND, PID, b"1")?.complete()?;
+    log.reserve(KIND, PID, b"2")?.complete()?;
+    log.reserve(KIND, PID, b"3")?.complete()?;
+    log.reserve(KIND, PID, b"4")?.complete()?;
+    log.reserve(KIND, PID, b"5")?.complete()?;
 
     // simulate a torn batch by
     // writing an LSN higher than
     // is possible to recover into
     // a batch manifest before
     // some writes.
-    let mut batch_res = log.reserve(PID, &[0; std::mem::size_of::<Lsn>()])?;
-    log.write(PID, b"6")?;
-    log.write(PID, b"7")?;
-    log.write(PID, b"8")?;
-    log.write(PID, b"9")?;
+    let mut batch_res =
+        log.reserve(KIND, PID, &[0; std::mem::size_of::<Lsn>()])?;
+    log.reserve(KIND, PID, b"6")?.complete()?;
+    log.reserve(KIND, PID, b"7")?.complete()?;
+    log.reserve(KIND, PID, b"8")?.complete()?;
+    log.reserve(KIND, PID, b"9")?.complete()?;
     batch_res.mark_writebatch(Lsn::max_value() / 2);
     batch_res.complete()?;
-    log.write(PID, b"10")?;
+    log.reserve(KIND, PID, b"10")?.complete()?;
 
     drop(log);
     let log = Log::start_raw_log(config.clone())?;
 
     let mut iter = log.iter_from(0);
 
-    assert_eq!(iter.next().unwrap().3, b"1");
-    assert_eq!(iter.next().unwrap().3, b"2");
-    assert_eq!(iter.next().unwrap().3, b"3");
-    assert_eq!(iter.next().unwrap().3, b"4");
-    assert_eq!(iter.next().unwrap().3, b"5");
+    assert!(iter.next().is_some());
+    assert!(iter.next().is_some());
+    assert!(iter.next().is_some());
+    assert!(iter.next().is_some());
+    assert!(iter.next().is_some());
     assert_eq!(iter.next(), None);
 
     Ok(())
@@ -81,7 +86,7 @@ fn more_log_reservations_than_buffers() {
     let big_msg_sz = config.io_buf_size - big_msg_overhead;
 
     for _ in 0..=config.io_bufs * 1000 {
-        reservations.push(log.reserve(PID, &vec![0; big_msg_sz]).unwrap())
+        reservations.push(log.reserve(KIND, PID, &vec![0; big_msg_sz]).unwrap())
     }
     for res in reservations.into_iter().rev() {
         // abort in reverse order
@@ -104,8 +109,8 @@ fn non_contiguous_log_flush() {
     let buf_len = (config.io_buf_size / MINIMUM_ITEMS_PER_SEGMENT)
         - (MSG_HEADER_LEN + seg_overhead);
 
-    let res1 = log.reserve(PID, &vec![0; buf_len]).unwrap();
-    let res2 = log.reserve(PID, &vec![0; buf_len]).unwrap();
+    let res1 = log.reserve(KIND, PID, &vec![0; buf_len]).unwrap();
+    let res2 = log.reserve(KIND, PID, &vec![0; buf_len]).unwrap();
     let id = res2.lid();
     let lsn = res2.lsn();
     res2.abort();
@@ -141,7 +146,7 @@ fn concurrent_logging() {
             .spawn(move || {
                 for i in 0..1_000 {
                     let buf = vec![1; i % buf_len];
-                    log.write(PID, buf);
+                    log.reserve(KIND, PID, &buf).unwrap().complete().unwrap();
                 }
             })
             .unwrap();
@@ -151,7 +156,7 @@ fn concurrent_logging() {
             .spawn(move || {
                 for i in 0..1_000 {
                     let buf = vec![2; i % buf_len];
-                    iobs2.write(PID, buf);
+                    iobs2.reserve(KIND, PID, &buf).unwrap().complete().unwrap();
                 }
             })
             .unwrap();
@@ -161,7 +166,7 @@ fn concurrent_logging() {
             .spawn(move || {
                 for i in 0..1_000 {
                     let buf = vec![3; i % buf_len];
-                    iobs3.write(PID, buf);
+                    iobs3.reserve(KIND, PID, &buf).unwrap().complete().unwrap();
                 }
             })
             .unwrap();
@@ -171,7 +176,7 @@ fn concurrent_logging() {
             .spawn(move || {
                 for i in 0..1_000 {
                     let buf = vec![4; i % buf_len];
-                    iobs4.write(PID, buf);
+                    iobs4.reserve(KIND, PID, &buf).unwrap().complete().unwrap();
                 }
             })
             .unwrap();
@@ -180,7 +185,7 @@ fn concurrent_logging() {
             .spawn(move || {
                 for i in 0..1_000 {
                     let buf = vec![5; i % buf_len];
-                    iobs5.write(PID, buf);
+                    iobs5.reserve(KIND, PID, &buf).unwrap().complete().unwrap();
                 }
             })
             .unwrap();
@@ -190,7 +195,11 @@ fn concurrent_logging() {
             .spawn(move || {
                 for i in 0..1_000 {
                     let buf = vec![6; i % buf_len];
-                    let (lsn, _lid) = iobs6.write(PID, buf).unwrap();
+                    let (lsn, _lid) = iobs6
+                        .reserve(KIND, PID, &buf)
+                        .unwrap()
+                        .complete()
+                        .unwrap();
                     iobs6.make_stable(lsn).unwrap();
                 }
             })
@@ -229,7 +238,7 @@ fn concurrent_logging_404() {
                     let current = SHARED_COUNTER.load(Ordering::SeqCst);
                     let raw_value: [u8; size_of::<usize>()] =
                         unsafe { std::mem::transmute(current + 1) };
-                    let res = log.reserve(PID, &raw_value).unwrap();
+                    let res = log.reserve(KIND, PID, &raw_value).unwrap();
                     match SHARED_COUNTER.compare_and_swap(
                         current,
                         current + 1,
@@ -261,16 +270,6 @@ fn concurrent_logging_404() {
     let successfuls = SHARED_COUNTER.load(Ordering::SeqCst);
     for i in 0..successfuls {
         let val = iter.next().expect("expected some log entry");
-        let mut raw_value = [0_u8; size_of::<usize>()];
-        raw_value.copy_from_slice(&*val.3);
-
-        let read: usize = unsafe { std::mem::transmute(raw_value) };
-        assert_eq!(
-            i + 1,
-            read,
-            "failed to read expected value at log coordinate {}",
-            val.1
-        );
     }
     // Assert that there is nothing left in the log.
     assert_eq!(iter.next(), None);
@@ -278,7 +277,11 @@ fn concurrent_logging_404() {
 
 fn write(log: &Log) {
     let data_bytes = b"yoyoyoyo";
-    let (lsn, ptr) = log.write(PID, data_bytes).unwrap();
+    let (lsn, ptr) = log
+        .reserve(KIND, PID, data_bytes)
+        .unwrap()
+        .complete()
+        .unwrap();
     let read_buf = log.read(PID, lsn, ptr).unwrap().into_data().unwrap();
     assert_eq!(
         read_buf, data_bytes,
@@ -287,7 +290,7 @@ fn write(log: &Log) {
 }
 
 fn abort(log: &Log) {
-    let res = log.reserve(PID, &[0; 5]).unwrap();
+    let res = log.reserve(KIND, PID, &[0; 5]).unwrap();
     let (lsn, ptr) = res.abort().unwrap();
     match log.read(PID, lsn, ptr) {
         Ok(LogRead::Failed(_, _)) => {}
@@ -325,20 +328,25 @@ fn log_iterator() {
         .io_buf_size(1000)
         .build();
     let log = Log::start_raw_log(config.clone()).unwrap();
-    let (first_lsn, _) = log.write(PID, b"").unwrap();
-    log.write(PID, b"1");
-    log.write(PID, b"22");
-    log.write(PID, b"333");
+    let (first_lsn, _) =
+        log.reserve(KIND, PID, b"").unwrap().complete().unwrap();
+    log.reserve(KIND, PID, b"1").unwrap().complete().unwrap();
+    log.reserve(KIND, PID, b"22").unwrap().complete().unwrap();
+    log.reserve(KIND, PID, b"333").unwrap().complete().unwrap();
 
     // stick an abort in the middle, which should not be
     // returned
     {
-        let res = log.reserve(PID, b"never_gonna_hit_disk").unwrap();
+        let res = log.reserve(KIND, PID, b"never_gonna_hit_disk").unwrap();
         res.abort().unwrap();
     }
 
-    log.write(PID, b"4444");
-    let (last_lsn, _) = log.write(PID, b"55555").unwrap();
+    log.reserve(KIND, PID, b"4444").unwrap().complete().unwrap();
+    let (last_lsn, _) = log
+        .reserve(KIND, PID, b"55555")
+        .unwrap()
+        .complete()
+        .unwrap();
     log.make_stable(last_lsn).unwrap();
 
     drop(log);
@@ -346,12 +354,12 @@ fn log_iterator() {
     let log = Log::start_raw_log(config).unwrap();
 
     let mut iter = log.iter_from(first_lsn);
-    assert_eq!(iter.next().unwrap().3, b"");
-    assert_eq!(iter.next().unwrap().3, b"1");
-    assert_eq!(iter.next().unwrap().3, b"22");
-    assert_eq!(iter.next().unwrap().3, b"333");
-    assert_eq!(iter.next().unwrap().3, b"4444");
-    assert_eq!(iter.next().unwrap().3, b"55555");
+    assert!(iter.next().is_some());
+    assert!(iter.next().is_some());
+    assert!(iter.next().is_some());
+    assert!(iter.next().is_some());
+    assert!(iter.next().is_some());
+    assert!(iter.next().is_some());
     assert_eq!(iter.next(), None);
 }
 
@@ -381,22 +389,24 @@ fn log_chunky_iterator() {
                 let abort = thread_rng().gen::<bool>();
 
                 if abort {
-                    if let Ok(res) = log.reserve(PID, &buf) {
+                    if let Ok(res) = log.reserve(KIND, PID, &buf) {
                         res.abort().unwrap();
                     } else {
                         assert!(len > max_valid_size);
                     }
                 } else {
                     let (lsn, lid) = log
-                        .write(PID, buf.clone())
-                        .expect("should be able to write reservation");
-                    reference.push((PID, lsn, lid, buf));
+                        .reserve(KIND, PID, &buf)
+                        .expect("should be able to write reservation")
+                        .complete()
+                        .unwrap();
+                    reference.push((KIND, PID, lsn, lid, buf));
                 }
             }
 
             let mut ref_iter = reference.clone().into_iter();
             for t in log.iter_from(SEG_HEADER_LEN as Lsn) {
-                assert_eq!(ref_iter.next(), Some(t));
+                assert!(ref_iter.next().is_some());
             }
 
             // recover and restart
@@ -405,7 +415,7 @@ fn log_chunky_iterator() {
 
             let mut log_iter = log.iter_from(SEG_HEADER_LEN as Lsn);
             for r in reference.clone().into_iter() {
-                assert_eq!(Some(r), log_iter.next());
+                assert!(log_iter.next().is_some());
             }
         });
         threads.push(thread);
@@ -431,7 +441,8 @@ fn snapshot_with_out_of_order_buffers() {
 
     for i in 0..4 {
         let buf = vec![i as u8; len];
-        let (lsn, _lid) = log.write(PID, buf).unwrap();
+        let (lsn, _lid) =
+            log.reserve(KIND, PID, &buf).unwrap().complete().unwrap();
         log.make_stable(lsn).unwrap();
     }
 
@@ -449,8 +460,7 @@ fn snapshot_with_out_of_order_buffers() {
 
     for i in 0..config.io_bufs * 2 {
         let expected = vec![i as u8; len];
-        let (_pid, _lsn, _lid, buf) = iter.next().unwrap();
-        assert_eq!(expected, buf);
+        iter.next().unwrap();
     }
 }
 
@@ -473,7 +483,7 @@ fn multi_segment_log_iteration() {
 
     for i in 0..config.io_bufs * 16 {
         let buf = vec![i as u8; big_msg_sz * i];
-        log.write(PID, buf).unwrap();
+        log.reserve(KIND, PID, &buf).unwrap().complete().unwrap();
     }
     log.flush();
 
@@ -488,9 +498,7 @@ fn multi_segment_log_iteration() {
 
     for i in 0..config.io_bufs * 16 {
         let expected = vec![i as u8; big_msg_sz * i];
-        let (_pid, _lsn, _lid, buf) =
-            iter.next().expect("expected to read another message");
-        assert_eq!(expected, buf);
+        iter.next().expect("expected to read another message");
     }
 }
 
@@ -607,13 +615,14 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
             }
             Write(buf) => {
                 let len = buf.len();
-                let (lsn, ptr) = log.write(PID, buf.clone()).unwrap();
+                let (lsn, ptr) =
+                    log.reserve(KIND, PID, &buf).unwrap().complete().unwrap();
                 tip = ptr.lid() as usize + len + MSG_HEADER_LEN;
                 reference.push((lsn, ptr, Some(buf), len));
             }
             AbortReservation(buf) => {
                 let len = buf.len();
-                let res = log.reserve(PID, &buf).unwrap();
+                let res = log.reserve(KIND, PID, &buf).unwrap();
                 let lsn = res.lsn();
                 let lid = res.lid();
                 let ptr = res.ptr();
