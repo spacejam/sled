@@ -230,6 +230,7 @@ impl Log {
             (BATCH_MANIFEST_PID, LogKind::Skip, false) => {
                 MessageKind::BatchManifest
             }
+            (_, LogKind::Free, false) => MessageKind::Free,
             (_, LogKind::Replace, true) => MessageKind::BlobReplace,
             (_, LogKind::Replace, false) => MessageKind::InlineReplace,
             (_, LogKind::Append, true) => MessageKind::BlobAppend,

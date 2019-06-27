@@ -453,7 +453,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
             }
             Replace(pid, c) => {
                 let tx = pc.begin().unwrap();
-                let pid = pid + 2;
+                let pid = pid + 3;
                 let get = pc.get(pid, &tx).unwrap();
                 let ref_get = reference.entry(pid).or_insert(P::Unallocated);
 
@@ -479,7 +479,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
             }
             Link(pid, c) => {
                 let tx = pc.begin().unwrap();
-                let pid = pid + 2;
+                let pid = pid + 3;
                 let get = pc.get(pid, &tx).unwrap();
                 let ref_get = reference.entry(pid).or_insert(P::Unallocated);
 
@@ -500,7 +500,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
             }
             Get(pid) => {
                 let tx = pc.begin().unwrap();
-                let pid = pid + 2;
+                let pid = pid + 3;
                 let get = pc.get(pid, &tx).unwrap();
 
                 match reference.get(&pid) {
@@ -527,7 +527,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
             }
             Free(pid) => {
                 let tx = pc.begin().unwrap();
-                let pid = pid + 2;
+                let pid = pid + 3;
 
                 let pre_get = pc.get(pid, &tx).unwrap();
 
