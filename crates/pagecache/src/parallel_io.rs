@@ -17,51 +17,12 @@ pub(crate) trait Pio {
 // On systems that support pread/pwrite, use them underneath.
 #[cfg(unix)]
 impl Pio for std::fs::File {
-    fn pread_exact(
-        &self,
-        mut buf: &mut [u8],
-        mut offset: LogId,
-    ) -> io::Result<()> {
-        while !buf.is_empty() {
-            match self.read_at(buf, offset) {
-                Ok(0) => break,
-                Ok(n) => {
-                    offset += n as LogId;
-                    let tmp = buf;
-                    buf = &mut tmp[n..];
-                }
-                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(e),
-            }
-        }
-        if !buf.is_empty() {
-            Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "failed to fill whole buffer",
-            ))
-        } else {
-            Ok(())
-        }
+    fn pread_exact(&self, buf: &mut [u8], offset: LogId) -> io::Result<()> {
+        self.read_exact_at(buf, offset)
     }
 
-    fn pwrite_all(&self, mut buf: &[u8], mut offset: LogId) -> io::Result<()> {
-        while !buf.is_empty() {
-            match self.write_at(buf, offset) {
-                Ok(0) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::WriteZero,
-                        "failed to write whole buffer",
-                    ));
-                }
-                Ok(n) => {
-                    offset += n as LogId;
-                    buf = &buf[n..]
-                }
-                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(e),
-            }
-        }
-        Ok(())
+    fn pwrite_all(&self, buf: &[u8], offset: LogId) -> io::Result<()> {
+        self.write_all_at(buf, offset)
     }
 }
 
