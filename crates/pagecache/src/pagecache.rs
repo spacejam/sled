@@ -749,11 +749,9 @@ where
             Some(p) => p,
         };
 
-        let update = Update::Append(new);
+        let bytes = measure(&M.serialize, || serialize(&new).unwrap());
 
-        let bytes = measure(&M.serialize, || serialize(&update).unwrap());
-
-        let mut new = if let Update::Append(new) = update {
+        let mut new = {
             let cache_entry =
                 CacheEntry::Resident(new, 0, 0, DiskPtr::Inline(0));
 
@@ -767,8 +765,6 @@ where
             };
 
             Some(Owned::new(node))
-        } else {
-            unreachable!();
         };
 
         loop {
@@ -1146,7 +1142,15 @@ where
         };
 
         let log_kind = log_kind_from_update(&update);
-        let bytes = measure(&M.serialize, || serialize(&update).unwrap());
+        let serialize_latency = Measure::new(&M.serialize);
+        let bytes = match &update {
+            Update::Counter(c) => serialize(&c).unwrap(),
+            Update::Meta(m) => serialize(&m).unwrap(),
+            Update::Config(c) => serialize(&c).unwrap(),
+            Update::Free => vec![],
+            other => serialize(other.as_frag()).unwrap(),
+        };
+        drop(serialize_latency);
         let mut update_opt = Some(update);
 
         loop {
@@ -1883,7 +1887,7 @@ where
     fn pull(&self, pid: PageId, lsn: Lsn, ptr: DiskPtr) -> Result<Update<P>> {
         trace!("pulling lsn {} ptr {} from disk", lsn, ptr);
         let _measure = Measure::new(&M.pull);
-        let bytes = match self.log.read(pid, lsn, ptr) {
+        let (header, bytes) = match self.log.read(pid, lsn, ptr) {
             Ok(LogRead::Inline(header, buf, _len)) => {
                 assert_eq!(
                     header.pid, pid,
@@ -1897,7 +1901,7 @@ where
                      but got lsn {} instead",
                     lsn, ptr, header.lsn
                 );
-                Ok(buf)
+                Ok((header, buf))
             }
             Ok(LogRead::Blob(header, buf, _blob_pointer)) => {
                 assert_eq!(
@@ -1913,7 +1917,7 @@ where
                     lsn, ptr, header.lsn
                 );
 
-                Ok(buf)
+                Ok((header, buf))
             }
             Ok(other) => {
                 debug!("read unexpected page: {:?}", other);
@@ -1925,11 +1929,30 @@ where
             }
         }?;
 
-        let update = measure(&M.deserialize, || {
-            deserialize::<Update<P>>(&*bytes)
-                .map_err(|_| ())
-                .expect("failed to deserialize data")
-        });
+        use MessageKind::*;
+        let deserialize_latency = Measure::new(&M.deserialize);
+        let update_res = match header.kind {
+            Counter => deserialize::<u64>(&bytes).map(Update::Counter),
+            BlobMeta | InlineMeta => {
+                deserialize::<Meta>(&bytes).map(Update::Meta)
+            }
+            BlobConfig | InlineConfig => {
+                deserialize::<PersistedConfig>(&bytes).map(Update::Config)
+            }
+            BlobAppend | InlineAppend => {
+                deserialize::<P>(&bytes).map(Update::Append)
+            }
+            BlobReplace | InlineReplace => {
+                deserialize::<P>(&bytes).map(Update::Compact)
+            }
+            Free => Ok(Update::Free),
+            other => panic!("unexpected pull: {:?}", other),
+        };
+        drop(deserialize_latency);
+
+        let update = update_res
+            .map_err(|_| ())
+            .expect("failed to deserialize data");
 
         match update {
             Update::Free => Err(Error::ReportableBug(
