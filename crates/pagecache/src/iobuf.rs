@@ -317,18 +317,19 @@ impl IoBufs {
     }
 
     // ensure self.max_header_stable_lsn is set to this Lsn or greater
-    pub(crate) fn bump_max_header_stable_lsn(&self, lsn: Lsn) {
+    pub(crate) fn bump_max_header_stable_lsn(&self, lsn: Lsn) -> Result<()> {
         let mut current = self.max_header_stable_lsn.load(SeqCst);
         loop {
             if current >= lsn {
-                return;
+                return Ok(());
             }
             let last = self
                 .max_header_stable_lsn
                 .compare_and_swap(current, lsn, SeqCst);
             if last == current {
                 // we succeeded.
-                return;
+                println!("swapped from {} to {}", last, lsn);
+                return self.with_sa(|sa| sa.stabilize(lsn));
             }
             current = last;
         }
@@ -448,9 +449,7 @@ impl IoBufs {
 
         M.written_bytes.measure(total_len as f64);
 
-        self.bump_max_header_stable_lsn(iobuf.stored_max_stable_lsn);
-
-        Ok(())
+        self.bump_max_header_stable_lsn(iobuf.stored_max_stable_lsn)
     }
 
     // It's possible that IO buffers are written out of order!
@@ -468,7 +467,6 @@ impl IoBufs {
             whence
         );
         let mut intervals = self.intervals.lock().unwrap();
-        let lsn_before = self.stable_lsn.load(SeqCst) as Lsn;
 
         let interval = (whence, whence + len as Lsn - 1);
 
@@ -487,7 +485,6 @@ impl IoBufs {
         let mut updated = false;
 
         let len_before = intervals.len();
-        let mut lsn_after = lsn_before;
 
         while let Some(&(low, high)) = intervals.last() {
             assert!(low <= high);
@@ -507,9 +504,9 @@ impl IoBufs {
                     "concurrent stable offset modification detected"
                 );
                 debug!("new highest interval: {} - {}", low, high);
+                println!("new highest interval: {} - {}", low, high);
                 intervals.pop();
                 updated = true;
-                lsn_after = high;
             } else {
                 break;
             }
@@ -521,29 +518,6 @@ impl IoBufs {
 
         if updated {
             self.interval_updated.notify_all();
-        }
-
-        // NB we continue to hold the intervals mutex for
-        // our calls to the segment accountant below so
-        // that we guarantee that we deactivate segments
-        // in order of LSN.
-        let logical_segment_before =
-            lsn_before / self.config.io_buf_size as Lsn;
-        let logical_segment_after = lsn_after / self.config.io_buf_size as Lsn;
-        if logical_segment_before != logical_segment_after {
-            self.with_sa(move |sa| {
-                for logical_segment in logical_segment_before..logical_segment_after {
-                    let segment_lsn = logical_segment * self.config.io_buf_size as Lsn;
-                    // transition this segment into deplete-only mode
-                    trace!(
-                        "deactivating segment with lsn {}",
-                        segment_lsn,
-                    );
-                    if let Err(e) = sa.deactivate_segment(segment_lsn) {
-                        error!("segment accountant failed to deactivate segment: {}", e);
-                    }
-                }
-            });
         }
     }
 
@@ -812,7 +786,7 @@ impl IoBuf {
             capacity: 0,
             maxed: AtomicBool::new(false),
             linearizer: Mutex::new(()),
-            stored_max_stable_lsn: 0,
+            stored_max_stable_lsn: -1,
         }
     }
 
