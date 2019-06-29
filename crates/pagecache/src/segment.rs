@@ -767,27 +767,37 @@ impl SegmentAccountant {
         segment.insert_pid(pid, segment_lsn);
     }
 
-    pub(super) fn stabilize(&mut self, lsn: Lsn) -> Result<()> {
-        println!("stabilize({})", lsn);
-        let last_stabilized = self.max_stabilized_lsn;
-        if last_stabilized >= lsn {
+    pub(super) fn stabilize(&mut self, stable_lsn: Lsn) -> Result<()> {
+        let io_buf_size = self.config.io_buf_size as Lsn;
+        let lsn = ((stable_lsn / io_buf_size) - 1) * io_buf_size;
+        println!(
+            "stabilize({}), normalized: {}, last: {}",
+            stable_lsn, lsn, self.max_stabilized_lsn
+        );
+        if self.max_stabilized_lsn >= lsn {
             println!(
                 "expected stabilization lsn {} \
                  to be greater than the previous value of {}",
-                lsn, last_stabilized
+                lsn, self.max_stabilized_lsn
             );
             return Ok(());
         }
-        let can_deactivate = {
-            self.ordering
-                .range(last_stabilized..=lsn)
-                .map(|(lsn, _lid)| *lsn)
-                .collect::<Vec<_>>()
-        };
+
+        let bounds = (
+            std::ops::Bound::Excluded(self.max_stabilized_lsn),
+            std::ops::Bound::Included(lsn),
+        );
+
+        let can_deactivate = self
+            .ordering
+            .range(bounds)
+            .map(|(lsn, _lid)| *lsn)
+            .collect::<Vec<_>>();
+
+        self.max_stabilized_lsn = lsn;
 
         for lsn in can_deactivate {
             self.deactivate_segment(lsn)?;
-            self.max_stabilized_lsn = lsn;
         }
 
         Ok(())
@@ -800,12 +810,13 @@ impl SegmentAccountant {
     /// # Panics
     /// The provided lsn and lid must exactly match the existing segment.
     fn deactivate_segment(&mut self, lsn: Lsn) -> Result<()> {
-        let lid = self.ordering.remove(&lsn).unwrap();
+        let lid = self.ordering[&lsn];
         let idx = self.lid_to_idx(lid);
 
-        println!(
+        trace!(
             "deactivating segment with lsn {}: {:?}",
-            lsn, self.segments[idx]
+            lsn,
+            self.segments[idx]
         );
 
         let replacements =
