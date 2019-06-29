@@ -817,6 +817,47 @@ impl Tree {
         }
     }
 
+    /// Create an iterator over tuples of keys and values,
+    /// where the all the keys starts with the given prefix.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sled::{ConfigBuilder, Db, IVec};
+    /// let config = ConfigBuilder::new().temporary(true).build();
+    /// let t = Db::start(config).unwrap();
+    ///
+    /// t.set(&[0, 0, 0], vec![0, 0, 0]).unwrap();
+    /// t.set(&[0, 0, 1], vec![0, 0, 1]).unwrap();
+    /// t.set(&[0, 0, 2], vec![0, 0, 2]).unwrap();
+    /// t.set(&[0, 0, 3], vec![0, 0, 3]).unwrap();
+    /// t.set(&[0, 1, 0], vec![0, 1, 0]).unwrap();
+    /// t.set(&[0, 1, 1], vec![0, 1, 1]).unwrap();
+    ///
+    /// let prefix: &[u8] = &[0, 0];
+    /// let mut r = t.scan_prefix(prefix);
+    /// assert_eq!(r.next(), Some(Ok((IVec::from(&[0, 0, 0]), IVec::from(&[0, 0, 0])))));
+    /// assert_eq!(r.next(), Some(Ok((IVec::from(&[0, 0, 1]), IVec::from(&[0, 0, 1])))));
+    /// assert_eq!(r.next(), Some(Ok((IVec::from(&[0, 0, 2]), IVec::from(&[0, 0, 2])))));
+    /// assert_eq!(r.next(), Some(Ok((IVec::from(&[0, 0, 3]), IVec::from(&[0, 0, 3])))));
+    /// assert_eq!(r.next(), None);
+    /// ```
+    pub fn scan_prefix<P>(&self, prefix: P) -> Iter<'_>
+    where P: AsRef<[u8]>,
+    {
+        let prefix = prefix.as_ref();
+        let mut upper = prefix.to_vec();
+
+        while let Some(last) = upper.pop() {
+            if last < u8::max_value() {
+                upper.push(last + 1);
+                return self.range(prefix..&upper);
+            }
+        }
+
+        self.range(prefix..)
+    }
+
     /// Returns the number of elements in this tree.
     ///
     /// Beware: performs a full O(n) scan under the hood.
