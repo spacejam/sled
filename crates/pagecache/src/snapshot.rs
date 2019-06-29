@@ -162,8 +162,8 @@ impl Snapshot {
     ) {
         let replacements = self
             .replacements
-            .entry(replaced_at_idx)
-            .or_insert((replaced_at_segment_lsn, FastSet8::default()));
+            .get_mut(&replaced_at_idx)
+            .expect("we should have initialized this before calling here");
 
         assert_eq!(replaced_at_segment_lsn, replacements.0);
 
@@ -262,12 +262,22 @@ where
             snapshot.max_lid = ptr.lid();
         }
 
+        let segment_idx = ptr.lid() as usize / io_buf_size;
+        let segment_lsn = lsn / (io_buf_size as Lsn) * (io_buf_size as Lsn);
+
         if lsn / (io_buf_size as Lsn) > last_seg_lsn {
             // invalidate any removed pids
-            let segment_idx = ptr.lid() as usize / io_buf_size;
 
-            snapshot.replacements.remove(&segment_idx);
-            last_seg_lsn = lsn / (io_buf_size as Lsn);
+            snapshot
+                .replacements
+                .insert(segment_idx, (segment_lsn, FastSet8::default()));
+            last_seg_lsn = segment_lsn;
+        } else {
+            // ensure it's present for later SA initialization
+            snapshot
+                .replacements
+                .entry(segment_idx)
+                .or_insert((segment_lsn, FastSet8::default()));
         }
 
         snapshot.apply(log_kind, pid, lsn, ptr, config);

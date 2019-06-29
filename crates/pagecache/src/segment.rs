@@ -1005,6 +1005,12 @@ impl SegmentAccountant {
         let segment_len = self.config.io_buf_size as Lsn;
         let normalized_lsn = lsn / segment_len * segment_len;
 
+        trace!(
+            "generated iterator over {:?} where lsn >= {}",
+            self.ordering,
+            normalized_lsn
+        );
+
         Box::new(
             self.ordering
                 .clone()
