@@ -818,21 +818,21 @@ where
             match result {
                 Ok(cached_ptr) => {
                     trace!("link of pid {} succeeded", pid);
-                    let skip_mark = {
-                        // if the last update for this page was also
-                        // sent to this segment, we can skip marking it
-                        let previous_head_lsn = old.last_lsn();
 
-                        assert_ne!(previous_head_lsn, 0);
+                    // if the last update for this page was also
+                    // sent to this segment, we can skip marking it
+                    let previous_head_lsn = old.last_lsn();
 
-                        let previous_lsn_segment =
-                            previous_head_lsn / self.config.io_buf_size as i64;
-                        let new_lsn_segment =
-                            lsn / self.config.io_buf_size as i64;
+                    assert_ne!(previous_head_lsn, 0);
 
-                        previous_lsn_segment == new_lsn_segment
-                    };
-                    let to_clean = if skip_mark {
+                    let previous_lsn_segment =
+                        previous_head_lsn / self.config.io_buf_size as i64;
+                    let new_lsn_segment = lsn / self.config.io_buf_size as i64;
+
+                    let to_clean = if previous_lsn_segment == new_lsn_segment {
+                        // can skip mark_link because we've
+                        // already accounted for this page
+                        // being resident on this segment
                         self.log.with_sa(|sa| sa.clean(pid))
                     } else {
                         self.log.with_sa(|sa| {
