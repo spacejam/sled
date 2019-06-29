@@ -462,42 +462,16 @@ impl SegmentAccountant {
             }
         }
 
-        let mut ordering = segments
+        let mut ordering = snapshot
+            .replacements
             .iter()
-            .enumerate()
-            .map(|(i, s)| (i, s.lsn))
-            .collect::<Vec<_>>();
+            .map(|(idx, (lsn, _))| (*lsn, *idx as LogId * io_buf_size as LogId))
+            .collect::<Vec<(Lsn, LogId)>>();
 
-        ordering.sort_unstable_by_key(|(_idx, lsn)| *lsn);
+        ordering.sort_unstable_by_key(|(_lsn, lid)| *lid);
 
-        for (idx, _lsn) in ordering.into_iter() {
-            let (replacement_lsn, replacements) =
-                if let Some(r) = snapshot.replacements.get(&idx) {
-                    r
-                } else {
-                    // no replacements to handle
-                    continue;
-                };
-
-            for &(old_pid, old_idx) in replacements {
-                let replaced_current_lsn =
-                    segments.get(old_idx).and_then(|s| s.lsn);
-                if replaced_current_lsn.unwrap_or(Lsn::max_value())
-                    > *replacement_lsn
-                {
-                    // we can skip this if it's already empty or
-                    // has been rewritten since the replacement.
-                    continue;
-                }
-
-                segments[old_idx].remove_pid(old_pid, *replacement_lsn, true);
-            }
-        }
-
-        for (idx, ref mut segment) in segments.iter_mut().enumerate() {
-            let segment_start = idx as LogId * io_buf_size as LogId;
-
-            if segment_start >= self.tip {
+        for (idx, (_lsn, segment_start)) in ordering.iter().enumerate() {
+            if *segment_start >= self.tip {
                 self.tip = segment_start + io_buf_size as LogId;
                 debug!(
                     "set self.tip to {} based on encountered segment",
@@ -505,13 +479,29 @@ impl SegmentAccountant {
                 );
             }
 
-            if let Some(lsn) = segment.lsn {
-                self.ordering.insert(lsn, segment_start);
-                if self.tip <= segment_start {
-                    self.tip = segment_start + io_buf_size as LogId;
-                    debug!(
-                        "set self.tip to {} based on safety buffer",
-                        self.tip
+            if self.tip <= *segment_start {
+                self.tip = segment_start + io_buf_size as LogId;
+                debug!("set self.tip to {} based on safety buffer", self.tip);
+            }
+
+            if let Some((replacement_lsn, replacements)) =
+                snapshot.replacements.get(&idx)
+            {
+                for &(old_pid, old_idx) in replacements {
+                    let replaced_current_lsn =
+                        segments.get(old_idx).and_then(|s| s.lsn);
+                    if replaced_current_lsn.unwrap_or(Lsn::max_value())
+                        > *replacement_lsn
+                    {
+                        // we can skip this if it's already empty or
+                        // has been rewritten since the replacement.
+                        continue;
+                    }
+
+                    segments[old_idx].remove_pid(
+                        old_pid,
+                        *replacement_lsn,
+                        true,
                     );
                 }
             }
@@ -519,6 +509,9 @@ impl SegmentAccountant {
 
         trace!("initialized self.segments to {:?}", segments);
         self.segments = segments;
+
+        trace!("initialized self.ordering to {:?}", ordering);
+        self.ordering = ordering.into_iter().collect();
 
         Ok(())
     }
