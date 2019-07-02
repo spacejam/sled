@@ -158,6 +158,10 @@ impl<'a> Iterator for Iter<'a> {
             self.lo, self.tree
         );
     }
+
+    fn last(mut self) -> Option<Self::Item> {
+        self.next_back()
+    }
 }
 
 impl<'a> DoubleEndedIterator for Iter<'a> {
