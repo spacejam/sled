@@ -21,8 +21,18 @@ impl LogReader for File {
 
         let mut seg_header_buf = [0u8; SEG_HEADER_LEN];
         self.pread_exact(&mut seg_header_buf, lid)?;
+        let mut segment_header = SegmentHeader::from(seg_header_buf);
 
-        Ok(seg_header_buf.into())
+        if segment_header.lsn == 0 && lid != 0 {
+            debug!(
+                "segment had lsn 0 but we expected something \
+                 greater, as the base lid is {}",
+                lid
+            );
+            segment_header.ok = false;
+        }
+
+        Ok(segment_header)
     }
 
     /// read a buffer from the disk

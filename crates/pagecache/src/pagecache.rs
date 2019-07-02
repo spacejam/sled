@@ -1997,14 +1997,14 @@ where
             // NB must be called after taking the snapshot mutex.
             iobufs.with_sa(|sa| sa.pause_rewriting());
 
-            let max_lsn = last_snapshot.max_lsn;
-            let start_lsn = max_lsn - (max_lsn % config.io_buf_size as Lsn);
+            let last_lsn = last_snapshot.last_lsn;
+            let start_lsn = last_lsn - (last_lsn % config.io_buf_size as Lsn);
 
             let iter = iobufs.iter_from(start_lsn);
 
             debug!(
                 "snapshot starting from offset {} to the segment containing ~{}",
-                last_snapshot.max_lsn,
+                last_snapshot.last_lsn,
                 iobufs.stable(),
             );
 
@@ -2064,31 +2064,44 @@ where
         // panic if not set
         let snapshot = self.last_snapshot.try_lock().unwrap().clone().unwrap();
 
-        self.max_pid.store(snapshot.max_pid, SeqCst);
+        let max_pid = *snapshot.pt.keys().last().unwrap_or(&0);
 
-        let mut snapshot_free = snapshot.free.clone();
+        self.max_pid.store(max_pid, SeqCst);
 
-        for (pid, state) in &snapshot.pt {
+        let mut snapshot_free: Vec<PageId> = vec![];
+
+        for pid in 0..max_pid {
+            let state = if let Some(state) = snapshot.pt.get(&pid) {
+                state
+            } else {
+                trace!(
+                    "load_snapshot page not found, added to free list: {:?}",
+                    pid
+                );
+                snapshot_free.push(pid);
+                continue;
+            };
+
             trace!("load_snapshot page {} {:?}", pid, state);
 
             let stack = Stack::default();
 
             match *state {
                 PageState::Present(ref ptrs) => {
-                    let (base_lsn, base_ptr) = ptrs[0];
+                    let (base_lsn, base_ptr, _sz) = ptrs[0];
 
                     stack.push(CacheEntry::Flush(0, base_lsn, base_ptr));
 
-                    for &(lsn, ptr) in &ptrs[1..] {
+                    for &(lsn, ptr, _sz) in &ptrs[1..] {
                         stack.push(CacheEntry::PartialFlush(0, lsn, ptr));
                     }
                 }
                 PageState::Free(lsn, ptr) => {
                     // blow away any existing state
-                    trace!("load_snapshot freeing pid {}", *pid);
+                    trace!("load_snapshot freeing pid {}", pid);
                     stack.push(CacheEntry::Free(0, lsn, ptr));
-                    self.free.lock().unwrap().push(*pid);
-                    snapshot_free.remove(&pid);
+                    self.free.lock().unwrap().push(pid);
+                    snapshot_free.push(pid);
                 }
             }
 
@@ -2107,7 +2120,7 @@ where
             trace!("installing stack for pid {}", pid);
 
             self.inner
-                .cas(*pid, Shared::null(), new_pte, &guard)
+                .cas(pid, Shared::null(), new_pte, &guard)
                 .expect("should be able to install initial stack");
         }
 

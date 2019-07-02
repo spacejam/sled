@@ -69,39 +69,28 @@ pub(super) struct IoBufs {
 /// `IoBufs` is a set of lock-free buffers for coordinating
 /// writes to underlying storage.
 impl IoBufs {
-    pub(crate) fn start(
-        config: Config,
-        mut snapshot: Snapshot,
-    ) -> Result<IoBufs> {
+    pub(crate) fn start(config: Config, snapshot: Snapshot) -> Result<IoBufs> {
         // open file for writing
         let file = &config.file;
 
         let io_buf_size = config.io_buf_size;
 
-        if snapshot.max_lsn < SEG_HEADER_LEN as Lsn {
-            debug!(
-                "setting snapshot to default as max_lsn < {}",
-                SEG_HEADER_LEN
-            );
-            snapshot = Snapshot::default();
-        }
-
-        let snapshot_max_lsn = snapshot.max_lsn;
+        let snapshot_last_lsn = snapshot.last_lsn;
         let snapshot_last_lid = snapshot.last_lid;
         let snapshot_max_header_stable_lsn = snapshot.max_header_stable_lsn;
 
         let mut segment_accountant: SegmentAccountant =
             SegmentAccountant::start(config.clone(), snapshot)?;
 
-        let (next_lsn, next_lid) = if snapshot_max_lsn
+        let (next_lsn, next_lid) = if snapshot_last_lsn
             % config.io_buf_size as Lsn
             == 0
         {
-            (snapshot_max_lsn, snapshot_last_lid)
+            (snapshot_last_lsn, snapshot_last_lid)
         } else {
             let width = match file.read_message(
                 snapshot_last_lid,
-                snapshot_max_lsn,
+                snapshot_last_lsn,
                 &config,
             ) {
                 Ok(LogRead::Failed(_, len))
@@ -120,7 +109,7 @@ impl IoBufs {
             };
 
             (
-                snapshot_max_lsn + Lsn::from(width),
+                snapshot_last_lsn + Lsn::from(width),
                 snapshot_last_lid + LogId::from(width),
             )
         };
@@ -808,18 +797,18 @@ impl IoBuf {
         &mut self,
         last: Header,
         lsn: Lsn,
-        highest_known_stable_lsn: Lsn,
+        max_stable_lsn: Lsn,
     ) {
         debug!("storing lsn {} in beginning of buffer", lsn);
         assert!(self.capacity >= SEG_HEADER_LEN);
 
-        self.stored_max_stable_lsn = highest_known_stable_lsn;
+        self.stored_max_stable_lsn = max_stable_lsn;
 
         self.lsn = lsn;
 
         let header = SegmentHeader {
             lsn,
-            highest_known_stable_lsn,
+            max_stable_lsn,
             ok: true,
         };
         let header_bytes: [u8; SEG_HEADER_LEN] = header.into();

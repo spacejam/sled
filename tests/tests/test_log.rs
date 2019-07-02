@@ -484,7 +484,8 @@ fn multi_segment_log_iteration() {
 
     for i in 0..config.io_bufs * 16 {
         let buf = vec![i as u8; big_msg_sz * i];
-        log.reserve(KIND, PID, &buf).unwrap().complete().unwrap();
+        let write = log.reserve(KIND, PID, &buf).unwrap().complete().unwrap();
+        println!("wrote {:?}", write);
     }
     log.flush();
 
@@ -499,7 +500,9 @@ fn multi_segment_log_iteration() {
 
     for i in 0..config.io_bufs * 16 {
         let expected = vec![i as u8; big_msg_sz * i];
-        iter.next().expect("expected to read another message");
+        println!("expecting to read msg # {}", i);
+        let got = iter.next().expect("expected to read another message");
+        println!("got {:?}", got);
     }
 }
 

@@ -56,6 +56,17 @@ impl Log {
         Ok(Log { iobufs, config })
     }
 
+    /// Starts a log for use without a materializer.
+    pub fn start_raw_log(config: Config) -> Result<Log> {
+        assert_eq!(config.segment_mode, SegmentMode::Linear);
+        let (log_iter, _) = raw_segment_iter_from(0, &config)?;
+
+        let snapshot =
+            advance_snapshot(log_iter, Snapshot::default(), &config)?;
+
+        Log::start(config, snapshot)
+    }
+
     /// Flushes any pending IO buffers to disk to ensure durability.
     /// Returns the number of bytes written during this call.
     pub fn flush(&self) -> Result<usize> {
@@ -461,7 +472,7 @@ pub struct MessageHeader {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) struct SegmentHeader {
     pub(crate) lsn: Lsn,
-    pub(crate) highest_known_stable_lsn: Lsn,
+    pub(crate) max_stable_lsn: Lsn,
     pub(crate) ok: bool,
 }
 
@@ -605,16 +616,15 @@ impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
             let xor_lsn = arr_to_u64(buf.get_unchecked(4..12)) as Lsn;
             let lsn = xor_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
 
-            let xor_highest_stable_lsn =
+            let xor_max_stable_lsn =
                 arr_to_u64(buf.get_unchecked(12..20)) as Lsn;
-            let highest_known_stable_lsn =
-                xor_highest_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
+            let max_stable_lsn = xor_max_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
 
             let crc32_tested = crc32(&buf[4..20]);
 
             SegmentHeader {
                 lsn,
-                highest_known_stable_lsn,
+                max_stable_lsn,
                 ok: crc32_tested == crc32_header,
             }
         }
@@ -626,10 +636,9 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
         let mut buf = [0u8; SEG_HEADER_LEN];
 
         let xor_lsn = self.lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
-        let xor_highest_stable_lsn =
-            self.highest_known_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
+        let xor_max_stable_lsn = self.max_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
         let lsn_arr = u64_to_arr(xor_lsn as u64);
-        let highest_stable_lsn_arr = u64_to_arr(xor_highest_stable_lsn as u64);
+        let highest_stable_lsn_arr = u64_to_arr(xor_max_stable_lsn as u64);
 
         unsafe {
             std::ptr::copy_nonoverlapping(

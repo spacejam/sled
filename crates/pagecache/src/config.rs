@@ -706,7 +706,7 @@ impl Config {
                 "page tables differ for pid {}",
                 k
             );
-            for (lsn, ptr) in v.iter() {
+            for (lsn, ptr, _sz) in v.iter() {
                 let read = self.file.read_message(ptr.lid(), lsn, &self);
                 if let Err(e) = read {
                     panic!(
@@ -732,7 +732,7 @@ impl Config {
                 "page tables differ for pid {}",
                 k
             );
-            for (lsn, ptr) in v.iter() {
+            for (lsn, ptr, _sz) in v.iter() {
                 let read = self.file.read_message(ptr.lid(), lsn, &self);
                 if let Err(e) = read {
                     panic!(
@@ -749,20 +749,12 @@ impl Config {
             "snapshot pagetable diverged"
         );
         assert_eq!(
-            incremental.max_pid, regenerated.max_pid,
-            "snapshot max_pid diverged"
-        );
-        assert_eq!(
-            incremental.max_lsn, regenerated.max_lsn,
+            incremental.last_lsn, regenerated.last_lsn,
             "snapshot max_lsn diverged"
         );
         assert_eq!(
             incremental.last_lid, regenerated.last_lid,
             "snapshot last_lid diverged"
-        );
-        assert_eq!(
-            incremental.free, regenerated.free,
-            "snapshot free list diverged"
         );
 
         /*
