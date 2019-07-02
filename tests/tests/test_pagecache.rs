@@ -280,7 +280,7 @@ fn pagecache_strange_crash_2() {
             .io_buf_size(20000)
             .build();
 
-        config.verify_snapshot::<TestMaterializer, _>().unwrap();
+        config.verify_snapshot().unwrap();
 
         let pc: PageCache<TestMaterializer, _> =
             PageCache::start(config.clone()).unwrap();
@@ -561,7 +561,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
 
                 println!("restarting pagecache in test");
 
-                config.verify_snapshot::<TestMaterializer, _>().unwrap();
+                config.verify_snapshot().unwrap();
 
                 pc = PageCache::start(config.clone()).unwrap();
             }
