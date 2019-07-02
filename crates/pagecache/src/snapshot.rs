@@ -1,7 +1,5 @@
 use std::io::{Read, Write};
 
-use rayon::prelude::*;
-
 #[cfg(feature = "zstd")]
 use zstd::block::{compress, decompress};
 
@@ -9,36 +7,27 @@ use super::*;
 
 /// A snapshot of the state required to quickly restart
 /// the `PageCache` and `SegmentAccountant`.
-/// TODO consider splitting `Snapshot` into separate
-/// snapshots for PC, SA, Materializer.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Snapshot {
-    /// the last lsn included in the `Snapshot`
-    pub max_lsn: Lsn,
-    /// the highest LSN persisted to a segment trailer
-    pub max_header_stable_lsn: Lsn,
-    /// the last lid included in the `Snapshot`
+    /// The last read message lsn
+    pub last_lsn: Lsn,
+    /// The last read message lid
     pub last_lid: LogId,
-    /// the highest lid observed while generating the `Snapshot`
-    pub max_lid: LogId,
-    /// the highest allocated pid
-    pub max_pid: PageId,
     /// the mapping from pages to (lsn, lid)
     pub pt: FastMap8<PageId, PageState>,
-    /// replaced pages per segment index
-    pub replacements: FastMap8<SegmentId, (Lsn, FastSet8<(PageId, SegmentId)>)>,
-    /// the free pids
-    pub free: FastSet8<PageId>,
+    /// The highest stable offset persisted
+    /// into a segment header
+    pub max_header_stable_lsn: Lsn,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum PageState {
-    Present(Vec<(Lsn, DiskPtr)>),
+    Present(Vec<(Lsn, DiskPtr, usize)>),
     Free(Lsn, DiskPtr),
 }
 
 impl PageState {
-    fn push(&mut self, item: (Lsn, DiskPtr)) {
+    fn push(&mut self, item: (Lsn, DiskPtr, usize)) {
         match *self {
             PageState::Present(ref mut items) => items.push(item),
             PageState::Free(_, _) => {
@@ -48,12 +37,12 @@ impl PageState {
     }
 
     /// Iterate over the (lsn, lid) pairs that hold this page's state.
-    pub fn iter(&self) -> Box<dyn Iterator<Item = (Lsn, DiskPtr)>> {
+    pub fn iter(&self) -> impl Iterator<Item = (Lsn, DiskPtr, usize)> {
         match *self {
-            PageState::Present(ref items) => {
-                Box::new(items.clone().into_iter())
+            PageState::Present(ref items) => items.clone().into_iter(),
+            PageState::Free(lsn, ptr) => {
+                vec![(lsn, ptr, MSG_HEADER_LEN)].into_iter()
             }
-            PageState::Free(lsn, ptr) => Box::new(vec![(lsn, ptr)].into_iter()),
         }
     }
 
@@ -72,19 +61,11 @@ impl Snapshot {
         pid: PageId,
         lsn: Lsn,
         disk_ptr: DiskPtr,
-        config: &Config,
+        sz: usize,
     ) {
         // unwrapping this because it's already passed the crc check
         // in the log iterator
         trace!("trying to deserialize buf for ptr {} lsn {}", disk_ptr, lsn);
-
-        if pid >= self.max_pid {
-            self.max_pid = pid + 1;
-        }
-
-        let replaced_at_idx = disk_ptr.lid() as SegmentId / config.io_buf_size;
-        let replaced_at_segment_lsn =
-            (lsn / config.io_buf_size as Lsn) * config.io_buf_size as Lsn;
 
         match log_kind {
             LogKind::Replace => {
@@ -95,17 +76,8 @@ impl Snapshot {
                     lsn,
                 );
 
-                self.replace_pid(
-                    pid,
-                    replaced_at_segment_lsn,
-                    replaced_at_idx,
-                    config,
-                );
-
                 self.pt
-                    .insert(pid, PageState::Present(vec![(lsn, disk_ptr)]));
-
-                self.free.remove(&pid);
+                    .insert(pid, PageState::Present(vec![(lsn, disk_ptr, sz)]));
             }
             LogKind::Append => {
                 // Because we rewrite pages over time, we may have relocated
@@ -131,20 +103,12 @@ impl Snapshot {
                         return;
                     }
 
-                    lids.push((lsn, disk_ptr));
+                    lids.push((lsn, disk_ptr, sz));
                 }
-                self.free.remove(&pid);
             }
             LogKind::Free => {
                 trace!("free of pid {} at ptr {} lsn {}", pid, disk_ptr, lsn);
-                self.replace_pid(
-                    pid,
-                    replaced_at_segment_lsn,
-                    replaced_at_idx,
-                    config,
-                );
                 self.pt.insert(pid, PageState::Free(lsn, disk_ptr));
-                self.free.insert(pid);
             }
             LogKind::Corrupted | LogKind::Skip => panic!(
                 "unexppected messagekind in snapshot application: {:?}",
@@ -152,165 +116,42 @@ impl Snapshot {
             ),
         }
     }
-
-    fn replace_pid(
-        &mut self,
-        pid: PageId,
-        replaced_at_segment_lsn: Lsn,
-        replaced_at_idx: usize,
-        config: &Config,
-    ) {
-        let replacements = self
-            .replacements
-            .get_mut(&replaced_at_idx)
-            .expect("we should have initialized this before calling here");
-
-        assert_eq!(replaced_at_segment_lsn, replacements.0);
-
-        match self.pt.remove(&pid) {
-            Some(PageState::Present(coords)) => {
-                for (_lsn, ptr) in &coords {
-                    let old_idx = ptr.lid() as SegmentId / config.io_buf_size;
-                    if replaced_at_idx == old_idx {
-                        continue;
-                    }
-                    replacements.1.insert((pid, old_idx));
-                }
-
-                // re-run any blob removals in case
-                // they were not completed. blobs are
-                // not rewritten if they are the only
-                // frag for a page during rewrite.
-                if coords.len() > 1 {
-                    let blob_ptrs = coords
-                        .iter()
-                        .filter(|(_, ptr)| ptr.is_blob())
-                        .map(|(_, ptr)| ptr.blob().1);
-
-                    for blob_ptr in blob_ptrs {
-                        trace!(
-                            "removing blob while advancing \
-                             snapshot: {}",
-                            blob_ptr,
-                        );
-
-                        // we don't care if this actually works
-                        // because it's possible that a previous
-                        // snapshot has run over this log and
-                        // removed the blob already.
-                        let _ = remove_blob(blob_ptr, config);
-                    }
-                }
-            }
-            Some(PageState::Free(_lsn, ptr)) => {
-                let old_idx = ptr.lid() as SegmentId / config.io_buf_size;
-                if replaced_at_idx != old_idx {
-                    replacements.1.insert((pid, old_idx));
-                }
-            }
-            None => {
-                // we just encountered a replace without it
-                // existing in the pt. this means we've
-                // relocated it to a later segment than
-                // the one we're currently at during recovery.
-                // so we can skip it here.
-            }
-        }
-    }
 }
 
-pub(super) fn advance_snapshot<PM, P>(
+pub(super) fn advance_snapshot(
     iter: LogIter,
     mut snapshot: Snapshot,
     config: &Config,
-) -> Result<Snapshot>
-where
-    PM: Materializer<PageFrag = P>,
-    P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
-{
+) -> Result<Snapshot> {
     let _measure = Measure::new(&M.advance_snapshot);
 
     trace!("building on top of old snapshot: {:?}", snapshot);
 
-    let io_buf_size = config.io_buf_size;
-
-    let mut last_seg_lsn = snapshot.max_lsn / io_buf_size as Lsn;
-
-    for (log_kind, pid, lsn, ptr, _sz) in iter {
+    for (log_kind, pid, lsn, ptr, sz) in iter {
         trace!(
             "in advance_snapshot looking at item with lsn {} ptr {}",
             lsn,
             ptr
         );
 
-        if lsn <= snapshot.max_lsn {
-            // don't process already-processed Lsn's. max_lsn is for the last
+        if lsn <= snapshot.last_lsn {
+            // don't process already-processed Lsn's. last_lsn is for the last
             // item ALREADY INCLUDED lsn in the snapshot.
             trace!(
-                "continuing in advance_snapshot, lsn {} ptr {} max_lsn {}",
+                "continuing in advance_snapshot, lsn {} ptr {} last_lsn {}",
                 lsn,
                 ptr,
-                snapshot.max_lsn
+                snapshot.last_lsn
             );
             continue;
         }
 
-        assert!(lsn > snapshot.max_lsn);
-        snapshot.max_lsn = lsn;
+        assert!(lsn > snapshot.last_lsn);
+        snapshot.last_lsn = lsn;
         snapshot.last_lid = ptr.lid();
-        if ptr.lid() > snapshot.max_lid {
-            snapshot.max_lid = ptr.lid();
-        }
 
-        let segment_idx = ptr.lid() as usize / io_buf_size;
-        let segment_lsn = lsn / (io_buf_size as Lsn) * (io_buf_size as Lsn);
-
-        if lsn / (io_buf_size as Lsn) > last_seg_lsn {
-            // invalidate any removed pids
-
-            snapshot
-                .replacements
-                .insert(segment_idx, (segment_lsn, FastSet8::default()));
-            last_seg_lsn = segment_lsn;
-        } else {
-            // ensure it's present for later SA initialization
-            snapshot
-                .replacements
-                .entry(segment_idx)
-                .or_insert((segment_lsn, FastSet8::default()));
-        }
-
-        snapshot.apply(log_kind, pid, lsn, ptr, config);
+        snapshot.apply(log_kind, pid, lsn, ptr, sz);
     }
-
-    // read the max stable lsn written into all trailers
-    let max_segment =
-        config.file.metadata()?.len() / config.io_buf_size as LogId;
-    let max_header_stable_lsn = (0..max_segment)
-        .into_par_iter()
-        .flat_map(|idx| {
-            let base = idx * config.io_buf_size as LogId;
-            match config.file.read_segment_header(base) {
-                Ok(header) if header.ok => {
-                    Some(header.highest_known_stable_lsn)
-                }
-                _ => None,
-            }
-        })
-        .max()
-        .unwrap_or(-1);
-
-    if max_header_stable_lsn != -1
-        && max_header_stable_lsn < snapshot.max_header_stable_lsn
-    {
-        debug!(
-            "the snapshot max_header_stable_lsn went \
-             down over time from {} before to {} after",
-            snapshot.max_header_stable_lsn, max_header_stable_lsn
-        );
-    }
-
-    snapshot.max_header_stable_lsn = max_header_stable_lsn;
 
     write_snapshot(config, &snapshot)?;
 
@@ -322,10 +163,13 @@ where
 /// Read a `Snapshot` or generate a default, then advance it to
 /// the tip of the data file, if present.
 pub fn read_snapshot_or_default(config: &Config) -> Result<Snapshot> {
-    let last_snap = read_snapshot(config)?.unwrap_or_else(Snapshot::default);
+    let mut last_snap =
+        read_snapshot(config)?.unwrap_or_else(Snapshot::default);
 
     let (log_iter, max_header_stable_lsn) =
         raw_segment_iter_from(last_snap.last_lsn, config)?;
+
+    last_snap.max_header_stable_lsn = max_header_stable_lsn;
 
     advance_snapshot(log_iter, last_snap, config)
 }
@@ -397,12 +241,12 @@ fn write_snapshot(config: &Config, snapshot: &Snapshot) -> Result<()> {
     let crc32: [u8; 4] = u32_to_arr(crc32(&bytes));
     let len_bytes: [u8; 8] = u64_to_arr(decompressed_len as u64);
 
-    let path_1_suffix = format!("snap.{:016X}.generating", snapshot.max_lsn);
+    let path_1_suffix = format!("snap.{:016X}.generating", snapshot.last_lsn);
 
     let mut path_1 = config.snapshot_prefix();
     path_1.push(path_1_suffix);
 
-    let path_2_suffix = format!("snap.{:016X}", snapshot.max_lsn);
+    let path_2_suffix = format!("snap.{:016X}", snapshot.last_lsn);
 
     let mut path_2 = config.snapshot_prefix();
     path_2.push(path_2_suffix);
