@@ -1,5 +1,4 @@
 use std::{
-    fmt::Debug,
     fs,
     io::{Read, Seek, Write},
     ops::Deref,
@@ -15,7 +14,6 @@ use bincode::{deserialize, serialize};
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use fs2::FileExt;
 
-use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 // explicitly bring LogReader in to be tool-friendly
@@ -682,21 +680,17 @@ impl Config {
     }
 
     #[doc(hidden)]
-    pub fn verify_snapshot<PM, P>(&self) -> Result<()>
-    where
-        PM: Materializer<PageFrag = P>,
-        P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
-    {
+    pub fn verify_snapshot(&self) -> Result<()> {
         debug!("generating incremental snapshot");
 
-        let incremental = read_snapshot_or_default::<PM, P>(&self)?;
+        let incremental = read_snapshot_or_default(&self)?;
 
         for snapshot_path in self.get_snapshot_files()? {
             std::fs::remove_file(snapshot_path)?;
         }
 
         debug!("generating snapshot without the previous one");
-        let regenerated = read_snapshot_or_default::<PM, P>(&self)?;
+        let regenerated = read_snapshot_or_default(&self)?;
 
         for (k, v) in &regenerated.pt {
             if !incremental.pt.contains_key(&k) {

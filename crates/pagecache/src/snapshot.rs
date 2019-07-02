@@ -321,16 +321,13 @@ where
 
 /// Read a `Snapshot` or generate a default, then advance it to
 /// the tip of the data file, if present.
-pub fn read_snapshot_or_default<PM, P>(config: &Config) -> Result<Snapshot>
-where
-    PM: Materializer<PageFrag = P>,
-    P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
-{
+pub fn read_snapshot_or_default(config: &Config) -> Result<Snapshot> {
     let last_snap = read_snapshot(config)?.unwrap_or_else(Snapshot::default);
 
-    let log_iter = raw_segment_iter_from(last_snap.max_lsn, config)?;
+    let (log_iter, max_header_stable_lsn) =
+        raw_segment_iter_from(last_snap.last_lsn, config)?;
 
-    advance_snapshot::<PM, P>(log_iter, last_snap, config)
+    advance_snapshot(log_iter, last_snap, config)
 }
 
 /// Read a `Snapshot` from disk.

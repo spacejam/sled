@@ -56,20 +56,6 @@ impl Log {
         Ok(Log { iobufs, config })
     }
 
-    /// Starts a log for use without a materializer.
-    pub fn start_raw_log(config: Config) -> Result<Log> {
-        assert_eq!(config.segment_mode, SegmentMode::Linear);
-        let log_iter = raw_segment_iter_from(0, &config)?;
-
-        let snapshot = advance_snapshot::<NullMaterializer, ()>(
-            log_iter,
-            Snapshot::default(),
-            &config,
-        )?;
-
-        Log::start(config, snapshot)
-    }
-
     /// Flushes any pending IO buffers to disk to ensure durability.
     /// Returns the number of bytes written during this call.
     pub fn flush(&self) -> Result<usize> {

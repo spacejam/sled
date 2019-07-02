@@ -410,7 +410,7 @@ where
         // try to pull any existing snapshot off disk, and
         // apply any new data to it to "catch-up" the
         // snapshot before loading it.
-        let snapshot = read_snapshot_or_default::<PM, P>(&config)?;
+        let snapshot = read_snapshot_or_default(&config)?;
 
         let mut pc = PageCache {
             _materializer: PhantomData,
@@ -2008,7 +2008,7 @@ where
                 iobufs.stable(),
             );
 
-            let res = advance_snapshot::<PM, P>(iter, last_snapshot, &config);
+            let res = advance_snapshot(iter, last_snapshot, &config);
 
             // NB it's important to resume writing before replacing the snapshot
             // into the mutex, otherwise we create a race condition where the SA is
