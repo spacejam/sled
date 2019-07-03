@@ -235,24 +235,24 @@ fn scan_segment_lsns(
     let f = &config.file;
     let file_len = f.metadata()?.len();
     let segments = LogId::from(file_len) / segment_len;
-    let headers_res: Result<Vec<(LogId, SegmentHeader)>> = (0..segments)
+    let headers: Vec<(LogId, SegmentHeader)> = (0..segments)
         .into_par_iter()
-        .map(|idx| {
+        .filter_map(|idx| {
             let base_lid = idx * segment_len;
-            let segment = LogReader::read_segment_header(&**f, base_lid)?;
+            let segment = f.read_segment_header(base_lid).ok()?;
             trace!(
                 "SA scanned header at lid {} during startup: {:?}",
                 base_lid,
                 segment
             );
-            assert_ne!(segment.lsn, Lsn::max_value());
-            Ok((base_lid, segment))
+            if segment.ok && segment.lsn >= min {
+                assert_ne!(segment.lsn, Lsn::max_value());
+                Some((base_lid, segment))
+            } else {
+                None
+            }
         })
         .collect();
-
-    let mut headers = headers_res?;
-
-    headers.retain(|(_, segment)| segment.lsn >= min);
 
     let mut ordering = BTreeMap::new();
     let mut max_header_stable_lsn = 0;
