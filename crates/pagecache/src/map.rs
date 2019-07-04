@@ -1,7 +1,9 @@
 use {
     fxhash::{FxHasher, FxHasher32, FxHasher64},
-    hashbrown::{HashMap, HashSet},
-    std::hash::BuildHasherDefault,
+    std::{
+        collections::{HashMap, HashSet},
+        hash::BuildHasherDefault,
+    },
 };
 
 /// A fast map that is not resistant to collision attacks. Works
