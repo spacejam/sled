@@ -293,7 +293,7 @@ where
     _materializer: PhantomData<PM>,
     config: Config,
     inner: Arc<PageTable<PageTableEntry<P>>>,
-    max_pid: AtomicU64,
+    next_pid_to_allocate: AtomicU64,
     free: Arc<Mutex<BinaryHeap<PageId>>>,
     log: Log,
     lru: Lru,
@@ -342,7 +342,7 @@ where
     ) -> std::result::Result<(), fmt::Error> {
         f.write_str(&*format!(
             "PageCache {{ max: {:?} free: {:?} }}\n",
-            self.max_pid.load(SeqCst),
+            self.next_pid_to_allocate.load(SeqCst),
             self.free
         ))
     }
@@ -371,7 +371,7 @@ where
                 self.meta(&tx).expect("should get meta under test").clone(),
             );
 
-            for pid in 0..self.max_pid.load(SeqCst) {
+            for pid in 0..self.next_pid_to_allocate.load(SeqCst) {
                 let pte = self.inner.get(pid, &tx.guard);
                 if pte.is_none() {
                     continue;
@@ -416,7 +416,7 @@ where
             _materializer: PhantomData,
             config: config.clone(),
             inner: Arc::new(PageTable::default()),
-            max_pid: AtomicU64::new(0),
+            next_pid_to_allocate: AtomicU64::new(0),
             free: Arc::new(Mutex::new(BinaryHeap::new())),
             log: Log::start(config, snapshot.clone())?,
             lru,
@@ -441,7 +441,7 @@ where
             let mut pages_after_restart: HashMap<PageId, Vec<DiskPtr>> =
                 HashMap::new();
 
-            for pid in 0..pc.max_pid.load(SeqCst) {
+            for pid in 0..pc.next_pid_to_allocate.load(SeqCst) {
                 let pte = pc.inner.get(pid, &tx.guard);
                 if pte.is_none() {
                     continue;
@@ -650,7 +650,7 @@ where
                 ),
             }
         } else {
-            let pid = self.max_pid.fetch_add(1, SeqCst);
+            let pid = self.next_pid_to_allocate.fetch_add(1, SeqCst);
 
             trace!("allocating pid {} for the first time", pid);
 
@@ -1110,8 +1110,8 @@ where
 
         let mut ret = meta_size + idgen_size + config_size;
         let min_pid = CONFIG_PID + 1;
-        let max_pid = self.max_pid.load(SeqCst);
-        for pid in min_pid..max_pid {
+        let next_pid_to_allocate = self.next_pid_to_allocate.load(SeqCst);
+        for pid in min_pid..next_pid_to_allocate {
             if let Some((_, frags)) = self.get(pid, &tx)? {
                 ret += frags.iter().map(|f| PM::size_in_bytes(*f)).sum::<u64>();
             }
@@ -2064,13 +2064,17 @@ where
         // panic if not set
         let snapshot = self.last_snapshot.try_lock().unwrap().clone().unwrap();
 
-        let max_pid = *snapshot.pt.keys().last().unwrap_or(&0);
+        let next_pid_to_allocate = if snapshot.pt.is_empty() {
+            0
+        } else {
+            *snapshot.pt.keys().last().unwrap() + 1
+        };
 
-        self.max_pid.store(max_pid, SeqCst);
+        self.next_pid_to_allocate = AtomicU64::from(next_pid_to_allocate);
 
         let mut snapshot_free: Vec<PageId> = vec![];
 
-        for pid in 0..max_pid {
+        for pid in 0..next_pid_to_allocate {
             let state = if let Some(state) = snapshot.pt.get(&pid) {
                 state
             } else {
