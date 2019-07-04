@@ -2076,12 +2076,10 @@ where
             let state = if let Some(state) = snapshot.pt.get(&pid) {
                 state
             } else {
-                trace!(
-                    "load_snapshot page not found, added to free list: {:?}",
-                    pid
+                panic!(
+                    "load_snapshot pid {} not found, despite being below the max pid {}",
+                    pid, next_pid_to_allocate
                 );
-                self.free.lock().unwrap().push(pid);
-                continue;
             };
 
             trace!("load_snapshot page {} {:?}", pid, state);
