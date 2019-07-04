@@ -234,7 +234,8 @@ fn scan_segment_lsns(
 
     let f = &config.file;
     let file_len = f.metadata()?.len();
-    let segments = (file_len / segment_len) + 1;
+    let segments = (file_len / segment_len)
+        + if file_len % segment_len == 0 { 0 } else { 1 };
     trace!(
         "file len: {} segment len {} segments: {}",
         file_len,
