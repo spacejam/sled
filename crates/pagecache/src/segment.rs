@@ -416,7 +416,7 @@ impl SegmentAccountant {
         let io_buf_size = self.config.io_buf_size;
         let file_len = self.config.file.metadata()?.len();
         let number_of_segments =
-            usize::try_from(file_len / io_buf_size as u64).unwrap();
+            usize::try_from(file_len / io_buf_size as u64).unwrap() + 1;
 
         // generate segments from snapshot lids
         let mut segments = vec![Segment::default(); number_of_segments];
@@ -454,8 +454,31 @@ impl SegmentAccountant {
             }
         }
 
-        let drain_sz = self.config.io_buf_size as f64
-            * self.config.segment_cleanup_threshold;
+        let currently_active_segment =
+            (snapshot.last_lid / io_buf_size as LogId) as usize;
+
+        for (idx, segment) in segments.iter_mut().enumerate() {
+            let segment_lid = idx as LogId * io_buf_size as LogId;
+
+            if segment_lid >= self.tip {
+                // set tip above the beginning of any
+                self.tip = segment_lid + io_buf_size as LogId;
+                trace!(
+                    "raised self.tip to {} during SA initialization",
+                    self.tip
+                );
+            }
+
+            if idx != currently_active_segment && segment_sizes[idx] == 0 {
+                // can free
+                trace!(
+                    "freeing segment with lid {} during SA initialization",
+                    segment_lid
+                );
+                segment.state = Free;
+                self.free_segment(idx as LogId * io_buf_size as LogId, true);
+            }
+        }
 
         trace!("initialized self.segments to {:?}", segments);
         self.segments = segments;
@@ -884,13 +907,26 @@ impl SegmentAccountant {
             "unaligned Lsn provided to next!"
         );
 
+        let free: Vec<LogId> = self
+            .free
+            .iter()
+            .filter(|lid| {
+                let idx =
+                    usize::try_from(*lid / self.config.io_buf_size as LogId)
+                        .unwrap();
+                if let Some(last_lsn) = self.segments[idx].lsn {
+                    last_lsn < self.max_stabilized_lsn
+                } else {
+                    true
+                }
+            })
+            .copied()
+            .collect();
+
         // truncate if possible
-        loop {
-            if self.tip == 0 {
-                break;
-            }
+        while self.tip != 0 {
             let last_segment = self.tip - self.config.io_buf_size as LogId;
-            if self.free.contains(&last_segment) {
+            if free.contains(&last_segment) {
                 self.free.remove(&last_segment);
                 self.truncate(last_segment)?;
             } else {
@@ -899,7 +935,7 @@ impl SegmentAccountant {
         }
 
         // pop free or add to end
-        let safe = self.free.peek_first();
+        let safe = free.first();
 
         let lid = if self.pause_rewriting || safe.is_none() {
             self.bump_tip()

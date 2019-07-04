@@ -61,4 +61,9 @@ where
     pub fn clear(&mut self) {
         self.inner.clear()
     }
+
+    /// Iterate over the contents of this set
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
+        self.inner.iter()
+    }
 }

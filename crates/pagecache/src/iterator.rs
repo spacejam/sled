@@ -234,7 +234,13 @@ fn scan_segment_lsns(
 
     let f = &config.file;
     let file_len = f.metadata()?.len();
-    let segments = LogId::from(file_len) / segment_len;
+    let segments = (file_len / segment_len) + 1;
+    trace!(
+        "file len: {} segment len {} segments: {}",
+        file_len,
+        segment_len,
+        segments
+    );
     let headers: Vec<(LogId, SegmentHeader)> = (0..segments)
         .into_par_iter()
         .filter_map(|idx| {
@@ -249,6 +255,13 @@ fn scan_segment_lsns(
                 assert_ne!(segment.lsn, Lsn::max_value());
                 Some((base_lid, segment))
             } else {
+                trace!(
+                    "not using segment at lid {}, ok: {} lsn: {} min lsn: {}",
+                    base_lid,
+                    segment.ok,
+                    segment.lsn,
+                    min
+                );
                 None
             }
         })
@@ -326,7 +339,7 @@ fn clean_tail_tears(
     for (lsn, lid) in ordering
         .range((std::ops::Bound::Excluded(tip.0), std::ops::Bound::Unbounded))
     {
-        error!("filtering out segment with lsn {} at lid {}", lsn, lid);
+        error!("zeroing torn segment with lsn {} at lid {}", lsn, lid);
 
         f.pwrite_all(
             &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
