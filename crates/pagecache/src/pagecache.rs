@@ -2072,8 +2072,6 @@ where
 
         self.next_pid_to_allocate = AtomicU64::from(next_pid_to_allocate);
 
-        let mut snapshot_free: Vec<PageId> = vec![];
-
         for pid in 0..next_pid_to_allocate {
             let state = if let Some(state) = snapshot.pt.get(&pid) {
                 state
@@ -2082,7 +2080,7 @@ where
                     "load_snapshot page not found, added to free list: {:?}",
                     pid
                 );
-                snapshot_free.push(pid);
+                self.free.lock().unwrap().push(pid);
                 continue;
             };
 
@@ -2105,7 +2103,6 @@ where
                     trace!("load_snapshot freeing pid {}", pid);
                     stack.push(CacheEntry::Free(0, lsn, ptr));
                     self.free.lock().unwrap().push(pid);
-                    snapshot_free.push(pid);
                 }
             }
 
@@ -2127,14 +2124,6 @@ where
                 .cas(pid, Shared::null(), new_pte, &guard)
                 .expect("should be able to install initial stack");
         }
-
-        assert!(
-            snapshot_free.is_empty(),
-            "pages present in Snapshot free list \
-                ({:?})
-                not found in recovered page table",
-            snapshot_free
-        );
     }
 }
 
