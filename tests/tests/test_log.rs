@@ -614,7 +614,11 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
                     );
                 } else {
                     let flush = read_res.unwrap().into_data();
-                    assert_eq!(flush, *expected);
+                    assert_eq!(
+                        flush, *expected,
+                        "read unexpected value at lid {}",
+                        lid
+                    );
                 }
             }
             Write(buf) => {

@@ -622,10 +622,20 @@ impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
 
             let crc32_tested = crc32(&buf[4..20]);
 
+            let ok = crc32_tested == crc32_header;
+
+            if !ok {
+                error!(
+                    "segment with lsn {} had computed crc {}, \
+                     but stored crc {}",
+                    lsn, crc32_tested, crc32_header
+                );
+            }
+
             SegmentHeader {
                 lsn,
                 max_stable_lsn,
-                ok: crc32_tested == crc32_header,
+                ok,
             }
         }
     }

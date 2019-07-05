@@ -23,11 +23,11 @@ impl LogReader for File {
         self.pread_exact(&mut seg_header_buf, lid)?;
         let mut segment_header = SegmentHeader::from(seg_header_buf);
 
-        if segment_header.lsn == 0 && lid != 0 {
+        if segment_header.lsn < Lsn::try_from(lid).unwrap() {
             debug!(
-                "segment had lsn 0 but we expected something \
+                "segment had lsn {} but we expected something \
                  greater, as the base lid is {}",
-                lid
+                segment_header.lsn, lid
             );
             segment_header.ok = false;
         }
