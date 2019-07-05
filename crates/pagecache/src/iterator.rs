@@ -230,12 +230,16 @@ fn scan_segment_lsns(
     min: Lsn,
     config: &Config,
 ) -> Result<(BTreeMap<Lsn, LogId>, Lsn)> {
-    let segment_len = config.io_buf_size as LogId;
+    let segment_len = LogId::try_from(config.io_buf_size).unwrap();
 
     let f = &config.file;
     let file_len = f.metadata()?.len();
     let segments = (file_len / segment_len)
-        + if file_len % segment_len == 0 { 0 } else { 1 };
+        + if file_len % segment_len < LogId::try_from(SEG_HEADER_LEN).unwrap() {
+            0
+        } else {
+            1
+        };
     trace!(
         "file len: {} segment len {} segments: {}",
         file_len,

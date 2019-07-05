@@ -133,11 +133,10 @@ impl IoBufs {
             if next_lsn == 0 {
                 assert_eq!(next_lid, 0);
             }
-            let lid = if next_lsn == 0 {
-                0
-            } else {
-                segment_accountant.next(next_lsn)?
-            };
+            let lid = segment_accountant.next(next_lsn)?;
+            if next_lsn == 0 {
+                assert_eq!(0, lid);
+            }
 
             iobuf.lid = lid;
             iobuf.capacity = io_buf_size;

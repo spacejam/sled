@@ -417,7 +417,9 @@ impl SegmentAccountant {
         let file_len = self.config.file.metadata()?.len();
         let number_of_segments = usize::try_from(file_len / io_buf_size as u64)
             .unwrap()
-            + if file_len % io_buf_size as u64 == 0 {
+            + if file_len % u64::try_from(io_buf_size).unwrap()
+                < u64::try_from(SEG_HEADER_LEN).unwrap()
+            {
                 0
             } else {
                 1
