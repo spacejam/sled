@@ -727,9 +727,12 @@ pub(crate) fn maybe_seal_and_write_iobuf(
     // are going to wait on the condition variable will observe
     // the change.
     debug_delay();
+    let intervals = iobufs.intervals.lock();
     let mut mu = iobufs.iobuf.write().unwrap();
     *mu = Arc::new(next_iobuf);
     drop(mu);
+    iobufs.interval_updated.notify_all();
+    drop(intervals);
 
     drop(measure_assign_offset);
 
