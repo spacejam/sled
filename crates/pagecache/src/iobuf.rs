@@ -545,6 +545,12 @@ pub(crate) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Result<usize> {
             // current IO buffer.
         } else {
             maybe_seal_and_write_iobuf(iobufs, &iobuf, header, false)?;
+            stable = iobufs.stable();
+            // NB we have to continue here to possibly clear
+            // the next io buffer, which may have dirty
+            // data we need to flush (and maybe no other
+            // thread is still alive to do so)
+            continue;
         }
 
         // block until another thread updates the stable lsn
@@ -554,7 +560,27 @@ pub(crate) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Result<usize> {
         if stable < lsn {
             trace!("waiting on cond var for make_stable({})", lsn);
 
-            let _ = iobufs.interval_updated.wait(waiter).unwrap();
+            if cfg!(feature = "event_log") {
+                let (waiter, timeout) = iobufs
+                    .interval_updated
+                    .wait_timeout(waiter, std::time::Duration::from_secs(1))
+                    .unwrap();
+                if timeout.timed_out() {
+                    fn tn() -> String {
+                        std::thread::current()
+                            .name()
+                            .unwrap_or("unknown")
+                            .to_owned()
+                    }
+                    panic!(
+                        "{} failed to make_stable after 1 second. \
+                         waiting to stabilize lsn {}, current stable {} intervals: {:?}",
+                        tn(), lsn, iobufs.stable(), waiter
+                    );
+                }
+            } else {
+                let _ = iobufs.interval_updated.wait(waiter).unwrap();
+            }
         } else {
             trace!("make_stable({}) returning", lsn);
             break;
