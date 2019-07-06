@@ -472,7 +472,6 @@ fn multi_segment_log_iteration() {
             .unwrap()
             .complete()
             .unwrap();
-        println!("wrote {:?}", write);
     }
     log.flush();
 
@@ -481,15 +480,11 @@ fn multi_segment_log_iteration() {
     let log = Log::start_raw_log(config.clone()).unwrap();
 
     // start iterating just past the first segment header
-    println!("creating iterator");
     let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
-    println!("using iterator");
 
     for i in 0..config.io_bufs * 16 {
         let expected = vec![i as u8; big_msg_sz * i];
-        println!("expecting to read msg # {}", i);
         let got = iter.next().expect("expected to read another message");
-        println!("got {:?}", got);
     }
 }
 
