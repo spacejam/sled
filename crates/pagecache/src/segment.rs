@@ -461,8 +461,26 @@ impl SegmentAccountant {
             }
         }
 
-        let currently_active_segment =
-            (snapshot.last_lid / io_buf_size as LogId) as usize;
+        let currently_active_segment = {
+            // this logic allows us to free the last
+            // active segment if it was empty.
+            let prospective_currently_active_segment =
+                (snapshot.last_lid / io_buf_size as LogId) as usize;
+            if let Some(segment) =
+                segments.get(prospective_currently_active_segment)
+            {
+                if segment.is_empty() {
+                    // we want to add this to the free list below,
+                    // so don't skip freeing it for being active
+                    usize::max_value()
+                } else {
+                    prospective_currently_active_segment
+                }
+            } else {
+                // segment was not used yet
+                usize::max_value()
+            }
+        };
 
         for (idx, segment) in segments.iter_mut().enumerate() {
             let segment_lid = idx as LogId * io_buf_size as LogId;
@@ -483,7 +501,21 @@ impl SegmentAccountant {
                     segment_lid
                 );
                 segment.state = Free;
-                self.free_segment(idx as LogId * io_buf_size as LogId, true);
+                let segment_base = idx as LogId * io_buf_size as LogId;
+                self.free_segment(segment_base, true);
+
+                // NB we corrupt the segment header to cause this
+                // segment to be skipped on subsequent recovery
+                // attempts, which guarantees that no two segments
+                // ever contain the same LSN. If we didn't do this,
+                // we would need to ensure through other means
+                // that empty segments with a written segment header
+                // but no other data get reused.
+                self.config.file.pwrite_all(
+                    &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
+                    segment_base,
+                )?;
+                self.config.file.sync_all()?;
             }
         }
 
@@ -929,6 +961,8 @@ impl SegmentAccountant {
             })
             .copied()
             .collect();
+
+        trace!("evaluating free list {:?} in SA::next", free);
 
         // truncate if possible
         while self.tip != 0 {
