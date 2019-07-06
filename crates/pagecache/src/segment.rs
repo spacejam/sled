@@ -494,7 +494,12 @@ impl SegmentAccountant {
                 );
             }
 
-            if idx != currently_active_segment && segment_sizes[idx] == 0 {
+            let segment_lsn = segment.lsn.unwrap_or(-1);
+
+            if idx != currently_active_segment
+                && segment_sizes[idx] == 0
+                && segment_lsn <= snapshot.max_header_stable_lsn
+            {
                 // can free
                 trace!(
                     "freeing segment with lid {} during SA initialization",
