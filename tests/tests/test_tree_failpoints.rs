@@ -30,8 +30,6 @@ impl Arbitrary for Op {
             "write_config bytes",
             "write_config crc",
             "write_config post",
-            "trailer write",
-            "trailer write post",
             "segment initial free zero",
             "snap write",
             "snap write len",
@@ -324,18 +322,7 @@ fn failpoints_bug_3() {
     // but first we need to make sure we are better about detecting
     // tears, by not also using 0 as a failed flush signifier.
     assert!(prop_tree_crashes_nicely(
-        vec![
-            Set,
-            Set,
-            Set,
-            Set,
-            FailPoint("trailer write"),
-            Set,
-            Set,
-            Set,
-            Set,
-            Restart,
-        ],
+        vec![Set, Set, Set, Set, Set, Set, Set, Set, Restart,],
         false,
     ))
 }
@@ -623,7 +610,6 @@ fn failpoints_bug_10() {
             Del(12),
             Del(134),
             Del(118),
-            FailPoint("trailer write"),
             Del(26),
             Del(161),
             Set,
@@ -719,7 +705,6 @@ fn failpoints_bug_10() {
             Set,
             Restart,
             Del(241),
-            FailPoint("trailer write"),
             Set,
             Del(49),
             Set,
@@ -827,7 +812,6 @@ fn failpoints_bug_13() {
             Set,
             Set,
             Set,
-            FailPoint("trailer write"),
             Set,
             FailPoint("snap write"),
             Del(4),
@@ -992,19 +976,7 @@ fn failpoints_bug_20() {
     // uninitialized segment ID's when creating a segment
     // iterator.
     assert!(prop_tree_crashes_nicely(
-        vec![
-            Restart,
-            Set,
-            Set,
-            Del(0),
-            Id,
-            FailPoint("trailer write post"),
-            Id,
-            Set,
-            Del(0),
-            Id,
-            Set
-        ],
+        vec![Restart, Set, Set, Del(0), Id, Id, Set, Del(0), Id, Set],
         false,
     ))
 }
@@ -1023,7 +995,6 @@ fn failpoints_bug_21() {
             Del(183),
             Set,
             Set,
-            FailPoint("trailer write"),
             Set,
             Set,
             Set,
@@ -1078,7 +1049,6 @@ fn failpoints_bug_21() {
             Del(94),
             Del(115),
             Id,
-            FailPoint("trailer write post"),
             Restart,
         ],
         false,
@@ -1136,7 +1106,6 @@ fn failpoints_bug_25() {
             Del(188),
             Set,
             Set,
-            FailPoint("trailer write"),
             Restart,
             Id,
             Id,
@@ -1166,7 +1135,6 @@ fn failpoints_bug_25() {
             Restart,
             Set,
             Set,
-            FailPoint("trailer write post"),
             Del(252),
             Set,
             Del(111),
