@@ -32,6 +32,7 @@ impl Arbitrary for Op {
             "write_config post",
             "trailer write",
             "trailer write post",
+            "segment initial free zero",
             "snap write",
             "snap write len",
             "snap write crc",
