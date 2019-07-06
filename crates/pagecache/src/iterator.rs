@@ -55,7 +55,7 @@ impl Iterator for LogIter {
 
             if self.cur_lsn > self.max_lsn {
                 // all done
-                trace!("hit max_lsn in iterator, stopping");
+                trace!("hit max_lsn {} in iterator, stopping", self.max_lsn);
                 return None;
             }
 

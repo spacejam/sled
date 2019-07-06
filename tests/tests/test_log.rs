@@ -216,6 +216,8 @@ fn concurrent_logging() {
 
 #[test]
 fn concurrent_logging_404() {
+    tests::setup_logger();
+
     let config = ConfigBuilder::new()
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
@@ -238,7 +240,13 @@ fn concurrent_logging_404() {
                     let current = SHARED_COUNTER.load(Ordering::SeqCst);
                     let raw_value: [u8; size_of::<usize>()] =
                         unsafe { std::mem::transmute(current + 1) };
-                    let res = log.reserve(KIND, PID, &raw_value).unwrap();
+                    let res = log
+                        .reserve(
+                            KIND,
+                            (i + 1) as PageId * (t + 1) as PageId,
+                            &raw_value,
+                        )
+                        .unwrap();
                     match SHARED_COUNTER.compare_and_swap(
                         current,
                         current + 1,
@@ -269,7 +277,13 @@ fn concurrent_logging_404() {
     let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
     let successfuls = SHARED_COUNTER.load(Ordering::SeqCst);
     for i in 0..successfuls {
-        let val = iter.next().expect("expected some log entry");
+        let val = iter.next().unwrap_or_else(|| {
+            panic!(
+                "expected {} messages, but failed to read number {}",
+                successfuls,
+                i - 1
+            )
+        });
     }
     // Assert that there is nothing left in the log.
     assert_eq!(iter.next(), None);
