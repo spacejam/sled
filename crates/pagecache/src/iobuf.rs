@@ -320,7 +320,6 @@ impl IoBufs {
                 .compare_and_swap(current, lsn, SeqCst);
             if last == current {
                 // we succeeded.
-                println!("swapped from {} to {}", last, lsn);
                 return self.with_sa(|sa| sa.stabilize(lsn));
             }
             current = last;
@@ -496,7 +495,6 @@ impl IoBufs {
                     "concurrent stable offset modification detected"
                 );
                 debug!("new highest interval: {} - {}", low, high);
-                println!("new highest interval: {} - {}", low, high);
                 intervals.pop();
                 updated = true;
             } else {

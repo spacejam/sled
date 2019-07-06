@@ -798,15 +798,18 @@ impl SegmentAccountant {
     pub(super) fn stabilize(&mut self, stable_lsn: Lsn) -> Result<()> {
         let io_buf_size = self.config.io_buf_size as Lsn;
         let lsn = ((stable_lsn / io_buf_size) - 1) * io_buf_size;
-        println!(
+        trace!(
             "stabilize({}), normalized: {}, last: {}",
-            stable_lsn, lsn, self.max_stabilized_lsn
+            stable_lsn,
+            lsn,
+            self.max_stabilized_lsn
         );
         if self.max_stabilized_lsn >= lsn {
-            println!(
+            trace!(
                 "expected stabilization lsn {} \
                  to be greater than the previous value of {}",
-                lsn, self.max_stabilized_lsn
+                lsn,
+                self.max_stabilized_lsn
             );
             return Ok(());
         }
@@ -840,11 +843,6 @@ impl SegmentAccountant {
     fn deactivate_segment(&mut self, lsn: Lsn) -> Result<()> {
         let lid = self.ordering[&lsn];
         let idx = self.lid_to_idx(lid);
-
-        println!(
-            "deactivating segment with lsn {}: {:?}",
-            lsn, self.segments[idx]
-        );
 
         trace!(
             "deactivating segment with lsn {}: {:?}",

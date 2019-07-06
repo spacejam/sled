@@ -344,7 +344,7 @@ fn clean_tail_tears(
     for (lsn, lid) in ordering
         .range((std::ops::Bound::Excluded(tip.0), std::ops::Bound::Unbounded))
     {
-        error!("zeroing torn segment with lsn {} at lid {}", lsn, lid);
+        debug!("zeroing torn segment with lsn {} at lid {}", lsn, lid);
 
         f.pwrite_all(
             &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
