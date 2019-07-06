@@ -382,8 +382,8 @@ fn log_iterator() {
 fn log_chunky_iterator() {
     tests::setup_logger();
     let mut threads = vec![];
-    for _ in 0..100 {
-        let thread = thread::spawn(|| {
+    for tn in 0..100 {
+        let thread = thread::spawn(move || {
             let config = ConfigBuilder::new()
                 .temporary(true)
                 .segment_mode(SegmentMode::Linear)
@@ -404,18 +404,26 @@ fn log_chunky_iterator() {
                 let abort = thread_rng().gen::<bool>();
 
                 if abort {
-                    if let Ok(res) = log.reserve(KIND, PID, &buf) {
+                    if let Ok(res) =
+                        log.reserve(KIND, (i + 1) as PageId * (tn + 1), &buf)
+                    {
                         res.abort().unwrap();
                     } else {
                         assert!(len > max_valid_size);
                     }
                 } else {
                     let (lsn, lid) = log
-                        .reserve(KIND, PID, &buf)
+                        .reserve(KIND, (i + 1) as PageId * (tn + 1), &buf)
                         .expect("should be able to write reservation")
                         .complete()
                         .unwrap();
-                    reference.push((KIND, PID, lsn, lid, buf));
+                    reference.push((
+                        KIND,
+                        (i + 1) as PageId * (tn + 1),
+                        lsn,
+                        lid,
+                        buf,
+                    ));
                 }
             }
 
@@ -498,7 +506,11 @@ fn multi_segment_log_iteration() {
 
     for i in 0..config.io_bufs * 16 {
         let buf = vec![i as u8; big_msg_sz * i];
-        let write = log.reserve(KIND, PID, &buf).unwrap().complete().unwrap();
+        let write = log
+            .reserve(KIND, i as PageId, &buf)
+            .unwrap()
+            .complete()
+            .unwrap();
         println!("wrote {:?}", write);
     }
     log.flush();
