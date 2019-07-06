@@ -449,45 +449,6 @@ fn log_chunky_iterator() {
 }
 
 #[test]
-fn snapshot_with_out_of_order_buffers() {
-    let config = ConfigBuilder::new()
-        .temporary(true)
-        .segment_mode(SegmentMode::Linear)
-        .io_buf_size(100)
-        .io_bufs(2)
-        .snapshot_after_ops(5)
-        .build();
-
-    let len = config.io_buf_size - SEG_HEADER_LEN - MSG_HEADER_LEN;
-
-    let log = Log::start_raw_log(config.clone()).unwrap();
-
-    for i in 0..4 {
-        let buf = vec![i as u8; len];
-        let (lsn, _lid) =
-            log.reserve(KIND, PID, &buf).unwrap().complete().unwrap();
-        log.make_stable(lsn).unwrap();
-    }
-
-    {
-        // erase the third segment trailer to represent
-        // an out-of-order segment write before
-    }
-
-    drop(log);
-
-    let log = Log::start_raw_log(config.clone()).unwrap();
-
-    // start iterating just past the first segment header
-    let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
-
-    for i in 0..config.io_bufs * 2 {
-        let expected = vec![i as u8; len];
-        iter.next().unwrap();
-    }
-}
-
-#[test]
 fn multi_segment_log_iteration() {
     tests::setup_logger();
     // ensure segments are being linked
