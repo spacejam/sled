@@ -505,9 +505,13 @@ impl SegmentAccountant {
                     "freeing segment with lid {} during SA initialization",
                     segment_lid
                 );
-                segment.state = Free;
                 let segment_base = idx as LogId * io_buf_size as LogId;
-                self.free_segment(segment_base, true);
+                if self.tip == segment_lid + io_buf_size as LogId {
+                    self.tip -= io_buf_size as LogId;
+                } else {
+                    segment.state = Free;
+                    self.free_segment(segment_base, true);
+                }
 
                 // NB we corrupt the segment header to cause this
                 // segment to be skipped on subsequent recovery
@@ -971,7 +975,7 @@ impl SegmentAccountant {
         trace!("evaluating free list {:?} in SA::next", free);
 
         // truncate if possible
-        while self.tip != 0 {
+        while self.tip != 0 && self.free.len() > 1 {
             let last_segment = self.tip - self.config.io_buf_size as LogId;
             if free.contains(&last_segment) {
                 self.free.remove(&last_segment);
