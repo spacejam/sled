@@ -625,7 +625,7 @@ impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
             let ok = crc32_tested == crc32_header;
 
             if !ok {
-                error!(
+                debug!(
                     "segment with lsn {} had computed crc {}, \
                      but stored crc {}",
                     lsn, crc32_tested, crc32_header
