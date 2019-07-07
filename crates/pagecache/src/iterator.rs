@@ -370,10 +370,40 @@ pub(super) fn raw_segment_iter_from(
 
     let (ordering, max_header_stable_lsn) = scan_segment_lsns(0, &config)?;
 
+    // find the last stable tip, to properly handle batch manifests.
+    let tip_segment_iter =
+        Box::new(ordering.iter().map(|(a, b)| (*a, *b)).last().into_iter());
+    trace!(
+        "trying to find the max stable tip for \
+         bounding batch manifests with segment iter {:?} \
+         of segments >= max_header_stable_lsn {}",
+        tip_segment_iter,
+        max_header_stable_lsn
+    );
+
+    let mut tip_iter = LogIter {
+        config: config.clone(),
+        max_lsn: Lsn::max_value(),
+        cur_lsn: 0,
+        segment_base: None,
+        segment_iter: tip_segment_iter,
+    };
+
+    // run the iterator to the end so
+    // we can grab its current lsn, inclusive
+    // of any zeroed messages and other
+    // legit items it may not have returned
+    // in the actual iterator.
+    while let Some(_) = tip_iter.next() {}
+
+    let tip = tip_iter.cur_lsn;
+
+    trace!("found max stable tip: {}", tip);
+
     trace!(
         "generated iterator over segments {:?} with lsn >= {}",
         ordering,
-        normalized_lsn
+        normalized_lsn,
     );
 
     let segment_iter = Box::new(
@@ -385,8 +415,8 @@ pub(super) fn raw_segment_iter_from(
     Ok((
         LogIter {
             config: config.clone(),
-            max_lsn: Lsn::max_value(),
-            cur_lsn: SEG_HEADER_LEN as Lsn,
+            max_lsn: tip,
+            cur_lsn: 0,
             segment_base: None,
             segment_iter,
         },
