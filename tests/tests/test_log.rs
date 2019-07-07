@@ -403,27 +403,21 @@ fn log_chunky_iterator() {
                 let buf = vec![item; len];
                 let abort = thread_rng().gen::<bool>();
 
+                let pid = (tn * 10000) + i;
+
                 if abort {
-                    if let Ok(res) =
-                        log.reserve(KIND, (i + 1) as PageId * (tn + 1), &buf)
-                    {
+                    if let Ok(res) = log.reserve(KIND, pid, &buf) {
                         res.abort().unwrap();
                     } else {
                         assert!(len > max_valid_size);
                     }
                 } else {
                     let (lsn, lid) = log
-                        .reserve(KIND, (i + 1) as PageId * (tn + 1), &buf)
+                        .reserve(KIND, pid, &buf)
                         .expect("should be able to write reservation")
                         .complete()
                         .unwrap();
-                    reference.push((
-                        KIND,
-                        (i + 1) as PageId * (tn + 1),
-                        lsn,
-                        lid,
-                        buf,
-                    ));
+                    reference.push((KIND, pid, lsn, lid, buf));
                 }
             }
 
