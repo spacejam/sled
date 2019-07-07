@@ -42,7 +42,7 @@ impl Context {
         trace!("starting context");
 
         #[cfg(any(test, feature = "check_snapshot_integrity"))]
-        match config.verify_snapshot::<BLinkMaterializer, Frag>() {
+        match config.verify_snapshot() {
             Ok(_) => {}
             #[cfg(feature = "failpoints")]
             Err(Error::FailPoint) => {}

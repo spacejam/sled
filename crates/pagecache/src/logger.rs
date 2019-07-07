@@ -59,13 +59,10 @@ impl Log {
     /// Starts a log for use without a materializer.
     pub fn start_raw_log(config: Config) -> Result<Log> {
         assert_eq!(config.segment_mode, SegmentMode::Linear);
-        let log_iter = raw_segment_iter_from(0, &config)?;
+        let (log_iter, _) = raw_segment_iter_from(0, &config)?;
 
-        let snapshot = advance_snapshot::<NullMaterializer, ()>(
-            log_iter,
-            Snapshot::default(),
-            &config,
-        )?;
+        let snapshot =
+            advance_snapshot(log_iter, Snapshot::default(), &config)?;
 
         Log::start(config, snapshot)
     }
@@ -248,6 +245,7 @@ impl Log {
             // don't continue if the system
             // has encountered an issue.
             if let Err(e) = self.config.global_error() {
+                let _ = self.iobufs.intervals.lock().unwrap();
                 self.iobufs.interval_updated.notify_all();
                 return Err(e);
             }
@@ -347,7 +345,7 @@ impl Log {
                 reservation_offset,
             );
 
-            self.iobufs.bump_max_reserved_lsn(reservation_lsn);
+            bump_atomic_lsn(&self.iobufs.max_reserved_lsn, reservation_lsn);
 
             self.iobufs.encapsulate(
                 &*buf,
@@ -406,6 +404,7 @@ impl Log {
         // to 0 and it's sealed then we should write it to storage.
         if iobuf::n_writers(header) == 0 && iobuf::is_sealed(header) {
             if let Err(e) = self.config.global_error() {
+                let _ = self.iobufs.intervals.lock().unwrap();
                 self.iobufs.interval_updated.notify_all();
                 return Err(e);
             }
@@ -475,7 +474,7 @@ pub struct MessageHeader {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) struct SegmentHeader {
     pub(crate) lsn: Lsn,
-    pub(crate) highest_known_stable_lsn: Lsn,
+    pub(crate) max_stable_lsn: Lsn,
     pub(crate) ok: bool,
 }
 
@@ -619,17 +618,26 @@ impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
             let xor_lsn = arr_to_u64(buf.get_unchecked(4..12)) as Lsn;
             let lsn = xor_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
 
-            let xor_highest_stable_lsn =
+            let xor_max_stable_lsn =
                 arr_to_u64(buf.get_unchecked(12..20)) as Lsn;
-            let highest_known_stable_lsn =
-                xor_highest_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
+            let max_stable_lsn = xor_max_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
 
             let crc32_tested = crc32(&buf[4..20]);
 
+            let ok = crc32_tested == crc32_header;
+
+            if !ok {
+                debug!(
+                    "segment with lsn {} had computed crc {}, \
+                     but stored crc {}",
+                    lsn, crc32_tested, crc32_header
+                );
+            }
+
             SegmentHeader {
                 lsn,
-                highest_known_stable_lsn,
-                ok: crc32_tested == crc32_header,
+                max_stable_lsn,
+                ok,
             }
         }
     }
@@ -640,10 +648,9 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
         let mut buf = [0u8; SEG_HEADER_LEN];
 
         let xor_lsn = self.lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
-        let xor_highest_stable_lsn =
-            self.highest_known_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
+        let xor_max_stable_lsn = self.max_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
         let lsn_arr = u64_to_arr(xor_lsn as u64);
-        let highest_stable_lsn_arr = u64_to_arr(xor_highest_stable_lsn as u64);
+        let highest_stable_lsn_arr = u64_to_arr(xor_max_stable_lsn as u64);
 
         unsafe {
             std::ptr::copy_nonoverlapping(

@@ -216,6 +216,8 @@ fn concurrent_logging() {
 
 #[test]
 fn concurrent_logging_404() {
+    tests::setup_logger();
+
     let config = ConfigBuilder::new()
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
@@ -237,8 +239,10 @@ fn concurrent_logging_404() {
                 for i in 0..ITERATIONS {
                     let current = SHARED_COUNTER.load(Ordering::SeqCst);
                     let raw_value: [u8; size_of::<usize>()] =
-                        unsafe { std::mem::transmute(current + 1) };
-                    let res = log.reserve(KIND, PID, &raw_value).unwrap();
+                        unsafe { current.to_be_bytes() };
+                    let res = log
+                        .reserve(KIND, current as PageId, &raw_value)
+                        .unwrap();
                     match SHARED_COUNTER.compare_and_swap(
                         current,
                         current + 1,
@@ -269,7 +273,17 @@ fn concurrent_logging_404() {
     let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
     let successfuls = SHARED_COUNTER.load(Ordering::SeqCst);
     for i in 0..successfuls {
-        let val = iter.next().expect("expected some log entry");
+        let (kind, pid, lsn, ptr, _sz) = iter.next().unwrap_or_else(|| {
+            panic!(
+                "expected {} messages, but failed to read number {}",
+                successfuls,
+                i - 1
+            )
+        });
+
+        let msg = log.read(pid, lsn, ptr).unwrap().into_data().unwrap();
+        assert_eq!(&msg, &i.to_be_bytes());
+        assert_eq!(kind, LogKind::Replace);
     }
     // Assert that there is nothing left in the log.
     assert_eq!(iter.next(), None);
@@ -366,9 +380,10 @@ fn log_iterator() {
 #[test]
 #[cfg(not(target_os = "fuchsia"))]
 fn log_chunky_iterator() {
+    tests::setup_logger();
     let mut threads = vec![];
-    for _ in 0..100 {
-        let thread = thread::spawn(|| {
+    for tn in 0..100 {
+        let thread = thread::spawn(move || {
             let config = ConfigBuilder::new()
                 .temporary(true)
                 .segment_mode(SegmentMode::Linear)
@@ -388,19 +403,21 @@ fn log_chunky_iterator() {
                 let buf = vec![item; len];
                 let abort = thread_rng().gen::<bool>();
 
+                let pid = (tn * 10000) + i;
+
                 if abort {
-                    if let Ok(res) = log.reserve(KIND, PID, &buf) {
+                    if let Ok(res) = log.reserve(KIND, pid, &buf) {
                         res.abort().unwrap();
                     } else {
                         assert!(len > max_valid_size);
                     }
                 } else {
                     let (lsn, lid) = log
-                        .reserve(KIND, PID, &buf)
+                        .reserve(KIND, pid, &buf)
                         .expect("should be able to write reservation")
                         .complete()
                         .unwrap();
-                    reference.push((KIND, PID, lsn, lid, buf));
+                    reference.push((KIND, pid, lsn, lid, buf));
                 }
             }
 
@@ -426,45 +443,6 @@ fn log_chunky_iterator() {
 }
 
 #[test]
-fn snapshot_with_out_of_order_buffers() {
-    let config = ConfigBuilder::new()
-        .temporary(true)
-        .segment_mode(SegmentMode::Linear)
-        .io_buf_size(100)
-        .io_bufs(2)
-        .snapshot_after_ops(5)
-        .build();
-
-    let len = config.io_buf_size - SEG_HEADER_LEN - MSG_HEADER_LEN;
-
-    let log = Log::start_raw_log(config.clone()).unwrap();
-
-    for i in 0..4 {
-        let buf = vec![i as u8; len];
-        let (lsn, _lid) =
-            log.reserve(KIND, PID, &buf).unwrap().complete().unwrap();
-        log.make_stable(lsn).unwrap();
-    }
-
-    {
-        // erase the third segment trailer to represent
-        // an out-of-order segment write before
-    }
-
-    drop(log);
-
-    let log = Log::start_raw_log(config.clone()).unwrap();
-
-    // start iterating just past the first segment header
-    let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
-
-    for i in 0..config.io_bufs * 2 {
-        let expected = vec![i as u8; len];
-        iter.next().unwrap();
-    }
-}
-
-#[test]
 fn multi_segment_log_iteration() {
     tests::setup_logger();
     // ensure segments are being linked
@@ -483,7 +461,11 @@ fn multi_segment_log_iteration() {
 
     for i in 0..config.io_bufs * 16 {
         let buf = vec![i as u8; big_msg_sz * i];
-        log.reserve(KIND, PID, &buf).unwrap().complete().unwrap();
+        let write = log
+            .reserve(KIND, i as PageId, &buf)
+            .unwrap()
+            .complete()
+            .unwrap();
     }
     log.flush();
 
@@ -492,13 +474,11 @@ fn multi_segment_log_iteration() {
     let log = Log::start_raw_log(config.clone()).unwrap();
 
     // start iterating just past the first segment header
-    println!("creating iterator");
     let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
-    println!("using iterator");
 
     for i in 0..config.io_bufs * 16 {
         let expected = vec![i as u8; big_msg_sz * i];
-        iter.next().expect("expected to read another message");
+        let got = iter.next().expect("expected to read another message");
     }
 }
 
@@ -610,7 +590,11 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
                     );
                 } else {
                     let flush = read_res.unwrap().into_data();
-                    assert_eq!(flush, *expected);
+                    assert_eq!(
+                        flush, *expected,
+                        "read unexpected value at lid {}",
+                        lid
+                    );
                 }
             }
             Write(buf) => {

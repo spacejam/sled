@@ -58,9 +58,7 @@
 //!    reallocated after another later segment has written
 //!    a "stable consecutive lsn" into its own header
 //!    that is higher than ours.
-use std::{collections::BTreeMap, fs::File, mem};
-
-use self::reader::LogReader;
+use std::{collections::BTreeMap, mem};
 
 use futures::{future::Future, oneshot, Oneshot};
 
@@ -81,11 +79,11 @@ pub(super) struct SegmentAccountant {
     // TODO put behind a single mutex
     // NB MUST group pause_rewriting with ordering
     // and free!
-    free: BTreeMap<LogId, bool>,
+    free: VecSet<LogId>,
     tip: LogId,
+    max_stabilized_lsn: Lsn,
     to_clean: VecSet<LogId>,
     pause_rewriting: bool,
-    safety_buffer: Vec<LogId>,
     ordering: BTreeMap<Lsn, LogId>,
     async_truncations: Vec<Oneshot<Result<()>>>,
 }
@@ -206,12 +204,12 @@ impl Segment {
         config: &Config,
     ) -> Result<FastSet8<(PageId, usize)>> {
         trace!("setting Segment with lsn {:?} to Inactive", self.lsn());
-        assert_eq!(
-            self.state,
-            Active,
+        assert!(
+            self.state == Active || self.state == Draining,
             "segment {} should have been \
-             Active before deactivating",
-            self.lsn()
+             Active or Draining, before deactivating, but was {:?}",
+            self.lsn(),
+            self.state
         );
         if from_recovery {
             assert!(lsn >= self.lsn());
@@ -394,13 +392,13 @@ impl SegmentAccountant {
             config,
             segments: vec![],
             clean_counter: 0,
-            free: BTreeMap::default(),
+            free: Default::default(),
             tip: 0,
+            max_stabilized_lsn: -1,
             to_clean: Default::default(),
             pause_rewriting: false,
-            safety_buffer: vec![],
-            ordering: BTreeMap::new(),
-            async_truncations: Vec::new(),
+            ordering: Default::default(),
+            async_truncations: Default::default(),
         };
 
         if let SegmentMode::Linear = ret.config.segment_mode {
@@ -409,35 +407,34 @@ impl SegmentAccountant {
             ret.pause_rewriting();
         }
 
-        if snapshot.max_lsn >= SEG_HEADER_LEN as Lsn && !snapshot.pt.is_empty()
-        {
-            ret.set_safety_buffer(snapshot.max_lsn)?;
-
-            ret.initialize_from_snapshot(snapshot)?;
-        } else {
-            trace!(
-                "skipping initialization of SA \
-                 for snapshot with max_lsn {} and pt {:?}",
-                snapshot.max_lsn,
-                snapshot.pt,
-            );
-        }
+        ret.initialize_from_snapshot(snapshot)?;
 
         Ok(ret)
     }
 
     fn initialize_from_snapshot(&mut self, snapshot: Snapshot) -> Result<()> {
         let io_buf_size = self.config.io_buf_size;
+        let file_len = self.config.file.metadata()?.len();
+        let number_of_segments = usize::try_from(file_len / io_buf_size as u64)
+            .unwrap()
+            + if file_len % u64::try_from(io_buf_size).unwrap()
+                < u64::try_from(SEG_HEADER_LEN).unwrap()
+            {
+                0
+            } else {
+                1
+            };
 
         // generate segments from snapshot lids
-        let mut segments = vec![];
+        let mut segments = vec![Segment::default(); number_of_segments];
+        let mut segment_sizes = vec![0_usize; number_of_segments];
 
-        let add = |pid, lsn, lid: LogId, segments: &mut Vec<Segment>| {
-            // add pid to segment
+        let mut add = |pid,
+                       lsn,
+                       sz,
+                       lid: LogId,
+                       segments: &mut Vec<Segment>| {
             let idx = assert_usize(lid / io_buf_size as LogId);
-            if segments.len() < idx + 1 {
-                segments.resize(idx + 1, Segment::default());
-            }
             trace!(
                 "adding lsn: {} lid: {} for pid {} to segment {} during SA recovery",
                 lsn,
@@ -448,234 +445,124 @@ impl SegmentAccountant {
             let segment_lsn = lsn / io_buf_size as Lsn * io_buf_size as Lsn;
             segments[idx].recovery_ensure_initialized(segment_lsn);
             segments[idx].insert_pid(pid, segment_lsn);
+            segment_sizes[idx] += sz;
         };
 
         for (pid, state) in snapshot.pt {
             match state {
                 PageState::Present(coords) => {
-                    for (lsn, ptr) in coords {
-                        add(pid, lsn, ptr.lid(), &mut segments);
+                    for (lsn, ptr, sz) in coords {
+                        add(pid, lsn, sz, ptr.lid(), &mut segments);
                     }
                 }
                 PageState::Free(lsn, ptr) => {
-                    add(pid, lsn, ptr.lid(), &mut segments);
+                    add(pid, lsn, MSG_HEADER_LEN, ptr.lid(), &mut segments);
                 }
             }
         }
 
-        let mut ordering = segments
-            .iter()
-            .enumerate()
-            .map(|(i, s)| (i, s.lsn))
-            .collect::<Vec<_>>();
-
-        ordering.sort_unstable_by_key(|(_idx, lsn)| *lsn);
-
-        for (idx, _lsn) in ordering.into_iter() {
-            let (replacement_lsn, replacements) =
-                if let Some(r) = snapshot.replacements.get(&idx) {
-                    r
+        let currently_active_segment = {
+            // this logic allows us to free the last
+            // active segment if it was empty.
+            let prospective_currently_active_segment =
+                (snapshot.last_lid / io_buf_size as LogId) as usize;
+            if let Some(segment) =
+                segments.get(prospective_currently_active_segment)
+            {
+                if segment.is_empty() {
+                    // we want to add this to the free list below,
+                    // so don't skip freeing it for being active
+                    usize::max_value()
                 } else {
-                    // no replacements to handle
-                    continue;
-                };
-
-            for &(old_pid, old_idx) in replacements {
-                let replaced_current_lsn =
-                    segments.get(old_idx).and_then(|s| s.lsn);
-                if replaced_current_lsn.unwrap_or(Lsn::max_value())
-                    > *replacement_lsn
-                {
-                    // we can skip this if it's already empty or
-                    // has been rewritten since the replacement.
-                    continue;
+                    prospective_currently_active_segment
                 }
-
-                segments[old_idx].remove_pid(old_pid, *replacement_lsn, true);
-            }
-        }
-
-        self.initialize_from_segments(segments)
-    }
-
-    fn initialize_from_segments(
-        &mut self,
-        mut segments: Vec<Segment>,
-    ) -> Result<()> {
-        // populate ordering from segments.
-        // use last segment as active even if it's full
-        let io_buf_size = self.config.io_buf_size;
-
-        let highest_lsn = segments
-            .iter()
-            .filter_map(|s| s.lsn)
-            .filter(|lsn| *lsn != Lsn::max_value())
-            .max()
-            .unwrap_or(0);
-
-        debug!("recovered highest_lsn in all segments: {}", highest_lsn);
-
-        // NB set tip BEFORE any calls to free_segment, as when
-        // we ensure the segment safety discipline, it is going to
-        // bump the tip, which hopefully is already the final recovered
-        // tip.
-        // we need to make sure that we raise the tip over any
-        // segments that are in the safety_buffer. The safety_buffer
-        // may contain segments that are beyond what we have tracked
-        // in self.segments, because they may have been fully replaced
-        // in a later segment, or the next one, but they still need
-        // to be in the safety buffer, in order to prevent us from
-        // zeroing and recycling something in the safety buffer, breaking
-        // the recovery of later segments if a tear is discovered.
-        for &lid in &self.safety_buffer {
-            if self.tip <= lid {
-                self.tip = lid + io_buf_size as LogId;
-            }
-        }
-
-        debug!("set self.tip to {} based on safety buffer", self.tip);
-
-        let segments_len = segments.len();
-
-        let max_lsn = Lsn::max_value();
-
-        for (idx, ref mut segment) in segments.iter_mut().enumerate() {
-            let segment_start = idx as LogId * io_buf_size as LogId;
-
-            if segment_start >= self.tip {
-                self.tip = segment_start + io_buf_size as LogId;
-                debug!(
-                    "set self.tip to {} based on encountered segment",
-                    self.tip
-                );
-            }
-
-            if let Some(lsn) = segment.lsn {
-                if lsn != highest_lsn && segment.state == Active {
-                    segment.active_to_inactive(lsn, true, &self.config)?;
-                }
-
-                self.ordering.insert(lsn, segment_start);
-            }
-
-            // can we transition these segments?
-            let can_free = segment.lsn.is_none() || segment.is_empty();
-
-            let can_drain = segment_is_drainable(
-                idx,
-                segments_len,
-                segment.live_pct(),
-                segment.len(),
-                &self.config,
-            );
-
-            // populate free and to_clean if the segment has seen
-            if self.pause_rewriting || segment.lsn == Some(highest_lsn) {
-                self.free.remove(&segment_start);
-            } else if can_free {
-                // can be reused immediately
-                if segment.state == Inactive {
-                    segment.inactive_to_draining(max_lsn);
-                    segment.draining_to_free(max_lsn);
-                } else {
-                    assert_eq!(segment.state, Free);
-                }
-
-                self.to_clean.remove(&segment_start);
-
-                trace!(
-                    "freeing segment {} from initialize_from_snapshot, tip: {}",
-                    segment_start,
-                    self.tip
-                );
-                if !self.free.contains_key(&segment_start) {
-                    self.free_segment(segment_start, true);
-                } else {
-                    trace!(
-                        "skipped freeing of segment {} \
-                         because it was already in free list",
-                        segment_start,
-                    );
-                }
-            } else if can_drain {
-                trace!(
-                    "setting segment {} to Draining from initialize_from_snapshot",
-                    segment_start
-                );
-
-                segment.inactive_to_draining(max_lsn);
-                self.to_clean.insert(segment_start);
-                self.free.remove(&segment_start);
             } else {
-                self.free.remove(&segment_start);
+                // segment was not used yet
+                usize::max_value()
+            }
+        };
+
+        assert!(self.config.segment_cleanup_threshold < 100.);
+        let cleanup_threshold =
+            (self.config.segment_cleanup_threshold * 100.) as usize;
+        let drain_sz = io_buf_size * 100 / cleanup_threshold;
+
+        for (idx, segment) in segments.iter_mut().enumerate() {
+            let segment_lid = idx as LogId * io_buf_size as LogId;
+
+            if segment_lid >= self.tip {
+                // set tip above the beginning of any
+                self.tip = segment_lid + io_buf_size as LogId;
+                trace!(
+                    "raised self.tip to {} during SA initialization",
+                    self.tip
+                );
+            }
+
+            let segment_lsn = segment.lsn.unwrap_or(-1);
+
+            if idx != currently_active_segment
+                && segment_lsn <= snapshot.max_header_stable_lsn
+            {
+                let segment_base = idx as LogId * io_buf_size as LogId;
+
+                if segment_sizes[idx] == 0 {
+                    // can free
+                    trace!(
+                        "freeing segment with lid {} during SA initialization",
+                        segment_lid
+                    );
+                    if self.tip == segment_lid + io_buf_size as LogId {
+                        self.tip -= io_buf_size as LogId;
+                    } else {
+                        segment.state = Free;
+                        self.free_segment(segment_base, true);
+                    }
+
+                    // NB we corrupt the segment header to cause this
+                    // segment to be skipped on subsequent recovery
+                    // attempts, which guarantees that no two segments
+                    // ever contain the same LSN. If we didn't do this,
+                    // we would need to ensure through other means
+                    // that empty segments with a written segment header
+                    // but no other data get reused.
+                    maybe_fail!("segment initial free zero");
+                    self.config.file.pwrite_all(
+                        &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
+                        segment_base,
+                    )?;
+                    self.config.file.sync_all()?;
+                } else if segment_sizes[idx] <= drain_sz {
+                    trace!(
+                        "SA draining segment at {} during startup \
+                         with size {} being < drain size of {}",
+                        segment_base,
+                        segment_sizes[idx],
+                        drain_sz
+                    );
+                    segment.state = Draining;
+                    self.to_clean.insert(segment_base);
+                }
             }
         }
 
         trace!("initialized self.segments to {:?}", segments);
         self.segments = segments;
-        if self.segments.is_empty() {
-            // this is basically just for when we recover with a single
-            // empty-yet-initialized segment
-            debug!("recovered no segments so not initializing from any",);
-        }
 
-        Ok(())
-    }
-
-    fn set_safety_buffer(&mut self, snapshot_max_lsn: Lsn) -> Result<()> {
-        self.ensure_ordering_initialized()?;
-
-        // if our ordering contains anything higher than
-        // what our snapshot logic scanned, it means it's
-        // empty, and we should nuke it to prevent incorrect
-        // recoveries.
-        let mut to_zero = vec![];
-        for (&lsn, &lid) in &self.ordering {
-            assert_ne!(lsn, Lsn::max_value());
-
-            if lsn <= snapshot_max_lsn {
-                continue;
-            }
-            warn!(
-                "zeroing out empty segment header for segment \
-                 above snapshot_max_lsn {} at lsn {} lid {}",
-                snapshot_max_lsn, lsn, lid
-            );
-            to_zero.push(lsn);
-            let f = &self.config.file;
-            maybe_fail!("zero garbage segment");
-            f.pwrite_all(
-                &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
-                lid,
-            )?;
-            f.sync_all()?;
-            maybe_fail!("zero garbage segment post");
-        }
-
-        for lsn in to_zero.into_iter() {
-            self.ordering.remove(&lsn);
-        }
-
-        let safety_buffer_len = self.config.io_bufs;
-        let mut safety_buffer: Vec<LogId> = self
-            .ordering
+        self.ordering = self
+            .segments
             .iter()
-            .rev()
-            .take(safety_buffer_len)
-            .map(|(_lsn, lid)| *lid)
+            .enumerate()
+            .filter(|(_id, s)| s.lsn.is_some())
+            .map(|(id, s)| (s.lsn(), id as LogId * io_buf_size as LogId))
             .collect();
-
-        // we want the things written last to be last in this Vec
-        safety_buffer.reverse();
-
-        self.safety_buffer = safety_buffer;
+        trace!("initialized self.ordering to {:?}", self.ordering);
 
         Ok(())
     }
 
     fn free_segment(&mut self, lid: LogId, in_recovery: bool) {
         debug!("freeing segment {}", lid);
-        debug!("safety_buffer before free: {:?}", self.safety_buffer);
         debug!("free list before free {:?}", self.free);
 
         let idx = self.lid_to_idx(lid);
@@ -686,14 +573,9 @@ impl SegmentAccountant {
         );
         assert_eq!(self.segments[idx].state, Free);
         assert!(
-            !self.segment_in_free(lid),
+            !self.free.contains(&lid),
             "double-free of a segment occurred"
         );
-
-        // we depend on the invariant that the last segments
-        // always link together, so that we can detect torn
-        // segments during recovery.
-        self.ensure_safe_free_distance(lid);
 
         if in_recovery {
             // We only want to immediately remove the segment
@@ -712,7 +594,7 @@ impl SegmentAccountant {
             }
         }
 
-        self.free.insert(lid, false);
+        self.free.insert(lid);
     }
 
     /// Causes all new allocations to occur at the end of the file, which
@@ -930,18 +812,66 @@ impl SegmentAccountant {
         segment.insert_pid(pid, segment_lsn);
     }
 
+    pub(super) fn stabilize(&mut self, stable_lsn: Lsn) -> Result<()> {
+        let io_buf_size = self.config.io_buf_size as Lsn;
+        let lsn = ((stable_lsn / io_buf_size) - 1) * io_buf_size;
+        trace!(
+            "stabilize({}), normalized: {}, last: {}",
+            stable_lsn,
+            lsn,
+            self.max_stabilized_lsn
+        );
+        if self.max_stabilized_lsn >= lsn {
+            trace!(
+                "expected stabilization lsn {} \
+                 to be greater than the previous value of {}",
+                lsn,
+                self.max_stabilized_lsn
+            );
+            return Ok(());
+        }
+
+        let bounds = (
+            std::ops::Bound::Excluded(self.max_stabilized_lsn),
+            std::ops::Bound::Included(lsn),
+        );
+
+        let can_deactivate = self
+            .ordering
+            .range(bounds)
+            .map(|(lsn, _lid)| *lsn)
+            .collect::<Vec<_>>();
+
+        self.max_stabilized_lsn = lsn;
+
+        for lsn in can_deactivate {
+            self.deactivate_segment(lsn)?;
+        }
+
+        Ok(())
+    }
+
     /// Called after the trailer of a segment has been written to disk,
     /// indicating that no more pids will be added to a segment. Moves
     /// the segment into the Inactive state.
     ///
     /// # Panics
     /// The provided lsn and lid must exactly match the existing segment.
-    pub(super) fn deactivate_segment(&mut self, lsn: Lsn) -> Result<()> {
+    fn deactivate_segment(&mut self, lsn: Lsn) -> Result<()> {
         let lid = self.ordering[&lsn];
         let idx = self.lid_to_idx(lid);
 
-        let replacements =
-            self.segments[idx].active_to_inactive(lsn, false, &self.config)?;
+        trace!(
+            "deactivating segment with lsn {}: {:?}",
+            lsn,
+            self.segments[idx]
+        );
+
+        let replacements = if self.segments[idx].state == Draining {
+            self.segments[idx].active_to_inactive(lsn, false, &self.config)?
+        } else {
+            Default::default()
+        };
 
         let mut old_segments = FastSet8::default();
 
@@ -950,30 +880,15 @@ impl SegmentAccountant {
 
             let old_segment = &mut self.segments[old_idx];
 
-            assert_ne!(
-                old_segment.state,
-                Active,
+            assert!(
+                old_segment.state != Active && old_segment.state != Free,
                 "segment {} is processing pid {} replacements for \
-                 old segment {}, which is in the Active state. \
+                 old segment {}, which is in the {:?} state. \
                  all replacements for pid: {:?}",
                 lid,
                 pid,
                 old_idx * self.config.io_buf_size,
-                replacements
-                    .iter()
-                    .filter(|(p, _)| p == &pid)
-                    .collect::<Vec<_>>()
-            );
-
-            assert_ne!(
                 old_segment.state,
-                Free,
-                "segment {} is processing pid {} replacements for \
-                 segment {}, which is in the Free state. \
-                 all replacements for pid: {:?}",
-                lid,
-                pid,
-                old_idx * self.config.io_buf_size,
                 replacements
                     .iter()
                     .filter(|(p, _)| p == &pid)
@@ -1049,37 +964,6 @@ impl SegmentAccountant {
         lid
     }
 
-    fn ensure_safe_free_distance(&mut self, lid: LogId) {
-        // NB If updates always have to wait in a queue
-        // at least as long as the number of IO buffers, it
-        // guarantees that the old updates are actually safe
-        // somewhere else first. Note that we push_front here
-        // so that the log tip is used first.
-        // This is so that we will never give out a segment
-        // that has been placed on the free queue after its
-        // contained pages have all had updates added to an
-        // IO buffer during a PageCache replace, but whose
-        // replacing updates have not actually landed on disk
-        // yet.
-        if let Some(idx) = &self.safety_buffer.iter().position(|l| *l == lid) {
-            while self.free.len() <= *idx {
-                let new_lid = self.bump_tip();
-                assert!(
-                    new_lid > lid,
-                    "we freed segment {} while self.tip of {} \
-                     was somehow below it",
-                    lid,
-                    new_lid,
-                );
-                debug!(
-                    "pushing segment {} to free from ensure_safe_free_distance",
-                    new_lid
-                );
-                self.free.insert(new_lid, true);
-            }
-        }
-    }
-
     /// Returns the next offset to write a new segment in.
     pub(super) fn next(&mut self, lsn: Lsn) -> Result<LogId> {
         let _measure = Measure::new(&M.accountant_next);
@@ -1090,15 +974,28 @@ impl SegmentAccountant {
             "unaligned Lsn provided to next!"
         );
 
+        let free: Vec<LogId> = self
+            .free
+            .iter()
+            .filter(|lid| {
+                let idx =
+                    usize::try_from(*lid / self.config.io_buf_size as LogId)
+                        .unwrap();
+                if let Some(last_lsn) = self.segments[idx].lsn {
+                    last_lsn < self.max_stabilized_lsn
+                } else {
+                    true
+                }
+            })
+            .copied()
+            .collect();
+
+        trace!("evaluating free list {:?} in SA::next", free);
+
         // truncate if possible
-        loop {
-            if self.tip == 0 {
-                break;
-            }
+        while self.tip != 0 && self.free.len() > 1 {
             let last_segment = self.tip - self.config.io_buf_size as LogId;
-            if self.free.get(&last_segment) == Some(&false)
-                && !self.safety_buffer.contains(&last_segment)
-            {
+            if free.contains(&last_segment) {
                 self.free.remove(&last_segment);
                 self.truncate(last_segment)?;
             } else {
@@ -1107,18 +1004,12 @@ impl SegmentAccountant {
         }
 
         // pop free or add to end
-        let safe = self
-            .free
-            .keys()
-            .filter(|l| !self.safety_buffer.contains(l))
-            .take(1)
-            .cloned()
-            .nth(0);
+        let safe = free.first();
 
         let lid = if self.pause_rewriting || safe.is_none() {
             self.bump_tip()
         } else {
-            let next = safe.unwrap();
+            let next = *safe.unwrap();
             self.free.remove(&next);
             next
         };
@@ -1139,38 +1030,9 @@ impl SegmentAccountant {
 
         debug!(
             "segment accountant returning offset: {} \
-             paused: {} last: {:?} on deck: {:?}, \
-             safety_buffer: {:?}",
-            lid,
-            self.pause_rewriting,
-            self.safety_buffer.last(),
-            self.free,
-            self.safety_buffer
+             paused: {} on deck: {:?}",
+            lid, self.pause_rewriting, self.free,
         );
-
-        if lid == 0 {
-            let no_zeroes = !self.safety_buffer.contains(&0);
-            assert!(
-                self.safety_buffer.is_empty() || no_zeroes,
-                "SA returning 0, and we expected \
-                 the safety buffer to either be empty, or contain no other \
-                 zeroes, but it was {:?}",
-                self.safety_buffer
-            );
-        } else {
-            assert!(
-                !self.safety_buffer.contains(&lid),
-                "giving away segment {} that is in the safety buffer {:?}",
-                lid,
-                self.safety_buffer
-            );
-        }
-
-        self.safety_buffer.push(lid);
-        if self.safety_buffer.len() > self.config.io_bufs {
-            self.safety_buffer.remove(0);
-        }
-        assert!(self.safety_buffer.len() <= self.config.io_bufs);
 
         Ok(lid)
     }
@@ -1181,9 +1043,10 @@ impl SegmentAccountant {
         &mut self,
         lsn: Lsn,
     ) -> Box<dyn Iterator<Item = (Lsn, LogId)>> {
-        if let Err(e) = self.ensure_ordering_initialized() {
-            error!("failed to load segment ordering: {:?}", e);
-        }
+        assert!(
+            !self.ordering.is_empty(),
+            "expected ordering to have been initialized already"
+        );
 
         assert!(
             self.pause_rewriting,
@@ -1193,6 +1056,12 @@ impl SegmentAccountant {
 
         let segment_len = self.config.io_buf_size as Lsn;
         let normalized_lsn = lsn / segment_len * segment_len;
+
+        trace!(
+            "generated iterator over {:?} where lsn >= {}",
+            self.ordering,
+            normalized_lsn
+        );
 
         Box::new(
             self.ordering
@@ -1210,17 +1079,10 @@ impl SegmentAccountant {
             "new length must be io-buf-len aligned"
         );
 
-        if self.safety_buffer.contains(&at) {
-            panic!(
-                "file tip {} to be truncated is in the safety buffer {:?}",
-                at, self.safety_buffer
-            );
-        }
-
         self.tip = at;
 
         assert!(
-            !self.segment_in_free(at),
+            !self.free.contains(&at),
             "double-free of a segment occurred"
         );
 
@@ -1253,16 +1115,6 @@ impl SegmentAccountant {
         }
     }
 
-    fn ensure_ordering_initialized(&mut self) -> Result<()> {
-        if !self.ordering.is_empty() {
-            return Ok(());
-        }
-
-        self.ordering = scan_segment_lsns(0, &self.config)?;
-        debug!("initialized ordering to {:?}", self.ordering);
-        Ok(())
-    }
-
     fn lid_to_idx(&mut self, lid: LogId) -> usize {
         let idx = assert_usize(lid / self.config.io_buf_size as LogId);
 
@@ -1274,135 +1126,6 @@ impl SegmentAccountant {
 
         idx
     }
-
-    fn segment_in_free(&self, lid: LogId) -> bool {
-        self.free.contains_key(&lid)
-    }
-}
-
-// Scan the log file if we don't know of any Lsn offsets yet,
-// and recover the order of segments, and the highest Lsn.
-fn scan_segment_lsns(
-    min: Lsn,
-    config: &Config,
-) -> Result<BTreeMap<Lsn, LogId>> {
-    let mut ordering = BTreeMap::new();
-
-    let segment_len = config.io_buf_size as LogId;
-    let mut cursor = 0;
-
-    let f = &config.file;
-    while let Ok(segment) = f.read_segment_header(cursor) {
-        // in the future this can be optimized to just read
-        // the initial header at that position... but we need to
-        // make sure the segment is not torn
-        trace!(
-            "SA scanned header at lid {} during startup: {:?}",
-            cursor,
-            segment
-        );
-        if segment.ok && (segment.lsn != 0 || cursor == 0) && segment.lsn >= min
-        {
-            assert_ne!(segment.lsn, Lsn::max_value());
-
-            // if lsn is 0, this is free
-            assert!(
-                !ordering.contains_key(&segment.lsn),
-                "duplicate segment LSN {} detected at both {} and {}, \
-                 one should have been zeroed out during recovery",
-                segment.lsn,
-                ordering[&segment.lsn],
-                cursor
-            );
-            ordering.insert(segment.lsn, cursor);
-        }
-        cursor += segment_len;
-    }
-
-    debug!("ordering before clearing tears: {:?}", ordering);
-
-    // Check that the last <# io buffers> segments properly
-    // link their previous segment pointers.
-    clean_tail_tears(ordering, config, &f)
-}
-
-// This ensures that the last <# io buffers> segments on
-// disk connect via their previous segment pointers in
-// the header. This is important because we expect that
-// the last <# io buffers> segments will join up, and we
-// never reuse buffers within this safety range.
-fn clean_tail_tears(
-    mut ordering: BTreeMap<Lsn, LogId>,
-    config: &Config,
-    f: &File,
-) -> Result<BTreeMap<Lsn, LogId>> {
-    let safety_buffer = config.io_bufs;
-    let logical_tail: Vec<Lsn> = ordering
-        .iter()
-        .rev()
-        .take(safety_buffer)
-        .map(|(lsn, _lid)| *lsn)
-        .collect();
-
-    let io_buf_size = config.io_buf_size;
-
-    let mut tear_at = None;
-
-    // make sure the last <# io_bufs> segments are contiguous
-    for window in logical_tail.windows(2) {
-        if window[0] != window[1] + io_buf_size as Lsn {
-            error!("detected torn segment somewhere after {}", window[1]);
-            tear_at = Some(window[1]);
-        }
-    }
-
-    if let Some(tear) = tear_at {
-        // we need to chop off the elements after the tear
-        debug!("filtering out segments after detected tear at {}", tear);
-        let tears = ordering
-            .iter()
-            .filter(|&(lsn, _lid)| *lsn > tear)
-            .collect::<Vec<_>>();
-
-        if tears.len() > config.io_bufs {
-            error!(
-                "encountered corruption in the middle \
-                 of the database file, before the \
-                 section that would be impacted by \
-                 a normal crash. tear at lsn {} \
-                 segments after that: {:?}",
-                tear, tears,
-            );
-            return Err(Error::Corruption {
-                at: DiskPtr::Inline(ordering[&tear]),
-            });
-        }
-
-        for (&lsn, &lid) in &tears {
-            if lsn > tear {
-                error!("filtering out segment with lsn {} at lid {}", lsn, lid);
-
-                f.pwrite_all(
-                    &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
-                    lid,
-                )
-                .expect(
-                    "should be able to mark a linear-orphan \
-                     segment as invalid",
-                );
-                f.sync_all().expect(
-                    "should be able to sync data \
-                     file after purging linear-orphan",
-                );
-            }
-        }
-        ordering = ordering
-            .into_iter()
-            .filter(|&(lsn, _lid)| lsn <= tear)
-            .collect();
-    }
-
-    Ok(ordering)
 }
 
 /// The log may be configured to write data
@@ -1418,36 +1141,6 @@ pub enum SegmentMode {
     /// Will try to copy data out of segments
     /// once they reach a configurable threshold.
     Gc,
-}
-
-pub(super) fn raw_segment_iter_from(
-    lsn: Lsn,
-    config: &Config,
-) -> Result<LogIter> {
-    let segment_len = config.io_buf_size as Lsn;
-    let normalized_lsn = lsn / segment_len * segment_len;
-
-    let ordering = scan_segment_lsns(0, &config)?;
-
-    trace!(
-        "generated iterator over segments {:?} with lsn >= {}",
-        ordering,
-        normalized_lsn
-    );
-
-    let segment_iter = Box::new(
-        ordering
-            .into_iter()
-            .filter(move |&(l, _)| l >= normalized_lsn),
-    );
-
-    Ok(LogIter {
-        config: config.clone(),
-        max_lsn: std::i64::MAX,
-        cur_lsn: SEG_HEADER_LEN as Lsn,
-        segment_base: None,
-        segment_iter,
-    })
 }
 
 fn segment_is_drainable(

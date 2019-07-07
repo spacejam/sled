@@ -293,7 +293,7 @@ where
     _materializer: PhantomData<PM>,
     config: Config,
     inner: Arc<PageTable<PageTableEntry<P>>>,
-    max_pid: AtomicU64,
+    next_pid_to_allocate: AtomicU64,
     free: Arc<Mutex<BinaryHeap<PageId>>>,
     log: Log,
     lru: Lru,
@@ -342,7 +342,7 @@ where
     ) -> std::result::Result<(), fmt::Error> {
         f.write_str(&*format!(
             "PageCache {{ max: {:?} free: {:?} }}\n",
-            self.max_pid.load(SeqCst),
+            self.next_pid_to_allocate.load(SeqCst),
             self.free
         ))
     }
@@ -371,7 +371,7 @@ where
                 self.meta(&tx).expect("should get meta under test").clone(),
             );
 
-            for pid in 0..self.max_pid.load(SeqCst) {
+            for pid in 0..self.next_pid_to_allocate.load(SeqCst) {
                 let pte = self.inner.get(pid, &tx.guard);
                 if pte.is_none() {
                     continue;
@@ -410,13 +410,13 @@ where
         // try to pull any existing snapshot off disk, and
         // apply any new data to it to "catch-up" the
         // snapshot before loading it.
-        let snapshot = read_snapshot_or_default::<PM, P>(&config)?;
+        let snapshot = read_snapshot_or_default(&config)?;
 
         let mut pc = PageCache {
             _materializer: PhantomData,
             config: config.clone(),
             inner: Arc::new(PageTable::default()),
-            max_pid: AtomicU64::new(0),
+            next_pid_to_allocate: AtomicU64::new(0),
             free: Arc::new(Mutex::new(BinaryHeap::new())),
             log: Log::start(config, snapshot.clone())?,
             lru,
@@ -441,7 +441,7 @@ where
             let mut pages_after_restart: HashMap<PageId, Vec<DiskPtr>> =
                 HashMap::new();
 
-            for pid in 0..pc.max_pid.load(SeqCst) {
+            for pid in 0..pc.next_pid_to_allocate.load(SeqCst) {
                 let pte = pc.inner.get(pid, &tx.guard);
                 if pte.is_none() {
                     continue;
@@ -650,7 +650,7 @@ where
                 ),
             }
         } else {
-            let pid = self.max_pid.fetch_add(1, SeqCst);
+            let pid = self.next_pid_to_allocate.fetch_add(1, SeqCst);
 
             trace!("allocating pid {} for the first time", pid);
 
@@ -818,21 +818,21 @@ where
             match result {
                 Ok(cached_ptr) => {
                     trace!("link of pid {} succeeded", pid);
-                    let skip_mark = {
-                        // if the last update for this page was also
-                        // sent to this segment, we can skip marking it
-                        let previous_head_lsn = old.last_lsn();
 
-                        assert_ne!(previous_head_lsn, 0);
+                    // if the last update for this page was also
+                    // sent to this segment, we can skip marking it
+                    let previous_head_lsn = old.last_lsn();
 
-                        let previous_lsn_segment =
-                            previous_head_lsn / self.config.io_buf_size as i64;
-                        let new_lsn_segment =
-                            lsn / self.config.io_buf_size as i64;
+                    assert_ne!(previous_head_lsn, 0);
 
-                        previous_lsn_segment == new_lsn_segment
-                    };
-                    let to_clean = if skip_mark {
+                    let previous_lsn_segment =
+                        previous_head_lsn / self.config.io_buf_size as i64;
+                    let new_lsn_segment = lsn / self.config.io_buf_size as i64;
+
+                    let to_clean = if previous_lsn_segment == new_lsn_segment {
+                        // can skip mark_link because we've
+                        // already accounted for this page
+                        // being resident on this segment
                         self.log.with_sa(|sa| sa.clean(pid))
                     } else {
                         self.log.with_sa(|sa| {
@@ -1110,8 +1110,8 @@ where
 
         let mut ret = meta_size + idgen_size + config_size;
         let min_pid = CONFIG_PID + 1;
-        let max_pid = self.max_pid.load(SeqCst);
-        for pid in min_pid..max_pid {
+        let next_pid_to_allocate = self.next_pid_to_allocate.load(SeqCst);
+        for pid in min_pid..next_pid_to_allocate {
             if let Some((_, frags)) = self.get(pid, &tx)? {
                 ret += frags.iter().map(|f| PM::size_in_bytes(*f)).sum::<u64>();
             }
@@ -1625,18 +1625,7 @@ where
 
         let pte = unsafe { pte_ptr.deref() };
 
-        let mut current = pte.rts.load(SeqCst);
-        loop {
-            if current >= ts {
-                return;
-            }
-            let last = pte.rts.compare_and_swap(current, ts, SeqCst);
-            if last == current {
-                // we succeeded.
-                return;
-            }
-            current = last;
-        }
+        bump_atomic_lsn(&pte.rts, ts);
     }
 
     /// Retrieves the current transactional read timestamp
@@ -1997,18 +1986,18 @@ where
             // NB must be called after taking the snapshot mutex.
             iobufs.with_sa(|sa| sa.pause_rewriting());
 
-            let max_lsn = last_snapshot.max_lsn;
-            let start_lsn = max_lsn - (max_lsn % config.io_buf_size as Lsn);
+            let last_lsn = last_snapshot.last_lsn;
+            let start_lsn = last_lsn - (last_lsn % config.io_buf_size as Lsn);
 
             let iter = iobufs.iter_from(start_lsn);
 
             debug!(
                 "snapshot starting from offset {} to the segment containing ~{}",
-                last_snapshot.max_lsn,
+                last_snapshot.last_lsn,
                 iobufs.stable(),
             );
 
-            let res = advance_snapshot::<PM, P>(iter, last_snapshot, &config);
+            let res = advance_snapshot(iter, last_snapshot, &config);
 
             // NB it's important to resume writing before replacing the snapshot
             // into the mutex, otherwise we create a race condition where the SA is
@@ -2064,31 +2053,47 @@ where
         // panic if not set
         let snapshot = self.last_snapshot.try_lock().unwrap().clone().unwrap();
 
-        self.max_pid.store(snapshot.max_pid, SeqCst);
+        let next_pid_to_allocate = if snapshot.pt.is_empty() {
+            0
+        } else {
+            *snapshot.pt.keys().max().unwrap() + 1
+        };
 
-        let mut snapshot_free = snapshot.free.clone();
+        self.next_pid_to_allocate = AtomicU64::from(next_pid_to_allocate);
 
-        for (pid, state) in &snapshot.pt {
+        debug!(
+            "load_snapshot loading pages from 0..{}",
+            next_pid_to_allocate
+        );
+        for pid in 0..next_pid_to_allocate {
+            let state = if let Some(state) = snapshot.pt.get(&pid) {
+                state
+            } else {
+                panic!(
+                    "load_snapshot pid {} not found, despite being below the max pid {}",
+                    pid, next_pid_to_allocate
+                );
+            };
+
             trace!("load_snapshot page {} {:?}", pid, state);
 
             let stack = Stack::default();
 
             match *state {
                 PageState::Present(ref ptrs) => {
-                    let (base_lsn, base_ptr) = ptrs[0];
+                    let (base_lsn, base_ptr, _sz) = ptrs[0];
 
                     stack.push(CacheEntry::Flush(0, base_lsn, base_ptr));
 
-                    for &(lsn, ptr) in &ptrs[1..] {
+                    for &(lsn, ptr, _sz) in &ptrs[1..] {
                         stack.push(CacheEntry::PartialFlush(0, lsn, ptr));
                     }
                 }
                 PageState::Free(lsn, ptr) => {
                     // blow away any existing state
-                    trace!("load_snapshot freeing pid {}", *pid);
+                    trace!("load_snapshot freeing pid {}", pid);
                     stack.push(CacheEntry::Free(0, lsn, ptr));
-                    self.free.lock().unwrap().push(*pid);
-                    snapshot_free.remove(&pid);
+                    self.free.lock().unwrap().push(pid);
                 }
             }
 
@@ -2107,17 +2112,9 @@ where
             trace!("installing stack for pid {}", pid);
 
             self.inner
-                .cas(*pid, Shared::null(), new_pte, &guard)
+                .cas(pid, Shared::null(), new_pte, &guard)
                 .expect("should be able to install initial stack");
         }
-
-        assert!(
-            snapshot_free.is_empty(),
-            "pages present in Snapshot free list \
-                ({:?})
-                not found in recovered page table",
-            snapshot_free
-        );
     }
 }
 

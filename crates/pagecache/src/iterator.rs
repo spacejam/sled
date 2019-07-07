@@ -1,6 +1,9 @@
-use std::io;
+use std::{collections::BTreeMap, io};
+
+use rayon::prelude::*;
 
 use self::reader::LogReader;
+
 use super::*;
 
 pub struct LogIter {
@@ -52,7 +55,7 @@ impl Iterator for LogIter {
 
             if self.cur_lsn > self.max_lsn {
                 // all done
-                trace!("hit max_lsn in iterator, stopping");
+                trace!("hit max_lsn {} in iterator, stopping", self.max_lsn);
                 return None;
             }
 
@@ -197,8 +200,8 @@ impl LogIter {
         let ret = unsafe {
             libc::posix_fadvise(
                 f.as_raw_fd(),
-                lid as libc::off_t,
-                self.config.io_buf_size as libc::off_t,
+                libc::off_t::try_from(lid).unwrap(),
+                libc::off_t::try_from(self.config.io_buf_size).unwrap(),
                 libc::POSIX_FADV_WILLNEED,
             )
         };
@@ -219,4 +222,204 @@ fn valid_entry_offset(lid: LogId, segment_len: usize) -> bool {
     let min_lid = seg_start + SEG_HEADER_LEN as LogId;
 
     lid >= min_lid && lid <= max_lid
+}
+
+// Scan the log file if we don't know of any Lsn offsets yet,
+// and recover the order of segments, and the highest Lsn.
+fn scan_segment_lsns(
+    min: Lsn,
+    config: &Config,
+) -> Result<(BTreeMap<Lsn, LogId>, Lsn)> {
+    let segment_len = LogId::try_from(config.io_buf_size).unwrap();
+
+    let f = &config.file;
+    let file_len = f.metadata()?.len();
+    let segments = (file_len / segment_len)
+        + if file_len % segment_len < LogId::try_from(SEG_HEADER_LEN).unwrap() {
+            0
+        } else {
+            1
+        };
+    trace!(
+        "file len: {} segment len {} segments: {}",
+        file_len,
+        segment_len,
+        segments
+    );
+    let headers: Vec<(LogId, SegmentHeader)> = (0..segments)
+        .into_par_iter()
+        .filter_map(|idx| {
+            let base_lid = idx * segment_len;
+            let segment = f.read_segment_header(base_lid).ok()?;
+            trace!(
+                "SA scanned header at lid {} during startup: {:?}",
+                base_lid,
+                segment
+            );
+            if segment.ok && segment.lsn >= min {
+                assert_ne!(segment.lsn, Lsn::max_value());
+                Some((base_lid, segment))
+            } else {
+                trace!(
+                    "not using segment at lid {}, ok: {} lsn: {} min lsn: {}",
+                    base_lid,
+                    segment.ok,
+                    segment.lsn,
+                    min
+                );
+                None
+            }
+        })
+        .collect();
+
+    let mut ordering = BTreeMap::new();
+    let mut max_header_stable_lsn = 0;
+
+    for (lid, header) in headers {
+        max_header_stable_lsn =
+            std::cmp::max(header.max_stable_lsn, max_header_stable_lsn);
+
+        let old = ordering.insert(header.lsn, lid);
+        assert_eq!(
+            old, None,
+            "duplicate segment LSN {} detected at both {} and {}, \
+             one should have been zeroed out during recovery",
+            header.lsn, ordering[&header.lsn], lid
+        );
+    }
+
+    debug!("ordering before clearing tears: {:?}", ordering);
+
+    // Check that the segments above max_header_stable_lsn
+    // properly link their previous segment pointers.
+    let ordering =
+        clean_tail_tears(max_header_stable_lsn, ordering, config, &f)?;
+
+    Ok((ordering, max_header_stable_lsn))
+}
+
+// This ensures that the last <# io buffers> segments on
+// disk connect via their previous segment pointers in
+// the header. This is important because we expect that
+// the last <# io buffers> segments will join up, and we
+// never reuse buffers within this safety range.
+fn clean_tail_tears(
+    max_header_stable_lsn: Lsn,
+    mut ordering: BTreeMap<Lsn, LogId>,
+    config: &Config,
+    f: &std::fs::File,
+) -> Result<BTreeMap<Lsn, LogId>> {
+    let io_buf_size = config.io_buf_size as Lsn;
+    let lowest_lsn_in_tail: Lsn =
+        ((max_header_stable_lsn / io_buf_size) - 1) * io_buf_size;
+
+    let logical_tail = ordering
+        .range(lowest_lsn_in_tail..)
+        .map(|(lsn, lid)| (*lsn, *lid))
+        .collect::<Vec<_>>();
+
+    let iter = LogIter {
+        config: config.clone(),
+        segment_iter: Box::new(logical_tail.into_iter()),
+        segment_base: None,
+        max_lsn: Lsn::max_value(),
+        cur_lsn: 0,
+    };
+
+    let tip: (Lsn, LogId) = iter
+        .max_by_key(|(_kind, _pid, lsn, _ptr, _sz)| *lsn)
+        .map(|(_, _, lsn, ptr, _)| (lsn, ptr.lid()))
+        .unwrap_or_else(|| {
+            if max_header_stable_lsn > 0 {
+                (lowest_lsn_in_tail, ordering[&lowest_lsn_in_tail])
+            } else {
+                (0, 0)
+            }
+        });
+
+    debug!(
+        "filtering out segments after detected tear at lsn {} lid {}",
+        tip.0, tip.1
+    );
+    for (lsn, lid) in ordering
+        .range((std::ops::Bound::Excluded(tip.0), std::ops::Bound::Unbounded))
+    {
+        debug!("zeroing torn segment with lsn {} at lid {}", lsn, lid);
+
+        f.pwrite_all(
+            &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
+            *lid,
+        )?;
+        f.sync_all()?;
+    }
+
+    ordering = ordering
+        .into_iter()
+        .filter(|&(lsn, _lid)| lsn <= tip.0)
+        .collect();
+
+    Ok(ordering)
+}
+
+pub(super) fn raw_segment_iter_from(
+    lsn: Lsn,
+    config: &Config,
+) -> Result<(LogIter, Lsn)> {
+    let segment_len = config.io_buf_size as Lsn;
+    let normalized_lsn = lsn / segment_len * segment_len;
+
+    let (ordering, max_header_stable_lsn) = scan_segment_lsns(0, &config)?;
+
+    // find the last stable tip, to properly handle batch manifests.
+    let tip_segment_iter =
+        Box::new(ordering.iter().map(|(a, b)| (*a, *b)).last().into_iter());
+    trace!(
+        "trying to find the max stable tip for \
+         bounding batch manifests with segment iter {:?} \
+         of segments >= max_header_stable_lsn {}",
+        tip_segment_iter,
+        max_header_stable_lsn
+    );
+
+    let mut tip_iter = LogIter {
+        config: config.clone(),
+        max_lsn: Lsn::max_value(),
+        cur_lsn: 0,
+        segment_base: None,
+        segment_iter: tip_segment_iter,
+    };
+
+    // run the iterator to the end so
+    // we can grab its current lsn, inclusive
+    // of any zeroed messages and other
+    // legit items it may not have returned
+    // in the actual iterator.
+    while let Some(_) = tip_iter.next() {}
+
+    let tip = tip_iter.cur_lsn;
+
+    trace!("found max stable tip: {}", tip);
+
+    trace!(
+        "generated iterator over segments {:?} with lsn >= {}",
+        ordering,
+        normalized_lsn,
+    );
+
+    let segment_iter = Box::new(
+        ordering
+            .into_iter()
+            .filter(move |&(l, _)| l >= normalized_lsn),
+    );
+
+    Ok((
+        LogIter {
+            config: config.clone(),
+            max_lsn: tip,
+            cur_lsn: 0,
+            segment_base: None,
+            segment_iter,
+        },
+        max_header_stable_lsn,
+    ))
 }

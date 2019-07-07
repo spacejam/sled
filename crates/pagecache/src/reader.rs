@@ -21,8 +21,18 @@ impl LogReader for File {
 
         let mut seg_header_buf = [0u8; SEG_HEADER_LEN];
         self.pread_exact(&mut seg_header_buf, lid)?;
+        let mut segment_header = SegmentHeader::from(seg_header_buf);
 
-        Ok(seg_header_buf.into())
+        if segment_header.lsn < Lsn::try_from(lid).unwrap() {
+            debug!(
+                "segment had lsn {} but we expected something \
+                 greater, as the base lid is {}",
+                segment_header.lsn, lid
+            );
+            segment_header.ok = false;
+        }
+
+        Ok(segment_header)
     }
 
     /// read a buffer from the disk
@@ -81,6 +91,10 @@ impl LogReader for File {
         }
 
         if header.lsn != expected_lsn {
+            debug!(
+                "header {:?} does not contain expected lsn {}",
+                header, expected_lsn
+            );
             return Ok(LogRead::Corrupted(header.len));
         }
 
@@ -89,14 +103,17 @@ impl LogReader for File {
 
         if usize::try_from(header.len).unwrap() > max_possible_len {
             trace!(
-                "read a corrupted message with impossibly long length of {}",
-                header.len
+                "read a corrupted message with impossibly long length {:?}",
+                header
             );
             return Ok(LogRead::Corrupted(header.len));
         }
 
         if header.kind == MessageKind::Corrupted {
-            trace!("read a corrupted message with Corrupted MessageKind with len {}", header.len);
+            trace!(
+                "read a corrupted message with Corrupted MessageKind: {:?}",
+                header
+            );
             return Ok(LogRead::Corrupted(header.len));
         }
 

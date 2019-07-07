@@ -11,8 +11,7 @@ cache:
 
 install:
   - curl https://sh.rustup.rs -sSf |
-    sh -s -- -y --default-toolchain $TRAVIS_RUST_VERSION &&
-    rustup component add clippy-preview
+    sh -s -- -y --default-toolchain $TRAVIS_RUST_VERSION
   - bash -c 'if [ "$TEST" = "sanitizers-and-cross-build" ]; then
       rustup target add aarch64-fuchsia;
       rustup target add aarch64-linux-android;
@@ -27,7 +26,7 @@ install:
 matrix:
   include:
     - os: linux
-      rust: nightly-2019-04-11
+      rust: nightly-2019-07-07
       env:
         - TEST=sanitizers-and-cross-build
     - os: osx
@@ -76,6 +75,7 @@ script:
                  cargo test quickcheck_tree_matches_btreemap --release -- --ignored --nocapture
                  ;;
                clippy)
+                 rustup component add clippy &&
                  cargo clippy
                  ;;
                sanitizers-and-cross-build)

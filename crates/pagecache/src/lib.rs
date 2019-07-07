@@ -77,12 +77,12 @@ use self::{
     config::PersistedConfig,
     constants::{BATCH_MANIFEST_PID, CONFIG_PID, COUNTER_PID, META_PID},
     iobuf::{IoBuf, IoBufs},
-    iterator::LogIter,
+    iterator::{raw_segment_iter_from, LogIter},
     metrics::{clock, measure},
     pagecache::Update,
     parallel_io::Pio,
     reader::LogReader,
-    segment::{raw_segment_iter_from, SegmentAccountant},
+    segment::SegmentAccountant,
     snapshot::{advance_snapshot, PageState},
     util::{arr_to_u32, arr_to_u64, maybe_decompress, u32_to_arr, u64_to_arr},
 };
@@ -289,4 +289,20 @@ where
     usize: std::convert::TryFrom<T, Error = std::num::TryFromIntError>,
 {
     usize::try_from(from).expect("lost data cast while converting to usize")
+}
+
+// TODO remove this when atomic fetch_max stabilizes in #48655
+fn bump_atomic_lsn(atomic_lsn: &AtomicLsn, to: Lsn) {
+    let mut current = atomic_lsn.load(SeqCst);
+    loop {
+        if current >= to {
+            return;
+        }
+        let last = atomic_lsn.compare_and_swap(current, to, SeqCst);
+        if last == current {
+            // we succeeded.
+            return;
+        }
+        current = last;
+    }
 }

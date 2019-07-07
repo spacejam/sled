@@ -62,46 +62,35 @@ pub(super) struct IoBufs {
     // to stable storage due to interesting thread interleavings.
     pub(crate) stable_lsn: AtomicLsn,
     pub(crate) max_reserved_lsn: AtomicLsn,
-    pub(crate) max_header_stable_lsn: AtomicLsn,
+    pub(crate) max_header_stable_lsn: Arc<AtomicLsn>,
     pub(crate) segment_accountant: Mutex<SegmentAccountant>,
 }
 
 /// `IoBufs` is a set of lock-free buffers for coordinating
 /// writes to underlying storage.
 impl IoBufs {
-    pub(crate) fn start(
-        config: Config,
-        mut snapshot: Snapshot,
-    ) -> Result<IoBufs> {
+    pub(crate) fn start(config: Config, snapshot: Snapshot) -> Result<IoBufs> {
         // open file for writing
         let file = &config.file;
 
         let io_buf_size = config.io_buf_size;
 
-        if snapshot.max_lsn < SEG_HEADER_LEN as Lsn {
-            debug!(
-                "setting snapshot to default as max_lsn < {}",
-                SEG_HEADER_LEN
-            );
-            snapshot = Snapshot::default();
-        }
-
-        let snapshot_max_lsn = snapshot.max_lsn;
+        let snapshot_last_lsn = snapshot.last_lsn;
         let snapshot_last_lid = snapshot.last_lid;
         let snapshot_max_header_stable_lsn = snapshot.max_header_stable_lsn;
 
         let mut segment_accountant: SegmentAccountant =
             SegmentAccountant::start(config.clone(), snapshot)?;
 
-        let (next_lsn, next_lid) = if snapshot_max_lsn
+        let (next_lsn, next_lid) = if snapshot_last_lsn
             % config.io_buf_size as Lsn
             == 0
         {
-            (snapshot_max_lsn, snapshot_last_lid)
+            (snapshot_last_lsn, snapshot_last_lid)
         } else {
             let width = match file.read_message(
                 snapshot_last_lid,
-                snapshot_max_lsn,
+                snapshot_last_lsn,
                 &config,
             ) {
                 Ok(LogRead::Failed(_, len))
@@ -120,7 +109,7 @@ impl IoBufs {
             };
 
             (
-                snapshot_max_lsn + Lsn::from(width),
+                snapshot_last_lsn + Lsn::from(width),
                 snapshot_last_lid + LogId::from(width),
             )
         };
@@ -145,6 +134,9 @@ impl IoBufs {
                 assert_eq!(next_lid, 0);
             }
             let lid = segment_accountant.next(next_lsn)?;
+            if next_lsn == 0 {
+                assert_eq!(0, lid);
+            }
 
             iobuf.lid = lid;
             iobuf.capacity = io_buf_size;
@@ -185,9 +177,9 @@ impl IoBufs {
 
             stable_lsn: AtomicLsn::new(stable),
             max_reserved_lsn: AtomicLsn::new(stable),
-            max_header_stable_lsn: AtomicLsn::new(
+            max_header_stable_lsn: Arc::new(AtomicLsn::new(
                 snapshot_max_header_stable_lsn,
-            ),
+            )),
             segment_accountant: Mutex::new(segment_accountant),
         })
     }
@@ -297,41 +289,6 @@ impl IoBufs {
         }
 
         Ok(())
-    }
-
-    // ensure self.max_reserved_lsn is set to this Lsn or greater
-    pub(crate) fn bump_max_reserved_lsn(&self, lsn: Lsn) {
-        let mut current = self.max_reserved_lsn.load(SeqCst);
-        loop {
-            if current >= lsn {
-                return;
-            }
-            let last =
-                self.max_reserved_lsn.compare_and_swap(current, lsn, SeqCst);
-            if last == current {
-                // we succeeded.
-                return;
-            }
-            current = last;
-        }
-    }
-
-    // ensure self.max_header_stable_lsn is set to this Lsn or greater
-    pub(crate) fn bump_max_header_stable_lsn(&self, lsn: Lsn) {
-        let mut current = self.max_header_stable_lsn.load(SeqCst);
-        loop {
-            if current >= lsn {
-                return;
-            }
-            let last = self
-                .max_header_stable_lsn
-                .compare_and_swap(current, lsn, SeqCst);
-            if last == current {
-                // we succeeded.
-                return;
-            }
-            current = last;
-        }
     }
 
     // Write an IO buffer's data to stable storage and set up the
@@ -448,9 +405,22 @@ impl IoBufs {
 
         M.written_bytes.measure(total_len as f64);
 
-        self.bump_max_header_stable_lsn(iobuf.stored_max_stable_lsn);
+        // NB the below deferred logic is important to ensure
+        // that we never actually free a segment until all threads
+        // that may have witnessed a DiskPtr that points into it
+        // have completed their (crossbeam-epoch)-pinned operations.
+        let guard = pin();
+        let max_header_stable_lsn = self.max_header_stable_lsn.clone();
+        let stored_max_stable_lsn = iobuf.stored_max_stable_lsn;
+        guard.defer(move || {
+            bump_atomic_lsn(&max_header_stable_lsn, stored_max_stable_lsn)
+        });
+        drop(guard);
 
-        Ok(())
+        let current_max_header_stable_lsn =
+            self.max_header_stable_lsn.load(SeqCst);
+
+        self.with_sa(|sa| sa.stabilize(current_max_header_stable_lsn))
     }
 
     // It's possible that IO buffers are written out of order!
@@ -468,7 +438,6 @@ impl IoBufs {
             whence
         );
         let mut intervals = self.intervals.lock().unwrap();
-        let lsn_before = self.stable_lsn.load(SeqCst) as Lsn;
 
         let interval = (whence, whence + len as Lsn - 1);
 
@@ -487,7 +456,6 @@ impl IoBufs {
         let mut updated = false;
 
         let len_before = intervals.len();
-        let mut lsn_after = lsn_before;
 
         while let Some(&(low, high)) = intervals.last() {
             assert!(low <= high);
@@ -509,7 +477,6 @@ impl IoBufs {
                 debug!("new highest interval: {} - {}", low, high);
                 intervals.pop();
                 updated = true;
-                lsn_after = high;
             } else {
                 break;
             }
@@ -521,29 +488,6 @@ impl IoBufs {
 
         if updated {
             self.interval_updated.notify_all();
-        }
-
-        // NB we continue to hold the intervals mutex for
-        // our calls to the segment accountant below so
-        // that we guarantee that we deactivate segments
-        // in order of LSN.
-        let logical_segment_before =
-            lsn_before / self.config.io_buf_size as Lsn;
-        let logical_segment_after = lsn_after / self.config.io_buf_size as Lsn;
-        if logical_segment_before != logical_segment_after {
-            self.with_sa(move |sa| {
-                for logical_segment in logical_segment_before..logical_segment_after {
-                    let segment_lsn = logical_segment * self.config.io_buf_size as Lsn;
-                    // transition this segment into deplete-only mode
-                    trace!(
-                        "deactivating segment with lsn {}",
-                        segment_lsn,
-                    );
-                    if let Err(e) = sa.deactivate_segment(segment_lsn) {
-                        error!("segment accountant failed to deactivate segment: {}", e);
-                    }
-                }
-            });
         }
     }
 
@@ -579,6 +523,12 @@ pub(crate) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Result<usize> {
             // current IO buffer.
         } else {
             maybe_seal_and_write_iobuf(iobufs, &iobuf, header, false)?;
+            stable = iobufs.stable();
+            // NB we have to continue here to possibly clear
+            // the next io buffer, which may have dirty
+            // data we need to flush (and maybe no other
+            // thread is still alive to do so)
+            continue;
         }
 
         // block until another thread updates the stable lsn
@@ -588,7 +538,27 @@ pub(crate) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Result<usize> {
         if stable < lsn {
             trace!("waiting on cond var for make_stable({})", lsn);
 
-            let _ = iobufs.interval_updated.wait(waiter).unwrap();
+            if cfg!(feature = "event_log") {
+                let (waiter, timeout) = iobufs
+                    .interval_updated
+                    .wait_timeout(waiter, std::time::Duration::from_secs(10))
+                    .unwrap();
+                if timeout.timed_out() {
+                    fn tn() -> String {
+                        std::thread::current()
+                            .name()
+                            .unwrap_or("unknown")
+                            .to_owned()
+                    }
+                    panic!(
+                        "{} failed to make_stable after 1 second. \
+                         waiting to stabilize lsn {}, current stable {} intervals: {:?}",
+                        tn(), lsn, iobufs.stable(), waiter
+                    );
+                }
+            } else {
+                let _ = iobufs.interval_updated.wait(waiter).unwrap();
+            }
         } else {
             trace!("make_stable({}) returning", lsn);
             break;
@@ -735,9 +705,12 @@ pub(crate) fn maybe_seal_and_write_iobuf(
     // are going to wait on the condition variable will observe
     // the change.
     debug_delay();
+    let intervals = iobufs.intervals.lock();
     let mut mu = iobufs.iobuf.write().unwrap();
     *mu = Arc::new(next_iobuf);
     drop(mu);
+    iobufs.interval_updated.notify_all();
+    drop(intervals);
 
     drop(measure_assign_offset);
 
@@ -812,7 +785,7 @@ impl IoBuf {
             capacity: 0,
             maxed: AtomicBool::new(false),
             linearizer: Mutex::new(()),
-            stored_max_stable_lsn: 0,
+            stored_max_stable_lsn: -1,
         }
     }
 
@@ -834,18 +807,18 @@ impl IoBuf {
         &mut self,
         last: Header,
         lsn: Lsn,
-        highest_known_stable_lsn: Lsn,
+        max_stable_lsn: Lsn,
     ) {
         debug!("storing lsn {} in beginning of buffer", lsn);
         assert!(self.capacity >= SEG_HEADER_LEN);
 
-        self.stored_max_stable_lsn = highest_known_stable_lsn;
+        self.stored_max_stable_lsn = max_stable_lsn;
 
         self.lsn = lsn;
 
         let header = SegmentHeader {
             lsn,
-            highest_known_stable_lsn,
+            max_stable_lsn,
             ok: true,
         };
         let header_bytes: [u8; SEG_HEADER_LEN] = header.into();

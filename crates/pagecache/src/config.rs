@@ -1,5 +1,4 @@
 use std::{
-    fmt::Debug,
     fs,
     io::{Read, Seek, Write},
     ops::Deref,
@@ -15,7 +14,6 @@ use bincode::{deserialize, serialize};
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use fs2::FileExt;
 
-use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 // explicitly bring LogReader in to be tool-friendly
@@ -682,21 +680,17 @@ impl Config {
     }
 
     #[doc(hidden)]
-    pub fn verify_snapshot<PM, P>(&self) -> Result<()>
-    where
-        PM: Materializer<PageFrag = P>,
-        P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
-    {
+    pub fn verify_snapshot(&self) -> Result<()> {
         debug!("generating incremental snapshot");
 
-        let incremental = read_snapshot_or_default::<PM, P>(&self)?;
+        let incremental = read_snapshot_or_default(&self)?;
 
         for snapshot_path in self.get_snapshot_files()? {
             std::fs::remove_file(snapshot_path)?;
         }
 
         debug!("generating snapshot without the previous one");
-        let regenerated = read_snapshot_or_default::<PM, P>(&self)?;
+        let regenerated = read_snapshot_or_default(&self)?;
 
         for (k, v) in &regenerated.pt {
             if !incremental.pt.contains_key(&k) {
@@ -712,7 +706,7 @@ impl Config {
                 "page tables differ for pid {}",
                 k
             );
-            for (lsn, ptr) in v.iter() {
+            for (lsn, ptr, _sz) in v.iter() {
                 let read = self.file.read_message(ptr.lid(), lsn, &self);
                 if let Err(e) = read {
                     panic!(
@@ -738,7 +732,7 @@ impl Config {
                 "page tables differ for pid {}",
                 k
             );
-            for (lsn, ptr) in v.iter() {
+            for (lsn, ptr, _sz) in v.iter() {
                 let read = self.file.read_message(ptr.lid(), lsn, &self);
                 if let Err(e) = read {
                     panic!(
@@ -755,20 +749,12 @@ impl Config {
             "snapshot pagetable diverged"
         );
         assert_eq!(
-            incremental.max_pid, regenerated.max_pid,
-            "snapshot max_pid diverged"
-        );
-        assert_eq!(
-            incremental.max_lsn, regenerated.max_lsn,
+            incremental.last_lsn, regenerated.last_lsn,
             "snapshot max_lsn diverged"
         );
         assert_eq!(
             incremental.last_lid, regenerated.last_lid,
             "snapshot last_lid diverged"
-        );
-        assert_eq!(
-            incremental.free, regenerated.free,
-            "snapshot free list diverged"
         );
 
         /*
