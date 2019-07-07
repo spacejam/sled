@@ -62,7 +62,7 @@ pub(super) struct IoBufs {
     // to stable storage due to interesting thread interleavings.
     pub(crate) stable_lsn: AtomicLsn,
     pub(crate) max_reserved_lsn: AtomicLsn,
-    pub(crate) max_header_stable_lsn: AtomicLsn,
+    pub(crate) max_header_stable_lsn: Arc<AtomicLsn>,
     pub(crate) segment_accountant: Mutex<SegmentAccountant>,
 }
 
@@ -177,9 +177,9 @@ impl IoBufs {
 
             stable_lsn: AtomicLsn::new(stable),
             max_reserved_lsn: AtomicLsn::new(stable),
-            max_header_stable_lsn: AtomicLsn::new(
+            max_header_stable_lsn: Arc::new(AtomicLsn::new(
                 snapshot_max_header_stable_lsn,
-            ),
+            )),
             segment_accountant: Mutex::new(segment_accountant),
         })
     }
@@ -405,10 +405,17 @@ impl IoBufs {
 
         M.written_bytes.measure(total_len as f64);
 
-        bump_atomic_lsn(
-            &self.max_header_stable_lsn,
-            iobuf.stored_max_stable_lsn,
-        );
+        // NB the below deferred logic is important to ensure
+        // that we never actually free a segment until all threads
+        // that may have witnessed a DiskPtr that points into it
+        // have completed their (crossbeam-epoch)-pinned operations.
+        let guard = pin();
+        let max_header_stable_lsn = self.max_header_stable_lsn.clone();
+        let stored_max_stable_lsn = iobuf.stored_max_stable_lsn;
+        guard.defer(move || {
+            bump_atomic_lsn(&max_header_stable_lsn, stored_max_stable_lsn)
+        });
+        drop(guard);
 
         let current_max_header_stable_lsn =
             self.max_header_stable_lsn.load(SeqCst);
