@@ -557,8 +557,6 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
             Restart => {
                 drop(pc);
 
-                println!("restarting pagecache in test");
-
                 config.verify_snapshot().unwrap();
 
                 pc = PageCache::start(config.clone()).unwrap();
