@@ -27,7 +27,7 @@ install:
 matrix:
   include:
     - os: linux
-      rust: nightly-2019-07-05
+      rust: nightly-2019-07-07
       env:
         - TEST=sanitizers-and-cross-build
     - os: osx
