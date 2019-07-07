@@ -191,19 +191,17 @@ fn parallel_pagecache() -> sled::Result<()> {
         Arc::new(PageCache::start(config.clone()).unwrap());
 
     par! {p, |pc: &PageCache<_, _>, i: usize| {
-        let mut success = 0;
-
-        while success <= 10 {
+        for item in 0..=10 {
             let tx = pc.begin().unwrap();
-            let (key, _frags) = pc.get(i as PageId, &tx)
+            let (key, frags) = pc.get(i as PageId, &tx)
                 .expect("we should read what we just wrote")
                 .unwrap();
-            match pc.link(i as PageId, key, vec![success], &tx) {
-                Err(_) => {},
-                Ok(_) => {
-                    success += 1;
-                }
-            }
+            let v = frags_to_vec(frags);
+            assert_eq!(v.len(), item + 1, "expected frags to be of len {} for pid {}, \
+                       but they were {:?}", item + 1, i, v);
+            pc.link(i as PageId, key, vec![item], &tx)
+                .expect("no IO errors expected")
+                .expect("no CAS failures expected");
         }
         let tx = pc.begin().unwrap();
         let (_key, frags) = pc.get(i as PageId, &tx)
@@ -211,7 +209,7 @@ fn parallel_pagecache() -> sled::Result<()> {
                              .unwrap();
         let v = frags_to_vec(frags);
 
-        assert_eq!(v, vec![i as usize, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        assert_eq!(v, vec![i, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     }};
 
     drop(p);
