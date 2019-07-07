@@ -291,41 +291,6 @@ impl IoBufs {
         Ok(())
     }
 
-    // ensure self.max_reserved_lsn is set to this Lsn or greater
-    pub(crate) fn bump_max_reserved_lsn(&self, lsn: Lsn) {
-        let mut current = self.max_reserved_lsn.load(SeqCst);
-        loop {
-            if current >= lsn {
-                return;
-            }
-            let last =
-                self.max_reserved_lsn.compare_and_swap(current, lsn, SeqCst);
-            if last == current {
-                // we succeeded.
-                return;
-            }
-            current = last;
-        }
-    }
-
-    // ensure self.max_header_stable_lsn is set to this Lsn or greater
-    pub(crate) fn bump_max_header_stable_lsn(&self, lsn: Lsn) -> Result<()> {
-        let mut current = self.max_header_stable_lsn.load(SeqCst);
-        loop {
-            if current >= lsn {
-                return Ok(());
-            }
-            let last = self
-                .max_header_stable_lsn
-                .compare_and_swap(current, lsn, SeqCst);
-            if last == current {
-                // we succeeded.
-                return self.with_sa(|sa| sa.stabilize(lsn));
-            }
-            current = last;
-        }
-    }
-
     // Write an IO buffer's data to stable storage and set up the
     // next IO buffer for writing.
     pub(crate) fn write_to_log(&self, iobuf: &IoBuf) -> Result<()> {
@@ -440,7 +405,15 @@ impl IoBufs {
 
         M.written_bytes.measure(total_len as f64);
 
-        self.bump_max_header_stable_lsn(iobuf.stored_max_stable_lsn)
+        bump_atomic_lsn(
+            &self.max_header_stable_lsn,
+            iobuf.stored_max_stable_lsn,
+        );
+
+        let current_max_header_stable_lsn =
+            self.max_header_stable_lsn.load(SeqCst);
+
+        self.with_sa(|sa| sa.stabilize(current_max_header_stable_lsn))
     }
 
     // It's possible that IO buffers are written out of order!

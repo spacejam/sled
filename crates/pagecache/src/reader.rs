@@ -91,6 +91,10 @@ impl LogReader for File {
         }
 
         if header.lsn != expected_lsn {
+            debug!(
+                "header {:?} does not contain expected lsn {}",
+                header, expected_lsn
+            );
             return Ok(LogRead::Corrupted(header.len));
         }
 
@@ -99,14 +103,17 @@ impl LogReader for File {
 
         if usize::try_from(header.len).unwrap() > max_possible_len {
             trace!(
-                "read a corrupted message with impossibly long length of {}",
-                header.len
+                "read a corrupted message with impossibly long length {:?}",
+                header
             );
             return Ok(LogRead::Corrupted(header.len));
         }
 
         if header.kind == MessageKind::Corrupted {
-            trace!("read a corrupted message with Corrupted MessageKind with len {}", header.len);
+            trace!(
+                "read a corrupted message with Corrupted MessageKind: {:?}",
+                header
+            );
             return Ok(LogRead::Corrupted(header.len));
         }
 

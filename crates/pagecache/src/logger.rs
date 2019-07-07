@@ -345,7 +345,7 @@ impl Log {
                 reservation_offset,
             );
 
-            self.iobufs.bump_max_reserved_lsn(reservation_lsn);
+            bump_atomic_lsn(&self.iobufs.max_reserved_lsn, reservation_lsn);
 
             self.iobufs.encapsulate(
                 &*buf,

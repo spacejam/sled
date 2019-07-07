@@ -1625,18 +1625,7 @@ where
 
         let pte = unsafe { pte_ptr.deref() };
 
-        let mut current = pte.rts.load(SeqCst);
-        loop {
-            if current >= ts {
-                return;
-            }
-            let last = pte.rts.compare_and_swap(current, ts, SeqCst);
-            if last == current {
-                // we succeeded.
-                return;
-            }
-            current = last;
-        }
+        bump_atomic_lsn(&pte.rts, ts);
     }
 
     /// Retrieves the current transactional read timestamp
