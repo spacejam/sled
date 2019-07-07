@@ -541,7 +541,7 @@ pub(crate) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Result<usize> {
             if cfg!(feature = "event_log") {
                 let (waiter, timeout) = iobufs
                     .interval_updated
-                    .wait_timeout(waiter, std::time::Duration::from_secs(1))
+                    .wait_timeout(waiter, std::time::Duration::from_secs(10))
                     .unwrap();
                 if timeout.timed_out() {
                     fn tn() -> String {
