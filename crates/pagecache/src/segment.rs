@@ -204,12 +204,12 @@ impl Segment {
         config: &Config,
     ) -> Result<FastSet8<(PageId, usize)>> {
         trace!("setting Segment with lsn {:?} to Inactive", self.lsn());
-        assert_eq!(
-            self.state,
-            Active,
+        assert!(
+            self.state == Active || self.state == Draining,
             "segment {} should have been \
-             Active before deactivating",
-            self.lsn()
+             Active or Draining, before deactivating, but was {:?}",
+            self.lsn(),
+            self.state
         );
         if from_recovery {
             assert!(lsn >= self.lsn());
@@ -482,6 +482,11 @@ impl SegmentAccountant {
             }
         };
 
+        assert!(self.config.segment_cleanup_threshold < 100.);
+        let cleanup_threshold =
+            (self.config.segment_cleanup_threshold * 100.) as usize;
+        let drain_sz = io_buf_size * 100 / cleanup_threshold;
+
         for (idx, segment) in segments.iter_mut().enumerate() {
             let segment_lid = idx as LogId * io_buf_size as LogId;
 
@@ -497,35 +502,47 @@ impl SegmentAccountant {
             let segment_lsn = segment.lsn.unwrap_or(-1);
 
             if idx != currently_active_segment
-                && segment_sizes[idx] == 0
                 && segment_lsn <= snapshot.max_header_stable_lsn
             {
-                // can free
-                trace!(
-                    "freeing segment with lid {} during SA initialization",
-                    segment_lid
-                );
                 let segment_base = idx as LogId * io_buf_size as LogId;
-                if self.tip == segment_lid + io_buf_size as LogId {
-                    self.tip -= io_buf_size as LogId;
-                } else {
-                    segment.state = Free;
-                    self.free_segment(segment_base, true);
-                }
 
-                // NB we corrupt the segment header to cause this
-                // segment to be skipped on subsequent recovery
-                // attempts, which guarantees that no two segments
-                // ever contain the same LSN. If we didn't do this,
-                // we would need to ensure through other means
-                // that empty segments with a written segment header
-                // but no other data get reused.
-                maybe_fail!("segment initial free zero");
-                self.config.file.pwrite_all(
-                    &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
-                    segment_base,
-                )?;
-                self.config.file.sync_all()?;
+                if segment_sizes[idx] == 0 {
+                    // can free
+                    trace!(
+                        "freeing segment with lid {} during SA initialization",
+                        segment_lid
+                    );
+                    if self.tip == segment_lid + io_buf_size as LogId {
+                        self.tip -= io_buf_size as LogId;
+                    } else {
+                        segment.state = Free;
+                        self.free_segment(segment_base, true);
+                    }
+
+                    // NB we corrupt the segment header to cause this
+                    // segment to be skipped on subsequent recovery
+                    // attempts, which guarantees that no two segments
+                    // ever contain the same LSN. If we didn't do this,
+                    // we would need to ensure through other means
+                    // that empty segments with a written segment header
+                    // but no other data get reused.
+                    maybe_fail!("segment initial free zero");
+                    self.config.file.pwrite_all(
+                        &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
+                        segment_base,
+                    )?;
+                    self.config.file.sync_all()?;
+                } else if segment_sizes[idx] <= drain_sz {
+                    trace!(
+                        "SA draining segment at {} during startup \
+                         with size {} being < drain size of {}",
+                        segment_base,
+                        segment_sizes[idx],
+                        drain_sz
+                    );
+                    segment.state = Draining;
+                    self.to_clean.insert(segment_base);
+                }
             }
         }
 
@@ -850,8 +867,11 @@ impl SegmentAccountant {
             self.segments[idx]
         );
 
-        let replacements =
-            self.segments[idx].active_to_inactive(lsn, false, &self.config)?;
+        let replacements = if self.segments[idx].state == Draining {
+            self.segments[idx].active_to_inactive(lsn, false, &self.config)?
+        } else {
+            Default::default()
+        };
 
         let mut old_segments = FastSet8::default();
 
