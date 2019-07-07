@@ -331,7 +331,7 @@ fn clean_tail_tears(
         .map(|(_, _, lsn, ptr, _)| (lsn, ptr.lid()))
         .unwrap_or_else(|| {
             if max_header_stable_lsn > 0 {
-                (max_header_stable_lsn, ordering[&lowest_lsn_in_tail])
+                (lowest_lsn_in_tail, ordering[&lowest_lsn_in_tail])
             } else {
                 (0, 0)
             }
