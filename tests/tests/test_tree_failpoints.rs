@@ -76,6 +76,12 @@ fn v(b: &[u8]) -> u16 {
     (u16::from(b[0]) << 8) + u16::from(b[1])
 }
 
+fn tear_down_failpoints() {
+    for (name, _) in fail::list() {
+        fail::remove(name);
+    }
+}
+
 fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
     lazy_static! {
         // forces quickcheck to run one thread at a time
@@ -85,13 +91,13 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
     let _lock = M.lock().expect("our test lock should not be poisoned");
 
     // clear all failpoints that may be left over from the last run
-    fail::teardown();
+    tear_down_failpoints();
 
     let res = std::panic::catch_unwind(|| {
         run_tree_crashes_nicely(ops.clone(), flusher)
     });
 
-    fail::teardown();
+    tear_down_failpoints();
 
     match res {
         Err(e) => {
@@ -192,7 +198,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
             match $e {
                 Ok(thing) => thing,
                 Err(Error::FailPoint) => {
-                    fail::teardown();
+                    tear_down_failpoints();
                     restart!();
                     continue;
                 }
