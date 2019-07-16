@@ -22,6 +22,7 @@ macro_rules! io_fail {
         fail_point!($e, |_| {
             $self.config.set_global_error(Error::FailPoint);
             // wake up any waiting threads so they don't stall forever
+            let _ = $self.intervals.lock().unwrap();
             $self.interval_updated.notify_all();
             Err(Error::FailPoint)
         });
@@ -487,6 +488,7 @@ impl IoBufs {
         }
 
         if updated {
+            // safe because self.intervals mutex is already held
             self.interval_updated.notify_all();
         }
     }
@@ -512,6 +514,7 @@ pub(crate) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Result<usize> {
 
     while stable < lsn {
         if let Err(e) = iobufs.config.global_error() {
+            let _ = iobufs.intervals.lock().unwrap();
             iobufs.interval_updated.notify_all();
             return Err(e);
         }
@@ -666,6 +669,8 @@ pub(crate) fn maybe_seal_and_write_iobuf(
         match iobufs.with_sa(|sa| sa.next(next_lsn)) {
             Ok(ret) => ret,
             Err(e) => {
+                iobufs.config.set_global_error(e.clone());
+                let _ = iobufs.intervals.lock();
                 iobufs.interval_updated.notify_all();
                 return Err(e);
             }
@@ -716,10 +721,7 @@ pub(crate) fn maybe_seal_and_write_iobuf(
 
     // if writers is 0, it's our responsibility to write the buffer.
     if n_writers(sealed) == 0 {
-        if let Err(e) = iobufs.config.global_error() {
-            iobufs.interval_updated.notify_all();
-            return Err(e);
-        }
+        iobufs.config.global_error()?;
         if let Some(ref thread_pool) = iobufs.config.thread_pool {
             trace!(
                 "asynchronously writing iobuf with lsn {} to log from maybe_seal",
@@ -733,6 +735,8 @@ pub(crate) fn maybe_seal_and_write_iobuf(
                         "hit error while writing iobuf with lsn {}: {:?}",
                         lsn, e
                     );
+                    let _ = iobufs.intervals.lock();
+                    iobufs.interval_updated.notify_all();
                     iobufs.config.set_global_error(e);
                 }
             });
