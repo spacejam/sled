@@ -610,6 +610,7 @@ where
 
             // wake up any waiting threads
             // so they don't stall forever
+            let _ = self.log.iobufs.intervals.lock().unwrap();
             self.log.iobufs.interval_updated.notify_all();
         }
     }
