@@ -8,7 +8,7 @@ use std::{
 
 use super::*;
 
-type PagePtrInner<'g, P> = Shared<'g, Node<CacheEntry<P>>>;
+type PagePtrInner<'g, P> = Shared<'g, Node<(Option<Update<P>>, CacheInfo)>>;
 
 /// A pointer to shared lock-free state bound by a pinned epoch's lifetime.
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -33,109 +33,12 @@ where
 unsafe impl<'g, P> Send for PagePtr<'g, P> where P: Send {}
 unsafe impl<'g, P> Sync for PagePtr<'g, P> where P: Send + Sync {}
 
-/// Points to either a memory location or a disk location to page-in data from.
-#[derive(Debug, Clone, PartialEq)]
-pub enum CacheEntry<M: Send> {
-    /// A cache item that contains the most recent fully-merged page state, also in secondary
-    /// storage.
-    MergedResident(M, u64, Lsn, DiskPtr),
-    /// A cache item that is in memory, and also in secondary storage.
-    Resident(M, u64, Lsn, DiskPtr),
-    /// A cache item that is present in secondary storage.
-    PartialFlush(u64, Lsn, DiskPtr),
-    /// A cache item that is present in secondary storage, and is the base segment
-    /// of a page.
-    Flush(u64, Lsn, DiskPtr),
-    /// A freed page tombstone.
-    Free(u64, Lsn, DiskPtr),
-    /// The persisted counter page
-    Counter(u64, u64, Lsn, DiskPtr),
-    /// The persisted meta page
-    Meta(Meta, u64, Lsn, DiskPtr),
-    /// The persisted config page
-    Config(PersistedConfig, u64, Lsn, DiskPtr),
-}
-
-impl<M: Send> CacheEntry<M> {
-    fn ptr(&self) -> DiskPtr {
-        use self::CacheEntry::*;
-
-        match self {
-            MergedResident(.., ptr)
-            | Resident(.., ptr)
-            | PartialFlush(.., ptr)
-            | Flush(.., ptr)
-            | Free(.., ptr)
-            | Counter(.., ptr)
-            | Meta(.., ptr)
-            | Config(.., ptr) => *ptr,
-        }
-    }
-
-    fn lsn(&self) -> Lsn {
-        use self::CacheEntry::*;
-
-        match self {
-            MergedResident(_, _, lsn, ..)
-            | Resident(_, _, lsn, ..)
-            | PartialFlush(_, lsn, ..)
-            | Flush(_, lsn, ..)
-            | Free(_, lsn, ..)
-            | Counter(.., lsn, _)
-            | Meta(.., lsn, _)
-            | Config(.., lsn, _) => *lsn,
-        }
-    }
-
-    fn ts(&self) -> u64 {
-        use self::CacheEntry::*;
-
-        match self {
-            MergedResident(_, ts, ..)
-            | Resident(_, ts, ..)
-            | PartialFlush(ts, ..)
-            | Flush(ts, ..)
-            | Free(ts, ..)
-            | Counter(_, ts, ..)
-            | Meta(_, ts, ..)
-            | Config(_, ts, ..) => *ts,
-        }
-    }
-
-    fn ptr_ref_mut(&mut self) -> &mut DiskPtr {
-        use self::CacheEntry::*;
-
-        match self {
-            MergedResident(.., ptr)
-            | Resident(.., ptr)
-            | PartialFlush(.., ptr)
-            | Flush(.., ptr)
-            | Free(.., ptr)
-            | Counter(.., ptr)
-            | Meta(.., ptr)
-            | Config(.., ptr) => ptr,
-        }
-    }
-
-    fn is_free(&self) -> bool {
-        if let CacheEntry::Free(..) = self {
-            true
-        } else {
-            false
-        }
-    }
-
-    unsafe fn deref_merged_resident(&self) -> &M
-    where
-        M: Debug,
-    {
-        match self {
-            CacheEntry::MergedResident(m, ..) => m,
-            other => {
-                panic!("called deref_merged_resident on {:?}", other);
-            }
-        }
-    }
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CacheInfo {
+    pub ts: u64,
+    pub lsn: Lsn,
+    pub ptr: DiskPtr,
+    pub log_sz: usize,
 }
 
 #[serde(bound(deserialize = ""))]
@@ -309,7 +212,7 @@ struct PageTableEntry<P>
 where
     P: 'static + Send + Sync + Serialize + DeserializeOwned,
 {
-    stack: Stack<CacheEntry<P>>,
+    stack: Stack<(Option<Update<P>>, CacheInfo)>,
     rts: AtomicLsn,
     pending: AtomicLsn,
 }

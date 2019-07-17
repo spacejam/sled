@@ -96,7 +96,7 @@ pub use self::{
     materializer::{Materializer, NullMaterializer},
     meta::Meta,
     metrics::M,
-    pagecache::{CacheEntry, PageCache, PagePtr, RecoveryGuard},
+    pagecache::{PageCache, PagePtr, RecoveryGuard},
     reservation::Reservation,
     result::{CasResult, Error, Result},
     segment::SegmentMode,
