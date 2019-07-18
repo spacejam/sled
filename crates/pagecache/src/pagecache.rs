@@ -540,11 +540,11 @@ where
             let mut stack_iter = StackIter::from_ptr(head, &tx.guard);
 
             match stack_iter.next() {
-                Some(CacheEntry::Free(wts, _lsn, _ptr)) => (
+                Some((Update::Free, cache_info)) => (
                     pid,
                     PagePtr {
                         cached_ptr: head,
-                        wts: *wts,
+                        wts: cache_info.ts,
                     },
                 ),
                 other => panic!(
@@ -656,11 +656,11 @@ where
         let bytes = measure(&M.serialize, || serialize(&new).unwrap());
 
         let mut new = {
-            let cache_entry =
-                CacheEntry::Resident(new, 0, 0, DiskPtr::Inline(0));
+            let update = Update::Append(new);
+            let cache_info = CacheInfo::default();
 
             let node = Node {
-                inner: cache_entry,
+                inner: (update, cache_info),
                 // NB this must be null
                 // to prevent double-frees
                 // if we encounter an IO error
@@ -694,29 +694,24 @@ where
             // changing.
             let ts = old.wts + 1;
 
-            let mut cache_entry = new.take().unwrap();
+            let mut node = new.take().unwrap();
 
-            match cache_entry.inner {
-                CacheEntry::Resident(
-                    _,
-                    ref mut ce_ts,
-                    ref mut ce_lsn,
-                    ref mut ce_ptr,
-                ) => {
-                    *ce_ts = ts;
-                    *ce_lsn = lsn;
-                    *ce_ptr = ptr;
+            match node.inner {
+                (Update::Compact(_), cache_info) => {
+                    cache_info.ts = ts;
+                    cache_info.lsn = lsn;
+                    cache_info.ptr = ptr;
+                    cache_info.log_sz = log_reservation.reservation_len();
                 }
                 _ => panic!("should only be working with Resident entries"),
             }
 
             debug_delay();
             let result = unsafe {
-                pte_ptr.deref().stack.cap_node(
-                    old.cached_ptr,
-                    cache_entry,
-                    &tx.guard,
-                )
+                pte_ptr
+                    .deref()
+                    .stack
+                    .cap_node(old.cached_ptr, node, &tx.guard)
             };
 
             match result {
