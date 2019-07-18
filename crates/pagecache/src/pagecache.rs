@@ -660,7 +660,7 @@ where
             let cache_info = CacheInfo::default();
 
             let node = Node {
-                inner: (update, cache_info),
+                inner: (Some(update), cache_info),
                 // NB this must be null
                 // to prevent double-frees
                 // if we encounter an IO error
@@ -697,7 +697,7 @@ where
             let mut node = new.take().unwrap();
 
             match node.inner {
-                (Update::Compact(_), cache_info) => {
+                (Some(Update::Append(_)), cache_info) => {
                     cache_info.ts = ts;
                     cache_info.lsn = lsn;
                     cache_info.ptr = ptr;
@@ -763,17 +763,9 @@ where
                         wts: ts,
                     }));
                 }
-                Err((actual_ptr, returned_new)) => {
+                Err((actual_ptr, mut returned_new)) => {
                     trace!("link of pid {} failed", pid);
                     log_reservation.abort()?;
-                    let returned = if let CacheEntry::Resident(ref new, ..) =
-                        returned_new.deref().inner
-                    {
-                        new
-                    } else {
-                        panic!("should only return Resident entries");
-                    };
-
                     let actual_ts = unsafe { actual_ptr.deref().ts() };
                     if actual_ts != old.wts {
                         return Ok(Err(Some((
@@ -781,7 +773,7 @@ where
                                 cached_ptr: actual_ptr,
                                 wts: actual_ts,
                             },
-                            returned.clone(),
+                            returned_new.0.take().unwrap(),
                         ))));
                     }
                     new = Some(returned_new);
