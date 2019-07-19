@@ -66,7 +66,7 @@ impl<'a> Reservation<'a> {
 
     /// Returns the length of the on-log reservation.
     pub fn reservation_len(&self) -> usize {
-        self.destination.len()
+        self.buf.len()
     }
 
     /// Refills the reservation buffer with new data.

@@ -253,7 +253,9 @@ where
         let mut cursor = self.inner;
 
         while !cursor.is_null() {
-            cursor = cursor.deref().next.load(Acquire, self.guard);
+            unsafe {
+                cursor = cursor.deref().next.load(Acquire, self.guard);
+            }
             size += 1;
         }
 

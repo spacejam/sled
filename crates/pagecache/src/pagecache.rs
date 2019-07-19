@@ -26,14 +26,14 @@ where
 {
     /// The last Lsn number for the head of this page
     pub fn last_lsn(&self) -> Lsn {
-        unsafe { self.cached_ptr.deref().deref().lsn() }
+        unsafe { self.cached_ptr.deref().deref().1.lsn }
     }
 }
 
 unsafe impl<'g, P> Send for PagePtr<'g, P> where P: Send {}
 unsafe impl<'g, P> Sync for PagePtr<'g, P> where P: Send + Sync {}
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CacheInfo {
     pub ts: u64,
     pub lsn: Lsn,
@@ -42,10 +42,7 @@ pub struct CacheInfo {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum Update<PageFrag>
-where
-    PageFrag: DeserializeOwned + Serialize,
-{
+pub(super) enum Update<PageFrag> {
     Append(PageFrag),
     Compact(PageFrag),
     Free,
@@ -74,6 +71,14 @@ where
             other => {
                 panic!("called as_frag on non-Append/Compact: {:?}", other)
             }
+        }
+    }
+
+    fn is_free(&self) -> bool {
+        if let Update::Free = self {
+            true
+        } else {
+            false
         }
     }
 }
@@ -539,7 +544,7 @@ where
             let mut stack_iter = StackIter::from_ptr(head, &tx.guard);
 
             match stack_iter.next() {
-                Some((Update::Free, cache_info)) => (
+                Some((Some(Update::Free), cache_info)) => (
                     pid,
                     PagePtr {
                         cached_ptr: head,
@@ -656,7 +661,12 @@ where
 
         let mut new = {
             let update = Update::Append(new);
-            let cache_info = CacheInfo::default();
+            let cache_info = CacheInfo {
+                lsn: -1,
+                ptr: DiskPtr::Inline(0),
+                ts: 0,
+                log_size: 0,
+            };
 
             let node = Node {
                 inner: (Some(update), cache_info),
@@ -693,16 +703,15 @@ where
             // changing.
             let ts = old.ts + 1;
 
-            let mut node = new.take().unwrap();
+            let node = new.take().unwrap();
 
-            match node.inner {
-                (Some(Update::Append(_)), cache_info) => {
-                    cache_info.ts = ts;
-                    cache_info.lsn = lsn;
-                    cache_info.ptr = ptr;
-                    cache_info.log_size = log_reservation.reservation_len();
-                }
-                _ => panic!("should only be working with Resident entries"),
+            if let (Some(Update::Append(_)), mut cache_info) = node.inner {
+                cache_info.ts = ts;
+                cache_info.lsn = lsn;
+                cache_info.ptr = ptr;
+                cache_info.log_size = log_reservation.reservation_len();
+            } else {
+                panic!("should only be working with Resident entries");
             }
 
             debug_delay();
@@ -759,24 +768,27 @@ where
 
                     return Ok(Ok(PagePtr { cached_ptr, ts: ts }));
                 }
-                Err((actual_ptr, mut returned_new)) => {
+                Err((actual_ptr, returned_new)) => {
                     trace!("link of pid {} failed", pid);
                     log_reservation.abort()?;
-                    let actual_ts = unsafe { actual_ptr.deref().ts() };
+                    let actual_ts = unsafe { actual_ptr.deref().1.ts };
                     if actual_ts != old.ts {
+                        let returned_update = returned_new.0.clone().unwrap();
+                        let returned_frag = returned_update.into_frag();
                         return Ok(Err(Some((
                             PagePtr {
                                 cached_ptr: actual_ptr,
                                 ts: actual_ts,
                             },
-                            returned_new.0.take().unwrap(),
+                            returned_frag,
                         ))));
+                    } else {
+                        new = Some(returned_new);
+                        old = PagePtr {
+                            cached_ptr: actual_ptr,
+                            ts: actual_ts,
+                        };
                     }
-                    new = Some(returned_new);
-                    old = PagePtr {
-                        cached_ptr: actual_ptr,
-                        ts: actual_ts,
-                    };
                 }
             }
         }
@@ -846,16 +858,16 @@ where
         let cache_entries: Vec<_> = stack_iter.collect();
 
         // if the page is just a single blob pointer, rewrite it.
-        if cache_entries.len() == 1 && cache_entries[0].ptr().is_blob() {
+        if cache_entries.len() == 1 && cache_entries[0].1.ptr.is_blob() {
             trace!("rewriting blob with pid {}", pid);
-            let blob_ptr = cache_entries[0].ptr().blob().1;
+            let blob_ptr = cache_entries[0].1.ptr.blob().1;
 
             let log_reservation = self.log.rewrite_blob_ptr(pid, blob_ptr)?;
 
             let new_ptr = log_reservation.ptr();
             let mut new_cache_entry = cache_entries[0].clone();
 
-            *new_cache_entry.ptr_ref_mut() = new_ptr;
+            new_cache_entry.1.ptr = new_ptr;
 
             let node = node_from_frag_vec(vec![new_cache_entry]);
 
@@ -928,7 +940,7 @@ where
                             StackIter::from_ptr(head, &tx.guard);
 
                         match stack_iter.next() {
-                            Some((Update::Free, cache_info)) => (
+                            Some((Some(Update::Free), cache_info)) => (
                                 PagePtr {
                                     cached_ptr: head,
                                     ts: cache_info.ts,
@@ -1068,6 +1080,7 @@ where
                 ts,
                 lsn,
                 ptr: new_ptr,
+                log_size: log_reservation.reservation_len(),
             };
 
             let node = node_from_frag_vec(vec![(
@@ -1100,9 +1113,9 @@ where
                     log_reservation.abort()?;
 
                     let returned_update =
-                        returned_entry.into_box().inner.take().unwrap();
+                        returned_entry.into_box().inner.0.take().unwrap();
 
-                    let actual_ts = unsafe { actual_ptr.deref().ts() };
+                    let actual_ts = unsafe { actual_ptr.deref().1.ts };
 
                     if actual_ts != old.ts {
                         return Ok(Err(Some((
@@ -1149,7 +1162,7 @@ where
         let head = unsafe { head_ptr.deref().stack.head(&tx.guard) };
 
         match StackIter::from_ptr(head, &tx.guard).next() {
-            Some((Some(Update::Meta(m), cache_info))) => Ok((
+            Some((Some(Update::Meta(m)), cache_info)) => Ok((
                 PagePtr {
                     cached_ptr: head,
                     ts: cache_info.ts,
@@ -1195,7 +1208,7 @@ where
         let head = unsafe { head_ptr.deref().stack.head(&tx.guard) };
 
         match StackIter::from_ptr(head, &tx.guard).next() {
-            Some((Some(Update::Config(config), cache_info))) => Ok((
+            Some((Some(Update::Config(config)), cache_info)) => Ok((
                 PagePtr {
                     cached_ptr: head,
                     ts: cache_info.ts,
@@ -1241,7 +1254,7 @@ where
         let head = unsafe { head_ptr.deref().stack.head(&tx.guard) };
 
         match StackIter::from_ptr(head, &tx.guard).next() {
-            Some((Some(Update::Counter(counter), cache_info))) => Ok((
+            Some((Some(Update::Counter(counter)), cache_info)) => Ok((
                 PagePtr {
                     cached_ptr: head,
                     ts: cache_info.ts,
@@ -1298,11 +1311,16 @@ where
 
         let entries: Vec<_> = StackIter::from_ptr(head, &tx.guard).collect();
 
-        if entries.is_empty() || entries[0].is_free() {
+        let is_free = entries
+            .first()
+            .and_then(|ref e| e.0.map(|update| update.is_free()))
+            .unwrap_or(false);
+
+        if entries.is_empty() || is_free {
             return Ok(None);
         }
 
-        if let (Update::Compact(compact), cache_info) = entries[0] {
+        if let (Some(Update::Compact(compact)), cache_info) = entries[0] {
             // short circuit
 
             return Ok(Some((
@@ -1314,20 +1332,20 @@ where
             )));
         }
 
-        let mut pulled = false;
+        let mut pulled_from_disk = false;
         let pulled = entries.iter().map(|entry| match entry {
-            (Some(Update::Compact(compact), cache_info)) => {
-                Ok((Cow::Borrowed(compact), cache_info))
+            (Some(Update::Compact(compact)), cache_info) => {
+                Ok((Cow::Borrowed(compact), *cache_info))
             }
-            (Some(Update::Append(compact), cache_info)) => {
-                Ok((Cow::Borrowed(compact), cache_info))
+            (Some(Update::Append(compact)), cache_info) => {
+                Ok((Cow::Borrowed(compact), *cache_info))
             }
             (None, cache_info) => {
                 let res = self
                     .pull(pid, cache_info.lsn, cache_info.ptr)
                     .map(|pg| pg)?;
-                pulled = true;
-                Ok((Cow::Owned(res.into_frag()), cache_info))
+                pulled_from_disk = true;
+                Ok((Cow::Owned(res.into_frag()), *cache_info))
             }
             other => {
                 panic!("iterating over unexpected update: {:?}", other);
@@ -1359,7 +1377,7 @@ where
 
             let ptr = PagePtr {
                 cached_ptr: head,
-                ts: successes[0].1,
+                ts: successes[0].1.ts,
             };
 
             match self.cas_page(pid, ptr, update, true, tx)? {
@@ -1367,7 +1385,7 @@ where
                     let head = new_head.cached_ptr;
 
                     return Ok(Some((new_head, unsafe {
-                        vec![head.deref().deref().deref_merged_resident()]
+                        vec![head.deref().deref().0.unwrap().as_frag()]
                     })));
                 }
                 Err(None) => {
@@ -1383,16 +1401,16 @@ where
             }
         }
 
-        if pulled {
+        if pulled_from_disk {
             // fix up the stack to include our pulled items
             let (tail_frag, tail_cache_info) = successes.pop().unwrap();
             let tail_update = Update::Compact(tail_frag.into_owned());
-            let mut total_page_size = tail_cache_info.log_size;
+            let mut total_page_size = tail_cache_info.log_size as u64;
 
             let mut frags = Vec::with_capacity(successes.len() + 1);
 
             for (item, cache_info) in successes.into_iter() {
-                total_page_size += cache_info.log_size;
+                total_page_size += cache_info.log_size as u64;
                 frags.push((
                     Some(Update::Append(item.into_owned())),
                     cache_info,
@@ -1427,7 +1445,7 @@ where
             }
             self.get(pid, tx)
         } else {
-            let ts = successes[0].1;
+            let ts = successes[0].1.ts;
 
             let refs = successes
                 .into_iter()
@@ -1666,7 +1684,7 @@ where
                     // already paged out
                     continue 'different_page_eviction;
                 }
-                new_stack.push((None, cache_info));
+                new_stack.push((None, *cache_info));
             }
 
             let node = node_from_frag_vec(new_stack);
@@ -1891,7 +1909,7 @@ where
 
             match *state {
                 PageState::Present(ref ptrs) => {
-                    for &(lsn, ptr, sz) in &ptrs {
+                    for &(lsn, ptr, sz) in ptrs {
                         let cache_info = CacheInfo {
                             lsn,
                             ptr,
@@ -1908,7 +1926,7 @@ where
                     let cache_info = CacheInfo {
                         lsn,
                         ptr,
-                        log_sz: MSG_HEADER_LEN,
+                        log_size: MSG_HEADER_LEN,
                         ts: 0,
                     };
                     stack.push((Some(Update::Free), cache_info));
