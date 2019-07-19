@@ -234,6 +234,7 @@ where
     T: Send + 'static + Sync,
 {
     type Item = &'a T;
+
     fn next(&mut self) -> Option<Self::Item> {
         debug_delay();
         if self.inner.is_null() {
@@ -245,6 +246,18 @@ where
                 Some(ret)
             }
         }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let mut size = 0;
+        let mut cursor = self.inner;
+
+        while !cursor.is_null() {
+            cursor = cursor.deref().next.load(Acquire, self.guard);
+            size += 1;
+        }
+
+        (size, Some(size))
     }
 }
 

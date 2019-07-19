@@ -58,7 +58,10 @@ use std::{
     convert::TryFrom,
     fmt::{self, Debug},
     io,
-    sync::atomic::{AtomicI64 as AtomicLsn, AtomicU64, Ordering::SeqCst},
+    sync::atomic::{
+        AtomicI64 as AtomicLsn, AtomicU64,
+        Ordering::{Acquire, Release, SeqCst},
+    },
 };
 
 use bincode::{deserialize, serialize};
