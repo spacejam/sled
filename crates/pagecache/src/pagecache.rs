@@ -1311,10 +1311,11 @@ where
 
         let entries: Vec<_> = StackIter::from_ptr(head, &tx.guard).collect();
 
-        let is_free = entries
-            .first()
-            .and_then(|ref e| e.0.map(|update| update.is_free()))
-            .unwrap_or(false);
+        let is_free = if let Some((Some(entry), _)) = entries.first() {
+            entry.is_free()
+        } else {
+            false
+        };
 
         if entries.is_empty() || is_free {
             return Ok(None);
@@ -1384,9 +1385,15 @@ where
                 Ok(new_head) => {
                     let head = new_head.cached_ptr;
 
-                    return Ok(Some((new_head, unsafe {
-                        vec![head.deref().deref().0.unwrap().as_frag()]
-                    })));
+                    let update: &Update<P> = unsafe {
+                        let pair_ref: &(Option<Update<P>>, CacheInfo) =
+                            head.deref();
+                        pair_ref.0.as_ref().unwrap()
+                    };
+
+                    let frag_ref: &P = update.as_frag();
+
+                    return Ok(Some((new_head, vec![frag_ref])));
                 }
                 Err(None) => {
                     // This page was unallocated since we
