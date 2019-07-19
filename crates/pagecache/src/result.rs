@@ -11,13 +11,10 @@ use super::*;
 /// the PageCache.
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// A compare and swap result.
-/// If the CAS is successful, the
-/// new `PagePtr` will be returned as `Ok`.
-/// If the CAS is not successful, the
-/// `Err` will contain a tuple of
-/// the current `PagePtr` and the old
-/// value that could not be set atomically.
+/// A compare and swap result.  If the CAS is successful,
+/// the new `PagePtr` will be returned as `Ok`.  Otherwise,
+/// the `Err` will contain a tuple of the current `PagePtr`
+/// and the old value that could not be set atomically.
 pub type CasResult<'a, P, R> =
     std::result::Result<PagePtr<'a, P>, Option<(PagePtr<'a, P>, R)>>;
 

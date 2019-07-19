@@ -10,7 +10,7 @@ use self::reader::LogReader;
 use super::*;
 
 // This is the most writers in a single IO buffer
-// that we have space to accomodate in the counter
+// that we have space to accommodate in the counter
 // for writers in the IO buffer header.
 pub(crate) const MAX_WRITERS: Header = 127;
 
@@ -692,7 +692,7 @@ pub(crate) fn maybe_seal_and_write_iobuf(
     // NB as soon as the "sealed" bit is 0, this allows new threads
     // to start writing into this buffer, so do that after it's all
     // set up. expect this thread to block until the buffer completes
-    // its entire lifecycle as soon as we do that.
+    // its entire life cycle as soon as we do that.
     if maxed {
         next_iobuf.capacity = io_buf_size;
         next_iobuf.store_segment_header(sealed, next_lsn, iobufs.stable());
