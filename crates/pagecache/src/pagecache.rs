@@ -661,6 +661,32 @@ where
             Some(p) => p,
         };
 
+        // see if we should short-circuit replace
+        let head = unsafe { head_ptr.deref().stack.head(&tx.guard) };
+        let stack_iter = StackIter::from_ptr(head, &tx.guard);
+        let stack_len = stack_iter.size_hint().1.unwrap();
+        if stack_len > self.config.page_consolidation_threshold {
+            let current_pages =
+                if let Some((_ptr, pages)) = self.get(pid, tx)? {
+                    pages
+                } else {
+                    return Ok(Err(None));
+                };
+
+            let update: P = {
+                let _measure = Measure::new(&M.merge_page);
+
+                let combined_iter = current_pages
+                    .into_iter()
+                    .rev()
+                    .chain(std::iter::once(&new));
+
+                PM::merge(combined_iter, &self.config)
+            };
+
+            return self.replace(pid, old, update, tx);
+        }
+
         let bytes = measure(&M.serialize, || serialize(&new).unwrap());
 
         let mut new = {
@@ -1353,10 +1379,10 @@ where
                 Ok((Cow::Borrowed(compact), *cache_info))
             }
             (None, cache_info) => {
+                pulled_from_disk = true;
                 let res = self
                     .pull(pid, cache_info.lsn, cache_info.ptr)
                     .map(|pg| pg)?;
-                pulled_from_disk = true;
                 Ok((Cow::Owned(res.into_frag()), *cache_info))
             }
             other => {
@@ -1376,48 +1402,6 @@ where
             }
             Err(error) => return Err(error),
         };
-
-        if successes.len() > self.config.page_consolidation_threshold {
-            trace!("consolidating pid {} with len {}!", pid, successes.len());
-            let update = {
-                let _measure = Measure::new(&M.merge_page);
-
-                let combined_iter = successes.iter().map(|(c, ..)| &**c).rev();
-
-                Update::Compact(PM::merge(combined_iter, &self.config))
-            };
-
-            let ptr = PagePtr {
-                cached_ptr: head,
-                ts: successes[0].1.ts,
-            };
-
-            match self.cas_page(pid, ptr, update, true, tx)? {
-                Ok(new_head) => {
-                    let head = new_head.cached_ptr;
-
-                    let update: &Update<P> = unsafe {
-                        let pair_ref: &(Option<Update<P>>, CacheInfo) =
-                            head.deref();
-                        pair_ref.0.as_ref().unwrap()
-                    };
-
-                    let frag_ref: &P = update.as_frag();
-
-                    return Ok(Some((new_head, vec![frag_ref])));
-                }
-                Err(None) => {
-                    // This page was unallocated since we
-                    // read the head pointer.
-                    return Ok(None);
-                }
-                Err(Some(_)) => {
-                    // our consolidation failed, recurse
-                    // TODO don't recurse in the released version
-                    return self.get(pid, tx);
-                }
-            }
-        }
 
         if pulled_from_disk {
             // fix up the stack to include our pulled items
