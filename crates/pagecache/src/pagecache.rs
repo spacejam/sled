@@ -249,7 +249,7 @@ where
     ) -> std::result::Result<(), fmt::Error> {
         f.write_str(&*format!(
             "PageCache {{ max: {:?} free: {:?} }}\n",
-            self.next_pid_to_allocate.load(SeqCst),
+            self.next_pid_to_allocate.load(Acquire),
             self.free
         ))
     }
@@ -278,7 +278,7 @@ where
                 self.meta(&tx).expect("should get meta under test").clone(),
             );
 
-            for pid in 0..self.next_pid_to_allocate.load(SeqCst) {
+            for pid in 0..self.next_pid_to_allocate.load(Acquire) {
                 let pte = self.inner.get(pid, &tx.guard);
                 if pte.is_none() {
                     continue;
@@ -348,7 +348,7 @@ where
             let mut pages_after_restart: HashMap<PageId, Vec<DiskPtr>> =
                 HashMap::new();
 
-            for pid in 0..pc.next_pid_to_allocate.load(SeqCst) {
+            for pid in 0..pc.next_pid_to_allocate.load(Acquire) {
                 let pte = pc.inner.get(pid, &tx.guard);
                 if pte.is_none() {
                     continue;
@@ -427,8 +427,8 @@ where
             let idgen_persists = counter / pc.config.idgen_persist_interval
                 * pc.config.idgen_persist_interval;
 
-            pc.idgen.store(idgen_recovery, SeqCst);
-            pc.idgen_persists.store(idgen_persists, SeqCst);
+            pc.idgen.store(idgen_recovery, Release);
+            pc.idgen_persists.store(idgen_persists, Release);
         }
 
         pc.was_recovered = was_recovered;
@@ -558,7 +558,7 @@ where
                 ),
             }
         } else {
-            let pid = self.next_pid_to_allocate.fetch_add(1, SeqCst);
+            let pid = self.next_pid_to_allocate.fetch_add(1, Relaxed);
 
             trace!("allocating pid {} for the first time", pid);
 
@@ -665,7 +665,7 @@ where
         let head = unsafe { head_ptr.deref().stack.head(&tx.guard) };
         let stack_iter = StackIter::from_ptr(head, &tx.guard);
         let stack_len = stack_iter.size_hint().1.unwrap();
-        if stack_len > self.config.page_consolidation_threshold {
+        if stack_len >= self.config.page_consolidation_threshold {
             let current_pages =
                 if let Some((_ptr, pages)) = self.get(pid, tx)? {
                     pages
@@ -796,7 +796,7 @@ where
                         self.rewrite_page(to_clean, tx)?;
                     }
 
-                    let count = self.updates.fetch_add(1, SeqCst) + 1;
+                    let count = self.updates.fetch_add(1, Relaxed) + 1;
                     let should_snapshot =
                         count % self.config.snapshot_after_ops == 0;
                     if should_snapshot {
@@ -856,7 +856,7 @@ where
             self.rewrite_page(to_clean, tx)?;
         }
 
-        let count = self.updates.fetch_add(1, SeqCst) + 1;
+        let count = self.updates.fetch_add(1, Relaxed) + 1;
         let should_snapshot = count % self.config.snapshot_after_ops == 0;
         if should_snapshot {
             self.advance_snapshot()?;
@@ -1046,7 +1046,7 @@ where
 
         let mut ret = meta_size + idgen_size + config_size;
         let min_pid = CONFIG_PID + 1;
-        let next_pid_to_allocate = self.next_pid_to_allocate.load(SeqCst);
+        let next_pid_to_allocate = self.next_pid_to_allocate.load(Acquire);
         for pid in min_pid..next_pid_to_allocate {
             if let Some((_, frags)) = self.get(pid, &tx)? {
                 ret += frags.iter().map(|f| PM::size_in_bytes(*f)).sum::<u64>();
@@ -1508,7 +1508,7 @@ where
 
         let pte = unsafe { head_ptr.deref() };
 
-        Some(pte.rts.load(SeqCst) as u64)
+        Some(pte.rts.load(Acquire) as u64)
     }
 
     /// Returns `true` if the database was
@@ -1534,15 +1534,15 @@ where
     /// a blocking flush to fsync the latest counter, ensuring
     /// that we will never give out the same counter twice.
     pub fn generate_id(&self) -> Result<u64> {
-        let ret = self.idgen.fetch_add(1, SeqCst);
+        let ret = self.idgen.fetch_add(1, Relaxed);
 
         let interval = self.config.idgen_persist_interval;
         let necessary_persists = ret / interval * interval;
-        let mut persisted = self.idgen_persists.load(SeqCst);
+        let mut persisted = self.idgen_persists.load(Acquire);
 
         while persisted < necessary_persists {
             let _mu = self.idgen_persist_mu.lock().unwrap();
-            persisted = self.idgen_persists.load(SeqCst);
+            persisted = self.idgen_persists.load(Acquire);
             if persisted < necessary_persists {
                 // it's our responsibility to persist up to our ID
                 let tx = Tx::new(&self, u64::max_value());
@@ -1552,7 +1552,7 @@ where
 
                 let counter_update = Update::Counter(necessary_persists);
 
-                let old = self.idgen_persists.swap(necessary_persists, SeqCst);
+                let old = self.idgen_persists.swap(necessary_persists, Release);
                 assert_eq!(old, persisted);
 
                 let res = self.cas_page(
