@@ -32,10 +32,10 @@ impl PersistedConfig {
     }
 }
 
-impl Deref for Config {
+impl Deref for ConfigInner {
     type Target = ConfigBuilder;
     fn deref(&self) -> &Self::Target {
-        &*self.inner
+        &self.inner
     }
 }
 
@@ -234,7 +234,7 @@ impl ConfigBuilder {
                 .build()
                 .expect("should be able to start rayon threadpool");
 
-            Some(Arc::new(tp))
+            Some(tp)
         } else {
             None
         };
@@ -248,16 +248,15 @@ impl ConfigBuilder {
         });
 
         // seal config in a Config
-        Config {
-            inner: Arc::new(self),
-            file: Arc::new(file),
-            refs: Arc::new(AtomicUsize::new(0)),
-            global_error: Arc::new(AtomicPtr::default()),
+        Config(Arc::new(ConfigInner {
+            inner: self,
+            file: file,
+            global_error: AtomicPtr::default(),
             #[cfg(feature = "event_log")]
-            event_log: Arc::new(crate::event_log::EventLog::default()),
+            event_log: crate::event_log::EventLog::default(),
             thread_pool,
             threads,
-        }
+        }))
     }
 
     builder!(
@@ -529,67 +528,60 @@ impl ConfigBuilder {
 
 /// A finalized `ConfigBuilder` that can be use multiple times
 /// to open a `Tree` or `Log`.
+#[derive(Debug, Clone)]
+pub struct Config(Arc<ConfigInner>);
+
+impl Deref for Config {
+    type Target = ConfigInner;
+
+    fn deref(&self) -> &ConfigInner {
+        &self.0
+    }
+}
+
 #[derive(Debug)]
-pub struct Config {
-    inner: Arc<ConfigBuilder>,
-    pub(crate) file: Arc<fs::File>,
-    pub(crate) thread_pool: Option<Arc<rayon::ThreadPool>>,
+pub struct ConfigInner {
+    inner: ConfigBuilder,
+    pub(crate) file: fs::File,
+    pub(crate) thread_pool: Option<rayon::ThreadPool>,
     threads: Arc<AtomicUsize>,
-    refs: Arc<AtomicUsize>,
-    pub(crate) global_error: Arc<AtomicPtr<Error>>,
+    pub(crate) global_error: AtomicPtr<Error>,
     #[cfg(feature = "event_log")]
     /// an event log for concurrent debugging
-    pub event_log: Arc<event_log::EventLog>,
+    pub event_log: event_log::EventLog,
 }
 
 unsafe impl Send for Config {}
 unsafe impl Sync for Config {}
 
-impl Clone for Config {
-    fn clone(&self) -> Config {
-        self.refs.fetch_add(1, Ordering::SeqCst);
-        Config {
-            inner: self.inner.clone(),
-            file: self.file.clone(),
-            refs: self.refs.clone(),
-            #[cfg(feature = "event_log")]
-            event_log: self.event_log.clone(),
-            threads: self.threads.clone(),
-            thread_pool: self.thread_pool.clone(),
-            global_error: self.global_error.clone(),
-        }
-    }
-}
-
-impl Drop for Config {
+impl Drop for ConfigInner {
     fn drop(&mut self) {
-        // if our ref count is 0 we can drop and close our file properly.
-        if self.refs.fetch_sub(1, Ordering::SeqCst) == 0 {
-            // wait on thread pool to close
-            debug!("dropping threadpool and waiting for it to drain");
-            let thread_pool = self.thread_pool.take();
-            drop(thread_pool);
+        // wait on thread pool to close
+        debug!("dropping threadpool and waiting for it to drain");
+        let thread_pool = self.thread_pool.take();
+        drop(thread_pool);
 
-            while self.threads.load(SeqCst) != 0 {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            debug!("threadpool drained");
-
-            if self.print_profile_on_drop {
-                M.print_profile();
-            }
-
-            if !self.temporary {
-                return;
-            }
-
-            // Our files are temporary, so nuke them.
-            debug!(
-                "removing temporary storage file {}",
-                self.inner.path.to_string_lossy()
-            );
-            let _res = fs::remove_dir_all(&self.path);
+        let mut duration = 1;
+        while self.threads.load(SeqCst) != 0 {
+            std::thread::sleep(std::time::Duration::from_millis(duration));
+            duration = std::cmp::min(50, duration << 1);
         }
+        debug!("threadpool drained");
+
+        if self.print_profile_on_drop {
+            M.print_profile();
+        }
+
+        if !self.temporary {
+            return;
+        }
+
+        // Our files are temporary, so nuke them.
+        debug!(
+            "removing temporary storage file {}",
+            self.inner.path.to_string_lossy()
+        );
+        let _res = fs::remove_dir_all(&self.path);
     }
 }
 
