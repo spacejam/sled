@@ -3,7 +3,7 @@
 use std::{
     alloc::{alloc_zeroed, Layout},
     mem::{align_of, size_of},
-    sync::atomic::Ordering::{Relaxed, SeqCst},
+    sync::atomic::Ordering::Relaxed,
 };
 
 use super::*;
@@ -105,7 +105,7 @@ where
         new: Shared<'g, T>,
         guard: &'g Guard,
     ) -> Shared<'g, T> {
-        let tip = traverse(self.head.load(SeqCst, guard), pid, guard);
+        let tip = traverse(self.head.load(Acquire, guard), pid, guard);
         debug_delay();
         tip.swap(new, SeqCst, guard)
     }
@@ -119,12 +119,12 @@ where
         guard: &'g Guard,
     ) -> std::result::Result<Shared<'g, T>, Shared<'g, T>> {
         debug_delay();
-        let tip = traverse(self.head.load(SeqCst, guard), pid, guard);
+        let tip = traverse(self.head.load(Acquire, guard), pid, guard);
 
         debug_delay();
 
         let _ = tip
-            .compare_and_set(old, new, SeqCst, guard)
+            .compare_and_set(old, new, Release, guard)
             .map_err(|e| e.current)?;
 
         if !old.is_null() {
@@ -142,9 +142,9 @@ where
         guard: &'g Guard,
     ) -> Option<Shared<'g, T>> {
         debug_delay();
-        let tip = traverse(self.head.load(SeqCst, guard), pid, guard);
+        let tip = traverse(self.head.load(Acquire, guard), pid, guard);
 
-        let res = tip.load(SeqCst, guard);
+        let res = tip.load(Acquire, guard);
         if res.is_null() {
             None
         } else {
@@ -182,14 +182,14 @@ fn traverse<'g, T: 'static + Send>(
     let l1 = unsafe { &head.deref().children };
 
     debug_delay();
-    let mut l2_ptr = l1[usize::try_from(l1k).unwrap()].load(SeqCst, guard);
+    let mut l2_ptr = l1[usize::try_from(l1k).unwrap()].load(Acquire, guard);
 
     if l2_ptr.is_null() {
         let next_child = Node2::new().into_shared(guard);
 
         debug_delay();
         let ret = l1[usize::try_from(l1k).unwrap()]
-            .compare_and_set(l2_ptr, next_child, SeqCst, guard);
+            .compare_and_set(l2_ptr, next_child, Release, guard);
 
         match ret {
             Ok(_) => {
