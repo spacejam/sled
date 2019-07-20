@@ -610,7 +610,11 @@ where
     ) -> Result<CasResult<'g, P, ()>> {
         trace!("attempting to free pid {}", pid);
 
-        if pid == META_PID || pid == COUNTER_PID {
+        if pid == COUNTER_PID
+            || pid == META_PID
+            || pid == CONFIG_PID
+            || pid == BATCH_MANIFEST_PID
+        {
             return Err(Error::Unsupported(
                 "you are not able to free the first \
                  couple pages, which are allocated \
@@ -661,9 +665,10 @@ where
 
         let mut new = {
             let update = Update::Append(new);
+
             let cache_info = CacheInfo {
                 lsn: -1,
-                ptr: DiskPtr::Inline(0),
+                ptr: DiskPtr::Inline(666666666),
                 ts: 0,
                 log_size: 0,
             };
@@ -703,13 +708,19 @@ where
             // changing.
             let ts = old.ts + 1;
 
-            let node = new.take().unwrap();
+            let mut node = new.take().unwrap();
 
-            if let (Some(Update::Append(_)), mut cache_info) = node.inner {
-                cache_info.ts = ts;
-                cache_info.lsn = lsn;
-                cache_info.ptr = ptr;
-                cache_info.log_size = log_reservation.reservation_len();
+            let cache_info = CacheInfo {
+                lsn,
+                ptr,
+                ts,
+                log_size: log_reservation.reservation_len(),
+            };
+
+            if let (Some(Update::Append(_)), ref mut stored_cache_info) =
+                node.inner
+            {
+                *stored_cache_info = cache_info;
             } else {
                 panic!("should only be working with Resident entries");
             }
@@ -1675,6 +1686,15 @@ where
     ) -> Result<()> {
         let _measure = Measure::new(&M.page_out);
         'different_page_eviction: for pid in to_evict {
+            if pid == COUNTER_PID
+                || pid == META_PID
+                || pid == CONFIG_PID
+                || pid == BATCH_MANIFEST_PID
+            {
+                // should not page these suckas out
+                continue;
+            }
+
             let head_ptr = match self.inner.get(pid, &tx.guard) {
                 None => continue 'different_page_eviction,
                 Some(ptr) => ptr,
@@ -1687,11 +1707,15 @@ where
             let mut new_stack = Vec::with_capacity(stack_len);
 
             'inner: for (update_opt, cache_info) in stack_iter {
-                if update_opt.is_none() {
-                    // already paged out
-                    continue 'different_page_eviction;
+                match update_opt {
+                    None | Some(Update::Free) => {
+                        // already paged out
+                        continue 'different_page_eviction;
+                    }
+                    Some(_) => {
+                        new_stack.push((None, *cache_info));
+                    }
                 }
-                new_stack.push((None, *cache_info));
             }
 
             let node = node_from_frag_vec(new_stack);
