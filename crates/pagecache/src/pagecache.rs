@@ -667,7 +667,13 @@ where
         let stack_len = stack_iter.size_hint().1.unwrap();
         if stack_len >= self.config.page_consolidation_threshold {
             let current_pages =
-                if let Some((_ptr, pages)) = self.get(pid, tx)? {
+                if let Some((current_ptr, pages)) = self.get(pid, tx)? {
+                    if old.ts != current_ptr.ts {
+                        // the page has changed in the mean time,
+                        // and merging frags may violate correctness
+                        // invariants
+                        return Ok(Err(Some((current_ptr, new))));
+                    }
                     pages
                 } else {
                     return Ok(Err(None));
