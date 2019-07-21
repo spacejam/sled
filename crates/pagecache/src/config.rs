@@ -103,8 +103,6 @@ pub struct ConfigBuilder {
     pub idgen_persist_interval: u64,
     #[doc(hidden)]
     pub async_io: bool,
-    #[doc(hidden)]
-    pub async_io_threads: usize,
 }
 
 unsafe impl Send for ConfigBuilder {}
@@ -134,7 +132,6 @@ impl Default for ConfigBuilder {
             print_profile_on_drop: false,
             idgen_persist_interval: 1_000_000,
             async_io: true,
-            async_io_threads: 3,
         }
     }
 }
@@ -214,31 +211,6 @@ impl ConfigBuilder {
             self.path = PathBuf::from(tmp_path);
         }
 
-        let threads = Arc::new(AtomicUsize::new(0));
-
-        let thread_pool = if self.async_io {
-            let start_threads = threads.clone();
-            let end_threads = threads.clone();
-
-            let path = self.path.clone();
-
-            let tp = rayon::ThreadPoolBuilder::new()
-                .num_threads(self.async_io_threads)
-                .thread_name(move |id| format!("sled_io_{}_{:?}", id, path))
-                .start_handler(move |_id| {
-                    start_threads.fetch_add(1, SeqCst);
-                })
-                .exit_handler(move |_id| {
-                    end_threads.fetch_sub(1, SeqCst);
-                })
-                .build()
-                .expect("should be able to start rayon threadpool");
-
-            Some(tp)
-        } else {
-            None
-        };
-
         let file = self.open_file().unwrap_or_else(|e| {
             panic!(
                 "should be able to open configured file at {:?}; {}",
@@ -254,8 +226,6 @@ impl ConfigBuilder {
             global_error: AtomicPtr::default(),
             #[cfg(feature = "event_log")]
             event_log: crate::event_log::EventLog::default(),
-            thread_pool,
-            threads,
         }))
     }
 
@@ -278,8 +248,7 @@ impl ConfigBuilder {
         (snapshot_path, Option<PathBuf>, "snapshot file location"),
         (print_profile_on_drop, bool, "print a performance profile when the Config is dropped"),
         (idgen_persist_interval, u64, "generated IDs are persisted at this interval. during recovery we skip twice this number"),
-        (async_io, bool, "perform IO operations on a threadpool"),
-        (async_io_threads, usize, "set the number of threads in the IO threadpool. defaults to # logical CPUs.")
+        (async_io, bool, "perform IO operations on a threadpool")
     );
 
     // panics if config options are outside of advised range
@@ -452,7 +421,9 @@ impl ConfigBuilder {
         f.write_all(&*bytes)?;
         maybe_fail!("write_config crc");
         f.write_all(&crc_arr)?;
-        f.sync_all()?;
+        if !self.temporary {
+            f.sync_all()?;
+        }
         maybe_fail!("write_config post");
         Ok(())
     }
@@ -543,8 +514,6 @@ impl Deref for Config {
 pub struct ConfigInner {
     inner: ConfigBuilder,
     pub(crate) file: fs::File,
-    pub(crate) thread_pool: Option<rayon::ThreadPool>,
-    threads: Arc<AtomicUsize>,
     pub(crate) global_error: AtomicPtr<Error>,
     #[cfg(feature = "event_log")]
     /// an event log for concurrent debugging
@@ -556,17 +525,6 @@ unsafe impl Sync for Config {}
 
 impl Drop for ConfigInner {
     fn drop(&mut self) {
-        // wait on thread pool to close
-        debug!("dropping threadpool and waiting for it to drain");
-        let thread_pool = self.thread_pool.take();
-        drop(thread_pool);
-
-        let mut duration = 1;
-        while self.threads.load(SeqCst) != 0 {
-            std::thread::sleep(std::time::Duration::from_millis(duration));
-            duration = std::cmp::min(50, duration << 1);
-        }
-        debug!("threadpool drained");
 
         if self.print_profile_on_drop {
             M.print_profile();
@@ -750,30 +708,6 @@ impl Config {
         );
 
         /*
-        for (k, v) in &regenerated.replacements {
-            if !incremental.replacements.contains_key(&k) {
-                panic!("page only present in regenerated replacement map: {}", k);
-            }
-            assert_eq!(
-                Some(v),
-                incremental.replacements.get(&k),
-                "replacement tables differ for pid {}",
-                k
-            );
-        }
-
-        for (k, v) in &incremental.replacements {
-            if !regenerated.replacements.contains_key(&k) {
-                panic!("page only present in incremental replacement map: {}", k);
-            }
-            assert_eq!(
-                Some(v),
-                regenerated.replacements.get(&k),
-                "replacement tables differ for pid {}",
-                k,
-            );
-        }
-
         assert_eq!(
             incremental,
             regenerated,

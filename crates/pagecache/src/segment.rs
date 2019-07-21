@@ -531,7 +531,9 @@ impl SegmentAccountant {
                         &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
                         segment_base,
                     )?;
-                    self.config.file.sync_all()?;
+                    if !self.config.temporary {
+                        self.config.file.sync_all()?;
+                    }
                 } else if segment_sizes[idx] <= drain_sz {
                     trace!(
                         "SA draining segment at {} during startup \
@@ -1086,13 +1088,13 @@ impl SegmentAccountant {
             "double-free of a segment occurred"
         );
 
-        if let Some(ref thread_pool) = self.config.thread_pool {
+        if self.config.async_io {
             trace!("asynchronously truncating file to length {}", at);
             let (completer, oneshot) = oneshot();
 
             let config = self.config.clone();
 
-            thread_pool.spawn(move || {
+            rayon::spawn(move || {
                 debug!("truncating file to length {}", at);
                 let res = config
                     .file
@@ -1111,7 +1113,9 @@ impl SegmentAccountant {
             trace!("synchronously truncating file to length {}", at);
             let f = &self.config.file;
             f.set_len(at)?;
-            f.sync_all()?;
+            if !self.config.temporary {
+                f.sync_all()?;
+            }
             Ok(())
         }
     }
