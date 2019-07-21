@@ -1,7 +1,6 @@
 use std::{
     fmt::{self, Debug},
     ops::Deref,
-    sync::atomic::Ordering::SeqCst,
 };
 
 use super::*;
@@ -21,7 +20,7 @@ pub struct Node<T: Send + 'static> {
 impl<T: Send + 'static> Drop for Node<T> {
     fn drop(&mut self) {
         unsafe {
-            let next = self.next.load(SeqCst, unprotected()).as_raw();
+            let next = self.next.load(Acquire, unprotected()).as_raw();
             if !next.is_null() {
                 drop(Box::from_raw(next as *mut Node<T>));
             }
@@ -46,7 +45,7 @@ impl<T: Send + 'static> Default for Stack<T> {
 impl<T: Send + 'static> Drop for Stack<T> {
     fn drop(&mut self) {
         unsafe {
-            let curr = self.head.load(SeqCst, unprotected()).as_raw();
+            let curr = self.head.load(Acquire, unprotected()).as_raw();
             if !curr.is_null() {
                 drop(Box::from_raw(curr as *mut Node<T>));
             }
@@ -102,10 +101,10 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
 
             loop {
                 let head = self.head(unprotected());
-                node.deref().next.store(head, SeqCst);
+                node.deref().next.store(head, Release);
                 if self
                     .head
-                    .compare_and_set(head, node, SeqCst, unprotected())
+                    .compare_and_set(head, node, Release, unprotected())
                     .is_ok()
                 {
                     return;
@@ -122,8 +121,8 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
         loop {
             match unsafe { head.as_ref() } {
                 Some(h) => {
-                    let next = h.next.load(SeqCst, &guard);
-                    match self.head.compare_and_set(head, next, SeqCst, &guard)
+                    let next = h.next.load(Acquire, &guard);
+                    match self.head.compare_and_set(head, next, Release, &guard)
                     {
                         Ok(_) => unsafe {
                             guard.defer_destroy(head);
@@ -162,7 +161,7 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
     ) -> CompareAndSwapResult<'g, T> {
         // properly set next ptr
         node.next = Atomic::from(old);
-        let res = self.head.compare_and_set(old, node, SeqCst, guard);
+        let res = self.head.compare_and_set(old, node, Release, guard);
 
         match res {
             Err(e) => {
@@ -185,7 +184,7 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
         guard: &'g Guard,
     ) -> CompareAndSwapResult<'g, T> {
         debug_delay();
-        let res = self.head.compare_and_set(old, new, SeqCst, guard);
+        let res = self.head.compare_and_set(old, new, Release, guard);
 
         match res {
             Ok(success) => {
@@ -203,7 +202,7 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
     /// Returns the current head pointer of the stack, which can
     /// later be used as the key for cas and cap operations.
     pub fn head<'g>(&self, guard: &'g Guard) -> Shared<'g, Node<T>> {
-        self.head.load(SeqCst, guard)
+        self.head.load(Acquire, guard)
     }
 }
 
@@ -242,7 +241,7 @@ where
         } else {
             unsafe {
                 let ret = &self.inner.deref().inner;
-                self.inner = self.inner.deref().next.load(SeqCst, self.guard);
+                self.inner = self.inner.deref().next.load(Acquire, self.guard);
                 Some(ret)
             }
         }

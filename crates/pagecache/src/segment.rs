@@ -1092,13 +1092,14 @@ impl SegmentAccountant {
             trace!("asynchronously truncating file to length {}", at);
             let (completer, oneshot) = oneshot();
 
-            let f = self.config.file.clone();
+            let config = self.config.clone();
 
             rayon::spawn(move || {
                 debug!("truncating file to length {}", at);
-                let res = f
+                let res = config
+                    .file
                     .set_len(at)
-                    .and_then(|_| f.sync_all())
+                    .and_then(|_| config.file.sync_all())
                     .map_err(|e| e.into());
                 if let Err(e) = completer.send(res) {
                     error!("failed to fill async truncation future: {:?}", e);

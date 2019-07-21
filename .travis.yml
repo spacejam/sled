@@ -148,10 +148,6 @@ script:
                  echo "testing pagecache doctests" &&
                  cargo test
                  ;;
-               concurrent)
-                 pushd tests &&
-                 cargo test concurrent --release -- --ignored --nocapture
-                 ;;
                *)
                  echo "unknown TEST value \"$TEST\"";
                  exit 1
