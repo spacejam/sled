@@ -1086,13 +1086,13 @@ impl SegmentAccountant {
             "double-free of a segment occurred"
         );
 
-        if let Some(ref thread_pool) = self.config.thread_pool {
+        if self.config.async_io {
             trace!("asynchronously truncating file to length {}", at);
             let (completer, oneshot) = oneshot();
 
             let f = self.config.file.clone();
 
-            thread_pool.spawn(move || {
+            rayon::spawn(move || {
                 debug!("truncating file to length {}", at);
                 let res = f
                     .set_len(at)

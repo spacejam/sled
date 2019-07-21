@@ -722,14 +722,14 @@ pub(crate) fn maybe_seal_and_write_iobuf(
     // if writers is 0, it's our responsibility to write the buffer.
     if n_writers(sealed) == 0 {
         iobufs.config.global_error()?;
-        if let Some(ref thread_pool) = iobufs.config.thread_pool {
+        if iobufs.config.async_io {
             trace!(
                 "asynchronously writing iobuf with lsn {} to log from maybe_seal",
                 lsn
             );
             let iobufs = iobufs.clone();
             let iobuf = iobuf.clone();
-            thread_pool.spawn(move || {
+            rayon::spawn(move || {
                 if let Err(e) = iobufs.write_to_log(&iobuf) {
                     error!(
                         "hit error while writing iobuf with lsn {}: {:?}",

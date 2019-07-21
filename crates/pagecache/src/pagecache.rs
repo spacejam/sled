@@ -1881,14 +1881,14 @@ where
             return Err(e);
         }
 
-        if let Some(ref thread_pool) = self.config.thread_pool {
+        if self.config.async_io {
             debug!("asynchronously spawning snapshot generation task");
             let config = self.config.clone();
-            thread_pool.spawn(move || {
+            rayon::spawn(move || {
                 if let Err(e) = gen_snapshot() {
                     match e {
                         Error::Io(ref ioe)
-                            if ioe.kind() == std::io::ErrorKind::NotFound => {},
+                            if ioe.kind() == std::io::ErrorKind::NotFound => {}
                         error => {
                             error!(
                                 "encountered error while generating snapshot: {:?}",

@@ -410,7 +410,7 @@ impl Log {
             }
 
             let lsn = iobuf.lsn;
-            if let Some(ref thread_pool) = self.config.thread_pool {
+            if self.config.async_io {
                 trace!(
                     "asynchronously writing iobuf with lsn {} \
                      to log from exit_reservation",
@@ -418,7 +418,7 @@ impl Log {
                 );
                 let iobufs = self.iobufs.clone();
                 let iobuf = iobuf.clone();
-                thread_pool.spawn(move || {
+                rayon::spawn(move || {
                     if let Err(e) = iobufs.write_to_log(&iobuf) {
                         error!(
                             "hit error while writing iobuf with lsn {}: {:?}",
