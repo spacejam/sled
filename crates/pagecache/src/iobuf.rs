@@ -143,11 +143,6 @@ impl IoBufs {
             iobuf.capacity = io_buf_size;
             iobuf.store_segment_header(0, next_lsn, stable);
 
-            maybe_fail!("initial allocation");
-            file.pwrite_all(&*vec![0; config.io_buf_size], lid)?;
-            file.sync_all()?;
-            maybe_fail!("initial allocation post");
-
             debug!(
                 "starting log at clean offset {}, recovered lsn {}",
                 next_lid, next_lsn
