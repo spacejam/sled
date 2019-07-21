@@ -74,6 +74,38 @@ impl<T: Send + 'static> Node2<T> {
     }
 }
 
+impl<T: Send + 'static> Drop for Node1<T> {
+    fn drop(&mut self) {
+        unsafe {
+            let children = self
+                .children
+                .iter()
+                .map(|c| c.load(Relaxed, &unprotected()).as_raw())
+                .filter(|c| !c.is_null());
+
+            for child in children {
+                drop(Box::from_raw(child as *mut Node2<T>));
+            }
+        }
+    }
+}
+
+impl<T: Send + 'static> Drop for Node2<T> {
+    fn drop(&mut self) {
+        unsafe {
+            let children = self
+                .children
+                .iter()
+                .map(|c| c.load(Relaxed, &unprotected()).as_raw())
+                .filter(|c| !c.is_null());
+
+            for child in children {
+                drop(Box::from_raw(child as *mut T));
+            }
+        }
+    }
+}
+
 /// A simple lock-free radix tree.
 pub struct PageTable<T>
 where
@@ -218,40 +250,6 @@ where
         unsafe {
             let head = self.head.load(Relaxed, &unprotected()).into_owned();
             drop(head);
-        }
-    }
-}
-
-impl<T: Send + 'static> Drop for Node1<T> {
-    fn drop(&mut self) {
-        unsafe {
-            let children: Vec<*const Node2<T>> = self
-                .children
-                .iter()
-                .map(|c| c.load(Relaxed, &unprotected()).as_raw())
-                .filter(|c| !c.is_null())
-                .collect();
-
-            for child in children {
-                drop(Box::from_raw(child as *mut Node2<T>));
-            }
-        }
-    }
-}
-
-impl<T: Send + 'static> Drop for Node2<T> {
-    fn drop(&mut self) {
-        unsafe {
-            let children: Vec<*const T> = self
-                .children
-                .iter()
-                .map(|c| c.load(Relaxed, &unprotected()).as_raw())
-                .filter(|c| !c.is_null())
-                .collect();
-
-            for child in children {
-                drop(Box::from_raw(child as *mut T));
-            }
         }
     }
 }
