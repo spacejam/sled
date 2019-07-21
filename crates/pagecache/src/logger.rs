@@ -453,7 +453,9 @@ impl Drop for Log {
             error!("failed to flush from IoBufs::drop: {}", e);
         }
 
-        self.config.file.sync_all().unwrap();
+        if !self.config.temporary {
+            self.config.file.sync_all().unwrap();
+        }
 
         debug!("IoBufs dropped");
     }

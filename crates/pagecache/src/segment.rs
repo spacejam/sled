@@ -531,7 +531,9 @@ impl SegmentAccountant {
                         &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
                         segment_base,
                     )?;
-                    self.config.file.sync_all()?;
+                    if !self.config.temporary {
+                        self.config.file.sync_all()?;
+                    }
                 } else if segment_sizes[idx] <= drain_sz {
                     trace!(
                         "SA draining segment at {} during startup \
@@ -1110,7 +1112,9 @@ impl SegmentAccountant {
             trace!("synchronously truncating file to length {}", at);
             let f = &self.config.file;
             f.set_len(at)?;
-            f.sync_all()?;
+            if !self.config.temporary {
+                f.sync_all()?;
+            }
             Ok(())
         }
     }

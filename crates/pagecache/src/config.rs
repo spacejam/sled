@@ -422,7 +422,9 @@ impl ConfigBuilder {
         f.write_all(&*bytes)?;
         maybe_fail!("write_config crc");
         f.write_all(&crc_arr)?;
-        f.sync_all()?;
+        if !self.temporary {
+            f.sync_all()?;
+        }
         maybe_fail!("write_config post");
         Ok(())
     }

@@ -375,7 +375,9 @@ impl IoBufs {
         let f = &self.config.file;
         io_fail!(self, "buffer write");
         f.pwrite_all(&data[..total_len], lid)?;
-        f.sync_all()?;
+        if !self.config.temporary {
+            f.sync_all()?;
+        }
         io_fail!(self, "buffer write post");
 
         if total_len > 0 {
