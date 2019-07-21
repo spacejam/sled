@@ -668,7 +668,9 @@ where
         if stack_len >= self.config.page_consolidation_threshold {
             let current_pages =
                 if let Some((current_ptr, pages)) = self.get(pid, tx)? {
-                    if old.ts != current_ptr.ts {
+                    if old.ts != current_ptr.ts
+                        && old.cached_ptr != current_ptr.cached_ptr
+                    {
                         // the page has changed in the mean time,
                         // and merging frags may violate correctness
                         // invariants
