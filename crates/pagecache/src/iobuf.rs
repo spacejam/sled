@@ -143,11 +143,6 @@ impl IoBufs {
             iobuf.capacity = io_buf_size;
             iobuf.store_segment_header(0, next_lsn, stable);
 
-            maybe_fail!("initial allocation");
-            file.pwrite_all(&*vec![0; config.io_buf_size], lid)?;
-            file.sync_all()?;
-            maybe_fail!("initial allocation post");
-
             debug!(
                 "starting log at clean offset {}, recovered lsn {}",
                 next_lid, next_lsn
@@ -380,7 +375,9 @@ impl IoBufs {
         let f = &self.config.file;
         io_fail!(self, "buffer write");
         f.pwrite_all(&data[..total_len], lid)?;
-        f.sync_all()?;
+        if !self.config.temporary {
+            f.sync_all()?;
+        }
         io_fail!(self, "buffer write post");
 
         if total_len > 0 {
@@ -722,14 +719,14 @@ pub(crate) fn maybe_seal_and_write_iobuf(
     // if writers is 0, it's our responsibility to write the buffer.
     if n_writers(sealed) == 0 {
         iobufs.config.global_error()?;
-        if let Some(ref thread_pool) = iobufs.config.thread_pool {
+        if iobufs.config.async_io {
             trace!(
                 "asynchronously writing iobuf with lsn {} to log from maybe_seal",
                 lsn
             );
             let iobufs = iobufs.clone();
             let iobuf = iobuf.clone();
-            thread_pool.spawn(move || {
+            rayon::spawn(move || {
                 if let Err(e) = iobufs.write_to_log(&iobuf) {
                     error!(
                         "hit error while writing iobuf with lsn {}: {:?}",

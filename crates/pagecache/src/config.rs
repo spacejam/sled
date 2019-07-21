@@ -103,8 +103,6 @@ pub struct ConfigBuilder {
     pub idgen_persist_interval: u64,
     #[doc(hidden)]
     pub async_io: bool,
-    #[doc(hidden)]
-    pub async_io_threads: usize,
 }
 
 unsafe impl Send for ConfigBuilder {}
@@ -134,7 +132,6 @@ impl Default for ConfigBuilder {
             print_profile_on_drop: false,
             idgen_persist_interval: 1_000_000,
             async_io: true,
-            async_io_threads: 3,
         }
     }
 }
@@ -214,31 +211,6 @@ impl ConfigBuilder {
             self.path = PathBuf::from(tmp_path);
         }
 
-        let threads = Arc::new(AtomicUsize::new(0));
-
-        let thread_pool = if self.async_io {
-            let start_threads = threads.clone();
-            let end_threads = threads.clone();
-
-            let path = self.path.clone();
-
-            let tp = rayon::ThreadPoolBuilder::new()
-                .num_threads(self.async_io_threads)
-                .thread_name(move |id| format!("sled_io_{}_{:?}", id, path))
-                .start_handler(move |_id| {
-                    start_threads.fetch_add(1, SeqCst);
-                })
-                .exit_handler(move |_id| {
-                    end_threads.fetch_sub(1, SeqCst);
-                })
-                .build()
-                .expect("should be able to start rayon threadpool");
-
-            Some(Arc::new(tp))
-        } else {
-            None
-        };
-
         let file = self.open_file().unwrap_or_else(|e| {
             panic!(
                 "should be able to open configured file at {:?}; {}",
@@ -255,8 +227,6 @@ impl ConfigBuilder {
             global_error: Arc::new(AtomicPtr::default()),
             #[cfg(feature = "event_log")]
             event_log: Arc::new(crate::event_log::EventLog::default()),
-            thread_pool,
-            threads,
         }
     }
 
@@ -279,8 +249,7 @@ impl ConfigBuilder {
         (snapshot_path, Option<PathBuf>, "snapshot file location"),
         (print_profile_on_drop, bool, "print a performance profile when the Config is dropped"),
         (idgen_persist_interval, u64, "generated IDs are persisted at this interval. during recovery we skip twice this number"),
-        (async_io, bool, "perform IO operations on a threadpool"),
-        (async_io_threads, usize, "set the number of threads in the IO threadpool. defaults to # logical CPUs.")
+        (async_io, bool, "perform IO operations on a threadpool")
     );
 
     // panics if config options are outside of advised range
@@ -453,7 +422,9 @@ impl ConfigBuilder {
         f.write_all(&*bytes)?;
         maybe_fail!("write_config crc");
         f.write_all(&crc_arr)?;
-        f.sync_all()?;
+        if !self.temporary {
+            f.sync_all()?;
+        }
         maybe_fail!("write_config post");
         Ok(())
     }
@@ -533,8 +504,6 @@ impl ConfigBuilder {
 pub struct Config {
     inner: Arc<ConfigBuilder>,
     pub(crate) file: Arc<fs::File>,
-    pub(crate) thread_pool: Option<Arc<rayon::ThreadPool>>,
-    threads: Arc<AtomicUsize>,
     refs: Arc<AtomicUsize>,
     pub(crate) global_error: Arc<AtomicPtr<Error>>,
     #[cfg(feature = "event_log")]
@@ -554,8 +523,6 @@ impl Clone for Config {
             refs: self.refs.clone(),
             #[cfg(feature = "event_log")]
             event_log: self.event_log.clone(),
-            threads: self.threads.clone(),
-            thread_pool: self.thread_pool.clone(),
             global_error: self.global_error.clone(),
         }
     }
@@ -565,16 +532,6 @@ impl Drop for Config {
     fn drop(&mut self) {
         // if our ref count is 0 we can drop and close our file properly.
         if self.refs.fetch_sub(1, Ordering::SeqCst) == 0 {
-            // wait on thread pool to close
-            debug!("dropping threadpool and waiting for it to drain");
-            let thread_pool = self.thread_pool.take();
-            drop(thread_pool);
-
-            while self.threads.load(SeqCst) != 0 {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            debug!("threadpool drained");
-
             if self.print_profile_on_drop {
                 M.print_profile();
             }
