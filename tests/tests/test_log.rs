@@ -617,8 +617,6 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
             Restart => {
                 drop(log);
 
-                println!("\nrestarting\n");
-
                 // on recovery, we will rewind over any aborted tip entries
                 while !reference.is_empty() {
                     let should_pop = reference.last().unwrap().2.is_none();
