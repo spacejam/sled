@@ -67,10 +67,11 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
         assert_eq!(
             slice_to_u32(&*v),
             lowest,
-            "expected key {} to have value {}, instead it had value {}",
+            "expected key {} to have value {}, instead it had value {} in db: {:?}",
             slice_to_u32(&*k),
             lowest,
-            slice_to_u32(&*v)
+            slice_to_u32(&*v),
+            tree
         );
     }
 
@@ -138,6 +139,7 @@ fn run(config: Config) {
 
 fn run_without_snapshot() {
     let config = ConfigBuilder::new()
+        .async_io(false)
         .io_bufs(2)
         .blink_node_split_size(1024)
         .page_consolidation_threshold(10)
@@ -162,6 +164,7 @@ fn run_without_snapshot() {
 
 fn run_with_snapshot() {
     let config = ConfigBuilder::new()
+        .async_io(true)
         .io_bufs(2)
         .blink_node_split_size(1024)
         .page_consolidation_threshold(10)
@@ -172,7 +175,7 @@ fn run_with_snapshot() {
         // low hanging fruit more quickly
         .io_buf_size(1_000)
         .path("test_crashes_with_snapshot".to_string())
-        .snapshot_after_ops(1 << 10)
+        .snapshot_after_ops(5000)
         .build();
 
     match thread::spawn(|| run(config)).join() {
