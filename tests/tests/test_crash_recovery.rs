@@ -129,7 +129,7 @@ fn run(config: Config) {
         let key = u32_to_vec((hu % CYCLE) as u32);
 
         let mut value = u32_to_vec((hu / CYCLE) as u32);
-        let additional_len = rand::thread_rng().gen_range(0, 100_000);
+        let additional_len = rand::thread_rng().gen_range(0, 1000);
         value.append(&mut vec![0u8; additional_len]);
 
         tree.set(&key, value).unwrap();
@@ -146,7 +146,7 @@ fn run_without_snapshot() {
         .flush_every_ms(Some(100))
         // drop io_buf_size to 1<<16, then 1<<17 to tease out
         // low hanging fruit more quickly
-        .io_buf_size(100_000) // 1<<16 is 65k but might cause stalling
+        .io_buf_size(1_000)
         .path("test_crashes".to_string())
         .snapshot_after_ops(1 << 56)
         .build();
@@ -170,7 +170,7 @@ fn run_with_snapshot() {
         .flush_every_ms(Some(100))
         // drop io_buf_size to 1<<16, then 1<<17 to tease out
         // low hanging fruit more quickly
-        .io_buf_size(100_000) // 1<<16 is 65k but might cause stalling
+        .io_buf_size(1_000)
         .path("test_crashes_with_snapshot".to_string())
         .snapshot_after_ops(1 << 10)
         .build();
