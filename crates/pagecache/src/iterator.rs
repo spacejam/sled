@@ -288,7 +288,11 @@ fn scan_segment_lsns(
         );
     }
 
-    debug!("ordering before clearing tears: {:?}", ordering);
+    debug!(
+        "ordering before clearing tears: {:?}, \
+         max_header_stable_lsn: {}",
+        ordering, max_header_stable_lsn
+    );
 
     // Check that the segments above max_header_stable_lsn
     // properly link their previous segment pointers.
@@ -310,8 +314,11 @@ fn clean_tail_tears(
     f: &std::fs::File,
 ) -> Result<BTreeMap<Lsn, LogId>> {
     let io_buf_size = config.io_buf_size as Lsn;
+
+    // -1..(2 * io_buf_size) - 1 => 0
+    // otherwise the floor of the buffer
     let lowest_lsn_in_tail: Lsn =
-        ((max_header_stable_lsn / io_buf_size) - 1) * io_buf_size;
+        std::cmp::max(0, (max_header_stable_lsn / io_buf_size) * io_buf_size);
 
     let mut expected_present = lowest_lsn_in_tail;
     let mut missing_item_in_tail = None;
