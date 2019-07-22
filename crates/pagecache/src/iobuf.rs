@@ -448,10 +448,10 @@ impl IoBufs {
 
         intervals.push(interval);
 
-        #[cfg(feature = "event_log")]
+        #[cfg(any(feature = "event_log", feature = "lock_free_delays"))]
         assert!(
-            intervals.len() < 10000,
-            "intervals is getting crazy... {:?}",
+            intervals.len() < 1000,
+            "intervals is getting strangely long... {:?}",
             *intervals
         );
 
