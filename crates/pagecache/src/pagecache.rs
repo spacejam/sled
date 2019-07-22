@@ -1162,7 +1162,7 @@ where
 
                     let actual_ts = unsafe { actual_ptr.deref().1.ts };
 
-                    if actual_ts != old.ts {
+                    if actual_ts != old.ts || is_rewrite {
                         return Ok(Err(Some((
                             PagePtr {
                                 cached_ptr: actual_ptr,
