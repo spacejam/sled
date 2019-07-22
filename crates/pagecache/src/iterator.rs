@@ -334,6 +334,12 @@ fn clean_tail_tears(
         })
         .collect::<Vec<_>>();
 
+    debug!(
+        "in clean_tail_tears, found missing item in tail: {:?} \
+         and we'll scan segments {:?} above lowest lsn {}",
+        missing_item_in_tail, logical_tail, lowest_lsn_in_tail
+    );
+
     let iter = LogIter {
         config: config.clone(),
         segment_iter: Box::new(logical_tail.into_iter()),
