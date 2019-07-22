@@ -313,16 +313,32 @@ fn clean_tail_tears(
     let lowest_lsn_in_tail: Lsn =
         ((max_header_stable_lsn / io_buf_size) - 1) * io_buf_size;
 
+    let mut expected_present = lowest_lsn_in_tail;
+    let mut missing_item_in_tail = None;
+
     let logical_tail = ordering
         .range(lowest_lsn_in_tail..)
         .map(|(lsn, lid)| (*lsn, *lid))
+        .take_while(|(lsn, _lid)| {
+            let matches = expected_present == *lsn;
+            if !matches {
+                debug!(
+                    "failed to find expected segment \
+                     at lsn {}, tear detected",
+                    expected_present
+                );
+                missing_item_in_tail = Some(expected_present);
+            }
+            expected_present += io_buf_size;
+            matches
+        })
         .collect::<Vec<_>>();
 
     let iter = LogIter {
         config: config.clone(),
         segment_iter: Box::new(logical_tail.into_iter()),
         segment_base: None,
-        max_lsn: Lsn::max_value(),
+        max_lsn: missing_item_in_tail.unwrap_or(Lsn::max_value()),
         cur_lsn: 0,
     };
 

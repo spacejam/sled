@@ -100,7 +100,7 @@ fn spawn_killah() {
 }
 
 fn run(config: Config) {
-    // tests::setup_logger();
+    tests::setup_logger();
     let crash_during_initialization = rand::thread_rng().gen_bool(0.1);
 
     if crash_during_initialization {
