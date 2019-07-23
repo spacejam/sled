@@ -139,15 +139,13 @@ fn run(config: Config) {
 
 fn run_without_snapshot() {
     let config = ConfigBuilder::new()
-        .async_io(false)
+        .async_io(true)
         .io_bufs(2)
         .blink_node_split_size(1024)
         .page_consolidation_threshold(10)
         .cache_bits(6)
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(100))
-        // drop io_buf_size to 1<<16, then 1<<17 to tease out
-        // low hanging fruit more quickly
         .io_buf_size(1_000)
         .path("test_crashes".to_string())
         .snapshot_after_ops(1 << 56)
@@ -171,8 +169,6 @@ fn run_with_snapshot() {
         .cache_bits(6)
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(100))
-        // drop io_buf_size to 1<<16, then 1<<17 to tease out
-        // low hanging fruit more quickly
         .io_buf_size(1_000)
         .path("test_crashes_with_snapshot".to_string())
         .snapshot_after_ops(5000)
