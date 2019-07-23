@@ -310,14 +310,14 @@ where
 
         config.reset_global_error();
 
-        let cache_capacity = config.cache_capacity;
-        let cache_shard_bits = config.cache_bits;
-        let lru = Lru::new(cache_capacity, cache_shard_bits);
-
         // try to pull any existing snapshot off disk, and
         // apply any new data to it to "catch-up" the
         // snapshot before loading it.
         let snapshot = read_snapshot_or_default(&config)?;
+
+        let cache_capacity = config.cache_capacity;
+        let cache_shard_bits = config.cache_bits;
+        let lru = Lru::new(cache_capacity, cache_shard_bits);
 
         let mut pc = PageCache {
             _materializer: PhantomData,

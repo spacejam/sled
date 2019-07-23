@@ -105,6 +105,8 @@ pub struct ConfigBuilder {
     pub async_io: bool,
     #[doc(hidden)]
     pub async_io_threads: usize,
+    #[doc(hidden)]
+    pub version: (usize, usize),
 }
 
 unsafe impl Send for ConfigBuilder {}
@@ -135,6 +137,7 @@ impl Default for ConfigBuilder {
             idgen_persist_interval: 1_000_000,
             async_io: true,
             async_io_threads: 3,
+            version: pagecache_crate_version(),
         }
     }
 }
@@ -406,8 +409,8 @@ impl ConfigBuilder {
                 if old.merge_operator.is_some() {
                     supported!(
                         self.merge_operator.is_some(),
-                        "this system was previously opened with a \
-                         merge operator. must supply one FOREVER after \
+                        "This system was previously opened with a \
+                         merge operator. You must supply one FOREVER after \
                          choosing to do so once, BWAHAHAHAHAHAHA!!!!"
                     );
                 }
@@ -428,6 +431,21 @@ impl ConfigBuilder {
                         "cannot change the io buffer size across restarts. \
                          please change it back to {}",
                         old.io_buf_size
+                    )
+                );
+
+                supported!(
+                    self.version == old.version,
+                    format!(
+                        "This database was created using \
+                         pagecache version {}.{}, but our pagecache \
+                         version is {}.{}. Please perform an upgrade \
+                         using the sled::Db::export and sled::Db::import \
+                         methods.",
+                        old.version.0,
+                        old.version.1,
+                        self.version.0,
+                        self.version.1,
                     )
                 );
                 Ok(())
