@@ -211,7 +211,6 @@ fn main() {
         .io_bufs(16)
         .io_buf_size(8_000_000)
         .async_io(args.flag_async)
-        .async_io_threads(3)
         .blink_node_split_size(4096)
         .page_consolidation_threshold(10)
         .cache_bits(8)

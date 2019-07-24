@@ -21,8 +21,6 @@ use self::Op::*;
 impl Arbitrary for Op {
     fn arbitrary<G: Gen>(g: &mut G) -> Op {
         let fail_points = vec![
-            "initial allocation",
-            "initial allocation post",
             "zero garbage segment",
             "zero garbage segment post",
             "buffer write",

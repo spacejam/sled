@@ -32,10 +32,10 @@ impl PersistedConfig {
     }
 }
 
-impl Deref for Config {
+impl Deref for ConfigInner {
     type Target = ConfigBuilder;
     fn deref(&self) -> &Self::Target {
-        &*self.inner
+        &self.inner
     }
 }
 
@@ -104,8 +104,6 @@ pub struct ConfigBuilder {
     #[doc(hidden)]
     pub async_io: bool,
     #[doc(hidden)]
-    pub async_io_threads: usize,
-    #[doc(hidden)]
     pub version: (usize, usize),
 }
 
@@ -136,7 +134,6 @@ impl Default for ConfigBuilder {
             print_profile_on_drop: false,
             idgen_persist_interval: 1_000_000,
             async_io: true,
-            async_io_threads: 3,
             version: pagecache_crate_version(),
         }
     }
@@ -217,31 +214,6 @@ impl ConfigBuilder {
             self.path = PathBuf::from(tmp_path);
         }
 
-        let threads = Arc::new(AtomicUsize::new(0));
-
-        let thread_pool = if self.async_io {
-            let start_threads = threads.clone();
-            let end_threads = threads.clone();
-
-            let path = self.path.clone();
-
-            let tp = rayon::ThreadPoolBuilder::new()
-                .num_threads(self.async_io_threads)
-                .thread_name(move |id| format!("sled_io_{}_{:?}", id, path))
-                .start_handler(move |_id| {
-                    start_threads.fetch_add(1, SeqCst);
-                })
-                .exit_handler(move |_id| {
-                    end_threads.fetch_sub(1, SeqCst);
-                })
-                .build()
-                .expect("should be able to start rayon threadpool");
-
-            Some(Arc::new(tp))
-        } else {
-            None
-        };
-
         let file = self.open_file().unwrap_or_else(|e| {
             panic!(
                 "should be able to open configured file at {:?}; {}",
@@ -251,16 +223,13 @@ impl ConfigBuilder {
         });
 
         // seal config in a Config
-        Config {
-            inner: Arc::new(self),
-            file: Arc::new(file),
-            refs: Arc::new(AtomicUsize::new(0)),
-            global_error: Arc::new(AtomicPtr::default()),
+        Config(Arc::new(ConfigInner {
+            inner: self,
+            file: file,
+            global_error: AtomicPtr::default(),
             #[cfg(feature = "event_log")]
-            event_log: Arc::new(crate::event_log::EventLog::default()),
-            thread_pool,
-            threads,
-        }
+            event_log: crate::event_log::EventLog::default(),
+        }))
     }
 
     builder!(
@@ -282,8 +251,7 @@ impl ConfigBuilder {
         (snapshot_path, Option<PathBuf>, "snapshot file location"),
         (print_profile_on_drop, bool, "print a performance profile when the Config is dropped"),
         (idgen_persist_interval, u64, "generated IDs are persisted at this interval. during recovery we skip twice this number"),
-        (async_io, bool, "perform IO operations on a threadpool"),
-        (async_io_threads, usize, "set the number of threads in the IO threadpool. defaults to # logical CPUs.")
+        (async_io, bool, "perform IO operations on a threadpool")
     );
 
     // panics if config options are outside of advised range
@@ -471,7 +439,9 @@ impl ConfigBuilder {
         f.write_all(&*bytes)?;
         maybe_fail!("write_config crc");
         f.write_all(&crc_arr)?;
-        f.sync_all()?;
+        if !self.temporary {
+            f.sync_all()?;
+        }
         maybe_fail!("write_config post");
         Ok(())
     }
@@ -547,67 +517,47 @@ impl ConfigBuilder {
 
 /// A finalized `ConfigBuilder` that can be use multiple times
 /// to open a `Tree` or `Log`.
+#[derive(Debug, Clone)]
+pub struct Config(Arc<ConfigInner>);
+
+impl Deref for Config {
+    type Target = ConfigInner;
+
+    fn deref(&self) -> &ConfigInner {
+        &self.0
+    }
+}
+
 #[derive(Debug)]
-pub struct Config {
-    inner: Arc<ConfigBuilder>,
-    pub(crate) file: Arc<fs::File>,
-    pub(crate) thread_pool: Option<Arc<rayon::ThreadPool>>,
-    threads: Arc<AtomicUsize>,
-    refs: Arc<AtomicUsize>,
-    pub(crate) global_error: Arc<AtomicPtr<Error>>,
+pub struct ConfigInner {
+    inner: ConfigBuilder,
+    pub(crate) file: fs::File,
+    pub(crate) global_error: AtomicPtr<Error>,
     #[cfg(feature = "event_log")]
     /// an event log for concurrent debugging
-    pub event_log: Arc<event_log::EventLog>,
+    pub event_log: event_log::EventLog,
 }
 
 unsafe impl Send for Config {}
 unsafe impl Sync for Config {}
 
-impl Clone for Config {
-    fn clone(&self) -> Config {
-        self.refs.fetch_add(1, Ordering::SeqCst);
-        Config {
-            inner: self.inner.clone(),
-            file: self.file.clone(),
-            refs: self.refs.clone(),
-            #[cfg(feature = "event_log")]
-            event_log: self.event_log.clone(),
-            threads: self.threads.clone(),
-            thread_pool: self.thread_pool.clone(),
-            global_error: self.global_error.clone(),
-        }
-    }
-}
-
-impl Drop for Config {
+impl Drop for ConfigInner {
     fn drop(&mut self) {
-        // if our ref count is 0 we can drop and close our file properly.
-        if self.refs.fetch_sub(1, Ordering::SeqCst) == 0 {
-            // wait on thread pool to close
-            debug!("dropping threadpool and waiting for it to drain");
-            let thread_pool = self.thread_pool.take();
-            drop(thread_pool);
 
-            while self.threads.load(SeqCst) != 0 {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            debug!("threadpool drained");
-
-            if self.print_profile_on_drop {
-                M.print_profile();
-            }
-
-            if !self.temporary {
-                return;
-            }
-
-            // Our files are temporary, so nuke them.
-            debug!(
-                "removing temporary storage file {}",
-                self.inner.path.to_string_lossy()
-            );
-            let _res = fs::remove_dir_all(&self.path);
+        if self.print_profile_on_drop {
+            M.print_profile();
         }
+
+        if !self.temporary {
+            return;
+        }
+
+        // Our files are temporary, so nuke them.
+        debug!(
+            "removing temporary storage file {}",
+            self.inner.path.to_string_lossy()
+        );
+        let _res = fs::remove_dir_all(&self.path);
     }
 }
 
@@ -776,30 +726,6 @@ impl Config {
         );
 
         /*
-        for (k, v) in &regenerated.replacements {
-            if !incremental.replacements.contains_key(&k) {
-                panic!("page only present in regenerated replacement map: {}", k);
-            }
-            assert_eq!(
-                Some(v),
-                incremental.replacements.get(&k),
-                "replacement tables differ for pid {}",
-                k
-            );
-        }
-
-        for (k, v) in &incremental.replacements {
-            if !regenerated.replacements.contains_key(&k) {
-                panic!("page only present in incremental replacement map: {}", k);
-            }
-            assert_eq!(
-                Some(v),
-                regenerated.replacements.get(&k),
-                "replacement tables differ for pid {}",
-                k,
-            );
-        }
-
         assert_eq!(
             incremental,
             regenerated,

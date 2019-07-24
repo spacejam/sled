@@ -60,7 +60,7 @@ use std::{
     io,
     sync::atomic::{
         AtomicI64 as AtomicLsn, AtomicU64,
-        Ordering::{Acquire, Release, SeqCst},
+        Ordering::{Acquire, Relaxed, Release, SeqCst},
     },
 };
 

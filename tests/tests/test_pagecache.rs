@@ -104,7 +104,7 @@ fn pagecache_caching() {
 }
 
 #[test]
-fn parallel_pagecache() -> sled::Result<()> {
+fn concurrent_pagecache() -> sled::Result<()> {
     tests::setup_logger();
     const N_THREADS: usize = 10;
     const N_PER_THREAD: usize = 100;

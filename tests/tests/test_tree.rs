@@ -30,7 +30,7 @@ fn kv(i: usize) -> Vec<u8> {
 }
 
 #[test]
-fn parallel_tree_ops() {
+fn concurrent_tree_ops() {
     tests::setup_logger();
 
     for i in 0..INTENSITY {
@@ -168,7 +168,7 @@ fn parallel_tree_ops() {
 }
 
 #[test]
-fn parallel_tree_iter() -> Result<()> {
+fn concurrent_tree_iter() -> Result<()> {
     tests::setup_logger();
 
     const N_FORWARD: usize = INTENSITY;

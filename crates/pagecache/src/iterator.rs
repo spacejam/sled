@@ -350,7 +350,9 @@ fn clean_tail_tears(
             &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
             *lid,
         )?;
-        f.sync_all()?;
+        if !config.temporary {
+            f.sync_all()?;
+        }
     }
 
     ordering = ordering
