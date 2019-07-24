@@ -265,10 +265,6 @@ fn write_snapshot(config: &Config, snapshot: &Snapshot) -> Result<()> {
     f.write_all(&len_bytes)?;
     maybe_fail!("snap write crc");
     f.write_all(&crc32)?;
-
-    if !config.temporary {
-        f.sync_all()?;
-    }
     maybe_fail!("snap write post");
 
     trace!("wrote snapshot to {}", path_1.to_string_lossy());
