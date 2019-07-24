@@ -1260,3 +1260,39 @@ fn failpoints_bug_27() {
         true,
     ))
 }
+
+#[test]
+fn failpoints_bug_28() {
+    // postmortem 1:
+    assert!(prop_tree_crashes_nicely(
+        vec![
+            Del(61),
+            Id,
+            Del(127),
+            Set,
+            Restart,
+            Del(219),
+            Id,
+            Set,
+            Id,
+            Del(41),
+            Id,
+            Id,
+            Set,
+            Del(227),
+            Set,
+            Del(191),
+            Id,
+            Del(78),
+            Set,
+            Id,
+            Set,
+            Del(123),
+            Restart,
+            Restart,
+            Restart,
+            Id
+        ],
+        true,
+    ))
+}

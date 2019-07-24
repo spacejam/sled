@@ -1076,11 +1076,26 @@ impl SegmentAccountant {
 
         self.ordering.insert(lsn, lid);
 
+        // this is the upper limit of overshoot between
+        // the current lsn and the lid of a new segment.
+        // in a stable situation, the system should never
+        // allocate a section of the file that is greater
+        // than the lsn, but this can happen when we have
+        // cautiously skipped a few segments that no longer
+        // contain recent page fragments.
+        let lid_slack = self
+            .deferred_free_segments
+            .as_ref()
+            .map(|dfs| dfs.len() * self.config.io_buf_size)
+            .unwrap_or(0);
+
         debug!(
             "segment accountant returning offset: {} \
-             paused: {} on deck: {:?}",
-            lid, self.pause_rewriting, self.free,
+             paused: {} on deck: {:?} lid_slack: {}",
+            lid, self.pause_rewriting, self.free, lid_slack
         );
+
+        assert!(lsn + lid_slack as Lsn >= lid as Lsn);
 
         Ok(lid)
     }
