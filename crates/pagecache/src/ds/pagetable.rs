@@ -80,7 +80,9 @@ impl<T: Send + 'static> Drop for Node1<T> {
             unsafe {
                 let shared_child = child.load(Relaxed, &unprotected());
                 if shared_child.as_raw().is_null() {
-                    continue;
+                    // this does not leak because the PageTable is
+                    // assumed to be dense.
+                    break;
                 }
                 drop(shared_child.into_owned());
             }
@@ -94,7 +96,9 @@ impl<T: Send + 'static> Drop for Node2<T> {
             unsafe {
                 let shared_child = child.load(Relaxed, &unprotected());
                 if shared_child.as_raw().is_null() {
-                    continue;
+                    // this does not leak because the PageTable is
+                    // assumed to be dense.
+                    break;
                 }
                 drop(shared_child.into_owned());
             }
