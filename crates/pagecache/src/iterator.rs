@@ -375,6 +375,9 @@ fn clean_tail_tears(
     {
         debug!("zeroing torn segment with lsn {} at lid {}", lsn, lid);
 
+        // NB we intentionally corrupt this header to prevent any segment
+        // from being allocated which would duplicate its LSN, messing
+        // up recovery in the future.
         f.pwrite_all(
             &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
             *lid,

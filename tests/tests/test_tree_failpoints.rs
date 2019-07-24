@@ -1220,3 +1220,43 @@ fn failpoints_bug_26() {
         false,
     ))
 }
+
+#[test]
+fn failpoints_bug_27() {
+    // postmortem 1: a segment is recovered as empty at recovery,
+    // which prevented its lsn from being known, and when the SA
+    // was recovered it erroneously calculated its lsn as being -1
+    assert!(prop_tree_crashes_nicely(
+        vec![
+            Id,
+            Id,
+            Set,
+            Set,
+            Restart,
+            Set,
+            Id,
+            Id,
+            Set,
+            Del(197),
+            Del(148),
+            Restart,
+            Id,
+            Set,
+            Del(165),
+            Set,
+            Set,
+            Set,
+            Set,
+            Id,
+            Del(29),
+            Set,
+            Set,
+            Del(75),
+            Del(170),
+            Restart,
+            Restart,
+            Set
+        ],
+        true,
+    ))
+}

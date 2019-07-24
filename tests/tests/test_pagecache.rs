@@ -1325,7 +1325,9 @@ fn pagecache_bug_29() {
 
 #[test]
 fn pagecache_bug_30() {
-    // postmortem:
+    // postmortem: during SA recovery the max_stable_header_lsn
+    // was compared against segment headers before deactivating
+    // the segment, rather than the end of that segment.
     use self::Op::*;
     prop_pagecache_works(
         vec![
