@@ -226,6 +226,74 @@ impl Db {
         self.context.generate_id()
     }
 
+    /// A database export method for all collections in the `Db`,
+    /// for use in sled version upgrades. Can be used in combination
+    /// with the `import` method below on a database running a later
+    /// version.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any IO problems occur while trying
+    /// to perform the export.
+    pub fn export(
+        &self,
+    ) -> Vec<(
+        CollectionType,
+        CollectionName,
+        impl Iterator<Item = Vec<Vec<u8>>>,
+    )> {
+        let tenants = self.tenants.read().unwrap();
+
+        let mut ret = vec![];
+
+        for (name, tree) in tenants.iter() {
+            let tree = tree.clone();
+            let iter: Iter<'static> =
+                unsafe { std::mem::transmute(tree.iter()) };
+            let arc_iter = ArcIter { _tree: tree, iter };
+            ret.push((b"tree".to_vec(), name.to_vec(), arc_iter));
+        }
+
+        ret
+    }
+
+    /// Imports the collections from a previous database.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any IO problems occur while trying
+    /// to perform the import.
+    pub fn import(
+        &self,
+        export: Vec<(
+            CollectionType,
+            CollectionName,
+            impl Iterator<Item = Vec<Vec<u8>>>,
+        )>,
+    ) {
+        for (collection_type, collection_name, collection_iter) in export {
+            match collection_type {
+                ref t if t == b"tree" => {
+                    let tree = self
+                        .open_tree(collection_name)
+                        .expect("failed to open new tree during import");
+                    for mut kv in collection_iter {
+                        let v = kv
+                            .pop()
+                            .expect("failed to get value from tree export");
+                        let k = kv
+                            .pop()
+                            .expect("failed to get key from tree export");
+                        tree.set(k, v).expect(
+                            "failed to insert value during tree import",
+                        );
+                    }
+                }
+                other => panic!("unknown collection type {:?}", other),
+            }
+        }
+    }
+
     /// Traverses all files and calculates their total physical
     /// size, then traverses all pages and calculates their
     /// total logical size, then divides the physical size
@@ -233,5 +301,43 @@ impl Db {
     #[doc(hidden)]
     pub fn space_amplification(&self) -> Result<f64> {
         self.context.pagecache.space_amplification()
+    }
+}
+
+/// These types provide the information that allows an entire
+/// system to be exported and imported to facilitate
+/// major upgrades. It is comprised entirely
+/// of standard library types to be forward compatible.
+/// NB this definitions are expensive to change, because
+/// they impact the migration path.
+type CollectionType = Vec<u8>;
+type CollectionName = Vec<u8>;
+
+struct ArcIter {
+    _tree: Arc<Tree>,
+    iter: Iter<'static>,
+}
+
+impl std::ops::Deref for ArcIter {
+    type Target = Iter<'static>;
+
+    fn deref(&self) -> &Iter<'static> {
+        &self.iter
+    }
+}
+
+impl std::ops::DerefMut for ArcIter {
+    fn deref_mut(&mut self) -> &mut Iter<'static> {
+        &mut self.iter
+    }
+}
+
+impl Iterator for ArcIter {
+    type Item = Vec<Vec<u8>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let kv_opt = self.iter.next()?;
+        let (k, v) = kv_opt.expect("failed to read data from system");
+        Some(vec![k.to_vec(), v.to_vec()])
     }
 }
