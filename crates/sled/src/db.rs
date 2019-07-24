@@ -251,7 +251,7 @@ impl Db {
             let iter: Iter<'static> =
                 unsafe { std::mem::transmute(tree.iter()) };
             let arc_iter = ArcIter { _tree: tree, iter };
-            ret.push((name.to_vec(), b"tree".to_vec(), arc_iter));
+            ret.push((b"tree".to_vec(), name.to_vec(), arc_iter));
         }
 
         ret
