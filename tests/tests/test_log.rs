@@ -406,11 +406,10 @@ fn log_chunky_iterator() {
                 let pid = (tn * 10000) + i;
 
                 if abort {
-                    if let Ok(res) = log.reserve(KIND, pid, &buf) {
-                        res.abort().unwrap();
-                    } else {
-                        assert!(len > max_valid_size);
-                    }
+                    let res = log
+                        .reserve(KIND, pid, &buf)
+                        .expect("should be able to reserve");
+                    res.abort().unwrap();
                 } else {
                     let (lsn, lid) = log
                         .reserve(KIND, pid, &buf)
