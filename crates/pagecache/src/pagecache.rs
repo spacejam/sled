@@ -631,7 +631,7 @@ where
                 let mut free = free.lock().unwrap();
                 // panic if we double-freed a page
                 if free.iter().any(|e| e == &pid) {
-                    panic!("page {} was double-freed", pid);
+                    panic!("pid {} was double-freed", pid);
                 }
 
                 free.push(pid);
@@ -1926,7 +1926,7 @@ where
                 );
             };
 
-            trace!("load_snapshot page {} {:?}", pid, state);
+            trace!("load_snapshot pid {} {:?}", pid, state);
 
             let stack = Stack::default();
 
