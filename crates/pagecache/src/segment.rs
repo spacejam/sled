@@ -545,6 +545,10 @@ impl SegmentAccountant {
                     // we would need to ensure through other means
                     // that empty segments with a written segment header
                     // but no other data get reused.
+                    trace!(
+                        "zeroing segment with lid {} during SA initialization",
+                        segment_base
+                    );
                     maybe_fail!("segment initial free zero");
                     self.config.file.pwrite_all(
                         &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
