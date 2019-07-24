@@ -589,6 +589,61 @@ fn recover_tree() {
 }
 
 #[test]
+fn tree_import_export() -> Result<()> {
+    tests::setup_logger();
+
+    let config_1 = ConfigBuilder::new().temporary(true).build();
+    let config_2 = ConfigBuilder::new().temporary(true).build();
+
+    let db = sled::Db::start(config_1.clone())?;
+    for db_id in 0..N_THREADS {
+        let tree_id = format!("tree_{}", db_id);
+        let tree = db.open_tree(tree_id.as_bytes())?;
+        for i in 0..N_THREADS {
+            let k = kv(i);
+            tree.set(&k, k.clone()).unwrap();
+        }
+    }
+    drop(db);
+
+    let exporter = sled::Db::start(config_1.clone())?;
+    let importer = sled::Db::start(config_2.clone())?;
+
+    let export = exporter.export();
+    importer.import(export);
+
+    drop(exporter);
+    drop(config_1);
+    drop(importer);
+
+    let db = sled::Db::start(config_2.clone())?;
+    for db_id in 0..N_THREADS {
+        let tree_id = format!("tree_{}", db_id);
+        let tree = db.open_tree(tree_id.as_bytes())?;
+
+        for i in 0..N_THREADS {
+            let k = kv(i as usize);
+            assert_eq!(tree.get(&*k).unwrap().unwrap(), k);
+            tree.del(&*k).unwrap();
+        }
+    }
+    drop(db);
+
+    let db = sled::Db::start(config_2.clone())?;
+    for db_id in 0..N_THREADS {
+        let tree_id = format!("tree_{}", db_id);
+        let tree = db.open_tree(tree_id.as_bytes())?;
+
+        for i in 0..N_THREADS {
+            let k = kv(i as usize);
+            assert_eq!(tree.get(&*k), Ok(None));
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
 #[cfg(not(target_os = "fuchsia"))]
 #[ignore]
 fn quickcheck_tree_matches_btreemap() {

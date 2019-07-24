@@ -309,3 +309,11 @@ fn bump_atomic_lsn(atomic_lsn: &AtomicLsn, to: Lsn) {
         current = last;
     }
 }
+
+fn pagecache_crate_version() -> (usize, usize) {
+    let vsn = env!("CARGO_PKG_VERSION");
+    let mut parts = vsn.split('.');
+    let major = parts.next().unwrap().parse().unwrap();
+    let minor = parts.next().unwrap().parse().unwrap();
+    (major, minor)
+}
