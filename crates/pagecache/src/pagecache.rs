@@ -422,8 +422,11 @@ where
             }
 
             let (_, counter) = pc.get_idgen(&tx)?;
-            let idgen_recovery =
-                counter + (2 * pc.config.idgen_persist_interval);
+            let idgen_recovery = if was_recovered {
+                counter + (2 * pc.config.idgen_persist_interval)
+            } else {
+                0
+            };
             let idgen_persists = counter / pc.config.idgen_persist_interval
                 * pc.config.idgen_persist_interval;
 
