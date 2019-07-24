@@ -502,7 +502,8 @@ impl SegmentAccountant {
             let segment_lsn = segment.lsn.unwrap_or(-1);
 
             if idx != currently_active_segment
-                && segment_lsn <= snapshot.max_header_stable_lsn
+                && segment_lsn + io_buf_size as Lsn
+                    <= snapshot.max_header_stable_lsn
             {
                 let segment_base = idx as LogId * io_buf_size as LogId;
 
