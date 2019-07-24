@@ -702,7 +702,7 @@ where
 
             let cache_info = CacheInfo {
                 lsn: -1,
-                ptr: DiskPtr::Inline(666666666),
+                ptr: DiskPtr::Inline(666_666_666),
                 ts: 0,
                 log_size: 0,
             };
@@ -811,7 +811,7 @@ where
                         self.advance_snapshot()?;
                     }
 
-                    return Ok(Ok(PagePtr { cached_ptr, ts: ts }));
+                    return Ok(Ok(PagePtr { cached_ptr, ts }));
                 }
                 Err((actual_ptr, returned_new)) => {
                     trace!("link of pid {} failed", pid);
@@ -1151,7 +1151,7 @@ where
                     // when the iobuf's n_writers hits 0, we may transition
                     // the segment to inactive, resulting in a race otherwise.
                     log_reservation.complete()?;
-                    return Ok(Ok(PagePtr { cached_ptr, ts: ts }));
+                    return Ok(Ok(PagePtr { cached_ptr, ts }));
                 }
                 Err((actual_ptr, returned_entry)) => {
                     trace!("cas_page failed on pid {}", pid);
@@ -1698,7 +1698,7 @@ where
             let stack_len = stack_iter.size_hint().1.unwrap();
             let mut new_stack = Vec::with_capacity(stack_len);
 
-            'inner: for (update_opt, cache_info) in stack_iter {
+            for (update_opt, cache_info) in stack_iter {
                 match update_opt {
                     None | Some(Update::Free) => {
                         // already paged out
