@@ -1323,6 +1323,43 @@ fn pagecache_bug_29() {
     );
 }
 
+#[test]
+fn pagecache_bug_30() {
+    // postmortem: during SA recovery the max_stable_header_lsn
+    // was compared against segment headers before deactivating
+    // the segment, rather than the end of that segment.
+    use self::Op::*;
+    prop_pagecache_works(
+        vec![
+            Restart,
+            Allocate,
+            Restart,
+            Allocate,
+            Replace(0, 202),
+            Allocate,
+            Replace(0, 204),
+            Replace(0, 205),
+            Link(0, 209),
+            Allocate,
+            Link(0, 210),
+            Replace(0, 211),
+            Allocate,
+            Free(0),
+            Link(1, 213),
+            Allocate,
+            Restart,
+            Free(0),
+            Restart,
+            Free(2),
+            Free(3),
+            Replace(1, 217),
+            Restart,
+            Restart,
+        ],
+        false,
+    );
+}
+
 fn _pagecache_bug_() {
     // postmortem: TEMPLATE
     // portmortem 2: ...

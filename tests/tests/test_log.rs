@@ -85,7 +85,7 @@ fn more_log_reservations_than_buffers() {
     let big_msg_overhead = MSG_HEADER_LEN + total_seg_overhead;
     let big_msg_sz = config.io_buf_size - big_msg_overhead;
 
-    for _ in 0..=config.io_bufs * 1000 {
+    for _ in 0..=config.io_bufs * 10 {
         reservations.push(log.reserve(KIND, PID, &vec![0; big_msg_sz]).unwrap())
     }
     for res in reservations.into_iter().rev() {
@@ -406,11 +406,10 @@ fn log_chunky_iterator() {
                 let pid = (tn * 10000) + i;
 
                 if abort {
-                    if let Ok(res) = log.reserve(KIND, pid, &buf) {
-                        res.abort().unwrap();
-                    } else {
-                        assert!(len > max_valid_size);
-                    }
+                    let res = log
+                        .reserve(KIND, pid, &buf)
+                        .expect("should be able to reserve");
+                    res.abort().unwrap();
                 } else {
                     let (lsn, lid) = log
                         .reserve(KIND, pid, &buf)

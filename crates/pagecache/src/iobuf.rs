@@ -313,6 +313,13 @@ impl IoBufs {
 
         let bytes_to_write = offset(header);
 
+        trace!(
+            "write_to_log lid {} lsn {} len {}",
+            lid,
+            base_lsn,
+            bytes_to_write
+        );
+
         let maxed = iobuf.linearized(|| iobuf.get_maxed());
         let unused_space = capacity - bytes_to_write;
         let should_pad = maxed && unused_space >= MSG_HEADER_LEN;
@@ -441,10 +448,10 @@ impl IoBufs {
 
         intervals.push(interval);
 
-        #[cfg(feature = "event_log")]
+        #[cfg(any(feature = "event_log", feature = "lock_free_delays"))]
         assert!(
-            intervals.len() < 10000,
-            "intervals is getting crazy... {:?}",
+            intervals.len() < 1000,
+            "intervals is getting strangely long... {:?}",
             *intervals
         );
 

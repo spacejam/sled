@@ -67,10 +67,11 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
         assert_eq!(
             slice_to_u32(&*v),
             lowest,
-            "expected key {} to have value {}, instead it had value {}",
+            "expected key {} to have value {}, instead it had value {} in db: {:?}",
             slice_to_u32(&*k),
             lowest,
-            slice_to_u32(&*v)
+            slice_to_u32(&*v),
+            tree
         );
     }
 
@@ -100,7 +101,7 @@ fn spawn_killah() {
 }
 
 fn run(config: Config) {
-    // tests::setup_logger();
+    tests::setup_logger();
     let crash_during_initialization = rand::thread_rng().gen_bool(0.1);
 
     if crash_during_initialization {
@@ -129,7 +130,7 @@ fn run(config: Config) {
         let key = u32_to_vec((hu % CYCLE) as u32);
 
         let mut value = u32_to_vec((hu / CYCLE) as u32);
-        let additional_len = rand::thread_rng().gen_range(0, 100_000);
+        let additional_len = rand::thread_rng().gen_range(0, 1000);
         value.append(&mut vec![0u8; additional_len]);
 
         tree.set(&key, value).unwrap();
@@ -138,15 +139,14 @@ fn run(config: Config) {
 
 fn run_without_snapshot() {
     let config = ConfigBuilder::new()
+        .async_io(true)
         .io_bufs(2)
         .blink_node_split_size(1024)
         .page_consolidation_threshold(10)
         .cache_bits(6)
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(100))
-        // drop io_buf_size to 1<<16, then 1<<17 to tease out
-        // low hanging fruit more quickly
-        .io_buf_size(100_000) // 1<<16 is 65k but might cause stalling
+        .io_buf_size(1_000)
         .path("test_crashes".to_string())
         .snapshot_after_ops(1 << 56)
         .build();
@@ -162,17 +162,16 @@ fn run_without_snapshot() {
 
 fn run_with_snapshot() {
     let config = ConfigBuilder::new()
+        .async_io(true)
         .io_bufs(2)
         .blink_node_split_size(1024)
         .page_consolidation_threshold(10)
         .cache_bits(6)
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(100))
-        // drop io_buf_size to 1<<16, then 1<<17 to tease out
-        // low hanging fruit more quickly
-        .io_buf_size(100_000) // 1<<16 is 65k but might cause stalling
+        .io_buf_size(1_000)
         .path("test_crashes_with_snapshot".to_string())
-        .snapshot_after_ops(1 << 10)
+        .snapshot_after_ops(5000)
         .build();
 
     match thread::spawn(|| run(config)).join() {

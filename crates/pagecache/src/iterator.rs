@@ -288,7 +288,11 @@ fn scan_segment_lsns(
         );
     }
 
-    debug!("ordering before clearing tears: {:?}", ordering);
+    debug!(
+        "ordering before clearing tears: {:?}, \
+         max_header_stable_lsn: {}",
+        ordering, max_header_stable_lsn
+    );
 
     // Check that the segments above max_header_stable_lsn
     // properly link their previous segment pointers.
@@ -310,19 +314,44 @@ fn clean_tail_tears(
     f: &std::fs::File,
 ) -> Result<BTreeMap<Lsn, LogId>> {
     let io_buf_size = config.io_buf_size as Lsn;
+
+    // -1..(2 * io_buf_size) - 1 => 0
+    // otherwise the floor of the buffer
     let lowest_lsn_in_tail: Lsn =
-        ((max_header_stable_lsn / io_buf_size) - 1) * io_buf_size;
+        std::cmp::max(0, (max_header_stable_lsn / io_buf_size) * io_buf_size);
+
+    let mut expected_present = lowest_lsn_in_tail;
+    let mut missing_item_in_tail = None;
 
     let logical_tail = ordering
         .range(lowest_lsn_in_tail..)
         .map(|(lsn, lid)| (*lsn, *lid))
+        .take_while(|(lsn, _lid)| {
+            let matches = expected_present == *lsn;
+            if !matches {
+                debug!(
+                    "failed to find expected segment \
+                     at lsn {}, tear detected",
+                    expected_present
+                );
+                missing_item_in_tail = Some(expected_present);
+            }
+            expected_present += io_buf_size;
+            matches
+        })
         .collect::<Vec<_>>();
+
+    debug!(
+        "in clean_tail_tears, found missing item in tail: {:?} \
+         and we'll scan segments {:?} above lowest lsn {}",
+        missing_item_in_tail, logical_tail, lowest_lsn_in_tail
+    );
 
     let iter = LogIter {
         config: config.clone(),
         segment_iter: Box::new(logical_tail.into_iter()),
         segment_base: None,
-        max_lsn: Lsn::max_value(),
+        max_lsn: missing_item_in_tail.unwrap_or(Lsn::max_value()),
         cur_lsn: 0,
     };
 
@@ -346,6 +375,9 @@ fn clean_tail_tears(
     {
         debug!("zeroing torn segment with lsn {} at lid {}", lsn, lid);
 
+        // NB we intentionally corrupt this header to prevent any segment
+        // from being allocated which would duplicate its LSN, messing
+        // up recovery in the future.
         f.pwrite_all(
             &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
             *lid,

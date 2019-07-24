@@ -21,7 +21,7 @@ impl LogReader for File {
 
         let mut seg_header_buf = [0u8; SEG_HEADER_LEN];
         self.pread_exact(&mut seg_header_buf, lid)?;
-        let mut segment_header = SegmentHeader::from(seg_header_buf);
+        let segment_header = SegmentHeader::from(seg_header_buf);
 
         if segment_header.lsn < Lsn::try_from(lid).unwrap() {
             debug!(
@@ -29,7 +29,6 @@ impl LogReader for File {
                  greater, as the base lid is {}",
                 segment_header.lsn, lid
             );
-            segment_header.ok = false;
         }
 
         Ok(segment_header)

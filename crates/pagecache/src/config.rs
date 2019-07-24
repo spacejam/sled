@@ -225,7 +225,7 @@ impl ConfigBuilder {
         // seal config in a Config
         Config(Arc::new(ConfigInner {
             inner: self,
-            file: file,
+            file,
             global_error: AtomicPtr::default(),
             #[cfg(feature = "event_log")]
             event_log: crate::event_log::EventLog::default(),
@@ -543,7 +543,6 @@ unsafe impl Sync for Config {}
 
 impl Drop for ConfigInner {
     fn drop(&mut self) {
-
         if self.print_profile_on_drop {
             M.print_profile();
         }
