@@ -127,6 +127,8 @@ pub(super) fn advance_snapshot(
 
     trace!("building on top of old snapshot: {:?}", snapshot);
 
+    let old_lsn = snapshot.last_lsn;
+
     for (log_kind, pid, lsn, ptr, sz) in iter {
         trace!(
             "in advance_snapshot looking at item with lsn {} ptr {}",
@@ -153,7 +155,9 @@ pub(super) fn advance_snapshot(
         snapshot.apply(log_kind, pid, lsn, ptr, sz);
     }
 
-    write_snapshot(config, &snapshot)?;
+    if snapshot.last_lsn != old_lsn {
+        write_snapshot(config, &snapshot)?;
+    }
 
     trace!("generated new snapshot: {:?}", snapshot);
 
