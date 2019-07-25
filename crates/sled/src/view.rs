@@ -219,13 +219,21 @@ impl<'a> View<'a> {
     ) -> Option<(IVec, IVec)> {
         assert!(!self.is_index);
 
+        lazy_static::lazy_static! {
+            static ref MAX_IVEC: IVec = {
+                let mut base = vec![255; 1024 * 1024];
+                base[0] = 0;
+                IVec::from(base)
+            };
+        }
+
         // This encoding happens this way because
         // the rightmost (unbounded) node has
         // a hi key represented by the empty slice
         let successor_key = match bound {
             Bound::Unbounded => {
                 if self.hi.is_empty() {
-                    prefix_encode(self.lo, &[255; 1024 * 1024])
+                    MAX_IVEC.clone()
                 } else {
                     prefix_encode(self.lo, self.hi)
                 }
