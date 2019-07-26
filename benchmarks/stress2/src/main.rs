@@ -152,7 +152,7 @@ fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
                 tree.get(&key).unwrap();
             }
             v if v > get_max && v <= set_max => {
-                tree.set(&key, bytes(args.flag_val_len)).unwrap();
+                tree.insert(&key, bytes(args.flag_val_len)).unwrap();
             }
             v if v > set_max && v <= del_max => {
                 tree.del(&key).unwrap();
