@@ -277,7 +277,7 @@ pub fn prop_tree_matches_btreemap(
                 );
             }
             Del(k) => {
-                tree.del(&*k.0).unwrap();
+                tree.remove(&*k.0).unwrap();
                 reference.remove(&k);
             }
             Cas(k, old, new) => {

@@ -152,7 +152,7 @@ fn concurrent_tree_ops() {
 
         debug!("========== deleting in test {} ==========", i);
         par! {t, |tree: &Tree, k: Vec<u8>| {
-            tree.del(&*k).unwrap();
+            tree.remove(&*k).unwrap();
         }};
 
         drop(t);
@@ -326,7 +326,7 @@ fn concurrent_tree_iter() -> Result<()> {
 
                     let mut base = INDELIBLE[major].to_vec();
                     base.push(minor as u8);
-                    t.del(&base)?;
+                    t.remove(&base)?;
                 }
 
                 Ok(())
@@ -577,7 +577,7 @@ fn recover_tree() {
     for i in 0..N_PER_THREAD {
         let k = kv(i as usize);
         assert_eq!(t.get(&*k).unwrap().unwrap(), k);
-        t.del(&*k).unwrap();
+        t.remove(&*k).unwrap();
     }
     drop(t);
 
@@ -624,7 +624,7 @@ fn tree_import_export() -> Result<()> {
         for i in 0..N_THREADS {
             let k = kv(i as usize);
             assert_eq!(tree.get(&*k).unwrap().unwrap(), k);
-            tree.del(&*k).unwrap();
+            tree.remove(&*k).unwrap();
         }
     }
     drop(db);

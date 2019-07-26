@@ -30,7 +30,7 @@ fn basic() -> Result<()> {
     assert_eq!(iter.next(), None);
 
     // deletion
-    db.del(&k)?;
+    db.remove(&k)?;
 
     Ok(())
 }
@@ -69,7 +69,7 @@ fn merge_operator() -> Result<()> {
     assert_eq!(db.get(&*k).unwrap().unwrap(), (vec![3]));
 
     // merges on non-present values will add them
-    db.del(&*k)?;
+    db.remove(&*k)?;
     db.merge(k.clone(), vec![4])?;
     assert_eq!(db.get(&*k).unwrap().unwrap(), (vec![4]));
 
