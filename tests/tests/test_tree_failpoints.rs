@@ -251,7 +251,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 // insert false certainty before completes
                 reference.insert(u16::from(k), (u16::from(k), false));
 
-                fp_crash!(tree.del(&*vec![0, k]));
+                fp_crash!(tree.remove(&*vec![0, k]));
                 fp_crash!(tree.flush());
 
                 reference.remove(&u16::from(k));

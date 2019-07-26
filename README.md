@@ -31,7 +31,7 @@ assert_eq!(iter.next(), Some(Ok((k, v2))));
 assert_eq!(iter.next(), None);
 
 // deletion
-tree.del(&k);
+tree.remove(&k);
 
 // block until all operations are on-disk
 tree.flush();
