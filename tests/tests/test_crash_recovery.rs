@@ -133,7 +133,7 @@ fn run(config: Config) {
         let additional_len = rand::thread_rng().gen_range(0, 1000);
         value.append(&mut vec![0u8; additional_len]);
 
-        tree.set(&key, value).unwrap();
+        tree.insert(&key, value).unwrap();
     }
 }
 

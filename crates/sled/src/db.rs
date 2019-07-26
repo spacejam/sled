@@ -284,7 +284,7 @@ impl Db {
                         let k = kv
                             .pop()
                             .expect("failed to get key from tree export");
-                        tree.set(k, v).expect(
+                        tree.insert(k, v).expect(
                             "failed to insert value during tree import",
                         );
                     }

@@ -12,7 +12,7 @@ pub struct Batch<'a> {
 
 impl<'a> Batch<'a> {
     /// Set a key to a new value
-    pub fn set<K, V>(&mut self, key: K, value: V)
+    pub fn insert<K, V>(&mut self, key: K, value: V)
     where
         IVec: From<K>,
         IVec: From<V>,
@@ -34,7 +34,7 @@ impl<'a> Batch<'a> {
         let cc = self.tree.concurrency_control.write().unwrap();
         for (k, v_opt) in self.writes.into_iter() {
             if let Some(v) = v_opt {
-                self.tree.set_inner(k, v)?;
+                self.tree.insert_inner(k, v)?;
             } else {
                 self.tree.remove_inner(k)?;
             }
