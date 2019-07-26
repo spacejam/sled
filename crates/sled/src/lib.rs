@@ -22,7 +22,7 @@
 //! assert_eq!(iter.next().unwrap(), Ok((IVec::from(b"yo!"), IVec::from(b"v2"))));
 //! assert_eq!(iter.next(), None);
 //!
-//! t.del(b"yo!");
+//! t.remove(b"yo!");
 //! assert_eq!(t.get(b"yo!"), Ok(None));
 //! ```
 

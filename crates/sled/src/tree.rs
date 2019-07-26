@@ -42,7 +42,7 @@ impl<'a> IntoIterator for &'a Tree {
 /// assert_eq!(iter.next().unwrap(), Ok((IVec::from(b"yo!"), IVec::from(b"v2"))));
 /// assert_eq!(iter.next(), None);
 ///
-/// t.del(b"yo!");
+/// t.remove(b"yo!");
 /// assert_eq!(t.get(b"yo!"), Ok(None));
 /// ```
 #[derive(Clone)]
@@ -170,7 +170,7 @@ impl Tree {
     /// batch.insert("key_a", "val_a");
     /// batch.insert("key_b", "val_b");
     /// batch.insert("key_c", "val_c");
-    /// batch.del("key_0");
+    /// batch.remove("key_0");
     /// batch.apply().unwrap();
     /// // key_0 no longer exists, and key_a, key_b, and key_c
     /// // now do exist.
@@ -220,12 +220,28 @@ impl Tree {
     /// assert_eq!(t.del(&[1]), Ok(Some(sled::IVec::from(vec![1]))));
     /// assert_eq!(t.del(&[1]), Ok(None));
     /// ```
+    #[deprecated(since = "0.24.2", note = "replaced by `Tree::remove`")]
     pub fn del<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
-        let _ = self.concurrency_control.read().unwrap();
-        self.del_inner(key)
+        self.remove(key)
     }
 
-    pub(crate) fn del_inner<K: AsRef<[u8]>>(
+    /// Delete a value, returning the old value if it existed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let config = sled::ConfigBuilder::new().temporary(true).build();
+    /// let t = sled::Db::start(config).unwrap();
+    /// t.set(&[1], vec![1]);
+    /// assert_eq!(t.remove(&[1]), Ok(Some(sled::IVec::from(vec![1]))));
+    /// assert_eq!(t.remove(&[1]), Ok(None));
+    /// ```
+    pub fn remove<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
+        let _ = self.concurrency_control.read().unwrap();
+        self.remove_inner(key)
+    }
+
+    pub(crate) fn remove_inner<K: AsRef<[u8]>>(
         &self,
         key: K,
     ) -> Result<Option<IVec>> {
@@ -681,7 +697,7 @@ impl Tree {
     /// // Merges on non-present values will cause the merge function to be called
     /// // with `old_value == None`. If the merge function returns something (which it
     /// // does, in this case) a new value will be inserted.
-    /// tree.del(k);
+    /// tree.remove(k);
     /// tree.merge(k, vec![4]);
     /// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![4]))));
     /// ```
@@ -908,7 +924,7 @@ impl Tree {
     pub fn clear(&self) -> Result<()> {
         for k in self.iter().keys() {
             let key = k?;
-            self.del(key)?;
+            self.remove(key)?;
         }
         Ok(())
     }

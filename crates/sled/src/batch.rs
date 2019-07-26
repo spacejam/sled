@@ -21,7 +21,7 @@ impl<'a> Batch<'a> {
     }
 
     /// Remove a key
-    pub fn del<K>(&mut self, key: K)
+    pub fn remove<K>(&mut self, key: K)
     where
         IVec: From<K>,
     {
@@ -36,7 +36,7 @@ impl<'a> Batch<'a> {
             if let Some(v) = v_opt {
                 self.tree.insert_inner(k, v)?;
             } else {
-                self.tree.del_inner(k)?;
+                self.tree.remove_inner(k)?;
             }
         }
         drop(cc);
