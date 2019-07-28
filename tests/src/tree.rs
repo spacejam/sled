@@ -230,7 +230,7 @@ pub fn prop_tree_matches_btreemap(
     for op in ops.into_iter() {
         match op {
             Set(k, v) => {
-                let old_actual = tree.set(&k.0, vec![0, v]).unwrap();
+                let old_actual = tree.insert(&k.0, vec![0, v]).unwrap();
                 let old_reference = reference.insert(k.clone(), u16::from(v));
                 assert_eq!(
                     old_actual.map(|v| bytes_to_u16(&*v)),
@@ -277,14 +277,14 @@ pub fn prop_tree_matches_btreemap(
                 );
             }
             Del(k) => {
-                tree.del(&*k.0).unwrap();
+                tree.remove(&*k.0).unwrap();
                 reference.remove(&k);
             }
             Cas(k, old, new) => {
                 let tree_old = tree.get(&*k.0).unwrap();
                 if let Some(old_tree) = tree_old {
                     if old_tree == *vec![0, old] {
-                        tree.set(&k.0, vec![0, new]).unwrap();
+                        tree.insert(&k.0, vec![0, new]).unwrap();
                     }
                 }
 

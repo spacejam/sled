@@ -75,7 +75,7 @@ fn concurrent_tree_ops() {
         let t = Arc::new(sled::Db::start(config.clone()).unwrap());
         par! {t, |tree: &Tree, k: Vec<u8>| {
             assert_eq!(tree.get(&*k), Ok(None));
-            tree.set(&k, k.clone()).expect("we should write successfully");
+            tree.insert(&k, k.clone()).expect("we should write successfully");
             assert_eq!(tree.get(&*k).unwrap(), Some(k.clone().into()),
                 "failed to read key {:?} that we just wrote from tree {:?}",
                 k, tree);
@@ -152,7 +152,7 @@ fn concurrent_tree_ops() {
 
         debug!("========== deleting in test {} ==========", i);
         par! {t, |tree: &Tree, k: Vec<u8>| {
-            tree.del(&*k).unwrap();
+            tree.remove(&*k).unwrap();
         }};
 
         drop(t);
@@ -202,7 +202,7 @@ fn concurrent_tree_iter() -> Result<()> {
     ];
 
     for item in &INDELIBLE {
-        t.set(item.to_vec(), item.to_vec())?;
+        t.insert(item.to_vec(), item.to_vec())?;
     }
 
     let barrier = Arc::new(Barrier::new(N_FORWARD + N_REVERSE + 2));
@@ -302,7 +302,7 @@ fn concurrent_tree_iter() -> Result<()> {
 
                     let mut base = INDELIBLE[major].to_vec();
                     base.push(minor as u8);
-                    t.set(base.clone(), base.clone())?;
+                    t.insert(base.clone(), base.clone())?;
                 }
 
                 Ok(())
@@ -326,7 +326,7 @@ fn concurrent_tree_iter() -> Result<()> {
 
                     let mut base = INDELIBLE[major].to_vec();
                     base.push(minor as u8);
-                    t.del(&base)?;
+                    t.remove(&base)?;
                 }
 
                 Ok(())
@@ -354,7 +354,7 @@ fn tree_subdir() {
 
     let t = sled::Db::start(config).unwrap();
 
-    t.set(&[1], vec![1]).unwrap();
+    t.insert(&[1], vec![1]).unwrap();
 
     drop(t);
 
@@ -382,7 +382,7 @@ fn tree_iterator() {
     let t = sled::Db::start(config).unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
-        t.set(&k, k.clone()).unwrap();
+        t.insert(&k, k.clone()).unwrap();
     }
 
     for (i, (k, v)) in t.iter().map(|res| res.unwrap()).enumerate() {
@@ -431,8 +431,8 @@ fn tree_subscriptions_and_keyspaces() -> Result<()> {
     let t2 = db.open_tree(b"2".to_vec())?;
     let mut s2 = t2.watch_prefix(b"".to_vec());
 
-    t1.set(b"t1_a", b"t1_a".to_vec())?;
-    t2.set(b"t2_a", b"t2_a".to_vec())?;
+    t1.insert(b"t1_a", b"t1_a".to_vec())?;
+    t2.insert(b"t2_a", b"t2_a".to_vec())?;
 
     assert_eq!(s1.next().unwrap().key(), b"t1_a");
     assert_eq!(s2.next().unwrap().key(), b"t2_a");
@@ -457,8 +457,8 @@ fn tree_subscriptions_and_keyspaces() -> Result<()> {
     assert_eq!(t1.len(), 1);
     assert_eq!(t2.len(), 1);
 
-    t1.set(b"t1_b", b"t1_b".to_vec())?;
-    t2.set(b"t2_b", b"t2_b".to_vec())?;
+    t1.insert(b"t1_b", b"t1_b".to_vec())?;
+    t2.insert(b"t2_b", b"t2_b".to_vec())?;
 
     assert_eq!(s1.next().unwrap().key(), b"t1_b");
     assert_eq!(s2.next().unwrap().key(), b"t2_b");
@@ -516,12 +516,12 @@ fn tree_range() {
         .build();
     let t = sled::Db::start(config).unwrap();
 
-    t.set(b"0", vec![0]).unwrap();
-    t.set(b"1", vec![10]).unwrap();
-    t.set(b"2", vec![20]).unwrap();
-    t.set(b"3", vec![30]).unwrap();
-    t.set(b"4", vec![40]).unwrap();
-    t.set(b"5", vec![50]).unwrap();
+    t.insert(b"0", vec![0]).unwrap();
+    t.insert(b"1", vec![10]).unwrap();
+    t.insert(b"2", vec![20]).unwrap();
+    t.insert(b"3", vec![30]).unwrap();
+    t.insert(b"4", vec![40]).unwrap();
+    t.insert(b"5", vec![50]).unwrap();
 
     let start: &[u8] = b"2";
     let end: &[u8] = b"4";
@@ -569,7 +569,7 @@ fn recover_tree() {
     let t = sled::Db::start(config.clone()).unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
-        t.set(&k, k.clone()).unwrap();
+        t.insert(&k, k.clone()).unwrap();
     }
     drop(t);
 
@@ -577,7 +577,7 @@ fn recover_tree() {
     for i in 0..N_PER_THREAD {
         let k = kv(i as usize);
         assert_eq!(t.get(&*k).unwrap().unwrap(), k);
-        t.del(&*k).unwrap();
+        t.remove(&*k).unwrap();
     }
     drop(t);
 
@@ -601,7 +601,7 @@ fn tree_import_export() -> Result<()> {
         let tree = db.open_tree(tree_id.as_bytes())?;
         for i in 0..N_THREADS {
             let k = kv(i);
-            tree.set(&k, k.clone()).unwrap();
+            tree.insert(&k, k.clone()).unwrap();
         }
     }
     drop(db);
@@ -624,7 +624,7 @@ fn tree_import_export() -> Result<()> {
         for i in 0..N_THREADS {
             let k = kv(i as usize);
             assert_eq!(tree.get(&*k).unwrap().unwrap(), k);
-            tree.del(&*k).unwrap();
+            tree.remove(&*k).unwrap();
         }
     }
     drop(db);

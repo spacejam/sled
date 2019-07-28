@@ -6,7 +6,7 @@
 //! use sled::{Db, IVec};
 //!
 //! let t = Db::start_default("my_db").unwrap();
-//! t.set(b"yo!", b"v1".to_vec());
+//! t.insert(b"yo!", b"v1".to_vec());
 //! assert_eq!(t.get(b"yo!"), Ok(Some(IVec::from(b"v1"))));
 //!
 //! // Atomic compare-and-swap.
@@ -22,7 +22,7 @@
 //! assert_eq!(iter.next().unwrap(), Ok((IVec::from(b"yo!"), IVec::from(b"v2"))));
 //! assert_eq!(iter.next(), None);
 //!
-//! t.del(b"yo!");
+//! t.remove(b"yo!");
 //! assert_eq!(t.get(b"yo!"), Ok(None));
 //! ```
 

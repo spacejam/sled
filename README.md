@@ -19,7 +19,7 @@ use sled::Db;
 let tree = Db::start_default(path)?;
 
 // set and get
-tree.set(k, v1);
+tree.insert(k, v1);
 assert_eq!(tree.get(&k), Ok(Some(v1)));
 
 // compare and swap
@@ -31,7 +31,7 @@ assert_eq!(iter.next(), Some(Ok((k, v2))));
 assert_eq!(iter.next(), None);
 
 // deletion
-tree.del(&k);
+tree.remove(&k);
 
 // block until all operations are on-disk
 tree.flush();
