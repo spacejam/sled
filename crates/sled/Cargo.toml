@@ -35,3 +35,4 @@ version = "0.4"
 pagecache = { path = "../pagecache", version = "0.17" }
 futures = "0.1"
 serde_bytes = "0.11"
+lazy_static = "1.3.0"
