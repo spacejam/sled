@@ -359,11 +359,19 @@ impl ConfigBuilder {
                 // try to exclusively lock the file
                 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
                 {
-                    if file.try_lock_exclusive().is_err() {
+                    let lock_res = if self.read_only {
+                        file.try_lock_shared()
+                    } else {
+                        file.try_lock_exclusive()
+                    };
+                    if lock_res.is_err() {
                         return Err(Error::Io(std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            "could not acquire exclusive file lock",
-                        )));
+                                    std::io::ErrorKind::Other,
+                                    format!(
+                                    "could not acquire appropriate file lock on {:?}",
+                                    path
+                                ),
+                            )));
                     }
                 }
 
