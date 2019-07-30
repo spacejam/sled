@@ -350,7 +350,9 @@ impl ConfigBuilder {
         let mut options = fs::OpenOptions::new();
         options.create(true);
         options.read(true);
-        options.write(true);
+        if !self.read_only {
+            options.write(true);
+        }
 
         match options.open(&path) {
             Ok(file) => {
