@@ -1,7 +1,6 @@
 use std::{
     borrow::Cow,
     collections::BinaryHeap,
-    marker::PhantomData,
     ops::Deref,
     sync::{Arc, Mutex},
 };
@@ -125,37 +124,19 @@ impl<'a> RecoveryGuard<'a> {
 /// ```
 /// use pagecache::{pin, Materializer, Config};
 ///
-/// pub struct TestMaterializer;
+/// pub struct TestState(String);
 ///
-/// impl Materializer for TestMaterializer {
-///     // The possibly fragmented page, written to log storage sequentially, and
-///     // read in parallel from multiple locations on disk when serving
-///     // a request to read the page. These will be merged to a single version
-///     // at read time, and possibly cached.
-///     type PageFrag = String;
-///
+/// impl Materializer for TestState {
 ///     // Used to merge chains of partial pages into a form
 ///     // that is useful for the `PageCache` owner.
-///     fn merge<'a, I>(frags: I, _config: &Config) -> Self::PageFrag
-///     where
-///         I: IntoIterator<Item = &'a Self::PageFrag>,
-///     {
-///         frags.into_iter().fold(String::new(), |mut acc, ref s| {
-///             acc.push_str(&*s);
-///             acc
-///         })
+///     fn merge(&mut self, other: &TestState, _config: &Config) {
+///         self.0.push_str(other.0);
 ///     }
-///
-///     // Used to determine the resident size for this item in cache.
-///     fn size_in_bytes(frag: &String) -> u64 {
-///         (std::mem::size_of::<String>() + frag.as_bytes().len()) as u64
-///     }
-///
 /// }
 ///
 /// fn main() {
 ///     let config = pagecache::ConfigBuilder::new().temporary(true).build();
-///     let pc: pagecache::PageCache<TestMaterializer, _> =
+///     let pc: pagecache::PageCache<TestState, _> =
 ///         pagecache::PageCache::start(config).unwrap();
 ///     {
 ///         // We begin by initiating a new transaction, which
@@ -191,13 +172,10 @@ impl<'a> RecoveryGuard<'a> {
 ///     }
 /// }
 /// ```
-pub struct PageCache<PM, P>
+pub struct PageCache<P>
 where
-    PM: Materializer<PageFrag = P>,
-    PM: 'static + Send + Sync,
-    P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
+    P: Materializer,
 {
-    _materializer: PhantomData<PM>,
     config: Config,
     inner: Arc<PageTable<PageTableEntry<P>>>,
     next_pid_to_allocate: AtomicU64,
@@ -221,27 +199,13 @@ where
     pending: AtomicLsn,
 }
 
-unsafe impl<PM, P> Send for PageCache<PM, P>
-where
-    PM: Materializer<PageFrag = P>,
-    PM: 'static + Send + Sync,
-    P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
-{
-}
+unsafe impl<P> Send for PageCache<P> where P: Materializer {}
 
-unsafe impl<PM, P> Sync for PageCache<PM, P>
-where
-    PM: Materializer<PageFrag = P>,
-    PM: 'static + Send + Sync,
-    P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
-{
-}
+unsafe impl<P> Sync for PageCache<P> where P: Materializer {}
 
-impl<PM, P> Debug for PageCache<PM, P>
+impl<P> Debug for PageCache<P>
 where
-    PM: Materializer<PageFrag = P>,
-    PM: 'static + Send + Sync,
-    P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
+    P: Materializer,
 {
     fn fmt(
         &self,
@@ -256,11 +220,9 @@ where
 }
 
 #[cfg(feature = "event_log")]
-impl<PM, P> Drop for PageCache<PM, P>
+impl<P> Drop for PageCache<P>
 where
-    PM: Materializer<PageFrag = P>,
-    PM: 'static + Send + Sync,
-    P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
+    P: Materializer,
 {
     fn drop(&mut self) {
         trace!("dropping pagecache");
@@ -298,14 +260,12 @@ where
     }
 }
 
-impl<PM, P> PageCache<PM, P>
+impl<P> PageCache<P>
 where
-    PM: Materializer<PageFrag = P>,
-    PM: 'static + Send + Sync,
-    P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
+    P: Materializer,
 {
     /// Instantiate a new `PageCache`.
-    pub fn start(config: Config) -> Result<PageCache<PM, P>> {
+    pub fn start(config: Config) -> Result<PageCache<P>> {
         trace!("starting pagecache");
 
         config.reset_global_error();
@@ -320,7 +280,6 @@ where
         let lru = Lru::new(cache_capacity, cache_shard_bits);
 
         let mut pc = PageCache {
-            _materializer: PhantomData,
             config: config.clone(),
             inner: Arc::new(PageTable::default()),
             next_pid_to_allocate: AtomicU64::new(0),
@@ -459,7 +418,7 @@ where
     }
 
     /// Begins a transaction.
-    pub fn begin(&self) -> Result<Tx<PM, P>> {
+    pub fn begin(&self) -> Result<Tx<P>> {
         Ok(Tx::new(&self, self.generate_id()?))
     }
 
@@ -470,7 +429,7 @@ where
     pub fn allocate<'g>(
         &self,
         new: P,
-        tx: &'g Tx<PM, P>,
+        tx: &'g Tx<P>,
     ) -> Result<(PageId, PagePtr<'g, P>)> {
         self.allocate_inner(Update::Compact(new), tx)
     }
@@ -528,7 +487,7 @@ where
     fn allocate_inner<'g>(
         &self,
         new: Update<P>,
-        tx: &'g Tx<PM, P>,
+        tx: &'g Tx<P>,
     ) -> Result<(PageId, PagePtr<'g, P>)> {
         let (pid, key) = if let Some(pid) = self.free.lock().unwrap().pop() {
             trace!("re-allocating pid {}", pid);
@@ -609,7 +568,7 @@ where
         &self,
         pid: PageId,
         old: PagePtr<'g, P>,
-        tx: &'g Tx<PM, P>,
+        tx: &'g Tx<P>,
     ) -> Result<CasResult<'g, P, ()>> {
         trace!("attempting to free pid {}", pid);
 
@@ -653,12 +612,11 @@ where
         pid: PageId,
         mut old: PagePtr<'g, P>,
         new: P,
-        tx: &'g Tx<PM, P>,
+        tx: &'g Tx<P>,
     ) -> Result<CasResult<'g, P, P>> {
         let _measure = Measure::new(&M.link_page);
 
         trace!("linking pid {} with {:?}", pid, new);
-
         let head_ptr = match self.inner.get(pid, &tx.guard) {
             None => return Ok(Err(None)),
             Some(p) => p,
@@ -669,8 +627,8 @@ where
         let stack_iter = StackIter::from_ptr(head, &tx.guard);
         let stack_len = stack_iter.size_hint().1.unwrap();
         if stack_len >= self.config.page_consolidation_threshold {
-            let current_pages =
-                if let Some((current_ptr, pages)) = self.get(pid, tx)? {
+            let current_frags =
+                if let Some((current_ptr, frags)) = self.get(pid, tx)? {
                     if old.ts != current_ptr.ts
                         && old.cached_ptr != current_ptr.cached_ptr
                     {
@@ -679,7 +637,7 @@ where
                         // invariants
                         return Ok(Err(Some((current_ptr, new))));
                     }
-                    pages
+                    frags
                 } else {
                     return Ok(Err(None));
                 };
@@ -687,12 +645,16 @@ where
             let update: P = {
                 let _measure = Measure::new(&M.merge_page);
 
-                let combined_iter = current_pages
-                    .into_iter()
-                    .rev()
-                    .chain(std::iter::once(&new));
+                let mut frags = current_frags.into_iter().rev();
+                let mut base = frags.next().unwrap().clone();
 
-                PM::merge(combined_iter, &self.config)
+                for frag in frags {
+                    base.merge(frag, &self.config);
+                }
+
+                base.merge(&new, &self.config);
+
+                base
             };
 
             return self.replace(pid, old, update, tx);
@@ -851,7 +813,7 @@ where
         pid: PageId,
         old: PagePtr<'g, P>,
         new: P,
-        tx: &'g Tx<PM, P>,
+        tx: &'g Tx<P>,
     ) -> Result<CasResult<'g, P, P>> {
         let _measure = Measure::new(&M.replace_page);
 
@@ -887,7 +849,7 @@ where
     // (at least partially) located in. This happens when a
     // segment has had enough resident page fragments moved
     // away to trigger the `segment_cleanup_threshold`.
-    fn rewrite_page<'g>(&self, pid: PageId, tx: &'g Tx<PM, P>) -> Result<()> {
+    fn rewrite_page<'g>(&self, pid: PageId, tx: &'g Tx<P>) -> Result<()> {
         let _measure = Measure::new(&M.rewrite_page);
 
         trace!("rewriting pid {}", pid);
@@ -949,7 +911,7 @@ where
             trace!("rewriting page with pid {}", pid);
 
             // page-in whole page with a get
-            let (key, update) = if pid == META_PID {
+            let (key, update): (_, Update<P>) = if pid == META_PID {
                 let (key, meta) = self.get_meta(tx)?;
                 (key, Update::Meta(meta.clone()))
             } else if pid == COUNTER_PID {
@@ -965,11 +927,14 @@ where
 
                         assert!(!entries.is_empty());
 
-                        let combined_iter = entries.into_iter().rev();
+                        let mut frags = entries.into_iter().rev();
+                        let mut base = frags.next().unwrap().clone();
 
-                        let merged = PM::merge(combined_iter, &self.config);
+                        for frag in frags {
+                            base.merge(frag, &self.config);
+                        }
 
-                        (key, Update::Compact(merged))
+                        (key, Update::Compact(base))
                     }
                     None => {
                         let head_ptr = match self.inner.get(pid, &tx.guard) {
@@ -1060,7 +1025,7 @@ where
         let next_pid_to_allocate = self.next_pid_to_allocate.load(Acquire);
         for pid in min_pid..next_pid_to_allocate {
             if let Some((_, frags)) = self.get(pid, &tx)? {
-                ret += frags.iter().map(|f| PM::size_in_bytes(*f)).sum::<u64>();
+                ret += frags.iter().map(|f| P::size_in_bytes(*f)).sum::<u64>();
             }
         }
         Ok(ret)
@@ -1072,7 +1037,7 @@ where
         mut old: PagePtr<'g, P>,
         update: Update<P>,
         is_rewrite: bool,
-        tx: &'g Tx<PM, P>,
+        tx: &'g Tx<P>,
     ) -> Result<CasResult<'g, P, Update<P>>> {
         trace!(
             "cas_page called on pid {} to {:?} with old ts {:?}",
@@ -1192,7 +1157,7 @@ where
     /// Retrieve the current meta page
     pub(crate) fn get_meta<'g>(
         &self,
-        tx: &'g Tx<PM, P>,
+        tx: &'g Tx<P>,
     ) -> Result<(PagePtr<'g, P>, &'g Meta)> {
         trace!("getting page iter for META");
 
@@ -1238,7 +1203,7 @@ where
     /// Retrieve the current meta page
     pub(crate) fn get_persisted_config<'g>(
         &self,
-        tx: &'g Tx<PM, P>,
+        tx: &'g Tx<P>,
     ) -> Result<(PagePtr<'g, P>, &'g PersistedConfig)> {
         trace!("getting page iter for persisted config");
 
@@ -1284,7 +1249,7 @@ where
     /// Retrieve the current persisted IDGEN value
     pub(crate) fn get_idgen<'g>(
         &self,
-        tx: &'g Tx<PM, P>,
+        tx: &'g Tx<P>,
     ) -> Result<(PagePtr<'g, P>, u64)> {
         trace!("getting page iter for idgen");
 
@@ -1331,7 +1296,7 @@ where
     pub fn get<'g>(
         &self,
         pid: PageId,
-        tx: &'g Tx<PM, P>,
+        tx: &'g Tx<P>,
     ) -> Result<Option<(PagePtr<'g, P>, Vec<&'g P>)>> {
         trace!("getting page iterator for pid {}", pid);
         let _measure = Measure::new(&M.get_page);
@@ -1496,7 +1461,7 @@ where
 
     /// Increase a page's associated transactional read
     /// timestamp (RTS) to as high as the specified timestamp.
-    pub fn bump_page_rts(&self, pid: PageId, ts: Lsn, tx: &Tx<PM, P>) {
+    pub fn bump_page_rts(&self, pid: PageId, ts: Lsn, tx: &Tx<P>) {
         let head_ptr = if let Some(p) = self.inner.get(pid, &tx.guard) {
             p
         } else {
@@ -1510,7 +1475,7 @@ where
 
     /// Retrieves the current transactional read timestamp
     /// for a page.
-    pub fn get_page_rts(&self, pid: PageId, tx: &Tx<PM, P>) -> Option<u64> {
+    pub fn get_page_rts(&self, pid: PageId, tx: &Tx<P>) -> Option<u64> {
         let head_ptr = if let Some(p) = self.inner.get(pid, &tx.guard) {
             p
         } else {
@@ -1602,7 +1567,7 @@ where
     /// mapping from identifiers to PageId's that the `PageCache`
     /// owner may use for storing metadata about their higher-level
     /// collections.
-    pub fn meta<'a>(&self, tx: &'a Tx<PM, P>) -> Result<&'a Meta> {
+    pub fn meta<'a>(&self, tx: &'a Tx<P>) -> Result<&'a Meta> {
         self.get_meta(tx).map(|(_k, m)| m)
     }
 
@@ -1613,11 +1578,7 @@ where
     /// sled's `Tree` root tracking for an example of
     /// avoiding this in a lock-free way that handles
     /// various race conditions.
-    pub fn meta_pid_for_name(
-        &self,
-        name: &[u8],
-        tx: &Tx<PM, P>,
-    ) -> Result<PageId> {
+    pub fn meta_pid_for_name(&self, name: &[u8], tx: &Tx<P>) -> Result<PageId> {
         let m = self.meta(tx)?;
         if let Some(root) = m.get_root(name) {
             Ok(root)
@@ -1633,7 +1594,7 @@ where
         name: Vec<u8>,
         old: Option<PageId>,
         new: Option<PageId>,
-        tx: &'g Tx<PM, P>,
+        tx: &'g Tx<P>,
     ) -> Result<std::result::Result<(), Option<PageId>>> {
         loop {
             let (meta_key, meta) = self.get_meta(tx)?;
@@ -1674,11 +1635,7 @@ where
         }
     }
 
-    fn page_out<'g>(
-        &self,
-        to_evict: Vec<PageId>,
-        tx: &'g Tx<PM, P>,
-    ) -> Result<()> {
+    fn page_out<'g>(&self, to_evict: Vec<PageId>, tx: &'g Tx<P>) -> Result<()> {
         let _measure = Measure::new(&M.page_out);
         'different_page_eviction: for pid in to_evict {
             if pid == COUNTER_PID
@@ -1981,14 +1938,12 @@ where
     }
 }
 
-fn ptrs_from_stack<'g, PM, P>(
+fn ptrs_from_stack<'g, P>(
     head_ptr: PagePtrInner<'g, P>,
-    tx: &'g Tx<'g, PM, P>,
+    tx: &'g Tx<'g, P>,
 ) -> Vec<DiskPtr>
 where
-    PM: Materializer<PageFrag = P>,
-    PM: 'static + Send + Sync,
-    P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
+    P: Materializer,
 {
     // generate a list of the old log ID's
     let stack_iter = StackIter::from_ptr(head_ptr, &tx.guard);

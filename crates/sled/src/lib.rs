@@ -71,7 +71,6 @@ use {
         context::Context,
         data::Data,
         frag::Frag,
-        materializer::BLinkMaterializer,
         node::Node,
         prefix::{
             prefix_cmp, prefix_cmp_encoded, prefix_decode, prefix_encode,

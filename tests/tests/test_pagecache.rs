@@ -21,22 +21,11 @@ fn frags_to_vec(frags: Vec<&Vec<usize>>) -> Vec<usize> {
 }
 
 #[derive(Clone)]
-pub struct TestMaterializer;
+pub struct TestMaterializer(Vec<usize>);
 
 impl Materializer for TestMaterializer {
-    type PageFrag = Vec<usize>;
-
-    fn merge<'a, I>(frags: I, _config: &Config) -> Self::PageFrag
-    where
-        I: IntoIterator<Item = &'a Self::PageFrag>,
-    {
-        let mut consolidated = vec![];
-        for frag in frags.into_iter() {
-            let mut frag = frag.clone();
-            consolidated.append(&mut frag);
-        }
-
-        consolidated
+    fn merge(&mut self, other: &TestMaterializer, config: &Config) {
+        self.append(other);
     }
 
     fn size_in_bytes(frag: &Vec<usize>) -> u64 {
@@ -55,14 +44,14 @@ fn pagecache_monotonic_idgen() {
         .io_buf_size(20000)
         .build();
 
-    let pc: PageCache<TestMaterializer, _> =
+    let pc: PageCache<TestMaterializer> =
         PageCache::start(config.clone()).unwrap();
 
     let id1 = pc.generate_id().unwrap();
 
     drop(pc);
 
-    let pc: PageCache<TestMaterializer, _> =
+    let pc: PageCache<TestMaterializer> =
         PageCache::start(config.clone()).unwrap();
 
     let id2 = pc.generate_id().unwrap();
@@ -84,7 +73,7 @@ fn pagecache_caching() {
         .io_buf_size(20000)
         .build();
 
-    let pc: PageCache<TestMaterializer, _> =
+    let pc: PageCache<TestMaterializer> =
         PageCache::start(config.clone()).unwrap();
 
     let tx = pc.begin().unwrap();
@@ -243,7 +232,7 @@ fn pagecache_strange_crash_1() {
         .build();
 
     {
-        let pc: PageCache<TestMaterializer, _> =
+        let pc: PageCache<TestMaterializer> =
             PageCache::start(config.clone()).unwrap();
 
         let tx = pc.begin().unwrap();
@@ -260,7 +249,7 @@ fn pagecache_strange_crash_1() {
             keys.insert(id, key);
         }
     }
-    let _pc: PageCache<TestMaterializer, _> =
+    let _pc: PageCache<TestMaterializer> =
         PageCache::start(config.clone()).unwrap();
     // TODO test no eaten lsn's on recovery
     // TODO test that we don't skip multiple segments ahead on recovery (confusing Lsn & Lid)
@@ -280,7 +269,7 @@ fn pagecache_strange_crash_2() {
 
         config.verify_snapshot().unwrap();
 
-        let pc: PageCache<TestMaterializer, _> =
+        let pc: PageCache<TestMaterializer> =
             PageCache::start(config.clone()).unwrap();
 
         let tx = pc.begin().unwrap();
@@ -315,7 +304,7 @@ fn basic_pagecache_recovery() {
         .io_buf_size(1000)
         .build();
 
-    let pc: PageCache<TestMaterializer, _> =
+    let pc: PageCache<TestMaterializer> =
         PageCache::start(config.clone()).unwrap();
 
     let tx = pc.begin().unwrap();
@@ -328,7 +317,7 @@ fn basic_pagecache_recovery() {
     drop(tx);
     drop(pc);
 
-    let pc2: PageCache<TestMaterializer, _> =
+    let pc2: PageCache<TestMaterializer> =
         PageCache::start(config.clone()).unwrap();
     let tx = pc2.begin().unwrap();
     let (consolidated2, frags2) = pc2.get(id, &tx).unwrap().unwrap();
@@ -339,7 +328,7 @@ fn basic_pagecache_recovery() {
     drop(tx);
     drop(pc2);
 
-    let pc3: PageCache<TestMaterializer, _> =
+    let pc3: PageCache<TestMaterializer> =
         PageCache::start(config.clone()).unwrap();
     let tx = pc3.begin().unwrap();
     let (consolidated3, frags3) = pc3.get(id, &tx).unwrap().unwrap();
@@ -349,7 +338,7 @@ fn basic_pagecache_recovery() {
     drop(tx);
     drop(pc3);
 
-    let pc4: PageCache<TestMaterializer, _> =
+    let pc4: PageCache<TestMaterializer> =
         PageCache::start(config.clone()).unwrap();
     let tx = pc4.begin().unwrap();
     let res = pc4.get(id, &tx).unwrap();
@@ -432,7 +421,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
         .cache_bits(0)
         .build();
 
-    let mut pc: PageCache<TestMaterializer, _> =
+    let mut pc: PageCache<TestMaterializer> =
         PageCache::start(config.clone()).unwrap();
 
     let mut reference: HashMap<PageId, P> = HashMap::new();

@@ -40,7 +40,7 @@ pub struct Iter<'a> {
     pub(super) hi: Bound<IVec>,
     pub(super) lo: Bound<IVec>,
     pub(super) cached_view: Option<View<'a>>,
-    pub(super) tx: Result<Tx<'a, BLinkMaterializer, Frag>>,
+    pub(super) tx: Result<Tx<'a, Frag>>,
     pub(super) going_forward: bool,
 }
 
@@ -90,10 +90,10 @@ impl<'a> Iterator for Iter<'a> {
         let _measure = Measure::new(&M.tree_scan);
         let _ = self.tree.concurrency_control.read().unwrap();
 
-        let tx: &'a Tx<'a, _, _> = match self.tx {
+        let tx: &'a Tx<'a, _> = match self.tx {
             Ok(ref tx) => {
-                let tx_ref = tx as *const Tx<'a, _, _>;
-                unsafe { &*tx_ref as &'a Tx<'a, _, _> }
+                let tx_ref = tx as *const Tx<'a, _>;
+                unsafe { &*tx_ref as &'a Tx<'a, _> }
             }
             Err(ref e) => return Some(Err(e.clone())),
         };
@@ -169,10 +169,10 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
         let _measure = Measure::new(&M.tree_reverse_scan);
         let _ = self.tree.concurrency_control.read().unwrap();
 
-        let tx: &'a Tx<'a, _, _> = match self.tx {
+        let tx: &'a Tx<'a, _> = match self.tx {
             Ok(ref tx) => {
-                let tx_ref = tx as *const Tx<'a, _, _>;
-                unsafe { &*tx_ref as &'a Tx<'a, _, _> }
+                let tx_ref = tx as *const Tx<'a, _>;
+                unsafe { &*tx_ref as &'a Tx<'a, _> }
             }
             Err(ref e) => return Some(Err(e.clone())),
         };

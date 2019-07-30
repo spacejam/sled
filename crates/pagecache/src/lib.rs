@@ -96,7 +96,7 @@ pub use self::{
     ds::{node_from_frag_vec, Lru, Node, PageTable, Stack, StackIter, VecSet},
     logger::{Log, LogRead},
     map::{FastMap1, FastMap4, FastMap8, FastSet1, FastSet4, FastSet8},
-    materializer::{Materializer, NullMaterializer},
+    materializer::Materializer,
     meta::Meta,
     metrics::M,
     pagecache::{PageCache, PagePtr, RecoveryGuard},

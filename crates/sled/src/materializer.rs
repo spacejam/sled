@@ -1,30 +1,11 @@
 use super::*;
 
-pub(crate) struct BLinkMaterializer;
-
-impl Materializer for BLinkMaterializer {
-    type PageFrag = Frag;
-
-    fn merge<'a, I>(frags: I, config: &Config) -> Self::PageFrag
-    where
-        I: IntoIterator<Item = &'a Self::PageFrag>,
-    {
-        let mut frag_iter = frags.into_iter();
-
-        let possible_base = frag_iter
-            .next()
-            .expect("merge should only be called on non-empty sets of Frag's");
-
-        match possible_base {
-            Frag::Base(ref base_node_ref) => {
-                let mut base_node = base_node_ref.clone();
-                for frag in frag_iter {
-                    base_node.apply(frag, config.merge_operator);
-                }
-
-                Frag::Base(base_node)
-            }
-            _ => panic!("non-Base in first element of frags slice"),
+impl Materializer for Frag {
+    fn merge(&mut self, other: &Frag, config: &Config) {
+        if let Frag::Base(ref mut base) = self {
+            base.apply(other, config.merge_operator);
+        } else {
+            panic!("expected base to be the first node");
         }
     }
 

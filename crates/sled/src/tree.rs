@@ -843,7 +843,8 @@ impl Tree {
     /// assert_eq!(r.next(), None);
     /// ```
     pub fn scan_prefix<P>(&self, prefix: P) -> Iter<'_>
-    where P: AsRef<[u8]>,
+    where
+        P: AsRef<[u8]>,
     {
         let prefix = prefix.as_ref();
         let mut upper = prefix.to_vec();
@@ -901,7 +902,7 @@ impl Tree {
         node_view: &View<'g>,
         parent_view: &Option<View<'g>>,
         root_pid: Option<PageId>,
-        tx: &'g Tx<'g, BLinkMaterializer, Frag>,
+        tx: &'g Tx<'g, Frag>,
     ) -> Result<()> {
         trace!("splitting node {}", node_view.pid);
         // split node
@@ -974,7 +975,7 @@ impl Tree {
         from: PageId,
         to: PageId,
         at: IVec,
-        tx: &'g Tx<BLinkMaterializer, Frag>,
+        tx: &'g Tx<Frag>,
     ) -> Result<bool> {
         // hoist new root, pointing to lhs & rhs
         let root_lo = b"";
@@ -1034,7 +1035,7 @@ impl Tree {
     pub(crate) fn view_for_pid<'g>(
         &self,
         pid: PageId,
-        tx: &'g Tx<BLinkMaterializer, Frag>,
+        tx: &'g Tx<Frag>,
     ) -> Result<Option<View<'g>>> {
         loop {
             let frag_opt = self.context.pagecache.get(pid, tx)?;
@@ -1056,7 +1057,7 @@ impl Tree {
     pub(crate) fn view_for_key<'g, K>(
         &self,
         key: K,
-        tx: &'g Tx<BLinkMaterializer, Frag>,
+        tx: &'g Tx<Frag>,
     ) -> Result<View<'g>>
     where
         K: AsRef<[u8]>,
@@ -1233,7 +1234,7 @@ impl Tree {
     pub(crate) fn merge_node<'g>(
         &self,
         parent: &View,
-        tx: &'g Tx<BLinkMaterializer, Frag>,
+        tx: &'g Tx<Frag>,
     ) -> Result<()> {
         let child_pid = parent.merging_child.unwrap();
 

@@ -61,13 +61,11 @@ impl StdError for TxError {
 /// that any state which is removed from a shared in-memory
 /// data structure is not destroyed until all possible
 /// readers have concluded.
-pub struct Tx<'a, PM, P>
+pub struct Tx<'a, P>
 where
-    PM: Materializer<PageFrag = P>,
-    PM: 'static + Send + Sync,
-    P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
+    P: Materializer,
 {
-    pagecache: &'a PageCache<PM, P>,
+    pagecache: &'a PageCache<P>,
     pub(crate) guard: Guard,
     pub(crate) ts: u64,
     pub(crate) pending: FastMap8<PageId, Update<P>>,
@@ -76,14 +74,12 @@ where
     write_set: FastSet8<PageId>,
 }
 
-impl<'a, PM, P> Tx<'a, PM, P>
+impl<'a, P> Tx<'a, P>
 where
-    PM: Materializer<PageFrag = P>,
-    PM: 'static + Send + Sync,
-    P: 'static + Debug + Clone + Serialize + DeserializeOwned + Send + Sync,
+    P: Materializer,
 {
     /// Creates a new Tx with a given timestamp.
-    pub fn new(pagecache: &'a PageCache<PM, P>, ts: u64) -> Tx<'a, PM, P> {
+    pub fn new(pagecache: &'a PageCache<P>, ts: u64) -> Tx<'a, P> {
         Tx {
             pagecache,
             ts,
