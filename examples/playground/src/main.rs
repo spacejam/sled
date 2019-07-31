@@ -13,7 +13,7 @@ fn basic() -> Result<()> {
     let v2 = b"v2".to_vec();
 
     // set and get
-    db.set(k.clone(), v1.clone())?;
+    db.insert(k.clone(), v1.clone())?;
     assert_eq!(db.get(&k).unwrap().unwrap(), (v1.clone()));
 
     // compare and swap
@@ -30,7 +30,7 @@ fn basic() -> Result<()> {
     assert_eq!(iter.next(), None);
 
     // deletion
-    db.del(&k)?;
+    db.remove(&k)?;
 
     Ok(())
 }
@@ -58,18 +58,18 @@ fn merge_operator() -> Result<()> {
 
     let k = b"k".to_vec();
 
-    db.set(k.clone(), vec![0])?;
+    db.insert(k.clone(), vec![0])?;
     db.merge(k.clone(), vec![1])?;
     db.merge(k.clone(), vec![2])?;
     assert_eq!(db.get(&*k).unwrap().unwrap(), (vec![0, 1, 2]));
 
     // sets replace previously merged data,
     // bypassing the merge function.
-    db.set(k.clone(), vec![3])?;
+    db.insert(k.clone(), vec![3])?;
     assert_eq!(db.get(&*k).unwrap().unwrap(), (vec![3]));
 
     // merges on non-present values will add them
-    db.del(&*k)?;
+    db.remove(&*k)?;
     db.merge(k.clone(), vec![4])?;
     assert_eq!(db.get(&*k).unwrap().unwrap(), (vec![4]));
 

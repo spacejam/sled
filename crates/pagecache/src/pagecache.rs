@@ -452,6 +452,9 @@ where
     /// to GC. Returns an Err if we encountered an IO problem
     /// while performing this GC.
     pub fn attempt_gc(&self) -> Result<bool> {
+        if self.config.read_only {
+            return Ok(false);
+        }
         let tx = Tx::new(&self, 0);
         let to_clean = self.log.with_sa(|sa| sa.clean(COUNTER_PID));
         if let Some(to_clean) = to_clean {

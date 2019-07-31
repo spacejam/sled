@@ -26,7 +26,7 @@ impl<'a> IntoIterator for &'a Tree {
 /// use sled::{Db, IVec};
 ///
 /// let t = Db::start_default("db").unwrap();
-/// t.set(b"yo!", b"v1".to_vec());
+/// t.insert(b"yo!", b"v1".to_vec());
 /// assert_eq!(t.get(b"yo!"), Ok(Some(IVec::from(b"v1"))));
 ///
 /// // Atomic compare-and-swap.
@@ -42,7 +42,7 @@ impl<'a> IntoIterator for &'a Tree {
 /// assert_eq!(iter.next().unwrap(), Ok((IVec::from(b"yo!"), IVec::from(b"v2"))));
 /// assert_eq!(iter.next(), None);
 ///
-/// t.del(b"yo!");
+/// t.remove(b"yo!");
 /// assert_eq!(t.get(b"yo!"), Ok(None));
 /// ```
 #[derive(Clone)]
@@ -59,7 +59,7 @@ unsafe impl Send for Tree {}
 unsafe impl Sync for Tree {}
 
 impl Tree {
-    /// Set a key to a new value, returning the last value if it
+    /// Insert a key to a new value, returning the last value if it
     /// was set.
     ///
     /// # Examples
@@ -72,16 +72,38 @@ impl Tree {
     /// assert_eq!(t.set(&[1,2,3], vec![0]), Ok(None));
     /// assert_eq!(t.set(&[1,2,3], vec![1]), Ok(Some(IVec::from(&[0]))));
     /// ```
+    #[deprecated(since = "0.24.2", note = "replaced by `Tree::insert`")]
     pub fn set<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
     where
         K: AsRef<[u8]>,
         IVec: From<V>,
     {
-        let _ = self.concurrency_control.read().unwrap();
-        self.set_inner(key, value)
+        self.insert(key, value)
     }
 
-    pub(crate) fn set_inner<K, V>(
+    /// Insert a key to a new value, returning the last value if it
+    /// was set.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sled::{ConfigBuilder, Db, IVec};
+    /// let config = ConfigBuilder::new().temporary(true).build();
+    /// let t = Db::start(config).unwrap();
+    ///
+    /// assert_eq!(t.insert(&[1,2,3], vec![0]), Ok(None));
+    /// assert_eq!(t.insert(&[1,2,3], vec![1]), Ok(Some(IVec::from(&[0]))));
+    /// ```
+    pub fn insert<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
+    where
+        K: AsRef<[u8]>,
+        IVec: From<V>,
+    {
+        let _ = self.concurrency_control.read().unwrap();
+        self.insert_inner(key, value)
+    }
+
+    pub(crate) fn insert_inner<K, V>(
         &self,
         key: K,
         value: V,
@@ -143,12 +165,12 @@ impl Tree {
     /// use sled::Db;
     ///
     /// let db = Db::start_default("batch_db").unwrap();
-    /// db.set("key_0", "val_0").unwrap();
+    /// db.insert("key_0", "val_0").unwrap();
     /// let mut batch = db.batch();
-    /// batch.set("key_a", "val_a");
-    /// batch.set("key_b", "val_b");
-    /// batch.set("key_c", "val_c");
-    /// batch.del("key_0");
+    /// batch.insert("key_a", "val_a");
+    /// batch.insert("key_b", "val_b");
+    /// batch.insert("key_c", "val_c");
+    /// batch.remove("key_0");
     /// batch.apply().unwrap();
     /// // key_0 no longer exists, and key_a, key_b, and key_c
     /// // now do exist.
@@ -169,7 +191,7 @@ impl Tree {
     /// let config = ConfigBuilder::new().temporary(true).build();
     /// let t = Db::start(config).unwrap();
     ///
-    /// t.set(&[0], vec![0]).unwrap();
+    /// t.insert(&[0], vec![0]).unwrap();
     /// assert_eq!(t.get(&[0]), Ok(Some(IVec::from(vec![0]))));
     /// assert_eq!(t.get(&[1]), Ok(None));
     /// ```
@@ -194,16 +216,32 @@ impl Tree {
     /// ```
     /// let config = sled::ConfigBuilder::new().temporary(true).build();
     /// let t = sled::Db::start(config).unwrap();
-    /// t.set(&[1], vec![1]);
+    /// t.insert(&[1], vec![1]);
     /// assert_eq!(t.del(&[1]), Ok(Some(sled::IVec::from(vec![1]))));
     /// assert_eq!(t.del(&[1]), Ok(None));
     /// ```
+    #[deprecated(since = "0.24.2", note = "replaced by `Tree::remove`")]
     pub fn del<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
-        let _ = self.concurrency_control.read().unwrap();
-        self.del_inner(key)
+        self.remove(key)
     }
 
-    pub(crate) fn del_inner<K: AsRef<[u8]>>(
+    /// Delete a value, returning the old value if it existed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let config = sled::ConfigBuilder::new().temporary(true).build();
+    /// let t = sled::Db::start(config).unwrap();
+    /// t.set(&[1], vec![1]);
+    /// assert_eq!(t.remove(&[1]), Ok(Some(sled::IVec::from(vec![1]))));
+    /// assert_eq!(t.remove(&[1]), Ok(None));
+    /// ```
+    pub fn remove<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
+        let _ = self.concurrency_control.read().unwrap();
+        self.remove_inner(key)
+    }
+
+    pub(crate) fn remove_inner<K: AsRef<[u8]>>(
         &self,
         key: K,
     ) -> Result<Option<IVec>> {
@@ -492,7 +530,7 @@ impl Tree {
     ///
     /// let tree_2 = tree.clone();
     /// let thread = std::thread::spawn(move || {
-    ///     tree.set(vec![0], vec![1]).unwrap();
+    ///     tree.insert(vec![0], vec![1]).unwrap();
     /// });
     ///
     /// // events is a blocking `Iterator` over `Event`s
@@ -528,7 +566,7 @@ impl Tree {
     /// let config = sled::ConfigBuilder::new().temporary(true).build();
     /// let t = sled::Db::start(config).unwrap();
     ///
-    /// t.set(&[0], vec![0]).unwrap();
+    /// t.insert(&[0], vec![0]).unwrap();
     /// assert!(t.contains_key(&[0]).unwrap());
     /// assert!(!t.contains_key(&[1]).unwrap());
     /// ```
@@ -547,7 +585,7 @@ impl Tree {
     /// let tree = Db::start(config).unwrap();
     ///
     /// for i in 0..10 {
-    ///     tree.set(&[i], vec![i]).expect("should write successfully");
+    ///     tree.insert(&[i], vec![i]).expect("should write successfully");
     /// }
     ///
     /// assert_eq!(tree.get_lt(&[]), Ok(None));
@@ -584,7 +622,7 @@ impl Tree {
     /// let tree = Db::start(config).unwrap();
     ///
     /// for i in 0..10 {
-    ///     tree.set(&[i], vec![i]).expect("should write successfully");
+    ///     tree.insert(&[i], vec![i]).expect("should write successfully");
     /// }
     ///
     /// assert_eq!(tree.get_gt(&[]), Ok(Some((IVec::from(&[0]), IVec::from(&[0])))));
@@ -593,7 +631,7 @@ impl Tree {
     /// assert_eq!(tree.get_gt(&[8]), Ok(Some((IVec::from(&[9]), IVec::from(&[9])))));
     /// assert_eq!(tree.get_gt(&[9]), Ok(None));
     ///
-    /// tree.set(500u16.to_be_bytes(), vec![10] );
+    /// tree.insert(500u16.to_be_bytes(), vec![10] );
     /// assert_eq!(tree.get_gt(&499u16.to_be_bytes()),
     ///            Ok(Some((IVec::from(&500u16.to_be_bytes()), IVec::from(&[10])))));
     /// ```
@@ -647,19 +685,19 @@ impl Tree {
     ///
     /// let k = b"k1";
     ///
-    /// tree.set(k, vec![0]);
+    /// tree.insert(k, vec![0]);
     /// tree.merge(k, vec![1]);
     /// tree.merge(k, vec![2]);
     /// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![0, 1, 2]))));
     ///
     /// // Replace previously merged data. The merge function will not be called.
-    /// tree.set(k, vec![3]);
+    /// tree.insert(k, vec![3]);
     /// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![3]))));
     ///
     /// // Merges on non-present values will cause the merge function to be called
     /// // with `old_value == None`. If the merge function returns something (which it
     /// // does, in this case) a new value will be inserted.
-    /// tree.del(k);
+    /// tree.remove(k);
     /// tree.merge(k, vec![4]);
     /// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![4]))));
     /// ```
@@ -738,9 +776,9 @@ impl Tree {
     /// use sled::{ConfigBuilder, Db, IVec};
     /// let config = ConfigBuilder::new().temporary(true).build();
     /// let t = Db::start(config).unwrap();
-    /// t.set(&[1], vec![10]);
-    /// t.set(&[2], vec![20]);
-    /// t.set(&[3], vec![30]);
+    /// t.insert(&[1], vec![10]);
+    /// t.insert(&[2], vec![20]);
+    /// t.insert(&[3], vec![30]);
     /// let mut iter = t.iter();
     /// assert_eq!(iter.next().unwrap(), Ok((IVec::from(&[1]), IVec::from(&[10]))));
     /// assert_eq!(iter.next().unwrap(), Ok((IVec::from(&[2]), IVec::from(&[20]))));
@@ -761,12 +799,12 @@ impl Tree {
     /// let config = ConfigBuilder::new().temporary(true).build();
     /// let t = Db::start(config).unwrap();
     ///
-    /// t.set(&[0], vec![0]).unwrap();
-    /// t.set(&[1], vec![10]).unwrap();
-    /// t.set(&[2], vec![20]).unwrap();
-    /// t.set(&[3], vec![30]).unwrap();
-    /// t.set(&[4], vec![40]).unwrap();
-    /// t.set(&[5], vec![50]).unwrap();
+    /// t.insert(&[0], vec![0]).unwrap();
+    /// t.insert(&[1], vec![10]).unwrap();
+    /// t.insert(&[2], vec![20]).unwrap();
+    /// t.insert(&[3], vec![30]).unwrap();
+    /// t.insert(&[4], vec![40]).unwrap();
+    /// t.insert(&[5], vec![50]).unwrap();
     ///
     /// let start: &[u8] = &[2];
     /// let end: &[u8] = &[4];
@@ -827,12 +865,12 @@ impl Tree {
     /// let config = ConfigBuilder::new().temporary(true).build();
     /// let t = Db::start(config).unwrap();
     ///
-    /// t.set(&[0, 0, 0], vec![0, 0, 0]).unwrap();
-    /// t.set(&[0, 0, 1], vec![0, 0, 1]).unwrap();
-    /// t.set(&[0, 0, 2], vec![0, 0, 2]).unwrap();
-    /// t.set(&[0, 0, 3], vec![0, 0, 3]).unwrap();
-    /// t.set(&[0, 1, 0], vec![0, 1, 0]).unwrap();
-    /// t.set(&[0, 1, 1], vec![0, 1, 1]).unwrap();
+    /// t.insert(&[0, 0, 0], vec![0, 0, 0]).unwrap();
+    /// t.insert(&[0, 0, 1], vec![0, 0, 1]).unwrap();
+    /// t.insert(&[0, 0, 2], vec![0, 0, 2]).unwrap();
+    /// t.insert(&[0, 0, 3], vec![0, 0, 3]).unwrap();
+    /// t.insert(&[0, 1, 0], vec![0, 1, 0]).unwrap();
+    /// t.insert(&[0, 1, 1], vec![0, 1, 1]).unwrap();
     ///
     /// let prefix: &[u8] = &[0, 0];
     /// let mut r = t.scan_prefix(prefix);
@@ -868,8 +906,8 @@ impl Tree {
     /// ```
     /// let config = sled::ConfigBuilder::new().temporary(true).build();
     /// let t = sled::Db::start(config).unwrap();
-    /// t.set(b"a", vec![0]);
-    /// t.set(b"b", vec![1]);
+    /// t.insert(b"a", vec![0]);
+    /// t.insert(b"b", vec![1]);
     /// assert_eq!(t.len(), 2);
     /// ```
     pub fn len(&self) -> usize {
@@ -887,7 +925,7 @@ impl Tree {
     pub fn clear(&self) -> Result<()> {
         for k in self.iter().keys() {
             let key = k?;
-            self.del(key)?;
+            self.remove(key)?;
         }
         Ok(())
     }
