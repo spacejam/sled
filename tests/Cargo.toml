@@ -7,7 +7,7 @@ edition = "2018"
 
 [dependencies]
 quickcheck = "0.8"
-rand = "0.6"
+rand = "0.7"
 log = "0.4"
 env_logger = "0.6"
 libc = "0.2"
