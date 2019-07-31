@@ -122,21 +122,32 @@ impl<'a> RecoveryGuard<'a> {
 /// # Working with the `PageCache`
 ///
 /// ```
-/// use pagecache::{pin, Materializer, Config};
+/// use {
+///     pagecache::{pin, Materializer, Config},
+///     serde::{Serialize, Deserialize},
+/// };
 ///
+///
+/// #[derive(
+///     Clone, Eq, PartialEq, Ord, PartialOrd, Debug, Serialize, Deserialize,
+/// )]
 /// pub struct TestState(String);
 ///
 /// impl Materializer for TestState {
 ///     // Used to merge chains of partial pages into a form
 ///     // that is useful for the `PageCache` owner.
 ///     fn merge(&mut self, other: &TestState, _config: &Config) {
-///         self.0.push_str(other.0);
+///         self.0.push_str(&other.0);
+///     }
+///
+///     fn size_in_bytes(frag: &TestState) -> u64 {
+///         frag.0.len() as u64
 ///     }
 /// }
 ///
 /// fn main() {
 ///     let config = pagecache::ConfigBuilder::new().temporary(true).build();
-///     let pc: pagecache::PageCache<TestState, _> =
+///     let pc: pagecache::PageCache<TestState> =
 ///         pagecache::PageCache::start(config).unwrap();
 ///     {
 ///         // We begin by initiating a new transaction, which
@@ -147,26 +158,26 @@ impl<'a> RecoveryGuard<'a> {
 ///         // The first item in a page should be set using allocate,
 ///         // which signals that this is the beginning of a new
 ///         // page history.
-///         let (id, mut key) = pc.allocate("a".to_owned(), &tx).unwrap();
+///         let (id, mut key) = pc.allocate(TestState("a".to_owned()), &tx).unwrap();
 ///
 ///         // Subsequent atomic updates should be added with link.
-///         key = pc.link(id, key, "b".to_owned(), &tx).unwrap().unwrap();
-///         key = pc.link(id, key, "c".to_owned(), &tx).unwrap().unwrap();
+///         key = pc.link(id, key, TestState("b".to_owned()), &tx).unwrap().unwrap();
+///         key = pc.link(id, key, TestState("c".to_owned()), &tx).unwrap().unwrap();
 ///
 ///         // When getting a page, the provided `Materializer` is
 ///         // used to merge all pages together.
 ///         let (mut key, pages) = pc.get(id, &tx).unwrap().unwrap();
 ///
-///         let consolidated: String = pages.into_iter().flat_map(|s| s.chars()).rev().collect();
+///         let consolidated: String = pages.into_iter().flat_map(|s| s.0.chars()).rev().collect();
 ///
 ///         assert_eq!(consolidated, "abc".to_owned());
 ///
 ///         // You can completely rewrite a page by using `replace`:
-///         key = pc.replace(id, key, "d".into(), &tx).unwrap().unwrap();
+///         key = pc.replace(id, key, TestState("d".into()), &tx).unwrap().unwrap();
 ///
 ///         let (key, pages) = pc.get(id, &tx).unwrap().unwrap();
 ///
-///         let consolidated: String = pages.into_iter().flat_map(|s| s.chars()).rev().collect();
+///         let consolidated: String = pages.into_iter().flat_map(|s| s.0.chars()).rev().collect();
 ///
 ///         assert_eq!(consolidated, "d".to_owned());
 ///     }
