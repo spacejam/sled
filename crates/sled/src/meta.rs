@@ -7,7 +7,7 @@ use super::*;
 pub(crate) fn open_tree<'a>(
     context: Context,
     name: Vec<u8>,
-    tx: &'a Tx<'a, BLinkMaterializer, Frag>,
+    tx: &'a Tx<'a, Frag>,
 ) -> Result<Tree> {
     // we loop because creating this Tree may race with
     // concurrent attempts to open the same one.

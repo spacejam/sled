@@ -17,6 +17,10 @@ deterministic = "0.1"
 jemallocator = "0.1"
 color-backtrace = "0.2.0"
 
+[dependencies.serde]
+version = "1.0.90"
+features = ["derive"]
+
 [dependencies.pagecache]
 features = ["failpoints", "lock_free_delays", "event_log", "no_metrics"]
 path = "../crates/pagecache"

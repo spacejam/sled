@@ -14,7 +14,7 @@ pub(crate) struct Context {
     /// should trigger all background threads to clean
     /// up synchronously.
     pub(crate) _flusher: Arc<Mutex<Option<flusher::Flusher>>>,
-    pub(crate) pagecache: Arc<PageCache<BLinkMaterializer, Frag>>,
+    pub(crate) pagecache: Arc<PageCache<Frag>>,
 }
 
 impl std::ops::Deref for Context {

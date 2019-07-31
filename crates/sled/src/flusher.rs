@@ -38,21 +38,11 @@ pub(crate) struct Flusher {
 
 impl Flusher {
     /// Spawns a thread that periodically calls `callback` until dropped.
-    pub(crate) fn new<PM, P>(
+    pub(crate) fn new(
         name: String,
-        pagecache: Arc<PageCache<PM, P>>,
+        pagecache: Arc<PageCache<Frag>>,
         flush_every_ms: u64,
-    ) -> Flusher
-    where
-        PM: 'static + Send + Sync + pagecache::Materializer<PageFrag = P>,
-        P: 'static
-            + Clone
-            + std::fmt::Debug
-            + Serialize
-            + Send
-            + Sync
-            + serde::de::DeserializeOwned,
-    {
+    ) -> Flusher {
         #[allow(clippy::mutex_atomic)] // mutex used in CondVar below
         let shutdown = Arc::new(Mutex::new(ShutdownState::Running));
         let sc = Arc::new(Condvar::new());
@@ -74,21 +64,12 @@ impl Flusher {
     }
 }
 
-fn run<PM, P>(
+fn run(
     shutdown: Arc<Mutex<ShutdownState>>,
     sc: Arc<Condvar>,
-    pagecache: Arc<PageCache<PM, P>>,
+    pagecache: Arc<PageCache<Frag>>,
     flush_every_ms: u64,
-) where
-    PM: 'static + Send + Sync + pagecache::Materializer<PageFrag = P>,
-    P: 'static
-        + Clone
-        + std::fmt::Debug
-        + Serialize
-        + Send
-        + Sync
-        + serde::de::DeserializeOwned,
-{
+) {
     let flush_every = Duration::from_millis(flush_every_ms);
     let mut shutdown = shutdown.lock().unwrap();
     let mut wrote_data = false;
