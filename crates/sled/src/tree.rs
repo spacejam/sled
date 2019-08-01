@@ -1077,8 +1077,8 @@ impl Tree {
     ) -> Result<Option<View<'g>>> {
         loop {
             let frag_opt = self.context.pagecache.get(pid, tx)?;
-            if let Some((tree_ptr, frags)) = frag_opt {
-                let view = View::new(pid, tree_ptr, frags);
+            if let Some((tree_ptr, frag)) = frag_opt {
+                let view = View::new(pid, tree_ptr, vec![frag]);
                 if view.merging_child.is_some() {
                     self.merge_node(&view, tx)?;
                 } else {

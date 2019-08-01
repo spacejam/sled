@@ -73,6 +73,14 @@ where
         }
     }
 
+    fn is_compact(&self) -> bool {
+        if let Update::Compact(_) = self {
+            true
+        } else {
+            false
+        }
+    }
+
     fn is_free(&self) -> bool {
         if let Update::Free = self {
             true
@@ -641,8 +649,8 @@ where
         let stack_iter = StackIter::from_ptr(head, &tx.guard);
         let stack_len = stack_iter.size_hint().1.unwrap();
         if stack_len >= self.config.page_consolidation_threshold {
-            let current_frags =
-                if let Some((current_ptr, frags)) = self.get(pid, tx)? {
+            let current_frag =
+                if let Some((current_ptr, frag)) = self.get(pid, tx)? {
                     if old.ts != current_ptr.ts
                         && old.cached_ptr != current_ptr.cached_ptr
                     {
@@ -651,7 +659,7 @@ where
                         // invariants
                         return Ok(Err(Some((current_ptr, new))));
                     }
-                    frags
+                    frag
                 } else {
                     return Ok(Err(None));
                 };
@@ -659,16 +667,9 @@ where
             let update: P = {
                 let _measure = Measure::new(&M.merge_page);
 
-                let mut frags = current_frags.into_iter().rev();
-                let mut base = frags.next().unwrap().clone();
-
-                for frag in frags {
-                    base.merge(frag, &self.config);
-                }
-
-                base.merge(&new, &self.config);
-
-                base
+                let mut update = current_frag.clone();
+                update.merge(&new, &self.config);
+                update
             };
 
             return self.replace(pid, old, update, tx);
@@ -936,20 +937,7 @@ where
                 (key, Update::Config(config.clone()))
             } else {
                 match self.get(pid, tx)? {
-                    Some((key, entries)) => {
-                        let _measure = Measure::new(&M.merge_page);
-
-                        assert!(!entries.is_empty());
-
-                        let mut frags = entries.into_iter().rev();
-                        let mut base = frags.next().unwrap().clone();
-
-                        for frag in frags {
-                            base.merge(frag, &self.config);
-                        }
-
-                        (key, Update::Compact(base))
-                    }
+                    Some((key, frag)) => (key, Update::Compact(frag.clone())),
                     None => {
                         let head_ptr = match self.inner.get(pid, &tx.guard) {
                             None => panic!(
@@ -1038,8 +1026,8 @@ where
         let min_pid = CONFIG_PID + 1;
         let next_pid_to_allocate = self.next_pid_to_allocate.load(Acquire);
         for pid in min_pid..next_pid_to_allocate {
-            if let Some((_, frags)) = self.get(pid, &tx)? {
-                ret += frags.iter().map(|f| P::size_in_bytes(*f)).sum::<u64>();
+            if let Some((_, frag)) = self.get(pid, &tx)? {
+                ret += P::size_in_bytes(frag);
             }
         }
         Ok(ret)
@@ -1311,7 +1299,7 @@ where
         &self,
         pid: PageId,
         tx: &'g Tx<P>,
-    ) -> Result<Option<(PagePtr<'g, P>, Vec<&'g P>)>> {
+    ) -> Result<Option<(PagePtr<'g, P>, &'g P)>> {
         trace!("getting page iterator for pid {}", pid);
         let _measure = Measure::new(&M.get_page);
 
@@ -1348,116 +1336,121 @@ where
             return Ok(None);
         }
 
-        if let (Some(Update::Compact(compact)), cache_info) = entries[0] {
-            // short circuit
-
-            return Ok(Some((
-                PagePtr {
-                    cached_ptr: head,
-                    ts: cache_info.ts,
-                },
-                vec![compact],
-            )));
-        }
-
-        let mut pulled_from_disk = false;
-        let pulled = entries.iter().map(|entry| match entry {
+        let initial_base = match entries[0] {
             (Some(Update::Compact(compact)), cache_info) => {
-                Ok((Cow::Borrowed(compact), *cache_info))
+                // short circuit
+                return Ok(Some((
+                    PagePtr {
+                        cached_ptr: head,
+                        ts: cache_info.ts,
+                    },
+                    compact,
+                )));
             }
-            (Some(Update::Append(compact)), cache_info) => {
-                Ok((Cow::Borrowed(compact), *cache_info))
+            (Some(Update::Append(_)), _) => {
+                // merge to next item
+                let base_idx = entries.iter().position(|(e, _)| {
+                    e.is_some() && e.as_ref().unwrap().is_compact()
+                });
+                if let Some(base_idx) = base_idx {
+                    let mut base =
+                        entries[base_idx].0.as_ref().unwrap().as_frag().clone();
+                    for (append, _) in entries[0..base_idx].iter().rev() {
+                        base.merge(
+                            append.as_ref().unwrap().as_frag(),
+                            &self.config,
+                        );
+                    }
+                    Some(base)
+                } else {
+                    None
+                }
             }
-            (None, cache_info) => {
-                pulled_from_disk = true;
-                let res = self
-                    .pull(pid, cache_info.lsn, cache_info.ptr)
-                    .map(|pg| pg)?;
-                Ok((Cow::Owned(res.into_frag()), *cache_info))
+            _ => {
+                // need to pull everything from disk and merge
+                None
             }
-            other => {
-                panic!("iterating over unexpected update: {:?}", other);
-            }
-        });
-
-        // if any of our pulls failed, bail here
-        let mut successes: Vec<(Cow<P>, CacheInfo)> = match pulled.collect() {
-            Ok(success) => success,
-            Err(Error::Io(ref error))
-                if error.kind() == std::io::ErrorKind::NotFound =>
-            {
-                // blob has been removed
-                // TODO is this possible to hit if it's just rewritten?
-                return Ok(None);
-            }
-            Err(error) => return Err(error),
         };
 
-        if pulled_from_disk {
-            // fix up the stack to include our pulled items
-            let (tail_frag, tail_cache_info) = successes.pop().unwrap();
-            let tail_update = Update::Compact(tail_frag.into_owned());
-            let mut total_page_size = tail_cache_info.log_size as u64;
-
-            let mut frags = Vec::with_capacity(successes.len() + 1);
-
-            for (item, cache_info) in successes.into_iter() {
-                total_page_size += cache_info.log_size as u64;
-                frags.push((
-                    Some(Update::Append(item.into_owned())),
-                    cache_info,
-                ));
-            }
-
-            frags.push((Some(tail_update), tail_cache_info));
-
-            let node = node_from_frag_vec(frags).into_shared(&tx.guard);
-
-            #[cfg(feature = "event_log")]
-            assert_eq!(ptrs_from_stack(head, tx), ptrs_from_stack(node, tx),);
-
-            let node = unsafe { node.into_owned() };
-
-            debug_delay();
-            let res =
-                unsafe { head_ptr.deref().stack.cas(head, node, &tx.guard) };
-            if res.is_ok() {
-                trace!("fix-up for pid {} succeeded", pid);
-
-                // possibly evict an item now that our cache has grown
-                let to_evict = self.lru.accessed(pid, total_page_size);
-                trace!(
-                    "accessed pid {} -> paging out pids {:?}",
-                    pid,
-                    to_evict
-                );
-                self.page_out(to_evict, tx)?;
-            } else {
-                trace!("fix-up for pid {} failed", pid);
-            }
-            self.get(pid, tx)
+        let base = if let Some(initial_base) = initial_base {
+            initial_base
         } else {
-            let ts = successes[0].1.ts;
+            // we were not able to short-circuit, so we should
+            // fix-up the stack.
+            let pulled = entries.iter().map(|entry| match entry {
+                (Some(Update::Compact(compact)), _) => {
+                    Ok(Cow::Borrowed(compact))
+                }
+                (Some(Update::Append(compact)), _) => {
+                    Ok(Cow::Borrowed(compact))
+                }
+                (None, cache_info) => {
+                    let res = self
+                        .pull(pid, cache_info.lsn, cache_info.ptr)
+                        .map(|pg| pg)?;
+                    Ok(Cow::Owned(res.into_frag()))
+                }
+                other => {
+                    panic!("iterating over unexpected update: {:?}", other);
+                }
+            });
 
-            let refs = successes
-                .into_iter()
-                .map(|(item, ..)| {
-                    if let Cow::Borrowed(i) = item {
-                        i
-                    } else {
-                        panic!("somehow got Cow::Owned");
-                    }
-                })
-                .collect();
+            // if any of our pulls failed, bail here
+            let mut successes: Vec<Cow<P>> = match pulled.collect() {
+                Ok(success) => success,
+                Err(Error::Io(ref error))
+                    if error.kind() == std::io::ErrorKind::NotFound =>
+                {
+                    // blob has been removed
+                    // TODO is this possible to hit if it's just rewritten?
+                    return Ok(None);
+                }
+                Err(error) => return Err(error),
+            };
 
-            Ok(Some((
-                PagePtr {
-                    cached_ptr: head,
-                    ts,
-                },
-                refs,
-            )))
+            let mut base = successes.pop().unwrap().into_owned();
+
+            while let Some(frag) = successes.pop() {
+                base.merge(&frag, &self.config);
+            }
+
+            base
+        };
+
+        // fix up the stack to include our pulled items
+        let total_page_size = entries
+            .iter()
+            .map(|(_, cache_info)| cache_info.log_size as u64)
+            .sum();
+
+        let mut frags: Vec<(Option<Update<P>>, CacheInfo)> = entries
+            .iter()
+            .map(|(_, cache_info)| (None, *cache_info))
+            .collect();
+
+        frags[0].0 = Some(Update::Compact(base));
+
+        let node = node_from_frag_vec(frags).into_shared(&tx.guard);
+
+        #[cfg(feature = "event_log")]
+        assert_eq!(ptrs_from_stack(head, tx), ptrs_from_stack(node, tx),);
+
+        let node = unsafe { node.into_owned() };
+
+        debug_delay();
+        let res = unsafe { head_ptr.deref().stack.cas(head, node, &tx.guard) };
+        if res.is_ok() {
+            trace!("fix-up for pid {} succeeded", pid);
+
+            // possibly evict an item now that our cache has grown
+            let to_evict = self.lru.accessed(pid, total_page_size);
+            trace!("accessed pid {} -> paging out pids {:?}", pid, to_evict);
+            self.page_out(to_evict, tx)?;
+        } else {
+            trace!("fix-up for pid {} failed", pid);
         }
+
+        self.get(pid, tx)
     }
 
     /// The highest known stable Lsn on disk.

@@ -99,7 +99,7 @@ impl Node {
                     panic!("tried to consolidate del at key <= hi")
                 }
             }
-            Base(_) => panic!("encountered base page in middle of chain"),
+            Base(_) => panic!("trying to apply a Base to frag {:?}", self),
             ParentMergeIntention(pid) => {
                 assert!(
                     self.merging_child.is_none(),
