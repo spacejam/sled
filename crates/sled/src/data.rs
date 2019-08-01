@@ -176,4 +176,12 @@ impl Data {
             Data::Leaf(_) => None,
         }
     }
+
+    pub(crate) fn is_index(&self) -> bool {
+        if let Data::Index(..) = self {
+            true
+        } else {
+            false
+        }
+    }
 }

@@ -39,7 +39,7 @@ pub struct Iter<'a> {
     pub(super) tree: &'a Tree,
     pub(super) hi: Bound<IVec>,
     pub(super) lo: Bound<IVec>,
-    pub(super) cached_view: Option<View<'a>>,
+    pub(super) cached_node: Option<(PageId, &'a Node)>,
     pub(super) tx: Result<Tx<'a, Frag>>,
     pub(super) going_forward: bool,
 }
@@ -98,41 +98,47 @@ impl<'a> Iterator for Iter<'a> {
             Err(ref e) => return Some(Err(e.clone())),
         };
 
-        let mut view = match (self.going_forward, self.cached_view.take()) {
-            (true, Some(view)) => view,
-            _ => iter_try!(self.tree.view_for_key(self.low_key(), &tx)),
-        };
+        let (mut pid, mut node) =
+            match (self.going_forward, self.cached_node.take()) {
+                (true, Some((pid, node))) => (pid, node),
+                _ => {
+                    let view =
+                        iter_try!(self.tree.node_for_key(self.low_key(), &tx));
+                    (view.pid, view.node)
+                }
+            };
 
         for _ in 0..MAX_LOOPS {
             if self.bounds_collapsed() {
                 return None;
             }
 
-            if !view.contains_upper_bound(&self.lo) {
+            if !node.contains_upper_bound(&self.lo) {
                 // view too low (maybe merged, maybe exhausted?)
-                let next_pid = view.next?;
-                assert_ne!(view.pid, next_pid);
-                if let Some(v) =
+                let next_pid = node.next?;
+                assert_ne!(pid, next_pid);
+                let view = if let Some(view) =
                     iter_try!(self.tree.view_for_pid(next_pid, &tx))
                 {
-                    view = v;
+                    view
                 } else {
-                    view =
-                        iter_try!(self.tree.view_for_key(self.low_key(), &tx));
-                }
+                    iter_try!(self.tree.node_for_key(self.low_key(), &tx))
+                };
+                pid = view.pid;
+                node = view.node;
                 continue;
-            } else if !view.contains_lower_bound(&self.lo, true) {
+            } else if !node.contains_lower_bound(&self.lo, true) {
                 // view too high (maybe split, maybe exhausted?)
-                let seek_key = possible_predecessor(view.lo)?;
-                view = iter_try!(self.tree.view_for_key(seek_key, &tx));
+                let seek_key = possible_predecessor(&node.lo)?;
+                let view = iter_try!(self.tree.node_for_key(seek_key, &tx));
+                pid = view.pid;
+                node = view.node;
                 continue;
             }
 
-            if let Some((key, value)) =
-                view.successor(&self.lo, &self.tree.context)
-            {
+            if let Some((key, value)) = node.successor(&self.lo) {
                 self.lo = Bound::Excluded(key.clone());
-                self.cached_view = Some(view);
+                self.cached_node = Some((pid, node));
                 self.going_forward = true;
 
                 match self.hi {
@@ -146,10 +152,10 @@ impl<'a> Iterator for Iter<'a> {
                     _ => return None,
                 }
             } else {
-                if view.hi.is_empty() {
+                if node.hi.is_empty() {
                     return None;
                 }
-                self.lo = Bound::Included(view.hi.clone());
+                self.lo = Bound::Included(node.hi.clone());
                 continue;
             }
         }
@@ -177,41 +183,48 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
             Err(ref e) => return Some(Err(e.clone())),
         };
 
-        let mut view = match (self.going_forward, self.cached_view.take()) {
-            (false, Some(view)) => view,
-            _ => iter_try!(self.tree.view_for_key(self.high_key(), &tx)),
-        };
+        let (mut pid, mut node) =
+            match (self.going_forward, self.cached_node.take()) {
+                (false, Some((pid, node))) => (pid, node),
+                _ => {
+                    let view =
+                        iter_try!(self.tree.node_for_key(self.high_key(), &tx));
+                    (view.pid, view.node)
+                }
+            };
 
         for _ in 0..MAX_LOOPS {
             if self.bounds_collapsed() {
                 return None;
             }
 
-            if !view.contains_upper_bound(&self.hi) {
-                // view too low (maybe merged, maybe exhausted?)
-                let next_pid = view.next?;
-                assert_ne!(view.pid, next_pid);
-                if let Some(v) =
+            if !node.contains_upper_bound(&self.hi) {
+                // node too low (maybe merged, maybe exhausted?)
+                let next_pid = node.next?;
+                assert_ne!(pid, next_pid);
+                let view = if let Some(view) =
                     iter_try!(self.tree.view_for_pid(next_pid, &tx))
                 {
-                    view = v;
+                    view
                 } else {
-                    view =
-                        iter_try!(self.tree.view_for_key(self.high_key(), &tx));
-                }
+                    iter_try!(self.tree.node_for_key(self.high_key(), &tx))
+                };
+
+                pid = view.pid;
+                node = view.node;
                 continue;
-            } else if !view.contains_lower_bound(&self.hi, false) {
+            } else if !node.contains_lower_bound(&self.hi, false) {
                 // view too high (maybe split, maybe exhausted?)
-                let seek_key = possible_predecessor(view.lo)?;
-                view = iter_try!(self.tree.view_for_key(seek_key, &tx));
+                let seek_key = possible_predecessor(&node.lo)?;
+                let view = iter_try!(self.tree.node_for_key(seek_key, &tx));
+                pid = view.pid;
+                node = view.node;
                 continue;
             }
 
-            if let Some((key, value)) =
-                view.predecessor(&self.hi, &self.tree.context)
-            {
+            if let Some((key, value)) = node.predecessor(&self.hi) {
                 self.hi = Bound::Excluded(key.clone());
-                self.cached_view = Some(view);
+                self.cached_node = Some((pid, node));
                 self.going_forward = false;
 
                 match self.lo {
@@ -227,10 +240,10 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                     }
                 }
             } else {
-                if view.lo.is_empty() {
+                if node.lo.is_empty() {
                     return None;
                 }
-                self.hi = Bound::Excluded(view.lo.clone());
+                self.hi = Bound::Excluded(node.lo.clone());
                 continue;
             }
         }
