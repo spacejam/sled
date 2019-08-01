@@ -1439,18 +1439,36 @@ where
 
         debug_delay();
         let res = unsafe { head_ptr.deref().stack.cas(head, node, &tx.guard) };
-        if res.is_ok() {
+        if let Ok(new_ptr) = res {
             trace!("fix-up for pid {} succeeded", pid);
 
             // possibly evict an item now that our cache has grown
             let to_evict = self.lru.accessed(pid, total_page_size);
             trace!("accessed pid {} -> paging out pids {:?}", pid, to_evict);
-            self.page_out(to_evict, tx)?;
+            if !to_evict.is_empty() {
+                self.page_out(to_evict, tx)?;
+            }
+
+            let page_ref = unsafe {
+                let item = &new_ptr.deref().inner;
+                if let (Some(Update::Compact(compact)), _) = item {
+                    compact
+                } else {
+                    panic!()
+                }
+            };
+
+            let ptr = PagePtr {
+                cached_ptr: new_ptr,
+                ts: entries[0].1.ts,
+            };
+
+            Ok(Some((ptr, page_ref)))
         } else {
             trace!("fix-up for pid {} failed", pid);
-        }
 
-        self.get(pid, tx)
+            self.get(pid, tx)
+        }
     }
 
     /// The highest known stable Lsn on disk.
