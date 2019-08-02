@@ -27,9 +27,9 @@ impl Pio for std::fs::File {
 }
 
 #[cfg(not(unix))]
-use std::{
-    io::{Read, Seek, Write},
-    sync::Mutex,
+use {
+    parking_lot::Mutex,
+    std::io::{Read, Seek, Write},
 };
 
 #[cfg(not(unix))]
@@ -40,7 +40,7 @@ lazy_static! {
 #[cfg(not(unix))]
 impl Pio for std::fs::File {
     fn pread_exact(&self, mut buf: &mut [u8], offset: LogId) -> io::Result<()> {
-        let _lock = GLOBAL_FILE_LOCK.lock().unwrap();
+        let _lock = GLOBAL_FILE_LOCK.lock();
 
         let mut f = self.try_clone()?;
 

@@ -1,6 +1,8 @@
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+
+use parking_lot::{Condvar, Mutex};
 
 use super::*;
 
@@ -71,7 +73,7 @@ fn run(
     flush_every_ms: u64,
 ) {
     let flush_every = Duration::from_millis(flush_every_ms);
-    let mut shutdown = shutdown.lock().unwrap();
+    let mut shutdown = shutdown.lock();
     let mut wrote_data = false;
     while shutdown.is_running() || wrote_data {
         let before = std::time::Instant::now();
@@ -129,7 +131,7 @@ fn run(
             .checked_sub(before.elapsed())
             .unwrap_or(Duration::from_millis(1));
 
-        shutdown = sc.wait_timeout(shutdown, sleep_duration).unwrap().0;
+        sc.wait_for(&mut shutdown, sleep_duration);
     }
     *shutdown = ShutdownState::ShutDown;
     sc.notify_all();
@@ -137,32 +139,17 @@ fn run(
 
 impl Drop for Flusher {
     fn drop(&mut self) {
-        let mut shutdown = match self.shutdown.lock() {
-            Ok(guard) => guard,
-            Err(poison) => {
-                error!(
-                    "encountered poisoned guard when dropping \
-                     Flusher: {:?}. data may not have been flushed \
-                     to disk before crashing.",
-                    poison
-                );
-                return;
-            }
-        };
+        let mut shutdown = self.shutdown.lock();
         if shutdown.is_running() {
             *shutdown = ShutdownState::ShuttingDown;
             self.sc.notify_all();
         }
 
         while !shutdown.is_shutdown() {
-            shutdown = self
-                .sc
-                .wait_timeout(shutdown, Duration::from_millis(100))
-                .unwrap()
-                .0;
+            self.sc.wait_for(&mut shutdown, Duration::from_millis(100));
         }
 
-        let mut join_handle_opt = self.join_handle.lock().unwrap();
+        let mut join_handle_opt = self.join_handle.lock();
         if let Some(join_handle) = join_handle_opt.take() {
             if let Err(e) = join_handle.join() {
                 error!("error joining Periodic thread: {:?}", e);

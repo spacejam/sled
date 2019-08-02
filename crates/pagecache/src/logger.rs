@@ -245,7 +245,7 @@ impl Log {
             // don't continue if the system
             // has encountered an issue.
             if let Err(e) = self.config.global_error() {
-                let _ = self.iobufs.intervals.lock().unwrap();
+                let _ = self.iobufs.intervals.lock();
                 self.iobufs.interval_updated.notify_all();
                 return Err(e);
             }
@@ -404,7 +404,7 @@ impl Log {
         // to 0 and it's sealed then we should write it to storage.
         if iobuf::n_writers(header) == 0 && iobuf::is_sealed(header) {
             if let Err(e) = self.config.global_error() {
-                let _ = self.iobufs.intervals.lock().unwrap();
+                let _ = self.iobufs.intervals.lock();
                 self.iobufs.interval_updated.notify_all();
                 return Err(e);
             }

@@ -67,7 +67,7 @@ impl Db {
                     fem,
                 )
             });
-            *context._flusher.lock().unwrap() = flusher;
+            *context._flusher.lock() = flusher;
         }
 
         // create or open the default tree

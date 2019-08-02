@@ -1,9 +1,6 @@
-use std::{
-    borrow::Cow,
-    collections::BinaryHeap,
-    ops::Deref,
-    sync::{Arc, Mutex},
-};
+use std::{borrow::Cow, collections::BinaryHeap, ops::Deref, sync::Arc};
+
+use parking_lot::Mutex;
 
 use super::*;
 
@@ -612,7 +609,7 @@ where
         if new_ptr.is_ok() {
             let free = self.free.clone();
             tx.guard.defer(move || {
-                let mut free = free.lock().unwrap();
+                let mut free = free.lock();
                 // panic if we double-freed a page
                 if free.iter().any(|e| e == &pid) {
                     panic!("pid {} was double-freed", pid);
@@ -1542,7 +1539,7 @@ where
         let mut persisted = self.idgen_persists.load(Acquire);
 
         while persisted < necessary_persists {
-            let _mu = self.idgen_persist_mu.lock().unwrap();
+            let _mu = self.idgen_persist_mu.lock();
             persisted = self.idgen_persists.load(Acquire);
             if persisted < necessary_persists {
                 // it's our responsibility to persist up to our ID
@@ -1796,7 +1793,7 @@ where
 
         let gen_snapshot = move || {
             let snapshot_opt_res = snapshot_mu.try_lock();
-            if snapshot_opt_res.is_err() {
+            if snapshot_opt_res.is_none() {
                 // some other thread is snapshotting
                 warn!(
                     "snapshot skipped because previous attempt \
@@ -1938,7 +1935,7 @@ where
                         ts: 0,
                     };
                     stack.push((Some(Update::Free), cache_info));
-                    self.free.lock().unwrap().push(pid);
+                    self.free.lock().push(pid);
                 }
             }
 
