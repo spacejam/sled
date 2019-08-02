@@ -163,8 +163,6 @@ impl Tree {
                     res.complete(event);
                 }
 
-                tx.flush();
-
                 return Ok(last_value.cloned());
             }
             M.tree_looped();

@@ -451,11 +451,13 @@ where
         }
         let tx = Tx::new(&self, 0);
         let to_clean = self.log.with_sa(|sa| sa.clean(COUNTER_PID));
-        if let Some(to_clean) = to_clean {
+        let ret = if let Some(to_clean) = to_clean {
             self.rewrite_page(to_clean, &tx).map(|_| true)
         } else {
             Ok(false)
-        }
+        };
+        tx.guard.flush();
+        ret
     }
 
     /// Initiate an atomic sequence of writes to the
