@@ -897,6 +897,88 @@ impl Tree {
         self.range(prefix..)
     }
 
+    /// Atomically removes the maximum item in the `Tree` instance.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sled::{ConfigBuilder, Db, IVec};
+    /// let config = ConfigBuilder::new().temporary(true).build();
+    /// let t = Db::start(config).unwrap();
+    ///
+    /// t.insert(&[0], vec![0]).unwrap();
+    /// t.insert(&[1], vec![10]).unwrap();
+    /// t.insert(&[2], vec![20]).unwrap();
+    /// t.insert(&[3], vec![30]).unwrap();
+    /// t.insert(&[4], vec![40]).unwrap();
+    /// t.insert(&[5], vec![50]).unwrap();
+    ///
+    /// assert_eq!(&t.pop_max().unwrap().unwrap().0, &[5]);
+    /// assert_eq!(&t.pop_max().unwrap().unwrap().0, &[4]);
+    /// assert_eq!(&t.pop_max().unwrap().unwrap().0, &[3]);
+    /// assert_eq!(&t.pop_max().unwrap().unwrap().0, &[2]);
+    /// assert_eq!(&t.pop_max().unwrap().unwrap().0, &[1]);
+    /// assert_eq!(&t.pop_max().unwrap().unwrap().0, &[0]);
+    /// assert_eq!(t.pop_max().unwrap(), None);
+    /// ```
+    pub fn pop_max(&self) -> Result<Option<(IVec, IVec)>> {
+        loop {
+            if let Some(first_res) = self.iter().next_back() {
+                let first = first_res?;
+                if self
+                    .cas(&first.0, Some(&first.1), None as Option<&[u8]>)
+                    .is_ok()
+                {
+                    return Ok(Some(first));
+                }
+            // try again
+            } else {
+                return Ok(None);
+            }
+        }
+    }
+
+    /// Atomically removes the minimum item in the `Tree` instance.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sled::{ConfigBuilder, Db, IVec};
+    /// let config = ConfigBuilder::new().temporary(true).build();
+    /// let t = Db::start(config).unwrap();
+    ///
+    /// t.insert(&[0], vec![0]).unwrap();
+    /// t.insert(&[1], vec![10]).unwrap();
+    /// t.insert(&[2], vec![20]).unwrap();
+    /// t.insert(&[3], vec![30]).unwrap();
+    /// t.insert(&[4], vec![40]).unwrap();
+    /// t.insert(&[5], vec![50]).unwrap();
+    ///
+    /// assert_eq!(&t.pop_min().unwrap().unwrap().0, &[0]);
+    /// assert_eq!(&t.pop_min().unwrap().unwrap().0, &[1]);
+    /// assert_eq!(&t.pop_min().unwrap().unwrap().0, &[2]);
+    /// assert_eq!(&t.pop_min().unwrap().unwrap().0, &[3]);
+    /// assert_eq!(&t.pop_min().unwrap().unwrap().0, &[4]);
+    /// assert_eq!(&t.pop_min().unwrap().unwrap().0, &[5]);
+    /// assert_eq!(t.pop_min().unwrap(), None);
+    /// ```
+    pub fn pop_min(&self) -> Result<Option<(IVec, IVec)>> {
+        loop {
+            if let Some(first_res) = self.iter().next() {
+                let first = first_res?;
+                if self
+                    .cas(&first.0, Some(&first.1), None as Option<&[u8]>)
+                    .is_ok()
+                {
+                    return Ok(Some(first));
+                }
+            // try again
+            } else {
+                return Ok(None);
+            }
+        }
+    }
+
     /// Returns the number of elements in this tree.
     ///
     /// Beware: performs a full O(n) scan under the hood.
