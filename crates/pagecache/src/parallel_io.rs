@@ -68,7 +68,7 @@ impl Pio for std::fs::File {
     }
 
     fn pwrite_all(&self, mut buf: &[u8], offset: LogId) -> io::Result<()> {
-        let _lock = GLOBAL_FILE_LOCK.lock().unwrap();
+        let _lock = GLOBAL_FILE_LOCK.lock();
 
         let mut f = self.try_clone()?;
 
