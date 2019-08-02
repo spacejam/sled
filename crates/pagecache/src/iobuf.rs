@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use parking_lot::{Condvar, Mutex, RwLock};
+use parking_lot::{Condvar, Mutex};
 
 use self::reader::LogReader;
 
@@ -49,7 +49,7 @@ pub(super) struct IoBufs {
     // full, and in order to prevent threads from having to spin in
     // the reserve function, we can have them block until a buffer becomes
     // available.
-    pub(crate) iobuf: RwLock<Arc<IoBuf>>,
+    pub(crate) iobuf: Mutex<Arc<IoBuf>>,
 
     // Pending intervals that have been written to stable storage, but may be
     // higher than the current value of `stable` due to interesting thread
@@ -166,7 +166,7 @@ impl IoBufs {
         Ok(IoBufs {
             config,
 
-            iobuf: RwLock::new(Arc::new(iobuf)),
+            iobuf: Mutex::new(Arc::new(iobuf)),
 
             intervals: Mutex::new(vec![]),
             interval_updated: Condvar::new(),
@@ -498,7 +498,7 @@ impl IoBufs {
     }
 
     pub(super) fn current_iobuf(&self) -> Arc<IoBuf> {
-        self.iobuf.read().clone()
+        self.iobuf.lock().clone()
     }
 }
 
@@ -714,7 +714,7 @@ pub(crate) fn maybe_seal_and_write_iobuf(
     // the change.
     debug_delay();
     let intervals = iobufs.intervals.lock();
-    let mut mu = iobufs.iobuf.write();
+    let mut mu = iobufs.iobuf.lock();
     *mu = Arc::new(next_iobuf);
     drop(mu);
     iobufs.interval_updated.notify_all();
