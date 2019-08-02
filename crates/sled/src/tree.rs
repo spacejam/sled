@@ -3,9 +3,11 @@ use std::{
     ops::{self, RangeBounds},
     sync::{
         atomic::{AtomicU64, Ordering::SeqCst},
-        Arc, RwLock,
+        Arc,
     },
 };
+
+use parking_lot::RwLock;
 
 use super::*;
 
@@ -114,7 +116,7 @@ impl Tree {
         K: AsRef<[u8]>,
         IVec: From<V>,
     {
-        let _ = self.concurrency_control.read().unwrap();
+        let _ = self.concurrency_control.read();
         self.insert_inner(key, value)
     }
 
@@ -209,7 +211,7 @@ impl Tree {
     /// assert_eq!(t.get(&[1]), Ok(None));
     /// ```
     pub fn get<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
-        let _ = self.concurrency_control.read().unwrap();
+        let _ = self.concurrency_control.read();
         let _measure = Measure::new(&M.tree_get);
         trace!("getting key {:?}", key.as_ref());
 
@@ -248,7 +250,7 @@ impl Tree {
     /// assert_eq!(t.remove(&[1]), Ok(None));
     /// ```
     pub fn remove<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
-        let _ = self.concurrency_control.read().unwrap();
+        let _ = self.concurrency_control.read();
         self.remove_inner(key)
     }
 
@@ -327,7 +329,7 @@ impl Tree {
         trace!("casing key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_cas);
 
-        let _ = self.concurrency_control.read().unwrap();
+        let _ = self.concurrency_control.read();
 
         if self.context.read_only {
             return Err(Error::Unsupported(
@@ -605,7 +607,7 @@ impl Tree {
         K: AsRef<[u8]>,
     {
         let _measure = Measure::new(&M.tree_get);
-        let _ = self.concurrency_control.read().unwrap();
+        let _ = self.concurrency_control.read();
         self.range(..key).next_back().transpose()
     }
 
@@ -645,7 +647,7 @@ impl Tree {
         K: AsRef<[u8]>,
     {
         let _measure = Measure::new(&M.tree_get);
-        let _ = self.concurrency_control.read().unwrap();
+        let _ = self.concurrency_control.read();
         self.range((ops::Bound::Excluded(key), ops::Bound::Unbounded))
             .next()
             .transpose()
@@ -711,7 +713,7 @@ impl Tree {
         K: AsRef<[u8]>,
         IVec: From<V>,
     {
-        let _ = self.concurrency_control.read().unwrap();
+        let _ = self.concurrency_control.read();
         self.merge_inner(key, value)
     }
 
