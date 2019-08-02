@@ -951,7 +951,7 @@ impl Tree {
         &self,
         node_view: View<'g>,
         parent_view: &Option<View<'g>>,
-        root_pid: Option<PageId>,
+        root_pid: PageId,
         tx: &'g Tx<'g, Frag>,
     ) -> Result<()> {
         trace!("splitting node {}", node_view.pid);
@@ -1012,7 +1012,7 @@ impl Tree {
             }
         } else {
             M.tree_root_split_attempt();
-            if self.root_hoist(root_pid.unwrap(), rhs_pid, rhs_lo, tx)? {
+            if self.root_hoist(root_pid, rhs_pid, rhs_lo, tx)? {
                 M.tree_root_split_success();
             }
         }
@@ -1126,7 +1126,7 @@ impl Tree {
         let _measure = Measure::new(&M.tree_traverse);
 
         let mut cursor = self.root.load(SeqCst);
-        let mut root_pid = Some(cursor);
+        let mut root_pid = cursor;
         let mut parent_view = None;
         let mut unsplit_parent = None;
         let mut took_leftmost_branch = false;
@@ -1139,7 +1139,7 @@ impl Tree {
                     cursor
                 );
                 cursor = self.root.load(SeqCst);
-                root_pid = Some(cursor);
+                root_pid = cursor;
                 parent_view = None;
                 unsplit_parent = None;
                 took_leftmost_branch = false;
@@ -1217,10 +1217,10 @@ impl Tree {
                 if unsplit_parent.is_none() && parent_view.is_some() {
                     unsplit_parent = parent_view.clone();
                 } else if parent_view.is_none() && node.lo.is_empty() {
-                    assert_eq!(cursor, root_pid.unwrap());
+                    assert_eq!(cursor, root_pid);
                     // we have found a partially-split root
                     if self.root_hoist(
-                        root_pid.unwrap(),
+                        root_pid,
                         node.next.unwrap(),
                         node.hi.clone(),
                         tx,
