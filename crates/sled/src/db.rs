@@ -149,14 +149,8 @@ impl Db {
 
         let mut leftmost_chain: Vec<PageId> = vec![root_id.unwrap()];
         let mut cursor = root_id.unwrap();
-        loop {
-            let node = if let Some(view) = self.view_for_pid(cursor, &tx)? {
-                view.node
-            } else {
-                break;
-            };
-
-            if let Some(index) = node.data.index_ref() {
+        while let Some(view) = self.view_for_pid(cursor, &tx)? {
+            if let Some(index) = view.data.index_ref() {
                 let leftmost_child = index[0].1;
                 leftmost_chain.push(leftmost_child);
                 cursor = leftmost_child;

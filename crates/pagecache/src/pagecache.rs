@@ -189,7 +189,7 @@ where
     P: Materializer,
 {
     config: Config,
-    inner: Arc<PageTable<Stack<(Option<Update<P>>, CacheInfo)>>>,
+    inner: PageTable<Stack<(Option<Update<P>>, CacheInfo)>>,
     next_pid_to_allocate: AtomicU64,
     free: Arc<Mutex<BinaryHeap<PageId>>>,
     log: Log,
@@ -283,7 +283,7 @@ where
 
         let mut pc = PageCache {
             config: config.clone(),
-            inner: Arc::new(PageTable::default()),
+            inner: PageTable::default(),
             next_pid_to_allocate: AtomicU64::new(0),
             free: Arc::new(Mutex::new(BinaryHeap::new())),
             log: Log::start(config, snapshot.clone())?,

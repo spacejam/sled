@@ -563,7 +563,7 @@ pub(crate) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Result<usize> {
                     );
                 }
             } else {
-                let _ = iobufs.interval_updated.wait(&mut waiter);
+                iobufs.interval_updated.wait(&mut waiter);
             }
         } else {
             trace!("make_stable({}) returning", lsn);

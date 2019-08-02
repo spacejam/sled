@@ -239,8 +239,8 @@ impl Node {
 
     pub(crate) fn contains_upper_bound(&self, bound: &Bound<IVec>) -> bool {
         match bound {
-            Bound::Excluded(bound) if &self.hi >= bound => true,
-            Bound::Included(bound) if &self.hi > bound => true,
+            Bound::Excluded(bound) if self.hi >= *bound => true,
+            Bound::Included(bound) if self.hi > *bound => true,
             _ => self.hi.is_empty(),
         }
     }
@@ -252,11 +252,11 @@ impl Node {
     ) -> bool {
         match bound {
             Bound::Excluded(bound)
-                if &self.lo < bound || (is_forward && bound == &self.lo) =>
+                if self.lo < *bound || (is_forward && *bound == self.lo) =>
             {
                 true
             }
-            Bound::Included(bound) if &self.lo <= bound => true,
+            Bound::Included(bound) if self.lo <= *bound => true,
             Bound::Unbounded if !is_forward => self.hi.is_empty(),
             _ => self.lo.is_empty(),
         }
