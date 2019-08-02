@@ -171,20 +171,16 @@ impl<'a> RecoveryGuard<'a> {
 ///
 ///         // When getting a page, the provided `Materializer` is
 ///         // used to merge all pages together.
-///         let (mut key, pages) = pc.get(id, &tx).unwrap().unwrap();
+///         let (mut key, page) = pc.get(id, &tx).unwrap().unwrap();
 ///
-///         let consolidated: String = pages.into_iter().flat_map(|s| s.0.chars()).rev().collect();
-///
-///         assert_eq!(consolidated, "abc".to_owned());
+///         assert_eq!(page.0, "abc".to_owned());
 ///
 ///         // You can completely rewrite a page by using `replace`:
 ///         key = pc.replace(id, key, TestState("d".into()), &tx).unwrap().unwrap();
 ///
-///         let (key, pages) = pc.get(id, &tx).unwrap().unwrap();
+///         let (key, page) = pc.get(id, &tx).unwrap().unwrap();
 ///
-///         let consolidated: String = pages.into_iter().flat_map(|s| s.0.chars()).rev().collect();
-///
-///         assert_eq!(consolidated, "d".to_owned());
+///         assert_eq!(page.0, "d".to_owned());
 ///     }
 /// }
 /// ```
