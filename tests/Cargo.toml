@@ -13,7 +13,6 @@ env_logger = "0.6"
 libc = "0.2"
 fail = "0.3"
 lazy_static = "1.0"
-deterministic = "0.1"
 jemallocator = "0.1"
 color-backtrace = "0.2.0"
 
