@@ -217,8 +217,6 @@ impl Tree {
 
         let View { node, .. } = self.node_for_key(key.as_ref(), &tx)?;
 
-        tx.flush();
-
         Ok(node.leaf_value_for_key(key.as_ref()).cloned())
     }
 
@@ -288,7 +286,6 @@ impl Tree {
                     res.complete(event);
                 }
 
-                tx.flush();
                 return Ok(existing_val.cloned());
             }
         }
@@ -379,7 +376,6 @@ impl Tree {
                     res.complete(event);
                 }
 
-                tx.flush();
                 return Ok(Ok(()));
             }
             M.tree_looped();
@@ -770,7 +766,6 @@ impl Tree {
 
                     res.complete(event);
                 }
-                tx.flush();
                 return Ok(());
             }
             M.tree_looped();
@@ -1682,8 +1677,6 @@ impl Debug for Tree {
                 }
             }
         }
-
-        tx.flush();
 
         Ok(())
     }

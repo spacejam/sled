@@ -1530,8 +1530,6 @@ where
                 } else if key.last_lsn() > self.stable_lsn() {
                     self.make_stable(key.last_lsn())?;
                 }
-
-                tx.flush();
             }
         }
 
