@@ -22,7 +22,7 @@ macro_rules! io_fail {
         fail_point!($e, |_| {
             $self.config.set_global_error(Error::FailPoint);
             // wake up any waiting threads so they don't stall forever
-            let _ = $self.intervals.lock().unwrap();
+            let _ = $self.intervals.lock();
             $self.interval_updated.notify_all();
             Err(Error::FailPoint)
         });
