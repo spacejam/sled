@@ -1161,68 +1161,59 @@ impl Tree {
 
             let node_opt = self.view_for_pid(cursor, tx)?;
 
-            let (ptr, node) = if let Some(view) = node_opt {
-                (view.ptr, view.node)
+            let view = if let Some(view) = node_opt {
+                view
             } else {
                 retry!();
             };
 
             // When we encounter a merge intention, we collaboratively help out
-            if node.merging_child.is_some() {
+            if view.merging_child.is_some() {
                 self.merge_node(
                     View {
-                        pid: cursor,
-                        node,
-                        ptr,
+                        pid: view.pid,
+                        node: view.node,
+                        ptr: view.ptr,
                     },
-                    node.merging_child.unwrap(),
+                    view.node.merging_child.unwrap(),
                     tx,
                 )?;
                 retry!();
-            } else if node.merging {
+            } else if view.merging {
                 // we missed the parent merge intention due to a benign race,
                 // so go around again and try to help out if necessary
                 retry!();
             }
 
-            let overshot = key.as_ref() < node.lo.as_ref();
+            let overshot = key.as_ref() < view.lo.as_ref();
             let undershot =
-                key.as_ref() >= node.hi.as_ref() && !node.hi.is_empty();
+                key.as_ref() >= view.hi.as_ref() && !view.hi.is_empty();
 
             if overshot {
                 // merge interfered, reload root and retry
                 retry!();
             }
 
-            if node.should_split(self.context.blink_node_split_size as u64) {
-                self.split_node(
-                    View {
-                        pid: cursor,
-                        ptr,
-                        node,
-                    },
-                    &parent_view,
-                    root_pid,
-                    tx,
-                )?;
+            if view.should_split(self.context.blink_node_split_size as u64) {
+                self.split_node(view.clone(), &parent_view, root_pid, tx)?;
                 retry!();
             }
 
             if undershot {
                 // half-complete split detect & completion
-                cursor = node.next.expect(
+                cursor = view.next.expect(
                     "if our hi bound is not Inf (inity), \
                      we should have a right sibling",
                 );
                 if unsplit_parent.is_none() && parent_view.is_some() {
                     unsplit_parent = parent_view.clone();
-                } else if parent_view.is_none() && node.lo.is_empty() {
-                    assert_eq!(cursor, root_pid);
+                } else if parent_view.is_none() && view.lo.is_empty() {
+                    assert_eq!(view.pid, root_pid);
                     // we have found a partially-split root
                     if self.root_hoist(
                         root_pid,
-                        node.next.unwrap(),
-                        node.hi.clone(),
+                        view.next.unwrap(),
+                        view.hi.clone(),
                         tx,
                     )? {
                         M.tree_root_split_success();
@@ -1235,7 +1226,7 @@ impl Tree {
                 // our cooperative parent split
                 let mut parent = unsplit_parent.node.clone();
                 let split_applied =
-                    parent.parent_split(node.lo.as_ref(), cursor);
+                    parent.parent_split(view.lo.as_ref(), cursor);
 
                 if !split_applied {
                     // due to deep races, it's possible for the
@@ -1264,7 +1255,7 @@ impl Tree {
             // would be merged into a different index, which
             // would add considerable complexity to this already
             // fairly complex implementation.
-            if node.should_merge(
+            if view.should_merge(
                 (self.context.blink_node_split_size
                     / self.context.blink_node_merge_ratio)
                     as u64,
@@ -1291,22 +1282,14 @@ impl Tree {
                 }
             }
 
-            if node.data.is_index() {
-                let next = node.index_next_node(key.as_ref());
+            if view.data.is_index() {
+                let next = view.index_next_node(key.as_ref());
                 took_leftmost_branch = next.0 == 0;
-                parent_view = Some(View {
-                    ptr,
-                    pid: cursor,
-                    node,
-                });
+                parent_view = Some(view);
                 cursor = next.1;
             } else {
                 assert!(!overshot && !undershot);
-                return Ok(View {
-                    ptr,
-                    pid: cursor,
-                    node,
-                });
+                return Ok(view);
             }
         }
         panic!(
