@@ -193,7 +193,7 @@ where
     P: Materializer,
 {
     config: Config,
-    inner: Arc<PageTable<PageTableEntry<P>>>,
+    inner: Arc<PageTable<Stack<(Option<Update<P>>, CacheInfo)>>>,
     next_pid_to_allocate: AtomicU64,
     free: Arc<Mutex<BinaryHeap<PageId>>>,
     log: Log,
@@ -204,15 +204,6 @@ where
     idgen_persists: Arc<AtomicU64>,
     idgen_persist_mu: Arc<Mutex<()>>,
     was_recovered: bool,
-}
-
-struct PageTableEntry<P>
-where
-    P: 'static + Send + Sync + Serialize + DeserializeOwned,
-{
-    stack: Stack<(Option<Update<P>>, CacheInfo)>,
-    rts: AtomicLsn,
-    pending: AtomicLsn,
 }
 
 unsafe impl<P> Send for PageCache<P> where P: Materializer {}
@@ -261,8 +252,7 @@ where
                 if pte.is_none() {
                     continue;
                 }
-                let head =
-                    unsafe { pte.unwrap().deref().stack.head(&tx.guard) };
+                let head = unsafe { pte.unwrap().deref().head(&tx.guard) };
                 let ptrs = ptrs_from_stack(head, &tx);
                 pages_before_restart.insert(pid, ptrs);
             }
@@ -328,8 +318,7 @@ where
                 if pte.is_none() {
                     continue;
                 }
-                let head =
-                    unsafe { pte.unwrap().deref().stack.head(&tx.guard) };
+                let head = unsafe { pte.unwrap().deref().head(&tx.guard) };
                 let ptrs = ptrs_from_stack(head, &tx);
                 pages_after_restart.insert(pid, ptrs);
             }
@@ -508,7 +497,7 @@ where
         new: Update<P>,
         tx: &'g Tx<P>,
     ) -> Result<(PageId, PagePtr<'g, P>)> {
-        let (pid, key) = if let Some(pid) = self.free.lock().unwrap().pop() {
+        let (pid, key) = if let Some(pid) = self.free.lock().pop() {
             trace!("re-allocating pid {}", pid);
 
             let head_ptr = match self.inner.get(pid, &tx.guard) {
@@ -520,7 +509,7 @@ where
                 Some(p) => p,
             };
 
-            let head = unsafe { head_ptr.deref().stack.head(&tx.guard) };
+            let head = unsafe { head_ptr.deref().head(&tx.guard) };
 
             let mut stack_iter = StackIter::from_ptr(head, &tx.guard);
 
@@ -544,13 +533,8 @@ where
             trace!("allocating pid {} for the first time", pid);
 
             let new_stack = Stack::default();
-            let new_pte = PageTableEntry {
-                stack: new_stack,
-                rts: AtomicLsn::new(0),
-                pending: AtomicLsn::new(0),
-            };
 
-            let head_ptr = Owned::new(new_pte).into_shared(&tx.guard);
+            let head_ptr = Owned::new(new_stack).into_shared(&tx.guard);
 
             self.inner
                 .cas(pid, Shared::null(), head_ptr, &tx.guard)
@@ -642,7 +626,7 @@ where
         };
 
         // see if we should short-circuit replace
-        let head = unsafe { head_ptr.deref().stack.head(&tx.guard) };
+        let head = unsafe { head_ptr.deref().head(&tx.guard) };
         let stack_iter = StackIter::from_ptr(head, &tx.guard);
         let stack_len = stack_iter.size_hint().1.unwrap();
         if stack_len >= self.config.page_consolidation_threshold {
@@ -738,10 +722,7 @@ where
 
             debug_delay();
             let result = unsafe {
-                head_ptr
-                    .deref()
-                    .stack
-                    .cap_node(old.cached_ptr, node, &tx.guard)
+                head_ptr.deref().cap_node(old.cached_ptr, node, &tx.guard)
             };
 
             match result {
@@ -875,7 +856,7 @@ where
         };
 
         debug_delay();
-        let head = unsafe { head_ptr.deref().stack.head(&tx.guard) };
+        let head = unsafe { head_ptr.deref().head(&tx.guard) };
         let stack_iter = StackIter::from_ptr(head, &tx.guard);
         let cache_entries: Vec<_> = stack_iter.collect();
 
@@ -894,8 +875,7 @@ where
             let node = node_from_frag_vec(vec![new_cache_entry]);
 
             debug_delay();
-            let result =
-                unsafe { head_ptr.deref().stack.cas(head, node, &tx.guard) };
+            let result = unsafe { head_ptr.deref().cas(head, node, &tx.guard) };
 
             if result.is_ok() {
                 let ptrs = ptrs_from_stack(head, tx);
@@ -945,8 +925,7 @@ where
                             Some(p) => p,
                         };
 
-                        let head =
-                            unsafe { head_ptr.deref().stack.head(&tx.guard) };
+                        let head = unsafe { head_ptr.deref().head(&tx.guard) };
 
                         let mut stack_iter =
                             StackIter::from_ptr(head, &tx.guard);
@@ -1102,7 +1081,7 @@ where
 
             debug_delay();
             let result = unsafe {
-                head_ptr.deref().stack.cas(old.cached_ptr, node, &tx.guard)
+                head_ptr.deref().cas(old.cached_ptr, node, &tx.guard)
             };
 
             match result {
@@ -1171,7 +1150,7 @@ where
             Some(pointer) => pointer,
         };
 
-        let head = unsafe { head_ptr.deref().stack.head(&tx.guard) };
+        let head = unsafe { head_ptr.deref().head(&tx.guard) };
 
         match StackIter::from_ptr(head, &tx.guard).next() {
             Some((Some(Update::Meta(m)), cache_info)) => Ok((
@@ -1217,7 +1196,7 @@ where
             Some(pointer) => pointer,
         };
 
-        let head = unsafe { head_ptr.deref().stack.head(&tx.guard) };
+        let head = unsafe { head_ptr.deref().head(&tx.guard) };
 
         match StackIter::from_ptr(head, &tx.guard).next() {
             Some((Some(Update::Config(config)), cache_info)) => Ok((
@@ -1263,7 +1242,7 @@ where
             Some(pointer) => pointer,
         };
 
-        let head = unsafe { head_ptr.deref().stack.head(&tx.guard) };
+        let head = unsafe { head_ptr.deref().head(&tx.guard) };
 
         match StackIter::from_ptr(head, &tx.guard).next() {
             Some((Some(Update::Counter(counter)), cache_info)) => Ok((
@@ -1319,7 +1298,7 @@ where
             Some(p) => p,
         };
 
-        let head = unsafe { head_ptr.deref().stack.head(&tx.guard) };
+        let head = unsafe { head_ptr.deref().head(&tx.guard) };
 
         let entries: Vec<_> = StackIter::from_ptr(head, &tx.guard).collect();
 
@@ -1435,7 +1414,7 @@ where
         let node = unsafe { node.into_owned() };
 
         debug_delay();
-        let res = unsafe { head_ptr.deref().stack.cas(head, node, &tx.guard) };
+        let res = unsafe { head_ptr.deref().cas(head, node, &tx.guard) };
         if let Ok(new_ptr) = res {
             trace!("fix-up for pid {} succeeded", pid);
 
@@ -1479,34 +1458,6 @@ where
     /// this call.
     pub fn make_stable(&self, lsn: Lsn) -> Result<usize> {
         self.log.make_stable(lsn)
-    }
-
-    /// Increase a page's associated transactional read
-    /// timestamp (RTS) to as high as the specified timestamp.
-    pub fn bump_page_rts(&self, pid: PageId, ts: Lsn, tx: &Tx<P>) {
-        let head_ptr = if let Some(p) = self.inner.get(pid, &tx.guard) {
-            p
-        } else {
-            return;
-        };
-
-        let pte = unsafe { head_ptr.deref() };
-
-        bump_atomic_lsn(&pte.rts, ts);
-    }
-
-    /// Retrieves the current transactional read timestamp
-    /// for a page.
-    pub fn get_page_rts(&self, pid: PageId, tx: &Tx<P>) -> Option<u64> {
-        let head_ptr = if let Some(p) = self.inner.get(pid, &tx.guard) {
-            p
-        } else {
-            return None;
-        };
-
-        let pte = unsafe { head_ptr.deref() };
-
-        Some(pte.rts.load(Acquire) as u64)
     }
 
     /// Returns `true` if the database was
@@ -1675,7 +1626,7 @@ where
             };
 
             debug_delay();
-            let head = unsafe { head_ptr.deref().stack.head(&tx.guard) };
+            let head = unsafe { head_ptr.deref().head(&tx.guard) };
             let stack_iter = StackIter::from_ptr(head, &tx.guard);
             let stack_len = stack_iter.size_hint().1.unwrap();
             let mut new_stack = Vec::with_capacity(stack_len);
@@ -1695,8 +1646,7 @@ where
             let node = node_from_frag_vec(new_stack);
 
             debug_delay();
-            let result =
-                unsafe { head_ptr.deref().stack.cas(head, node, &tx.guard) };
+            let result = unsafe { head_ptr.deref().cas(head, node, &tx.guard) };
             if result.is_ok() {
                 // TODO record cache difference
             } else {
@@ -1943,18 +1893,12 @@ where
 
             // Set up new stack
 
-            let pte = PageTableEntry {
-                stack,
-                rts: AtomicLsn::new(0),
-                pending: AtomicLsn::new(0),
-            };
-
-            let new_pte = Owned::new(pte).into_shared(&guard);
+            let new_stack = Owned::new(stack).into_shared(&guard);
 
             trace!("installing stack for pid {}", pid);
 
             self.inner
-                .cas(pid, Shared::null(), new_pte, &guard)
+                .cas(pid, Shared::null(), new_stack, &guard)
                 .expect("should be able to install initial stack");
         }
     }
