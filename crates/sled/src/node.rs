@@ -358,17 +358,27 @@ impl Node {
             records.binary_search_by(|(k, _)| prefix_cmp(k, &successor_key));
 
         let idx = match search {
-            Ok(idx) if idx > 0 => idx - 1,
+            Ok(idx) if idx > 0 => idx,
             Err(idx) if idx > 0 => idx - 1,
             _ => return None,
         };
 
-        if let Some((k, v)) = records.get(idx) {
+        for (k, v) in records[0..=idx].iter().rev() {
+            match bound {
+                Bound::Excluded(b)
+                    if prefix_cmp_encoded(k, b, &self.lo)
+                        == std::cmp::Ordering::Equal =>
+                {
+                    // keep going because we wanted to exclude
+                    // this key.
+                    continue;
+                }
+                _ => {}
+            }
             let decoded_key = prefix_decode(&self.lo, &k);
-            Some((IVec::from(decoded_key), v.clone()))
-        } else {
-            None
+            return Some((IVec::from(decoded_key), v.clone()));
         }
+        None
     }
 
     pub(crate) fn leaf_value_for_key(&self, key: &[u8]) -> Option<&IVec> {

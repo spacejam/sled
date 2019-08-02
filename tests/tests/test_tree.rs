@@ -509,6 +509,8 @@ fn tree_subscriptions_and_keyspaces() -> Result<()> {
 
 #[test]
 fn tree_range() {
+    tests::setup_logger();
+
     let config = ConfigBuilder::new()
         .temporary(true)
         .blink_node_split_size(0)
@@ -547,7 +549,12 @@ fn tree_range() {
 
     let start = b"2".to_vec();
     let mut r = t.range(..=start).rev();
-    assert_eq!(r.next().unwrap().unwrap().0, b"2");
+    assert_eq!(
+        r.next().unwrap().unwrap().0,
+        b"2",
+        "failed to find 2 in tree {:?}",
+        t
+    );
     assert_eq!(r.next().unwrap().unwrap().0, b"1");
     assert_eq!(r.next().unwrap().unwrap().0, b"0");
     assert_eq!(r.next(), None);

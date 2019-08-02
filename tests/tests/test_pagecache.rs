@@ -201,7 +201,6 @@ fn concurrent_pagecache() -> sled::Result<()> {
             let (key, frag) = pc.get(i as PageId, &tx)
                 .expect("we should read what we just wrote")
                 .unwrap();
-            println!("adding item {} to pid {} {:?}", item, i, frag);
             assert_eq!(frag.0.len(), item + 1, "expected frags to be of len {} for pid {}, \
                        but they were {:?}", item + 1, i, frag);
             pc.link(i as PageId, key, vec![item].into(), &tx)
