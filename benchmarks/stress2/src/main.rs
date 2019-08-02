@@ -239,10 +239,7 @@ fn main() {
                 .spawn(move || report(shutdown))
                 .unwrap()
         } else {
-            thread::Builder::new()
-                .name(format!("t({})", i))
-                .spawn(move || run(tree, shutdown))
-                .unwrap()
+            thread::spawn(move || run(tree, shutdown))
         };
 
         threads.push(t);
