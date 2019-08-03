@@ -16,6 +16,7 @@ pub(crate) struct View<'g> {
     pub ptr: TreePtr<'g>,
     pub pid: PageId,
     pub node: &'g Node,
+    pub size: u64,
 }
 
 impl<'g> std::ops::Deref for View<'g> {
@@ -142,7 +143,7 @@ impl Tree {
 
         loop {
             let tx = self.context.pagecache.begin()?;
-            let View { ptr, pid, node } =
+            let View { ptr, pid, node, .. } =
                 self.node_for_key(key.as_ref(), &tx)?;
             let encoded_key = prefix_encode(&node.lo, key.as_ref());
 
@@ -267,7 +268,7 @@ impl Tree {
         loop {
             let tx = self.context.pagecache.begin()?;
 
-            let View { ptr, pid, node } =
+            let View { ptr, pid, node, .. } =
                 self.node_for_key(key.as_ref(), &tx)?;
             let existing_val = node.leaf_value_for_key(key.as_ref());
 
@@ -343,7 +344,7 @@ impl Tree {
         // cap fails it doesn't mean our value was changed.
         loop {
             let tx = self.context.pagecache.begin()?;
-            let View { ptr, pid, node } =
+            let View { ptr, pid, node, .. } =
                 self.node_for_key(key.as_ref(), &tx)?;
             let cur = node.leaf_value_for_key(key.as_ref());
 
@@ -744,7 +745,7 @@ impl Tree {
         loop {
             let tx = self.context.pagecache.begin()?;
 
-            let View { ptr, pid, node } =
+            let View { ptr, pid, node, .. } =
                 self.node_for_key(key.as_ref(), &tx)?;
 
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
@@ -1166,23 +1167,17 @@ impl Tree {
     ) -> Result<Option<View<'g>>> {
         loop {
             let frag_opt = self.context.pagecache.get(pid, tx)?;
-            if let Some((tree_ptr, Frag::Base(ref leaf))) = &frag_opt {
+            if let Some((tree_ptr, Frag::Base(ref leaf), size)) = &frag_opt {
+                let view = View {
+                    node: leaf,
+                    ptr: tree_ptr.clone(),
+                    pid,
+                    size: *size,
+                };
                 if leaf.merging_child.is_some() {
-                    self.merge_node(
-                        View {
-                            node: leaf,
-                            ptr: tree_ptr.clone(),
-                            pid,
-                        },
-                        leaf.merging_child.unwrap(),
-                        tx,
-                    )?;
+                    self.merge_node(view, leaf.merging_child.unwrap(), tx)?;
                 } else {
-                    return Ok(Some(View {
-                        ptr: tree_ptr.clone(),
-                        pid,
-                        node: leaf,
-                    }));
+                    return Ok(Some(view));
                 }
             } else {
                 return Ok(None);
@@ -1247,11 +1242,7 @@ impl Tree {
             // When we encounter a merge intention, we collaboratively help out
             if view.merging_child.is_some() {
                 self.merge_node(
-                    View {
-                        pid: view.pid,
-                        node: view.node,
-                        ptr: view.ptr,
-                    },
+                    view.clone(),
                     view.node.merging_child.unwrap(),
                     tx,
                 )?;
@@ -1271,7 +1262,10 @@ impl Tree {
                 retry!();
             }
 
-            if view.should_split(self.context.blink_node_split_size as u64) {
+            if view.should_split(
+                view.size,
+                self.context.blink_node_split_size as u64,
+            ) {
                 self.split_node(view.clone(), &parent_view, root_pid, tx)?;
                 retry!();
             }
@@ -1333,6 +1327,7 @@ impl Tree {
             // would add considerable complexity to this already
             // fairly complex implementation.
             if view.should_merge(
+                view.size,
                 (self.context.blink_node_split_size
                     / self.context.blink_node_merge_ratio)
                     as u64,

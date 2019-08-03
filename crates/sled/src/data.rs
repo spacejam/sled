@@ -1,5 +1,3 @@
-use std::mem::size_of;
-
 use super::*;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -9,37 +7,6 @@ pub(crate) enum Data {
 }
 
 impl Data {
-    #[inline]
-    pub(crate) fn size_in_bytes(&self) -> u64 {
-        let self_sz = size_of::<Self>() as u64;
-
-        let inner_sz = match self {
-            Data::Index(ref v) => {
-                let mut sz = 0_u64;
-                for (k, _p) in v.iter() {
-                    sz = sz
-                        .saturating_add(k.len() as u64)
-                        .saturating_add(size_of::<IVec>() as u64)
-                        .saturating_add(size_of::<PageId>() as u64);
-                }
-                sz.saturating_add(size_of::<Vec<(IVec, PageId)>>() as u64)
-            }
-            Data::Leaf(ref v) => {
-                let mut sz = 0_u64;
-                for (k, value) in v.iter() {
-                    sz = sz
-                        .saturating_add(k.len() as u64)
-                        .saturating_add(size_of::<IVec>() as u64)
-                        .saturating_add(value.len() as u64)
-                        .saturating_add(size_of::<IVec>() as u64);
-                }
-                sz.saturating_add(size_of::<Vec<(IVec, IVec)>>() as u64)
-            }
-        };
-
-        self_sz.saturating_add(inner_sz)
-    }
-
     pub(crate) fn fmt_keys(&self, prefix: &[u8]) -> Data {
         fn fmt_inner<T>(prefix: &[u8], xs: &[(IVec, T)]) -> Vec<(IVec, T)>
         where

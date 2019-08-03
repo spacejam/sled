@@ -28,10 +28,6 @@ impl Materializer for TestMaterializer {
     fn merge(&mut self, other: &TestMaterializer, _config: &Config) {
         self.0.extend_from_slice(&other.0);
     }
-
-    fn size_in_bytes(frag: &TestMaterializer) -> u64 {
-        (std::mem::size_of::<Vec<usize>>() + frag.0.len()) as u64
-    }
 }
 
 impl From<Vec<usize>> for TestMaterializer {
@@ -99,7 +95,7 @@ fn pagecache_caching() {
 
     for i in 0..1000 {
         let id = 3 + (i % 2);
-        let (key, _) = pc.get(id, &tx).unwrap().unwrap();
+        let (key, _, _) = pc.get(id, &tx).unwrap().unwrap();
         let key = pc
             .link(id, key, vec![i as usize].into(), &tx)
             .unwrap()
@@ -165,7 +161,7 @@ fn concurrent_pagecache() -> sled::Result<()> {
         let (id, key) = pc.allocate(vec![].into(), &tx).unwrap();
         pc.replace(id, key, vec![id as usize].into(), &tx).unwrap().unwrap();
 
-        let (_key, frag) = pc.get(id, &tx)
+        let (_key, frag, _) = pc.get(id, &tx)
                              .expect("no io issues")
                              .expect("should not be None since we just wrote it");
         assert_eq!(
@@ -183,7 +179,8 @@ fn concurrent_pagecache() -> sled::Result<()> {
 
     par! {p, |pc: &PageCache<_>, i: usize| {
         let tx = pc.begin().unwrap();
-        let (_key, frag) = pc.get(i as PageId, &tx)
+        let (_key, frag,
+            _) = pc.get(i as PageId, &tx)
                              .expect("failed to recover a page we previously wrote")
                              .expect(&format!("failed to recover pid {} which we previously wrote", i));
         assert_eq!(frag, &vec![i].into());
@@ -198,7 +195,7 @@ fn concurrent_pagecache() -> sled::Result<()> {
     par! {p, |pc: &PageCache<TestMaterializer>, i: usize| {
         for item in 0..=10 {
             let tx = pc.begin().unwrap();
-            let (key, frag) = pc.get(i as PageId, &tx)
+            let (key, frag,_) = pc.get(i as PageId, &tx)
                 .expect("we should read what we just wrote")
                 .unwrap();
             assert_eq!(frag.0.len(), item + 1, "expected frags to be of len {} for pid {}, \
@@ -208,7 +205,7 @@ fn concurrent_pagecache() -> sled::Result<()> {
                 .expect("no CAS failures expected");
         }
         let tx = pc.begin().unwrap();
-        let (_key, frag) = pc.get(i as PageId, &tx)
+        let (_key, frag, _) = pc.get(i as PageId, &tx)
                              .expect("we should read what we just wrote")
                              .unwrap();
         assert_eq!(frag.0, vec![i, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
@@ -222,7 +219,7 @@ fn concurrent_pagecache() -> sled::Result<()> {
 
     par! {p, |pc: &PageCache<TestMaterializer>, i: usize| {
         let tx = pc.begin().unwrap();
-        let (_key, frag) = pc.get(i as PageId, &tx)
+        let (_key, frag, _) = pc.get(i as PageId, &tx)
                              .expect("we should read what we just wrote")
                              .unwrap();
 
@@ -256,7 +253,7 @@ fn pagecache_strange_crash_1() {
 
         for i in 0..1000 {
             let id = 3 + (i % 2);
-            let (key, _frag) = pc.get(id, &tx).unwrap().unwrap();
+            let (key, _frag, _) = pc.get(id, &tx).unwrap().unwrap();
             let key = pc
                 .link(id, key, vec![i as usize].into(), &tx)
                 .unwrap()
@@ -299,7 +296,7 @@ fn pagecache_strange_crash_2() {
             let id = 3 + (i % 2);
             let page_get = pc.get(id, &tx).unwrap();
             assert!(!page_get.is_none());
-            let (key, _frag) = page_get.unwrap();
+            let (key, _frag, _) = page_get.unwrap();
 
             let key_res =
                 pc.link(id, key, vec![i as usize].into(), &tx).unwrap();
@@ -335,7 +332,7 @@ fn basic_pagecache_recovery() {
     let pc2: PageCache<TestMaterializer> =
         PageCache::start(config.clone()).unwrap();
     let tx = pc2.begin().unwrap();
-    let (consolidated2, frag2) = pc2.get(id, &tx).unwrap().unwrap();
+    let (consolidated2, frag2, _) = pc2.get(id, &tx).unwrap().unwrap();
     assert_eq!(&frag1, frag2);
 
     pc2.link(id, consolidated2, vec![4].into(), &tx)
@@ -347,7 +344,7 @@ fn basic_pagecache_recovery() {
     let pc3: PageCache<TestMaterializer> =
         PageCache::start(config.clone()).unwrap();
     let tx = pc3.begin().unwrap();
-    let (consolidated3, frag3) = pc3.get(id, &tx).unwrap().unwrap();
+    let (consolidated3, frag3, _) = pc3.get(id, &tx).unwrap().unwrap();
     assert_eq!(frag3.0, vec![1, 2, 3, 4]);
     pc3.free(id, consolidated3, &tx).unwrap().unwrap();
     drop(tx);
@@ -461,7 +458,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
 
                 match *ref_get {
                     P::Present(ref mut existing) => {
-                        let (old_key, frag) = get.unwrap();
+                        let (old_key, frag, _) = get.unwrap();
                         assert_eq!(&frag.0, existing);
                         pc.replace(pid, old_key, vec![c].into(), &tx)
                             .unwrap()
@@ -486,7 +483,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
 
                 match *ref_get {
                     P::Present(ref mut existing) => {
-                        let (old_key, _) = get.unwrap();
+                        let (old_key, _, _) = get.unwrap();
                         pc.link(pid, old_key, vec![c].into(), &tx)
                             .unwrap()
                             .unwrap();
@@ -508,7 +505,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
 
                 match reference.get(&pid) {
                     Some(&P::Present(ref existing)) => {
-                        let (_key, frag) = get.unwrap();
+                        let (_key, frag, _) = get.unwrap();
 
                         assert_eq!(&frag.0, existing);
                         frag.0.iter().fold(0, |acc, cur| {
@@ -533,7 +530,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
 
                 let pre_get = pc.get(pid, &tx).unwrap();
 
-                if let Some((ptr, _frags)) = pre_get {
+                if let Some((ptr, _frags, _)) = pre_get {
                     pc.free(pid, ptr, &tx).unwrap().unwrap();
                 }
 

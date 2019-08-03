@@ -81,16 +81,6 @@ impl IVec {
     fn remote(arc: Arc<[u8]>) -> IVec {
         IVec(IVecInner::Remote(arc))
     }
-
-    #[inline]
-    pub(crate) fn size_in_bytes(&self) -> u64 {
-        if let IVecInner::Inline(..) = self.0 {
-            std::mem::size_of::<IVec>() as u64
-        } else {
-            let sz = std::mem::size_of::<IVec>() as u64;
-            sz.saturating_add(self.len() as u64)
-        }
-    }
 }
 
 impl From<Box<[u8]>> for IVec {

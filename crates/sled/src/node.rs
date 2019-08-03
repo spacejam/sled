@@ -1,4 +1,4 @@
-use std::{fmt, mem::size_of, ops::Bound};
+use std::{fmt, ops::Bound};
 
 use super::*;
 
@@ -34,19 +34,6 @@ impl fmt::Debug for Node {
 }
 
 impl Node {
-    #[inline]
-    pub(crate) fn size_in_bytes(&self) -> u64 {
-        let self_sz = size_of::<Self>() as u64;
-        let lo_sz = self.lo.size_in_bytes();
-        let hi_sz = self.hi.size_in_bytes();
-        let data_sz = self.data.size_in_bytes();
-
-        self_sz
-            .saturating_add(lo_sz)
-            .saturating_add(hi_sz)
-            .saturating_add(data_sz)
-    }
-
     pub(crate) fn apply(&mut self, frag: &Frag, merge_operator: Option<usize>) {
         use self::Frag::*;
 
@@ -394,15 +381,15 @@ impl Node {
         search.map(|idx| &records[idx].1)
     }
 
-    pub(crate) fn should_split(&self, max_sz: u64) -> bool {
-        let size_checks = self.data.len() > 4 && self.size_in_bytes() > max_sz;
+    pub(crate) fn should_split(&self, our_sz: u64, max_sz: u64) -> bool {
+        let size_checks = self.data.len() > 4 && our_sz > max_sz;
         let safety_checks = self.merging_child.is_none() && !self.merging;
 
         size_checks && safety_checks
     }
 
-    pub(crate) fn should_merge(&self, min_sz: u64) -> bool {
-        let size_checks = self.data.len() < 2 && self.size_in_bytes() < min_sz;
+    pub(crate) fn should_merge(&self, our_sz: u64, min_sz: u64) -> bool {
+        let size_checks = self.data.len() < 2 && our_sz < min_sz;
         let safety_checks = self.merging_child.is_none() && !self.merging;
 
         size_checks && safety_checks

@@ -114,7 +114,7 @@ impl Default for ConfigBuilder {
         ConfigBuilder {
             io_bufs: 3,
             io_buf_size: 2 << 22, // 8mb
-            blink_node_split_size: 4096,
+            blink_node_split_size: 2400,
             blink_node_merge_ratio: 4,
             page_consolidation_threshold: 10,
             path: PathBuf::from(DEFAULT_PATH),
