@@ -26,7 +26,7 @@ pub const BATCH_MANIFEST_INLINE_LEN: usize = std::mem::size_of::<Lsn>();
 pub const MINIMUM_ITEMS_PER_SEGMENT: usize = 4;
 
 /// During testing, this should never be exceeded.
-pub const MAX_SPACE_AMPLIFICATION: f64 = 20.;
+pub const MAX_SPACE_AMPLIFICATION: f64 = 30.;
 
 pub(crate) const META_PID: PageId = 0;
 pub(crate) const COUNTER_PID: PageId = 1;

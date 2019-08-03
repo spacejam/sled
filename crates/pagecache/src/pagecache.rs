@@ -966,8 +966,10 @@ where
     pub fn space_amplification(&self) -> Result<f64> {
         let on_disk_bytes = self.size_on_disk()? as f64;
         let logical_size = self.logical_size_of_all_pages()? as f64;
+        let discount =
+            self.config.io_buf_size as f64 * self.config.io_bufs as f64;
 
-        Ok(on_disk_bytes / logical_size)
+        Ok(on_disk_bytes / (logical_size + discount))
     }
 
     fn size_on_disk(&self) -> Result<u64> {
@@ -981,11 +983,7 @@ where
             size += blob_file?.metadata()?.len();
         }
 
-        let discount =
-            self.config.io_buf_size as u64 * self.config.io_bufs as u64;
-        let ret = std::cmp::max(discount, size) - discount + 1;
-
-        Ok(ret)
+        Ok(size)
     }
 
     fn logical_size_of_all_pages(&self) -> Result<u64> {
