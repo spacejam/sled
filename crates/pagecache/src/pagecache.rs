@@ -167,14 +167,14 @@ impl<'a> RecoveryGuard<'a> {
 ///
 ///         // When getting a page, the provided `Materializer` is
 ///         // used to merge all pages together.
-///         let (mut key, page) = pc.get(id, &tx).unwrap().unwrap();
+///         let (mut key, page, size_on_disk) = pc.get(id, &tx).unwrap().unwrap();
 ///
 ///         assert_eq!(page.0, "abc".to_owned());
 ///
 ///         // You can completely rewrite a page by using `replace`:
 ///         key = pc.replace(id, key, TestState("d".into()), &tx).unwrap().unwrap();
 ///
-///         let (key, page) = pc.get(id, &tx).unwrap().unwrap();
+///         let (key, page, size_on_disk) = pc.get(id, &tx).unwrap().unwrap();
 ///
 ///         assert_eq!(page.0, "d".to_owned());
 ///     }
@@ -625,7 +625,7 @@ where
         let stack_len = stack_iter.size_hint().1.unwrap();
         if stack_len >= self.config.page_consolidation_threshold {
             let current_frag =
-                if let Some((current_ptr, frag)) = self.get(pid, tx)? {
+                if let Some((current_ptr, frag, _sz)) = self.get(pid, tx)? {
                     if old.ts != current_ptr.ts
                         && old.cached_ptr != current_ptr.cached_ptr
                     {
@@ -908,7 +908,9 @@ where
                 (key, Update::Config(config.clone()))
             } else {
                 match self.get(pid, tx)? {
-                    Some((key, frag)) => (key, Update::Compact(frag.clone())),
+                    Some((key, frag, _sz)) => {
+                        (key, Update::Compact(frag.clone()))
+                    }
                     None => {
                         let head_ptr = match self.inner.get(pid, &tx.guard) {
                             None => panic!(
@@ -996,8 +998,8 @@ where
         let min_pid = CONFIG_PID + 1;
         let next_pid_to_allocate = self.next_pid_to_allocate.load(Acquire);
         for pid in min_pid..next_pid_to_allocate {
-            if let Some((_, frag)) = self.get(pid, &tx)? {
-                ret += P::size_in_bytes(frag);
+            if let Some((_, _, sz)) = self.get(pid, &tx)? {
+                ret += sz;
             }
         }
         Ok(ret)
@@ -1269,7 +1271,7 @@ where
         &self,
         pid: PageId,
         tx: &'g Tx<P>,
-    ) -> Result<Option<(PagePtr<'g, P>, &'g P)>> {
+    ) -> Result<Option<(PagePtr<'g, P>, &'g P, u64)>> {
         trace!("getting page iterator for pid {}", pid);
         let _measure = Measure::new(&M.get_page);
 
@@ -1306,6 +1308,11 @@ where
             return Ok(None);
         }
 
+        let total_page_size = entries
+            .iter()
+            .map(|(_, cache_info)| cache_info.log_size as u64)
+            .sum();
+
         let initial_base = match entries[0] {
             (Some(Update::Compact(compact)), cache_info) => {
                 // short circuit
@@ -1315,6 +1322,7 @@ where
                         ts: cache_info.ts,
                     },
                     compact,
+                    total_page_size,
                 )));
             }
             (Some(Update::Append(_)), _) => {
@@ -1388,11 +1396,6 @@ where
         };
 
         // fix up the stack to include our pulled items
-        let total_page_size = entries
-            .iter()
-            .map(|(_, cache_info)| cache_info.log_size as u64)
-            .sum();
-
         let mut frags: Vec<(Option<Update<P>>, CacheInfo)> = entries
             .iter()
             .map(|(_, cache_info)| (None, *cache_info))
@@ -1433,7 +1436,7 @@ where
                 ts: entries[0].1.ts,
             };
 
-            Ok(Some((ptr, page_ref)))
+            Ok(Some((ptr, page_ref, total_page_size)))
         } else {
             trace!("fix-up for pid {} failed", pid);
 
