@@ -1,9 +1,11 @@
 use std::{
     ops::Deref,
-    sync::{atomic::AtomicU64, Arc, RwLock},
+    sync::{atomic::AtomicU64, Arc},
 };
 
 use pagecache::FastMap8;
+
+use parking_lot::RwLock;
 
 use super::*;
 
@@ -32,7 +34,7 @@ impl std::fmt::Debug for Db {
         &self,
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::result::Result<(), std::fmt::Error> {
-        let tenants = self.tenants.read().unwrap();
+        let tenants = self.tenants.read();
         write!(f, "Db {{")?;
         for (raw_name, tree) in tenants.iter() {
             let name = std::str::from_utf8(&raw_name)
@@ -67,7 +69,7 @@ impl Db {
                     fem,
                 )
             });
-            *context._flusher.lock().unwrap() = flusher;
+            *context._flusher.lock() = flusher;
         }
 
         // create or open the default tree
@@ -84,7 +86,7 @@ impl Db {
             tenants: Arc::new(RwLock::new(FastMap8::default())),
         };
 
-        let mut tenants = ret.tenants.write().unwrap();
+        let mut tenants = ret.tenants.write();
 
         for (id, root) in context.pagecache.meta(&tx)?.tenants().into_iter() {
             let tree = Tree {
@@ -106,7 +108,7 @@ impl Db {
     /// accessible from the `Db` via the provided identifier.
     pub fn open_tree<V: AsRef<[u8]>>(&self, name: V) -> Result<Arc<Tree>> {
         let name = name.as_ref();
-        let tenants = self.tenants.read().unwrap();
+        let tenants = self.tenants.read();
         if let Some(tree) = tenants.get(name) {
             return Ok(tree.clone());
         }
@@ -114,7 +116,7 @@ impl Db {
 
         let tx = self.context.pagecache.begin()?;
 
-        let mut tenants = self.tenants.write().unwrap();
+        let mut tenants = self.tenants.write();
         let tree = Arc::new(meta::open_tree(
             self.context.clone(),
             name.to_vec(),
@@ -134,7 +136,7 @@ impl Db {
         }
         trace!("dropping tree {:?}", name,);
 
-        let mut tenants = self.tenants.write().unwrap();
+        let mut tenants = self.tenants.write();
 
         let tree = if let Some(tree) = tenants.remove(&*name) {
             tree
@@ -149,17 +151,8 @@ impl Db {
 
         let mut leftmost_chain: Vec<PageId> = vec![root_id.unwrap()];
         let mut cursor = root_id.unwrap();
-        loop {
-            let view_opt = self.view_for_pid(cursor, &tx)?;
-            let view = if let Some(view) = view_opt {
-                view
-            } else {
-                break;
-            };
-
-            let node = view.compact(&self.context);
-
-            if let Some(index) = node.data.index_ref() {
+        while let Some(view) = self.view_for_pid(cursor, &tx)? {
+            if let Some(index) = view.data.index_ref() {
                 let leftmost_child = index[0].1;
                 leftmost_chain.push(leftmost_child);
                 cursor = leftmost_child;
@@ -198,7 +191,7 @@ impl Db {
 
     /// Returns the trees names saved in this Db.
     pub fn tree_names(&self) -> Vec<Vec<u8>> {
-        let tenants = self.tenants.read().unwrap();
+        let tenants = self.tenants.read();
         tenants.iter().map(|(name, _)| name.clone()).collect()
     }
 
@@ -244,7 +237,7 @@ impl Db {
         CollectionName,
         impl Iterator<Item = Vec<Vec<u8>>>,
     )> {
-        let tenants = self.tenants.read().unwrap();
+        let tenants = self.tenants.read();
 
         let mut ret = vec![];
 

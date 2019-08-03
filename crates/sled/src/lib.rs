@@ -49,7 +49,6 @@ mod node;
 mod prefix;
 mod subscription;
 mod tree;
-mod view;
 
 const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
 
@@ -77,7 +76,6 @@ use {
             prefix_reencode,
         },
         subscription::Subscriptions,
-        view::View,
     },
     log::{debug, error, trace},
     pagecache::{

@@ -1,5 +1,5 @@
+use parking_lot::Mutex;
 use std::ptr;
-use std::sync::Mutex;
 
 use super::*;
 
@@ -33,11 +33,7 @@ impl Lru {
         let shard_idx = pid % self.shards.len() as u64;
         let rel_idx = pid / self.shards.len() as u64;
         let shard_mu = &self.shards[usize::try_from(shard_idx).unwrap()];
-        let mut shard = shard_mu.lock().expect(
-            "Lru was poisoned by a \
-             thread that panicked \
-             inside a critical section",
-        );
+        let mut shard = shard_mu.lock();
         let mut rel_ids = shard.accessed(rel_idx, sz);
 
         for rel_id in &mut rel_ids {

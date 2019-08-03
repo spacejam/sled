@@ -20,9 +20,9 @@ pub struct Node<T: Send + 'static> {
 impl<T: Send + 'static> Drop for Node<T> {
     fn drop(&mut self) {
         unsafe {
-            let next = self.next.load(Acquire, unprotected()).as_raw();
-            if !next.is_null() {
-                drop(Box::from_raw(next as *mut Node<T>));
+            let next = self.next.load(Relaxed, unprotected());
+            if !next.as_raw().is_null() {
+                drop(next.into_owned());
             }
         }
     }
@@ -45,9 +45,9 @@ impl<T: Send + 'static> Default for Stack<T> {
 impl<T: Send + 'static> Drop for Stack<T> {
     fn drop(&mut self) {
         unsafe {
-            let curr = self.head.load(Acquire, unprotected()).as_raw();
-            if !curr.is_null() {
-                drop(Box::from_raw(curr as *mut Node<T>));
+            let curr = self.head.load(Relaxed, unprotected());
+            if !curr.as_raw().is_null() {
+                drop(curr.into_owned());
             }
         }
     }

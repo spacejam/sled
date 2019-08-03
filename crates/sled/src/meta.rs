@@ -1,4 +1,6 @@
-use std::sync::{atomic::AtomicU64, Arc, RwLock};
+use std::sync::{atomic::AtomicU64, Arc};
+
+use parking_lot::RwLock;
 
 use super::*;
 

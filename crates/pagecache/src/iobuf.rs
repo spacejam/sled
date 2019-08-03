@@ -1,9 +1,9 @@
 use std::{
-    mem::size_of,
-    sync::atomic::AtomicBool,
-    sync::atomic::Ordering::SeqCst,
-    sync::{Arc, Condvar, Mutex, RwLock},
+    mem::size_of, sync::atomic::AtomicBool, sync::atomic::Ordering::SeqCst,
+    sync::Arc,
 };
+
+use parking_lot::{Condvar, Mutex, RwLock};
 
 use self::reader::LogReader;
 
@@ -22,7 +22,7 @@ macro_rules! io_fail {
         fail_point!($e, |_| {
             $self.config.set_global_error(Error::FailPoint);
             // wake up any waiting threads so they don't stall forever
-            let _ = $self.intervals.lock().unwrap();
+            let _ = $self.intervals.lock();
             $self.interval_updated.notify_all();
             Err(Error::FailPoint)
         });
@@ -188,7 +188,7 @@ impl IoBufs {
         let start = clock();
 
         debug_delay();
-        let mut sa = self.segment_accountant.lock().unwrap();
+        let mut sa = self.segment_accountant.lock();
 
         let locked_at = clock();
 
@@ -442,7 +442,7 @@ impl IoBufs {
             "mark_interval called with an empty length at {}",
             whence
         );
-        let mut intervals = self.intervals.lock().unwrap();
+        let mut intervals = self.intervals.lock();
 
         let interval = (whence, whence + len as Lsn - 1);
 
@@ -498,7 +498,7 @@ impl IoBufs {
     }
 
     pub(super) fn current_iobuf(&self) -> Arc<IoBuf> {
-        self.iobuf.read().unwrap().clone()
+        self.iobuf.read().clone()
     }
 }
 
@@ -518,7 +518,7 @@ pub(crate) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Result<usize> {
 
     while stable < lsn {
         if let Err(e) = iobufs.config.global_error() {
-            let _ = iobufs.intervals.lock().unwrap();
+            let _ = iobufs.intervals.lock();
             iobufs.interval_updated.notify_all();
             return Err(e);
         }
@@ -539,17 +539,16 @@ pub(crate) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Result<usize> {
         }
 
         // block until another thread updates the stable lsn
-        let waiter = iobufs.intervals.lock().unwrap();
+        let mut waiter = iobufs.intervals.lock();
 
         stable = iobufs.stable();
         if stable < lsn {
             trace!("waiting on cond var for make_stable({})", lsn);
 
             if cfg!(feature = "event_log") {
-                let (waiter, timeout) = iobufs
+                let timeout = iobufs
                     .interval_updated
-                    .wait_timeout(waiter, std::time::Duration::from_secs(10))
-                    .unwrap();
+                    .wait_for(&mut waiter, std::time::Duration::from_secs(10));
                 if timeout.timed_out() {
                     fn tn() -> String {
                         std::thread::current()
@@ -564,7 +563,7 @@ pub(crate) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Result<usize> {
                     );
                 }
             } else {
-                let _ = iobufs.interval_updated.wait(waiter).unwrap();
+                iobufs.interval_updated.wait(&mut waiter);
             }
         } else {
             trace!("make_stable({}) returning", lsn);
@@ -715,7 +714,7 @@ pub(crate) fn maybe_seal_and_write_iobuf(
     // the change.
     debug_delay();
     let intervals = iobufs.intervals.lock();
-    let mut mu = iobufs.iobuf.write().unwrap();
+    let mut mu = iobufs.iobuf.write();
     *mu = Arc::new(next_iobuf);
     drop(mu);
     iobufs.interval_updated.notify_all();
@@ -803,7 +802,7 @@ impl IoBuf {
     where
         F: FnOnce() -> B,
     {
-        let _l = self.linearizer.lock().unwrap();
+        let _l = self.linearizer.lock();
         f()
     }
 
