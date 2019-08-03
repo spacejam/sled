@@ -1,5 +1,3 @@
-use std::mem::size_of;
-
 use super::*;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
