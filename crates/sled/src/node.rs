@@ -1,4 +1,4 @@
-use std::{fmt, mem::size_of, ops::Bound};
+use std::{fmt, ops::Bound};
 
 use super::*;
 
@@ -34,19 +34,6 @@ impl fmt::Debug for Node {
 }
 
 impl Node {
-    #[inline]
-    pub(crate) fn size_in_bytes(&self) -> u64 {
-        let self_sz = size_of::<Self>() as u64;
-        let lo_sz = self.lo.size_in_bytes();
-        let hi_sz = self.hi.size_in_bytes();
-        let data_sz = self.data.size_in_bytes();
-
-        self_sz
-            .saturating_add(lo_sz)
-            .saturating_add(hi_sz)
-            .saturating_add(data_sz)
-    }
-
     pub(crate) fn apply(&mut self, frag: &Frag, merge_operator: Option<usize>) {
         use self::Frag::*;
 

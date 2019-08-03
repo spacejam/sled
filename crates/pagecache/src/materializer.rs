@@ -8,7 +8,4 @@ pub trait Materializer:
     /// Used to merge chains of partial pages into a form
     /// that is useful for the `PageCache` owner.
     fn merge(&mut self, other: &Self, config: &Config);
-
-    /// Returns the size of the item.
-    fn size_in_bytes(this: &Self) -> u64;
 }

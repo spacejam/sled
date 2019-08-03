@@ -144,10 +144,6 @@ impl<'a> RecoveryGuard<'a> {
 ///     fn merge(&mut self, other: &TestState, _config: &Config) {
 ///         self.0.push_str(&other.0);
 ///     }
-///
-///     fn size_in_bytes(frag: &TestState) -> u64 {
-///         frag.0.len() as u64
-///     }
 /// }
 ///
 /// fn main() {

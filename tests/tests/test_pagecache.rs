@@ -28,10 +28,6 @@ impl Materializer for TestMaterializer {
     fn merge(&mut self, other: &TestMaterializer, _config: &Config) {
         self.0.extend_from_slice(&other.0);
     }
-
-    fn size_in_bytes(frag: &TestMaterializer) -> u64 {
-        (std::mem::size_of::<Vec<usize>>() + frag.0.len()) as u64
-    }
 }
 
 impl From<Vec<usize>> for TestMaterializer {
