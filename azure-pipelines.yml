@@ -23,8 +23,7 @@ strategy:
     linux-nightly:
       imageName: 'ubuntu-16.04'
       rustup_toolchain: nightly
-      variables:
-        testKind: 'cross-san'
+      testKind: 'cross-san'
 
 pool:
   vmImage: $(imageName)
