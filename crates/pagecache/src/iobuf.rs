@@ -414,8 +414,10 @@ impl IoBufs {
         let max_header_stable_lsn = self.max_header_stable_lsn.clone();
         let stored_max_stable_lsn = iobuf.stored_max_stable_lsn;
         guard.defer(move || {
+            trace!("bumping atomic header lsn to {}", stored_max_stable_lsn);
             bump_atomic_lsn(&max_header_stable_lsn, stored_max_stable_lsn)
         });
+        guard.flush();
         drop(guard);
 
         let current_max_header_stable_lsn =
