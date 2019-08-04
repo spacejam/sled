@@ -72,6 +72,13 @@ steps:
   - script: |
       echo "cross build" &&
       echo "https://github.com/rust-lang/cargo/issues/4753" &&
+      rustup target add aarch64-fuchsia &&
+      rustup target add aarch64-linux-android &&
+      rustup target add i686-linux-android &&
+      rustup target add i686-unknown-linux-gnu &&
+      rustup target add x86_64-pc-windows-gnu &&
+      rustup target add x86_64-linux-android &&
+      rustup target add x86_64-fuchsia &&
       pushd crates/sled      && cargo check --target aarch64-fuchsia && popd &&
       pushd crates/sled      && cargo check --target aarch64-linux-android && popd &&
       pushd crates/sled      && cargo check --target i686-linux-android && popd &&
