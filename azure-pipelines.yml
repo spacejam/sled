@@ -52,6 +52,7 @@ steps:
     displayName: Cargo build
   - script: cargo test --all
     displayName: Cargo test
+    condition: eq( variables['testKind'], 'default' )
   - script: |
       pushd examples/playground &&
       cargo check &&
