@@ -1,21 +1,22 @@
-extern crate env_logger;
-extern crate log;
-extern crate quickcheck;
-extern crate rand;
-extern crate sled;
-
 pub mod tree;
 
 #[cfg_attr(
     // only enable jemalloc on linux and macos by default
-    // for fast tests
-    all(
-        any(target_os = "linux", target_os = "macos"),
-        not(feature = "no_jemalloc"),
-    ),
+    // for faster tests
+    any(target_os = "linux", target_os = "macos"),
     global_allocator
 )]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
+#[cfg_attr(
+    // only enable mimalloc on windows by default
+    // for faster tests
+    target_os = "windows",
+    global_allocator
+)]
+#[cfg(target_os = "windows")]
+static ALLOC: mimallocator::Mimalloc = mimallocator::Mimalloc;
 
 pub fn setup_logger() {
     color_backtrace::install();
