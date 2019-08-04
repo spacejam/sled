@@ -1262,10 +1262,7 @@ impl Tree {
                 retry!();
             }
 
-            if view.should_split(
-                view.size,
-                self.context.blink_node_split_size as u64,
-            ) {
+            if view.should_split() {
                 self.split_node(view.clone(), &parent_view, root_pid, tx)?;
                 retry!();
             }
@@ -1326,13 +1323,7 @@ impl Tree {
             // would be merged into a different index, which
             // would add considerable complexity to this already
             // fairly complex implementation.
-            if view.should_merge(
-                view.size,
-                (self.context.blink_node_split_size
-                    / self.context.blink_node_merge_ratio)
-                    as u64,
-            ) && !took_leftmost_branch
-            {
+            if view.should_merge() && !took_leftmost_branch {
                 if let Some(ref mut parent) = parent_view {
                     assert!(parent.node.merging_child.is_none());
                     if parent.node.can_merge_child() {
