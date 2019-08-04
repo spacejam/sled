@@ -9,15 +9,6 @@ pub mod tree;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
-#[cfg_attr(
-    // only enable mimalloc on windows by default
-    // for faster tests
-    target_os = "windows",
-    global_allocator
-)]
-#[cfg(target_os = "windows")]
-static ALLOC: mimallocator::Mimalloc = mimallocator::Mimalloc;
-
 pub fn setup_logger() {
     color_backtrace::install();
 
