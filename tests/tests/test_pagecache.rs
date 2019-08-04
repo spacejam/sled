@@ -14,7 +14,7 @@ use {
 };
 
 use pagecache::{
-    Config, ConfigBuilder, Materializer, PageCache, MAX_SPACE_AMPLIFICATION,
+    ConfigBuilder, Materializer, PageCache, MAX_SPACE_AMPLIFICATION,
 };
 
 type PageId = u64;

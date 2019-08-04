@@ -345,6 +345,7 @@ pub fn prop_tree_matches_btreemap(
             Restart => {
                 drop(tree);
                 tree = sled::Db::start(config.clone()).unwrap();
+                tree.set_merge_operator(test_merge_operator);
             }
         }
     }
