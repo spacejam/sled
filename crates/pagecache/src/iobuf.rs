@@ -45,10 +45,6 @@ unsafe impl Sync for IoBuf {}
 pub(super) struct IoBufs {
     pub(super) config: Config,
 
-    // We have a fixed number of io buffers. Sometimes they will all be
-    // full, and in order to prevent threads from having to spin in
-    // the reserve function, we can have them block until a buffer becomes
-    // available.
     pub(crate) iobuf: RwLock<Arc<IoBuf>>,
 
     // Pending intervals that have been written to stable storage, but may be
