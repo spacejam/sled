@@ -50,6 +50,7 @@ steps:
     condition: eq( variables['Agent.OS'], 'Windows_NT' )
   - script: cargo build --all --release
     displayName: Cargo build
+    condition: eq( variables['testKind'], 'default' )
   - script: cargo test --all --release
     displayName: Cargo test
     condition: eq( variables['testKind'], 'default' )
