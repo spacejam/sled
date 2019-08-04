@@ -45,7 +45,7 @@ steps:
     displayName: Cargo build
   - script: cargo test --all
     displayName: Cargo test
-  - ${{ if eq( $(testKind), 'cross-san' ) }}:
+  - ${{ if eq( variables['testKind'], 'cross-san' ) }}:
     - script: |
         pushd benchmarks/stress2 &&
         echo "lsan" &&
