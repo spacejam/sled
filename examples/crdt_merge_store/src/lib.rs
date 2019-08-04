@@ -18,14 +18,12 @@ pub struct OrswotStore {
 
 impl OrswotStore {
     pub fn new(path: &AsRef<Path>) -> OrswotStore {
-        let config = sled::ConfigBuilder::new()
-            .path(path)
-            .merge_operator(orswot_merge)
-            .build();
+        let config = sled::ConfigBuilder::new().path(path).build();
 
-        OrswotStore {
-            db: sled::Db::start(config).unwrap(),
-        }
+        let db = sled::Db::start(config).unwrap();
+        db.set_merge_operator(orswot_merge);
+
+        OrswotStore { db: db }
     }
 
     pub fn get(&self) -> Orswot<Vec<u8>, DeviceID> {

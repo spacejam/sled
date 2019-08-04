@@ -49,12 +49,10 @@ fn merge_operator() -> Result<()> {
         Some(ret)
     }
 
-    let config = ConfigBuilder::new()
-        .temporary(true)
-        .merge_operator(concatenate_merge)
-        .build();
+    let config = ConfigBuilder::new().temporary(true).build();
 
     let db = Db::start(config)?;
+    db.set_merge_operator(concatenate_merge);
 
     let k = b"k".to_vec();
 
