@@ -34,7 +34,7 @@ impl fmt::Debug for Node {
 }
 
 impl Node {
-    pub(crate) fn apply(&mut self, frag: &Frag, merge_operator: Option<usize>) {
+    pub(crate) fn apply(&mut self, frag: &Frag) {
         use self::Frag::*;
 
         assert!(
@@ -56,23 +56,6 @@ impl Node {
                          Set({:?}, {:?}) to node {:?}",
                         k, v, self
                     )
-                }
-            }
-            Merge(ref k, ref v) => {
-                // (when hi is empty, it means it's unbounded)
-                if self.hi.is_empty()
-                    || prefix_cmp_encoded(k, &self.hi, &self.lo)
-                        == std::cmp::Ordering::Less
-                {
-                    let merge_fn_ptr =
-                        merge_operator.expect("must have a merge operator set");
-                    unsafe {
-                        let merge_fn: MergeOperator =
-                            std::mem::transmute(merge_fn_ptr);
-                        self.merge_leaf(k.clone(), v.clone(), merge_fn);
-                    }
-                } else {
-                    panic!("tried to consolidate set at key <= hi")
                 }
             }
             Del(ref k) => {

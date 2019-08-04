@@ -255,13 +255,6 @@ impl From<MessageKind> for LogKind {
     }
 }
 
-/// Allows arbitrary logic to be injected into mere operations of the `PageCache`.
-pub type MergeOperator = fn(
-    key: &[u8],
-    last_value: Option<&[u8]>,
-    new_merge: &[u8],
-) -> Option<Vec<u8>>;
-
 pub(crate) fn crc32(buf: &[u8]) -> u32 {
     let mut hasher = crc32fast::Hasher::new();
     hasher.update(&buf);

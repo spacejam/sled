@@ -25,7 +25,7 @@ type PageId = u64;
 pub struct TestMaterializer(Vec<usize>);
 
 impl Materializer for TestMaterializer {
-    fn merge(&mut self, other: &TestMaterializer, _config: &Config) {
+    fn merge(&mut self, other: &TestMaterializer) {
         self.0.extend_from_slice(&other.0);
     }
 }

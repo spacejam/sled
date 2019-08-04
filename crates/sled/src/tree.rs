@@ -70,6 +70,7 @@ pub struct Tree {
     pub(crate) subscriptions: Arc<Subscriptions>,
     pub(crate) root: Arc<AtomicU64>,
     pub(crate) concurrency_control: Arc<RwLock<()>>,
+    pub(crate) merge_operator: Arc<RwLock<Option<MergeOperator>>>,
 }
 
 unsafe impl Send for Tree {}
@@ -686,10 +687,10 @@ impl Tree {
     ///
     /// let config = ConfigBuilder::new()
     ///   .temporary(true)
-    ///   .merge_operator(concatenate_merge)
     ///   .build();
     ///
     /// let tree = Db::start(config).unwrap();
+    /// tree.set_merge_operator(concatenate_merge);
     ///
     /// let k = b"k1";
     ///
@@ -709,19 +710,23 @@ impl Tree {
     /// tree.merge(k, vec![4]);
     /// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![4]))));
     /// ```
-    pub fn merge<K, V>(&self, key: K, value: V) -> Result<()>
+    pub fn merge<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
     where
         K: AsRef<[u8]>,
-        IVec: From<V>,
+        V: AsRef<[u8]>,
     {
         let _ = self.concurrency_control.read();
         self.merge_inner(key, value)
     }
 
-    pub(crate) fn merge_inner<K, V>(&self, key: K, value: V) -> Result<()>
+    pub(crate) fn merge_inner<K, V>(
+        &self,
+        key: K,
+        value: V,
+    ) -> Result<Option<IVec>>
     where
         K: AsRef<[u8]>,
-        IVec: From<V>,
+        V: AsRef<[u8]>,
     {
         trace!("merging key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_merge);
@@ -732,47 +737,93 @@ impl Tree {
             ));
         }
 
-        if self.context.merge_operator.is_none() {
+        let merge_operator_opt = self.merge_operator.read();
+
+        if merge_operator_opt.is_none() {
             return Err(Error::Unsupported(
-                "must set a merge_operator on config \
-                 before calling merge"
+                "must set a merge operator on this Tree \
+                 before calling merge by calling \
+                 Tree::set_merge_operator"
                     .to_owned(),
             ));
         }
 
-        let value = IVec::from(value);
+        let merge_operator = merge_operator_opt.unwrap();
+
+        let key = key.as_ref();
+        let mut current = self.get(key)?;
 
         loop {
-            let tx = self.context.pagecache.begin()?;
-
-            let View { ptr, pid, node, .. } =
-                self.node_for_key(key.as_ref(), &tx)?;
-
-            let mut subscriber_reservation = self.subscriptions.reserve(&key);
-
-            let encoded_key = prefix_encode(&node.lo, key.as_ref());
-            let frag = Frag::Merge(encoded_key, value.clone());
-
-            let link = self.context.pagecache.link(
-                pid,
-                ptr.clone(),
-                frag.clone(),
-                &tx,
-            )?;
-            if let Ok(_new_cas_key) = link {
-                // success
-                if let Some(res) = subscriber_reservation.take() {
-                    let event = subscription::Event::Merge(
-                        key.as_ref().to_vec(),
-                        value,
-                    );
-
-                    res.complete(event);
-                }
-                return Ok(());
+            let tmp = current.as_ref().map(AsRef::as_ref);
+            let next = merge_operator(key, tmp, value.as_ref()).map(IVec::from);
+            match self.cas::<_, _, IVec>(key, tmp, next.clone())? {
+                Ok(()) => return Ok(next),
+                Err(new_current) => current = new_current,
             }
             M.tree_looped();
         }
+    }
+
+    /// Sets a merge operator for use with the `merge` function.
+    ///
+    /// Merge state directly into a given key's value using the
+    /// configured merge operator. This allows state to be written
+    /// into a value directly, without any read-modify-write steps.
+    /// Merge operators can be used to implement arbitrary data
+    /// structures.
+    ///
+    /// # Panics
+    ///
+    /// Calling `merge` will panic if no merge operator has been
+    /// configured.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sled::{ConfigBuilder, Db, IVec};
+    ///
+    /// fn concatenate_merge(
+    ///   _key: &[u8],               // the key being merged
+    ///   old_value: Option<&[u8]>,  // the previous value, if one existed
+    ///   merged_bytes: &[u8]        // the new bytes being merged in
+    /// ) -> Option<Vec<u8>> {       // set the new value, return None to delete
+    ///   let mut ret = old_value
+    ///     .map(|ov| ov.to_vec())
+    ///     .unwrap_or_else(|| vec![]);
+    ///
+    ///   ret.extend_from_slice(merged_bytes);
+    ///
+    ///   Some(ret)
+    /// }
+    ///
+    /// let config = ConfigBuilder::new()
+    ///   .temporary(true)
+    ///   .build();
+    ///
+    /// let tree = Db::start(config).unwrap();
+    /// tree.set_merge_operator(concatenate_merge);
+    ///
+    /// let k = b"k1";
+    ///
+    /// tree.insert(k, vec![0]);
+    /// tree.merge(k, vec![1]);
+    /// tree.merge(k, vec![2]);
+    /// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![0, 1, 2]))));
+    ///
+    /// // Replace previously merged data. The merge function will not be called.
+    /// tree.insert(k, vec![3]);
+    /// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![3]))));
+    ///
+    /// // Merges on non-present values will cause the merge function to be called
+    /// // with `old_value == None`. If the merge function returns something (which it
+    /// // does, in this case) a new value will be inserted.
+    /// tree.remove(k);
+    /// tree.merge(k, vec![4]);
+    /// assert_eq!(tree.get(k), Ok(Some(IVec::from(vec![4]))));
+    /// ```
+    pub fn set_merge_operator(&self, merge_operator: MergeOperator) {
+        let mut mo_write = self.merge_operator.write();
+        *mo_write = Some(merge_operator);
     }
 
     /// Create a double-ended iterator over the tuples of keys and

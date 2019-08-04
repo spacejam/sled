@@ -78,7 +78,7 @@ impl Arbitrary for Key {
             let gamma = Gamma::new(0.3, gs as f64);
             let v = gamma.sample(&mut rand::thread_rng());
             let len = if v > 30000.0 {
-                1000
+                10000
             } else {
                 (v % 100.) as usize
             };
@@ -213,13 +213,14 @@ pub fn prop_tree_matches_btreemap(
         .use_compression(use_compression)
         .snapshot_after_ops(u64::from(snapshot_after) + 1)
         .flush_every_ms(if flusher { Some(1) } else { None })
-        .io_buf_size(1000)
+        .io_buf_size(10000)
         .cache_capacity(256)
-        .merge_operator(test_merge_operator)
         .idgen_persist_interval(1)
         .build();
 
     let mut tree = sled::Db::start(config.clone()).unwrap();
+    tree.set_merge_operator(test_merge_operator);
+
     let mut reference: BTreeMap<Key, u16> = BTreeMap::new();
 
     for op in ops.into_iter() {

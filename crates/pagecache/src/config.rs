@@ -88,8 +88,6 @@ pub struct ConfigBuilder {
     #[doc(hidden)]
     pub compression_factor: i32,
     #[doc(hidden)]
-    pub merge_operator: Option<usize>,
-    #[doc(hidden)]
     pub print_profile_on_drop: bool,
     #[doc(hidden)]
     pub idgen_persist_interval: u64,
@@ -118,7 +116,6 @@ impl Default for ConfigBuilder {
             segment_cleanup_skew: 10,
             temporary: false,
             segment_mode: SegmentMode::Gc,
-            merge_operator: None,
             print_profile_on_drop: false,
             idgen_persist_interval: 1_000_000,
             async_io: true,
@@ -155,13 +152,6 @@ impl ConfigBuilder {
     /// Set the path of the database (builder).
     pub fn path<P: AsRef<Path>>(mut self, path: P) -> ConfigBuilder {
         self.path = path.as_ref().to_path_buf();
-        self
-    }
-
-    /// Set the merge operator that can be relied on during merges in
-    /// the `PageCache`.
-    pub fn merge_operator(mut self, mo: MergeOperator) -> ConfigBuilder {
-        self.merge_operator = Some(mo as usize);
         self
     }
 
@@ -361,15 +351,6 @@ impl ConfigBuilder {
     fn verify_config_changes_ok(&self) -> Result<()> {
         match self.read_config() {
             Ok(Some(old)) => {
-                if old.merge_operator.is_some() {
-                    supported!(
-                        self.merge_operator.is_some(),
-                        "This system was previously opened with a \
-                         merge operator. You must supply one FOREVER after \
-                         choosing to do so once, BWAHAHAHAHAHAHA!!!!"
-                    );
-                }
-
                 supported!(
                     self.use_compression == old.use_compression,
                     format!(
