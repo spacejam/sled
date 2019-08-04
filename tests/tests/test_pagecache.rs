@@ -46,8 +46,7 @@ impl Into<Vec<usize>> for TestMaterializer {
 fn pagecache_monotonic_idgen() {
     let config = ConfigBuilder::new()
         .temporary(true)
-        .cache_capacity(40)
-        .cache_bits(0)
+        .cache_capacity(256)
         .flush_every_ms(None)
         .snapshot_after_ops(1_000_000)
         .io_buf_size(20000)
@@ -75,8 +74,7 @@ fn pagecache_monotonic_idgen() {
 fn pagecache_caching() {
     let config = ConfigBuilder::new()
         .temporary(true)
-        .cache_capacity(40)
-        .cache_bits(0)
+        .cache_capacity(256)
         .flush_every_ms(None)
         .snapshot_after_ops(1_000_000)
         .io_buf_size(20000)
@@ -233,8 +231,7 @@ fn concurrent_pagecache() -> sled::Result<()> {
 fn pagecache_strange_crash_1() {
     let config = ConfigBuilder::new()
         .temporary(true)
-        .cache_capacity(40)
-        .cache_bits(0)
+        .cache_capacity(256)
         .flush_every_ms(None)
         .snapshot_after_ops(1_000_000)
         .io_buf_size(20000)
@@ -272,8 +269,7 @@ fn pagecache_strange_crash_2() {
     for _ in 0..10 {
         let config = ConfigBuilder::new()
             .temporary(true)
-            .cache_capacity(40)
-            .cache_bits(0)
+            .cache_capacity(256)
             .flush_every_ms(None)
             .snapshot_after_ops(1_000_000)
             .io_buf_size(20000)
@@ -429,8 +425,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
         .temporary(true)
         .io_buf_size(1000)
         .flush_every_ms(if flusher { Some(1) } else { None })
-        .cache_capacity(40)
-        .cache_bits(0)
+        .cache_capacity(256)
         .build();
 
     let mut pc: PageCache<TestMaterializer> =

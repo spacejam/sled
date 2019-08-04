@@ -274,8 +274,7 @@ where
         let snapshot = read_snapshot_or_default(&config)?;
 
         let cache_capacity = config.cache_capacity;
-        let cache_shard_bits = config.cache_bits;
-        let lru = Lru::new(cache_capacity, cache_shard_bits);
+        let lru = Lru::new(cache_capacity);
 
         let mut pc = PageCache {
             config: config.clone(),

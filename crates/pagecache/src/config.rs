@@ -60,8 +60,6 @@ impl Deref for ConfigInner {
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct ConfigBuilder {
     #[doc(hidden)]
-    pub cache_bits: usize,
-    #[doc(hidden)]
     pub cache_capacity: u64,
     #[doc(hidden)]
     pub flush_every_ms: Option<u64>,
@@ -113,7 +111,6 @@ impl Default for ConfigBuilder {
             page_consolidation_threshold: 10,
             path: PathBuf::from(DEFAULT_PATH),
             read_only: false,
-            cache_bits: 8,                      // 256 shards
             cache_capacity: 1024 * 1024 * 1024, // 1gb
             use_compression: false,
             compression_factor: 5,
@@ -232,7 +229,6 @@ impl ConfigBuilder {
         (page_consolidation_threshold, usize, "page consolidation threshold"),
         (temporary, bool, "deletes the database after drop. if no path is set, uses /dev/shm on linux"),
         (read_only, bool, "whether to run in read-only mode"),
-        (cache_bits, usize, "log base 2 of the number of cache shards"),
         (cache_capacity, u64, "maximum size for the system page cache"),
         (use_compression, bool, "whether to use zstd compression"),
         (compression_factor, i32, "the compression factor to use with zstd compression"),
@@ -268,10 +264,6 @@ impl ConfigBuilder {
         supported!(
             self.page_consolidation_threshold < 1 << 20,
             "must consolidate pages after fewer than 1 million updates"
-        );
-        supported!(
-            self.cache_bits <= 20,
-            "# LRU shards = 2^cache_bits. set cache_bits to 20 or less."
         );
         supported!(
             match self.segment_cleanup_threshold.partial_cmp(&0.01) {

@@ -12,16 +12,17 @@ unsafe impl Sync for Lru {}
 
 impl Lru {
     /// Instantiates a new `Lru` cache.
-    pub fn new(cache_capacity: u64, cache_bits: usize) -> Lru {
+    pub fn new(cache_capacity: u64) -> Lru {
         assert!(
-            cache_bits <= 20,
-            "way too many shards. use a smaller number of cache_bits"
+            cache_capacity >= 256,
+            "Please configure the cache \
+             capacity to be at least 256 bytes"
         );
-        let size: usize = 1 << cache_bits;
-        let shard_capacity = cache_capacity / size as u64;
+        let n_shards = 256;
+        let shard_capacity = cache_capacity / n_shards as u64;
 
-        let mut shards = Vec::with_capacity(size);
-        shards.resize_with(size, || Mutex::new(Shard::new(shard_capacity)));
+        let mut shards = Vec::with_capacity(n_shards);
+        shards.resize_with(n_shards, || Mutex::new(Shard::new(shard_capacity)));
 
         Lru { shards }
     }
