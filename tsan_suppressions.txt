@@ -19,3 +19,7 @@ race:rayon
 # of a raw atomic Acquire fence after the strong-count
 # atomic subtraction with a Release fence in the Drop impl.
 race:Arc*drop
+
+# The pagecache debug_delay uses an unsafe pointer in a way that
+# relies on thread-local access for correctness.
+race:debug_delay

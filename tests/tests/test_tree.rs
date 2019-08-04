@@ -645,7 +645,6 @@ fn tree_import_export() -> Result<()> {
 
 #[test]
 #[cfg(not(target_os = "fuchsia"))]
-#[ignore]
 fn quickcheck_tree_matches_btreemap() {
     let n_tests = 100;
 

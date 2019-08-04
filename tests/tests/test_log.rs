@@ -559,7 +559,6 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
         M.lock().expect("our test lock should not be poisoned");
     */
 
-    println!("ops: {:?}", ops);
     use self::Op::*;
     let config = ConfigBuilder::new()
         .temporary(true)
@@ -670,7 +669,6 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
 }
 
 #[test]
-#[ignore]
 fn quickcheck_log_works() {
     QuickCheck::new()
         .gen(StdGen::new(rand::thread_rng(), 100))

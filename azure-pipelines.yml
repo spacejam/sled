@@ -6,6 +6,9 @@
 trigger:
 - master
 
+variables:
+  testKind: 'default'
+
 strategy:
   matrix:
     windows-stable:
@@ -17,12 +20,18 @@ strategy:
     linux-stable:
       imageName: 'ubuntu-16.04'
       rustup_toolchain: stable
-    linux-beta:
+    doctests:
       imageName: 'ubuntu-16.04'
-      rustup_toolchain: beta
-    linux-nightly:
+      rustup_toolchain: stable
+      testKind: 'doctests'
+    sanitizers:
       imageName: 'ubuntu-16.04'
       rustup_toolchain: nightly
+      testKind: 'sanitizers'
+    cross-compile:
+      imageName: 'ubuntu-16.04'
+      rustup_toolchain: nightly
+      testKind: 'cross-compile'
 
 pool:
   vmImage: $(imageName)
@@ -39,7 +48,82 @@ steps:
       echo "##vso[task.setvariable variable=PATH;]%PATH%;%USERPROFILE%\.cargo\bin"
     displayName: Windows install rust
     condition: eq( variables['Agent.OS'], 'Windows_NT' )
-  - script: cargo build --all
+  - script: cargo build --all --release
     displayName: Cargo build
-  - script: cargo test --all
+    condition: eq( variables['testKind'], 'default' )
+  - script: cargo test --all --release
     displayName: Cargo test
+    condition: eq( variables['testKind'], 'default' )
+  - script: |
+      pushd examples/playground &&
+      cargo check &&
+      popd &&
+      pushd examples/crdt_merge_store &&
+      cargo check &&
+      popd &&
+      pushd crates/sled &&
+      echo "testing sled doctests" &&
+      cargo test &&
+      popd &&
+      pushd crates/pagecache &&
+      echo "testing pagecache doctests" &&
+      cargo test
+    displayName: doctests
+    condition: eq( variables['testKind'], 'doctests' )
+  - script: |
+      echo "cross build" &&
+      echo "https://github.com/rust-lang/cargo/issues/4753" &&
+      rustup target add aarch64-fuchsia &&
+      rustup target add aarch64-linux-android &&
+      rustup target add i686-linux-android &&
+      rustup target add i686-unknown-linux-gnu &&
+      rustup target add x86_64-pc-windows-gnu &&
+      rustup target add x86_64-linux-android &&
+      rustup target add x86_64-fuchsia &&
+      pushd crates/sled      && cargo check --target aarch64-fuchsia && popd &&
+      pushd crates/sled      && cargo check --target aarch64-linux-android && popd &&
+      pushd crates/sled      && cargo check --target i686-linux-android && popd &&
+      pushd crates/sled      && cargo check --target i686-unknown-linux-gnu && popd &&
+      pushd crates/sled      && cargo check --target x86_64-pc-windows-gnu  && popd &&
+      pushd crates/sled      && cargo check --target x86_64-linux-android  && popd &&
+      pushd crates/sled      && cargo check --target x86_64-fuchsia && popd &&
+      pushd crates/pagecache && cargo check --target aarch64-fuchsia && popd &&
+      pushd crates/pagecache && cargo check --target aarch64-linux-android && popd &&
+      pushd crates/pagecache && cargo check --target i686-linux-android && popd &&
+      pushd crates/pagecache && cargo check --target i686-unknown-linux-gnu && popd &&
+      pushd crates/pagecache && cargo check --target x86_64-pc-windows-gnu  && popd &&
+      pushd crates/pagecache && cargo check --target x86_64-linux-android && popd &&
+      pushd crates/pagecache && cargo check --target x86_64-fuchsia && popd
+    displayName: cross-build
+    condition: eq( variables['testKind'], 'cross-compile' )
+  - script: |
+      pushd benchmarks/stress2 &&
+      echo "lsan" &&
+      cargo clean &&
+      export RUSTFLAGS="-Z sanitizer=leak" &&
+      cargo build --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu &&
+      sudo rm -rf default.sled &&
+      sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30 &&
+      sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=6 &&
+
+      echo "asan" &&
+      cargo clean &&
+      export RUSTFLAGS="-Z sanitizer=address" &&
+      export ASAN_OPTIONS="detect_odr_violation=0" &&
+      cargo build --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu &&
+      sudo rm -rf default.sled &&
+      sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30 &&
+      sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=6 &&
+      unset ASAN_OPTIONS &&
+
+      echo "tsan" &&
+      cargo clean &&
+      export RUSTFLAGS="-Z sanitizer=thread" &&
+      export TSAN_OPTIONS=suppressions=$(Agent.BuildDirectory)/s/tsan_suppressions.txt &&
+      sudo rm -rf default.sled &&
+      cargo run --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu -- --duration=30 &&
+      cargo run --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu -- --duration=6 &&
+      unset RUSTFLAGS &&
+      unset TSAN_OPTIONS
+    displayName: sanitizers
+    condition: eq( variables['testKind'], 'sanitizers' )

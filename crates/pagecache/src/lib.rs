@@ -60,7 +60,7 @@ use std::{
     io,
     sync::atomic::{
         AtomicI64 as AtomicLsn, AtomicU64,
-        Ordering::{Acquire, Relaxed, Release, SeqCst},
+        Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst},
     },
 };
 
@@ -71,9 +71,6 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 #[doc(hidden)]
 use self::logger::{MessageHeader, SegmentHeader};
-
-#[cfg(not(unix))]
-use self::metrics::uptime;
 
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},

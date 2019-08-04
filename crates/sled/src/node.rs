@@ -107,39 +107,6 @@ impl Node {
         }
     }
 
-    pub(crate) fn merge_leaf(
-        &mut self,
-        key: IVec,
-        val: IVec,
-        merge_fn: MergeOperator,
-    ) {
-        if let Data::Leaf(ref mut records) = self.data {
-            let search = records.binary_search_by(|(k, _)| prefix_cmp(k, &key));
-
-            let decoded_k = prefix_decode(&self.lo, &key);
-
-            match search {
-                Ok(idx) => {
-                    let new =
-                        merge_fn(&*decoded_k, Some(&records[idx].1), &val);
-                    if let Some(new) = new {
-                        records[idx] = (key, new.into());
-                    } else {
-                        records.remove(idx);
-                    }
-                }
-                Err(idx) => {
-                    let new = merge_fn(&*decoded_k, None, &val);
-                    if let Some(new) = new {
-                        records.insert(idx, (key, new.into()));
-                    }
-                }
-            }
-        } else {
-            panic!("tried to Merge a value to an index");
-        }
-    }
-
     pub(crate) fn parent_split(&mut self, at: &[u8], to: PageId) -> bool {
         if let Data::Index(ref mut ptrs) = self.data {
             let encoded_sep = prefix_encode(&self.lo, at);

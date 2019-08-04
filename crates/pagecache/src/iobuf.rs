@@ -45,10 +45,6 @@ unsafe impl Sync for IoBuf {}
 pub(super) struct IoBufs {
     pub(super) config: Config,
 
-    // We have a fixed number of io buffers. Sometimes they will all be
-    // full, and in order to prevent threads from having to spin in
-    // the reserve function, we can have them block until a buffer becomes
-    // available.
     pub(crate) iobuf: RwLock<Arc<IoBuf>>,
 
     // Pending intervals that have been written to stable storage, but may be
@@ -418,8 +414,10 @@ impl IoBufs {
         let max_header_stable_lsn = self.max_header_stable_lsn.clone();
         let stored_max_stable_lsn = iobuf.stored_max_stable_lsn;
         guard.defer(move || {
+            trace!("bumping atomic header lsn to {}", stored_max_stable_lsn);
             bump_atomic_lsn(&max_header_stable_lsn, stored_max_stable_lsn)
         });
+        guard.flush();
         drop(guard);
 
         let current_max_header_stable_lsn =
@@ -450,7 +448,7 @@ impl IoBufs {
 
         #[cfg(any(feature = "event_log", feature = "lock_free_delays"))]
         assert!(
-            intervals.len() < 1000,
+            intervals.len() < 10000,
             "intervals is getting strangely long... {:?}",
             *intervals
         );
