@@ -215,10 +215,10 @@ fn main() {
         .flush_every_ms(Some(200))
         .snapshot_after_ops(100_000_000_000)
         .print_profile_on_drop(true)
-        .merge_operator(concatenate_merge)
         .build();
 
     let tree = Arc::new(sled::Db::start(config).unwrap());
+    tree.set_merge_operator(concatenate_merge);
 
     let mut threads = vec![];
 
