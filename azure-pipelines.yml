@@ -44,53 +44,53 @@ steps:
     displayName: Cargo build
   - script: cargo test --all
     displayName: Cargo test
-  - ${{ if eq( variables['testKind'], 'cross-san' ) }}:
-    - script: |
-        pushd benchmarks/stress2 &&
-        echo "lsan" &&
-        cargo clean &&
-        export RUSTFLAGS="-Z sanitizer=leak" &&
-        cargo build --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu &&
-        sudo rm -rf default.sled &&
-        sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30 &&
-        sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=6 &&
+    condition: eq( variables['testKind'], 'default' )
+  - displayName: cross-build and sanitizers
+    condition: eq( variables['testKind'], 'cross-san' )
+    script: |
+      pushd benchmarks/stress2 &&
+      echo "lsan" &&
+      cargo clean &&
+      export RUSTFLAGS="-Z sanitizer=leak" &&
+      cargo build --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu &&
+      sudo rm -rf default.sled &&
+      sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30 &&
+      sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=6 &&
 
-        echo "asan" &&
-        cargo clean &&
-        export RUSTFLAGS="-Z sanitizer=address" &&
-        export ASAN_OPTIONS="detect_odr_violation=0" &&
-        cargo build --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu &&
-        sudo rm -rf default.sled &&
-        sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30 &&
-        sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=6 &&
-        unset ASAN_OPTIONS &&
+      echo "asan" &&
+      cargo clean &&
+      export RUSTFLAGS="-Z sanitizer=address" &&
+      export ASAN_OPTIONS="detect_odr_violation=0" &&
+      cargo build --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu &&
+      sudo rm -rf default.sled &&
+      sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30 &&
+      sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=6 &&
+      unset ASAN_OPTIONS &&
 
-        echo "tsan" &&
-        cargo clean &&
-        export RUSTFLAGS="-Z sanitizer=thread" &&
-        export TSAN_OPTIONS=suppressions=${TRAVIS_BUILD_DIR}/tsan_suppressions.txt &&
-        sudo rm -rf default.sled &&
-        cargo run --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu -- --duration=30 &&
-        cargo run --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu -- --duration=6 &&
-        unset RUSTFLAGS &&
-        unset TSAN_OPTIONS &&
-        popd &&
+      echo "tsan" &&
+      cargo clean &&
+      export RUSTFLAGS="-Z sanitizer=thread" &&
+      export TSAN_OPTIONS=suppressions=${TRAVIS_BUILD_DIR}/tsan_suppressions.txt &&
+      sudo rm -rf default.sled &&
+      cargo run --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu -- --duration=30 &&
+      cargo run --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu -- --duration=6 &&
+      unset RUSTFLAGS &&
+      unset TSAN_OPTIONS &&
+      popd &&
 
-        echo "cross build" &&
-        echo "https://github.com/rust-lang/cargo/issues/4753" &&
-        pushd crates/sled      && cargo check --target aarch64-fuchsia && popd &&
-        pushd crates/sled      && cargo check --target aarch64-linux-android && popd &&
-        pushd crates/sled      && cargo check --target i686-linux-android && popd &&
-        pushd crates/sled      && cargo check --target i686-unknown-linux-gnu && popd &&
-        pushd crates/sled      && cargo check --target x86_64-pc-windows-gnu  && popd &&
-        pushd crates/sled      && cargo check --target x86_64-linux-android  && popd &&
-        pushd crates/sled      && cargo check --target x86_64-fuchsia && popd &&
-        pushd crates/pagecache && cargo check --target aarch64-fuchsia && popd &&
-        pushd crates/pagecache && cargo check --target aarch64-linux-android && popd &&
-        pushd crates/pagecache && cargo check --target i686-linux-android && popd &&
-        pushd crates/pagecache && cargo check --target i686-unknown-linux-gnu && popd &&
-        pushd crates/pagecache && cargo check --target x86_64-pc-windows-gnu  && popd &&
-        pushd crates/pagecache && cargo check --target x86_64-linux-android && popd &&
-        pushd crates/pagecache && cargo check --target x86_64-fuchsia && popd
-      displayName: cross-build and sanitizers
-
+      echo "cross build" &&
+      echo "https://github.com/rust-lang/cargo/issues/4753" &&
+      pushd crates/sled      && cargo check --target aarch64-fuchsia && popd &&
+      pushd crates/sled      && cargo check --target aarch64-linux-android && popd &&
+      pushd crates/sled      && cargo check --target i686-linux-android && popd &&
+      pushd crates/sled      && cargo check --target i686-unknown-linux-gnu && popd &&
+      pushd crates/sled      && cargo check --target x86_64-pc-windows-gnu  && popd &&
+      pushd crates/sled      && cargo check --target x86_64-linux-android  && popd &&
+      pushd crates/sled      && cargo check --target x86_64-fuchsia && popd &&
+      pushd crates/pagecache && cargo check --target aarch64-fuchsia && popd &&
+      pushd crates/pagecache && cargo check --target aarch64-linux-android && popd &&
+      pushd crates/pagecache && cargo check --target i686-linux-android && popd &&
+      pushd crates/pagecache && cargo check --target i686-unknown-linux-gnu && popd &&
+      pushd crates/pagecache && cargo check --target x86_64-pc-windows-gnu  && popd &&
+      pushd crates/pagecache && cargo check --target x86_64-linux-android && popd &&
+      pushd crates/pagecache && cargo check --target x86_64-fuchsia && popd
