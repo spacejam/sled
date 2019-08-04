@@ -161,7 +161,7 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
     ) -> CompareAndSwapResult<'g, T> {
         // properly set next ptr
         node.next = Atomic::from(old);
-        let res = self.head.compare_and_set(old, node, Release, guard);
+        let res = self.head.compare_and_set(old, node, AcqRel, guard);
 
         match res {
             Err(e) => {
@@ -184,7 +184,7 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
         guard: &'g Guard,
     ) -> CompareAndSwapResult<'g, T> {
         debug_delay();
-        let res = self.head.compare_and_set(old, new, Release, guard);
+        let res = self.head.compare_and_set(old, new, AcqRel, guard);
 
         match res {
             Ok(success) => {
