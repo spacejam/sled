@@ -140,10 +140,7 @@ fn run(config: Config) {
 fn run_without_snapshot() {
     let config = ConfigBuilder::new()
         .async_io(true)
-        .io_bufs(2)
-        .blink_node_split_size(1024)
         .page_consolidation_threshold(10)
-        .cache_bits(6)
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(100))
         .io_buf_size(1_000)
@@ -163,10 +160,7 @@ fn run_without_snapshot() {
 fn run_with_snapshot() {
     let config = ConfigBuilder::new()
         .async_io(true)
-        .io_bufs(2)
-        .blink_node_split_size(1024)
         .page_consolidation_threshold(10)
-        .cache_bits(6)
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(100))
         .io_buf_size(1_000)

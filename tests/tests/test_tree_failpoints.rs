@@ -125,9 +125,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
         .snapshot_after_ops(1)
         .flush_every_ms(if flusher { Some(1) } else { None })
         .io_buf_size(io_buf_size)
-        .blink_node_split_size(0) // smol pages for smol buffers
-        .cache_capacity(40)
-        .cache_bits(2)
+        .cache_capacity(256)
         .idgen_persist_interval(1)
         .build();
 

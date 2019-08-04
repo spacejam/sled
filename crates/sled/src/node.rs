@@ -345,7 +345,7 @@ impl Node {
             records.binary_search_by(|(k, _)| prefix_cmp(k, &successor_key));
 
         let idx = match search {
-            Ok(idx) if idx > 0 => idx,
+            Ok(idx) => idx,
             Err(idx) if idx > 0 => idx - 1,
             _ => return None,
         };
@@ -381,15 +381,31 @@ impl Node {
         search.map(|idx| &records[idx].1)
     }
 
-    pub(crate) fn should_split(&self, our_sz: u64, max_sz: u64) -> bool {
-        let size_checks = self.data.len() > 4 && our_sz > max_sz;
+    pub(crate) fn should_split(&self) -> bool {
+        let threshold = if cfg!(feature = "lock_free_delays") {
+            2
+        } else if self.data.is_index() {
+            256
+        } else {
+            16
+        };
+
+        let size_checks = self.data.len() > threshold;
         let safety_checks = self.merging_child.is_none() && !self.merging;
 
         size_checks && safety_checks
     }
 
-    pub(crate) fn should_merge(&self, our_sz: u64, min_sz: u64) -> bool {
-        let size_checks = self.data.len() < 2 && our_sz < min_sz;
+    pub(crate) fn should_merge(&self) -> bool {
+        let threshold = if cfg!(feature = "lock_free_delays") {
+            1
+        } else if self.data.is_index() {
+            64
+        } else {
+            4
+        };
+
+        let size_checks = self.data.len() < threshold;
         let safety_checks = self.merging_child.is_none() && !self.merging;
 
         size_checks && safety_checks

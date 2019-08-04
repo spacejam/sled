@@ -124,6 +124,7 @@ impl<'a> Iterator for Iter<'a> {
                 } else {
                     iter_try!(self.tree.node_for_key(self.low_key(), &tx))
                 };
+
                 pid = view.pid;
                 node = view.node;
                 continue;
@@ -235,9 +236,7 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                     Bound::Excluded(ref l) if *l < key => {
                         return Some(Ok((key, value)));
                     }
-                    _ => {
-                        return None;
-                    }
+                    _ => return None,
                 }
             } else {
                 if node.lo.is_empty() {

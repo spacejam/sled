@@ -75,7 +75,6 @@ fn more_log_reservations_than_buffers() {
     let config = ConfigBuilder::new()
         .temporary(true)
         .io_buf_size(100)
-        .io_bufs(3)
         .segment_mode(SegmentMode::Linear)
         .build();
     let log = Log::start_raw_log(config.clone()).unwrap();
@@ -85,7 +84,7 @@ fn more_log_reservations_than_buffers() {
     let big_msg_overhead = MSG_HEADER_LEN + total_seg_overhead;
     let big_msg_sz = config.io_buf_size - big_msg_overhead;
 
-    for _ in 0..=config.io_bufs * 10 {
+    for _ in 0..=30 {
         reservations.push(log.reserve(KIND, PID, &vec![0; big_msg_sz]).unwrap())
     }
     for res in reservations.into_iter().rev() {
@@ -458,7 +457,7 @@ fn multi_segment_log_iteration() {
 
     let log = Log::start_raw_log(config.clone()).unwrap();
 
-    for i in 0..config.io_bufs * 16 {
+    for i in 0..48 {
         let buf = vec![i as u8; big_msg_sz * i];
         let write = log
             .reserve(KIND, i as PageId, &buf)
@@ -475,7 +474,7 @@ fn multi_segment_log_iteration() {
     // start iterating just past the first segment header
     let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
 
-    for i in 0..config.io_bufs * 16 {
+    for i in 0..48 {
         let expected = vec![i as u8; big_msg_sz * i];
         let got = iter.next().expect("expected to read another message");
     }

@@ -60,17 +60,9 @@ impl Deref for ConfigInner {
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct ConfigBuilder {
     #[doc(hidden)]
-    pub blink_node_split_size: usize,
-    #[doc(hidden)]
-    pub blink_node_merge_ratio: usize,
-    #[doc(hidden)]
-    pub cache_bits: usize,
-    #[doc(hidden)]
     pub cache_capacity: u64,
     #[doc(hidden)]
     pub flush_every_ms: Option<u64>,
-    #[doc(hidden)]
-    pub io_bufs: usize,
     #[doc(hidden)]
     pub io_buf_size: usize,
     #[doc(hidden)]
@@ -112,14 +104,10 @@ unsafe impl Send for ConfigBuilder {}
 impl Default for ConfigBuilder {
     fn default() -> ConfigBuilder {
         ConfigBuilder {
-            io_bufs: 3,
             io_buf_size: 2 << 22, // 8mb
-            blink_node_split_size: 2400,
-            blink_node_merge_ratio: 4,
             page_consolidation_threshold: 10,
             path: PathBuf::from(DEFAULT_PATH),
             read_only: false,
-            cache_bits: 8,                      // 256 shards
             cache_capacity: 1024 * 1024 * 1024, // 1gb
             use_compression: false,
             compression_factor: 5,
@@ -233,13 +221,10 @@ impl ConfigBuilder {
     }
 
     builder!(
-        (io_bufs, usize, "number of io buffers"),
         (io_buf_size, usize, "size of each io flush buffer. MUST be multiple of 512!"),
-        (blink_node_split_size, usize, "b-link tree node size in bytes before splitting"),
         (page_consolidation_threshold, usize, "page consolidation threshold"),
         (temporary, bool, "deletes the database after drop. if no path is set, uses /dev/shm on linux"),
         (read_only, bool, "whether to run in read-only mode"),
-        (cache_bits, usize, "log base 2 of the number of cache shards"),
         (cache_capacity, u64, "maximum size for the system page cache"),
         (use_compression, bool, "whether to use zstd compression"),
         (compression_factor, i32, "the compression factor to use with zstd compression"),
@@ -257,10 +242,6 @@ impl ConfigBuilder {
     // panics if config options are outside of advised range
     fn validate(&self) -> Result<()> {
         supported!(
-            self.io_bufs <= 32,
-            "too many configured io_bufs. please make <= 32"
-        );
-        supported!(
             self.io_buf_size >= 100,
             "io_buf_size should be hundreds of kb at minimum, and we won't start if below 100"
         );
@@ -275,10 +256,6 @@ impl ConfigBuilder {
         supported!(
             self.page_consolidation_threshold < 1 << 20,
             "must consolidate pages after fewer than 1 million updates"
-        );
-        supported!(
-            self.cache_bits <= 20,
-            "# LRU shards = 2^cache_bits. set cache_bits to 20 or less."
         );
         supported!(
             match self.segment_cleanup_threshold.partial_cmp(&0.01) {

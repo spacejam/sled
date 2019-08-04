@@ -64,7 +64,7 @@ pub fn fuzz_then_shrink(buf: &[u8]) {
         .collect();
 
     match panic::catch_unwind(move || {
-        prop_tree_matches_btreemap(ops, 0, 100, false, use_compression)
+        prop_tree_matches_btreemap(ops, 100, false, use_compression)
     }) {
         Ok(_) => {}
         Err(_e) => panic!("TODO"),
@@ -78,11 +78,9 @@ impl Arbitrary for Key {
             let gamma = Gamma::new(0.3, gs as f64);
             let v = gamma.sample(&mut rand::thread_rng());
             let len = if v > 30000.0 {
-                30000
-            } else if v < 1. && v > 0.0001 {
-                1
+                1000
             } else {
-                v as usize
+                (v % 100.) as usize
             };
 
             let space = g.gen_range(0, gs) + 1;
@@ -123,7 +121,7 @@ pub enum Op {
     GetGt(Key),
     Del(Key),
     Cas(Key, u8, u8),
-    Scan(Key, usize),
+    Scan(Key, isize),
     Restart,
 }
 
@@ -155,7 +153,7 @@ impl Arbitrary for Op {
             4 => GetGt(Key::arbitrary(g)),
             5 => Del(Key::arbitrary(g)),
             6 => Cas(Key::arbitrary(g), g.gen::<u8>(), g.gen::<u8>()),
-            7 => Scan(Key::arbitrary(g), g.gen_range(0, 40)),
+            7 => Scan(Key::arbitrary(g), g.gen_range(-40, 40)),
             _ => panic!("impossible choice"),
         }
     }
@@ -202,7 +200,6 @@ fn test_merge_operator(
 
 pub fn prop_tree_matches_btreemap(
     ops: Vec<Op>,
-    blink_node_exponent: u8,
     snapshot_after: u8,
     flusher: bool,
     use_compression: bool,
@@ -216,10 +213,8 @@ pub fn prop_tree_matches_btreemap(
         .use_compression(use_compression)
         .snapshot_after_ops(u64::from(snapshot_after) + 1)
         .flush_every_ms(if flusher { Some(1) } else { None })
-        .io_buf_size(10000)
-        .blink_node_split_size(1 << std::cmp::min(blink_node_exponent, 20))
-        .cache_capacity(40)
-        .cache_bits(0)
+        .io_buf_size(1000)
+        .cache_capacity(256)
         .merge_operator(test_merge_operator)
         .idgen_persist_interval(1)
         .build();
@@ -294,26 +289,56 @@ pub fn prop_tree_matches_btreemap(
                 }
             }
             Scan(k, len) => {
-                let mut tree_iter =
-                    tree.range(&*k.0..).take(len).map(|res| res.unwrap());
-                let ref_iter = reference
-                    .iter()
-                    .filter(|&(ref rk, _rv)| **rk >= k)
-                    .take(len)
-                    .map(|(ref rk, ref rv)| (rk.0.clone(), **rv));
+                if len > 0 {
+                    let mut tree_iter = tree
+                        .range(&*k.0..)
+                        .take(len.abs() as usize)
+                        .map(|res| res.unwrap());
+                    let ref_iter = reference
+                        .iter()
+                        .filter(|&(ref rk, _rv)| **rk >= k)
+                        .take(len.abs() as usize)
+                        .map(|(ref rk, ref rv)| (rk.0.clone(), **rv));
 
-                for r in ref_iter {
-                    let tree_next = tree_iter.next().unwrap();
-                    let lhs = (tree_next.0, &*tree_next.1);
-                    let rhs = (r.0.clone(), &*u16_to_bytes(r.1));
-                    assert_eq!(
-                        (lhs.0.as_ref(), lhs.1),
-                        (rhs.0.as_ref(), rhs.1),
-                        "expected {:?} while iterating from {:?} on tree: {:?}",
-                        rhs,
-                        k,
-                        tree
-                    );
+                    for r in ref_iter {
+                        let tree_next = tree_iter.next().unwrap();
+                        let lhs = (tree_next.0, &*tree_next.1);
+                        let rhs = (r.0.clone(), &*u16_to_bytes(r.1));
+                        assert_eq!(
+                            (lhs.0.as_ref(), lhs.1),
+                            (rhs.0.as_ref(), rhs.1),
+                            "expected {:?} while iterating from {:?} on tree: {:?}",
+                            rhs,
+                            k,
+                            tree
+                        );
+                    }
+                } else {
+                    let mut tree_iter = tree
+                        .range(&*k.0..)
+                        .rev()
+                        .take(len.abs() as usize)
+                        .map(|res| res.unwrap());
+                    let ref_iter = reference
+                        .iter()
+                        .rev()
+                        .filter(|&(ref rk, _rv)| **rk >= k)
+                        .take(len.abs() as usize)
+                        .map(|(ref rk, ref rv)| (rk.0.clone(), **rv));
+
+                    for r in ref_iter {
+                        let tree_next = tree_iter.next().unwrap();
+                        let lhs = (tree_next.0, &*tree_next.1);
+                        let rhs = (r.0.clone(), &*u16_to_bytes(r.1));
+                        assert_eq!(
+                            (lhs.0.as_ref(), lhs.1),
+                            (rhs.0.as_ref(), rhs.1),
+                            "expected {:?} while reverse iterating from {:?} on tree: {:?}",
+                            rhs,
+                            k,
+                            tree
+                        );
+                    }
                 }
             }
             Restart => {
