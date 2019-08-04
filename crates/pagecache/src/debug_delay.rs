@@ -8,6 +8,7 @@ use {
     },
     rand_chacha::ChaCha20Core as Core,
     rand_distr::{Distribution, Gamma},
+    std::sync::atomic::{AtomicUsize, Ordering::Relaxed},
 };
 
 /// This function is useful for inducing random jitter into our atomic
@@ -16,6 +17,27 @@ use {
 pub fn debug_delay() {
     use std::thread;
     use std::time::Duration;
+
+    static GLOBAL_DELAYS: AtomicUsize = AtomicUsize::new(0);
+
+    thread_local!(
+        static LOCAL_DELAYS: std::cell::RefCell<usize> = std::cell::RefCell::new(0)
+    );
+
+    let global_delays = GLOBAL_DELAYS.fetch_add(1, Relaxed);
+    let local_delays = LOCAL_DELAYS.with(|ld| {
+        let mut ld = ld.borrow_mut();
+        let old = *ld;
+        *ld = std::cmp::max(global_delays + 1, *ld + 1);
+        old
+    });
+
+    if global_delays == local_delays {
+        // no other threads seem to be
+        // calling this, so we may as
+        // well skip it
+        return;
+    }
 
     let mut rng = if let Some(rng) = try_thread_rng() {
         rng
