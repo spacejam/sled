@@ -39,7 +39,6 @@ fn concurrent_tree_ops() {
             .temporary(true)
             .async_io(false)
             .io_bufs(3)
-            .blink_node_split_size(100)
             .flush_every_ms(None)
             .snapshot_after_ops(100_000_000)
             .io_buf_size(250)
@@ -176,7 +175,6 @@ fn concurrent_tree_iter() -> Result<()> {
 
     let config = ConfigBuilder::new()
         .temporary(true)
-        .blink_node_split_size(0)
         .flush_every_ms(None)
         .build();
 
@@ -376,7 +374,6 @@ fn tree_subdir() {
 fn tree_iterator() {
     let config = ConfigBuilder::new()
         .temporary(true)
-        .blink_node_split_size(0)
         .flush_every_ms(None)
         .build();
     let t = sled::Db::start(config).unwrap();
@@ -419,7 +416,6 @@ fn tree_iterator() {
 fn tree_subscriptions_and_keyspaces() -> Result<()> {
     let config = ConfigBuilder::new()
         .temporary(true)
-        .blink_node_split_size(0)
         .flush_every_ms(None)
         .build();
 
@@ -513,7 +509,6 @@ fn tree_range() {
 
     let config = ConfigBuilder::new()
         .temporary(true)
-        .blink_node_split_size(0)
         .flush_every_ms(None)
         .build();
     let t = sled::Db::start(config).unwrap();
@@ -566,7 +561,6 @@ fn recover_tree() {
 
     let config = ConfigBuilder::new()
         .temporary(true)
-        .blink_node_split_size(0)
         .io_buf_size(5000)
         .flush_every_ms(None)
         .async_io(false)
@@ -661,8 +655,7 @@ fn quickcheck_tree_matches_btreemap() {
         .tests(n_tests)
         .max_tests(n_tests * 10)
         .quickcheck(
-            prop_tree_matches_btreemap
-                as fn(Vec<Op>, u8, u8, bool, bool) -> bool,
+            prop_tree_matches_btreemap as fn(Vec<Op>, u8, bool, bool) -> bool,
         );
 }
 
@@ -684,7 +677,6 @@ fn tree_bug_01() {
             Restart,
             Set(Key(vec![164]), 147),
         ],
-        0,
         0,
         true,
         false,
@@ -713,7 +705,6 @@ fn tree_bug_02() {
             Scan(Key(vec![210]), 4),
         ],
         0,
-        0,
         true,
         false,
     );
@@ -736,7 +727,6 @@ fn tree_bug_3() {
             Restart,
             Scan(Key(vec![198]), 11),
         ],
-        0,
         0,
         true,
         false,
@@ -763,7 +753,6 @@ fn tree_bug_4() {
             Set(Key(vec![59]), 119),
         ],
         0,
-        0,
         true,
         false,
     );
@@ -784,7 +773,6 @@ fn tree_bug_5() {
             Set(Key(vec![98]), 78),
             Set(Key(vec![0]), 45),
         ],
-        0,
         0,
         true,
         false,
@@ -808,7 +796,6 @@ fn tree_bug_6() {
             Set(Key(vec![18]), 34),
         ],
         0,
-        0,
         true,
         false,
     );
@@ -831,7 +818,6 @@ fn tree_bug_7() {
             Scan(Key(vec![196]), 25),
         ],
         0,
-        0,
         true,
         false,
     );
@@ -853,7 +839,6 @@ fn tree_bug_8() {
             Set(Key(vec![102]), 205),
             Restart,
         ],
-        0,
         0,
         true,
         false,
@@ -879,7 +864,6 @@ fn tree_bug_9() {
             Set(Key(vec![190]), 16),
             Restart,
         ],
-        0,
         0,
         true,
         false,
@@ -918,7 +902,6 @@ fn tree_bug_10() {
             Set(Key(vec![172]), 84),
         ],
         0,
-        0,
         true,
         false,
     );
@@ -943,7 +926,6 @@ fn tree_bug_11() {
             Restart,
             Set(Key(vec![243]), 6),
         ],
-        0,
         0,
         true,
         false,
@@ -995,7 +977,6 @@ fn tree_bug_12() {
             Set(Key(vec![214]), 72),
         ],
         0,
-        0,
         true,
         false,
     );
@@ -1026,7 +1007,6 @@ fn tree_bug_13() {
             Del(Key(vec![165])),
         ],
         0,
-        0,
         true,
         false,
     );
@@ -1046,7 +1026,6 @@ fn tree_bug_14() {
             Set(Key(vec![171]), 176),
             Scan(Key(vec![93]), 33),
         ],
-        1,
         0,
         true,
         false,
@@ -1066,7 +1045,6 @@ fn tree_bug_15() {
             Scan(Key(vec![101]), 26),
         ],
         0,
-        0,
         true,
         false,
     );
@@ -1077,7 +1055,6 @@ fn tree_bug_16() {
     // postmortem: the test merge function was not properly adding numbers.
     prop_tree_matches_btreemap(
         vec![Merge(Key(vec![247]), 162), Scan(Key(vec![209]), 31)],
-        0,
         0,
         false,
         false,
@@ -1094,7 +1071,6 @@ fn tree_bug_17() {
             Set(Key(vec![194, 215, 103, 0, 138, 11, 248, 131]), 70),
             Scan(Key(vec![]), 30),
         ],
-        0,
         0,
         false,
         false,
@@ -1115,7 +1091,6 @@ fn tree_bug_18() {
             GetGt(Key(vec![89])),
         ],
         0,
-        0,
         false,
         false,
     );
@@ -1134,7 +1109,6 @@ fn tree_bug_19() {
             Set(Key(vec![]), 247),
             GetLt(Key(vec![100])),
         ],
-        0,
         0,
         false,
         false,
@@ -1155,7 +1129,6 @@ fn tree_bug_20() {
             Set(Key(vec![]), 251),
             GetGt(Key(vec![94])),
         ],
-        0,
         0,
         false,
         false,
@@ -1178,7 +1151,6 @@ fn tree_bug_21() {
             GetLt(Key(vec![176])),
         ],
         0,
-        0,
         false,
         false,
     );
@@ -1196,7 +1168,6 @@ fn tree_bug_22() {
             Scan(Key(vec![]), 2),
         ],
         0,
-        0,
         false,
         false,
     );
@@ -1207,7 +1178,6 @@ fn tree_bug_23() {
     // postmortem: when rewriting CRC handling code, mis-sized the blob crc
     prop_tree_matches_btreemap(
         vec![Set(Key(vec![6; 5120]), 92), Restart, Scan(Key(vec![]), 35)],
-        0,
         0,
         false,
         false,
@@ -1233,7 +1203,6 @@ fn tree_bug_24() {
             GetGt(Key(vec![])),
         ],
         0,
-        0,
         false,
         false,
     );
@@ -1245,7 +1214,6 @@ fn tree_bug_25() {
     // the frag chain and a Del was encountered
     prop_tree_matches_btreemap(
         vec![Del(Key(vec![])), Merge(Key(vec![]), 84), Get(Key(vec![]))],
-        0,
         0,
         false,
         false,
@@ -1270,7 +1238,6 @@ fn tree_bug_26() {
             GetGt(Key(vec![])),
             GetLt(Key(vec![80])),
         ],
-        0,
         0,
         false,
         false,
@@ -1341,7 +1308,6 @@ fn tree_bug_27() {
             ])),
             Merge(Key(vec![]), 50),
         ],
-        10,
         0,
         false,
         false,
@@ -1365,7 +1331,6 @@ fn tree_bug_28() {
             Merge(Key(vec![149]), 60),
             Scan(Key(vec![178]), 18),
         ],
-        0,
         0,
         false,
         false,
@@ -1507,7 +1472,6 @@ fn tree_bug_29() {
             Set(Key(vec![145]), 43),
             GetLt(Key(vec![229])),
         ],
-        11,
         0,
         false,
         false,
@@ -1547,7 +1511,6 @@ fn tree_bug_30() {
             Merge(Key(vec![119]), 152),
             Scan(Key(vec![]), 31),
         ],
-        0,
         0,
         false,
         false,

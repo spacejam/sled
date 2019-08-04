@@ -64,7 +64,7 @@ pub fn fuzz_then_shrink(buf: &[u8]) {
         .collect();
 
     match panic::catch_unwind(move || {
-        prop_tree_matches_btreemap(ops, 0, 100, false, use_compression)
+        prop_tree_matches_btreemap(ops, 100, false, use_compression)
     }) {
         Ok(_) => {}
         Err(_e) => panic!("TODO"),
@@ -200,7 +200,6 @@ fn test_merge_operator(
 
 pub fn prop_tree_matches_btreemap(
     ops: Vec<Op>,
-    blink_node_exponent: u8,
     snapshot_after: u8,
     flusher: bool,
     use_compression: bool,
@@ -215,8 +214,7 @@ pub fn prop_tree_matches_btreemap(
         .snapshot_after_ops(u64::from(snapshot_after) + 1)
         .flush_every_ms(if flusher { Some(1) } else { None })
         .io_buf_size(1000)
-        .cache_capacity(40)
-        .cache_bits(0)
+        .cache_capacity(256)
         .merge_operator(test_merge_operator)
         .idgen_persist_interval(1)
         .build();
