@@ -67,7 +67,7 @@ steps:
       pushd crates/pagecache &&
       echo "testing pagecache doctests" &&
       cargo test
-    displayName: cross-build and sanitizers
+    displayName: doctests
     condition: eq( variables['testKind'], 'doctests' )
   - script: |
       echo "cross build" &&
@@ -86,7 +86,7 @@ steps:
       pushd crates/pagecache && cargo check --target x86_64-pc-windows-gnu  && popd &&
       pushd crates/pagecache && cargo check --target x86_64-linux-android && popd &&
       pushd crates/pagecache && cargo check --target x86_64-fuchsia && popd
-    displayName: cross-build and sanitizers
+    displayName: cross-build
     condition: eq( variables['testKind'], 'cross-compile' )
   - script: |
       pushd benchmarks/stress2 &&
@@ -117,5 +117,5 @@ steps:
       cargo run --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu -- --duration=6 &&
       unset RUSTFLAGS &&
       unset TSAN_OPTIONS &&
-    displayName: cross-build and sanitizers
+    displayName: sanitizers
     condition: eq( variables['testKind'], 'sanitizers' )
