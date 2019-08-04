@@ -170,22 +170,22 @@ impl ConfigBuilder {
         if self.temporary && self.path == PathBuf::from(DEFAULT_PATH) {
             static SALT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-            let tid: u64 =
-                unsafe { std::mem::transmute(std::thread::current().id()) };
+            use std::time::SystemTime;
+            let now = (SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+                << 32) as u64;
+            let salt = SALT_COUNTER.fetch_add(1, Ordering::SeqCst) as u64;
 
             #[cfg(unix)]
             let salt = {
                 let pid = unsafe { libc::getpid() };
-                ((pid as u64) << 32)
-                    + tid as u64
-                    + SALT_COUNTER.fetch_add(1, Ordering::SeqCst) as u64
+                ((pid as u64) << 16) + now + salt
             };
 
             #[cfg(not(unix))]
-            let salt = {
-                ((tid as u64) << 32)
-                    + SALT_COUNTER.fetch_add(1, Ordering::SeqCst) as u64
-            };
+            let salt = { now + salt };
 
             // use shared memory for temporary linux files
             #[cfg(target_os = "linux")]
