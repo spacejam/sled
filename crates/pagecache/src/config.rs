@@ -64,8 +64,6 @@ pub struct ConfigBuilder {
     #[doc(hidden)]
     pub flush_every_ms: Option<u64>,
     #[doc(hidden)]
-    pub io_bufs: usize,
-    #[doc(hidden)]
     pub io_buf_size: usize,
     #[doc(hidden)]
     pub page_consolidation_threshold: usize,
@@ -106,7 +104,6 @@ unsafe impl Send for ConfigBuilder {}
 impl Default for ConfigBuilder {
     fn default() -> ConfigBuilder {
         ConfigBuilder {
-            io_bufs: 3,
             io_buf_size: 2 << 22, // 8mb
             page_consolidation_threshold: 10,
             path: PathBuf::from(DEFAULT_PATH),
@@ -224,7 +221,6 @@ impl ConfigBuilder {
     }
 
     builder!(
-        (io_bufs, usize, "number of io buffers"),
         (io_buf_size, usize, "size of each io flush buffer. MUST be multiple of 512!"),
         (page_consolidation_threshold, usize, "page consolidation threshold"),
         (temporary, bool, "deletes the database after drop. if no path is set, uses /dev/shm on linux"),
@@ -245,10 +241,6 @@ impl ConfigBuilder {
 
     // panics if config options are outside of advised range
     fn validate(&self) -> Result<()> {
-        supported!(
-            self.io_bufs <= 32,
-            "too many configured io_bufs. please make <= 32"
-        );
         supported!(
             self.io_buf_size >= 100,
             "io_buf_size should be hundreds of kb at minimum, and we won't start if below 100"

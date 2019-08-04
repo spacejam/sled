@@ -38,7 +38,6 @@ fn concurrent_tree_ops() {
         let config = ConfigBuilder::new()
             .temporary(true)
             .async_io(false)
-            .io_bufs(3)
             .flush_every_ms(None)
             .snapshot_after_ops(100_000_000)
             .io_buf_size(250)

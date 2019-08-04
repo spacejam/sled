@@ -965,8 +965,7 @@ where
     pub fn space_amplification(&self) -> Result<f64> {
         let on_disk_bytes = self.size_on_disk()? as f64;
         let logical_size = self.logical_size_of_all_pages()? as f64;
-        let discount =
-            self.config.io_buf_size as f64 * self.config.io_bufs as f64;
+        let discount = self.config.io_buf_size as f64 * 8.;
 
         Ok(on_disk_bytes / (logical_size + discount))
     }

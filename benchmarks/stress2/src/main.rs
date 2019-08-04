@@ -208,7 +208,6 @@ fn main() {
     let shutdown = Arc::new(AtomicBool::new(false));
 
     let config = sled::ConfigBuilder::new()
-        .io_bufs(16)
         .io_buf_size(8_000_000)
         .async_io(args.flag_async)
         .page_consolidation_threshold(10)
