@@ -6,7 +6,7 @@
 trigger:
 - master
 
-parameters:
+variables:
   testKind: 'default'
 
 strategy:
@@ -23,7 +23,7 @@ strategy:
     linux-nightly:
       imageName: 'ubuntu-16.04'
       rustup_toolchain: nightly
-      parameters:
+      variables:
         testKind: 'cross-san'
 
 pool:
@@ -45,7 +45,7 @@ steps:
     displayName: Cargo build
   - script: cargo test --all
     displayName: Cargo test
-  - ${{ if eq(parameters.testKind, 'cross-san') }}:
+  - ${{ if eq( $(testKind), 'cross-san' ) }}:
     - script: |
         pushd benchmarks/stress2 &&
         echo "lsan" &&
