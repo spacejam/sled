@@ -20,10 +20,18 @@ strategy:
     linux-stable:
       imageName: 'ubuntu-16.04'
       rustup_toolchain: stable
-    linux-nightly:
+    doctests:
+      imageName: 'ubuntu-16.04'
+      rustup_toolchain: stable
+      testKind: 'doctests'
+    sanitizers:
       imageName: 'ubuntu-16.04'
       rustup_toolchain: nightly
-      testKind: 'cross-san'
+      testKind: 'sanitizers'
+    cross-compile:
+      imageName: 'ubuntu-16.04'
+      rustup_toolchain: nightly
+      testKind: 'cross-compile'
 
 pool:
   vmImage: $(imageName)
@@ -44,7 +52,41 @@ steps:
     displayName: Cargo build
   - script: cargo test --all
     displayName: Cargo test
-    condition: eq( variables['testKind'], 'default' )
+  - script: |
+      pushd examples/playground &&
+      cargo check &&
+      popd &&
+      pushd examples/crdt_merge_store &&
+      cargo check &&
+      popd &&
+      pushd crates/sled &&
+      echo "testing sled doctests" &&
+      cargo test &&
+      popd &&
+      pushd crates/pagecache &&
+      echo "testing pagecache doctests" &&
+      cargo test
+    displayName: cross-build and sanitizers
+    condition: eq( variables['testKind'], 'doctests' )
+  - script: |
+      echo "cross build" &&
+      echo "https://github.com/rust-lang/cargo/issues/4753" &&
+      pushd crates/sled      && cargo check --target aarch64-fuchsia && popd &&
+      pushd crates/sled      && cargo check --target aarch64-linux-android && popd &&
+      pushd crates/sled      && cargo check --target i686-linux-android && popd &&
+      pushd crates/sled      && cargo check --target i686-unknown-linux-gnu && popd &&
+      pushd crates/sled      && cargo check --target x86_64-pc-windows-gnu  && popd &&
+      pushd crates/sled      && cargo check --target x86_64-linux-android  && popd &&
+      pushd crates/sled      && cargo check --target x86_64-fuchsia && popd &&
+      pushd crates/pagecache && cargo check --target aarch64-fuchsia && popd &&
+      pushd crates/pagecache && cargo check --target aarch64-linux-android && popd &&
+      pushd crates/pagecache && cargo check --target i686-linux-android && popd &&
+      pushd crates/pagecache && cargo check --target i686-unknown-linux-gnu && popd &&
+      pushd crates/pagecache && cargo check --target x86_64-pc-windows-gnu  && popd &&
+      pushd crates/pagecache && cargo check --target x86_64-linux-android && popd &&
+      pushd crates/pagecache && cargo check --target x86_64-fuchsia && popd
+    displayName: cross-build and sanitizers
+    condition: eq( variables['testKind'], 'cross-compile' )
   - script: |
       pushd benchmarks/stress2 &&
       echo "lsan" &&
@@ -74,23 +116,5 @@ steps:
       cargo run --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu -- --duration=6 &&
       unset RUSTFLAGS &&
       unset TSAN_OPTIONS &&
-      popd &&
-
-      echo "cross build" &&
-      echo "https://github.com/rust-lang/cargo/issues/4753" &&
-      pushd crates/sled      && cargo check --target aarch64-fuchsia && popd &&
-      pushd crates/sled      && cargo check --target aarch64-linux-android && popd &&
-      pushd crates/sled      && cargo check --target i686-linux-android && popd &&
-      pushd crates/sled      && cargo check --target i686-unknown-linux-gnu && popd &&
-      pushd crates/sled      && cargo check --target x86_64-pc-windows-gnu  && popd &&
-      pushd crates/sled      && cargo check --target x86_64-linux-android  && popd &&
-      pushd crates/sled      && cargo check --target x86_64-fuchsia && popd &&
-      pushd crates/pagecache && cargo check --target aarch64-fuchsia && popd &&
-      pushd crates/pagecache && cargo check --target aarch64-linux-android && popd &&
-      pushd crates/pagecache && cargo check --target i686-linux-android && popd &&
-      pushd crates/pagecache && cargo check --target i686-unknown-linux-gnu && popd &&
-      pushd crates/pagecache && cargo check --target x86_64-pc-windows-gnu  && popd &&
-      pushd crates/pagecache && cargo check --target x86_64-linux-android && popd &&
-      pushd crates/pagecache && cargo check --target x86_64-fuchsia && popd
     displayName: cross-build and sanitizers
-    condition: eq( variables['testKind'], 'cross-san' )
+    condition: eq( variables['testKind'], 'sanitizers' )
