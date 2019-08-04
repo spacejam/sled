@@ -22,6 +22,7 @@ pub(crate) fn open_tree<'a>(
                     subscriptions: Arc::new(Subscriptions::default()),
                     root: Arc::new(AtomicU64::new(root_id)),
                     concurrency_control: Arc::new(RwLock::new(())),
+                    merge_operator: Arc::new(RwLock::new(None)),
                 });
             }
             Err(Error::CollectionNotFound(_)) => {}
@@ -91,6 +92,7 @@ pub(crate) fn open_tree<'a>(
             context: context.clone(),
             root: Arc::new(AtomicU64::new(root_id)),
             concurrency_control: Arc::new(RwLock::new(())),
+            merge_operator: Arc::new(RwLock::new(None)),
         });
     }
 }

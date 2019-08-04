@@ -141,7 +141,7 @@ impl<'a> RecoveryGuard<'a> {
 /// impl Materializer for TestState {
 ///     // Used to merge chains of partial pages into a form
 ///     // that is useful for the `PageCache` owner.
-///     fn merge(&mut self, other: &TestState, _config: &Config) {
+///     fn merge(&mut self, other: &TestState) {
 ///         self.0.push_str(&other.0);
 ///     }
 /// }
@@ -642,7 +642,7 @@ where
                 let _measure = Measure::new(&M.merge_page);
 
                 let mut update = current_frag.clone();
-                update.merge(&new, &self.config);
+                update.merge(&new);
                 update
             };
 
@@ -1330,10 +1330,7 @@ where
                     let mut base =
                         entries[base_idx].0.as_ref().unwrap().as_frag().clone();
                     for (append, _) in entries[0..base_idx].iter().rev() {
-                        base.merge(
-                            append.as_ref().unwrap().as_frag(),
-                            &self.config,
-                        );
+                        base.merge(append.as_ref().unwrap().as_frag());
                     }
                     Some(base)
                 } else {
@@ -1385,7 +1382,7 @@ where
             let mut base = successes.pop().unwrap().into_owned();
 
             while let Some(frag) = successes.pop() {
-                base.merge(&frag, &self.config);
+                base.merge(&frag);
             }
 
             base

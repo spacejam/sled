@@ -95,6 +95,7 @@ impl Db {
                 context: context.clone(),
                 root: Arc::new(AtomicU64::new(root)),
                 concurrency_control: Arc::new(RwLock::new(())),
+                merge_operator: Arc::new(RwLock::new(None)),
             };
             tenants.insert(id, Arc::new(tree));
         }

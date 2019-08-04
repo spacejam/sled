@@ -79,10 +79,17 @@ use {
     },
     log::{debug, error, trace},
     pagecache::{
-        debug_delay, Materializer, Measure, MergeOperator, PageCache, PageId,
-        RecoveryGuard, Tx, M,
+        debug_delay, Materializer, Measure, PageCache, PageId, RecoveryGuard,
+        Tx, M,
     },
     serde::{Deserialize, Serialize},
 };
 
 type TreePtr<'g> = pagecache::PagePtr<'g, Frag>;
+
+/// Allows arbitrary logic to be injected into mere operations of the `PageCache`.
+pub type MergeOperator = fn(
+    key: &[u8],
+    last_value: Option<&[u8]>,
+    new_merge: &[u8],
+) -> Option<Vec<u8>>;

@@ -7,5 +7,5 @@ pub trait Materializer:
 {
     /// Used to merge chains of partial pages into a form
     /// that is useful for the `PageCache` owner.
-    fn merge(&mut self, other: &Self, config: &Config);
+    fn merge(&mut self, other: &Self);
 }

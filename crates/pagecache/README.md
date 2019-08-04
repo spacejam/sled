@@ -12,78 +12,56 @@ A construction kit for databases. Provides a lock-free log store and pagecache.
 * [The Design and Implementation of a Log-Structured File System](https://people.eecs.berkeley.edu/~brewer/cs262/LFS.pdf)
 
 ```rust
-use pagecache::{PagePtr, pin, Materializer};
+use {
+    pagecache::{pin, Materializer, Config},
+    serde::{Serialize, Deserialize},
+};
 
-pub struct TestMaterializer;
 
-// A PageCache must be used with a Materializer to
-// assist with recovery of custom state, and to
-// assemble partial page fragments into the form
-// that is usable by the higher-level system.
-impl Materializer for TestMaterializer {
-    // The possibly fragmented page, written to log storage sequentially, and
-    // read in parallel from multiple locations on disk when serving
-    // a request to read the page. These will be merged to a single version
-    // at read time, and possibly cached.
-    type PageFrag = String;
+#[derive(
+    Clone, Eq, PartialEq, Ord, PartialOrd, Debug, Serialize, Deserialize,
+)]
+pub struct TestState(String);
 
-    // The state returned by a call to `PageCache::recover`, as
-    // described by `Materializer::recover`
-    type Recovery = ();
-
-    // Create a new `Materializer` with the previously recovered
-    // state if any existed.
-    fn new(last_recovery: &Option<Self::Recovery>) -> Self {
-        TestMaterializer
-    }
-
+impl Materializer for TestState {
     // Used to merge chains of partial pages into a form
     // that is useful for the `PageCache` owner.
-    fn merge(&self, frags: &[&Self::PageFrag]) -> Self::PageFrag {
-        let mut consolidated = String::new();
-        for frag in frags.into_iter() {
-            consolidated.push_str(&*frag);
-        }
-
-        consolidated
-    }
-
-    // Used to feed custom recovery information back to a higher-level abstraction
-    // during startup. For example, a B-Link tree must know what the current
-    // root node is before it can start serving requests.
-    fn recover(&self, _: &Self::PageFrag) -> Option<Self::Recovery> {
-        None
-    }
-
-    // Used to determine the resident size for this item in cache.
-    fn size_in_bytes(&self, frag: &String) -> usize {
-        std::mem::size_of::<String>() + frag.as_bytes().len()
+    fn merge(&mut self, other: &TestState) {
+        self.0.push_str(&other.0);
     }
 }
 
 fn main() {
-    let config = pagecache::ConfigBuilder::new().temporary(true);
-    let pc: pagecache::PageCache<TestMaterializer, _, _> =
-        pagecache::PageCache::start(config.build());
+    let config = pagecache::ConfigBuilder::new().temporary(true).build();
+    let pc: pagecache::PageCache<TestState> =
+        pagecache::PageCache::start(config).unwrap();
     {
-        let guard = pin();
-        let id = pc.allocate(&guard);
+        // We begin by initiating a new transaction, which
+        // will prevent any witnessable memory from being
+        // reclaimed before we drop this object.
+        let tx = pc.begin().unwrap();
 
-        // The first item in a page should be set using replace,
+        // The first item in a page should be set using allocate,
         // which signals that this is the beginning of a new
-        // page history, and that any previous items associated
-        // with this page should be forgotten.
-        let key = pc.replace(id, PagePtr::null(), "a".to_owned(), &guard).unwrap();
+        // page history.
+        let (id, mut key) = pc.allocate(TestState("a".to_owned()), &tx).unwrap();
 
         // Subsequent atomic updates should be added with link.
-        let key = pc.link(id, key, "b".to_owned(), &guard).unwrap();
-        let _key = pc.link(id, key, "c".to_owned(), &guard).unwrap();
+        key = pc.link(id, key, TestState("b".to_owned()), &tx).unwrap().unwrap();
+        key = pc.link(id, key, TestState("c".to_owned()), &tx).unwrap().unwrap();
 
-        // When getting a page, the provide `Materializer` is
+        // When getting a page, the provided `Materializer` is
         // used to merge all pages together.
-        let (consolidated, _key) = pc.get(id, &guard).unwrap();
+        let (mut key, page, size_on_disk) = pc.get(id, &tx).unwrap().unwrap();
 
-        assert_eq!(consolidated, "abc".to_owned());
+        assert_eq!(page.0, "abc".to_owned());
+
+        // You can completely rewrite a page by using `replace`:
+        key = pc.replace(id, key, TestState("d".into()), &tx).unwrap().unwrap();
+
+        let (key, page, size_on_disk) = pc.get(id, &tx).unwrap().unwrap();
+
+         assert_eq!(page.0, "d".to_owned());
     }
 }
 ```
