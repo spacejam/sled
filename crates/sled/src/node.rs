@@ -345,7 +345,7 @@ impl Node {
             records.binary_search_by(|(k, _)| prefix_cmp(k, &successor_key));
 
         let idx = match search {
-            Ok(idx) if idx > 0 => idx,
+            Ok(idx) => idx,
             Err(idx) if idx > 0 => idx - 1,
             _ => return None,
         };
