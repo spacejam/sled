@@ -72,9 +72,6 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 #[doc(hidden)]
 use self::logger::{MessageHeader, SegmentHeader};
 
-#[cfg(not(unix))]
-use self::metrics::uptime;
-
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
     config::PersistedConfig,

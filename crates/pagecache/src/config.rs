@@ -170,22 +170,21 @@ impl ConfigBuilder {
         if self.temporary && self.path == PathBuf::from(DEFAULT_PATH) {
             static SALT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
+            let tid: u64 =
+                unsafe { std::mem::transmute(std::thread::current().id()) };
+
             #[cfg(unix)]
             let salt = {
                 let pid = unsafe { libc::getpid() };
                 ((pid as u64) << 32)
+                    + tid as u64
                     + SALT_COUNTER.fetch_add(1, Ordering::SeqCst) as u64
             };
 
             #[cfg(not(unix))]
             let salt = {
-                let now = uptime();
-                let tid: u64 =
-                    unsafe { std::mem::transmute(std::thread::current().id()) };
                 ((tid as u64) << 32)
                     + SALT_COUNTER.fetch_add(1, Ordering::SeqCst) as u64
-                    + (now.as_secs() * 1_000_000_000)
-                    + u64::from(now.subsec_nanos())
             };
 
             // use shared memory for temporary linux files
@@ -193,7 +192,11 @@ impl ConfigBuilder {
             let tmp_path = format!("/dev/shm/pagecache.tmp.{}", salt);
 
             #[cfg(not(target_os = "linux"))]
-            let tmp_path = format!("/tmp/pagecache.tmp.{}", salt);
+            let tmp_path = {
+                let mut pb = std::env::temp_dir();
+                pb.push(format!("pagecache.tmp.{}", salt));
+                pb
+            };
 
             self.path = PathBuf::from(tmp_path);
         }
