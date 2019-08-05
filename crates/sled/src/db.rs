@@ -49,9 +49,15 @@ impl std::fmt::Debug for Db {
 
 impl Db {
     /// Load existing or create a new `Db` with a default configuration.
-    pub fn start_default<P: AsRef<std::path::Path>>(path: P) -> Result<Db> {
+    pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Db> {
         let config = ConfigBuilder::new().path(path).build();
         Self::start(config)
+    }
+
+    /// Load existing or create a new `Db` with a default configuration.
+    #[deprecated(since = "0.24.2", note = "replaced by `Db:open`")]
+    pub fn start_default<P: AsRef<std::path::Path>>(path: P) -> Result<Db> {
+        Self::open(path)
     }
 
     /// Load existing or create a new `Db`.

@@ -43,7 +43,7 @@ impl<'a> IntoIterator for &'a Tree {
 /// ```
 /// use sled::{Db, IVec};
 ///
-/// let t = Db::start_default("db").unwrap();
+/// let t = Db::open("db").unwrap();
 /// t.insert(b"yo!", b"v1".to_vec());
 /// assert_eq!(t.get(b"yo!"), Ok(Some(IVec::from(b"v1"))));
 ///
@@ -181,7 +181,7 @@ impl Tree {
     /// ```
     /// use sled::Db;
     ///
-    /// let db = Db::start_default("batch_db").unwrap();
+    /// let db = Db::open("batch_db").unwrap();
     /// db.insert("key_0", "val_0").unwrap();
     /// let mut batch = db.batch();
     /// batch.insert("key_a", "val_a");
