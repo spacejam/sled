@@ -49,6 +49,14 @@ impl std::fmt::Debug for Db {
 
 impl Db {
     /// Load existing or create a new `Db` with a default configuration.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sled::Db;
+    ///
+    /// let t = Db::open("my_db").unwrap();
+    /// ```
     pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Db> {
         let config = ConfigBuilder::new().path(path).build();
         Self::start(config)
