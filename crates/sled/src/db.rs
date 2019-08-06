@@ -52,7 +52,7 @@ impl Db {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
     /// use sled::Db;
     ///
     /// let t = Db::open("my_db").unwrap();
