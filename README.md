@@ -16,7 +16,7 @@ An (alpha) modern embedded database. Doesn't your data deserve an (alpha) beauti
 ```rust
 use sled::Db;
 
-let tree = Db::start_default(path)?;
+let tree = Db::open(path)?;
 
 // set and get
 tree.insert(k, v1);
