@@ -387,7 +387,7 @@ impl Arbitrary for Op {
         }
     }
 
-    fn shrink(&self) -> Box<Iterator<Item = Op>> {
+    fn shrink(&self) -> Box<dyn Iterator<Item = Op>> {
         let mut shrunk = false;
         let mut op = self.clone();
         match op {

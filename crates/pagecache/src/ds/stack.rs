@@ -114,7 +114,7 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
     }
 
     /// Pop the next item off the stack. Returns None if nothing is there.
-    fn _pop<'g>(&self, guard: &'g Guard) -> Option<T> {
+    fn _pop(&self, guard: &Guard) -> Option<T> {
         use std::ptr;
         debug_delay();
         let mut head = self.head(&guard);

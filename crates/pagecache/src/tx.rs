@@ -112,10 +112,10 @@ where
     /// to maximize underlying `PageTable` pointer density. Returns
     /// the page ID and its pointer for use in future `replace`
     /// and `link` operations.
-    pub fn allocate<'g>(
-        &'g self,
+    pub fn allocate(
+        &self,
         new: P,
-    ) -> TxResult<(PageId, PagePtr<'g, P>)> {
+    ) -> TxResult<(PageId, PagePtr<P>)> {
         unimplemented!()
     }
 
@@ -155,10 +155,10 @@ where
     }
 
     /// Try to retrieve a page by its logical ID.
-    pub fn get<'g>(
-        &'g self,
+    pub fn get(
+        &self,
         pid: PageId,
-    ) -> TxResult<(PagePtr<'g, P>, Vec<&'g P>)> {
+    ) -> TxResult<(PagePtr<P>, Vec<&P>)> {
         unimplemented!()
     }
 
