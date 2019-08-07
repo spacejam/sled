@@ -463,7 +463,7 @@ where
     /// to facilitate transactions and write batches when
     /// combined with a concurrency control system in another
     /// component.
-    pub fn pin_log<'a>(&'a self) -> Result<RecoveryGuard<'a>> {
+    pub fn pin_log(&self) -> Result<RecoveryGuard> {
         let batch_res = self.log.reserve(
             LogKind::Skip,
             BATCH_MANIFEST_PID,

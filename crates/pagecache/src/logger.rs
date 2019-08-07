@@ -132,11 +132,11 @@ impl Log {
     /// Reserve a replacement buffer for a previously written
     /// blob write. This ensures the message header has the
     /// proper blob flag set.
-    pub(super) fn rewrite_blob_ptr<'a>(
-        &'a self,
+    pub(super) fn rewrite_blob_ptr(
+        &self,
         pid: PageId,
         blob_ptr: BlobPointer,
-    ) -> Result<Reservation<'a>> {
+    ) -> Result<Reservation> {
         let lsn_buf: [u8; std::mem::size_of::<BlobPointer>()] =
             u64_to_arr(blob_ptr as u64);
 
@@ -149,12 +149,12 @@ impl Log {
     /// linearizability across CAS operations that may need to
     /// persist part of their operation.
     #[allow(unused)]
-    pub fn reserve<'a>(
-        &'a self,
+    pub fn reserve(
+        &self,
         log_kind: LogKind,
         pid: PageId,
         raw_buf: &[u8],
-    ) -> Result<Reservation<'a>> {
+    ) -> Result<Reservation> {
         let mut _compressed: Option<Vec<u8>> = None;
         let mut buf = raw_buf;
 
@@ -176,13 +176,13 @@ impl Log {
         self.reserve_inner(log_kind, pid, buf, false)
     }
 
-    fn reserve_inner<'a>(
-        &'a self,
+    fn reserve_inner(
+        &self,
         log_kind: LogKind,
         pid: PageId,
         buf: &[u8],
         is_blob_rewrite: bool,
-    ) -> Result<Reservation<'a>> {
+    ) -> Result<Reservation> {
         let _measure = Measure::new(&M.reserve_lat);
 
         let total_buf_len = MSG_HEADER_LEN + buf.len();

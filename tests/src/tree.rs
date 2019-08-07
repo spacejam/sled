@@ -100,7 +100,7 @@ impl Arbitrary for Key {
         }
     }
 
-    fn shrink(&self) -> Box<Iterator<Item = Key>> {
+    fn shrink(&self) -> Box<dyn Iterator<Item = Key>> {
         // we only want to shrink on length, not byte values
         Box::new(
             self.0
@@ -158,7 +158,7 @@ impl Arbitrary for Op {
         }
     }
 
-    fn shrink(&self) -> Box<Iterator<Item = Op>> {
+    fn shrink(&self) -> Box<dyn Iterator<Item = Op>> {
         match *self {
             Set(ref k, v) => Box::new(k.shrink().map(move |sk| Set(sk, v))),
             Merge(ref k, v) => Box::new(k.shrink().map(move |k| Merge(k, v))),

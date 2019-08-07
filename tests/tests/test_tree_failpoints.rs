@@ -57,7 +57,7 @@ impl Arbitrary for Op {
         }
     }
 
-    fn shrink(&self) -> Box<Iterator<Item = Op>> {
+    fn shrink(&self) -> Box<dyn Iterator<Item = Op>> {
         match *self {
             Op::Del(ref lid) if *lid > 0 => {
                 Box::new(vec![Op::Del(*lid / 2), Op::Del(*lid - 1)].into_iter())
