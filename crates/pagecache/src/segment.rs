@@ -58,9 +58,9 @@
 //!    reallocated after another later segment has written
 //!    a "stable consecutive lsn" into its own header
 //!    that is higher than ours.
-use std::{collections::BTreeMap, mem};
+use std::{collections::BTreeMap, mem, sync::Arc};
 
-use futures::{future::Future, oneshot, Oneshot};
+use parking_lot::{Condvar, Mutex};
 
 use super::*;
 
@@ -85,7 +85,7 @@ pub(super) struct SegmentAccountant {
     to_clean: VecSet<LogId>,
     pause_rewriting: bool,
     ordering: BTreeMap<Lsn, LogId>,
-    async_truncations: Vec<Oneshot<Result<()>>>,
+    async_truncations: Vec<Future<Result<()>>>,
     deferred_free_segments: Option<Vec<LogId>>,
     deferred_free_segments_after: Lsn,
 }
@@ -996,7 +996,7 @@ impl SegmentAccountant {
 
         for truncation in truncations {
             match truncation.wait() {
-                Ok(Ok(())) => {}
+                Ok(()) => {}
                 error => {
                     error!("failed to shrink file: {:?}", error);
                 }
@@ -1151,7 +1151,7 @@ impl SegmentAccountant {
 
         if self.config.async_io {
             trace!("asynchronously truncating file to length {}", at);
-            let (completer, oneshot) = oneshot();
+            let (completer, oneshot) = Future::pair();
 
             let config = self.config.clone();
 
@@ -1162,9 +1162,7 @@ impl SegmentAccountant {
                     .set_len(at)
                     .and_then(|_| config.file.sync_all())
                     .map_err(|e| e.into());
-                if let Err(e) = completer.send(res) {
-                    error!("failed to fill async truncation future: {:?}", e);
-                }
+                completer.fill(res);
             });
 
             self.async_truncations.push(oneshot);
@@ -1249,4 +1247,45 @@ fn segment_is_drainable(
         len < MINIMUM_ITEMS_PER_SEGMENT * 100 / cleanup_threshold;
 
     segment_low_pct || segment_low_count
+}
+
+#[derive(Clone, Debug)]
+struct Future<T> {
+    mu: Arc<Mutex<Option<T>>>,
+    cv: Arc<Condvar>,
+}
+
+struct FutureFiller<T> {
+    mu: Arc<Mutex<Option<T>>>,
+    cv: Arc<Condvar>,
+}
+
+impl<T> Future<T> {
+    fn pair() -> (FutureFiller<T>, Future<T>) {
+        let mu = Arc::new(Mutex::new(None));
+        let cv = Arc::new(Condvar::new());
+        let future = Future {
+            mu: mu.clone(),
+            cv: cv.clone(),
+        };
+        let filler = FutureFiller { mu, cv };
+
+        (filler, future)
+    }
+
+    fn wait(self) -> T {
+        let mut inner = self.mu.lock();
+        while inner.is_none() {
+            self.cv.wait(&mut inner);
+        }
+        inner.take().unwrap()
+    }
+}
+
+impl<T> FutureFiller<T> {
+    fn fill(self, inner: T) {
+        let mut mu = self.mu.lock();
+        *mu = Some(inner);
+        self.cv.notify_all();
+    }
 }
