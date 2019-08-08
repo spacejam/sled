@@ -996,7 +996,7 @@ impl SegmentAccountant {
 
         for truncation in truncations {
             match truncation.wait() {
-                Ok(()) => {}
+                Some(Ok(())) => {}
                 error => {
                     error!("failed to shrink file: {:?}", error);
                 }
@@ -1249,43 +1249,60 @@ fn segment_is_drainable(
     segment_low_pct || segment_low_count
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct Future<T> {
-    mu: Arc<Mutex<Option<T>>>,
+    mu: Arc<Mutex<(bool, Option<T>)>>,
     cv: Arc<Condvar>,
 }
 
 struct FutureFiller<T> {
-    mu: Arc<Mutex<Option<T>>>,
+    mu: Arc<Mutex<(bool, Option<T>)>>,
     cv: Arc<Condvar>,
+    completed: bool,
 }
 
 impl<T> Future<T> {
     fn pair() -> (FutureFiller<T>, Future<T>) {
-        let mu = Arc::new(Mutex::new(None));
+        let mu = Arc::new(Mutex::new((false, None)));
         let cv = Arc::new(Condvar::new());
         let future = Future {
             mu: mu.clone(),
             cv: cv.clone(),
         };
-        let filler = FutureFiller { mu, cv };
+        let filler = FutureFiller {
+            mu,
+            cv,
+            completed: false,
+        };
 
         (filler, future)
     }
 
-    fn wait(self) -> T {
+    fn wait(self) -> Option<T> {
         let mut inner = self.mu.lock();
-        while inner.is_none() {
+        while !inner.0 {
             self.cv.wait(&mut inner);
         }
-        inner.take().unwrap()
+        inner.1.take()
     }
 }
 
 impl<T> FutureFiller<T> {
-    fn fill(self, inner: T) {
+    fn fill(mut self, inner: T) {
         let mut mu = self.mu.lock();
-        *mu = Some(inner);
+        *mu = (true, Some(inner));
+        self.cv.notify_all();
+        self.completed = true;
+    }
+}
+
+impl<T> Drop for FutureFiller<T> {
+    fn drop(&mut self) {
+        if self.completed {
+            return;
+        }
+        let mut mu = self.mu.lock();
+        *mu = (true, None);
         self.cv.notify_all();
     }
 }

@@ -21,6 +21,7 @@ struct Future<T> {
 struct FutureFiller<T> {
     mu: Arc<Mutex<(bool, Option<T>)>>,
     cv: Arc<Condvar>,
+    completed: bool,
 }
 
 impl<T> Future<T> {
@@ -31,7 +32,11 @@ impl<T> Future<T> {
             mu: mu.clone(),
             cv: cv.clone(),
         };
-        let filler = FutureFiller { mu, cv };
+        let filler = FutureFiller {
+            mu,
+            cv,
+            completed: false,
+        };
 
         (filler, future)
     }
@@ -46,9 +51,21 @@ impl<T> Future<T> {
 }
 
 impl<T> FutureFiller<T> {
-    fn fill(self, inner: Option<T>) {
+    fn fill(mut self, inner: Option<T>) {
         let mut mu = self.mu.lock();
         *mu = (true, inner);
+        self.cv.notify_all();
+        self.completed = true;
+    }
+}
+
+impl<T> Drop for FutureFiller<T> {
+    fn drop(&mut self) {
+        if self.completed {
+            return;
+        }
+        let mut mu = self.mu.lock();
+        *mu = (true, None);
         self.cv.notify_all();
     }
 }
