@@ -3,21 +3,72 @@ use std::{
     sync::{
         atomic::{AtomicUsize, Ordering::Relaxed},
         mpsc::{sync_channel, Receiver, SyncSender},
-        Arc, RwLock,
+        Arc,
     },
 };
 
-use futures::{
-    future::Future,
-    sync::oneshot::{
-        channel as future_channel, Receiver as FutureReceiver,
-        Sender as FutureSender,
-    },
-};
+use parking_lot::{Condvar, Mutex, RwLock};
 
 use crate::ivec::IVec;
 
 static ID_GEN: AtomicUsize = AtomicUsize::new(0);
+
+struct Future<T> {
+    mu: Arc<Mutex<(bool, Option<T>)>>,
+    cv: Arc<Condvar>,
+}
+
+struct FutureFiller<T> {
+    mu: Arc<Mutex<(bool, Option<T>)>>,
+    cv: Arc<Condvar>,
+    completed: bool,
+}
+
+impl<T> Future<T> {
+    fn pair() -> (FutureFiller<T>, Future<T>) {
+        let mu = Arc::new(Mutex::new((false, None)));
+        let cv = Arc::new(Condvar::new());
+        let future = Future {
+            mu: mu.clone(),
+            cv: cv.clone(),
+        };
+        let filler = FutureFiller {
+            mu,
+            cv,
+            completed: false,
+        };
+
+        (filler, future)
+    }
+
+    fn wait(self) -> Option<T> {
+        let mut inner = self.mu.lock();
+        while !inner.0 {
+            self.cv.wait(&mut inner);
+        }
+        inner.1.take()
+    }
+}
+
+impl<T> FutureFiller<T> {
+    fn fill(mut self, inner: Option<T>) {
+        let mut mu = self.mu.lock();
+        *mu = (true, inner);
+        self.cv.notify_all();
+        self.completed = true;
+    }
+}
+
+impl<T> Drop for FutureFiller<T> {
+    fn drop(&mut self) {
+        if self.completed {
+            return;
+        }
+        let mut mu = self.mu.lock();
+        *mu = (true, None);
+        self.cv.notify_all();
+    }
+}
 
 /// An event that happened to a key that a subscriber is interested in.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -51,18 +102,18 @@ impl Clone for Event {
     }
 }
 
-type Senders = Vec<(usize, SyncSender<FutureReceiver<Event>>)>;
+type Senders = Vec<(usize, SyncSender<Future<Event>>)>;
 
 /// A subscriber listening on a specified prefix
 pub struct Subscriber {
     id: usize,
-    rx: Receiver<FutureReceiver<Event>>,
+    rx: Receiver<Future<Event>>,
     home: Arc<RwLock<Senders>>,
 }
 
 impl Drop for Subscriber {
     fn drop(&mut self) {
-        let mut w_senders = self.home.write().unwrap();
+        let mut w_senders = self.home.write();
         w_senders.retain(|(id, _)| *id != self.id);
     }
 }
@@ -74,8 +125,8 @@ impl Iterator for Subscriber {
         loop {
             let future_rx = self.rx.recv().ok()?;
             match future_rx.wait() {
-                Ok(event) => return Some(event),
-                Err(_cancelled) => continue,
+                Some(event) => return Some(event),
+                None => continue,
             }
         }
     }
@@ -89,24 +140,24 @@ pub(crate) struct Subscriptions {
 impl Subscriptions {
     pub(crate) fn register(&self, prefix: Vec<u8>) -> Subscriber {
         let r_mu = {
-            let r_mu = self.watched.read().unwrap();
+            let r_mu = self.watched.read();
             if r_mu.contains_key(&prefix) {
                 r_mu
             } else {
                 drop(r_mu);
-                let mut w_mu = self.watched.write().unwrap();
+                let mut w_mu = self.watched.write();
                 if !w_mu.contains_key(&prefix) {
                     w_mu.insert(prefix.clone(), Arc::new(RwLock::new(vec![])));
                 }
                 drop(w_mu);
-                self.watched.read().unwrap()
+                self.watched.read()
             }
         };
 
         let (tx, rx) = sync_channel(1024);
 
         let arc_senders = &r_mu[&prefix];
-        let mut w_senders = arc_senders.write().unwrap();
+        let mut w_senders = arc_senders.write();
 
         let id = ID_GEN.fetch_add(1, Relaxed);
 
@@ -123,16 +174,16 @@ impl Subscriptions {
         &self,
         key: R,
     ) -> Option<ReservedBroadcast> {
-        let r_mu = self.watched.read().unwrap();
+        let r_mu = self.watched.read();
         let prefixes = r_mu.iter().filter(|(k, _)| key.as_ref().starts_with(k));
 
         let mut subscribers = vec![];
 
         for (_, subs_rwl) in prefixes {
-            let subs = subs_rwl.read().unwrap();
+            let subs = subs_rwl.read();
 
             for (_id, sender) in subs.iter() {
-                let (tx, rx) = future_channel();
+                let (tx, rx) = Future::pair();
                 if sender.send(rx).is_err() {
                     continue;
                 }
@@ -149,7 +200,7 @@ impl Subscriptions {
 }
 
 pub(crate) struct ReservedBroadcast {
-    subscribers: Vec<FutureSender<Event>>,
+    subscribers: Vec<FutureFiller<Event>>,
 }
 
 impl ReservedBroadcast {
@@ -162,12 +213,12 @@ impl ReservedBroadcast {
         while sent + 1 < len {
             sent += 1;
             let tx = iter.next().unwrap();
-            let _ = tx.send(event.clone());
+            let _ = tx.fill(Some(event.clone()));
         }
 
         if len != 0 {
             let tx = iter.next().unwrap();
-            let _ = tx.send(event);
+            let _ = tx.fill(Some(event));
         }
     }
 }
