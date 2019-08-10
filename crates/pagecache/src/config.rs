@@ -92,8 +92,6 @@ pub struct ConfigBuilder {
     #[doc(hidden)]
     pub idgen_persist_interval: u64,
     #[doc(hidden)]
-    pub async_io: bool,
-    #[doc(hidden)]
     pub version: (usize, usize),
 }
 
@@ -118,7 +116,6 @@ impl Default for ConfigBuilder {
             segment_mode: SegmentMode::Gc,
             print_profile_on_drop: false,
             idgen_persist_interval: 1_000_000,
-            async_io: true,
             version: pagecache_crate_version(),
         }
     }

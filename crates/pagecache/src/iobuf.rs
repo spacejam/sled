@@ -723,32 +723,24 @@ pub(crate) fn maybe_seal_and_write_iobuf(
     // if writers is 0, it's our responsibility to write the buffer.
     if n_writers(sealed) == 0 {
         iobufs.config.global_error()?;
-        if iobufs.config.async_io {
-            trace!(
-                "asynchronously writing iobuf with lsn {} to log from maybe_seal",
-                lsn
-            );
-            let iobufs = iobufs.clone();
-            let iobuf = iobuf.clone();
-            threadpool::spawn(move || {
-                if let Err(e) = iobufs.write_to_log(&iobuf) {
-                    error!(
-                        "hit error while writing iobuf with lsn {}: {:?}",
-                        lsn, e
-                    );
-                    let _ = iobufs.intervals.lock();
-                    iobufs.interval_updated.notify_all();
-                    iobufs.config.set_global_error(e);
-                }
-            });
-            Ok(())
-        } else {
-            trace!(
-                "synchronously writing iobuf with lsn {} to log from maybe_seal",
-                lsn
-            );
-            iobufs.write_to_log(iobuf)
-        }
+        trace!(
+            "asynchronously writing iobuf with lsn {} to log from maybe_seal",
+            lsn
+        );
+        let iobufs = iobufs.clone();
+        let iobuf = iobuf.clone();
+        threadpool::spawn(move || {
+            if let Err(e) = iobufs.write_to_log(&iobuf) {
+                error!(
+                    "hit error while writing iobuf with lsn {}: {:?}",
+                    lsn, e
+                );
+                let _ = iobufs.intervals.lock();
+                iobufs.interval_updated.notify_all();
+                iobufs.config.set_global_error(e);
+            }
+        });
+        Ok(())
     } else {
         Ok(())
     }

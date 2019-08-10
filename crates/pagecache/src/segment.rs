@@ -1149,34 +1149,24 @@ impl SegmentAccountant {
             "double-free of a segment occurred"
         );
 
-        if self.config.async_io {
-            trace!("asynchronously truncating file to length {}", at);
-            let (completer, oneshot) = Future::pair();
+        trace!("asynchronously truncating file to length {}", at);
+        let (completer, promise) = Promise::pair();
 
-            let config = self.config.clone();
+        let config = self.config.clone();
 
-            threadpool::spawn(move || {
-                debug!("truncating file to length {}", at);
-                let res = config
-                    .file
-                    .set_len(at)
-                    .and_then(|_| config.file.sync_all())
-                    .map_err(|e| e.into());
-                completer.fill(res);
-            });
+        threadpool::spawn(move || {
+            debug!("truncating file to length {}", at);
+            let res = config
+                .file
+                .set_len(at)
+                .and_then(|_| config.file.sync_all())
+                .map_err(|e| e.into());
+            completer.fill(res);
+        });
 
-            self.async_truncations.push(oneshot);
+        self.async_truncations.push(promise);
 
-            Ok(())
-        } else {
-            trace!("synchronously truncating file to length {}", at);
-            let f = &self.config.file;
-            f.set_len(at)?;
-            if !self.config.temporary {
-                f.sync_all()?;
-            }
-            Ok(())
-        }
+        Ok(())
     }
 
     fn lid_to_idx(&mut self, lid: LogId) -> usize {
