@@ -34,7 +34,7 @@ Usage: stress [--threads=<#>] [--burn-in] [--duration=<s>] \
     [--merge-prop=<p>] \
     [--entries=<n>] \
     [--sequential] \
-    [--total-ops=<n>] \
+    [--total-ops=<n>]
 
 Options:
     --threads=<#>      Number of threads [default: 4].
