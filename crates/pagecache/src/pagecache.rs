@@ -1795,21 +1795,25 @@ where
 
         debug!("asynchronously spawning snapshot generation task");
         let config = self.config.clone();
-        let _result = threadpool::spawn(move || match gen_snapshot() {
-            Ok(_) => {}
-            Err(Error::Io(ref ioe))
-                if ioe.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                error!(
-                    "encountered error while generating snapshot: {:?}",
-                    error,
-                );
-                config.set_global_error(error);
+        let _result = threadpool::spawn(move || {
+            let result = gen_snapshot();
+            match &result {
+                Ok(_) => {}
+                Err(Error::Io(ref ioe))
+                    if ioe.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    error!(
+                        "encountered error while generating snapshot: {:?}",
+                        error,
+                    );
+                    config.set_global_error(error.clone());
+                }
             }
+            result
         });
 
         #[cfg(any(test, feature = "check_snapshot_integrity"))]
-        let _ = _result.wait();
+        _result.unwrap()?;
 
         // TODO add future for waiting on the result of this if desired
         Ok(())
