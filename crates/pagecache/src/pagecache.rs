@@ -1796,7 +1796,7 @@ where
         if self.config.async_io {
             debug!("asynchronously spawning snapshot generation task");
             let config = self.config.clone();
-            rayon::spawn(move || {
+            threadpool::spawn(move || {
                 if let Err(e) = gen_snapshot() {
                     match e {
                         Error::Io(ref ioe)

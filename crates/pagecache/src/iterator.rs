@@ -1,7 +1,5 @@
 use std::{collections::BTreeMap, io};
 
-use rayon::prelude::*;
-
 use self::reader::LogReader;
 
 use super::*;
@@ -246,30 +244,53 @@ fn scan_segment_lsns(
         segment_len,
         segments
     );
-    let headers: Vec<(LogId, SegmentHeader)> = (0..segments)
-        .into_par_iter()
-        .filter_map(|idx| {
-            let base_lid = idx * segment_len;
-            let segment = f.read_segment_header(base_lid).ok()?;
+
+    fn fetch(
+        idx: u64,
+        min: Lsn,
+        config: Config,
+    ) -> Option<(LogId, SegmentHeader)> {
+        let segment_len = u64::try_from(config.io_buf_size).unwrap();
+        let base_lid = idx * segment_len;
+        let segment = config.file.read_segment_header(base_lid).ok()?;
+        trace!(
+            "SA scanned header at lid {} during startup: {:?}",
+            base_lid,
+            segment
+        );
+        if segment.ok && segment.lsn >= min {
+            assert_ne!(segment.lsn, Lsn::max_value());
+            Some((base_lid, segment))
+        } else {
             trace!(
-                "SA scanned header at lid {} during startup: {:?}",
+                "not using segment at lid {}, ok: {} lsn: {} min lsn: {}",
                 base_lid,
-                segment
+                segment.ok,
+                segment.lsn,
+                min
             );
-            if segment.ok && segment.lsn >= min {
-                assert_ne!(segment.lsn, Lsn::max_value());
-                Some((base_lid, segment))
-            } else {
-                trace!(
-                    "not using segment at lid {}, ok: {} lsn: {} min lsn: {}",
-                    base_lid,
-                    segment.ok,
-                    segment.lsn,
-                    min
-                );
-                None
+            None
+        }
+    };
+
+    let header_promises: Vec<
+        threadpool::Promise<Option<(LogId, SegmentHeader)>>,
+    > = (0..segments)
+        .into_iter()
+        .map({
+            let config = config.clone();
+            move |idx| {
+                threadpool::spawn({
+                    let config = config.clone();
+                    move || fetch(idx, min, config)
+                })
             }
         })
+        .collect();
+
+    let headers: Vec<(LogId, SegmentHeader)> = header_promises
+        .into_iter()
+        .filter_map(|promise| promise.unwrap())
         .collect();
 
     let mut ordering = BTreeMap::new();
@@ -297,7 +318,7 @@ fn scan_segment_lsns(
     // Check that the segments above max_header_stable_lsn
     // properly link their previous segment pointers.
     let ordering =
-        clean_tail_tears(max_header_stable_lsn, ordering, config, &f)?;
+        clean_tail_tears(max_header_stable_lsn, ordering, &config, &f)?;
 
     Ok((ordering, max_header_stable_lsn))
 }
@@ -402,7 +423,7 @@ pub(super) fn raw_segment_iter_from(
     let segment_len = config.io_buf_size as Lsn;
     let normalized_lsn = lsn / segment_len * segment_len;
 
-    let (ordering, max_header_stable_lsn) = scan_segment_lsns(0, &config)?;
+    let (ordering, max_header_stable_lsn) = scan_segment_lsns(0, config)?;
 
     // find the last stable tip, to properly handle batch manifests.
     let tip_segment_iter =

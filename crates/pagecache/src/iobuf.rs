@@ -730,7 +730,7 @@ pub(crate) fn maybe_seal_and_write_iobuf(
             );
             let iobufs = iobufs.clone();
             let iobuf = iobuf.clone();
-            rayon::spawn(move || {
+            threadpool::spawn(move || {
                 if let Err(e) = iobufs.write_to_log(&iobuf) {
                     error!(
                         "hit error while writing iobuf with lsn {}: {:?}",

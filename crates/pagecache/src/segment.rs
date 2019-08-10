@@ -1155,7 +1155,7 @@ impl SegmentAccountant {
 
             let config = self.config.clone();
 
-            rayon::spawn(move || {
+            threadpool::spawn(move || {
                 debug!("truncating file to length {}", at);
                 let res = config
                     .file

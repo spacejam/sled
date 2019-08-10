@@ -234,8 +234,7 @@ impl ConfigBuilder {
         (segment_mode, SegmentMode, "the file segment selection mode"),
         (snapshot_path, Option<PathBuf>, "snapshot file location"),
         (print_profile_on_drop, bool, "print a performance profile when the Config is dropped"),
-        (idgen_persist_interval, u64, "generated IDs are persisted at this interval. during recovery we skip twice this number"),
-        (async_io, bool, "perform IO operations on a threadpool")
+        (idgen_persist_interval, u64, "generated IDs are persisted at this interval. during recovery we skip twice this number")
     );
 
     // panics if config options are outside of advised range

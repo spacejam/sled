@@ -36,6 +36,7 @@ mod reservation;
 mod result;
 mod segment;
 mod snapshot;
+mod threadpool;
 mod tx;
 mod util;
 
@@ -270,12 +271,12 @@ pub use self::debug_delay::debug_delay;
 #[cfg(not(any(test, feature = "lock_free_delays")))]
 pub fn debug_delay() {}
 
-pub use crossbeam_epoch::{
+pub use crossbeam::epoch::{
     pin, unprotected, Atomic, Collector, CompareAndSetError, Guard,
     LocalHandle, Owned, Shared,
 };
 
-pub use crossbeam_utils::{Backoff, CachePadded};
+pub use crossbeam::utils::{Backoff, CachePadded};
 
 fn assert_usize<T>(from: T) -> usize
 where
