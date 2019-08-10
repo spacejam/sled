@@ -273,9 +273,8 @@ fn scan_segment_lsns(
         }
     };
 
-    let header_promises: Vec<
-        threadpool::Promise<Option<(LogId, SegmentHeader)>>,
-    > = (0..segments)
+    let header_promises: Vec<Promise<Option<(LogId, SegmentHeader)>>> = (0
+        ..segments)
         .into_iter()
         .map({
             let config = config.clone();

@@ -58,9 +58,7 @@
 //!    reallocated after another later segment has written
 //!    a "stable consecutive lsn" into its own header
 //!    that is higher than ours.
-use std::{collections::BTreeMap, mem, sync::Arc};
-
-use parking_lot::{Condvar, Mutex};
+use std::{collections::BTreeMap, mem};
 
 use super::*;
 
@@ -85,7 +83,7 @@ pub(super) struct SegmentAccountant {
     to_clean: VecSet<LogId>,
     pause_rewriting: bool,
     ordering: BTreeMap<Lsn, LogId>,
-    async_truncations: Vec<Future<Result<()>>>,
+    async_truncations: Vec<Promise<Result<()>>>,
     deferred_free_segments: Option<Vec<LogId>>,
     deferred_free_segments_after: Lsn,
 }
@@ -1237,62 +1235,4 @@ fn segment_is_drainable(
         len < MINIMUM_ITEMS_PER_SEGMENT * 100 / cleanup_threshold;
 
     segment_low_pct || segment_low_count
-}
-
-#[derive(Debug)]
-struct Future<T> {
-    mu: Arc<Mutex<(bool, Option<T>)>>,
-    cv: Arc<Condvar>,
-}
-
-struct FutureFiller<T> {
-    mu: Arc<Mutex<(bool, Option<T>)>>,
-    cv: Arc<Condvar>,
-    completed: bool,
-}
-
-impl<T> Future<T> {
-    fn pair() -> (FutureFiller<T>, Future<T>) {
-        let mu = Arc::new(Mutex::new((false, None)));
-        let cv = Arc::new(Condvar::new());
-        let future = Future {
-            mu: mu.clone(),
-            cv: cv.clone(),
-        };
-        let filler = FutureFiller {
-            mu,
-            cv,
-            completed: false,
-        };
-
-        (filler, future)
-    }
-
-    fn wait(self) -> Option<T> {
-        let mut inner = self.mu.lock();
-        while !inner.0 {
-            self.cv.wait(&mut inner);
-        }
-        inner.1.take()
-    }
-}
-
-impl<T> FutureFiller<T> {
-    fn fill(mut self, inner: T) {
-        let mut mu = self.mu.lock();
-        *mu = (true, Some(inner));
-        self.cv.notify_all();
-        self.completed = true;
-    }
-}
-
-impl<T> Drop for FutureFiller<T> {
-    fn drop(&mut self) {
-        if self.completed {
-            return;
-        }
-        let mut mu = self.mu.lock();
-        *mu = (true, None);
-        self.cv.notify_all();
-    }
 }

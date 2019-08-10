@@ -31,6 +31,7 @@ mod meta;
 mod metrics;
 mod pagecache;
 mod parallel_io;
+mod promise;
 mod reader;
 mod reservation;
 mod result;
@@ -98,6 +99,7 @@ pub use self::{
     meta::Meta,
     metrics::M,
     pagecache::{PageCache, PagePtr, RecoveryGuard},
+    promise::{Promise, PromiseFiller},
     reservation::Reservation,
     result::{CasResult, Error, Result},
     segment::SegmentMode,

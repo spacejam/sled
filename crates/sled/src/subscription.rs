@@ -7,68 +7,13 @@ use std::{
     },
 };
 
-use parking_lot::{Condvar, Mutex, RwLock};
+use parking_lot::RwLock;
 
 use crate::ivec::IVec;
 
+use pagecache::{Promise, PromiseFiller};
+
 static ID_GEN: AtomicUsize = AtomicUsize::new(0);
-
-struct Future<T> {
-    mu: Arc<Mutex<(bool, Option<T>)>>,
-    cv: Arc<Condvar>,
-}
-
-struct FutureFiller<T> {
-    mu: Arc<Mutex<(bool, Option<T>)>>,
-    cv: Arc<Condvar>,
-    completed: bool,
-}
-
-impl<T> Future<T> {
-    fn pair() -> (FutureFiller<T>, Future<T>) {
-        let mu = Arc::new(Mutex::new((false, None)));
-        let cv = Arc::new(Condvar::new());
-        let future = Future {
-            mu: mu.clone(),
-            cv: cv.clone(),
-        };
-        let filler = FutureFiller {
-            mu,
-            cv,
-            completed: false,
-        };
-
-        (filler, future)
-    }
-
-    fn wait(self) -> Option<T> {
-        let mut inner = self.mu.lock();
-        while !inner.0 {
-            self.cv.wait(&mut inner);
-        }
-        inner.1.take()
-    }
-}
-
-impl<T> FutureFiller<T> {
-    fn fill(mut self, inner: Option<T>) {
-        let mut mu = self.mu.lock();
-        *mu = (true, inner);
-        self.cv.notify_all();
-        self.completed = true;
-    }
-}
-
-impl<T> Drop for FutureFiller<T> {
-    fn drop(&mut self) {
-        if self.completed {
-            return;
-        }
-        let mut mu = self.mu.lock();
-        *mu = (true, None);
-        self.cv.notify_all();
-    }
-}
 
 /// An event that happened to a key that a subscriber is interested in.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -102,12 +47,12 @@ impl Clone for Event {
     }
 }
 
-type Senders = Vec<(usize, SyncSender<Future<Event>>)>;
+type Senders = Vec<(usize, SyncSender<Promise<Event>>)>;
 
 /// A subscriber listening on a specified prefix
 pub struct Subscriber {
     id: usize,
-    rx: Receiver<Future<Event>>,
+    rx: Receiver<Promise<Event>>,
     home: Arc<RwLock<Senders>>,
 }
 
@@ -183,7 +128,7 @@ impl Subscriptions {
             let subs = subs_rwl.read();
 
             for (_id, sender) in subs.iter() {
-                let (tx, rx) = Future::pair();
+                let (tx, rx) = Promise::pair();
                 if sender.send(rx).is_err() {
                     continue;
                 }
@@ -200,7 +145,7 @@ impl Subscriptions {
 }
 
 pub(crate) struct ReservedBroadcast {
-    subscribers: Vec<FutureFiller<Event>>,
+    subscribers: Vec<PromiseFiller<Event>>,
 }
 
 impl ReservedBroadcast {
@@ -213,12 +158,12 @@ impl ReservedBroadcast {
         while sent + 1 < len {
             sent += 1;
             let tx = iter.next().unwrap();
-            let _ = tx.fill(Some(event.clone()));
+            let _ = tx.fill(event.clone());
         }
 
         if len != 0 {
             let tx = iter.next().unwrap();
-            let _ = tx.fill(Some(event));
+            let _ = tx.fill(event);
         }
     }
 }
