@@ -1,5 +1,3 @@
-//! A thread pool for running blocking functions asynchronously.
-
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
@@ -22,7 +20,7 @@ lazy_static! {
     static ref POOL: Pool = {
         for _ in 0..2 {
             thread::Builder::new()
-                .name("async-blocking-driver".to_string())
+                .name("sled-io".to_string())
                 .spawn(|| {
                     for task in &POOL.receiver {
                         (task)()
@@ -56,7 +54,7 @@ fn maybe_create_another_blocking_thread() {
     }
 
     thread::Builder::new()
-        .name("async-blocking-driver-dynamic".to_string())
+        .name("sled-io".to_string())
         .spawn(|| {
             let wait_limit = Duration::from_secs(1);
 
@@ -69,9 +67,7 @@ fn maybe_create_another_blocking_thread() {
         .expect("cannot start a dynamic thread driving blocking tasks");
 }
 
-/// Spawns a blocking task.
-///
-/// The task will be spawned onto a thread pool specifically dedicated to blocking tasks.
+/// Spawn a function on the threadpool.
 pub fn spawn<F, R>(work: F) -> Promise<R>
 where
     F: FnOnce() -> R + Send + 'static,
