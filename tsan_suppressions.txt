@@ -11,15 +11,12 @@
 # as of Feb 1 2018 / rust 1.23.
 race:crossbeam_epoch::internal::Global::collect
 
-# Rayon relies on crossbeam stuff which uses raw fences, which are
-# not detected by TSAN.
-race:rayon
-
 # Arc::drop is not properly detected by TSAN due to the use
 # of a raw atomic Acquire fence after the strong-count
 # atomic subtraction with a Release fence in the Drop impl.
 race:Arc*drop
 
-# The pagecache debug_delay uses an unsafe pointer in a way that
-# relies on thread-local access for correctness.
-race:debug_delay
+# lazy_static and thread_local rely on implicit barriers not
+# picked-up by TSAN
+race:lazy_static
+race:std::thread::local
