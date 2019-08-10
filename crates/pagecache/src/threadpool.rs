@@ -14,8 +14,8 @@ const MAX_THREADS: u64 = 10_000;
 static DYNAMIC_THREAD_COUNT: AtomicU64 = AtomicU64::new(0);
 
 struct Pool {
-    sender: Sender<Box<FnOnce() + Send + 'static>>,
-    receiver: Receiver<Box<FnOnce() + Send + 'static>>,
+    sender: Sender<Box<dyn FnOnce() + Send + 'static>>,
+    receiver: Receiver<Box<dyn FnOnce() + Send + 'static>>,
 }
 
 lazy_static! {
