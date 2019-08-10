@@ -4,7 +4,7 @@ use std::{
     ops::Deref,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicPtr, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
         Arc,
     },
 };
@@ -210,7 +210,7 @@ impl ConfigBuilder {
         Config(Arc::new(ConfigInner {
             inner: self,
             file,
-            global_error: AtomicPtr::default(),
+            global_error: Atomic::default(),
             #[cfg(feature = "event_log")]
             event_log: crate::event_log::EventLog::default(),
         }))
@@ -502,7 +502,7 @@ impl Deref for Config {
 pub struct ConfigInner {
     inner: ConfigBuilder,
     pub(crate) file: fs::File,
-    pub(crate) global_error: AtomicPtr<Error>,
+    pub(crate) global_error: Atomic<Error>,
     #[cfg(feature = "event_log")]
     /// an event log for concurrent debugging
     pub event_log: event_log::EventLog,
@@ -534,36 +534,40 @@ impl Config {
     /// Return the global error if one was encountered during
     /// an asynchronous IO operation.
     pub fn global_error(&self) -> Result<()> {
-        let ge = self.global_error.load(Ordering::Relaxed);
+        let guard = pin();
+        let ge = self.global_error.load(Ordering::Relaxed, &guard);
         if ge.is_null() {
             Ok(())
         } else {
-            unsafe { Err((*ge).clone()) }
+            unsafe { Err(ge.deref().clone()) }
         }
     }
 
     pub(crate) fn reset_global_error(&self) {
-        self.global_error
-            .store(std::ptr::null_mut(), Ordering::SeqCst);
-    }
-
-    pub(crate) fn set_global_error(&self, error: Error) {
-        let ptr = Box::into_raw(Box::new(error));
-
-        let expected_old = std::ptr::null_mut();
-
-        let ret = self.global_error.compare_and_swap(
-            expected_old,
-            ptr as *mut Error,
-            Ordering::Release,
-        );
-
-        if ret != expected_old {
-            // CAS failed, reclaim memory
+        let guard = pin();
+        let old =
+            self.global_error
+                .swap(Shared::default(), Ordering::SeqCst, &guard);
+        if !old.is_null() {
+            let guard = pin();
             unsafe {
-                drop(Box::from_raw(ptr));
+                guard.defer_destroy(old);
             }
         }
+    }
+
+    pub(crate) fn set_global_error(&self, error_value: Error) {
+        let guard = pin();
+        let error = Owned::new(error_value);
+
+        let expected_old = Shared::null();
+
+        let _ = self.global_error.compare_and_set(
+            expected_old,
+            error,
+            Ordering::Release,
+            &guard,
+        );
     }
 
     // returns the current snapshot file prefix
