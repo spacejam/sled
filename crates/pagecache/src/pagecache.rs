@@ -1795,7 +1795,7 @@ where
 
         debug!("asynchronously spawning snapshot generation task");
         let config = self.config.clone();
-        threadpool::spawn(move || match gen_snapshot() {
+        let _result = threadpool::spawn(move || match gen_snapshot() {
             Ok(_) => {}
             Err(Error::Io(ref ioe))
                 if ioe.kind() == std::io::ErrorKind::NotFound => {}
@@ -1807,6 +1807,9 @@ where
                 config.set_global_error(error);
             }
         });
+
+        #[cfg(any(test, feature = "check_snapshot_integrity"))]
+        let _ = _result.wait();
 
         // TODO add future for waiting on the result of this if desired
         Ok(())
