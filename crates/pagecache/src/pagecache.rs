@@ -1795,19 +1795,16 @@ where
 
         debug!("asynchronously spawning snapshot generation task");
         let config = self.config.clone();
-        threadpool::spawn(move || {
-            if let Err(e) = gen_snapshot() {
-                match e {
-                    Error::Io(ref ioe)
-                        if ioe.kind() == std::io::ErrorKind::NotFound => {}
-                    error => {
-                        error!(
-                            "encountered error while generating snapshot: {:?}",
-                            error,
-                        );
-                        config.set_global_error(error);
-                    }
-                }
+        threadpool::spawn(move || match gen_snapshot() {
+            Ok(_) => {}
+            Err(Error::Io(ref ioe))
+                if ioe.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                error!(
+                    "encountered error while generating snapshot: {:?}",
+                    error,
+                );
+                config.set_global_error(error);
             }
         });
 
