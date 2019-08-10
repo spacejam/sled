@@ -1733,7 +1733,7 @@ where
             let snapshot_opt_res = snapshot_mu.try_lock();
             if snapshot_opt_res.is_none() {
                 // some other thread is snapshotting
-                warn!(
+                debug!(
                     "snapshot skipped because previous attempt \
                      appears not to have completed"
                 );
