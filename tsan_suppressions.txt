@@ -20,3 +20,7 @@ race:Arc*drop
 # picked-up by TSAN
 race:lazy_static
 race:std::thread::local
+
+# tsan doesn't seem to pick up parking_lot RwLock-protected accesses
+# that sometimes use lock elision
+race:current_iobuf
