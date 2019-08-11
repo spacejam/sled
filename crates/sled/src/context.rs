@@ -33,11 +33,14 @@ impl Drop for Context {
             match self.pagecache.flush() {
                 Ok(0) => return,
                 Ok(_) => continue,
-                Err(e) => error!(
-                    "failed to flush underlying \
-                     pagecache during drop: {:?}",
-                    e
-                ),
+                Err(e) => {
+                    error!(
+                        "failed to flush underlying \
+                         pagecache during drop: {:?}",
+                        e
+                    );
+                    return;
+                }
             }
         }
     }
