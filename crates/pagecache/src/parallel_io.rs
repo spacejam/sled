@@ -41,7 +41,7 @@ fn init_mu() -> Mutex<()> {
 type MutexInit = fn() -> Mutex<()>;
 
 #[cfg(not(unix))]
-static MAX_GLOBAL_FILE_LOCK: Lazy<Mutex<()>, MutexInit> = Lazy::new(init_mu);
+static GLOBAL_FILE_LOCK: Lazy<Mutex<()>, MutexInit> = Lazy::new(init_mu);
 
 #[cfg(not(unix))]
 impl Pio for std::fs::File {
