@@ -22,12 +22,11 @@ no_logs = ["log/max_level_off", "pagecache/no_logs"]
 no_inline = ["pagecache/no_inline"]
 event_log = ["pagecache/event_log"]
 measure_allocs = ["pagecache/measure_allocs"]
-check_snapshot_integrity = []
+check_snapshot_integrity = ["pagecache/check_snapshot_integrity"]
 
 [dependencies]
 pagecache = { path = "../pagecache", version = "0.17" }
 serde_bytes = "0.11"
-lazy_static = "1.3.0"
 parking_lot = "0.9.0"
 
 [dependencies.serde]

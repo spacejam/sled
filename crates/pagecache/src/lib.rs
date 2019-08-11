@@ -25,17 +25,20 @@ mod diskptr;
 mod ds;
 mod iobuf;
 mod iterator;
+mod lazy;
 mod map;
 mod materializer;
 mod meta;
 mod metrics;
 mod pagecache;
 mod parallel_io;
+mod promise;
 mod reader;
 mod reservation;
 mod result;
 mod segment;
 mod snapshot;
+mod threadpool;
 mod tx;
 mod util;
 
@@ -65,7 +68,6 @@ use std::{
 };
 
 use bincode::{deserialize, serialize};
-use lazy_static::lazy_static;
 use log::{debug, error, trace, warn};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
@@ -91,12 +93,14 @@ pub use self::{
     config::{Config, ConfigBuilder},
     diskptr::DiskPtr,
     ds::{node_from_frag_vec, Lru, Node, PageTable, Stack, StackIter, VecSet},
+    lazy::Lazy,
     logger::{Log, LogRead},
     map::{FastMap1, FastMap4, FastMap8, FastSet1, FastSet4, FastSet8},
     materializer::Materializer,
     meta::Meta,
     metrics::M,
     pagecache::{PageCache, PagePtr, RecoveryGuard},
+    promise::{Promise, PromiseFiller},
     reservation::Reservation,
     result::{CasResult, Error, Result},
     segment::SegmentMode,
@@ -270,12 +274,12 @@ pub use self::debug_delay::debug_delay;
 #[cfg(not(any(test, feature = "lock_free_delays")))]
 pub fn debug_delay() {}
 
-pub use crossbeam_epoch::{
+pub use crossbeam::epoch::{
     pin, unprotected, Atomic, Collector, CompareAndSetError, Guard,
     LocalHandle, Owned, Shared,
 };
 
-pub use crossbeam_utils::{Backoff, CachePadded};
+pub use crossbeam::utils::{Backoff, CachePadded};
 
 fn assert_usize<T>(from: T) -> usize
 where

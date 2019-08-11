@@ -180,17 +180,27 @@ pub fn read_snapshot_or_default(config: &Config) -> Result<Snapshot> {
 
 /// Read a `Snapshot` from disk.
 fn read_snapshot(config: &Config) -> std::io::Result<Option<Snapshot>> {
-    let mut candidates = config.get_snapshot_files()?;
-    if candidates.is_empty() {
-        debug!("no previous snapshot found");
-        return Ok(None);
-    }
+    let mut f = loop {
+        let mut candidates = config.get_snapshot_files()?;
+        if candidates.is_empty() {
+            debug!("no previous snapshot found");
+            return Ok(None);
+        }
 
-    candidates.sort();
+        candidates.sort();
 
-    let path = candidates.pop().unwrap();
+        let path = candidates.pop().unwrap();
 
-    let mut f = std::fs::OpenOptions::new().read(true).open(&path)?;
+        match std::fs::OpenOptions::new().read(true).open(&path) {
+            Ok(f) => break f,
+            Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // this can happen if there's a race
+                continue;
+            }
+            Err(other) => return Err(other.into()),
+        }
+    };
+
     if f.metadata()?.len() <= 12 {
         warn!("empty/corrupt snapshot file found");
         return Ok(None);

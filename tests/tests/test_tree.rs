@@ -37,7 +37,6 @@ fn concurrent_tree_ops() {
         debug!("beginning test {}", i);
         let config = ConfigBuilder::new()
             .temporary(true)
-            .async_io(false)
             .flush_every_ms(None)
             .snapshot_after_ops(100_000_000)
             .io_buf_size(250)
@@ -345,7 +344,6 @@ fn tree_subdir() {
     let _ = std::fs::remove_dir_all("/tmp/test_tree_subdir");
 
     let config = ConfigBuilder::new()
-        .async_io(false)
         .path("/tmp/test_tree_subdir/test_subdir".to_owned())
         .build();
 
@@ -562,7 +560,6 @@ fn recover_tree() {
         .temporary(true)
         .io_buf_size(5000)
         .flush_every_ms(None)
-        .async_io(false)
         .snapshot_after_ops(N_PER_THREAD as u64)
         .build();
 

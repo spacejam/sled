@@ -208,7 +208,6 @@ pub fn prop_tree_matches_btreemap(
 
     use self::*;
     let config = ConfigBuilder::new()
-        .async_io(false)
         .temporary(true)
         .use_compression(use_compression)
         .snapshot_after_ops(u64::from(snapshot_after) + 1)

@@ -410,32 +410,23 @@ impl Log {
             }
 
             let lsn = iobuf.lsn;
-            if self.config.async_io {
-                trace!(
-                    "asynchronously writing iobuf with lsn {} \
-                     to log from exit_reservation",
-                    lsn
-                );
-                let iobufs = self.iobufs.clone();
-                let iobuf = iobuf.clone();
-                rayon::spawn(move || {
-                    if let Err(e) = iobufs.write_to_log(&iobuf) {
-                        error!(
-                            "hit error while writing iobuf with lsn {}: {:?}",
-                            lsn, e
-                        );
-                        iobufs.config.set_global_error(e);
-                    }
-                });
-                Ok(())
-            } else {
-                trace!(
-                    "synchronously writing iobuf with \
-                     lsn {} to log from exit_reservation",
-                    lsn
-                );
-                self.iobufs.write_to_log(iobuf)
-            }
+            trace!(
+                "asynchronously writing iobuf with lsn {} \
+                 to log from exit_reservation",
+                lsn
+            );
+            let iobufs = self.iobufs.clone();
+            let iobuf = iobuf.clone();
+            threadpool::spawn(move || {
+                if let Err(e) = iobufs.write_to_log(&iobuf) {
+                    error!(
+                        "hit error while writing iobuf with lsn {}: {:?}",
+                        lsn, e
+                    );
+                    iobufs.config.set_global_error(e);
+                }
+            });
+            Ok(())
         } else {
             Ok(())
         }

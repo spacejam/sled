@@ -121,7 +121,6 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 
     let config = ConfigBuilder::new()
         .temporary(true)
-        .async_io(false)
         .snapshot_after_ops(1)
         .flush_every_ms(if flusher { Some(1) } else { None })
         .io_buf_size(io_buf_size)

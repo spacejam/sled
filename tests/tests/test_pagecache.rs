@@ -110,7 +110,6 @@ fn concurrent_pagecache() -> sled::Result<()> {
 
     let config = ConfigBuilder::new()
         .temporary(true)
-        .async_io(false)
         .flush_every_ms(Some(10))
         .snapshot_after_ops(100_000_000)
         .io_buf_size(250)

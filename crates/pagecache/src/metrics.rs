@@ -13,11 +13,9 @@ use super::*;
 
 use historian::Histo;
 
-lazy_static! {
-    /// A metric collector for all pagecache users running in this
-    /// process.
-    pub static ref M: Metrics = Metrics::default();
-}
+/// A metric collector for all pagecache users running in this
+/// process.
+pub static M: Lazy<Metrics, fn() -> Metrics> = Lazy::new(Metrics::default);
 
 pub(crate) fn clock() -> f64 {
     if cfg!(feature = "no_metrics") {
@@ -30,9 +28,7 @@ pub(crate) fn clock() -> f64 {
 
 // not correct, since it starts counting at the first observance...
 pub(crate) fn uptime() -> Duration {
-    lazy_static! {
-        static ref START: Instant = Instant::now();
-    }
+    static START: Lazy<Instant, fn() -> Instant> = Lazy::new(Instant::now);
 
     if cfg!(feature = "no_metrics") {
         Duration::new(0, 0)

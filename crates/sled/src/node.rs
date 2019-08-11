@@ -1,5 +1,7 @@
 use std::{fmt, ops::Bound};
 
+use pagecache::Lazy;
+
 use super::*;
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
@@ -253,13 +255,13 @@ impl Node {
     ) -> Option<(IVec, IVec)> {
         assert!(!self.data.is_index());
 
-        lazy_static::lazy_static! {
-            static ref MAX_IVEC: IVec = {
-                let mut base = vec![255; 1024 * 1024];
-                base[0] = 0;
-                IVec::from(base)
-            };
+        fn init_max_ivec() -> IVec {
+            let mut base = vec![255; 1024 * 1024];
+            base[0] = 0;
+            IVec::from(base)
         }
+
+        static MAX_IVEC: Lazy<IVec, fn() -> IVec> = Lazy::new(init_max_ivec);
 
         // This encoding happens this way because
         // the rightmost (unbounded) node has

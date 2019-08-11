@@ -1733,7 +1733,7 @@ where
             let snapshot_opt_res = snapshot_mu.try_lock();
             if snapshot_opt_res.is_none() {
                 // some other thread is snapshotting
-                warn!(
+                debug!(
                     "snapshot skipped because previous attempt \
                      appears not to have completed"
                 );
@@ -1793,28 +1793,27 @@ where
             return Err(e);
         }
 
-        if self.config.async_io {
-            debug!("asynchronously spawning snapshot generation task");
-            let config = self.config.clone();
-            rayon::spawn(move || {
-                if let Err(e) = gen_snapshot() {
-                    match e {
-                        Error::Io(ref ioe)
-                            if ioe.kind() == std::io::ErrorKind::NotFound => {}
-                        error => {
-                            error!(
-                                "encountered error while generating snapshot: {:?}",
-                                error,
-                            );
-                            config.set_global_error(error);
-                        }
-                    }
+        debug!("asynchronously spawning snapshot generation task");
+        let config = self.config.clone();
+        let _result = threadpool::spawn(move || {
+            let result = gen_snapshot();
+            match &result {
+                Ok(_) => {}
+                Err(Error::Io(ref ioe))
+                    if ioe.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    error!(
+                        "encountered error while generating snapshot: {:?}",
+                        error,
+                    );
+                    config.set_global_error(error.clone());
                 }
-            });
-        } else {
-            debug!("synchronously generating a new snapshot");
-            gen_snapshot()?;
-        }
+            }
+            result
+        });
+
+        #[cfg(any(test, feature = "check_snapshot_integrity"))]
+        _result.unwrap()?;
 
         // TODO add future for waiting on the result of this if desired
         Ok(())
