@@ -25,6 +25,7 @@ mod diskptr;
 mod ds;
 mod iobuf;
 mod iterator;
+mod lazy;
 mod map;
 mod materializer;
 mod meta;
@@ -67,7 +68,6 @@ use std::{
 };
 
 use bincode::{deserialize, serialize};
-use lazy_static::lazy_static;
 use log::{debug, error, trace, warn};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
@@ -93,6 +93,7 @@ pub use self::{
     config::{Config, ConfigBuilder},
     diskptr::DiskPtr,
     ds::{node_from_frag_vec, Lru, Node, PageTable, Stack, StackIter, VecSet},
+    lazy::Lazy,
     logger::{Log, LogRead},
     map::{FastMap1, FastMap4, FastMap8, FastSet1, FastSet4, FastSet8},
     materializer::Materializer,

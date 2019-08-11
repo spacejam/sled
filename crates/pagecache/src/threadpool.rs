@@ -3,9 +3,8 @@ use std::thread;
 use std::time::Duration;
 
 use crossbeam::channel::{bounded, Receiver, Sender};
-use lazy_static::lazy_static;
 
-use super::Promise;
+use super::{Lazy, Promise};
 
 const MAX_THREADS: u64 = 10_000;
 
@@ -16,29 +15,29 @@ struct Pool {
     receiver: Receiver<Box<dyn FnOnce() + Send + 'static>>,
 }
 
-lazy_static! {
-    static ref POOL: Pool = {
-        for _ in 0..2 {
-            thread::Builder::new()
-                .name("sled-io".to_string())
-                .spawn(|| {
-                    for task in &POOL.receiver {
-                        (task)()
-                    }
-                })
-                .expect("cannot start a thread driving blocking tasks");
-        }
+static POOL: Lazy<Pool, fn() -> Pool> = Lazy::new(init_pool);
 
-        // We want to use an unbuffered channel here to help
-        // us drive our dynamic control. In effect, the
-        // kernel's scheduler becomes the queue, reducing
-        // the number of buffers that work must flow through
-        // before being acted on by a core. This helps keep
-        // latency snappy in the overall async system by
-        // reducing bufferbloat.
-        let (sender, receiver) = bounded(0);
-        Pool { sender, receiver }
-    };
+fn init_pool() -> Pool {
+    for _ in 0..2 {
+        thread::Builder::new()
+            .name("sled-io".to_string())
+            .spawn(|| {
+                for task in &POOL.receiver {
+                    (task)()
+                }
+            })
+            .expect("cannot start a thread driving blocking tasks");
+    }
+
+    // We want to use an unbuffered channel here to help
+    // us drive our dynamic control. In effect, the
+    // kernel's scheduler becomes the queue, reducing
+    // the number of buffers that work must flow through
+    // before being acted on by a core. This helps keep
+    // latency snappy in the overall async system by
+    // reducing bufferbloat.
+    let (sender, receiver) = bounded(0);
+    Pool { sender, receiver }
 }
 
 // Create up to MAX_THREADS dynamic blocking task worker threads.
