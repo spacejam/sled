@@ -29,12 +29,16 @@ impl std::ops::Deref for Context {
 
 impl Drop for Context {
     fn drop(&mut self) {
-        if let Err(e) = self.pagecache.flush() {
-            error!(
-                "failed to flush underlying \
-                 pagecache during drop: {:?}",
-                e
-            );
+        loop {
+            match self.pagecache.flush() {
+                Ok(0) => return,
+                Ok(_) => continue,
+                Err(e) => error!(
+                    "failed to flush underlying \
+                     pagecache during drop: {:?}",
+                    e
+                ),
+            }
         }
     }
 }
