@@ -15,6 +15,7 @@ edition = "2018"
 [features]
 default = []
 lock_free_delays = ["rand", "rand_chacha", "rand_distr"]
+check_snapshot_integrity = []
 compression = ["zstd"]
 failpoints = ["fail", "rand", "fail/failpoints"]
 no_metrics = ["historian/disable"]
