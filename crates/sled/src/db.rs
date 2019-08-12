@@ -87,11 +87,11 @@ impl Db {
         }
 
         // create or open the default tree
-        let tx = context.pagecache.begin()?;
+        let guard = pin();
         let default = Arc::new(meta::open_tree(
             context.clone(),
             DEFAULT_TREE_ID.to_vec(),
-            &tx,
+            &guard,
         )?);
 
         let ret = Db {
@@ -102,7 +102,8 @@ impl Db {
 
         let mut tenants = ret.tenants.write();
 
-        for (id, root) in context.pagecache.meta(&tx)?.tenants().into_iter() {
+        for (id, root) in context.pagecache.meta(&guard)?.tenants().into_iter()
+        {
             let tree = Tree {
                 tree_id: id.clone(),
                 subscriptions: Arc::new(Subscriptions::default()),
@@ -129,13 +130,13 @@ impl Db {
         }
         drop(tenants);
 
-        let tx = self.context.pagecache.begin()?;
+        let guard = pin();
 
         let mut tenants = self.tenants.write();
         let tree = Arc::new(meta::open_tree(
             self.context.clone(),
             name.to_vec(),
-            &tx,
+            &guard,
         )?);
         tenants.insert(name.to_vec(), tree.clone());
         drop(tenants);
@@ -159,14 +160,14 @@ impl Db {
             return Ok(false);
         };
 
-        let tx = self.context.pagecache.begin()?;
+        let guard = pin();
 
         let mut root_id =
-            Some(self.context.pagecache.meta_pid_for_name(&name, &tx)?);
+            Some(self.context.pagecache.meta_pid_for_name(&name, &guard)?);
 
         let mut leftmost_chain: Vec<PageId> = vec![root_id.unwrap()];
         let mut cursor = root_id.unwrap();
-        while let Some(view) = self.view_for_pid(cursor, &tx)? {
+        while let Some(view) = self.view_for_pid(cursor, &guard)? {
             if let Some(index) = view.data.index_ref() {
                 let leftmost_child = index[0].1;
                 leftmost_chain.push(leftmost_child);
@@ -181,7 +182,7 @@ impl Db {
                 name.to_vec(),
                 root_id,
                 None,
-                &tx,
+                &guard,
             )?;
 
             if let Err(actual_root) = res {
@@ -199,7 +200,7 @@ impl Db {
 
         tree.gc_pages(leftmost_chain)?;
 
-        tx.flush();
+        guard.flush();
 
         Ok(true)
     }
