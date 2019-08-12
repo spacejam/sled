@@ -16,7 +16,7 @@ lazy_static = "1.0"
 color-backtrace = "0.2.0"
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
-jemallocator = "0.1"
+jemallocator = "0.3"
 
 [dependencies.serde]
 version = "1.0.90"
