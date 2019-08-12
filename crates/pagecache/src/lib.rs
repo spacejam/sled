@@ -39,7 +39,6 @@ mod result;
 mod segment;
 mod snapshot;
 mod threadpool;
-mod tx;
 mod util;
 
 #[cfg(feature = "measure_allocs")]
@@ -104,7 +103,6 @@ pub use self::{
     reservation::Reservation,
     result::{CasResult, Error, Result},
     segment::SegmentMode,
-    tx::{Tx, TxError, TxResult},
 };
 
 #[doc(hidden)]

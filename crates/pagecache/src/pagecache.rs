@@ -154,27 +154,27 @@ impl<'a> RecoveryGuard<'a> {
 ///         // We begin by initiating a new transaction, which
 ///         // will prevent any witnessable memory from being
 ///         // reclaimed before we drop this object.
-///         let tx = pc.begin().unwrap();
+///         let guard = pin();
 ///
 ///         // The first item in a page should be set using allocate,
 ///         // which signals that this is the beginning of a new
 ///         // page history.
-///         let (id, mut key) = pc.allocate(TestState("a".to_owned()), &tx).unwrap();
+///         let (id, mut key) = pc.allocate(TestState("a".to_owned()), &guard).unwrap();
 ///
 ///         // Subsequent atomic updates should be added with link.
-///         key = pc.link(id, key, TestState("b".to_owned()), &tx).unwrap().unwrap();
-///         key = pc.link(id, key, TestState("c".to_owned()), &tx).unwrap().unwrap();
+///         key = pc.link(id, key, TestState("b".to_owned()), &guard).unwrap().unwrap();
+///         key = pc.link(id, key, TestState("c".to_owned()), &guard).unwrap().unwrap();
 ///
 ///         // When getting a page, the provided `Materializer` is
 ///         // used to merge all pages together.
-///         let (mut key, page, size_on_disk) = pc.get(id, &tx).unwrap().unwrap();
+///         let (mut key, page, size_on_disk) = pc.get(id, &guard).unwrap().unwrap();
 ///
 ///         assert_eq!(page.0, "abc".to_owned());
 ///
 ///         // You can completely rewrite a page by using `replace`:
-///         key = pc.replace(id, key, TestState("d".into()), &tx).unwrap().unwrap();
+///         key = pc.replace(id, key, TestState("d".into()), &guard).unwrap().unwrap();
 ///
-///         let (key, page, size_on_disk) = pc.get(id, &tx).unwrap().unwrap();
+///         let (key, page, size_on_disk) = pc.get(id, &guard).unwrap().unwrap();
 ///
 ///         assert_eq!(page.0, "d".to_owned());
 ///     }
@@ -233,19 +233,21 @@ where
             let mut pages_before_restart: HashMap<PageId, Vec<DiskPtr>> =
                 HashMap::new();
 
-            let tx = Tx::new(&self, 0);
+            let guard = pin();
 
             self.config.event_log.meta_before_restart(
-                self.meta(&tx).expect("should get meta under test").clone(),
+                self.meta(&guard)
+                    .expect("should get meta under test")
+                    .clone(),
             );
 
             for pid in 0..self.next_pid_to_allocate.load(Acquire) {
-                let pte = self.inner.get(pid, &tx.guard);
+                let pte = self.inner.get(pid, &guard);
                 if pte.is_none() {
                     continue;
                 }
-                let head = unsafe { pte.unwrap().deref().head(&tx.guard) };
-                let ptrs = ptrs_from_stack(head, &tx);
+                let head = unsafe { pte.unwrap().deref().head(&guard) };
+                let ptrs = ptrs_from_stack(head, &guard);
                 pages_before_restart.insert(pid, ptrs);
             }
 
@@ -298,19 +300,19 @@ where
         {
             // NB this must be before idgen/meta are initialized
             // because they may cas_page on initial page-in.
-            let tx = Tx::new(&pc, 0);
+            let guard = pin();
 
             use std::collections::HashMap;
             let mut pages_after_restart: HashMap<PageId, Vec<DiskPtr>> =
                 HashMap::new();
 
             for pid in 0..pc.next_pid_to_allocate.load(Acquire) {
-                let pte = pc.inner.get(pid, &tx.guard);
+                let pte = pc.inner.get(pid, &guard);
                 if pte.is_none() {
                     continue;
                 }
-                let head = unsafe { pte.unwrap().deref().head(&tx.guard) };
-                let ptrs = ptrs_from_stack(head, &tx);
+                let head = unsafe { pte.unwrap().deref().head(&guard) };
+                let ptrs = ptrs_from_stack(head, &guard);
                 pages_after_restart.insert(pid, ptrs);
             }
 
@@ -322,15 +324,15 @@ where
         {
             // subscope required because pc.begin() borrows pc
 
-            let tx = pc.begin()?;
+            let guard = pin();
 
-            if let Err(Error::ReportableBug(..)) = pc.get_meta(&tx) {
+            if let Err(Error::ReportableBug(..)) = pc.get_meta(&guard) {
                 // set up meta
                 was_recovered = false;
 
                 let meta_update = Update::Meta(Meta::default());
 
-                let (meta_id, _) = pc.allocate_inner(meta_update, &tx)?;
+                let (meta_id, _) = pc.allocate_inner(meta_update, &guard)?;
 
                 assert_eq!(
                     meta_id,
@@ -341,13 +343,14 @@ where
                 );
             }
 
-            if let Err(Error::ReportableBug(..)) = pc.get_idgen(&tx) {
+            if let Err(Error::ReportableBug(..)) = pc.get_idgen(&guard) {
                 // set up idgen
                 was_recovered = false;
 
                 let counter_update = Update::Counter(0);
 
-                let (counter_id, _) = pc.allocate_inner(counter_update, &tx)?;
+                let (counter_id, _) =
+                    pc.allocate_inner(counter_update, &guard)?;
 
                 assert_eq!(
                     counter_id,
@@ -358,14 +361,16 @@ where
                 );
             }
 
-            if let Err(Error::ReportableBug(..)) = pc.get_persisted_config(&tx)
+            if let Err(Error::ReportableBug(..)) =
+                pc.get_persisted_config(&guard)
             {
                 // set up idgen
                 was_recovered = false;
 
                 let config_update = Update::Config(PersistedConfig);
 
-                let (config_id, _) = pc.allocate_inner(config_update, &tx)?;
+                let (config_id, _) =
+                    pc.allocate_inner(config_update, &guard)?;
 
                 assert_eq!(
                     config_id,
@@ -376,7 +381,7 @@ where
                 );
             }
 
-            let (_, counter) = pc.get_idgen(&tx)?;
+            let (_, counter) = pc.get_idgen(&guard)?;
             let idgen_recovery = if was_recovered {
                 counter + (2 * pc.config.idgen_persist_interval)
             } else {
@@ -393,10 +398,10 @@ where
 
         #[cfg(feature = "event_log")]
         {
-            let tx = Tx::new(&pc, 0);
+            let guard = pin();
 
             pc.config.event_log.meta_after_restart(
-                pc.meta(&tx)
+                pc.meta(&guard)
                     .expect("should be able to get meta under test")
                     .clone(),
             );
@@ -413,11 +418,6 @@ where
         self.log.flush()
     }
 
-    /// Begins a transaction.
-    pub fn begin(&self) -> Result<Tx<P>> {
-        Ok(Tx::new(&self, self.generate_id()?))
-    }
-
     /// Create a new page, trying to reuse old freed pages if possible
     /// to maximize underlying `PageTable` pointer density. Returns
     /// the page ID and its pointer for use in future atomic `replace`
@@ -425,9 +425,9 @@ where
     pub fn allocate<'g>(
         &self,
         new: P,
-        tx: &'g Tx<P>,
+        guard: &'g Guard,
     ) -> Result<(PageId, PagePtr<'g, P>)> {
-        self.allocate_inner(Update::Compact(new), tx)
+        self.allocate_inner(Update::Compact(new), guard)
     }
 
     /// Attempt to opportunistically rewrite data from a Draining
@@ -440,14 +440,14 @@ where
         if self.config.read_only {
             return Ok(false);
         }
-        let tx = Tx::new(&self, 0);
+        let guard = pin();
         let to_clean = self.log.with_sa(|sa| sa.clean(COUNTER_PID));
         let ret = if let Some(to_clean) = to_clean {
-            self.rewrite_page(to_clean, &tx).map(|_| true)
+            self.rewrite_page(to_clean, &guard).map(|_| true)
         } else {
             Ok(false)
         };
-        tx.guard.flush();
+        guard.flush();
         ret
     }
 
@@ -488,12 +488,12 @@ where
     fn allocate_inner<'g>(
         &self,
         new: Update<P>,
-        tx: &'g Tx<P>,
+        guard: &'g Guard,
     ) -> Result<(PageId, PagePtr<'g, P>)> {
         let (pid, key) = if let Some(pid) = self.free.lock().pop() {
             trace!("re-allocating pid {}", pid);
 
-            let head_ptr = match self.inner.get(pid, &tx.guard) {
+            let head_ptr = match self.inner.get(pid, &guard) {
                 None => panic!(
                     "expected to find existing stack \
                      for re-allocated pid {}",
@@ -502,9 +502,9 @@ where
                 Some(p) => p,
             };
 
-            let head = unsafe { head_ptr.deref().head(&tx.guard) };
+            let head = unsafe { head_ptr.deref().head(&guard) };
 
-            let mut stack_iter = StackIter::from_ptr(head, &tx.guard);
+            let mut stack_iter = StackIter::from_ptr(head, &guard);
 
             match stack_iter.next() {
                 Some((Some(Update::Free), cache_info)) => (
@@ -527,10 +527,10 @@ where
 
             let new_stack = Stack::default();
 
-            let head_ptr = Owned::new(new_stack).into_shared(&tx.guard);
+            let head_ptr = Owned::new(new_stack).into_shared(&guard);
 
             self.inner
-                .cas(pid, Shared::null(), head_ptr, &tx.guard)
+                .cas(pid, Shared::null(), head_ptr, &guard)
                 .expect(
                     "allocating a fresh new page should \
                      never conflict on existing data",
@@ -545,16 +545,16 @@ where
             )
         };
 
-        let new_ptr =
-            self.cas_page(pid, key, new, false, tx)?
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "should always be able to install \
-                         a new page during allocation, but \
-                         failed for pid {}: {:?}",
-                        pid, e
-                    )
-                });
+        let new_ptr = self
+            .cas_page(pid, key, new, false, guard)?
+            .unwrap_or_else(|e| {
+                panic!(
+                    "should always be able to install \
+                     a new page during allocation, but \
+                     failed for pid {}: {:?}",
+                    pid, e
+                )
+            });
 
         Ok((pid, new_ptr))
     }
@@ -564,7 +564,7 @@ where
         &self,
         pid: PageId,
         old: PagePtr<'g, P>,
-        tx: &'g Tx<P>,
+        guard: &'g Guard,
     ) -> Result<CasResult<'g, P, ()>> {
         trace!("attempting to free pid {}", pid);
 
@@ -581,11 +581,11 @@ where
             ));
         }
 
-        let new_ptr = self.cas_page(pid, old, Update::Free, false, tx)?;
+        let new_ptr = self.cas_page(pid, old, Update::Free, false, guard)?;
 
         if new_ptr.is_ok() {
             let free = self.free.clone();
-            tx.guard.defer(move || {
+            guard.defer(move || {
                 let mut free = free.lock();
                 // panic if we double-freed a page
                 if free.iter().any(|e| e == &pid) {
@@ -608,23 +608,23 @@ where
         pid: PageId,
         mut old: PagePtr<'g, P>,
         new: P,
-        tx: &'g Tx<P>,
+        guard: &'g Guard,
     ) -> Result<CasResult<'g, P, P>> {
         let _measure = Measure::new(&M.link_page);
 
         trace!("linking pid {} with {:?}", pid, new);
-        let head_ptr = match self.inner.get(pid, &tx.guard) {
+        let head_ptr = match self.inner.get(pid, &guard) {
             None => return Ok(Err(None)),
             Some(p) => p,
         };
 
         // see if we should short-circuit replace
-        let head = unsafe { head_ptr.deref().head(&tx.guard) };
-        let stack_iter = StackIter::from_ptr(head, &tx.guard);
+        let head = unsafe { head_ptr.deref().head(&guard) };
+        let stack_iter = StackIter::from_ptr(head, &guard);
         let stack_len = stack_iter.size_hint().1.unwrap();
         if stack_len >= self.config.page_consolidation_threshold {
             let current_frag =
-                if let Some((current_ptr, frag, _sz)) = self.get(pid, tx)? {
+                if let Some((current_ptr, frag, _sz)) = self.get(pid, guard)? {
                     if old.ts != current_ptr.ts
                         && old.cached_ptr != current_ptr.cached_ptr
                     {
@@ -646,7 +646,7 @@ where
                 update
             };
 
-            return self.replace(pid, old, update, tx);
+            return self.replace(pid, old, update, guard);
         }
 
         let bytes = measure(&M.serialize, || serialize(&new).unwrap());
@@ -715,7 +715,7 @@ where
 
             debug_delay();
             let result = unsafe {
-                head_ptr.deref().cap_node(old.cached_ptr, node, &tx.guard)
+                head_ptr.deref().cap_node(old.cached_ptr, node, &guard)
             };
 
             match result {
@@ -752,7 +752,7 @@ where
                     log_reservation.complete()?;
 
                     if let Some(to_clean) = to_clean {
-                        self.rewrite_page(to_clean, tx)?;
+                        self.rewrite_page(to_clean, guard)?;
                     }
 
                     let count = self.updates.fetch_add(1, Relaxed) + 1;
@@ -799,20 +799,20 @@ where
         pid: PageId,
         old: PagePtr<'g, P>,
         new: P,
-        tx: &'g Tx<P>,
+        guard: &'g Guard,
     ) -> Result<CasResult<'g, P, P>> {
         let _measure = Measure::new(&M.replace_page);
 
         trace!("replacing pid {} with {:?}", pid, new);
 
         let result =
-            self.cas_page(pid, old, Update::Compact(new), false, tx)?;
+            self.cas_page(pid, old, Update::Compact(new), false, guard)?;
 
         let to_clean = self.log.with_sa(|sa| sa.clean(pid));
 
         if let Some(to_clean) = to_clean {
             assert_ne!(pid, to_clean);
-            self.rewrite_page(to_clean, tx)?;
+            self.rewrite_page(to_clean, guard)?;
         }
 
         let count = self.updates.fetch_add(1, Relaxed) + 1;
@@ -835,12 +835,12 @@ where
     // (at least partially) located in. This happens when a
     // segment has had enough resident page fragments moved
     // away to trigger the `segment_cleanup_threshold`.
-    fn rewrite_page<'g>(&self, pid: PageId, tx: &'g Tx<P>) -> Result<()> {
+    fn rewrite_page<'g>(&self, pid: PageId, guard: &'g Guard) -> Result<()> {
         let _measure = Measure::new(&M.rewrite_page);
 
         trace!("rewriting pid {}", pid);
 
-        let head_ptr = match self.inner.get(pid, &tx.guard) {
+        let head_ptr = match self.inner.get(pid, &guard) {
             None => {
                 trace!("rewriting pid {} failed (no longer exists)", pid);
                 return Ok(());
@@ -849,8 +849,8 @@ where
         };
 
         debug_delay();
-        let head = unsafe { head_ptr.deref().head(&tx.guard) };
-        let stack_iter = StackIter::from_ptr(head, &tx.guard);
+        let head = unsafe { head_ptr.deref().head(&guard) };
+        let stack_iter = StackIter::from_ptr(head, &guard);
         let cache_entries: Vec<_> = stack_iter.collect();
 
         // if the page is just a single blob pointer, rewrite it.
@@ -868,10 +868,10 @@ where
             let node = node_from_frag_vec(vec![new_cache_entry]);
 
             debug_delay();
-            let result = unsafe { head_ptr.deref().cas(head, node, &tx.guard) };
+            let result = unsafe { head_ptr.deref().cas(head, node, &guard) };
 
             if result.is_ok() {
-                let ptrs = ptrs_from_stack(head, tx);
+                let ptrs = ptrs_from_stack(head, guard);
                 let lsn = log_reservation.lsn();
 
                 self.log
@@ -897,21 +897,21 @@ where
 
             // page-in whole page with a get
             let (key, update): (_, Update<P>) = if pid == META_PID {
-                let (key, meta) = self.get_meta(tx)?;
+                let (key, meta) = self.get_meta(guard)?;
                 (key, Update::Meta(meta.clone()))
             } else if pid == COUNTER_PID {
-                let (key, counter) = self.get_idgen(tx)?;
+                let (key, counter) = self.get_idgen(guard)?;
                 (key, Update::Counter(counter))
             } else if pid == CONFIG_PID {
-                let (key, config) = self.get_persisted_config(tx)?;
+                let (key, config) = self.get_persisted_config(guard)?;
                 (key, Update::Config(config.clone()))
             } else {
-                match self.get(pid, tx)? {
+                match self.get(pid, guard)? {
                     Some((key, frag, _sz)) => {
                         (key, Update::Compact(frag.clone()))
                     }
                     None => {
-                        let head_ptr = match self.inner.get(pid, &tx.guard) {
+                        let head_ptr = match self.inner.get(pid, &guard) {
                             None => panic!(
                                 "expected to find existing stack \
                                  for freed pid {}",
@@ -920,10 +920,9 @@ where
                             Some(p) => p,
                         };
 
-                        let head = unsafe { head_ptr.deref().head(&tx.guard) };
+                        let head = unsafe { head_ptr.deref().head(&guard) };
 
-                        let mut stack_iter =
-                            StackIter::from_ptr(head, &tx.guard);
+                        let mut stack_iter = StackIter::from_ptr(head, &guard);
 
                         match stack_iter.next() {
                             Some((Some(Update::Free), cache_info)) => (
@@ -951,7 +950,7 @@ where
                 }
             };
 
-            self.cas_page(pid, key, update, true, tx).map(|res| {
+            self.cas_page(pid, key, update, true, guard).map(|res| {
                 trace!("rewriting pid {} success: {}", pid, res.is_ok());
             })
         }
@@ -985,16 +984,16 @@ where
     }
 
     fn logical_size_of_all_pages(&self) -> Result<u64> {
-        let tx = self.begin()?;
-        let meta_size = self.meta(&tx)?.size_in_bytes();
+        let guard = pin();
+        let meta_size = self.meta(&guard)?.size_in_bytes();
         let idgen_size = std::mem::size_of::<u64>() as u64;
-        let config_size = self.get_persisted_config(&tx)?.1.size_in_bytes();
+        let config_size = self.get_persisted_config(&guard)?.1.size_in_bytes();
 
         let mut ret = meta_size + idgen_size + config_size;
         let min_pid = CONFIG_PID + 1;
         let next_pid_to_allocate = self.next_pid_to_allocate.load(Acquire);
         for pid in min_pid..next_pid_to_allocate {
-            if let Some((_, _, sz)) = self.get(pid, &tx)? {
+            if let Some((_, _, sz)) = self.get(pid, &guard)? {
                 ret += sz;
             }
         }
@@ -1007,7 +1006,7 @@ where
         mut old: PagePtr<'g, P>,
         update: Update<P>,
         is_rewrite: bool,
-        tx: &'g Tx<P>,
+        guard: &'g Guard,
     ) -> Result<CasResult<'g, P, Update<P>>> {
         trace!(
             "cas_page called on pid {} to {:?} with old ts {:?}",
@@ -1015,7 +1014,7 @@ where
             update,
             old.ts
         );
-        let head_ptr = match self.inner.get(pid, &tx.guard) {
+        let head_ptr = match self.inner.get(pid, &guard) {
             None => {
                 trace!("early-returning from cas_page, no stack found");
                 return Ok(Err(None));
@@ -1072,14 +1071,13 @@ where
             )]);
 
             debug_delay();
-            let result = unsafe {
-                head_ptr.deref().cas(old.cached_ptr, node, &tx.guard)
-            };
+            let result =
+                unsafe { head_ptr.deref().cas(old.cached_ptr, node, &guard) };
 
             match result {
                 Ok(cached_ptr) => {
                     trace!("cas_page succeeded on pid {}", pid);
-                    let pointers = ptrs_from_stack(old.cached_ptr, tx);
+                    let pointers = ptrs_from_stack(old.cached_ptr, guard);
 
                     self.log.with_sa(|sa| {
                         sa.mark_replace(pid, lsn, pointers, new_ptr)
@@ -1127,11 +1125,11 @@ where
     /// Retrieve the current meta page
     pub(crate) fn get_meta<'g>(
         &self,
-        tx: &'g Tx<P>,
+        guard: &'g Guard,
     ) -> Result<(PagePtr<'g, P>, &'g Meta)> {
         trace!("getting page iter for META");
 
-        let head_ptr = match self.inner.get(META_PID, &tx.guard) {
+        let head_ptr = match self.inner.get(META_PID, &guard) {
             None => {
                 return Err(Error::ReportableBug(
                     "failed to retrieve META page \
@@ -1142,9 +1140,9 @@ where
             Some(pointer) => pointer,
         };
 
-        let head = unsafe { head_ptr.deref().head(&tx.guard) };
+        let head = unsafe { head_ptr.deref().head(&guard) };
 
-        match StackIter::from_ptr(head, &tx.guard).next() {
+        match StackIter::from_ptr(head, &guard).next() {
             Some((Some(Update::Meta(m)), cache_info)) => Ok((
                 PagePtr {
                     cached_ptr: head,
@@ -1159,8 +1157,8 @@ where
                     cached_ptr: head,
                     ts: cache_info.ts,
                 };
-                let _ = self.cas_page(META_PID, ptr, update, false, tx)?;
-                self.get_meta(tx)
+                let _ = self.cas_page(META_PID, ptr, update, false, guard)?;
+                self.get_meta(guard)
             }
             _ => Err(Error::ReportableBug(
                 "failed to retrieve META page \
@@ -1173,11 +1171,11 @@ where
     /// Retrieve the current meta page
     pub(crate) fn get_persisted_config<'g>(
         &self,
-        tx: &'g Tx<P>,
+        guard: &'g Guard,
     ) -> Result<(PagePtr<'g, P>, &'g PersistedConfig)> {
         trace!("getting page iter for persisted config");
 
-        let head_ptr = match self.inner.get(CONFIG_PID, &tx.guard) {
+        let head_ptr = match self.inner.get(CONFIG_PID, &guard) {
             None => {
                 return Err(Error::ReportableBug(
                     "failed to retrieve persisted config page \
@@ -1188,9 +1186,9 @@ where
             Some(pointer) => pointer,
         };
 
-        let head = unsafe { head_ptr.deref().head(&tx.guard) };
+        let head = unsafe { head_ptr.deref().head(&guard) };
 
-        match StackIter::from_ptr(head, &tx.guard).next() {
+        match StackIter::from_ptr(head, &guard).next() {
             Some((Some(Update::Config(config)), cache_info)) => Ok((
                 PagePtr {
                     cached_ptr: head,
@@ -1205,8 +1203,8 @@ where
                     cached_ptr: head,
                     ts: cache_info.ts,
                 };
-                let _ = self.cas_page(CONFIG_PID, ptr, update, false, tx)?;
-                self.get_persisted_config(tx)
+                let _ = self.cas_page(CONFIG_PID, ptr, update, false, guard)?;
+                self.get_persisted_config(guard)
             }
             _ => Err(Error::ReportableBug(
                 "failed to retrieve CONFIG page \
@@ -1219,11 +1217,11 @@ where
     /// Retrieve the current persisted IDGEN value
     pub(crate) fn get_idgen<'g>(
         &self,
-        tx: &'g Tx<P>,
+        guard: &'g Guard,
     ) -> Result<(PagePtr<'g, P>, u64)> {
         trace!("getting page iter for idgen");
 
-        let head_ptr = match self.inner.get(COUNTER_PID, &tx.guard) {
+        let head_ptr = match self.inner.get(COUNTER_PID, &guard) {
             None => {
                 return Err(Error::ReportableBug(
                     "failed to retrieve idgen page \
@@ -1234,9 +1232,9 @@ where
             Some(pointer) => pointer,
         };
 
-        let head = unsafe { head_ptr.deref().head(&tx.guard) };
+        let head = unsafe { head_ptr.deref().head(&guard) };
 
-        match StackIter::from_ptr(head, &tx.guard).next() {
+        match StackIter::from_ptr(head, &guard).next() {
             Some((Some(Update::Counter(counter)), cache_info)) => Ok((
                 PagePtr {
                     cached_ptr: head,
@@ -1251,8 +1249,9 @@ where
                     cached_ptr: head,
                     ts: cache_info.ts,
                 };
-                let _ = self.cas_page(COUNTER_PID, ptr, update, false, tx)?;
-                self.get_idgen(tx)
+                let _ =
+                    self.cas_page(COUNTER_PID, ptr, update, false, guard)?;
+                self.get_idgen(guard)
             }
             _ => Err(Error::ReportableBug(
                 "failed to retrieve idgen page \
@@ -1266,7 +1265,7 @@ where
     pub fn get<'g>(
         &self,
         pid: PageId,
-        tx: &'g Tx<P>,
+        guard: &'g Guard,
     ) -> Result<Option<(PagePtr<'g, P>, &'g P, u64)>> {
         trace!("getting page iterator for pid {}", pid);
         let _measure = Measure::new(&M.get_page);
@@ -1285,14 +1284,14 @@ where
             ));
         }
 
-        let head_ptr = match self.inner.get(pid, &tx.guard) {
+        let head_ptr = match self.inner.get(pid, &guard) {
             None => return Ok(None),
             Some(p) => p,
         };
 
-        let head = unsafe { head_ptr.deref().head(&tx.guard) };
+        let head = unsafe { head_ptr.deref().head(&guard) };
 
-        let entries: Vec<_> = StackIter::from_ptr(head, &tx.guard).collect();
+        let entries: Vec<_> = StackIter::from_ptr(head, &guard).collect();
 
         let is_free = if let Some((Some(entry), _)) = entries.first() {
             entry.is_free()
@@ -1396,15 +1395,15 @@ where
 
         frags[0].0 = Some(Update::Compact(base));
 
-        let node = node_from_frag_vec(frags).into_shared(&tx.guard);
+        let node = node_from_frag_vec(frags).into_shared(&guard);
 
         #[cfg(feature = "event_log")]
-        assert_eq!(ptrs_from_stack(head, tx), ptrs_from_stack(node, tx),);
+        assert_eq!(ptrs_from_stack(head, guard), ptrs_from_stack(node, guard),);
 
         let node = unsafe { node.into_owned() };
 
         debug_delay();
-        let res = unsafe { head_ptr.deref().cas(head, node, &tx.guard) };
+        let res = unsafe { head_ptr.deref().cas(head, node, &guard) };
         if let Ok(new_ptr) = res {
             trace!("fix-up for pid {} succeeded", pid);
 
@@ -1412,7 +1411,7 @@ where
             let to_evict = self.lru.accessed(pid, total_page_size);
             trace!("accessed pid {} -> paging out pids {:?}", pid, to_evict);
             if !to_evict.is_empty() {
-                self.page_out(to_evict, tx)?;
+                self.page_out(to_evict, guard)?;
             }
 
             let page_ref = unsafe {
@@ -1433,7 +1432,7 @@ where
         } else {
             trace!("fix-up for pid {} failed", pid);
 
-            self.get(pid, tx)
+            self.get(pid, guard)
         }
     }
 
@@ -1484,8 +1483,8 @@ where
             persisted = self.idgen_persists.load(Acquire);
             if persisted < necessary_persists {
                 // it's our responsibility to persist up to our ID
-                let tx = Tx::new(&self, u64::max_value());
-                let (key, current) = self.get_idgen(&tx)?;
+                let guard = pin();
+                let (key, current) = self.get_idgen(&guard)?;
 
                 assert_eq!(current, persisted);
 
@@ -1499,7 +1498,7 @@ where
                     key.clone(),
                     counter_update,
                     false,
-                    &tx,
+                    &guard,
                 );
 
                 if res?.is_err() {
@@ -1528,8 +1527,8 @@ where
     /// mapping from identifiers to PageId's that the `PageCache`
     /// owner may use for storing metadata about their higher-level
     /// collections.
-    pub fn meta<'a>(&self, tx: &'a Tx<P>) -> Result<&'a Meta> {
-        self.get_meta(tx).map(|(_k, m)| m)
+    pub fn meta<'a>(&self, guard: &'a Guard) -> Result<&'a Meta> {
+        self.get_meta(guard).map(|(_k, m)| m)
     }
 
     /// Look up a PageId for a given identifier in the `Meta`
@@ -1539,8 +1538,12 @@ where
     /// sled's `Tree` root tracking for an example of
     /// avoiding this in a lock-free way that handles
     /// various race conditions.
-    pub fn meta_pid_for_name(&self, name: &[u8], tx: &Tx<P>) -> Result<PageId> {
-        let m = self.meta(tx)?;
+    pub fn meta_pid_for_name(
+        &self,
+        name: &[u8],
+        guard: &Guard,
+    ) -> Result<PageId> {
+        let m = self.meta(guard)?;
         if let Some(root) = m.get_root(name) {
             Ok(root)
         } else {
@@ -1555,10 +1558,10 @@ where
         name: Vec<u8>,
         old: Option<PageId>,
         new: Option<PageId>,
-        tx: &'g Tx<P>,
+        guard: &'g Guard,
     ) -> Result<std::result::Result<(), Option<PageId>>> {
         loop {
-            let (meta_key, meta) = self.get_meta(tx)?;
+            let (meta_key, meta) = self.get_meta(guard)?;
 
             let actual = meta.get_root(&name);
             if actual != old {
@@ -1579,7 +1582,7 @@ where
                 meta_key.clone(),
                 new_meta_frag,
                 false,
-                &tx,
+                &guard,
             )?;
 
             match res {
@@ -1596,7 +1599,11 @@ where
         }
     }
 
-    fn page_out<'g>(&self, to_evict: Vec<PageId>, tx: &'g Tx<P>) -> Result<()> {
+    fn page_out<'g>(
+        &self,
+        to_evict: Vec<PageId>,
+        guard: &'g Guard,
+    ) -> Result<()> {
         let _measure = Measure::new(&M.page_out);
         'different_page_eviction: for pid in to_evict {
             if pid == COUNTER_PID
@@ -1608,14 +1615,14 @@ where
                 continue;
             }
 
-            let head_ptr = match self.inner.get(pid, &tx.guard) {
+            let head_ptr = match self.inner.get(pid, &guard) {
                 None => continue 'different_page_eviction,
                 Some(ptr) => ptr,
             };
 
             debug_delay();
-            let head = unsafe { head_ptr.deref().head(&tx.guard) };
-            let stack_iter = StackIter::from_ptr(head, &tx.guard);
+            let head = unsafe { head_ptr.deref().head(&guard) };
+            let stack_iter = StackIter::from_ptr(head, &guard);
             let stack_len = stack_iter.size_hint().1.unwrap();
             let mut new_stack = Vec::with_capacity(stack_len);
 
@@ -1634,7 +1641,7 @@ where
             let node = node_from_frag_vec(new_stack);
 
             debug_delay();
-            let result = unsafe { head_ptr.deref().cas(head, node, &tx.guard) };
+            let result = unsafe { head_ptr.deref().cas(head, node, &guard) };
             if result.is_ok() {
                 // TODO record cache difference
             } else {
@@ -1893,13 +1900,13 @@ where
 
 fn ptrs_from_stack<'g, P>(
     head_ptr: PagePtrInner<'g, P>,
-    tx: &'g Tx<'g, P>,
+    guard: &'g Guard,
 ) -> Vec<DiskPtr>
 where
     P: Materializer,
 {
     // generate a list of the old log ID's
-    let stack_iter = StackIter::from_ptr(head_ptr, &tx.guard);
+    let stack_iter = StackIter::from_ptr(head_ptr, &guard);
 
     let mut ptrs = vec![];
     for (_, cache_info) in stack_iter {
