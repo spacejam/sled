@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
 
-use crossbeam::channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{bounded, Receiver, Sender};
 
 use super::{Lazy, Promise};
 
@@ -82,14 +82,14 @@ where
         Ok(()) => {
             // NICEEEE
         }
-        Err(crossbeam::channel::TrySendError::Full(task)) => {
+        Err(crossbeam_channel::TrySendError::Full(task)) => {
             // We were not able to send to the channel without
             // blocking. Try to spin up another thread and then
             // retry sending while blocking.
             maybe_create_another_blocking_thread();
             POOL.sender.send(task).unwrap()
         }
-        Err(crossbeam::channel::TrySendError::Disconnected(_)) => {
+        Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
             panic!(
                 "unable to send to blocking threadpool \
                  due to receiver disconnection"
