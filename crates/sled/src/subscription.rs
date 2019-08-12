@@ -158,12 +158,12 @@ impl ReservedBroadcast {
         while sent + 1 < len {
             sent += 1;
             let tx = iter.next().unwrap();
-            let _ = tx.fill(event.clone());
+            tx.fill(event.clone());
         }
 
         if len != 0 {
             let tx = iter.next().unwrap();
-            let _ = tx.fill(event);
+            tx.fill(event);
         }
     }
 }

@@ -195,7 +195,7 @@ impl ConfigBuilder {
                 pb
             };
 
-            self.path = PathBuf::from(tmp_path);
+            self.path = tmp_path;
         }
 
         let file = self.open_file().unwrap_or_else(|e| {
