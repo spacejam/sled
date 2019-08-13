@@ -272,12 +272,12 @@ pub use self::debug_delay::debug_delay;
 #[cfg(not(any(test, feature = "lock_free_delays")))]
 pub fn debug_delay() {}
 
-pub use crossbeam::epoch::{
+pub use crossbeam_epoch::{
     pin, unprotected, Atomic, Collector, CompareAndSetError, Guard,
     LocalHandle, Owned, Shared,
 };
 
-pub use crossbeam::utils::{Backoff, CachePadded};
+pub use crossbeam_utils::{Backoff, CachePadded};
 
 fn assert_usize<T>(from: T) -> usize
 where

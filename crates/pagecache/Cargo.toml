@@ -14,7 +14,7 @@ edition = "2018"
 
 [features]
 default = ["no_metrics"]
-lock_free_delays = ["rand", "rand_chacha", "rand_distr"]
+lock_free_delays = ["rand", "rand_chacha", "rand_distr", "parking_lot/deadlock_detection"]
 check_snapshot_integrity = []
 compression = ["zstd"]
 failpoints = ["fail", "rand", "fail/failpoints"]
@@ -25,7 +25,9 @@ event_log = []
 measure_allocs = []
 
 [dependencies]
-crossbeam = "0.7.2"
+crossbeam-channel = "0.3"
+crossbeam-epoch = "0.7"
+crossbeam-utils = "0.6"
 bincode = "1.1.4"
 fxhash = "0.2.1"
 libc = "0.2.60"

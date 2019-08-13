@@ -197,7 +197,7 @@ fn read_snapshot(config: &Config) -> std::io::Result<Option<Snapshot>> {
                 // this can happen if there's a race
                 continue;
             }
-            Err(other) => return Err(other.into()),
+            Err(other) => return Err(other),
         }
     };
 

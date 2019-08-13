@@ -186,7 +186,7 @@ impl ConfigBuilder {
 
             // use shared memory for temporary linux files
             #[cfg(target_os = "linux")]
-            let tmp_path = format!("/dev/shm/pagecache.tmp.{}", salt);
+            let tmp_path = format!("/dev/shm/pagecache.tmp.{}", salt).into();
 
             #[cfg(not(target_os = "linux"))]
             let tmp_path = {
@@ -195,7 +195,7 @@ impl ConfigBuilder {
                 pb
             };
 
-            self.path = PathBuf::from(tmp_path);
+            self.path = tmp_path;
         }
 
         let file = self.open_file().unwrap_or_else(|e| {

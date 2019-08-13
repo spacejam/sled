@@ -25,8 +25,8 @@ assert_eq!(tree.get(&k), Ok(Some(v1)));
 // compare and swap
 tree.cas(k, Some(v1), Some(v2));
 
-// scan forward
-let mut iter = tree.scan(k);
+// range queries
+let mut iter = tree.range(k..);
 assert_eq!(iter.next(), Some(Ok((k, v2))));
 assert_eq!(iter.next(), None);
 
@@ -37,7 +37,8 @@ tree.remove(&k);
 tree.flush();
 ```
 
-We also support [merge operators](https://github.com/spacejam/sled/wiki/merge-operators)!
+We also support [reactive subscription semantics](https://github.com/spacejam/sled/wiki/reactive-semantics)
+and [merge operators](https://github.com/spacejam/sled/wiki/merge-operators)!
 
 # features
 

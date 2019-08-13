@@ -49,7 +49,11 @@ where
             }
         }
 
-        while self.init_mu.compare_and_swap(false, true, SeqCst) != false {}
+        // compare_and_swap returns the last value on success,
+        // or the current value on failure. We want to keep
+        // looping as long as it returns true, so we don't need
+        // any explicit conversion here.
+        while self.init_mu.compare_and_swap(false, true, SeqCst) {}
 
         let value_ptr = self.value.load(SeqCst);
 
