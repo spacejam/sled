@@ -913,7 +913,7 @@ impl SegmentAccountant {
             self.segments[idx]
         );
 
-        let replacements = if self.segments[idx].state == Draining {
+        let replacements = if self.segments[idx].state == Active {
             self.segments[idx].active_to_inactive(lsn, false, &self.config)?
         } else {
             Default::default()
