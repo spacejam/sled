@@ -546,7 +546,7 @@ pub(crate) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Result<usize> {
             if cfg!(feature = "event_log") {
                 let timeout = iobufs
                     .interval_updated
-                    .wait_for(&mut waiter, std::time::Duration::from_secs(10));
+                    .wait_for(&mut waiter, std::time::Duration::from_secs(30));
                 if timeout.timed_out() {
                     fn tn() -> String {
                         std::thread::current()
@@ -555,9 +555,13 @@ pub(crate) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Result<usize> {
                             .to_owned()
                     }
                     panic!(
-                        "{} failed to make_stable after 1 second. \
-                         waiting to stabilize lsn {}, current stable {} intervals: {:?}",
-                        tn(), lsn, iobufs.stable(), waiter
+                        "{} failed to make_stable after 30 seconds. \
+                         waiting to stabilize lsn {}, current stable {} \
+                         intervals: {:?}",
+                        tn(),
+                        lsn,
+                        iobufs.stable(),
+                        waiter
                     );
                 }
             } else {

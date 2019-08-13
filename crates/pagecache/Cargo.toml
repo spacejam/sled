@@ -14,7 +14,7 @@ edition = "2018"
 
 [features]
 default = ["no_metrics"]
-lock_free_delays = ["rand", "rand_chacha", "rand_distr"]
+lock_free_delays = ["rand", "rand_chacha", "rand_distr", "parking_lot/deadlock_detection"]
 check_snapshot_integrity = []
 compression = ["zstd"]
 failpoints = ["fail", "rand", "fail/failpoints"]
