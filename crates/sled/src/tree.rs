@@ -148,11 +148,17 @@ impl Tree {
             let guard = pin();
             let View { ptr, pid, node, .. } =
                 self.node_for_key(key.as_ref(), &guard)?;
-            let encoded_key = prefix_encode(&node.lo, key.as_ref());
 
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
 
-            let last_value = node.leaf_value_for_key(key.as_ref());
+            let (encoded_key, last_value) =
+                if let Some((k, v)) = node.leaf_pair_for_key(key.as_ref()) {
+                    (k.clone(), Some(v.clone()))
+                } else {
+                    let k = prefix_encode(&node.lo, key.as_ref());
+                    let old_v = None;
+                    (k, old_v)
+                };
             let frag = Frag::Set(encoded_key, value.clone());
             let link = self.context.pagecache.link(
                 pid,
@@ -169,7 +175,7 @@ impl Tree {
                     res.complete(event);
                 }
 
-                return Ok(last_value.cloned());
+                return Ok(last_value);
             }
             M.tree_looped();
         }
@@ -223,7 +229,10 @@ impl Tree {
 
         let View { node, .. } = self.node_for_key(key.as_ref(), &guard)?;
 
-        Ok(node.leaf_value_for_key(key.as_ref()).cloned())
+        let kv_opt = node.leaf_pair_for_key(key.as_ref());
+        let k_opt = kv_opt.map(|kv| kv.0.clone());
+
+        Ok(k_opt)
     }
 
     /// Delete a value, returning the old value if it existed.
@@ -273,7 +282,9 @@ impl Tree {
 
             let View { ptr, pid, node, .. } =
                 self.node_for_key(key.as_ref(), &guard)?;
-            let existing_val = node.leaf_value_for_key(key.as_ref());
+
+            let existing_kv_opt = node.leaf_pair_for_key(key.as_ref());
+            let existing_val_opt = existing_kv_opt.map(|kv| kv.1.clone());
 
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
 
@@ -294,7 +305,7 @@ impl Tree {
                     res.complete(event);
                 }
 
-                return Ok(existing_val.cloned());
+                return Ok(existing_val_opt);
             }
         }
     }
@@ -351,21 +362,28 @@ impl Tree {
             let guard = pin();
             let View { ptr, pid, node, .. } =
                 self.node_for_key(key.as_ref(), &guard)?;
-            let cur = node.leaf_value_for_key(key.as_ref());
 
-            let matches = match (&old, &cur) {
+            let (encoded_key, current_value) =
+                if let Some((k, v)) = node.leaf_pair_for_key(key.as_ref()) {
+                    (k.clone(), Some(v.clone()))
+                } else {
+                    let k = prefix_encode(&node.lo, key.as_ref());
+                    let old_v = None;
+                    (k, old_v)
+                };
+
+            let matches = match (&old, &current_value) {
                 (None, None) => true,
-                (Some(ref o), Some(ref c)) => o.as_ref() == &***c,
+                (Some(ref o), Some(ref c)) => o.as_ref() == &**c,
                 _ => false,
             };
 
             if !matches {
-                return Ok(Err(cur.cloned()));
+                return Ok(Err(current_value));
             }
 
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
 
-            let encoded_key = prefix_encode(&node.lo, key.as_ref());
             let frag = if let Some(ref new) = new {
                 Frag::Set(encoded_key, new.clone())
             } else {
