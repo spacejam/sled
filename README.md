@@ -53,6 +53,7 @@ and [merge operators](https://github.com/spacejam/sled/wiki/merge-operators)!
 * [zstd](https://github.com/facebook/zstd) compression (use the `compression` build feature)
 * cpu-scalable lock-free implementation
 * SSD-optimized log-structured storage
+* prefix encodes stored keys, reducing the storage cost of complex keys
 
 # architecture
 
