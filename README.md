@@ -42,17 +42,19 @@ and [merge operators](https://github.com/spacejam/sled/wiki/merge-operators)!
 
 # features
 
-* API similar to a threadsafe `BTreeMap<Vec<u8>, Vec<u8>>`
-* fully atomic single-key operations, supports CAS
+* [API](https://docs.rs/sled) similar to a threadsafe `BTreeMap<Vec<u8>, Vec<u8>>`
+* fully atomic single-key operations, supports [compare and swap](https://docs.rs/sled/latest/sled/struct.Tree.html#method.cas)
 * zero-copy reads
-* subscription/watch semantics on key prefixes
+* [write batch support](https://docs.rs/sled/latest/sled/struct.Tree.html#method.batch)
+* [subscription/watch semantics on key prefixes](https://github.com/spacejam/sled/wiki/reactive-semantics)
 * multiple keyspace support
-* merge operators
+* [merge operators](https://github.com/spacejam/sled/wiki/merge-operators)
 * forward and reverse iterators
-* a crash-safe monotonic ID generator capable of generating 75-125 million ID's per second
+* a crash-safe monotonic [ID generator](https://docs.rs/sled/latest/sled/struct.Db.html#method.generate_id) capable of generating 75-125 million unique ID's per second
 * [zstd](https://github.com/facebook/zstd) compression (use the `compression` build feature)
 * cpu-scalable lock-free implementation
 * SSD-optimized log-structured storage
+* prefix encodes stored keys, reducing the storage cost of complex keys
 
 # architecture
 
