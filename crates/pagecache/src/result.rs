@@ -111,7 +111,7 @@ impl PartialEq for Error {
 impl From<io::Error> for Error {
     #[inline]
     fn from(io_error: io::Error) -> Self {
-        Self::Io(io_error)
+        Error::Io(io_error)
     }
 }
 

@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::{HashMap, BinaryHeap}, ops::Deref, sync::Arc};
+use std::{borrow::Cow, collections::BinaryHeap, ops::Deref, sync::Arc};
 
 use parking_lot::Mutex;
 
@@ -54,7 +54,7 @@ where
 {
     fn into_frag(self) -> P {
         match self {
-            Self::Append(frag) | Self::Compact(frag) => frag,
+            Update::Append(frag) | Update::Compact(frag) => frag,
             other => {
                 panic!("called into_frag on non-Append/Compact: {:?}", other)
             }
@@ -63,7 +63,7 @@ where
 
     fn as_frag(&self) -> &P {
         match self {
-            Self::Append(frag) | Self::Compact(frag) => frag,
+            Update::Append(frag) | Update::Compact(frag) => frag,
             other => {
                 panic!("called as_frag on non-Append/Compact: {:?}", other)
             }
@@ -71,7 +71,7 @@ where
     }
 
     fn is_compact(&self) -> bool {
-        if let Self::Compact(_) = self {
+        if let Update::Compact(_) = self {
             true
         } else {
             false
@@ -79,7 +79,7 @@ where
     }
 
     fn is_free(&self) -> bool {
-        if let Self::Free = self {
+        if let Update::Free = self {
             true
         } else {
             false
