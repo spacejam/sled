@@ -45,6 +45,7 @@ and [merge operators](https://github.com/spacejam/sled/wiki/merge-operators)!
 * [API](https://docs.rs/sled) similar to a threadsafe `BTreeMap<Vec<u8>, Vec<u8>>`
 * fully atomic single-key operations, supports [compare and swap](https://docs.rs/sled/latest/sled/struct.Tree.html#method.cas)
 * zero-copy reads
+* [write batch support](https://docs.rs/sled/latest/sled/struct.Tree.html#method.batch)
 * [subscription/watch semantics on key prefixes](https://github.com/spacejam/sled/wiki/reactive-semantics)
 * multiple keyspace support
 * [merge operators](https://github.com/spacejam/sled/wiki/merge-operators)
