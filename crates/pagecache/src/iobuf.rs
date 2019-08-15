@@ -733,7 +733,7 @@ pub(crate) fn maybe_seal_and_write_iobuf(
         );
         let iobufs = iobufs.clone();
         let iobuf = iobuf.clone();
-        threadpool::spawn(move || {
+        let _result = threadpool::spawn(move || {
             if let Err(e) = iobufs.write_to_log(&iobuf) {
                 error!(
                     "hit error while writing iobuf with lsn {}: {:?}",
@@ -744,6 +744,10 @@ pub(crate) fn maybe_seal_and_write_iobuf(
                 iobufs.config.set_global_error(e);
             }
         });
+
+        #[cfg(any(test, feature = "check_snapshot_integrity"))]
+        _result.unwrap();
+
         Ok(())
     } else {
         Ok(())
