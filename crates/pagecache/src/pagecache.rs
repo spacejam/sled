@@ -226,6 +226,8 @@ where
     fn drop(&mut self) {
         trace!("dropping pagecache");
 
+        use std::collections::HashMap;
+
         // we can't as easily assert recovery
         // invariants across failpoints for now
         if self.log.iobufs.config.global_error().is_ok() {
@@ -296,6 +298,8 @@ where
 
         #[cfg(feature = "event_log")]
         {
+            use std::collections::HashMap;
+
             // NB this must be before idgen/meta are initialized
             // because they may cas_page on initial page-in.
             let guard = pin();
