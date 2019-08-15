@@ -746,7 +746,7 @@ pub(crate) fn maybe_seal_and_write_iobuf(
         });
 
         #[cfg(any(test, feature = "check_snapshot_integrity"))]
-        _result.unwrap()?;
+        _result.unwrap();
 
         Ok(())
     } else {
