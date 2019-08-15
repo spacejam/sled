@@ -230,9 +230,9 @@ impl Tree {
         let View { node, .. } = self.node_for_key(key.as_ref(), &guard)?;
 
         let kv_opt = node.leaf_pair_for_key(key.as_ref());
-        let k_opt = kv_opt.map(|kv| kv.0.clone());
+        let v_opt = kv_opt.map(|kv| kv.1.clone());
 
-        Ok(k_opt)
+        Ok(v_opt)
     }
 
     /// Delete a value, returning the old value if it existed.
@@ -283,12 +283,16 @@ impl Tree {
             let View { ptr, pid, node, .. } =
                 self.node_for_key(key.as_ref(), &guard)?;
 
-            let existing_kv_opt = node.leaf_pair_for_key(key.as_ref());
-            let existing_val_opt = existing_kv_opt.map(|kv| kv.1.clone());
-
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
 
-            let encoded_key = prefix_encode(&node.lo, key.as_ref());
+            let (encoded_key, existing_val) =
+                if let Some((k, v)) = node.leaf_pair_for_key(key.as_ref()) {
+                    (k.clone(), Some(v.clone()))
+                } else {
+                    let encoded_key = prefix_encode(&node.lo, key.as_ref());
+                    let encoded_val = None;
+                    (encoded_key, encoded_val)
+                };
 
             let frag = Frag::Del(encoded_key);
 
@@ -305,7 +309,7 @@ impl Tree {
                     res.complete(event);
                 }
 
-                return Ok(existing_val_opt);
+                return Ok(existing_val);
             }
         }
     }
