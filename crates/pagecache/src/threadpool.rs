@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crossbeam_channel::{bounded, Receiver, Sender};
 
-use super::{Lazy, Promise};
+use super::{debug_delay, Lazy, Promise};
 
 const MAX_THREADS: u64 = 10_000;
 
@@ -23,6 +23,7 @@ fn init_pool() -> Pool {
             .name("sled-io".to_string())
             .spawn(|| {
                 for task in &POOL.receiver {
+                    debug_delay();
                     (task)()
                 }
             })
@@ -59,6 +60,7 @@ fn maybe_create_another_blocking_thread() {
 
             DYNAMIC_THREAD_COUNT.fetch_add(1, Ordering::Relaxed);
             while let Ok(task) = POOL.receiver.recv_timeout(wait_limit) {
+                debug_delay();
                 (task)();
             }
             DYNAMIC_THREAD_COUNT.fetch_sub(1, Ordering::Relaxed);
