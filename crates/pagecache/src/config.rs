@@ -98,8 +98,8 @@ pub struct ConfigBuilder {
 unsafe impl Send for ConfigBuilder {}
 
 impl Default for ConfigBuilder {
-    fn default() -> ConfigBuilder {
-        ConfigBuilder {
+    fn default() -> Self {
+        Self {
             io_buf_size: 2 << 22, // 8mb
             page_consolidation_threshold: 10,
             path: PathBuf::from(DEFAULT_PATH),
@@ -132,7 +132,7 @@ macro_rules! builder {
     ($(($name:ident, $t:ty, $desc:expr)),*) => {
         $(
             #[doc=$desc]
-            pub fn $name(mut self, to: $t) -> ConfigBuilder {
+            pub fn $name(mut self, to: $t) -> Self {
                 self.$name = to;
                 self
             }
@@ -142,12 +142,12 @@ macro_rules! builder {
 
 impl ConfigBuilder {
     /// Returns a default `ConfigBuilder`
-    pub fn new() -> ConfigBuilder {
+    pub fn new() -> Self {
         Self::default()
     }
 
     /// Set the path of the database (builder).
-    pub fn path<P: AsRef<Path>>(mut self, path: P) -> ConfigBuilder {
+    pub fn path<P: AsRef<Path>>(mut self, path: P) -> Self {
         self.path = path.as_ref().to_path_buf();
         self
     }
@@ -310,10 +310,7 @@ impl ConfigBuilder {
 
         if !dir.exists() {
             let res: std::io::Result<()> = std::fs::create_dir_all(dir);
-            res.map_err(|e: std::io::Error| {
-                let ret: Error = e.into();
-                ret
-            })?;
+            res.map_err(|e: std::io::Error| Error::from(e))?;
         }
 
         self.verify_config_changes_ok()?;
@@ -416,7 +413,7 @@ impl ConfigBuilder {
         Ok(())
     }
 
-    fn read_config(&self) -> std::io::Result<Option<ConfigBuilder>> {
+    fn read_config(&self) -> std::io::Result<Option<Self>> {
         let path = self.config_path();
 
         let f_res = std::fs::OpenOptions::new().read(true).open(&path);
@@ -441,7 +438,7 @@ impl ConfigBuilder {
         let len = buf.len();
         buf.split_off(len - 4);
 
-        let mut crc_arr = [0u8; 4];
+        let mut crc_arr = [0_u8; 4];
         f.seek(std::io::SeekFrom::End(-4)).unwrap();
         f.read_exact(&mut crc_arr).unwrap();
         let crc_expected = arr_to_u32(&crc_arr);

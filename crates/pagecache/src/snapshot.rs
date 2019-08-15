@@ -29,8 +29,8 @@ pub enum PageState {
 impl PageState {
     fn push(&mut self, item: (Lsn, DiskPtr, usize)) {
         match *self {
-            PageState::Present(ref mut items) => items.push(item),
-            PageState::Free(_, _) => {
+            Self::Present(ref mut items) => items.push(item),
+            Self::Free(_, _) => {
                 panic!("pushed items to a PageState::Free")
             }
         }
@@ -39,8 +39,8 @@ impl PageState {
     /// Iterate over the (lsn, lid) pairs that hold this page's state.
     pub fn iter(&self) -> impl Iterator<Item = (Lsn, DiskPtr, usize)> {
         match *self {
-            PageState::Present(ref items) => items.clone().into_iter(),
-            PageState::Free(lsn, ptr) => {
+            Self::Present(ref items) => items.clone().into_iter(),
+            Self::Free(lsn, ptr) => {
                 vec![(lsn, ptr, MSG_HEADER_LEN)].into_iter()
             }
         }
@@ -48,7 +48,7 @@ impl PageState {
 
     fn is_free(&self) -> bool {
         match *self {
-            PageState::Free(_, _) => true,
+            Self::Free(_, _) => true,
             _ => false,
         }
     }
@@ -209,10 +209,10 @@ fn read_snapshot(config: &Config) -> std::io::Result<Option<Snapshot>> {
     let mut buf = vec![];
     f.read_to_end(&mut buf)?;
     let len = buf.len();
-    let mut len_expected_bytes = [0u8; 8];
+    let mut len_expected_bytes = [0; 8];
     len_expected_bytes.copy_from_slice(&buf[len - 12..len - 4]);
 
-    let mut crc_expected_bytes = [0u8; 4];
+    let mut crc_expected_bytes = [0; 4];
     crc_expected_bytes.copy_from_slice(&buf[len - 4..]);
 
     buf.split_off(len - 12);
@@ -298,12 +298,9 @@ fn write_snapshot(config: &Config, snapshot: &Snapshot) -> Result<()> {
 
             maybe_fail!("snap write rm old");
 
-            if let Err(_e) = std::fs::remove_file(&path) {
+            if let Err(e) = std::fs::remove_file(&path) {
                 // TODO should this just be a try return?
-                warn!(
-                    "failed to remove old snapshot file, maybe snapshot race? {}",
-                    _e
-                );
+                warn!("failed to remove old snapshot file, maybe snapshot race? {}", e);
             }
         }
     }

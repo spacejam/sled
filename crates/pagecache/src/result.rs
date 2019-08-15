@@ -8,7 +8,7 @@ use std::{
 use super::*;
 
 /// The top-level result type for dealing with
-/// the PageCache.
+/// the `PageCache`.
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// A compare and swap result.  If the CAS is successful,
@@ -19,7 +19,7 @@ pub type CasResult<'a, P, R> =
     std::result::Result<PagePtr<'a, P>, Option<(PagePtr<'a, P>, R)>>;
 
 /// An Error type encapsulating various issues that may come up
-/// in both the expected and unexpected operation of a PageCache.
+/// in both the expected and unexpected operation of a `PageCache`.
 #[derive(Debug)]
 pub enum Error {
     /// The underlying collection no longer exists.
@@ -41,10 +41,11 @@ pub enum Error {
     FailPoint,
 }
 
-use self::Error::*;
 
 impl Clone for Error {
-    fn clone(&self) -> Error {
+    fn clone(&self) -> Self {
+        use self::Error::*;
+
         match self {
             Io(ioe) => {
                 Io(std::io::Error::new(ioe.kind(), format!("{:?}", ioe)))
@@ -62,7 +63,9 @@ impl Clone for Error {
 impl Eq for Error {}
 
 impl PartialEq for Error {
-    fn eq(&self, other: &Error) -> bool {
+    fn eq(&self, other: &Self) -> bool {
+        use self::Error::*;
+
         match *self {
             CollectionNotFound(ref l) => {
                 if let CollectionNotFound(ref r) = *other {
@@ -107,17 +110,18 @@ impl PartialEq for Error {
 
 impl From<io::Error> for Error {
     #[inline]
-    fn from(io_error: io::Error) -> Error {
-        Error::Io(io_error)
+    fn from(io_error: io::Error) -> Self {
+        Self::Io(io_error)
     }
 }
 
 impl StdError for Error {
     fn description(&self) -> &str {
+        use self::Error::*;
+
         match *self {
             CollectionNotFound(_) => "Collection does not exist.",
-            Unsupported(ref e) => &*e,
-            ReportableBug(ref e) => &*e,
+            Unsupported(ref e) | ReportableBug(ref e) => &*e,
             #[cfg(feature = "failpoints")]
             FailPoint => "Fail point has been triggered.",
             Io(ref e) => e.description(),
@@ -131,6 +135,8 @@ impl Display for Error {
         &self,
         f: &mut fmt::Formatter<'_>,
     ) -> std::result::Result<(), fmt::Error> {
+        use self::Error::*;
+
         match *self {
             CollectionNotFound(ref name) => {
                 write!(f, "Collection {:?} does not exist", name,)

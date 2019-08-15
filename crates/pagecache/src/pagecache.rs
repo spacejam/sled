@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::BinaryHeap, ops::Deref, sync::Arc};
+use std::{borrow::Cow, collections::{HashMap, BinaryHeap}, ops::Deref, sync::Arc};
 
 use parking_lot::Mutex;
 
@@ -54,7 +54,7 @@ where
 {
     fn into_frag(self) -> P {
         match self {
-            Update::Append(frag) | Update::Compact(frag) => frag,
+            Self::Append(frag) | Self::Compact(frag) => frag,
             other => {
                 panic!("called into_frag on non-Append/Compact: {:?}", other)
             }
@@ -63,7 +63,7 @@ where
 
     fn as_frag(&self) -> &P {
         match self {
-            Update::Append(frag) | Update::Compact(frag) => frag,
+            Self::Append(frag) | Self::Compact(frag) => frag,
             other => {
                 panic!("called as_frag on non-Append/Compact: {:?}", other)
             }
@@ -71,7 +71,7 @@ where
     }
 
     fn is_compact(&self) -> bool {
-        if let Update::Compact(_) = self {
+        if let Self::Compact(_) = self {
             true
         } else {
             false
@@ -79,7 +79,7 @@ where
     }
 
     fn is_free(&self) -> bool {
-        if let Update::Free = self {
+        if let Self::Free = self {
             true
         } else {
             false
@@ -229,9 +229,7 @@ where
         // we can't as easily assert recovery
         // invariants across failpoints for now
         if self.log.iobufs.config.global_error().is_ok() {
-            use std::collections::HashMap;
-            let mut pages_before_restart: HashMap<PageId, Vec<DiskPtr>> =
-                HashMap::new();
+            let mut pages_before_restart = HashMap::new();
 
             let guard = pin();
 
@@ -278,7 +276,7 @@ where
         let cache_capacity = config.cache_capacity;
         let lru = Lru::new(cache_capacity);
 
-        let mut pc = PageCache {
+        let mut pc = Self {
             config: config.clone(),
             inner: PageTable::default(),
             next_pid_to_allocate: AtomicU64::new(0),
@@ -302,9 +300,7 @@ where
             // because they may cas_page on initial page-in.
             let guard = pin();
 
-            use std::collections::HashMap;
-            let mut pages_after_restart: HashMap<PageId, Vec<DiskPtr>> =
-                HashMap::new();
+            let mut pages_after_restart = HashMap::new();
 
             for pid in 0..pc.next_pid_to_allocate.load(Acquire) {
                 let pte = pc.inner.get(pid, &guard);
@@ -768,7 +764,13 @@ where
                     trace!("link of pid {} failed", pid);
                     log_reservation.abort()?;
                     let actual_ts = unsafe { actual_ptr.deref().1.ts };
-                    if actual_ts != old.ts {
+                    if actual_ts == old.ts {
+                        new = Some(returned_new);
+                        old = PagePtr {
+                            cached_ptr: actual_ptr,
+                            ts: actual_ts,
+                        };
+                    } else {
                         let returned_update = returned_new.0.clone().unwrap();
                         let returned_frag = returned_update.into_frag();
                         return Ok(Err(Some((
@@ -778,12 +780,6 @@ where
                             },
                             returned_frag,
                         ))));
-                    } else {
-                        new = Some(returned_new);
-                        old = PagePtr {
-                            cached_ptr: actual_ptr,
-                            ts: actual_ts,
-                        };
                     }
                 }
             }
@@ -906,45 +902,42 @@ where
                 let (key, config) = self.get_persisted_config(guard)?;
                 (key, Update::Config(config.clone()))
             } else {
-                match self.get(pid, guard)? {
-                    Some((key, frag, _sz)) => {
-                        (key, Update::Compact(frag.clone()))
-                    }
-                    None => {
-                        let head_ptr = match self.inner.get(pid, &guard) {
-                            None => panic!(
-                                "expected to find existing stack \
-                                 for freed pid {}",
-                                pid
-                            ),
-                            Some(p) => p,
-                        };
+                if let Some((key, frag, _sz)) = self.get(pid, guard)? {
+                    (key, Update::Compact(frag.clone()))
+                } else {
+                    let head_ptr = match self.inner.get(pid, &guard) {
+                        None => panic!(
+                            "expected to find existing stack \
+                             for freed pid {}",
+                            pid
+                        ),
+                        Some(p) => p,
+                    };
 
-                        let head = unsafe { head_ptr.deref().head(&guard) };
+                    let head = unsafe { head_ptr.deref().head(&guard) };
 
-                        let mut stack_iter = StackIter::from_ptr(head, &guard);
+                    let mut stack_iter = StackIter::from_ptr(head, &guard);
 
-                        match stack_iter.next() {
-                            Some((Some(Update::Free), cache_info)) => (
-                                PagePtr {
-                                    cached_ptr: head,
-                                    ts: cache_info.ts,
-                                },
-                                Update::Free,
-                            ),
-                            other => {
-                                debug!(
-                                    "when rewriting pid {} \
-                                     we encountered a rewritten \
-                                     node with a frag {:?} that \
-                                     we previously witnessed a Free \
-                                     for (PageCache::get returned None), \
-                                     assuming we can just return now since \
-                                     the Free was replace'd",
-                                    pid, other
-                                );
-                                return Ok(());
-                            }
+                    match stack_iter.next() {
+                        Some((Some(Update::Free), cache_info)) => (
+                            PagePtr {
+                                cached_ptr: head,
+                                ts: cache_info.ts,
+                            },
+                            Update::Free,
+                        ),
+                        other => {
+                            debug!(
+                                "when rewriting pid {} \
+                                 we encountered a rewritten \
+                                 node with a frag {:?} that \
+                                 we previously witnessed a Free \
+                                 for (PageCache::get returned None), \
+                                 assuming we can just return now since \
+                                 the Free was replace'd",
+                                pid, other
+                            );
+                            return Ok(());
                         }
                     }
                 }
@@ -1348,18 +1341,16 @@ where
             // we were not able to short-circuit, so we should
             // fix-up the stack.
             let pulled = entries.iter().map(|entry| match entry {
-                (Some(Update::Compact(compact)), _) => {
+                  (Some(Update::Compact(compact)), _)
+                | (Some(Update::Append(compact)), _) => {
                     Ok(Cow::Borrowed(compact))
-                }
-                (Some(Update::Append(compact)), _) => {
-                    Ok(Cow::Borrowed(compact))
-                }
+                },
                 (None, cache_info) => {
                     let res = self
                         .pull(pid, cache_info.lsn, cache_info.ptr)
                         .map(|pg| pg)?;
                     Ok(Cow::Owned(res.into_frag()))
-                }
+                },
                 other => {
                     panic!("iterating over unexpected update: {:?}", other);
                 }
@@ -1652,6 +1643,8 @@ where
     }
 
     fn pull(&self, pid: PageId, lsn: Lsn, ptr: DiskPtr) -> Result<Update<P>> {
+        use MessageKind::*;
+
         trace!("pulling lsn {} ptr {} from disk", lsn, ptr);
         let _measure = Measure::new(&M.pull);
         let (header, bytes) = match self.log.read(pid, lsn, ptr) {
@@ -1696,7 +1689,6 @@ where
             }
         }?;
 
-        use MessageKind::*;
         let deserialize_latency = Measure::new(&M.deserialize);
         let update_res = match header.kind {
             Counter => deserialize::<u64>(&bytes).map(Update::Counter),
@@ -1754,7 +1746,7 @@ where
 
             if let Err(e) = iobuf::flush(&iobufs) {
                 error!("failed to flush log during advance_snapshot: {}", e);
-                iobufs.with_sa(|sa| sa.resume_rewriting());
+                iobufs.with_sa(SegmentAccountant::resume_rewriting);
                 *snapshot_opt = Some(last_snapshot);
                 return Err(e);
             }
@@ -1762,7 +1754,7 @@ where
             // we disable rewriting so that our log becomes append-only,
             // allowing us to iterate through it without corrupting ourselves.
             // NB must be called after taking the snapshot mutex.
-            iobufs.with_sa(|sa| sa.pause_rewriting());
+            iobufs.with_sa(SegmentAccountant::pause_rewriting);
 
             let last_lsn = last_snapshot.last_lsn;
             let start_lsn = last_lsn - (last_lsn % config.io_buf_size as Lsn);
@@ -1780,7 +1772,7 @@ where
             // NB it's important to resume writing before replacing the snapshot
             // into the mutex, otherwise we create a race condition where the SA is
             // not actually paused when a snapshot happens.
-            iobufs.with_sa(|sa| sa.resume_rewriting());
+            iobufs.with_sa(SegmentAccountant::resume_rewriting);
 
             match res {
                 Err(e) => {

@@ -22,7 +22,7 @@ impl<T> Promise<T> {
     pub fn pair() -> (PromiseFiller<T>, Promise<T>) {
         let mu = Arc::new(Mutex::new((false, None)));
         let cv = Arc::new(Condvar::new());
-        let future = Promise {
+        let future = Self {
             mu: mu.clone(),
             cv: cv.clone(),
         };
