@@ -320,7 +320,10 @@ impl Node {
         None
     }
 
-    pub(crate) fn leaf_value_for_key(&self, key: &[u8]) -> Option<&IVec> {
+    pub(crate) fn leaf_pair_for_key(
+        &self,
+        key: &[u8],
+    ) -> Option<(&IVec, &IVec)> {
         assert!(!self.data.is_index());
 
         let records = self.data.leaf_ref().unwrap();
@@ -330,7 +333,7 @@ impl Node {
             })
             .ok();
 
-        search.map(|idx| &records[idx].1)
+        search.map(|idx| (&records[idx].0, &records[idx].1))
     }
 
     pub(crate) fn should_split(&self) -> bool {
