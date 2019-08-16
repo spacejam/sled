@@ -15,7 +15,7 @@ pub(crate) fn read_blob(
 
     let mut f = f_res?;
 
-    let mut crc_expected_bytes = [0u8; std::mem::size_of::<u32>()];
+    let mut crc_expected_bytes = [0_u8; std::mem::size_of::<u32>()];
 
     if let Err(e) = f.read_exact(&mut crc_expected_bytes) {
         debug!(
@@ -27,7 +27,7 @@ pub(crate) fn read_blob(
 
     let crc_expected = arr_to_u32(&crc_expected_bytes);
 
-    let mut kind_byte = [0u8];
+    let mut kind_byte = [0_u8];
 
     if let Err(e) = f.read_exact(&mut kind_byte) {
         debug!(
@@ -51,19 +51,19 @@ pub(crate) fn read_blob(
     hasher.update(&buf);
     let crc_actual = hasher.finalize();
 
-    if crc_expected != crc_actual {
-        warn!("blob {} failed crc check!", blob_ptr);
-
-        Err(Error::Corruption {
-            at: DiskPtr::Blob(0, blob_ptr),
-        })
-    } else {
+    if crc_expected == crc_actual {
         let buf = if config.use_compression {
             maybe_decompress(buf)?
         } else {
             buf
         };
         Ok((MessageKind::from(kind_byte[0]), buf))
+    } else {
+        warn!("blob {} failed crc check!", blob_ptr);
+
+        Err(Error::Corruption {
+            at: DiskPtr::Blob(0, blob_ptr),
+        })
     }
 }
 

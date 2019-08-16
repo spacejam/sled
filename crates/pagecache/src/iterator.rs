@@ -228,27 +228,11 @@ fn scan_segment_lsns(
     min: Lsn,
     config: &Config,
 ) -> Result<(BTreeMap<Lsn, LogId>, Lsn)> {
-    let segment_len = LogId::try_from(config.io_buf_size).unwrap();
-
-    let f = &config.file;
-    let file_len = f.metadata()?.len();
-    let segments = (file_len / segment_len)
-        + if file_len % segment_len < LogId::try_from(SEG_HEADER_LEN).unwrap() {
-            0
-        } else {
-            1
-        };
-    trace!(
-        "file len: {} segment len {} segments: {}",
-        file_len,
-        segment_len,
-        segments
-    );
 
     fn fetch(
         idx: u64,
         min: Lsn,
-        config: Config,
+        config: &Config,
     ) -> Option<(LogId, SegmentHeader)> {
         let segment_len = u64::try_from(config.io_buf_size).unwrap();
         let base_lid = idx * segment_len;
@@ -273,14 +257,31 @@ fn scan_segment_lsns(
         }
     };
 
+    let segment_len = LogId::try_from(config.io_buf_size).unwrap();
+
+    let f = &config.file;
+    let file_len = f.metadata()?.len();
+    let segments = (file_len / segment_len)
+        + if file_len % segment_len < LogId::try_from(SEG_HEADER_LEN).unwrap() {
+            0
+        } else {
+            1
+        };
+    trace!(
+        "file len: {} segment len {} segments: {}",
+        file_len,
+        segment_len,
+        segments
+    );
+
     let header_promises: Vec<Promise<Option<(LogId, SegmentHeader)>>> = (0
         ..segments)
         .map({
-            let config = config.clone();
+            // let config = config.clone();
             move |idx| {
                 threadpool::spawn({
                     let config = config.clone();
-                    move || fetch(idx, min, config)
+                    move || fetch(idx, min, &config)
                 })
             }
         })
@@ -288,7 +289,7 @@ fn scan_segment_lsns(
 
     let headers: Vec<(LogId, SegmentHeader)> = header_promises
         .into_iter()
-        .filter_map(|promise| promise.unwrap())
+        .filter_map(Promise::unwrap)
         .collect();
 
     let mut ordering = BTreeMap::new();
@@ -376,14 +377,13 @@ fn clean_tail_tears(
 
     let tip: (Lsn, LogId) = iter
         .max_by_key(|(_kind, _pid, lsn, _ptr, _sz)| *lsn)
-        .map(|(_, _, lsn, ptr, _)| (lsn, ptr.lid()))
-        .unwrap_or_else(|| {
+        .map_or_else(|| {
             if max_header_stable_lsn > 0 {
                 (lowest_lsn_in_tail, ordering[&lowest_lsn_in_tail])
             } else {
                 (0, 0)
             }
-        });
+        }, |(_, _, lsn, ptr, _)| (lsn, ptr.lid()));
 
     debug!(
         "filtering out segments after detected tear at lsn {} lid {}",

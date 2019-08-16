@@ -12,7 +12,7 @@ unsafe impl Sync for Lru {}
 
 impl Lru {
     /// Instantiates a new `Lru` cache.
-    pub fn new(cache_capacity: u64) -> Lru {
+    pub fn new(cache_capacity: u64) -> Self {
         assert!(
             cache_capacity >= 256,
             "Please configure the cache \
@@ -24,7 +24,7 @@ impl Lru {
         let mut shards = Vec::with_capacity(n_shards);
         shards.resize_with(n_shards, || Mutex::new(Shard::new(shard_capacity)));
 
-        Lru { shards }
+        Self { shards }
     }
 
     /// Called when a page is accessed. Returns a Vec of pages to
@@ -53,8 +53,8 @@ struct Entry {
 }
 
 impl Default for Entry {
-    fn default() -> Entry {
-        Entry {
+    fn default() -> Self {
+        Self {
             ptr: ptr::null_mut(),
             sz: 0,
         }
@@ -69,10 +69,10 @@ struct Shard {
 }
 
 impl Shard {
-    fn new(capacity: u64) -> Shard {
+    fn new(capacity: u64) -> Self {
         assert!(capacity > 0, "shard capacity must be non-zero");
 
-        Shard {
+        Self {
             list: Dll::default(),
             entries: vec![],
             capacity,

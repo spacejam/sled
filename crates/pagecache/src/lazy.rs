@@ -1,6 +1,6 @@
-//! This module exists because lazy_static causes TSAN to
+//! This module exists because `lazy_static` causes TSAN to
 //! be very unhappy. We rely heavily on TSAN for finding
-//! races, so we don't use lazy_static.
+//! races, so we don't use `lazy_static`.
 
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering::SeqCst};
 
@@ -17,7 +17,7 @@ impl<T, F> Lazy<T, F> {
     where
         F: Sized,
     {
-        Lazy {
+        Self {
             value: AtomicPtr::new(std::ptr::null_mut()),
             init_mu: AtomicBool::new(false),
             init,

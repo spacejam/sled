@@ -19,7 +19,7 @@ impl LogReader for File {
     fn read_segment_header(&self, lid: LogId) -> Result<SegmentHeader> {
         trace!("reading segment header at {}", lid);
 
-        let mut seg_header_buf = [0u8; SEG_HEADER_LEN];
+        let mut seg_header_buf = [0; SEG_HEADER_LEN];
         self.pread_exact(&mut seg_header_buf, lid)?;
         let segment_header = SegmentHeader::from(seg_header_buf);
 
@@ -41,7 +41,7 @@ impl LogReader for File {
         expected_lsn: Lsn,
         config: &Config,
     ) -> Result<LogRead> {
-        let mut msg_header_buf = [0u8; MSG_HEADER_LEN];
+        let mut msg_header_buf = [0; MSG_HEADER_LEN];
 
         self.pread_exact(&mut msg_header_buf, lid)?;
         let header: MessageHeader = msg_header_buf.into();
@@ -75,7 +75,7 @@ impl LogReader for File {
         assert!(lid + MSG_HEADER_LEN as LogId <= ceiling);
 
         if header.lsn % segment_len as Lsn != lid as Lsn % segment_len as Lsn {
-            let _hb: [u8; MSG_HEADER_LEN] = header.into();
+            let hb: [u8; MSG_HEADER_LEN] = header.into();
             // our message lsn was not aligned to our segment offset
             trace!(
                 "read a message whose header lsn \
@@ -84,7 +84,7 @@ impl LogReader for File {
                  expected: relative offset {} bytes: {:?}",
                 header,
                 lid % segment_len as LogId,
-                _hb
+                hb
             );
             return Ok(LogRead::Corrupted(header.len));
         }

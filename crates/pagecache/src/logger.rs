@@ -50,21 +50,21 @@ unsafe impl Send for Log {}
 impl Log {
     /// Start the log, open or create the configured file,
     /// and optionally start the periodic buffer flush thread.
-    pub fn start(config: Config, snapshot: Snapshot) -> Result<Log> {
+    pub fn start(config: Config, snapshot: Snapshot) -> Result<Self> {
         let iobufs = Arc::new(IoBufs::start(config.clone(), snapshot)?);
 
-        Ok(Log { iobufs, config })
+        Ok(Self { iobufs, config })
     }
 
     /// Starts a log for use without a materializer.
-    pub fn start_raw_log(config: Config) -> Result<Log> {
+    pub fn start_raw_log(config: Config) -> Result<Self> {
         assert_eq!(config.segment_mode, SegmentMode::Linear);
         let (log_iter, _) = raw_segment_iter_from(0, &config)?;
 
         let snapshot =
             advance_snapshot(log_iter, Snapshot::default(), &config)?;
 
-        Log::start(config, snapshot)
+        Self::start(config, snapshot)
     }
 
     /// Flushes any pending IO buffers to disk to ensure durability.
@@ -571,7 +571,7 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
 
 impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
     fn into(self) -> [u8; MSG_HEADER_LEN] {
-        let mut buf = [0u8; MSG_HEADER_LEN];
+        let mut buf = [0; MSG_HEADER_LEN];
         buf[0] = self.kind.into();
 
         let pid_arr = u64_to_arr(self.pid);
@@ -642,7 +642,7 @@ impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
 
 impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
     fn into(self) -> [u8; SEG_HEADER_LEN] {
-        let mut buf = [0u8; SEG_HEADER_LEN];
+        let mut buf = [0; SEG_HEADER_LEN];
 
         let xor_lsn = self.lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
         let xor_max_stable_lsn = self.max_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;

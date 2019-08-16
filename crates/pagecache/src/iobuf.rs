@@ -1,5 +1,5 @@
 use std::{
-    mem::size_of, sync::atomic::AtomicBool, sync::atomic::Ordering::SeqCst,
+    sync::atomic::AtomicBool, sync::atomic::Ordering::SeqCst,
     sync::Arc,
 };
 
@@ -66,7 +66,7 @@ pub(super) struct IoBufs {
 /// `IoBufs` is a set of lock-free buffers for coordinating
 /// writes to underlying storage.
 impl IoBufs {
-    pub(crate) fn start(config: Config, snapshot: Snapshot) -> Result<IoBufs> {
+    pub(crate) fn start(config: Config, snapshot: Snapshot) -> Result<Self> {
         // open file for writing
         let file = &config.file;
 
@@ -159,7 +159,7 @@ impl IoBufs {
         // remove all blob files larger than our stable offset
         gc_blobs(&config, stable)?;
 
-        Ok(IoBufs {
+        Ok(Self {
             config,
 
             iobuf: RwLock::new(Arc::new(iobuf)),
@@ -238,20 +238,20 @@ impl IoBufs {
         lsn: Lsn,
         over_blob_threshold: bool,
     ) -> Result<()> {
-        let mut _blob_ptr = None;
+        let blob_ptr;
 
         let to_reserve = if over_blob_threshold {
             // write blob to file
             io_fail!(self, "blob blob write");
             write_blob(&self.config, kind, lsn, in_buf)?;
 
-            let lsn_buf: [u8; size_of::<BlobPointer>()] =
-                u64_to_arr(lsn as u64);
+            let lsn_buf = u64_to_arr(lsn as u64);
 
-            _blob_ptr = Some(lsn_buf);
+            blob_ptr = lsn_buf;
+            &blob_ptr
 
-            _blob_ptr.as_mut().unwrap()
         } else {
+
             in_buf
         };
 
@@ -781,8 +781,8 @@ impl Debug for IoBuf {
 }
 
 impl IoBuf {
-    pub(crate) fn new(buf_size: usize) -> IoBuf {
-        IoBuf {
+    pub(crate) fn new(buf_size: usize) -> Self {
+        Self {
             buf: UnsafeCell::new(vec![0; buf_size]),
             header: CachePadded::new(AtomicU64::new(0)),
             lid: LogId::max_value(),
@@ -794,7 +794,7 @@ impl IoBuf {
         }
     }
 
-    // use this for operations on an IoBuf that must be
+    // use this for operations on an `IoBuf` that must be
     // linearized together, and can't fit in the header!
     pub(crate) fn linearized<F, B>(&self, f: F) -> B
     where

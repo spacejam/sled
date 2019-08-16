@@ -6,7 +6,7 @@
 //! A. We must not overwrite existing segments when they
 //!    contain the most-recent stable state for a page.
 //! B. We must not overwrite existing segments when active
-//!    threads may have references to LogId's that point
+//!    threads may have references to `LogId`'s that point
 //!    into those segments.
 //!
 //! To complicate matters, the `PageCache` only knows
@@ -139,7 +139,7 @@ pub(crate) enum SegmentState {
     Draining,
 }
 
-use self::SegmentState::*;
+use self::SegmentState::{Free, Active, Inactive, Draining};
 
 impl Default for SegmentState {
     fn default() -> SegmentState {
@@ -387,18 +387,18 @@ impl SegmentAccountant {
     pub(super) fn start(
         config: Config,
         snapshot: Snapshot,
-    ) -> Result<SegmentAccountant> {
-        let mut ret = SegmentAccountant {
+    ) -> Result<Self> {
+        let mut ret = Self {
             config,
             segments: vec![],
             clean_counter: 0,
-            free: Default::default(),
+            free: VecSet::default(),
             tip: 0,
             max_stabilized_lsn: -1,
-            to_clean: Default::default(),
+            to_clean: VecSet::default(),
             pause_rewriting: false,
-            ordering: Default::default(),
-            async_truncations: Default::default(),
+            ordering: BTreeMap::default(),
+            async_truncations: Vec::default(),
             deferred_free_segments: None,
             deferred_free_segments_after: 0,
         };
@@ -587,8 +587,13 @@ impl SegmentAccountant {
             .segments
             .iter()
             .enumerate()
-            .filter(|(_id, s)| s.lsn.is_some())
-            .map(|(id, s)| (s.lsn(), id as LogId * io_buf_size as LogId))
+            .filter_map(|(id, s)| {
+                if s.lsn.is_some() {
+                    Some((s.lsn(), id as LogId * io_buf_size as LogId))
+                } else {
+                    None
+                }
+            })
             .collect();
         trace!("initialized self.ordering to {:?}", self.ordering);
 
@@ -952,19 +957,24 @@ impl SegmentAccountant {
                 self.segments
                     .iter()
                     .enumerate()
-                    .filter(|(_, s)| s.present.contains(&pid))
-                    .map(|(i, s)| (
-                        i * self.config.io_buf_size,
-                        s.state,
-                        s.present.clone(),
-                    ))
+                    .filter_map(|(i, s)| {
+                        if s.present.contains(&pid) {
+                            Some((
+                                i * self.config.io_buf_size,
+                                s.state,
+                                s.present.clone(),
+                            ))
+                        } else {
+                            None
+                        }
+                    })
                     .collect::<Vec<_>>()
             );
 
             old_segment.remove_pid(pid, lsn, false);
         }
 
-        for old_idx in old_segments.into_iter() {
+        for old_idx in old_segments {
             self.possibly_clean_or_free_segment(old_idx, lsn);
         }
 
@@ -1052,12 +1062,12 @@ impl SegmentAccountant {
         // pop free or add to end
         let safe = free.first();
 
-        let lid = if self.pause_rewriting || safe.is_none() {
-            self.bump_tip()
-        } else {
-            let next = *safe.unwrap();
-            self.free.remove(&next);
-            next
+        let lid = match (self.pause_rewriting, safe) {
+            (true, _) | (_, None) => self.bump_tip(),
+            (_, Some(&next)) => {
+                self.free.remove(&next);
+                next
+            },
         };
 
         // pin lsn to this segment
@@ -1084,8 +1094,7 @@ impl SegmentAccountant {
         let lid_slack = self
             .deferred_free_segments
             .as_ref()
-            .map(|dfs| dfs.len() * self.config.io_buf_size)
-            .unwrap_or(0);
+            .map_or(0, |dfs| dfs.len() * self.config.io_buf_size);
 
         debug!(
             "segment accountant returning offset: {} \

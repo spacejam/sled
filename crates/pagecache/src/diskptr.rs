@@ -12,11 +12,11 @@ pub enum DiskPtr {
 }
 
 impl DiskPtr {
-    pub(crate) fn new_inline(l: LogId) -> DiskPtr {
+    pub(crate) fn new_inline(l: LogId) -> Self {
         DiskPtr::Inline(l)
     }
 
-    pub(crate) fn new_blob(lid: LogId, ptr: BlobPointer) -> DiskPtr {
+    pub(crate) fn new_blob(lid: LogId, ptr: BlobPointer) -> Self {
         DiskPtr::Blob(lid, ptr)
     }
 

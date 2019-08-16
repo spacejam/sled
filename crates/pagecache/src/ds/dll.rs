@@ -57,8 +57,8 @@ impl Drop for Dll {
 }
 
 impl Default for Dll {
-    fn default() -> Dll {
-        Dll {
+    fn default() -> Self {
+        Self {
             head: ptr::null_mut(),
             tail: ptr::null_mut(),
             len: 0,

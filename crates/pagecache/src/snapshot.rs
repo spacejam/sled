@@ -209,10 +209,10 @@ fn read_snapshot(config: &Config) -> std::io::Result<Option<Snapshot>> {
     let mut buf = vec![];
     f.read_to_end(&mut buf)?;
     let len = buf.len();
-    let mut len_expected_bytes = [0u8; 8];
+    let mut len_expected_bytes = [0; 8];
     len_expected_bytes.copy_from_slice(&buf[len - 12..len - 4]);
 
-    let mut crc_expected_bytes = [0u8; 4];
+    let mut crc_expected_bytes = [0; 4];
     crc_expected_bytes.copy_from_slice(&buf[len - 4..]);
 
     buf.split_off(len - 12);
@@ -298,12 +298,9 @@ fn write_snapshot(config: &Config, snapshot: &Snapshot) -> Result<()> {
 
             maybe_fail!("snap write rm old");
 
-            if let Err(_e) = std::fs::remove_file(&path) {
+            if let Err(e) = std::fs::remove_file(&path) {
                 // TODO should this just be a try return?
-                warn!(
-                    "failed to remove old snapshot file, maybe snapshot race? {}",
-                    _e
-                );
+                warn!("failed to remove old snapshot file, maybe snapshot race? {}", e);
             }
         }
     }

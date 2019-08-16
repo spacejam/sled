@@ -120,7 +120,7 @@ where
 {
     fn default() -> PageTable<T> {
         let head = Node1::new();
-        PageTable {
+        Self {
             head: Atomic::from(head),
         }
     }
@@ -192,13 +192,13 @@ where
     ) -> Option<Shared<'g, T>> {
         debug_delay();
         let old = self.swap(pid, Shared::null(), guard);
-        if !old.is_null() {
+        if old.is_null() {
+            None
+        } else {
             unsafe {
                 guard.defer_destroy(old);
             }
             Some(old)
-        } else {
-            None
         }
     }
 }
