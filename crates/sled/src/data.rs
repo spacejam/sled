@@ -7,7 +7,7 @@ pub(crate) enum Data {
 }
 
 impl Data {
-    pub(crate) fn fmt_keys(&self, prefix: &[u8]) -> Data {
+    pub(crate) fn fmt_keys(&self, prefix: &[u8]) -> Self {
         fn fmt_inner<T>(prefix: &[u8], xs: &[(IVec, T)]) -> Vec<(IVec, T)>
         where
             T: Clone + Ord,
@@ -33,7 +33,7 @@ impl Data {
         }
     }
 
-    pub(crate) fn split(&self, lhs_prefix: &[u8]) -> (IVec, Data) {
+    pub(crate) fn split(&self, lhs_prefix: &[u8]) -> (IVec, Self) {
         fn split_inner<T>(
             xs: &[(IVec, T)],
             lhs_prefix: &[u8],
@@ -69,7 +69,7 @@ impl Data {
         &mut self,
         old_prefix: &[u8],
         new_prefix: &[u8],
-        rhs_data: &Data,
+        rhs_data: &Self,
     ) {
         fn receive_merge_inner<T>(
             old_prefix: &[u8],

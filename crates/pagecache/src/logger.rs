@@ -549,7 +549,7 @@ impl LogRead {
 // data on disk and an lsn or crc32 of 0
 
 impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
-    fn from(buf: [u8; MSG_HEADER_LEN]) -> MessageHeader {
+    fn from(buf: [u8; MSG_HEADER_LEN]) -> Self {
         let kind = MessageKind::from(buf[0]);
 
         unsafe {
@@ -558,7 +558,7 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
             let len = arr_to_u32(buf.get_unchecked(17..21));
             let crc32 = arr_to_u32(buf.get_unchecked(21..)) ^ 0xFFFF_FFFF;
 
-            MessageHeader {
+            Self {
                 kind,
                 pid,
                 lsn,
@@ -607,7 +607,7 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
 }
 
 impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
-    fn from(buf: [u8; SEG_HEADER_LEN]) -> SegmentHeader {
+    fn from(buf: [u8; SEG_HEADER_LEN]) -> Self {
         unsafe {
             let crc32_header =
                 arr_to_u32(buf.get_unchecked(0..4)) ^ 0xFFFF_FFFF;
@@ -631,7 +631,7 @@ impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
                 );
             }
 
-            SegmentHeader {
+            Self {
                 lsn,
                 max_stable_lsn,
                 ok,

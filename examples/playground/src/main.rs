@@ -42,7 +42,7 @@ fn merge_operator() -> Result<()> {
         merged_bytes: &[u8],      // the new bytes being merged in
     ) -> Option<Vec<u8>> {
         // set the new value, return None to delete
-        let mut ret = old_value.map(|ov| ov.to_vec()).unwrap_or_else(|| vec![]);
+        let mut ret = old_value.map_or_else(|| vec![], |ov| ov.to_vec());
 
         ret.extend_from_slice(merged_bytes);
 

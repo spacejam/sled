@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fmt, panic};
+use std::{collections::BTreeMap, convert::TryInto, fmt, panic};
 
 use quickcheck::{Arbitrary, Gen, RngCore};
 use rand::distributions::{Distribution, Gamma};
@@ -54,7 +54,7 @@ pub fn fuzz_then_shrink(buf: &[u8]) {
     let ops: Vec<Op> = buf
         .chunks(2)
         .map(|chunk| {
-            let mut seed = [0u8; 32];
+            let mut seed = [0_u8; 32];
             seed[0..chunk.len()].copy_from_slice(chunk);
             let rng: StdRng = SeedableRng::from_seed(seed);
             let mut sled_rng = SledGen { r: rng, size: 2 };
@@ -72,7 +72,7 @@ pub fn fuzz_then_shrink(buf: &[u8]) {
 }
 
 impl Arbitrary for Key {
-    fn arbitrary<G: Gen>(g: &mut G) -> Key {
+    fn arbitrary<G: Gen>(g: &mut G) -> Self {
         if g.gen::<bool>() {
             let gs = g.size();
             let gamma = Gamma::new(0.3, gs as f64);
@@ -87,7 +87,7 @@ impl Arbitrary for Key {
 
             let inner = (0..len).map(|_| g.gen_range(0, space) as u8).collect();
 
-            Key(inner)
+            Self(inner)
         } else {
             let len = g.gen_range(0, 2);
             let mut inner = vec![];
@@ -96,18 +96,18 @@ impl Arbitrary for Key {
                 inner.push(g.gen::<u8>());
             }
 
-            Key(inner)
+            Self(inner)
         }
     }
 
-    fn shrink(&self) -> Box<dyn Iterator<Item = Key>> {
+    fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
         // we only want to shrink on length, not byte values
         Box::new(
             self.0
                 .len()
                 .shrink()
                 .zip(std::iter::repeat(self.0.clone()))
-                .map(|(len, underlying)| Key(underlying[..len].to_vec())),
+                .map(|(len, underlying)| Self(underlying[..len].to_vec())),
         )
     }
 }
@@ -125,7 +125,7 @@ pub enum Op {
     Restart,
 }
 
-use self::Op::*;
+use self::Op::{Set, Merge, Get, GetLt, GetGt, Del, Cas, Scan, Restart};
 
 impl Op {
     pub fn is_restart(&self) -> bool {
@@ -138,7 +138,7 @@ impl Op {
 }
 
 impl Arbitrary for Op {
-    fn arbitrary<G: Gen>(g: &mut G) -> Op {
+    fn arbitrary<G: Gen>(g: &mut G) -> Self {
         if g.gen_bool(1. / 10.) {
             return Restart;
         }
@@ -158,7 +158,7 @@ impl Arbitrary for Op {
         }
     }
 
-    fn shrink(&self) -> Box<dyn Iterator<Item = Op>> {
+    fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
         match *self {
             Set(ref k, v) => Box::new(k.shrink().map(move |sk| Set(sk, v))),
             Merge(ref k, v) => Box::new(k.shrink().map(move |k| Merge(k, v))),
@@ -181,8 +181,7 @@ fn bytes_to_u16(v: &[u8]) -> u16 {
 }
 
 fn u16_to_bytes(u: u16) -> Vec<u8> {
-    let ret = vec![(u >> 8) as u8, u as u8];
-    ret
+    u.to_be_bytes().to_vec()
 }
 
 // just adds up values as if they were u16's
@@ -204,9 +203,10 @@ pub fn prop_tree_matches_btreemap(
     flusher: bool,
     use_compression: bool,
 ) -> bool {
+    use self::*;
+
     super::setup_logger();
 
-    use self::*;
     let config = ConfigBuilder::new()
         .temporary(true)
         .use_compression(use_compression)
@@ -222,7 +222,7 @@ pub fn prop_tree_matches_btreemap(
 
     let mut reference: BTreeMap<Key, u16> = BTreeMap::new();
 
-    for op in ops.into_iter() {
+    for op in ops {
         match op {
             Set(k, v) => {
                 let old_actual = tree.insert(&k.0, vec![0, v]).unwrap();
@@ -234,7 +234,7 @@ pub fn prop_tree_matches_btreemap(
             }
             Merge(k, v) => {
                 tree.merge(&k.0, vec![v]).unwrap();
-                let entry = reference.entry(k).or_insert(0u16);
+                let entry = reference.entry(k).or_insert(0_u16);
                 *entry += u16::from(v);
             }
             Get(k) => {
@@ -292,12 +292,12 @@ pub fn prop_tree_matches_btreemap(
                 if len > 0 {
                     let mut tree_iter = tree
                         .range(&*k.0..)
-                        .take(len.abs() as usize)
-                        .map(|res| res.unwrap());
+                        .take(len.abs().try_into().unwrap())
+                        .map(Result::unwrap);
                     let ref_iter = reference
                         .iter()
                         .filter(|&(ref rk, _rv)| **rk >= k)
-                        .take(len.abs() as usize)
+                        .take(len.abs().try_into().unwrap())
                         .map(|(ref rk, ref rv)| (rk.0.clone(), **rv));
 
                     for r in ref_iter {
@@ -317,13 +317,13 @@ pub fn prop_tree_matches_btreemap(
                     let mut tree_iter = tree
                         .range(&*k.0..)
                         .rev()
-                        .take(len.abs() as usize)
-                        .map(|res| res.unwrap());
+                        .take(len.abs().try_into().unwrap())
+                        .map(Result::unwrap);
                     let ref_iter = reference
                         .iter()
                         .rev()
                         .filter(|&(ref rk, _rv)| **rk >= k)
-                        .take(len.abs() as usize)
+                        .take(len.abs().try_into().unwrap())
                         .map(|(ref rk, ref rv)| (rk.0.clone(), **rv));
 
                     for r in ref_iter {

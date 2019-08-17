@@ -142,9 +142,9 @@ impl Node {
         }
     }
 
-    pub(crate) fn split(mut self) -> (Node, Node) {
+    pub(crate) fn split(mut self) -> (Self, Self) {
         let (split, right_data) = self.data.split(&self.lo);
-        let rhs = Node {
+        let rhs = Self {
             data: right_data,
             next: self.next,
             lo: split,
@@ -164,7 +164,7 @@ impl Node {
         (self, rhs)
     }
 
-    pub(crate) fn receive_merge(&self, rhs: &Node) -> Node {
+    pub(crate) fn receive_merge(&self, rhs: &Self) -> Self {
         let mut merged = self.clone();
         merged.hi = rhs.hi.clone();
         merged.data.receive_merge(
@@ -226,8 +226,7 @@ impl Node {
             records.binary_search_by(|(k, _)| prefix_cmp(k, &predecessor_key));
 
         let idx = match search {
-            Ok(idx) => idx,
-            Err(idx) => idx,
+            Ok(idx) | Err(idx) => idx,
         };
 
         for (k, v) in &records[idx..] {
@@ -253,7 +252,7 @@ impl Node {
         &self,
         bound: &Bound<IVec>,
     ) -> Option<(IVec, IVec)> {
-        assert!(!self.data.is_index());
+        static MAX_IVEC: Lazy<IVec, fn() -> IVec> = Lazy::new(init_max_ivec);
 
         fn init_max_ivec() -> IVec {
             let mut base = vec![255; 1024 * 1024];
@@ -261,7 +260,7 @@ impl Node {
             IVec::from(base)
         }
 
-        static MAX_IVEC: Lazy<IVec, fn() -> IVec> = Lazy::new(init_max_ivec);
+        assert!(!self.data.is_index());
 
         // This encoding happens this way because
         // the rightmost (unbounded) node has
