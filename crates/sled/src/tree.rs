@@ -181,6 +181,17 @@ impl Tree {
         }
     }
 
+    /// real shit right here
+    pub fn transaction<'a, F, R>(
+        &'a self,
+        f: F,
+    ) -> Result<std::result::Result<R, TransactionError>>
+    where
+        F: Fn(&TransactionalTree) -> std::result::Result<R, TransactionError>,
+    {
+        <&Self as Transactional>::transaction(&self, f)
+    }
+
     /// Create a new batched update that can be
     /// atomically applied.
     ///
