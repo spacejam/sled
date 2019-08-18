@@ -10,8 +10,6 @@ pub mod tree;
 static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 pub fn setup_logger() {
-    color_backtrace::install();
-
     use std::io::Write;
 
     fn tn() -> String {
@@ -20,6 +18,8 @@ pub fn setup_logger() {
             .unwrap_or("unknown")
             .to_owned()
     }
+
+    color_backtrace::install();
 
     let mut builder = env_logger::Builder::new();
     builder

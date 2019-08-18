@@ -180,7 +180,7 @@ impl MessageKind {
 }
 
 impl From<u8> for MessageKind {
-    fn from(byte: u8) -> MessageKind {
+    fn from(byte: u8) -> Self {
         use MessageKind::*;
         match byte {
             0 => Corrupted,
@@ -235,7 +235,7 @@ where
 }
 
 impl From<MessageKind> for LogKind {
-    fn from(kind: MessageKind) -> LogKind {
+    fn from(kind: MessageKind) -> Self {
         use MessageKind::*;
         match kind {
             Free => LogKind::Free,

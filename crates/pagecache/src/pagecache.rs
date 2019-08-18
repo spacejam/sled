@@ -227,9 +227,9 @@ where
     P: Materializer,
 {
     fn drop(&mut self) {
-        trace!("dropping pagecache");
-
         use std::collections::HashMap;
+
+        trace!("dropping pagecache");
 
         // we can't as easily assert recovery
         // invariants across failpoints for now
@@ -268,7 +268,7 @@ where
     P: Materializer,
 {
     /// Instantiate a new `PageCache`.
-    pub fn start(config: Config) -> Result<PageCache<P>> {
+    pub fn start(config: Config) -> Result<Self> {
         trace!("starting pagecache");
 
         config.reset_global_error();
@@ -908,44 +908,42 @@ where
             } else if pid == CONFIG_PID {
                 let (key, config) = self.get_persisted_config(guard)?;
                 (key, Update::Config(config.clone()))
+            } else if let Some((key, frag, _sz)) = self.get(pid, guard)? {
+                (key, Update::Compact(frag.clone()))
             } else {
-                if let Some((key, frag, _sz)) = self.get(pid, guard)? {
-                    (key, Update::Compact(frag.clone()))
-                } else {
-                    let head_ptr = match self.inner.get(pid, &guard) {
-                        None => panic!(
-                            "expected to find existing stack \
-                             for freed pid {}",
-                            pid
-                        ),
-                        Some(p) => p,
-                    };
+                let head_ptr = match self.inner.get(pid, &guard) {
+                    None => panic!(
+                        "expected to find existing stack \
+                         for freed pid {}",
+                        pid
+                    ),
+                    Some(p) => p,
+                };
 
-                    let head = unsafe { head_ptr.deref().head(&guard) };
+                let head = unsafe { head_ptr.deref().head(&guard) };
 
-                    let mut stack_iter = StackIter::from_ptr(head, &guard);
+                let mut stack_iter = StackIter::from_ptr(head, &guard);
 
-                    match stack_iter.next() {
-                        Some((Some(Update::Free), cache_info)) => (
-                            PagePtr {
-                                cached_ptr: head,
-                                ts: cache_info.ts,
-                            },
-                            Update::Free,
-                        ),
-                        other => {
-                            debug!(
-                                "when rewriting pid {} \
-                                 we encountered a rewritten \
-                                 node with a frag {:?} that \
-                                 we previously witnessed a Free \
-                                 for (PageCache::get returned None), \
-                                 assuming we can just return now since \
-                                 the Free was replace'd",
-                                pid, other
-                            );
-                            return Ok(());
-                        }
+                match stack_iter.next() {
+                    Some((Some(Update::Free), cache_info)) => (
+                        PagePtr {
+                            cached_ptr: head,
+                            ts: cache_info.ts,
+                        },
+                        Update::Free,
+                    ),
+                    other => {
+                        debug!(
+                            "when rewriting pid {} \
+                             we encountered a rewritten \
+                             node with a frag {:?} that \
+                             we previously witnessed a Free \
+                             for (PageCache::get returned None), \
+                             assuming we can just return now since \
+                             the Free was replace'd",
+                            pid, other
+                        );
+                        return Ok(());
                     }
                 }
             };

@@ -50,7 +50,7 @@ pub(crate) fn prefix_reencode(
     let max_prefix_len = u8::max_value() as usize;
 
     let mut output = Vec::with_capacity(buf.len());
-    output.push(0u8);
+    output.push(0_u8);
 
     for (i, c) in decoded_key.enumerate() {
         if output[0] as usize == i

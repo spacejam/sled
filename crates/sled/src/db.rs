@@ -38,8 +38,8 @@ impl std::fmt::Debug for Db {
         write!(f, "Db {{")?;
         for (raw_name, tree) in tenants.iter() {
             let name = std::str::from_utf8(&raw_name)
-                .map(String::from)
-                .unwrap_or_else(|_| format!("{:?}", raw_name));
+                .ok()
+                .map_or_else(|| format!("{:?}", raw_name), String::from);
             write!(f, "tree: {:?} contents: {:?}", name, tree)?;
         }
         write!(f, "}}")?;
@@ -57,19 +57,19 @@ impl Db {
     ///
     /// let t = Db::open("my_db").unwrap();
     /// ```
-    pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Db> {
+    pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
         let config = ConfigBuilder::new().path(path).build();
         Self::start(config)
     }
 
     /// Load existing or create a new `Db` with a default configuration.
     #[deprecated(since = "0.24.2", note = "replaced by `Db:open`")]
-    pub fn start_default<P: AsRef<std::path::Path>>(path: P) -> Result<Db> {
+    pub fn start_default<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
         Self::open(path)
     }
 
     /// Load existing or create a new `Db`.
-    pub fn start(config: Config) -> Result<Db> {
+    pub fn start(config: Config) -> Result<Self> {
         let _measure = Measure::new(&M.tree_start);
 
         let context = Context::start(config)?;
@@ -94,7 +94,7 @@ impl Db {
             &guard,
         )?);
 
-        let ret = Db {
+        let ret = Self {
             context: context.clone(),
             default,
             tenants: Arc::new(RwLock::new(FastMap8::default())),
@@ -102,7 +102,7 @@ impl Db {
 
         let mut tenants = ret.tenants.write();
 
-        for (id, root) in context.pagecache.meta(&guard)?.tenants().into_iter()
+        for (id, root) in context.pagecache.meta(&guard)?.tenants()
         {
             let tree = Tree {
                 tree_id: id.clone(),

@@ -13,7 +13,7 @@ pub struct Lazy<T, F> {
 
 impl<T, F> Lazy<T, F> {
     /// Create a new Lazy
-    pub const fn new(init: F) -> Lazy<T, F>
+    pub const fn new(init: F) -> Self
     where
         F: Sized,
     {

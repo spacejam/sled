@@ -1280,6 +1280,12 @@ impl Tree {
     where
         K: AsRef<[u8]>,
     {
+        #[cfg(feature = "lock_free_delays")]
+        const MAX_LOOPS: usize = usize::max_value();
+
+        #[cfg(not(feature = "lock_free_delays"))]
+        const MAX_LOOPS: usize = 1_000_000;
+
         let _measure = Measure::new(&M.tree_traverse);
 
         let mut cursor = self.root.load(SeqCst);
@@ -1303,12 +1309,6 @@ impl Tree {
                 continue;
             };
         }
-
-        #[cfg(feature = "lock_free_delays")]
-        const MAX_LOOPS: usize = usize::max_value();
-
-        #[cfg(not(feature = "lock_free_delays"))]
-        const MAX_LOOPS: usize = 1_000_000;
 
         for _ in 0..MAX_LOOPS {
             if cursor == u64::max_value() {

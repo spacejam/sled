@@ -32,7 +32,7 @@ impl<'a> Batch<'a> {
     pub fn apply(self) -> Result<()> {
         let peg = self.tree.context.pin_log()?;
         let cc = self.tree.concurrency_control.write();
-        for (k, v_opt) in self.writes.into_iter() {
+        for (k, v_opt) in self.writes {
             if let Some(v) = v_opt {
                 self.tree.insert_inner(k, v)?;
             } else {

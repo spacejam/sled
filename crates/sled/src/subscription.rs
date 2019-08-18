@@ -36,7 +36,7 @@ impl Event {
 }
 
 impl Clone for Event {
-    fn clone(&self) -> Event {
+    fn clone(&self) -> Self {
         use self::Event::*;
 
         match self {
