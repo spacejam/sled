@@ -21,8 +21,8 @@ type Inner = [u8; CUTOFF];
 pub struct IVec(IVecInner);
 
 impl Default for IVec {
-    fn default() -> IVec {
-        IVec::from(&[])
+    fn default() -> Self {
+        Self::from(&[])
     }
 }
 
@@ -53,7 +53,7 @@ impl<'de> Deserialize<'de> for IVec {
     ) -> StdResult<Self, D::Error> {
         let bytes: StdResult<Box<[u8]>, D::Error> =
             serde_bytes::deserialize(deserializer);
-        bytes.map(IVec::from)
+        bytes.map(Self::from)
     }
 }
 
@@ -62,7 +62,7 @@ const fn is_inline_candidate(length: usize) -> bool {
 }
 
 impl IVec {
-    fn inline(slice: &[u8]) -> IVec {
+    fn inline(slice: &[u8]) -> Self {
         assert!(is_inline_candidate(slice.len()));
 
         let mut data = Inner::default();
@@ -75,64 +75,64 @@ impl IVec {
             );
         }
 
-        IVec(IVecInner::Inline(slice.len() as u8, data))
+        Self(IVecInner::Inline(slice.len() as u8, data))
     }
 
-    fn remote(arc: Arc<[u8]>) -> IVec {
-        IVec(IVecInner::Remote(arc))
+    fn remote(arc: Arc<[u8]>) -> Self {
+        Self(IVecInner::Remote(arc))
     }
 }
 
 impl From<Box<[u8]>> for IVec {
-    fn from(b: Box<[u8]>) -> IVec {
+    fn from(b: Box<[u8]>) -> Self {
         if is_inline_candidate(b.len()) {
-            IVec::inline(&b)
+            Self::inline(&b)
         } else {
             // rely on the Arc From specialization
             // for Box<T>, which may improve
             // over time
-            IVec::remote(Arc::from(b))
+            Self::remote(Arc::from(b))
         }
     }
 }
 
 impl From<&[u8]> for IVec {
-    fn from(slice: &[u8]) -> IVec {
+    fn from(slice: &[u8]) -> Self {
         if is_inline_candidate(slice.len()) {
-            IVec::inline(slice)
+            Self::inline(slice)
         } else {
-            IVec::remote(Arc::from(slice))
+            Self::remote(Arc::from(slice))
         }
     }
 }
 
 impl From<Arc<[u8]>> for IVec {
-    fn from(arc: Arc<[u8]>) -> IVec {
-        IVec::remote(arc)
+    fn from(arc: Arc<[u8]>) -> Self {
+        Self::remote(arc)
     }
 }
 
 impl From<&str> for IVec {
-    fn from(s: &str) -> IVec {
-        IVec::from(s.as_bytes())
+    fn from(s: &str) -> Self {
+        Self::from(s.as_bytes())
     }
 }
 
 impl From<&IVec> for IVec {
-    fn from(v: &IVec) -> IVec {
+    fn from(v: &Self) -> Self {
         v.clone()
     }
 }
 
 impl From<Vec<u8>> for IVec {
-    fn from(v: Vec<u8>) -> IVec {
+    fn from(v: Vec<u8>) -> Self {
         if is_inline_candidate(v.len()) {
-            IVec::inline(&v)
+            Self::inline(&v)
         } else {
             // rely on the Arc From specialization
             // for Vec<T>, which may improve
             // over time
-            IVec::remote(Arc::from(v))
+            Self::remote(Arc::from(v))
         }
     }
 }
@@ -153,8 +153,8 @@ macro_rules! from_array {
     ($($s:expr),*) => {
         $(
             impl From<&[u8; $s]> for IVec {
-                fn from(v: &[u8; $s]) -> IVec {
-                    IVec::from(&v[..])
+                fn from(v: &[u8; $s]) -> Self {
+                    Self::from(&v[..])
                 }
             }
         )*
@@ -197,13 +197,13 @@ impl AsRef<[u8]> for IVec {
 }
 
 impl Ord for IVec {
-    fn cmp(&self, other: &IVec) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.as_ref().cmp(other.as_ref())
     }
 }
 
 impl PartialOrd for IVec {
-    fn partial_cmp(&self, other: &IVec) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }

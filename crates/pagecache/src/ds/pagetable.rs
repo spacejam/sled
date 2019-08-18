@@ -43,15 +43,15 @@ struct Node2<T: Send + 'static> {
 }
 
 impl<T: Send + 'static> Node1<T> {
-    fn new() -> Box<Node1<T>> {
-        let size = size_of::<Node1<T>>();
-        let align = align_of::<Node1<T>>();
+    fn new() -> Box<Self> {
+        let size = size_of::<Self>();
+        let align = align_of::<Self>();
 
         unsafe {
             let layout = Layout::from_size_align_unchecked(size, align);
 
             #[allow(clippy::cast_ptr_alignment)]
-            let ptr = alloc_zeroed(layout) as *mut Node1<T>;
+            let ptr = alloc_zeroed(layout) as *mut Self;
 
             Box::from_raw(ptr)
         }
@@ -59,15 +59,15 @@ impl<T: Send + 'static> Node1<T> {
 }
 
 impl<T: Send + 'static> Node2<T> {
-    fn new() -> Owned<Node2<T>> {
-        let size = size_of::<Node2<T>>();
-        let align = align_of::<Node2<T>>();
+    fn new() -> Owned<Self> {
+        let size = size_of::<Self>();
+        let align = align_of::<Self>();
 
         unsafe {
             let layout = Layout::from_size_align_unchecked(size, align);
 
             #[allow(clippy::cast_ptr_alignment)]
-            let ptr = alloc_zeroed(layout) as *mut Node2<T>;
+            let ptr = alloc_zeroed(layout) as *mut Self;
 
             Owned::from_raw(ptr)
         }
@@ -118,7 +118,7 @@ impl<T> Default for PageTable<T>
 where
     T: 'static + Send + Sync,
 {
-    fn default() -> PageTable<T> {
+    fn default() -> Self {
         let head = Node1::new();
         Self {
             head: Atomic::from(head),

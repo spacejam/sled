@@ -142,7 +142,7 @@ pub(crate) enum SegmentState {
 use self::SegmentState::{Free, Active, Inactive, Draining};
 
 impl Default for SegmentState {
-    fn default() -> SegmentState {
+    fn default() -> Self {
         Free
     }
 }
@@ -989,7 +989,7 @@ impl SegmentAccountant {
             && inactive_segs > 5
         {
             let last_index =
-                self.segments.iter().rposition(|s| s.is_inactive()).unwrap();
+                self.segments.iter().rposition(Segment::is_inactive).unwrap();
 
             let segment_start = (last_index * self.config.io_buf_size) as LogId;
 

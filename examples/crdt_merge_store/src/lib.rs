@@ -10,20 +10,20 @@ use std::path::Path;
 use bincode::{deserialize, serialize, Infinite};
 use crdts::{Orswot, VClock};
 
-const KEY: &'static [u8] = b"dat orswot";
+const KEY: &[u8] = b"dat orswot";
 
 pub struct OrswotStore {
     db: sled::Db,
 }
 
 impl OrswotStore {
-    pub fn new(path: &AsRef<Path>) -> OrswotStore {
+    pub fn new(path: &dyn AsRef<Path>) -> Self {
         let config = sled::ConfigBuilder::new().path(path).build();
 
         let db = sled::Db::start(config).unwrap();
         db.set_merge_operator(orswot_merge);
 
-        OrswotStore { db: db }
+        Self { db }
     }
 
     pub fn get(&self) -> Orswot<Vec<u8>, DeviceID> {
@@ -40,15 +40,15 @@ impl OrswotStore {
 
     pub fn add(&self, device: DeviceID, item: Vec<u8>) {
         self.apply(Add {
-            device: device,
-            item: item,
+            device,
+            item,
         });
     }
 
     pub fn remove(&self, context: VClock<DeviceID>, item: Vec<u8>) {
         self.apply(Remove {
-            context: context,
-            item: item,
+            context,
+            item,
         });
     }
 
@@ -75,7 +75,7 @@ enum OrswotOp {
     },
 }
 
-use OrswotOp::*;
+use OrswotOp::{Add, Remove, Merge};
 
 fn orswot_merge(
     _key: &[u8],
@@ -83,8 +83,7 @@ fn orswot_merge(
     merged_bytes: &[u8],
 ) -> Option<Vec<u8>> {
     let mut ret = old_value
-        .map(|ov| deserialize(ov).unwrap())
-        .unwrap_or_else(|| Orswot::new());
+        .map_or_else(Orswot::new, |ov| deserialize(ov).unwrap());
 
     let op = deserialize(merged_bytes).unwrap();
 

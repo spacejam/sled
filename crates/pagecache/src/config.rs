@@ -310,7 +310,7 @@ impl ConfigBuilder {
 
         if !dir.exists() {
             let res: std::io::Result<()> = std::fs::create_dir_all(dir);
-            res.map_err(|e: std::io::Error| Error::from(e))?;
+            res.map_err(Error::from)?;
         }
 
         self.verify_config_changes_ok()?;
@@ -453,7 +453,7 @@ impl ConfigBuilder {
             );
         }
 
-        Ok(deserialize::<ConfigBuilder>(&*buf).ok())
+        Ok(deserialize::<Self>(&*buf).ok())
     }
 
     // Get the path of the database

@@ -35,7 +35,7 @@ pub struct Stack<T: Send + 'static> {
 }
 
 impl<T: Send + 'static> Default for Stack<T> {
-    fn default() -> Stack<T> {
+    fn default() -> Self {
         Self {
             head: Atomic::null(),
         }

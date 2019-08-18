@@ -44,7 +44,7 @@ impl Flusher {
         name: String,
         pagecache: Arc<PageCache<Frag>>,
         flush_every_ms: u64,
-    ) -> Flusher {
+    ) -> Self {
         #[allow(clippy::mutex_atomic)] // mutex used in CondVar below
         let shutdown = Arc::new(Mutex::new(ShutdownState::Running));
         let sc = Arc::new(Condvar::new());
@@ -58,7 +58,7 @@ impl Flusher {
             })
             .unwrap();
 
-        Flusher {
+        Self {
             shutdown,
             sc,
             join_handle: Mutex::new(Some(join_handle)),

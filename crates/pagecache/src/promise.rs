@@ -19,7 +19,7 @@ pub struct PromiseFiller<T> {
 impl<T> Promise<T> {
     /// Create a new PromiseFiller and the Promise
     /// that will be filled by its completion.
-    pub fn pair() -> (PromiseFiller<T>, Promise<T>) {
+    pub fn pair() -> (PromiseFiller<T>, Self) {
         let mu = Arc::new(Mutex::new((false, None)));
         let cv = Arc::new(Condvar::new());
         let future = Self {
