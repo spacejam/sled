@@ -340,6 +340,64 @@ fn concurrent_tree_iter() -> Result<()> {
 }
 
 #[test]
+fn concurrent_tree_transactions() {
+    tests::setup_logger();
+
+    let config = ConfigBuilder::new()
+        .temporary(true)
+        .flush_every_ms(None)
+        .build();
+
+    let db = Arc::new(sled::Db::start(config).unwrap());
+    db.insert(b"k1", b"cats").unwrap();
+    db.insert(b"k2", b"dogs").unwrap();
+
+    let mut threads = vec![];
+
+    let n_writers = 30;
+    for _ in 0..n_writers {
+        let db = db.clone();
+        let thread = std::thread::spawn(move || {
+            db.transaction(|db| {
+                let v1 = db.remove(b"k1").unwrap().unwrap();
+                let v2 = db.remove(b"k2").unwrap().unwrap();
+
+                db.insert(b"k1", v2);
+                db.insert(b"k2", v1);
+
+                Ok(())
+            })
+            .unwrap();
+        });
+        threads.push(thread);
+    }
+
+    let n_readers = 5;
+    for _ in 0..n_writers {
+        let db = db.clone();
+        let thread = std::thread::spawn(move || {
+            db.transaction(|db| {
+                let v1 = db.get(b"k1").unwrap().unwrap();
+                let v2 = db.get(b"k2").unwrap().unwrap();
+
+                let mut results = vec![v1, v2];
+                results.sort();
+
+                assert_eq!([&results[0], &results[1]], [b"cats", b"dogs"]);
+
+                Ok(())
+            })
+            .unwrap();
+        });
+        threads.push(thread);
+    }
+
+    for thread in threads.into_iter() {
+        thread.join().unwrap();
+    }
+}
+
+#[test]
 fn tree_subdir() {
     let _ = std::fs::remove_dir_all("/tmp/test_tree_subdir");
 
