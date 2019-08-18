@@ -182,12 +182,9 @@ impl Tree {
     }
 
     /// real shit right here
-    pub fn transaction<'a, F, R>(
-        &'a self,
-        f: F,
-    ) -> Result<std::result::Result<R, TransactionError>>
+    pub fn transaction<'a, F, R>(&'a self, f: F) -> TransactionResult<R>
     where
-        F: Fn(&TransactionalTree) -> std::result::Result<R, TransactionError>,
+        F: Fn(&TransactionalTree) -> TransactionResult<R>,
     {
         <&Self as Transactional>::transaction(&self, f)
     }

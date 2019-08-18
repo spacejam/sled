@@ -61,7 +61,10 @@ pub use {
         ivec::IVec,
         subscription::{Event, Subscriber},
         tree::Tree,
-        tx::{TransactionError, Transactional, TransactionalTree},
+        tx::{
+            TransactionError, TransactionResult, Transactional,
+            TransactionalTree,
+        },
     },
     pagecache::{Config, ConfigBuilder, Error, Result},
 };

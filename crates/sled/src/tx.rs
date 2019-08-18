@@ -9,22 +9,23 @@
 //!
 //! // Use write-only transactions as a writebatch:
 //! db.transaction(|db| {
-//!     db.insert(b"k1", b"cats");
-//!     db.insert(b"k2", b"dogs");
+//!     db.insert(b"k1", b"cats")?;
+//!     db.insert(b"k2", b"dogs")?;
 //!     Ok(())
-//! }).unwrap().unwrap();
+//! }).unwrap();
 //!
 //! // Atomically swap two items:
 //! db.transaction(|db| {
-//!     let v1_option = db.get(b"k1")?;
+//!     let v1_option = db.remove(b"k1")?;
 //!     let v1 = v1_option.unwrap();
-//!     let v2_option = db.get(b"k2")?;
+//!     let v2_option = db.remove(b"k2")?;
 //!     let v2 = v2_option.unwrap();
 //!
 //!     db.insert(b"k1", v2);
 //!     db.insert(b"k2", v1);
+//!
 //!     Ok(())
-//! }).unwrap().unwrap();
+//! }).unwrap();
 //!
 //! assert_eq!(&db.get(b"k1").unwrap().unwrap(), b"dogs");
 //! assert_eq!(&db.get(b"k2").unwrap().unwrap(), b"cats");
@@ -50,7 +51,7 @@
 //!     processed_item.extend_from_slice(&unprocessed_item);
 //!     processed.insert(b"k3", processed_item)?;
 //!     Ok(())
-//! }).unwrap().unwrap();
+//! }).unwrap();
 //!
 //! assert_eq!(unprocessed.get(b"k3").unwrap(), None);
 //! assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
@@ -68,59 +69,107 @@ use super::*;
 /// Tree.
 pub struct TransactionalTree<'a> {
     pub(super) tree: &'a Tree,
-    pub(super) cache: RefCell<HashMap<IVec, Option<IVec>>>,
+    pub(super) writes: RefCell<HashMap<IVec, Option<IVec>>>,
+    pub(super) read_cache: RefCell<HashMap<IVec, Option<IVec>>>,
+    pub(super) locks: RefCell<Vec<parking_lot::RwLockWriteGuard<'a, ()>>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Copy)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TransactionError {
     Conflict,
     Abort,
+    Storage(Error),
+}
+
+pub type TransactionResult<T> = std::result::Result<T, TransactionError>;
+
+fn abort() -> TransactionError {
+    TransactionError::Abort
+}
+
+impl From<Error> for TransactionError {
+    fn from(error: Error) -> Self {
+        TransactionError::Storage(error)
+    }
 }
 
 impl<'a> TransactionalTree<'a> {
     /// Set a key to a new value
-    pub fn insert<K, V>(&self, key: K, value: V) -> TxResult<Option<IVec>>
+    pub fn insert<K, V>(
+        &self,
+        key: K,
+        value: V,
+    ) -> TransactionResult<Option<IVec>>
     where
         IVec: From<K>,
         IVec: From<V>,
         K: AsRef<[u8]>,
     {
-        let mut cache = self.cache.borrow_mut();
         let old = self.get(key.as_ref())?;
-        cache.insert(IVec::from(key), Some(IVec::from(value)));
+        let mut writes = self.writes.borrow_mut();
+        writes.insert(IVec::from(key), Some(IVec::from(value)));
         Ok(old)
     }
 
     /// Remove a key
-    pub fn remove<K>(&self, key: K) -> TxResult<Option<IVec>>
+    pub fn remove<K>(&self, key: K) -> TransactionResult<Option<IVec>>
     where
         IVec: From<K>,
         K: AsRef<[u8]>,
     {
-        let mut cache = self.cache.borrow_mut();
         let old = self.get(key.as_ref());
-        cache.insert(IVec::from(key), None);
+        let mut writes = self.writes.borrow_mut();
+        writes.insert(IVec::from(key), None);
         old
     }
 
     /// Get the value associated with a key
-    pub fn get<K: AsRef<[u8]>>(&self, key: K) -> TxResult<Option<IVec>> {
+    pub fn get<K: AsRef<[u8]>>(
+        &self,
+        key: K,
+    ) -> TransactionResult<Option<IVec>> {
+        let writes = self.writes.borrow();
+        if let Some(first_try) = writes.get(key.as_ref()) {
+            return Ok(first_try.clone());
+        }
+        let mut reads = self.read_cache.borrow_mut();
+        if let Some(second_try) = reads.get(key.as_ref()) {
+            return Ok(second_try.clone());
+        }
+
+        // not found in a cache, need to hit the backing db
+        let get = self.tree.get(key.as_ref())?;
+        reads.insert(key.as_ref().into(), get.clone());
+
+        Ok(get)
+    }
+
+    fn stage(&self) -> bool {
+        let mut locks = self.locks.borrow_mut();
+        let guard = self.tree.concurrency_control.write();
+        locks.push(guard);
+        true
+    }
+
+    fn unstage(&self) {
         unimplemented!()
     }
 
     fn validate(&self) -> bool {
-        unimplemented!()
+        true
     }
 
     fn commit(&self) -> Result<()> {
-        unimplemented!()
+        let mut writes = self.writes.borrow_mut();
+        for (k, v_opt) in &*writes {
+            if let Some(v) = v_opt {
+                self.tree.insert_inner(k, v)?;
+            } else {
+                self.tree.remove_inner(k)?;
+            }
+        }
+        Ok(())
     }
-}
-
-type TxResult<T> = std::result::Result<T, TransactionError>;
-
-fn abort() -> TransactionError {
-    TransactionError::Abort
 }
 
 pub struct TransactionalTrees<'a> {
@@ -128,6 +177,21 @@ pub struct TransactionalTrees<'a> {
 }
 
 impl<'a> TransactionalTrees<'a> {
+    fn stage(&self) -> bool {
+        for tree in &self.inner {
+            if !tree.stage() {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn unstage(&self) {
+        for tree in &self.inner {
+            tree.unstage();
+        }
+    }
+
     fn validate(&self) -> bool {
         for tree in &self.inner {
             if !tree.validate() {
@@ -136,11 +200,17 @@ impl<'a> TransactionalTrees<'a> {
         }
         true
     }
-    fn commit(&self) -> Result<()> {
+
+    fn commit(self) -> Result<()> {
+        let peg = self.inner[0].tree.context.pin_log()?;
         for tree in &self.inner {
             tree.commit()?;
         }
-        Ok(())
+
+        // when the peg drops, it ensures all updates
+        // written to the log since its creation are
+        // recovered atomically
+        peg.seal_batch()
     }
 }
 
@@ -151,23 +221,33 @@ pub trait Transactional {
 
     fn view_overlay(overlay: &TransactionalTrees<'_>) -> Self::View;
 
-    fn transaction<F, R>(&self, f: F) -> Result<TxResult<R>>
+    fn transaction<F, R>(&self, f: F) -> TransactionResult<R>
     where
-        F: Fn(Self::View) -> TxResult<R>,
+        F: Fn(Self::View) -> TransactionResult<R>,
     {
         loop {
             let tt = self.make_overlay();
             let view = Self::view_overlay(&tt);
             let ret = f(view);
+            if !tt.stage() {
+                continue;
+            }
+            if !tt.validate() {
+                tt.unstage();
+                continue;
+            }
             match ret {
-                Ok(ref r) if tt.validate() => {
+                Ok(r) => {
                     tt.commit()?;
-                    return Ok(ret);
+                    return Ok(r);
                 }
                 Err(TransactionError::Abort) => {
-                    return Ok(Err(TransactionError::Abort))
+                    return Err(TransactionError::Abort);
                 }
-                other => continue,
+                Err(TransactionError::Conflict) => continue,
+                Err(TransactionError::Storage(e)) => {
+                    return Err(TransactionError::Storage(e));
+                }
             }
         }
     }
@@ -180,7 +260,9 @@ impl<'a> Transactional for &'a Tree {
         TransactionalTrees {
             inner: vec![TransactionalTree {
                 tree: &self,
-                cache: Default::default(),
+                writes: Default::default(),
+                read_cache: Default::default(),
+                locks: Default::default(),
             }],
         }
     }
@@ -209,11 +291,15 @@ where
             inner: vec![
                 TransactionalTree {
                     tree: self.0.as_ref(),
-                    cache: Default::default(),
+                    writes: Default::default(),
+                    read_cache: Default::default(),
+                    locks: Default::default(),
                 },
                 TransactionalTree {
                     tree: self.1.as_ref(),
-                    cache: Default::default(),
+                    writes: Default::default(),
+                    read_cache: Default::default(),
+                    locks: Default::default(),
                 },
             ],
         }
