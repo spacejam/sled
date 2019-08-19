@@ -259,27 +259,47 @@ impl Tree {
     /// Create a new batched update that can be
     /// atomically applied.
     ///
+    /// It is possible to apply a `Batch` in a transaction
+    /// as well, which is the way you can apply a `Batch`
+    /// to multiple `Tree`s atomically.
+    ///
     /// # Examples
     ///
     /// ```
-    /// use sled::Db;
+    /// use sled::{Db, Batch};
     ///
     /// let db = Db::open("batch_db").unwrap();
     /// db.insert("key_0", "val_0").unwrap();
-    /// let mut batch = db.batch();
+    ///
+    /// let mut batch = Batch::default();
     /// batch.insert("key_a", "val_a");
     /// batch.insert("key_b", "val_b");
     /// batch.insert("key_c", "val_c");
     /// batch.remove("key_0");
-    /// batch.apply().unwrap();
+    ///
+    /// db.apply_batch(batch).unwrap();
     /// // key_0 no longer exists, and key_a, key_b, and key_c
     /// // now do exist.
     /// ```
-    pub fn batch(&self) -> Batch {
-        Batch {
-            tree: self,
-            writes: std::collections::HashMap::default(),
+    pub fn apply_batch(&self, batch: Batch) -> Result<()> {
+        let _ = self.concurrency_control.write();
+        self.apply_batch_inner(batch)
+    }
+
+    pub(crate) fn apply_batch_inner(&self, batch: Batch) -> Result<()> {
+        let peg = self.context.pin_log()?;
+        for (k, v_opt) in batch.writes {
+            if let Some(v) = v_opt {
+                self.insert_inner(k, v)?;
+            } else {
+                self.remove_inner(k)?;
+            }
         }
+
+        // when the peg drops, it ensures all updates
+        // written to the log since its creation are
+        // recovered atomically
+        peg.seal_batch()
     }
 
     /// Retrieve a value from the `Tree` if it exists.

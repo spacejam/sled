@@ -144,6 +144,18 @@ impl<'a> TransactionalTree<'a> {
         Ok(get)
     }
 
+    /// Atomically apply multiple inserts and removals.
+    pub fn apply_batch(&self, batch: Batch) -> TransactionResult<()> {
+        for (k, v_opt) in batch.writes {
+            if let Some(v) = v_opt {
+                self.insert(k, v)?;
+            } else {
+                self.remove(k)?;
+            }
+        }
+        Ok(())
+    }
+
     fn stage(&self) -> bool {
         let mut locks = self.locks.borrow_mut();
         let guard = self.tree.concurrency_control.write();
