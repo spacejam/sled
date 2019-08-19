@@ -911,11 +911,11 @@ impl Tree {
                 if let Some(res) = subscriber_reservation.take() {
                     let event = if let Some(new) = &new {
                         subscription::Event::Set(
-                            key.as_ref().to_vec(),
+                            key.as_ref().into(),
                             new.clone(),
                         )
                     } else {
-                        subscription::Event::Del(key.as_ref().to_vec())
+                        subscription::Event::Del(key.as_ref().into())
                     };
 
                     res.complete(event);
