@@ -13,7 +13,7 @@ use super::*;
 #[derive(Clone)]
 pub struct Db {
     context: Context,
-    default: Arc<Tree>,
+    pub(crate) default: Arc<Tree>,
     tenants: Arc<RwLock<FastMap8<Vec<u8>, Arc<Tree>>>>,
 }
 

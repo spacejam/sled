@@ -96,6 +96,9 @@ where
 /// before any of the atomic batch can be partially recovered.
 ///
 /// Must call `seal_batch` to complete the atomic batch operation.
+///
+/// If this is dropped without calling `seal_batch`, the complete
+/// recovery effect will not occur.
 pub struct RecoveryGuard<'a> {
     batch_res: Reservation<'a>,
 }
@@ -1343,16 +1346,16 @@ where
             // we were not able to short-circuit, so we should
             // fix-up the stack.
             let pulled = entries.iter().map(|entry| match entry {
-                  (Some(Update::Compact(compact)), _)
+                (Some(Update::Compact(compact)), _)
                 | (Some(Update::Append(compact)), _) => {
                     Ok(Cow::Borrowed(compact))
-                },
+                }
                 (None, cache_info) => {
                     let res = self
                         .pull(pid, cache_info.lsn, cache_info.ptr)
                         .map(|pg| pg)?;
                     Ok(Cow::Owned(res.into_frag()))
-                },
+                }
                 other => {
                     panic!("iterating over unexpected update: {:?}", other);
                 }
