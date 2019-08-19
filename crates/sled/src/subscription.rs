@@ -20,8 +20,6 @@ static ID_GEN: AtomicUsize = AtomicUsize::new(0);
 pub enum Event {
     /// A new complete (key, value) pair
     Set(Vec<u8>, IVec),
-    /// A new partial (key, merged value) pair
-    Merge(Vec<u8>, IVec),
     /// A deleted key
     Del(Vec<u8>),
 }
@@ -30,7 +28,7 @@ impl Event {
     /// Return a reference to the key that this `Event` refers to
     pub fn key(&self) -> &[u8] {
         match self {
-            Event::Set(k, ..) | Event::Merge(k, ..) | Event::Del(k) => &*k,
+            Event::Set(k, ..) | Event::Del(k) => &*k,
         }
     }
 }
@@ -41,7 +39,6 @@ impl Clone for Event {
 
         match self {
             Set(k, v) => Set(k.clone(), v.clone()),
-            Merge(k, v) => Merge(k.clone(), v.clone()),
             Del(k) => Del(k.clone()),
         }
     }
@@ -195,7 +192,7 @@ fn basic_subscription() {
 
     let k5 = vec![0, 1, 2];
     let r5 = subs.reserve(&k5).unwrap();
-    r5.complete(Event::Merge(k5.clone(), IVec::from(k5.clone())));
+    r5.complete(Event::Set(k5.clone(), IVec::from(k5.clone())));
 
     let k6 = vec![1, 1, 2];
     let r6 = subs.reserve(&k6).unwrap();

@@ -572,7 +572,6 @@ impl Tree {
     /// for event in events.take(1) {
     ///     match event {
     ///         Event::Set(key, value) => assert_eq!(key, vec![0]),
-    ///         Event::Merge(key, partial_value) => {}
     ///         Event::Del(key) => {}
     ///     }
     /// }
