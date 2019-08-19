@@ -188,7 +188,7 @@ impl LogReader for File {
             | MessageKind::Counter => {
                 trace!("read a successful inline message");
                 let buf = if config.use_compression {
-                    maybe_decompress(buf)?
+                    maybe_decompress(&buf)?
                 } else {
                     buf
                 };

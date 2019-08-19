@@ -1104,7 +1104,7 @@ impl Tree {
 
     fn split_node<'g>(
         &self,
-        node_view: View<'g>,
+        node_view: &View<'g>,
         parent_view: &Option<View<'g>>,
         root_pid: PageId,
         guard: &'g Guard,
@@ -1167,7 +1167,7 @@ impl Tree {
             }
         } else {
             M.tree_root_split_attempt();
-            if self.root_hoist(root_pid, rhs_pid, rhs_lo, guard)? {
+            if self.root_hoist(root_pid, rhs_pid, &rhs_lo, guard)? {
                 M.tree_root_split_success();
             }
         }
@@ -1179,7 +1179,7 @@ impl Tree {
         &self,
         from: PageId,
         to: PageId,
-        at: IVec,
+        at: &IVec,
         guard: &'g Guard,
     ) -> Result<bool> {
         // hoist new root, pointing to lhs & rhs
@@ -1206,7 +1206,7 @@ impl Tree {
         debug_delay();
 
         let cas = self.context.pagecache.cas_root_in_meta(
-            self.tree_id.clone(),
+            &self.tree_id,
             Some(from),
             Some(new_root_pid),
             guard,
@@ -1252,7 +1252,7 @@ impl Tree {
                     size: *size,
                 };
                 if leaf.merging_child.is_some() {
-                    self.merge_node(view, leaf.merging_child.unwrap(), guard)?;
+                    self.merge_node(&view, leaf.merging_child.unwrap(), guard)?;
                 } else {
                     return Ok(Some(view));
                 }
@@ -1319,7 +1319,7 @@ impl Tree {
             // When we encounter a merge intention, we collaboratively help out
             if view.merging_child.is_some() {
                 self.merge_node(
-                    view.clone(),
+                    &view,
                     view.node.merging_child.unwrap(),
                     guard,
                 )?;
@@ -1340,7 +1340,7 @@ impl Tree {
             }
 
             if view.should_split() {
-                self.split_node(view.clone(), &parent_view, root_pid, guard)?;
+                self.split_node(&view, &parent_view, root_pid, guard)?;
                 retry!();
             }
 
@@ -1358,7 +1358,7 @@ impl Tree {
                     if self.root_hoist(
                         root_pid,
                         view.next.unwrap(),
-                        view.hi.clone(),
+                        &view.hi,
                         guard,
                     )? {
                         M.tree_root_split_success();
@@ -1415,7 +1415,7 @@ impl Tree {
 
                         if let Ok(new_parent_ptr) = link {
                             parent.ptr = new_parent_ptr;
-                            self.merge_node(parent.clone(), cursor, guard)?;
+                            self.merge_node(&parent, cursor, guard)?;
                             retry!();
                         }
                     }
@@ -1441,7 +1441,7 @@ impl Tree {
 
     pub(crate) fn merge_node<'g>(
         &self,
-        parent_view: View<'g>,
+        parent_view: &View<'g>,
         child_pid: PageId,
         guard: &'g Guard,
     ) -> Result<()> {

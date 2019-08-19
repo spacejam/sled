@@ -89,7 +89,7 @@ impl Db {
         // create or open the default tree
         let guard = pin();
         let default = Arc::new(meta::open_tree(
-            context.clone(),
+            &context,
             DEFAULT_TREE_ID.to_vec(),
             &guard,
         )?);
@@ -134,7 +134,7 @@ impl Db {
 
         let mut tenants = self.tenants.write();
         let tree = Arc::new(meta::open_tree(
-            self.context.clone(),
+            &self.context,
             name.to_vec(),
             &guard,
         )?);
@@ -179,7 +179,7 @@ impl Db {
 
         loop {
             let res = self.context.pagecache.cas_root_in_meta(
-                name.to_vec(),
+                &name,
                 root_id,
                 None,
                 &guard,

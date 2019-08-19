@@ -54,7 +54,7 @@ impl Flusher {
             .spawn({
                 let shutdown = shutdown.clone();
                 let sc = sc.clone();
-                move || run(shutdown, sc, pagecache, flush_every_ms)
+                move || run(&shutdown, &sc, &pagecache, flush_every_ms)
             })
             .unwrap();
 
@@ -67,9 +67,9 @@ impl Flusher {
 }
 
 fn run(
-    shutdown: Arc<Mutex<ShutdownState>>,
-    sc: Arc<Condvar>,
-    pagecache: Arc<PageCache<Frag>>,
+    shutdown: &Arc<Mutex<ShutdownState>>,
+    sc: &Arc<Condvar>,
+    pagecache: &Arc<PageCache<Frag>>,
     flush_every_ms: u64,
 ) {
     let flush_every = Duration::from_millis(flush_every_ms);
