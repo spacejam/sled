@@ -181,7 +181,7 @@ impl Tree {
         }
     }
 
-    /// Perform a multi-key serializable transaction
+    /// Perform a multi-key serializable transaction.
     ///
     /// # Examples
     ///
