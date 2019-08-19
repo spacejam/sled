@@ -49,6 +49,7 @@ mod node;
 mod prefix;
 mod subscription;
 mod tree;
+mod tx;
 
 const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
 
@@ -60,6 +61,10 @@ pub use {
         ivec::IVec,
         subscription::{Event, Subscriber},
         tree::Tree,
+        tx::{
+            TransactionError, TransactionResult, Transactional,
+            TransactionalTree,
+        },
     },
     pagecache::{Config, ConfigBuilder, Error, Result},
 };
