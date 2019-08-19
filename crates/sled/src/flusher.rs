@@ -83,30 +83,6 @@ fn run(
                 if !shutdown.is_running() {
                     break;
                 }
-                // we had no dirty data to flush,
-                // so we can spend a little effort
-                // cleaning up the file. try not to
-                // spend more than half of our sleep
-                // time rewriting pages though.
-                while before.elapsed() < flush_every / 2 {
-                    match pagecache.attempt_gc() {
-                        Err(e) => {
-                            error!(
-                                "failed to clean file from async flush thread: {}",
-                                e
-                            );
-
-                            #[cfg(feature = "failpoints")]
-                            pagecache.set_failpoint(e);
-
-                            *shutdown = ShutdownState::ShutDown;
-                            sc.notify_all();
-                            return;
-                        }
-                        Ok(false) => break,
-                        Ok(true) => {}
-                    }
-                }
             }
             Ok(_) => {
                 wrote_data = true;
@@ -124,6 +100,30 @@ fn run(
                 *shutdown = ShutdownState::ShutDown;
                 sc.notify_all();
                 return;
+            }
+        }
+
+        // so we can spend a little effort
+        // cleaning up the segments. try not to
+        // spend more than half of our sleep
+        // time rewriting pages though.
+        while shutdown.is_running() && before.elapsed() < flush_every / 2 {
+            match pagecache.attempt_gc() {
+                Err(e) => {
+                    error!(
+                        "failed to clean file from periodic flush thread: {}",
+                        e
+                    );
+
+                    #[cfg(feature = "failpoints")]
+                    pagecache.set_failpoint(e);
+
+                    *shutdown = ShutdownState::ShutDown;
+                    sc.notify_all();
+                    return;
+                }
+                Ok(false) => break,
+                Ok(true) => {}
             }
         }
 
