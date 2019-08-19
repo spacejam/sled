@@ -23,7 +23,7 @@ pub(crate) fn u32_to_arr(number: u32) -> [u8; 4] {
     number.to_le_bytes()
 }
 
-pub(crate) fn maybe_decompress(buf: &[u8]) -> std::io::Result<Vec<u8>> {
+pub(crate) fn maybe_decompress(buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
     #[cfg(feature = "compression")]
     {
         use std::sync::atomic::AtomicUsize;
@@ -57,5 +57,5 @@ pub(crate) fn maybe_decompress(buf: &[u8]) -> std::io::Result<Vec<u8>> {
     }
 
     #[cfg(not(feature = "compression"))]
-    Ok(buf.to_vec())
+    Ok(buf)
 }
