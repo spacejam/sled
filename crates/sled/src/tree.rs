@@ -181,7 +181,74 @@ impl Tree {
         }
     }
 
-    /// real shit right here
+    /// Perform a multi-key serializable transaction
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sled::{ConfigBuilder, Db};
+    ///
+    /// let config = ConfigBuilder::new().temporary(true).build();
+    /// let db = Db::start(config).unwrap();
+    ///
+    /// // Use write-only transactions as a writebatch:
+    /// db.transaction(|db| {
+    ///     db.insert(b"k1", b"cats")?;
+    ///     db.insert(b"k2", b"dogs")?;
+    ///     Ok(())
+    /// }).unwrap();
+    ///
+    /// // Atomically swap two items:
+    /// db.transaction(|db| {
+    ///     let v1_option = db.remove(b"k1")?;
+    ///     let v1 = v1_option.unwrap();
+    ///     let v2_option = db.remove(b"k2")?;
+    ///     let v2 = v2_option.unwrap();
+    ///
+    ///     db.insert(b"k1", v2);
+    ///     db.insert(b"k2", v1);
+    ///
+    ///     Ok(())
+    /// }).unwrap();
+    ///
+    /// assert_eq!(&db.get(b"k1").unwrap().unwrap(), b"dogs");
+    /// assert_eq!(&db.get(b"k2").unwrap().unwrap(), b"cats");
+    /// ```
+    ///
+    /// Transactions also work on tuples of `Tree`s,
+    /// preserving serializable ACID semantics!
+    /// In this example, we treat two trees like a
+    /// work queue, atomically apply updates to
+    /// data and move them from the unprocessed `Tree`
+    /// to the processed `Tree`.
+    ///
+    /// ```
+    /// use sled::{ConfigBuilder, Db, Transactional};
+    ///
+    /// let config = ConfigBuilder::new().temporary(true).build();
+    /// let db = Db::start(config).unwrap();
+    ///
+    /// let unprocessed = db.open_tree(b"unprocessed items").unwrap();
+    /// let processed = db.open_tree(b"processed items").unwrap();
+    ///
+    /// // An update somehow gets into the tree, which we
+    /// // later trigger the atomic processing of.
+    /// unprocessed.insert(b"k3", b"ligers").unwrap();
+    ///
+    /// // Atomically process the new item and move it
+    /// // between `Tree`s.
+    /// (&unprocessed, &processed).transaction(|(unprocessed, processed)| {
+    ///     let unprocessed_item = unprocessed.remove(b"k3")?.unwrap();
+    ///     let mut processed_item = b"yappin' ".to_vec();
+    ///     processed_item.extend_from_slice(&unprocessed_item);
+    ///     processed.insert(b"k3", processed_item)?;
+    ///     Ok(())
+    /// }).unwrap();
+    ///
+    /// assert_eq!(unprocessed.get(b"k3").unwrap(), None);
+    /// assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
+    /// ```
+    ///
     pub fn transaction<'a, F, R>(&'a self, f: F) -> TransactionResult<R>
     where
         F: Fn(&TransactionalTree) -> TransactionResult<R>,
@@ -230,7 +297,15 @@ impl Tree {
     /// ```
     pub fn get<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
         let _ = self.concurrency_control.read();
+        self.get_inner(key)
+    }
+
+    pub(crate) fn get_inner<K: AsRef<[u8]>>(
+        &self,
+        key: K,
+    ) -> Result<Option<IVec>> {
         let _measure = Measure::new(&M.tree_get);
+
         trace!("getting key {:?}", key.as_ref());
 
         let guard = pin();
@@ -280,6 +355,8 @@ impl Tree {
         key: K,
     ) -> Result<Option<IVec>> {
         let _measure = Measure::new(&M.tree_del);
+
+        trace!("removing key {:?}", key.as_ref());
 
         if self.context.read_only {
             return Ok(None);

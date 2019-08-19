@@ -358,36 +358,40 @@ fn concurrent_tree_transactions() {
     for _ in 0..n_writers {
         let db = db.clone();
         let thread = std::thread::spawn(move || {
-            db.transaction(|db| {
-                let v1 = db.remove(b"k1").unwrap().unwrap();
-                let v2 = db.remove(b"k2").unwrap().unwrap();
+            for _ in 0..100 {
+                db.transaction(|db| {
+                    let v1 = db.remove(b"k1").unwrap().unwrap();
+                    let v2 = db.remove(b"k2").unwrap().unwrap();
 
-                db.insert(b"k1", v2);
-                db.insert(b"k2", v1);
+                    db.insert(b"k1", v2).unwrap();
+                    db.insert(b"k2", v1).unwrap();
 
-                Ok(())
-            })
-            .unwrap();
+                    Ok(())
+                })
+                .unwrap();
+            }
         });
         threads.push(thread);
     }
 
     let n_readers = 5;
-    for _ in 0..n_writers {
+    for _ in 0..n_readers {
         let db = db.clone();
         let thread = std::thread::spawn(move || {
-            db.transaction(|db| {
-                let v1 = db.get(b"k1").unwrap().unwrap();
-                let v2 = db.get(b"k2").unwrap().unwrap();
+            for _ in 0..1000 {
+                db.transaction(|db| {
+                    let v1 = db.get(b"k1").unwrap().unwrap();
+                    let v2 = db.get(b"k2").unwrap().unwrap();
 
-                let mut results = vec![v1, v2];
-                results.sort();
+                    let mut results = vec![v1, v2];
+                    results.sort();
 
-                assert_eq!([&results[0], &results[1]], [b"cats", b"dogs"]);
+                    assert_eq!([&results[0], &results[1]], [b"cats", b"dogs"]);
 
-                Ok(())
-            })
-            .unwrap();
+                    Ok(())
+                })
+                .unwrap();
+            }
         });
         threads.push(thread);
     }

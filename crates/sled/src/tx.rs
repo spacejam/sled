@@ -138,7 +138,7 @@ impl<'a> TransactionalTree<'a> {
         }
 
         // not found in a cache, need to hit the backing db
-        let get = self.tree.get(key.as_ref())?;
+        let get = self.tree.get_inner(key.as_ref())?;
         reads.insert(key.as_ref().into(), get.clone());
 
         Ok(get)
@@ -178,8 +178,27 @@ pub struct TransactionalTrees<'a> {
 
 impl<'a> TransactionalTrees<'a> {
     fn stage(&self) -> bool {
-        for tree in &self.inner {
-            if !tree.stage() {
+        // we want to stage our trees in
+        // lexicographic order to guarantee
+        // no deadlocks should they block
+        // on mutexes in their own staging
+        // implementations.
+        let mut tree_idxs: Vec<(&[u8], usize)> = self
+            .inner
+            .iter()
+            .enumerate()
+            .map(|(idx, t)| (&*t.tree.tree_id, idx))
+            .collect();
+        tree_idxs.sort_unstable();
+
+        let mut last_idx = usize::max_value();
+        for (_, idx) in tree_idxs.into_iter() {
+            if idx == last_idx {
+                // prevents us from double-locking
+                continue;
+            }
+            last_idx = idx;
+            if !self.inner[idx].stage() {
                 return false;
             }
         }
@@ -228,10 +247,11 @@ pub trait Transactional {
         loop {
             let tt = self.make_overlay();
             let view = Self::view_overlay(&tt);
-            let ret = f(view);
             if !tt.stage() {
+                tt.unstage();
                 continue;
             }
+            let ret = f(view);
             if !tt.validate() {
                 tt.unstage();
                 continue;
