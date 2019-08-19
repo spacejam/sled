@@ -881,15 +881,48 @@ impl Tree {
 
         let merge_operator = merge_operator_opt.unwrap();
 
-        let key = key.as_ref();
-        let mut current = self.get(key)?;
-
         loop {
-            let tmp = current.as_ref().map(AsRef::as_ref);
-            let next = merge_operator(key, tmp, value.as_ref()).map(IVec::from);
-            match self.cas::<_, _, IVec>(key, tmp, next.clone())? {
-                Ok(()) => return Ok(next),
-                Err(new_current) => current = new_current,
+            let guard = pin();
+            let View { ptr, pid, node, .. } =
+                self.node_for_key(key.as_ref(), &guard)?;
+
+            let (encoded_key, current_value) =
+                if let Some((k, v)) = node.leaf_pair_for_key(key.as_ref()) {
+                    (k.clone(), Some(v.clone()))
+                } else {
+                    let k = prefix_encode(&node.lo, key.as_ref());
+                    let old_v = None;
+                    (k, old_v)
+                };
+
+            let tmp = current_value.as_ref().map(AsRef::as_ref);
+            let new = merge_operator(key.as_ref(), tmp, value.as_ref())
+                .map(IVec::from);
+
+            let mut subscriber_reservation = self.subscriptions.reserve(&key);
+
+            let frag = if let Some(ref new) = new {
+                Frag::Set(encoded_key, new.clone())
+            } else {
+                Frag::Del(encoded_key)
+            };
+            let link = self.context.pagecache.link(pid, ptr, frag, &guard)?;
+
+            if link.is_ok() {
+                if let Some(res) = subscriber_reservation.take() {
+                    let event = if let Some(new) = &new {
+                        subscription::Event::Set(
+                            key.as_ref().to_vec(),
+                            new.clone(),
+                        )
+                    } else {
+                        subscription::Event::Del(key.as_ref().to_vec())
+                    };
+
+                    res.complete(event);
+                }
+
+                return Ok(new);
             }
             M.tree_looped();
         }
