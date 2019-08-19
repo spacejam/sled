@@ -30,8 +30,8 @@ impl<'a> Batch<'a> {
 
     /// Atomically apply the `Batch`
     pub fn apply(self) -> Result<()> {
-        let peg = self.tree.context.pin_log()?;
         let cc = self.tree.concurrency_control.write();
+        let peg = self.tree.context.pin_log()?;
         for (k, v_opt) in self.writes {
             if let Some(v) = v_opt {
                 self.tree.insert_inner(k, v)?;
