@@ -354,10 +354,16 @@ fn concurrent_tree_transactions() {
 
     let mut threads = vec![];
 
-    let n_writers = 30;
-    for _ in 0..n_writers {
+    const N_WRITERS: usize = 30;
+    const N_READERS: usize = 5;
+
+    let barrier = Arc::new(Barrier::new(N_WRITERS + N_READERS));
+
+    for _ in 0..N_WRITERS {
         let db = db.clone();
+        let barrier = barrier.clone();
         let thread = std::thread::spawn(move || {
+            barrier.wait();
             for _ in 0..100 {
                 db.transaction(|db| {
                     let v1 = db.remove(b"k1").unwrap().unwrap();
@@ -374,10 +380,11 @@ fn concurrent_tree_transactions() {
         threads.push(thread);
     }
 
-    let n_readers = 5;
-    for _ in 0..n_readers {
+    for _ in 0..N_READERS {
         let db = db.clone();
+        let barrier = barrier.clone();
         let thread = std::thread::spawn(move || {
+            barrier.wait();
             for _ in 0..1000 {
                 db.transaction(|db| {
                     let v1 = db.get(b"k1").unwrap().unwrap();
