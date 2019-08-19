@@ -19,18 +19,16 @@ static ID_GEN: AtomicUsize = AtomicUsize::new(0);
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Event {
     /// A new complete (key, value) pair
-    Set(Vec<u8>, IVec),
-    /// A new partial (key, merged value) pair
-    Merge(Vec<u8>, IVec),
+    Set(Arc<[u8]>, IVec),
     /// A deleted key
-    Del(Vec<u8>),
+    Del(Arc<[u8]>),
 }
 
 impl Event {
     /// Return a reference to the key that this `Event` refers to
     pub fn key(&self) -> &[u8] {
         match self {
-            Event::Set(k, ..) | Event::Merge(k, ..) | Event::Del(k) => &*k,
+            Event::Set(k, ..) | Event::Del(k) => &*k,
         }
     }
 }
@@ -41,7 +39,6 @@ impl Clone for Event {
 
         match self {
             Set(k, v) => Set(k.clone(), v.clone()),
-            Merge(k, v) => Merge(k.clone(), v.clone()),
             Del(k) => Del(k.clone()),
         }
     }
@@ -181,31 +178,31 @@ fn basic_subscription() {
 
     let mut s1 = subs.register([].to_vec());
 
-    let k2 = vec![];
+    let k2: Arc<[u8]> = vec![].into();
     let r2 = subs.reserve(&k2).unwrap();
     r2.complete(Event::Set(k2.clone(), IVec::from(k2.clone())));
 
-    let k3 = vec![0];
+    let k3: Arc<[u8]> = vec![0].into();
     let r3 = subs.reserve(&k3).unwrap();
     r3.complete(Event::Set(k3.clone(), IVec::from(k3.clone())));
 
-    let k4 = vec![0, 1];
+    let k4: Arc<[u8]> = vec![0, 1].into();
     let r4 = subs.reserve(&k4).unwrap();
     r4.complete(Event::Del(k4.clone()));
 
-    let k5 = vec![0, 1, 2];
+    let k5: Arc<[u8]> = vec![0, 1, 2].into();
     let r5 = subs.reserve(&k5).unwrap();
-    r5.complete(Event::Merge(k5.clone(), IVec::from(k5.clone())));
+    r5.complete(Event::Set(k5.clone(), IVec::from(k5.clone())));
 
-    let k6 = vec![1, 1, 2];
+    let k6: Arc<[u8]> = vec![1, 1, 2].into();
     let r6 = subs.reserve(&k6).unwrap();
     r6.complete(Event::Del(k6.clone()));
 
-    let k7 = vec![1, 1, 2];
+    let k7: Arc<[u8]> = vec![1, 1, 2].into();
     let r7 = subs.reserve(&k7).unwrap();
     drop(r7);
 
-    let k8 = vec![1, 2, 2];
+    let k8: Arc<[u8]> = vec![1, 2, 2].into();
     let r8 = subs.reserve(&k8).unwrap();
     r8.complete(Event::Set(k8.clone(), IVec::from(k8.clone())));
 

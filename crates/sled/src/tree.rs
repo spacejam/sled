@@ -170,7 +170,7 @@ impl Tree {
                 // success
                 if let Some(res) = subscriber_reservation.take() {
                     let event =
-                        subscription::Event::Set(key.as_ref().to_vec(), value);
+                        subscription::Event::Set(key.as_ref().into(), value);
 
                     res.complete(event);
                 }
@@ -409,7 +409,7 @@ impl Tree {
             if link.is_ok() {
                 // success
                 if let Some(res) = subscriber_reservation.take() {
-                    let event = subscription::Event::Del(key.as_ref().to_vec());
+                    let event = subscription::Event::Del(key.as_ref().into());
 
                     res.complete(event);
                 }
@@ -503,9 +503,9 @@ impl Tree {
             if link.is_ok() {
                 if let Some(res) = subscriber_reservation.take() {
                     let event = if let Some(new) = new {
-                        subscription::Event::Set(key.as_ref().to_vec(), new)
+                        subscription::Event::Set(key.as_ref().into(), new)
                     } else {
-                        subscription::Event::Del(key.as_ref().to_vec())
+                        subscription::Event::Del(key.as_ref().into())
                     };
 
                     res.complete(event);
@@ -676,8 +676,7 @@ impl Tree {
     /// // events is a blocking `Iterator` over `Event`s
     /// for event in events.take(1) {
     ///     match event {
-    ///         Event::Set(key, value) => assert_eq!(key, vec![0]),
-    ///         Event::Merge(key, partial_value) => {}
+    ///         Event::Set(key, value) => assert_eq!(key.as_ref(), &[0]),
     ///         Event::Del(key) => {}
     ///     }
     /// }
