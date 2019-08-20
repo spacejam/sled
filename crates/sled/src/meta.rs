@@ -9,7 +9,7 @@ use super::*;
 /// Open or create a new disk-backed Tree with its own keyspace,
 /// accessible from the `Db` via the provided identifier.
 pub(crate) fn open_tree<'a>(
-    context: Context,
+    context: &Context,
     name: Vec<u8>,
     guard: &'a Guard,
 ) -> Result<Tree> {
@@ -68,7 +68,7 @@ pub(crate) fn open_tree<'a>(
         debug!("allocated pid {} for root of new_tree {:?}", root_id, name);
 
         let res = context.pagecache.cas_root_in_meta(
-            name.clone(),
+            &name,
             None,
             Some(root_id),
             guard,

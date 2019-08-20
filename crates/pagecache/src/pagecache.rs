@@ -1551,7 +1551,7 @@ where
     /// identifier.
     pub fn cas_root_in_meta<'g>(
         &self,
-        name: Vec<u8>,
+        name: &[u8],
         old: Option<PageId>,
         new: Option<PageId>,
         guard: &'g Guard,
@@ -1566,7 +1566,7 @@ where
 
             let mut new_meta = (*meta).clone();
             if let Some(new) = new {
-                new_meta.set_root(name.clone(), new);
+                new_meta.set_root(name.to_vec(), new);
             } else {
                 new_meta.del_root(&name);
             }
