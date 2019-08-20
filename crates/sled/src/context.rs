@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use parking_lot::Mutex;
-
 use super::*;
 
 #[derive(Clone)]
@@ -15,7 +13,8 @@ pub(crate) struct Context {
     /// When the last high-level reference is dropped, it
     /// should trigger all background threads to clean
     /// up synchronously.
-    pub(crate) _flusher: Arc<Mutex<Option<flusher::Flusher>>>,
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+    pub(crate) _flusher: Arc<parking_lot::Mutex<Option<flusher::Flusher>>>,
     pub(crate) pagecache: Arc<PageCache<Frag>>,
 }
 
@@ -64,7 +63,8 @@ impl Context {
         Ok(Self {
             config,
             pagecache,
-            _flusher: Arc::new(Mutex::new(None)),
+            #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+            _flusher: Arc::new(parking_lot::Mutex::new(None)),
         })
     }
 

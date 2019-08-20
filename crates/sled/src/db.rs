@@ -74,16 +74,19 @@ impl Db {
 
         let context = Context::start(config)?;
 
-        if !context.read_only {
-            let flusher_pagecache = context.pagecache.clone();
-            let flusher = context.flush_every_ms.map(move |fem| {
-                flusher::Flusher::new(
-                    "log flusher".to_owned(),
-                    flusher_pagecache,
-                    fem,
-                )
-            });
-            *context._flusher.lock() = flusher;
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+        {
+            if !context.read_only {
+                let flusher_pagecache = context.pagecache.clone();
+                let flusher = context.flush_every_ms.map(move |fem| {
+                    flusher::Flusher::new(
+                        "log flusher".to_owned(),
+                        flusher_pagecache,
+                        fem,
+                    )
+                });
+                *context._flusher.lock() = flusher;
+            }
         }
 
         // create or open the default tree

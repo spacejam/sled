@@ -39,7 +39,6 @@ mod binary_search;
 mod context;
 mod data;
 mod db;
-mod flusher;
 mod frag;
 mod iter;
 mod ivec;
@@ -50,6 +49,9 @@ mod prefix;
 mod subscription;
 mod tree;
 mod tx;
+
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+mod flusher;
 
 const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
 
