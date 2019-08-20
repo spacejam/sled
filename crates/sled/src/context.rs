@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use parking_lot::Mutex;
-
 use super::*;
 
 #[derive(Clone)]
@@ -16,7 +14,7 @@ pub(crate) struct Context {
     /// should trigger all background threads to clean
     /// up synchronously.
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-    pub(crate) _flusher: Arc<Mutex<Option<flusher::Flusher>>>,
+    pub(crate) _flusher: Arc<parking_lot::Mutex<Option<flusher::Flusher>>>,
     pub(crate) pagecache: Arc<PageCache<Frag>>,
 }
 
@@ -66,7 +64,7 @@ impl Context {
             config,
             pagecache,
             #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-            _flusher: Arc::new(Mutex::new(None)),
+            _flusher: Arc::new(parking_lot::Mutex::new(None)),
         })
     }
 
