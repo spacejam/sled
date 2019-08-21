@@ -94,7 +94,7 @@ impl Context {
         self.pagecache.generate_id()
     }
 
-    pub(crate) fn pin_log(&self) -> Result<RecoveryGuard> {
+    pub(crate) fn pin_log(&self) -> Result<RecoveryGuard<'_>> {
         self.pagecache.pin_log()
     }
 }

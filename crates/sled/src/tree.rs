@@ -251,7 +251,7 @@ impl Tree {
     ///
     pub fn transaction<'a, F, R>(&'a self, f: F) -> TransactionResult<R>
     where
-        F: Fn(&TransactionalTree) -> TransactionResult<R>,
+        F: Fn(&TransactionalTree<'_>) -> TransactionResult<R>,
     {
         <&Self as Transactional>::transaction(&self, f)
     }
