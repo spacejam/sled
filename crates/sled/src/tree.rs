@@ -249,7 +249,7 @@ impl Tree {
     /// assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
     /// ```
     ///
-    pub fn transaction<'a, F, R>(&'a self, f: F) -> TransactionResult<R>
+    pub fn transaction<F, R>(&self, f: F) -> TransactionResult<R>
     where
         F: Fn(&TransactionalTree<'_>) -> TransactionResult<R>,
     {
