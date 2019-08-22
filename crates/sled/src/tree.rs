@@ -82,17 +82,6 @@ unsafe impl Sync for Tree {}
 impl Tree {
     /// Insert a key to a new value, returning the last value if it
     /// was set.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use sled::{ConfigBuilder, Db, IVec};
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let t = Db::start(config).unwrap();
-    ///
-    /// assert_eq!(t.set(&[1,2,3], vec![0]), Ok(None));
-    /// assert_eq!(t.set(&[1,2,3], vec![1]), Ok(Some(IVec::from(&[0]))));
-    /// ```
     #[deprecated(since = "0.24.2", note = "replaced by `Tree::insert`")]
     pub fn set<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
     where
@@ -249,9 +238,9 @@ impl Tree {
     /// assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
     /// ```
     ///
-    pub fn transaction<'a, F, R>(&'a self, f: F) -> TransactionResult<R>
+    pub fn transaction<F, R>(&self, f: F) -> TransactionResult<R>
     where
-        F: Fn(&TransactionalTree) -> TransactionResult<R>,
+        F: Fn(&TransactionalTree<'_>) -> TransactionResult<R>,
     {
         <&Self as Transactional>::transaction(&self, f)
     }

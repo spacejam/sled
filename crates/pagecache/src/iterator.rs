@@ -228,7 +228,6 @@ fn scan_segment_lsns(
     min: Lsn,
     config: &Config,
 ) -> Result<(BTreeMap<Lsn, LogId>, Lsn)> {
-
     fn fetch(
         idx: u64,
         min: Lsn,
@@ -377,13 +376,16 @@ fn clean_tail_tears(
 
     let tip: (Lsn, LogId) = iter
         .max_by_key(|(_kind, _pid, lsn, _ptr, _sz)| *lsn)
-        .map_or_else(|| {
-            if max_header_stable_lsn > 0 {
-                (lowest_lsn_in_tail, ordering[&lowest_lsn_in_tail])
-            } else {
-                (0, 0)
-            }
-        }, |(_, _, lsn, ptr, _)| (lsn, ptr.lid()));
+        .map_or_else(
+            || {
+                if max_header_stable_lsn > 0 {
+                    (lowest_lsn_in_tail, ordering[&lowest_lsn_in_tail])
+                } else {
+                    (0, 0)
+                }
+            },
+            |(_, _, lsn, ptr, _)| (lsn, ptr.lid()),
+        );
 
     debug!(
         "filtering out segments after detected tear at lsn {} lid {}",

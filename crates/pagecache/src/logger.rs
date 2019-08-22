@@ -136,7 +136,7 @@ impl Log {
         &self,
         pid: PageId,
         blob_ptr: BlobPointer,
-    ) -> Result<Reservation> {
+    ) -> Result<Reservation<'_>> {
         let lsn_buf: [u8; std::mem::size_of::<BlobPointer>()] =
             u64_to_arr(blob_ptr as u64);
 
@@ -154,7 +154,7 @@ impl Log {
         log_kind: LogKind,
         pid: PageId,
         raw_buf: &[u8],
-    ) -> Result<Reservation> {
+    ) -> Result<Reservation<'_>> {
         let mut _compressed: Option<Vec<u8>> = None;
         let mut buf = raw_buf;
 
@@ -182,7 +182,7 @@ impl Log {
         pid: PageId,
         buf: &[u8],
         is_blob_rewrite: bool,
-    ) -> Result<Reservation> {
+    ) -> Result<Reservation<'_>> {
         let _measure = Measure::new(&M.reserve_lat);
 
         let total_buf_len = MSG_HEADER_LEN + buf.len();

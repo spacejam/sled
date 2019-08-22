@@ -1,12 +1,10 @@
 //! `pagecache` is a lock-free pagecache and log for building high-performance databases.
+#![cfg_attr(test, deny(warnings))]
 #![deny(missing_docs)]
-#![cfg_attr(test, deny(clippy::warnings))]
-#![cfg_attr(test, deny(clippy::bad_style))]
-#![cfg_attr(test, deny(clippy::future_incompatible))]
-#![cfg_attr(test, deny(clippy::nonstandard_style))]
-#![cfg_attr(test, deny(clippy::rust_2018_compatibility))]
-#![cfg_attr(test, deny(clippy::rust_2018_idioms))]
-#![cfg_attr(test, deny(clippy::unused))]
+#![deny(future_incompatible)]
+#![deny(nonstandard_style)]
+#![deny(rust_2018_compatibility)]
+#![deny(rust_2018_idioms)]
 
 #[cfg(feature = "failpoints")]
 use fail::fail_point;

@@ -466,7 +466,7 @@ where
     /// to facilitate transactions and write batches when
     /// combined with a concurrency control system in another
     /// component.
-    pub fn pin_log(&self) -> Result<RecoveryGuard> {
+    pub fn pin_log(&self) -> Result<RecoveryGuard<'_>> {
         let batch_res = self.log.reserve(
             LogKind::Skip,
             BATCH_MANIFEST_PID,
@@ -1362,7 +1362,7 @@ where
             });
 
             // if any of our pulls failed, bail here
-            let mut successes: Vec<Cow<P>> = match pulled.collect() {
+            let mut successes: Vec<Cow<'_, P>> = match pulled.collect() {
                 Ok(success) => success,
                 Err(Error::Io(ref error))
                     if error.kind() == std::io::ErrorKind::NotFound =>

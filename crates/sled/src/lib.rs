@@ -25,14 +25,12 @@
 //! t.remove(b"yo!");
 //! assert_eq!(t.get(b"yo!"), Ok(None));
 //! ```
-
+#![cfg_attr(test, deny(warnings))]
 #![deny(missing_docs)]
-#![cfg_attr(test, deny(clippy::warnings))]
-#![cfg_attr(test, deny(clippy::bad_style))]
-#![cfg_attr(test, deny(clippy::future_incompatible))]
-#![cfg_attr(test, deny(clippy::nonstandard_style))]
-#![cfg_attr(test, deny(clippy::rust_2018_compatibility))]
-#![cfg_attr(test, deny(clippy::rust_2018_idioms))]
+#![deny(future_incompatible)]
+#![deny(nonstandard_style)]
+#![deny(rust_2018_compatibility)]
+#![deny(rust_2018_idioms)]
 
 mod batch;
 mod binary_search;
