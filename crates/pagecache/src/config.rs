@@ -337,8 +337,8 @@ impl ConfigBuilder {
                         return Err(Error::Io(std::io::Error::new(
                                     std::io::ErrorKind::Other,
                                     format!(
-                                    "could not acquire appropriate file lock on {:?}",
-                                    path
+                                    "could not acquire appropriate file lock on {:?}: {:?}",
+                                    path, lock_res.unwrap_err()
                                 ),
                             )));
                     }

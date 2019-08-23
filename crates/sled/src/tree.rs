@@ -335,8 +335,8 @@ impl Tree {
     /// let config = sled::ConfigBuilder::new().temporary(true).build();
     /// let t = sled::Db::start(config).unwrap();
     /// t.insert(&[1], vec![1]);
-    /// assert_eq!(t.del(&[1]), Ok(Some(sled::IVec::from(vec![1]))));
-    /// assert_eq!(t.del(&[1]), Ok(None));
+    /// assert_eq!(t.remove(&[1]), Ok(Some(sled::IVec::from(vec![1]))));
+    /// assert_eq!(t.remove(&[1]), Ok(None));
     /// ```
     #[deprecated(since = "0.24.2", note = "replaced by `Tree::remove`")]
     pub fn del<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
@@ -350,7 +350,7 @@ impl Tree {
     /// ```
     /// let config = sled::ConfigBuilder::new().temporary(true).build();
     /// let t = sled::Db::start(config).unwrap();
-    /// t.set(&[1], vec![1]);
+    /// t.insert(&[1], vec![1]);
     /// assert_eq!(t.remove(&[1]), Ok(Some(sled::IVec::from(vec![1]))));
     /// assert_eq!(t.remove(&[1]), Ok(None));
     /// ```
