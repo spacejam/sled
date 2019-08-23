@@ -90,8 +90,8 @@ impl Tree {
     /// let config = ConfigBuilder::new().temporary(true).build();
     /// let t = Db::start(config).unwrap();
     ///
-    /// assert_eq!(t.set(&[1,2,3], vec![0]), Ok(None));
-    /// assert_eq!(t.set(&[1,2,3], vec![1]), Ok(Some(IVec::from(&[0]))));
+    /// assert_eq!(t.insert(&[1,2,3], vec![0]), Ok(None));
+    /// assert_eq!(t.insert(&[1,2,3], vec![1]), Ok(Some(IVec::from(&[0]))));
     /// ```
     #[deprecated(since = "0.24.2", note = "replaced by `Tree::insert`")]
     pub fn set<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
@@ -249,7 +249,7 @@ impl Tree {
     /// assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
     /// ```
     ///
-    pub fn transaction<'a, F, R>(&'a self, f: F) -> TransactionResult<R>
+    pub fn transaction<F, R>(&self, f: F) -> TransactionResult<R>
     where
         F: Fn(&TransactionalTree) -> TransactionResult<R>,
     {
@@ -346,8 +346,8 @@ impl Tree {
     /// let config = sled::ConfigBuilder::new().temporary(true).build();
     /// let t = sled::Db::start(config).unwrap();
     /// t.insert(&[1], vec![1]);
-    /// assert_eq!(t.del(&[1]), Ok(Some(sled::IVec::from(vec![1]))));
-    /// assert_eq!(t.del(&[1]), Ok(None));
+    /// assert_eq!(t.remove(&[1]), Ok(Some(sled::IVec::from(vec![1]))));
+    /// assert_eq!(t.remove(&[1]), Ok(None));
     /// ```
     #[deprecated(since = "0.24.2", note = "replaced by `Tree::remove`")]
     pub fn del<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
@@ -361,7 +361,7 @@ impl Tree {
     /// ```
     /// let config = sled::ConfigBuilder::new().temporary(true).build();
     /// let t = sled::Db::start(config).unwrap();
-    /// t.set(&[1], vec![1]);
+    /// t.insert(&[1], vec![1]);
     /// assert_eq!(t.remove(&[1]), Ok(Some(sled::IVec::from(vec![1]))));
     /// assert_eq!(t.remove(&[1]), Ok(None));
     /// ```
