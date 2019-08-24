@@ -327,7 +327,13 @@ impl ConfigBuilder {
             Ok(file) => {
                 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
                 {
-                    if let Err(e) = Self::try_lock(&file, self.read_only) {
+                    let try_lock = if self.read_only {
+                        file.try_lock_shared()
+                    } else {
+                        file.try_lock_exclusive()
+                    };
+
+                    if let Err(e) = try_lock {
                         return Err(Error::Io(io::Error::new(
                             io::ErrorKind::Other,
                             format!("could not acquire appropriate file lock on {:?}: {:?}", path, e),
@@ -338,14 +344,6 @@ impl ConfigBuilder {
                 Ok(file)
             }
             Err(e) => Err(e.into()),
-        }
-    }
-
-    fn try_lock(file: &fs::File, read_only: bool) -> io::Result<()> {
-        if read_only {
-            file.try_lock_shared()
-        } else {
-            file.try_lock_exclusive()
         }
     }
 
