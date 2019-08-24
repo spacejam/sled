@@ -325,21 +325,12 @@ impl ConfigBuilder {
 
         match options.open(&path) {
             Ok(file) => {
-                // try to exclusively lock the file
                 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
                 {
-                    let lock_res = if self.read_only {
-                        file.try_lock_shared()
-                    } else {
-                        file.try_lock_exclusive()
-                    };
-                    if lock_res.is_err() {
-                        return Err(Error::Io(std::io::Error::new(
-                                    std::io::ErrorKind::Other,
-                                    format!(
-                                    "could not acquire appropriate file lock on {:?}: {:?}",
-                                    path, lock_res.unwrap_err()
-                                ),
+                    if let Err(e) = Self::try_lock(&file, self.read_only) {
+                        return Err(Error::Io(io::Error::new(
+                            io::ErrorKind::Other,
+                            format!("could not acquire appropriate file lock on {:?}: {:?}", path, e),
                             )));
                     }
                 }
@@ -347,6 +338,14 @@ impl ConfigBuilder {
                 Ok(file)
             }
             Err(e) => Err(e.into()),
+        }
+    }
+
+    fn try_lock(file: &fs::File, read_only: bool) -> io::Result<()> {
+        if read_only {
+            file.try_lock_shared()
+        } else {
+            file.try_lock_exclusive()
         }
     }
 
