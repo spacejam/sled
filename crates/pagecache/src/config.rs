@@ -168,10 +168,7 @@ impl ConfigBuilder {
             self.path = Self::gen_temp_path();
         }
 
-        let mem = get_cgroup_memory_limit();
-        if mem > 0 && self.cache_capacity > mem {
-            self.cache_capacity = mem;
-        }
+        self.limit_cache_max_memory();
 
         let file = self.open_file().unwrap_or_else(|e| {
             panic!("open file at {:?}: {}", self.db_path(), e);
@@ -204,7 +201,7 @@ impl ConfigBuilder {
             now + seed
         };
 
-        return if cfg!(linux) {
+        return if cfg!(target_os="linux") {
             // use shared memory for temporary linux files
             format!("/dev/shm/pagecache.tmp.{}", salt).into()
         } else {
@@ -212,6 +209,18 @@ impl ConfigBuilder {
             pb.push(format!("pagecache.tmp.{}", salt));
             pb
         };
+    }
+
+    fn limit_cache_max_memory(&mut self) {
+        #[cfg(target_os="linux")]
+        {
+            let mem = get_cgroup_memory_limit();
+            if mem > 0 && self.cache_capacity > mem {
+                self.cache_capacity = mem;
+                println!("WARNING! Cache capacity is limited by the cgroup memory limit: {} bytes",
+                         self.cache_capacity);
+            }
+        }
     }
 
     builder!(
@@ -322,26 +331,29 @@ impl ConfigBuilder {
         }
 
         match options.open(&path) {
-            Ok(file) => {
-                if cfg!(any(windows, target_os = "linux", target_os = "macos")) {
-                    let try_lock = if self.read_only {
-                        file.try_lock_shared()
-                    } else {
-                        file.try_lock_exclusive()
-                    };
-
-                    if let Err(e) = try_lock {
-                        return Err(Error::Io(io::Error::new(
-                            io::ErrorKind::WouldBlock,
-                            format!("could not acquire appropriate file lock on {:?}: {:?}", path, e),
-                            )));
-                    }
-                };
-
-                Ok(file)
-            }
+            Ok(file) => self.try_lock(file),
             Err(e) => Err(e.into()),
         }
+    }
+
+    fn try_lock(&self, file: fs::File) -> Result<fs::File> {
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+        {
+            let try_lock = if self.read_only {
+                file.try_lock_shared()
+            } else {
+                file.try_lock_exclusive()
+            };
+
+            if let Err(e) = try_lock {
+                return Err(Error::Io(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    format!("could not acquire appropriate file lock on {:?}: {:?}", self.db_path() , e),
+                )));
+            }
+        }
+
+        Ok(file)
     }
 
     fn verify_config_changes_ok(&self) -> Result<()> {
@@ -688,12 +700,14 @@ impl Config {
 
 /// See the Kernel's documentation for more information about this subsystem, found at:
 ///  [Documentation/cgroup-v1/memory.txt](https://www.kernel.org/doc/Documentation/cgroup-v1/memory.txt)
+#[cfg(target_os="linux")]
 fn get_cgroup_memory_limit() -> u64 {
     std::fs::File::open("/sys/fs/cgroup/memory/memory.limit_in_bytes")
         .and_then(read_u64_from)
         .unwrap_or(0)
 }
 
+#[cfg(target_os="linux")]
 fn read_u64_from(mut file: std::fs::File) -> io::Result<u64> {
     let mut s = String::new();
     file.read_to_string(&mut s).and_then(|_|
