@@ -325,21 +325,18 @@ impl ConfigBuilder {
 
         match options.open(&path) {
             Ok(file) => {
-                // try to exclusively lock the file
                 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
                 {
-                    let lock_res = if self.read_only {
+                    let try_lock = if self.read_only {
                         file.try_lock_shared()
                     } else {
                         file.try_lock_exclusive()
                     };
-                    if lock_res.is_err() {
-                        return Err(Error::Io(std::io::Error::new(
-                                    std::io::ErrorKind::Other,
-                                    format!(
-                                    "could not acquire appropriate file lock on {:?}",
-                                    path
-                                ),
+
+                    if let Err(e) = try_lock {
+                        return Err(Error::Io(io::Error::new(
+                            io::ErrorKind::Other,
+                            format!("could not acquire appropriate file lock on {:?}: {:?}", path, e),
                             )));
                     }
                 }
@@ -630,23 +627,9 @@ impl Config {
         debug!("generating snapshot without the previous one");
         let regenerated = read_snapshot_or_default(&self)?;
 
-        for (k, v) in &regenerated.pt {
-            if !incremental.pt.contains_key(&k) {
-                panic!(
-                    "page only present in regenerated \
-                     pagetable: {} -> {:?}",
-                    k, v
-                );
-            }
-            assert_eq!(
-                incremental.pt.get(&k),
-                Some(v),
-                "page tables differ for pid {}",
-                k
-            );
+        let verify_messages = |k: &PageId, v: &PageState| {
             for (lsn, ptr, _sz) in v.iter() {
-                let read = self.file.read_message(ptr.lid(), lsn, &self);
-                if let Err(e) = read {
+                if let Err(e) = self.file.read_message(ptr.lid(), lsn, &self) {
                     panic!(
                         "could not read log data for \
                          pid {} at lsn {} ptr {}: {}",
@@ -654,33 +637,24 @@ impl Config {
                     );
                 }
             }
-        }
+        };
 
-        for (k, v) in &incremental.pt {
-            if !regenerated.pt.contains_key(&k) {
-                panic!(
-                    "page only present in incremental \
-                     pagetable: {} -> {:?}",
-                    k, v
-                );
-            }
-            assert_eq!(
-                Some(v),
-                regenerated.pt.get(&k),
-                "page tables differ for pid {}",
-                k
-            );
-            for (lsn, ptr, _sz) in v.iter() {
-                let read = self.file.read_message(ptr.lid(), lsn, &self);
-                if let Err(e) = read {
-                    panic!(
-                        "could not read log data for \
-                         pid {} at lsn {} ptr {}: {}",
-                        k, lsn, ptr, e
-                    );
+        let verify_pagestate = |
+            x: &FastMap8<PageId, PageState>,
+            y: &FastMap8<PageId, PageState>,
+            typ: &str,
+        | {
+            for (k, v) in x {
+                if !y.contains_key(&k) {
+                    panic!("page only present in {} pagetable: {} -> {:?}", typ, k, v);
                 }
+                assert_eq!(y.get(&k), Some(v), "page tables differ for pid {}", k);
+                verify_messages(k, v);
             }
-        }
+        };
+
+        verify_pagestate(&regenerated.pt, &incremental.pt, "regenerated");
+        verify_pagestate(&incremental.pt, &regenerated.pt, "incremental");
 
         assert_eq!(
             incremental.pt, regenerated.pt,
@@ -702,6 +676,7 @@ impl Config {
             "snapshots have diverged!"
         );
         */
+
         Ok(())
     }
 
