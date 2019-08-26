@@ -165,45 +165,11 @@ impl ConfigBuilder {
         self.validate().unwrap();
 
         if self.temporary && self.path == PathBuf::from(DEFAULT_PATH) {
-            static SALT_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-            use std::time::SystemTime;
-            let now = (SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-                << 32) as u64;
-            let salt = SALT_COUNTER.fetch_add(1, Ordering::SeqCst) as u64;
-
-            #[cfg(unix)]
-            let salt = {
-                let pid = unsafe { libc::getpid() };
-                ((pid as u64) << 16) + now + salt
-            };
-
-            #[cfg(not(unix))]
-            let salt = { now + salt };
-
-            // use shared memory for temporary linux files
-            #[cfg(target_os = "linux")]
-            let tmp_path = format!("/dev/shm/pagecache.tmp.{}", salt).into();
-
-            #[cfg(not(target_os = "linux"))]
-            let tmp_path = {
-                let mut pb = std::env::temp_dir();
-                pb.push(format!("pagecache.tmp.{}", salt));
-                pb
-            };
-
-            self.path = tmp_path;
+            self.path = Self::gen_temp_path();
         }
 
         let file = self.open_file().unwrap_or_else(|e| {
-            panic!(
-                "should be able to open configured file at {:?}; {}",
-                self.db_path(),
-                e,
-            );
+            panic!("open file at {:?}: {}", self.db_path(), e);
         });
 
         // seal config in a Config
@@ -214,6 +180,33 @@ impl ConfigBuilder {
             #[cfg(feature = "event_log")]
             event_log: crate::event_log::EventLog::default(),
         }))
+    }
+
+    fn gen_temp_path() -> PathBuf {
+        use std::time::SystemTime;
+
+        static SALT_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+        let seed = SALT_COUNTER.fetch_add(1, Ordering::SeqCst) as u64;
+        let now = (SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH).unwrap()
+            .as_nanos() << 32) as u64;
+
+        let salt = if cfg!(unix) {
+            let pid = unsafe { libc::getpid() };
+            ((pid as u64) << 16) + now + seed
+        } else {
+            now + seed
+        };
+
+        return if cfg!(linux) {
+            // use shared memory for temporary linux files
+            format!("/dev/shm/pagecache.tmp.{}", salt).into()
+        } else {
+            let mut pb = std::env::temp_dir();
+            pb.push(format!("pagecache.tmp.{}", salt));
+            pb
+        };
     }
 
     builder!(
