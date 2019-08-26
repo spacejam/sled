@@ -318,8 +318,7 @@ impl ConfigBuilder {
 
         match options.open(&path) {
             Ok(file) => {
-                #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-                {
+                if cfg!(any(windows, target_os = "linux", target_os = "macos")) {
                     let try_lock = if self.read_only {
                         file.try_lock_shared()
                     } else {
@@ -328,11 +327,11 @@ impl ConfigBuilder {
 
                     if let Err(e) = try_lock {
                         return Err(Error::Io(io::Error::new(
-                            io::ErrorKind::Other,
+                            io::ErrorKind::WouldBlock,
                             format!("could not acquire appropriate file lock on {:?}: {:?}", path, e),
                             )));
                     }
-                }
+                };
 
                 Ok(file)
             }
