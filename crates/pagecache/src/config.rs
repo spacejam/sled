@@ -168,6 +168,11 @@ impl ConfigBuilder {
             self.path = Self::gen_temp_path();
         }
 
+        let mem = get_cgroup_memory_limit();
+        if mem > 0 && self.cache_capacity > mem {
+            self.cache_capacity = mem;
+        }
+
         let file = self.open_file().unwrap_or_else(|e| {
             panic!("open file at {:?}: {}", self.db_path(), e);
         });
@@ -680,3 +685,18 @@ impl Config {
             .expect("should be able to truncate");
     }
 }
+
+/// See the Kernel's documentation for more information about this subsystem, found at:
+///  [Documentation/cgroup-v1/memory.txt](https://www.kernel.org/doc/Documentation/cgroup-v1/memory.txt)
+fn get_cgroup_memory_limit() -> u64 {
+    std::fs::File::open("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+        .and_then(read_u64_from)
+        .unwrap_or(0)
+}
+
+fn read_u64_from(mut file: std::fs::File) -> io::Result<u64> {
+    let mut s = String::new();
+    file.read_to_string(&mut s).and_then(|_|
+        s.trim().parse().map_err(|e| io::Error::new(std::io::ErrorKind::InvalidData, e)))
+}
+
