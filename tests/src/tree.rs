@@ -125,7 +125,7 @@ pub enum Op {
     Restart,
 }
 
-use self::Op::{Set, Merge, Get, GetLt, GetGt, Del, Cas, Scan, Restart};
+use self::Op::{Cas, Del, Get, GetGt, GetLt, Merge, Restart, Scan, Set};
 
 impl Op {
     pub fn is_restart(&self) -> bool {

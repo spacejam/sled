@@ -137,7 +137,8 @@ use {
 
 type TreePtr<'g> = pagecache::PagePtr<'g, Frag>;
 
-/// Allows arbitrary logic to be injected into mere operations of the `PageCache`.
+/// Allows arbitrary logic to be injected into mere operations of the
+/// `PageCache`.
 pub type MergeOperator = fn(
     key: &[u8],
     last_value: Option<&[u8]>,

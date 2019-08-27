@@ -236,7 +236,6 @@ impl Tree {
     /// assert_eq!(unprocessed.get(b"k3").unwrap(), None);
     /// assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
     /// ```
-    ///
     pub fn transaction<F, R>(&self, f: F) -> TransactionResult<R>
     where
         F: Fn(&TransactionalTree<'_>) -> TransactionResult<R>,
@@ -1629,8 +1628,9 @@ impl Tree {
 
         // searching for the left sibling to merge the target page into
         loop {
-            // The only way this child could have been freed is if the original merge has
-            // already been handled. Only in that case can this child have been freed
+            // The only way this child could have been freed is if the original
+            // merge has already been handled. Only in that case can this child
+            // have been freed
             trace!(
                 "cursor_pid is {} while looking for left sibling",
                 cursor_pid

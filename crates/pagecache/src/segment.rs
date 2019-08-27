@@ -139,7 +139,7 @@ pub(crate) enum SegmentState {
     Draining,
 }
 
-use self::SegmentState::{Free, Active, Inactive, Draining};
+use self::SegmentState::{Active, Draining, Free, Inactive};
 
 impl Default for SegmentState {
     fn default() -> Self {
@@ -384,10 +384,7 @@ impl Segment {
 
 impl SegmentAccountant {
     /// Create a new SegmentAccountant from previously recovered segments.
-    pub(super) fn start(
-        config: Config,
-        snapshot: Snapshot,
-    ) -> Result<Self> {
+    pub(super) fn start(config: Config, snapshot: Snapshot) -> Result<Self> {
         let mut ret = Self {
             config,
             segments: vec![],
@@ -637,8 +634,8 @@ impl SegmentAccountant {
     }
 
     /// Causes all new allocations to occur at the end of the file, which
-    /// is necessary to preserve consistency while concurrently iterating through
-    /// the log during snapshot creation.
+    /// is necessary to preserve consistency while concurrently iterating
+    /// through the log during snapshot creation.
     pub(super) fn pause_rewriting(&mut self) {
         self.pause_rewriting = true;
     }
@@ -988,8 +985,11 @@ impl SegmentAccountant {
         if free_ratio >= (self.config.segment_cleanup_threshold * 100.) as usize
             && inactive_segs > 5
         {
-            let last_index =
-                self.segments.iter().rposition(Segment::is_inactive).unwrap();
+            let last_index = self
+                .segments
+                .iter()
+                .rposition(Segment::is_inactive)
+                .unwrap();
 
             let segment_start = (last_index * self.config.io_buf_size) as LogId;
 
@@ -1067,7 +1067,7 @@ impl SegmentAccountant {
             (_, Some(&next)) => {
                 self.free.remove(&next);
                 next
-            },
+            }
         };
 
         // pin lsn to this segment

@@ -135,10 +135,18 @@ impl Db {
         let guard = pin();
 
         let mut tenants = self.tenants.write();
+
+        // we need to check this again in case another
+        // thread opened it concurrently.
+        if let Some(tree) = tenants.get(name) {
+            return Ok(tree.clone());
+        }
+
         let tree =
             Arc::new(meta::open_tree(&self.context, name.to_vec(), &guard)?);
+      
         tenants.insert(name.to_vec(), tree.clone());
-        drop(tenants);
+      
         Ok(tree)
     }
 
