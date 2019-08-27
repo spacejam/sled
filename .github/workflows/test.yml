@@ -1,9 +1,6 @@
 name: Rust
 
 on: [push]
-
-variables:
-  testKind: 'default'
   
 jobs:
   check:
