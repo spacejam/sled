@@ -1,6 +1,5 @@
 use std::{
-    sync::atomic::AtomicBool, sync::atomic::Ordering::SeqCst,
-    sync::Arc,
+    sync::atomic::AtomicBool, sync::atomic::Ordering::SeqCst, sync::Arc,
 };
 
 use parking_lot::{Condvar, Mutex, RwLock};
@@ -249,9 +248,7 @@ impl IoBufs {
 
             blob_ptr = lsn_buf;
             &blob_ptr
-
         } else {
-
             in_buf
         };
 

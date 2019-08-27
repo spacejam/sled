@@ -639,16 +639,22 @@ impl Config {
             }
         };
 
-        let verify_pagestate = |
-            x: &FastMap8<PageId, PageState>,
-            y: &FastMap8<PageId, PageState>,
-            typ: &str,
-        | {
+        let verify_pagestate = |x: &FastMap8<PageId, PageState>,
+                                y: &FastMap8<PageId, PageState>,
+                                typ: &str| {
             for (k, v) in x {
                 if !y.contains_key(&k) {
-                    panic!("page only present in {} pagetable: {} -> {:?}", typ, k, v);
+                    panic!(
+                        "page only present in {} pagetable: {} -> {:?}",
+                        typ, k, v
+                    );
                 }
-                assert_eq!(y.get(&k), Some(v), "page tables differ for pid {}", k);
+                assert_eq!(
+                    y.get(&k),
+                    Some(v),
+                    "page tables differ for pid {}",
+                    k
+                );
                 verify_messages(k, v);
             }
         };
