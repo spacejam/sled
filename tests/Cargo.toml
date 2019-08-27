@@ -6,17 +6,15 @@ publish = false
 edition = "2018"
 
 [dependencies]
-quickcheck = "0.8"
-rand = "0.6"
+quickcheck = "0.9"
+rand = "0.7"
 log = "0.4"
 env_logger = "0.6"
 libc = "0.2"
 fail = "0.3"
 lazy_static = "1.0"
 color-backtrace = "0.2.0"
-
-[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
-jemallocator = "0.3"
+rand_distr = "0.2.1"
 
 [dependencies.serde]
 version = "1.0.90"
@@ -29,3 +27,6 @@ path = "../crates/pagecache"
 [dependencies.sled]
 features = ["failpoints", "lock_free_delays", "event_log", "no_metrics", "check_snapshot_integrity", "compression"]
 path = "../crates/sled"
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+jemallocator = "0.3"
