@@ -105,8 +105,7 @@ impl Db {
 
         let mut tenants = ret.tenants.write();
 
-        for (id, root) in context.pagecache.meta(&guard)?.tenants()
-        {
+        for (id, root) in context.pagecache.meta(&guard)?.tenants() {
             let tree = Tree {
                 tree_id: id.clone(),
                 subscriptions: Arc::new(Subscriptions::default()),
@@ -136,11 +135,8 @@ impl Db {
         let guard = pin();
 
         let mut tenants = self.tenants.write();
-        let tree = Arc::new(meta::open_tree(
-            &self.context,
-            name.to_vec(),
-            &guard,
-        )?);
+        let tree =
+            Arc::new(meta::open_tree(&self.context, name.to_vec(), &guard)?);
         tenants.insert(name.to_vec(), tree.clone());
         drop(tenants);
         Ok(tree)
@@ -181,12 +177,10 @@ impl Db {
         }
 
         loop {
-            let res = self.context.pagecache.cas_root_in_meta(
-                &name,
-                root_id,
-                None,
-                &guard,
-            )?;
+            let res = self
+                .context
+                .pagecache
+                .cas_root_in_meta(&name, root_id, None, &guard)?;
 
             if let Err(actual_root) = res {
                 root_id = actual_root;
