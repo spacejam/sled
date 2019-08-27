@@ -1,6 +1,6 @@
 [package]
 name = "sled"
-version = "0.26.2"
+version = "0.26.3"
 authors = ["Tyler Neely <t@jujit.su>"]
 description = "a modern embedded database"
 license = "MIT/Apache-2.0"
@@ -25,7 +25,7 @@ measure_allocs = ["pagecache/measure_allocs"]
 check_snapshot_integrity = ["pagecache/check_snapshot_integrity"]
 
 [dependencies]
-pagecache = { path = "../pagecache", version = ">= 0.19.1" }
+pagecache = { path = "../pagecache", version = "0.19.1" }
 serde_bytes = "0.11"
 parking_lot = "0.9.0"
 
