@@ -1,6 +1,9 @@
 name: Rust
 
-on: [push]
+on:
+  pull_request:
+    branches:
+    - master
   
 jobs:
   check:
@@ -8,9 +11,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macOS-latest]
-        
+        os: [ubuntu-latest, windows-latest, macOS-latest]       
     steps:
+    - uses: actions/checkout@v1
     - name: cargo check
       run: cargo check
         
@@ -19,9 +22,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macOS-latest]
-        
+        os: [ubuntu-latest, windows-latest, macOS-latest]     
     steps:
+    - uses: actions/checkout@v1
     - name: cargo test
       run: cargo test --release -- --nocapture
      
@@ -29,7 +32,8 @@ jobs:
     name: Example Tests
     runs-on: ubuntu-latest
     steps:
-      - run: |
+    - uses: actions/checkout@v1
+    - run: |
           pushd examples/playground &&
           cargo check &&
           popd &&
@@ -48,7 +52,8 @@ jobs:
     name: Cross Compile
     runs-on: ubuntu-latest
     steps:
-      - run: |
+    - uses: actions/checkout@v1
+    - run: |
           echo "cross build" &&
           rustup target add aarch64-fuchsia &&
           rustup target add aarch64-linux-android &&
@@ -76,7 +81,8 @@ jobs:
     name: Sanitizers
     runs-on: ubuntu-latest
     steps:
-      - run: |
+    - uses: actions/checkout@v1
+    - run: |
           rustup toolchain install nightly &&
           rustup default nightly &&
           pushd benchmarks/stress2 &&
