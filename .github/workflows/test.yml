@@ -15,48 +15,20 @@ jobs:
       run: cargo check
         
   test:
+    name: Cargo Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        windows-stable:
-          runs-on: 'windows-latest'
-          rustup_toolchain: stable
-        mac-stable:
-          runs-on: 'macos-latest'
-          rustup_toolchain: stable
-        linux-stable:
-          runs-on: 'ubuntu-latest'
-          rustup_toolchain: stable
-        doctests:
-          runs-on: 'ubuntu-latest'
-          rustup_toolchain: stable
-          testKind: 'doctests'
-        sanitizers:
-          runs-on: 'ubuntu-latest'
-          rustup_toolchain: nightly
-          testKind: 'sanitizers'
-        cross-compile:
-          runs-on: 'ubuntu-latest'
-          rustup_toolchain: nightly
-          testKind: 'cross-compile'
-
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+        
     steps:
-      - run: |
-          curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain $RUSTUP_TOOLCHAIN
-          echo "##vso[task.setvariable variable=PATH;]$PATH:$HOME/.cargo/bin"
-        name: Install rust
-        if: ne( variables['Agent.OS'], 'Windows_NT' )
-      - run: |
-          curl -sSf -o rustup-init.exe https://win.rustup.rs
-          rustup-init.exe -y --default-toolchain %RUSTUP_TOOLCHAIN%
-          echo "##vso[task.setvariable variable=PATH;]%PATH%;%USERPROFILE%\.cargo\bin"
-        name: Windows install rust
-        if: eq( variables['Agent.OS'], 'Windows_NT' )
-      - run: cargo build --all --release
-        name: Cargo build
-        if: eq( variables['testKind'], 'default' )
-      - run: cargo test --all --release
-        name: Cargo test
-        if: eq( variables['testKind'], 'default' )
+    - name: cargo test
+      run: cargo test --release -- --nocapture
+     
+  examples:
+    name: Example Tests
+    runs-on: ubuntu-latest
+    steps:
       - run: |
           pushd examples/playground &&
           cargo check &&
@@ -71,11 +43,13 @@ jobs:
           pushd crates/pagecache &&
           echo "testing pagecache doctests" &&
           cargo test
-        name: doctests
-        if: eq( variables['testKind'], 'doctests' )
+
+  cross-compile:
+    name: Cross Compile
+    runs-on: ubuntu-latest
+    steps:
       - run: |
           echo "cross build" &&
-          echo "https://github.com/rust-lang/cargo/issues/4753" &&
           rustup target add aarch64-fuchsia &&
           rustup target add aarch64-linux-android &&
           rustup target add i686-linux-android &&
@@ -97,9 +71,14 @@ jobs:
           pushd crates/pagecache && cargo check --target x86_64-pc-windows-gnu  && popd &&
           pushd crates/pagecache && cargo check --target x86_64-linux-android && popd &&
           pushd crates/pagecache && cargo check --target x86_64-fuchsia && popd
-        name: cross-build
-        if: eq( variables['testKind'], 'cross-compile' )
+
+  sanitizers:
+    name: Sanitizers
+    runs-on: ubuntu-latest
+    steps:
       - run: |
+          rustup toolchain install nightly &&
+          rustup default nightly &&
           pushd benchmarks/stress2 &&
           echo "lsan" &&
           cargo clean &&
@@ -125,6 +104,5 @@ jobs:
           cargo run --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu -- --duration=30 &&
           cargo run --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu -- --duration=6 &&
           unset RUSTFLAGS &&
-          unset TSAN_OPTIONS
-        name: sanitizers
-        if: eq( variables['testKind'], 'sanitizers' )
+          unset TSAN_OPTIONS &&
+          rustup default stable
