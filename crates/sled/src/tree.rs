@@ -80,8 +80,7 @@ unsafe impl Send for Tree {}
 unsafe impl Sync for Tree {}
 
 impl Tree {
-    /// Insert a key to a new value, returning the last value if it
-    /// was set.
+    #[doc(hidden)]
     #[deprecated(since = "0.24.2", note = "replaced by `Tree::insert`")]
     pub fn set<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
     where
@@ -327,17 +326,7 @@ impl Tree {
         Ok(v_opt)
     }
 
-    /// Delete a value, returning the old value if it existed.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let config = sled::ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Db::start(config).unwrap();
-    /// t.insert(&[1], vec![1]);
-    /// assert_eq!(t.remove(&[1]), Ok(Some(sled::IVec::from(vec![1]))));
-    /// assert_eq!(t.remove(&[1]), Ok(None));
-    /// ```
+    #[doc(hidden)]
     #[deprecated(since = "0.24.2", note = "replaced by `Tree::remove`")]
     pub fn del<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
         self.remove(key)

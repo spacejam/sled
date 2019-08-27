@@ -62,7 +62,7 @@ impl Db {
         Self::start(config)
     }
 
-    /// Load existing or create a new `Db` with a default configuration.
+    #[doc(hidden)]
     #[deprecated(since = "0.24.2", note = "replaced by `Db:open`")]
     pub fn start_default<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
         Self::open(path)
