@@ -1,3 +1,10 @@
+# 0.26.1
+
+## Improvements
+
+* std::thread is no longer used on platforms other than
+  linux, macos, and windows, which increases portability.
+
 # 0.26
 
 ## New Features
