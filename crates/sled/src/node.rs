@@ -5,8 +5,8 @@ use pagecache::Lazy;
 use super::*;
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Node {
-    pub(crate) data: Data,
+pub(crate) struct Node<T: ?Sized> {
+    pub(crate) data: Data<T>,
     pub(crate) next: Option<PageId>,
     pub(crate) lo: IVec,
     pub(crate) hi: IVec,
@@ -14,7 +14,10 @@ pub(crate) struct Node {
     pub(crate) merging: bool,
 }
 
-impl fmt::Debug for Node {
+impl<T> fmt::Debug for Node<T>
+where
+    T: fmt::Debug,
+{
     fn fmt(
         &self,
         f: &mut fmt::Formatter<'_>,
@@ -35,7 +38,7 @@ impl fmt::Debug for Node {
     }
 }
 
-impl Node {
+impl<T> Node<T> {
     pub(crate) fn apply(&mut self, frag: &Frag) {
         use self::Frag::*;
 

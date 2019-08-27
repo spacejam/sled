@@ -1,5 +1,6 @@
 use std::{
     fmt::{self, Debug},
+    marker::PhantomData,
     ops::{self, RangeBounds},
     sync::{
         atomic::{AtomicU64, Ordering::SeqCst},
@@ -14,26 +15,26 @@ use pagecache::Guard;
 use super::*;
 
 #[derive(Debug, Clone)]
-pub(crate) struct View<'g> {
+pub(crate) struct View<'g, T> {
     pub ptr: TreePtr<'g>,
     pub pid: PageId,
-    pub node: &'g Node,
+    pub node: &'g Node<T>,
     pub size: u64,
 }
 
-impl<'g> std::ops::Deref for View<'g> {
-    type Target = Node;
+impl<'g, T> std::ops::Deref for View<'g, T> {
+    type Target = Node<T>;
 
-    fn deref(&self) -> &Node {
+    fn deref(&self) -> &Node<T> {
         &self.node
     }
 }
 
-impl<'a> IntoIterator for &'a Tree {
-    type Item = Result<(IVec, IVec)>;
-    type IntoIter = Iter<'a>;
+impl<'a, T> IntoIterator for &'a Tree<T> {
+    type Item = Result<(IVec, T)>;
+    type IntoIter = Iter<'a, T>;
 
-    fn into_iter(self) -> Iter<'a> {
+    fn into_iter(self) -> Iter<'a, T> {
         self.iter()
     }
 }
@@ -66,7 +67,8 @@ impl<'a> IntoIterator for &'a Tree {
 /// assert_eq!(t.get(b"yo!"), Ok(None));
 /// ```
 #[derive(Clone)]
-pub struct Tree {
+pub struct Tree<T: ?Sized> {
+    pub(crate) _type: PhantomData<T>,
     pub(crate) tree_id: Vec<u8>,
     pub(crate) context: Context,
     pub(crate) subscriptions: Arc<Subscriptions>,
@@ -75,11 +77,11 @@ pub struct Tree {
     pub(crate) merge_operator: Arc<RwLock<Option<MergeOperator>>>,
 }
 
-unsafe impl Send for Tree {}
+unsafe impl<T> Send for Tree<T> where T: Sync {}
 
-unsafe impl Sync for Tree {}
+unsafe impl<T> Sync for Tree<T> where T: Sync {}
 
-impl Tree {
+impl<T> Tree<T> {
     /// Insert a key to a new value, returning the last value if it
     /// was set.
     #[deprecated(since = "0.24.2", note = "replaced by `Tree::insert`")]
@@ -240,7 +242,7 @@ impl Tree {
     ///
     pub fn transaction<F, R>(&self, f: F) -> TransactionResult<R>
     where
-        F: Fn(&TransactionalTree<'_>) -> TransactionResult<R>,
+        F: Fn(&TransactionalTree<'_, T>) -> TransactionResult<R>,
     {
         <&Self as Transactional>::transaction(&self, f)
     }
@@ -978,136 +980,6 @@ impl Tree {
         *mo_write = Some(merge_operator);
     }
 
-    /// Create a double-ended iterator over the tuples of keys and
-    /// values in this tree.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use sled::{ConfigBuilder, Db, IVec};
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let t = Db::start(config).unwrap();
-    /// t.insert(&[1], vec![10]);
-    /// t.insert(&[2], vec![20]);
-    /// t.insert(&[3], vec![30]);
-    /// let mut iter = t.iter();
-    /// assert_eq!(iter.next().unwrap(), Ok((IVec::from(&[1]), IVec::from(&[10]))));
-    /// assert_eq!(iter.next().unwrap(), Ok((IVec::from(&[2]), IVec::from(&[20]))));
-    /// assert_eq!(iter.next().unwrap(), Ok((IVec::from(&[3]), IVec::from(&[30]))));
-    /// assert_eq!(iter.next(), None);
-    /// ```
-    pub fn iter(&self) -> Iter<'_> {
-        self.range::<Vec<u8>, _>(..)
-    }
-
-    /// Create a double-ended iterator over tuples of keys and values,
-    /// where the keys fall within the specified range.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use sled::{ConfigBuilder, Db, IVec};
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let t = Db::start(config).unwrap();
-    ///
-    /// t.insert(&[0], vec![0]).unwrap();
-    /// t.insert(&[1], vec![10]).unwrap();
-    /// t.insert(&[2], vec![20]).unwrap();
-    /// t.insert(&[3], vec![30]).unwrap();
-    /// t.insert(&[4], vec![40]).unwrap();
-    /// t.insert(&[5], vec![50]).unwrap();
-    ///
-    /// let start: &[u8] = &[2];
-    /// let end: &[u8] = &[4];
-    /// let mut r = t.range(start..end);
-    /// assert_eq!(r.next().unwrap(), Ok((IVec::from(&[2]), IVec::from(&[20]))));
-    /// assert_eq!(r.next().unwrap(), Ok((IVec::from(&[3]), IVec::from(&[30]))));
-    /// assert_eq!(r.next(), None);
-    ///
-    /// let mut r = t.range(start..end).rev();
-    /// assert_eq!(r.next().unwrap(), Ok((IVec::from(&[3]), IVec::from(&[30]))));
-    /// assert_eq!(r.next().unwrap(), Ok((IVec::from(&[2]), IVec::from(&[20]))));
-    /// assert_eq!(r.next(), None);
-    /// ```
-    pub fn range<K, R>(&self, range: R) -> Iter<'_>
-    where
-        K: AsRef<[u8]>,
-        R: RangeBounds<K>,
-    {
-        let _measure = Measure::new(&M.tree_scan);
-
-        let lo = match range.start_bound() {
-            ops::Bound::Included(ref start) => {
-                ops::Bound::Included(IVec::from(start.as_ref()))
-            }
-            ops::Bound::Excluded(ref start) => {
-                ops::Bound::Excluded(IVec::from(start.as_ref()))
-            }
-            ops::Bound::Unbounded => ops::Bound::Included(IVec::from(&[])),
-        };
-
-        let hi = match range.end_bound() {
-            ops::Bound::Included(ref end) => {
-                ops::Bound::Included(IVec::from(end.as_ref()))
-            }
-            ops::Bound::Excluded(ref end) => {
-                ops::Bound::Excluded(IVec::from(end.as_ref()))
-            }
-            ops::Bound::Unbounded => ops::Bound::Unbounded,
-        };
-
-        Iter {
-            tree: &self,
-            hi,
-            lo,
-            cached_node: None,
-            guard: pin(),
-            going_forward: true,
-        }
-    }
-
-    /// Create an iterator over tuples of keys and values,
-    /// where the all the keys starts with the given prefix.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use sled::{ConfigBuilder, Db, IVec};
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let t = Db::start(config).unwrap();
-    ///
-    /// t.insert(&[0, 0, 0], vec![0, 0, 0]).unwrap();
-    /// t.insert(&[0, 0, 1], vec![0, 0, 1]).unwrap();
-    /// t.insert(&[0, 0, 2], vec![0, 0, 2]).unwrap();
-    /// t.insert(&[0, 0, 3], vec![0, 0, 3]).unwrap();
-    /// t.insert(&[0, 1, 0], vec![0, 1, 0]).unwrap();
-    /// t.insert(&[0, 1, 1], vec![0, 1, 1]).unwrap();
-    ///
-    /// let prefix: &[u8] = &[0, 0];
-    /// let mut r = t.scan_prefix(prefix);
-    /// assert_eq!(r.next(), Some(Ok((IVec::from(&[0, 0, 0]), IVec::from(&[0, 0, 0])))));
-    /// assert_eq!(r.next(), Some(Ok((IVec::from(&[0, 0, 1]), IVec::from(&[0, 0, 1])))));
-    /// assert_eq!(r.next(), Some(Ok((IVec::from(&[0, 0, 2]), IVec::from(&[0, 0, 2])))));
-    /// assert_eq!(r.next(), Some(Ok((IVec::from(&[0, 0, 3]), IVec::from(&[0, 0, 3])))));
-    /// assert_eq!(r.next(), None);
-    /// ```
-    pub fn scan_prefix<P>(&self, prefix: P) -> Iter<'_>
-    where
-        P: AsRef<[u8]>,
-    {
-        let prefix = prefix.as_ref();
-        let mut upper = prefix.to_vec();
-
-        while let Some(last) = upper.pop() {
-            if last < u8::max_value() {
-                upper.push(last + 1);
-                return self.range(prefix..&upper);
-            }
-        }
-
-        self.range(prefix..)
-    }
-
     /// Atomically removes the maximum item in the `Tree` instance.
     ///
     /// # Examples
@@ -1230,8 +1102,8 @@ impl Tree {
 
     fn split_node<'g>(
         &self,
-        node_view: &View<'g>,
-        parent_view: &Option<View<'g>>,
+        node_view: &View<'g, T>,
+        parent_view: &Option<View<'g, T>>,
         root_pid: PageId,
         guard: &'g Guard,
     ) -> Result<()> {
@@ -1367,7 +1239,7 @@ impl Tree {
         &self,
         pid: PageId,
         guard: &'g Guard,
-    ) -> Result<Option<View<'g>>> {
+    ) -> Result<Option<View<'g, T>>> {
         loop {
             let frag_opt = self.context.pagecache.get(pid, guard)?;
             if let Some((tree_ptr, Frag::Base(ref leaf), size)) = &frag_opt {
@@ -1394,7 +1266,7 @@ impl Tree {
         &self,
         key: K,
         guard: &'g Guard,
-    ) -> Result<View<'g>>
+    ) -> Result<View<'g, T>>
     where
         K: AsRef<[u8]>,
     {
@@ -1567,7 +1439,7 @@ impl Tree {
 
     pub(crate) fn merge_node<'g>(
         &self,
-        parent_view: &View<'g>,
+        parent_view: &View<'g, T>,
         child_pid: PageId,
         guard: &'g Guard,
     ) -> Result<()> {
@@ -1892,7 +1764,7 @@ impl Tree {
     }
 }
 
-impl Debug for Tree {
+impl<T> Debug for Tree<T> {
     fn fmt(
         &self,
         f: &mut fmt::Formatter<'_>,
@@ -1958,5 +1830,137 @@ impl Debug for Tree {
         }
 
         Ok(())
+    }
+}
+
+impl Tree<IVec> {
+    /// Create a double-ended iterator over the tuples of keys and
+    /// values in this tree.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sled::{ConfigBuilder, Db, IVec};
+    /// let config = ConfigBuilder::new().temporary(true).build();
+    /// let t = Db::start(config).unwrap();
+    /// t.insert(&[1], vec![10]);
+    /// t.insert(&[2], vec![20]);
+    /// t.insert(&[3], vec![30]);
+    /// let mut iter = t.iter();
+    /// assert_eq!(iter.next().unwrap(), Ok((IVec::from(&[1]), IVec::from(&[10]))));
+    /// assert_eq!(iter.next().unwrap(), Ok((IVec::from(&[2]), IVec::from(&[20]))));
+    /// assert_eq!(iter.next().unwrap(), Ok((IVec::from(&[3]), IVec::from(&[30]))));
+    /// assert_eq!(iter.next(), None);
+    /// ```
+    pub fn iter(&self) -> Iter<'_, IVec> {
+        self.range::<Vec<u8>, _>(..)
+    }
+
+    /// Create a double-ended iterator over tuples of keys and values,
+    /// where the keys fall within the specified range.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sled::{ConfigBuilder, Db, IVec};
+    /// let config = ConfigBuilder::new().temporary(true).build();
+    /// let t = Db::start(config).unwrap();
+    ///
+    /// t.insert(&[0], vec![0]).unwrap();
+    /// t.insert(&[1], vec![10]).unwrap();
+    /// t.insert(&[2], vec![20]).unwrap();
+    /// t.insert(&[3], vec![30]).unwrap();
+    /// t.insert(&[4], vec![40]).unwrap();
+    /// t.insert(&[5], vec![50]).unwrap();
+    ///
+    /// let start: &[u8] = &[2];
+    /// let end: &[u8] = &[4];
+    /// let mut r = t.range(start..end);
+    /// assert_eq!(r.next().unwrap(), Ok((IVec::from(&[2]), IVec::from(&[20]))));
+    /// assert_eq!(r.next().unwrap(), Ok((IVec::from(&[3]), IVec::from(&[30]))));
+    /// assert_eq!(r.next(), None);
+    ///
+    /// let mut r = t.range(start..end).rev();
+    /// assert_eq!(r.next().unwrap(), Ok((IVec::from(&[3]), IVec::from(&[30]))));
+    /// assert_eq!(r.next().unwrap(), Ok((IVec::from(&[2]), IVec::from(&[20]))));
+    /// assert_eq!(r.next(), None);
+    /// ```
+    pub fn range<K, R>(&self, range: R) -> Iter<'_, IVec>
+    where
+        K: AsRef<[u8]>,
+        R: RangeBounds<K>,
+    {
+        let _measure = Measure::new(&M.tree_scan);
+
+        let lo = match range.start_bound() {
+            ops::Bound::Included(ref start) => {
+                ops::Bound::Included(IVec::from(start.as_ref()))
+            }
+            ops::Bound::Excluded(ref start) => {
+                ops::Bound::Excluded(IVec::from(start.as_ref()))
+            }
+            ops::Bound::Unbounded => ops::Bound::Included(IVec::from(&[])),
+        };
+
+        let hi = match range.end_bound() {
+            ops::Bound::Included(ref end) => {
+                ops::Bound::Included(IVec::from(end.as_ref()))
+            }
+            ops::Bound::Excluded(ref end) => {
+                ops::Bound::Excluded(IVec::from(end.as_ref()))
+            }
+            ops::Bound::Unbounded => ops::Bound::Unbounded,
+        };
+
+        Iter {
+            tree: &self,
+            hi,
+            lo,
+            cached_node: None,
+            guard: pin(),
+            going_forward: true,
+        }
+    }
+
+    /// Create an iterator over tuples of keys and values,
+    /// where the all the keys starts with the given prefix.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sled::{ConfigBuilder, Db, IVec};
+    /// let config = ConfigBuilder::new().temporary(true).build();
+    /// let t = Db::start(config).unwrap();
+    ///
+    /// t.insert(&[0, 0, 0], vec![0, 0, 0]).unwrap();
+    /// t.insert(&[0, 0, 1], vec![0, 0, 1]).unwrap();
+    /// t.insert(&[0, 0, 2], vec![0, 0, 2]).unwrap();
+    /// t.insert(&[0, 0, 3], vec![0, 0, 3]).unwrap();
+    /// t.insert(&[0, 1, 0], vec![0, 1, 0]).unwrap();
+    /// t.insert(&[0, 1, 1], vec![0, 1, 1]).unwrap();
+    ///
+    /// let prefix: &[u8] = &[0, 0];
+    /// let mut r = t.scan_prefix(prefix);
+    /// assert_eq!(r.next(), Some(Ok((IVec::from(&[0, 0, 0]), IVec::from(&[0, 0, 0])))));
+    /// assert_eq!(r.next(), Some(Ok((IVec::from(&[0, 0, 1]), IVec::from(&[0, 0, 1])))));
+    /// assert_eq!(r.next(), Some(Ok((IVec::from(&[0, 0, 2]), IVec::from(&[0, 0, 2])))));
+    /// assert_eq!(r.next(), Some(Ok((IVec::from(&[0, 0, 3]), IVec::from(&[0, 0, 3])))));
+    /// assert_eq!(r.next(), None);
+    /// ```
+    pub fn scan_prefix<P>(&self, prefix: P) -> Iter<'_, IVec>
+    where
+        P: AsRef<[u8]>,
+    {
+        let prefix = prefix.as_ref();
+        let mut upper = prefix.to_vec();
+
+        while let Some(last) = upper.pop() {
+            if last < u8::max_value() {
+                upper.push(last + 1);
+                return self.range(prefix..&upper);
+            }
+        }
+
+        self.range(prefix..)
     }
 }

@@ -67,10 +67,10 @@ use super::*;
 /// A transaction that will
 /// be applied atomically to the
 /// Tree.
-pub struct TransactionalTree<'a> {
-    pub(super) tree: &'a Tree,
-    pub(super) writes: RefCell<HashMap<IVec, Option<IVec>>>,
-    pub(super) read_cache: RefCell<HashMap<IVec, Option<IVec>>>,
+pub struct TransactionalTree<'a, T> {
+    pub(super) tree: &'a Tree<T>,
+    pub(super) writes: RefCell<HashMap<IVec, Option<T>>>,
+    pub(super) read_cache: RefCell<HashMap<IVec, Option<T>>>,
     pub(super) locks: RefCell<Vec<parking_lot::RwLockWriteGuard<'a, ()>>>,
 }
 
@@ -93,7 +93,7 @@ impl From<Error> for TransactionError {
     }
 }
 
-impl<'a> TransactionalTree<'a> {
+impl<'a, T> TransactionalTree<'a, T> {
     /// Set a key to a new value
     pub fn insert<K, V>(
         &self,
@@ -185,7 +185,7 @@ impl<'a> TransactionalTree<'a> {
 }
 
 pub struct TransactionalTrees<'a> {
-    inner: Vec<TransactionalTree<'a>>,
+    inner: Vec<TransactionalTree<'a, IVec>>,
 }
 
 impl<'a> TransactionalTrees<'a> {
@@ -285,8 +285,11 @@ pub trait Transactional {
     }
 }
 
-impl<'a> Transactional for &'a Tree {
-    type View = &'static TransactionalTree<'static>;
+impl<'a, T> Transactional for &'a Tree<T>
+where
+    T: 'static,
+{
+    type View = &'static TransactionalTree<'static, T>;
 
     fn make_overlay(&self) -> TransactionalTrees<'_> {
         TransactionalTrees {
@@ -310,12 +313,12 @@ impl<'a> Transactional for &'a Tree {
 
 impl<A, B> Transactional for (A, B)
 where
-    A: AsRef<Tree>,
-    B: AsRef<Tree>,
+    A: AsRef<Tree<IVec>>,
+    B: AsRef<Tree<IVec>>,
 {
     type View = (
-        &'static TransactionalTree<'static>,
-        &'static TransactionalTree<'static>,
+        &'static TransactionalTree<'static, IVec>,
+        &'static TransactionalTree<'static, IVec>,
     );
 
     fn make_overlay(&self) -> TransactionalTrees<'_> {

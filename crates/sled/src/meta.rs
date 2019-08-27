@@ -8,11 +8,11 @@ use super::*;
 
 /// Open or create a new disk-backed Tree with its own keyspace,
 /// accessible from the `Db` via the provided identifier.
-pub(crate) fn open_tree<'a>(
+pub(crate) fn open_tree<'a, T>(
     context: &Context,
     name: Vec<u8>,
     guard: &'a Guard,
-) -> Result<Tree> {
+) -> Result<Tree<T>> {
     // we loop because creating this Tree may race with
     // concurrent attempts to open the same one.
     loop {

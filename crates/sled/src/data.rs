@@ -1,16 +1,19 @@
 use super::*;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) enum Data {
+pub(crate) enum Data<T: ?Sized> {
     Index(Vec<(IVec, PageId)>),
-    Leaf(Vec<(IVec, IVec)>),
+    Leaf(Vec<(IVec, LazyDeserialized<T>)>),
 }
 
-impl Data {
+impl<T: Clone + Ord> Data<T> {
     pub(crate) fn fmt_keys(&self, prefix: &[u8]) -> Self {
-        fn fmt_inner<T>(prefix: &[u8], xs: &[(IVec, T)]) -> Vec<(IVec, T)>
+        fn fmt_inner<Second>(
+            prefix: &[u8],
+            xs: &[(IVec, Second)],
+        ) -> Vec<(IVec, Second)>
         where
-            T: Clone + Ord,
+            Second: Clone + Ord,
         {
             let mut data = Vec::with_capacity(xs.len());
             for (k, v) in xs {
@@ -130,7 +133,7 @@ impl Data {
         }
     }
 
-    pub(crate) fn leaf_ref(&self) -> Option<&Vec<(IVec, IVec)>> {
+    pub(crate) fn leaf_ref(&self) -> Option<&Vec<(IVec, LazyDeserialized<T>)>> {
         match *self {
             Data::Index(_) => None,
             Data::Leaf(ref items) => Some(items),

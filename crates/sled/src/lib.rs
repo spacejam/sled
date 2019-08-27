@@ -40,6 +40,7 @@ mod db;
 mod frag;
 mod iter;
 mod ivec;
+mod lazy_deserialized;
 mod materializer;
 mod meta;
 mod node;
@@ -75,6 +76,7 @@ use {
         context::Context,
         data::Data,
         frag::Frag,
+        lazy_deserialized::LazyDeserialized,
         node::Node,
         prefix::{
             prefix_cmp, prefix_cmp_encoded, prefix_decode, prefix_encode,

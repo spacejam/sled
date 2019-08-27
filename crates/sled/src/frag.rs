@@ -12,7 +12,7 @@ use super::*;
 pub(crate) enum Frag {
     Set(IVec, IVec),
     Del(IVec),
-    Base(Node),
+    Base(Node<IVec>),
     ParentMergeIntention(PageId),
     ParentMergeConfirm,
     ChildMergeCap,
