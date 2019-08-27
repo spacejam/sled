@@ -6,50 +6,61 @@ variables:
   testKind: 'default'
   
 jobs:
+  check:
+    name: Cargo Check on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+        
+    steps:
+    - name: cargo check
+      run: cargo check
+        
   test:
     strategy:
       matrix:
         windows-stable:
-          imageName: 'windows-latest'
+          runs-on: 'windows-latest'
           rustup_toolchain: stable
         mac-stable:
-          imageName: 'macos-latest'
+          runs-on: 'macos-latest'
           rustup_toolchain: stable
         linux-stable:
-          imageName: 'ubuntu-latest'
+          runs-on: 'ubuntu-latest'
           rustup_toolchain: stable
         doctests:
-          imageName: 'ubuntu-latest'
+          runs-on: 'ubuntu-latest'
           rustup_toolchain: stable
           testKind: 'doctests'
         sanitizers:
-          imageName: 'ubuntu-latest'
+          runs-on: 'ubuntu-latest'
           rustup_toolchain: nightly
           testKind: 'sanitizers'
         cross-compile:
-          imageName: 'ubuntu-latest'
+          runs-on: 'ubuntu-latest'
           rustup_toolchain: nightly
           testKind: 'cross-compile'
 
     steps:
-      - script: |
+      - run: |
           curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain $RUSTUP_TOOLCHAIN
           echo "##vso[task.setvariable variable=PATH;]$PATH:$HOME/.cargo/bin"
-        displayName: Install rust
-        condition: ne( variables['Agent.OS'], 'Windows_NT' )
-      - script: |
+        name: Install rust
+        if: ne( variables['Agent.OS'], 'Windows_NT' )
+      - run: |
           curl -sSf -o rustup-init.exe https://win.rustup.rs
           rustup-init.exe -y --default-toolchain %RUSTUP_TOOLCHAIN%
           echo "##vso[task.setvariable variable=PATH;]%PATH%;%USERPROFILE%\.cargo\bin"
-        displayName: Windows install rust
-        condition: eq( variables['Agent.OS'], 'Windows_NT' )
-      - script: cargo build --all --release
-        displayName: Cargo build
-        condition: eq( variables['testKind'], 'default' )
-      - script: cargo test --all --release
-        displayName: Cargo test
-        condition: eq( variables['testKind'], 'default' )
-      - script: |
+        name: Windows install rust
+        if: eq( variables['Agent.OS'], 'Windows_NT' )
+      - run: cargo build --all --release
+        name: Cargo build
+        if: eq( variables['testKind'], 'default' )
+      - run: cargo test --all --release
+        name: Cargo test
+        if: eq( variables['testKind'], 'default' )
+      - run: |
           pushd examples/playground &&
           cargo check &&
           popd &&
@@ -63,9 +74,9 @@ jobs:
           pushd crates/pagecache &&
           echo "testing pagecache doctests" &&
           cargo test
-        displayName: doctests
-        condition: eq( variables['testKind'], 'doctests' )
-      - script: |
+        name: doctests
+        if: eq( variables['testKind'], 'doctests' )
+      - run: |
           echo "cross build" &&
           echo "https://github.com/rust-lang/cargo/issues/4753" &&
           rustup target add aarch64-fuchsia &&
@@ -89,9 +100,9 @@ jobs:
           pushd crates/pagecache && cargo check --target x86_64-pc-windows-gnu  && popd &&
           pushd crates/pagecache && cargo check --target x86_64-linux-android && popd &&
           pushd crates/pagecache && cargo check --target x86_64-fuchsia && popd
-        displayName: cross-build
-        condition: eq( variables['testKind'], 'cross-compile' )
-      - script: |
+        name: cross-build
+        if: eq( variables['testKind'], 'cross-compile' )
+      - run: |
           pushd benchmarks/stress2 &&
           echo "lsan" &&
           cargo clean &&
@@ -118,5 +129,5 @@ jobs:
           cargo run --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu -- --duration=6 &&
           unset RUSTFLAGS &&
           unset TSAN_OPTIONS
-        displayName: sanitizers
-        condition: eq( variables['testKind'], 'sanitizers' )
+        name: sanitizers
+        if: eq( variables['testKind'], 'sanitizers' )
