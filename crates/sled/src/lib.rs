@@ -62,7 +62,7 @@
 //! ).unwrap();
 //!
 //! // Iterates over key-value pairs, starting at the given key.
-//! let scan_key = b"a non-present key before yo!";
+//! let scan_key: &[u8] = b"a non-present key before yo!";
 //! let mut iter = t.range(scan_key..);
 //! assert_eq!(&iter.next().unwrap().unwrap().0, b"yo!");
 //! assert_eq!(iter.next(), None);
