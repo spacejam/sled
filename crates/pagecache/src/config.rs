@@ -1,7 +1,7 @@
 use std::{
     fs,
     fs::File,
-    io::{Read, Seek, Write, ErrorKind},
+    io::{ErrorKind, Read, Seek, Write},
     ops::Deref,
     path::{Path, PathBuf},
     sync::{
@@ -215,15 +215,11 @@ impl ConfigBuilder {
     }
 
     fn limit_cache_max_memory(&mut self) {
-        #[cfg(target_os = "linux")]
-        {
-            if let Ok(mem) = get_cgroup_memory_limit() {
-                if self.cache_capacity > mem {
-                    self.cache_capacity = mem;
-                    eprintln!("WARN: cache capacity is limited to the cgroup memory limit: {} bytes",
-                             self.cache_capacity);
-                }
-            }
+        let limit = get_memory_limit();
+        if limit > 0 && self.cache_capacity > limit {
+            self.cache_capacity = limit;
+            eprintln!("WARN: cache capacity is limited to the cgroup memory limit: {} bytes",
+                     self.cache_capacity);
         }
     }
 
@@ -414,10 +410,8 @@ impl ConfigBuilder {
 
         let path = self.config_path();
 
-        let mut f = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .open(path)?;
+        let mut f =
+            fs::OpenOptions::new().write(true).create(true).open(path)?;
 
         maybe_fail!("write_config bytes");
         f.write_all(&*bytes)?;
@@ -714,6 +708,10 @@ impl Config {
 
 /// See the Kernel's documentation for more information about this subsystem, found at:
 ///  [Documentation/cgroup-v1/memory.txt](https://www.kernel.org/doc/Documentation/cgroup-v1/memory.txt)
+///
+/// If there's no memory limit specified on the container this may return
+/// 0x7FFFFFFFFFFFF000 (2^63-1 rounded down to 4k which is a common page size).
+/// So we know we are not running in a memory restricted environment.
 #[cfg(target_os = "linux")]
 fn get_cgroup_memory_limit() -> io::Result<u64> {
     File::open("/sys/fs/cgroup/memory/memory.limit_in_bytes")
@@ -728,4 +726,76 @@ fn read_u64_from(mut file: File) -> io::Result<u64> {
             .parse()
             .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
     })
+}
+
+/// Returns the maximum size of total available memory of the process, in bytes.
+/// If this limit is exceeded, the malloc() and mmap() functions shall fail with errno set
+/// to [ENOMEM].
+#[cfg(unix)]
+fn get_rlimit_as() -> io::Result<libc::rlimit> {
+    let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+
+    let ret = unsafe { libc::getrlimit(libc::RLIMIT_AS, limit.as_mut_ptr()) };
+
+    if ret == 0 {
+        Ok(unsafe { limit.assume_init() })
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(unix)]
+fn get_available_memory() -> u64 {
+    let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGE_SIZE) };
+    if pages > -1 && page_size > -1 {
+        return (pages as u64) * (page_size as u64);
+    }
+    return 0;
+}
+
+fn get_memory_limit() -> u64 {
+    // Maximum addressable memory space limit in u64
+    static MAX_USIZE: u64 = std::usize::MAX as u64;
+
+    let mut max: u64 = 0;
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(mem) = get_cgroup_memory_limit() {
+            max = mem;
+        }
+
+        // If there's no memory limit specified on the container this
+        // actually returns 0x7FFFFFFFFFFFF000 (2^63-1 rounded down to
+        // 4k which is a common page size). So we know we are not
+        // running in a memory restricted environment.
+        // src: https://github.com/dotnet/coreclr/blob/master/src/pal/src/misc/cgroup.cpp#L385-L428
+        if max > 0x7FFFFFFF00000000 {
+            return 0;
+        }
+    }
+
+    #[cfg(unix)]
+    {
+        if let Ok(rlim) = get_rlimit_as() {
+            let rlim_cur = rlim.rlim_cur as u64;
+            if rlim_cur < max || max == 0 {
+                max = rlim_cur;
+            }
+        }
+
+        let available = get_available_memory();
+        if available > 0 && available < max {
+            max = available;
+        }
+    }
+
+    if max > MAX_USIZE {
+        // It is observed in practice when the memory is unrestricted, Linux control
+        // group returns a physical limit that is bigger than the address space
+        max = MAX_USIZE;
+    }
+
+    return max;
 }
