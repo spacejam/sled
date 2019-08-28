@@ -259,7 +259,8 @@ fn pagecache_strange_crash_1() {
     let _pc: PageCache<TestMaterializer> =
         PageCache::start(config.clone()).unwrap();
     // TODO test no eaten lsn's on recovery
-    // TODO test that we don't skip multiple segments ahead on recovery (confusing Lsn & Lid)
+    // TODO test that we don't skip multiple segments ahead on recovery
+    // (confusing Lsn & Lid)
 }
 
 #[test]
@@ -625,15 +626,16 @@ fn pagecache_bug_05() {
 
 #[test]
 fn pagecache_bug_06() {
-    // postmortem: the test wasn't actually recording changes to the reference page...
+    // postmortem: the test wasn't actually recording changes to the reference
+    // page...
     use self::Op::*;
     prop_pagecache_works(vec![Allocate, Replace(0, 53), Replace(0, 54)], true);
 }
 
 #[test]
 fn pagecache_bug_07() {
-    // postmortem: the test wasn't correctly recording the replacement effect of a replace
-    // in the reference page
+    // postmortem: the test wasn't correctly recording the replacement effect of
+    // a replace in the reference page
     use self::Op::*;
     prop_pagecache_works(
         vec![Allocate, Link(0, 201), Replace(0, 208), Get(0)],
@@ -643,7 +645,8 @@ fn pagecache_bug_07() {
 
 #[test]
 fn pagecache_bug_08() {
-    // postmortem: page_in messed up the stack ordering when storing a linked stack
+    // postmortem: page_in messed up the stack ordering when storing a linked
+    // stack
     use self::Op::*;
     prop_pagecache_works(
         vec![
@@ -662,8 +665,9 @@ fn pagecache_bug_08() {
 
 #[test]
 fn pagecache_bug_09() {
-    // postmortem: this started failing in the giant refactor for log structured storage,
-    // and was possibly fixed by properly handling intervals in mark_interval
+    // postmortem: this started failing in the giant refactor for log structured
+    // storage, and was possibly fixed by properly handling intervals in
+    // mark_interval
     use self::Op::*;
     prop_pagecache_works(
         vec![

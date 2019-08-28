@@ -62,7 +62,7 @@ impl Db {
         Self::start(config)
     }
 
-    /// Load existing or create a new `Db` with a default configuration.
+    #[doc(hidden)]
     #[deprecated(since = "0.24.2", note = "replaced by `Db:open`")]
     pub fn start_default<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
         Self::open(path)
@@ -105,8 +105,7 @@ impl Db {
 
         let mut tenants = ret.tenants.write();
 
-        for (id, root) in context.pagecache.meta(&guard)?.tenants()
-        {
+        for (id, root) in context.pagecache.meta(&guard)?.tenants() {
             let tree = Tree {
                 tree_id: id.clone(),
                 subscriptions: Arc::new(Subscriptions::default()),
@@ -136,13 +135,18 @@ impl Db {
         let guard = pin();
 
         let mut tenants = self.tenants.write();
-        let tree = Arc::new(meta::open_tree(
-            &self.context,
-            name.to_vec(),
-            &guard,
-        )?);
+
+        // we need to check this again in case another
+        // thread opened it concurrently.
+        if let Some(tree) = tenants.get(name) {
+            return Ok(tree.clone());
+        }
+
+        let tree =
+            Arc::new(meta::open_tree(&self.context, name.to_vec(), &guard)?);
+      
         tenants.insert(name.to_vec(), tree.clone());
-        drop(tenants);
+      
         Ok(tree)
     }
 
@@ -181,12 +185,10 @@ impl Db {
         }
 
         loop {
-            let res = self.context.pagecache.cas_root_in_meta(
-                &name,
-                root_id,
-                None,
-                &guard,
-            )?;
+            let res = self
+                .context
+                .pagecache
+                .cas_root_in_meta(&name, root_id, None, &guard)?;
 
             if let Err(actual_root) = res {
                 root_id = actual_root;

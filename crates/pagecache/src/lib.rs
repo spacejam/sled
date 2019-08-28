@@ -1,4 +1,5 @@
-//! `pagecache` is a lock-free pagecache and log for building high-performance databases.
+//! `pagecache` is a lock-free pagecache and log for building high-performance
+//! databases.
 #![cfg_attr(test, deny(warnings))]
 #![deny(missing_docs)]
 #![deny(future_incompatible)]

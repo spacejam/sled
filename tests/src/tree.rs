@@ -1,8 +1,8 @@
 use std::{collections::BTreeMap, convert::TryInto, fmt, panic};
 
 use quickcheck::{Arbitrary, Gen, RngCore};
-use rand::distributions::{Distribution, Gamma};
 use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand_distr::{Distribution, Gamma};
 
 use pagecache::MAX_SPACE_AMPLIFICATION;
 use sled::*;
@@ -75,7 +75,7 @@ impl Arbitrary for Key {
     fn arbitrary<G: Gen>(g: &mut G) -> Self {
         if g.gen::<bool>() {
             let gs = g.size();
-            let gamma = Gamma::new(0.3, gs as f64);
+            let gamma = Gamma::new(0.3, gs as f64).unwrap();
             let v = gamma.sample(&mut rand::thread_rng());
             let len = if v > 30000.0 {
                 10000
@@ -125,7 +125,7 @@ pub enum Op {
     Restart,
 }
 
-use self::Op::{Set, Merge, Get, GetLt, GetGt, Del, Cas, Scan, Restart};
+use self::Op::{Cas, Del, Get, GetGt, GetLt, Merge, Restart, Scan, Set};
 
 impl Op {
     pub fn is_restart(&self) -> bool {

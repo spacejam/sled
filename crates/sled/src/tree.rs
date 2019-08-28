@@ -80,8 +80,7 @@ unsafe impl Send for Tree {}
 unsafe impl Sync for Tree {}
 
 impl Tree {
-    /// Insert a key to a new value, returning the last value if it
-    /// was set.
+    #[doc(hidden)]
     #[deprecated(since = "0.24.2", note = "replaced by `Tree::insert`")]
     pub fn set<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
     where
@@ -237,7 +236,6 @@ impl Tree {
     /// assert_eq!(unprocessed.get(b"k3").unwrap(), None);
     /// assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
     /// ```
-    ///
     pub fn transaction<F, R>(&self, f: F) -> TransactionResult<R>
     where
         F: Fn(&TransactionalTree<'_>) -> TransactionResult<R>,
@@ -327,17 +325,7 @@ impl Tree {
         Ok(v_opt)
     }
 
-    /// Delete a value, returning the old value if it existed.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let config = sled::ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Db::start(config).unwrap();
-    /// t.insert(&[1], vec![1]);
-    /// assert_eq!(t.remove(&[1]), Ok(Some(sled::IVec::from(vec![1]))));
-    /// assert_eq!(t.remove(&[1]), Ok(None));
-    /// ```
+    #[doc(hidden)]
     #[deprecated(since = "0.24.2", note = "replaced by `Tree::remove`")]
     pub fn del<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
         self.remove(key)
@@ -1640,8 +1628,9 @@ impl Tree {
 
         // searching for the left sibling to merge the target page into
         loop {
-            // The only way this child could have been freed is if the original merge has
-            // already been handled. Only in that case can this child have been freed
+            // The only way this child could have been freed is if the original
+            // merge has already been handled. Only in that case can this child
+            // have been freed
             trace!(
                 "cursor_pid is {} while looking for left sibling",
                 cursor_pid

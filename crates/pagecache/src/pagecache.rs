@@ -604,8 +604,8 @@ where
 
     /// Try to atomically add a `PageFrag` to the page.
     /// Returns `Ok(new_key)` if the operation was successful. Returns
-    /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
-    /// if the atomic append fails.
+    /// `Err(None)` if the page no longer exists. Returns
+    /// `Err(Some(actual_key))` if the atomic append fails.
     pub fn link<'g>(
         &'g self,
         pid: PageId,
@@ -795,8 +795,8 @@ where
 
     /// Replace an existing page with a different set of `PageFrag`s.
     /// Returns `Ok(new_key)` if the operation was successful. Returns
-    /// `Err(None)` if the page no longer exists. Returns `Err(Some(actual_key))`
-    /// if the atomic swap fails.
+    /// `Err(None)` if the page no longer exists. Returns
+    /// `Err(Some(actual_key))` if the atomic swap fails.
     pub fn replace<'g>(
         &self,
         pid: PageId,
@@ -1775,8 +1775,8 @@ where
             let res = advance_snapshot(iter, last_snapshot, &config);
 
             // NB it's important to resume writing before replacing the snapshot
-            // into the mutex, otherwise we create a race condition where the SA is
-            // not actually paused when a snapshot happens.
+            // into the mutex, otherwise we create a race condition where the SA
+            // is not actually paused when a snapshot happens.
             iobufs.with_sa(SegmentAccountant::resume_rewriting);
 
             match res {
