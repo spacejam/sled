@@ -1,6 +1,7 @@
 use std::{
     fs,
-    io::{Read, Seek, Write},
+    fs::File,
+    io::{Read, Seek, Write, ErrorKind},
     ops::Deref,
     path::{Path, PathBuf},
     sync::{
@@ -191,8 +192,10 @@ impl ConfigBuilder {
 
         let seed = SALT_COUNTER.fetch_add(1, Ordering::SeqCst) as u64;
         let now = (SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH).unwrap()
-            .as_nanos() << 32) as u64;
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+            << 32) as u64;
 
         let salt = if cfg!(unix) {
             let pid = unsafe { libc::getpid() };
@@ -201,7 +204,7 @@ impl ConfigBuilder {
             now + seed
         };
 
-        return if cfg!(target_os="linux") {
+        return if cfg!(target_os = "linux") {
             // use shared memory for temporary linux files
             format!("/dev/shm/pagecache.tmp.{}", salt).into()
         } else {
@@ -212,13 +215,14 @@ impl ConfigBuilder {
     }
 
     fn limit_cache_max_memory(&mut self) {
-        #[cfg(target_os="linux")]
+        #[cfg(target_os = "linux")]
         {
-            let mem = get_cgroup_memory_limit();
-            if mem > 0 && self.cache_capacity > mem {
-                self.cache_capacity = mem;
-                println!("WARNING! Cache capacity is limited by the cgroup memory limit: {} bytes",
-                         self.cache_capacity);
+            if let Ok(mem) = get_cgroup_memory_limit() {
+                if self.cache_capacity > mem {
+                    self.cache_capacity = mem;
+                    eprintln!("WARN: cache capacity is limited to the cgroup memory limit: {} bytes",
+                             self.cache_capacity);
+                }
             }
         }
     }
@@ -292,7 +296,7 @@ impl ConfigBuilder {
         Ok(())
     }
 
-    fn open_file(&mut self) -> Result<fs::File> {
+    fn open_file(&mut self) -> Result<File> {
         let path = self.db_path();
 
         // panic if we can't parse the path
@@ -316,7 +320,7 @@ impl ConfigBuilder {
         }
 
         if !dir.exists() {
-            let res: std::io::Result<()> = std::fs::create_dir_all(dir);
+            let res: std::io::Result<()> = fs::create_dir_all(dir);
             res.map_err(Error::from)?;
         }
 
@@ -336,7 +340,7 @@ impl ConfigBuilder {
         }
     }
 
-    fn try_lock(&self, file: fs::File) -> Result<fs::File> {
+    fn try_lock(&self, file: File) -> Result<File> {
         #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             let try_lock = if self.read_only {
@@ -347,8 +351,12 @@ impl ConfigBuilder {
 
             if let Err(e) = try_lock {
                 return Err(Error::Io(io::Error::new(
-                    io::ErrorKind::WouldBlock,
-                    format!("could not acquire appropriate file lock on {:?}: {:?}", self.db_path() , e),
+                    ErrorKind::Other,
+                    format!(
+                        "could not acquire lock on {:?}: {:?}",
+                        self.db_path(),
+                        e
+                    ),
                 )));
             }
         }
@@ -406,7 +414,7 @@ impl ConfigBuilder {
 
         let path = self.config_path();
 
-        let mut f = std::fs::OpenOptions::new()
+        let mut f = fs::OpenOptions::new()
             .write(true)
             .create(true)
             .open(path)?;
@@ -419,13 +427,13 @@ impl ConfigBuilder {
         Ok(())
     }
 
-    fn read_config(&self) -> std::io::Result<Option<Self>> {
+    fn read_config(&self) -> io::Result<Option<Self>> {
         let path = self.config_path();
 
-        let f_res = std::fs::OpenOptions::new().read(true).open(&path);
+        let f_res = fs::OpenOptions::new().read(true).open(&path);
 
         let mut f = match f_res {
-            Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(ref e) if e.kind() == ErrorKind::NotFound => {
                 return Ok(None);
             }
             Err(other) => {
@@ -504,7 +512,7 @@ impl Deref for Config {
 #[derive(Debug)]
 pub struct ConfigInner {
     inner: ConfigBuilder,
-    pub(crate) file: fs::File,
+    pub(crate) file: File,
     pub(crate) global_error: Atomic<Error>,
     #[cfg(feature = "event_log")]
     /// an event log for concurrent debugging
@@ -597,7 +605,7 @@ impl Config {
             abs_path
         };
 
-        let filter = |dir_entry: std::io::Result<std::fs::DirEntry>| {
+        let filter = |dir_entry: std::io::Result<fs::DirEntry>| {
             if let Ok(de) = dir_entry {
                 let path_buf = de.path();
                 let path = path_buf.as_path();
@@ -617,7 +625,7 @@ impl Config {
         let snap_dir = Path::new(&abs_prefix).parent().unwrap();
 
         if !snap_dir.exists() {
-            std::fs::create_dir_all(snap_dir)?;
+            fs::create_dir_all(snap_dir)?;
         }
 
         Ok(snap_dir.read_dir()?.filter_map(filter).collect())
@@ -630,7 +638,7 @@ impl Config {
         let incremental = read_snapshot_or_default(&self)?;
 
         for snapshot_path in self.get_snapshot_files()? {
-            std::fs::remove_file(snapshot_path)?;
+            fs::remove_file(snapshot_path)?;
         }
 
         debug!("generating snapshot without the previous one");
@@ -648,16 +656,22 @@ impl Config {
             }
         };
 
-        let verify_pagestate = |
-            x: &FastMap8<PageId, PageState>,
-            y: &FastMap8<PageId, PageState>,
-            typ: &str,
-        | {
+        let verify_pagestate = |x: &FastMap8<PageId, PageState>,
+                                y: &FastMap8<PageId, PageState>,
+                                typ: &str| {
             for (k, v) in x {
                 if !y.contains_key(&k) {
-                    panic!("page only present in {} pagetable: {} -> {:?}", typ, k, v);
+                    panic!(
+                        "page only present in {} pagetable: {} -> {:?}",
+                        typ, k, v
+                    );
                 }
-                assert_eq!(y.get(&k), Some(v), "page tables differ for pid {}", k);
+                assert_eq!(
+                    y.get(&k),
+                    Some(v),
+                    "page tables differ for pid {}",
+                    k
+                );
                 verify_messages(k, v);
             }
         };
@@ -700,17 +714,18 @@ impl Config {
 
 /// See the Kernel's documentation for more information about this subsystem, found at:
 ///  [Documentation/cgroup-v1/memory.txt](https://www.kernel.org/doc/Documentation/cgroup-v1/memory.txt)
-#[cfg(target_os="linux")]
-fn get_cgroup_memory_limit() -> u64 {
-    std::fs::File::open("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+#[cfg(target_os = "linux")]
+fn get_cgroup_memory_limit() -> io::Result<u64> {
+    File::open("/sys/fs/cgroup/memory/memory.limit_in_bytes")
         .and_then(read_u64_from)
-        .unwrap_or(0)
 }
 
-#[cfg(target_os="linux")]
-fn read_u64_from(mut file: std::fs::File) -> io::Result<u64> {
+#[cfg(target_os = "linux")]
+fn read_u64_from(mut file: File) -> io::Result<u64> {
     let mut s = String::new();
-    file.read_to_string(&mut s).and_then(|_|
-        s.trim().parse().map_err(|e| io::Error::new(std::io::ErrorKind::InvalidData, e)))
+    file.read_to_string(&mut s).and_then(|_| {
+        s.trim()
+            .parse()
+            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
+    })
 }
-
