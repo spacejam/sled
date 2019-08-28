@@ -316,7 +316,7 @@ impl ConfigBuilder {
         }
 
         if !dir.exists() {
-            let res: std::io::Result<()> = fs::create_dir_all(dir);
+            let res: io::Result<()> = fs::create_dir_all(dir);
             res.map_err(Error::from)?;
         }
 
@@ -447,7 +447,7 @@ impl ConfigBuilder {
         buf.split_off(len - 4);
 
         let mut crc_arr = [0_u8; 4];
-        f.seek(std::io::SeekFrom::End(-4)).unwrap();
+        f.seek(io::SeekFrom::End(-4)).unwrap();
         f.read_exact(&mut crc_arr).unwrap();
         let crc_expected = arr_to_u32(&crc_arr);
 
@@ -586,7 +586,7 @@ impl Config {
 
     // returns the snapshot file paths for this system
     #[doc(hidden)]
-    pub fn get_snapshot_files(&self) -> std::io::Result<Vec<PathBuf>> {
+    pub fn get_snapshot_files(&self) -> io::Result<Vec<PathBuf>> {
         let mut prefix = self.snapshot_prefix();
 
         prefix.push("snap.");
@@ -599,7 +599,7 @@ impl Config {
             abs_path
         };
 
-        let filter = |dir_entry: std::io::Result<fs::DirEntry>| {
+        let filter = |dir_entry: io::Result<fs::DirEntry>| {
             if let Ok(de) = dir_entry {
                 let path_buf = de.path();
                 let path = path_buf.as_path();
@@ -731,7 +731,7 @@ fn read_u64_from(mut file: File) -> io::Result<u64> {
 /// Returns the maximum size of total available memory of the process, in bytes.
 /// If this limit is exceeded, the malloc() and mmap() functions shall fail with errno set
 /// to [ENOMEM].
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn get_rlimit_as() -> io::Result<libc::rlimit> {
     let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
 
@@ -744,7 +744,7 @@ fn get_rlimit_as() -> io::Result<libc::rlimit> {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn get_available_memory() -> io::Result<u64> {
     let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
     if pages == -1 {
@@ -781,7 +781,7 @@ fn get_memory_limit() -> u64 {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         if let Ok(rlim) = get_rlimit_as() {
             let rlim_cur = rlim.rlim_cur as u64;
