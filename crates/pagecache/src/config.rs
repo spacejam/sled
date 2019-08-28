@@ -745,13 +745,18 @@ fn get_rlimit_as() -> io::Result<libc::rlimit> {
 }
 
 #[cfg(unix)]
-fn get_available_memory() -> u64 {
+fn get_available_memory() -> io::Result<u64> {
     let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
-    let page_size = unsafe { libc::sysconf(libc::_SC_PAGE_SIZE) };
-    if pages > -1 && page_size > -1 {
-        return (pages as u64) * (page_size as u64);
+    if pages == -1 {
+        return Err(io::Error::last_os_error());
     }
-    return 0;
+
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGE_SIZE) };
+    if page_size == -1 {
+        return Err(io::Error::last_os_error());
+    }
+
+    return Ok((pages as u64) * (page_size as u64));
 }
 
 fn get_memory_limit() -> u64 {
@@ -785,9 +790,10 @@ fn get_memory_limit() -> u64 {
             }
         }
 
-        let available = get_available_memory();
-        if available > 0 && available < max {
-            max = available;
+        if let Ok(available) = get_available_memory() {
+            if available < max || max == 0 {
+                max = available;
+            }
         }
     }
 
