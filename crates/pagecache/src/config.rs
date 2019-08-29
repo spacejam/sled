@@ -1,6 +1,7 @@
 use std::{
     fs,
-    io::{Read, Seek, Write},
+    fs::File,
+    io::{ErrorKind, Read, Seek, Write},
     ops::Deref,
     path::{Path, PathBuf},
     sync::{
@@ -165,45 +166,13 @@ impl ConfigBuilder {
         self.validate().unwrap();
 
         if self.temporary && self.path == PathBuf::from(DEFAULT_PATH) {
-            static SALT_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-            use std::time::SystemTime;
-            let now = (SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-                << 32) as u64;
-            let salt = SALT_COUNTER.fetch_add(1, Ordering::SeqCst) as u64;
-
-            #[cfg(unix)]
-            let salt = {
-                let pid = unsafe { libc::getpid() };
-                ((pid as u64) << 16) + now + salt
-            };
-
-            #[cfg(not(unix))]
-            let salt = { now + salt };
-
-            // use shared memory for temporary linux files
-            #[cfg(target_os = "linux")]
-            let tmp_path = format!("/dev/shm/pagecache.tmp.{}", salt).into();
-
-            #[cfg(not(target_os = "linux"))]
-            let tmp_path = {
-                let mut pb = std::env::temp_dir();
-                pb.push(format!("pagecache.tmp.{}", salt));
-                pb
-            };
-
-            self.path = tmp_path;
+            self.path = Self::gen_temp_path();
         }
 
+        self.limit_cache_max_memory();
+
         let file = self.open_file().unwrap_or_else(|e| {
-            panic!(
-                "should be able to open configured file at {:?}; {}",
-                self.db_path(),
-                e,
-            );
+            panic!("open file at {:?}: {}", self.db_path(), e);
         });
 
         // seal config in a Config
@@ -214,6 +183,44 @@ impl ConfigBuilder {
             #[cfg(feature = "event_log")]
             event_log: crate::event_log::EventLog::default(),
         }))
+    }
+
+    fn gen_temp_path() -> PathBuf {
+        use std::time::SystemTime;
+
+        static SALT_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+        let seed = SALT_COUNTER.fetch_add(1, Ordering::SeqCst) as u64;
+        let now = (SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+            << 32) as u64;
+
+        let salt = if cfg!(unix) {
+            let pid = unsafe { libc::getpid() };
+            ((pid as u64) << 16) + now + seed
+        } else {
+            now + seed
+        };
+
+        return if cfg!(target_os = "linux") {
+            // use shared memory for temporary linux files
+            format!("/dev/shm/pagecache.tmp.{}", salt).into()
+        } else {
+            let mut pb = std::env::temp_dir();
+            pb.push(format!("pagecache.tmp.{}", salt));
+            pb
+        };
+    }
+
+    fn limit_cache_max_memory(&mut self) {
+        let limit = get_memory_limit();
+        if limit > 0 && self.cache_capacity > limit {
+            self.cache_capacity = limit;
+            eprintln!("WARN: cache capacity is limited to the cgroup memory limit: {} bytes",
+                     self.cache_capacity);
+        }
     }
 
     builder!(
@@ -285,7 +292,7 @@ impl ConfigBuilder {
         Ok(())
     }
 
-    fn open_file(&mut self) -> Result<fs::File> {
+    fn open_file(&mut self) -> Result<File> {
         let path = self.db_path();
 
         // panic if we can't parse the path
@@ -309,7 +316,7 @@ impl ConfigBuilder {
         }
 
         if !dir.exists() {
-            let res: std::io::Result<()> = std::fs::create_dir_all(dir);
+            let res: io::Result<()> = fs::create_dir_all(dir);
             res.map_err(Error::from)?;
         }
 
@@ -324,27 +331,33 @@ impl ConfigBuilder {
         }
 
         match options.open(&path) {
-            Ok(file) => {
-                #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-                {
-                    let try_lock = if self.read_only {
-                        file.try_lock_shared()
-                    } else {
-                        file.try_lock_exclusive()
-                    };
-
-                    if let Err(e) = try_lock {
-                        return Err(Error::Io(io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("could not acquire appropriate file lock on {:?}: {:?}", path, e),
-                            )));
-                    }
-                }
-
-                Ok(file)
-            }
+            Ok(file) => self.try_lock(file),
             Err(e) => Err(e.into()),
         }
+    }
+
+    fn try_lock(&self, file: File) -> Result<File> {
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+        {
+            let try_lock = if self.read_only {
+                file.try_lock_shared()
+            } else {
+                file.try_lock_exclusive()
+            };
+
+            if let Err(e) = try_lock {
+                return Err(Error::Io(io::Error::new(
+                    ErrorKind::Other,
+                    format!(
+                        "could not acquire lock on {:?}: {:?}",
+                        self.db_path(),
+                        e
+                    ),
+                )));
+            }
+        }
+
+        Ok(file)
     }
 
     fn verify_config_changes_ok(&self) -> Result<()> {
@@ -397,10 +410,7 @@ impl ConfigBuilder {
 
         let path = self.config_path();
 
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .open(path)?;
+        let mut f = fs::OpenOptions::new().write(true).create(true).open(path)?;
 
         maybe_fail!("write_config bytes");
         f.write_all(&*bytes)?;
@@ -410,13 +420,13 @@ impl ConfigBuilder {
         Ok(())
     }
 
-    fn read_config(&self) -> std::io::Result<Option<Self>> {
+    fn read_config(&self) -> io::Result<Option<Self>> {
         let path = self.config_path();
 
-        let f_res = std::fs::OpenOptions::new().read(true).open(&path);
+        let f_res = fs::OpenOptions::new().read(true).open(&path);
 
         let mut f = match f_res {
-            Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(ref e) if e.kind() == ErrorKind::NotFound => {
                 return Ok(None);
             }
             Err(other) => {
@@ -436,7 +446,7 @@ impl ConfigBuilder {
         buf.split_off(len - 4);
 
         let mut crc_arr = [0_u8; 4];
-        f.seek(std::io::SeekFrom::End(-4)).unwrap();
+        f.seek(io::SeekFrom::End(-4)).unwrap();
         f.read_exact(&mut crc_arr).unwrap();
         let crc_expected = arr_to_u32(&crc_arr);
 
@@ -495,7 +505,7 @@ impl Deref for Config {
 #[derive(Debug)]
 pub struct ConfigInner {
     inner: ConfigBuilder,
-    pub(crate) file: fs::File,
+    pub(crate) file: File,
     pub(crate) global_error: Atomic<Error>,
     #[cfg(feature = "event_log")]
     /// an event log for concurrent debugging
@@ -575,7 +585,7 @@ impl Config {
 
     // returns the snapshot file paths for this system
     #[doc(hidden)]
-    pub fn get_snapshot_files(&self) -> std::io::Result<Vec<PathBuf>> {
+    pub fn get_snapshot_files(&self) -> io::Result<Vec<PathBuf>> {
         let mut prefix = self.snapshot_prefix();
 
         prefix.push("snap.");
@@ -588,7 +598,7 @@ impl Config {
             abs_path
         };
 
-        let filter = |dir_entry: std::io::Result<std::fs::DirEntry>| {
+        let filter = |dir_entry: io::Result<fs::DirEntry>| {
             if let Ok(de) = dir_entry {
                 let path_buf = de.path();
                 let path = path_buf.as_path();
@@ -608,7 +618,7 @@ impl Config {
         let snap_dir = Path::new(&abs_prefix).parent().unwrap();
 
         if !snap_dir.exists() {
-            std::fs::create_dir_all(snap_dir)?;
+            fs::create_dir_all(snap_dir)?;
         }
 
         Ok(snap_dir.read_dir()?.filter_map(filter).collect())
@@ -621,7 +631,7 @@ impl Config {
         let incremental = read_snapshot_or_default(&self)?;
 
         for snapshot_path in self.get_snapshot_files()? {
-            std::fs::remove_file(snapshot_path)?;
+            fs::remove_file(snapshot_path)?;
         }
 
         debug!("generating snapshot without the previous one");
@@ -693,4 +703,104 @@ impl Config {
             .set_len(new_len)
             .expect("should be able to truncate");
     }
+}
+
+/// See the Kernel's documentation for more information about this subsystem, found at:
+///  [Documentation/cgroup-v1/memory.txt](https://www.kernel.org/doc/Documentation/cgroup-v1/memory.txt)
+///
+/// If there's no memory limit specified on the container this may return
+/// 0x7FFFFFFFFFFFF000 (2^63-1 rounded down to 4k which is a common page size).
+/// So we know we are not running in a memory restricted environment.
+#[cfg(target_os = "linux")]
+fn get_cgroup_memory_limit() -> io::Result<u64> {
+    File::open("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+        .and_then(read_u64_from)
+}
+
+#[cfg(target_os = "linux")]
+fn read_u64_from(mut file: File) -> io::Result<u64> {
+    let mut s = String::new();
+    file.read_to_string(&mut s).and_then(|_| {
+        s.trim()
+            .parse()
+            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
+    })
+}
+
+/// Returns the maximum size of total available memory of the process, in bytes.
+/// If this limit is exceeded, the malloc() and mmap() functions shall fail with errno set
+/// to [ENOMEM].
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn get_rlimit_as() -> io::Result<libc::rlimit> {
+    let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+
+    let ret = unsafe { libc::getrlimit(libc::RLIMIT_AS, limit.as_mut_ptr()) };
+
+    if ret == 0 {
+        Ok(unsafe { limit.assume_init() })
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn get_available_memory() -> io::Result<u64> {
+    let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
+    if pages == -1 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGE_SIZE) };
+    if page_size == -1 {
+        return Err(io::Error::last_os_error());
+    }
+
+    return Ok((pages as u64) * (page_size as u64));
+}
+
+fn get_memory_limit() -> u64 {
+    // Maximum addressable memory space limit in u64
+    static MAX_USIZE: u64 = std::usize::MAX as u64;
+
+    let mut max: u64 = 0;
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(mem) = get_cgroup_memory_limit() {
+            max = mem;
+        }
+
+        // If there's no memory limit specified on the container this
+        // actually returns 0x7FFFFFFFFFFFF000 (2^63-1 rounded down to
+        // 4k which is a common page size). So we know we are not
+        // running in a memory restricted environment.
+        // src: https://github.com/dotnet/coreclr/blob/master/src/pal/src/misc/cgroup.cpp#L385-L428
+        if max > 0x7FFFFFFF00000000 {
+            return 0;
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        if let Ok(rlim) = get_rlimit_as() {
+            let rlim_cur = rlim.rlim_cur as u64;
+            if rlim_cur < max || max == 0 {
+                max = rlim_cur;
+            }
+        }
+
+        if let Ok(available) = get_available_memory() {
+            if available < max || max == 0 {
+                max = available;
+            }
+        }
+    }
+
+    if max > MAX_USIZE {
+        // It is observed in practice when the memory is unrestricted, Linux control
+        // group returns a physical limit that is bigger than the address space
+        max = MAX_USIZE;
+    }
+
+    return max;
 }
