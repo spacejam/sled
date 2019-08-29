@@ -13,8 +13,8 @@ use super::*;
 #[derive(Clone)]
 pub struct Db {
     context: Context,
-    pub(crate) default: Arc<Tree>,
-    tenants: Arc<RwLock<FastMap8<Vec<u8>, Arc<Tree>>>>,
+    pub(crate) default: Tree,
+    tenants: Arc<RwLock<FastMap8<Vec<u8>, Tree>>>,
 }
 
 unsafe impl Send for Db {}
@@ -91,11 +91,8 @@ impl Db {
 
         // create or open the default tree
         let guard = pin();
-        let default = Arc::new(meta::open_tree(
-            &context,
-            DEFAULT_TREE_ID.to_vec(),
-            &guard,
-        )?);
+        let default =
+            meta::open_tree(&context, DEFAULT_TREE_ID.to_vec(), &guard)?;
 
         let ret = Self {
             context: context.clone(),
@@ -106,15 +103,15 @@ impl Db {
         let mut tenants = ret.tenants.write();
 
         for (id, root) in context.pagecache.meta(&guard)?.tenants() {
-            let tree = Tree {
+            let tree = Tree(Arc::new(TreeInner {
                 tree_id: id.clone(),
-                subscriptions: Arc::new(Subscriptions::default()),
+                subscriptions: Subscriptions::default(),
                 context: context.clone(),
-                root: Arc::new(AtomicU64::new(root)),
-                concurrency_control: Arc::new(RwLock::new(())),
-                merge_operator: Arc::new(RwLock::new(None)),
-            };
-            tenants.insert(id, Arc::new(tree));
+                root: AtomicU64::new(root),
+                concurrency_control: RwLock::new(()),
+                merge_operator: RwLock::new(None),
+            }));
+            tenants.insert(id, tree);
         }
 
         drop(tenants);
@@ -124,7 +121,7 @@ impl Db {
 
     /// Open or create a new disk-backed Tree with its own keyspace,
     /// accessible from the `Db` via the provided identifier.
-    pub fn open_tree<V: AsRef<[u8]>>(&self, name: V) -> Result<Arc<Tree>> {
+    pub fn open_tree<V: AsRef<[u8]>>(&self, name: V) -> Result<Tree> {
         let name = name.as_ref();
         let tenants = self.tenants.read();
         if let Some(tree) = tenants.get(name) {
@@ -140,8 +137,7 @@ impl Db {
         if let Some(tree) = tenants.get(name) {
             return Ok(tree.clone());
         }
-        let tree =
-            Arc::new(meta::open_tree(&self.context, name.to_vec(), &guard)?);
+        let tree = meta::open_tree(&self.context, name.to_vec(), &guard)?;
         tenants.insert(name.to_vec(), tree.clone());
         drop(tenants);
         Ok(tree)
@@ -327,7 +323,7 @@ type CollectionType = Vec<u8>;
 type CollectionName = Vec<u8>;
 
 struct ArcIter {
-    _tree: Arc<Tree>,
+    _tree: Tree,
     iter: Iter<'static>,
 }
 

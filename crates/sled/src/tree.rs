@@ -66,13 +66,23 @@ impl<'a> IntoIterator for &'a Tree {
 /// assert_eq!(t.get(b"yo!"), Ok(None));
 /// ```
 #[derive(Clone)]
-pub struct Tree {
+pub struct Tree(pub(crate) Arc<TreeInner>);
+
+pub struct TreeInner {
     pub(crate) tree_id: Vec<u8>,
     pub(crate) context: Context,
-    pub(crate) subscriptions: Arc<Subscriptions>,
-    pub(crate) root: Arc<AtomicU64>,
-    pub(crate) concurrency_control: Arc<RwLock<()>>,
-    pub(crate) merge_operator: Arc<RwLock<Option<MergeOperator>>>,
+    pub(crate) subscriptions: Subscriptions,
+    pub(crate) root: AtomicU64,
+    pub(crate) concurrency_control: RwLock<()>,
+    pub(crate) merge_operator: RwLock<Option<MergeOperator>>,
+}
+
+impl std::ops::Deref for Tree {
+    type Target = TreeInner;
+
+    fn deref(&self) -> &TreeInner {
+        &self.0
+    }
 }
 
 unsafe impl Send for Tree {}
