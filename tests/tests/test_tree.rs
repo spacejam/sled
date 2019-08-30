@@ -406,6 +406,10 @@ fn concurrent_tree_transactions() {
     for thread in threads.into_iter() {
         thread.join().unwrap();
     }
+
+    let v1 = db.get(b"k1").unwrap().unwrap();
+    let v2 = db.get(b"k2").unwrap().unwrap();
+    assert_eq!([v1, v2], [b"cats", b"dogs"]);
 }
 
 #[test]
