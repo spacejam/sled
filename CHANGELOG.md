@@ -1,3 +1,12 @@
+# Unreleased
+
+## Breaking Changes
+
+* `Event::Set` has been renamed to `Event::Insert` and
+  `Event::Del` has been renamed to `Event::Remove`. These
+  names better align with the methods of BTreeMap from
+  the standard library.
+
 # 0.26.1
 
 ## Improvements
