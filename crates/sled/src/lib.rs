@@ -129,7 +129,7 @@ use {
     },
     log::{debug, error, trace},
     pagecache::{
-        debug_delay, pin, Materializer, Measure, PageCache, PageId,
+        debug::debug_delay, pin, Materializer, Measure, PageCache, PageId,
         RecoveryGuard, M,
     },
     serde::{Deserialize, Serialize},

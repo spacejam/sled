@@ -1,16 +1,15 @@
 use parking_lot::Mutex;
 use std::ptr;
+use super::dll::{LinkedList, Node, Item};
 
-use super::*;
-
-/// A simple Lru cache.
-pub struct Lru {
+/// A simple LRU cache.
+pub struct LRU {
     shards: Vec<Mutex<Shard>>,
 }
 
-unsafe impl Sync for Lru {}
+unsafe impl Sync for LRU {}
 
-impl Lru {
+impl LRU {
     /// Instantiates a new `Lru` cache.
     pub fn new(cache_capacity: u64) -> Self {
         assert!(
@@ -27,45 +26,47 @@ impl Lru {
         Self { shards }
     }
 
-    /// Called when a page is accessed. Returns a Vec of pages to
-    /// try to page-out. For each one of these, the caller is expected
-    /// to call `page_out_succeeded` if the page-out succeeded.
-    pub fn accessed(&self, pid: PageId, sz: u64) -> Vec<PageId> {
-        let shard_idx = pid % self.shards.len() as u64;
-        let rel_idx = pid / self.shards.len() as u64;
-        let shard_mu = &self.shards[usize::try_from(shard_idx).unwrap()];
+    /// Called when an item is accessed. Returns a Vec of items to be
+    /// evicted. For each evicted item, the caller must call
+    /// `page_out_succeeded`.
+    ///
+    /// Items layout:
+    ///   items:   1 2 3 4 5 6 7 8 9 10
+    ///   shards:  1 0 1 0 1 0 1 0 1 0
+    ///   shard 0:   2   4   6   8   10
+    ///   shard 1: 1   3   5   7   9
+    pub fn accessed(&self, id: Item, item_size: u64) -> Vec<Item> {
+        let shards = self.shards.len() as u64;
+        let (shard_idx, item_idx) = (id % shards, id / shards);
+        let shard_mu = &self.shards[shard_idx as usize];
         let mut shard = shard_mu.lock();
-        let mut rel_ids = shard.accessed(rel_idx, sz);
-
-        for rel_id in &mut rel_ids {
-            let real_id = (*rel_id * self.shards.len() as u64) + shard_idx;
-            *rel_id = real_id;
-        }
-
-        rel_ids
+        let mut to_evict = shard.accessed(item_idx as usize, item_size);
+        // map shard internal offsets to global items ids
+        to_evict.iter_mut().for_each(|pos| *pos = (*pos * shards) + shard_idx);
+        to_evict
     }
 }
 
 #[derive(Clone)]
 struct Entry {
-    ptr: *mut dll::Node,
-    sz: u64,
+    ptr: *mut Node,
+    size: u64,
 }
 
 impl Default for Entry {
     fn default() -> Self {
         Self {
             ptr: ptr::null_mut(),
-            sz: 0,
+            size: 0,
         }
     }
 }
 
 struct Shard {
-    list: Dll,
+    list: LinkedList,
     entries: Vec<Entry>,
     capacity: u64,
-    sz: u64,
+    size: u64,
 }
 
 impl Shard {
@@ -73,50 +74,49 @@ impl Shard {
         assert!(capacity > 0, "shard capacity must be non-zero");
 
         Self {
-            list: Dll::default(),
+            list: LinkedList::default(),
             entries: vec![],
             capacity,
-            sz: 0,
+            size: 0,
         }
     }
 
-    fn accessed(&mut self, rel_idx: PageId, sz: u64) -> Vec<PageId> {
-        if PageId::try_from(self.entries.len()).unwrap() <= rel_idx {
-            self.entries.resize(
-                usize::try_from(rel_idx).unwrap() + 1,
-                Entry::default(),
-            );
+    /// Items in the shard list are indexes of the entries.
+    fn accessed(&mut self, idx: usize, size: u64) -> Vec<Item> {
+        if idx as usize >= self.entries.len() {
+            self.entries.resize(idx + 1, Entry::default());
         }
 
         {
-            let entry = &mut self.entries[usize::try_from(rel_idx).unwrap()];
+            let entry = &mut self.entries[idx];
 
-            self.sz -= entry.sz;
-            entry.sz = sz;
-            self.sz += sz;
+            self.size -= entry.size;
+            entry.size = size;
+            self.size += size;
 
             if entry.ptr.is_null() {
-                entry.ptr = self.list.push_head(rel_idx);
+                entry.ptr = self.list.push_head(idx as Item);
             } else {
                 entry.ptr = self.list.promote(entry.ptr);
             }
         }
 
         let mut to_evict = vec![];
-        while self.sz > self.capacity {
+        while self.size > self.capacity {
             if self.list.len() == 1 {
                 // don't evict what we just added
                 break;
             }
 
             let min_pid = self.list.pop_tail().unwrap();
-            self.entries[usize::try_from(min_pid).unwrap()].ptr =
-                ptr::null_mut();
+            let min_pid_idx = min_pid as usize;
+
+            self.entries[min_pid_idx].ptr = ptr::null_mut();
 
             to_evict.push(min_pid);
 
-            self.sz -= self.entries[usize::try_from(min_pid).unwrap()].sz;
-            self.entries[usize::try_from(min_pid).unwrap()].sz = 0;
+            self.size -= self.entries[min_pid_idx].size;
+            self.entries[min_pid_idx].size = 0;
         }
 
         to_evict

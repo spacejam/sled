@@ -20,6 +20,8 @@ macro_rules! maybe_fail {
 mod blob_io;
 mod config;
 mod constants;
+/// Debug helps test concurrent issues with random jittering and another instruments.
+pub mod debug;
 mod diskptr;
 mod ds;
 mod iobuf;
@@ -61,7 +63,7 @@ use std::{
     io,
     sync::atomic::{
         AtomicI64 as AtomicLsn, AtomicU64,
-        Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst},
+        Ordering::{Acquire, Relaxed, Release, SeqCst},
     },
 };
 
@@ -90,7 +92,7 @@ use self::{
 pub use self::{
     config::{Config, ConfigBuilder},
     diskptr::DiskPtr,
-    ds::{node_from_frag_vec, Lru, Node, PageTable, Stack, StackIter, VecSet},
+    ds::{node_from_frag_vec, LRU, Node, PageTable, Stack, StackIter, VecSet},
     lazy::Lazy,
     logger::{Log, LogRead},
     map::{FastMap1, FastMap4, FastMap8, FastSet1, FastSet4, FastSet8},
@@ -259,17 +261,7 @@ pub(crate) fn crc32(buf: &[u8]) -> u32 {
     hasher.finalize()
 }
 
-#[cfg(any(test, feature = "lock_free_delays"))]
-mod debug_delay;
-
-#[cfg(any(test, feature = "lock_free_delays"))]
-pub use self::debug_delay::debug_delay;
-
-/// This function is useful for inducing random jitter into our atomic
-/// operations, shaking out more possible interleavings quickly. It gets
-/// fully elliminated by the compiler in non-test code.
-#[cfg(not(any(test, feature = "lock_free_delays")))]
-pub fn debug_delay() {}
+use self::debug::debug_delay;
 
 pub use crossbeam_epoch::{
     pin, unprotected, Atomic, Collector, CompareAndSetError, Guard,

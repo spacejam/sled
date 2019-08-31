@@ -192,7 +192,7 @@ where
     next_pid_to_allocate: AtomicU64,
     free: Arc<Mutex<BinaryHeap<PageId>>>,
     log: Log,
-    lru: Lru,
+    lru: LRU,
     updates: AtomicU64,
     last_snapshot: Arc<Mutex<Option<Snapshot>>>,
     idgen: Arc<AtomicU64>,
@@ -279,7 +279,7 @@ where
         let snapshot = read_snapshot_or_default(&config)?;
 
         let cache_capacity = config.cache_capacity;
-        let lru = Lru::new(cache_capacity);
+        let lru = LRU::new(cache_capacity);
 
         let mut pc = Self {
             config: config.clone(),
@@ -1595,10 +1595,10 @@ where
         }
     }
 
-    fn page_out<'g>(
+    fn page_out(
         &self,
         to_evict: Vec<PageId>,
-        guard: &'g Guard,
+        guard: &Guard,
     ) -> Result<()> {
         let _measure = Measure::new(&M.page_out);
         'different_page_eviction: for pid in to_evict {

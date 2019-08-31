@@ -3,43 +3,45 @@
 use std::{
     alloc::{alloc_zeroed, Layout},
     mem::{align_of, size_of},
-    sync::atomic::Ordering::Relaxed,
+    sync::atomic::Ordering::{SeqCst, Acquire, Release, Relaxed},
 };
 
-use super::*;
+use crossbeam_epoch::{unprotected, Atomic, Guard, Owned, Shared};
 
-const FANFACTOR: u64 = 18;
-const FANOUT: u64 = 1 << FANFACTOR;
-const FAN_MASK: u64 = FANOUT - 1;
+use crate::debug::debug_delay;
+
+const FAN_FACTOR: u64 = 18;
+const FAN_OUT: u64 = 1 << FAN_FACTOR;
+const FAN_MASK: u64 = FAN_OUT - 1;
 
 #[doc(hidden)]
 pub const PAGETABLE_NODE_SZ: usize = size_of::<Node1<()>>();
 
-pub type PageId = u64;
+pub type Item = u64;
 
 #[inline(always)]
 fn split_fanout(i: u64) -> (u64, u64) {
     // right shift 32 on 32-bit pointer systems panics
     #[cfg(target_pointer_width = "64")]
     assert!(
-        i <= 1 << (FANFACTOR * 2),
+        i <= 1 << (FAN_FACTOR * 2),
         "trying to access key of {}, which is \
          higher than 2 ^ {}",
         i,
-        (FANFACTOR * 2)
+        (FAN_FACTOR * 2)
     );
 
-    let left = i >> FANFACTOR;
+    let left = i >> FAN_FACTOR;
     let right = i & FAN_MASK;
     (left, right)
 }
 
 struct Node1<T: Send + 'static> {
-    children: [Atomic<Node2<T>>; FANOUT as usize],
+    children: [Atomic<Node2<T>>; FAN_OUT as usize],
 }
 
 struct Node2<T: Send + 'static> {
-    children: [Atomic<T>; FANOUT as usize],
+    children: [Atomic<T>; FAN_OUT as usize],
 }
 
 impl<T: Send + 'static> Node1<T> {
@@ -76,32 +78,26 @@ impl<T: Send + 'static> Node2<T> {
 
 impl<T: Send + 'static> Drop for Node1<T> {
     fn drop(&mut self) {
-        for child in self.children.iter() {
-            unsafe {
-                let shared_child = child.load(Relaxed, &unprotected());
-                if shared_child.as_raw().is_null() {
-                    // this does not leak because the PageTable is
-                    // assumed to be dense.
-                    break;
-                }
-                drop(shared_child.into_owned());
-            }
-        }
+        drop_iter(self.children.iter());
     }
 }
 
 impl<T: Send + 'static> Drop for Node2<T> {
     fn drop(&mut self) {
-        for child in self.children.iter() {
-            unsafe {
-                let shared_child = child.load(Relaxed, &unprotected());
-                if shared_child.as_raw().is_null() {
-                    // this does not leak because the PageTable is
-                    // assumed to be dense.
-                    break;
-                }
-                drop(shared_child.into_owned());
+        drop_iter(self.children.iter());
+    }
+}
+
+fn drop_iter<T>(iter: core::slice::Iter<'_, Atomic<T>>) {
+    for child in iter {
+        unsafe {
+            let shared_child = child.load(Relaxed, &unprotected());
+            if shared_child.as_raw().is_null() {
+                // this does not leak because the PageTable is
+                // assumed to be dense.
+                break;
             }
+            drop(shared_child.into_owned());
         }
     }
 }
@@ -133,7 +129,7 @@ where
     /// Atomically swap the previous value in a tree with a new one.
     pub fn swap<'g>(
         &self,
-        pid: PageId,
+        pid: Item,
         new: Shared<'g, T>,
         guard: &'g Guard,
     ) -> Shared<'g, T> {
@@ -145,7 +141,7 @@ where
     /// Compare and swap an old value to a new one.
     pub fn cas<'g>(
         &self,
-        pid: PageId,
+        pid: Item,
         old: Shared<'g, T>,
         new: Shared<'g, T>,
         guard: &'g Guard,
@@ -170,7 +166,7 @@ where
     /// Try to get a value from the tree.
     pub fn get<'g>(
         &self,
-        pid: PageId,
+        pid: Item,
         guard: &'g Guard,
     ) -> Option<Shared<'g, T>> {
         debug_delay();
@@ -187,7 +183,7 @@ where
     /// Delete a value from the tree, returning the old value if it was set.
     pub fn del<'g>(
         &self,
-        pid: PageId,
+        pid: Item,
         guard: &'g Guard,
     ) -> Option<Shared<'g, T>> {
         debug_delay();
@@ -205,7 +201,7 @@ where
 
 fn traverse<'g, T: 'static + Send>(
     head: Shared<'g, Node1<T>>,
-    k: PageId,
+    k: Item,
     guard: &'g Guard,
 ) -> &'g Atomic<T> {
     let (l1k, l2k) = split_fanout(k);
@@ -214,13 +210,13 @@ fn traverse<'g, T: 'static + Send>(
     let l1 = unsafe { &head.deref().children };
 
     debug_delay();
-    let mut l2_ptr = l1[usize::try_from(l1k).unwrap()].load(Acquire, guard);
+    let mut l2_ptr = l1[l1k as usize].load(Acquire, guard);
 
     if l2_ptr.is_null() {
         let next_child = Node2::new().into_shared(guard);
 
         debug_delay();
-        let ret = l1[usize::try_from(l1k).unwrap()]
+        let ret = l1[l1k as usize]
             .compare_and_set(l2_ptr, next_child, Release, guard);
 
         match ret {
@@ -239,7 +235,7 @@ fn traverse<'g, T: 'static + Send>(
     debug_delay();
     let l2 = unsafe { &l2_ptr.deref().children };
 
-    &l2[usize::try_from(l2k).unwrap()]
+    &l2[l2k as usize]
 }
 
 impl<T> Drop for PageTable<T>
@@ -269,7 +265,7 @@ fn test_split_fanout() {
 #[test]
 fn basic_functionality() {
     unsafe {
-        let guard = pin();
+        let guard = crossbeam_epoch::pin();
         let rt = PageTable::default();
         let v1 = Owned::new(5).into_shared(&guard);
         rt.cas(0, Shared::null(), v1, &guard).unwrap();
@@ -281,7 +277,7 @@ fn basic_functionality() {
         rt.del(0, &guard);
         assert!(rt.get(0, &guard).is_none());
 
-        let k2 = 321 << FANFACTOR;
+        let k2 = 321 << FAN_FACTOR;
         let k3 = k2 + 1;
 
         let v2 = Owned::new(2).into_shared(&guard);
