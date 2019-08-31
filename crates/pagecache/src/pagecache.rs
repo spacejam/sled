@@ -1489,17 +1489,15 @@ where
                 let old = self.idgen_persists.swap(necessary_persists, Release);
                 assert_eq!(old, persisted);
 
-                let res = self.cas_page(
+                if let Err(_) = self.cas_page(
                     COUNTER_PID,
                     key.clone(),
                     counter_update,
                     false,
                     &guard,
-                );
-
-                if res?.is_err() {
+                ) {
                     // CAS failed
-                    continue;
+                    continue
                 }
 
                 // during recovery we add 2x the interval. we only
