@@ -1489,13 +1489,14 @@ where
                 let old = self.idgen_persists.swap(necessary_persists, Release);
                 assert_eq!(old, persisted);
 
+                // important: check CasResult is not an error in Result with ?.
                 if let Err(_) = self.cas_page(
                     COUNTER_PID,
                     key.clone(),
                     counter_update,
                     false,
                     &guard,
-                ) {
+                )? {
                     // CAS failed
                     continue
                 }

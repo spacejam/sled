@@ -17,7 +17,7 @@ const FAN_MASK: u64 = FAN_OUT - 1;
 #[doc(hidden)]
 pub const PAGETABLE_NODE_SZ: usize = size_of::<Node1<()>>();
 
-pub type Item = u64;
+pub type PageId = u64;
 
 #[inline(always)]
 fn split_fanout(i: u64) -> (u64, u64) {
@@ -129,7 +129,7 @@ where
     /// Atomically swap the previous value in a tree with a new one.
     pub fn swap<'g>(
         &self,
-        pid: Item,
+        pid: PageId,
         new: Shared<'g, T>,
         guard: &'g Guard,
     ) -> Shared<'g, T> {
@@ -141,7 +141,7 @@ where
     /// Compare and swap an old value to a new one.
     pub fn cas<'g>(
         &self,
-        pid: Item,
+        pid: PageId,
         old: Shared<'g, T>,
         new: Shared<'g, T>,
         guard: &'g Guard,
@@ -166,7 +166,7 @@ where
     /// Try to get a value from the tree.
     pub fn get<'g>(
         &self,
-        pid: Item,
+        pid: PageId,
         guard: &'g Guard,
     ) -> Option<Shared<'g, T>> {
         debug_delay();
@@ -183,7 +183,7 @@ where
     /// Delete a value from the tree, returning the old value if it was set.
     pub fn del<'g>(
         &self,
-        pid: Item,
+        pid: PageId,
         guard: &'g Guard,
     ) -> Option<Shared<'g, T>> {
         debug_delay();
@@ -201,7 +201,7 @@ where
 
 fn traverse<'g, T: 'static + Send>(
     head: Shared<'g, Node1<T>>,
-    k: Item,
+    k: PageId,
     guard: &'g Guard,
 ) -> &'g Atomic<T> {
     let (l1k, l2k) = split_fanout(k);
