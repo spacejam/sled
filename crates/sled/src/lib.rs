@@ -71,11 +71,15 @@
 //! assert_eq!(t.get(b"yo!"), Ok(None));
 //! ```
 #![cfg_attr(test, deny(warnings))]
+
 #![deny(missing_docs)]
 #![deny(future_incompatible)]
 #![deny(nonstandard_style)]
 #![deny(rust_2018_compatibility)]
 #![deny(rust_2018_idioms)]
+
+#![allow(clippy::cognitive_complexity)]
+#![allow(clippy::default_trait_access)]
 
 mod batch;
 mod binary_search;

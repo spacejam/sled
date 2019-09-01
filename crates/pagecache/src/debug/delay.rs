@@ -90,6 +90,8 @@ fn try_thread_rng() -> Option<ThreadRng> {
 }
 
 impl RngCore for ThreadRng {
+    #![allow(clippy::inline_always)]
+
     #[inline(always)]
     fn next_u32(&mut self) -> u32 {
         unsafe { (*self.rng).next_u32() }

@@ -72,6 +72,10 @@ pub fn fuzz_then_shrink(buf: &[u8]) {
 }
 
 impl Arbitrary for Key {
+    #![allow(clippy::cast_possible_truncation)]
+    #![allow(clippy::cast_precision_loss)]
+    #![allow(clippy::cast_sign_loss)]
+
     fn arbitrary<G: Gen>(g: &mut G) -> Self {
         if g.gen::<bool>() {
             let gs = g.size();

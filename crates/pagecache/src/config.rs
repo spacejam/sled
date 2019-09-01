@@ -204,14 +204,14 @@ impl ConfigBuilder {
             now + seed
         };
 
-        return if cfg!(target_os = "linux") {
+        if cfg!(target_os = "linux") {
             // use shared memory for temporary linux files
             format!("/dev/shm/pagecache.tmp.{}", salt).into()
         } else {
             let mut pb = std::env::temp_dir();
             pb.push(format!("pagecache.tmp.{}", salt));
             pb
-        };
+        }
     }
 
     fn limit_cache_max_memory(&mut self) {
@@ -755,7 +755,7 @@ fn get_available_memory() -> io::Result<u64> {
         return Err(io::Error::last_os_error());
     }
 
-    return Ok((pages as u64) * (page_size as u64));
+    Ok((pages as u64) * (page_size as u64))
 }
 
 fn get_memory_limit() -> u64 {
@@ -802,5 +802,5 @@ fn get_memory_limit() -> u64 {
         max = MAX_USIZE;
     }
 
-    return max;
+    max
 }
