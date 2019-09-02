@@ -3,7 +3,7 @@
 use std::{
     alloc::{alloc_zeroed, Layout},
     mem::{align_of, size_of},
-    sync::atomic::Ordering::{SeqCst, Acquire, Release, Relaxed},
+    sync::atomic::Ordering::{Acquire, Relaxed, Release, SeqCst},
 };
 
 use crossbeam_epoch::{unprotected, Atomic, Guard, Owned, Shared};
@@ -21,20 +21,21 @@ pub type PageId = u64;
 
 #[allow(clippy::inline_always)]
 #[inline(always)]
-fn split_fanout(i: u64) -> (u64, u64) {
+fn split_fanout(id: PageId) -> (usize, usize) {
     // right shift 32 on 32-bit pointer systems panics
     #[cfg(target_pointer_width = "64")]
     assert!(
-        i <= 1 << (FAN_FACTOR * 2),
+        id <= 1 << (FAN_FACTOR * 2),
         "trying to access key of {}, which is \
          higher than 2 ^ {}",
-        i,
+        id,
         (FAN_FACTOR * 2)
     );
 
-    let left = i >> FAN_FACTOR;
-    let right = i & FAN_MASK;
-    (left, right)
+    let left = id >> FAN_FACTOR;
+    let right = id & FAN_MASK;
+
+    (left as usize, right as usize)
 }
 
 struct Node1<T: Send + 'static> {
@@ -211,14 +212,13 @@ fn traverse<'g, T: 'static + Send>(
     let l1 = unsafe { &head.deref().children };
 
     debug_delay();
-    let mut l2_ptr = l1[l1k as usize].load(Acquire, guard);
+    let mut l2_ptr = l1[l1k].load(Acquire, guard);
 
     if l2_ptr.is_null() {
         let next_child = Node2::new().into_shared(guard);
 
         debug_delay();
-        let ret = l1[l1k as usize]
-            .compare_and_set(l2_ptr, next_child, Release, guard);
+        let ret = l1[l1k].compare_and_set(l2_ptr, next_child, Release, guard);
 
         match ret {
             Ok(_) => {
@@ -236,7 +236,7 @@ fn traverse<'g, T: 'static + Send>(
     debug_delay();
     let l2 = unsafe { &l2_ptr.deref().children };
 
-    &l2[l2k as usize]
+    &l2[l2k]
 }
 
 impl<T> Drop for PageTable<T>
