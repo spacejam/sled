@@ -83,7 +83,7 @@ pub(super) struct SegmentAccountant {
     to_clean: VecSet<LogId>,
     pause_rewriting: bool,
     ordering: BTreeMap<Lsn, LogId>,
-    async_truncations: Vec<Promise<Result<()>>>,
+    async_truncations: Vec<OneShot<Result<()>>>,
     deferred_free_segments: Option<Vec<LogId>>,
     deferred_free_segments_after: Lsn,
 }
@@ -1157,7 +1157,7 @@ impl SegmentAccountant {
         );
 
         trace!("asynchronously truncating file to length {}", at);
-        let (completer, promise) = Promise::pair();
+        let (completer, promise) = OneShot::pair();
 
         let config = self.config.clone();
 

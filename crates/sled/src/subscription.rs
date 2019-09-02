@@ -11,7 +11,7 @@ use parking_lot::RwLock;
 
 use crate::ivec::IVec;
 
-use pagecache::{Promise, PromiseFiller};
+use pagecache::{OneShot, OneShotFiller};
 
 static ID_GEN: AtomicUsize = AtomicUsize::new(0);
 
@@ -44,12 +44,12 @@ impl Clone for Event {
     }
 }
 
-type Senders = Vec<(usize, SyncSender<Promise<Event>>)>;
+type Senders = Vec<(usize, SyncSender<OneShot<Event>>)>;
 
 /// A subscriber listening on a specified prefix
 pub struct Subscriber {
     id: usize,
-    rx: Receiver<Promise<Event>>,
+    rx: Receiver<OneShot<Event>>,
     home: Arc<RwLock<Senders>>,
 }
 
@@ -125,7 +125,7 @@ impl Subscriptions {
             let subs = subs_rwl.read();
 
             for (_id, sender) in subs.iter() {
-                let (tx, rx) = Promise::pair();
+                let (tx, rx) = OneShot::pair();
                 if sender.send(rx).is_err() {
                     continue;
                 }
@@ -142,7 +142,7 @@ impl Subscriptions {
 }
 
 pub(crate) struct ReservedBroadcast {
-    subscribers: Vec<PromiseFiller<Event>>,
+    subscribers: Vec<OneShotFiller<Event>>,
 }
 
 impl ReservedBroadcast {

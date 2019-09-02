@@ -386,7 +386,8 @@ impl Tree {
             if link.is_ok() {
                 // success
                 if let Some(res) = subscriber_reservation.take() {
-                    let event = subscription::Event::Remove(key.as_ref().into());
+                    let event =
+                        subscription::Event::Remove(key.as_ref().into());
 
                     res.complete(event);
                 }
@@ -664,13 +665,35 @@ impl Tree {
         self.subscriptions.register(prefix)
     }
 
-    /// Flushes all dirty IO buffers and calls fsync.
-    /// If this succeeds, it is guaranteed that
-    /// all previous writes will be recovered if
-    /// the system crashes. Returns the number
-    /// of bytes flushed during this call.
+    /// Synchronously flushes all dirty IO buffers and calls
+    /// fsync. If this succeeds, it is guaranteed that all
+    /// previous writes will be recovered if the system
+    /// crashes. Returns the number of bytes flushed during
+    /// this call.
+    ///
+    /// Flushing can take quite a lot of time, and you should
+    /// measure the performance impact of using it on
+    /// realistic sustained workloads running on realistic
+    /// hardware.
     pub fn flush(&self) -> Result<usize> {
         self.context.pagecache.flush()
+    }
+
+    /// Asynchronously flushes all dirty IO buffers
+    /// and calls fsync. If this succeeds, it is
+    /// guaranteed that all previous writes will
+    /// be recovered if the system crashes. Returns
+    /// the number of bytes flushed during this call.
+    ///
+    /// Flushing can take quite a lot of time, and you
+    /// should measure the performance impact of
+    /// using it on realistic sustained workloads
+    /// running on realistic hardware.
+    pub fn flush_async(
+        &self,
+    ) -> impl std::future::Future<Output = Result<usize>> {
+        let pagecache = self.context.pagecache.clone();
+        threadpool::spawn(move || pagecache.flush())
     }
 
     /// Returns `true` if the `Tree` contains a value for
