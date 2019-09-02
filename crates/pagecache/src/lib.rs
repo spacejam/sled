@@ -14,6 +14,7 @@
 #![allow(clippy::cast_sign_loss)]
 #![allow(clippy::cognitive_complexity)]
 #![allow(clippy::default_trait_access)]
+#![allow(clippy::integer_division)]
 #![allow(clippy::module_name_repetitions)]
 
 #[cfg(feature = "failpoints")]

@@ -775,7 +775,7 @@ fn get_memory_limit() -> u64 {
         // 4k which is a common page size). So we know we are not
         // running in a memory restricted environment.
         // src: https://github.com/dotnet/coreclr/blob/master/src/pal/src/misc/cgroup.cpp#L385-L428
-        if max > 0x7FFFFFFF00000000 {
+        if max > 0x7FFF_FFFF_0000_0000 {
             return 0;
         }
     }

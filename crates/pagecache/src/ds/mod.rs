@@ -1,3 +1,5 @@
+#![allow(clippy::integer_division)]
+
 mod dll;
 mod lru;
 mod pagetable;

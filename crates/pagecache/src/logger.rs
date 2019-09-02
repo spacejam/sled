@@ -157,6 +157,7 @@ impl Log {
         let mut buf = raw_buf;
 
         #[cfg(feature = "compression")]
+        #[allow(clippy::used_underscore_binding)]
         {
             if self.config.use_compression {
                 use zstd::block::compress;

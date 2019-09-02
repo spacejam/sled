@@ -19,6 +19,7 @@ pub const PAGETABLE_NODE_SZ: usize = size_of::<Node1<()>>();
 
 pub type PageId = u64;
 
+#[allow(clippy::inline_always)]
 #[inline(always)]
 fn split_fanout(i: u64) -> (u64, u64) {
     // right shift 32 on 32-bit pointer systems panics

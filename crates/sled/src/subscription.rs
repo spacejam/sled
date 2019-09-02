@@ -80,6 +80,7 @@ pub(crate) struct Subscriptions {
 }
 
 impl Subscriptions {
+    #[allow(clippy::needless_pass_by_value)]
     pub(crate) fn register(&self, prefix: Vec<u8>) -> Subscriber {
         let r_mu = {
             let r_mu = self.watched.read();

@@ -319,10 +319,10 @@ impl Tree {
 
         let View { node, .. } = self.node_for_key(key.as_ref(), &guard)?;
 
-        let kv_opt = node.leaf_pair_for_key(key.as_ref());
-        let v_opt = kv_opt.map(|kv| kv.1.clone());
+        let pair = node.leaf_pair_for_key(key.as_ref());
+        let val = pair.map(|kv| kv.1.clone());
 
-        Ok(v_opt)
+        Ok(val)
     }
 
     #[doc(hidden)]

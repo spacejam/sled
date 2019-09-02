@@ -75,6 +75,7 @@ impl Db {
         let context = Context::start(config)?;
 
         #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+        #[allow(clippy::used_underscore_binding)]
         {
             if !context.read_only {
                 let flusher_pagecache = context.pagecache.clone();

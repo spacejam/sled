@@ -78,8 +78,10 @@
 #![deny(rust_2018_compatibility)]
 #![deny(rust_2018_idioms)]
 
+#![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cognitive_complexity)]
 #![allow(clippy::default_trait_access)]
+#![allow(clippy::integer_division)]
 
 mod batch;
 mod binary_search;
