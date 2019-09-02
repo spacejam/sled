@@ -111,7 +111,7 @@ pub use {
             TransactionalTree,
         },
     },
-    pagecache::{Config, ConfigBuilder, Error, Result},
+    pagecache::{Config, ConfigBuilder, Error, OneShot, Result},
 };
 
 use {
@@ -129,7 +129,7 @@ use {
     },
     log::{debug, error, trace},
     pagecache::{
-        debug_delay, pin, Materializer, Measure, PageCache, PageId,
+        debug_delay, pin, threadpool, Materializer, Measure, PageCache, PageId,
         RecoveryGuard, M,
     },
     serde::{Deserialize, Serialize},

@@ -29,15 +29,14 @@ mod map;
 mod materializer;
 mod meta;
 mod metrics;
+mod oneshot;
 mod pagecache;
 mod parallel_io;
-mod promise;
 mod reader;
 mod reservation;
 mod result;
 mod segment;
 mod snapshot;
-mod threadpool;
 mod util;
 
 #[cfg(feature = "measure_allocs")]
@@ -53,6 +52,8 @@ static ALLOCATOR: measure_allocs::TrackingAllocator =
 pub mod event_log;
 
 pub mod logger;
+
+pub mod threadpool;
 
 use std::{
     cell::UnsafeCell,
@@ -98,7 +99,7 @@ pub use self::{
     meta::Meta,
     metrics::M,
     pagecache::{PageCache, PagePtr, RecoveryGuard},
-    promise::{Promise, PromiseFiller},
+    oneshot::{OneShot, OneShotFiller},
     reservation::Reservation,
     result::{CasResult, Error, Result},
     segment::SegmentMode,

@@ -1,12 +1,13 @@
-use super::Promise;
+//! A simple adaptive threadpool that returns a oneshot future.
+use super::OneShot;
 
 /// Spawn a function on the threadpool.
-pub fn spawn<F, R>(work: F) -> Promise<R>
+pub fn spawn<F, R>(work: F) -> OneShot<R>
 where
     F: FnOnce() -> R + Send + 'static,
     R: Send + 'static,
 {
-    let (promise_filler, promise) = Promise::pair();
+    let (promise_filler, promise) = OneShot::pair();
     let task = move || {
         let result = (work)();
         promise_filler.fill(result);
