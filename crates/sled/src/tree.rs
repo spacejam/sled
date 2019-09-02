@@ -429,9 +429,6 @@ impl Tree {
         OV: AsRef<[u8]>,
         IVec: From<NV>,
     {
-        #![allow(clippy::needless_pass_by_value)]
-        // cas<> wants old: Option<&OV> exactly by value
-
         trace!("casing key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_cas);
 

@@ -70,8 +70,6 @@ impl Data {
         new_prefix: &[u8],
         rhs_data: &Self,
     ) {
-        #![allow(clippy::similar_names)]
-
         fn receive_merge_inner<T>(
             old_prefix: &[u8],
             new_prefix: &[u8],

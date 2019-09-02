@@ -23,7 +23,6 @@ pub(crate) fn u32_to_arr(number: u32) -> [u8; 4] {
     number.to_le_bytes()
 }
 
-#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn maybe_decompress(buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
     #[cfg(feature = "compression")]
     {
