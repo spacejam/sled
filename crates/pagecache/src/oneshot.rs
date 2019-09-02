@@ -85,11 +85,11 @@ impl<T> Future for OneShot<Result<T>> {
         if state.fused {
             return Poll::Pending;
         }
-        state.waker = Some(cx.waker().clone());
         if state.filled {
             state.fused = true;
             Poll::Ready(state.item.take().unwrap())
         } else {
+            state.waker = Some(cx.waker().clone());
             Poll::Pending
         }
     }
