@@ -102,7 +102,7 @@ use self::{
 pub use self::{
     config::{Config, ConfigBuilder},
     diskptr::DiskPtr,
-    ds::{node_from_frag_vec, LRU, Node, PageTable, Stack, StackIter, VecSet},
+    ds::{node_from_frag_vec, Lru, Node, PageTable, Stack, StackIter, VecSet},
     lazy::Lazy,
     logger::{Log, LogRead},
     map::{FastMap1, FastMap4, FastMap8, FastSet1, FastSet4, FastSet8},

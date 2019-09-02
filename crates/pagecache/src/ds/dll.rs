@@ -32,13 +32,13 @@ impl Node {
 /// list where items can be efficiently
 /// removed from the middle, for the purposes
 /// of backing an LRU cache.
-pub struct LinkedList {
+pub struct DoublyLinkedList {
     head: *mut Node,
     tail: *mut Node,
     len: usize,
 }
 
-impl Drop for LinkedList {
+impl Drop for DoublyLinkedList {
     fn drop(&mut self) {
         let mut cursor = self.head;
         while !cursor.is_null() {
@@ -57,7 +57,7 @@ impl Drop for LinkedList {
     }
 }
 
-impl Default for LinkedList {
+impl Default for DoublyLinkedList {
     fn default() -> Self {
         Self {
             head: ptr::null_mut(),
@@ -67,7 +67,7 @@ impl Default for LinkedList {
     }
 }
 
-impl LinkedList {
+impl DoublyLinkedList {
     pub(crate) fn len(&self) -> usize {
         self.len
     }
@@ -210,7 +210,7 @@ impl LinkedList {
 
 #[test]
 fn test_dll() {
-    let mut dll = LinkedList::default();
+    let mut dll = DoublyLinkedList::default();
     dll.push_head(5);
     dll.push_tail(6);
     dll.push_head(4);

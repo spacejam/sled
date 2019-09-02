@@ -53,7 +53,7 @@ pub(crate) fn read_blob(
 
     if crc_expected == crc_actual {
         let buf = if config.use_compression {
-            maybe_decompress(buf.as_slice())?
+            maybe_decompress(buf)?
         } else {
             buf
         };

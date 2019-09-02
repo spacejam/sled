@@ -23,7 +23,8 @@ pub(crate) fn u32_to_arr(number: u32) -> [u8; 4] {
     number.to_le_bytes()
 }
 
-pub(crate) fn maybe_decompress(buf: &[u8]) -> std::io::Result<Vec<u8>> {
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn maybe_decompress(buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
     #[cfg(feature = "compression")]
     {
         use std::sync::atomic::AtomicUsize;
@@ -36,7 +37,7 @@ pub(crate) fn maybe_decompress(buf: &[u8]) -> std::io::Result<Vec<u8>> {
         let _measure = Measure::new(&M.decompress);
         loop {
             let ratio = MAX_COMPRESSION_RATIO.load(Acquire);
-            match decompress(buf, buf.len() * ratio) {
+            match decompress(&*buf, buf.len() * ratio) {
                 Err(ref e) if e.kind() == io::ErrorKind::Other => {
                     debug!(
                         "bumping expected compression \
@@ -57,5 +58,6 @@ pub(crate) fn maybe_decompress(buf: &[u8]) -> std::io::Result<Vec<u8>> {
     }
 
     #[cfg(not(feature = "compression"))]
-    Ok(buf.into_vec())
+
+    Ok(buf)
 }

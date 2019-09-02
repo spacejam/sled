@@ -1,15 +1,15 @@
 use parking_lot::Mutex;
 use std::ptr;
-use super::dll::{LinkedList, Node, Item};
+use super::dll::{DoublyLinkedList, Node, Item};
 
 /// A simple LRU cache.
-pub struct LRU {
+pub struct Lru {
     shards: Vec<Mutex<Shard>>,
 }
 
-unsafe impl Sync for LRU {}
+unsafe impl Sync for Lru {}
 
-impl LRU {
+impl Lru {
     /// Instantiates a new `Lru` cache.
     pub fn new(cache_capacity: u64) -> Self {
         assert!(
@@ -27,8 +27,7 @@ impl LRU {
     }
 
     /// Called when an item is accessed. Returns a Vec of items to be
-    /// evicted. For each evicted item, the caller must call
-    /// `page_out_succeeded`.
+    /// evicted.
     ///
     /// Items layout:
     ///   items:   1 2 3 4 5 6 7 8 9 10
@@ -63,7 +62,7 @@ impl Default for Entry {
 }
 
 struct Shard {
-    list: LinkedList,
+    list: DoublyLinkedList,
     entries: Vec<Entry>,
     capacity: u64,
     size: u64,
@@ -74,7 +73,7 @@ impl Shard {
         assert!(capacity > 0, "shard capacity must be non-zero");
 
         Self {
-            list: LinkedList::default(),
+            list: DoublyLinkedList::default(),
             entries: vec![],
             capacity,
             size: 0,

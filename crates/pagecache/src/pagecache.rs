@@ -192,7 +192,7 @@ where
     next_pid_to_allocate: AtomicU64,
     free: Arc<Mutex<BinaryHeap<PageId>>>,
     log: Log,
-    lru: LRU,
+    lru: Lru,
     updates: AtomicU64,
     last_snapshot: Arc<Mutex<Option<Snapshot>>>,
     idgen: Arc<AtomicU64>,
@@ -279,7 +279,7 @@ where
         let snapshot = read_snapshot_or_default(&config)?;
 
         let cache_capacity = config.cache_capacity;
-        let lru = LRU::new(cache_capacity);
+        let lru = Lru::new(cache_capacity);
 
         let mut pc = Self {
             config: config.clone(),
