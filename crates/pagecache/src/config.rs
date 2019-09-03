@@ -204,14 +204,14 @@ impl ConfigBuilder {
             now + seed
         };
 
-        return if cfg!(target_os = "linux") {
+        if cfg!(target_os = "linux") {
             // use shared memory for temporary linux files
             format!("/dev/shm/pagecache.tmp.{}", salt).into()
         } else {
             let mut pb = std::env::temp_dir();
             pb.push(format!("pagecache.tmp.{}", salt));
             pb
-        };
+        }
     }
 
     fn limit_cache_max_memory(&mut self) {
@@ -755,12 +755,12 @@ fn get_available_memory() -> io::Result<u64> {
         return Err(io::Error::last_os_error());
     }
 
-    return Ok((pages as u64) * (page_size as u64));
+    Ok((pages as u64) * (page_size as u64))
 }
 
 fn get_memory_limit() -> u64 {
     // Maximum addressable memory space limit in u64
-    static MAX_USIZE: u64 = std::usize::MAX as u64;
+    static MAX_USIZE: u64 = usize::max_value() as u64;
 
     let mut max: u64 = 0;
 
@@ -775,7 +775,7 @@ fn get_memory_limit() -> u64 {
         // 4k which is a common page size). So we know we are not
         // running in a memory restricted environment.
         // src: https://github.com/dotnet/coreclr/blob/master/src/pal/src/misc/cgroup.cpp#L385-L428
-        if max > 0x7FFFFFFF00000000 {
+        if max > 0x7FFF_FFFF_0000_0000 {
             return 0;
         }
     }
@@ -802,5 +802,5 @@ fn get_memory_limit() -> u64 {
         max = MAX_USIZE;
     }
 
-    return max;
+    max
 }

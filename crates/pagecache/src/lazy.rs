@@ -41,11 +41,12 @@ where
     type Target = T;
 
     fn deref(&self) -> &T {
-        let value_ptr = self.value.load(SeqCst);
-
-        if !value_ptr.is_null() {
-            unsafe {
-                return &*value_ptr;
+        {
+            let value_ptr = self.value.load(SeqCst);
+            if !value_ptr.is_null() {
+                unsafe {
+                    return &*value_ptr;
+                }
             }
         }
 
@@ -55,28 +56,30 @@ where
         // any explicit conversion here.
         while self.init_mu.compare_and_swap(false, true, SeqCst) {}
 
-        let value_ptr = self.value.load(SeqCst);
-
-        // we need to check this again because
-        // maybe some other thread completed
-        // the initialization already.
-        if !value_ptr.is_null() {
-            let unlock = self.init_mu.swap(false, SeqCst);
-            assert!(unlock);
-            unsafe {
-                return &*value_ptr;
+        {
+            let value_ptr = self.value.load(SeqCst);
+            // we need to check this again because
+            // maybe some other thread completed
+            // the initialization already.
+            if !value_ptr.is_null() {
+                let unlock = self.init_mu.swap(false, SeqCst);
+                assert!(unlock);
+                unsafe {
+                    return &*value_ptr;
+                }
             }
         }
 
-        let value = (self.init)();
+        {
+            let value = (self.init)();
+            let value_ptr = Box::into_raw(Box::new(value));
 
-        let value_ptr = Box::into_raw(Box::new(value));
+            self.value.store(value_ptr, SeqCst);
 
-        self.value.store(value_ptr, SeqCst);
+            let unlock = self.init_mu.swap(false, SeqCst);
+            assert!(unlock);
 
-        let unlock = self.init_mu.swap(false, SeqCst);
-        assert!(unlock);
-
-        unsafe { &*value_ptr }
+            unsafe { &*value_ptr }
+        }
     }
 }

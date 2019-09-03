@@ -86,15 +86,13 @@ impl Log {
         self.make_stable(lsn)?;
 
         if ptr.is_inline() {
-            let lid = ptr.lid();
             let f = &self.config.file;
-
-            f.read_message(lid, lsn, &self.config)
+            f.read_message(ptr.lid(), lsn, &self.config)
         } else {
             // we short-circuit the inline read
             // here because it might not still
             // exist in the inline log.
-            let (_lid, blob_ptr) = ptr.blob();
+            let (_, blob_ptr) = ptr.blob();
             read_blob(blob_ptr, &self.config).map(|(kind, buf)| {
                 let sz = MSG_HEADER_LEN + BLOB_INLINE_LEN;
                 let header = MessageHeader {
@@ -306,7 +304,7 @@ impl Log {
                 continue;
             }
 
-            let lid = iobuf.lid;
+            let log_id = iobuf.lid;
 
             // if we're giving out a reservation,
             // the writer count should be positive
@@ -323,7 +321,7 @@ impl Log {
             // used to choose this IO buffer
             // were incremented in a racy way.
             assert_ne!(
-                lid,
+                log_id,
                 LogId::max_value(),
                 "fucked up on iobuf with lsn {}\n{:?}",
                 reservation_lsn,
@@ -336,7 +334,7 @@ impl Log {
             let res_end = res_start + inline_buf_len;
 
             let destination = &mut (out_buf)[res_start..res_end];
-            let reservation_offset = lid + buf_offset as LogId;
+            let reservation_offset = log_id + buf_offset as LogId;
 
             trace!(
                 "reserved {} bytes at lsn {} lid {}",
@@ -553,16 +551,16 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
         let kind = MessageKind::from(buf[0]);
 
         unsafe {
-            let pid = arr_to_u64(buf.get_unchecked(1..9));
+            let page_id = arr_to_u64(buf.get_unchecked(1..9));
             let lsn = arr_to_u64(buf.get_unchecked(9..17)) as Lsn;
-            let len = arr_to_u32(buf.get_unchecked(17..21));
+            let length = arr_to_u32(buf.get_unchecked(17..21));
             let crc32 = arr_to_u32(buf.get_unchecked(21..)) ^ 0xFFFF_FFFF;
 
             Self {
                 kind,
-                pid,
+                pid: page_id,
                 lsn,
-                len,
+                len: length,
                 crc32,
             }
         }
@@ -576,7 +574,7 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
 
         let pid_arr = u64_to_arr(self.pid);
         let lsn_arr = u64_to_arr(self.lsn as u64);
-        let len_arr = u32_to_arr(self.len as u32);
+        let length_arr = u32_to_arr(self.len as u32);
         let crc32_arr = u32_to_arr(self.crc32 ^ 0xFFFF_FFFF);
 
         unsafe {
@@ -591,7 +589,7 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
                 std::mem::size_of::<u64>(),
             );
             std::ptr::copy_nonoverlapping(
-                len_arr.as_ptr(),
+                length_arr.as_ptr(),
                 buf.as_mut_ptr().add(17),
                 std::mem::size_of::<u32>(),
             );

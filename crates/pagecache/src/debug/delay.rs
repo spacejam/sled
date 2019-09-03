@@ -13,7 +13,7 @@ use {
 
 /// This function is useful for inducing random jitter into our atomic
 /// operations, shaking out more possible interleavings quickly. It gets
-/// fully elliminated by the compiler in non-test code.
+/// fully eliminated by the compiler in non-test code.
 pub fn debug_delay() {
     use std::thread;
     use std::time::Duration;
