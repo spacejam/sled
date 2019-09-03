@@ -58,10 +58,11 @@
 //!
 //! // Atomic compare-and-swap.
 //! t.cas(
-//!     b"yo!",       // key
-//!     Some(b"v1"),  // old value, None for not present
-//!     Some(b"v2"),  // new value, None for delete
-//! ).unwrap();
+//!     b"yo!",      // key
+//!     Some(b"v1"), // old value, None for not present
+//!     Some(b"v2"), // new value, None for delete
+//! )
+//! .unwrap();
 //!
 //! // Iterates over key-value pairs, starting at the given key.
 //! let scan_key: &[u8] = b"a non-present key before yo!";
@@ -131,8 +132,8 @@ use {
     },
     log::{debug, error, trace},
     pagecache::{
-        debug_delay, pin, threadpool, Materializer, Measure, PageCache, PageId,
-        RecoveryGuard, M,
+        debug::debug_delay, pin, threadpool, Materializer, Measure, PageCache,
+        PageId, RecoveryGuard, M,
     },
     serde::{Deserialize, Serialize},
 };

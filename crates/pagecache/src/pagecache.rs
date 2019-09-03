@@ -131,10 +131,9 @@ impl<'a> RecoveryGuard<'a> {
 ///
 /// ```
 /// use {
-///     pagecache::{pin, Materializer, Config},
-///     serde::{Serialize, Deserialize},
+///     pagecache::{pin, Config, Materializer},
+///     serde::{Deserialize, Serialize},
 /// };
-///
 ///
 /// #[derive(
 ///     Clone, Eq, PartialEq, Ord, PartialOrd, Debug, Serialize, Deserialize,
@@ -162,22 +161,34 @@ impl<'a> RecoveryGuard<'a> {
 ///         // The first item in a page should be set using allocate,
 ///         // which signals that this is the beginning of a new
 ///         // page history.
-///         let (id, mut key) = pc.allocate(TestState("a".to_owned()), &guard).unwrap();
+///         let (id, mut key) =
+///             pc.allocate(TestState("a".to_owned()), &guard).unwrap();
 ///
 ///         // Subsequent atomic updates should be added with link.
-///         key = pc.link(id, key, TestState("b".to_owned()), &guard).unwrap().unwrap();
-///         key = pc.link(id, key, TestState("c".to_owned()), &guard).unwrap().unwrap();
+///         key = pc
+///             .link(id, key, TestState("b".to_owned()), &guard)
+///             .unwrap()
+///             .unwrap();
+///         key = pc
+///             .link(id, key, TestState("c".to_owned()), &guard)
+///             .unwrap()
+///             .unwrap();
 ///
 ///         // When getting a page, the provided `Materializer` is
 ///         // used to merge all pages together.
-///         let (mut key, page, size_on_disk) = pc.get(id, &guard).unwrap().unwrap();
+///         let (mut key, page, size_on_disk) =
+///             pc.get(id, &guard).unwrap().unwrap();
 ///
 ///         assert_eq!(page.0, "abc".to_owned());
 ///
 ///         // You can completely rewrite a page by using `replace`:
-///         key = pc.replace(id, key, TestState("d".into()), &guard).unwrap().unwrap();
+///         key = pc
+///             .replace(id, key, TestState("d".into()), &guard)
+///             .unwrap()
+///             .unwrap();
 ///
-///         let (key, page, size_on_disk) = pc.get(id, &guard).unwrap().unwrap();
+///         let (key, page, size_on_disk) =
+///             pc.get(id, &guard).unwrap().unwrap();
 ///
 ///         assert_eq!(page.0, "d".to_owned());
 ///     }
@@ -1489,15 +1500,16 @@ where
                 let old = self.idgen_persists.swap(necessary_persists, Release);
                 assert_eq!(old, persisted);
 
-                let res = self.cas_page(
-                    COUNTER_PID,
-                    key.clone(),
-                    counter_update,
-                    false,
-                    &guard,
-                );
-
-                if res?.is_err() {
+                if self
+                    .cas_page(
+                        COUNTER_PID,
+                        key.clone(),
+                        counter_update,
+                        false,
+                        &guard,
+                    )?
+                    .is_err()
+                {
                     // CAS failed
                     continue;
                 }
@@ -1595,11 +1607,7 @@ where
         }
     }
 
-    fn page_out<'g>(
-        &self,
-        to_evict: Vec<PageId>,
-        guard: &'g Guard,
-    ) -> Result<()> {
+    fn page_out(&self, to_evict: Vec<PageId>, guard: &Guard) -> Result<()> {
         let _measure = Measure::new(&M.page_out);
         'different_page_eviction: for pid in to_evict {
             if pid == COUNTER_PID

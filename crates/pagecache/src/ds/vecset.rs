@@ -1,4 +1,4 @@
-use super::*;
+use serde::{Serialize, Deserialize};
 
 /// A set built on top of `Vec` and binary search,
 /// for use when calling `nth` to iterate over a set
