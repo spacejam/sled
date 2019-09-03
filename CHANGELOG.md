@@ -7,6 +7,11 @@
   names better align with the methods of BTreeMap from
   the standard library.
 
+## New Features
+
+* `flush_async` has been added to perform time-intensive
+  flushing in an asynchronous manner, returning a Future.
+
 # 0.26.1
 
 ## Improvements
