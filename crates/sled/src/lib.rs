@@ -51,6 +51,8 @@
 //! use sled::Db;
 //!
 //! let t = Db::open("my_db").unwrap();
+//!
+//! // insert and get
 //! t.insert(b"yo!", b"v1");
 //! assert_eq!(&t.get(b"yo!").unwrap().unwrap(), b"v1");
 //!
