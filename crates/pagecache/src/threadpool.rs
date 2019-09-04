@@ -1,4 +1,7 @@
 //! A simple adaptive threadpool that returns a oneshot future.
+
+use log::warn;
+
 use super::OneShot;
 
 /// Spawn a function on the threadpool.
@@ -32,7 +35,7 @@ where
 
         use super::{debug_delay, Lazy};
 
-        const MAX_THREADS: u64 = 10_000;
+        const MAX_THREADS: u64 = 128;
 
         static DYNAMIC_THREAD_COUNT: AtomicU64 = AtomicU64::new(0);
 
@@ -79,7 +82,7 @@ where
                 return;
             }
 
-            thread::Builder::new()
+            let spawn_res = thread::Builder::new()
                 .name("sled-io".to_string())
                 .spawn(|| {
                     let wait_limit = Duration::from_secs(1);
@@ -91,8 +94,16 @@ where
                         (task)();
                     }
                     DYNAMIC_THREAD_COUNT.fetch_sub(1, Ordering::Relaxed);
-                })
-                .expect("cannot start a dynamic thread driving blocking tasks");
+                });
+
+            if let Err(e) = spawn_res {
+                warn!(
+                    "Failed to dynamically increase the threadpool size: {:?}. \
+                     Currently have {} dynamic threads",
+                    e,
+                    workers
+                );
+            }
         }
 
         let first_try_result = POOL.sender.try_send(Box::new(task));
