@@ -331,19 +331,50 @@ impl ConfigBuilder {
         }
 
         match options.open(&path) {
-            Ok(file) => self.try_lock(file),
+            Ok(file) => self.lock(file),
             Err(e) => Err(e.into()),
         }
     }
 
-    fn try_lock(&self, file: File) -> Result<File> {
+    fn lock(&self, file: File) -> Result<File> {
         #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
+            use std::sync::mpsc::{self, TryRecvError};
+            use std::thread;
+            use std::time::SystemTime;
+
+            let now = SystemTime::now();
+            println!(
+                "started waiting for a lock at {:?}, {:?}",
+                self.db_path(),
+                now.elapsed()
+            );
+
+            let (tx, rx) = mpsc::channel();
+            let path = self.db_path().clone();
+            let child = thread::spawn(move || loop {
+                thread::park_timeout(std::time::Duration::from_secs(1));
+                match rx.try_recv() {
+                    Ok(_) | Err(TryRecvError::Disconnected) => {
+                        break;
+                    }
+                    Err(TryRecvError::Empty) => {}
+                }
+                println!(
+                    "waiting for a lock at {:?}, {:?}",
+                    path,
+                    now.elapsed()
+                );
+            });
+
             let try_lock = if self.read_only {
-                file.try_lock_shared()
+                file.lock_shared()
             } else {
-                file.try_lock_exclusive()
+                file.lock_exclusive()
             };
+
+            tx.send(()).unwrap();
+            child.join().unwrap();
 
             if let Err(e) = try_lock {
                 return Err(Error::Io(io::Error::new(
@@ -410,7 +441,8 @@ impl ConfigBuilder {
 
         let path = self.config_path();
 
-        let mut f = fs::OpenOptions::new().write(true).create(true).open(path)?;
+        let mut f =
+            fs::OpenOptions::new().write(true).create(true).open(path)?;
 
         maybe_fail!("write_config bytes");
         f.write_all(&*bytes)?;
@@ -705,8 +737,8 @@ impl Config {
     }
 }
 
-/// See the Kernel's documentation for more information about this subsystem, found at:
-///  [Documentation/cgroup-v1/memory.txt](https://www.kernel.org/doc/Documentation/cgroup-v1/memory.txt)
+/// See the Kernel's documentation for more information about this subsystem,
+/// found at:  [Documentation/cgroup-v1/memory.txt](https://www.kernel.org/doc/Documentation/cgroup-v1/memory.txt)
 ///
 /// If there's no memory limit specified on the container this may return
 /// 0x7FFFFFFFFFFFF000 (2^63-1 rounded down to 4k which is a common page size).
@@ -728,8 +760,8 @@ fn read_u64_from(mut file: File) -> io::Result<u64> {
 }
 
 /// Returns the maximum size of total available memory of the process, in bytes.
-/// If this limit is exceeded, the malloc() and mmap() functions shall fail with errno set
-/// to [ENOMEM].
+/// If this limit is exceeded, the malloc() and mmap() functions shall fail with
+/// errno set to [ENOMEM].
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn get_rlimit_as() -> io::Result<libc::rlimit> {
     let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
@@ -797,8 +829,9 @@ fn get_memory_limit() -> u64 {
     }
 
     if max > MAX_USIZE {
-        // It is observed in practice when the memory is unrestricted, Linux control
-        // group returns a physical limit that is bigger than the address space
+        // It is observed in practice when the memory is unrestricted, Linux
+        // control group returns a physical limit that is bigger than
+        // the address space
         max = MAX_USIZE;
     }
 
