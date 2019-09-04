@@ -54,12 +54,16 @@ impl<'a> IntoIterator for &'a Tree {
 ///     b"yo!",      // key
 ///     Some(b"v1"), // old value, None for not present
 ///     Some(b"v2"), // new value, None for delete
-/// ).unwrap();
+/// )
+/// .unwrap();
 ///
 /// // Iterates over key-value pairs, starting at the given key.
 /// let scan_key: &[u8] = b"a non-present key before yo!";
 /// let mut iter = t.range(scan_key..);
-/// assert_eq!(iter.next().unwrap(), Ok((IVec::from(b"yo!"), IVec::from(b"v2"))));
+/// assert_eq!(
+///     iter.next().unwrap(),
+///     Ok((IVec::from(b"yo!"), IVec::from(b"v2")))
+/// );
 /// assert_eq!(iter.next(), None);
 ///
 /// t.remove(b"yo!");
@@ -100,8 +104,8 @@ impl Tree {
     /// let config = ConfigBuilder::new().temporary(true).build();
     /// let t = Db::start(config).unwrap();
     ///
-    /// assert_eq!(t.insert(&[1,2,3], vec![0]), Ok(None));
-    /// assert_eq!(t.insert(&[1,2,3], vec![1]), Ok(Some(IVec::from(&[0]))));
+    /// assert_eq!(t.insert(&[1, 2, 3], vec![0]), Ok(None));
+    /// assert_eq!(t.insert(&[1, 2, 3], vec![1]), Ok(Some(IVec::from(&[0]))));
     /// ```
     pub fn insert<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
     where
@@ -184,7 +188,8 @@ impl Tree {
     ///     db.insert(b"k1", b"cats")?;
     ///     db.insert(b"k2", b"dogs")?;
     ///     Ok(())
-    /// }).unwrap();
+    /// })
+    /// .unwrap();
     ///
     /// // Atomically swap two items:
     /// db.transaction(|db| {
@@ -197,7 +202,8 @@ impl Tree {
     ///     db.insert(b"k2", v1);
     ///
     ///     Ok(())
-    /// }).unwrap();
+    /// })
+    /// .unwrap();
     ///
     /// assert_eq!(&db.get(b"k1").unwrap().unwrap(), b"dogs");
     /// assert_eq!(&db.get(b"k2").unwrap().unwrap(), b"cats");
@@ -225,13 +231,15 @@ impl Tree {
     ///
     /// // Atomically process the new item and move it
     /// // between `Tree`s.
-    /// (&unprocessed, &processed).transaction(|(unprocessed, processed)| {
-    ///     let unprocessed_item = unprocessed.remove(b"k3")?.unwrap();
-    ///     let mut processed_item = b"yappin' ".to_vec();
-    ///     processed_item.extend_from_slice(&unprocessed_item);
-    ///     processed.insert(b"k3", processed_item)?;
-    ///     Ok(())
-    /// }).unwrap();
+    /// (&unprocessed, &processed)
+    ///     .transaction(|(unprocessed, processed)| {
+    ///         let unprocessed_item = unprocessed.remove(b"k3")?.unwrap();
+    ///         let mut processed_item = b"yappin' ".to_vec();
+    ///         processed_item.extend_from_slice(&unprocessed_item);
+    ///         processed.insert(b"k3", processed_item)?;
+    ///         Ok(())
+    ///     })
+    ///     .unwrap();
     ///
     /// assert_eq!(unprocessed.get(b"k3").unwrap(), None);
     /// assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
@@ -253,7 +261,7 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use sled::{Db, Batch};
+    /// use sled::{Batch, Db};
     ///
     /// let db = Db::open("batch_db").unwrap();
     /// db.insert("key_0", "val_0").unwrap();
@@ -505,8 +513,8 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use std::convert::TryInto;
     /// use sled::{ConfigBuilder, Error, IVec};
+    /// use std::convert::TryInto;
     ///
     /// let config = ConfigBuilder::new().temporary(true).build();
     /// let tree = sled::Db::start(config).unwrap();
@@ -526,7 +534,7 @@ impl Tree {
     ///             let array: [u8; 8] = bytes.try_into().unwrap();
     ///             let number = u64::from_be_bytes(array);
     ///             number + 1
-    ///         },
+    ///         }
     ///         None => 0,
     ///     };
     ///
@@ -571,8 +579,8 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use std::convert::TryInto;
     /// use sled::{ConfigBuilder, Error, IVec};
+    /// use std::convert::TryInto;
     ///
     /// let config = ConfigBuilder::new().temporary(true).build();
     /// let tree = sled::Db::start(config).unwrap();
@@ -591,7 +599,7 @@ impl Tree {
     ///             let array: [u8; 8] = bytes.try_into().unwrap();
     ///             let number = u64::from_be_bytes(array);
     ///             number + 1
-    ///         },
+    ///         }
     ///         None => 0,
     ///     };
     ///
@@ -638,7 +646,7 @@ impl Tree {
     ///
     /// # Examples
     /// ```
-    /// use sled::{Event, ConfigBuilder};
+    /// use sled::{ConfigBuilder, Event};
     /// let config = ConfigBuilder::new().temporary(true).build();
     ///
     /// let tree = sled::Db::start(config).unwrap();
@@ -724,15 +732,28 @@ impl Tree {
     /// let tree = Db::start(config).unwrap();
     ///
     /// for i in 0..10 {
-    ///     tree.insert(&[i], vec![i]).expect("should write successfully");
+    ///     tree.insert(&[i], vec![i])
+    ///         .expect("should write successfully");
     /// }
     ///
     /// assert_eq!(tree.get_lt(&[]), Ok(None));
     /// assert_eq!(tree.get_lt(&[0]), Ok(None));
-    /// assert_eq!(tree.get_lt(&[1]), Ok(Some((IVec::from(&[0]), IVec::from(&[0])))));
-    /// assert_eq!(tree.get_lt(&[9]), Ok(Some((IVec::from(&[8]), IVec::from(&[8])))));
-    /// assert_eq!(tree.get_lt(&[10]), Ok(Some((IVec::from(&[9]), IVec::from(&[9])))));
-    /// assert_eq!(tree.get_lt(&[255]), Ok(Some((IVec::from(&[9]), IVec::from(&[9])))));
+    /// assert_eq!(
+    ///     tree.get_lt(&[1]),
+    ///     Ok(Some((IVec::from(&[0]), IVec::from(&[0]))))
+    /// );
+    /// assert_eq!(
+    ///     tree.get_lt(&[9]),
+    ///     Ok(Some((IVec::from(&[8]), IVec::from(&[8]))))
+    /// );
+    /// assert_eq!(
+    ///     tree.get_lt(&[10]),
+    ///     Ok(Some((IVec::from(&[9]), IVec::from(&[9]))))
+    /// );
+    /// assert_eq!(
+    ///     tree.get_lt(&[255]),
+    ///     Ok(Some((IVec::from(&[9]), IVec::from(&[9]))))
+    /// );
     /// ```
     pub fn get_lt<K>(&self, key: K) -> Result<Option<(IVec, IVec)>>
     where
@@ -761,18 +782,33 @@ impl Tree {
     /// let tree = Db::start(config).unwrap();
     ///
     /// for i in 0..10 {
-    ///     tree.insert(&[i], vec![i]).expect("should write successfully");
+    ///     tree.insert(&[i], vec![i])
+    ///         .expect("should write successfully");
     /// }
     ///
-    /// assert_eq!(tree.get_gt(&[]), Ok(Some((IVec::from(&[0]), IVec::from(&[0])))));
-    /// assert_eq!(tree.get_gt(&[0]), Ok(Some((IVec::from(&[1]), IVec::from(&[1])))));
-    /// assert_eq!(tree.get_gt(&[1]), Ok(Some((IVec::from(&[2]), IVec::from(&[2])))));
-    /// assert_eq!(tree.get_gt(&[8]), Ok(Some((IVec::from(&[9]), IVec::from(&[9])))));
+    /// assert_eq!(
+    ///     tree.get_gt(&[]),
+    ///     Ok(Some((IVec::from(&[0]), IVec::from(&[0]))))
+    /// );
+    /// assert_eq!(
+    ///     tree.get_gt(&[0]),
+    ///     Ok(Some((IVec::from(&[1]), IVec::from(&[1]))))
+    /// );
+    /// assert_eq!(
+    ///     tree.get_gt(&[1]),
+    ///     Ok(Some((IVec::from(&[2]), IVec::from(&[2]))))
+    /// );
+    /// assert_eq!(
+    ///     tree.get_gt(&[8]),
+    ///     Ok(Some((IVec::from(&[9]), IVec::from(&[9]))))
+    /// );
     /// assert_eq!(tree.get_gt(&[9]), Ok(None));
     ///
-    /// tree.insert(500u16.to_be_bytes(), vec![10] );
-    /// assert_eq!(tree.get_gt(&499u16.to_be_bytes()),
-    ///            Ok(Some((IVec::from(&500u16.to_be_bytes()), IVec::from(&[10])))));
+    /// tree.insert(500u16.to_be_bytes(), vec![10]);
+    /// assert_eq!(
+    ///     tree.get_gt(&499u16.to_be_bytes()),
+    ///     Ok(Some((IVec::from(&500u16.to_be_bytes()), IVec::from(&[10]))))
+    /// );
     /// ```
     pub fn get_gt<K>(&self, key: K) -> Result<Option<(IVec, IVec)>>
     where
@@ -1002,9 +1038,18 @@ impl Tree {
     /// t.insert(&[2], vec![20]);
     /// t.insert(&[3], vec![30]);
     /// let mut iter = t.iter();
-    /// assert_eq!(iter.next().unwrap(), Ok((IVec::from(&[1]), IVec::from(&[10]))));
-    /// assert_eq!(iter.next().unwrap(), Ok((IVec::from(&[2]), IVec::from(&[20]))));
-    /// assert_eq!(iter.next().unwrap(), Ok((IVec::from(&[3]), IVec::from(&[30]))));
+    /// assert_eq!(
+    ///     iter.next().unwrap(),
+    ///     Ok((IVec::from(&[1]), IVec::from(&[10])))
+    /// );
+    /// assert_eq!(
+    ///     iter.next().unwrap(),
+    ///     Ok((IVec::from(&[2]), IVec::from(&[20])))
+    /// );
+    /// assert_eq!(
+    ///     iter.next().unwrap(),
+    ///     Ok((IVec::from(&[3]), IVec::from(&[30])))
+    /// );
     /// assert_eq!(iter.next(), None);
     /// ```
     pub fn iter(&self) -> Iter<'_> {
@@ -1096,10 +1141,22 @@ impl Tree {
     ///
     /// let prefix: &[u8] = &[0, 0];
     /// let mut r = t.scan_prefix(prefix);
-    /// assert_eq!(r.next(), Some(Ok((IVec::from(&[0, 0, 0]), IVec::from(&[0, 0, 0])))));
-    /// assert_eq!(r.next(), Some(Ok((IVec::from(&[0, 0, 1]), IVec::from(&[0, 0, 1])))));
-    /// assert_eq!(r.next(), Some(Ok((IVec::from(&[0, 0, 2]), IVec::from(&[0, 0, 2])))));
-    /// assert_eq!(r.next(), Some(Ok((IVec::from(&[0, 0, 3]), IVec::from(&[0, 0, 3])))));
+    /// assert_eq!(
+    ///     r.next(),
+    ///     Some(Ok((IVec::from(&[0, 0, 0]), IVec::from(&[0, 0, 0]))))
+    /// );
+    /// assert_eq!(
+    ///     r.next(),
+    ///     Some(Ok((IVec::from(&[0, 0, 1]), IVec::from(&[0, 0, 1]))))
+    /// );
+    /// assert_eq!(
+    ///     r.next(),
+    ///     Some(Ok((IVec::from(&[0, 0, 2]), IVec::from(&[0, 0, 2]))))
+    /// );
+    /// assert_eq!(
+    ///     r.next(),
+    ///     Some(Ok((IVec::from(&[0, 0, 3]), IVec::from(&[0, 0, 3]))))
+    /// );
     /// assert_eq!(r.next(), None);
     /// ```
     pub fn scan_prefix<P>(&self, prefix: P) -> Iter<'_>
@@ -1125,23 +1182,26 @@ impl Tree {
     ///
     /// ```
     /// use sled::{ConfigBuilder, Db, IVec};
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let t = Db::start(config).unwrap();
     ///
-    /// t.insert(&[0], vec![0]).unwrap();
-    /// t.insert(&[1], vec![10]).unwrap();
-    /// t.insert(&[2], vec![20]).unwrap();
-    /// t.insert(&[3], vec![30]).unwrap();
-    /// t.insert(&[4], vec![40]).unwrap();
-    /// t.insert(&[5], vec![50]).unwrap();
+    /// for i in 1..10000 {
+    ///     let config = ConfigBuilder::new().temporary(true).build();
+    ///     let t = Db::start(config).unwrap();
     ///
-    /// assert_eq!(&t.pop_max().unwrap().unwrap().0, &[5]);
-    /// assert_eq!(&t.pop_max().unwrap().unwrap().0, &[4]);
-    /// assert_eq!(&t.pop_max().unwrap().unwrap().0, &[3]);
-    /// assert_eq!(&t.pop_max().unwrap().unwrap().0, &[2]);
-    /// assert_eq!(&t.pop_max().unwrap().unwrap().0, &[1]);
-    /// assert_eq!(&t.pop_max().unwrap().unwrap().0, &[0]);
-    /// assert_eq!(t.pop_max().unwrap(), None);
+    ///     t.insert(&[0], vec![0]).unwrap();
+    ///     t.insert(&[1], vec![10]).unwrap();
+    ///     t.insert(&[2], vec![20]).unwrap();
+    ///     t.insert(&[3], vec![30]).unwrap();
+    ///     t.insert(&[4], vec![40]).unwrap();
+    ///     t.insert(&[5], vec![50]).unwrap();
+    ///
+    ///     assert_eq!(&t.pop_max().unwrap().unwrap().0, &[5]);
+    ///     assert_eq!(&t.pop_max().unwrap().unwrap().0, &[4]);
+    ///     assert_eq!(&t.pop_max().unwrap().unwrap().0, &[3]);
+    ///     assert_eq!(&t.pop_max().unwrap().unwrap().0, &[2]);
+    ///     assert_eq!(&t.pop_max().unwrap().unwrap().0, &[1]);
+    ///     assert_eq!(&t.pop_max().unwrap().unwrap().0, &[0]);
+    ///     assert_eq!(t.pop_max().unwrap(), None);
+    /// }
     /// ```
     pub fn pop_max(&self) -> Result<Option<(IVec, IVec)>> {
         loop {
@@ -1166,23 +1226,26 @@ impl Tree {
     ///
     /// ```
     /// use sled::{ConfigBuilder, Db, IVec};
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let t = Db::start(config).unwrap();
     ///
-    /// t.insert(&[0], vec![0]).unwrap();
-    /// t.insert(&[1], vec![10]).unwrap();
-    /// t.insert(&[2], vec![20]).unwrap();
-    /// t.insert(&[3], vec![30]).unwrap();
-    /// t.insert(&[4], vec![40]).unwrap();
-    /// t.insert(&[5], vec![50]).unwrap();
+    /// for i in 1..10000 {
+    ///     let config = ConfigBuilder::new().temporary(true).build();
+    ///     let t = Db::start(config).unwrap();
     ///
-    /// assert_eq!(&t.pop_min().unwrap().unwrap().0, &[0]);
-    /// assert_eq!(&t.pop_min().unwrap().unwrap().0, &[1]);
-    /// assert_eq!(&t.pop_min().unwrap().unwrap().0, &[2]);
-    /// assert_eq!(&t.pop_min().unwrap().unwrap().0, &[3]);
-    /// assert_eq!(&t.pop_min().unwrap().unwrap().0, &[4]);
-    /// assert_eq!(&t.pop_min().unwrap().unwrap().0, &[5]);
-    /// assert_eq!(t.pop_min().unwrap(), None);
+    ///     t.insert(&[0], vec![0]).unwrap();
+    ///     t.insert(&[1], vec![10]).unwrap();
+    ///     t.insert(&[2], vec![20]).unwrap();
+    ///     t.insert(&[3], vec![30]).unwrap();
+    ///     t.insert(&[4], vec![40]).unwrap();
+    ///     t.insert(&[5], vec![50]).unwrap();
+    ///
+    ///     assert_eq!(&t.pop_min().unwrap().unwrap().0, &[0]);
+    ///     assert_eq!(&t.pop_min().unwrap().unwrap().0, &[1]);
+    ///     assert_eq!(&t.pop_min().unwrap().unwrap().0, &[2]);
+    ///     assert_eq!(&t.pop_min().unwrap().unwrap().0, &[3]);
+    ///     assert_eq!(&t.pop_min().unwrap().unwrap().0, &[4]);
+    ///     assert_eq!(&t.pop_min().unwrap().unwrap().0, &[5]);
+    ///     assert_eq!(t.pop_min().unwrap(), None);
+    /// }
     /// ```
     pub fn pop_min(&self) -> Result<Option<(IVec, IVec)>> {
         loop {

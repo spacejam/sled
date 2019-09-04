@@ -354,13 +354,12 @@ impl ConfigBuilder {
                 file.try_lock_exclusive()
             };
 
+            let path = self.db_path().clone();
+            println!("using temporary path {:?}", path);
+
             if let Err(e) = try_lock {
-                let path = self.db_path().clone();
-
                 println!("try lock failed at {:?}, {:?}", path, now.elapsed());
-
                 println!("started waiting for a lock at {:?}", path);
-
                 let (tx, rx) = mpsc::channel();
                 let child = thread::spawn(move || loop {
                     match rx.recv_timeout(std::time::Duration::from_secs(1)) {
