@@ -202,6 +202,8 @@ impl ConfigBuilder {
 
         let salt = (pid << 16) + now + seed;
 
+        println!("using temporary path {}", salt);
+
         if cfg!(target_os = "linux") {
             // use shared memory for temporary linux files
             format!("/dev/shm/pagecache.tmp.{}", salt).into()
