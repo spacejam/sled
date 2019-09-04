@@ -51,7 +51,7 @@ steps:
   - script: cargo build --all --release
     displayName: Cargo build
     condition: eq( variables['testKind'], 'default' )
-  - script: cargo test --all --release
+  - script: cargo test --all --release -- --nocapture
     displayName: Cargo test
     condition: eq( variables['testKind'], 'default' )
   - script: |
@@ -63,11 +63,11 @@ steps:
       popd &&
       pushd crates/sled &&
       echo "testing sled doctests" &&
-      cargo test &&
+      cargo test -- --nocapture &&
       popd &&
       pushd crates/pagecache &&
       echo "testing pagecache doctests" &&
-      cargo test
+      cargo test -- --nocapture
     displayName: doctests
     condition: eq( variables['testKind'], 'doctests' )
   - script: |
