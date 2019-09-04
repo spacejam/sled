@@ -339,7 +339,7 @@ impl ConfigBuilder {
     fn lock(&self, file: File) -> Result<File> {
         #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
-            use std::sync::mpsc::{self, TryRecvError};
+            use std::sync::mpsc::{self, RecvTimeoutError};
             use std::thread;
             use std::time::SystemTime;
 
@@ -353,12 +353,11 @@ impl ConfigBuilder {
             let (tx, rx) = mpsc::channel();
             let path = self.db_path().clone();
             let child = thread::spawn(move || loop {
-                thread::park_timeout(std::time::Duration::from_secs(1));
-                match rx.try_recv() {
-                    Ok(_) | Err(TryRecvError::Disconnected) => {
+                match rx.recv_timeout(std::time::Duration::from_secs(1)) {
+                    Ok(_) | Err(RecvTimeoutError::Disconnected) => {
                         break;
                     }
-                    Err(TryRecvError::Empty) => {}
+                    Err(RecvTimeoutError::Timeout) => {}
                 }
                 println!(
                     "waiting for a lock at {:?}, {:?}",
