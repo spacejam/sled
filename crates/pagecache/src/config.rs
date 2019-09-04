@@ -347,6 +347,7 @@ impl ConfigBuilder {
             use std::thread;
             use std::time::SystemTime;
 
+            let now = SystemTime::now();
             let try_lock = if self.read_only {
                 file.try_lock_shared()
             } else {
@@ -354,15 +355,13 @@ impl ConfigBuilder {
             };
 
             if let Err(e) = try_lock {
-                let now = SystemTime::now();
-                println!(
-                    "started waiting for a lock at {:?}, {:?}",
-                    self.db_path(),
-                    now.elapsed()
-                );
+                let path = self.db_path().clone();
+
+                println!("try lock failed at {:?}, {:?}", path, now.elapsed());
+
+                println!("started waiting for a lock at {:?}", path);
 
                 let (tx, rx) = mpsc::channel();
-                let path = self.db_path().clone();
                 let child = thread::spawn(move || loop {
                     match rx.recv_timeout(std::time::Duration::from_secs(1)) {
                         Ok(_) | Err(RecvTimeoutError::Disconnected) => {
@@ -377,11 +376,6 @@ impl ConfigBuilder {
                     );
                 });
 
-                println!(
-                    "try lock failed at {:?}, {:?}",
-                    self.db_path(),
-                    now.elapsed()
-                );
                 if self.read_only {
                     file.lock_shared().unwrap();
                 } else {
