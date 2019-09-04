@@ -367,10 +367,23 @@ impl ConfigBuilder {
             });
 
             let try_lock = if self.read_only {
-                file.lock_shared()
+                file.try_lock_shared()
             } else {
-                file.lock_exclusive()
+                file.try_lock_exclusive()
             };
+
+            if let Err(_) = &try_lock {
+                println!(
+                    "try lock failed at {:?}, {:?}",
+                    self.db_path(),
+                    now.elapsed()
+                );
+                if self.read_only {
+                    file.lock_shared().unwrap();
+                } else {
+                    file.lock_exclusive().unwrap();
+                };
+            }
 
             tx.send(()).unwrap();
             child.join().unwrap();
