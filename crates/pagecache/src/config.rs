@@ -191,18 +191,16 @@ impl ConfigBuilder {
         static SALT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
         let seed = SALT_COUNTER.fetch_add(1, Ordering::SeqCst) as u64;
+
         let now = (SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
-            << 32) as u64;
+            << 48) as u64;
 
-        let salt = if cfg!(unix) {
-            let pid = unsafe { libc::getpid() };
-            ((pid as u64) << 16) + now + seed
-        } else {
-            now + seed
-        };
+        let pid = std::process::id() as u64;
+
+        let salt = (pid << 16) + now + seed;
 
         if cfg!(target_os = "linux") {
             // use shared memory for temporary linux files
