@@ -134,7 +134,6 @@ where
         let tip = traverse(self.head.load(Acquire, guard), pid, guard);
 
         debug_delay();
-        debug_delay();
 
         let _ = tip
             .compare_and_set(old, new, Release, guard)
