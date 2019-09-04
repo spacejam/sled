@@ -131,6 +131,7 @@ where
         guard: &'g Guard,
     ) -> std::result::Result<Shared<'g, T>, Shared<'g, T>> {
         debug_delay();
+        debug_delay();
         let tip = traverse(self.head.load(Acquire, guard), pid, guard);
 
         debug_delay();
