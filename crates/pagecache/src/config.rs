@@ -196,13 +196,14 @@ impl ConfigBuilder {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
-            << 48) as u64;
+            << 32) as u64;
 
-        let pid = std::process::id() as u64;
-
-        let salt = (pid << 16) + now + seed;
-
-        println!("using temporary path {}", salt);
+        let salt = if cfg!(unix) {
+            let pid = unsafe { libc::getpid() };
+            ((pid as u64) << 16) + now + seed
+        } else {
+            now + seed
+        };
 
         if cfg!(target_os = "linux") {
             // use shared memory for temporary linux files
@@ -343,36 +344,36 @@ impl ConfigBuilder {
             use std::thread;
             use std::time::SystemTime;
 
-            let now = SystemTime::now();
-            println!(
-                "started waiting for a lock at {:?}, {:?}",
-                self.db_path(),
-                now.elapsed()
-            );
-
-            let (tx, rx) = mpsc::channel();
-            let path = self.db_path().clone();
-            let child = thread::spawn(move || loop {
-                match rx.recv_timeout(std::time::Duration::from_secs(1)) {
-                    Ok(_) | Err(RecvTimeoutError::Disconnected) => {
-                        break;
-                    }
-                    Err(RecvTimeoutError::Timeout) => {}
-                }
-                println!(
-                    "waiting for a lock at {:?}, {:?}",
-                    path,
-                    now.elapsed()
-                );
-            });
-
             let try_lock = if self.read_only {
                 file.try_lock_shared()
             } else {
                 file.try_lock_exclusive()
             };
 
-            if let Err(_) = &try_lock {
+            if let Err(e) = try_lock {
+                let now = SystemTime::now();
+                println!(
+                    "started waiting for a lock at {:?}, {:?}",
+                    self.db_path(),
+                    now.elapsed()
+                );
+
+                let (tx, rx) = mpsc::channel();
+                let path = self.db_path().clone();
+                let child = thread::spawn(move || loop {
+                    match rx.recv_timeout(std::time::Duration::from_secs(1)) {
+                        Ok(_) | Err(RecvTimeoutError::Disconnected) => {
+                            break;
+                        }
+                        Err(RecvTimeoutError::Timeout) => {}
+                    }
+                    println!(
+                        "waiting for a lock at {:?}, {:?}",
+                        path,
+                        now.elapsed()
+                    );
+                });
+
                 println!(
                     "try lock failed at {:?}, {:?}",
                     self.db_path(),
@@ -383,17 +384,15 @@ impl ConfigBuilder {
                 } else {
                     file.lock_exclusive().unwrap();
                 };
-            }
 
-            tx.send(()).unwrap();
-            child.join().unwrap();
-            println!(
-                "finished waiting for a lock at {:?}, {:?}",
-                self.db_path(),
-                now.elapsed()
-            );
+                tx.send(()).unwrap();
+                child.join().unwrap();
+                println!(
+                    "finished waiting for a lock at {:?}, {:?}",
+                    self.db_path(),
+                    now.elapsed()
+                );
 
-            if let Err(e) = try_lock {
                 return Err(Error::Io(io::Error::new(
                     ErrorKind::Other,
                     format!(
