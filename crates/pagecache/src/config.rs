@@ -202,8 +202,6 @@ impl ConfigBuilder {
 
         let salt = (pid << 16) + now + seed;
 
-        println!("using temporary path {}", salt);
-
         if cfg!(target_os = "linux") {
             // use shared memory for temporary linux files
             format!("/dev/shm/pagecache.tmp.{}", salt).into()
@@ -218,8 +216,11 @@ impl ConfigBuilder {
         let limit = get_memory_limit();
         if limit > 0 && self.cache_capacity > limit {
             self.cache_capacity = limit;
-            eprintln!("WARN: cache capacity is limited to the cgroup memory limit: {} bytes",
-                     self.cache_capacity);
+            error!(
+                "cache capacity is limited to the cgroup memory \
+                 limit: {} bytes",
+                self.cache_capacity
+            );
         }
     }
 
@@ -410,7 +411,8 @@ impl ConfigBuilder {
 
         let path = self.config_path();
 
-        let mut f = fs::OpenOptions::new().write(true).create(true).open(path)?;
+        let mut f =
+            fs::OpenOptions::new().write(true).create(true).open(path)?;
 
         maybe_fail!("write_config bytes");
         f.write_all(&*bytes)?;
