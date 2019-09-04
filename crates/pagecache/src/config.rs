@@ -334,6 +334,10 @@ impl ConfigBuilder {
             options.write(true);
         }
 
+        if std::path::Path::new(&path).exists() {
+            panic!("file exists {:?} before the test", path);
+        }
+
         match options.open(&path) {
             Ok(file) => self.lock(file),
             Err(e) => Err(e.into()),
@@ -348,6 +352,7 @@ impl ConfigBuilder {
             use std::time::SystemTime;
 
             let now = SystemTime::now();
+
             let try_lock = if self.read_only {
                 file.try_lock_shared()
             } else {
