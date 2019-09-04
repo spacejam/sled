@@ -374,6 +374,11 @@ impl ConfigBuilder {
 
             tx.send(()).unwrap();
             child.join().unwrap();
+            println!(
+                "finished waiting for a lock at {:?}, {:?}",
+                self.db_path(),
+                now.elapsed()
+            );
 
             if let Err(e) = try_lock {
                 return Err(Error::Io(io::Error::new(
