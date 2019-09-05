@@ -50,13 +50,13 @@ steps:
     condition: eq( variables['Agent.OS'], 'Windows_NT' )
   - task: CacheBeta@0
     inputs:
-      path: $(Pipeline.Workspace)/target
+      path: $(Agent.BuildDirectory)/s/target
       key: Cargo.lock | $(Agent.OS)
     displayName: 'Cache Build'
     condition: ne( variables['Agent.OS'], 'Windows_NT' )
   - task: CacheBeta@1
     inputs:
-      path: $(Pipeline.Workspace)\target
+      path: $(Agent.BuildDirectory)\s\target
       key: Cargo.lock | $(Agent.OS)
     displayName: 'Cache Build (Windows)'
     condition: eq( variables['Agent.OS'], 'Windows_NT' )
