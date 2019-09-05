@@ -53,6 +53,13 @@ steps:
       path: $(Pipeline.Workspace)/target
       key: Cargo.lock | $(Agent.OS)
     displayName: 'Cache Build'
+    condition: ne( variables['Agent.OS'], 'Windows_NT' )
+  - task: Cache@1
+    inputs:
+      path: $(Pipeline.Workspace)\target
+      key: Cargo.lock | $(Agent.OS)
+    displayName: 'Cache Build (Windows)'
+    condition: eq( variables['Agent.OS'], 'Windows_NT' )
   - script: cargo build --all --release
     displayName: Cargo build
     condition: eq( variables['testKind'], 'default' )
