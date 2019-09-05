@@ -48,13 +48,13 @@ steps:
       echo "##vso[task.setvariable variable=PATH;]%PATH%;%USERPROFILE%\.cargo\bin"
     displayName: Windows install rust
     condition: eq( variables['Agent.OS'], 'Windows_NT' )
-  - task: Cache@0
+  - task: CacheBeta@0
     inputs:
       path: $(Pipeline.Workspace)/target
       key: Cargo.lock | $(Agent.OS)
     displayName: 'Cache Build'
     condition: ne( variables['Agent.OS'], 'Windows_NT' )
-  - task: Cache@1
+  - task: CacheBeta@1
     inputs:
       path: $(Pipeline.Workspace)\target
       key: Cargo.lock | $(Agent.OS)
