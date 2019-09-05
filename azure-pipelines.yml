@@ -51,13 +51,13 @@ steps:
   - task: CacheBeta@0
     inputs:
       path: $(Agent.BuildDirectory)/s/target
-      key: Cargo.lock | $(Agent.OS)
+      key: $(Agent.BuildDirectory)/s/Cargo.lock | $(Agent.OS)
     displayName: 'Cache Build'
     condition: ne( variables['Agent.OS'], 'Windows_NT' )
   - task: CacheBeta@1
     inputs:
       path: $(Agent.BuildDirectory)\s\target
-      key: Cargo.lock | $(Agent.OS)
+      key: $(Agent.BuildDirectory)\s\Cargo.lock | $(Agent.OS)
     displayName: 'Cache Build (Windows)'
     condition: eq( variables['Agent.OS'], 'Windows_NT' )
   - script: cargo build --all --release
