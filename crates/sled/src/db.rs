@@ -1,7 +1,9 @@
-use std::{
-    marker::PhantomData,
-    ops::Deref,
-    sync::{atomic::AtomicU64, Arc},
+use {
+    std::{
+        sync::{atomic::AtomicU64, Arc},
+        ops::Deref,
+        marker::PhantomData,
+    },
 };
 
 use pagecache::FastMap8;
@@ -15,14 +17,7 @@ use super::*;
 pub struct Db {
     context: Context,
     pub(crate) default: Arc<Tree<IVec>>,
-    tenants: Arc<
-        RwLock<
-            FastMap8<
-                Vec<u8>,
-                Arc<Tree<dyn 'static + std::any::Any + Send + Sync>>,
-            >,
-        >,
-    >,
+    tenants: Arc<RwLock<FastMap8<Vec<u8>, DynamicArc>>>,
 }
 
 unsafe impl Send for Db {}
@@ -116,7 +111,7 @@ impl Db {
         let mut tenants = ret.tenants.write();
 
         for (id, root) in context.pagecache.meta(&guard)?.tenants() {
-            let tree = Tree {
+            let tree: Tree<IVec> = Tree {
                 _type: PhantomData,
                 tree_id: id.clone(),
                 subscriptions: Arc::new(Subscriptions::default()),
@@ -125,7 +120,7 @@ impl Db {
                 concurrency_control: Arc::new(RwLock::new(())),
                 merge_operator: Arc::new(RwLock::new(None)),
             };
-            tenants.insert(id, Arc::new(tree));
+            tenants.insert(id, DynamicArc::new(Arc::new(tree)));
         }
 
         drop(tenants);
@@ -135,14 +130,14 @@ impl Db {
 
     /// Open or create a new disk-backed Tree with its own keyspace,
     /// accessible from the `Db` via the provided identifier.
-    pub fn open_tree<V: AsRef<[u8]>, T>(
+    pub fn open_tree<V: AsRef<[u8]>, T: 'static>(
         &self,
         name: V,
     ) -> Result<Arc<Tree<T>>> {
         let name = name.as_ref();
         let tenants = self.tenants.read();
         if let Some(tree) = tenants.get(name) {
-            return Ok(tree.clone());
+            return tree.maybe_clone();
         }
         drop(tenants);
 
@@ -150,17 +145,17 @@ impl Db {
 
         let mut tenants = self.tenants.write();
         if let Some(tree) = tenants.get(name) {
-            return Ok(tree.clone());
+            return tree.maybe_clone();
         }
-        let tree =
+        let tree: Arc<Tree<T>> =
             Arc::new(meta::open_tree(&self.context, name.to_vec(), &guard)?);
-        tenants.insert(name.to_vec(), tree.clone());
+        tenants.insert(name.to_vec(), DynamicArc::new(tree.clone()));
         drop(tenants);
         Ok(tree)
     }
 
     /// Remove a disk-backed collection.
-    pub fn drop_tree(&self, name: &[u8]) -> Result<bool> {
+    pub fn drop_tree<T: 'static>(&self, name: &[u8]) -> Result<bool> {
         if name == DEFAULT_TREE_ID {
             return Err(Error::Unsupported(
                 "cannot remove the core structures".into(),
@@ -170,8 +165,8 @@ impl Db {
 
         let mut tenants = self.tenants.write();
 
-        let tree = if let Some(tree) = tenants.remove(&*name) {
-            tree
+        let tree: Arc<Tree<T>> = if let Some(tree) = tenants.remove(&*name) {
+            tree.maybe_clone()?
         } else {
             return Ok(false);
         };
@@ -302,7 +297,7 @@ impl Db {
         for (collection_type, collection_name, collection_iter) in export {
             match collection_type {
                 ref t if t == b"tree" => {
-                    let tree = self
+                    let tree: Arc<Tree<IVec>> = self
                         .open_tree(collection_name)
                         .expect("failed to open new tree during import");
                     for mut kv in collection_iter {
