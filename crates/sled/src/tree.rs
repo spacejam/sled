@@ -1183,23 +1183,25 @@ impl Tree {
     /// ```
     /// use sled::{ConfigBuilder, Db, IVec};
     ///
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let t = Db::start(config).unwrap();
+    /// for i in 1..10000 {
+    ///     let config = ConfigBuilder::new().temporary(true).build();
+    ///     let t = Db::start(config).unwrap();
     ///
-    /// t.insert(&[0], vec![0]).unwrap();
-    /// t.insert(&[1], vec![10]).unwrap();
-    /// t.insert(&[2], vec![20]).unwrap();
-    /// t.insert(&[3], vec![30]).unwrap();
-    /// t.insert(&[4], vec![40]).unwrap();
-    /// t.insert(&[5], vec![50]).unwrap();
+    ///     t.insert(&[0], vec![0]).unwrap();
+    ///     t.insert(&[1], vec![10]).unwrap();
+    ///     t.insert(&[2], vec![20]).unwrap();
+    ///     t.insert(&[3], vec![30]).unwrap();
+    ///     t.insert(&[4], vec![40]).unwrap();
+    ///     t.insert(&[5], vec![50]).unwrap();
     ///
-    /// assert_eq!(&t.pop_max().unwrap().unwrap().0, &[5]);
-    /// assert_eq!(&t.pop_max().unwrap().unwrap().0, &[4]);
-    /// assert_eq!(&t.pop_max().unwrap().unwrap().0, &[3]);
-    /// assert_eq!(&t.pop_max().unwrap().unwrap().0, &[2]);
-    /// assert_eq!(&t.pop_max().unwrap().unwrap().0, &[1]);
-    /// assert_eq!(&t.pop_max().unwrap().unwrap().0, &[0]);
-    /// assert_eq!(t.pop_max().unwrap(), None);
+    ///     assert_eq!(&t.pop_max().unwrap().unwrap().0, &[5]);
+    ///     assert_eq!(&t.pop_max().unwrap().unwrap().0, &[4]);
+    ///     assert_eq!(&t.pop_max().unwrap().unwrap().0, &[3]);
+    ///     assert_eq!(&t.pop_max().unwrap().unwrap().0, &[2]);
+    ///     assert_eq!(&t.pop_max().unwrap().unwrap().0, &[1]);
+    ///     assert_eq!(&t.pop_max().unwrap().unwrap().0, &[0]);
+    ///     assert_eq!(t.pop_max().unwrap(), None);
+    /// }
     /// ```
     pub fn pop_max(&self) -> Result<Option<(IVec, IVec)>> {
         loop {
@@ -1225,23 +1227,25 @@ impl Tree {
     /// ```
     /// use sled::{ConfigBuilder, Db, IVec};
     ///
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let t = Db::start(config).unwrap();
+    /// for i in 1..10000 {
+    ///     let config = ConfigBuilder::new().temporary(true).build();
+    ///     let t = Db::start(config).unwrap();
     ///
-    /// t.insert(&[0], vec![0]).unwrap();
-    /// t.insert(&[1], vec![10]).unwrap();
-    /// t.insert(&[2], vec![20]).unwrap();
-    /// t.insert(&[3], vec![30]).unwrap();
-    /// t.insert(&[4], vec![40]).unwrap();
-    /// t.insert(&[5], vec![50]).unwrap();
+    ///     t.insert(&[0], vec![0]).unwrap();
+    ///     t.insert(&[1], vec![10]).unwrap();
+    ///     t.insert(&[2], vec![20]).unwrap();
+    ///     t.insert(&[3], vec![30]).unwrap();
+    ///     t.insert(&[4], vec![40]).unwrap();
+    ///     t.insert(&[5], vec![50]).unwrap();
     ///
-    /// assert_eq!(&t.pop_min().unwrap().unwrap().0, &[0]);
-    /// assert_eq!(&t.pop_min().unwrap().unwrap().0, &[1]);
-    /// assert_eq!(&t.pop_min().unwrap().unwrap().0, &[2]);
-    /// assert_eq!(&t.pop_min().unwrap().unwrap().0, &[3]);
-    /// assert_eq!(&t.pop_min().unwrap().unwrap().0, &[4]);
-    /// assert_eq!(&t.pop_min().unwrap().unwrap().0, &[5]);
-    /// assert_eq!(t.pop_min().unwrap(), None);
+    ///     assert_eq!(&t.pop_min().unwrap().unwrap().0, &[0]);
+    ///     assert_eq!(&t.pop_min().unwrap().unwrap().0, &[1]);
+    ///     assert_eq!(&t.pop_min().unwrap().unwrap().0, &[2]);
+    ///     assert_eq!(&t.pop_min().unwrap().unwrap().0, &[3]);
+    ///     assert_eq!(&t.pop_min().unwrap().unwrap().0, &[4]);
+    ///     assert_eq!(&t.pop_min().unwrap().unwrap().0, &[5]);
+    ///     assert_eq!(t.pop_min().unwrap(), None);
+    /// }
     /// ```
     pub fn pop_min(&self) -> Result<Option<(IVec, IVec)>> {
         loop {

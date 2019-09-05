@@ -413,34 +413,6 @@ fn concurrent_tree_transactions() {
 }
 
 #[test]
-fn tree_subdir() {
-    let _ = std::fs::remove_dir_all("/tmp/test_tree_subdir");
-
-    let config = ConfigBuilder::new()
-        .path("/tmp/test_tree_subdir/test_subdir".to_owned())
-        .build();
-
-    let t = sled::Db::start(config).unwrap();
-
-    t.insert(&[1], vec![1]).unwrap();
-
-    drop(t);
-
-    let config = ConfigBuilder::new()
-        .path("/tmp/test_tree_subdir/test_subdir".to_owned())
-        .build();
-    let t = sled::Db::start(config).unwrap();
-
-    let res = t.get(&*vec![1]);
-
-    assert_eq!(res.unwrap().unwrap(), vec![1_u8]);
-
-    drop(t);
-
-    std::fs::remove_dir_all("/tmp/test_tree_subdir").unwrap();
-}
-
-#[test]
 fn tree_iterator() {
     let config = ConfigBuilder::new()
         .temporary(true)
