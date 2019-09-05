@@ -35,6 +35,8 @@ pub enum Error {
         /// The file location that corrupted data was found at.
         at: DiskPtr,
     },
+    /// When using a typed Tree, an incorrect type was provided
+    IncorrectType,
     // a failpoint has been triggered for testing purposes
     #[doc(hidden)]
     #[cfg(feature = "failpoints")]
@@ -54,6 +56,7 @@ impl Clone for Error {
             Unsupported(why) => Unsupported(why.clone()),
             ReportableBug(what) => ReportableBug(what.clone()),
             Corruption { at } => Corruption { at: *at },
+            IncorrectType => IncorrectType,
             #[cfg(feature = "failpoints")]
             FailPoint => FailPoint,
         }
@@ -104,6 +107,7 @@ impl PartialEq for Error {
                 }
             }
             Io(_) => false,
+            IncorrectType => *other == IncorrectType,
         }
     }
 }
@@ -126,6 +130,7 @@ impl StdError for Error {
             FailPoint => "Fail point has been triggered.",
             Io(ref e) => e.description(),
             Corruption { .. } => "Read corrupted data.",
+            IncorrectType => "Incorrect type provided to typed Tree",
         }
     }
 }
@@ -154,6 +159,7 @@ impl Display for Error {
             Corruption { at } => {
                 write!(f, "Read corrupted data at file offset {}", at)
             }
+            IncorrectType => write!(f, "Incorrect type provided to typed Tree"),
         }
     }
 }
