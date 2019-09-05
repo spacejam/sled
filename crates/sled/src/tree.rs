@@ -1183,7 +1183,7 @@ impl Tree {
     /// ```
     /// use sled::{ConfigBuilder, Db, IVec};
     ///
-    /// for i in 1..10000 {
+    /// for i in 1..100 {
     ///     let config = ConfigBuilder::new().temporary(true).build();
     ///     let t = Db::start(config).unwrap();
     ///
@@ -1227,7 +1227,7 @@ impl Tree {
     /// ```
     /// use sled::{ConfigBuilder, Db, IVec};
     ///
-    /// for i in 1..10000 {
+    /// for i in 1..100 {
     ///     let config = ConfigBuilder::new().temporary(true).build();
     ///     let t = Db::start(config).unwrap();
     ///
