@@ -71,6 +71,8 @@ pub struct ConfigBuilder {
     #[doc(hidden)]
     pub path: PathBuf,
     #[doc(hidden)]
+    pub path_rnd: bool,
+    #[doc(hidden)]
     pub read_only: bool,
     #[doc(hidden)]
     pub segment_cleanup_threshold: f64,
@@ -104,6 +106,7 @@ impl Default for ConfigBuilder {
             io_buf_size: 2 << 22, // 8mb
             page_consolidation_threshold: 10,
             path: PathBuf::from(DEFAULT_PATH),
+            path_rnd: false,
             read_only: false,
             cache_capacity: 1024 * 1024 * 1024, // 1gb
             use_compression: false,
@@ -167,6 +170,7 @@ impl ConfigBuilder {
 
         if self.temporary && self.path == PathBuf::from(DEFAULT_PATH) {
             self.path = Self::gen_temp_path();
+            self.path_rnd = true;
         }
 
         self.limit_cache_max_memory();
@@ -334,7 +338,7 @@ impl ConfigBuilder {
             options.write(true);
         }
 
-        if std::path::Path::new(&path).exists() {
+        if self.path_rnd && std::path::Path::new(&path).exists() {
             panic!("file exists {:?} before the test", path);
         }
 
