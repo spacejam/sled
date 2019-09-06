@@ -40,7 +40,6 @@ mod db;
 mod frag;
 mod iter;
 mod ivec;
-mod dynamic_arc;
 mod lazy_deserialized;
 mod materializer;
 mod meta;
@@ -78,7 +77,6 @@ use {
         data::Data,
         frag::Frag,
         lazy_deserialized::LazyDeserialized,
-        dynamic_arc::DynamicArc,
         node::Node,
         prefix::{
             prefix_cmp, prefix_cmp_encoded, prefix_decode, prefix_encode,

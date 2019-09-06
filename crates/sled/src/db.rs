@@ -1,9 +1,8 @@
-use {
-    std::{
-        sync::{atomic::AtomicU64, Arc},
-        ops::Deref,
-        marker::PhantomData,
-    },
+use std::{
+    any::Any,
+    marker::PhantomData,
+    ops::Deref,
+    sync::{atomic::AtomicU64, Arc},
 };
 
 use pagecache::FastMap8;
@@ -17,7 +16,7 @@ use super::*;
 pub struct Db {
     context: Context,
     pub(crate) default: Arc<Tree<IVec>>,
-    tenants: Arc<RwLock<FastMap8<Vec<u8>, DynamicArc>>>,
+    tenants: Arc<RwLock<FastMap8<Vec<u8>, Arc<dyn Any + Send + Sync + 'static>>>>,
 }
 
 unsafe impl Send for Db {}
@@ -120,7 +119,7 @@ impl Db {
                 concurrency_control: Arc::new(RwLock::new(())),
                 merge_operator: Arc::new(RwLock::new(None)),
             };
-            tenants.insert(id, DynamicArc::new(Arc::new(tree)));
+            tenants.insert(id, Arc::new(tree));
         }
 
         drop(tenants);
@@ -130,14 +129,14 @@ impl Db {
 
     /// Open or create a new disk-backed Tree with its own keyspace,
     /// accessible from the `Db` via the provided identifier.
-    pub fn open_tree<V: AsRef<[u8]>, T: 'static>(
+    pub fn open_tree<V: AsRef<[u8]>, T: Send + Sync + 'static>(
         &self,
         name: V,
     ) -> Result<Arc<Tree<T>>> {
         let name = name.as_ref();
         let tenants = self.tenants.read();
         if let Some(tree) = tenants.get(name) {
-            return tree.maybe_clone();
+            return Arc::downcast(*tree).map_err(|_| Error::IncorrectType);
         }
         drop(tenants);
 
@@ -145,17 +144,17 @@ impl Db {
 
         let mut tenants = self.tenants.write();
         if let Some(tree) = tenants.get(name) {
-            return tree.maybe_clone();
+            return Arc::downcast(*tree).map_err(|_| Error::IncorrectType);
         }
         let tree: Arc<Tree<T>> =
             Arc::new(meta::open_tree(&self.context, name.to_vec(), &guard)?);
-        tenants.insert(name.to_vec(), DynamicArc::new(tree.clone()));
+        tenants.insert(name.to_vec(), tree.clone());
         drop(tenants);
         Ok(tree)
     }
 
     /// Remove a disk-backed collection.
-    pub fn drop_tree<T: 'static>(&self, name: &[u8]) -> Result<bool> {
+    pub fn drop_tree<T: Send + Sync + 'static>(&self, name: &[u8]) -> Result<bool> {
         if name == DEFAULT_TREE_ID {
             return Err(Error::Unsupported(
                 "cannot remove the core structures".into(),
