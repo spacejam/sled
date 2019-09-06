@@ -67,6 +67,12 @@ impl Arbitrary for Op {
     }
 }
 
+#[derive(Debug, Clone)]
+enum Expected {
+    Certain(u16),
+    Uncertain { old: Vec<u16>, new: u16 },
+}
+
 fn v(b: &[u8]) -> u16 {
     if b[0] % 4 != 0 {
         assert_eq!(b.len(), 2);
@@ -148,7 +154,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 
             tree = tree_res.expect("tree should restart");
 
-            let mut ref_iter = reference.iter().map(|(ref rk, ref rv)| (**rk, **rv));
+            let mut ref_iter = reference.iter().map(|(ref rk, ref rv)| (**rk, *rv));
             for res in tree.iter() {
                 let t = match res {
                     Ok((ref tk, _)) => v(tk),
@@ -157,31 +163,42 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 };
 
                 // make sure the tree value is in there
-                while let Some((r, (_rv, certainty))) = ref_iter.next() {
-                    if certainty {
-                        // tree MUST match reference if we have a certain reference
-                        if t != r {
-                            println!("expected to iterate over {:?} but got {:?} instead", r, t);
-                            return false;
-                        }
-                        break;
-                    } else {
-                        // we have an uncertain reference, so we iterate through
-                        // it and guarantee the reference is never higher than
-                        // the tree value.
-                        if t == r {
-                            // we can move on to the next tree item
+                while let Some((ref_key, ref_expected)) = ref_iter.next() {
+                    match ref_expected {
+                        Expected::Certain(_ref_value) => {
+                            // tree MUST match reference if we have a certain reference
+                            if t != ref_key {
+                                println!(
+                                    "expected to iterate over {:?} but got {:?} instead",
+                                    ref_key,
+                                    t
+                                );
+                                return false;
+                            }
                             break;
                         }
+                        Expected::Uncertain { old: _, new: _ } => {
+                            // we have an uncertain reference, so we iterate through
+                            // it and guarantee the reference is never higher than
+                            // the tree value.
+                            if t == ref_key {
+                                // we can move on to the next tree item
+                                break;
+                            }
 
-                        if r > t {
-                            // we have a bug, the reference iterator should always be <= tree
-                            println!("tree verification failed: expected {:?} got {:?}", r, t);
-                            return false;
+                            if ref_key > t {
+                                // we have a bug, the reference iterator should always be <= tree
+                                println!(
+                                    "tree verification failed: expected {:?} got {:?}",
+                                    ref_key,
+                                    t
+                                );
+                                return false;
+                            }
+
+                            // we are iterating through the reference until we have a certain
+                            // item or an item that matches the tree's real item anyway
                         }
-
-                        // we are iterating through the reference until we have a certain
-                        // item or an item that matches the tree's real item anyway
                     }
                 }
             }
@@ -227,7 +244,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 };
 
                 // insert false certainty until it fully completes
-                reference.insert(set_counter, (set_counter, false));
+                reference.insert(set_counter, Expected::Uncertain { old: vec![] /* TODO */, new: set_counter });
 
                 fp_crash!(tree.insert(&[hi, lo], val));
 
@@ -241,13 +258,13 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 
                 // now we should be certain the thing is in there, set certainty
                 // to true
-                reference.insert(set_counter, (set_counter, true));
+                reference.insert(set_counter, Expected::Certain(set_counter));
 
                 set_counter += 1;
             }
             Del(k) => {
                 // insert false certainty before completes
-                reference.insert(u16::from(k), (u16::from(k), false));
+                reference.insert(u16::from(k), Expected::Uncertain { old: vec![] /* TODO */, new: u16::from(k) });
 
                 fp_crash!(tree.remove(&*vec![0, k]));
                 fp_crash!(tree.flush());
