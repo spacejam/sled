@@ -16,7 +16,8 @@ use super::*;
 pub struct Db {
     context: Context,
     pub(crate) default: Arc<Tree<IVec>>,
-    tenants: Arc<RwLock<FastMap8<Vec<u8>, Arc<dyn Any + Send + Sync + 'static>>>>,
+    tenants:
+        Arc<RwLock<FastMap8<Vec<u8>, Arc<dyn Any + Send + Sync + 'static>>>>,
 }
 
 unsafe impl Send for Db {}
@@ -143,7 +144,7 @@ impl Db {
         let guard = pin();
 
         let mut tenants = self.tenants.write();
-      
+
         // we need to check this again in case another
         // thread opened it concurrently.
         if let Some(tree) = tenants.get(name) {
@@ -153,12 +154,15 @@ impl Db {
             Arc::new(meta::open_tree(&self.context, name.to_vec(), &guard)?);
 
         tenants.insert(name.to_vec(), tree.clone());
-      
+
         Ok(tree)
     }
 
     /// Remove a disk-backed collection.
-    pub fn drop_tree<T: Send + Sync + 'static>(&self, name: &[u8]) -> Result<bool> {
+    pub fn drop_tree<T: Send + Sync + 'static>(
+        &self,
+        name: &[u8],
+    ) -> Result<bool> {
         if name == DEFAULT_TREE_ID {
             return Err(Error::Unsupported(
                 "cannot remove the core structures".into(),
@@ -169,7 +173,7 @@ impl Db {
         let mut tenants = self.tenants.write();
 
         let tree: Arc<Tree<T>> = if let Some(tree) = tenants.remove(&*name) {
-            tree.maybe_clone()?
+            Arc::downcast(tree).map_err(|_| Error::IncorrectType)?
         } else {
             return Ok(false);
         };
