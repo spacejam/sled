@@ -51,7 +51,7 @@ steps:
   - script: cargo build --all --release
     displayName: Cargo build
     condition: eq( variables['testKind'], 'default' )
-  - script: cargo test --all --release
+  - script: cargo test --all --release -- --nocapture
     displayName: Cargo test
     condition: eq( variables['testKind'], 'default' )
   - script: |
@@ -63,37 +63,31 @@ steps:
       popd &&
       pushd crates/sled &&
       echo "testing sled doctests" &&
-      cargo test &&
+      cargo test -- --nocapture &&
       popd &&
       pushd crates/pagecache &&
       echo "testing pagecache doctests" &&
-      cargo test
+      cargo test -- --nocapture
     displayName: doctests
     condition: eq( variables['testKind'], 'doctests' )
   - script: |
-      echo "cross build" &&
-      echo "https://github.com/rust-lang/cargo/issues/4753" &&
-      rustup target add aarch64-fuchsia &&
-      rustup target add aarch64-linux-android &&
-      rustup target add i686-linux-android &&
-      rustup target add i686-unknown-linux-gnu &&
-      rustup target add x86_64-pc-windows-gnu &&
-      rustup target add x86_64-linux-android &&
-      rustup target add x86_64-fuchsia &&
-      pushd crates/sled      && cargo check --target aarch64-fuchsia && popd &&
-      pushd crates/sled      && cargo check --target aarch64-linux-android && popd &&
-      pushd crates/sled      && cargo check --target i686-linux-android && popd &&
-      pushd crates/sled      && cargo check --target i686-unknown-linux-gnu && popd &&
-      pushd crates/sled      && cargo check --target x86_64-pc-windows-gnu  && popd &&
-      pushd crates/sled      && cargo check --target x86_64-linux-android  && popd &&
-      pushd crates/sled      && cargo check --target x86_64-fuchsia && popd &&
-      pushd crates/pagecache && cargo check --target aarch64-fuchsia && popd &&
-      pushd crates/pagecache && cargo check --target aarch64-linux-android && popd &&
-      pushd crates/pagecache && cargo check --target i686-linux-android && popd &&
-      pushd crates/pagecache && cargo check --target i686-unknown-linux-gnu && popd &&
-      pushd crates/pagecache && cargo check --target x86_64-pc-windows-gnu  && popd &&
-      pushd crates/pagecache && cargo check --target x86_64-linux-android && popd &&
-      pushd crates/pagecache && cargo check --target x86_64-fuchsia && popd
+      set -eo pipefail
+      echo "cross build"
+      echo "https://github.com/rust-lang/cargo/issues/4753"
+      crates="sled pagecache"
+      targets="aarch64-fuchsia aarch64-linux-android"
+      targets="$targets i686-linux-android i686-unknown-linux-gnu"
+      targets="$targets x86_64-pc-windows-gnu x86_64-linux-android x86_64-fuchsia"
+      for crate in $crates; do
+      for target in $targets; do
+        pushd crates/$crate
+        echo "setting up $target..."
+        rustup target add $target
+        echo "checking $target..."
+        cargo check --target $target
+        popd
+      done
+      done
     displayName: cross-build
     condition: eq( variables['testKind'], 'cross-compile' )
   - script: |

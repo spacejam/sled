@@ -1,11 +1,11 @@
-/// A simple doubly-linked list for use in the `Lru`
 use std::ptr;
 
-use super::*;
+pub type Item = u64;
 
+/// A simple doubly linked list for use in the `Lru`
 #[derive(Debug)]
 pub(crate) struct Node {
-    inner: PageId,
+    inner: Item,
     next: *mut Node,
     prev: *mut Node,
 }
@@ -27,17 +27,17 @@ impl Node {
     }
 }
 
-/// A simple non-cyclical doubly-linked
+/// A simple non-cyclical doubly linked
 /// list where items can be efficiently
 /// removed from the middle, for the purposes
-/// of backing an Lru cache.
-pub struct Dll {
+/// of backing an LRU cache.
+pub struct DoublyLinkedList {
     head: *mut Node,
     tail: *mut Node,
     len: usize,
 }
 
-impl Drop for Dll {
+impl Drop for DoublyLinkedList {
     fn drop(&mut self) {
         let mut cursor = self.head;
         while !cursor.is_null() {
@@ -56,7 +56,7 @@ impl Drop for Dll {
     }
 }
 
-impl Default for Dll {
+impl Default for DoublyLinkedList {
     fn default() -> Self {
         Self {
             head: ptr::null_mut(),
@@ -66,12 +66,12 @@ impl Default for Dll {
     }
 }
 
-impl Dll {
+impl DoublyLinkedList {
     pub(crate) fn len(&self) -> usize {
         self.len
     }
 
-    pub(crate) fn push_head(&mut self, item: PageId) -> *mut Node {
+    pub(crate) fn push_head(&mut self, item: Item) -> *mut Node {
         self.len += 1;
 
         let node = Node {
@@ -98,7 +98,7 @@ impl Dll {
     }
 
     #[cfg(test)]
-    pub(crate) fn push_tail(&mut self, item: PageId) {
+    pub(crate) fn push_tail(&mut self, item: Item) {
         self.len += 1;
 
         let node = Node {
@@ -135,7 +135,7 @@ impl Dll {
     }
 
     #[cfg(test)]
-    pub(crate) fn pop_head(&mut self) -> Option<PageId> {
+    pub(crate) fn pop_head(&mut self) -> Option<Item> {
         if self.head.is_null() {
             return None;
         }
@@ -157,7 +157,7 @@ impl Dll {
         }
     }
 
-    pub(crate) fn pop_tail(&mut self) -> Option<PageId> {
+    pub(crate) fn pop_tail(&mut self) -> Option<Item> {
         if self.tail.is_null() {
             return None;
         }
@@ -179,7 +179,7 @@ impl Dll {
         }
     }
 
-    pub(crate) unsafe fn pop_ptr(&mut self, ptr: *mut Node) -> PageId {
+    pub(crate) unsafe fn pop_ptr(&mut self, ptr: *mut Node) -> Item {
         self.len -= 1;
 
         let mut node = Box::from_raw(ptr);
@@ -198,7 +198,7 @@ impl Dll {
     }
 
     #[cfg(test)]
-    pub(crate) fn into_vec(mut self) -> Vec<PageId> {
+    pub(crate) fn into_vec(mut self) -> Vec<Item> {
         let mut res = vec![];
         while let Some(val) = self.pop_head() {
             res.push(val);
@@ -209,7 +209,7 @@ impl Dll {
 
 #[test]
 fn test_dll() {
-    let mut dll = Dll::default();
+    let mut dll = DoublyLinkedList::default();
     dll.push_head(5);
     dll.push_tail(6);
     dll.push_head(4);

@@ -168,7 +168,7 @@ impl Tree {
                 // success
                 if let Some(res) = subscriber_reservation.take() {
                     let event =
-                        subscription::Event::Set(key.as_ref().into(), value);
+                        subscription::Event::Insert(key.as_ref().into(), value);
 
                     res.complete(event);
                 }
@@ -329,10 +329,10 @@ impl Tree {
 
         let View { node, .. } = self.node_for_key(key.as_ref(), &guard)?;
 
-        let kv_opt = node.leaf_pair_for_key(key.as_ref());
-        let v_opt = kv_opt.map(|kv| kv.1.clone());
+        let pair = node.leaf_pair_for_key(key.as_ref());
+        let val = pair.map(|kv| kv.1.clone());
 
-        Ok(v_opt)
+        Ok(val)
     }
 
     #[doc(hidden)]
@@ -396,7 +396,8 @@ impl Tree {
             if link.is_ok() {
                 // success
                 if let Some(res) = subscriber_reservation.take() {
-                    let event = subscription::Event::Del(key.as_ref().into());
+                    let event =
+                        subscription::Event::Remove(key.as_ref().into());
 
                     res.complete(event);
                 }
@@ -490,9 +491,9 @@ impl Tree {
             if link.is_ok() {
                 if let Some(res) = subscriber_reservation.take() {
                     let event = if let Some(new) = new {
-                        subscription::Event::Set(key.as_ref().into(), new)
+                        subscription::Event::Insert(key.as_ref().into(), new)
                     } else {
-                        subscription::Event::Del(key.as_ref().into())
+                        subscription::Event::Remove(key.as_ref().into())
                     };
 
                     res.complete(event);
@@ -663,8 +664,8 @@ impl Tree {
     /// // events is a blocking `Iterator` over `Event`s
     /// for event in events.take(1) {
     ///     match event {
-    ///         Event::Set(key, value) => assert_eq!(key.as_ref(), &[0]),
-    ///         Event::Del(key) => {}
+    ///         Event::Insert(key, value) => assert_eq!(key.as_ref(), &[0]),
+    ///         Event::Remove(key) => {}
     ///     }
     /// }
     ///
@@ -674,13 +675,35 @@ impl Tree {
         self.subscriptions.register(prefix)
     }
 
-    /// Flushes all dirty IO buffers and calls fsync.
-    /// If this succeeds, it is guaranteed that
-    /// all previous writes will be recovered if
-    /// the system crashes. Returns the number
-    /// of bytes flushed during this call.
+    /// Synchronously flushes all dirty IO buffers and calls
+    /// fsync. If this succeeds, it is guaranteed that all
+    /// previous writes will be recovered if the system
+    /// crashes. Returns the number of bytes flushed during
+    /// this call.
+    ///
+    /// Flushing can take quite a lot of time, and you should
+    /// measure the performance impact of using it on
+    /// realistic sustained workloads running on realistic
+    /// hardware.
     pub fn flush(&self) -> Result<usize> {
         self.context.pagecache.flush()
+    }
+
+    /// Asynchronously flushes all dirty IO buffers
+    /// and calls fsync. If this succeeds, it is
+    /// guaranteed that all previous writes will
+    /// be recovered if the system crashes. Returns
+    /// the number of bytes flushed during this call.
+    ///
+    /// Flushing can take quite a lot of time, and you
+    /// should measure the performance impact of
+    /// using it on realistic sustained workloads
+    /// running on realistic hardware.
+    pub fn flush_async(
+        &self,
+    ) -> impl std::future::Future<Output = Result<usize>> {
+        let pagecache = self.context.pagecache.clone();
+        threadpool::spawn(move || pagecache.flush())
     }
 
     /// Returns `true` if the `Tree` contains a value for
@@ -897,12 +920,12 @@ impl Tree {
             if link.is_ok() {
                 if let Some(res) = subscriber_reservation.take() {
                     let event = if let Some(new) = &new {
-                        subscription::Event::Set(
+                        subscription::Event::Insert(
                             key.as_ref().into(),
                             new.clone(),
                         )
                     } else {
-                        subscription::Event::Del(key.as_ref().into())
+                        subscription::Event::Remove(key.as_ref().into())
                     };
 
                     res.complete(event);

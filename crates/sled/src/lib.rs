@@ -51,15 +51,18 @@
 //! use sled::Db;
 //!
 //! let t = Db::open("my_db").unwrap();
+//!
+//! // insert and get
 //! t.insert(b"yo!", b"v1");
 //! assert_eq!(&t.get(b"yo!").unwrap().unwrap(), b"v1");
 //!
 //! // Atomic compare-and-swap.
 //! t.cas(
-//!     b"yo!",       // key
-//!     Some(b"v1"),  // old value, None for not present
-//!     Some(b"v2"),  // new value, None for delete
-//! ).unwrap();
+//!     b"yo!",      // key
+//!     Some(b"v1"), // old value, None for not present
+//!     Some(b"v2"), // new value, None for delete
+//! )
+//! .unwrap();
 //!
 //! // Iterates over key-value pairs, starting at the given key.
 //! let scan_key: &[u8] = b"a non-present key before yo!";
@@ -111,7 +114,7 @@ pub use {
             TransactionalTree,
         },
     },
-    pagecache::{Config, ConfigBuilder, Error, Result},
+    pagecache::{Config, ConfigBuilder, Error, OneShot, Result},
 };
 
 use {
@@ -130,8 +133,8 @@ use {
     },
     log::{debug, error, trace},
     pagecache::{
-        debug_delay, pin, Materializer, Measure, PageCache, PageId,
-        RecoveryGuard, M,
+        debug::debug_delay, pin, threadpool, Materializer, Measure, PageCache,
+        PageId, RecoveryGuard, M,
     },
     serde::{Deserialize, Serialize},
 };

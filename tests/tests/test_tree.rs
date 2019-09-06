@@ -406,15 +406,23 @@ fn concurrent_tree_transactions() {
     for thread in threads.into_iter() {
         thread.join().unwrap();
     }
+
+    let v1 = db.get(b"k1").unwrap().unwrap();
+    let v2 = db.get(b"k2").unwrap().unwrap();
+    assert_eq!([v1, v2], [b"cats", b"dogs"]);
 }
 
 #[test]
 fn tree_subdir() {
-    let _ = std::fs::remove_dir_all("/tmp/test_tree_subdir");
+    let mut parent_path = std::env::temp_dir();
+    parent_path.push("test_tree_subdir");
 
-    let config = ConfigBuilder::new()
-        .path("/tmp/test_tree_subdir/test_subdir".to_owned())
-        .build();
+    let _ = std::fs::remove_dir_all(&parent_path);
+
+    let mut path = parent_path.clone();
+    path.push("test_subdir");
+
+    let config = ConfigBuilder::new().path(&path).build();
 
     let t = sled::Db::start(config).unwrap();
 
@@ -422,9 +430,8 @@ fn tree_subdir() {
 
     drop(t);
 
-    let config = ConfigBuilder::new()
-        .path("/tmp/test_tree_subdir/test_subdir".to_owned())
-        .build();
+    let config = ConfigBuilder::new().path(&path).build();
+
     let t = sled::Db::start(config).unwrap();
 
     let res = t.get(&*vec![1]);
@@ -433,7 +440,7 @@ fn tree_subdir() {
 
     drop(t);
 
-    std::fs::remove_dir_all("/tmp/test_tree_subdir").unwrap();
+    std::fs::remove_dir_all(&parent_path).unwrap();
 }
 
 #[test]
