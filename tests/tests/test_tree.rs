@@ -406,15 +406,23 @@ fn concurrent_tree_transactions() {
     for thread in threads.into_iter() {
         thread.join().unwrap();
     }
+
+    let v1 = db.get(b"k1").unwrap().unwrap();
+    let v2 = db.get(b"k2").unwrap().unwrap();
+    assert_eq!([v1, v2], [b"cats", b"dogs"]);
 }
 
 #[test]
 fn tree_subdir() {
-    let _ = std::fs::remove_dir_all("/tmp/test_tree_subdir");
+    let mut parent_path = std::env::temp_dir();
+    parent_path.push("test_tree_subdir");
 
-    let config = ConfigBuilder::new()
-        .path("/tmp/test_tree_subdir/test_subdir".to_owned())
-        .build();
+    let _ = std::fs::remove_dir_all(&parent_path);
+
+    let mut path = parent_path.clone();
+    path.push("test_subdir");
+
+    let config = ConfigBuilder::new().path(&path).build();
 
     let t = sled::Db::start(config).unwrap();
 
@@ -422,9 +430,8 @@ fn tree_subdir() {
 
     drop(t);
 
-    let config = ConfigBuilder::new()
-        .path("/tmp/test_tree_subdir/test_subdir".to_owned())
-        .build();
+    let config = ConfigBuilder::new().path(&path).build();
+
     let t = sled::Db::start(config).unwrap();
 
     let res = t.get(&*vec![1]);
@@ -433,7 +440,7 @@ fn tree_subdir() {
 
     drop(t);
 
-    std::fs::remove_dir_all("/tmp/test_tree_subdir").unwrap();
+    std::fs::remove_dir_all(&parent_path).unwrap();
 }
 
 #[test]
@@ -824,8 +831,8 @@ fn tree_bug_4() {
 
 #[test]
 fn tree_bug_5() {
-    // postmortem: during recovery, the segment accountant was failing to properly set the file's
-    // tip.
+    // postmortem: during recovery, the segment accountant was failing to
+    // properly set the file's tip.
     prop_tree_matches_btreemap(
         vec![
             Set(Key(vec![231]), 107),
@@ -845,9 +852,10 @@ fn tree_bug_5() {
 
 #[test]
 fn tree_bug_6() {
-    // postmortem: after reusing segments, we were failing to checksum reads performed while
-    // iterating over rewritten segment buffers, and using former garbage data. fix: use the
-    // crc that's there for catching torn writes with high probability, AND zero out buffers.
+    // postmortem: after reusing segments, we were failing to checksum reads
+    // performed while iterating over rewritten segment buffers, and using
+    // former garbage data. fix: use the crc that's there for catching torn
+    // writes with high probability, AND zero out buffers.
     prop_tree_matches_btreemap(
         vec![
             Set(Key(vec![162]), 8),
@@ -867,8 +875,9 @@ fn tree_bug_6() {
 
 #[test]
 fn tree_bug_7() {
-    // postmortem: the segment accountant was not fully recovered, and thought that it could
-    // reuse a particular segment that wasn't actually empty yet.
+    // postmortem: the segment accountant was not fully recovered, and thought
+    // that it could reuse a particular segment that wasn't actually empty
+    // yet.
     prop_tree_matches_btreemap(
         vec![
             Set(Key(vec![135]), 22),
@@ -889,8 +898,8 @@ fn tree_bug_7() {
 
 #[test]
 fn tree_bug_8() {
-    // postmortem: failed to properly recover the state in the segment accountant
-    // that tracked the previously issued segment.
+    // postmortem: failed to properly recover the state in the segment
+    // accountant that tracked the previously issued segment.
     prop_tree_matches_btreemap(
         vec![
             Set(Key(vec![145]), 151),
@@ -911,10 +920,10 @@ fn tree_bug_8() {
 
 #[test]
 fn tree_bug_9() {
-    // postmortem: was failing to load existing snapshots on initialization. would
-    // encounter uninitialized segments at the log tip and overwrite the first segment
-    // (indexed by LSN of 0) in the segment accountant ordering, skipping over
-    // important updates.
+    // postmortem: was failing to load existing snapshots on initialization.
+    // would encounter uninitialized segments at the log tip and overwrite
+    // the first segment (indexed by LSN of 0) in the segment accountant
+    // ordering, skipping over important updates.
     prop_tree_matches_btreemap(
         vec![
             Set(Key(vec![189]), 36),
@@ -936,8 +945,9 @@ fn tree_bug_9() {
 
 #[test]
 fn tree_bug_10() {
-    // postmortem: after reusing a segment, but not completely writing a segment,
-    // we were hitting an old LSN and violating an assert, rather than just ending.
+    // postmortem: after reusing a segment, but not completely writing a
+    // segment, we were hitting an old LSN and violating an assert, rather
+    // than just ending.
     prop_tree_matches_btreemap(
         vec![
             Set(Key(vec![152]), 163),
@@ -998,8 +1008,8 @@ fn tree_bug_11() {
 
 #[test]
 fn tree_bug_12() {
-    // postmortem: was not checking that a log entry's LSN matches its position as
-    // part of detecting tears / partial rewrites.
+    // postmortem: was not checking that a log entry's LSN matches its position
+    // as part of detecting tears / partial rewrites.
     prop_tree_matches_btreemap(
         vec![
             Set(Key(vec![118]), 156),

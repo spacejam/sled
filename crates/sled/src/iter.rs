@@ -95,14 +95,14 @@ impl<'a, T> Iterator for Iter<'a, T> {
         let guard = unsafe { &*g_ptr as &'a Guard };
 
         let (mut pid, mut node) =
-            match (self.going_forward, self.cached_node.take()) {
-                (true, Some((pid, node))) => (pid, node),
-                _ => {
-                    let view = iter_try!(self
-                        .tree
-                        .node_for_key(self.low_key(), guard));
-                    (view.pid, view.node)
-                }
+            if let (true, Some((pid, node))) =
+                (self.going_forward, self.cached_node.take()) {
+                (pid, node)
+            } else {
+                let view = iter_try!(self
+                    .tree
+                    .node_for_key(self.low_key(), guard));
+                (view.pid, view.node)
             };
 
         for _ in 0..MAX_LOOPS {
@@ -178,14 +178,14 @@ impl<'a, T> DoubleEndedIterator for Iter<'a, T> {
         let guard = unsafe { &*g_ptr as &'a Guard };
 
         let (mut pid, mut node) =
-            match (self.going_forward, self.cached_node.take()) {
-                (false, Some((pid, node))) => (pid, node),
-                _ => {
-                    let view = iter_try!(self
-                        .tree
-                        .node_for_key(self.high_key(), guard));
-                    (view.pid, view.node)
-                }
+            if let (false, Some((pid, node))) =
+                (self.going_forward, self.cached_node.take()) {
+                (pid, node)
+            } else {
+                let view = iter_try!(self
+                    .tree
+                    .node_for_key(self.high_key(), guard));
+                (view.pid, view.node)
             };
 
         for _ in 0..MAX_LOOPS {

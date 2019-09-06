@@ -28,7 +28,8 @@ pub enum Error {
     Unsupported(String),
     /// An unexpected bug has happened. Please open an issue on github!
     ReportableBug(String),
-    /// A read or write error has happened when interacting with the file system.
+    /// A read or write error has happened when interacting with the file
+    /// system.
     Io(io::Error),
     /// Corruption has been detected in the storage file.
     Corruption {
@@ -42,7 +43,6 @@ pub enum Error {
     #[cfg(feature = "failpoints")]
     FailPoint,
 }
-
 
 impl Clone for Error {
     fn clone(&self) -> Self {

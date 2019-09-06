@@ -1,9 +1,15 @@
 use std::{
     fmt::{self, Debug},
     ops::Deref,
+    sync::atomic::Ordering::{Acquire, Release, AcqRel, Relaxed},
 };
 
-use super::*;
+use crossbeam_epoch::{
+    unprotected, Atomic, Guard,
+    Owned, Shared,
+};
+
+use crate::debug::debug_delay;
 
 type CompareAndSwapResult<'g, T> = std::result::Result<
     Shared<'g, Node<T>>,
@@ -61,7 +67,7 @@ where
         &self,
         formatter: &mut fmt::Formatter<'_>,
     ) -> std::result::Result<(), fmt::Error> {
-        let guard = pin();
+        let guard = crossbeam_epoch::pin();
         let head = self.head(&guard);
         let iter = StackIter::from_ptr(head, &guard);
 
@@ -291,6 +297,7 @@ where
 fn basic_functionality() {
     use std::sync::Arc;
     use std::thread;
+    use crossbeam_epoch::pin;
 
     let guard = pin();
     let ll = Arc::new(Stack::default());

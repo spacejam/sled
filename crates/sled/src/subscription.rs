@@ -11,7 +11,7 @@ use parking_lot::RwLock;
 
 use crate::ivec::IVec;
 
-use pagecache::{Promise, PromiseFiller};
+use pagecache::{OneShot, OneShotFiller};
 
 static ID_GEN: AtomicUsize = AtomicUsize::new(0);
 
@@ -19,16 +19,16 @@ static ID_GEN: AtomicUsize = AtomicUsize::new(0);
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Event {
     /// A new complete (key, value) pair
-    Set(Arc<[u8]>, IVec),
+    Insert(Arc<[u8]>, IVec),
     /// A deleted key
-    Del(Arc<[u8]>),
+    Remove(Arc<[u8]>),
 }
 
 impl Event {
     /// Return a reference to the key that this `Event` refers to
     pub fn key(&self) -> &[u8] {
         match self {
-            Event::Set(k, ..) | Event::Del(k) => &*k,
+            Event::Insert(k, ..) | Event::Remove(k) => &*k,
         }
     }
 }
@@ -38,18 +38,18 @@ impl Clone for Event {
         use self::Event::*;
 
         match self {
-            Set(k, v) => Set(k.clone(), v.clone()),
-            Del(k) => Del(k.clone()),
+            Insert(k, v) => Insert(k.clone(), v.clone()),
+            Remove(k) => Remove(k.clone()),
         }
     }
 }
 
-type Senders = Vec<(usize, SyncSender<Promise<Event>>)>;
+type Senders = Vec<(usize, SyncSender<OneShot<Event>>)>;
 
 /// A subscriber listening on a specified prefix
 pub struct Subscriber {
     id: usize,
-    rx: Receiver<Promise<Event>>,
+    rx: Receiver<OneShot<Event>>,
     home: Arc<RwLock<Senders>>,
 }
 
@@ -125,7 +125,7 @@ impl Subscriptions {
             let subs = subs_rwl.read();
 
             for (_id, sender) in subs.iter() {
-                let (tx, rx) = Promise::pair();
+                let (tx, rx) = OneShot::pair();
                 if sender.send(rx).is_err() {
                     continue;
                 }
@@ -142,7 +142,7 @@ impl Subscriptions {
 }
 
 pub(crate) struct ReservedBroadcast {
-    subscribers: Vec<PromiseFiller<Event>>,
+    subscribers: Vec<OneShotFiller<Event>>,
 }
 
 impl ReservedBroadcast {
@@ -180,23 +180,23 @@ fn basic_subscription() {
 
     let k2: Arc<[u8]> = vec![].into();
     let r2 = subs.reserve(&k2).unwrap();
-    r2.complete(Event::Set(k2.clone(), IVec::from(k2.clone())));
+    r2.complete(Event::Insert(k2.clone(), IVec::from(k2.clone())));
 
     let k3: Arc<[u8]> = vec![0].into();
     let r3 = subs.reserve(&k3).unwrap();
-    r3.complete(Event::Set(k3.clone(), IVec::from(k3.clone())));
+    r3.complete(Event::Insert(k3.clone(), IVec::from(k3.clone())));
 
     let k4: Arc<[u8]> = vec![0, 1].into();
     let r4 = subs.reserve(&k4).unwrap();
-    r4.complete(Event::Del(k4.clone()));
+    r4.complete(Event::Remove(k4.clone()));
 
     let k5: Arc<[u8]> = vec![0, 1, 2].into();
     let r5 = subs.reserve(&k5).unwrap();
-    r5.complete(Event::Set(k5.clone(), IVec::from(k5.clone())));
+    r5.complete(Event::Insert(k5.clone(), IVec::from(k5.clone())));
 
     let k6: Arc<[u8]> = vec![1, 1, 2].into();
     let r6 = subs.reserve(&k6).unwrap();
-    r6.complete(Event::Del(k6.clone()));
+    r6.complete(Event::Remove(k6.clone()));
 
     let k7: Arc<[u8]> = vec![1, 1, 2].into();
     let r7 = subs.reserve(&k7).unwrap();
@@ -204,7 +204,7 @@ fn basic_subscription() {
 
     let k8: Arc<[u8]> = vec![1, 2, 2].into();
     let r8 = subs.reserve(&k8).unwrap();
-    r8.complete(Event::Set(k8.clone(), IVec::from(k8.clone())));
+    r8.complete(Event::Insert(k8.clone(), IVec::from(k8.clone())));
 
     assert_eq!(s1.next().unwrap().key(), &*k2);
     assert_eq!(s1.next().unwrap().key(), &*k3);

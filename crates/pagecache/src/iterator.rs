@@ -273,7 +273,7 @@ fn scan_segment_lsns(
         segments
     );
 
-    let header_promises: Vec<Promise<Option<(LogId, SegmentHeader)>>> = (0
+    let header_promises: Vec<OneShot<Option<(LogId, SegmentHeader)>>> = (0
         ..segments)
         .map({
             // let config = config.clone();
@@ -288,7 +288,7 @@ fn scan_segment_lsns(
 
     let headers: Vec<(LogId, SegmentHeader)> = header_promises
         .into_iter()
-        .filter_map(Promise::unwrap)
+        .filter_map(OneShot::unwrap)
         .collect();
 
     let mut ordering = BTreeMap::new();

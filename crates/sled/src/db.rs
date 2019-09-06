@@ -66,7 +66,7 @@ impl Db {
         Self::start(config)
     }
 
-    /// Load existing or create a new `Db` with a default configuration.
+    #[doc(hidden)]
     #[deprecated(since = "0.24.2", note = "replaced by `Db:open`")]
     pub fn start_default<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
         Self::open(path)
@@ -143,13 +143,17 @@ impl Db {
         let guard = pin();
 
         let mut tenants = self.tenants.write();
+      
+        // we need to check this again in case another
+        // thread opened it concurrently.
         if let Some(tree) = tenants.get(name) {
             return Arc::downcast(*tree).map_err(|_| Error::IncorrectType);
         }
         let tree: Arc<Tree<T>> =
             Arc::new(meta::open_tree(&self.context, name.to_vec(), &guard)?);
+
         tenants.insert(name.to_vec(), tree.clone());
-        drop(tenants);
+      
         Ok(tree)
     }
 

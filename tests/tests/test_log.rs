@@ -247,7 +247,8 @@ fn concurrent_logging_404() {
                         current + 1,
                         Ordering::SeqCst,
                     ) {
-                        // If the current value was returned, then CAS succeeded on AtomicUsize
+                        // If the current value was returned, then CAS succeeded
+                        // on AtomicUsize
                         c if c == current => {
                             res.complete().expect("reservation complete panic");
                         }
@@ -580,7 +581,8 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
                 let (lsn, ptr, ref expected, _len) = reference[lid as usize];
                 // log.make_stable(lid);
                 let read_res = log.read(PID, lsn, ptr);
-                // println!( "expected {:?} read_res {:?} tip {} lid {}", expected, read_res, tip, lid);
+                // println!( "expected {:?} read_res {:?} tip {} lid {}",
+                // expected, read_res, tip, lid);
                 if expected.is_none() || tip as u64 <= ptr.lid() {
                     assert!(
                         read_res.is_err() || !read_res.unwrap().is_successful()

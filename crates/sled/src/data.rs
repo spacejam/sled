@@ -67,7 +67,6 @@ impl<T: Clone + Ord> Data<T> {
             }
         }
     }
-
     pub(crate) fn receive_merge(
         &mut self,
         old_prefix: &[u8],

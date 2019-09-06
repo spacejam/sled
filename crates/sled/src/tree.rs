@@ -82,8 +82,7 @@ unsafe impl<T> Send for Tree<T> where T: Sync {}
 unsafe impl<T> Sync for Tree<T> where T: Sync {}
 
 impl<T> Tree<T> {
-    /// Insert a key to a new value, returning the last value if it
-    /// was set.
+    #[doc(hidden)]
     #[deprecated(since = "0.24.2", note = "replaced by `Tree::insert`")]
     pub fn set<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
     where
@@ -161,7 +160,7 @@ impl<T> Tree<T> {
                 // success
                 if let Some(res) = subscriber_reservation.take() {
                     let event =
-                        subscription::Event::Set(key.as_ref().into(), value);
+                        subscription::Event::Insert(key.as_ref().into(), value);
 
                     res.complete(event);
                 }
@@ -239,7 +238,6 @@ impl<T> Tree<T> {
     /// assert_eq!(unprocessed.get(b"k3").unwrap(), None);
     /// assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
     /// ```
-    ///
     pub fn transaction<F, R>(&self, f: F) -> TransactionResult<R>
     where
         F: Fn(&TransactionalTree<'_, T>) -> TransactionResult<R>,
@@ -323,23 +321,13 @@ impl<T> Tree<T> {
 
         let View { node, .. } = self.node_for_key(key.as_ref(), &guard)?;
 
-        let kv_opt = node.leaf_pair_for_key(key.as_ref());
-        let v_opt = kv_opt.map(|kv| kv.1.clone());
+        let pair = node.leaf_pair_for_key(key.as_ref());
+        let val = pair.map(|kv| kv.1.clone());
 
-        Ok(v_opt)
+        Ok(val)
     }
 
-    /// Delete a value, returning the old value if it existed.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let config = sled::ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Db::start(config).unwrap();
-    /// t.insert(&[1], vec![1]);
-    /// assert_eq!(t.del(&[1]), Ok(Some(sled::IVec::from(vec![1]))));
-    /// assert_eq!(t.del(&[1]), Ok(None));
-    /// ```
+    #[doc(hidden)]
     #[deprecated(since = "0.24.2", note = "replaced by `Tree::remove`")]
     pub fn del<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
         self.remove(key)
@@ -352,7 +340,7 @@ impl<T> Tree<T> {
     /// ```
     /// let config = sled::ConfigBuilder::new().temporary(true).build();
     /// let t = sled::Db::start(config).unwrap();
-    /// t.set(&[1], vec![1]);
+    /// t.insert(&[1], vec![1]);
     /// assert_eq!(t.remove(&[1]), Ok(Some(sled::IVec::from(vec![1]))));
     /// assert_eq!(t.remove(&[1]), Ok(None));
     /// ```
@@ -400,7 +388,8 @@ impl<T> Tree<T> {
             if link.is_ok() {
                 // success
                 if let Some(res) = subscriber_reservation.take() {
-                    let event = subscription::Event::Del(key.as_ref().into());
+                    let event =
+                        subscription::Event::Remove(key.as_ref().into());
 
                     res.complete(event);
                 }
@@ -494,9 +483,9 @@ impl<T> Tree<T> {
             if link.is_ok() {
                 if let Some(res) = subscriber_reservation.take() {
                     let event = if let Some(new) = new {
-                        subscription::Event::Set(key.as_ref().into(), new)
+                        subscription::Event::Insert(key.as_ref().into(), new)
                     } else {
-                        subscription::Event::Del(key.as_ref().into())
+                        subscription::Event::Remove(key.as_ref().into())
                     };
 
                     res.complete(event);
@@ -667,8 +656,8 @@ impl<T> Tree<T> {
     /// // events is a blocking `Iterator` over `Event`s
     /// for event in events.take(1) {
     ///     match event {
-    ///         Event::Set(key, value) => assert_eq!(key.as_ref(), &[0]),
-    ///         Event::Del(key) => {}
+    ///         Event::Insert(key, value) => assert_eq!(key.as_ref(), &[0]),
+    ///         Event::Remove(key) => {}
     ///     }
     /// }
     ///
@@ -678,13 +667,35 @@ impl<T> Tree<T> {
         self.subscriptions.register(prefix)
     }
 
-    /// Flushes all dirty IO buffers and calls fsync.
-    /// If this succeeds, it is guaranteed that
-    /// all previous writes will be recovered if
-    /// the system crashes. Returns the number
-    /// of bytes flushed during this call.
+    /// Synchronously flushes all dirty IO buffers and calls
+    /// fsync. If this succeeds, it is guaranteed that all
+    /// previous writes will be recovered if the system
+    /// crashes. Returns the number of bytes flushed during
+    /// this call.
+    ///
+    /// Flushing can take quite a lot of time, and you should
+    /// measure the performance impact of using it on
+    /// realistic sustained workloads running on realistic
+    /// hardware.
     pub fn flush(&self) -> Result<usize> {
         self.context.pagecache.flush()
+    }
+
+    /// Asynchronously flushes all dirty IO buffers
+    /// and calls fsync. If this succeeds, it is
+    /// guaranteed that all previous writes will
+    /// be recovered if the system crashes. Returns
+    /// the number of bytes flushed during this call.
+    ///
+    /// Flushing can take quite a lot of time, and you
+    /// should measure the performance impact of
+    /// using it on realistic sustained workloads
+    /// running on realistic hardware.
+    pub fn flush_async(
+        &self,
+    ) -> impl std::future::Future<Output = Result<usize>> {
+        let pagecache = self.context.pagecache.clone();
+        threadpool::spawn(move || pagecache.flush())
     }
 
     /// Returns `true` if the `Tree` contains a value for
@@ -901,12 +912,12 @@ impl<T> Tree<T> {
             if link.is_ok() {
                 if let Some(res) = subscriber_reservation.take() {
                     let event = if let Some(new) = &new {
-                        subscription::Event::Set(
+                        subscription::Event::Insert(
                             key.as_ref().into(),
                             new.clone(),
                         )
                     } else {
-                        subscription::Event::Del(key.as_ref().into())
+                        subscription::Event::Remove(key.as_ref().into())
                     };
 
                     res.complete(event);
@@ -1512,8 +1523,9 @@ impl<T> Tree<T> {
 
         // searching for the left sibling to merge the target page into
         loop {
-            // The only way this child could have been freed is if the original merge has
-            // already been handled. Only in that case can this child have been freed
+            // The only way this child could have been freed is if the original
+            // merge has already been handled. Only in that case can this child
+            // have been freed
             trace!(
                 "cursor_pid is {} while looking for left sibling",
                 cursor_pid

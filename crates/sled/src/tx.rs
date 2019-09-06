@@ -204,7 +204,7 @@ impl<'a> TransactionalTrees<'a> {
         tree_idxs.sort_unstable();
 
         let mut last_idx = usize::max_value();
-        for (_, idx) in tree_idxs.into_iter() {
+        for (_, idx) in tree_idxs {
             if idx == last_idx {
                 // prevents us from double-locking
                 continue;

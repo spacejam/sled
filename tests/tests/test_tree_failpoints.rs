@@ -239,7 +239,8 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 // also use the fp_crash macro here for handling it.
                 fp_crash!(tree.flush());
 
-                // now we should be certain the thing is in there, set certainty to true
+                // now we should be certain the thing is in there, set certainty
+                // to true
                 reference.insert(set_counter, (set_counter, true));
 
                 set_counter += 1;
