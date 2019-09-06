@@ -102,10 +102,10 @@ mod flusher;
 
 const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
 
-trait CustomType: std::fmt::Debug + Clone + Serialize + DeserializeOwned + Send + Sync + 'static {}
+trait CustomType: std::fmt::Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync + 'static {}
 
 impl<T> CustomType for T where T:
-    std::fmt::Debug + Clone + Serialize + DeserializeOwned + Send + Sync + 'static {}
+    std::fmt::Debug + PartialEq + Clone + Serialize + DeserializeOwned + Send + Sync + 'static {}
 
 
 pub use {

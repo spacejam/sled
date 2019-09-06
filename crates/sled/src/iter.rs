@@ -1,4 +1,4 @@
-use std::ops::Bound;
+use std::{sync::Arc, ops::Bound};
 
 use pagecache::{Guard, Measure, M};
 
@@ -51,7 +51,7 @@ impl<'a, T: CustomType> Iter<'a, T> {
     }
 
     /// Iterate over the values of this Tree
-    pub fn values(self) -> impl 'a + DoubleEndedIterator<Item = Result<T>> {
+    pub fn values(self) -> impl 'a + DoubleEndedIterator<Item = Result<Arc<T>>> {
         self.map(|r| r.map(|(_k, v)| v))
     }
 
@@ -84,7 +84,7 @@ impl<'a, T: CustomType> Iter<'a, T> {
 }
 
 impl<'a, T: CustomType> Iterator for Iter<'a, T> {
-    type Item = Result<(IVec, T)>;
+    type Item = Result<(IVec, Arc<T>)>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let _measure = Measure::new(&M.tree_scan);
@@ -140,12 +140,12 @@ impl<'a, T: CustomType> Iterator for Iter<'a, T> {
                 self.going_forward = true;
 
                 match self.hi {
-                    Bound::Unbounded => return Some(Ok((key, value))),
+                    Bound::Unbounded => return Some(Ok((key, value.read().unwrap().clone()))),
                     Bound::Included(ref h) if *h >= key => {
-                        return Some(Ok((key, value)));
+                        return Some(Ok((key, value.read().unwrap().clone())));
                     }
                     Bound::Excluded(ref h) if *h > key => {
-                        return Some(Ok((key, value)));
+                        return Some(Ok((key, value.read().unwrap().clone())));
                     }
                     _ => return None,
                 }
@@ -226,12 +226,12 @@ where
                 self.going_forward = false;
 
                 match self.lo {
-                    Bound::Unbounded => return Some(Ok((key, value))),
+                    Bound::Unbounded => return Some(Ok((key, value.read().unwrap().clone()))),
                     Bound::Included(ref l) if *l <= key => {
-                        return Some(Ok((key, value)));
+                        return Some(Ok((key, value.read().unwrap().clone())));
                     }
                     Bound::Excluded(ref l) if *l < key => {
-                        return Some(Ok((key, value)));
+                        return Some(Ok((key, value.read().unwrap().clone())));
                     }
                     _ => return None,
                 }

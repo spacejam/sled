@@ -56,7 +56,7 @@ impl<T> LazyDeserialized<T>
 where
     T: Clone + Serialize + DeserializeOwned + Send + Sync + 'static
 {
-    fn read(&mut self) -> Result<&Arc<T>> {
+    pub(crate) fn read(&mut self) -> Result<&Arc<T>> {
         self.upgrade()?;
         if let LazyDeserialized::Deserialized(t) = self {
             Ok(t)

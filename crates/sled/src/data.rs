@@ -14,7 +14,7 @@ impl<T: CustomType> Data<T> {
             xs: &[(IVec, Second)],
         ) -> Vec<(IVec, Second)>
         where
-            Second: Clone + Ord,
+            Second: CustomType,
         {
             let mut data = Vec::with_capacity(xs.len());
             for (k, v) in xs {
@@ -38,12 +38,12 @@ impl<T: CustomType> Data<T> {
     }
 
     pub(crate) fn split(&self, lhs_prefix: &[u8]) -> (IVec, Self) {
-        fn split_inner<T>(
-            xs: &[(IVec, T)],
+        fn split_inner<Second>(
+            xs: &[(IVec, Second)],
             lhs_prefix: &[u8],
-        ) -> (IVec, Vec<(IVec, T)>)
+        ) -> (IVec, Vec<(IVec, Second)>)
         where
-            T: Clone + Ord,
+            Second: CustomType
         {
             let (_lhs, rhs) = xs.split_at(xs.len() / 2 + 1);
             let split = prefix_decode(lhs_prefix, &rhs[0].0);

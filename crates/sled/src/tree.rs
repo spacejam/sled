@@ -31,7 +31,7 @@ impl<'g, T: CustomType> std::ops::Deref for View<'g, T> {
 }
 
 impl<'a, T: CustomType> IntoIterator for &'a Tree<T> {
-    type Item = Result<(IVec, T)>;
+    type Item = Result<(IVec, Arc<T>)>;
     type IntoIter = Iter<'a, T>;
 
     fn into_iter(self) -> Iter<'a, T> {
@@ -84,7 +84,7 @@ unsafe impl<T: CustomType> Sync for Tree<T> {}
 impl<T: CustomType> Tree<T> {
     #[doc(hidden)]
     #[deprecated(since = "0.24.2", note = "replaced by `Tree::insert`")]
-    pub fn set<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
+    pub fn set<K, V>(&self, key: K, value: V) -> Result<Option<Arc<T>>>
     where
         K: AsRef<[u8]>,
         IVec: From<V>,
@@ -105,7 +105,7 @@ impl<T: CustomType> Tree<T> {
     /// assert_eq!(t.insert(&[1,2,3], vec![0]), Ok(None));
     /// assert_eq!(t.insert(&[1,2,3], vec![1]), Ok(Some(IVec::from(&[0]))));
     /// ```
-    pub fn insert<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
+    pub fn insert<K, V>(&self, key: K, value: V) -> Result<Option<Arc<T>>>
     where
         K: AsRef<[u8]>,
         IVec: From<V>,
@@ -118,7 +118,7 @@ impl<T: CustomType> Tree<T> {
         &self,
         key: K,
         value: V,
-    ) -> Result<Option<IVec>>
+    ) -> Result<Option<Arc<T>>>
     where
         K: AsRef<[u8]>,
         IVec: From<V>,
@@ -143,7 +143,7 @@ impl<T: CustomType> Tree<T> {
 
             let (encoded_key, last_value) =
                 if let Some((k, v)) = node.leaf_pair_for_key(key.as_ref()) {
-                    (k.clone(), Some(v.clone()))
+                    (k.clone(), Some(v.clone().read()?.clone()))
                 } else {
                     let k = prefix_encode(&node.lo, key.as_ref());
                     let old_v = None;
@@ -304,7 +304,7 @@ impl<T: CustomType> Tree<T> {
     /// assert_eq!(t.get(&[0]), Ok(Some(IVec::from(vec![0]))));
     /// assert_eq!(t.get(&[1]), Ok(None));
     /// ```
-    pub fn get<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
+    pub fn get<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<Arc<T>>> {
         let _ = self.concurrency_control.read();
         self.get_inner(key)
     }
@@ -312,7 +312,7 @@ impl<T: CustomType> Tree<T> {
     pub(crate) fn get_inner<K: AsRef<[u8]>>(
         &self,
         key: K,
-    ) -> Result<Option<IVec>> {
+    ) -> Result<Option<Arc<T>>> {
         let _measure = Measure::new(&M.tree_get);
 
         trace!("getting key {:?}", key.as_ref());
@@ -322,14 +322,14 @@ impl<T: CustomType> Tree<T> {
         let View { node, .. } = self.node_for_key(key.as_ref(), &guard)?;
 
         let pair = node.leaf_pair_for_key(key.as_ref());
-        let val = pair.map(|kv| kv.1.clone());
+        let val = pair.map(|kv| kv.1.clone().read());
 
-        Ok(val)
+        Ok(val.transpose()?.cloned())
     }
 
     #[doc(hidden)]
     #[deprecated(since = "0.24.2", note = "replaced by `Tree::remove`")]
-    pub fn del<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
+    pub fn del<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<Arc<T>>> {
         self.remove(key)
     }
 
@@ -344,7 +344,7 @@ impl<T: CustomType> Tree<T> {
     /// assert_eq!(t.remove(&[1]), Ok(Some(sled::IVec::from(vec![1]))));
     /// assert_eq!(t.remove(&[1]), Ok(None));
     /// ```
-    pub fn remove<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
+    pub fn remove<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<Arc<T>>> {
         let _ = self.concurrency_control.read();
         self.remove_inner(key)
     }
@@ -352,7 +352,7 @@ impl<T: CustomType> Tree<T> {
     pub(crate) fn remove_inner<K: AsRef<[u8]>>(
         &self,
         key: K,
-    ) -> Result<Option<IVec>> {
+    ) -> Result<Option<Arc<T>>> {
         let _measure = Measure::new(&M.tree_del);
 
         trace!("removing key {:?}", key.as_ref());
@@ -371,7 +371,7 @@ impl<T: CustomType> Tree<T> {
 
             let (encoded_key, existing_val) =
                 if let Some((k, v)) = node.leaf_pair_for_key(key.as_ref()) {
-                    (k.clone(), Some(v.clone()))
+                    (k.clone(), Some(v.read()?.clone()))
                 } else {
                     let encoded_key = prefix_encode(&node.lo, key.as_ref());
                     let encoded_val = None;
@@ -426,11 +426,11 @@ impl<T: CustomType> Tree<T> {
         key: K,
         old: Option<OV>,
         new: Option<NV>,
-    ) -> Result<std::result::Result<(), Option<IVec>>>
+    ) -> Result<std::result::Result<(), Option<Arc<T>>>>
     where
         K: AsRef<[u8]>,
-        OV: AsRef<[u8]>,
-        IVec: From<NV>,
+        OV: AsRef<T>,
+        T: From<NV>,
     {
         trace!("casing key {:?}", key.as_ref());
         let _measure = Measure::new(&M.tree_cas);
@@ -443,7 +443,7 @@ impl<T: CustomType> Tree<T> {
             ));
         }
 
-        let new = new.map(IVec::from);
+        let new = new.map(T::from);
 
         // we need to retry caps until old != cur, since just because
         // cap fails it doesn't mean our value was changed.
@@ -454,7 +454,7 @@ impl<T: CustomType> Tree<T> {
 
             let (encoded_key, current_value) =
                 if let Some((k, v)) = node.leaf_pair_for_key(key.as_ref()) {
-                    (k.clone(), Some(v.clone()))
+                    (k.clone(), Some(v.read()?.clone()))
                 } else {
                     let k = prefix_encode(&node.lo, key.as_ref());
                     let old_v = None;
@@ -544,11 +544,10 @@ impl<T: CustomType> Tree<T> {
         &self,
         key: K,
         mut f: F,
-    ) -> Result<Option<IVec>>
+    ) -> Result<Option<Arc<T>>>
     where
         K: AsRef<[u8]>,
-        F: FnMut(Option<&[u8]>) -> Option<V>,
-        IVec: From<V>,
+        F: FnMut(Option<&T>) -> Option<T>,
     {
         let key = key.as_ref();
         let mut current = self.get(key)?;
@@ -609,11 +608,10 @@ impl<T: CustomType> Tree<T> {
         &self,
         key: K,
         mut f: F,
-    ) -> Result<Option<IVec>>
+    ) -> Result<Option<Arc<T>>>
     where
-        K: AsRef<[u8]>,
-        F: FnMut(Option<&[u8]>) -> Option<V>,
-        IVec: From<V>,
+        K: AsRef<T>,
+        F: FnMut(Option<&T>) -> Option<T>,
     {
         let key = key.as_ref();
         let mut current = self.get(key)?;
@@ -1774,78 +1772,7 @@ impl<T: CustomType> Tree<T> {
 
         Ok(())
     }
-}
 
-impl<T: CustomType> Debug for Tree<T> {
-    fn fmt(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-    ) -> std::result::Result<(), fmt::Error> {
-        let guard = pin();
-
-        let mut pid = self.root.load(SeqCst);
-        let mut left_most = pid;
-        let mut level = 0;
-
-        f.write_str("Tree: \n\t")?;
-        self.context.pagecache.fmt(f)?;
-        f.write_str("\tlevel 0:\n")?;
-
-        loop {
-            let get_res = self.view_for_pid(pid, &guard);
-            let node = match get_res {
-                Ok(Some(ref view)) => view.node,
-                broken => {
-                    error!(
-                        "Tree::fmt failed to read node {} \
-                         that has been freed: {:?}",
-                        pid, broken
-                    );
-                    break;
-                }
-            };
-
-            write!(f, "\t\t{}: ", pid)?;
-            node.fmt(f)?;
-            f.write_str("\n")?;
-
-            if let Some(next_pid) = node.next {
-                pid = next_pid;
-            } else {
-                // we've traversed our level, time to bump down
-                let left_get_res = self.view_for_pid(left_most, &guard);
-                let left_node = match left_get_res {
-                    Ok(Some(ref view)) => view.node,
-                    broken => {
-                        panic!("pagecache returned non-base node: {:?}", broken)
-                    }
-                };
-
-                match &left_node.data {
-                    Data::Index(ptrs) => {
-                        if let Some(&(ref _sep, ref next_pid)) = ptrs.first() {
-                            pid = *next_pid;
-                            left_most = *next_pid;
-                            level += 1;
-                            f.write_str(&*format!("\n\tlevel {}:\n", level))?;
-                        } else {
-                            panic!("trying to debug print empty index node");
-                        }
-                    }
-                    Data::Leaf(_items) => {
-                        // we've reached the end of our tree, all leafs are on
-                        // the lowest level.
-                        break;
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-}
-
-impl Tree<IVec> {
     /// Create a double-ended iterator over the tuples of keys and
     /// values in this tree.
     ///
@@ -1864,7 +1791,7 @@ impl Tree<IVec> {
     /// assert_eq!(iter.next().unwrap(), Ok((IVec::from(&[3]), IVec::from(&[30]))));
     /// assert_eq!(iter.next(), None);
     /// ```
-    pub fn iter(&self) -> Iter<'_, IVec> {
+    pub fn iter(&self) -> Iter<'_, T> {
         self.range::<Vec<u8>, _>(..)
     }
 
@@ -1897,7 +1824,7 @@ impl Tree<IVec> {
     /// assert_eq!(r.next().unwrap(), Ok((IVec::from(&[2]), IVec::from(&[20]))));
     /// assert_eq!(r.next(), None);
     /// ```
-    pub fn range<K, R>(&self, range: R) -> Iter<'_, IVec>
+    pub fn range<K, R>(&self, range: R) -> Iter<'_, T>
     where
         K: AsRef<[u8]>,
         R: RangeBounds<K>,
@@ -1974,5 +1901,74 @@ impl Tree<IVec> {
         }
 
         self.range(prefix..)
+    }
+}
+
+impl<T: CustomType> Debug for Tree<T> {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> std::result::Result<(), fmt::Error> {
+        let guard = pin();
+
+        let mut pid = self.root.load(SeqCst);
+        let mut left_most = pid;
+        let mut level = 0;
+
+        f.write_str("Tree: \n\t")?;
+        self.context.pagecache.fmt(f)?;
+        f.write_str("\tlevel 0:\n")?;
+
+        loop {
+            let get_res = self.view_for_pid(pid, &guard);
+            let node = match get_res {
+                Ok(Some(ref view)) => view.node,
+                broken => {
+                    error!(
+                        "Tree::fmt failed to read node {} \
+                         that has been freed: {:?}",
+                        pid, broken
+                    );
+                    break;
+                }
+            };
+
+            write!(f, "\t\t{}: ", pid)?;
+            node.fmt(f)?;
+            f.write_str("\n")?;
+
+            if let Some(next_pid) = node.next {
+                pid = next_pid;
+            } else {
+                // we've traversed our level, time to bump down
+                let left_get_res = self.view_for_pid(left_most, &guard);
+                let left_node = match left_get_res {
+                    Ok(Some(ref view)) => view.node,
+                    broken => {
+                        panic!("pagecache returned non-base node: {:?}", broken)
+                    }
+                };
+
+                match &left_node.data {
+                    Data::Index(ptrs) => {
+                        if let Some(&(ref _sep, ref next_pid)) = ptrs.first() {
+                            pid = *next_pid;
+                            left_most = *next_pid;
+                            level += 1;
+                            f.write_str(&*format!("\n\tlevel {}:\n", level))?;
+                        } else {
+                            panic!("trying to debug print empty index node");
+                        }
+                    }
+                    Data::Leaf(_items) => {
+                        // we've reached the end of our tree, all leafs are on
+                        // the lowest level.
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }

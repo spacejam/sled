@@ -52,7 +52,7 @@ impl<T: CustomType> Node<T> {
                     || prefix_cmp_encoded(k, &self.hi, &self.lo)
                         == std::cmp::Ordering::Less
                 {
-                    self.set_leaf(k.clone(), v.clone());
+                    self.set_leaf(k.clone(), LazyDeserialized::Serialized(v.clone()));
                 } else {
                     panic!(
                         "tried to consolidate set at key <= hi.\
@@ -98,7 +98,7 @@ impl<T: CustomType> Node<T> {
         }
     }
 
-    pub(crate) fn set_leaf(&mut self, key: IVec, val: T) {
+    pub(crate) fn set_leaf(&mut self, key: IVec, val: LazyDeserialized<T>) {
         if let Data::Leaf(ref mut records) = self.data {
             let search = records.binary_search_by(|(k, _)| prefix_cmp(k, &key));
             match search {
@@ -205,7 +205,7 @@ impl<T: CustomType> Node<T> {
     pub(crate) fn successor(
         &self,
         bound: &Bound<IVec>,
-    ) -> Option<(IVec, T)> {
+    ) -> Option<(IVec, LazyDeserialized<T>)> {
         assert!(!self.data.is_index());
 
         // This encoding happens this way because
@@ -252,7 +252,7 @@ impl<T: CustomType> Node<T> {
     pub(crate) fn predecessor(
         &self,
         bound: &Bound<IVec>,
-    ) -> Option<(IVec, T)> {
+    ) -> Option<(IVec, LazyDeserialized<T>)> {
         static MAX_IVEC: Lazy<IVec, fn() -> IVec> = Lazy::new(init_max_ivec);
 
         fn init_max_ivec() -> IVec {
@@ -323,7 +323,7 @@ impl<T: CustomType> Node<T> {
     pub(crate) fn leaf_pair_for_key(
         &self,
         key: &[u8],
-    ) -> Option<(&IVec, &IVec)> {
+    ) -> Option<(&IVec, &LazyDeserialized<T>)> {
         assert!(!self.data.is_index());
 
         let records = self.data.leaf_ref().unwrap();
