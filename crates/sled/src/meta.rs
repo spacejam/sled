@@ -1,4 +1,7 @@
-use std::sync::{atomic::AtomicU64, Arc};
+use std::{
+    marker::PhantomData,
+    sync::{atomic::AtomicU64, Arc}
+};
 
 use parking_lot::RwLock;
 
@@ -8,7 +11,7 @@ use super::*;
 
 /// Open or create a new disk-backed Tree with its own keyspace,
 /// accessible from the `Db` via the provided identifier.
-pub(crate) fn open_tree<'a, T>(
+pub(crate) fn open_tree<'a, T: CustomType>(
     context: &Context,
     name: Vec<u8>,
     guard: &'a Guard,
@@ -19,6 +22,7 @@ pub(crate) fn open_tree<'a, T>(
         match context.pagecache.meta_pid_for_name(&name, guard) {
             Ok(root_id) => {
                 return Ok(Tree {
+                    _type: PhantomData,
                     tree_id: name,
                     context: context.clone(),
                     subscriptions: Arc::new(Subscriptions::default()),
@@ -89,6 +93,7 @@ pub(crate) fn open_tree<'a, T>(
         }
 
         return Ok(Tree {
+            _type: PhantomData,
             tree_id: name,
             subscriptions: Arc::new(Subscriptions::default()),
             context: context.clone(),

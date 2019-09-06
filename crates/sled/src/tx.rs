@@ -62,12 +62,14 @@
 
 use std::{cell::RefCell, collections::HashMap, sync::Arc};
 
+use serde::de::DeserializeOwned;
+
 use super::*;
 
 /// A transaction that will
 /// be applied atomically to the
 /// Tree.
-pub struct TransactionalTree<'a, T> {
+pub struct TransactionalTree<'a, T: CustomType> {
     pub(super) tree: &'a Tree<T>,
     pub(super) writes: RefCell<HashMap<IVec, Option<T>>>,
     pub(super) read_cache: RefCell<HashMap<IVec, Option<T>>>,
@@ -93,7 +95,7 @@ impl From<Error> for TransactionError {
     }
 }
 
-impl<'a, T> TransactionalTree<'a, T> {
+impl<'a, T: CustomType> TransactionalTree<'a, T> {
     /// Set a key to a new value
     pub fn insert<K, V>(
         &self,
@@ -285,10 +287,7 @@ pub trait Transactional {
     }
 }
 
-impl<'a, T> Transactional for &'a Tree<T>
-where
-    T: 'static,
-{
+impl<'a, T: CustomType> Transactional for &'a Tree<T> {
     type View = &'static TransactionalTree<'static, T>;
 
     fn make_overlay(&self) -> TransactionalTrees<'_> {

@@ -102,6 +102,12 @@ mod flusher;
 
 const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
 
+trait CustomType: std::fmt::Debug + Clone + Serialize + DeserializeOwned + Send + Sync + 'static {}
+
+impl<T> CustomType for T where T:
+    std::fmt::Debug + Clone + Serialize + DeserializeOwned + Send + Sync + 'static {}
+
+
 pub use {
     self::{
         batch::Batch,
@@ -137,7 +143,7 @@ use {
         debug::debug_delay, pin, threadpool, Materializer, Measure, PageCache,
         PageId, RecoveryGuard, M,
     },
-    serde::{Deserialize, Serialize},
+    serde::{Deserialize, Serialize, de::DeserializeOwned},
 };
 
 type TreePtr<'g> = pagecache::PagePtr<'g, Frag>;

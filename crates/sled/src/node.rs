@@ -5,7 +5,8 @@ use pagecache::Lazy;
 use super::*;
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Node<T: ?Sized> {
+#[serde(bound(deserialize = ""))]
+pub(crate) struct Node<T: CustomType> {
     pub(crate) data: Data<T>,
     pub(crate) next: Option<PageId>,
     pub(crate) lo: IVec,
@@ -14,10 +15,7 @@ pub(crate) struct Node<T: ?Sized> {
     pub(crate) merging: bool,
 }
 
-impl<T> fmt::Debug for Node<T>
-where
-    T: fmt::Debug,
-{
+impl<T: CustomType> fmt::Debug for Node<T> {
     fn fmt(
         &self,
         f: &mut fmt::Formatter<'_>,
@@ -38,7 +36,7 @@ where
     }
 }
 
-impl<T> Node<T> {
+impl<T: CustomType> Node<T> {
     pub(crate) fn apply(&mut self, frag: &Frag) {
         use self::Frag::*;
 
@@ -100,7 +98,7 @@ impl<T> Node<T> {
         }
     }
 
-    pub(crate) fn set_leaf(&mut self, key: IVec, val: IVec) {
+    pub(crate) fn set_leaf(&mut self, key: IVec, val: T) {
         if let Data::Leaf(ref mut records) = self.data {
             let search = records.binary_search_by(|(k, _)| prefix_cmp(k, &key));
             match search {
@@ -207,7 +205,7 @@ impl<T> Node<T> {
     pub(crate) fn successor(
         &self,
         bound: &Bound<IVec>,
-    ) -> Option<(IVec, IVec)> {
+    ) -> Option<(IVec, T)> {
         assert!(!self.data.is_index());
 
         // This encoding happens this way because
@@ -254,7 +252,7 @@ impl<T> Node<T> {
     pub(crate) fn predecessor(
         &self,
         bound: &Bound<IVec>,
-    ) -> Option<(IVec, IVec)> {
+    ) -> Option<(IVec, T)> {
         static MAX_IVEC: Lazy<IVec, fn() -> IVec> = Lazy::new(init_max_ivec);
 
         fn init_max_ivec() -> IVec {

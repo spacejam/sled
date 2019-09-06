@@ -35,7 +35,7 @@ macro_rules! iter_try {
 }
 
 /// An iterator over keys and values in a `Tree`.
-pub struct Iter<'a, T: ?Sized> {
+pub struct Iter<'a, T: CustomType> {
     pub(super) tree: &'a Tree<T>,
     pub(super) hi: Bound<IVec>,
     pub(super) lo: Bound<IVec>,
@@ -44,7 +44,7 @@ pub struct Iter<'a, T: ?Sized> {
     pub(super) going_forward: bool,
 }
 
-impl<'a, T> Iter<'a, T> {
+impl<'a, T: CustomType> Iter<'a, T> {
     /// Iterate over the keys of this Tree
     pub fn keys(self) -> impl 'a + DoubleEndedIterator<Item = Result<IVec>> {
         self.map(|r| r.map(|(k, _v)| k))
@@ -83,7 +83,7 @@ impl<'a, T> Iter<'a, T> {
     }
 }
 
-impl<'a, T> Iterator for Iter<'a, T> {
+impl<'a, T: CustomType> Iterator for Iter<'a, T> {
     type Item = Result<(IVec, T)>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -168,7 +168,10 @@ impl<'a, T> Iterator for Iter<'a, T> {
     }
 }
 
-impl<'a, T> DoubleEndedIterator for Iter<'a, T> {
+impl<'a, T> DoubleEndedIterator for Iter<'a, T>
+where
+    T: CustomType
+{
     fn next_back(&mut self) -> Option<Self::Item> {
         let _measure = Measure::new(&M.tree_reverse_scan);
         let _ = self.tree.concurrency_control.read();

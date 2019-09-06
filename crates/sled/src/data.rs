@@ -1,12 +1,13 @@
 use super::*;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) enum Data<T: ?Sized> {
+#[serde(bound(deserialize = ""))]
+pub(crate) enum Data<T: CustomType> {
     Index(Vec<(IVec, PageId)>),
     Leaf(Vec<(IVec, LazyDeserialized<T>)>),
 }
 
-impl<T: Clone + Ord> Data<T> {
+impl<T: CustomType> Data<T> {
     pub(crate) fn fmt_keys(&self, prefix: &[u8]) -> Self {
         fn fmt_inner<Second>(
             prefix: &[u8],

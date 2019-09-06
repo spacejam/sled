@@ -5,9 +5,9 @@ use std::{
     sync::{atomic::AtomicU64, Arc},
 };
 
-use pagecache::FastMap8;
-
 use parking_lot::RwLock;
+
+use pagecache::FastMap8;
 
 use super::*;
 
@@ -130,7 +130,7 @@ impl Db {
 
     /// Open or create a new disk-backed Tree with its own keyspace,
     /// accessible from the `Db` via the provided identifier.
-    pub fn open_tree<V: AsRef<[u8]>, T: Send + Sync + 'static>(
+    pub fn open_tree<V: AsRef<[u8]>, T: CustomType>(
         &self,
         name: V,
     ) -> Result<Arc<Tree<T>>> {
@@ -159,7 +159,7 @@ impl Db {
     }
 
     /// Remove a disk-backed collection.
-    pub fn drop_tree<T: Send + Sync + 'static>(
+    pub fn drop_tree<T: CustomType>(
         &self,
         name: &[u8],
     ) -> Result<bool> {
@@ -343,13 +343,14 @@ impl Db {
 type CollectionType = Vec<u8>;
 type CollectionName = Vec<u8>;
 
+/*
 struct ArcIter {
     _tree: Arc<Tree<IVec>>,
-    iter: Iter<'static, dyn std::any::Any>,
+    iter: Box<dyn Iterator<Item = Vec<Vec<u8>>>>,
 }
 
 impl std::ops::Deref for ArcIter {
-    type Target = Iter<'static, dyn std::any::Any>;
+    type Target = dyn Iterator<Item = Vec<Vec<u8>>>;
 
     fn deref(&self) -> &Self::Target {
         &self.iter
@@ -371,3 +372,4 @@ impl Iterator for ArcIter {
         Some(vec![k.to_vec(), v.to_vec()])
     }
 }
+*/

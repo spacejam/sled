@@ -15,14 +15,14 @@ use pagecache::Guard;
 use super::*;
 
 #[derive(Debug, Clone)]
-pub(crate) struct View<'g, T> {
+pub(crate) struct View<'g, T: CustomType> {
     pub ptr: TreePtr<'g>,
     pub pid: PageId,
     pub node: &'g Node<T>,
     pub size: u64,
 }
 
-impl<'g, T> std::ops::Deref for View<'g, T> {
+impl<'g, T: CustomType> std::ops::Deref for View<'g, T> {
     type Target = Node<T>;
 
     fn deref(&self) -> &Node<T> {
@@ -30,7 +30,7 @@ impl<'g, T> std::ops::Deref for View<'g, T> {
     }
 }
 
-impl<'a, T> IntoIterator for &'a Tree<T> {
+impl<'a, T: CustomType> IntoIterator for &'a Tree<T> {
     type Item = Result<(IVec, T)>;
     type IntoIter = Iter<'a, T>;
 
@@ -67,7 +67,7 @@ impl<'a, T> IntoIterator for &'a Tree<T> {
 /// assert_eq!(t.get(b"yo!"), Ok(None));
 /// ```
 #[derive(Clone)]
-pub struct Tree<T: ?Sized> {
+pub struct Tree<T: CustomType> {
     pub(crate) _type: PhantomData<T>,
     pub(crate) tree_id: Vec<u8>,
     pub(crate) context: Context,
@@ -77,11 +77,11 @@ pub struct Tree<T: ?Sized> {
     pub(crate) merge_operator: Arc<RwLock<Option<MergeOperator>>>,
 }
 
-unsafe impl<T> Send for Tree<T> where T: Sync {}
+unsafe impl<T: CustomType> Send for Tree<T> {}
 
-unsafe impl<T> Sync for Tree<T> where T: Sync {}
+unsafe impl<T: CustomType> Sync for Tree<T> {}
 
-impl<T> Tree<T> {
+impl<T: CustomType> Tree<T> {
     #[doc(hidden)]
     #[deprecated(since = "0.24.2", note = "replaced by `Tree::insert`")]
     pub fn set<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
@@ -1776,7 +1776,7 @@ impl<T> Tree<T> {
     }
 }
 
-impl<T> Debug for Tree<T> {
+impl<T: CustomType> Debug for Tree<T> {
     fn fmt(
         &self,
         f: &mut fmt::Formatter<'_>,
