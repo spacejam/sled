@@ -51,7 +51,7 @@ steps:
   - task: CacheBeta@1
     inputs:
       path: target
-      key: variables['testKind'] | $(Agent.OS)
+      key: $(testKind) | $(Agent.OS)
     displayName: 'Cache Build'
   - script: cargo build --all --release
     displayName: Cargo build
