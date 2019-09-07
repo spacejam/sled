@@ -16,11 +16,7 @@ const N_PER_THREAD: usize = 100;
 const N: usize = N_THREADS * N_PER_THREAD; // NB N should be multiple of N_THREADS
 const SPACE: usize = N;
 
-#[cfg(target_os = "macos")]
 const INTENSITY: usize = 5;
-
-#[cfg(not(target_os = "macos"))]
-const INTENSITY: usize = 10;
 
 #[inline(always)]
 fn kv(i: usize) -> Vec<u8> {
