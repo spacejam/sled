@@ -69,8 +69,11 @@ impl Arbitrary for Op {
 
 #[derive(Debug, Clone)]
 enum Expected {
-    Certain(u16),
-    Uncertain { old: Vec<u16>, new: u16 },
+    Certain(Option<u16>),
+    Uncertain {
+        old: Vec<Option<u16>>,
+        new: Option<u16>,
+    },
 }
 
 fn v(b: &[u8]) -> u16 {
@@ -244,7 +247,28 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 };
 
                 // insert false certainty until it fully completes
-                reference.insert(set_counter, Expected::Uncertain { old: vec![] /* TODO */, new: set_counter });
+                reference
+                    .entry(set_counter)
+                    .and_modify(|v| {
+                        *v = match v {
+                            Expected::Certain(old) => Expected::Uncertain {
+                                old: vec![*old],
+                                new: Some(set_counter),
+                            },
+                            Expected::Uncertain { old, new } => {
+                                let mut old = old.to_vec();
+                                old.push(*new);
+                                Expected::Uncertain {
+                                    old,
+                                    new: Some(set_counter),
+                                }
+                            }
+                        }
+                    })
+                    .or_insert_with(|| Expected::Uncertain {
+                        old: vec![None],
+                        new: Some(set_counter),
+                    });
 
                 fp_crash!(tree.insert(&[hi, lo], val));
 
@@ -258,13 +282,32 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 
                 // now we should be certain the thing is in there, set certainty
                 // to true
-                reference.insert(set_counter, Expected::Certain(set_counter));
+                reference
+                    .insert(set_counter, Expected::Certain(Some(set_counter)));
 
                 set_counter += 1;
             }
             Del(k) => {
                 // insert false certainty before completes
-                reference.insert(u16::from(k), Expected::Uncertain { old: vec![] /* TODO */, new: u16::from(k) });
+                reference
+                    .entry(u16::from(k))
+                    .and_modify(|v| {
+                        *v = match v {
+                            Expected::Certain(old) => Expected::Uncertain {
+                                old: vec![*old],
+                                new: None,
+                            },
+                            Expected::Uncertain { old, new } => {
+                                let mut old = old.to_vec();
+                                old.push(*new);
+                                Expected::Uncertain { old, new: None }
+                            }
+                        }
+                    })
+                    .or_insert_with(|| Expected::Uncertain {
+                        old: vec![None],
+                        new: None,
+                    });
 
                 fp_crash!(tree.remove(&*vec![0, k]));
                 fp_crash!(tree.flush());
