@@ -54,6 +54,9 @@ steps:
       key: $(testKind) | $(Agent.OS)
     displayName: 'Cache Build'
     condition: ne( variables['testKind'], 'sanitizers' )
+  - script: mkdir target || find target -name '*build' -exec chmod +x {} \;
+    displayName: chmod cache workaround
+    condition: ne( variables['Agent.OS'], 'Windows_NT' )
   - script: cargo build --all --release
     displayName: Cargo build
     condition: eq( variables['testKind'], 'default' )
