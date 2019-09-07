@@ -249,7 +249,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                     vec![hi, lo]
                 };
 
-                // insert false certainty until it fully completes
+                // insert uncertain value until it fully completes
                 reference
                     .entry(set_counter)
                     .and_modify(|v| {
@@ -283,15 +283,15 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 // also use the fp_crash macro here for handling it.
                 fp_crash!(tree.flush());
 
-                // now we should be certain the thing is in there, set certainty
-                // to true
+                // now we should be certain the thing is in there, overwrite
+                // with certain
                 reference
                     .insert(set_counter, Expected::Certain(Some(set_counter)));
 
                 set_counter += 1;
             }
             Del(k) => {
-                // insert false certainty before completes
+                // insert uncertain before it completes
                 reference
                     .entry(u16::from(k))
                     .and_modify(|v| {
@@ -315,6 +315,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 fp_crash!(tree.remove(&*vec![0, k]));
                 fp_crash!(tree.flush());
 
+                // now certain, remove it from the reference
                 reference.remove(&u16::from(k));
             }
             Id => {
