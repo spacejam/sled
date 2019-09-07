@@ -53,6 +53,7 @@ steps:
       path: target
       key: $(testKind) | $(Agent.OS)
     displayName: 'Cache Build'
+    condition: ne( variables['testKind'], 'sanitizers' )
   - script: cargo build --all --release
     displayName: Cargo build
     condition: eq( variables['testKind'], 'default' )
