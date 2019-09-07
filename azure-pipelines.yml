@@ -40,20 +40,18 @@ steps:
   - script: |
       curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain $RUSTUP_TOOLCHAIN
       echo "##vso[task.setvariable variable=PATH;]$PATH:$HOME/.cargo/bin"
-      touch Cargo.lock
     displayName: Install rust
     condition: ne( variables['Agent.OS'], 'Windows_NT' )
   - script: |
       curl -sSf -o rustup-init.exe https://win.rustup.rs
       rustup-init.exe -y --default-toolchain %RUSTUP_TOOLCHAIN%
       echo "##vso[task.setvariable variable=PATH;]%PATH%;%USERPROFILE%\.cargo\bin"
-      copy NUL Cargo.lock
     displayName: Windows install rust
     condition: eq( variables['Agent.OS'], 'Windows_NT' )
   - task: CacheBeta@1
     inputs:
       path: target
-      key: target | Cargo.lock | $(Agent.OS)
+      key: variables['testKind'] | $(Agent.OS)
     displayName: 'Cache Build'
   - script: cargo build --all --release
     displayName: Cargo build
