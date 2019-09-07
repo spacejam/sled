@@ -7,6 +7,14 @@
   names better align with the methods of BTreeMap from
   the standard library.
 
+## Bug Fixes
+
+* A deadlock was possible in very high write volume
+  situations when the segment accountant lock was
+  taken by all IO threads while a task was blocked
+  trying to submit a file truncation request to the
+  threadpool while holding the segment accountant lock.
+
 ## New Features
 
 * `flush_async` has been added to perform time-intensive
