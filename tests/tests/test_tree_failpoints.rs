@@ -170,7 +170,8 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 // make sure the tree value is in there
                 while let Some((ref_key, ref_expected)) = ref_iter.next() {
                     match ref_expected {
-                        Expected::Certain(_ref_value) => {
+                        Expected::Certain(None) => continue,
+                        Expected::Certain(Some(_ref_value)) => {
                             // tree MUST match reference if we have a certain reference
                             if t != ref_key {
                                 println!(
