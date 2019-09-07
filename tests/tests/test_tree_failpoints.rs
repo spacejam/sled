@@ -291,19 +291,6 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 
                 fp_crash!(tree.insert(&[hi, lo], val));
 
-                // make sure we keep the disk and reference in-sync
-                // maybe in the future put pending things in their own
-                // reference and have a Flush op that syncs them.
-                // just because the set above didn't hit a failpoint,
-                // it doesn't mean this flush won't hit one, so we
-                // also use the fp_crash macro here for handling it.
-                fp_crash!(tree.flush());
-
-                // now we should be certain the thing is in there, overwrite
-                // with certain
-                reference
-                    .insert(set_counter, Expected::Certain(Some(set_counter)));
-
                 set_counter += 1;
             }
             Del(k) => {
@@ -325,10 +312,6 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                     .or_insert(Expected::Certain(None));
 
                 fp_crash!(tree.remove(&*vec![0, k]));
-                fp_crash!(tree.flush());
-
-                // now certain, remove it from the reference
-                reference.remove(&u16::from(k));
             }
             Id => {
                 let id = fp_crash!(tree.generate_id());
