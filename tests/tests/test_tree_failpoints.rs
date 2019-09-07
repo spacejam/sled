@@ -72,10 +72,7 @@ impl Arbitrary for Op {
 #[derive(Debug, Clone)]
 enum Expected {
     Certain(Option<u16>),
-    Uncertain {
-        old: Vec<Option<u16>>,
-        new: Option<u16>,
-    },
+    Uncertain(Vec<Option<u16>>),
 }
 
 fn v(b: &[u8]) -> u16 {
@@ -83,6 +80,14 @@ fn v(b: &[u8]) -> u16 {
         assert_eq!(b.len(), 2);
     }
     (u16::from(b[0]) << 8) + u16::from(b[1])
+}
+
+fn all_some<T>(vec: &Vec<Option<T>>) -> bool {
+    vec.iter().all(Option::is_some)
+}
+
+fn all_none<T>(vec: &Vec<Option<T>>) -> bool {
+    vec.iter().all(Option::is_none)
 }
 
 fn tear_down_failpoints() {
@@ -171,6 +176,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 while let Some((ref_key, ref_expected)) = ref_iter.next() {
                     match ref_expected {
                         Expected::Certain(None) => continue,
+                        Expected::Uncertain(choices) if all_none(choices) => continue,
                         Expected::Certain(Some(_ref_value)) => {
                             // tree MUST match reference if we have a certain reference
                             if t != ref_key {
@@ -183,7 +189,19 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                             }
                             break;
                         }
-                        Expected::Uncertain { old: _, new: _ } => {
+                        Expected::Uncertain(choices) if all_some(choices) => {
+                            // Same logic as above
+                            if t != ref_key {
+                                println!(
+                                    "expected to iterate over {:?} but got {:?} instead",
+                                    ref_key,
+                                    t
+                                );
+                                return false;
+                            }
+                            break;
+                        }
+                        Expected::Uncertain(_) => {
                             // we have an uncertain reference, so we iterate through
                             // it and guarantee the reference is never higher than
                             // the tree value.
@@ -254,23 +272,21 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                     .entry(set_counter)
                     .and_modify(|v| {
                         *v = match v {
-                            Expected::Certain(old) => Expected::Uncertain {
-                                old: vec![*old],
-                                new: Some(set_counter),
-                            },
-                            Expected::Uncertain { old, new } => {
-                                let mut old = old.to_vec();
-                                old.push(*new);
-                                Expected::Uncertain {
-                                    old,
-                                    new: Some(set_counter),
-                                }
+                            Expected::Certain(old) => {
+                                Expected::Uncertain(vec![
+                                    *old,
+                                    Some(set_counter),
+                                ])
+                            }
+                            Expected::Uncertain(old) => {
+                                let mut new = old.to_vec();
+                                new.push(Some(set_counter));
+                                Expected::Uncertain(new)
                             }
                         }
                     })
-                    .or_insert_with(|| Expected::Uncertain {
-                        old: vec![None],
-                        new: Some(set_counter),
+                    .or_insert_with(|| {
+                        Expected::Uncertain(vec![None, Some(set_counter)])
                     });
 
                 fp_crash!(tree.insert(&[hi, lo], val));
@@ -296,21 +312,17 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                     .entry(u16::from(k))
                     .and_modify(|v| {
                         *v = match v {
-                            Expected::Certain(old) => Expected::Uncertain {
-                                old: vec![*old],
-                                new: None,
-                            },
-                            Expected::Uncertain { old, new } => {
-                                let mut old = old.to_vec();
-                                old.push(*new);
-                                Expected::Uncertain { old, new: None }
+                            Expected::Certain(old) => {
+                                Expected::Uncertain(vec![*old, None])
+                            }
+                            Expected::Uncertain(old) => {
+                                let mut new = old.to_vec();
+                                new.push(None);
+                                Expected::Uncertain(new)
                             }
                         }
                     })
-                    .or_insert_with(|| Expected::Uncertain {
-                        old: vec![None],
-                        new: None,
-                    });
+                    .or_insert(Expected::Certain(None));
 
                 fp_crash!(tree.remove(&*vec![0, k]));
                 fp_crash!(tree.flush());
@@ -332,8 +344,8 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
             Flush => {
                 fp_crash!(tree.flush());
                 for (_key, value) in reference.iter_mut() {
-                    if let Expected::Uncertain { old: _, new } = value {
-                        *value = Expected::Certain(*new);
+                    if let Expected::Uncertain(old) = value {
+                        *value = Expected::Certain(*old.last().unwrap());
                     }
                 }
             }
