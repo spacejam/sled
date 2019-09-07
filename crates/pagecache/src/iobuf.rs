@@ -198,6 +198,29 @@ impl IoBufs {
         ret
     }
 
+    /// SegmentAccountant access for coordination with the `PageCache`
+    pub(super) fn try_with_sa<B, F>(&self, f: F) -> Option<B>
+    where
+        F: FnOnce(&mut SegmentAccountant) -> B,
+    {
+        let start = clock();
+
+        debug_delay();
+        let mut sa = self.segment_accountant.try_lock()?;
+
+        let locked_at = clock();
+
+        M.accountant_lock.measure(locked_at - start);
+
+        let ret = f(&mut sa);
+
+        drop(sa);
+
+        M.accountant_hold.measure(clock() - locked_at);
+
+        Some(ret)
+    }
+
     /// Return an iterator over the log, starting with
     /// a specified offset.
     pub(crate) fn iter_from(&self, lsn: Lsn) -> LogIter {
@@ -420,7 +443,14 @@ impl IoBufs {
         let current_max_header_stable_lsn =
             self.max_header_stable_lsn.load(SeqCst);
 
-        self.with_sa(|sa| sa.stabilize(current_max_header_stable_lsn))
+        // TODO make SA lock-free so we don't have to defer this occasionally
+        if let Some(ret) =
+            self.try_with_sa(|sa| sa.stabilize(current_max_header_stable_lsn))
+        {
+            ret
+        } else {
+            Ok(())
+        }
     }
 
     // It's possible that IO buffers are written out of order!
