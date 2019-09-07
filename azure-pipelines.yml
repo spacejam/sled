@@ -54,7 +54,7 @@ steps:
       key: $(Agent.BuildDirectory)/s/Cargo.lock | $(Agent.OS)
     displayName: 'Cache Build'
     condition: ne( variables['Agent.OS'], 'Windows_NT' )
-  - task: CacheBeta@1
+  - task: CacheBeta@0
     inputs:
       path: $(Agent.BuildDirectory)\s\target
       key: $(Agent.BuildDirectory)\s\Cargo.lock | $(Agent.OS)
