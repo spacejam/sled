@@ -13,6 +13,7 @@ enum Op {
     Del(u8),
     Id,
     Restart,
+    Flush,
     FailPoint(&'static str),
 }
 
@@ -47,12 +48,13 @@ impl Arbitrary for Op {
             return Restart;
         }
 
-        let choice = g.gen_range(0, 3);
+        let choice = g.gen_range(0, 4);
 
         match choice {
             0 => Set,
             1 => Del(g.gen::<u8>()),
             2 => Id,
+            3 => Flush,
             _ => panic!("impossible choice"),
         }
     }
@@ -324,6 +326,14 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                     max_id,
                 );
                 max_id = id as isize;
+            }
+            Flush => {
+                fp_crash!(tree.flush());
+                for (_key, value) in reference.iter_mut() {
+                    if let Expected::Uncertain { old: _, new } = value {
+                        *value = Expected::Certain(*new);
+                    }
+                }
             }
             Restart => {
                 restart!();
