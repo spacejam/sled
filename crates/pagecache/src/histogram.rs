@@ -172,6 +172,7 @@ fn decompress(compressed: u16) -> f64 {
     (unboosted.exp() - 1.)
 }
 
+#[cfg(not(feature = "no_metrics"))]
 #[test]
 fn it_works() {
     let c = Histogram::default();
@@ -189,6 +190,7 @@ fn it_works() {
     c.print_percentiles();
 }
 
+#[cfg(not(feature = "no_metrics"))]
 #[test]
 fn high_percentiles() {
     let c = Histogram::default();
@@ -213,6 +215,7 @@ fn high_percentiles() {
     assert_eq!(c.percentile(100.).round() as usize, 502);
 }
 
+#[cfg(not(feature = "no_metrics"))]
 #[test]
 fn multithreaded() {
     use std::sync::Arc;
