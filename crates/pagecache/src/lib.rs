@@ -25,6 +25,7 @@ mod constants;
 pub mod debug;
 mod diskptr;
 mod ds;
+mod histogram;
 mod iobuf;
 mod iterator;
 mod lazy;
@@ -95,6 +96,7 @@ pub use self::{
     config::{Config, ConfigBuilder},
     diskptr::DiskPtr,
     ds::{node_from_frag_vec, Lru, Node, PageTable, Stack, StackIter, VecSet},
+    histogram::Histogram,
     lazy::Lazy,
     logger::{Log, LogRead},
     map::{FastMap1, FastMap4, FastMap8, FastSet1, FastSet4, FastSet8},
