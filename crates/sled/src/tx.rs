@@ -81,6 +81,26 @@ pub enum TransactionError {
     Storage(Error),
 }
 
+impl std::fmt::Display for TransactionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use TransactionError::*;
+        match self {
+            Conflict => write!(f, "Conflict during transaction"),
+            Abort => write!(f, "Transaction was aborted"),
+            Storage(e) => e.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for TransactionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            TransactionError::Storage(ref e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
 pub type TransactionResult<T> = std::result::Result<T, TransactionError>;
 
 fn abort() -> TransactionError {
