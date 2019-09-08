@@ -13,6 +13,7 @@ enum Op {
     Del(u8),
     Id,
     Restart,
+    Flush,
     FailPoint(&'static str),
 }
 
@@ -47,12 +48,13 @@ impl Arbitrary for Op {
             return Restart;
         }
 
-        let choice = g.gen_range(0, 3);
+        let choice = g.gen_range(0, 4);
 
         match choice {
             0 => Set,
             1 => Del(g.gen::<u8>()),
             2 => Id,
+            3 => Flush,
             _ => panic!("impossible choice"),
         }
     }
@@ -148,7 +150,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 
             tree = tree_res.expect("tree should restart");
 
-            let mut ref_iter = reference.iter().map(|(ref rk, ref rv)| (**rk, **rv));
+            let mut ref_iter = reference.iter().map(|(ref rk, ref rv)| (**rk, *rv));
             for res in tree.iter() {
                 let t = match res {
                     Ok((ref tk, _)) => v(tk),
@@ -157,11 +159,17 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 };
 
                 // make sure the tree value is in there
-                while let Some((r, (_rv, certainty))) = ref_iter.next() {
-                    if certainty {
+                while let Some((ref_key, ref_expected)) = ref_iter.next() {
+                    if ref_expected.iter().all(Option::is_none) {
+                        continue
+                    } else if ref_expected.iter().all(Option::is_some) {
                         // tree MUST match reference if we have a certain reference
-                        if t != r {
-                            println!("expected to iterate over {:?} but got {:?} instead", r, t);
+                        if t != ref_key {
+                            println!(
+                                "expected to iterate over {:?} but got {:?} instead",
+                                ref_key,
+                                t
+                            );
                             return false;
                         }
                         break;
@@ -169,14 +177,18 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                         // we have an uncertain reference, so we iterate through
                         // it and guarantee the reference is never higher than
                         // the tree value.
-                        if t == r {
+                        if t == ref_key {
                             // we can move on to the next tree item
                             break;
                         }
 
-                        if r > t {
+                        if ref_key > t {
                             // we have a bug, the reference iterator should always be <= tree
-                            println!("tree verification failed: expected {:?} got {:?}", r, t);
+                            println!(
+                                "tree verification failed: expected {:?} got {:?}",
+                                ref_key,
+                                t
+                            );
                             return false;
                         }
 
@@ -226,33 +238,21 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                     vec![hi, lo]
                 };
 
-                // insert false certainty until it fully completes
-                reference.insert(set_counter, (set_counter, false));
+                // insert uncertain value until it fully completes
+                reference
+                    .entry(set_counter)
+                    .or_insert_with(|| vec![None])
+                    .push(Some(set_counter));
 
                 fp_crash!(tree.insert(&[hi, lo], val));
-
-                // make sure we keep the disk and reference in-sync
-                // maybe in the future put pending things in their own
-                // reference and have a Flush op that syncs them.
-                // just because the set above didn't hit a failpoint,
-                // it doesn't mean this flush won't hit one, so we
-                // also use the fp_crash macro here for handling it.
-                fp_crash!(tree.flush());
-
-                // now we should be certain the thing is in there, set certainty
-                // to true
-                reference.insert(set_counter, (set_counter, true));
 
                 set_counter += 1;
             }
             Del(k) => {
-                // insert false certainty before completes
-                reference.insert(u16::from(k), (u16::from(k), false));
+                // insert uncertain before it completes
+                reference.entry(u16::from(k)).and_modify(|v| v.push(None));
 
                 fp_crash!(tree.remove(&*vec![0, k]));
-                fp_crash!(tree.flush());
-
-                reference.remove(&u16::from(k));
             }
             Id => {
                 let id = fp_crash!(tree.generate_id());
@@ -264,6 +264,16 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                     max_id,
                 );
                 max_id = id as isize;
+            }
+            Flush => {
+                fp_crash!(tree.flush());
+                for (_key, value) in reference.iter_mut() {
+                    if value.len() > 1 {
+                        let last = *value.last().unwrap();
+                        value.clear();
+                        value.push(last);
+                    }
+                }
             }
             Restart => {
                 restart!();
@@ -283,11 +293,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 #[cfg(not(target_os = "fuchsia"))]
 fn quickcheck_tree_with_failpoints() {
     // use fewer tests for travis OSX builds that stall out all the time
-    #[cfg(target_os = "macos")]
     let n_tests = 50;
-
-    #[cfg(not(target_os = "macos"))]
-    let n_tests = 100;
 
     let generator_sz = 100;
 

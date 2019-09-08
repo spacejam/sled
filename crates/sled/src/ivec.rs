@@ -11,7 +11,7 @@ use serde::{
     {de::Deserializer, ser::Serializer},
 };
 
-const CUTOFF: usize = std::mem::size_of::<&[u8]>() - 1;
+const CUTOFF: usize = 22;
 
 type Inner = [u8; CUTOFF];
 

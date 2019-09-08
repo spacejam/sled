@@ -26,12 +26,10 @@ check_snapshot_integrity = ["pagecache/check_snapshot_integrity"]
 
 [dependencies]
 pagecache = { path = "../pagecache", version = "0.19.1" }
-serde_bytes = "0.11"
+serde_bytes = "0.11.2"
 parking_lot = "0.9.0"
+log = "0.4.8"
 
 [dependencies.serde]
-version = "1.0"
+version = "1.0.99"
 features = ["derive"]
-
-[dependencies.log]
-version = "0.4"
