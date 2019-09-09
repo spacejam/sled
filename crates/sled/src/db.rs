@@ -138,11 +138,11 @@ impl Db {
         if let Some(tree) = tenants.get(name) {
             return Ok(tree.clone());
         }
-      
+
         let tree = meta::open_tree(&self.context, name.to_vec(), &guard)?;
 
         tenants.insert(name.to_vec(), tree.clone());
-      
+
         Ok(tree)
     }
 
@@ -259,11 +259,14 @@ impl Db {
         let mut ret = vec![];
 
         for (name, tree) in tenants.iter() {
-            let tree = tree.clone();
-            let iter: Iter<'static> =
-                unsafe { std::mem::transmute(tree.iter()) };
-            let arc_iter = ArcIter { _tree: tree, iter };
-            ret.push((b"tree".to_vec(), name.to_vec(), arc_iter));
+            ret.push((
+                b"tree".to_vec(),
+                name.to_vec(),
+                tree.iter().map(|kv| {
+                    let kv = kv.unwrap();
+                    vec![kv.0.to_vec(), kv.1.to_vec()]
+                }),
+            ));
         }
 
         ret
@@ -324,32 +327,3 @@ impl Db {
 /// they impact the migration path.
 type CollectionType = Vec<u8>;
 type CollectionName = Vec<u8>;
-
-struct ArcIter {
-    _tree: Tree,
-    iter: Iter<'static>,
-}
-
-impl std::ops::Deref for ArcIter {
-    type Target = Iter<'static>;
-
-    fn deref(&self) -> &Iter<'static> {
-        &self.iter
-    }
-}
-
-impl std::ops::DerefMut for ArcIter {
-    fn deref_mut(&mut self) -> &mut Iter<'static> {
-        &mut self.iter
-    }
-}
-
-impl Iterator for ArcIter {
-    type Item = Vec<Vec<u8>>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let kv_opt = self.iter.next()?;
-        let (k, v) = kv_opt.expect("failed to read data from system");
-        Some(vec![k.to_vec(), v.to_vec()])
-    }
-}
