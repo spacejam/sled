@@ -29,11 +29,11 @@ impl<'g> std::ops::Deref for View<'g> {
     }
 }
 
-impl<'a> IntoIterator for &'a Tree {
+impl IntoIterator for &'_ Tree {
     type Item = Result<(IVec, IVec)>;
-    type IntoIter = Iter<'a>;
+    type IntoIter = Iter;
 
-    fn into_iter(self) -> Iter<'a> {
+    fn into_iter(self) -> Iter {
         self.iter()
     }
 }
@@ -66,13 +66,23 @@ impl<'a> IntoIterator for &'a Tree {
 /// assert_eq!(t.get(b"yo!"), Ok(None));
 /// ```
 #[derive(Clone)]
-pub struct Tree {
+pub struct Tree(pub(crate) Arc<TreeInner>);
+
+pub struct TreeInner {
     pub(crate) tree_id: Vec<u8>,
     pub(crate) context: Context,
-    pub(crate) subscriptions: Arc<Subscriptions>,
-    pub(crate) root: Arc<AtomicU64>,
-    pub(crate) concurrency_control: Arc<RwLock<()>>,
-    pub(crate) merge_operator: Arc<RwLock<Option<MergeOperator>>>,
+    pub(crate) subscriptions: Subscriptions,
+    pub(crate) root: AtomicU64,
+    pub(crate) concurrency_control: RwLock<()>,
+    pub(crate) merge_operator: RwLock<Option<MergeOperator>>,
+}
+
+impl std::ops::Deref for Tree {
+    type Target = TreeInner;
+
+    fn deref(&self) -> &TreeInner {
+        &self.0
+    }
 }
 
 unsafe impl Send for Tree {}
@@ -238,7 +248,7 @@ impl Tree {
     /// ```
     pub fn transaction<F, R>(&self, f: F) -> TransactionResult<R>
     where
-        F: Fn(&TransactionalTree<'_>) -> TransactionResult<R>,
+        F: Fn(&TransactionalTree) -> TransactionResult<R>,
     {
         <&Self as Transactional>::transaction(&self, f)
     }
@@ -1007,7 +1017,7 @@ impl Tree {
     /// assert_eq!(iter.next().unwrap(), Ok((IVec::from(&[3]), IVec::from(&[30]))));
     /// assert_eq!(iter.next(), None);
     /// ```
-    pub fn iter(&self) -> Iter<'_> {
+    pub fn iter(&self) -> Iter {
         self.range::<Vec<u8>, _>(..)
     }
 
@@ -1040,7 +1050,7 @@ impl Tree {
     /// assert_eq!(r.next().unwrap(), Ok((IVec::from(&[2]), IVec::from(&[20]))));
     /// assert_eq!(r.next(), None);
     /// ```
-    pub fn range<K, R>(&self, range: R) -> Iter<'_>
+    pub fn range<K, R>(&self, range: R) -> Iter
     where
         K: AsRef<[u8]>,
         R: RangeBounds<K>,
@@ -1068,11 +1078,10 @@ impl Tree {
         };
 
         Iter {
-            tree: &self,
+            tree: self.clone(),
             hi,
             lo,
             cached_node: None,
-            guard: pin(),
             going_forward: true,
         }
     }
@@ -1102,7 +1111,7 @@ impl Tree {
     /// assert_eq!(r.next(), Some(Ok((IVec::from(&[0, 0, 3]), IVec::from(&[0, 0, 3])))));
     /// assert_eq!(r.next(), None);
     /// ```
-    pub fn scan_prefix<P>(&self, prefix: P) -> Iter<'_>
+    pub fn scan_prefix<P>(&self, prefix: P) -> Iter
     where
         P: AsRef<[u8]>,
     {

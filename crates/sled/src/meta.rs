@@ -18,14 +18,14 @@ pub(crate) fn open_tree<'a>(
     loop {
         match context.pagecache.meta_pid_for_name(&name, guard) {
             Ok(root_id) => {
-                return Ok(Tree {
+                return Ok(Tree(Arc::new(TreeInner {
                     tree_id: name,
                     context: context.clone(),
-                    subscriptions: Arc::new(Subscriptions::default()),
-                    root: Arc::new(AtomicU64::new(root_id)),
-                    concurrency_control: Arc::new(RwLock::new(())),
-                    merge_operator: Arc::new(RwLock::new(None)),
-                });
+                    subscriptions: Subscriptions::default(),
+                    root: AtomicU64::new(root_id),
+                    concurrency_control: RwLock::new(()),
+                    merge_operator: RwLock::new(None),
+                })));
             }
             Err(Error::CollectionNotFound(_)) => {}
             Err(other) => return Err(other),
@@ -88,13 +88,13 @@ pub(crate) fn open_tree<'a>(
             continue;
         }
 
-        return Ok(Tree {
+        return Ok(Tree(Arc::new(TreeInner {
             tree_id: name,
-            subscriptions: Arc::new(Subscriptions::default()),
+            subscriptions: Subscriptions::default(),
             context: context.clone(),
-            root: Arc::new(AtomicU64::new(root_id)),
-            concurrency_control: Arc::new(RwLock::new(())),
-            merge_operator: Arc::new(RwLock::new(None)),
-        });
+            root: AtomicU64::new(root_id),
+            concurrency_control: RwLock::new(()),
+            merge_operator: RwLock::new(None),
+        })));
     }
 }
