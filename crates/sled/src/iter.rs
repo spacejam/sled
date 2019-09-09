@@ -36,7 +36,7 @@ macro_rules! iter_try {
 
 /// An iterator over keys and values in a `Tree`.
 pub struct Iter<'a> {
-    pub(super) tree: &'a Tree,
+    pub(super) tree: Tree,
     pub(super) hi: Bound<IVec>,
     pub(super) lo: Bound<IVec>,
     pub(super) cached_node: Option<(PageId, &'a Node)>,
@@ -94,16 +94,14 @@ impl<'a> Iterator for Iter<'a> {
         let g_ptr = &self.guard as *const Guard;
         let guard = unsafe { &*g_ptr as &'a Guard };
 
-        let (mut pid, mut node) =
-            if let (true, Some((pid, node))) =
-                (self.going_forward, self.cached_node.take()) {
-                (pid, node)
-            } else {
-                let view = iter_try!(self
-                    .tree
-                    .node_for_key(self.low_key(), guard));
-                (view.pid, view.node)
-            };
+        let (mut pid, mut node) = if let (true, Some((pid, node))) =
+            (self.going_forward, self.cached_node.take())
+        {
+            (pid, node)
+        } else {
+            let view = iter_try!(self.tree.node_for_key(self.low_key(), guard));
+            (view.pid, view.node)
+        };
 
         for _ in 0..MAX_LOOPS {
             if self.bounds_collapsed() {
@@ -177,16 +175,15 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
         let g_ptr = &self.guard as *const Guard;
         let guard = unsafe { &*g_ptr as &'a Guard };
 
-        let (mut pid, mut node) =
-            if let (false, Some((pid, node))) =
-                (self.going_forward, self.cached_node.take()) {
-                (pid, node)
-            } else {
-                let view = iter_try!(self
-                    .tree
-                    .node_for_key(self.high_key(), guard));
-                (view.pid, view.node)
-            };
+        let (mut pid, mut node) = if let (false, Some((pid, node))) =
+            (self.going_forward, self.cached_node.take())
+        {
+            (pid, node)
+        } else {
+            let view =
+                iter_try!(self.tree.node_for_key(self.high_key(), guard));
+            (view.pid, view.node)
+        };
 
         for _ in 0..MAX_LOOPS {
             if self.bounds_collapsed() {

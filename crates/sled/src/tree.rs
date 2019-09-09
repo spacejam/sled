@@ -1078,7 +1078,7 @@ impl Tree {
         };
 
         Iter {
-            tree: &self,
+            tree: self.clone(),
             hi,
             lo,
             cached_node: None,
