@@ -319,6 +319,7 @@ impl Node {
         None
     }
 
+    /// leaf_pair_for_key finds an existing value pair for a given key.
     pub(crate) fn leaf_pair_for_key(
         &self,
         key: &[u8],
@@ -333,6 +334,18 @@ impl Node {
             .ok();
 
         search.map(|idx| (&records[idx].0, &records[idx].1))
+    }
+
+    /// node_kv_pair returns either existing (node/key, value) pair or
+    /// (node/key, none) where a node/key is node level encoded key.
+    pub fn node_kv_pair(&self, key: &[u8]) -> (IVec, Option<IVec>) {
+        if let Some((k, v)) = self.leaf_pair_for_key(key.as_ref()) {
+            (k.clone(), Some(v.clone()))
+        } else {
+            let encoded_key = prefix_encode(&self.lo, key.as_ref());
+            let encoded_val = None;
+            (encoded_key, encoded_val)
+        }
     }
 
     pub(crate) fn should_split(&self) -> bool {

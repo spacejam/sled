@@ -12,7 +12,8 @@
 //!     db.insert(b"k1", b"cats")?;
 //!     db.insert(b"k2", b"dogs")?;
 //!     Ok(())
-//! }).unwrap();
+//! })
+//! .unwrap();
 //!
 //! // Atomically swap two items:
 //! db.transaction(|db| {
@@ -25,7 +26,8 @@
 //!     db.insert(b"k2", v1);
 //!
 //!     Ok(())
-//! }).unwrap();
+//! })
+//! .unwrap();
 //!
 //! assert_eq!(&db.get(b"k1").unwrap().unwrap(), b"dogs");
 //! assert_eq!(&db.get(b"k2").unwrap().unwrap(), b"cats");
@@ -45,13 +47,15 @@
 //!
 //! // Atomically process the new item and move it
 //! // between `Tree`s.
-//! (&unprocessed, &processed).transaction(|(unprocessed, processed)| {
-//!     let unprocessed_item = unprocessed.remove(b"k3")?.unwrap();
-//!     let mut processed_item = b"yappin' ".to_vec();
-//!     processed_item.extend_from_slice(&unprocessed_item);
-//!     processed.insert(b"k3", processed_item)?;
-//!     Ok(())
-//! }).unwrap();
+//! (&unprocessed, &processed)
+//!     .transaction(|(unprocessed, processed)| {
+//!         let unprocessed_item = unprocessed.remove(b"k3")?.unwrap();
+//!         let mut processed_item = b"yappin' ".to_vec();
+//!         processed_item.extend_from_slice(&unprocessed_item);
+//!         processed.insert(b"k3", processed_item)?;
+//!         Ok(())
+//!     })
+//!     .unwrap();
 //!
 //! assert_eq!(unprocessed.get(b"k3").unwrap(), None);
 //! assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
@@ -60,6 +64,7 @@
 #![allow(unused)]
 #![allow(missing_docs)]
 
+use parking_lot::RwLockWriteGuard;
 use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 
 use super::*;
@@ -176,9 +181,7 @@ impl TransactionalTree {
         Ok(())
     }
 
-    fn stage<'a>(
-        &'a self,
-    ) -> TransactionResult<Vec<parking_lot::RwLockWriteGuard<'a, ()>>> {
+    fn stage(&self) -> TransactionResult<Vec<RwLockWriteGuard<'_, ()>>> {
         let guard = self.tree.concurrency_control.write();
         Ok(vec![guard])
     }
@@ -209,9 +212,7 @@ pub struct TransactionalTrees {
 }
 
 impl TransactionalTrees {
-    fn stage<'a>(
-        &'a self,
-    ) -> TransactionResult<Vec<parking_lot::RwLockWriteGuard<'a, ()>>> {
+    fn stage(&self) -> TransactionResult<Vec<RwLockWriteGuard<'_, ()>>> {
         // we want to stage our trees in
         // lexicographic order to guarantee
         // no deadlocks should they block

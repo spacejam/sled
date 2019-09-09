@@ -54,12 +54,16 @@ impl IntoIterator for &'_ Tree {
 ///     b"yo!",      // key
 ///     Some(b"v1"), // old value, None for not present
 ///     Some(b"v2"), // new value, None for delete
-/// ).unwrap();
+/// )
+/// .unwrap();
 ///
 /// // Iterates over key-value pairs, starting at the given key.
 /// let scan_key: &[u8] = b"a non-present key before yo!";
 /// let mut iter = t.range(scan_key..);
-/// assert_eq!(iter.next().unwrap(), Ok((IVec::from(b"yo!"), IVec::from(b"v2"))));
+/// assert_eq!(
+///     iter.next().unwrap(),
+///     Ok((IVec::from(b"yo!"), IVec::from(b"v2")))
+/// );
 /// assert_eq!(iter.next(), None);
 ///
 /// t.remove(b"yo!");
@@ -110,8 +114,8 @@ impl Tree {
     /// let config = ConfigBuilder::new().temporary(true).build();
     /// let t = Db::start(config).unwrap();
     ///
-    /// assert_eq!(t.insert(&[1,2,3], vec![0]), Ok(None));
-    /// assert_eq!(t.insert(&[1,2,3], vec![1]), Ok(Some(IVec::from(&[0]))));
+    /// assert_eq!(t.insert(&[1, 2, 3], vec![0]), Ok(None));
+    /// assert_eq!(t.insert(&[1, 2, 3], vec![1]), Ok(Some(IVec::from(&[0]))));
     /// ```
     pub fn insert<K, V>(&self, key: K, value: V) -> Result<Option<IVec>>
     where
@@ -149,14 +153,7 @@ impl Tree {
 
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
 
-            let (encoded_key, last_value) =
-                if let Some((k, v)) = node.leaf_pair_for_key(key.as_ref()) {
-                    (k.clone(), Some(v.clone()))
-                } else {
-                    let k = prefix_encode(&node.lo, key.as_ref());
-                    let old_v = None;
-                    (k, old_v)
-                };
+            let (encoded_key, last_value) = node.node_kv_pair(key.as_ref());
             let frag = Frag::Set(encoded_key, value.clone());
             let link = self.context.pagecache.link(
                 pid,
@@ -194,7 +191,8 @@ impl Tree {
     ///     db.insert(b"k1", b"cats")?;
     ///     db.insert(b"k2", b"dogs")?;
     ///     Ok(())
-    /// }).unwrap();
+    /// })
+    /// .unwrap();
     ///
     /// // Atomically swap two items:
     /// db.transaction(|db| {
@@ -207,7 +205,8 @@ impl Tree {
     ///     db.insert(b"k2", v1);
     ///
     ///     Ok(())
-    /// }).unwrap();
+    /// })
+    /// .unwrap();
     ///
     /// assert_eq!(&db.get(b"k1").unwrap().unwrap(), b"dogs");
     /// assert_eq!(&db.get(b"k2").unwrap().unwrap(), b"cats");
@@ -235,13 +234,15 @@ impl Tree {
     ///
     /// // Atomically process the new item and move it
     /// // between `Tree`s.
-    /// (&unprocessed, &processed).transaction(|(unprocessed, processed)| {
-    ///     let unprocessed_item = unprocessed.remove(b"k3")?.unwrap();
-    ///     let mut processed_item = b"yappin' ".to_vec();
-    ///     processed_item.extend_from_slice(&unprocessed_item);
-    ///     processed.insert(b"k3", processed_item)?;
-    ///     Ok(())
-    /// }).unwrap();
+    /// (&unprocessed, &processed)
+    ///     .transaction(|(unprocessed, processed)| {
+    ///         let unprocessed_item = unprocessed.remove(b"k3")?.unwrap();
+    ///         let mut processed_item = b"yappin' ".to_vec();
+    ///         processed_item.extend_from_slice(&unprocessed_item);
+    ///         processed.insert(b"k3", processed_item)?;
+    ///         Ok(())
+    ///     })
+    ///     .unwrap();
     ///
     /// assert_eq!(unprocessed.get(b"k3").unwrap(), None);
     /// assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
@@ -263,7 +264,7 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use sled::{Db, Batch};
+    /// use sled::{Batch, Db};
     ///
     /// let db = Db::open("batch_db").unwrap();
     /// db.insert("key_0", "val_0").unwrap();
@@ -377,17 +378,8 @@ impl Tree {
 
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
 
-            let (encoded_key, existing_val) =
-                if let Some((k, v)) = node.leaf_pair_for_key(key.as_ref()) {
-                    (k.clone(), Some(v.clone()))
-                } else {
-                    let encoded_key = prefix_encode(&node.lo, key.as_ref());
-                    let encoded_val = None;
-                    (encoded_key, encoded_val)
-                };
-
+            let (encoded_key, existing_val) = node.node_kv_pair(key.as_ref());
             let frag = Frag::Del(encoded_key);
-
             let link =
                 self.context
                     .pagecache
@@ -460,15 +452,7 @@ impl Tree {
             let View { ptr, pid, node, .. } =
                 self.node_for_key(key.as_ref(), &guard)?;
 
-            let (encoded_key, current_value) =
-                if let Some((k, v)) = node.leaf_pair_for_key(key.as_ref()) {
-                    (k.clone(), Some(v.clone()))
-                } else {
-                    let k = prefix_encode(&node.lo, key.as_ref());
-                    let old_v = None;
-                    (k, old_v)
-                };
-
+            let (encoded_key, current_value) = node.node_kv_pair(key.as_ref());
             let matches = match (&old, &current_value) {
                 (None, None) => true,
                 (Some(ref o), Some(ref c)) => o.as_ref() == &**c,
@@ -515,8 +499,8 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use std::convert::TryInto;
     /// use sled::{ConfigBuilder, Error, IVec};
+    /// use std::convert::TryInto;
     ///
     /// let config = ConfigBuilder::new().temporary(true).build();
     /// let tree = sled::Db::start(config).unwrap();
@@ -536,7 +520,7 @@ impl Tree {
     ///             let array: [u8; 8] = bytes.try_into().unwrap();
     ///             let number = u64::from_be_bytes(array);
     ///             number + 1
-    ///         },
+    ///         }
     ///         None => 0,
     ///     };
     ///
@@ -581,8 +565,8 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use std::convert::TryInto;
     /// use sled::{ConfigBuilder, Error, IVec};
+    /// use std::convert::TryInto;
     ///
     /// let config = ConfigBuilder::new().temporary(true).build();
     /// let tree = sled::Db::start(config).unwrap();
@@ -601,7 +585,7 @@ impl Tree {
     ///             let array: [u8; 8] = bytes.try_into().unwrap();
     ///             let number = u64::from_be_bytes(array);
     ///             number + 1
-    ///         },
+    ///         }
     ///         None => 0,
     ///     };
     ///
@@ -648,7 +632,7 @@ impl Tree {
     ///
     /// # Examples
     /// ```
-    /// use sled::{Event, ConfigBuilder};
+    /// use sled::{ConfigBuilder, Event};
     /// let config = ConfigBuilder::new().temporary(true).build();
     ///
     /// let tree = sled::Db::start(config).unwrap();
@@ -734,15 +718,28 @@ impl Tree {
     /// let tree = Db::start(config).unwrap();
     ///
     /// for i in 0..10 {
-    ///     tree.insert(&[i], vec![i]).expect("should write successfully");
+    ///     tree.insert(&[i], vec![i])
+    ///         .expect("should write successfully");
     /// }
     ///
     /// assert_eq!(tree.get_lt(&[]), Ok(None));
     /// assert_eq!(tree.get_lt(&[0]), Ok(None));
-    /// assert_eq!(tree.get_lt(&[1]), Ok(Some((IVec::from(&[0]), IVec::from(&[0])))));
-    /// assert_eq!(tree.get_lt(&[9]), Ok(Some((IVec::from(&[8]), IVec::from(&[8])))));
-    /// assert_eq!(tree.get_lt(&[10]), Ok(Some((IVec::from(&[9]), IVec::from(&[9])))));
-    /// assert_eq!(tree.get_lt(&[255]), Ok(Some((IVec::from(&[9]), IVec::from(&[9])))));
+    /// assert_eq!(
+    ///     tree.get_lt(&[1]),
+    ///     Ok(Some((IVec::from(&[0]), IVec::from(&[0]))))
+    /// );
+    /// assert_eq!(
+    ///     tree.get_lt(&[9]),
+    ///     Ok(Some((IVec::from(&[8]), IVec::from(&[8]))))
+    /// );
+    /// assert_eq!(
+    ///     tree.get_lt(&[10]),
+    ///     Ok(Some((IVec::from(&[9]), IVec::from(&[9]))))
+    /// );
+    /// assert_eq!(
+    ///     tree.get_lt(&[255]),
+    ///     Ok(Some((IVec::from(&[9]), IVec::from(&[9]))))
+    /// );
     /// ```
     pub fn get_lt<K>(&self, key: K) -> Result<Option<(IVec, IVec)>>
     where
@@ -771,18 +768,33 @@ impl Tree {
     /// let tree = Db::start(config).unwrap();
     ///
     /// for i in 0..10 {
-    ///     tree.insert(&[i], vec![i]).expect("should write successfully");
+    ///     tree.insert(&[i], vec![i])
+    ///         .expect("should write successfully");
     /// }
     ///
-    /// assert_eq!(tree.get_gt(&[]), Ok(Some((IVec::from(&[0]), IVec::from(&[0])))));
-    /// assert_eq!(tree.get_gt(&[0]), Ok(Some((IVec::from(&[1]), IVec::from(&[1])))));
-    /// assert_eq!(tree.get_gt(&[1]), Ok(Some((IVec::from(&[2]), IVec::from(&[2])))));
-    /// assert_eq!(tree.get_gt(&[8]), Ok(Some((IVec::from(&[9]), IVec::from(&[9])))));
+    /// assert_eq!(
+    ///     tree.get_gt(&[]),
+    ///     Ok(Some((IVec::from(&[0]), IVec::from(&[0]))))
+    /// );
+    /// assert_eq!(
+    ///     tree.get_gt(&[0]),
+    ///     Ok(Some((IVec::from(&[1]), IVec::from(&[1]))))
+    /// );
+    /// assert_eq!(
+    ///     tree.get_gt(&[1]),
+    ///     Ok(Some((IVec::from(&[2]), IVec::from(&[2]))))
+    /// );
+    /// assert_eq!(
+    ///     tree.get_gt(&[8]),
+    ///     Ok(Some((IVec::from(&[9]), IVec::from(&[9]))))
+    /// );
     /// assert_eq!(tree.get_gt(&[9]), Ok(None));
     ///
-    /// tree.insert(500u16.to_be_bytes(), vec![10] );
-    /// assert_eq!(tree.get_gt(&499u16.to_be_bytes()),
-    ///            Ok(Some((IVec::from(&500u16.to_be_bytes()), IVec::from(&[10])))));
+    /// tree.insert(500u16.to_be_bytes(), vec![10]);
+    /// assert_eq!(
+    ///     tree.get_gt(&499u16.to_be_bytes()),
+    ///     Ok(Some((IVec::from(&500u16.to_be_bytes()), IVec::from(&[10]))))
+    /// );
     /// ```
     pub fn get_gt<K>(&self, key: K) -> Result<Option<(IVec, IVec)>>
     where
@@ -895,15 +907,7 @@ impl Tree {
             let View { ptr, pid, node, .. } =
                 self.node_for_key(key.as_ref(), &guard)?;
 
-            let (encoded_key, current_value) =
-                if let Some((k, v)) = node.leaf_pair_for_key(key.as_ref()) {
-                    (k.clone(), Some(v.clone()))
-                } else {
-                    let k = prefix_encode(&node.lo, key.as_ref());
-                    let old_v = None;
-                    (k, old_v)
-                };
-
+            let (encoded_key, current_value) = node.node_kv_pair(key.as_ref());
             let tmp = current_value.as_ref().map(AsRef::as_ref);
             let new = merge_operator(key.as_ref(), tmp, value.as_ref())
                 .map(IVec::from);
@@ -1012,9 +1016,18 @@ impl Tree {
     /// t.insert(&[2], vec![20]);
     /// t.insert(&[3], vec![30]);
     /// let mut iter = t.iter();
-    /// assert_eq!(iter.next().unwrap(), Ok((IVec::from(&[1]), IVec::from(&[10]))));
-    /// assert_eq!(iter.next().unwrap(), Ok((IVec::from(&[2]), IVec::from(&[20]))));
-    /// assert_eq!(iter.next().unwrap(), Ok((IVec::from(&[3]), IVec::from(&[30]))));
+    /// assert_eq!(
+    ///     iter.next().unwrap(),
+    ///     Ok((IVec::from(&[1]), IVec::from(&[10])))
+    /// );
+    /// assert_eq!(
+    ///     iter.next().unwrap(),
+    ///     Ok((IVec::from(&[2]), IVec::from(&[20])))
+    /// );
+    /// assert_eq!(
+    ///     iter.next().unwrap(),
+    ///     Ok((IVec::from(&[3]), IVec::from(&[30])))
+    /// );
     /// assert_eq!(iter.next(), None);
     /// ```
     pub fn iter(&self) -> Iter {
@@ -1105,10 +1118,22 @@ impl Tree {
     ///
     /// let prefix: &[u8] = &[0, 0];
     /// let mut r = t.scan_prefix(prefix);
-    /// assert_eq!(r.next(), Some(Ok((IVec::from(&[0, 0, 0]), IVec::from(&[0, 0, 0])))));
-    /// assert_eq!(r.next(), Some(Ok((IVec::from(&[0, 0, 1]), IVec::from(&[0, 0, 1])))));
-    /// assert_eq!(r.next(), Some(Ok((IVec::from(&[0, 0, 2]), IVec::from(&[0, 0, 2])))));
-    /// assert_eq!(r.next(), Some(Ok((IVec::from(&[0, 0, 3]), IVec::from(&[0, 0, 3])))));
+    /// assert_eq!(
+    ///     r.next(),
+    ///     Some(Ok((IVec::from(&[0, 0, 0]), IVec::from(&[0, 0, 0]))))
+    /// );
+    /// assert_eq!(
+    ///     r.next(),
+    ///     Some(Ok((IVec::from(&[0, 0, 1]), IVec::from(&[0, 0, 1]))))
+    /// );
+    /// assert_eq!(
+    ///     r.next(),
+    ///     Some(Ok((IVec::from(&[0, 0, 2]), IVec::from(&[0, 0, 2]))))
+    /// );
+    /// assert_eq!(
+    ///     r.next(),
+    ///     Some(Ok((IVec::from(&[0, 0, 3]), IVec::from(&[0, 0, 3]))))
+    /// );
     /// assert_eq!(r.next(), None);
     /// ```
     pub fn scan_prefix<P>(&self, prefix: P) -> Iter
@@ -1336,14 +1361,7 @@ impl Tree {
         let encoded_at = prefix_encode(root_lo, &*at);
         new_root_vec.push((encoded_at, to));
 
-        let new_root = Frag::Base(Node {
-            data: Data::Index(new_root_vec),
-            next: None,
-            lo: vec![].into(),
-            hi: vec![].into(),
-            merging_child: None,
-            merging: false,
-        });
+        let new_root = Frag::base(Data::Index(new_root_vec));
 
         let (new_root_pid, new_root_ptr) =
             self.context.pagecache.allocate(new_root, guard)?;
@@ -1539,7 +1557,7 @@ impl Tree {
                 }
             }
 
-            // detect whether a node is mergable, and begin
+            // detect whether a node is mergeable, and begin
             // the merge process.
             // NB we can never begin merging a node that is
             // the leftmost child of an index, because it

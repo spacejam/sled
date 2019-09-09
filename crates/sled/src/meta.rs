@@ -8,10 +8,10 @@ use super::*;
 
 /// Open or create a new disk-backed Tree with its own keyspace,
 /// accessible from the `Db` via the provided identifier.
-pub(crate) fn open_tree<'a>(
+pub(crate) fn open_tree(
     context: &Context,
     name: Vec<u8>,
-    guard: &'a Guard,
+    guard: &Guard,
 ) -> Result<Tree> {
     // we loop because creating this Tree may race with
     // concurrent attempts to open the same one.
@@ -32,15 +32,7 @@ pub(crate) fn open_tree<'a>(
         }
 
         // set up empty leaf
-        let leaf = Frag::Base(Node {
-            data: Data::Leaf(vec![]),
-            next: None,
-            lo: vec![].into(),
-            hi: vec![].into(),
-            merging_child: None,
-            merging: false,
-        });
-
+        let leaf = Frag::base(Data::Leaf(vec![]));
         let (leaf_id, leaf_ptr) = context.pagecache.allocate(leaf, guard)?;
 
         trace!(
@@ -53,16 +45,7 @@ pub(crate) fn open_tree<'a>(
 
         // vec![0] represents a prefix-encoded empty prefix
         let root_index_vec = vec![(vec![0].into(), leaf_id)];
-
-        let root = Frag::Base(Node {
-            data: Data::Index(root_index_vec),
-            next: None,
-            lo: vec![].into(),
-            hi: vec![].into(),
-            merging_child: None,
-            merging: false,
-        });
-
+        let root = Frag::base(Data::Index(root_index_vec));
         let (root_id, root_ptr) = context.pagecache.allocate(root, guard)?;
 
         debug!("allocated pid {} for root of new_tree {:?}", root_id, name);
