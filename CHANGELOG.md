@@ -1,3 +1,17 @@
+# 0.28
+
+## Breaking Changes
+
+* `Iter` no longer has an associated lifetime
+
+## Bug Fixes
+
+* A bug with prefix encoding has been fixed that
+  led to nodes with keys longer than 256 bytes
+  being stored incorrectly, which led to them
+  being inaccessible and also leading to infinite
+  loops during iteration.
+
 # 0.27
 
 ## Breaking Changes
