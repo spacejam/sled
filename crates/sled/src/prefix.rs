@@ -2,6 +2,8 @@ use super::*;
 
 use std::cmp::Ordering;
 
+const MAX_PREFIX_ENCODED_LENGTH: usize = u8::max_value() as usize;
+
 pub(crate) fn prefix_encode(prefix: &[u8], buf: &[u8]) -> IVec {
     assert!(
         prefix <= buf,
@@ -10,9 +12,11 @@ pub(crate) fn prefix_encode(prefix: &[u8], buf: &[u8]) -> IVec {
         buf
     );
 
-    let max = u8::max_value() as usize;
     let zip = prefix.iter().zip(buf);
-    let prefix_len = zip.take(max).take_while(|(a, b)| a == b).count();
+    let prefix_len = zip
+        .take(MAX_PREFIX_ENCODED_LENGTH)
+        .take_while(|(a, b)| a == b)
+        .count();
 
     let encoded_len = 1 + buf.len() - prefix_len;
 
@@ -47,7 +51,6 @@ pub(crate) fn prefix_reencode(
     let old_suffix = &buf[1..];
 
     let decoded_key = old_prefix.iter().chain(old_suffix.iter());
-    let max_prefix_len = u8::max_value() as usize;
 
     let mut output = Vec::with_capacity(buf.len());
     output.push(0_u8);
@@ -55,7 +58,7 @@ pub(crate) fn prefix_reencode(
     for (i, c) in decoded_key.enumerate() {
         if output[0] as usize == i
             && Some(c) == new_prefix.get(i)
-            && i != max_prefix_len
+            && i != MAX_PREFIX_ENCODED_LENGTH
         {
             output[0] += 1;
         } else {
