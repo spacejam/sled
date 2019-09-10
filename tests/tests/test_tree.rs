@@ -18,7 +18,6 @@ const SPACE: usize = N;
 
 const INTENSITY: usize = 5;
 
-#[inline(always)]
 fn kv(i: usize) -> Vec<u8> {
     let i = i % SPACE;
     let k = [(i >> 16) as u8, (i >> 8) as u8, i as u8];
@@ -440,7 +439,7 @@ fn tree_subdir() {
 }
 
 #[test]
-fn tree_iterator() {
+fn tree_small_keys_iterator() {
     let config = ConfigBuilder::new()
         .temporary(true)
         .flush_every_ms(None)
@@ -454,6 +453,57 @@ fn tree_iterator() {
     for (i, (k, v)) in t.iter().map(|res| res.unwrap()).enumerate() {
         let should_be = kv(i);
         assert_eq!(should_be, &*k);
+        assert_eq!(should_be, &*v);
+    }
+
+    for (i, (k, v)) in t.iter().map(|res| res.unwrap()).enumerate() {
+        let should_be = kv(i);
+        assert_eq!(should_be, &*k);
+        assert_eq!(should_be, &*v);
+    }
+
+    let half_way = N_PER_THREAD / 2;
+    let half_key = kv(half_way);
+    let mut tree_scan = t.range(&*half_key..);
+    let r1 = tree_scan.next().unwrap().unwrap();
+    assert_eq!((r1.0.as_ref(), &*r1.1), (half_key.as_ref(), &*half_key));
+
+    let first_key = kv(0);
+    let mut tree_scan = t.range(&*first_key..);
+    let r2 = tree_scan.next().unwrap().unwrap();
+    assert_eq!((r2.0.as_ref(), &*r2.1), (first_key.as_ref(), &*first_key));
+
+    let last_key = kv(N_PER_THREAD - 1);
+    let mut tree_scan = t.range(&*last_key..);
+    let r3 = tree_scan.next().unwrap().unwrap();
+    assert_eq!((r3.0.as_ref(), &*r3.1), (last_key.as_ref(), &*last_key));
+    assert_eq!(tree_scan.next(), None);
+}
+
+#[test]
+fn tree_big_keys_iterator() {
+    fn kv(i: usize) -> Vec<u8> {
+        let k = [(i >> 16) as u8, (i >> 8) as u8, i as u8];
+
+        let mut base = vec![0; u8::max_value() as usize];
+        base.extend_from_slice(&k);
+        base
+    }
+
+    let config = ConfigBuilder::new()
+        .temporary(true)
+        .flush_every_ms(None)
+        .build();
+
+    let t = sled::Db::start(config).unwrap();
+    for i in 0..N_PER_THREAD {
+        let k = kv(i);
+        t.insert(&k, k.clone()).unwrap();
+    }
+
+    for (i, (k, v)) in t.iter().map(|res| res.unwrap()).enumerate() {
+        let should_be = kv(i);
+        assert_eq!(should_be, &*k, "{:#?}", t);
         assert_eq!(should_be, &*v);
     }
 
