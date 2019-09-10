@@ -55,7 +55,7 @@ pub(crate) fn prefix_reencode(
     for (i, c) in decoded_key.enumerate() {
         if output[0] as usize == i
             && Some(c) == new_prefix.get(i)
-            && i != max_prefix_len - 1
+            && i != max_prefix_len
         {
             output[0] += 1;
         } else {
