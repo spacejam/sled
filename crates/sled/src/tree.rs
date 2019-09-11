@@ -1361,7 +1361,7 @@ impl Tree {
         let encoded_at = prefix_encode(root_lo, &*at);
         new_root_vec.push((encoded_at, to));
 
-        let new_root = Frag::base(Data::Index(new_root_vec));
+        let new_root = Frag::root(Data::Index(new_root_vec));
 
         let (new_root_pid, new_root_ptr) =
             self.context.pagecache.allocate(new_root, guard)?;

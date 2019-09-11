@@ -22,7 +22,7 @@ pub(crate) enum Frag {
 }
 
 impl Frag {
-    pub fn base(data: Data) -> Frag {
+    fn base(data: Data) -> Frag {
         Frag::Base(Node {
             data,
             next: None,
@@ -31,5 +31,15 @@ impl Frag {
             merging_child: None,
             merging: false,
         })
+    }
+
+    pub fn root(data: Data) -> Frag {
+        assert!(data.is_index(), "root node must has index data type");
+        Frag::base(data)
+    }
+
+    pub fn leaf(data: Data) -> Frag {
+        assert!(data.is_leaf(), "leaf node must has leaf data type");
+        Frag::base(data)
     }
 }

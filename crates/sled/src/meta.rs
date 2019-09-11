@@ -32,7 +32,7 @@ pub(crate) fn open_tree(
         }
 
         // set up empty leaf
-        let leaf = Frag::base(Data::Leaf(vec![]));
+        let leaf = Frag::leaf(Data::Leaf(vec![]));
         let (leaf_id, leaf_ptr) = context.pagecache.allocate(leaf, guard)?;
 
         trace!(
@@ -45,7 +45,7 @@ pub(crate) fn open_tree(
 
         // vec![0] represents a prefix-encoded empty prefix
         let root_index_vec = vec![(vec![0].into(), leaf_id)];
-        let root = Frag::base(Data::Index(root_index_vec));
+        let root = Frag::root(Data::Index(root_index_vec));
         let (root_id, root_ptr) = context.pagecache.allocate(root, guard)?;
 
         debug!("allocated pid {} for root of new_tree {:?}", root_id, name);
