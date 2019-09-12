@@ -226,7 +226,9 @@ impl Node {
             records.binary_search_by(|(k, _)| prefix_cmp(k, &predecessor_key));
 
         let idx = match search {
-            Ok(idx) | Err(idx) => idx,
+            Ok(idx) => idx,
+            Err(idx) if idx < records.len() => idx,
+            _ => return None,
         };
 
         for (k, v) in &records[idx..] {
