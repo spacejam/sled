@@ -37,6 +37,8 @@ pub struct CacheInfo {
     pub log_size: usize,
 }
 
+/// Update<PageFragment> denotes a state or a change in a sequence of updates
+/// of which a page consists.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum Update<PageFrag> {
     Append(PageFrag),
@@ -199,7 +201,7 @@ where
     P: Materializer,
 {
     config: Config,
-    inner: PageTable<Stack<(Option<Update<P>>, CacheInfo)>>,
+    inner: PageTable<Page<P>>,
     next_pid_to_allocate: AtomicU64,
     free: Arc<Mutex<BinaryHeap<PageId>>>,
     log: Log,
@@ -211,6 +213,10 @@ where
     idgen_persist_mu: Arc<Mutex<()>>,
     was_recovered: bool,
 }
+
+/// A page consists of a sequence state updates with associated
+/// storage parameters like disk pos, lsn, time.
+type Page<P> = Stack<(Option<Update<P>>, CacheInfo)>;
 
 unsafe impl<P> Send for PageCache<P> where P: Materializer {}
 
@@ -849,7 +855,7 @@ where
     // (at least partially) located in. This happens when a
     // segment has had enough resident page fragments moved
     // away to trigger the `segment_cleanup_threshold`.
-    fn rewrite_page<'g>(&self, pid: PageId, guard: &'g Guard) -> Result<()> {
+    fn rewrite_page(&self, pid: PageId, guard: &Guard) -> Result<()> {
         let _measure = Measure::new(&M.rewrite_page);
 
         trace!("rewriting pid {}", pid);

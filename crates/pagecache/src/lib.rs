@@ -18,6 +18,7 @@ macro_rules! maybe_fail {
 }
 
 mod blob_io;
+mod sys_limits;
 mod config;
 mod constants;
 /// Debug helps test concurrent issues with random jitter and other
