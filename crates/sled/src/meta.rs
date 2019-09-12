@@ -8,39 +8,31 @@ use super::*;
 
 /// Open or create a new disk-backed Tree with its own keyspace,
 /// accessible from the `Db` via the provided identifier.
-pub(crate) fn open_tree<'a>(
+pub(crate) fn open_tree(
     context: &Context,
     name: Vec<u8>,
-    guard: &'a Guard,
+    guard: &Guard,
 ) -> Result<Tree> {
     // we loop because creating this Tree may race with
     // concurrent attempts to open the same one.
     loop {
         match context.pagecache.meta_pid_for_name(&name, guard) {
             Ok(root_id) => {
-                return Ok(Tree {
+                return Ok(Tree(Arc::new(TreeInner {
                     tree_id: name,
                     context: context.clone(),
-                    subscriptions: Arc::new(Subscriptions::default()),
-                    root: Arc::new(AtomicU64::new(root_id)),
-                    concurrency_control: Arc::new(RwLock::new(())),
-                    merge_operator: Arc::new(RwLock::new(None)),
-                });
+                    subscriptions: Subscriptions::default(),
+                    root: AtomicU64::new(root_id),
+                    concurrency_control: RwLock::new(()),
+                    merge_operator: RwLock::new(None),
+                })));
             }
             Err(Error::CollectionNotFound(_)) => {}
             Err(other) => return Err(other),
         }
 
         // set up empty leaf
-        let leaf = Frag::Base(Node {
-            data: Data::Leaf(vec![]),
-            next: None,
-            lo: vec![].into(),
-            hi: vec![].into(),
-            merging_child: None,
-            merging: false,
-        });
-
+        let leaf = Frag::leaf(Data::Leaf(vec![]));
         let (leaf_id, leaf_ptr) = context.pagecache.allocate(leaf, guard)?;
 
         trace!(
@@ -53,16 +45,7 @@ pub(crate) fn open_tree<'a>(
 
         // vec![0] represents a prefix-encoded empty prefix
         let root_index_vec = vec![(vec![0].into(), leaf_id)];
-
-        let root = Frag::Base(Node {
-            data: Data::Index(root_index_vec),
-            next: None,
-            lo: vec![].into(),
-            hi: vec![].into(),
-            merging_child: None,
-            merging: false,
-        });
-
+        let root = Frag::root(Data::Index(root_index_vec));
         let (root_id, root_ptr) = context.pagecache.allocate(root, guard)?;
 
         debug!("allocated pid {} for root of new_tree {:?}", root_id, name);
@@ -88,13 +71,13 @@ pub(crate) fn open_tree<'a>(
             continue;
         }
 
-        return Ok(Tree {
+        return Ok(Tree(Arc::new(TreeInner {
             tree_id: name,
-            subscriptions: Arc::new(Subscriptions::default()),
+            subscriptions: Subscriptions::default(),
             context: context.clone(),
-            root: Arc::new(AtomicU64::new(root_id)),
-            concurrency_control: Arc::new(RwLock::new(())),
-            merge_operator: Arc::new(RwLock::new(None)),
-        });
+            root: AtomicU64::new(root_id),
+            concurrency_control: RwLock::new(()),
+            merge_operator: RwLock::new(None),
+        })));
     }
 }

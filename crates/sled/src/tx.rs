@@ -12,7 +12,8 @@
 //!     db.insert(b"k1", b"cats")?;
 //!     db.insert(b"k2", b"dogs")?;
 //!     Ok(())
-//! }).unwrap();
+//! })
+//! .unwrap();
 //!
 //! // Atomically swap two items:
 //! db.transaction(|db| {
@@ -25,7 +26,8 @@
 //!     db.insert(b"k2", v1);
 //!
 //!     Ok(())
-//! }).unwrap();
+//! })
+//! .unwrap();
 //!
 //! assert_eq!(&db.get(b"k1").unwrap().unwrap(), b"dogs");
 //! assert_eq!(&db.get(b"k2").unwrap().unwrap(), b"cats");
@@ -45,13 +47,15 @@
 //!
 //! // Atomically process the new item and move it
 //! // between `Tree`s.
-//! (&unprocessed, &processed).transaction(|(unprocessed, processed)| {
-//!     let unprocessed_item = unprocessed.remove(b"k3")?.unwrap();
-//!     let mut processed_item = b"yappin' ".to_vec();
-//!     processed_item.extend_from_slice(&unprocessed_item);
-//!     processed.insert(b"k3", processed_item)?;
-//!     Ok(())
-//! }).unwrap();
+//! (&unprocessed, &processed)
+//!     .transaction(|(unprocessed, processed)| {
+//!         let unprocessed_item = unprocessed.remove(b"k3")?.unwrap();
+//!         let mut processed_item = b"yappin' ".to_vec();
+//!         processed_item.extend_from_slice(&unprocessed_item);
+//!         processed.insert(b"k3", processed_item)?;
+//!         Ok(())
+//!     })
+//!     .unwrap();
 //!
 //! assert_eq!(unprocessed.get(b"k3").unwrap(), None);
 //! assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
@@ -60,18 +64,19 @@
 #![allow(unused)]
 #![allow(missing_docs)]
 
-use std::{cell::RefCell, collections::HashMap, sync::Arc};
+use parking_lot::RwLockWriteGuard;
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 
 use super::*;
 
 /// A transaction that will
 /// be applied atomically to the
 /// Tree.
-pub struct TransactionalTree<'a> {
-    pub(super) tree: &'a Tree,
-    pub(super) writes: RefCell<HashMap<IVec, Option<IVec>>>,
-    pub(super) read_cache: RefCell<HashMap<IVec, Option<IVec>>>,
-    pub(super) locks: RefCell<Vec<parking_lot::RwLockWriteGuard<'a, ()>>>,
+#[derive(Clone)]
+pub struct TransactionalTree {
+    pub(super) tree: Tree,
+    pub(super) writes: Rc<RefCell<HashMap<IVec, Option<IVec>>>>,
+    pub(super) read_cache: Rc<RefCell<HashMap<IVec, Option<IVec>>>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -79,6 +84,26 @@ pub enum TransactionError {
     Conflict,
     Abort,
     Storage(Error),
+}
+
+impl std::fmt::Display for TransactionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use TransactionError::*;
+        match self {
+            Conflict => write!(f, "Conflict during transaction"),
+            Abort => write!(f, "Transaction was aborted"),
+            Storage(e) => e.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for TransactionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            TransactionError::Storage(ref e) => Some(e),
+            _ => None,
+        }
+    }
 }
 
 pub type TransactionResult<T> = std::result::Result<T, TransactionError>;
@@ -93,7 +118,7 @@ impl From<Error> for TransactionError {
     }
 }
 
-impl<'a> TransactionalTree<'a> {
+impl TransactionalTree {
     /// Set a key to a new value
     pub fn insert<K, V>(
         &self,
@@ -156,11 +181,9 @@ impl<'a> TransactionalTree<'a> {
         Ok(())
     }
 
-    fn stage(&self) -> bool {
-        let mut locks = self.locks.borrow_mut();
+    fn stage(&self) -> TransactionResult<Vec<RwLockWriteGuard<'_, ()>>> {
         let guard = self.tree.concurrency_control.write();
-        locks.push(guard);
-        true
+        Ok(vec![guard])
     }
 
     fn unstage(&self) {
@@ -184,12 +207,12 @@ impl<'a> TransactionalTree<'a> {
     }
 }
 
-pub struct TransactionalTrees<'a> {
-    inner: Vec<TransactionalTree<'a>>,
+pub struct TransactionalTrees {
+    inner: Vec<TransactionalTree>,
 }
 
-impl<'a> TransactionalTrees<'a> {
-    fn stage(&self) -> bool {
+impl TransactionalTrees {
+    fn stage(&self) -> TransactionResult<Vec<RwLockWriteGuard<'_, ()>>> {
         // we want to stage our trees in
         // lexicographic order to guarantee
         // no deadlocks should they block
@@ -204,17 +227,17 @@ impl<'a> TransactionalTrees<'a> {
         tree_idxs.sort_unstable();
 
         let mut last_idx = usize::max_value();
+        let mut all_guards = vec![];
         for (_, idx) in tree_idxs {
             if idx == last_idx {
                 // prevents us from double-locking
                 continue;
             }
             last_idx = idx;
-            if !self.inner[idx].stage() {
-                return false;
-            }
+            let mut guards = self.inner[idx].stage()?;
+            all_guards.append(&mut guards);
         }
-        true
+        Ok(all_guards)
     }
 
     fn unstage(&self) {
@@ -232,7 +255,7 @@ impl<'a> TransactionalTrees<'a> {
         true
     }
 
-    fn commit(self) -> Result<()> {
+    fn commit(&self) -> Result<()> {
         let peg = self.inner[0].tree.context.pin_log()?;
         for tree in &self.inner {
             tree.commit()?;
@@ -248,22 +271,24 @@ impl<'a> TransactionalTrees<'a> {
 pub trait Transactional {
     type View;
 
-    fn make_overlay(&self) -> TransactionalTrees<'_>;
+    fn make_overlay(&self) -> TransactionalTrees;
 
-    fn view_overlay(overlay: &TransactionalTrees<'_>) -> Self::View;
+    fn view_overlay(overlay: &TransactionalTrees) -> Self::View;
 
     fn transaction<F, R>(&self, f: F) -> TransactionResult<R>
     where
-        F: Fn(Self::View) -> TransactionResult<R>,
+        F: Fn(&Self::View) -> TransactionResult<R>,
     {
         loop {
             let tt = self.make_overlay();
             let view = Self::view_overlay(&tt);
-            if !tt.stage() {
+            let locks = if let Ok(l) = tt.stage() {
+                l
+            } else {
                 tt.unstage();
                 continue;
-            }
-            let ret = f(view);
+            };
+            let ret = f(&view);
             if !tt.validate() {
                 tt.unstage();
                 continue;
@@ -285,69 +310,45 @@ pub trait Transactional {
     }
 }
 
-impl<'a> Transactional for &'a Tree {
-    type View = &'static TransactionalTree<'static>;
+impl Transactional for &Tree {
+    type View = TransactionalTree;
 
-    fn make_overlay(&self) -> TransactionalTrees<'_> {
+    fn make_overlay(&self) -> TransactionalTrees {
         TransactionalTrees {
             inner: vec![TransactionalTree {
-                tree: &self,
+                tree: (*self).clone(),
                 writes: Default::default(),
                 read_cache: Default::default(),
-                locks: Default::default(),
             }],
         }
     }
 
-    fn view_overlay(overlay: &TransactionalTrees<'_>) -> Self::View {
-        unsafe {
-            let unsafe_ptr: &'static TransactionalTree<'static> =
-                std::mem::transmute(&overlay.inner[0]);
-            &*unsafe_ptr
-        }
+    fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
+        overlay.inner[0].clone()
     }
 }
 
-impl<A, B> Transactional for (A, B)
-where
-    A: AsRef<Tree>,
-    B: AsRef<Tree>,
-{
-    type View = (
-        &'static TransactionalTree<'static>,
-        &'static TransactionalTree<'static>,
-    );
+impl Transactional for (&Tree, &Tree) {
+    type View = (TransactionalTree, TransactionalTree);
 
-    fn make_overlay(&self) -> TransactionalTrees<'_> {
+    fn make_overlay(&self) -> TransactionalTrees {
         TransactionalTrees {
             inner: vec![
                 TransactionalTree {
-                    tree: self.0.as_ref(),
+                    tree: self.0.clone(),
                     writes: Default::default(),
                     read_cache: Default::default(),
-                    locks: Default::default(),
                 },
                 TransactionalTree {
-                    tree: self.1.as_ref(),
+                    tree: self.1.clone(),
                     writes: Default::default(),
                     read_cache: Default::default(),
-                    locks: Default::default(),
                 },
             ],
         }
     }
 
-    fn view_overlay(overlay: &TransactionalTrees<'_>) -> Self::View {
-        let t1 = unsafe {
-            let unsafe_ptr: &'static TransactionalTree<'static> =
-                std::mem::transmute(&overlay.inner[0]);
-            &*unsafe_ptr
-        };
-        let t2 = unsafe {
-            let unsafe_ptr: &'static TransactionalTree<'static> =
-                std::mem::transmute(&overlay.inner[1]);
-            &*unsafe_ptr
-        };
-        (t1, t2)
+    fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
+        (overlay.inner[0].clone(), overlay.inner[1].clone())
     }
 }

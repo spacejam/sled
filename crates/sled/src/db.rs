@@ -13,8 +13,8 @@ use super::*;
 #[derive(Clone)]
 pub struct Db {
     context: Context,
-    pub(crate) default: Arc<Tree>,
-    tenants: Arc<RwLock<FastMap8<Vec<u8>, Arc<Tree>>>>,
+    pub(crate) default: Tree,
+    tenants: Arc<RwLock<FastMap8<Vec<u8>, Tree>>>,
 }
 
 unsafe impl Send for Db {}
@@ -91,11 +91,8 @@ impl Db {
 
         // create or open the default tree
         let guard = pin();
-        let default = Arc::new(meta::open_tree(
-            &context,
-            DEFAULT_TREE_ID.to_vec(),
-            &guard,
-        )?);
+        let default =
+            meta::open_tree(&context, DEFAULT_TREE_ID.to_vec(), &guard)?;
 
         let ret = Self {
             context: context.clone(),
@@ -106,15 +103,15 @@ impl Db {
         let mut tenants = ret.tenants.write();
 
         for (id, root) in context.pagecache.meta(&guard)?.tenants() {
-            let tree = Tree {
+            let tree = Tree(Arc::new(TreeInner {
                 tree_id: id.clone(),
-                subscriptions: Arc::new(Subscriptions::default()),
+                subscriptions: Subscriptions::default(),
                 context: context.clone(),
-                root: Arc::new(AtomicU64::new(root)),
-                concurrency_control: Arc::new(RwLock::new(())),
-                merge_operator: Arc::new(RwLock::new(None)),
-            };
-            tenants.insert(id, Arc::new(tree));
+                root: AtomicU64::new(root),
+                concurrency_control: RwLock::new(()),
+                merge_operator: RwLock::new(None),
+            }));
+            tenants.insert(id, tree);
         }
 
         drop(tenants);
@@ -124,7 +121,7 @@ impl Db {
 
     /// Open or create a new disk-backed Tree with its own keyspace,
     /// accessible from the `Db` via the provided identifier.
-    pub fn open_tree<V: AsRef<[u8]>>(&self, name: V) -> Result<Arc<Tree>> {
+    pub fn open_tree<V: AsRef<[u8]>>(&self, name: V) -> Result<Tree> {
         let name = name.as_ref();
         let tenants = self.tenants.read();
         if let Some(tree) = tenants.get(name) {
@@ -142,11 +139,10 @@ impl Db {
             return Ok(tree.clone());
         }
 
-        let tree =
-            Arc::new(meta::open_tree(&self.context, name.to_vec(), &guard)?);
-      
+        let tree = meta::open_tree(&self.context, name.to_vec(), &guard)?;
+
         tenants.insert(name.to_vec(), tree.clone());
-      
+
         Ok(tree)
     }
 
@@ -263,11 +259,14 @@ impl Db {
         let mut ret = vec![];
 
         for (name, tree) in tenants.iter() {
-            let tree = tree.clone();
-            let iter: Iter<'static> =
-                unsafe { std::mem::transmute(tree.iter()) };
-            let arc_iter = ArcIter { _tree: tree, iter };
-            ret.push((b"tree".to_vec(), name.to_vec(), arc_iter));
+            ret.push((
+                b"tree".to_vec(),
+                name.to_vec(),
+                tree.iter().map(|kv| {
+                    let kv = kv.unwrap();
+                    vec![kv.0.to_vec(), kv.1.to_vec()]
+                }),
+            ));
         }
 
         ret
@@ -328,32 +327,3 @@ impl Db {
 /// they impact the migration path.
 type CollectionType = Vec<u8>;
 type CollectionName = Vec<u8>;
-
-struct ArcIter {
-    _tree: Arc<Tree>,
-    iter: Iter<'static>,
-}
-
-impl std::ops::Deref for ArcIter {
-    type Target = Iter<'static>;
-
-    fn deref(&self) -> &Iter<'static> {
-        &self.iter
-    }
-}
-
-impl std::ops::DerefMut for ArcIter {
-    fn deref_mut(&mut self) -> &mut Iter<'static> {
-        &mut self.iter
-    }
-}
-
-impl Iterator for ArcIter {
-    type Item = Vec<Vec<u8>>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let kv_opt = self.iter.next()?;
-        let (k, v) = kv_opt.expect("failed to read data from system");
-        Some(vec![k.to_vec(), v.to_vec()])
-    }
-}

@@ -35,23 +35,22 @@ macro_rules! iter_try {
 }
 
 /// An iterator over keys and values in a `Tree`.
-pub struct Iter<'a> {
-    pub(super) tree: &'a Tree,
+pub struct Iter {
+    pub(super) tree: Tree,
     pub(super) hi: Bound<IVec>,
     pub(super) lo: Bound<IVec>,
-    pub(super) cached_node: Option<(PageId, &'a Node)>,
-    pub(super) guard: Guard,
+    pub(super) cached_node: Option<(PageId, Node, Guard)>,
     pub(super) going_forward: bool,
 }
 
-impl<'a> Iter<'a> {
+impl Iter {
     /// Iterate over the keys of this Tree
-    pub fn keys(self) -> impl 'a + DoubleEndedIterator<Item = Result<IVec>> {
+    pub fn keys(self) -> impl DoubleEndedIterator<Item = Result<IVec>> {
         self.map(|r| r.map(|(k, _v)| k))
     }
 
     /// Iterate over the values of this Tree
-    pub fn values(self) -> impl 'a + DoubleEndedIterator<Item = Result<IVec>> {
+    pub fn values(self) -> impl DoubleEndedIterator<Item = Result<IVec>> {
         self.map(|r| r.map(|(_k, v)| v))
     }
 
@@ -83,26 +82,23 @@ impl<'a> Iter<'a> {
     }
 }
 
-impl<'a> Iterator for Iter<'a> {
+impl Iterator for Iter {
     type Item = Result<(IVec, IVec)>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let _measure = Measure::new(&M.tree_scan);
         let _ = self.tree.concurrency_control.read();
 
-        // TODO evil lifetime hack, please kill
-        let g_ptr = &self.guard as *const Guard;
-        let guard = unsafe { &*g_ptr as &'a Guard };
-
-        let (mut pid, mut node) =
-            if let (true, Some((pid, node))) =
-                (self.going_forward, self.cached_node.take()) {
-                (pid, node)
+        let (mut pid, mut node, guard) =
+            if let (true, Some((pid, node, guard))) =
+                (self.going_forward, self.cached_node.take())
+            {
+                (pid, node, guard)
             } else {
-                let view = iter_try!(self
-                    .tree
-                    .node_for_key(self.low_key(), guard));
-                (view.pid, view.node)
+                let guard = pin();
+                let view =
+                    iter_try!(self.tree.node_for_key(self.low_key(), &guard));
+                (view.pid, view.node.clone(), guard)
             };
 
         for _ in 0..MAX_LOOPS {
@@ -115,28 +111,28 @@ impl<'a> Iterator for Iter<'a> {
                 let next_pid = node.next?;
                 assert_ne!(pid, next_pid);
                 let view = if let Some(view) =
-                    iter_try!(self.tree.view_for_pid(next_pid, guard))
+                    iter_try!(self.tree.view_for_pid(next_pid, &guard))
                 {
                     view
                 } else {
-                    iter_try!(self.tree.node_for_key(self.low_key(), guard))
+                    iter_try!(self.tree.node_for_key(self.low_key(), &guard))
                 };
 
                 pid = view.pid;
-                node = view.node;
+                node = view.node.clone();
                 continue;
             } else if !node.contains_lower_bound(&self.lo, true) {
                 // view too high (maybe split, maybe exhausted?)
                 let seek_key = possible_predecessor(&node.lo)?;
-                let view = iter_try!(self.tree.node_for_key(seek_key, guard));
+                let view = iter_try!(self.tree.node_for_key(seek_key, &guard));
                 pid = view.pid;
-                node = view.node;
+                node = view.node.clone();
                 continue;
             }
 
             if let Some((key, value)) = node.successor(&self.lo) {
                 self.lo = Bound::Excluded(key.clone());
-                self.cached_node = Some((pid, node));
+                self.cached_node = Some((pid, node, guard));
                 self.going_forward = true;
 
                 match self.hi {
@@ -168,24 +164,22 @@ impl<'a> Iterator for Iter<'a> {
     }
 }
 
-impl<'a> DoubleEndedIterator for Iter<'a> {
+impl DoubleEndedIterator for Iter {
     fn next_back(&mut self) -> Option<Self::Item> {
         let _measure = Measure::new(&M.tree_reverse_scan);
         let _ = self.tree.concurrency_control.read();
 
-        // TODO evil lifetime hack, please kill
-        let g_ptr = &self.guard as *const Guard;
-        let guard = unsafe { &*g_ptr as &'a Guard };
-
-        let (mut pid, mut node) =
-            if let (false, Some((pid, node))) =
-                (self.going_forward, self.cached_node.take()) {
-                (pid, node)
+        let (mut pid, mut node, guard) =
+            if let (false, Some((pid, node, guard))) =
+                (self.going_forward, self.cached_node.take())
+            {
+                (pid, node, guard)
             } else {
-                let view = iter_try!(self
-                    .tree
-                    .node_for_key(self.high_key(), guard));
-                (view.pid, view.node)
+                let guard = pin();
+
+                let view =
+                    iter_try!(self.tree.node_for_key(self.high_key(), &guard));
+                (view.pid, view.node.clone(), guard)
             };
 
         for _ in 0..MAX_LOOPS {
@@ -198,28 +192,28 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
                 let next_pid = node.next?;
                 assert_ne!(pid, next_pid);
                 let view = if let Some(view) =
-                    iter_try!(self.tree.view_for_pid(next_pid, guard))
+                    iter_try!(self.tree.view_for_pid(next_pid, &guard))
                 {
                     view
                 } else {
-                    iter_try!(self.tree.node_for_key(self.high_key(), guard))
+                    iter_try!(self.tree.node_for_key(self.high_key(), &guard))
                 };
 
                 pid = view.pid;
-                node = view.node;
+                node = view.node.clone();
                 continue;
             } else if !node.contains_lower_bound(&self.hi, false) {
                 // view too high (maybe split, maybe exhausted?)
                 let seek_key = possible_predecessor(&node.lo)?;
-                let view = iter_try!(self.tree.node_for_key(seek_key, guard));
+                let view = iter_try!(self.tree.node_for_key(seek_key, &guard));
                 pid = view.pid;
-                node = view.node;
+                node = view.node.clone();
                 continue;
             }
 
             if let Some((key, value)) = node.predecessor(&self.hi) {
                 self.hi = Bound::Excluded(key.clone());
-                self.cached_node = Some((pid, node));
+                self.cached_node = Some((pid, node, guard));
                 self.going_forward = false;
 
                 match self.lo {

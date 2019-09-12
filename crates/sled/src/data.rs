@@ -150,4 +150,12 @@ impl Data {
             false
         }
     }
+
+    pub(crate) fn is_leaf(&self) -> bool {
+        if let Data::Leaf(..) = self {
+            true
+        } else {
+            false
+        }
+    }
 }

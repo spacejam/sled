@@ -129,6 +129,7 @@ use {
             prefix_reencode,
         },
         subscription::Subscriptions,
+        tree::TreeInner,
     },
     log::{debug, error, trace},
     pagecache::{

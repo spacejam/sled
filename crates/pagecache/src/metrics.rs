@@ -11,8 +11,6 @@ use std::sync::atomic::Ordering::{Acquire, Relaxed};
 
 use super::*;
 
-use historian::Histo;
-
 /// A metric collector for all pagecache users running in this
 /// process.
 pub static M: Lazy<Metrics, fn() -> Metrics> = Lazy::new(Metrics::default);
@@ -37,11 +35,11 @@ pub(crate) fn uptime() -> Duration {
     }
 }
 
-/// Measure the duration of an event, and call `Histo::measure()`.
+/// Measure the duration of an event, and call `Histogram::measure()`.
 pub struct Measure<'h> {
     _start: f64,
     #[cfg(not(feature = "no_metrics"))]
-    histo: &'h Histo,
+    histo: &'h Histogram,
     #[cfg(feature = "no_metrics")]
     _pd: PhantomData<&'h ()>,
 }
@@ -49,7 +47,7 @@ pub struct Measure<'h> {
 impl<'h> Measure<'h> {
     /// The time delta from ctor to dtor is recorded in `histo`.
     #[inline(always)]
-    pub fn new(_histo: &'h Histo) -> Measure<'h> {
+    pub fn new(_histo: &'h Histogram) -> Measure<'h> {
         Measure {
             #[cfg(feature = "no_metrics")]
             _pd: PhantomData,
@@ -68,9 +66,9 @@ impl<'h> Drop for Measure<'h> {
     }
 }
 
-/// Measure the time spent on calling a given function in a given `Histo`.
+/// Measure the time spent on calling a given function in a given `Histogram`.
 #[cfg_attr(not(feature = "no_inline"), inline)]
-pub(crate) fn measure<F: FnOnce() -> R, R>(_histo: &Histo, f: F) -> R {
+pub(crate) fn measure<F: FnOnce() -> R, R>(_histo: &Histogram, f: F) -> R {
     #[cfg(not(feature = "no_metrics"))]
     let _measure = Measure::new(_histo);
     f()
@@ -78,52 +76,52 @@ pub(crate) fn measure<F: FnOnce() -> R, R>(_histo: &Histo, f: F) -> R {
 
 #[derive(Default, Debug)]
 pub struct Metrics {
-    pub advance_snapshot: Histo,
-    pub tree_set: Histo,
-    pub tree_get: Histo,
-    pub tree_del: Histo,
-    pub tree_cas: Histo,
-    pub tree_scan: Histo,
-    pub tree_reverse_scan: Histo,
-    pub tree_merge: Histo,
-    pub tree_start: Histo,
-    pub tree_traverse: Histo,
+    pub advance_snapshot: Histogram,
+    pub tree_set: Histogram,
+    pub tree_get: Histogram,
+    pub tree_del: Histogram,
+    pub tree_cas: Histogram,
+    pub tree_scan: Histogram,
+    pub tree_reverse_scan: Histogram,
+    pub tree_merge: Histogram,
+    pub tree_start: Histogram,
+    pub tree_traverse: Histogram,
     pub tree_child_split_attempt: CachePadded<AtomicUsize>,
     pub tree_child_split_success: CachePadded<AtomicUsize>,
     pub tree_parent_split_attempt: CachePadded<AtomicUsize>,
     pub tree_parent_split_success: CachePadded<AtomicUsize>,
     pub tree_root_split_attempt: CachePadded<AtomicUsize>,
     pub tree_root_split_success: CachePadded<AtomicUsize>,
-    pub get_page: Histo,
-    pub rewrite_page: Histo,
-    pub replace_page: Histo,
-    pub link_page: Histo,
-    pub merge_page: Histo,
-    pub page_out: Histo,
-    pub pull: Histo,
-    pub serialize: Histo,
-    pub deserialize: Histo,
-    pub compress: Histo,
-    pub decompress: Histo,
-    pub make_stable: Histo,
-    pub assign_offset: Histo,
-    pub assign_spinloop: Histo,
-    pub reserve_lat: Histo,
-    pub reserve_sz: Histo,
-    pub reserve_current_condvar_wait: Histo,
-    pub reserve_written_condvar_wait: Histo,
-    pub write_to_log: Histo,
-    pub written_bytes: Histo,
-    pub read: Histo,
+    pub get_page: Histogram,
+    pub rewrite_page: Histogram,
+    pub replace_page: Histogram,
+    pub link_page: Histogram,
+    pub merge_page: Histogram,
+    pub page_out: Histogram,
+    pub pull: Histogram,
+    pub serialize: Histogram,
+    pub deserialize: Histogram,
+    pub compress: Histogram,
+    pub decompress: Histogram,
+    pub make_stable: Histogram,
+    pub assign_offset: Histogram,
+    pub assign_spinloop: Histogram,
+    pub reserve_lat: Histogram,
+    pub reserve_sz: Histogram,
+    pub reserve_current_condvar_wait: Histogram,
+    pub reserve_written_condvar_wait: Histogram,
+    pub write_to_log: Histogram,
+    pub written_bytes: Histogram,
+    pub read: Histogram,
     pub tree_loops: CachePadded<AtomicUsize>,
     pub log_reservations: CachePadded<AtomicUsize>,
     pub log_reservation_attempts: CachePadded<AtomicUsize>,
-    pub accountant_lock: Histo,
-    pub accountant_hold: Histo,
-    pub accountant_next: Histo,
-    pub accountant_mark_link: Histo,
-    pub accountant_mark_replace: Histo,
-    pub accountant_bump_tip: Histo,
+    pub accountant_lock: Histogram,
+    pub accountant_hold: Histogram,
+    pub accountant_next: Histogram,
+    pub accountant_mark_link: Histogram,
+    pub accountant_mark_replace: Histogram,
+    pub accountant_bump_tip: Histogram,
     #[cfg(feature = "measure_allocs")]
     pub allocations: CachePadded<AtomicUsize>,
     #[cfg(feature = "measure_allocs")]
@@ -206,7 +204,7 @@ impl Metrics {
             }
         };
 
-        let lat = |name: &str, histo: &Histo| {
+        let lat = |name: &str, histo: &Histogram| {
             (
                 name.to_string(),
                 histo.percentile(0.) / 1e3,
@@ -221,7 +219,7 @@ impl Metrics {
             )
         };
 
-        let sz = |name: &str, histo: &Histo| {
+        let sz = |name: &str, histo: &Histogram| {
             (
                 name.to_string(),
                 histo.percentile(0.),
