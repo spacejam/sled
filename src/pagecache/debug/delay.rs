@@ -11,7 +11,7 @@ use {
     std::sync::atomic::{AtomicUsize, Ordering::Relaxed},
 };
 
-use crate::pagecache::lazy::Lazy;
+use crate::Lazy;
 
 /// This function is useful for inducing random jitter into our atomic
 /// operations, shaking out more possible interleavings quickly. It gets

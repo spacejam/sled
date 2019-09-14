@@ -1,6 +1,6 @@
 use std::{fmt, ops::Bound};
 
-use pagecache::Lazy;
+use crate::Lazy;
 
 use super::*;
 

@@ -83,6 +83,8 @@
 mod batch;
 mod binary_search;
 mod context;
+mod threadpool;
+mod lazy;
 mod data;
 mod db;
 mod frag;
@@ -131,10 +133,11 @@ use {
         },
         subscription::Subscriptions,
         tree::TreeInner,
+        lazy::Lazy,
     },
     log::{debug, error, trace},
     pagecache::{
-        debug::debug_delay, pin, threadpool, Materializer, Measure, PageCache,
+        debug::debug_delay, pin, Materializer, Measure, PageCache,
         PageId, RecoveryGuard, M,
     },
     serde::{Deserialize, Serialize},

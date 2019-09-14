@@ -9,6 +9,8 @@ use std::marker::PhantomData;
 #[cfg(not(feature = "no_metrics"))]
 use std::sync::atomic::Ordering::{Acquire, Relaxed};
 
+use crate::Lazy;
+
 use super::*;
 
 /// A metric collector for all pagecache users running in this

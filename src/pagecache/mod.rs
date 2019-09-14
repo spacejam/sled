@@ -28,7 +28,6 @@ mod ds;
 mod histogram;
 mod iobuf;
 mod iterator;
-mod lazy;
 mod map;
 mod materializer;
 mod meta;
@@ -57,8 +56,6 @@ pub mod event_log;
 
 pub mod logger;
 
-pub mod threadpool;
-
 use std::{
     cell::UnsafeCell,
     convert::TryFrom,
@@ -76,6 +73,8 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 #[doc(hidden)]
 use self::logger::{MessageHeader, SegmentHeader};
+
+use crate::threadpool;
 
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
@@ -104,7 +103,6 @@ pub(crate) use self::{
     diskptr::DiskPtr,
     ds::{node_from_frag_vec, Lru, Node, PageTable, Stack, StackIter, VecSet},
     histogram::Histogram,
-    lazy::Lazy,
     map::{FastMap8, FastSet8},
     materializer::Materializer,
     meta::Meta,
