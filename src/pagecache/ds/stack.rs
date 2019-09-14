@@ -120,8 +120,10 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
     }
 
     /// Pop the next item off the stack. Returns None if nothing is there.
-    fn _pop(&self, guard: &Guard) -> Option<T> {
+    #[cfg(test)]
+    fn pop(&self, guard: &Guard) -> Option<T> {
         use std::ptr;
+        use std::sync::atomic::Ordering::SeqCst;
         debug_delay();
         let mut head = self.head(&guard);
         loop {
@@ -131,10 +133,9 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
                     match self.head.compare_and_set(head, next, Release, &guard)
                     {
                         Ok(_) => unsafe {
-                            // we use Acquire because we want to unset
-                            // the next pointer before destruction
+                            // we unset the next pointer before destruction
                             // to avoid double-frees.
-                            h.next.store(Shared::default(), Acquire);
+                            h.next.store(Shared::default(), SeqCst);
                             guard.defer_destroy(head);
                             return Some(ptr::read(&h.inner));
                         },
@@ -290,7 +291,7 @@ fn basic_functionality() {
 
     let guard = pin();
     let ll = Arc::new(Stack::default());
-    assert_eq!(ll._pop(&guard), None);
+    assert_eq!(ll.pop(&guard), None);
     ll.push(CachePadded::new(1), &guard);
     let ll2 = Arc::clone(&ll);
     let t = thread::spawn(move || {
@@ -302,21 +303,21 @@ fn basic_functionality() {
     });
     t.join().unwrap();
     ll.push(CachePadded::new(5), &guard);
-    assert_eq!(ll._pop(&guard), Some(CachePadded::new(5)));
-    assert_eq!(ll._pop(&guard), Some(CachePadded::new(4)));
+    assert_eq!(ll.pop(&guard), Some(CachePadded::new(5)));
+    assert_eq!(ll.pop(&guard), Some(CachePadded::new(4)));
     let ll3 = Arc::clone(&ll);
     let t = thread::spawn(move || {
         let guard = pin();
-        assert_eq!(ll3._pop(&guard), Some(CachePadded::new(3)));
-        assert_eq!(ll3._pop(&guard), Some(CachePadded::new(2)));
+        assert_eq!(ll3.pop(&guard), Some(CachePadded::new(3)));
+        assert_eq!(ll3.pop(&guard), Some(CachePadded::new(2)));
         guard.flush();
     });
     t.join().unwrap();
-    assert_eq!(ll._pop(&guard), Some(CachePadded::new(1)));
+    assert_eq!(ll.pop(&guard), Some(CachePadded::new(1)));
     let ll4 = Arc::clone(&ll);
     let t = thread::spawn(move || {
         let guard = pin();
-        assert_eq!(ll4._pop(&guard), None);
+        assert_eq!(ll4.pop(&guard), None);
         guard.flush();
     });
     t.join().unwrap();
