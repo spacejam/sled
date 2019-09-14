@@ -13,7 +13,7 @@ use {
     serde::{Deserialize, Serialize},
 };
 
-use pagecache::{
+use crate::pagecache::{
     pin, ConfigBuilder, Materializer, PageCache, MAX_SPACE_AMPLIFICATION,
 };
 
@@ -103,8 +103,8 @@ fn pagecache_caching() {
 }
 
 #[test]
-fn concurrent_pagecache() -> sled::Result<()> {
-    tests::setup_logger();
+fn concurrent_pagecache() -> crate::Result<()> {
+    super::setup_logger();
     const N_THREADS: usize = 10;
     const N_PER_THREAD: usize = 100;
 
@@ -129,7 +129,7 @@ fn concurrent_pagecache() -> sled::Result<()> {
                 // instead of directly on the heap.
                 let thread = thread::Builder::new()
                     .name(format!("t({})", tn))
-                    .stack_size(pagecache::PAGETABLE_NODE_SZ)
+                    .stack_size(crate::pagecache::PAGETABLE_NODE_SZ)
                     .spawn(move || {
                         for i in (tn * N_PER_THREAD)..((tn + 1) * N_PER_THREAD)
                         {
@@ -418,7 +418,7 @@ enum P {
 }
 
 fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
-    tests::setup_logger();
+    super::setup_logger();
     use self::Op::*;
     let config = ConfigBuilder::new()
         .temporary(true)

@@ -348,7 +348,5 @@ impl Metrics {
 
     pub fn tree_looped(&self) {}
 
-    pub fn log_looped(&self) {}
-
     pub fn print_profile(&self) {}
 }

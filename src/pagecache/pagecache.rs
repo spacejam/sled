@@ -116,12 +116,6 @@ impl<'a> RecoveryGuard<'a> {
         self.batch_res.mark_writebatch(max_reserved);
         self.batch_res.complete().map(|_| ())
     }
-
-    /// Returns the LSN representing the beginning of this
-    /// batch.
-    pub fn lsn(&self) -> Lsn {
-        self.batch_res.lsn()
-    }
 }
 
 /// A lock-free pagecache which supports fragmented pages

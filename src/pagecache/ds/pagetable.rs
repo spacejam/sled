@@ -4,7 +4,7 @@ use std::{
     alloc::{alloc_zeroed, Layout},
     convert::TryFrom,
     mem::{align_of, size_of},
-    sync::atomic::Ordering::{Acquire, Relaxed, Release, SeqCst},
+    sync::atomic::Ordering::{Acquire, Relaxed, Release},
 };
 
 use crossbeam_epoch::{unprotected, Atomic, Guard, Owned, Shared};
@@ -111,18 +111,6 @@ impl<T> PageTable<T>
 where
     T: 'static + Send + Sync,
 {
-    /// Atomically swap the previous value in a tree with a new one.
-    pub fn swap<'g>(
-        &self,
-        pid: PageId,
-        new: Shared<'g, T>,
-        guard: &'g Guard,
-    ) -> Shared<'g, T> {
-        let tip = traverse(self.head.load(Acquire, guard), pid, guard);
-        debug_delay();
-        tip.swap(new, SeqCst, guard)
-    }
-
     /// Compare and swap an old value to a new one.
     pub fn cas<'g>(
         &self,
@@ -162,24 +150,6 @@ where
             None
         } else {
             Some(res)
-        }
-    }
-
-    /// Delete a value from the tree, returning the old value if it was set.
-    pub fn del<'g>(
-        &self,
-        pid: PageId,
-        guard: &'g Guard,
-    ) -> Option<Shared<'g, T>> {
-        debug_delay();
-        let old = self.swap(pid, Shared::null(), guard);
-        if old.is_null() {
-            None
-        } else {
-            unsafe {
-                guard.defer_destroy(old);
-            }
-            Some(old)
         }
     }
 }
@@ -281,8 +251,6 @@ fn basic_functionality() {
         rt.cas(0, ptr, Owned::new(6).into_shared(&guard), &guard)
             .unwrap();
         assert_eq!(rt.get(0, &guard).unwrap().deref(), &6);
-        rt.del(0, &guard);
-        assert!(rt.get(0, &guard).is_none());
 
         let k2 = 321 << FAN_FACTOR;
         let k3 = k2 + 1;

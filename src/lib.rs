@@ -149,3 +149,6 @@ pub type MergeOperator = fn(
     last_value: Option<&[u8]>,
     new_merge: &[u8],
 ) -> Option<Vec<u8>>;
+
+#[cfg(test)]
+mod tests;

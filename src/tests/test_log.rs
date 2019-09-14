@@ -1,22 +1,21 @@
 #![cfg_attr(test, allow(unused))]
 
-use std::mem::size_of;
-use {
-    lazy_static::lazy_static,
-    pagecache::{
-        ConfigBuilder, DiskPtr, Log, LogKind, LogRead, PageId, SegmentMode,
-        MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
+use std::{
+    mem::size_of,
+    fs,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        {Arc, Mutex},
     },
-    quickcheck::{Arbitrary, Gen, QuickCheck, StdGen},
-    rand::{thread_rng, Rng},
-    std::{
-        fs,
-        sync::{
-            atomic::{AtomicUsize, Ordering},
-            {Arc, Mutex},
-        },
-        thread,
-    },
+    thread,
+};
+
+use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
+use rand::{thread_rng, Rng};
+
+use crate::pagecache::{
+    ConfigBuilder, DiskPtr, Log, LogKind, LogRead, PageId, SegmentMode,
+    MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
 };
 
 type Lsn = i64;
@@ -26,8 +25,8 @@ const PID: PageId = 0;
 const KIND: LogKind = LogKind::Replace;
 
 #[test]
-fn log_writebatch() -> pagecache::Result<()> {
-    tests::setup_logger();
+fn log_writebatch() -> crate::pagecache::Result<()> {
+    super::setup_logger();
     let config = ConfigBuilder::new()
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
@@ -119,7 +118,7 @@ fn non_contiguous_log_flush() {
 
 #[test]
 fn concurrent_logging() {
-    tests::setup_logger();
+    super::setup_logger();
     // TODO linearize res bufs, verify they are correct
     for i in 0..10 {
         let config = ConfigBuilder::new()
@@ -215,7 +214,7 @@ fn concurrent_logging() {
 
 #[test]
 fn concurrent_logging_404() {
-    tests::setup_logger();
+    super::setup_logger();
 
     let config = ConfigBuilder::new()
         .temporary(true)
@@ -380,7 +379,7 @@ fn log_iterator() {
 #[test]
 #[cfg(not(target_os = "fuchsia"))]
 fn log_chunky_iterator() {
-    tests::setup_logger();
+    super::setup_logger();
     let mut threads = vec![];
     for tn in 0..100 {
         let thread = thread::spawn(move || {
@@ -443,7 +442,7 @@ fn log_chunky_iterator() {
 
 #[test]
 fn multi_segment_log_iteration() {
-    tests::setup_logger();
+    super::setup_logger();
     // ensure segments are being linked
     // ensure trailers are valid
     let config = ConfigBuilder::new()
@@ -548,17 +547,7 @@ impl Arbitrary for Op {
 }
 
 fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
-    tests::setup_logger();
-
-    /*
-    lazy_static! {
-        // forces quickcheck to run one thread at a time
-        static ref M: Mutex<()> = Mutex::new(());
-    }
-
-    let _lock =
-        M.lock().expect("our test lock should not be poisoned");
-    */
+    super::setup_logger();
 
     use self::Op::*;
     let config = ConfigBuilder::new()

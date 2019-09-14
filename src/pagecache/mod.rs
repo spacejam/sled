@@ -86,27 +86,30 @@ use self::{
     metrics::{clock, measure},
     pagecache::Update,
     parallel_io::Pio,
-    reader::LogReader,
     segment::SegmentAccountant,
     snapshot::{advance_snapshot, PageState},
     util::{arr_to_u32, arr_to_u64, maybe_decompress, u32_to_arr, u64_to_arr},
-    logger::{Log, LogRead},
 };
 
-pub use self::{
+pub use {
     config::{Config, ConfigBuilder},
+    result::{CasResult, Error, Result},
+    metrics::M,
+    oneshot::{OneShot, OneShotFiller},
+};
+
+pub(crate) use self::{
+    reader::LogReader,
+    logger::{Log, LogRead},
     diskptr::DiskPtr,
     ds::{node_from_frag_vec, Lru, Node, PageTable, Stack, StackIter, VecSet},
     histogram::Histogram,
     lazy::Lazy,
-    map::{FastMap1, FastMap4, FastMap8, FastSet1, FastSet4, FastSet8},
+    map::{FastMap8, FastSet8},
     materializer::Materializer,
     meta::Meta,
-    metrics::M,
-    oneshot::{OneShot, OneShotFiller},
     pagecache::{PageCache, PagePtr, RecoveryGuard},
     reservation::Reservation,
-    result::{CasResult, Error, Result},
     segment::SegmentMode,
 };
 
@@ -139,7 +142,7 @@ pub type PageId = u64;
 #[doc(hidden)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
-pub (in crate::pagecache) enum MessageKind {
+pub (crate) enum MessageKind {
     /// The EVIL_BYTE is written as a canary to help
     /// detect torn writes.
     Corrupted = 0,

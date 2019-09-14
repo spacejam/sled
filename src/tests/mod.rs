@@ -1,13 +1,7 @@
-pub mod tree;
-
-#[cfg_attr(
-    // only enable jemalloc on linux and macos by default
-    // for faster tests
-    any(target_os = "linux", target_os = "macos"),
-    global_allocator
-)]
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
+mod test_log;
+mod test_tree;
+mod test_pagecache;
+mod tree;
 
 pub fn setup_logger() {
     use std::io::Write;
@@ -19,6 +13,7 @@ pub fn setup_logger() {
             .to_owned()
     }
 
+    #[cfg(feature = "pretty_backtrace")]
     color_backtrace::install();
 
     let mut builder = env_logger::Builder::new();

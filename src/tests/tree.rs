@@ -5,13 +5,13 @@ use rand::{rngs::StdRng, Rng, SeedableRng};
 use rand_distr::{Distribution, Gamma};
 
 use pagecache::MAX_SPACE_AMPLIFICATION;
-use sled::*;
+use crate::*;
 
 #[derive(Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Key(pub Vec<u8>);
 
 impl fmt::Debug for Key {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Key(vec!{:?})", self.0)
     }
 }
@@ -131,16 +131,6 @@ pub enum Op {
 
 use self::Op::{Cas, Del, Get, GetGt, GetLt, Merge, Restart, Scan, Set};
 
-impl Op {
-    pub fn is_restart(&self) -> bool {
-        if let Restart = self {
-            true
-        } else {
-            false
-        }
-    }
-}
-
 impl Arbitrary for Op {
     fn arbitrary<G: Gen>(g: &mut G) -> Self {
         if g.gen_bool(1. / 10.) {
@@ -221,7 +211,7 @@ pub fn prop_tree_matches_btreemap(
         .idgen_persist_interval(1)
         .build();
 
-    let mut tree = sled::Db::start(config.clone()).unwrap();
+    let mut tree = Db::start(config.clone()).unwrap();
     tree.set_merge_operator(test_merge_operator);
 
     let mut reference: BTreeMap<Key, u16> = BTreeMap::new();
@@ -347,7 +337,7 @@ pub fn prop_tree_matches_btreemap(
             }
             Restart => {
                 drop(tree);
-                tree = sled::Db::start(config.clone()).unwrap();
+                tree = Db::start(config.clone()).unwrap();
                 tree.set_merge_operator(test_merge_operator);
             }
         }

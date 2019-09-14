@@ -37,11 +37,6 @@ where
         self.inner.binary_search(item).is_ok()
     }
 
-    /// Peeks the first element
-    pub fn peek_first(&self) -> Option<&T> {
-        self.inner.first()
-    }
-
     /// Returns `true` if the set is empty
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
@@ -55,11 +50,6 @@ where
     /// Indexes into the underlying buffer
     pub fn get(&self, idx: usize) -> Option<&T> {
         self.inner.get(idx)
-    }
-
-    /// Clears the underlying buffer
-    pub fn clear(&mut self) {
-        self.inner.clear()
     }
 
     /// Iterate over the contents of this set

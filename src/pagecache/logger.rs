@@ -39,7 +39,7 @@ use super::*;
 /// for writing persistent data structures that need
 /// to know where to find persisted bits in the future.
 #[derive(Debug)]
-pub(in crate::pagecache) struct Log {
+pub(crate) struct Log {
     /// iobufs is the underlying lock-free IO write buffer.
     pub(super) iobufs: Arc<IoBufs>,
     pub(crate) config: Config,
@@ -57,6 +57,7 @@ impl Log {
     }
 
     /// Starts a log for use without a materializer.
+    #[cfg(test)]
     pub fn start_raw_log(config: Config) -> Result<Self> {
         assert_eq!(config.segment_mode, SegmentMode::Linear);
         let (log_iter, _) = raw_segment_iter_from(0, &config)?;
@@ -75,6 +76,7 @@ impl Log {
 
     /// Return an iterator over the log, starting with
     /// a specified offset.
+    #[cfg(test)]
     pub fn iter_from(&self, lsn: Lsn) -> LogIter {
         self.iobufs.iter_from(lsn)
     }
@@ -456,7 +458,7 @@ impl Drop for Log {
 
 /// All log messages are prepended with this header
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub(in crate::pagecache) struct MessageHeader {
+pub(crate) struct MessageHeader {
     pub kind: MessageKind,
     pub lsn: Lsn,
     pub pid: PageId,
@@ -475,7 +477,7 @@ pub(crate) struct SegmentHeader {
 
 #[doc(hidden)]
 #[derive(Debug)]
-pub(in crate::pagecache) enum LogRead {
+pub(crate) enum LogRead {
     Inline(MessageHeader, Vec<u8>, u32),
     Blob(MessageHeader, Vec<u8>, BlobPointer),
     Failed(Lsn, u32),
@@ -486,31 +488,8 @@ pub(in crate::pagecache) enum LogRead {
 }
 
 impl LogRead {
-    /// Return true if this is an Inline value..
-    pub fn is_inline(&self) -> bool {
-        match *self {
-            LogRead::Inline(..) => true,
-            _ => false,
-        }
-    }
-
-    /// Return true if we read a completed blob write successfully.
-    pub fn is_blob(&self) -> bool {
-        match self {
-            LogRead::Blob(..) => true,
-            _ => false,
-        }
-    }
-
-    /// Return true if we read an aborted flush.
-    pub fn is_failed(&self) -> bool {
-        match *self {
-            LogRead::Failed(_, _) => true,
-            _ => false,
-        }
-    }
-
     /// Return true if we read a successful Inline or Blob value.
+    #[cfg(test)]
     pub fn is_successful(&self) -> bool {
         match *self {
             LogRead::Inline(..) | LogRead::Blob(..) => true,
@@ -518,23 +497,8 @@ impl LogRead {
         }
     }
 
-    /// Return true if we read a segment pad.
-    pub fn is_pad(&self) -> bool {
-        match *self {
-            LogRead::Pad(_) => true,
-            _ => false,
-        }
-    }
-
-    /// Return true if we read a corrupted log entry.
-    pub fn is_corrupt(&self) -> bool {
-        match *self {
-            LogRead::Corrupted(_) => true,
-            _ => false,
-        }
-    }
-
     /// Return the underlying data read from a log read, if successful.
+    #[cfg(test)]
     pub fn into_data(self) -> Option<Vec<u8>> {
         match self {
             LogRead::Blob(_, buf, _) | LogRead::Inline(_, buf, _) => Some(buf),

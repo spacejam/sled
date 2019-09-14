@@ -143,22 +143,6 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
     }
 
     /// compare and push
-    pub fn cap<'g>(
-        &self,
-        old: Shared<'_, Node<T>>,
-        new: T,
-        guard: &'g Guard,
-    ) -> CompareAndSwapResult<'g, T> {
-        debug_delay();
-        let node = Owned::new(Node {
-            inner: new,
-            next: Atomic::from(old),
-        });
-
-        self.cap_node(old, node, guard)
-    }
-
-    /// compare and push
     pub fn cap_node<'g>(
         &self,
         old: Shared<'_, Node<T>>,
