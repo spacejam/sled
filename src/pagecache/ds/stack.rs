@@ -131,6 +131,10 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
                     match self.head.compare_and_set(head, next, Release, &guard)
                     {
                         Ok(_) => unsafe {
+                            // we use Acquire because we want to unset
+                            // the next pointer before destruction
+                            // to avoid double-frees.
+                            h.next.store(Shared::default(), Acquire);
                             guard.defer_destroy(head);
                             return Some(ptr::read(&h.inner));
                         },
