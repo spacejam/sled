@@ -11,7 +11,7 @@ use parking_lot::RwLock;
 
 use crate::ivec::IVec;
 
-use pagecache::{OneShot, OneShotFiller};
+use crate::pagecache::{OneShot, OneShotFiller};
 
 static ID_GEN: AtomicUsize = AtomicUsize::new(0);
 

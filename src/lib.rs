@@ -95,6 +95,7 @@ mod prefix;
 mod subscription;
 mod tree;
 mod tx;
+mod pagecache;
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod flusher;

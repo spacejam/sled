@@ -6,14 +6,14 @@ use parking_lot::{Condvar, Mutex, RwLock};
 
 use self::reader::LogReader;
 
-use super::*;
+use crate::pagecache::*;
 
 // This is the most writers in a single IO buffer
 // that we have space to accommodate in the counter
 // for writers in the IO buffer header.
-pub(crate) const MAX_WRITERS: Header = 127;
+pub(in crate::pagecache) const MAX_WRITERS: Header = 127;
 
-pub(crate) type Header = u64;
+pub(in crate::pagecache) type Header = u64;
 
 macro_rules! io_fail {
     ($self:expr, $e:expr) => {
@@ -28,12 +28,12 @@ macro_rules! io_fail {
     };
 }
 
-pub(crate) struct IoBuf {
-    pub(crate) buf: UnsafeCell<Vec<u8>>,
+pub(in crate::pagecache) struct IoBuf {
+    pub buf: UnsafeCell<Vec<u8>>,
     header: CachePadded<AtomicU64>,
-    pub(super) lid: LogId,
-    pub(super) lsn: Lsn,
-    pub(super) capacity: usize,
+    pub lid: LogId,
+    pub lsn: Lsn,
+    pub capacity: usize,
     maxed: AtomicBool,
     linearizer: Mutex<()>,
     stored_max_stable_lsn: Lsn,
@@ -41,31 +41,31 @@ pub(crate) struct IoBuf {
 
 unsafe impl Sync for IoBuf {}
 
-pub(super) struct IoBufs {
-    pub(super) config: Config,
+pub(in crate::pagecache) struct IoBufs {
+    pub config: Config,
 
-    pub(crate) iobuf: RwLock<Arc<IoBuf>>,
+    pub iobuf: RwLock<Arc<IoBuf>>,
 
     // Pending intervals that have been written to stable storage, but may be
     // higher than the current value of `stable` due to interesting thread
     // interleavings.
-    pub(crate) intervals: Mutex<Vec<(Lsn, Lsn)>>,
-    pub(super) interval_updated: Condvar,
+    pub intervals: Mutex<Vec<(Lsn, Lsn)>>,
+    pub interval_updated: Condvar,
 
     // The highest CONTIGUOUS log sequence number that has been written to
     // stable storage. This may be lower than the length of the underlying
     // file, and there may be buffers that have been written out-of-order
     // to stable storage due to interesting thread interleavings.
-    pub(crate) stable_lsn: AtomicLsn,
-    pub(crate) max_reserved_lsn: AtomicLsn,
-    pub(crate) max_header_stable_lsn: Arc<AtomicLsn>,
-    pub(crate) segment_accountant: Mutex<SegmentAccountant>,
+    pub stable_lsn: AtomicLsn,
+    pub max_reserved_lsn: AtomicLsn,
+    pub max_header_stable_lsn: Arc<AtomicLsn>,
+    pub segment_accountant: Mutex<SegmentAccountant>,
 }
 
 /// `IoBufs` is a set of lock-free buffers for coordinating
 /// writes to underlying storage.
 impl IoBufs {
-    pub(crate) fn start(config: Config, snapshot: Snapshot) -> Result<Self> {
+    pub fn start(config: Config, snapshot: Snapshot) -> Result<Self> {
         // open file for writing
         let file = &config.file;
 
@@ -176,7 +176,7 @@ impl IoBufs {
     }
 
     /// SegmentAccountant access for coordination with the `PageCache`
-    pub(super) fn with_sa<B, F>(&self, f: F) -> B
+    pub(in crate::pagecache) fn with_sa<B, F>(&self, f: F) -> B
     where
         F: FnOnce(&mut SegmentAccountant) -> B,
     {
@@ -199,7 +199,7 @@ impl IoBufs {
     }
 
     /// SegmentAccountant access for coordination with the `PageCache`
-    pub(super) fn try_with_sa<B, F>(&self, f: F) -> Option<B>
+    pub(in crate::pagecache) fn try_with_sa<B, F>(&self, f: F) -> Option<B>
     where
         F: FnOnce(&mut SegmentAccountant) -> B,
     {
@@ -245,7 +245,7 @@ impl IoBufs {
     }
 
     /// Returns the last stable offset in storage.
-    pub(super) fn stable(&self) -> Lsn {
+    pub(in crate::pagecache) fn stable(&self) -> Lsn {
         debug_delay();
         self.stable_lsn.load(SeqCst) as Lsn
     }
@@ -522,7 +522,7 @@ impl IoBufs {
         }
     }
 
-    pub(super) fn current_iobuf(&self) -> Arc<IoBuf> {
+    pub(in crate::pagecache) fn current_iobuf(&self) -> Arc<IoBuf> {
         self.iobuf.read().clone()
     }
 }
@@ -530,7 +530,7 @@ impl IoBufs {
 /// Blocks until the specified log sequence number has
 /// been made stable on disk. Returns the number of
 /// bytes written.
-pub(crate) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Result<usize> {
+pub(in crate::pagecache) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Result<usize> {
     let _measure = Measure::new(&M.make_stable);
 
     // NB before we write the 0th byte of the file, stable  is -1
@@ -606,7 +606,7 @@ pub(crate) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Result<usize> {
 /// Called by users who wish to force the current buffer
 /// to flush some pending writes. Returns the number
 /// of bytes written during this call.
-pub(super) fn flush(iobufs: &Arc<IoBufs>) -> Result<usize> {
+pub(in crate::pagecache) fn flush(iobufs: &Arc<IoBufs>) -> Result<usize> {
     let max_reserved_lsn = iobufs.max_reserved_lsn.load(SeqCst) as Lsn;
     make_stable(iobufs, max_reserved_lsn)
 }
@@ -614,7 +614,7 @@ pub(super) fn flush(iobufs: &Arc<IoBufs>) -> Result<usize> {
 /// Attempt to seal the current IO buffer, possibly
 /// writing it to disk if there are no other writers
 /// operating on it.
-pub(crate) fn maybe_seal_and_write_iobuf(
+pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
     iobufs: &Arc<IoBufs>,
     iobuf: &Arc<IoBuf>,
     header: Header,

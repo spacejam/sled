@@ -2,7 +2,7 @@ use std::io::{Read, Write};
 
 use super::*;
 
-pub(crate) fn read_blob(
+pub(in crate::pagecache) fn read_blob(
     blob_ptr: Lsn,
     config: &Config,
 ) -> Result<(MessageKind, Vec<u8>)> {
@@ -67,7 +67,7 @@ pub(crate) fn read_blob(
     }
 }
 
-pub(crate) fn write_blob(
+pub(in crate::pagecache) fn write_blob(
     config: &Config,
     kind: MessageKind,
     id: Lsn,

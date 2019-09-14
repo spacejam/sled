@@ -4,7 +4,7 @@ use super::Pio;
 
 use super::*;
 
-pub(crate) trait LogReader {
+pub(in crate::pagecache) trait LogReader {
     fn read_segment_header(&self, id: LogId) -> Result<SegmentHeader>;
 
     fn read_message(

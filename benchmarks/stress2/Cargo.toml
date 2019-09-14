@@ -23,10 +23,12 @@ no_jemalloc = []
 docopt = "1.0"
 env_logger = "0.5"
 rand = "0.4"
-sled = { path = "../../crates/sled" }
 jemallocator = "0.1"
 log = "0.4"
 color-backtrace = "0.1.3"
+
+[dependencies.sled]
+path = "../.."
 
 [dependencies.serde]
 version = "1.0"

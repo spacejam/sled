@@ -9,8 +9,9 @@ use std::{
 
 use crossbeam_epoch::{unprotected, Atomic, Guard, Owned, Shared};
 
-use crate::debug::debug_delay;
+use crate::pagecache::debug::debug_delay;
 
+#[allow(unused)]
 #[doc(hidden)]
 pub const PAGETABLE_NODE_SZ: usize = size_of::<Node1<()>>();
 

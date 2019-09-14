@@ -39,7 +39,7 @@ use super::*;
 /// for writing persistent data structures that need
 /// to know where to find persisted bits in the future.
 #[derive(Debug)]
-pub struct Log {
+pub(in crate::pagecache) struct Log {
     /// iobufs is the underlying lock-free IO write buffer.
     pub(super) iobufs: Arc<IoBufs>,
     pub(crate) config: Config,
@@ -120,7 +120,7 @@ impl Log {
     }
 
     // SegmentAccountant access for coordination with the `PageCache`
-    pub(crate) fn with_sa<B, F>(&self, f: F) -> B
+    pub(in crate::pagecache) fn with_sa<B, F>(&self, f: F) -> B
     where
         F: FnOnce(&mut SegmentAccountant) -> B,
     {
@@ -456,12 +456,12 @@ impl Drop for Log {
 
 /// All log messages are prepended with this header
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub struct MessageHeader {
-    pub(crate) kind: MessageKind,
-    pub(crate) lsn: Lsn,
-    pub(crate) pid: PageId,
-    pub(crate) len: u32,
-    pub(crate) crc32: u32,
+pub(in crate::pagecache) struct MessageHeader {
+    pub kind: MessageKind,
+    pub lsn: Lsn,
+    pub pid: PageId,
+    pub len: u32,
+    pub crc32: u32,
 }
 
 /// A segment's header contains the new base LSN and a reference
@@ -475,7 +475,7 @@ pub(crate) struct SegmentHeader {
 
 #[doc(hidden)]
 #[derive(Debug)]
-pub enum LogRead {
+pub(in crate::pagecache) enum LogRead {
     Inline(MessageHeader, Vec<u8>, u32),
     Blob(MessageHeader, Vec<u8>, BlobPointer),
     Failed(Lsn, u32),

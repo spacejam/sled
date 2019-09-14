@@ -90,6 +90,7 @@ use self::{
     segment::SegmentAccountant,
     snapshot::{advance_snapshot, PageState},
     util::{arr_to_u32, arr_to_u64, maybe_decompress, u32_to_arr, u64_to_arr},
+    logger::{Log, LogRead},
 };
 
 pub use self::{
@@ -98,7 +99,6 @@ pub use self::{
     ds::{node_from_frag_vec, Lru, Node, PageTable, Stack, StackIter, VecSet},
     histogram::Histogram,
     lazy::Lazy,
-    logger::{Log, LogRead},
     map::{FastMap1, FastMap4, FastMap8, FastSet1, FastSet4, FastSet8},
     materializer::Materializer,
     meta::Meta,
@@ -139,7 +139,7 @@ pub type PageId = u64;
 #[doc(hidden)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
-enum MessageKind {
+pub (in crate::pagecache) enum MessageKind {
     /// The EVIL_BYTE is written as a canary to help
     /// detect torn writes.
     Corrupted = 0,
