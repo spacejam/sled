@@ -1,10 +1,9 @@
 use std::fs::File;
 
-use super::Pio;
+use crate::*;
+use crate::pagecache::*;
 
-use super::*;
-
-fn read_segment_header(file: &File, lid: LogId) -> Result<SegmentHeader> {
+pub(crate) fn read_segment_header(file: &File, lid: LogId) -> Result<SegmentHeader> {
     trace!("reading segment header at {}", lid);
 
     let mut seg_header_buf = [0; SEG_HEADER_LEN];
@@ -23,7 +22,7 @@ fn read_segment_header(file: &File, lid: LogId) -> Result<SegmentHeader> {
 }
 
 /// read a buffer from the disk
-fn read_message(
+pub(crate) fn read_message(
     file: &File,
     lid: LogId,
     expected_lsn: Lsn,

@@ -134,31 +134,40 @@ pub use {
         },
         config::{Config, ConfigBuilder},
         result::{Error, Result},
-        oneshot::OneShot,
     },
 };
 
 use {
     self::{
+        config::PersistedConfig,
         binary_search::binary_search_lub,
         context::Context,
         data::Data,
+        result::CasResult,
         frag::Frag,
         node::Node,
+        meta::Meta,
         prefix::{
             prefix_cmp, prefix_cmp_encoded, prefix_decode, prefix_encode,
             prefix_reencode,
         },
         subscription::Subscriptions,
+        oneshot::{OneShot, OneShotFiller},
         histogram::Histogram,
         tree::TreeInner,
         lazy::Lazy,
         metrics::{M, clock, measure, Measure},
     },
     std::{
-        sync::atomic::{
-            AtomicI64 as AtomicLsn, AtomicU64,
-            Ordering::{Acquire, Relaxed, Release, SeqCst},
+        fmt::{self, Debug},
+        collections::BTreeMap,
+        sync::{
+            Arc,
+            atomic::{
+                AtomicUsize,
+                AtomicI64 as AtomicLsn, AtomicU64,
+                Ordering::{Acquire, Relaxed, Release, SeqCst},
+            },
         },
         convert::TryFrom,
         io::{Read, Write},
@@ -173,8 +182,7 @@ use {
     serde::{de::DeserializeOwned, Deserialize, Serialize},
     crossbeam_utils::{Backoff, CachePadded},
     crossbeam_epoch::{
-        pin, unprotected, Atomic, Collector, CompareAndSetError, Guard,
-        LocalHandle, Owned, Shared,
+        pin, Atomic, Guard, Owned, Shared,
     },
 };
 
@@ -198,6 +206,14 @@ use debug_delay::debug_delay;
 #[cfg(not(any(test, feature = "lock_free_delays")))]
 fn debug_delay() {}
 
+/// A fast map that is not resistant to collision attacks. Works
+/// on 8 bytes at a time.
+pub type FastMap8<K, V> = std::collections::HashMap<K, V, std::hash::BuildHasherDefault<fxhash::FxHasher64>>;
+
+/// A fast set that is not resistant to collision attacks. Works
+/// on 8 bytes at a time.
+pub type FastSet8<V> = std::collections::HashSet<V, std::hash::BuildHasherDefault<fxhash::FxHasher64>>;
+
 /// Allows arbitrary logic to be injected into mere operations of the
 /// `PageCache`.
 pub type MergeOperator = fn(
@@ -208,3 +224,14 @@ pub type MergeOperator = fn(
 
 #[cfg(test)]
 mod tests;
+
+mod dll;
+mod lru;
+mod pagetable;
+mod stack;
+mod vecset;
+
+use self::lru::Lru;
+use self::pagetable::{PageTable, PAGETABLE_NODE_SZ};
+use self::stack::{node_from_frag_vec, Stack, StackIter};
+use self::vecset::VecSet;

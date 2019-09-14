@@ -1,13 +1,6 @@
-use std::{
-    ops::Deref,
-    sync::{atomic::AtomicU64, Arc},
-};
+use std::ops::Deref;
 
-use pagecache::FastMap8;
-
-use parking_lot::RwLock;
-
-use super::*;
+use crate::*;
 
 /// The `sled` embedded database!
 #[derive(Clone)]
@@ -29,11 +22,11 @@ impl Deref for Db {
     }
 }
 
-impl std::fmt::Debug for Db {
+impl fmt::Debug for Db {
     fn fmt(
         &self,
-        f: &mut std::fmt::Formatter<'_>,
-    ) -> std::result::Result<(), std::fmt::Error> {
+        f: &mut fmt::Formatter<'_>,
+    ) -> std::result::Result<(), fmt::Error> {
         let tenants = self.tenants.read();
         write!(f, "Db {{")?;
         for (raw_name, tree) in tenants.iter() {

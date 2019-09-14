@@ -1,6 +1,7 @@
-use crate::{*, pagecache::{DiskPtr, MessageKind}};
+use crate::*;
+use crate::pagecache::*;
 
-pub(in crate::pagecache) fn read_blob(
+pub(crate) fn read_blob(
     blob_ptr: Lsn,
     config: &Config,
 ) -> Result<(MessageKind, Vec<u8>)> {
@@ -65,7 +66,7 @@ pub(in crate::pagecache) fn read_blob(
     }
 }
 
-pub(in crate::pagecache) fn write_blob(
+pub(crate) fn write_blob(
     config: &Config,
     kind: MessageKind,
     id: Lsn,

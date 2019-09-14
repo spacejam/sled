@@ -1,4 +1,4 @@
-use super::*;
+use super::LogId;
 
 #[cfg(unix)]
 use std::os::unix::fs::FileExt;
@@ -7,21 +7,21 @@ use std::os::unix::fs::FileExt;
 pub(crate) trait Pio {
     /// Read from a specific offset without changing
     /// the underlying file offset.
-    fn pread_exact(&self, to_buf: &mut [u8], offset: LogId) -> io::Result<()>;
+    fn pread_exact(&self, to_buf: &mut [u8], offset: LogId) -> std::io::Result<()>;
 
     /// Write to a specific offset without changing
     /// the underlying file offset.
-    fn pwrite_all(&self, from_buf: &[u8], offset: LogId) -> io::Result<()>;
+    fn pwrite_all(&self, from_buf: &[u8], offset: LogId) -> std::io::Result<()>;
 }
 
 // On systems that support pread/pwrite, use them underneath.
 #[cfg(unix)]
 impl Pio for std::fs::File {
-    fn pread_exact(&self, buf: &mut [u8], offset: LogId) -> io::Result<()> {
+    fn pread_exact(&self, buf: &mut [u8], offset: LogId) -> std::io::Result<()> {
         self.read_exact_at(buf, offset)
     }
 
-    fn pwrite_all(&self, buf: &[u8], offset: LogId) -> io::Result<()> {
+    fn pwrite_all(&self, buf: &[u8], offset: LogId) -> std::io::Result<()> {
         self.write_all_at(buf, offset)
     }
 }

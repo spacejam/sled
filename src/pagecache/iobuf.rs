@@ -25,7 +25,7 @@ macro_rules! io_fail {
     };
 }
 
-pub(in crate::pagecache) struct IoBuf {
+pub(crate) struct IoBuf {
     pub buf: UnsafeCell<Vec<u8>>,
     header: CachePadded<AtomicU64>,
     pub lid: LogId,
@@ -38,7 +38,7 @@ pub(in crate::pagecache) struct IoBuf {
 
 unsafe impl Sync for IoBuf {}
 
-pub(in crate::pagecache) struct IoBufs {
+pub(crate) struct IoBufs {
     pub config: Config,
 
     pub iobuf: RwLock<Arc<IoBuf>>,
@@ -81,7 +81,8 @@ impl IoBufs {
         {
             (snapshot_last_lsn, snapshot_last_lid)
         } else {
-            let width = match file.read_message(
+            let width = match read_message(
+                &file,
                 snapshot_last_lid,
                 snapshot_last_lsn,
                 &config,

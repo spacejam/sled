@@ -10,19 +10,15 @@
 mod blob_io;
 mod constants;
 mod diskptr;
-mod ds;
 mod iobuf;
 mod iterator;
-mod map;
 mod materializer;
-mod meta;
 mod pagecache;
 mod parallel_io;
 mod reader;
 mod reservation;
 mod segment;
 mod snapshot;
-mod util;
 
 #[cfg(feature = "measure_allocs")]
 mod measure_allocs;
@@ -38,16 +34,7 @@ pub mod event_log;
 
 pub mod logger;
 
-#[doc(hidden)]
-use self::logger::{MessageHeader, SegmentHeader};
-
-use crate::{
-    threadpool, Config, ConfigBuilder,
-    result::{CasResult, Error, Result},
-    metrics::{M, clock, measure, Measure},
-    oneshot::{OneShot, OneShotFiller},
-    histogram::Histogram,
-};
+use crate::{debug, DeserializeOwned, AtomicLsn, Serialize, SeqCst};
 
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
@@ -57,31 +44,22 @@ use self::{
     pagecache::Update,
     parallel_io::Pio,
     segment::SegmentAccountant,
-    snapshot::{advance_snapshot, PageState},
-    util::{arr_to_u32, arr_to_u64, maybe_decompress, u32_to_arr, u64_to_arr},
+    snapshot::{advance_snapshot},
 };
 
 pub(crate) use self::{
     reader::{read_segment_header, read_message},
-    logger::{Log, LogRead},
+    logger::{Log, LogRead, MessageHeader, SegmentHeader},
     diskptr::DiskPtr,
-    ds::{node_from_frag_vec, Lru, Node, PageTable, Stack, StackIter, VecSet},
-    map::{FastMap8, FastSet8},
     materializer::Materializer,
-    meta::Meta,
     pagecache::{PageCache, PagePtr, RecoveryGuard},
     reservation::Reservation,
     segment::SegmentMode,
-};
-
-#[doc(hidden)]
-pub use self::{
     constants::{
         BATCH_MANIFEST_INLINE_LEN, BLOB_INLINE_LEN, MAX_SPACE_AMPLIFICATION,
         MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
     },
-    ds::PAGETABLE_NODE_SZ,
-    snapshot::{read_snapshot_or_default, Snapshot},
+    snapshot::{read_snapshot_or_default, Snapshot, PageState},
 };
 
 /// An offset for a storage file segment.
@@ -245,10 +223,64 @@ fn bump_atomic_lsn(atomic_lsn: &AtomicLsn, to: Lsn) {
     }
 }
 
-fn pagecache_crate_version() -> (usize, usize) {
-    let vsn = env!("CARGO_PKG_VERSION");
-    let mut parts = vsn.split('.');
-    let major = parts.next().unwrap().parse().unwrap();
-    let minor = parts.next().unwrap().parse().unwrap();
-    (major, minor)
+use std::convert::{TryFrom, TryInto};
+
+#[cfg(feature = "compression")]
+use zstd::block::decompress;
+
+#[inline]
+pub(crate) fn u64_to_arr(number: u64) -> [u8; 8] {
+    number.to_le_bytes()
+}
+
+#[inline]
+pub(crate) fn arr_to_u64(arr: &[u8]) -> u64 {
+    arr.try_into().map(u64::from_le_bytes).unwrap()
+}
+
+#[inline]
+pub(crate) fn arr_to_u32(arr: &[u8]) -> u32 {
+    arr.try_into().map(u32::from_le_bytes).unwrap()
+}
+
+#[inline]
+pub(crate) fn u32_to_arr(number: u32) -> [u8; 4] {
+    number.to_le_bytes()
+}
+
+pub(crate) fn maybe_decompress(buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
+    #[cfg(feature = "compression")]
+    {
+        use std::sync::atomic::AtomicUsize;
+
+        use super::*;
+
+        static MAX_COMPRESSION_RATIO: AtomicUsize = AtomicUsize::new(1);
+        use std::sync::atomic::Ordering::{Acquire, Release};
+
+        let _measure = Measure::new(&M.decompress);
+        loop {
+            let ratio = MAX_COMPRESSION_RATIO.load(Acquire);
+            match decompress(&*buf, buf.len() * ratio) {
+                Err(ref e) if e.kind() == io::ErrorKind::Other => {
+                    debug!(
+                        "bumping expected compression \
+                         ratio up from {} to {}: {:?}",
+                        ratio,
+                        ratio + 1,
+                        e
+                    );
+                    MAX_COMPRESSION_RATIO.compare_and_swap(
+                        ratio,
+                        ratio + 1,
+                        Release,
+                    );
+                }
+                other => return other,
+            }
+        }
+    }
+
+    #[cfg(not(feature = "compression"))]
+    Ok(buf)
 }

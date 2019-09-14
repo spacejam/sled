@@ -32,7 +32,17 @@
 //! ```
 use std::sync::Arc;
 
-use super::*;
+use super::{
+    advance_snapshot, LogIter, iobuf, Snapshot,
+    IoBufs, raw_segment_iter_from, read_blob, SegmentAccountant,
+    u64_to_arr, bump_atomic_lsn, arr_to_u64, arr_to_u32, IoBuf,
+    u32_to_arr, SegmentMode, LogKind, MessageKind, LogId, DiskPtr,
+    Lsn, MSG_HEADER_LEN, BLOB_INLINE_LEN, BlobPointer, Reservation,
+    MINIMUM_ITEMS_PER_SEGMENT, SEG_HEADER_LEN, read_message,
+    COUNTER_PID, CONFIG_PID, META_PID, BATCH_MANIFEST_PID,
+};
+
+use crate::*;
 
 /// A sequential store which allows users to create
 /// reservations placed at known log offsets, used
@@ -89,7 +99,7 @@ impl Log {
 
         if ptr.is_inline() {
             let f = &self.config.file;
-            f.read_message(ptr.lid(), lsn, &self.config)
+            read_message(&f, ptr.lid(), lsn, &self.config)
         } else {
             // we short-circuit the inline read
             // here because it might not still

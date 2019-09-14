@@ -1,4 +1,5 @@
 use crate::*;
+use super::{LogId, BlobPointer};
 
 /// A pointer to a location on disk or an off-log blob.
 #[derive(
@@ -51,11 +52,11 @@ impl DiskPtr {
     }
 }
 
-impl std::fmt::Display for DiskPtr {
+impl fmt::Display for DiskPtr {
     fn fmt(
         &self,
-        f: &mut std::fmt::Formatter<'_>,
-    ) -> std::result::Result<(), std::fmt::Error> {
+        f: &mut fmt::Formatter<'_>,
+    ) -> std::result::Result<(), fmt::Error> {
         write!(f, "{:?}", self)
     }
 }

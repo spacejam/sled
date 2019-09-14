@@ -5,7 +5,9 @@ use std::{
     io,
 };
 
-use super::*;
+use crate::pagecache::{
+    PagePtr, DiskPtr
+};
 
 /// The top-level result type for dealing with
 /// the `PageCache`.
@@ -48,7 +50,7 @@ impl Clone for Error {
 
         match self {
             Io(ioe) => {
-                Io(std::io::Error::new(ioe.kind(), format!("{:?}", ioe)))
+                Io(io::Error::new(ioe.kind(), format!("{:?}", ioe)))
             }
             CollectionNotFound(name) => CollectionNotFound(name.clone()),
             Unsupported(why) => Unsupported(why.clone()),

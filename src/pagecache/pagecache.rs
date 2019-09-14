@@ -1,10 +1,8 @@
-use std::{borrow::Cow, collections::BinaryHeap, ops::Deref, sync::Arc};
+use std::{borrow::Cow, collections::BinaryHeap, ops::Deref};
 
-use parking_lot::Mutex;
+use crate::{*, pagecache::*};
 
-use super::*;
-
-type PagePtrInner<'g, P> = Shared<'g, Node<(Option<Update<P>>, CacheInfo)>>;
+type PagePtrInner<'g, P> = Shared<'g, stack::Node<(Option<Update<P>>, CacheInfo)>>;
 
 /// A pointer to shared lock-free state bound by a pinned epoch's lifetime.
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -38,7 +36,7 @@ pub struct CacheInfo {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum Update<PageFrag> {
+pub(crate) enum Update<PageFrag> {
     Append(PageFrag),
     Compact(PageFrag),
     Free,
@@ -669,7 +667,7 @@ where
                 log_size: 0,
             };
 
-            let node = Node {
+            let node = stack::Node {
                 inner: (Some(update), cache_info),
                 // NB this must be null
                 // to prevent double-frees

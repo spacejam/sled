@@ -1,8 +1,8 @@
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-use crate::pagecache::ConfigBuilder;
 use crate::*;
+
 use tests::tree::{
     prop_tree_matches_btreemap, Key,
     Op::{self, *},
@@ -552,7 +552,7 @@ fn tree_subscriptions_and_keyspaces() -> Result<()> {
     assert_eq!(s1.next().unwrap().key(), b"t1_a");
     assert_eq!(s2.next().unwrap().key(), b"t2_a");
 
-    let guard = pagecache::pin();
+    let guard = pin();
     guard.flush();
     drop(guard);
 
@@ -578,7 +578,7 @@ fn tree_subscriptions_and_keyspaces() -> Result<()> {
     assert_eq!(s1.next().unwrap().key(), b"t1_b");
     assert_eq!(s2.next().unwrap().key(), b"t2_b");
 
-    let guard = pagecache::pin();
+    let guard = pin();
     guard.flush();
     drop(guard);
 
@@ -602,7 +602,7 @@ fn tree_subscriptions_and_keyspaces() -> Result<()> {
 
     assert_eq!(t2.get(b""), Err(Error::CollectionNotFound(b"2".to_vec())));
 
-    let guard = pagecache::pin();
+    let guard = pin();
     guard.flush();
     drop(guard);
 

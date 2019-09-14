@@ -1,8 +1,11 @@
 use std::{collections::BTreeMap, io};
 
-use crate::pagecache::{read_message, read_segment_header};
-
 use crate::*;
+use super::{
+    LogRead, DiskPtr, LogKind, Lsn, LogId, MessageKind, read_message,
+    MSG_HEADER_LEN, BLOB_INLINE_LEN, read_segment_header,
+    SEG_HEADER_LEN, BATCH_MANIFEST_INLINE_LEN, SegmentHeader, Pio
+};
 
 pub struct LogIter {
     pub config: Config,
@@ -416,7 +419,7 @@ fn clean_tail_tears(
     Ok(ordering)
 }
 
-pub(super) fn raw_segment_iter_from(
+pub fn raw_segment_iter_from(
     lsn: Lsn,
     config: &Config,
 ) -> Result<(LogIter, Lsn)> {

@@ -58,15 +58,19 @@
 //!    reallocated after another later segment has written
 //!    a "stable consecutive lsn" into its own header
 //!    that is higher than ours.
-use std::{collections::BTreeMap, mem};
 
-use super::*;
+use std::mem;
+
+use super::PageState;
+
+use crate::*;
+use crate::pagecache::*;
 
 /// The segment accountant keeps track of the logical blocks
 /// of storage. It scans through all segments quickly during
 /// recovery and attempts to locate torn segments.
 #[derive(Debug)]
-pub(super) struct SegmentAccountant {
+pub(crate) struct SegmentAccountant {
     // static or one-time set
     config: Config,
 

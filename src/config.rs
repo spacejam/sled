@@ -1,4 +1,5 @@
 use std::{
+    io,
     fs,
     fs::File,
     io::{ErrorKind, Read, Seek, Write},
@@ -10,14 +11,14 @@ use std::{
     },
 };
 
-use bincode::{deserialize, serialize};
-
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use fs2::FileExt;
 
-// explicitly bring LogReader in to be tool-friendly
-use crate::pagecache::{LogReader, *};
 use crate::*;
+use crate::pagecache::{
+    u32_to_arr, arr_to_u32, PageState, SegmentMode, Lsn,
+    read_snapshot_or_default, read_message
+};
 
 const DEFAULT_PATH: &str = "default.sled";
 
@@ -116,7 +117,7 @@ impl Default for ConfigBuilder {
             segment_mode: SegmentMode::Gc,
             print_profile_on_drop: false,
             idgen_persist_interval: 1_000_000,
-            version: pagecache_crate_version(),
+            version: crate_version(),
         }
     }
 }
@@ -346,7 +347,7 @@ impl ConfigBuilder {
             };
 
             if let Err(e) = try_lock {
-                return Err(Error::Io(std::io::Error::new(
+                return Err(Error::Io(io::Error::new(
                     ErrorKind::Other,
                     format!(
                         "could not acquire lock on {:?}: {:?}",
@@ -640,7 +641,7 @@ impl Config {
 
         let verify_messages = |k: &PageId, v: &PageState| {
             for (lsn, ptr, _sz) in v.iter() {
-                if let Err(e) = self.file.read_message(ptr.lid(), lsn, &self) {
+                if let Err(e) = read_message(&self.file, ptr.lid(), lsn, &self) {
                     panic!(
                         "could not read log data for \
                          pid {} at lsn {} ptr {}: {}",
@@ -804,4 +805,12 @@ fn get_memory_limit() -> u64 {
     }
 
     max
+}
+
+fn crate_version() -> (usize, usize) {
+    let vsn = env!("CARGO_PKG_VERSION");
+    let mut parts = vsn.split('.');
+    let major = parts.next().unwrap().parse().unwrap();
+    let minor = parts.next().unwrap().parse().unwrap();
+    (major, minor)
 }

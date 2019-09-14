@@ -65,9 +65,11 @@
 #![allow(missing_docs)]
 
 use parking_lot::RwLockWriteGuard;
-use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
+use std::{fmt, cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 
-use super::*;
+use crate::{
+    Tree, IVec, Error, Batch, Result
+};
 
 /// A transaction that will
 /// be applied atomically to the
@@ -86,8 +88,8 @@ pub enum TransactionError {
     Storage(Error),
 }
 
-impl std::fmt::Display for TransactionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for TransactionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use TransactionError::*;
         match self {
             Conflict => write!(f, "Conflict during transaction"),

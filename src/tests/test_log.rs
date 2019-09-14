@@ -13,19 +13,18 @@ use std::{
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::{thread_rng, Rng};
 
+use crate::*;
 use crate::pagecache::{
-    ConfigBuilder, DiskPtr, Log, LogKind, LogRead, PageId, SegmentMode,
-    MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
+    LogKind, Log, SegmentMode, LogRead, LogId, Lsn,
+    SEG_HEADER_LEN, MSG_HEADER_LEN, MINIMUM_ITEMS_PER_SEGMENT,
+    DiskPtr,
 };
-
-type Lsn = i64;
-type LogId = u64;
 
 const PID: PageId = 0;
 const KIND: LogKind = LogKind::Replace;
 
 #[test]
-fn log_writebatch() -> crate::pagecache::Result<()> {
+fn log_writebatch() -> crate::Result<()> {
     super::setup_logger();
     let config = ConfigBuilder::new()
         .temporary(true)

@@ -1,9 +1,13 @@
-use std::io::{Read, Write};
-
 #[cfg(feature = "zstd")]
 use zstd::block::{compress, decompress};
 
-use super::*;
+use crate::*;
+
+use super::{
+    LogIter, raw_segment_iter_from, arr_to_u32,
+    u32_to_arr, u64_to_arr, LogKind, Lsn, LogId,
+    DiskPtr, MSG_HEADER_LEN,
+};
 
 /// A snapshot of the state required to quickly restart
 /// the `PageCache` and `SegmentAccountant`.
@@ -118,7 +122,7 @@ impl Snapshot {
     }
 }
 
-pub(super) fn advance_snapshot(
+pub(crate) fn advance_snapshot(
     iter: LogIter,
     mut snapshot: Snapshot,
     config: &Config,

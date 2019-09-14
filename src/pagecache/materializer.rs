@@ -1,4 +1,4 @@
-use super::*;
+use crate::*;
 
 /// A user of a `PageCache` needs to provide a `Materializer` which
 /// handles the merging of page fragments.
