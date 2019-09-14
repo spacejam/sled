@@ -9,7 +9,7 @@ use std::{
 
 use crossbeam_epoch::{unprotected, Atomic, Guard, Owned, Shared};
 
-use crate::pagecache::debug::debug_delay;
+use crate::debug_delay;
 
 #[allow(unused)]
 #[doc(hidden)]

@@ -15,10 +15,9 @@ use bincode::{deserialize, serialize};
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use fs2::FileExt;
 
-use serde::Serialize;
-
 // explicitly bring LogReader in to be tool-friendly
-use super::{LogReader, *};
+use crate::pagecache::{LogReader, *};
+use crate::*;
 
 const DEFAULT_PATH: &str = "default.sled";
 
@@ -317,7 +316,7 @@ impl ConfigBuilder {
         }
 
         if !dir.exists() {
-            let res: io::Result<()> = fs::create_dir_all(dir);
+            let res = fs::create_dir_all(dir);
             res.map_err(Error::from)?;
         }
 
@@ -347,7 +346,7 @@ impl ConfigBuilder {
             };
 
             if let Err(e) = try_lock {
-                return Err(Error::Io(io::Error::new(
+                return Err(Error::Io(std::io::Error::new(
                     ErrorKind::Other,
                     format!(
                         "could not acquire lock on {:?}: {:?}",

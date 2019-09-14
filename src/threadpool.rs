@@ -33,7 +33,7 @@ where
 
         use crossbeam_channel::{bounded, Receiver, Sender};
 
-        use super::{debug_delay, Lazy};
+        use crate::{debug_delay, Lazy};
 
         const MAX_THREADS: u64 = 128;
 

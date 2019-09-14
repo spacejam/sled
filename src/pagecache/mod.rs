@@ -7,37 +7,19 @@
 #![deny(rust_2018_compatibility)]
 #![deny(rust_2018_idioms)]
 
-#[cfg(feature = "failpoints")]
-use fail::fail_point;
-
-macro_rules! maybe_fail {
-    ($e:expr) => {
-        #[cfg(feature = "failpoints")]
-        fail_point!($e, |_| Err(Error::FailPoint));
-    };
-}
-
 mod blob_io;
-mod config;
 mod constants;
-/// Debug helps test concurrent issues with random jitter and other
-/// instruments.
-pub mod debug;
 mod diskptr;
 mod ds;
-mod histogram;
 mod iobuf;
 mod iterator;
 mod map;
 mod materializer;
 mod meta;
-mod metrics;
-mod oneshot;
 mod pagecache;
 mod parallel_io;
 mod reader;
 mod reservation;
-mod result;
 mod segment;
 mod snapshot;
 mod util;
@@ -56,33 +38,22 @@ pub mod event_log;
 
 pub mod logger;
 
-use std::{
-    cell::UnsafeCell,
-    convert::TryFrom,
-    fmt::{self, Debug},
-    io,
-    sync::atomic::{
-        AtomicI64 as AtomicLsn, AtomicU64,
-        Ordering::{Acquire, Relaxed, Release, SeqCst},
-    },
-};
-
-use bincode::{deserialize, serialize};
-use log::{debug, error, trace, warn};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-
 #[doc(hidden)]
 use self::logger::{MessageHeader, SegmentHeader};
 
-use crate::threadpool;
+use crate::{
+    threadpool, Config, ConfigBuilder,
+    result::{CasResult, Error, Result},
+    metrics::{M, clock, measure, Measure},
+    oneshot::{OneShot, OneShotFiller},
+    histogram::Histogram,
+};
 
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
-    config::PersistedConfig,
     constants::{BATCH_MANIFEST_PID, CONFIG_PID, COUNTER_PID, META_PID},
     iobuf::{IoBuf, IoBufs},
     iterator::{raw_segment_iter_from, LogIter},
-    metrics::{clock, measure},
     pagecache::Update,
     parallel_io::Pio,
     segment::SegmentAccountant,
@@ -90,19 +61,11 @@ use self::{
     util::{arr_to_u32, arr_to_u64, maybe_decompress, u32_to_arr, u64_to_arr},
 };
 
-pub use {
-    config::{Config, ConfigBuilder},
-    result::{CasResult, Error, Result},
-    metrics::M,
-    oneshot::{OneShot, OneShotFiller},
-};
-
 pub(crate) use self::{
-    reader::LogReader,
+    reader::{read_segment_header, read_message},
     logger::{Log, LogRead},
     diskptr::DiskPtr,
     ds::{node_from_frag_vec, Lru, Node, PageTable, Stack, StackIter, VecSet},
-    histogram::Histogram,
     map::{FastMap8, FastSet8},
     materializer::Materializer,
     meta::Meta,
@@ -118,7 +81,6 @@ pub use self::{
         MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
     },
     ds::PAGETABLE_NODE_SZ,
-    metrics::Measure,
     snapshot::{read_snapshot_or_default, Snapshot},
 };
 
@@ -259,21 +221,6 @@ impl From<MessageKind> for LogKind {
         }
     }
 }
-
-pub(crate) fn crc32(buf: &[u8]) -> u32 {
-    let mut hasher = crc32fast::Hasher::new();
-    hasher.update(&buf);
-    hasher.finalize()
-}
-
-use self::debug::debug_delay;
-
-pub use crossbeam_epoch::{
-    pin, unprotected, Atomic, Collector, CompareAndSetError, Guard,
-    LocalHandle, Owned, Shared,
-};
-
-pub use crossbeam_utils::{Backoff, CachePadded};
 
 fn assert_usize<T>(from: T) -> usize
 where

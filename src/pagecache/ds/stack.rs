@@ -9,7 +9,7 @@ use crossbeam_epoch::{
     Owned, Shared,
 };
 
-use crate::pagecache::debug::debug_delay;
+use crate::debug_delay;
 
 type CompareAndSwapResult<'g, T> = std::result::Result<
     Shared<'g, Node<T>>,

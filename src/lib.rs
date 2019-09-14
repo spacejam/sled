@@ -80,6 +80,16 @@
 #![deny(rust_2018_compatibility)]
 #![deny(rust_2018_idioms)]
 
+#[cfg(feature = "failpoints")]
+use fail::fail_point;
+
+macro_rules! maybe_fail {
+    ($e:expr) => {
+        #[cfg(feature = "failpoints")]
+        fail_point!($e, |_| Err(Error::FailPoint));
+    };
+}
+
 mod batch;
 mod binary_search;
 mod context;
@@ -97,12 +107,18 @@ mod prefix;
 mod subscription;
 mod tree;
 mod tx;
+mod histogram;
+mod metrics;
 mod pagecache;
+mod result;
+mod oneshot;
+mod config;
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod flusher;
 
 const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
+
 
 pub use {
     self::{
@@ -116,8 +132,10 @@ pub use {
             TransactionError, TransactionResult, Transactional,
             TransactionalTree,
         },
+        config::{Config, ConfigBuilder},
+        result::{Error, Result},
+        oneshot::OneShot,
     },
-    pagecache::{Config, ConfigBuilder, Error, OneShot, Result},
 };
 
 use {
@@ -132,18 +150,53 @@ use {
             prefix_reencode,
         },
         subscription::Subscriptions,
+        histogram::Histogram,
         tree::TreeInner,
         lazy::Lazy,
+        metrics::{M, clock, measure, Measure},
     },
-    log::{debug, error, trace},
+    std::{
+        sync::atomic::{
+            AtomicI64 as AtomicLsn, AtomicU64,
+            Ordering::{Acquire, Relaxed, Release, SeqCst},
+        },
+        convert::TryFrom,
+        io::{Read, Write},
+    },
+    log::{debug, error, trace, warn},
+    bincode::{deserialize, serialize},
+
+    parking_lot::{Condvar, Mutex, RwLock},
     pagecache::{
-        debug::debug_delay, pin, Materializer, Measure, PageCache,
-        PageId, RecoveryGuard, M,
+        Materializer, PageCache, PageId, RecoveryGuard,
     },
-    serde::{Deserialize, Serialize},
+    serde::{de::DeserializeOwned, Deserialize, Serialize},
+    crossbeam_utils::{Backoff, CachePadded},
+    crossbeam_epoch::{
+        pin, unprotected, Atomic, Collector, CompareAndSetError, Guard,
+        LocalHandle, Owned, Shared,
+    },
 };
 
+fn crc32(buf: &[u8]) -> u32 {
+    let mut hasher = crc32fast::Hasher::new();
+    hasher.update(&buf);
+    hasher.finalize()
+}
+
 type TreePtr<'g> = pagecache::PagePtr<'g, Frag>;
+
+#[cfg(any(test, feature = "lock_free_delays"))]
+mod debug_delay;
+
+#[cfg(any(test, feature = "lock_free_delays"))]
+use debug_delay::debug_delay;
+
+/// This function is useful for inducing random jitter into our atomic
+/// operations, shaking out more possible interleavings quickly. It gets
+/// fully eliminated by the compiler in non-test code.
+#[cfg(not(any(test, feature = "lock_free_delays")))]
+fn debug_delay() {}
 
 /// Allows arbitrary logic to be injected into mere operations of the
 /// `PageCache`.

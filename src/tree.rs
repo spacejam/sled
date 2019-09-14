@@ -9,7 +9,7 @@ use std::{
 
 use parking_lot::RwLock;
 
-use pagecache::Guard;
+use crate::Guard;
 
 use super::*;
 

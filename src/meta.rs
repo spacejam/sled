@@ -2,7 +2,7 @@ use std::sync::{atomic::AtomicU64, Arc};
 
 use parking_lot::RwLock;
 
-use pagecache::Guard;
+use crate::Guard;
 
 use super::*;
 

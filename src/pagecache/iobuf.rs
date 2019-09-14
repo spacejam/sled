@@ -1,12 +1,9 @@
 use std::{
+    cell::UnsafeCell,
     sync::atomic::AtomicBool, sync::atomic::Ordering::SeqCst, sync::Arc,
 };
 
-use parking_lot::{Condvar, Mutex, RwLock};
-
-use self::reader::LogReader;
-
-use crate::pagecache::*;
+use crate::{*, pagecache::*};
 
 // This is the most writers in a single IO buffer
 // that we have space to accommodate in the counter

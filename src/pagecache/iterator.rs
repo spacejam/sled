@@ -1,8 +1,8 @@
 use std::{collections::BTreeMap, io};
 
-use self::reader::LogReader;
+use crate::pagecache::{read_message, read_segment_header};
 
-use super::*;
+use crate::*;
 
 pub struct LogIter {
     pub config: Config,
@@ -62,7 +62,7 @@ impl Iterator for LogIter {
 
             let f = &self.config.file;
 
-            match f.read_message(lid, self.cur_lsn, &self.config) {
+            match read_message(&f, lid, self.cur_lsn, &self.config) {
                 Ok(LogRead::Blob(header, _buf, blob_ptr)) => {
                     trace!("read blob flush in LogIter::next");
                     let sz = MSG_HEADER_LEN + BLOB_INLINE_LEN;
@@ -151,7 +151,7 @@ impl LogIter {
         // initial segment that is a bit behind where we left off before.
         assert!(lsn + self.config.io_buf_size as Lsn >= self.cur_lsn);
         let f = &self.config.file;
-        let segment_header = f.read_segment_header(offset)?;
+        let segment_header = read_segment_header(&f, offset)?;
         if offset % self.config.io_buf_size as LogId != 0 {
             debug!("segment offset not divisible by segment length");
             return Err(Error::Corruption {
@@ -235,7 +235,7 @@ fn scan_segment_lsns(
     ) -> Option<(LogId, SegmentHeader)> {
         let segment_len = u64::try_from(config.io_buf_size).unwrap();
         let base_lid = idx * segment_len;
-        let segment = config.file.read_segment_header(base_lid).ok()?;
+        let segment = read_segment_header(&config.file, base_lid).ok()?;
         trace!(
             "SA scanned header at lid {} during startup: {:?}",
             base_lid,

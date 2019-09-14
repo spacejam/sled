@@ -13,8 +13,8 @@ use {
     serde::{Deserialize, Serialize},
 };
 
-use crate::pagecache::{
-    pin, ConfigBuilder, Materializer, PageCache, MAX_SPACE_AMPLIFICATION,
+use crate::{
+    pin, ConfigBuilder, Materializer, PageCache, pagecache::MAX_SPACE_AMPLIFICATION,
 };
 
 type PageId = u64;
