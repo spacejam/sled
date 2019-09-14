@@ -12,6 +12,9 @@ documentation = "https://docs.rs/sled/"
 readme = "../../README.md"
 edition = "2018"
 
+[profile.release]
+debug = true
+
 [features]
 default = ["no_metrics"]
 lock_free_delays = ["rand", "rand_chacha", "rand_distr", "parking_lot/deadlock_detection"]

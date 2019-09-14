@@ -1855,6 +1855,8 @@ where
 
             let stack = Stack::default();
 
+            let guard = pin();
+
             match *state {
                 PageState::Present(ref ptrs) => {
                     for &(lsn, ptr, sz) in ptrs {
@@ -1865,7 +1867,7 @@ where
                             ts: 0,
                         };
 
-                        stack.push((None, cache_info));
+                        stack.push((None, cache_info), &guard);
                     }
                 }
                 PageState::Free(lsn, ptr) => {
@@ -1877,12 +1879,10 @@ where
                         log_size: MSG_HEADER_LEN,
                         ts: 0,
                     };
-                    stack.push((Some(Update::Free), cache_info));
+                    stack.push((Some(Update::Free), cache_info), &guard);
                     self.free.lock().push(pid);
                 }
             }
-
-            let guard = pin();
 
             // Set up new stack
 

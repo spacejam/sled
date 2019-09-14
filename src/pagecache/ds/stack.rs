@@ -1,7 +1,7 @@
 use std::{
     fmt::{self, Debug},
     ops::Deref,
-    sync::atomic::Ordering::{Acquire, Release, AcqRel, Relaxed},
+    sync::atomic::Ordering::{Acquire, Release, AcqRel},
 };
 
 use crossbeam_epoch::{
@@ -26,7 +26,7 @@ pub struct Node<T: Send + 'static> {
 impl<T: Send + 'static> Drop for Node<T> {
     fn drop(&mut self) {
         unsafe {
-            let next = self.next.load(Relaxed, unprotected());
+            let next = self.next.load(Acquire, unprotected());
             if !next.as_raw().is_null() {
                 drop(next.into_owned());
             }
@@ -51,7 +51,7 @@ impl<T: Send + 'static> Default for Stack<T> {
 impl<T: Send + 'static> Drop for Stack<T> {
     fn drop(&mut self) {
         unsafe {
-            let curr = self.head.load(Relaxed, unprotected());
+            let curr = self.head.load(Acquire, unprotected());
             if !curr.as_raw().is_null() {
                 drop(curr.into_owned());
             }
@@ -95,7 +95,7 @@ impl<T: Send + 'static> Deref for Node<T> {
 
 impl<T: Clone + Send + Sync + 'static> Stack<T> {
     /// Add an item to the stack, spinning until successful.
-    pub fn push(&self, inner: T) {
+    pub fn push(&self, inner: T, guard: &Guard) {
         debug_delay();
         let node = Owned::new(Node {
             inner,
@@ -103,14 +103,14 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
         });
 
         unsafe {
-            let node = node.into_shared(unprotected());
+            let node = node.into_shared(guard);
 
             loop {
-                let head = self.head(unprotected());
+                let head = self.head(guard);
                 node.deref().next.store(head, Release);
                 if self
                     .head
-                    .compare_and_set(head, node, Release, unprotected())
+                    .compare_and_set(head, node, Release, guard)
                     .is_ok()
                 {
                     return;
@@ -282,33 +282,41 @@ fn basic_functionality() {
     use std::sync::Arc;
     use std::thread;
     use crossbeam_epoch::pin;
+    use crossbeam_utils::CachePadded;
 
     let guard = pin();
     let ll = Arc::new(Stack::default());
     assert_eq!(ll._pop(&guard), None);
-    ll.push(1);
+    ll.push(CachePadded::new(1), &guard);
     let ll2 = Arc::clone(&ll);
     let t = thread::spawn(move || {
-        ll2.push(2);
-        ll2.push(3);
-        ll2.push(4);
+        let guard = pin();
+        ll2.push(CachePadded::new(2), &guard);
+        ll2.push(CachePadded::new(3), &guard);
+        ll2.push(CachePadded::new(4), &guard);
+        guard.flush();
     });
     t.join().unwrap();
-    ll.push(5);
-    assert_eq!(ll._pop(&guard), Some(5));
-    assert_eq!(ll._pop(&guard), Some(4));
+    ll.push(CachePadded::new(5), &guard);
+    assert_eq!(ll._pop(&guard), Some(CachePadded::new(5)));
+    assert_eq!(ll._pop(&guard), Some(CachePadded::new(4)));
     let ll3 = Arc::clone(&ll);
     let t = thread::spawn(move || {
         let guard = pin();
-        assert_eq!(ll3._pop(&guard), Some(3));
-        assert_eq!(ll3._pop(&guard), Some(2));
+        assert_eq!(ll3._pop(&guard), Some(CachePadded::new(3)));
+        assert_eq!(ll3._pop(&guard), Some(CachePadded::new(2)));
+        guard.flush();
     });
     t.join().unwrap();
-    assert_eq!(ll._pop(&guard), Some(1));
+    assert_eq!(ll._pop(&guard), Some(CachePadded::new(1)));
     let ll4 = Arc::clone(&ll);
     let t = thread::spawn(move || {
         let guard = pin();
         assert_eq!(ll4._pop(&guard), None);
+        guard.flush();
     });
     t.join().unwrap();
+    drop(ll);
+    guard.flush();
+    drop(guard);
 }
