@@ -33,10 +33,10 @@
 use std::sync::Arc;
 
 use super::{
-    advance_snapshot, LogIter, iobuf, Snapshot,
-    IoBufs, raw_segment_iter_from, read_blob, SegmentAccountant,
+    iobuf, Snapshot,
+    IoBufs, read_blob, SegmentAccountant,
     u64_to_arr, bump_atomic_lsn, arr_to_u64, arr_to_u32, IoBuf,
-    u32_to_arr, SegmentMode, LogKind, MessageKind, LogId, DiskPtr,
+    u32_to_arr, LogKind, MessageKind, LogId, DiskPtr,
     Lsn, MSG_HEADER_LEN, BLOB_INLINE_LEN, BlobPointer, Reservation,
     MINIMUM_ITEMS_PER_SEGMENT, SEG_HEADER_LEN, read_message,
     COUNTER_PID, CONFIG_PID, META_PID, BATCH_MANIFEST_PID,
@@ -69,11 +69,11 @@ impl Log {
     /// Starts a log for use without a materializer.
     #[cfg(test)]
     pub fn start_raw_log(config: Config) -> Result<Self> {
-        assert_eq!(config.segment_mode, SegmentMode::Linear);
-        let (log_iter, _) = raw_segment_iter_from(0, &config)?;
+        assert_eq!(config.segment_mode, super::SegmentMode::Linear);
+        let (log_iter, _) = super::raw_segment_iter_from(0, &config)?;
 
         let snapshot =
-            advance_snapshot(log_iter, Snapshot::default(), &config)?;
+            super::advance_snapshot(log_iter, Snapshot::default(), &config)?;
 
         Self::start(config, snapshot)
     }
@@ -87,7 +87,7 @@ impl Log {
     /// Return an iterator over the log, starting with
     /// a specified offset.
     #[cfg(test)]
-    pub fn iter_from(&self, lsn: Lsn) -> LogIter {
+    pub fn iter_from(&self, lsn: Lsn) -> super::LogIter {
         self.iobufs.iter_from(lsn)
     }
 

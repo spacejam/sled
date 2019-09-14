@@ -232,6 +232,6 @@ mod stack;
 mod vecset;
 
 use self::lru::Lru;
-use self::pagetable::{PageTable, PAGETABLE_NODE_SZ};
+use self::pagetable::PageTable;
 use self::stack::{node_from_frag_vec, Stack, StackIter};
 use self::vecset::VecSet;

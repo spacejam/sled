@@ -15,6 +15,7 @@ use {
 
 use crate::{
     pin, ConfigBuilder, Materializer, PageCache, pagecache::MAX_SPACE_AMPLIFICATION,
+    pagetable::PAGETABLE_NODE_SZ
 };
 
 type PageId = u64;
@@ -129,7 +130,7 @@ fn concurrent_pagecache() -> crate::Result<()> {
                 // instead of directly on the heap.
                 let thread = thread::Builder::new()
                     .name(format!("t({})", tn))
-                    .stack_size(crate::PAGETABLE_NODE_SZ)
+                    .stack_size(PAGETABLE_NODE_SZ)
                     .spawn(move || {
                         for i in (tn * N_PER_THREAD)..((tn + 1) * N_PER_THREAD)
                         {
