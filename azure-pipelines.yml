@@ -59,15 +59,7 @@ steps:
       cargo check &&
       popd &&
       pushd examples/crdt_merge_store &&
-      cargo check &&
-      popd &&
-      pushd crates/sled &&
-      echo "testing sled doctests" &&
-      cargo test -- --nocapture &&
-      popd &&
-      pushd crates/pagecache &&
-      echo "testing pagecache doctests" &&
-      cargo test -- --nocapture
+      cargo check
     displayName: doctests
     condition: eq( variables['testKind'], 'doctests' )
   - script: |
@@ -78,15 +70,11 @@ steps:
       targets="aarch64-fuchsia aarch64-linux-android"
       targets="$targets i686-linux-android i686-unknown-linux-gnu"
       targets="$targets x86_64-pc-windows-gnu x86_64-linux-android x86_64-fuchsia"
-      for crate in $crates; do
       for target in $targets; do
-        pushd crates/$crate
         echo "setting up $target..."
         rustup target add $target
         echo "checking $target..."
         cargo check --target $target
-        popd
-      done
       done
     displayName: cross-build
     condition: eq( variables['testKind'], 'cross-compile' )
