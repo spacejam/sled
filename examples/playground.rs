@@ -1,4 +1,3 @@
-extern crate pagecache;
 extern crate sled;
 
 use sled::{ConfigBuilder, Db, Result};

@@ -1,14 +1,11 @@
-#[macro_use]
-extern crate serde_derive;
-extern crate bincode;
 extern crate crdts;
-extern crate serde;
 extern crate sled;
 
 use std::path::Path;
 
-use bincode::{deserialize, serialize, Infinite};
+use bincode::{deserialize, serialize};
 use crdts::{Orswot, VClock};
+use serde::{Serialize, Deserialize};
 
 const KEY: &[u8] = b"dat orswot";
 
@@ -53,7 +50,7 @@ impl OrswotStore {
     }
 
     fn apply(&self, op: OrswotOp) {
-        let op_bytes = serialize(&op, Infinite).unwrap();
+        let op_bytes = serialize(&op).unwrap();
         self.db.merge(KEY.to_vec(), op_bytes).unwrap();
     }
 }
@@ -93,11 +90,10 @@ fn orswot_merge(
         Merge { other } => ret.merge(other),
     }
 
-    Some(serialize(&ret, Infinite).unwrap())
+    Some(serialize(&ret).unwrap())
 }
 
-#[test]
-fn store_works() {
+fn main() {
     let store = OrswotStore::new(&"orswot_store");
 
     store.add(b"phone".to_vec(), vec![55]);
@@ -111,4 +107,8 @@ fn store_works() {
     store.remove(ctx, vec![55]);
     let stored_2 = store.get();
     assert!(stored_2.value().is_empty());
+
+    // cleanup
+    drop(store);
+    std::fs::remove_dir_all("orswot_store").unwrap();
 }
