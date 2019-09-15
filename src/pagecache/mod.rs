@@ -28,10 +28,6 @@ mod measure_allocs;
 static ALLOCATOR: measure_allocs::TrackingAllocator =
     measure_allocs::TrackingAllocator;
 
-#[cfg(feature = "event_log")]
-/// The event log helps debug concurrency issues.
-pub mod event_log;
-
 pub mod logger;
 
 use crate::{debug, DeserializeOwned, AtomicLsn, Serialize, SeqCst};
@@ -265,7 +261,7 @@ pub(crate) fn maybe_decompress(buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
         loop {
             let ratio = MAX_COMPRESSION_RATIO.load(Acquire);
             match decompress(&*buf, buf.len() * ratio) {
-                Err(ref e) if e.kind() == io::ErrorKind::Other => {
+                Err(ref e) if e.kind() == std::io::ErrorKind::Other => {
                     debug!(
                         "bumping expected compression \
                          ratio up from {} to {}: {:?}",

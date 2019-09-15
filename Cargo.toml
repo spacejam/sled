@@ -17,14 +17,15 @@ debug = true
 
 [features]
 default = ["no_metrics"]
+testing = ["lock_free_delays", "check_snapshot_integrity", "compression", "failpoints"]
+compression = ["zstd"]
 lock_free_delays = ["rand", "rand_chacha", "rand_distr", "parking_lot/deadlock_detection"]
 check_snapshot_integrity = []
-compression = ["zstd"]
 failpoints = ["fail", "rand", "fail/failpoints"]
+event_log = []
 no_metrics = []
 no_logs = ["log/max_level_off"]
 no_inline = []
-event_log = []
 measure_allocs = []
 pretty_backtrace = ["color-backtrace"]
 

@@ -117,8 +117,11 @@ mod config;
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod flusher;
 
-const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
+#[cfg(feature = "event_log")]
+/// The event log helps debug concurrency issues.
+pub mod event_log;
 
+const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
 
 pub use {
     self::{

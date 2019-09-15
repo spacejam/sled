@@ -24,7 +24,8 @@
 
 use std::collections::HashMap;
 
-use super::*;
+use crate::*;
+use crate::pagecache::{LogId, DiskPtr, Lsn};
 
 /// A thing that happens at a certain time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,22 +139,26 @@ impl EventLog {
         &self,
         pages: HashMap<PageId, Vec<DiskPtr>>,
     ) {
-        self.inner.push(Event::PagesBeforeRestart { pages });
+        let guard = pin();
+        self.inner.push(Event::PagesBeforeRestart { pages }, &guard);
     }
 
     pub(crate) fn pages_after_restart(
         &self,
         pages: HashMap<PageId, Vec<DiskPtr>>,
     ) {
-        self.inner.push(Event::PagesAfterRestart { pages });
+        let guard = pin();
+        self.inner.push(Event::PagesAfterRestart { pages }, &guard);
     }
 
     pub fn meta_before_restart(&self, meta: Meta) {
-        self.inner.push(Event::MetaBeforeRestart { meta });
+        let guard = pin();
+        self.inner.push(Event::MetaBeforeRestart { meta }, &guard);
     }
 
     pub fn meta_after_restart(&self, meta: Meta) {
-        self.inner.push(Event::MetaAfterRestart { meta });
+        let guard = pin();
+        self.inner.push(Event::MetaAfterRestart { meta }, &guard);
     }
 }
 

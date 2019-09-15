@@ -230,7 +230,7 @@ fn read_snapshot(config: &Config) -> std::io::Result<Option<Snapshot>> {
 
     #[cfg(feature = "zstd")]
     let bytes = if config.use_compression {
-        let len_expected: u64 = arr_to_u64(&len_expected_bytes);
+        let len_expected: u64 = crate::pagecache::arr_to_u64(&len_expected_bytes);
         decompress(&*buf, len_expected as usize).unwrap()
     } else {
         buf
