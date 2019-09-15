@@ -1,35 +1,3 @@
-//! # Working with `Log`
-//!
-//! ```
-//! let config = pagecache::ConfigBuilder::new()
-//!     .temporary(true)
-//!     .segment_mode(pagecache::SegmentMode::Linear)
-//!     .build();
-//! let log = pagecache::Log::start_raw_log(config).unwrap();
-//!
-//! // all log messages have an associated kind and page ID
-//! let kind = pagecache::LogKind::Replace;
-//! let pid = pagecache::PageId::max_value();
-//!
-//! let (first_lsn, _first_offset) = log.reserve(kind, pid, b"1").unwrap().complete().unwrap();
-//! log.reserve(kind, pid, b"22").unwrap().complete().unwrap();
-//! log.reserve(kind, pid, b"333").unwrap().complete().unwrap();
-//!
-//! // stick an abort in the middle, which should not be returned
-//! let res = log.reserve(kind, pid, b"never_gonna_hit_disk").unwrap();
-//! res.abort().unwrap();
-//!
-//! log.reserve(kind, pid, b"4444").unwrap().complete().unwrap();
-//! let (last_lsn, _last_offset) = log.reserve(kind, pid, b"55555").unwrap().complete().unwrap();
-//! log.make_stable(last_lsn).unwrap();
-//! let mut iter = log.iter_from(first_lsn);
-//! assert!(iter.next().is_some());
-//! assert!(iter.next().is_some());
-//! assert!(iter.next().is_some());
-//! assert!(iter.next().is_some());
-//! assert!(iter.next().is_some());
-//! assert_eq!(iter.next(), None);
-//! ```
 use std::sync::Arc;
 
 use super::{

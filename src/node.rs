@@ -351,7 +351,7 @@ impl Node {
     }
 
     pub(crate) fn should_split(&self) -> bool {
-        let threshold = if cfg!(feature = "lock_free_delays") {
+        let threshold = if cfg!(any(test, feature = "lock_free_delays")) {
             2
         } else if self.data.is_index() {
             256
@@ -366,7 +366,7 @@ impl Node {
     }
 
     pub(crate) fn should_merge(&self) -> bool {
-        let threshold = if cfg!(feature = "lock_free_delays") {
+        let threshold = if cfg!(any(test, feature = "lock_free_delays")) {
             1
         } else if self.data.is_index() {
             64

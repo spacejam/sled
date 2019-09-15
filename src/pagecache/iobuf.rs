@@ -471,7 +471,7 @@ impl IoBufs {
 
         intervals.push(interval);
 
-        #[cfg(any(feature = "event_log", feature = "lock_free_delays"))]
+        #[cfg(any(test, feature = "event_log", feature = "lock_free_delays"))]
         assert!(
             intervals.len() < 10000,
             "intervals is getting strangely long... {:?}",

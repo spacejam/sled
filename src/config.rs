@@ -45,7 +45,7 @@ impl Deref for ConfigInner {
 /// # Examples
 ///
 /// ```
-/// let _config = pagecache::ConfigBuilder::default()
+/// let _config = sled::ConfigBuilder::default()
 ///     .path("/path/to/data".to_owned())
 ///     .cache_capacity(10_000_000_000)
 ///     .flush_every_ms(Some(1000))
@@ -54,7 +54,7 @@ impl Deref for ConfigInner {
 ///
 /// ```
 /// // Read-only mode
-/// let _config = pagecache::ConfigBuilder::default()
+/// let _config = sled::ConfigBuilder::default()
 ///     .path("/path/to/data".to_owned())
 ///     .read_only(true);
 /// ```

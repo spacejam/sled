@@ -4,10 +4,10 @@ use crate::{Guard, Measure, M};
 
 use super::*;
 
-#[cfg(feature = "lock_free_delays")]
+#[cfg(any(test, feature = "lock_free_delays"))]
 const MAX_LOOPS: usize = usize::max_value();
 
-#[cfg(not(feature = "lock_free_delays"))]
+#[cfg(not(any(test, feature = "lock_free_delays")))]
 const MAX_LOOPS: usize = 1_000_000;
 
 fn possible_predecessor(s: &[u8]) -> Option<Vec<u8>> {
