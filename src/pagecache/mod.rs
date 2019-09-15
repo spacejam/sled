@@ -56,11 +56,14 @@ pub(crate) use self::{
     reservation::Reservation,
     segment::SegmentMode,
     constants::{
-        BATCH_MANIFEST_INLINE_LEN, BLOB_INLINE_LEN, MAX_SPACE_AMPLIFICATION,
+        BATCH_MANIFEST_INLINE_LEN, BLOB_INLINE_LEN,
         MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
     },
     snapshot::{read_snapshot_or_default, Snapshot, PageState},
 };
+
+#[cfg(test)]
+pub(crate) use self::constants::MAX_SPACE_AMPLIFICATION;
 
 /// An offset for a storage file segment.
 pub type SegmentId = usize;

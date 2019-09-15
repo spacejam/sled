@@ -1,3 +1,5 @@
+use std::io;
+
 use super::LogId;
 
 #[cfg(unix)]
@@ -7,21 +9,21 @@ use std::os::unix::fs::FileExt;
 pub(crate) trait Pio {
     /// Read from a specific offset without changing
     /// the underlying file offset.
-    fn pread_exact(&self, to_buf: &mut [u8], offset: LogId) -> std::io::Result<()>;
+    fn pread_exact(&self, to_buf: &mut [u8], offset: LogId) -> io::Result<()>;
 
     /// Write to a specific offset without changing
     /// the underlying file offset.
-    fn pwrite_all(&self, from_buf: &[u8], offset: LogId) -> std::io::Result<()>;
+    fn pwrite_all(&self, from_buf: &[u8], offset: LogId) -> io::Result<()>;
 }
 
 // On systems that support pread/pwrite, use them underneath.
 #[cfg(unix)]
 impl Pio for std::fs::File {
-    fn pread_exact(&self, buf: &mut [u8], offset: LogId) -> std::io::Result<()> {
+    fn pread_exact(&self, buf: &mut [u8], offset: LogId) -> io::Result<()> {
         self.read_exact_at(buf, offset)
     }
 
-    fn pwrite_all(&self, buf: &[u8], offset: LogId) -> std::io::Result<()> {
+    fn pwrite_all(&self, buf: &[u8], offset: LogId) -> io::Result<()> {
         self.write_all_at(buf, offset)
     }
 }
@@ -41,7 +43,7 @@ fn init_mu() -> Mutex<()> {
 type MutexInit = fn() -> Mutex<()>;
 
 #[cfg(not(unix))]
-static GLOBAL_FILE_LOCK: Lazy<Mutex<()>, MutexInit> = Lazy::new(init_mu);
+static GLOBAL_FILE_LOCK: crate::Lazy<Mutex<()>, MutexInit> = crate::Lazy::new(init_mu);
 
 #[cfg(not(unix))]
 impl Pio for std::fs::File {
@@ -50,7 +52,7 @@ impl Pio for std::fs::File {
 
         let mut f = self.try_clone()?;
 
-        f.seek(std::io::SeekFrom::Start(offset))?;
+        f.seek(io::SeekFrom::Start(offset))?;
 
         while !buf.is_empty() {
             match f.read(buf) {
@@ -78,7 +80,7 @@ impl Pio for std::fs::File {
 
         let mut f = self.try_clone()?;
 
-        f.seek(std::io::SeekFrom::Start(offset))?;
+        f.seek(io::SeekFrom::Start(offset))?;
 
         while !buf.is_empty() {
             match f.write(buf) {
