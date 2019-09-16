@@ -51,7 +51,7 @@ steps:
   - task: CacheBeta@1
     inputs:
       path: target
-      key: $(testKind) | $(Agent.OS)
+      key: Cargo.toml | $(testKind) | $(Agent.OS)
     displayName: 'Cache Build'
     condition: ne( variables['testKind'], 'sanitizers' )
   - script: |
