@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use rand::Rng;
 
-use pagecache::{Config, ConfigBuilder};
+use sled::{Db, Config, ConfigBuilder};
 
 const CYCLE: usize = 256;
 
@@ -97,7 +97,7 @@ fn run(config: Config) {
         spawn_killah();
     }
 
-    let tree = sled::Db::start(config).unwrap();
+    let tree = Db::start(config).unwrap();
 
     if !crash_during_initialization {
         spawn_killah();
