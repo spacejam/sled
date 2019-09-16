@@ -13,6 +13,7 @@ use rand::Rng;
 use sled::{Db, Config, ConfigBuilder};
 
 const CYCLE: usize = 256;
+const BATCH_SIZE: u32 = 8;
 
 /// Verifies that the keys in the tree are correctly recovered.
 /// Panics if they are incorrect.
@@ -67,6 +68,41 @@ fn verify(tree: &sled::Tree) -> (u32, u32) {
     }
 
     (contiguous, highest)
+}
+
+/// Verifies that the keys in the tree are correctly recovered (i.e., equal).
+/// Panics if they are incorrect.
+fn verify_batches(tree: &sled::Tree) -> u32 {
+    let mut iter = tree.iter();
+    let first_value = match iter.next() {
+        Some(Ok((_k, v))) => slice_to_u32(&*v),
+        Some(Err(e)) => panic!("{:?}", e),
+        None => return 0,
+    };
+    for key in 0..BATCH_SIZE {
+        let res = tree.get(u32_to_vec(key));
+        let option = res.unwrap();
+        let v = match option {
+            Some(v) => v,
+            None => panic!(
+                "expected key {} to have a value, instead it was missing in db: {:?}",
+                key,
+                tree
+            ),
+        };
+        let value = slice_to_u32(&*v);
+        assert_eq!(
+            first_value,
+            value,
+            "expected key {} to have value {}, instead it had value {} in db: {:?}",
+            key,
+            first_value,
+            value,
+            tree
+        );
+    }
+
+    first_value
 }
 
 fn u32_to_vec(u: u32) -> Vec<u8> {
@@ -129,13 +165,58 @@ fn run(config: Config) {
     }
 }
 
-fn run_without_snapshot() {
+fn run_batches(config: Config) {
+    fn do_batch(i: u32, tree: &sled::Tree) {
+        let mut rng = rand::thread_rng();
+        let base_value = u32_to_vec(i);
+
+        let mut batch = sled::Batch::default();
+        if rng.gen_bool(0.1) {
+            for key in 0..BATCH_SIZE {
+                batch.remove(u32_to_vec(key));
+            }
+        } else {
+            for key in 0..BATCH_SIZE {
+                let mut value = base_value.clone();
+                let additional_len = rng.gen_range(0, 1000);
+                value.append(&mut vec![0u8; additional_len]);
+
+                batch.insert(u32_to_vec(key), value);
+            }
+        }
+        tree.apply_batch(batch).unwrap();
+    }
+
+    tests::setup_logger();
+    let crash_during_initialization = rand::thread_rng().gen_bool(0.1);
+
+    if crash_during_initialization {
+        spawn_killah();
+    }
+
+    let tree = sled::Db::start(config).unwrap();
+
+    let mut i = verify_batches(&tree);
+    i += 1;
+    do_batch(i, &tree);
+
+    if !crash_during_initialization {
+        spawn_killah();
+    }
+
+    loop {
+        i += 1;
+        do_batch(i, &tree);
+    }
+}
+
+fn run_without_snapshot(dir: &str) {
     let config = ConfigBuilder::new()
         .page_consolidation_threshold(10)
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(100))
         .io_buf_size(1_000)
-        .path("test_crashes".to_string())
+        .path(dir.to_string())
         .snapshot_after_ops(1 << 56)
         .build();
 
@@ -148,13 +229,13 @@ fn run_without_snapshot() {
     }
 }
 
-fn run_with_snapshot() {
+fn run_with_snapshot(dir: &str) {
     let config = ConfigBuilder::new()
         .page_consolidation_threshold(10)
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(100))
         .io_buf_size(1_000)
-        .path("test_crashes_with_snapshot".to_string())
+        .path(dir.to_string())
         .snapshot_after_ops(5000)
         .build();
 
@@ -167,57 +248,134 @@ fn run_with_snapshot() {
     }
 }
 
+fn run_batches_without_snapshot(dir: &str) {
+    let config = ConfigBuilder::new()
+        .page_consolidation_threshold(10)
+        .cache_capacity(128 * 1024 * 1024)
+        .flush_every_ms(Some(100))
+        .io_buf_size(1_000)
+        .path(dir.to_string())
+        .snapshot_after_ops(1 << 56)
+        .build();
+
+    match thread::spawn(|| run_batches(config)).join() {
+        Err(e) => {
+            println!("worker thread failed: {:?}", e);
+            std::process::exit(15);
+        }
+        _ => {}
+    }
+}
+
+fn run_batches_with_snapshot(dir: &str) {
+    let config = ConfigBuilder::new()
+        .page_consolidation_threshold(10)
+        .cache_capacity(128 * 1024 * 1024)
+        .flush_every_ms(Some(100))
+        .io_buf_size(1_000)
+        .path(dir.to_string())
+        .snapshot_after_ops(5000)
+        .build();
+
+    match thread::spawn(|| run_batches(config)).join() {
+        Err(e) => {
+            println!("worker thread failed: {:?}", e);
+            std::process::exit(15);
+        }
+        _ => {}
+    }
+}
+
 #[test]
 fn test_crash_recovery_with_runtime_snapshot() {
-    cleanup_with_snapshots();
+    let dir = "test_crashes_with_snapshot";
+    cleanup(dir);
     for _ in 0..100 {
         let child = unsafe { libc::fork() };
         if child == 0 {
-            run_with_snapshot()
+            run_with_snapshot(dir)
         } else {
             let mut status = 0;
             unsafe {
                 libc::waitpid(child, &mut status as *mut libc::c_int, 0);
             }
             if status != 9 {
-                cleanup();
+                cleanup(dir);
                 panic!("child exited abnormally");
             }
         }
     }
-    cleanup_with_snapshots();
+    cleanup(dir);
 }
 
 #[test]
 fn test_crash_recovery_no_runtime_snapshot() {
-    cleanup();
+    let dir = "test_crashes";
+    cleanup(dir);
     for _ in 0..100 {
         let child = unsafe { libc::fork() };
         if child == 0 {
-            run_without_snapshot()
+            run_without_snapshot(dir)
         } else {
             let mut status = 0;
             unsafe {
                 libc::waitpid(child, &mut status as *mut libc::c_int, 0);
             }
             if status != 9 {
-                cleanup();
+                cleanup(dir);
                 panic!("child exited abnormally");
             }
         }
     }
-    cleanup();
+    cleanup(dir);
 }
 
-fn cleanup_with_snapshots() {
-    let dir = Path::new("test_crashes_with_snapshot");
-    if dir.exists() {
-        fs::remove_dir_all(dir).unwrap();
+#[test]
+fn test_crash_batches_with_runtime_snapshot() {
+    let dir = "test_batches_with_snapshot";
+    cleanup(dir);
+    for _ in 0..100 {
+        let child = unsafe { libc::fork() };
+        if child == 0 {
+            run_batches_with_snapshot(dir)
+        } else {
+            let mut status = 0;
+            unsafe {
+                libc::waitpid(child, &mut status as *mut libc::c_int, 0);
+            }
+            if status != 9 {
+                cleanup(dir);
+                panic!("child exited abnormally");
+            }
+        }
     }
+    cleanup(dir);
 }
 
-fn cleanup() {
-    let dir = Path::new("test_crashes");
+#[test]
+fn test_crash_batches_no_runtime_snapshot() {
+    let dir = "test_batches";
+    cleanup(dir);
+    for _ in 0..100 {
+        let child = unsafe { libc::fork() };
+        if child == 0 {
+            run_batches_without_snapshot(dir)
+        } else {
+            let mut status = 0;
+            unsafe {
+                libc::waitpid(child, &mut status as *mut libc::c_int, 0);
+            }
+            if status != 9 {
+                cleanup(dir);
+                panic!("child exited abnormally");
+            }
+        }
+    }
+    cleanup(dir);
+}
+
+fn cleanup(dir: &str) {
+    let dir = Path::new(dir);
     if dir.exists() {
         fs::remove_dir_all(dir).unwrap();
     }
