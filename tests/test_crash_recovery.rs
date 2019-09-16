@@ -1,5 +1,7 @@
 #![cfg(target_os = "linux")]
 
+mod common;
+
 use std::fs;
 use std::mem::size_of;
 use std::path::Path;
@@ -90,7 +92,8 @@ fn spawn_killah() {
 }
 
 fn run(config: Config) {
-    tests::setup_logger();
+    common::setup_logger();
+
     let crash_during_initialization = rand::thread_rng().gen_bool(0.1);
 
     if crash_during_initialization {
