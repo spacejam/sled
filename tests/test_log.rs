@@ -1,5 +1,7 @@
 #![cfg_attr(test, allow(unused))]
 
+mod common;
+
 use std::{
     mem::size_of,
     fs,
@@ -13,11 +15,12 @@ use std::{
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::{thread_rng, Rng};
 
-use crate::*;
-use crate::pagecache::{
+use sled::*;
+
+use sled::{
     LogKind, Log, SegmentMode, LogRead, LogId, Lsn,
     SEG_HEADER_LEN, MSG_HEADER_LEN, MINIMUM_ITEMS_PER_SEGMENT,
-    DiskPtr,
+    DiskPtr, PageId,
 };
 
 const PID: PageId = 0;
@@ -25,7 +28,7 @@ const KIND: LogKind = LogKind::Replace;
 
 #[test]
 fn log_writebatch() -> crate::Result<()> {
-    super::setup_logger();
+    common::setup_logger();
     let config = ConfigBuilder::new()
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
@@ -117,7 +120,7 @@ fn non_contiguous_log_flush() {
 
 #[test]
 fn concurrent_logging() {
-    super::setup_logger();
+    common::setup_logger();
     // TODO linearize res bufs, verify they are correct
     for i in 0..10 {
         let config = ConfigBuilder::new()
@@ -213,7 +216,7 @@ fn concurrent_logging() {
 
 #[test]
 fn concurrent_logging_404() {
-    super::setup_logger();
+    common::setup_logger();
 
     let config = ConfigBuilder::new()
         .temporary(true)
@@ -378,7 +381,7 @@ fn log_iterator() {
 #[test]
 #[cfg(not(target_os = "fuchsia"))]
 fn log_chunky_iterator() {
-    super::setup_logger();
+    common::setup_logger();
     let mut threads = vec![];
     for tn in 0..100 {
         let thread = thread::spawn(move || {
@@ -441,7 +444,7 @@ fn log_chunky_iterator() {
 
 #[test]
 fn multi_segment_log_iteration() {
-    super::setup_logger();
+    common::setup_logger();
     // ensure segments are being linked
     // ensure trailers are valid
     let config = ConfigBuilder::new()
@@ -546,7 +549,7 @@ impl Arbitrary for Op {
 }
 
 fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
-    super::setup_logger();
+    common::setup_logger();
 
     use self::Op::*;
     let config = ConfigBuilder::new()

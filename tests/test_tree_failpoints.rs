@@ -1,7 +1,8 @@
+mod common;
+
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Mutex;
 
-use lazy_static::lazy_static;
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
 use rand::{seq::SliceRandom, Rng};
 
@@ -89,10 +90,8 @@ struct ReferenceEntry {
 }
 
 fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
-    lazy_static! {
-        // forces quickcheck to run one thread at a time
-        static ref M: Mutex<()> = Mutex::new(());
-    }
+    // forces quickcheck to run one thread at a time
+    static M: Lazy<Mutex<()>, fn() -> Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
     let _lock = M.lock().expect("our test lock should not be poisoned");
 
@@ -123,7 +122,7 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 }
 
 fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
-    tests::setup_logger();
+    common::setup_logger();
 
     let io_buf_size = 300;
 

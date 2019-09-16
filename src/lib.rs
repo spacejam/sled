@@ -93,6 +93,11 @@ macro_rules! maybe_fail {
 mod batch;
 mod binary_search;
 mod context;
+mod dll;
+mod lru;
+mod pagetable;
+mod stack;
+mod vecset;
 mod threadpool;
 mod lazy;
 mod data;
@@ -123,6 +128,27 @@ pub mod event_log;
 
 const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
 
+/// hidden re-export of items for testing purposes
+#[doc(hidden)]
+pub use {
+    self::{
+        lazy::Lazy,
+        pagetable::PAGETABLE_NODE_SZ,
+        pagecache::{
+            Materializer, PageCache,
+            constants::{
+                MAX_SPACE_AMPLIFICATION,
+                SEG_HEADER_LEN, MSG_HEADER_LEN, MINIMUM_ITEMS_PER_SEGMENT,
+            },
+            LogKind, Log, SegmentMode, LogRead, LogId, Lsn,
+            DiskPtr, PageId,
+        },
+    },
+    crossbeam_epoch::{
+        pin, Atomic, Guard, Owned, Shared,
+    },
+};
+
 pub use {
     self::{
         batch::Batch,
@@ -142,6 +168,10 @@ pub use {
 
 use {
     self::{
+        lru::Lru,
+        pagetable::PageTable,
+        stack::{node_from_frag_vec, Stack, StackIter},
+        vecset::VecSet,
         config::PersistedConfig,
         binary_search::binary_search_lub,
         context::Context,
@@ -158,7 +188,6 @@ use {
         oneshot::{OneShot, OneShotFiller},
         histogram::Histogram,
         tree::TreeInner,
-        lazy::Lazy,
         metrics::{M, clock, measure, Measure},
     },
     std::{
@@ -180,13 +209,10 @@ use {
 
     parking_lot::{Condvar, Mutex, RwLock},
     pagecache::{
-        Materializer, PageCache, PageId, RecoveryGuard,
+        RecoveryGuard,
     },
     serde::{de::DeserializeOwned, Deserialize, Serialize},
     crossbeam_utils::{Backoff, CachePadded},
-    crossbeam_epoch::{
-        pin, Atomic, Guard, Owned, Shared,
-    },
 };
 
 fn crc32(buf: &[u8]) -> u32 {
@@ -224,17 +250,3 @@ pub type MergeOperator = fn(
     last_value: Option<&[u8]>,
     new_merge: &[u8],
 ) -> Option<Vec<u8>>;
-
-#[cfg(test)]
-mod tests;
-
-mod dll;
-mod lru;
-mod pagetable;
-mod stack;
-mod vecset;
-
-use self::lru::Lru;
-use self::pagetable::PageTable;
-use self::stack::{node_from_frag_vec, Stack, StackIter};
-use self::vecset::VecSet;

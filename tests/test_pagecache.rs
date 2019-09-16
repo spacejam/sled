@@ -1,3 +1,5 @@
+mod common;
+
 use std::{
     collections::HashMap,
     sync::{
@@ -13,9 +15,10 @@ use {
     serde::{Deserialize, Serialize},
 };
 
-use crate::{
-    pin, ConfigBuilder, Materializer, PageCache, pagecache::MAX_SPACE_AMPLIFICATION,
-    pagetable::PAGETABLE_NODE_SZ
+use sled::{
+    PAGETABLE_NODE_SZ,
+    ConfigBuilder, Materializer, PageCache,
+    MAX_SPACE_AMPLIFICATION, pin
 };
 
 type PageId = u64;
@@ -104,8 +107,8 @@ fn pagecache_caching() {
 }
 
 #[test]
-fn concurrent_pagecache() -> crate::Result<()> {
-    super::setup_logger();
+fn concurrent_pagecache() -> sled::Result<()> {
+    common::setup_logger();
     const N_THREADS: usize = 10;
     const N_PER_THREAD: usize = 100;
 
@@ -419,7 +422,7 @@ enum P {
 }
 
 fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
-    super::setup_logger();
+    common::setup_logger();
     use self::Op::*;
     let config = ConfigBuilder::new()
         .temporary(true)

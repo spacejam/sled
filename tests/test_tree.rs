@@ -1,15 +1,18 @@
+mod common;
+mod tree;
+
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-use crate::*;
+use log::{debug, warn};
+use quickcheck::{QuickCheck, StdGen};
 
-use tests::tree::{
+use sled::*;
+
+use tree::{
     prop_tree_matches_btreemap, Key,
     Op::{self, *},
 };
-
-use log::{debug, warn};
-use quickcheck::{QuickCheck, StdGen};
 
 const N_THREADS: usize = 10;
 const N_PER_THREAD: usize = 100;
@@ -26,7 +29,7 @@ fn kv(i: usize) -> Vec<u8> {
 
 #[test]
 fn concurrent_tree_ops() {
-    super::setup_logger();
+    common::setup_logger();
 
     for i in 0..INTENSITY {
         debug!("beginning test {}", i);
@@ -161,7 +164,7 @@ fn concurrent_tree_ops() {
 
 #[test]
 fn concurrent_tree_iter() -> Result<()> {
-    super::setup_logger();
+    common::setup_logger();
 
     const N_FORWARD: usize = INTENSITY;
     const N_REVERSE: usize = INTENSITY;
@@ -336,7 +339,7 @@ fn concurrent_tree_iter() -> Result<()> {
 
 #[test]
 fn concurrent_tree_transactions() {
-    super::setup_logger();
+    common::setup_logger();
 
     let config = ConfigBuilder::new()
         .temporary(true)
@@ -624,7 +627,7 @@ fn tree_subscriptions_and_keyspaces() -> Result<()> {
 
 #[test]
 fn tree_range() {
-    super::setup_logger();
+    common::setup_logger();
 
     let config = ConfigBuilder::new()
         .temporary(true)
@@ -676,7 +679,7 @@ fn tree_range() {
 
 #[test]
 fn recover_tree() {
-    super::setup_logger();
+    common::setup_logger();
 
     let config = ConfigBuilder::new()
         .temporary(true)
@@ -709,7 +712,7 @@ fn recover_tree() {
 
 #[test]
 fn tree_import_export() -> Result<()> {
-    super::setup_logger();
+    common::setup_logger();
 
     let config_1 = ConfigBuilder::new().temporary(true).build();
     let config_2 = ConfigBuilder::new().temporary(true).build();
