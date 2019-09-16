@@ -1,4 +1,25 @@
-# Unreleased
+# 0.28
+
+## Breaking Changes
+
+* `Iter` no longer has a lifetime parameter.
+* `Db::open_tree` now returns a `Tree` instead of
+  an `Arc<Tree>`. `Tree` now has an inner type that
+  uses an `Arc`, so you don't need to think about it.
+
+## Bug Fixes
+
+* A bug with prefix encoding has been fixed that
+  led to nodes with keys longer than 256 bytes
+  being stored incorrectly, which led to them
+  being inaccessible and also leading to infinite
+  loops during iteration.
+* Several cases of incorrect unsafe code were removed
+  from the sled crate. No bugs are known to have been
+  encountered, but they may have resulted in 
+  incorrect optimizations in future refactors.
+
+# 0.27
 
 ## Breaking Changes
 

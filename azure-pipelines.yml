@@ -20,10 +20,10 @@ strategy:
     linux-stable:
       imageName: 'ubuntu-16.04'
       rustup_toolchain: stable
-    doctests:
+    examples:
       imageName: 'ubuntu-16.04'
       rustup_toolchain: stable
-      testKind: 'doctests'
+      testKind: 'examples'
     sanitizers:
       imageName: 'ubuntu-16.04'
       rustup_toolchain: nightly
@@ -58,28 +58,17 @@ steps:
       find target -exec chmod +x {} \; || true
     displayName: chmod cache workaround
     condition: ne( variables['Agent.OS'], 'Windows_NT' )
-  - script: cargo build --all --release
+  - script: cargo build --release --tests --features=testing
     displayName: Cargo build
     condition: eq( variables['testKind'], 'default' )
-  - script: cargo test --all --release -- --nocapture
+  - script: cargo test --release --tests --features=testing -- --nocapture
     displayName: Cargo test
     condition: eq( variables['testKind'], 'default' )
   - script: |
-      pushd examples/playground &&
-      cargo check &&
-      popd &&
-      pushd examples/crdt_merge_store &&
-      cargo check &&
-      popd &&
-      pushd crates/sled &&
-      echo "testing sled doctests" &&
-      cargo test -- --nocapture &&
-      popd &&
-      pushd crates/pagecache &&
-      echo "testing pagecache doctests" &&
-      cargo test -- --nocapture
-    displayName: doctests
-    condition: eq( variables['testKind'], 'doctests' )
+      cargo run --example playground &&
+      cargo run --example crdt_merge_store
+    displayName: examples
+    condition: eq( variables['testKind'], 'examples' )
   - script: |
       set -eo pipefail
       echo "cross build"
@@ -88,15 +77,11 @@ steps:
       targets="aarch64-fuchsia aarch64-linux-android"
       targets="$targets i686-linux-android i686-unknown-linux-gnu"
       targets="$targets x86_64-pc-windows-gnu x86_64-linux-android x86_64-fuchsia"
-      for crate in $crates; do
       for target in $targets; do
-        pushd crates/$crate
         echo "setting up $target..."
         rustup target add $target
         echo "checking $target..."
         cargo check --target $target
-        popd
-      done
       done
     displayName: cross-build
     condition: eq( variables['testKind'], 'cross-compile' )
