@@ -1,8 +1,3 @@
-mod test_log;
-mod test_tree;
-mod test_pagecache;
-mod tree;
-
 pub fn setup_logger() {
     use std::io::Write;
 

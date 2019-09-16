@@ -46,7 +46,6 @@ impl<'a> Reservation<'a> {
     }
 
     /// Get the log file offset for reading this buffer in the future.
-    #[cfg(test)]
     pub fn lid(&self) -> LogId {
         self.ptr.lid()
     }

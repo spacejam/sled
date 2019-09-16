@@ -1,10 +1,6 @@
 #![cfg(target_os = "linux")]
 
-extern crate libc;
-extern crate pagecache;
-extern crate rand;
-extern crate sled;
-extern crate tests;
+mod common;
 
 use std::fs;
 use std::mem::size_of;
@@ -14,7 +10,7 @@ use std::time::Duration;
 
 use rand::Rng;
 
-use pagecache::{Config, ConfigBuilder};
+use sled::{Db, Config, ConfigBuilder};
 
 const CYCLE: usize = 256;
 
@@ -96,14 +92,15 @@ fn spawn_killah() {
 }
 
 fn run(config: Config) {
-    tests::setup_logger();
+    common::setup_logger();
+
     let crash_during_initialization = rand::thread_rng().gen_bool(0.1);
 
     if crash_during_initialization {
         spawn_killah();
     }
 
-    let tree = sled::Db::start(config).unwrap();
+    let tree = Db::start(config).unwrap();
 
     if !crash_during_initialization {
         spawn_killah();

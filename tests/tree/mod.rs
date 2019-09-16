@@ -4,8 +4,7 @@ use quickcheck::{Arbitrary, Gen, RngCore};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use rand_distr::{Distribution, Gamma};
 
-use pagecache::MAX_SPACE_AMPLIFICATION;
-use crate::*;
+use sled::*;
 
 #[derive(Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Key(pub Vec<u8>);
@@ -200,7 +199,7 @@ pub fn prop_tree_matches_btreemap(
 ) -> bool {
     use self::*;
 
-    super::setup_logger();
+    super::common::setup_logger();
 
     let use_compression = cfg!(feature = "compression") &&
         use_compression;

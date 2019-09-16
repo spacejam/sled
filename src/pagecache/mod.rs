@@ -7,8 +7,10 @@
 #![deny(rust_2018_compatibility)]
 #![deny(rust_2018_idioms)]
 
+pub mod constants;
+pub mod logger;
+
 mod blob_io;
-mod constants;
 mod diskptr;
 mod iobuf;
 mod iterator;
@@ -28,8 +30,6 @@ mod measure_allocs;
 static ALLOCATOR: measure_allocs::TrackingAllocator =
     measure_allocs::TrackingAllocator;
 
-pub mod logger;
-
 use crate::{debug, DeserializeOwned, AtomicLsn, Serialize, SeqCst};
 
 use self::{
@@ -45,21 +45,22 @@ use self::{
 
 pub(crate) use self::{
     reader::{read_segment_header, read_message},
-    logger::{Log, LogRead, MessageHeader, SegmentHeader},
-    diskptr::DiskPtr,
-    materializer::Materializer,
-    pagecache::{PageCache, PagePtr, RecoveryGuard},
+    logger::{MessageHeader, SegmentHeader},
     reservation::Reservation,
-    segment::SegmentMode,
-    constants::{
-        BATCH_MANIFEST_INLINE_LEN, BLOB_INLINE_LEN,
-        MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
-    },
     snapshot::{read_snapshot_or_default, Snapshot, PageState},
 };
 
-#[cfg(test)]
-pub(crate) use self::constants::MAX_SPACE_AMPLIFICATION;
+pub use self::{
+    diskptr::DiskPtr,
+    segment::SegmentMode,
+    pagecache::{PageCache, PagePtr, RecoveryGuard},
+    materializer::Materializer,
+    logger::{LogRead, Log},
+    constants::{
+        BATCH_MANIFEST_INLINE_LEN, BLOB_INLINE_LEN, MAX_SPACE_AMPLIFICATION,
+        MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
+    },
+};
 
 /// An offset for a storage file segment.
 pub type SegmentId = usize;
@@ -76,10 +77,10 @@ pub type Lsn = i64;
 /// A page identifier.
 pub type PageId = u64;
 
-#[doc(hidden)]
+/// A byte used to disambiguate log message types
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
-pub (crate) enum MessageKind {
+pub enum MessageKind {
     /// The EVIL_BYTE is written as a canary to help
     /// detect torn writes.
     Corrupted = 0,

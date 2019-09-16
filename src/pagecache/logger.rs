@@ -17,7 +17,7 @@ use crate::*;
 /// for writing persistent data structures that need
 /// to know where to find persisted bits in the future.
 #[derive(Debug)]
-pub(crate) struct Log {
+pub struct Log {
     /// iobufs is the underlying lock-free IO write buffer.
     pub(super) iobufs: Arc<IoBufs>,
     pub(crate) config: Config,
@@ -35,7 +35,6 @@ impl Log {
     }
 
     /// Starts a log for use without a materializer.
-    #[cfg(test)]
     pub fn start_raw_log(config: Config) -> Result<Self> {
         assert_eq!(config.segment_mode, super::SegmentMode::Linear);
         let (log_iter, _) = super::raw_segment_iter_from(0, &config)?;
@@ -54,7 +53,6 @@ impl Log {
 
     /// Return an iterator over the log, starting with
     /// a specified offset.
-    #[cfg(test)]
     pub fn iter_from(&self, lsn: Lsn) -> super::LogIter {
         self.iobufs.iter_from(lsn)
     }
@@ -436,7 +434,7 @@ impl Drop for Log {
 
 /// All log messages are prepended with this header
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub(crate) struct MessageHeader {
+pub struct MessageHeader {
     pub kind: MessageKind,
     pub lsn: Lsn,
     pub pid: PageId,
@@ -447,27 +445,33 @@ pub(crate) struct MessageHeader {
 /// A segment's header contains the new base LSN and a reference
 /// to the previous log segment.
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub(crate) struct SegmentHeader {
-    pub(crate) lsn: Lsn,
-    pub(crate) max_stable_lsn: Lsn,
-    pub(crate) ok: bool,
+pub struct SegmentHeader {
+    pub lsn: Lsn,
+    pub max_stable_lsn: Lsn,
+    pub ok: bool,
 }
 
-#[doc(hidden)]
+/// The result of a read of a log message
 #[derive(Debug)]
-pub(crate) enum LogRead {
+pub enum LogRead {
+    /// Successful read, entirely on-log
     Inline(MessageHeader, Vec<u8>, u32),
+    /// Successful read, spilled to its own blob file
     Blob(MessageHeader, Vec<u8>, BlobPointer),
+    /// A cancelled message was encountered
     Failed(Lsn, u32),
+    /// A padding message used to show that a segment was filled
     Pad(Lsn),
+    /// This log message was not readable due to corruption
     Corrupted(u32),
+    /// This blob file is no longer available
     DanglingBlob(MessageHeader, BlobPointer),
+    /// This data may only be read if at least this future location is stable
     BatchManifest(Lsn),
 }
 
 impl LogRead {
     /// Return true if we read a successful Inline or Blob value.
-    #[cfg(test)]
     pub fn is_successful(&self) -> bool {
         match *self {
             LogRead::Inline(..) | LogRead::Blob(..) => true,
@@ -476,7 +480,6 @@ impl LogRead {
     }
 
     /// Return the underlying data read from a log read, if successful.
-    #[cfg(test)]
     pub fn into_data(self) -> Option<Vec<u8>> {
         match self {
             LogRead::Blob(_, buf, _) | LogRead::Inline(_, buf, _) => Some(buf),
