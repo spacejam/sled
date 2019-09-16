@@ -48,6 +48,16 @@ steps:
       echo "##vso[task.setvariable variable=PATH;]%PATH%;%USERPROFILE%\.cargo\bin"
     displayName: Windows install rust
     condition: eq( variables['Agent.OS'], 'Windows_NT' )
+  - task: CacheBeta@1
+    inputs:
+      path: target
+      key: Cargo.toml | $(testKind) | $(Agent.OS)
+    displayName: 'Cache Build'
+    condition: ne( variables['testKind'], 'sanitizers' )
+  - script: |
+      find target -exec chmod +x {} \; || true
+    displayName: chmod cache workaround
+    condition: ne( variables['Agent.OS'], 'Windows_NT' )
   - script: cargo build --release --tests --features=testing
     displayName: Cargo build
     condition: eq( variables['testKind'], 'default' )
