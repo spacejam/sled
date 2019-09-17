@@ -768,11 +768,11 @@ fn get_available_memory() -> io::Result<u64> {
     Ok((pages as u64) * (page_size as u64))
 }
 
-fn get_memory_limit() -> libc::rlim_t {
+fn get_memory_limit() -> u64 {
     // Maximum addressable memory space limit in u64
-    static MAX_USIZE: libc::rlim_t = usize::max_value() as libc::rlim_t;
+    static MAX_USIZE: u64 = usize::max_value() as u64;
 
-    let mut max: libc::rlim_t = 0;
+    let mut max: u64 = 0;
 
     #[cfg(target_os = "linux")]
     {
@@ -793,7 +793,7 @@ fn get_memory_limit() -> libc::rlim_t {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         if let Ok(rlim) = get_rlimit_as() {
-            let rlim_cur = rlim.rlim_cur;
+            let rlim_cur = u64::from(rlim.rlim_cur);
             if rlim_cur < max || max == 0 {
                 max = rlim_cur;
             }
@@ -813,7 +813,7 @@ fn get_memory_limit() -> libc::rlim_t {
         max = MAX_USIZE;
     }
 
-    max
+    u64::from(max)
 }
 
 fn crate_version() -> (usize, usize) {
