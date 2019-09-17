@@ -198,6 +198,7 @@ impl LogIter {
         use std::os::unix::io::AsRawFd;
 
         let f = &self.config.file;
+        #[allow(unsafe_code)]
         let ret = unsafe {
             libc::posix_fadvise(
                 f.as_raw_fd(),
