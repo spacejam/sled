@@ -323,10 +323,12 @@ impl ConfigBuilder {
 
         // open the data file
         let mut options = fs::OpenOptions::new();
-        options.create(true);
-        options.read(true);
+
+        let _ = options.create(true);
+        let _ = options.read(true);
+
         if !self.read_only {
-            options.write(true);
+            let _ = options.write(true);
         }
 
         match options.open(&path) {
@@ -441,13 +443,13 @@ impl ConfigBuilder {
         }
 
         let mut buf = vec![];
-        f.read_to_end(&mut buf).unwrap();
+        let _ = f.read_to_end(&mut buf)?;
         let len = buf.len();
-        buf.split_off(len - 4);
+        let _ = buf.split_off(len - 4);
 
         let mut crc_arr = [0_u8; 4];
-        f.seek(io::SeekFrom::End(-4)).unwrap();
-        f.read_exact(&mut crc_arr).unwrap();
+        let _ = f.seek(io::SeekFrom::End(-4))?;
+        f.read_exact(&mut crc_arr)?;
         let crc_expected = arr_to_u32(&crc_arr);
 
         let crc_actual = crc32(&*buf);

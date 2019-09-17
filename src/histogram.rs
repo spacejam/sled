@@ -75,7 +75,7 @@ impl Debug for Histogram {
 impl Histogram {
     /// Record a value.
     #[inline]
-    pub fn measure<T: Into<f64>>(&self, raw_value: T) -> usize {
+    pub fn measure<T: Into<f64>>(&self, raw_value: T) {
         #[cfg(not(feature = "no_metrics"))]
         {
             let value_float: f64 = raw_value.into();
@@ -90,11 +90,6 @@ impl Histogram {
 
             // increment the counter for this compressed value
             self.vals[compressed as usize].fetch_add(1, Ordering::Relaxed) + 1
-        }
-
-        #[cfg(feature = "no_metrics")]
-        {
-            0
         }
     }
 

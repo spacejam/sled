@@ -78,7 +78,9 @@ impl Subscriptions {
                 drop(r_mu);
                 let mut w_mu = self.watched.write();
                 if !w_mu.contains_key(&prefix) {
-                    w_mu.insert(prefix.clone(), Arc::new(RwLock::new(vec![])));
+                    let old = w_mu
+                        .insert(prefix.clone(), Arc::new(RwLock::new(vec![])));
+                    assert!(old.is_none());
                 }
                 drop(w_mu);
                 self.watched.read()

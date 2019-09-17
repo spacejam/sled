@@ -106,7 +106,7 @@ impl Db {
                 concurrency_control: RwLock::new(()),
                 merge_operator: RwLock::new(None),
             }));
-            tenants.insert(id, tree);
+            assert!(tenants.insert(id, tree).is_none());
         }
 
         drop(tenants);
@@ -136,7 +136,7 @@ impl Db {
 
         let tree = meta::open_tree(&self.context, name.to_vec(), &guard)?;
 
-        tenants.insert(name.to_vec(), tree.clone());
+        assert!(tenants.insert(name.to_vec(), tree.clone()).is_none());
 
         Ok(tree)
     }
@@ -293,8 +293,12 @@ impl Db {
                         let k = kv
                             .pop()
                             .expect("failed to get key from tree export");
-                        tree.insert(k, v).expect(
+                        let old = tree.insert(k, v).expect(
                             "failed to insert value during tree import",
+                        );
+                        assert!(
+                            old.is_none(),
+                            "import is overwriting existing data"
                         );
                     }
                 }

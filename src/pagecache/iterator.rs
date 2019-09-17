@@ -1,11 +1,11 @@
 use std::{collections::BTreeMap, io};
 
-use crate::*;
 use super::{
-    LogRead, DiskPtr, LogKind, Lsn, LogId, MessageKind, read_message,
-    MSG_HEADER_LEN, BLOB_INLINE_LEN, read_segment_header,
-    SEG_HEADER_LEN, BATCH_MANIFEST_INLINE_LEN, SegmentHeader, Pio
+    read_message, read_segment_header, DiskPtr, LogId, LogKind, LogRead, Lsn,
+    MessageKind, Pio, SegmentHeader, BATCH_MANIFEST_INLINE_LEN,
+    BLOB_INLINE_LEN, MSG_HEADER_LEN, SEG_HEADER_LEN,
 };
+use crate::*;
 
 pub struct LogIter {
     pub config: Config,
@@ -115,7 +115,7 @@ impl Iterator for LogIter {
                     return None;
                 }
                 Ok(LogRead::Pad(_lsn)) => {
-                    self.segment_base.take();
+                    let _taken = self.segment_base.take().unwrap();
 
                     continue;
                 }

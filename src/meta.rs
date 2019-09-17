@@ -14,8 +14,8 @@ impl Meta {
     }
 
     /// Set the PageId associated with an identifier
-    pub fn set_root(&mut self, name: Vec<u8>, pid: PageId) {
-        self.inner.insert(name, pid);
+    pub fn set_root(&mut self, name: Vec<u8>, pid: PageId) -> Option<PageId> {
+        self.inner.insert(name, pid)
     }
 
     /// Remove the page mapping for a given identifier
@@ -92,11 +92,11 @@ pub(crate) fn open_tree(
         if res.is_err() {
             // clean up the tree we just created if we couldn't
             // install it.
-            context
+            let _ = context
                 .pagecache
                 .free(root_id, root_ptr, guard)?
                 .expect("could not free allocated page");
-            context
+            let _ = context
                 .pagecache
                 .free(leaf_id, leaf_ptr, guard)?
                 .expect("could not free allocated page");

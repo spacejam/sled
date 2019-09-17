@@ -241,6 +241,7 @@ fn test_split_fanout() {
 }
 
 #[test]
+#[allow(unused_results)]
 fn basic_functionality() {
     unsafe {
         let guard = crossbeam_epoch::pin();

@@ -135,7 +135,7 @@ impl Node {
             let search = records
                 .binary_search_by(|&(ref k, ref _v)| prefix_cmp(k, &*key));
             if let Ok(idx) = search {
-                records.remove(idx);
+                let _removed = records.remove(idx);
             }
         } else {
             panic!("tried to attach a Del to an Index chain");

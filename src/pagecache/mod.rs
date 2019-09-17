@@ -264,7 +264,7 @@ pub(crate) fn maybe_decompress(buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
                         ratio + 1,
                         e
                     );
-                    MAX_COMPRESSION_RATIO.compare_and_swap(
+                    let _who_cares = MAX_COMPRESSION_RATIO.compare_and_swap(
                         ratio,
                         ratio + 1,
                         Release,

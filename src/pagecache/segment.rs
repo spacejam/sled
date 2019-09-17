@@ -59,6 +59,8 @@
 //!    a "stable consecutive lsn" into its own header
 //!    that is higher than ours.
 
+#![allow(unused_results)]
+
 use std::mem;
 
 use super::PageState;

@@ -65,11 +65,9 @@
 #![allow(missing_docs)]
 
 use parking_lot::RwLockWriteGuard;
-use std::{fmt, cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
+use std::{cell::RefCell, collections::HashMap, fmt, rc::Rc, sync::Arc};
 
-use crate::{
-    Tree, IVec, Error, Batch, Result
-};
+use crate::{Batch, Error, IVec, Result, Tree};
 
 /// A transaction that will
 /// be applied atomically to the
@@ -134,7 +132,8 @@ impl TransactionalTree {
     {
         let old = self.get(key.as_ref())?;
         let mut writes = self.writes.borrow_mut();
-        writes.insert(IVec::from(key), Some(IVec::from(value)));
+        let _last_write =
+            writes.insert(IVec::from(key), Some(IVec::from(value)));
         Ok(old)
     }
 
@@ -146,7 +145,7 @@ impl TransactionalTree {
     {
         let old = self.get(key.as_ref());
         let mut writes = self.writes.borrow_mut();
-        writes.insert(IVec::from(key), None);
+        let _last_write = writes.insert(IVec::from(key), None);
         old
     }
 
@@ -166,7 +165,8 @@ impl TransactionalTree {
 
         // not found in a cache, need to hit the backing db
         let get = self.tree.get_inner(key.as_ref())?;
-        reads.insert(key.as_ref().into(), get.clone());
+        let last = reads.insert(key.as_ref().into(), get.clone());
+        assert!(last.is_none());
 
         Ok(get)
     }
@@ -175,9 +175,9 @@ impl TransactionalTree {
     pub fn apply_batch(&self, batch: Batch) -> TransactionResult<()> {
         for (k, v_opt) in batch.writes {
             if let Some(v) = v_opt {
-                self.insert(k, v)?;
+                let _old = self.insert(k, v)?;
             } else {
-                self.remove(k)?;
+                let _old = self.remove(k)?;
             }
         }
         Ok(())
@@ -200,9 +200,9 @@ impl TransactionalTree {
         let mut writes = self.writes.borrow_mut();
         for (k, v_opt) in &*writes {
             if let Some(v) = v_opt {
-                self.tree.insert_inner(k, v)?;
+                let _old = self.tree.insert_inner(k, v)?;
             } else {
-                self.tree.remove_inner(k)?;
+                let _old = self.tree.remove_inner(k)?;
             }
         }
         Ok(())

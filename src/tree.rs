@@ -290,9 +290,9 @@ impl Tree {
         let peg = self.context.pin_log()?;
         for (k, v_opt) in batch.writes {
             if let Some(v) = v_opt {
-                self.insert_inner(k, v)?;
+                let _old = self.insert_inner(k, v)?;
             } else {
-                self.remove_inner(k)?;
+                let _old = self.remove_inner(k)?;
             }
         }
 
@@ -1265,7 +1265,7 @@ impl Tree {
     pub fn clear(&self) -> Result<()> {
         for k in self.iter().keys() {
             let key = k?;
-            self.remove(key)?;
+            let _old = self.remove(key)?;
         }
         Ok(())
     }
@@ -1303,7 +1303,8 @@ impl Tree {
         if replace.is_err() {
             // if we failed, don't follow through with the
             // parent split or root hoist.
-            self.context
+            let _new_stack = self
+                .context
                 .pagecache
                 .free(rhs_pid, rhs_ptr, guard)?
                 .expect("could not free allocated page");
@@ -1394,7 +1395,8 @@ impl Tree {
                 "root hoist from {} to {} failed: {:?}",
                 from, new_root_pid, cas
             );
-            self.context
+            let _new_stack = self
+                .context
                 .pagecache
                 .free(new_root_pid, new_root_ptr, guard)?
                 .expect("could not free allocated page");

@@ -209,6 +209,7 @@ impl DoublyLinkedList {
     }
 }
 
+#[allow(unused_results)]
 #[test]
 fn test_dll() {
     let mut dll = DoublyLinkedList::default();
