@@ -1,7 +1,5 @@
 //! A simple adaptive threadpool that returns a oneshot future.
 
-use log::warn;
-
 use super::OneShot;
 
 /// Spawn a function on the threadpool.
@@ -99,7 +97,7 @@ where
                 });
 
             if let Err(e) = spawn_res {
-                warn!(
+                log::warn!(
                     "Failed to dynamically increase the threadpool size: {:?}. \
                      Currently have {} dynamic threads",
                     e,
