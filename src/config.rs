@@ -5,10 +5,7 @@ use std::{
     io::{ErrorKind, Read, Seek, Write},
     ops::Deref,
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::{atomic::AtomicUsize, Arc},
 };
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -191,7 +188,7 @@ impl ConfigBuilder {
 
         static SALT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-        let seed = SALT_COUNTER.fetch_add(1, Ordering::SeqCst) as u64;
+        let seed = SALT_COUNTER.fetch_add(1, SeqCst) as u64;
 
         let now = (SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -545,7 +542,7 @@ impl Config {
     /// an asynchronous IO operation.
     pub fn global_error(&self) -> Result<()> {
         let guard = pin();
-        let ge = self.global_error.load(Ordering::Relaxed, &guard);
+        let ge = self.global_error.load(Relaxed, &guard);
         if ge.is_null() {
             Ok(())
         } else {
@@ -558,9 +555,7 @@ impl Config {
 
     pub(crate) fn reset_global_error(&self) {
         let guard = pin();
-        let old =
-            self.global_error
-                .swap(Shared::default(), Ordering::SeqCst, &guard);
+        let old = self.global_error.swap(Shared::default(), SeqCst, &guard);
         if !old.is_null() {
             let guard = pin();
             #[allow(unsafe_code)]
@@ -579,7 +574,7 @@ impl Config {
         let _ = self.global_error.compare_and_set(
             expected_old,
             error,
-            Ordering::Release,
+            SeqCst,
             &guard,
         );
     }

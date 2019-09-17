@@ -57,10 +57,7 @@ impl Default for Histogram {
 unsafe impl Send for Histogram {}
 
 impl Debug for Histogram {
-    fn fmt(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-    ) -> std::result::Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         const PS: [f64; 10] =
             [0., 50., 75., 90., 95., 97.5, 99., 99.9, 99.99, 100.];
         f.write_str("Histogramgram[")?;

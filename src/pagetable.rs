@@ -119,7 +119,7 @@ where
         old: Shared<'g, T>,
         new: Shared<'g, T>,
         guard: &'g Guard,
-    ) -> std::result::Result<Shared<'g, T>, Shared<'g, T>> {
+    ) -> Result<Shared<'g, T>, Shared<'g, T>> {
         debug_delay();
         let tip = traverse(self.head.load(Acquire, guard), pid, guard);
 

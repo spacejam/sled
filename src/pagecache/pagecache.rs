@@ -108,12 +108,8 @@ impl<'a> RecoveryGuard<'a> {
     /// Writes the last LSN for a batch into an earlier
     /// reservation, releasing it.
     pub fn seal_batch(mut self) -> Result<()> {
-        let max_reserved = self
-            .batch_res
-            .log
-            .iobufs
-            .max_reserved_lsn
-            .load(std::sync::atomic::Ordering::Acquire);
+        let max_reserved =
+            self.batch_res.log.iobufs.max_reserved_lsn.load(Acquire);
         self.batch_res.mark_writebatch(max_reserved);
         self.batch_res.complete().map(|_| ())
     }

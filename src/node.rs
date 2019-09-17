@@ -14,7 +14,7 @@ pub(crate) struct Node {
     pub(crate) merging: bool,
 }
 
-impl fmt::Debug for Node {
+impl Debug for Node {
     fn fmt(
         &self,
         f: &mut fmt::Formatter<'_>,

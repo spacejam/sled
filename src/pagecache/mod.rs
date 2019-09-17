@@ -168,7 +168,7 @@ where
     use Update::*;
 
     match update {
-        Update::Free => LogKind::Free,
+        Free => LogKind::Free,
         Append(..) => LogKind::Append,
         Compact(..) | Counter(..) | Meta(..) | Config(..) => LogKind::Replace,
     }
@@ -196,7 +196,7 @@ impl From<MessageKind> for LogKind {
 
 fn assert_usize<T>(from: T) -> usize
 where
-    usize: std::convert::TryFrom<T, Error = std::num::TryFromIntError>,
+    usize: TryFrom<T, Error = std::num::TryFromIntError>,
 {
     usize::try_from(from).expect("lost data cast while converting to usize")
 }

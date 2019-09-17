@@ -24,7 +24,7 @@ impl Deref for Db {
     }
 }
 
-impl fmt::Debug for Db {
+impl Debug for Db {
     fn fmt(
         &self,
         f: &mut fmt::Formatter<'_>,
@@ -188,8 +188,7 @@ impl Db {
             }
         }
 
-        tree.root
-            .store(u64::max_value(), std::sync::atomic::Ordering::SeqCst);
+        tree.root.store(u64::max_value(), SeqCst);
 
         // drop writer lock
         drop(tenants);
