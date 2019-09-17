@@ -94,6 +94,7 @@ for a more detailed overview of where we're at and where we see things going!
 * if storage price performance is your primary constraint, use RocksDB. sled uses too much space sometimes.
 * quite young, should be considered unstable for the time being.
 * the on-disk format is going to change in ways that require manual migrations before the `1.0.0` release!
+* until `1.0.0`, sled targets the *current* stable version of rust. after `1.0.0`, we will aim to trail current by at least one version.
 
 # plans
 
