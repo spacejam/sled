@@ -48,8 +48,8 @@ impl RngCore for SledGen {
 }
 
 pub fn fuzz_then_shrink(buf: &[u8]) {
-    let use_compression = cfg!(feature = "compression") &&
-        buf.get(0).unwrap_or(&0) % 2 == 0;
+    let use_compression =
+        cfg!(feature = "compression") && buf.get(0).unwrap_or(&0) % 2 == 0;
 
     let ops: Vec<Op> = buf
         .chunks(2)
@@ -201,8 +201,7 @@ pub fn prop_tree_matches_btreemap(
 
     super::common::setup_logger();
 
-    let use_compression = cfg!(feature = "compression") &&
-        use_compression;
+    let use_compression = cfg!(feature = "compression") && use_compression;
 
     let config = ConfigBuilder::new()
         .temporary(true)

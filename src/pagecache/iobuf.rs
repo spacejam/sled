@@ -1,9 +1,9 @@
 use std::{
-    cell::UnsafeCell,
-    sync::atomic::AtomicBool, sync::atomic::Ordering::SeqCst, sync::Arc,
+    cell::UnsafeCell, sync::atomic::AtomicBool, sync::atomic::Ordering::SeqCst,
+    sync::Arc,
 };
 
-use crate::{*, pagecache::*};
+use crate::{pagecache::*, *};
 
 // This is the most writers in a single IO buffer
 // that we have space to accommodate in the counter
@@ -245,7 +245,7 @@ impl IoBufs {
     /// Returns the last stable offset in storage.
     pub(in crate::pagecache) fn stable(&self) -> Lsn {
         debug_delay();
-        self.stable_lsn.load(SeqCst) as Lsn
+        self.stable_lsn.load(SeqCst)
     }
 
     // Adds a header to the front of the buffer
@@ -528,7 +528,10 @@ impl IoBufs {
 /// Blocks until the specified log sequence number has
 /// been made stable on disk. Returns the number of
 /// bytes written.
-pub(in crate::pagecache) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Result<usize> {
+pub(in crate::pagecache) fn make_stable(
+    iobufs: &Arc<IoBufs>,
+    lsn: Lsn,
+) -> Result<usize> {
     let _measure = Measure::new(&M.make_stable);
 
     // NB before we write the 0th byte of the file, stable  is -1
@@ -605,7 +608,7 @@ pub(in crate::pagecache) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Resul
 /// to flush some pending writes. Returns the number
 /// of bytes written during this call.
 pub(in crate::pagecache) fn flush(iobufs: &Arc<IoBufs>) -> Result<usize> {
-    let max_reserved_lsn = iobufs.max_reserved_lsn.load(SeqCst) as Lsn;
+    let max_reserved_lsn = iobufs.max_reserved_lsn.load(SeqCst);
     make_stable(iobufs, max_reserved_lsn)
 }
 

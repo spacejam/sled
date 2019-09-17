@@ -1,7 +1,7 @@
 use std::{
-    io,
     fs,
     fs::File,
+    io,
     io::{ErrorKind, Read, Seek, Write},
     ops::Deref,
     path::{Path, PathBuf},
@@ -14,11 +14,11 @@ use std::{
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use fs2::FileExt;
 
-use crate::*;
 use crate::pagecache::{
-    u32_to_arr, arr_to_u32, PageState, SegmentMode, Lsn,
-    read_snapshot_or_default, read_message
+    arr_to_u32, read_message, read_snapshot_or_default, u32_to_arr, Lsn,
+    PageState, SegmentMode,
 };
+use crate::*;
 
 const DEFAULT_PATH: &str = "default.sled";
 
@@ -641,7 +641,8 @@ impl Config {
 
         let verify_messages = |k: &PageId, v: &PageState| {
             for (lsn, ptr, _sz) in v.iter() {
-                if let Err(e) = read_message(&self.file, ptr.lid(), lsn, &self) {
+                if let Err(e) = read_message(&self.file, ptr.lid(), lsn, &self)
+                {
                     panic!(
                         "could not read log data for \
                          pid {} at lsn {} ptr {}: {}",
@@ -707,8 +708,8 @@ impl Config {
     }
 }
 
-/// See the Kernel's documentation for more information about this subsystem, found at:
-///  [Documentation/cgroup-v1/memory.txt](https://www.kernel.org/doc/Documentation/cgroup-v1/memory.txt)
+/// See the Kernel's documentation for more information about this subsystem,
+/// found at:  [Documentation/cgroup-v1/memory.txt](https://www.kernel.org/doc/Documentation/cgroup-v1/memory.txt)
 ///
 /// If there's no memory limit specified on the container this may return
 /// 0x7FFFFFFFFFFFF000 (2^63-1 rounded down to 4k which is a common page size).
@@ -730,8 +731,8 @@ fn read_u64_from(mut file: File) -> io::Result<u64> {
 }
 
 /// Returns the maximum size of total available memory of the process, in bytes.
-/// If this limit is exceeded, the malloc() and mmap() functions shall fail with errno set
-/// to [ENOMEM].
+/// If this limit is exceeded, the malloc() and mmap() functions shall fail with
+/// errno set to [ENOMEM].
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn get_rlimit_as() -> io::Result<libc::rlimit> {
     let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
@@ -785,7 +786,7 @@ fn get_memory_limit() -> u64 {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         if let Ok(rlim) = get_rlimit_as() {
-            let rlim_cur = rlim.rlim_cur as u64;
+            let rlim_cur = rlim.rlim_cur;
             if rlim_cur < max || max == 0 {
                 max = rlim_cur;
             }
@@ -799,8 +800,9 @@ fn get_memory_limit() -> u64 {
     }
 
     if max > MAX_USIZE {
-        // It is observed in practice when the memory is unrestricted, Linux control
-        // group returns a physical limit that is bigger than the address space
+        // It is observed in practice when the memory is unrestricted, Linux
+        // control group returns a physical limit that is bigger than
+        // the address space
         max = MAX_USIZE;
     }
 

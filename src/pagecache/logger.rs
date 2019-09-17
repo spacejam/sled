@@ -1,13 +1,11 @@
 use std::sync::Arc;
 
 use super::{
-    iobuf, Snapshot,
-    IoBufs, read_blob, SegmentAccountant,
-    u64_to_arr, bump_atomic_lsn, arr_to_u64, arr_to_u32, IoBuf,
-    u32_to_arr, LogKind, MessageKind, LogId, DiskPtr,
-    Lsn, MSG_HEADER_LEN, BLOB_INLINE_LEN, BlobPointer, Reservation,
-    MINIMUM_ITEMS_PER_SEGMENT, SEG_HEADER_LEN, read_message,
-    COUNTER_PID, CONFIG_PID, META_PID, BATCH_MANIFEST_PID,
+    arr_to_u32, arr_to_u64, bump_atomic_lsn, iobuf, read_blob, read_message,
+    u32_to_arr, u64_to_arr, BlobPointer, DiskPtr, IoBuf, IoBufs, LogId,
+    LogKind, Lsn, MessageKind, Reservation, SegmentAccountant, Snapshot,
+    BATCH_MANIFEST_PID, BLOB_INLINE_LEN, CONFIG_PID, COUNTER_PID, META_PID,
+    MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
 };
 
 use crate::*;
@@ -519,7 +517,7 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
 
         let pid_arr = u64_to_arr(self.pid);
         let lsn_arr = u64_to_arr(self.lsn as u64);
-        let length_arr = u32_to_arr(self.len as u32);
+        let length_arr = u32_to_arr(self.len);
         let crc32_arr = u32_to_arr(self.crc32 ^ 0xFFFF_FFFF);
 
         unsafe {

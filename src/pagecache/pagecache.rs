@@ -1,8 +1,9 @@
 use std::{borrow::Cow, collections::BinaryHeap, ops::Deref};
 
-use crate::{*, pagecache::*};
+use crate::{pagecache::*, *};
 
-type PagePtrInner<'g, P> = Shared<'g, stack::Node<(Option<Update<P>>, CacheInfo)>>;
+type PagePtrInner<'g, P> =
+    Shared<'g, stack::Node<(Option<Update<P>>, CacheInfo)>>;
 
 /// A pointer to shared lock-free state bound by a pinned epoch's lifetime.
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -1452,7 +1453,7 @@ where
             }
         }
 
-        Ok(ret as u64)
+        Ok(ret)
     }
 
     /// Returns the current `Meta` map, which contains a convenient

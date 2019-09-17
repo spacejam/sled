@@ -80,6 +80,7 @@
 #![deny(rust_2018_idioms)]
 #![deny(missing_copy_implementations)]
 #![deny(trivial_casts)]
+#![deny(trivial_numeric_casts)]
 
 #[cfg(feature = "failpoints")]
 use fail::fail_point;
