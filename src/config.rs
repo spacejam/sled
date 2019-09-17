@@ -11,9 +11,6 @@ use std::{
     },
 };
 
-#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-use fs2::FileExt;
-
 use crate::pagecache::{
     arr_to_u32, read_message, read_snapshot_or_default, u32_to_arr, Lsn,
     PageState, SegmentMode,
@@ -340,6 +337,8 @@ impl ConfigBuilder {
     fn try_lock(&self, file: File) -> Result<File> {
         #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
+            use fs2::FileExt;
+
             let try_lock = if self.read_only {
                 file.try_lock_shared()
             } else {
