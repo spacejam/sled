@@ -21,6 +21,7 @@ pub struct Log {
     pub(crate) config: Config,
 }
 
+#[allow(unsafe_code)]
 unsafe impl Send for Log {}
 
 impl Log {
@@ -304,6 +305,7 @@ impl Log {
                 self
             );
 
+            #[allow(unsafe_code)]
             let out_buf = unsafe { (*iobuf.buf.get()).as_mut_slice() };
 
             let res_start = buf_offset;
@@ -493,6 +495,7 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
     fn from(buf: [u8; MSG_HEADER_LEN]) -> Self {
         let kind = MessageKind::from(buf[0]);
 
+        #[allow(unsafe_code)]
         unsafe {
             let page_id = arr_to_u64(buf.get_unchecked(1..9));
             let lsn = arr_to_u64(buf.get_unchecked(9..17)) as Lsn;
@@ -520,6 +523,7 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
         let length_arr = u32_to_arr(self.len);
         let crc32_arr = u32_to_arr(self.crc32 ^ 0xFFFF_FFFF);
 
+        #[allow(unsafe_code)]
         unsafe {
             std::ptr::copy_nonoverlapping(
                 pid_arr.as_ptr(),
@@ -549,6 +553,7 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
 
 impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
     fn from(buf: [u8; SEG_HEADER_LEN]) -> Self {
+        #[allow(unsafe_code)]
         unsafe {
             let crc32_header =
                 arr_to_u32(buf.get_unchecked(0..4)) ^ 0xFFFF_FFFF;
@@ -590,6 +595,7 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
         let lsn_arr = u64_to_arr(xor_lsn as u64);
         let highest_stable_lsn_arr = u64_to_arr(xor_max_stable_lsn as u64);
 
+        #[allow(unsafe_code)]
         unsafe {
             std::ptr::copy_nonoverlapping(
                 lsn_arr.as_ptr(),
@@ -605,6 +611,7 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
 
         let crc32 = u32_to_arr(crc32(&buf[4..20]) ^ 0xFFFF_FFFF);
 
+        #[allow(unsafe_code)]
         unsafe {
             std::ptr::copy_nonoverlapping(
                 crc32.as_ptr(),

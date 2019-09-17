@@ -81,6 +81,7 @@
 #![deny(missing_copy_implementations)]
 #![deny(trivial_casts)]
 #![deny(trivial_numeric_casts)]
+#![deny(unsafe_code)]
 
 #[cfg(feature = "failpoints")]
 use fail::fail_point;

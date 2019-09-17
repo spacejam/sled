@@ -10,8 +10,10 @@ pub struct Db {
     tenants: Arc<RwLock<FastMap8<Vec<u8>, Tree>>>,
 }
 
+#[allow(unsafe_code)]
 unsafe impl Send for Db {}
 
+#[allow(unsafe_code)]
 unsafe impl Sync for Db {}
 
 impl Deref for Db {

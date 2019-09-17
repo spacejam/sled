@@ -8,6 +8,7 @@ pub struct Lru {
     shards: Vec<Mutex<Shard>>,
 }
 
+#[allow(unsafe_code)]
 unsafe impl Sync for Lru {}
 
 impl Lru {

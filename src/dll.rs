@@ -1,3 +1,5 @@
+#![allow(unsafe_code)]
+
 use std::ptr;
 
 pub type Item = u64;

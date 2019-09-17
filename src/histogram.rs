@@ -53,6 +53,7 @@ impl Default for Histogram {
     }
 }
 
+#[allow(unsafe_code)]
 unsafe impl Send for Histogram {}
 
 impl Debug for Histogram {

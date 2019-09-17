@@ -29,7 +29,10 @@ impl<T, F> Drop for Lazy<T, F> {
     fn drop(&mut self) {
         let value_ptr = self.value.load(SeqCst);
         if !value_ptr.is_null() {
-            unsafe { drop(Box::from_raw(value_ptr)) }
+            #[allow(unsafe_code)]
+            unsafe {
+                drop(Box::from_raw(value_ptr))
+            }
         }
     }
 }
@@ -44,6 +47,7 @@ where
         {
             let value_ptr = self.value.load(SeqCst);
             if !value_ptr.is_null() {
+                #[allow(unsafe_code)]
                 unsafe {
                     return &*value_ptr;
                 }
@@ -64,6 +68,7 @@ where
             if !value_ptr.is_null() {
                 let unlock = self.init_mu.swap(false, SeqCst);
                 assert!(unlock);
+                #[allow(unsafe_code)]
                 unsafe {
                     return &*value_ptr;
                 }
@@ -79,7 +84,10 @@ where
             let unlock = self.init_mu.swap(false, SeqCst);
             assert!(unlock);
 
-            unsafe { &*value_ptr }
+            #[allow(unsafe_code)]
+            unsafe {
+                &*value_ptr
+            }
         }
     }
 }

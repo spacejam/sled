@@ -96,6 +96,7 @@ pub struct ConfigBuilder {
     pub version: (usize, usize),
 }
 
+#[allow(unsafe_code)]
 unsafe impl Send for ConfigBuilder {}
 
 impl Default for ConfigBuilder {
@@ -514,7 +515,10 @@ pub struct ConfigInner {
     pub event_log: event_log::EventLog,
 }
 
+#[allow(unsafe_code)]
 unsafe impl Send for Config {}
+
+#[allow(unsafe_code)]
 unsafe impl Sync for Config {}
 
 impl Drop for ConfigInner {
@@ -545,7 +549,10 @@ impl Config {
         if ge.is_null() {
             Ok(())
         } else {
-            unsafe { Err(ge.deref().clone()) }
+            #[allow(unsafe_code)]
+            unsafe {
+                Err(ge.deref().clone())
+            }
         }
     }
 
@@ -556,6 +563,7 @@ impl Config {
                 .swap(Shared::default(), Ordering::SeqCst, &guard);
         if !old.is_null() {
             let guard = pin();
+            #[allow(unsafe_code)]
             unsafe {
                 guard.defer_destroy(old);
             }
@@ -733,6 +741,7 @@ fn read_u64_from(mut file: File) -> io::Result<u64> {
 /// Returns the maximum size of total available memory of the process, in bytes.
 /// If this limit is exceeded, the malloc() and mmap() functions shall fail with
 /// errno set to [ENOMEM].
+#[allow(unsafe_code)]
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn get_rlimit_as() -> io::Result<libc::rlimit> {
     let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
@@ -746,6 +755,7 @@ fn get_rlimit_as() -> io::Result<libc::rlimit> {
     }
 }
 
+#[allow(unsafe_code)]
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn get_available_memory() -> io::Result<u64> {
     let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };

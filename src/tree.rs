@@ -89,8 +89,10 @@ impl std::ops::Deref for Tree {
     }
 }
 
+#[allow(unsafe_code)]
 unsafe impl Send for Tree {}
 
+#[allow(unsafe_code)]
 unsafe impl Sync for Tree {}
 
 impl Tree {

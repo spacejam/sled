@@ -1,3 +1,5 @@
+#![allow(unsafe_code)]
+
 use std::{borrow::Cow, collections::BinaryHeap, ops::Deref};
 
 use crate::{pagecache::*, *};

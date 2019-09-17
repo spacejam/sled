@@ -1,4 +1,5 @@
 //! A simple wait-free, grow-only pagetable, assumes a dense keyspace.
+#![allow(unsafe_code)]
 
 use std::{
     alloc::{alloc_zeroed, Layout},

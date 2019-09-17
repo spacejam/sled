@@ -67,6 +67,7 @@ impl IVec {
 
         let mut data = Inner::default();
 
+        #[allow(unsafe_code)]
         unsafe {
             std::ptr::copy_nonoverlapping(
                 slice.as_ptr(),
@@ -186,6 +187,7 @@ impl Deref for IVec {
 
 impl AsRef<[u8]> for IVec {
     #[inline]
+    #[allow(unsafe_code)]
     fn as_ref(&self) -> &[u8] {
         match &self.0 {
             IVecInner::Inline(sz, buf) => unsafe {

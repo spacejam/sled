@@ -1,9 +1,9 @@
 #[cfg(not(feature = "testing"))]
 compile_error!(
     "please run tests using the \"testing\" feature, \
-    which enables additional checks at runtime and \
-    causes more race conditions to jump out by \
-    inserting delays in concurrent code."
+     which enables additional checks at runtime and \
+     causes more race conditions to jump out by \
+     inserting delays in concurrent code."
 );
 
 pub fn setup_logger() {

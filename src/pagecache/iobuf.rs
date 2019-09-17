@@ -36,6 +36,7 @@ pub(crate) struct IoBuf {
     stored_max_stable_lsn: Lsn,
 }
 
+#[allow(unsafe_code)]
 unsafe impl Sync for IoBuf {}
 
 pub(crate) struct IoBufs {
@@ -285,6 +286,7 @@ impl IoBufs {
 
         let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
 
+        #[allow(unsafe_code)]
         unsafe {
             std::ptr::copy_nonoverlapping(
                 header_bytes.as_ptr(),
@@ -341,6 +343,7 @@ impl IoBufs {
         // a pad is a null message written to the end of a buffer
         // to signify that nothing else will be written into it
         if should_pad {
+            #[allow(unsafe_code)]
             let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
             let pad_len = capacity - bytes_to_write - MSG_HEADER_LEN;
 
@@ -358,6 +361,7 @@ impl IoBufs {
 
             let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
 
+            #[allow(unsafe_code)]
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     header_bytes.as_ptr(),
@@ -377,6 +381,7 @@ impl IoBufs {
             let crc32 = hasher.finalize();
             let crc32_arr = u32_to_arr(crc32 ^ 0xFFFF_FFFF);
 
+            #[allow(unsafe_code)]
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     crc32_arr.as_ptr(),
@@ -391,6 +396,7 @@ impl IoBufs {
 
         let total_len = if maxed { capacity } else { bytes_to_write };
 
+        #[allow(unsafe_code)]
         let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
 
         let f = &self.config.file;
@@ -856,6 +862,7 @@ impl IoBuf {
         };
         let header_bytes: [u8; SEG_HEADER_LEN] = header.into();
 
+        #[allow(unsafe_code)]
         unsafe {
             std::ptr::copy_nonoverlapping(
                 header_bytes.as_ptr(),
