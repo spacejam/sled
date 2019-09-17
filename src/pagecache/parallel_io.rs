@@ -43,7 +43,8 @@ fn init_mu() -> Mutex<()> {
 type MutexInit = fn() -> Mutex<()>;
 
 #[cfg(not(unix))]
-static GLOBAL_FILE_LOCK: crate::Lazy<Mutex<()>, MutexInit> = crate::Lazy::new(init_mu);
+static GLOBAL_FILE_LOCK: crate::Lazy<Mutex<()>, MutexInit> =
+    crate::Lazy::new(init_mu);
 
 #[cfg(not(unix))]
 impl Pio for std::fs::File {
@@ -52,7 +53,7 @@ impl Pio for std::fs::File {
 
         let mut f = self.try_clone()?;
 
-        f.seek(io::SeekFrom::Start(offset))?;
+        let _ = f.seek(io::SeekFrom::Start(offset))?;
 
         while !buf.is_empty() {
             match f.read(buf) {
@@ -80,7 +81,7 @@ impl Pio for std::fs::File {
 
         let mut f = self.try_clone()?;
 
-        f.seek(io::SeekFrom::Start(offset))?;
+        let _ = f.seek(io::SeekFrom::Start(offset))?;
 
         while !buf.is_empty() {
             match f.write(buf) {
