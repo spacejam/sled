@@ -1,9 +1,12 @@
 use std::fs::File;
 
-use crate::*;
 use crate::pagecache::*;
+use crate::*;
 
-pub(crate) fn read_segment_header(file: &File, lid: LogId) -> Result<SegmentHeader> {
+pub(crate) fn read_segment_header(
+    file: &File,
+    lid: LogId,
+) -> Result<SegmentHeader> {
     trace!("reading segment header at {}", lid);
 
     let mut seg_header_buf = [0; SEG_HEADER_LEN];
@@ -37,6 +40,7 @@ pub(crate) fn read_message(
     // calculate the crc32 over all bytes other
     // than the crc itfile, including the bytes
     // in the header.
+    #[allow(unsafe_code)]
     unsafe {
         std::ptr::write_bytes(
             msg_header_buf
@@ -105,6 +109,7 @@ pub(crate) fn read_message(
 
     // perform crc check on everything that isn't Corrupted
     let mut buf = Vec::with_capacity(usize::try_from(header.len).unwrap());
+    #[allow(unsafe_code)]
     unsafe {
         buf.set_len(usize::try_from(header.len).unwrap());
     }

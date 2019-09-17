@@ -138,7 +138,7 @@ fn test_prefix() {
     );
     assert_eq!(prefix_encode(prefix, b"zig"), vec![0, b'z', b'i', b'g']);
 
-    let rtt = vec![b"" as &[u8], b"\x00cat", b"\x00", b"oyunwytounw\x00"];
+    let rtt: Vec<&[u8]> = vec![b"", b"\x00cat", b"\x00", b"oyunwytounw\x00"];
     for item in rtt {
         assert_eq!(
             prefix_decode(prefix, &*prefix_encode(prefix, item)),

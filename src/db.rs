@@ -10,8 +10,10 @@ pub struct Db {
     tenants: Arc<RwLock<FastMap8<Vec<u8>, Tree>>>,
 }
 
+#[allow(unsafe_code)]
 unsafe impl Send for Db {}
 
+#[allow(unsafe_code)]
 unsafe impl Sync for Db {}
 
 impl Deref for Db {
@@ -22,7 +24,7 @@ impl Deref for Db {
     }
 }
 
-impl fmt::Debug for Db {
+impl Debug for Db {
     fn fmt(
         &self,
         f: &mut fmt::Formatter<'_>,
@@ -104,7 +106,7 @@ impl Db {
                 concurrency_control: RwLock::new(()),
                 merge_operator: RwLock::new(None),
             }));
-            tenants.insert(id, tree);
+            assert!(tenants.insert(id, tree).is_none());
         }
 
         drop(tenants);
@@ -134,7 +136,7 @@ impl Db {
 
         let tree = meta::open_tree(&self.context, name.to_vec(), &guard)?;
 
-        tenants.insert(name.to_vec(), tree.clone());
+        assert!(tenants.insert(name.to_vec(), tree.clone()).is_none());
 
         Ok(tree)
     }
@@ -186,8 +188,7 @@ impl Db {
             }
         }
 
-        tree.root
-            .store(u64::max_value(), std::sync::atomic::Ordering::SeqCst);
+        tree.root.store(u64::max_value(), SeqCst);
 
         // drop writer lock
         drop(tenants);
@@ -292,8 +293,12 @@ impl Db {
                         let k = kv
                             .pop()
                             .expect("failed to get key from tree export");
-                        tree.insert(k, v).expect(
+                        let old = tree.insert(k, v).expect(
                             "failed to insert value during tree import",
+                        );
+                        assert!(
+                            old.is_none(),
+                            "import is overwriting existing data"
                         );
                     }
                 }

@@ -1,11 +1,11 @@
 use std::{collections::BTreeMap, io};
 
-use crate::*;
 use super::{
-    LogRead, DiskPtr, LogKind, Lsn, LogId, MessageKind, read_message,
-    MSG_HEADER_LEN, BLOB_INLINE_LEN, read_segment_header,
-    SEG_HEADER_LEN, BATCH_MANIFEST_INLINE_LEN, SegmentHeader, Pio
+    read_message, read_segment_header, DiskPtr, LogId, LogKind, LogRead, Lsn,
+    MessageKind, Pio, SegmentHeader, BATCH_MANIFEST_INLINE_LEN,
+    BLOB_INLINE_LEN, MSG_HEADER_LEN, SEG_HEADER_LEN,
 };
+use crate::*;
 
 pub struct LogIter {
     pub config: Config,
@@ -115,7 +115,7 @@ impl Iterator for LogIter {
                     return None;
                 }
                 Ok(LogRead::Pad(_lsn)) => {
-                    self.segment_base.take();
+                    let _taken = self.segment_base.take().unwrap();
 
                     continue;
                 }
@@ -198,6 +198,7 @@ impl LogIter {
         use std::os::unix::io::AsRawFd;
 
         let f = &self.config.file;
+        #[allow(unsafe_code)]
         let ret = unsafe {
             libc::posix_fadvise(
                 f.as_raw_fd(),
@@ -301,13 +302,14 @@ fn scan_segment_lsns(
         max_header_stable_lsn =
             std::cmp::max(header.max_stable_lsn, max_header_stable_lsn);
 
-        let old = ordering.insert(header.lsn, lid);
-        assert_eq!(
-            old, None,
-            "duplicate segment LSN {} detected at both {} and {}, \
-             one should have been zeroed out during recovery",
-            header.lsn, ordering[&header.lsn], lid
-        );
+        if let Some(old) = ordering.insert(header.lsn, lid) {
+            assert_eq!(
+                old, lid,
+                "duplicate segment LSN {} detected at both {} and {}, \
+                 one should have been zeroed out during recovery",
+                header.lsn, old, lid
+            );
+        }
     }
 
     debug!(
@@ -394,6 +396,7 @@ fn clean_tail_tears(
         "filtering out segments after detected tear at lsn {} lid {}",
         tip.0, tip.1
     );
+
     for (lsn, lid) in ordering
         .range((std::ops::Bound::Excluded(tip.0), std::ops::Bound::Unbounded))
     {

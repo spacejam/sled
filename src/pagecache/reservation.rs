@@ -1,4 +1,4 @@
-use crate::{*, pagecache::*};
+use crate::{pagecache::*, *};
 
 /// A pending log reservation which can be aborted or completed.
 /// NB the holder should quickly call `complete` or `abort` as
@@ -18,7 +18,7 @@ impl<'a> Drop for Reservation<'a> {
     fn drop(&mut self) {
         // We auto-abort if the user never uses a reservation.
         if !self.flushed {
-            self.flush(false).unwrap();
+            let _written = self.flush(false).unwrap();
         }
     }
 }
@@ -78,6 +78,14 @@ impl<'a> Reservation<'a> {
     /// size to hold a serialized Lsn.
     #[doc(hidden)]
     pub fn mark_writebatch(&mut self, lsn: Lsn) {
+        trace!(
+            "writing batch required stable lsn {} into \
+             BatchManifest at lid {} lsn {}",
+            lsn,
+            self.ptr.lid(),
+            self.lsn
+        );
+
         self.buf[0] = MessageKind::BatchManifest.into();
 
         let buf = u64_to_arr(u64::try_from(lsn).unwrap());
@@ -109,6 +117,7 @@ impl<'a> Reservation<'a> {
         let crc32 = hasher.finalize();
         let crc32_arr = u32_to_arr(crc32 ^ 0xFFFF_FFFF);
 
+        #[allow(unsafe_code)]
         unsafe {
             std::ptr::copy_nonoverlapping(
                 crc32_arr.as_ptr(),

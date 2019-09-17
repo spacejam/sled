@@ -4,9 +4,8 @@ use zstd::block::{compress, decompress};
 use crate::*;
 
 use super::{
-    LogIter, raw_segment_iter_from, arr_to_u32,
-    u32_to_arr, u64_to_arr, LogKind, Lsn, LogId,
-    DiskPtr, MSG_HEADER_LEN,
+    arr_to_u32, raw_segment_iter_from, u32_to_arr, u64_to_arr, DiskPtr, LogId,
+    LogIter, LogKind, Lsn, MSG_HEADER_LEN,
 };
 
 /// A snapshot of the state required to quickly restart
@@ -80,7 +79,8 @@ impl Snapshot {
                     lsn,
                 );
 
-                self.pt
+                let _old = self
+                    .pt
                     .insert(pid, PageState::Present(vec![(lsn, disk_ptr, sz)]));
             }
             LogKind::Append => {
@@ -112,7 +112,7 @@ impl Snapshot {
             }
             LogKind::Free => {
                 trace!("free of pid {} at ptr {} lsn {}", pid, disk_ptr, lsn);
-                self.pt.insert(pid, PageState::Free(lsn, disk_ptr));
+                let _old = self.pt.insert(pid, PageState::Free(lsn, disk_ptr));
             }
             LogKind::Corrupted | LogKind::Skip => panic!(
                 "unexppected messagekind in snapshot application: {:?}",
@@ -211,7 +211,7 @@ fn read_snapshot(config: &Config) -> std::io::Result<Option<Snapshot>> {
     }
 
     let mut buf = vec![];
-    f.read_to_end(&mut buf)?;
+    let _read = f.read_to_end(&mut buf)?;
     let len = buf.len();
     let mut len_expected_bytes = [0; 8];
     len_expected_bytes.copy_from_slice(&buf[len - 12..len - 4]);
@@ -219,7 +219,7 @@ fn read_snapshot(config: &Config) -> std::io::Result<Option<Snapshot>> {
     let mut crc_expected_bytes = [0; 4];
     crc_expected_bytes.copy_from_slice(&buf[len - 4..]);
 
-    buf.split_off(len - 12);
+    let _ = buf.split_off(len - 12);
     let crc_expected: u32 = arr_to_u32(&crc_expected_bytes);
 
     let crc_actual = crc32(&buf);
@@ -230,7 +230,8 @@ fn read_snapshot(config: &Config) -> std::io::Result<Option<Snapshot>> {
 
     #[cfg(feature = "zstd")]
     let bytes = if config.use_compression {
-        let len_expected: u64 = crate::pagecache::arr_to_u64(&len_expected_bytes);
+        let len_expected: u64 =
+            crate::pagecache::arr_to_u64(&len_expected_bytes);
         decompress(&*buf, len_expected as usize).unwrap()
     } else {
         buf

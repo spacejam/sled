@@ -1,8 +1,11 @@
+#![allow(unsafe_code)]
+
 use std::{borrow::Cow, collections::BinaryHeap, ops::Deref};
 
-use crate::{*, pagecache::*};
+use crate::{pagecache::*, *};
 
-type PagePtrInner<'g, P> = Shared<'g, stack::Node<(Option<Update<P>>, CacheInfo)>>;
+type PagePtrInner<'g, P> =
+    Shared<'g, stack::Node<(Option<Update<P>>, CacheInfo)>>;
 
 /// A pointer to shared lock-free state bound by a pinned epoch's lifetime.
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -105,12 +108,8 @@ impl<'a> RecoveryGuard<'a> {
     /// Writes the last LSN for a batch into an earlier
     /// reservation, releasing it.
     pub fn seal_batch(mut self) -> Result<()> {
-        let max_reserved = self
-            .batch_res
-            .log
-            .iobufs
-            .max_reserved_lsn
-            .load(std::sync::atomic::Ordering::Acquire);
+        let max_reserved =
+            self.batch_res.log.iobufs.max_reserved_lsn.load(Acquire);
         self.batch_res.mark_writebatch(max_reserved);
         self.batch_res.complete().map(|_| ())
     }
@@ -419,7 +418,7 @@ where
             // wake up any waiting threads
             // so they don't stall forever
             let _ = self.log.iobufs.intervals.lock();
-            self.log.iobufs.interval_updated.notify_all();
+            let _notified = self.log.iobufs.interval_updated.notify_all();
         }
     }
 
@@ -467,7 +466,8 @@ where
 
             let head_ptr = Owned::new(new_stack).into_shared(&guard);
 
-            self.inner
+            let _new_stack = self
+                .inner
                 .cas(pid, Shared::null(), head_ptr, &guard)
                 .expect(
                     "allocating a fresh new page should \
@@ -687,7 +687,7 @@ where
                     // the segment to inactive, resulting in a race otherwise.
                     // FIXME can result in deadlock if a node that holds SA
                     // is waiting to acquire a new reservation blocked by this?
-                    log_reservation.complete()?;
+                    let _ptr = log_reservation.complete()?;
 
                     if let Some(to_clean) = to_clean {
                         self.rewrite_page(to_clean, guard)?;
@@ -704,7 +704,7 @@ where
                 }
                 Err((actual_ptr, returned_new)) => {
                     trace!("link of pid {} failed", pid);
-                    log_reservation.abort()?;
+                    let _ptr = log_reservation.abort()?;
                     let actual_ts = unsafe { actual_ptr.deref().1.ts };
                     if actual_ts == old.ts {
                         new = Some(returned_new);
@@ -818,13 +818,13 @@ where
                 // NB complete must happen AFTER calls to SA, because
                 // when the iobuf's n_writers hits 0, we may transition
                 // the segment to inactive, resulting in a race otherwise.
-                log_reservation.complete()?;
+                let _ptr = log_reservation.complete()?;
 
                 trace!("rewriting pid {} succeeded", pid);
 
                 Ok(())
             } else {
-                log_reservation.abort()?;
+                let _ptr = log_reservation.abort()?;
 
                 trace!("rewriting pid {} failed", pid);
 
@@ -1019,12 +1019,12 @@ where
                     // NB complete must happen AFTER calls to SA, because
                     // when the iobuf's n_writers hits 0, we may transition
                     // the segment to inactive, resulting in a race otherwise.
-                    log_reservation.complete()?;
+                    let _ptr = log_reservation.complete()?;
                     return Ok(Ok(PagePtr { cached_ptr, ts }));
                 }
                 Err((actual_ptr, returned_entry)) => {
                     trace!("cas_page failed on pid {}", pid);
-                    log_reservation.abort()?;
+                    let _ptr = log_reservation.abort()?;
 
                     let returned_update =
                         returned_entry.into_box().inner.0.take().unwrap();
@@ -1445,14 +1445,14 @@ where
                     // this is the most pessimistic case, hopefully
                     // we only ever hit this on the first ID generation
                     // of a process's lifetime
-                    self.flush()?;
+                    let _written = self.flush()?;
                 } else if key.last_lsn() > self.stable_lsn() {
-                    self.make_stable(key.last_lsn())?;
+                    let _written = self.make_stable(key.last_lsn())?;
                 }
             }
         }
 
-        Ok(ret as u64)
+        Ok(ret)
     }
 
     /// Returns the current `Meta` map, which contains a convenient
@@ -1502,9 +1502,9 @@ where
 
             let mut new_meta = (*meta).clone();
             if let Some(new) = new {
-                new_meta.set_root(name.to_vec(), new);
+                let _old = new_meta.set_root(name.to_vec(), new);
             } else {
-                new_meta.del_root(&name);
+                let _old = new_meta.del_root(&name);
             }
 
             let new_meta_frag = Update::Meta(new_meta);
@@ -1725,7 +1725,7 @@ where
         };
 
         if let Err(e) = self.config.global_error() {
-            self.log.iobufs.interval_updated.notify_all();
+            let _notified = self.log.iobufs.interval_updated.notify_all();
             return Err(e);
         }
 
@@ -1820,7 +1820,8 @@ where
 
             trace!("installing stack for pid {}", pid);
 
-            self.inner
+            let _new_stack = self
+                .inner
                 .cas(pid, Shared::null(), new_stack, &guard)
                 .expect("should be able to install initial stack");
         }

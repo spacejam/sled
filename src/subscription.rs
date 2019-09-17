@@ -1,9 +1,4 @@
-use std::{
-    sync::{
-        mpsc::{sync_channel, Receiver, SyncSender},
-    },
-};
-
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 
 use crate::*;
 
@@ -68,7 +63,7 @@ impl Iterator for Subscriber {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(crate) struct Subscriptions {
     watched: RwLock<BTreeMap<Vec<u8>, Arc<RwLock<Senders>>>>,
 }
@@ -83,7 +78,9 @@ impl Subscriptions {
                 drop(r_mu);
                 let mut w_mu = self.watched.write();
                 if !w_mu.contains_key(&prefix) {
-                    w_mu.insert(prefix.clone(), Arc::new(RwLock::new(vec![])));
+                    let old = w_mu
+                        .insert(prefix.clone(), Arc::new(RwLock::new(vec![])));
+                    assert!(old.is_none());
                 }
                 drop(w_mu);
                 self.watched.read()

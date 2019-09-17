@@ -1,20 +1,17 @@
+#![allow(unsafe_code)]
+
 use std::{
     fmt::{self, Debug},
     ops::Deref,
-    sync::atomic::Ordering::{Acquire, Release, AcqRel},
+    sync::atomic::Ordering::{AcqRel, Acquire, Release},
 };
 
-use crossbeam_epoch::{
-    unprotected, Atomic, Guard,
-    Owned, Shared,
-};
+use crossbeam_epoch::{unprotected, Atomic, Guard, Owned, Shared};
 
 use crate::debug_delay;
 
-type CompareAndSwapResult<'g, T> = std::result::Result<
-    Shared<'g, Node<T>>,
-    (Shared<'g, Node<T>>, Owned<Node<T>>),
->;
+type CompareAndSwapResult<'g, T> =
+    Result<Shared<'g, Node<T>>, (Shared<'g, Node<T>>, Owned<Node<T>>)>;
 
 /// A node in the lock-free `Stack`.
 #[derive(Debug)]
@@ -66,7 +63,7 @@ where
     fn fmt(
         &self,
         formatter: &mut fmt::Formatter<'_>,
-    ) -> std::result::Result<(), fmt::Error> {
+    ) -> Result<(), fmt::Error> {
         let guard = crossbeam_epoch::pin();
         let head = self.head(&guard);
         let iter = StackIter::from_ptr(head, &guard);
@@ -77,7 +74,7 @@ where
             if written {
                 formatter.write_str(", ")?;
             }
-            formatter.write_str(&*format!("({:?}) ", &node as *const _))?;
+            formatter.write_str(&*format!("({:?}) ", &node))?;
             node.fmt(formatter)?;
             written = true;
         }
@@ -284,10 +281,10 @@ where
 
 #[test]
 fn basic_functionality() {
-    use std::sync::Arc;
-    use std::thread;
     use crossbeam_epoch::pin;
     use crossbeam_utils::CachePadded;
+    use std::sync::Arc;
+    use std::thread;
 
     let guard = pin();
     let ll = Arc::new(Stack::default());

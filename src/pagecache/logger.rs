@@ -1,13 +1,11 @@
 use std::sync::Arc;
 
 use super::{
-    iobuf, Snapshot,
-    IoBufs, read_blob, SegmentAccountant,
-    u64_to_arr, bump_atomic_lsn, arr_to_u64, arr_to_u32, IoBuf,
-    u32_to_arr, LogKind, MessageKind, LogId, DiskPtr,
-    Lsn, MSG_HEADER_LEN, BLOB_INLINE_LEN, BlobPointer, Reservation,
-    MINIMUM_ITEMS_PER_SEGMENT, SEG_HEADER_LEN, read_message,
-    COUNTER_PID, CONFIG_PID, META_PID, BATCH_MANIFEST_PID,
+    arr_to_u32, arr_to_u64, bump_atomic_lsn, iobuf, read_blob, read_message,
+    u32_to_arr, u64_to_arr, BlobPointer, DiskPtr, IoBuf, IoBufs, LogId,
+    LogKind, Lsn, MessageKind, Reservation, SegmentAccountant, Snapshot,
+    BATCH_MANIFEST_PID, BLOB_INLINE_LEN, CONFIG_PID, COUNTER_PID, META_PID,
+    MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
 };
 
 use crate::*;
@@ -23,6 +21,7 @@ pub struct Log {
     pub(crate) config: Config,
 }
 
+#[allow(unsafe_code)]
 unsafe impl Send for Log {}
 
 impl Log {
@@ -61,7 +60,7 @@ impl Log {
     pub fn read(&self, pid: PageId, lsn: Lsn, ptr: DiskPtr) -> Result<LogRead> {
         trace!("reading log lsn {} ptr {}", lsn, ptr);
 
-        self.make_stable(lsn)?;
+        let _wrote = self.make_stable(lsn)?;
 
         if ptr.is_inline() {
             let f = &self.config.file;
@@ -222,7 +221,7 @@ impl Log {
             // has encountered an issue.
             if let Err(e) = self.config.global_error() {
                 let _ = self.iobufs.intervals.lock();
-                self.iobufs.interval_updated.notify_all();
+                let _notified = self.iobufs.interval_updated.notify_all();
                 return Err(e);
             }
 
@@ -306,6 +305,7 @@ impl Log {
                 self
             );
 
+            #[allow(unsafe_code)]
             let out_buf = unsafe { (*iobuf.buf.get()).as_mut_slice() };
 
             let res_start = buf_offset;
@@ -381,7 +381,7 @@ impl Log {
         if iobuf::n_writers(header) == 0 && iobuf::is_sealed(header) {
             if let Err(e) = self.config.global_error() {
                 let _ = self.iobufs.intervals.lock();
-                self.iobufs.interval_updated.notify_all();
+                let _notified = self.iobufs.interval_updated.notify_all();
                 return Err(e);
             }
 
@@ -495,6 +495,7 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
     fn from(buf: [u8; MSG_HEADER_LEN]) -> Self {
         let kind = MessageKind::from(buf[0]);
 
+        #[allow(unsafe_code)]
         unsafe {
             let page_id = arr_to_u64(buf.get_unchecked(1..9));
             let lsn = arr_to_u64(buf.get_unchecked(9..17)) as Lsn;
@@ -519,9 +520,10 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
 
         let pid_arr = u64_to_arr(self.pid);
         let lsn_arr = u64_to_arr(self.lsn as u64);
-        let length_arr = u32_to_arr(self.len as u32);
+        let length_arr = u32_to_arr(self.len);
         let crc32_arr = u32_to_arr(self.crc32 ^ 0xFFFF_FFFF);
 
+        #[allow(unsafe_code)]
         unsafe {
             std::ptr::copy_nonoverlapping(
                 pid_arr.as_ptr(),
@@ -551,6 +553,7 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
 
 impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
     fn from(buf: [u8; SEG_HEADER_LEN]) -> Self {
+        #[allow(unsafe_code)]
         unsafe {
             let crc32_header =
                 arr_to_u32(buf.get_unchecked(0..4)) ^ 0xFFFF_FFFF;
@@ -592,6 +595,7 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
         let lsn_arr = u64_to_arr(xor_lsn as u64);
         let highest_stable_lsn_arr = u64_to_arr(xor_max_stable_lsn as u64);
 
+        #[allow(unsafe_code)]
         unsafe {
             std::ptr::copy_nonoverlapping(
                 lsn_arr.as_ptr(),
@@ -607,6 +611,7 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
 
         let crc32 = u32_to_arr(crc32(&buf[4..20]) ^ 0xFFFF_FFFF);
 
+        #[allow(unsafe_code)]
         unsafe {
             std::ptr::copy_nonoverlapping(
                 crc32.as_ptr(),

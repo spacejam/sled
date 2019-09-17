@@ -1,9 +1,9 @@
 use std::{
-    cell::UnsafeCell,
-    sync::atomic::AtomicBool, sync::atomic::Ordering::SeqCst, sync::Arc,
+    cell::UnsafeCell, sync::atomic::AtomicBool, sync::atomic::Ordering::SeqCst,
+    sync::Arc,
 };
 
-use crate::{*, pagecache::*};
+use crate::{pagecache::*, *};
 
 // This is the most writers in a single IO buffer
 // that we have space to accommodate in the counter
@@ -19,7 +19,7 @@ macro_rules! io_fail {
             $self.config.set_global_error(Error::FailPoint);
             // wake up any waiting threads so they don't stall forever
             let _ = $self.intervals.lock();
-            $self.interval_updated.notify_all();
+            let _notified = $self.interval_updated.notify_all();
             Err(Error::FailPoint)
         });
     };
@@ -36,6 +36,7 @@ pub(crate) struct IoBuf {
     stored_max_stable_lsn: Lsn,
 }
 
+#[allow(unsafe_code)]
 unsafe impl Sync for IoBuf {}
 
 pub(crate) struct IoBufs {
@@ -245,7 +246,7 @@ impl IoBufs {
     /// Returns the last stable offset in storage.
     pub(in crate::pagecache) fn stable(&self) -> Lsn {
         debug_delay();
-        self.stable_lsn.load(SeqCst) as Lsn
+        self.stable_lsn.load(SeqCst)
     }
 
     // Adds a header to the front of the buffer
@@ -285,6 +286,7 @@ impl IoBufs {
 
         let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
 
+        #[allow(unsafe_code)]
         unsafe {
             std::ptr::copy_nonoverlapping(
                 header_bytes.as_ptr(),
@@ -341,6 +343,7 @@ impl IoBufs {
         // a pad is a null message written to the end of a buffer
         // to signify that nothing else will be written into it
         if should_pad {
+            #[allow(unsafe_code)]
             let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
             let pad_len = capacity - bytes_to_write - MSG_HEADER_LEN;
 
@@ -358,6 +361,7 @@ impl IoBufs {
 
             let header_bytes: [u8; MSG_HEADER_LEN] = header.into();
 
+            #[allow(unsafe_code)]
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     header_bytes.as_ptr(),
@@ -377,6 +381,7 @@ impl IoBufs {
             let crc32 = hasher.finalize();
             let crc32_arr = u32_to_arr(crc32 ^ 0xFFFF_FFFF);
 
+            #[allow(unsafe_code)]
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     crc32_arr.as_ptr(),
@@ -391,6 +396,7 @@ impl IoBufs {
 
         let total_len = if maxed { capacity } else { bytes_to_write };
 
+        #[allow(unsafe_code)]
         let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
 
         let f = &self.config.file;
@@ -503,7 +509,7 @@ impl IoBufs {
                     "concurrent stable offset modification detected"
                 );
                 debug!("new highest interval: {} - {}", low, high);
-                intervals.pop();
+                let (_low, _high) = intervals.pop().unwrap();
                 updated = true;
             } else {
                 break;
@@ -516,7 +522,7 @@ impl IoBufs {
 
         if updated {
             // safe because self.intervals mutex is already held
-            self.interval_updated.notify_all();
+            let _notified = self.interval_updated.notify_all();
         }
     }
 
@@ -528,7 +534,10 @@ impl IoBufs {
 /// Blocks until the specified log sequence number has
 /// been made stable on disk. Returns the number of
 /// bytes written.
-pub(in crate::pagecache) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Result<usize> {
+pub(in crate::pagecache) fn make_stable(
+    iobufs: &Arc<IoBufs>,
+    lsn: Lsn,
+) -> Result<usize> {
     let _measure = Measure::new(&M.make_stable);
 
     // NB before we write the 0th byte of the file, stable  is -1
@@ -542,7 +551,7 @@ pub(in crate::pagecache) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Resul
     while stable < lsn {
         if let Err(e) = iobufs.config.global_error() {
             let _ = iobufs.intervals.lock();
-            iobufs.interval_updated.notify_all();
+            let _notified = iobufs.interval_updated.notify_all();
             return Err(e);
         }
 
@@ -605,7 +614,7 @@ pub(in crate::pagecache) fn make_stable(iobufs: &Arc<IoBufs>, lsn: Lsn) -> Resul
 /// to flush some pending writes. Returns the number
 /// of bytes written during this call.
 pub(in crate::pagecache) fn flush(iobufs: &Arc<IoBufs>) -> Result<usize> {
-    let max_reserved_lsn = iobufs.max_reserved_lsn.load(SeqCst) as Lsn;
+    let max_reserved_lsn = iobufs.max_reserved_lsn.load(SeqCst);
     make_stable(iobufs, max_reserved_lsn)
 }
 
@@ -701,7 +710,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
             Err(e) => {
                 iobufs.config.set_global_error(e.clone());
                 let _ = iobufs.intervals.lock();
-                iobufs.interval_updated.notify_all();
+                let _notified = iobufs.interval_updated.notify_all();
                 return Err(e);
             }
         }
@@ -744,7 +753,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
     let mut mu = iobufs.iobuf.write();
     *mu = Arc::new(next_iobuf);
     drop(mu);
-    iobufs.interval_updated.notify_all();
+    let _notified = iobufs.interval_updated.notify_all();
     drop(intervals);
 
     drop(measure_assign_offset);
@@ -765,7 +774,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
                     lsn, e
                 );
                 let _ = iobufs.intervals.lock();
-                iobufs.interval_updated.notify_all();
+                let _notified = iobufs.interval_updated.notify_all();
                 iobufs.config.set_global_error(e);
             }
         });
@@ -853,6 +862,7 @@ impl IoBuf {
         };
         let header_bytes: [u8; SEG_HEADER_LEN] = header.into();
 
+        #[allow(unsafe_code)]
         unsafe {
             std::ptr::copy_nonoverlapping(
                 header_bytes.as_ptr(),

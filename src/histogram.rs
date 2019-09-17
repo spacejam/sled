@@ -53,13 +53,11 @@ impl Default for Histogram {
     }
 }
 
+#[allow(unsafe_code)]
 unsafe impl Send for Histogram {}
 
 impl Debug for Histogram {
-    fn fmt(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-    ) -> std::result::Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         const PS: [f64; 10] =
             [0., 50., 75., 90., 95., 97.5, 99., 99.9, 99.99, 100.];
         f.write_str("Histogramgram[")?;
@@ -77,7 +75,7 @@ impl Debug for Histogram {
 impl Histogram {
     /// Record a value.
     #[inline]
-    pub fn measure<T: Into<f64>>(&self, raw_value: T) -> usize {
+    pub fn measure<T: Into<f64>>(&self, raw_value: T) {
         #[cfg(not(feature = "no_metrics"))]
         {
             let value_float: f64 = raw_value.into();
@@ -92,11 +90,6 @@ impl Histogram {
 
             // increment the counter for this compressed value
             self.vals[compressed as usize].fetch_add(1, Ordering::Relaxed) + 1
-        }
-
-        #[cfg(feature = "no_metrics")]
-        {
-            0
         }
     }
 

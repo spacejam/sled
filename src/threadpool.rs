@@ -1,7 +1,5 @@
 //! A simple adaptive threadpool that returns a oneshot future.
 
-use log::warn;
-
 use super::OneShot;
 
 /// Spawn a function on the threadpool.
@@ -48,7 +46,7 @@ where
 
         fn init_pool() -> Pool {
             for _ in 0..2 {
-                thread::Builder::new()
+                let _handle = thread::Builder::new()
                     .name("sled-io".to_string())
                     .spawn(|| {
                         for task in &POOL.receiver {
@@ -87,17 +85,19 @@ where
                 .spawn(|| {
                     let wait_limit = Duration::from_secs(1);
 
-                    DYNAMIC_THREAD_COUNT.fetch_add(1, Ordering::Relaxed);
+                    let _ =
+                        DYNAMIC_THREAD_COUNT.fetch_add(1, Ordering::Relaxed);
                     while let Ok(task) = POOL.receiver.recv_timeout(wait_limit)
                     {
                         debug_delay();
                         (task)();
                     }
-                    DYNAMIC_THREAD_COUNT.fetch_sub(1, Ordering::Relaxed);
+                    let _ =
+                        DYNAMIC_THREAD_COUNT.fetch_sub(1, Ordering::Relaxed);
                 });
 
             if let Err(e) = spawn_res {
-                warn!(
+                log::warn!(
                     "Failed to dynamically increase the threadpool size: {:?}. \
                      Currently have {} dynamic threads",
                     e,

@@ -1,24 +1,21 @@
 use std::{
-    io,
     fs,
     fs::File,
+    io,
     io::{ErrorKind, Read, Seek, Write},
     ops::Deref,
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::{atomic::AtomicUsize, Arc},
 };
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use fs2::FileExt;
 
-use crate::*;
 use crate::pagecache::{
-    u32_to_arr, arr_to_u32, PageState, SegmentMode, Lsn,
-    read_snapshot_or_default, read_message
+    arr_to_u32, read_message, read_snapshot_or_default, u32_to_arr, Lsn,
+    PageState, SegmentMode,
 };
+use crate::*;
 
 const DEFAULT_PATH: &str = "default.sled";
 
@@ -96,6 +93,7 @@ pub struct ConfigBuilder {
     pub version: (usize, usize),
 }
 
+#[allow(unsafe_code)]
 unsafe impl Send for ConfigBuilder {}
 
 impl Default for ConfigBuilder {
@@ -190,7 +188,7 @@ impl ConfigBuilder {
 
         static SALT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-        let seed = SALT_COUNTER.fetch_add(1, Ordering::SeqCst) as u64;
+        let seed = SALT_COUNTER.fetch_add(1, SeqCst) as u64;
 
         let now = (SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -213,7 +211,7 @@ impl ConfigBuilder {
     }
 
     fn limit_cache_max_memory(&mut self) {
-        let limit = get_memory_limit();
+        let limit = u64::from(get_memory_limit());
         if limit > 0 && self.cache_capacity > limit {
             self.cache_capacity = limit;
             error!(
@@ -325,10 +323,12 @@ impl ConfigBuilder {
 
         // open the data file
         let mut options = fs::OpenOptions::new();
-        options.create(true);
-        options.read(true);
+
+        let _ = options.create(true);
+        let _ = options.read(true);
+
         if !self.read_only {
-            options.write(true);
+            let _ = options.write(true);
         }
 
         match options.open(&path) {
@@ -443,13 +443,13 @@ impl ConfigBuilder {
         }
 
         let mut buf = vec![];
-        f.read_to_end(&mut buf).unwrap();
+        let _ = f.read_to_end(&mut buf)?;
         let len = buf.len();
-        buf.split_off(len - 4);
+        let _ = buf.split_off(len - 4);
 
         let mut crc_arr = [0_u8; 4];
-        f.seek(io::SeekFrom::End(-4)).unwrap();
-        f.read_exact(&mut crc_arr).unwrap();
+        let _ = f.seek(io::SeekFrom::End(-4))?;
+        f.read_exact(&mut crc_arr)?;
         let crc_expected = arr_to_u32(&crc_arr);
 
         let crc_actual = crc32(&*buf);
@@ -514,7 +514,10 @@ pub struct ConfigInner {
     pub event_log: event_log::EventLog,
 }
 
+#[allow(unsafe_code)]
 unsafe impl Send for Config {}
+
+#[allow(unsafe_code)]
 unsafe impl Sync for Config {}
 
 impl Drop for ConfigInner {
@@ -541,21 +544,23 @@ impl Config {
     /// an asynchronous IO operation.
     pub fn global_error(&self) -> Result<()> {
         let guard = pin();
-        let ge = self.global_error.load(Ordering::Relaxed, &guard);
+        let ge = self.global_error.load(Relaxed, &guard);
         if ge.is_null() {
             Ok(())
         } else {
-            unsafe { Err(ge.deref().clone()) }
+            #[allow(unsafe_code)]
+            unsafe {
+                Err(ge.deref().clone())
+            }
         }
     }
 
     pub(crate) fn reset_global_error(&self) {
         let guard = pin();
-        let old =
-            self.global_error
-                .swap(Shared::default(), Ordering::SeqCst, &guard);
+        let old = self.global_error.swap(Shared::default(), SeqCst, &guard);
         if !old.is_null() {
             let guard = pin();
+            #[allow(unsafe_code)]
             unsafe {
                 guard.defer_destroy(old);
             }
@@ -571,7 +576,7 @@ impl Config {
         let _ = self.global_error.compare_and_set(
             expected_old,
             error,
-            Ordering::Release,
+            SeqCst,
             &guard,
         );
     }
@@ -641,7 +646,8 @@ impl Config {
 
         let verify_messages = |k: &PageId, v: &PageState| {
             for (lsn, ptr, _sz) in v.iter() {
-                if let Err(e) = read_message(&self.file, ptr.lid(), lsn, &self) {
+                if let Err(e) = read_message(&self.file, ptr.lid(), lsn, &self)
+                {
                     panic!(
                         "could not read log data for \
                          pid {} at lsn {} ptr {}: {}",
@@ -707,8 +713,8 @@ impl Config {
     }
 }
 
-/// See the Kernel's documentation for more information about this subsystem, found at:
-///  [Documentation/cgroup-v1/memory.txt](https://www.kernel.org/doc/Documentation/cgroup-v1/memory.txt)
+/// See the Kernel's documentation for more information about this subsystem,
+/// found at:  [Documentation/cgroup-v1/memory.txt](https://www.kernel.org/doc/Documentation/cgroup-v1/memory.txt)
 ///
 /// If there's no memory limit specified on the container this may return
 /// 0x7FFFFFFFFFFFF000 (2^63-1 rounded down to 4k which is a common page size).
@@ -730,8 +736,9 @@ fn read_u64_from(mut file: File) -> io::Result<u64> {
 }
 
 /// Returns the maximum size of total available memory of the process, in bytes.
-/// If this limit is exceeded, the malloc() and mmap() functions shall fail with errno set
-/// to [ENOMEM].
+/// If this limit is exceeded, the malloc() and mmap() functions shall fail with
+/// errno set to [ENOMEM].
+#[allow(unsafe_code)]
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn get_rlimit_as() -> io::Result<libc::rlimit> {
     let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
@@ -745,6 +752,7 @@ fn get_rlimit_as() -> io::Result<libc::rlimit> {
     }
 }
 
+#[allow(unsafe_code)]
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn get_available_memory() -> io::Result<u64> {
     let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
@@ -785,7 +793,7 @@ fn get_memory_limit() -> u64 {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         if let Ok(rlim) = get_rlimit_as() {
-            let rlim_cur = rlim.rlim_cur as u64;
+            let rlim_cur = u64::from(rlim.rlim_cur);
             if rlim_cur < max || max == 0 {
                 max = rlim_cur;
             }
@@ -799,12 +807,13 @@ fn get_memory_limit() -> u64 {
     }
 
     if max > MAX_USIZE {
-        // It is observed in practice when the memory is unrestricted, Linux control
-        // group returns a physical limit that is bigger than the address space
+        // It is observed in practice when the memory is unrestricted, Linux
+        // control group returns a physical limit that is bigger than
+        // the address space
         max = MAX_USIZE;
     }
 
-    max
+    u64::from(max)
 }
 
 fn crate_version() -> (usize, usize) {

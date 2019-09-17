@@ -112,7 +112,7 @@ impl Data {
                     .iter()
                     .position(|(_k, c)| *c == merged_child_pid)
                     .unwrap();
-                ptrs.remove(idx);
+                let _ = ptrs.remove(idx);
             }
             _ => panic!("parent_merge_confirm called on leaf data"),
         }
