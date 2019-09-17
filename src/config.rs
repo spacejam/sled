@@ -772,7 +772,7 @@ fn get_memory_limit() -> u64 {
     // Maximum addressable memory space limit in u64
     static MAX_USIZE: u64 = usize::max_value() as u64;
 
-    let mut max: u64 = 0;
+    let mut max: libc::rlim_t = 0;
 
     #[cfg(target_os = "linux")]
     {
