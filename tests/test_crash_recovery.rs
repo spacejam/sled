@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use rand::Rng;
 
-use sled::{Db, Config, ConfigBuilder};
+use sled::{Config, ConfigBuilder, Db};
 
 const CYCLE: usize = 256;
 const BATCH_SIZE: u32 = 8;
@@ -331,6 +331,7 @@ fn test_crash_recovery_no_runtime_snapshot() {
 }
 
 #[test]
+#[ignore]
 fn test_crash_batches_with_runtime_snapshot() {
     let dir = "test_batches_with_snapshot";
     cleanup(dir);
@@ -353,6 +354,7 @@ fn test_crash_batches_with_runtime_snapshot() {
 }
 
 #[test]
+#[ignore]
 fn test_crash_batches_no_runtime_snapshot() {
     let dir = "test_batches";
     cleanup(dir);
