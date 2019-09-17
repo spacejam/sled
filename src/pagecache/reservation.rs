@@ -78,6 +78,12 @@ impl<'a> Reservation<'a> {
     /// size to hold a serialized Lsn.
     #[doc(hidden)]
     pub fn mark_writebatch(&mut self, lsn: Lsn) {
+        trace!(
+            "writing batch required stable lsn {} into \
+            BatchManifest at lid {} lsn {}",
+            lsn, self.ptr.lid(), self.lsn
+        );
+
         self.buf[0] = MessageKind::BatchManifest.into();
 
         let buf = u64_to_arr(u64::try_from(lsn).unwrap());

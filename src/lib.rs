@@ -77,8 +77,9 @@
 #![deny(missing_docs)]
 #![deny(future_incompatible)]
 #![deny(nonstandard_style)]
-#![deny(rust_2018_compatibility)]
 #![deny(rust_2018_idioms)]
+#![deny(missing_copy_implementations)]
+#![deny(trivial_casts)]
 
 #[cfg(feature = "failpoints")]
 use fail::fail_point;
@@ -92,32 +93,32 @@ macro_rules! maybe_fail {
 
 mod batch;
 mod binary_search;
+mod config;
 mod context;
-mod dll;
-mod lru;
-mod pagetable;
-mod stack;
-mod vecset;
-mod threadpool;
-mod lazy;
 mod data;
 mod db;
+mod dll;
 mod frag;
+mod histogram;
 mod iter;
 mod ivec;
+mod lazy;
+mod lru;
 mod materializer;
 mod meta;
+mod metrics;
 mod node;
+mod oneshot;
+mod pagecache;
+mod pagetable;
 mod prefix;
+mod result;
+mod stack;
 mod subscription;
+mod threadpool;
 mod tree;
 mod tx;
-mod histogram;
-mod metrics;
-mod pagecache;
-mod result;
-mod oneshot;
-mod config;
+mod vecset;
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod flusher;
@@ -133,86 +134,76 @@ const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
 pub use {
     self::{
         lazy::Lazy,
-        pagetable::PAGETABLE_NODE_SZ,
         pagecache::{
-            Materializer, PageCache,
             constants::{
-                MAX_SPACE_AMPLIFICATION,
-                SEG_HEADER_LEN, MSG_HEADER_LEN, MINIMUM_ITEMS_PER_SEGMENT,
+                MAX_SPACE_AMPLIFICATION, MINIMUM_ITEMS_PER_SEGMENT,
+                MSG_HEADER_LEN, SEG_HEADER_LEN,
             },
-            LogKind, Log, SegmentMode, LogRead, LogId, Lsn,
-            DiskPtr, PageId,
+            DiskPtr, Log, LogId, LogKind, LogRead, Lsn, Materializer,
+            PageCache, PageId, SegmentMode,
         },
+        pagetable::PAGETABLE_NODE_SZ,
     },
-    crossbeam_epoch::{
-        pin, Atomic, Guard, Owned, Shared,
-    },
+    crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared},
 };
 
-pub use {
-    self::{
-        batch::Batch,
-        db::Db,
-        iter::Iter,
-        ivec::IVec,
-        subscription::{Event, Subscriber},
-        tree::Tree,
-        tx::{
-            TransactionError, TransactionResult, Transactional,
-            TransactionalTree,
-        },
-        config::{Config, ConfigBuilder},
-        result::{Error, Result},
+pub use self::{
+    batch::Batch,
+    config::{Config, ConfigBuilder},
+    db::Db,
+    iter::Iter,
+    ivec::IVec,
+    result::{Error, Result},
+    subscription::{Event, Subscriber},
+    tree::Tree,
+    tx::{
+        TransactionError, TransactionResult, Transactional, TransactionalTree,
     },
 };
 
 use {
     self::{
-        lru::Lru,
-        pagetable::PageTable,
-        stack::{node_from_frag_vec, Stack, StackIter},
-        vecset::VecSet,
-        config::PersistedConfig,
         binary_search::binary_search_lub,
+        config::PersistedConfig,
         context::Context,
         data::Data,
-        result::CasResult,
         frag::Frag,
-        node::Node,
+        histogram::Histogram,
+        lru::Lru,
         meta::Meta,
+        metrics::{clock, measure, Measure, M},
+        node::Node,
+        oneshot::{OneShot, OneShotFiller},
+        pagetable::PageTable,
         prefix::{
             prefix_cmp, prefix_cmp_encoded, prefix_decode, prefix_encode,
             prefix_reencode,
         },
+        result::CasResult,
+        stack::{node_from_frag_vec, Stack, StackIter},
         subscription::Subscriptions,
-        oneshot::{OneShot, OneShotFiller},
-        histogram::Histogram,
         tree::TreeInner,
-        metrics::{M, clock, measure, Measure},
+        vecset::VecSet,
     },
+    bincode::{deserialize, serialize},
+    crossbeam_utils::{Backoff, CachePadded},
+    log::{debug, error, trace, warn},
+    pagecache::RecoveryGuard,
+    parking_lot::{Condvar, Mutex, RwLock},
+    serde::{de::DeserializeOwned, Deserialize, Serialize},
     std::{
-        fmt::{self, Debug},
         collections::BTreeMap,
+        convert::TryFrom,
+        fmt::{self, Debug},
+        io::{Read, Write},
         sync::{
-            Arc,
             atomic::{
-                AtomicUsize,
-                AtomicI64 as AtomicLsn, AtomicU64,
+                AtomicI64 as AtomicLsn, AtomicU64, AtomicUsize,
                 Ordering::{Acquire, Relaxed, Release, SeqCst},
             },
+            Arc,
         },
-        convert::TryFrom,
-        io::{Read, Write},
     },
-    log::{debug, error, trace, warn},
-    bincode::{deserialize, serialize},
-
-    parking_lot::{Condvar, Mutex, RwLock},
-    pagecache::{
-        RecoveryGuard,
-    },
-    serde::{de::DeserializeOwned, Deserialize, Serialize},
-    crossbeam_utils::{Backoff, CachePadded},
 };
 
 fn crc32(buf: &[u8]) -> u32 {
@@ -237,11 +228,18 @@ fn debug_delay() {}
 
 /// A fast map that is not resistant to collision attacks. Works
 /// on 8 bytes at a time.
-pub type FastMap8<K, V> = std::collections::HashMap<K, V, std::hash::BuildHasherDefault<fxhash::FxHasher64>>;
+pub type FastMap8<K, V> = std::collections::HashMap<
+    K,
+    V,
+    std::hash::BuildHasherDefault<fxhash::FxHasher64>,
+>;
 
 /// A fast set that is not resistant to collision attacks. Works
 /// on 8 bytes at a time.
-pub type FastSet8<V> = std::collections::HashSet<V, std::hash::BuildHasherDefault<fxhash::FxHasher64>>;
+pub type FastSet8<V> = std::collections::HashSet<
+    V,
+    std::hash::BuildHasherDefault<fxhash::FxHasher64>,
+>;
 
 /// Allows arbitrary logic to be injected into mere operations of the
 /// `PageCache`.

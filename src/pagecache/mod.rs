@@ -1,11 +1,5 @@
 //! `pagecache` is a lock-free pagecache and log for building high-performance
 //! databases.
-#![cfg_attr(test, deny(warnings))]
-#![deny(missing_docs)]
-#![deny(future_incompatible)]
-#![deny(nonstandard_style)]
-#![deny(rust_2018_compatibility)]
-#![deny(rust_2018_idioms)]
 
 pub mod constants;
 pub mod logger;
@@ -30,7 +24,7 @@ mod measure_allocs;
 static ALLOCATOR: measure_allocs::TrackingAllocator =
     measure_allocs::TrackingAllocator;
 
-use crate::{debug, DeserializeOwned, AtomicLsn, Serialize, SeqCst};
+use crate::{debug, AtomicLsn, DeserializeOwned, SeqCst, Serialize};
 
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
@@ -40,26 +34,26 @@ use self::{
     pagecache::Update,
     parallel_io::Pio,
     segment::SegmentAccountant,
-    snapshot::{advance_snapshot},
+    snapshot::advance_snapshot,
 };
 
 pub(crate) use self::{
-    reader::{read_segment_header, read_message},
     logger::{MessageHeader, SegmentHeader},
+    reader::{read_message, read_segment_header},
     reservation::Reservation,
-    snapshot::{read_snapshot_or_default, Snapshot, PageState},
+    snapshot::{read_snapshot_or_default, PageState, Snapshot},
 };
 
 pub use self::{
-    diskptr::DiskPtr,
-    segment::SegmentMode,
-    pagecache::{PageCache, PagePtr, RecoveryGuard},
-    materializer::Materializer,
-    logger::{LogRead, Log},
     constants::{
         BATCH_MANIFEST_INLINE_LEN, BLOB_INLINE_LEN, MAX_SPACE_AMPLIFICATION,
         MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
     },
+    diskptr::DiskPtr,
+    logger::{Log, LogRead},
+    materializer::Materializer,
+    pagecache::{PageCache, PagePtr, RecoveryGuard},
+    segment::SegmentMode,
 };
 
 /// An offset for a storage file segment.

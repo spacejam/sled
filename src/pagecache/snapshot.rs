@@ -4,9 +4,8 @@ use zstd::block::{compress, decompress};
 use crate::*;
 
 use super::{
-    LogIter, raw_segment_iter_from, arr_to_u32,
-    u32_to_arr, u64_to_arr, LogKind, Lsn, LogId,
-    DiskPtr, MSG_HEADER_LEN,
+    arr_to_u32, raw_segment_iter_from, u32_to_arr, u64_to_arr, DiskPtr, LogId,
+    LogIter, LogKind, Lsn, MSG_HEADER_LEN,
 };
 
 /// A snapshot of the state required to quickly restart
@@ -230,7 +229,8 @@ fn read_snapshot(config: &Config) -> std::io::Result<Option<Snapshot>> {
 
     #[cfg(feature = "zstd")]
     let bytes = if config.use_compression {
-        let len_expected: u64 = crate::pagecache::arr_to_u64(&len_expected_bytes);
+        let len_expected: u64 =
+            crate::pagecache::arr_to_u64(&len_expected_bytes);
         decompress(&*buf, len_expected as usize).unwrap()
     } else {
         buf

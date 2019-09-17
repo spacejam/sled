@@ -1182,7 +1182,7 @@ impl Tree {
             if let Some(first_res) = self.iter().next_back() {
                 let first = first_res?;
                 if self
-                    .cas(&first.0, Some(&first.1), None as Option<&[u8]>)
+                    .cas::<_, _, &[u8]>(&first.0, Some(&first.1), None)
                     .is_ok()
                 {
                     return Ok(Some(first));
@@ -1223,7 +1223,7 @@ impl Tree {
             if let Some(first_res) = self.iter().next() {
                 let first = first_res?;
                 if self
-                    .cas(&first.0, Some(&first.1), None as Option<&[u8]>)
+                    .cas::<_, _, &[u8]>(&first.0, Some(&first.1), None)
                     .is_ok()
                 {
                     return Ok(Some(first));

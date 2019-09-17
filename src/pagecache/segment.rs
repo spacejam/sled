@@ -63,8 +63,8 @@ use std::mem;
 
 use super::PageState;
 
-use crate::*;
 use crate::pagecache::*;
+use crate::*;
 
 /// The segment accountant keeps track of the logical blocks
 /// of storage. It scans through all segments quickly during
@@ -1199,7 +1199,7 @@ impl SegmentAccountant {
 /// The log may be configured to write data
 /// in several different ways, depending on
 /// the constraints of the system using it.
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum SegmentMode {
     /// Write to the end of the log, always.
     Linear,

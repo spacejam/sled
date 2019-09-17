@@ -301,13 +301,14 @@ fn scan_segment_lsns(
         max_header_stable_lsn =
             std::cmp::max(header.max_stable_lsn, max_header_stable_lsn);
 
-        let old = ordering.insert(header.lsn, lid);
-        assert_eq!(
-            old, None,
-            "duplicate segment LSN {} detected at both {} and {}, \
-             one should have been zeroed out during recovery",
-            header.lsn, ordering[&header.lsn], lid
-        );
+        if let Some(old) = ordering.insert(header.lsn, lid) {
+            assert_eq!(
+                old, lid,
+                "duplicate segment LSN {} detected at both {} and {}, \
+                 one should have been zeroed out during recovery",
+                header.lsn, old, lid
+            );
+        }
     }
 
     debug!(
@@ -394,6 +395,7 @@ fn clean_tail_tears(
         "filtering out segments after detected tear at lsn {} lid {}",
         tip.0, tip.1
     );
+
     for (lsn, lid) in ordering
         .range((std::ops::Bound::Excluded(tip.0), std::ops::Bound::Unbounded))
     {

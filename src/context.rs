@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::*;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct Context {
     // TODO file from config should be in here
     config: Config,
