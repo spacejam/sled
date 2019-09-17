@@ -211,7 +211,7 @@ impl ConfigBuilder {
     }
 
     fn limit_cache_max_memory(&mut self) {
-        let limit = get_memory_limit();
+        let limit = u64::from(get_memory_limit());
         if limit > 0 && self.cache_capacity > limit {
             self.cache_capacity = limit;
             error!(
@@ -768,9 +768,9 @@ fn get_available_memory() -> io::Result<u64> {
     Ok((pages as u64) * (page_size as u64))
 }
 
-fn get_memory_limit() -> u64 {
+fn get_memory_limit() -> libc::rlim_t {
     // Maximum addressable memory space limit in u64
-    static MAX_USIZE: u64 = usize::max_value() as u64;
+    static MAX_USIZE: libc::rlim_t = usize::max_value() as libc::rlim_t;
 
     let mut max: libc::rlim_t = 0;
 
