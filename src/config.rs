@@ -2,7 +2,7 @@ use std::{
     fs,
     fs::File,
     io,
-    io::{ErrorKind, Read, Seek, Write},
+    io::ErrorKind,
     ops::Deref,
     path::{Path, PathBuf},
     sync::{
@@ -12,8 +12,7 @@ use std::{
 };
 
 use crate::pagecache::{
-    arr_to_u32, read_message, read_snapshot_or_default, u32_to_arr, Lsn,
-    PageState, SegmentMode,
+    read_message, read_snapshot_or_default, Lsn, PageState, SegmentMode,
 };
 use crate::*;
 
@@ -22,11 +21,15 @@ const DEFAULT_PATH: &str = "default.sled";
 /// A persisted configuration about high-level
 /// storage file information
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
-pub struct PersistedConfig;
+pub struct PersistedConfig {
+    pub io_buf_size: usize,
+    pub use_compression: bool,
+    pub version: (usize, usize),
+}
 
 impl PersistedConfig {
     pub fn size_in_bytes(&self) -> u64 {
-        0
+        return std::mem::size_of::<PersistedConfig>() as u64;
     }
 }
 
@@ -318,8 +321,6 @@ impl ConfigBuilder {
             res.map_err(Error::from)?;
         }
 
-        self.verify_config_changes_ok()?;
-
         // open the data file
         let mut options = fs::OpenOptions::new();
         options.create(true);
@@ -360,108 +361,44 @@ impl ConfigBuilder {
         Ok(file)
     }
 
-    fn verify_config_changes_ok(&self) -> Result<()> {
-        match self.read_config() {
-            Ok(Some(old)) => {
-                supported!(
-                    self.use_compression == old.use_compression,
-                    format!(
-                        "cannot change compression values across restarts. \
-                         old value of use_compression loaded from disk: {}, \
-                         currently set value: {}.",
-                        old.use_compression, self.use_compression,
-                    )
-                );
+    // Verify config parameters are safe to open specified database.
+    #[doc(hidden)]
+    pub fn verify_config_changes_ok(
+        &self,
+        old: &PersistedConfig,
+    ) -> Result<()> {
+        supported!(
+            self.use_compression == old.use_compression,
+            format!(
+                "cannot change compression values across restarts. \
+                 old value of use_compression loaded from disk: {}, \
+                 currently set value: {}.",
+                old.use_compression, self.use_compression,
+            )
+        );
 
-                supported!(
-                    self.io_buf_size == old.io_buf_size,
-                    format!(
-                        "cannot change the io buffer size across restarts. \
-                         please change it back to {}",
-                        old.io_buf_size
-                    )
-                );
+        supported!(
+            self.io_buf_size == old.io_buf_size,
+            format!(
+                "cannot change the io buffer size across restarts. \
+                 please change it back to {}",
+                old.io_buf_size
+            )
+        );
 
-                supported!(
-                    self.version == old.version,
-                    format!(
-                        "This database was created using \
-                         pagecache version {}.{}, but our pagecache \
-                         version is {}.{}. Please perform an upgrade \
-                         using the sled::Db::export and sled::Db::import \
-                         methods.",
-                        old.version.0,
-                        old.version.1,
-                        self.version.0,
-                        self.version.1,
-                    )
-                );
-                Ok(())
-            }
-            Ok(None) => self.write_config(),
-            Err(e) => Err(e.into()),
-        }
-    }
+        supported!(
+            self.version == old.version,
+            format!(
+                "This database was created using \
+                 pagecache version {}.{}, but our pagecache \
+                 version is {}.{}. Please perform an upgrade \
+                 using the sled::Db::export and sled::Db::import \
+                 methods.",
+                old.version.0, old.version.1, self.version.0, self.version.1,
+            )
+        );
 
-    fn write_config(&self) -> Result<()> {
-        let bytes = serialize(&*self).unwrap();
-        let crc: u32 = crc32(&*bytes);
-        let crc_arr = u32_to_arr(crc);
-
-        let path = self.config_path();
-
-        let mut f =
-            fs::OpenOptions::new().write(true).create(true).open(path)?;
-
-        maybe_fail!("write_config bytes");
-        f.write_all(&*bytes)?;
-        maybe_fail!("write_config crc");
-        f.write_all(&crc_arr)?;
-        maybe_fail!("write_config post");
         Ok(())
-    }
-
-    fn read_config(&self) -> io::Result<Option<Self>> {
-        let path = self.config_path();
-
-        let f_res = fs::OpenOptions::new().read(true).open(&path);
-
-        let mut f = match f_res {
-            Err(ref e) if e.kind() == ErrorKind::NotFound => {
-                return Ok(None);
-            }
-            Err(other) => {
-                return Err(other);
-            }
-            Ok(f) => f,
-        };
-
-        if f.metadata()?.len() <= 8 {
-            warn!("empty/corrupt configuration file found");
-            return Ok(None);
-        }
-
-        let mut buf = vec![];
-        f.read_to_end(&mut buf).unwrap();
-        let len = buf.len();
-        buf.split_off(len - 4);
-
-        let mut crc_arr = [0_u8; 4];
-        f.seek(io::SeekFrom::End(-4)).unwrap();
-        f.read_exact(&mut crc_arr).unwrap();
-        let crc_expected = arr_to_u32(&crc_arr);
-
-        let crc_actual = crc32(&*buf);
-
-        if crc_expected != crc_actual {
-            warn!(
-                "crc for settings file {:?} failed! \
-                 can't verify that config is safe",
-                path
-            );
-        }
-
-        Ok(deserialize::<Self>(&*buf).ok())
     }
 
     // Get the path of the database
@@ -480,12 +417,6 @@ impl ConfigBuilder {
     fn db_path(&self) -> PathBuf {
         let mut path = self.get_path();
         path.push("db");
-        path
-    }
-
-    fn config_path(&self) -> PathBuf {
-        let mut path = self.get_path();
-        path.push("conf");
         path
     }
 }

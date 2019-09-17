@@ -1,3 +1,4 @@
+#![cfg(feature = "failpoints")]
 mod common;
 
 use std::collections::{BTreeMap, HashSet};
@@ -267,8 +268,9 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                     vec![hi, lo]
                 };
 
-                // update the reference to show that this key could be present. the next Flush
-                // operation will update the reference again, and require this key to be present
+                // update the reference to show that this key could be present.
+                // the next Flush operation will update the
+                // reference again, and require this key to be present
                 // (unless there's a crash before then).
                 let reference_entry = reference
                     .entry(set_counter)
@@ -284,9 +286,11 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 set_counter += 1;
             }
             Del(k) => {
-                // if this key was already set, update the reference to show that this key could
-                // either be present or absent. the next Flush operation will update the reference
-                // again, and require this key to be absent (unless there's a crash before then).
+                // if this key was already set, update the reference to show
+                // that this key could either be present or
+                // absent. the next Flush operation will update the reference
+                // again, and require this key to be absent (unless there's a
+                // crash before then).
                 reference.entry(u16::from(k)).and_modify(|v| {
                     v.values.push(None);
                     v.crash_epoch = crash_counter;
@@ -308,10 +312,11 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
             Flush => {
                 fp_crash!(tree.flush());
 
-                // once a flush has been successfully completed, recent Set/Del operations should
-                // be durable. go through the reference, and if a Set/Del operation was done since
-                // the last crash, keep the value for that key corresponding to the most recent
-                // operation, and toss the rest.
+                // once a flush has been successfully completed, recent Set/Del
+                // operations should be durable. go through the
+                // reference, and if a Set/Del operation was done since
+                // the last crash, keep the value for that key corresponding to
+                // the most recent operation, and toss the rest.
                 for (_key, reference_entry) in reference.iter_mut() {
                     if reference_entry.values.len() > 1 {
                         if reference_entry.crash_epoch == crash_counter {

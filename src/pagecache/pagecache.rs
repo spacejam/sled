@@ -1,8 +1,9 @@
 use std::{borrow::Cow, collections::BinaryHeap, ops::Deref};
 
-use crate::{*, pagecache::*};
+use crate::{pagecache::*, *};
 
-type PagePtrInner<'g, P> = Shared<'g, stack::Node<(Option<Update<P>>, CacheInfo)>>;
+type PagePtrInner<'g, P> =
+    Shared<'g, stack::Node<(Option<Update<P>>, CacheInfo)>>;
 
 /// A pointer to shared lock-free state bound by a pinned epoch's lifetime.
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -227,7 +228,7 @@ where
             inner: PageTable::default(),
             next_pid_to_allocate: AtomicU64::new(0),
             free: Arc::new(Mutex::new(BinaryHeap::new())),
-            log: Log::start(config, snapshot.clone())?,
+            log: Log::start(config.clone(), snapshot.clone())?,
             lru,
             updates: AtomicU64::new(0),
             last_snapshot: Arc::new(Mutex::new(Some(snapshot))),
@@ -305,25 +306,31 @@ where
                 );
             }
 
-            if let Err(Error::ReportableBug(..)) =
-                pc.get_persisted_config(&guard)
-            {
-                // set up idgen
-                was_recovered = false;
+            match pc.get_persisted_config(&guard) {
+                Ok(t) => config.verify_config_changes_ok(t.1)?,
+                Err(Error::ReportableBug(..)) => {
+                    // set up idgen
+                    was_recovered = false;
 
-                let config_update = Update::Config(PersistedConfig);
+                    let config_update = Update::Config(PersistedConfig {
+                        io_buf_size: config.io_buf_size,
+                        use_compression: config.use_compression,
+                        version: config.version,
+                    });
 
-                let (config_id, _) =
-                    pc.allocate_inner(config_update, &guard)?;
+                    let (config_id, _) =
+                        pc.allocate_inner(config_update, &guard)?;
 
-                assert_eq!(
-                    config_id,
-                    CONFIG_PID,
-                    "we expect the counter to have pid {}, but it had pid {} instead",
-                    CONFIG_PID,
-                    config_id,
-                );
-            }
+                    assert_eq!(
+                        config_id,
+                        CONFIG_PID,
+                        "we expect the counter to have pid {}, but it had pid {} instead",
+                        CONFIG_PID,
+                        config_id,
+                    );
+                }
+                Err(e) => return Err(e),
+            };
 
             let (_, counter) = pc.get_idgen(&guard)?;
             let idgen_recovery = if was_recovered {

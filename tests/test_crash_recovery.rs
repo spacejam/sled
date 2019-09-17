@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use rand::Rng;
 
-use sled::{Db, Config, ConfigBuilder};
+use sled::{Config, ConfigBuilder, Db};
 
 const CYCLE: usize = 256;
 const BATCH_SIZE: u32 = 8;
@@ -187,7 +187,7 @@ fn run_batches(config: Config) {
         tree.apply_batch(batch).unwrap();
     }
 
-    tests::setup_logger();
+    common::setup_logger();
     let crash_during_initialization = rand::thread_rng().gen_bool(0.1);
 
     if crash_during_initialization {
