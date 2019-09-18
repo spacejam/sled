@@ -83,7 +83,7 @@ pub fn get_memory_limit() -> u64 {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         if let Ok(rlim) = get_rlimit_as() {
-            let rlim_cur = rlim.rlim_cur;
+            let rlim_cur = Into::<u64>::into(rlim.rlim_cur);
             if rlim_cur < max || max == 0 {
                 max = rlim_cur;
             }
