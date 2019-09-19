@@ -212,7 +212,6 @@ fn run_batches(config: Config) {
 
 fn run_without_snapshot(dir: &str) {
     let mut config_builder = ConfigBuilder::new()
-        .page_consolidation_threshold(10)
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(100))
         .path(dir.to_string())
@@ -233,7 +232,6 @@ fn run_without_snapshot(dir: &str) {
 
 fn run_with_snapshot(dir: &str) {
     let mut config_builder = ConfigBuilder::new()
-        .page_consolidation_threshold(10)
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(100))
         .path(dir.to_string())
@@ -254,7 +252,6 @@ fn run_with_snapshot(dir: &str) {
 
 fn run_batches_without_snapshot(dir: &str) {
     let mut config_builder = ConfigBuilder::new()
-        .page_consolidation_threshold(10)
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(100))
         .path(dir.to_string())
@@ -275,7 +272,6 @@ fn run_batches_without_snapshot(dir: &str) {
 
 fn run_batches_with_snapshot(dir: &str) {
     let mut config_builder = ConfigBuilder::new()
-        .page_consolidation_threshold(10)
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(100))
         .path(dir.to_string())
