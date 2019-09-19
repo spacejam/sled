@@ -3,7 +3,10 @@ set -e
 
 # checks sled's compatibility using several targets
 
-targets="aarch64-fuchsia aarch64-linux-android i686-linux-android i686-unknown-linux-gnu x86_64-pc-windows-gnu x86_64-linux-android x86_64-fuchsia"
+targets="aarch64-fuchsia aarch64-linux-android aarch64-apple-ios \
+         i686-linux-android i686-unknown-linux-gnu \
+         x86_64-linux-android x86_64-fuchsia \
+         wasm32-unknown-unknown"
 
 for target in $targets; do
   echo "setting up $target..."
