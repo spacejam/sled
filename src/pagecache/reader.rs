@@ -5,7 +5,7 @@ use crate::*;
 
 pub(crate) fn read_segment_header(
     file: &File,
-    lid: LogId,
+    lid: LogOffset,
 ) -> Result<SegmentHeader> {
     trace!("reading segment header at {}", lid);
 
@@ -27,7 +27,7 @@ pub(crate) fn read_segment_header(
 /// read a buffer from the disk
 pub(crate) fn read_message(
     file: &File,
-    lid: LogId,
+    lid: LogOffset,
     expected_lsn: Lsn,
     config: &Config,
 ) -> Result<LogRead> {
@@ -52,18 +52,18 @@ pub(crate) fn read_message(
     }
 
     let _measure = Measure::new(&M.read);
-    let segment_len = config.io_buf_size;
-    let seg_start = lid / segment_len as LogId * segment_len as LogId;
+    let segment_len = config.segment_size;
+    let seg_start = lid / segment_len as LogOffset * segment_len as LogOffset;
     trace!(
         "reading message from segment: {} at lid: {}",
         seg_start,
         lid
     );
-    assert!(seg_start + SEG_HEADER_LEN as LogId <= lid);
+    assert!(seg_start + SEG_HEADER_LEN as LogOffset <= lid);
 
-    let ceiling = seg_start + segment_len as LogId;
+    let ceiling = seg_start + segment_len as LogOffset;
 
-    assert!(lid + MSG_HEADER_LEN as LogId <= ceiling);
+    assert!(lid + MSG_HEADER_LEN as LogOffset <= ceiling);
 
     if header.lsn % segment_len as Lsn != lid as Lsn % segment_len as Lsn {
         let hb: [u8; MSG_HEADER_LEN] = header.into();
@@ -74,7 +74,7 @@ pub(crate) fn read_message(
              within its segment. header: {:?} \
              expected: relative offset {} bytes: {:?}",
             header,
-            lid % segment_len as LogId,
+            lid % segment_len as LogOffset,
             hb
         );
         return Ok(LogRead::Corrupted(header.len));
@@ -89,7 +89,7 @@ pub(crate) fn read_message(
     }
 
     let max_possible_len =
-        assert_usize(ceiling - lid - MSG_HEADER_LEN as LogId);
+        assert_usize(ceiling - lid - MSG_HEADER_LEN as LogOffset);
 
     if usize::try_from(header.len).unwrap() > max_possible_len {
         trace!(
@@ -113,7 +113,7 @@ pub(crate) fn read_message(
     unsafe {
         buf.set_len(usize::try_from(header.len).unwrap());
     }
-    file.pread_exact(&mut buf, lid + MSG_HEADER_LEN as LogId)?;
+    file.pread_exact(&mut buf, lid + MSG_HEADER_LEN as LogOffset)?;
 
     // calculate the CRC32, calculating the hash on the
     // header afterwards

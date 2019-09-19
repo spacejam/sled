@@ -6,7 +6,7 @@
 //! A. We must not overwrite existing segments when they
 //!    contain the most-recent stable state for a page.
 //! B. We must not overwrite existing segments when active
-//!    threads may have references to `LogId`'s that point
+//!    threads may have references to `LogOffset`'s that point
 //!    into those segments.
 //!
 //! To complicate matters, the `PageCache` only knows
@@ -83,14 +83,14 @@ pub(crate) struct SegmentAccountant {
     // TODO put behind a single mutex
     // NB MUST group pause_rewriting with ordering
     // and free!
-    free: VecSet<LogId>,
-    tip: LogId,
+    free: VecSet<LogOffset>,
+    tip: LogOffset,
     max_stabilized_lsn: Lsn,
-    to_clean: VecSet<LogId>,
+    to_clean: VecSet<LogOffset>,
     pause_rewriting: bool,
-    ordering: BTreeMap<Lsn, LogId>,
+    ordering: BTreeMap<Lsn, LogOffset>,
     async_truncations: Vec<OneShot<Result<()>>>,
-    deferred_free_segments: Option<Vec<LogId>>,
+    deferred_free_segments: Option<Vec<LogOffset>>,
     deferred_free_segments_after: Lsn,
 }
 
@@ -333,7 +333,7 @@ impl Segment {
 
     fn defer_replace_pids(
         &mut self,
-        deferred: FastSet8<(PageId, usize)>,
+        deferred: FastSet8<(PageId, SegmentId)>,
         lsn: Lsn,
     ) {
         assert!(lsn >= self.lsn.unwrap());
@@ -418,19 +418,19 @@ impl SegmentAccountant {
     }
 
     fn initialize_from_snapshot(&mut self, snapshot: Snapshot) -> Result<()> {
-        let io_buf_size = self.config.io_buf_size;
+        let segment_size = self.config.segment_size;
         let file_len = self.config.file.metadata()?.len();
         let empty_snapshot = snapshot.pt.is_empty();
-        let number_of_segments = usize::try_from(file_len / io_buf_size as u64)
-            .unwrap()
-            + if empty_snapshot
-                || file_len % u64::try_from(io_buf_size).unwrap()
-                    < u64::try_from(SEG_HEADER_LEN).unwrap()
-            {
-                0
-            } else {
-                1
-            };
+        let number_of_segments =
+            usize::try_from(file_len / segment_size as u64).unwrap()
+                + if empty_snapshot
+                    || file_len % u64::try_from(segment_size).unwrap()
+                        < u64::try_from(SEG_HEADER_LEN).unwrap()
+                {
+                    0
+                } else {
+                    1
+                };
 
         if empty_snapshot {
             assert_eq!(number_of_segments, 0);
@@ -443,9 +443,9 @@ impl SegmentAccountant {
         let mut add = |pid,
                        lsn,
                        sz,
-                       lid: LogId,
+                       lid: LogOffset,
                        segments: &mut Vec<Segment>| {
-            let idx = assert_usize(lid / io_buf_size as LogId);
+            let idx = assert_usize(lid / segment_size as LogOffset);
             trace!(
                 "adding lsn: {} lid: {} for pid {} to segment {} during SA recovery",
                 lsn,
@@ -453,7 +453,7 @@ impl SegmentAccountant {
                 pid,
                 idx
             );
-            let segment_lsn = lsn / io_buf_size as Lsn * io_buf_size as Lsn;
+            let segment_lsn = lsn / segment_size as Lsn * segment_size as Lsn;
             segments[idx].recovery_ensure_initialized(segment_lsn);
             segments[idx].insert_pid(pid, segment_lsn);
             segment_sizes[idx] += sz;
@@ -476,7 +476,7 @@ impl SegmentAccountant {
             // this logic allows us to free the last
             // active segment if it was empty.
             let prospective_currently_active_segment =
-                (snapshot.last_lid / io_buf_size as LogId) as usize;
+                (snapshot.last_lid / segment_size as LogOffset) as usize;
             if let Some(segment) =
                 segments.get(prospective_currently_active_segment)
             {
@@ -496,15 +496,15 @@ impl SegmentAccountant {
         assert!(self.config.segment_cleanup_threshold < 100.);
         let cleanup_threshold =
             (self.config.segment_cleanup_threshold * 100.) as usize;
-        let drain_sz = io_buf_size * 100 / cleanup_threshold;
+        let drain_sz = segment_size * 100 / cleanup_threshold;
         let mut deferred_free_segments = vec![];
 
         for (idx, segment) in segments.iter_mut().enumerate() {
-            let segment_base = idx as LogId * io_buf_size as LogId;
+            let segment_base = idx as LogOffset * segment_size as LogOffset;
 
             if segment_base >= self.tip {
                 // set tip above the beginning of any
-                self.tip = segment_base + io_buf_size as LogId;
+                self.tip = segment_base + segment_size as LogOffset;
                 trace!(
                     "raised self.tip to {} during SA initialization",
                     self.tip
@@ -523,7 +523,7 @@ impl SegmentAccountant {
             };
 
             if idx != currently_active_segment
-                && segment_lsn + io_buf_size as Lsn
+                && segment_lsn + segment_size as Lsn
                     <= snapshot.max_header_stable_lsn
             {
                 if segment_sizes[idx] == 0 {
@@ -532,8 +532,8 @@ impl SegmentAccountant {
                         "freeing segment with lid {} during SA initialization",
                         segment_base
                     );
-                    if self.tip == segment_base + io_buf_size as LogId {
-                        self.tip -= io_buf_size as LogId;
+                    if self.tip == segment_base + segment_size as LogOffset {
+                        self.tip -= segment_size as LogOffset;
                     } else {
                         segment.state = Free;
                         self.free_segment(segment_base, true);
@@ -592,7 +592,7 @@ impl SegmentAccountant {
             .enumerate()
             .filter_map(|(id, s)| {
                 if s.lsn.is_some() {
-                    Some((s.lsn(), id as LogId * io_buf_size as LogId))
+                    Some((s.lsn(), id as LogOffset * segment_size as LogOffset))
                 } else {
                     None
                 }
@@ -603,11 +603,11 @@ impl SegmentAccountant {
         Ok(())
     }
 
-    fn free_segment(&mut self, lid: LogId, in_recovery: bool) {
+    fn free_segment(&mut self, lid: LogOffset, in_recovery: bool) {
         debug!("freeing segment {}", lid);
         debug!("free list before free {:?}", self.free);
 
-        let idx = self.lid_to_idx(lid);
+        let idx = self.segment_id(lid);
         assert!(
             self.tip > lid,
             "freed a segment above our current file tip, \
@@ -675,11 +675,11 @@ impl SegmentAccountant {
             lsn
         );
 
-        let new_idx = self.lid_to_idx(new_ptr.lid());
+        let new_idx = self.segment_id(new_ptr.lid());
 
         // make sure we're not actively trying to replace the destination
         let new_segment_start =
-            new_idx as LogId * self.config.io_buf_size as LogId;
+            new_idx as LogOffset * self.config.segment_size as LogOffset;
 
         assert!(!self.to_clean.contains(&new_segment_start));
 
@@ -703,7 +703,7 @@ impl SegmentAccountant {
                     .remove_blob(old_ptr.blob().1, &self.config)?;
             }
 
-            let old_idx = self.lid_to_idx(old_lid);
+            let old_idx = self.segment_id(old_lid);
             if new_idx == old_idx {
                 // we probably haven't flushed this segment yet, so don't
                 // mark the pid as being removed from it
@@ -727,7 +727,7 @@ impl SegmentAccountant {
                     "mark_replace called on Free segment with lid {}. \
                      this means it was dropped while other threads still had \
                      references to it.",
-                    old_idx * self.config.io_buf_size
+                    old_idx * self.config.segment_size
                 );
             }
 
@@ -752,7 +752,7 @@ impl SegmentAccountant {
             &self.config,
         ) && self.segments[idx].is_inactive();
 
-        let segment_start = (idx * self.config.io_buf_size) as LogId;
+        let segment_start = (idx * self.config.segment_size) as LogOffset;
 
         if can_drain {
             // can be cleaned
@@ -790,7 +790,7 @@ impl SegmentAccountant {
         let item = self.to_clean.get(seg_offset).cloned();
 
         if let Some(lid) = item {
-            let idx = self.lid_to_idx(lid);
+            let idx = self.segment_id(lid);
             let segment = &self.segments[idx];
             assert!(segment.state == Draining || segment.state == Inactive);
 
@@ -829,17 +829,18 @@ impl SegmentAccountant {
         let _measure = Measure::new(&M.accountant_mark_link);
 
         trace!("mark_link pid {} at ptr {}", pid, ptr);
-        let idx = self.lid_to_idx(ptr.lid());
+        let idx = self.segment_id(ptr.lid());
 
         // make sure we're not actively trying to replace the destination
-        let new_segment_start = idx as LogId * self.config.io_buf_size as LogId;
+        let new_segment_start =
+            idx as LogOffset * self.config.segment_size as LogOffset;
 
         assert!(!self.to_clean.contains(&new_segment_start));
 
         let segment = &mut self.segments[idx];
 
-        let segment_lsn = lsn / self.config.io_buf_size as Lsn
-            * self.config.io_buf_size as Lsn;
+        let segment_lsn = lsn / self.config.segment_size as Lsn
+            * self.config.segment_size as Lsn;
 
         // a race happened, and our Lsn does not apply anymore
         assert_eq!(
@@ -855,8 +856,8 @@ impl SegmentAccountant {
     }
 
     pub(super) fn stabilize(&mut self, stable_lsn: Lsn) -> Result<()> {
-        let io_buf_size = self.config.io_buf_size as Lsn;
-        let lsn = ((stable_lsn / io_buf_size) - 1) * io_buf_size;
+        let segment_size = self.config.segment_size as Lsn;
+        let lsn = ((stable_lsn / segment_size) - 1) * segment_size;
         trace!(
             "stabilize({}), normalized: {}, last: {}",
             stable_lsn,
@@ -879,7 +880,7 @@ impl SegmentAccountant {
             let deferred_free_segments =
                 self.deferred_free_segments.take().unwrap();
             for segment_base in deferred_free_segments {
-                let idx = self.lid_to_idx(segment_base);
+                let idx = self.segment_id(segment_base);
                 self.segments[idx].state = Free;
                 self.free_segment(segment_base, false);
             }
@@ -913,7 +914,7 @@ impl SegmentAccountant {
     /// The provided lsn and lid must exactly match the existing segment.
     fn deactivate_segment(&mut self, lsn: Lsn) -> Result<()> {
         let lid = self.ordering[&lsn];
-        let idx = self.lid_to_idx(lid);
+        let idx = self.segment_id(lid);
 
         trace!(
             "deactivating segment with lsn {}: {:?}",
@@ -941,7 +942,7 @@ impl SegmentAccountant {
                  all replacements for pid: {:?}",
                 lid,
                 pid,
-                old_idx * self.config.io_buf_size,
+                old_idx * self.config.segment_size,
                 old_segment.state,
                 replacements
                     .iter()
@@ -956,14 +957,14 @@ impl SegmentAccountant {
                  all previous segments so we can clean them. \
                  pid {} old_ptr segment: {} segments with pid: {:?}",
                 pid,
-                old_idx * self.config.io_buf_size,
+                old_idx * self.config.segment_size,
                 self.segments
                     .iter()
                     .enumerate()
                     .filter_map(|(i, s)| {
                         if s.present.contains(&pid) {
                             Some((
-                                i * self.config.io_buf_size,
+                                i * self.config.segment_size,
                                 s.state,
                                 s.present.clone(),
                             ))
@@ -997,7 +998,8 @@ impl SegmentAccountant {
                 .rposition(Segment::is_inactive)
                 .unwrap();
 
-            let segment_start = (last_index * self.config.io_buf_size) as LogId;
+            let segment_start =
+                (last_index * self.config.segment_size) as LogOffset;
 
             self.to_clean.insert(segment_start);
         }
@@ -1005,7 +1007,7 @@ impl SegmentAccountant {
         Ok(())
     }
 
-    fn bump_tip(&mut self) -> LogId {
+    fn bump_tip(&mut self) -> LogOffset {
         let truncations = mem::replace(&mut self.async_truncations, Vec::new());
 
         for truncation in truncations {
@@ -1019,7 +1021,7 @@ impl SegmentAccountant {
 
         let lid = self.tip;
 
-        self.tip += self.config.io_buf_size as LogId;
+        self.tip += self.config.segment_size as LogOffset;
 
         trace!("advancing file tip from {} to {}", lid, self.tip);
 
@@ -1027,21 +1029,21 @@ impl SegmentAccountant {
     }
 
     /// Returns the next offset to write a new segment in.
-    pub(super) fn next(&mut self, lsn: Lsn) -> Result<LogId> {
+    pub(super) fn next(&mut self, lsn: Lsn) -> Result<LogOffset> {
         let _measure = Measure::new(&M.accountant_next);
 
         assert_eq!(
-            lsn % self.config.io_buf_size as Lsn,
+            lsn % self.config.segment_size as Lsn,
             0,
             "unaligned Lsn provided to next!"
         );
 
-        let free: Vec<LogId> = self
+        let free: Vec<LogOffset> = self
             .free
             .iter()
             .filter(|lid| {
                 let idx =
-                    usize::try_from(*lid / self.config.io_buf_size as LogId)
+                    usize::try_from(*lid / self.config.segment_size as LogOffset)
                         .unwrap();
                 if let Some(last_lsn) = self.segments[idx].lsn {
                     last_lsn < self.max_stabilized_lsn
@@ -1056,7 +1058,7 @@ impl SegmentAccountant {
 
         // truncate if possible
         while self.tip != 0 && self.free.len() > 1 {
-            let last_segment = self.tip - self.config.io_buf_size as LogId;
+            let last_segment = self.tip - self.config.segment_size as LogOffset;
             if free.contains(&last_segment) {
                 self.free.remove(&last_segment);
                 self.truncate(last_segment)?;
@@ -1077,7 +1079,7 @@ impl SegmentAccountant {
         };
 
         // pin lsn to this segment
-        let idx = self.lid_to_idx(lid);
+        let idx = self.segment_id(lid);
 
         assert_eq!(self.segments[idx].state, Free);
 
@@ -1100,7 +1102,7 @@ impl SegmentAccountant {
         let lid_slack = self
             .deferred_free_segments
             .as_ref()
-            .map_or(0, |dfs| dfs.len() * self.config.io_buf_size);
+            .map_or(0, |dfs| dfs.len() * self.config.segment_size);
 
         debug!(
             "segment accountant returning offset: {} \
@@ -1118,7 +1120,7 @@ impl SegmentAccountant {
     pub(super) fn segment_snapshot_iter_from(
         &mut self,
         lsn: Lsn,
-    ) -> Box<dyn Iterator<Item = (Lsn, LogId)>> {
+    ) -> Box<dyn Iterator<Item = (Lsn, LogOffset)>> {
         assert!(
             !self.ordering.is_empty(),
             "expected ordering to have been initialized already"
@@ -1130,7 +1132,7 @@ impl SegmentAccountant {
              iterating over segments"
         );
 
-        let segment_len = self.config.io_buf_size as Lsn;
+        let segment_len = self.config.segment_size as Lsn;
         let normalized_lsn = lsn / segment_len * segment_len;
 
         trace!(
@@ -1148,9 +1150,9 @@ impl SegmentAccountant {
     }
 
     // truncate the file to the desired length
-    fn truncate(&mut self, at: LogId) -> Result<()> {
+    fn truncate(&mut self, at: LogOffset) -> Result<()> {
         assert_eq!(
-            at % self.config.io_buf_size as LogId,
+            at % self.config.segment_size as LogOffset,
             0,
             "new length must be io-buf-len aligned"
         );
@@ -1185,8 +1187,8 @@ impl SegmentAccountant {
         Ok(())
     }
 
-    fn lid_to_idx(&mut self, lid: LogId) -> usize {
-        let idx = assert_usize(lid / self.config.io_buf_size as LogId);
+    fn segment_id(&mut self, lid: LogOffset) -> SegmentId {
+        let idx = assert_usize(lid / self.config.segment_size as LogOffset);
 
         // TODO never resize like this, make it a single
         // responsibility when the tip is bumped / truncated.

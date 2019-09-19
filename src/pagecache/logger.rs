@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use super::{
     arr_to_u32, arr_to_u64, bump_atomic_lsn, iobuf, read_blob, read_message,
-    u32_to_arr, u64_to_arr, BlobPointer, DiskPtr, IoBuf, IoBufs, LogId,
-    LogKind, Lsn, MessageKind, Reservation, SegmentAccountant, Snapshot,
+    u32_to_arr, u64_to_arr, BlobPointer, DiskPtr, IoBuf, IoBufs, LogKind,
+    LogOffset, Lsn, MessageKind, Reservation, SegmentAccountant, Snapshot,
     BATCH_MANIFEST_PID, BLOB_INLINE_LEN, CONFIG_PID, COUNTER_PID, META_PID,
     MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
 };
@@ -164,7 +164,7 @@ impl Log {
 
         M.reserve_sz.measure(total_buf_len as f64);
 
-        let max_buf_size = (self.config.io_buf_size
+        let max_buf_size = (self.config.segment_size
             / MINIMUM_ITEMS_PER_SEGMENT)
             - SEG_HEADER_LEN;
 
@@ -281,7 +281,7 @@ impl Log {
                 continue;
             }
 
-            let log_id = iobuf.lid;
+            let log_offset = iobuf.offset;
 
             // if we're giving out a reservation,
             // the writer count should be positive
@@ -298,8 +298,8 @@ impl Log {
             // used to choose this IO buffer
             // were incremented in a racy way.
             assert_ne!(
-                log_id,
-                LogId::max_value(),
+                log_offset,
+                LogOffset::max_value(),
                 "fucked up on iobuf with lsn {}\n{:?}",
                 reservation_lsn,
                 self
@@ -312,7 +312,7 @@ impl Log {
             let res_end = res_start + inline_buf_len;
 
             let destination = &mut (out_buf)[res_start..res_end];
-            let reservation_offset = log_id + buf_offset as LogId;
+            let reservation_offset = log_offset + buf_offset as LogOffset;
 
             trace!(
                 "reserved {} bytes at lsn {} lid {}",

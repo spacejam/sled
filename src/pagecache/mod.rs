@@ -59,16 +59,17 @@ pub use self::{
     segment::SegmentMode,
 };
 
-/// An offset for a storage file segment.
+/// The offset of a segment. This equals its LogOffset (or the offset of any
+/// item contained inside it) divided by the configured segment_size.
 pub type SegmentId = usize;
 
-/// A log file offset.
-pub type LogId = u64;
+/// A file offset in the database log.
+pub type LogOffset = u64;
 
 /// A pointer to an blob blob.
 pub type BlobPointer = Lsn;
 
-/// A logical sequence number.
+/// The logical sequence number of an item in the database log.
 pub type Lsn = i64;
 
 /// A page identifier.

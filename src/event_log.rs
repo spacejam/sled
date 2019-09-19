@@ -24,34 +24,34 @@
 
 use std::collections::HashMap;
 
+use crate::pagecache::{DiskPtr, LogOffset, Lsn};
 use crate::*;
-use crate::pagecache::{LogId, DiskPtr, Lsn};
 
 /// A thing that happens at a certain time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum Event {
     SegmentAllocate {
         lsn: Lsn,
-        lid: LogId,
+        lid: LogOffset,
     },
     SegmentFree {
         lsn: Lsn,
-        lid: LogId,
+        lid: LogOffset,
     },
     SegmentZero {
         lsn: Lsn,
-        lid: LogId,
+        lid: LogOffset,
     },
     Replace {
         pid: PageId,
         lsn: Lsn,
-        lid: LogId,
-        old_lids: Vec<LogId>,
+        lid: LogOffset,
+        old_lids: Vec<LogOffset>,
     },
     Link {
         pid: PageId,
         lsn: Lsn,
-        lid: LogId,
+        lid: LogOffset,
     },
     PagesBeforeRestart {
         pages: HashMap<PageId, Vec<DiskPtr>>,

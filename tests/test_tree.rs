@@ -38,7 +38,7 @@ fn concurrent_tree_ops() {
             .temporary(true)
             .flush_every_ms(None)
             .snapshot_after_ops(100_000_000);
-        config_builder.io_buf_size = 256;
+        config_builder.segment_size = 256;
 
         let config = config_builder.build();
 
@@ -682,7 +682,7 @@ fn recover_tree() {
         .temporary(true)
         .flush_every_ms(None)
         .snapshot_after_ops(N_PER_THREAD as u64);
-    config_builder.io_buf_size = 4096;
+    config_builder.segment_size = 4096;
 
     let config = config_builder.build();
 
