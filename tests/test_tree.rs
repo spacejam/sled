@@ -33,12 +33,14 @@ fn concurrent_tree_ops() {
 
     for i in 0..INTENSITY {
         debug!("beginning test {}", i);
-        let config = ConfigBuilder::new()
+
+        let mut config_builder = ConfigBuilder::new()
             .temporary(true)
             .flush_every_ms(None)
-            .snapshot_after_ops(100_000_000)
-            .io_buf_size(250)
-            .build();
+            .snapshot_after_ops(100_000_000);
+        config_builder.io_buf_size = 256;
+
+        let config = config_builder.build();
 
         macro_rules! par {
             ($t:ident, $f:expr) => {
@@ -87,8 +89,7 @@ fn concurrent_tree_ops() {
 
         drop(t);
         let t = Arc::new(
-            Db::start(config.clone())
-                .expect("should be able to restart Tree"),
+            Db::start(config.clone()).expect("should be able to restart Tree"),
         );
 
         let n_scanned = t.iter().count();
@@ -114,8 +115,7 @@ fn concurrent_tree_ops() {
 
         drop(t);
         let t = Arc::new(
-            Db::start(config.clone())
-                .expect("should be able to restart Tree"),
+            Db::start(config.clone()).expect("should be able to restart Tree"),
         );
 
         debug!("========== CAS test in test {} ==========", i);
@@ -128,8 +128,7 @@ fn concurrent_tree_ops() {
 
         drop(t);
         let t = Arc::new(
-            Db::start(config.clone())
-                .expect("should be able to restart Tree"),
+            Db::start(config.clone()).expect("should be able to restart Tree"),
         );
 
         par! {t, |tree: &Tree, k: Vec<u8>| {
@@ -141,8 +140,7 @@ fn concurrent_tree_ops() {
 
         drop(t);
         let t = Arc::new(
-            Db::start(config.clone())
-                .expect("should be able to restart Tree"),
+            Db::start(config.clone()).expect("should be able to restart Tree"),
         );
 
         debug!("========== deleting in test {} ==========", i);
@@ -152,8 +150,7 @@ fn concurrent_tree_ops() {
 
         drop(t);
         let t = Arc::new(
-            Db::start(config.clone())
-                .expect("should be able to restart Tree"),
+            Db::start(config.clone()).expect("should be able to restart Tree"),
         );
 
         par! {t, |tree: &Tree, k: Vec<u8>| {
@@ -681,12 +678,13 @@ fn tree_range() {
 fn recover_tree() {
     common::setup_logger();
 
-    let config = ConfigBuilder::new()
+    let mut config_builder = ConfigBuilder::new()
         .temporary(true)
-        .io_buf_size(5000)
         .flush_every_ms(None)
-        .snapshot_after_ops(N_PER_THREAD as u64)
-        .build();
+        .snapshot_after_ops(N_PER_THREAD as u64);
+    config_builder.io_buf_size = 4096;
+
+    let config = config_builder.build();
 
     let t = Db::start(config.clone()).unwrap();
     for i in 0..N_PER_THREAD {

@@ -28,7 +28,10 @@ use crate::{debug, AtomicLsn, DeserializeOwned, SeqCst, Serialize};
 
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
-    constants::{BATCH_MANIFEST_PID, CONFIG_PID, COUNTER_PID, META_PID},
+    constants::{
+        BATCH_MANIFEST_PID, CONFIG_PID, COUNTER_PID, META_PID,
+        PAGE_CONSOLIDATION_THRESHOLD,
+    },
     iobuf::{IoBuf, IoBufs},
     iterator::{raw_segment_iter_from, LogIter},
     pagecache::Update,

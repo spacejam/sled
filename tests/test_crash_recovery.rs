@@ -211,14 +211,15 @@ fn run_batches(config: Config) {
 }
 
 fn run_without_snapshot(dir: &str) {
-    let config = ConfigBuilder::new()
-        .page_consolidation_threshold(10)
+    let mut config_builder = ConfigBuilder::new()
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(100))
-        .io_buf_size(1_000)
         .path(dir.to_string())
-        .snapshot_after_ops(1 << 56)
-        .build();
+        .snapshot_after_ops(1 << 56);
+
+    config_builder.io_buf_size = 1024;
+
+    let config = config_builder.build();
 
     match thread::spawn(|| run(config)).join() {
         Err(e) => {
@@ -230,14 +231,15 @@ fn run_without_snapshot(dir: &str) {
 }
 
 fn run_with_snapshot(dir: &str) {
-    let config = ConfigBuilder::new()
-        .page_consolidation_threshold(10)
+    let mut config_builder = ConfigBuilder::new()
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(100))
-        .io_buf_size(1_000)
         .path(dir.to_string())
-        .snapshot_after_ops(5000)
-        .build();
+        .snapshot_after_ops(5000);
+
+    config_builder.io_buf_size = 1024;
+
+    let config = config_builder.build();
 
     match thread::spawn(|| run(config)).join() {
         Err(e) => {
@@ -249,14 +251,15 @@ fn run_with_snapshot(dir: &str) {
 }
 
 fn run_batches_without_snapshot(dir: &str) {
-    let config = ConfigBuilder::new()
-        .page_consolidation_threshold(10)
+    let mut config_builder = ConfigBuilder::new()
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(100))
-        .io_buf_size(1_000)
         .path(dir.to_string())
-        .snapshot_after_ops(1 << 56)
-        .build();
+        .snapshot_after_ops(1 << 56);
+
+    config_builder.io_buf_size = 1024;
+
+    let config = config_builder.build();
 
     match thread::spawn(|| run_batches(config)).join() {
         Err(e) => {
@@ -268,14 +271,15 @@ fn run_batches_without_snapshot(dir: &str) {
 }
 
 fn run_batches_with_snapshot(dir: &str) {
-    let config = ConfigBuilder::new()
-        .page_consolidation_threshold(10)
+    let mut config_builder = ConfigBuilder::new()
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(100))
-        .io_buf_size(1_000)
         .path(dir.to_string())
-        .snapshot_after_ops(5000)
-        .build();
+        .snapshot_after_ops(5000);
+
+    config_builder.io_buf_size = 1024;
+
+    let config = config_builder.build();
 
     match thread::spawn(|| run_batches(config)).join() {
         Err(e) => {

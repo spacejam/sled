@@ -125,16 +125,18 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
     common::setup_logger();
 
-    let io_buf_size = 300;
+    let io_buf_size = 256;
 
-    let config = ConfigBuilder::new()
+    let mut config_builder = ConfigBuilder::new()
         .temporary(true)
         .snapshot_after_ops(1)
         .flush_every_ms(if flusher { Some(1) } else { None })
-        .io_buf_size(io_buf_size)
         .cache_capacity(256)
-        .idgen_persist_interval(1)
-        .build();
+        .idgen_persist_interval(1);
+
+    config_builder.io_buf_size = io_buf_size;
+
+    let config = config_builder.build();
 
     let mut tree = sled::Db::start(config.clone()).expect("tree should start");
     let mut reference = BTreeMap::new();

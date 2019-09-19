@@ -3,8 +3,8 @@
 mod common;
 
 use std::{
-    mem::size_of,
     fs,
+    mem::size_of,
     sync::{
         atomic::{AtomicUsize, Ordering},
         {Arc, Mutex},
@@ -18,9 +18,8 @@ use rand::{thread_rng, Rng};
 use sled::*;
 
 use sled::{
-    LogKind, Log, SegmentMode, LogRead, LogId, Lsn,
-    SEG_HEADER_LEN, MSG_HEADER_LEN, MINIMUM_ITEMS_PER_SEGMENT,
-    DiskPtr, PageId,
+    DiskPtr, Log, LogId, LogKind, LogRead, Lsn, PageId, SegmentMode,
+    MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
 };
 
 const PID: PageId = 0;
@@ -73,11 +72,14 @@ fn log_writebatch() -> crate::Result<()> {
 
 #[test]
 fn more_log_reservations_than_buffers() {
-    let config = ConfigBuilder::new()
+    let mut config_builder = ConfigBuilder::new()
         .temporary(true)
-        .io_buf_size(100)
-        .segment_mode(SegmentMode::Linear)
-        .build();
+        .segment_mode(SegmentMode::Linear);
+
+    config_builder.io_buf_size = 128;
+
+    let config = config_builder.build();
+
     let log = Log::start_raw_log(config.clone()).unwrap();
     let mut reservations = vec![];
 
@@ -98,11 +100,14 @@ fn more_log_reservations_than_buffers() {
 
 #[test]
 fn non_contiguous_log_flush() {
-    let config = ConfigBuilder::new()
+    let mut config_builder = ConfigBuilder::new()
         .temporary(true)
-        .segment_mode(SegmentMode::Linear)
-        .io_buf_size(1000)
-        .build();
+        .segment_mode(SegmentMode::Linear);
+
+    config_builder.io_buf_size = 1024;
+
+    let config = config_builder.build();
+
     let log = Log::start_raw_log(config.clone()).unwrap();
 
     let seg_overhead = SEG_HEADER_LEN;
@@ -123,12 +128,15 @@ fn concurrent_logging() {
     common::setup_logger();
     // TODO linearize res bufs, verify they are correct
     for i in 0..10 {
-        let config = ConfigBuilder::new()
+        let mut config_builder = ConfigBuilder::new()
             .temporary(true)
             .segment_mode(SegmentMode::Linear)
-            .io_buf_size(1000)
-            .flush_every_ms(Some(50))
-            .build();
+            .flush_every_ms(Some(50));
+
+        config_builder.io_buf_size = 1024;
+
+        let config = config_builder.build();
+
         let log = Arc::new(Log::start_raw_log(config.clone()).unwrap());
         let iobs2 = log.clone();
         let iobs3 = log.clone();
@@ -218,12 +226,15 @@ fn concurrent_logging() {
 fn concurrent_logging_404() {
     common::setup_logger();
 
-    let config = ConfigBuilder::new()
+    let mut config_builder = ConfigBuilder::new()
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
-        .io_buf_size(1000)
-        .flush_every_ms(Some(50))
-        .build();
+        .flush_every_ms(Some(50));
+
+    config_builder.io_buf_size = 1024;
+
+    let config = config_builder.build();
+
     let log_arc = Arc::new(Log::start_raw_log(config.clone()).unwrap());
 
     const ITERATIONS: i32 = 5000;
@@ -337,11 +348,14 @@ fn log_aborts() {
 
 #[test]
 fn log_iterator() {
-    let config = ConfigBuilder::new()
+    let mut config_builder = ConfigBuilder::new()
         .temporary(true)
-        .segment_mode(SegmentMode::Linear)
-        .io_buf_size(1000)
-        .build();
+        .segment_mode(SegmentMode::Linear);
+
+    config_builder.io_buf_size = 1024;
+
+    let config = config_builder.build();
+
     let log = Log::start_raw_log(config.clone()).unwrap();
     let (first_lsn, _) =
         log.reserve(KIND, PID, b"").unwrap().complete().unwrap();
@@ -385,11 +399,13 @@ fn log_chunky_iterator() {
     let mut threads = vec![];
     for tn in 0..100 {
         let thread = thread::spawn(move || {
-            let config = ConfigBuilder::new()
+            let mut config_builder = ConfigBuilder::new()
                 .temporary(true)
-                .segment_mode(SegmentMode::Linear)
-                .io_buf_size(100)
-                .build();
+                .segment_mode(SegmentMode::Linear);
+
+            config_builder.io_buf_size = 128;
+
+            let config = config_builder.build();
 
             let log = Log::start_raw_log(config.clone()).unwrap();
 
@@ -447,11 +463,13 @@ fn multi_segment_log_iteration() {
     common::setup_logger();
     // ensure segments are being linked
     // ensure trailers are valid
-    let config = ConfigBuilder::new()
+    let mut config_builder = ConfigBuilder::new()
         .temporary(true)
-        .segment_mode(SegmentMode::Linear)
-        .io_buf_size(500)
-        .build();
+        .segment_mode(SegmentMode::Linear);
+
+    config_builder.io_buf_size = 512;
+
+    let config = config_builder.build();
 
     let total_seg_overhead = SEG_HEADER_LEN;
     let big_msg_overhead = MSG_HEADER_LEN + total_seg_overhead;
@@ -552,12 +570,14 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
     common::setup_logger();
 
     use self::Op::*;
-    let config = ConfigBuilder::new()
+    let mut config_builder = ConfigBuilder::new()
         .temporary(true)
-        .io_buf_size(8192)
         .flush_every_ms(if flusher { Some(1) } else { None })
-        .segment_mode(SegmentMode::Linear)
-        .build();
+        .segment_mode(SegmentMode::Linear);
+
+    config_builder.io_buf_size = 8192;
+
+    let config = config_builder.build();
 
     let mut tip = 0;
     let mut log = Log::start_raw_log(config.clone()).unwrap();

@@ -16,9 +16,8 @@ use {
 };
 
 use sled::{
+    pin, ConfigBuilder, Materializer, PageCache, MAX_SPACE_AMPLIFICATION,
     PAGETABLE_NODE_SZ,
-    ConfigBuilder, Materializer, PageCache,
-    MAX_SPACE_AMPLIFICATION, pin
 };
 
 type PageId = u64;
@@ -48,13 +47,15 @@ impl Into<Vec<usize>> for TestMaterializer {
 
 #[test]
 fn pagecache_monotonic_idgen() {
-    let config = ConfigBuilder::new()
+    let mut config_builder = ConfigBuilder::new()
         .temporary(true)
         .cache_capacity(256)
         .flush_every_ms(None)
-        .snapshot_after_ops(1_000_000)
-        .io_buf_size(20000)
-        .build();
+        .snapshot_after_ops(1_000_000);
+
+    config_builder.io_buf_size = 16384;
+
+    let config = config_builder.build();
 
     let pc: PageCache<TestMaterializer> =
         PageCache::start(config.clone()).unwrap();
@@ -76,13 +77,15 @@ fn pagecache_monotonic_idgen() {
 
 #[test]
 fn pagecache_caching() {
-    let config = ConfigBuilder::new()
+    let mut config_builder = ConfigBuilder::new()
         .temporary(true)
         .cache_capacity(256)
         .flush_every_ms(None)
-        .snapshot_after_ops(1_000_000)
-        .io_buf_size(20000)
-        .build();
+        .snapshot_after_ops(1_000_000);
+
+    config_builder.io_buf_size = 16384;
+
+    let config = config_builder.build();
 
     let pc: PageCache<TestMaterializer> =
         PageCache::start(config.clone()).unwrap();
@@ -112,13 +115,14 @@ fn concurrent_pagecache() -> sled::Result<()> {
     const N_THREADS: usize = 10;
     const N_PER_THREAD: usize = 100;
 
-    let config = ConfigBuilder::new()
+    let mut config_builder = ConfigBuilder::new()
         .temporary(true)
         .flush_every_ms(Some(10))
-        .snapshot_after_ops(100_000_000)
-        .io_buf_size(250)
-        .page_consolidation_threshold(3)
-        .build();
+        .snapshot_after_ops(100_000_000);
+
+    config_builder.io_buf_size = 256;
+
+    let config = config_builder.build();
 
     macro_rules! par {
         ($t:ident, $f:expr) => {
@@ -231,13 +235,15 @@ fn concurrent_pagecache() -> sled::Result<()> {
 
 #[test]
 fn pagecache_strange_crash_1() {
-    let config = ConfigBuilder::new()
+    let mut config_builder = ConfigBuilder::new()
         .temporary(true)
         .cache_capacity(256)
         .flush_every_ms(None)
-        .snapshot_after_ops(1_000_000)
-        .io_buf_size(20000)
-        .build();
+        .snapshot_after_ops(1_000_000);
+
+    config_builder.io_buf_size = 16384;
+
+    let config = config_builder.build();
 
     {
         let pc: PageCache<TestMaterializer> =
@@ -270,13 +276,15 @@ fn pagecache_strange_crash_1() {
 #[test]
 fn pagecache_strange_crash_2() {
     for _ in 0..10 {
-        let config = ConfigBuilder::new()
+        let mut config_builder = ConfigBuilder::new()
             .temporary(true)
             .cache_capacity(256)
             .flush_every_ms(None)
-            .snapshot_after_ops(1_000_000)
-            .io_buf_size(20000)
-            .build();
+            .snapshot_after_ops(1_000_000);
+
+        config_builder.io_buf_size = 16384;
+
+        let config = config_builder.build();
 
         config.verify_snapshot().unwrap();
 
@@ -310,11 +318,12 @@ fn pagecache_strange_crash_2() {
 
 #[test]
 fn basic_pagecache_recovery() {
-    let config = ConfigBuilder::new()
-        .temporary(true)
-        .flush_every_ms(None)
-        .io_buf_size(1000)
-        .build();
+    let mut config_builder =
+        ConfigBuilder::new().temporary(true).flush_every_ms(None);
+
+    config_builder.io_buf_size = 1024;
+
+    let config = config_builder.build();
 
     let pc: PageCache<TestMaterializer> =
         PageCache::start(config.clone()).unwrap();
@@ -424,12 +433,14 @@ enum P {
 fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
     common::setup_logger();
     use self::Op::*;
-    let config = ConfigBuilder::new()
+    let mut config_builder = ConfigBuilder::new()
         .temporary(true)
-        .io_buf_size(1000)
         .flush_every_ms(if flusher { Some(1) } else { None })
-        .cache_capacity(256)
-        .build();
+        .cache_capacity(256);
+
+    config_builder.io_buf_size = 1024;
+
+    let config = config_builder.build();
 
     let mut pc: PageCache<TestMaterializer> =
         PageCache::start(config.clone()).unwrap();
