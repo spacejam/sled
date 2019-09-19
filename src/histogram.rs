@@ -26,6 +26,7 @@
 //! into the shared collector that will be used for
 //! reporting.
 #![allow(unused)]
+#![allow(unused_results)]
 
 use std::fmt::{self, Debug};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -89,7 +90,7 @@ impl Histogram {
             let compressed: u16 = compress(value_float);
 
             // increment the counter for this compressed value
-            self.vals[compressed as usize].fetch_add(1, Ordering::Relaxed) + 1
+            self.vals[compressed as usize].fetch_add(1, Ordering::Relaxed);
         }
     }
 

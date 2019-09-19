@@ -1070,8 +1070,6 @@ impl Tree {
         K: AsRef<[u8]>,
         R: RangeBounds<K>,
     {
-        let _measure = Measure::new(&M.tree_scan);
-
         let lo = match range.start_bound() {
             ops::Bound::Included(ref start) => {
                 ops::Bound::Included(IVec::from(start.as_ref()))
@@ -1340,10 +1338,7 @@ impl Tree {
                 // failed.
             }
         } else {
-            M.tree_root_split_attempt();
-            if self.root_hoist(root_pid, rhs_pid, &rhs_lo, guard)? {
-                M.tree_root_split_success();
-            }
+            let _ = self.root_hoist(root_pid, rhs_pid, &rhs_lo, guard)?;
         }
 
         Ok(())
@@ -1356,6 +1351,7 @@ impl Tree {
         at: &IVec,
         guard: &'g Guard,
     ) -> Result<bool> {
+        M.tree_root_split_attempt();
         // hoist new root, pointing to lhs & rhs
         let root_lo = b"";
         let mut new_root_vec = vec![];
@@ -1380,6 +1376,7 @@ impl Tree {
         )?;
         if cas.is_ok() {
             debug!("root hoist from {} to {} successful", from, new_root_pid);
+            M.tree_root_split_success();
 
             // we spin in a cas loop because it's possible
             // 2 threads are at this point, and we don't want
