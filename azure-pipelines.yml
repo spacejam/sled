@@ -29,7 +29,7 @@ strategy:
       rustup_toolchain: nightly
       testKind: 'sanitizers'
     cross-compile:
-      imageName: 'ubuntu-16.04'
+      imageName: 'macos-10.13'
       rustup_toolchain: nightly
       testKind: 'cross-compile'
 
