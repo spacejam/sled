@@ -121,8 +121,8 @@ fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
     let set_max = get_max + args.flag_set_prop;
     let del_max = set_max + args.flag_del_prop;
     let cas_max = del_max + args.flag_cas_prop;
-    let scan_max = cas_max + args.flag_scan_prop;
-    let merge_max = scan_max + args.flag_merge_prop;
+    let merge_max = cas_max + args.flag_merge_prop;
+    let scan_max = merge_max + args.flag_scan_prop;
 
     let bytes = |len| -> Vec<u8> {
         let i = if args.flag_sequential {
@@ -139,9 +139,9 @@ fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
     let mut rng = thread_rng();
 
     while !shutdown.load(Ordering::Relaxed) {
-        TOTAL.fetch_add(1, Ordering::Release);
+        let op = TOTAL.fetch_add(1, Ordering::Release);
         let key = bytes(args.flag_key_len);
-        let choice = rng.gen_range(0, merge_max + 1);
+        let choice = rng.gen_range(0, scan_max + 1);
 
         match choice {
             v if v <= get_max => {
@@ -172,10 +172,13 @@ fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
                     panic!("operational error: {:?}", e);
                 }
             }
-            v if v > cas_max && v <= scan_max => {
+            v if v > cas_max && v <= merge_max => {
+                tree.merge(&key, bytes(args.flag_val_len)).unwrap();
+            }
+            _ => {
                 let iter = tree.range(key..).map(|res| res.unwrap());
 
-                if v % 2 == 0 {
+                if op % 2 == 0 {
                     let _ = iter.take(rng.gen_range(0, 15)).collect::<Vec<_>>();
                 } else {
                     let _ = iter
@@ -183,9 +186,6 @@ fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
                         .take(rng.gen_range(0, 15))
                         .collect::<Vec<_>>();
                 }
-            }
-            _ => {
-                tree.merge(&key, bytes(args.flag_val_len)).unwrap();
             }
         }
     }

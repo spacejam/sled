@@ -28,6 +28,7 @@ log = "0.4"
 color-backtrace = "0.1.3"
 
 [dependencies.sled]
+default_features = false
 path = "../.."
 
 [dependencies.serde]

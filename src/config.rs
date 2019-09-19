@@ -687,14 +687,6 @@ impl Config {
             "snapshot last_lid diverged"
         );
 
-        /*
-        assert_eq!(
-            incremental,
-            regenerated,
-            "snapshots have diverged!"
-        );
-        */
-
         Ok(())
     }
 
