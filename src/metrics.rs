@@ -1,3 +1,5 @@
+#![allow(unused_results)]
+
 use std::{
     sync::atomic::AtomicUsize,
     time::{Duration, Instant},
