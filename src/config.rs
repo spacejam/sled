@@ -20,7 +20,7 @@ const DEFAULT_PATH: &str = "default.sled";
 /// storage file information
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
 pub struct PersistedConfig {
-    pub io_buf_size: usize,
+    pub segment_size: usize,
     pub use_compression: bool,
     pub version: (usize, usize),
 }
@@ -63,7 +63,7 @@ pub struct ConfigBuilder {
     #[doc(hidden)]
     pub flush_every_ms: Option<u64>,
     #[doc(hidden)]
-    pub io_buf_size: usize,
+    pub segment_size: usize,
     #[doc(hidden)]
     pub path: PathBuf,
     #[doc(hidden)]
@@ -98,7 +98,7 @@ unsafe impl Send for ConfigBuilder {}
 impl Default for ConfigBuilder {
     fn default() -> Self {
         Self {
-            io_buf_size: 2 << 22, // 8mb
+            segment_size: 2 << 22, // 8mb
             path: PathBuf::from(DEFAULT_PATH),
             read_only: false,
             cache_capacity: 1024 * 1024 * 1024, // 1gb
@@ -239,16 +239,16 @@ impl ConfigBuilder {
     // panics if config options are outside of advised range
     fn validate(&self) -> Result<()> {
         supported!(
-            self.io_buf_size.count_ones() == 1,
-            "io_buf_size should be a power of 2"
+            self.segment_size.count_ones() == 1,
+            "segment_size should be a power of 2"
         );
         supported!(
-            self.io_buf_size >= 100,
-            "io_buf_size should be hundreds of kb at minimum, and we won't start if below 100"
+            self.segment_size >= 100,
+            "segment_size should be hundreds of kb at minimum, and we won't start if below 100"
         );
         supported!(
-            self.io_buf_size <= 1 << 24,
-            "io_buf_size should be <= 16mb"
+            self.segment_size <= 1 << 24,
+            "segment_size should be <= 16mb"
         );
         supported!(
             match self.segment_cleanup_threshold.partial_cmp(&0.01) {
@@ -369,11 +369,11 @@ impl ConfigBuilder {
                 );
 
                 supported!(
-                    self.io_buf_size == old.io_buf_size,
+                    self.segment_size == old.segment_size,
                     format!(
                         "cannot change the io buffer size across restarts. \
                          please change it back to {}",
-                        old.io_buf_size
+                        old.segment_size
                     )
                 );
 

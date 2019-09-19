@@ -59,16 +59,19 @@ pub use self::{
     segment::SegmentMode,
 };
 
-/// An offset for a storage file segment.
+/// A segment id == Segment.LogOffset / Config.SegmentSize.
 pub type SegmentId = usize;
 
-/// A log file offset.
-pub type LogId = u64;
+/// An offset in the file storage sometimes called LogId (lid).
+pub type LogOffset = u64;
 
 /// A pointer to an blob blob.
 pub type BlobPointer = Lsn;
 
-/// A logical sequence number.
+/// A logical sequence number of a log entry ==
+/// aligned log entry LogOffset ==
+/// Segment.LogOffset & ~SegmentSize
+/// Represent an Id of a log segment.
 pub type Lsn = i64;
 
 /// A page identifier.

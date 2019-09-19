@@ -125,7 +125,7 @@ fn prop_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
     common::setup_logger();
 
-    let io_buf_size = 256;
+    let segment_size = 256;
 
     let mut config_builder = ConfigBuilder::new()
         .temporary(true)
@@ -134,7 +134,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
         .cache_capacity(256)
         .idgen_persist_interval(1);
 
-    config_builder.io_buf_size = io_buf_size;
+    config_builder.segment_size = segment_size;
 
     let config = config_builder.build();
 
@@ -262,7 +262,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                     let mut val = vec![hi, lo];
                     val.extend(vec![
                         lo;
-                        hi as usize * io_buf_size / 4
+                        hi as usize * segment_size / 4
                             * set_counter as usize
                     ]);
                     val

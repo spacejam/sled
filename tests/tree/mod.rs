@@ -211,7 +211,7 @@ pub fn prop_tree_matches_btreemap(
         .cache_capacity(256)
         .idgen_persist_interval(1);
 
-    config_builder.io_buf_size = 8192;
+    config_builder.segment_size = 8192;
 
     let config = config_builder.build();
 

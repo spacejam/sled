@@ -53,7 +53,7 @@ fn pagecache_monotonic_idgen() {
         .flush_every_ms(None)
         .snapshot_after_ops(1_000_000);
 
-    config_builder.io_buf_size = 16384;
+    config_builder.segment_size = 16384;
 
     let config = config_builder.build();
 
@@ -83,7 +83,7 @@ fn pagecache_caching() {
         .flush_every_ms(None)
         .snapshot_after_ops(1_000_000);
 
-    config_builder.io_buf_size = 16384;
+    config_builder.segment_size = 16384;
 
     let config = config_builder.build();
 
@@ -120,7 +120,7 @@ fn concurrent_pagecache() -> sled::Result<()> {
         .flush_every_ms(Some(10))
         .snapshot_after_ops(100_000_000);
 
-    config_builder.io_buf_size = 256;
+    config_builder.segment_size = 256;
 
     let config = config_builder.build();
 
@@ -241,7 +241,7 @@ fn pagecache_strange_crash_1() {
         .flush_every_ms(None)
         .snapshot_after_ops(1_000_000);
 
-    config_builder.io_buf_size = 16384;
+    config_builder.segment_size = 16384;
 
     let config = config_builder.build();
 
@@ -282,7 +282,7 @@ fn pagecache_strange_crash_2() {
             .flush_every_ms(None)
             .snapshot_after_ops(1_000_000);
 
-        config_builder.io_buf_size = 16384;
+        config_builder.segment_size = 16384;
 
         let config = config_builder.build();
 
@@ -321,7 +321,7 @@ fn basic_pagecache_recovery() {
     let mut config_builder =
         ConfigBuilder::new().temporary(true).flush_every_ms(None);
 
-    config_builder.io_buf_size = 1024;
+    config_builder.segment_size = 1024;
 
     let config = config_builder.build();
 
@@ -438,7 +438,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
         .flush_every_ms(if flusher { Some(1) } else { None })
         .cache_capacity(256);
 
-    config_builder.io_buf_size = 1024;
+    config_builder.segment_size = 1024;
 
     let config = config_builder.build();
 
