@@ -69,9 +69,7 @@ pub type LogOffset = u64;
 /// A pointer to an blob blob.
 pub type BlobPointer = Lsn;
 
-/// A logical sequence number of a log entry.
-/// A segment lsn equals to an aligned LogOffset that is
-/// Segment.LogOffset & ~SegmentSize.
+/// The logical sequence number of an item in the database log.
 pub type Lsn = i64;
 
 /// A page identifier.
