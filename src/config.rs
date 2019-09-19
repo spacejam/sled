@@ -64,8 +64,6 @@ pub struct ConfigBuilder {
     #[doc(hidden)]
     pub io_buf_size: usize,
     #[doc(hidden)]
-    pub page_consolidation_threshold: usize,
-    #[doc(hidden)]
     pub path: PathBuf,
     #[doc(hidden)]
     pub read_only: bool,
@@ -100,7 +98,6 @@ impl Default for ConfigBuilder {
     fn default() -> Self {
         Self {
             io_buf_size: 2 << 22, // 8mb
-            page_consolidation_threshold: 10,
             path: PathBuf::from(DEFAULT_PATH),
             read_only: false,
             cache_capacity: 1024 * 1024 * 1024, // 1gb
@@ -223,8 +220,6 @@ impl ConfigBuilder {
     }
 
     builder!(
-        (io_buf_size, usize, "size of each io flush buffer. MUST be multiple of 512!"),
-        (page_consolidation_threshold, usize, "page consolidation threshold"),
         (temporary, bool, "deletes the database after drop. if no path is set, uses /dev/shm on linux"),
         (read_only, bool, "whether to run in read-only mode"),
         (cache_capacity, u64, "maximum size for the system page cache"),
@@ -243,20 +238,16 @@ impl ConfigBuilder {
     // panics if config options are outside of advised range
     fn validate(&self) -> Result<()> {
         supported!(
+            self.io_buf_size.count_ones() == 1,
+            "io_buf_size should be a power of 2"
+        );
+        supported!(
             self.io_buf_size >= 100,
             "io_buf_size should be hundreds of kb at minimum, and we won't start if below 100"
         );
         supported!(
             self.io_buf_size <= 1 << 24,
             "io_buf_size should be <= 16mb"
-        );
-        supported!(
-            self.page_consolidation_threshold >= 1,
-            "must consolidate pages after a non-zero number of updates"
-        );
-        supported!(
-            self.page_consolidation_threshold < 1 << 20,
-            "must consolidate pages after fewer than 1 million updates"
         );
         supported!(
             match self.segment_cleanup_threshold.partial_cmp(&0.01) {

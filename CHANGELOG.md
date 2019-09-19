@@ -1,3 +1,16 @@
+# Unreleased
+
+## Breaking Changes
+
+* The `io_buf_size` method has been removed from
+  ConfigBuilder. This can be manually set by setting
+  the attribute directly on the ConfigBuilder, but
+  this is discouraged. Additionally, this must now
+  be a power of 2.
+* The `page_consolidation_threshold` method has been
+  removed from ConfigBuilder, and this is now
+  a constant of 10.
+
 # 0.28
 
 ## Breaking Changes
@@ -16,7 +29,7 @@
   loops during iteration.
 * Several cases of incorrect unsafe code were removed
   from the sled crate. No bugs are known to have been
-  encountered, but they may have resulted in 
+  encountered, but they may have resulted in
   incorrect optimizations in future refactors.
 
 # 0.27

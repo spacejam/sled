@@ -560,7 +560,7 @@ where
         let head = unsafe { head_ptr.deref().head(&guard) };
         let stack_iter = StackIter::from_ptr(head, &guard);
         let stack_len = stack_iter.size_hint().1.unwrap();
-        if stack_len >= self.config.page_consolidation_threshold {
+        if stack_len >= PAGE_CONSOLIDATION_THRESHOLD {
             let current_frag =
                 if let Some((current_ptr, frag, _sz)) = self.get(pid, guard)? {
                     if old.ts != current_ptr.ts
