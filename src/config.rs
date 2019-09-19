@@ -8,9 +8,6 @@ use std::{
     sync::{atomic::AtomicUsize, Arc},
 };
 
-#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-use fs2::FileExt;
-
 use crate::pagecache::{
     arr_to_u32, read_message, read_snapshot_or_default, u32_to_arr, Lsn,
     PageState, SegmentMode,
@@ -22,11 +19,15 @@ const DEFAULT_PATH: &str = "default.sled";
 /// A persisted configuration about high-level
 /// storage file information
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
-pub struct PersistedConfig;
+pub struct PersistedConfig {
+    pub io_buf_size: usize,
+    pub use_compression: bool,
+    pub version: (usize, usize),
+}
 
 impl PersistedConfig {
     pub fn size_in_bytes(&self) -> u64 {
-        0
+        return std::mem::size_of::<PersistedConfig>() as u64;
     }
 }
 
@@ -208,7 +209,7 @@ impl ConfigBuilder {
     }
 
     fn limit_cache_max_memory(&mut self) {
-        let limit = u64::from(get_memory_limit());
+        let limit = sys_limits::get_memory_limit();
         if limit > 0 && self.cache_capacity > limit {
             self.cache_capacity = limit;
             error!(
@@ -310,7 +311,7 @@ impl ConfigBuilder {
             res.map_err(Error::from)?;
         }
 
-        self.verify_config_changes_ok()?;
+        self.verify_config()?;
 
         // open the data file
         let mut options = fs::OpenOptions::new();
@@ -331,6 +332,8 @@ impl ConfigBuilder {
     fn try_lock(&self, file: File) -> Result<File> {
         #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
+            use fs2::FileExt;
+
             let try_lock = if self.read_only {
                 file.try_lock_shared()
             } else {
@@ -352,7 +355,7 @@ impl ConfigBuilder {
         Ok(file)
     }
 
-    fn verify_config_changes_ok(&self) -> Result<()> {
+    fn verify_config(&self) -> Result<()> {
         match self.read_config() {
             Ok(Some(old)) => {
                 supported!(
@@ -702,109 +705,6 @@ impl Config {
             .set_len(new_len)
             .expect("should be able to truncate");
     }
-}
-
-/// See the Kernel's documentation for more information about this subsystem,
-/// found at:  [Documentation/cgroup-v1/memory.txt](https://www.kernel.org/doc/Documentation/cgroup-v1/memory.txt)
-///
-/// If there's no memory limit specified on the container this may return
-/// 0x7FFFFFFFFFFFF000 (2^63-1 rounded down to 4k which is a common page size).
-/// So we know we are not running in a memory restricted environment.
-#[cfg(target_os = "linux")]
-fn get_cgroup_memory_limit() -> io::Result<u64> {
-    File::open("/sys/fs/cgroup/memory/memory.limit_in_bytes")
-        .and_then(read_u64_from)
-}
-
-#[cfg(target_os = "linux")]
-fn read_u64_from(mut file: File) -> io::Result<u64> {
-    let mut s = String::new();
-    file.read_to_string(&mut s).and_then(|_| {
-        s.trim()
-            .parse()
-            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
-    })
-}
-
-/// Returns the maximum size of total available memory of the process, in bytes.
-/// If this limit is exceeded, the malloc() and mmap() functions shall fail with
-/// errno set to [ENOMEM].
-#[allow(unsafe_code)]
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn get_rlimit_as() -> io::Result<libc::rlimit> {
-    let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
-
-    let ret = unsafe { libc::getrlimit(libc::RLIMIT_AS, limit.as_mut_ptr()) };
-
-    if ret == 0 {
-        Ok(unsafe { limit.assume_init() })
-    } else {
-        Err(io::Error::last_os_error())
-    }
-}
-
-#[allow(unsafe_code)]
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn get_available_memory() -> io::Result<u64> {
-    let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
-    if pages == -1 {
-        return Err(io::Error::last_os_error());
-    }
-
-    let page_size = unsafe { libc::sysconf(libc::_SC_PAGE_SIZE) };
-    if page_size == -1 {
-        return Err(io::Error::last_os_error());
-    }
-
-    Ok((pages as u64) * (page_size as u64))
-}
-
-fn get_memory_limit() -> u64 {
-    // Maximum addressable memory space limit in u64
-    static MAX_USIZE: u64 = usize::max_value() as u64;
-
-    let mut max: u64 = 0;
-
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(mem) = get_cgroup_memory_limit() {
-            max = mem;
-        }
-
-        // If there's no memory limit specified on the container this
-        // actually returns 0x7FFFFFFFFFFFF000 (2^63-1 rounded down to
-        // 4k which is a common page size). So we know we are not
-        // running in a memory restricted environment.
-        // src: https://github.com/dotnet/coreclr/blob/master/src/pal/src/misc/cgroup.cpp#L385-L428
-        if max > 0x7FFF_FFFF_0000_0000 {
-            return 0;
-        }
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    {
-        if let Ok(rlim) = get_rlimit_as() {
-            let rlim_cur = u64::from(rlim.rlim_cur);
-            if rlim_cur < max || max == 0 {
-                max = rlim_cur;
-            }
-        }
-
-        if let Ok(available) = get_available_memory() {
-            if available < max || max == 0 {
-                max = available;
-            }
-        }
-    }
-
-    if max > MAX_USIZE {
-        // It is observed in practice when the memory is unrestricted, Linux
-        // control group returns a physical limit that is bigger than
-        // the address space
-        max = MAX_USIZE;
-    }
-
-    u64::from(max)
 }
 
 fn crate_version() -> (usize, usize) {

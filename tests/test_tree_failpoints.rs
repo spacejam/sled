@@ -1,3 +1,4 @@
+#![cfg(feature = "failpoints")]
 mod common;
 
 use std::collections::{BTreeMap, HashSet};
