@@ -1,5 +1,5 @@
-extern crate sled;
 extern crate libc;
+extern crate sled;
 
 use std::ffi::CString;
 use std::mem;
@@ -33,8 +33,8 @@ pub unsafe extern "C" fn sled_free_config(config: *mut ConfigBuilder) {
     drop(Box::from_raw(config));
 }
 
-/// Set the configured file path. The caller is responsible for freeing the path string after
-/// calling this (it is copied in this function).
+/// Set the configured file path. The caller is responsible for freeing the path
+/// string after calling this (it is copied in this function).
 #[no_mangle]
 pub unsafe extern "C" fn sled_config_set_path(
     config: *mut ConfigBuilder,
@@ -142,11 +142,12 @@ pub unsafe extern "C" fn sled_set(
 ) {
     let k = slice::from_raw_parts(key, keylen).to_vec();
     let v = slice::from_raw_parts(val, vallen).to_vec();
-    (*db).set(k.clone(), v.clone()).unwrap();
+    (*db).insert(k.clone(), v.clone()).unwrap();
 }
 
 /// Get the value of a key.
-/// Caller is responsible for freeing the returned value with `sled_free_buf` if it's non-null.
+/// Caller is responsible for freeing the returned value with `sled_free_buf` if
+/// it's non-null.
 #[no_mangle]
 pub unsafe extern "C" fn sled_get(
     db: *mut Tree,
@@ -157,7 +158,7 @@ pub unsafe extern "C" fn sled_get(
     let k = slice::from_raw_parts(key as *const u8, keylen);
     let res = (*db).get(k);
     match res {
-        Ok(Some(v)) => leak_buf(v, vallen),
+        Ok(Some(v)) => leak_buf(v.to_vec(), vallen),
         Ok(None) => ptr::null_mut(),
         // TODO proper error propagation
         Err(e) => panic!("{:?}", e),
@@ -172,16 +173,17 @@ pub unsafe extern "C" fn sled_del(
     keylen: size_t,
 ) {
     let k = slice::from_raw_parts(key as *const u8, keylen);
-    (*db).del(k).unwrap();
+    (*db).remove(k).unwrap();
 }
 
 /// Compare and swap.
 /// Returns 1 if successful, 0 if unsuccessful.
 /// Otherwise sets `actual_val` and `actual_vallen` to the current value,
 /// which must be freed using `sled_free_buf` by the caller if non-null.
-/// `actual_val` will be null and `actual_vallen` 0 if the current value is not set.
+/// `actual_val` will be null and `actual_vallen` 0 if the current value is not
+/// set.
 #[no_mangle]
-pub unsafe extern "C" fn sled_cas(
+pub unsafe extern "C" fn sled_compare_and_swap(
     db: *mut Tree,
     key: *const c_char,
     keylen: size_t,
@@ -210,18 +212,16 @@ pub unsafe extern "C" fn sled_cas(
         Some(copy)
     };
 
-    let res = (*db).cas(k.clone(), old, new);
+    let res = (*db).compare_and_swap(k.clone(), old, new);
 
     match res {
-        Ok(()) => {
-            1
-        }
-        Err(Error::CasFailed(None)) => {
+        Ok(_) => 1,
+        Err(Error::CompareAndSwap { cur: None }) => {
             *actual_vallen = 0;
             0
         }
-        Err(Error::CasFailed(Some(v))) => {
-            *actual_val = leak_buf(v, actual_vallen) as *const u8;
+        Err(Error::CompareAndSwap { cur: Some(v) }) => {
+            *actual_val = leak_buf(v.to_vec(), actual_vallen) as *const u8;
             0
         }
         // TODO proper error propagation
@@ -229,16 +229,17 @@ pub unsafe extern "C" fn sled_cas(
     }
 }
 
-/// Iterate from a starting key.
-/// Caller is responsible for freeing the returned iterator with `sled_free_iter`.
+/// Iterate over tuples which have specified key prefix.
+/// Caller is responsible for freeing the returned iterator with
+/// `sled_free_iter`.
 #[no_mangle]
-pub unsafe extern "C" fn sled_scan<'a>(
+pub unsafe extern "C" fn sled_scan_prefix(
     db: *mut Tree,
     key: *const c_char,
     keylen: size_t,
-) -> *mut Iter<'a> {
+) -> *mut Iter {
     let k = slice::from_raw_parts(key as *const u8, keylen);
-    Box::into_raw(Box::new((*db).scan(k)))
+    Box::into_raw(Box::new((*db).scan_prefix(k)))
 }
 
 /// Get they next kv pair from an iterator.
@@ -254,8 +255,8 @@ pub unsafe extern "C" fn sled_iter_next(
 ) -> c_uchar {
     match (*iter).next() {
         Some(Ok((k, v))) => {
-            *key = leak_buf(k, keylen);
-            *val = leak_buf(v, vallen);
+            *key = leak_buf(k.to_vec(), keylen);
+            *val = leak_buf(v.to_vec(), vallen);
             1
         }
         // TODO proper error propagation

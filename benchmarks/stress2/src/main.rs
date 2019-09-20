@@ -168,8 +168,10 @@ fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
                     None
                 };
 
-                if let Err(e) = tree.cas(&key, old, new) {
-                    panic!("operational error: {:?}", e);
+                match tree.compare_and_swap(&key, old, new) {
+                    Ok(_) => {}
+                    Err(sled::Error::CompareAndSwap { .. }) => {}
+                    Err(e) => panic!("operational error: {:?}", e),
                 }
             }
             v if v > cas_max && v <= merge_max => {

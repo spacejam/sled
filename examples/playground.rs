@@ -16,9 +16,12 @@ fn basic() -> Result<()> {
     assert_eq!(db.get(&k).unwrap().unwrap(), (v1.clone()));
 
     // compare and swap
-    match db.compare_and_swap(k.clone(), Some(&v1.clone()), Some(v2.clone()))? {
-        Ok(()) => println!("it worked!"),
-        Err(actual) => println!("the actual current value is {:?}", actual),
+    match db.compare_and_swap(k.clone(), Some(&v1.clone()), Some(v2.clone())) {
+        Ok(_) => println!("it worked!"),
+        Err(sled::Error::CompareAndSwap { cur: actual }) => {
+            println!("the actual current value is {:?}", actual)
+        }
+        Err(e) => return Err(e),
     }
 
     // scan forward
