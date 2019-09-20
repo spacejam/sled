@@ -16,7 +16,7 @@ fn basic() -> Result<()> {
     assert_eq!(db.get(&k).unwrap().unwrap(), (v1.clone()));
 
     // compare and swap
-    match db.cas(k.clone(), Some(&v1.clone()), Some(v2.clone()))? {
+    match db.compare_and_swap(k.clone(), Some(&v1.clone()), Some(v2.clone()))? {
         Ok(()) => println!("it worked!"),
         Err(actual) => println!("the actual current value is {:?}", actual),
     }

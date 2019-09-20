@@ -5,9 +5,9 @@ use std::{
     io,
 };
 
-use crate::pagecache::{
-    PagePtr, DiskPtr
-};
+use crate::pagecache::{DiskPtr, PagePtr};
+
+use crate::ivec::IVec;
 
 /// The top-level result type for dealing with
 /// the `PageCache`.
@@ -42,6 +42,11 @@ pub enum Error {
     #[doc(hidden)]
     #[cfg(feature = "failpoints")]
     FailPoint,
+    /// Compare and swap failure.
+    CompareAndSwap {
+        /// Current value if present.
+        cur: Option<IVec>,
+    },
 }
 
 impl Clone for Error {
@@ -49,15 +54,14 @@ impl Clone for Error {
         use self::Error::*;
 
         match self {
-            Io(ioe) => {
-                Io(io::Error::new(ioe.kind(), format!("{:?}", ioe)))
-            }
+            Io(ioe) => Io(io::Error::new(ioe.kind(), format!("{:?}", ioe))),
             CollectionNotFound(name) => CollectionNotFound(name.clone()),
             Unsupported(why) => Unsupported(why.clone()),
             ReportableBug(what) => ReportableBug(what.clone()),
             Corruption { at } => Corruption { at: *at },
             #[cfg(feature = "failpoints")]
             FailPoint => FailPoint,
+            CompareAndSwap { cur } => CompareAndSwap { cur: cur.clone() },
         }
     }
 }
@@ -106,6 +110,13 @@ impl PartialEq for Error {
                 }
             }
             Io(_) => false,
+            CompareAndSwap { cur: ref l } => {
+                if let CompareAndSwap { cur: ref r } = *other {
+                    l == r
+                } else {
+                    false
+                }
+            }
         }
     }
 }
@@ -128,6 +139,7 @@ impl StdError for Error {
             FailPoint => "Fail point has been triggered.",
             Io(ref e) => e.description(),
             Corruption { .. } => "Read corrupted data.",
+            CompareAndSwap { .. } => "Compare and swap a value.",
         }
     }
 }
@@ -156,6 +168,7 @@ impl Display for Error {
             Corruption { at } => {
                 write!(f, "Read corrupted data at file offset {}", at)
             }
+            CompareAndSwap { cur: _ } => write!(f, "Compare and swap failed."),
         }
     }
 }
