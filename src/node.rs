@@ -1,4 +1,4 @@
-use std::{fmt, ops::Bound};
+use std::{cmp::Ordering, fmt, ops::Bound};
 
 use crate::Lazy;
 
