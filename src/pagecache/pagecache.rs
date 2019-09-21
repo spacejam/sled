@@ -311,7 +311,7 @@ where
                 was_recovered = false;
 
                 let config_update = Update::Config(PersistedConfig {
-                    io_buf_size: config.io_buf_size,
+                    segment_size: config.segment_size,
                     use_compression: config.use_compression,
                     version: config.version,
                 });
@@ -677,8 +677,8 @@ where
                     assert_ne!(previous_head_lsn, 0);
 
                     let previous_lsn_segment =
-                        previous_head_lsn / self.config.io_buf_size as i64;
-                    let new_lsn_segment = lsn / self.config.io_buf_size as i64;
+                        previous_head_lsn / self.config.segment_size as i64;
+                    let new_lsn_segment = lsn / self.config.segment_size as i64;
 
                     let to_clean = if previous_lsn_segment == new_lsn_segment {
                         // can skip mark_link because we've
@@ -907,7 +907,7 @@ where
     pub fn space_amplification(&self) -> Result<f64> {
         let on_disk_bytes = self.size_on_disk()? as f64;
         let logical_size = self.logical_size_of_all_pages()? as f64;
-        let discount = self.config.io_buf_size as f64 * 8.;
+        let discount = self.config.segment_size as f64 * 8.;
 
         Ok(on_disk_bytes / (logical_size + discount))
     }
@@ -1704,7 +1704,7 @@ where
             iobufs.with_sa(SegmentAccountant::pause_rewriting);
 
             let last_lsn = last_snapshot.last_lsn;
-            let start_lsn = last_lsn - (last_lsn % config.io_buf_size as Lsn);
+            let start_lsn = last_lsn - (last_lsn % config.segment_size as Lsn);
 
             let iter = iobufs.iter_from(start_lsn);
 

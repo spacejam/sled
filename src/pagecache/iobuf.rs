@@ -28,7 +28,7 @@ macro_rules! io_fail {
 pub(crate) struct IoBuf {
     pub buf: UnsafeCell<Vec<u8>>,
     header: CachePadded<AtomicU64>,
-    pub lid: LogId,
+    pub offset: LogOffset,
     pub lsn: Lsn,
     pub capacity: usize,
     maxed: AtomicBool,
@@ -67,7 +67,7 @@ impl IoBufs {
         // open file for writing
         let file = &config.file;
 
-        let io_buf_size = config.io_buf_size;
+        let segment_size = config.segment_size;
 
         let snapshot_last_lsn = snapshot.last_lsn;
         let snapshot_last_lid = snapshot.last_lid;
@@ -76,8 +76,7 @@ impl IoBufs {
         let mut segment_accountant: SegmentAccountant =
             SegmentAccountant::start(config.clone(), snapshot)?;
 
-        let (next_lsn, next_lid) = if snapshot_last_lsn
-            % config.io_buf_size as Lsn
+        let (next_lsn, next_lid) = if snapshot_last_lsn % segment_size as Lsn
             == 0
         {
             (snapshot_last_lsn, snapshot_last_lid)
@@ -105,11 +104,11 @@ impl IoBufs {
 
             (
                 snapshot_last_lsn + Lsn::from(width),
-                snapshot_last_lid + LogId::from(width),
+                snapshot_last_lid + LogOffset::from(width),
             )
         };
 
-        let mut iobuf = IoBuf::new(io_buf_size);
+        let mut iobuf = IoBuf::new(segment_size);
 
         trace!(
             "starting IoBufs with next_lsn: {} \
@@ -122,7 +121,7 @@ impl IoBufs {
         // of our file has not yet been written.
         let stable = next_lsn - 1;
 
-        if next_lsn % config.io_buf_size as Lsn == 0 {
+        if next_lsn % config.segment_size as Lsn == 0 {
             // allocate new segment for data
 
             if next_lsn == 0 {
@@ -133,8 +132,8 @@ impl IoBufs {
                 assert_eq!(0, lid);
             }
 
-            iobuf.lid = lid;
-            iobuf.capacity = io_buf_size;
+            iobuf.offset = lid;
+            iobuf.capacity = segment_size;
             iobuf.store_segment_header(0, next_lsn, stable);
 
             debug!(
@@ -143,9 +142,9 @@ impl IoBufs {
             );
         } else {
             // the tip offset is not completely full yet, reuse it
-            let offset = assert_usize(next_lid % io_buf_size as LogId);
-            iobuf.lid = next_lid;
-            iobuf.capacity = io_buf_size - offset;
+            let offset = assert_usize(next_lid % segment_size as LogOffset);
+            iobuf.offset = next_lid;
+            iobuf.capacity = segment_size - offset;
             iobuf.lsn = next_lsn;
 
             debug!(
@@ -224,8 +223,8 @@ impl IoBufs {
     /// a specified offset.
     pub(crate) fn iter_from(&self, lsn: Lsn) -> LogIter {
         trace!("iterating from lsn {}", lsn);
-        let io_buf_size = self.config.io_buf_size;
-        let segment_base_lsn = lsn / io_buf_size as Lsn * io_buf_size as Lsn;
+        let segment_size = self.config.segment_size;
+        let segment_base_lsn = lsn / segment_size as Lsn * segment_size as Lsn;
         let min_lsn = segment_base_lsn + SEG_HEADER_LEN as Lsn;
 
         // corrected_lsn accounts for the segment header length
@@ -308,20 +307,20 @@ impl IoBufs {
     pub(crate) fn write_to_log(&self, iobuf: &IoBuf) -> Result<()> {
         let _measure = Measure::new(&M.write_to_log);
         let header = iobuf.get_header();
-        let lid = iobuf.lid;
+        let log_offset = iobuf.offset;
         let base_lsn = iobuf.lsn;
         let capacity = iobuf.capacity;
 
-        let io_buf_size = self.config.io_buf_size;
+        let segment_size = self.config.segment_size;
 
         assert_eq!(
-            (lid % io_buf_size as LogId) as Lsn,
-            base_lsn % io_buf_size as Lsn
+            (log_offset % segment_size as LogOffset) as Lsn,
+            base_lsn % segment_size as Lsn
         );
 
         assert_ne!(
-            lid,
-            LogId::max_value(),
+            log_offset,
+            LogOffset::max_value(),
             "created reservation for uninitialized slot",
         );
 
@@ -330,8 +329,8 @@ impl IoBufs {
         let bytes_to_write = offset(header);
 
         trace!(
-            "write_to_log lid {} lsn {} len {}",
-            lid,
+            "write_to_log log_offset {} lsn {} len {}",
+            log_offset,
             base_lsn,
             bytes_to_write
         );
@@ -401,7 +400,7 @@ impl IoBufs {
 
         let f = &self.config.file;
         io_fail!(self, "buffer write");
-        f.pwrite_all(&data[..total_len], lid)?;
+        f.pwrite_all(&data[..total_len], log_offset)?;
         if !self.config.temporary {
             f.sync_all()?;
         }
@@ -409,8 +408,8 @@ impl IoBufs {
 
         if total_len > 0 {
             let complete_len = if maxed {
-                let lsn_idx = base_lsn / io_buf_size as Lsn;
-                let next_seg_beginning = (lsn_idx + 1) * io_buf_size as Lsn;
+                let lsn_idx = base_lsn / segment_size as Lsn;
+                let next_seg_beginning = (lsn_idx + 1) * segment_size as Lsn;
                 assert_usize(next_seg_beginning - base_lsn)
             } else {
                 total_len
@@ -420,8 +419,8 @@ impl IoBufs {
                 "wrote lsns {}-{} to disk at offsets {}-{}, maxed {} complete_len {}",
                 base_lsn,
                 base_lsn + total_len as Lsn - 1,
-                lid,
-                lid + total_len as LogId - 1,
+                log_offset,
+                log_offset + total_len as LogOffset - 1,
                 maxed,
                 complete_len
             );
@@ -634,10 +633,10 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
 
     // NB need to do this before CAS because it can get
     // written and reset by another thread afterward
-    let lid = iobuf.lid;
+    let lid = iobuf.offset;
     let lsn = iobuf.lsn;
     let capacity = iobuf.capacity;
-    let io_buf_size = iobufs.config.io_buf_size;
+    let segment_size = iobufs.config.segment_size;
 
     if offset(header) > capacity {
         // a race happened, nothing we can do
@@ -681,7 +680,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
 
     assert_ne!(
         lid,
-        LogId::max_value(),
+        LogOffset::max_value(),
         "sealing something that should never have \
          been claimed (iobuf lsn {})\n{:?}",
         lsn,
@@ -695,14 +694,14 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
 
     let next_offset = if maxed {
         // roll lsn to the next offset
-        let lsn_idx = lsn / io_buf_size as Lsn;
-        next_lsn = (lsn_idx + 1) * io_buf_size as Lsn;
+        let lsn_idx = lsn / segment_size as Lsn;
+        next_lsn = (lsn_idx + 1) * segment_size as Lsn;
 
         // mark unused as clear
         debug!(
             "rolling to new segment after clearing {}-{}",
             lid,
-            lid + res_len as LogId,
+            lid + res_len as LogOffset,
         );
 
         match iobufs.with_sa(|sa| sa.next(next_lsn)) {
@@ -718,22 +717,22 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
         debug!(
             "advancing offset within the current segment from {} to {}",
             lid,
-            lid + res_len as LogId
+            lid + res_len as LogOffset
         );
         next_lsn += res_len as Lsn;
 
-        lid + res_len as LogId
+        lid + res_len as LogOffset
     };
 
-    let mut next_iobuf = IoBuf::new(io_buf_size);
-    next_iobuf.lid = next_offset;
+    let mut next_iobuf = IoBuf::new(segment_size);
+    next_iobuf.offset = next_offset;
 
     // NB as soon as the "sealed" bit is 0, this allows new threads
     // to start writing into this buffer, so do that after it's all
     // set up. expect this thread to block until the buffer completes
     // its entire life cycle as soon as we do that.
     if maxed {
-        next_iobuf.capacity = io_buf_size;
+        next_iobuf.capacity = segment_size;
         next_iobuf.store_segment_header(sealed, next_lsn, iobufs.stable());
     } else {
         let new_cap = capacity - res_len;
@@ -806,7 +805,7 @@ impl Debug for IoBuf {
         formatter.write_fmt(format_args!(
             "\n\tIoBuf {{ lid: {}, n_writers: {}, offset: \
              {}, sealed: {} }}",
-            self.lid,
+            self.offset,
             n_writers(header),
             offset(header),
             is_sealed(header)
@@ -819,7 +818,7 @@ impl IoBuf {
         Self {
             buf: UnsafeCell::new(vec![0; buf_size]),
             header: CachePadded::new(AtomicU64::new(0)),
-            lid: LogId::max_value(),
+            offset: LogOffset::max_value(),
             lsn: 0,
             capacity: 0,
             maxed: AtomicBool::new(false),

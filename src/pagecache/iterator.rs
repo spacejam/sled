@@ -1,16 +1,16 @@
 use std::{collections::BTreeMap, io};
 
 use super::{
-    read_message, read_segment_header, DiskPtr, LogId, LogKind, LogRead, Lsn,
-    MessageKind, Pio, SegmentHeader, BATCH_MANIFEST_INLINE_LEN,
+    read_message, read_segment_header, DiskPtr, LogKind, LogOffset, LogRead,
+    Lsn, MessageKind, Pio, SegmentHeader, BATCH_MANIFEST_INLINE_LEN,
     BLOB_INLINE_LEN, MSG_HEADER_LEN, SEG_HEADER_LEN,
 };
 use crate::*;
 
 pub struct LogIter {
     pub config: Config,
-    pub segment_iter: Box<dyn Iterator<Item = (Lsn, LogId)>>,
-    pub segment_base: Option<LogId>,
+    pub segment_iter: Box<dyn Iterator<Item = (Lsn, LogOffset)>>,
+    pub segment_base: Option<LogOffset>,
     pub max_lsn: Lsn,
     pub cur_lsn: Lsn,
 }
@@ -24,14 +24,14 @@ impl Iterator for LogIter {
         // return None if there are no more remaining segments.
         loop {
             let remaining_seg_too_small_for_msg = !valid_entry_offset(
-                self.cur_lsn as LogId,
-                self.config.io_buf_size,
+                self.cur_lsn as LogOffset,
+                self.config.segment_size,
             );
 
             if self.segment_base.is_none() || remaining_seg_too_small_for_msg {
                 if let Some((next_lsn, next_lid)) = self.segment_iter.next() {
                     assert!(
-                        next_lsn + (self.config.io_buf_size as Lsn)
+                        next_lsn + (self.config.segment_size as Lsn)
                             >= self.cur_lsn,
                         "caller is responsible for providing segments \
                          that contain the initial cur_lsn value or higher"
@@ -61,7 +61,7 @@ impl Iterator for LogIter {
             }
 
             let lid = self.segment_base.unwrap()
-                + (self.cur_lsn % self.config.io_buf_size as Lsn) as LogId;
+                + (self.cur_lsn % self.config.segment_size as Lsn) as LogOffset;
 
             let f = &self.config.file;
 
@@ -144,7 +144,7 @@ impl Iterator for LogIter {
 impl LogIter {
     /// read a segment of log messages. Only call after
     /// pausing segment rewriting on the segment accountant!
-    fn read_segment(&mut self, lsn: Lsn, offset: LogId) -> Result<()> {
+    fn read_segment(&mut self, lsn: Lsn, offset: LogOffset) -> Result<()> {
         trace!(
             "LogIter::read_segment lsn: {:?} cur_lsn: {:?}",
             lsn,
@@ -152,20 +152,20 @@ impl LogIter {
         );
         // we add segment_len to this check because we may be getting the
         // initial segment that is a bit behind where we left off before.
-        assert!(lsn + self.config.io_buf_size as Lsn >= self.cur_lsn);
+        assert!(lsn + self.config.segment_size as Lsn >= self.cur_lsn);
         let f = &self.config.file;
         let segment_header = read_segment_header(&f, offset)?;
-        if offset % self.config.io_buf_size as LogId != 0 {
+        if offset % self.config.segment_size as LogOffset != 0 {
             debug!("segment offset not divisible by segment length");
             return Err(Error::Corruption {
                 at: DiskPtr::Inline(offset),
             });
         }
-        if segment_header.lsn % self.config.io_buf_size as Lsn != 0 {
+        if segment_header.lsn % self.config.segment_size as Lsn != 0 {
             debug!(
                 "expected a segment header lsn that is divisible \
-                 by the io_buf_size ({}) instead it was {}",
-                self.config.io_buf_size, segment_header.lsn
+                 by the segment_size ({}) instead it was {}",
+                self.config.segment_size, segment_header.lsn
             );
             return Err(Error::Corruption {
                 at: DiskPtr::Inline(offset),
@@ -194,7 +194,7 @@ impl LogIter {
     }
 
     #[cfg(target_os = "linux")]
-    fn fadvise_willneed(&self, lid: LogId) {
+    fn fadvise_willneed(&self, lid: LogOffset) {
         use std::os::unix::io::AsRawFd;
 
         let f = &self.config.file;
@@ -203,7 +203,7 @@ impl LogIter {
             libc::posix_fadvise(
                 f.as_raw_fd(),
                 libc::off_t::try_from(lid).unwrap(),
-                libc::off_t::try_from(self.config.io_buf_size).unwrap(),
+                libc::off_t::try_from(self.config.segment_size).unwrap(),
                 libc::POSIX_FADV_WILLNEED,
             )
         };
@@ -216,12 +216,13 @@ impl LogIter {
     }
 }
 
-fn valid_entry_offset(lid: LogId, segment_len: usize) -> bool {
-    let seg_start = lid / segment_len as LogId * segment_len as LogId;
+fn valid_entry_offset(lid: LogOffset, segment_len: usize) -> bool {
+    let seg_start = lid / segment_len as LogOffset * segment_len as LogOffset;
 
-    let max_lid = seg_start + segment_len as LogId - MSG_HEADER_LEN as LogId;
+    let max_lid =
+        seg_start + segment_len as LogOffset - MSG_HEADER_LEN as LogOffset;
 
-    let min_lid = seg_start + SEG_HEADER_LEN as LogId;
+    let min_lid = seg_start + SEG_HEADER_LEN as LogOffset;
 
     lid >= min_lid && lid <= max_lid
 }
@@ -231,13 +232,13 @@ fn valid_entry_offset(lid: LogId, segment_len: usize) -> bool {
 fn scan_segment_lsns(
     min: Lsn,
     config: &Config,
-) -> Result<(BTreeMap<Lsn, LogId>, Lsn)> {
+) -> Result<(BTreeMap<Lsn, LogOffset>, Lsn)> {
     fn fetch(
         idx: u64,
         min: Lsn,
         config: &Config,
-    ) -> Option<(LogId, SegmentHeader)> {
-        let segment_len = u64::try_from(config.io_buf_size).unwrap();
+    ) -> Option<(LogOffset, SegmentHeader)> {
+        let segment_len = u64::try_from(config.segment_size).unwrap();
         let base_lid = idx * segment_len;
         let segment = read_segment_header(&config.file, base_lid).ok()?;
         trace!(
@@ -260,12 +261,14 @@ fn scan_segment_lsns(
         }
     };
 
-    let segment_len = LogId::try_from(config.io_buf_size).unwrap();
+    let segment_len = LogOffset::try_from(config.segment_size).unwrap();
 
     let f = &config.file;
     let file_len = f.metadata()?.len();
     let segments = (file_len / segment_len)
-        + if file_len % segment_len < LogId::try_from(SEG_HEADER_LEN).unwrap() {
+        + if file_len % segment_len
+            < LogOffset::try_from(SEG_HEADER_LEN).unwrap()
+        {
             0
         } else {
             1
@@ -277,7 +280,7 @@ fn scan_segment_lsns(
         segments
     );
 
-    let header_promises: Vec<OneShot<Option<(LogId, SegmentHeader)>>> = (0
+    let header_promises: Vec<OneShot<Option<(LogOffset, SegmentHeader)>>> = (0
         ..segments)
         .map({
             // let config = config.clone();
@@ -290,7 +293,7 @@ fn scan_segment_lsns(
         })
         .collect();
 
-    let headers: Vec<(LogId, SegmentHeader)> = header_promises
+    let headers: Vec<(LogOffset, SegmentHeader)> = header_promises
         .into_iter()
         .filter_map(OneShot::unwrap)
         .collect();
@@ -333,16 +336,16 @@ fn scan_segment_lsns(
 // never reuse buffers within this safety range.
 fn clean_tail_tears(
     max_header_stable_lsn: Lsn,
-    mut ordering: BTreeMap<Lsn, LogId>,
+    mut ordering: BTreeMap<Lsn, LogOffset>,
     config: &Config,
     f: &std::fs::File,
-) -> Result<BTreeMap<Lsn, LogId>> {
-    let io_buf_size = config.io_buf_size as Lsn;
+) -> Result<BTreeMap<Lsn, LogOffset>> {
+    let segment_size = config.segment_size as Lsn;
 
-    // -1..(2 * io_buf_size) - 1 => 0
+    // -1..(2 *  segment_size) - 1 => 0
     // otherwise the floor of the buffer
     let lowest_lsn_in_tail: Lsn =
-        std::cmp::max(0, (max_header_stable_lsn / io_buf_size) * io_buf_size);
+        std::cmp::max(0, (max_header_stable_lsn / segment_size) * segment_size);
 
     let mut expected_present = lowest_lsn_in_tail;
     let mut missing_item_in_tail = None;
@@ -360,7 +363,7 @@ fn clean_tail_tears(
                 );
                 missing_item_in_tail = Some(expected_present);
             }
-            expected_present += io_buf_size;
+            expected_present += segment_size;
             matches
         })
         .collect::<Vec<_>>();
@@ -379,7 +382,7 @@ fn clean_tail_tears(
         cur_lsn: 0,
     };
 
-    let tip: (Lsn, LogId) = iter
+    let tip: (Lsn, LogOffset) = iter
         .max_by_key(|(_kind, _pid, lsn, _ptr, _sz)| *lsn)
         .map_or_else(
             || {
@@ -426,7 +429,7 @@ pub fn raw_segment_iter_from(
     lsn: Lsn,
     config: &Config,
 ) -> Result<(LogIter, Lsn)> {
-    let segment_len = config.io_buf_size as Lsn;
+    let segment_len = config.segment_size as Lsn;
     let normalized_lsn = lsn / segment_len * segment_len;
 
     let (ordering, max_header_stable_lsn) = scan_segment_lsns(0, config)?;

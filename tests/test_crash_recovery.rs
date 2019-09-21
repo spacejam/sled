@@ -217,7 +217,7 @@ fn run_without_snapshot(dir: &str) {
         .path(dir.to_string())
         .snapshot_after_ops(1 << 56);
 
-    config_builder.io_buf_size = 1024;
+    config_builder.segment_size = 1024;
 
     let config = config_builder.build();
 
@@ -237,7 +237,7 @@ fn run_with_snapshot(dir: &str) {
         .path(dir.to_string())
         .snapshot_after_ops(5000);
 
-    config_builder.io_buf_size = 1024;
+    config_builder.segment_size = 1024;
 
     let config = config_builder.build();
 
@@ -257,7 +257,7 @@ fn run_batches_without_snapshot(dir: &str) {
         .path(dir.to_string())
         .snapshot_after_ops(1 << 56);
 
-    config_builder.io_buf_size = 1024;
+    config_builder.segment_size = 1024;
 
     let config = config_builder.build();
 
@@ -277,7 +277,7 @@ fn run_batches_with_snapshot(dir: &str) {
         .path(dir.to_string())
         .snapshot_after_ops(5000);
 
-    config_builder.io_buf_size = 1024;
+    config_builder.segment_size = 1024;
 
     let config = config_builder.build();
 

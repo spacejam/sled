@@ -144,7 +144,7 @@ pub use {
                 MAX_SPACE_AMPLIFICATION, MINIMUM_ITEMS_PER_SEGMENT,
                 MSG_HEADER_LEN, SEG_HEADER_LEN,
             },
-            DiskPtr, Log, LogId, LogKind, LogRead, Lsn, Materializer,
+            DiskPtr, Log, LogKind, LogOffset, LogRead, Lsn, Materializer,
             PageCache, PageId, SegmentMode,
         },
         pagetable::PAGETABLE_NODE_SZ,

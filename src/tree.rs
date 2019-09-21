@@ -419,6 +419,15 @@ impl Tree {
     /// // conditional modification
     /// assert_eq!(t.cas(&[1], Some(&[10]), Some(&[20])), Ok(Ok(())));
     ///
+    /// // failed conditional modification -- the current value is returned in
+    /// // the error variant
+    /// let operation = t.cas(&[1], Some(&[30]), Some(&[40]));
+    /// assert!(operation.is_ok()); // the operation succeeded
+    /// let modification = operation.unwrap();
+    /// assert!(modification.is_err());
+    /// let actual_value = modification.unwrap_err();
+    /// assert_eq!(actual_value.map(|ivec| ivec.to_vec()), Some(vec![20]));
+    ///
     /// // conditional deletion
     /// assert_eq!(t.cas(&[1], Some(&[20]), None as Option<&[u8]>), Ok(Ok(())));
     /// assert_eq!(t.get(&[1]), Ok(None));

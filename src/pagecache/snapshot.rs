@@ -4,8 +4,8 @@ use zstd::block::{compress, decompress};
 use crate::*;
 
 use super::{
-    arr_to_u32, raw_segment_iter_from, u32_to_arr, u64_to_arr, DiskPtr, LogId,
-    LogIter, LogKind, Lsn, MSG_HEADER_LEN,
+    arr_to_u32, raw_segment_iter_from, u32_to_arr, u64_to_arr, DiskPtr,
+    LogIter, LogKind, LogOffset, Lsn, MSG_HEADER_LEN,
 };
 
 /// A snapshot of the state required to quickly restart
@@ -15,7 +15,7 @@ pub struct Snapshot {
     /// The last read message lsn
     pub last_lsn: Lsn,
     /// The last read message lid
-    pub last_lid: LogId,
+    pub last_lid: LogOffset,
     /// the mapping from pages to (lsn, lid)
     pub pt: FastMap8<PageId, PageState>,
     /// The highest stable offset persisted

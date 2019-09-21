@@ -18,7 +18,7 @@ use rand::{thread_rng, Rng};
 use sled::*;
 
 use sled::{
-    DiskPtr, Log, LogId, LogKind, LogRead, Lsn, PageId, SegmentMode,
+    DiskPtr, Log, LogKind, LogOffset, LogRead, Lsn, PageId, SegmentMode,
     MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
 };
 
@@ -76,7 +76,7 @@ fn more_log_reservations_than_buffers() {
         .temporary(true)
         .segment_mode(SegmentMode::Linear);
 
-    config_builder.io_buf_size = 128;
+    config_builder.segment_size = 128;
 
     let config = config_builder.build();
 
@@ -85,7 +85,7 @@ fn more_log_reservations_than_buffers() {
 
     let total_seg_overhead = SEG_HEADER_LEN;
     let big_msg_overhead = MSG_HEADER_LEN + total_seg_overhead;
-    let big_msg_sz = config.io_buf_size - big_msg_overhead;
+    let big_msg_sz = config.segment_size - big_msg_overhead;
 
     for _ in 0..=30 {
         reservations.push(log.reserve(KIND, PID, &vec![0; big_msg_sz]).unwrap())
@@ -104,14 +104,14 @@ fn non_contiguous_log_flush() {
         .temporary(true)
         .segment_mode(SegmentMode::Linear);
 
-    config_builder.io_buf_size = 1024;
+    config_builder.segment_size = 1024;
 
     let config = config_builder.build();
 
     let log = Log::start_raw_log(config.clone()).unwrap();
 
     let seg_overhead = SEG_HEADER_LEN;
-    let buf_len = (config.io_buf_size / MINIMUM_ITEMS_PER_SEGMENT)
+    let buf_len = (config.segment_size / MINIMUM_ITEMS_PER_SEGMENT)
         - (MSG_HEADER_LEN + seg_overhead);
 
     let res1 = log.reserve(KIND, PID, &vec![0; buf_len]).unwrap();
@@ -133,7 +133,7 @@ fn concurrent_logging() {
             .segment_mode(SegmentMode::Linear)
             .flush_every_ms(Some(50));
 
-        config_builder.io_buf_size = 1024;
+        config_builder.segment_size = 1024;
 
         let config = config_builder.build();
 
@@ -146,7 +146,7 @@ fn concurrent_logging() {
         let log7 = log.clone();
 
         let seg_overhead = SEG_HEADER_LEN;
-        let buf_len = (config.io_buf_size / MINIMUM_ITEMS_PER_SEGMENT)
+        let buf_len = (config.segment_size / MINIMUM_ITEMS_PER_SEGMENT)
             - (MSG_HEADER_LEN + seg_overhead);
 
         let t1 = thread::Builder::new()
@@ -231,7 +231,7 @@ fn concurrent_logging_404() {
         .segment_mode(SegmentMode::Linear)
         .flush_every_ms(Some(50));
 
-    config_builder.io_buf_size = 1024;
+    config_builder.segment_size = 1024;
 
     let config = config_builder.build();
 
@@ -352,7 +352,7 @@ fn log_iterator() {
         .temporary(true)
         .segment_mode(SegmentMode::Linear);
 
-    config_builder.io_buf_size = 1024;
+    config_builder.segment_size = 1024;
 
     let config = config_builder.build();
 
@@ -403,7 +403,7 @@ fn log_chunky_iterator() {
                 .temporary(true)
                 .segment_mode(SegmentMode::Linear);
 
-            config_builder.io_buf_size = 128;
+            config_builder.segment_size = 128;
 
             let config = config_builder.build();
 
@@ -412,7 +412,7 @@ fn log_chunky_iterator() {
             let mut reference = vec![];
 
             let max_valid_size =
-                config.io_buf_size - (MSG_HEADER_LEN + SEG_HEADER_LEN);
+                config.segment_size - (MSG_HEADER_LEN + SEG_HEADER_LEN);
 
             for i in 0..1000 {
                 let len = thread_rng().gen_range(0, max_valid_size * 2);
@@ -467,13 +467,13 @@ fn multi_segment_log_iteration() {
         .temporary(true)
         .segment_mode(SegmentMode::Linear);
 
-    config_builder.io_buf_size = 512;
+    config_builder.segment_size = 512;
 
     let config = config_builder.build();
 
     let total_seg_overhead = SEG_HEADER_LEN;
     let big_msg_overhead = MSG_HEADER_LEN + total_seg_overhead;
-    let big_msg_sz = (config.io_buf_size - big_msg_overhead) / 64;
+    let big_msg_sz = (config.segment_size - big_msg_overhead) / 64;
 
     let log = Log::start_raw_log(config.clone()).unwrap();
 
@@ -575,7 +575,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
         .flush_every_ms(if flusher { Some(1) } else { None })
         .segment_mode(SegmentMode::Linear);
 
-    config_builder.io_buf_size = 8192;
+    config_builder.segment_size = 8192;
 
     let config = config_builder.build();
 
