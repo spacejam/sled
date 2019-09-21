@@ -3,7 +3,7 @@
 use std::sync::atomic::AtomicUsize;
 
 #[cfg(not(target_arch = "x86_64"))]
-use time::{Duration, Instant};
+use std::time::{Duration, Instant};
 
 #[cfg(feature = "no_metrics")]
 use std::marker::PhantomData;
