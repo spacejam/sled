@@ -326,9 +326,10 @@ impl Node {
         &self,
         key: &[u8],
     ) -> Option<(&IVec, &IVec)> {
-        assert!(!self.data.is_index());
-
-        let records = self.data.leaf_ref().unwrap();
+        let records = self
+            .data
+            .leaf_ref()
+            .expect("leaf_pair_for_key called on index node");
 
         let common_prefix = key
             .iter()
