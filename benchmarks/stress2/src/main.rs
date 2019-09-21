@@ -192,6 +192,7 @@ fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
 }
 
 fn main() {
+    #[cfg(feature = "logging")]
     setup_logger();
 
     let args = unsafe {
@@ -266,6 +267,7 @@ fn main() {
     );
 }
 
+#[cfg(feature = "logging")]
 pub fn setup_logger() {
     use std::io::Write;
 
