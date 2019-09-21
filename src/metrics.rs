@@ -1,9 +1,9 @@
 #![allow(unused_results)]
 
-use std::{
-    sync::atomic::AtomicUsize,
-    time::{Duration, Instant},
-};
+use std::sync::atomic::AtomicUsize;
+
+#[cfg(not(target_arch = "x86_64"))]
+use time::{Duration, Instant};
 
 #[cfg(feature = "no_metrics")]
 use std::marker::PhantomData;
@@ -23,12 +23,23 @@ pub(crate) fn clock() -> f64 {
     if cfg!(feature = "no_metrics") {
         0.
     } else {
-        let u = uptime();
-        (u.as_secs() * 1_000_000_000) as f64 + f64::from(u.subsec_nanos())
+        #[cfg(target_arch = "x86_64")]
+        #[allow(unsafe_code)]
+        unsafe {
+            let mut _aux = 0;
+            core::arch::x86_64::__rdtscp(&mut _aux) as f64
+        }
+
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            let u = uptime();
+            (u.as_secs() * 1_000_000_000) as f64 + f64::from(u.subsec_nanos())
+        }
     }
 }
 
 // not correct, since it starts counting at the first observance...
+#[cfg(not(target_arch = "x86_64"))]
 pub(crate) fn uptime() -> Duration {
     static START: Lazy<Instant, fn() -> Instant> = Lazy::new(Instant::now);
 
