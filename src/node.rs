@@ -1,4 +1,4 @@
-use std::{fmt, ops::Bound};
+use std::{cmp::Ordering, fmt, ops::Bound};
 
 use crate::Lazy;
 
@@ -326,12 +326,27 @@ impl Node {
         &self,
         key: &[u8],
     ) -> Option<(&IVec, &IVec)> {
-        assert!(!self.data.is_index());
+        let records = self
+            .data
+            .leaf_ref()
+            .expect("leaf_pair_for_key called on index node");
 
-        let records = self.data.leaf_ref().unwrap();
+        let common_prefix = key
+            .iter()
+            .zip(self.lo.iter())
+            .take(u8::max_value() as usize)
+            .take_while(|(a, b)| a == b)
+            .count() as u8;
+
         let search = records
             .binary_search_by(|&(ref k, ref _v)| {
-                prefix_cmp_encoded(k, key, &self.lo)
+                if k[0] > common_prefix {
+                    Ordering::Less
+                } else if k[0] < common_prefix {
+                    Ordering::Greater
+                } else {
+                    k[1..].cmp(&key[common_prefix as usize..])
+                }
             })
             .ok();
 
@@ -385,16 +400,28 @@ impl Node {
     }
 
     pub(crate) fn index_next_node(&self, key: &[u8]) -> (usize, PageId) {
-        assert!(self.data.is_index());
+        let records = self
+            .data
+            .index_ref()
+            .expect("index_next_node called on leaf");
 
-        let records = self.data.index_ref().unwrap();
+        let common_prefix = key
+            .iter()
+            .zip(self.lo.iter())
+            .take(u8::max_value() as usize)
+            .take_while(|(a, b)| a == b)
+            .count() as u8;
 
         let search = binary_search_lub(records, |&(ref k, ref _v)| {
-            prefix_cmp_encoded(k, key, &self.lo)
+            if k[0] > common_prefix {
+                Ordering::Less
+            } else if k[0] < common_prefix {
+                Ordering::Greater
+            } else {
+                k[1..].cmp(&key[common_prefix as usize..])
+            }
         });
 
-        // This might be none if ord is Less and we're
-        // searching for the empty key
         let index = search.expect("failed to traverse index");
 
         (index, records[index].1)
