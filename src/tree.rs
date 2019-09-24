@@ -50,7 +50,7 @@ impl IntoIterator for &'_ Tree {
 /// assert_eq!(t.get(b"yo!"), Ok(Some(IVec::from(b"v1"))));
 ///
 /// // Atomic compare-and-swap.
-/// t.cas(
+/// t.compare_and_swap(
 ///     b"yo!",      // key
 ///     Some(b"v1"), // old value, None for not present
 ///     Some(b"v2"), // new value, None for delete
@@ -405,7 +405,14 @@ impl Tree {
     /// or deletion. If old is None, this will only set the value if it doesn't
     /// exist yet. If new is None, will delete the value if old is correct.
     /// If both old and new are Some, will modify the value if old is correct.
-    /// If Tree is read-only, will do nothing.
+    ///
+    /// It returns CAS_OK if operation finishes successfully.
+    ///
+    /// If it fails it returns:
+    ///     - Ok(Err(CompareAndSwapError(cur))) if operation failed to setup a
+    ///       new value. CompareAndSwapError contains current value.
+    ///     - Err(Error::Unsupported) if the database is opened in read-only
+    ///       mode.
     ///
     /// # Examples
     ///
@@ -414,10 +421,16 @@ impl Tree {
     /// let t = sled::Db::start(config).unwrap();
     ///
     /// // unique creation
-    /// assert_eq!(t.cas(&[1], None as Option<&[u8]>, Some(&[10])), Ok(Ok(())));
+    /// assert_eq!(
+    ///     t.compare_and_swap(&[1], None as Option<&[u8]>, Some(&[10])),
+    ///     sled::CAS_OK
+    /// );
     ///
     /// // conditional modification
-    /// assert_eq!(t.cas(&[1], Some(&[10]), Some(&[20])), Ok(Ok(())));
+    /// assert_eq!(
+    ///     t.compare_and_swap(&[1], Some(&[10]), Some(&[20])),
+    ///     sled::CAS_OK
+    /// );
     ///
     /// // failed conditional modification -- the current value is returned in
     /// // the error variant
@@ -429,15 +442,18 @@ impl Tree {
     /// assert_eq!(actual_value.map(|ivec| ivec.to_vec()), Some(vec![20]));
     ///
     /// // conditional deletion
-    /// assert_eq!(t.cas(&[1], Some(&[20]), None as Option<&[u8]>), Ok(Ok(())));
+    /// assert_eq!(
+    ///     t.compare_and_swap(&[1], Some(&[20]), None as Option<&[u8]>),
+    ///     sled::CAS_OK
+    /// );
     /// assert_eq!(t.get(&[1]), Ok(None));
     /// ```
-    pub fn cas<K, OV, NV>(
+    pub fn compare_and_swap<K, OV, NV>(
         &self,
         key: K,
         old: Option<OV>,
         new: Option<NV>,
-    ) -> Result<std::result::Result<(), Option<IVec>>>
+    ) -> CompareAndSwapResult
     where
         K: AsRef<[u8]>,
         OV: AsRef<[u8]>,
@@ -471,7 +487,7 @@ impl Tree {
             };
 
             if !matches {
-                return Ok(Err(current_value));
+                return Ok(Err(CompareAndSwapError { cur: current_value }));
             }
 
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
@@ -494,10 +510,21 @@ impl Tree {
                     res.complete(event);
                 }
 
-                return Ok(Ok(()));
+                return CAS_OK;
             }
             M.tree_looped();
         }
+    }
+
+    #[deprecated(since = "0.28.1", note = "replaced with compare_and_swap")]
+    #[doc(hidden)]
+    pub fn cas<K, OV, NV>(
+        &self,
+        _key: K,
+        _old: Option<OV>,
+        _new: Option<NV>,
+    ) -> Result<std::result::Result<(), Option<IVec>>> {
+        unimplemented!("cas method is deprecated. use compare_and_swap.");
     }
 
     /// Fetch the value, apply a function to it and return the result.
@@ -559,9 +586,11 @@ impl Tree {
         loop {
             let tmp = current.as_ref().map(AsRef::as_ref);
             let next = f(tmp).map(IVec::from);
-            match self.cas::<_, _, IVec>(key, tmp, next.clone())? {
+            match self.compare_and_swap::<_, _, IVec>(key, tmp, next.clone())? {
                 Ok(()) => return Ok(next),
-                Err(new_current) => current = new_current,
+                Err(CompareAndSwapError { cur: new_current }) => {
+                    current = new_current;
+                }
             }
         }
     }
@@ -624,9 +653,11 @@ impl Tree {
         loop {
             let tmp = current.as_ref().map(AsRef::as_ref);
             let next = f(tmp);
-            match self.cas(key, tmp, next)? {
+            match self.compare_and_swap(key, tmp, next)? {
                 Ok(()) => return Ok(current),
-                Err(new_current) => current = new_current,
+                Err(CompareAndSwapError { cur: new_current }) => {
+                    current = new_current;
+                }
             }
         }
     }
@@ -1191,7 +1222,11 @@ impl Tree {
             if let Some(first_res) = self.iter().next_back() {
                 let first = first_res?;
                 if self
-                    .cas::<_, _, &[u8]>(&first.0, Some(&first.1), None)
+                    .compare_and_swap::<_, _, &[u8]>(
+                        &first.0,
+                        Some(&first.1),
+                        None,
+                    )
                     .is_ok()
                 {
                     return Ok(Some(first));
@@ -1232,7 +1267,11 @@ impl Tree {
             if let Some(first_res) = self.iter().next() {
                 let first = first_res?;
                 if self
-                    .cas::<_, _, &[u8]>(&first.0, Some(&first.1), None)
+                    .compare_and_swap::<_, _, &[u8]>(
+                        &first.0,
+                        Some(&first.1),
+                        None,
+                    )
                     .is_ok()
                 {
                     return Ok(Some(first));
@@ -2007,5 +2046,36 @@ impl Debug for Tree {
         }
 
         Ok(())
+    }
+}
+
+/// Compare and swap result.
+///
+/// It returns CAS_OK if operation finishes successfully and otherwise:
+///     - Ok(Err(CompareAndSwapError(cur))) if operation failed to setup a new
+///       value. CompareAndSwapError contains current value.
+///     - Err(Error::Unsupported) if the database is opened in read-only mode.
+pub type CompareAndSwapResult =
+    Result<std::result::Result<(), CompareAndSwapError>>;
+
+/// Successful result of compare and swap operation.
+pub const CAS_OK: CompareAndSwapResult = Ok(Ok(()));
+
+impl From<Error> for CompareAndSwapResult {
+    fn from(error: Error) -> Self {
+        Err(error)
+    }
+}
+
+/// Compare and swap error.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompareAndSwapError {
+    /// Current value.
+    pub cur: Option<IVec>,
+}
+
+impl fmt::Display for CompareAndSwapError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Compare and swap conflict")
     }
 }

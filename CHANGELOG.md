@@ -2,6 +2,7 @@
 
 ## Breaking Changes
 
+* The `cas` is deprecated in favor of `compare_and_swap`.
 * The `io_buf_size` renamed to the `segment_size`.
 * The `io_buf_size` method has been removed from
   ConfigBuilder. This can be manually set by setting

@@ -14,5 +14,5 @@ name = "sled_native"
 crate-type = ["dylib"]
 
 [dependencies]
-libc = "0.2"
-sled = {version = "0.15.4", path = "../../crates/sled"}
+libc = "0.2.62"
+sled = {version = "0.28.0", path = "../.."}

@@ -168,7 +168,7 @@ fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
                     None
                 };
 
-                if let Err(e) = tree.cas(&key, old, new) {
+                if let Err(e) = tree.compare_and_swap(&key, old, new) {
                     panic!("operational error: {:?}", e);
                 }
             }

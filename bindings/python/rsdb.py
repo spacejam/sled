@@ -94,7 +94,8 @@ class Tree:
         if new is None:
             new = b""
 
-        success = sled.sled_cas(self.ptr, key,
+        success = sled.sled_compare_and_swap(
+                                self.ptr, key,
                                 len(key),
                                 old, len(old),
                                 new, len(new),
