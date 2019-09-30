@@ -520,11 +520,20 @@ impl Tree {
     #[doc(hidden)]
     pub fn cas<K, OV, NV>(
         &self,
-        _key: K,
-        _old: Option<OV>,
-        _new: Option<NV>,
-    ) -> Result<std::result::Result<(), Option<IVec>>> {
-        unimplemented!("cas method is deprecated. use compare_and_swap.");
+        key: K,
+        old: Option<OV>,
+        new: Option<NV>,
+    ) -> Result<std::result::Result<(), Option<IVec>>>
+    where
+        K: AsRef<[u8]>,
+        OV: AsRef<[u8]>,
+        IVec: From<NV>,
+    {
+        match self.compare_and_swap(key, old, new) {
+            Ok(Ok(())) => Ok(Ok(())),
+            Ok(Err(CompareAndSwapError { cur })) => Ok(Err(cur)),
+            Err(e) => Err(e),
+        }
     }
 
     /// Fetch the value, apply a function to it and return the result.
