@@ -5,9 +5,7 @@ use std::{
     io,
 };
 
-use crate::pagecache::{
-    PagePtr, DiskPtr
-};
+use crate::pagecache::{DiskPtr, PagePtr};
 
 /// The top-level result type for dealing with
 /// the `PageCache`.
