@@ -2,7 +2,7 @@ use std::ops::Bound;
 
 use super::*;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Node {
     pub(crate) data: Data,
     pub(crate) next: Option<PageId>,
@@ -10,7 +10,7 @@ pub(crate) struct Node {
     pub(crate) hi: IVec,
     pub(crate) merging_child: Option<PageId>,
     pub(crate) merging: bool,
-    pub(crate) prefix_len: u8,
+    prefix_len: u8,
 }
 
 impl Node {
@@ -483,6 +483,12 @@ impl Node {
 pub(crate) enum Data {
     Index(Vec<(IVec, PageId)>),
     Leaf(Vec<(IVec, IVec)>),
+}
+
+impl Default for Data {
+    fn default() -> Data {
+        Data::Leaf(vec![])
+    }
 }
 
 impl Data {

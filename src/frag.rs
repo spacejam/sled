@@ -23,15 +23,9 @@ pub(crate) enum Frag {
 
 impl Frag {
     fn base(data: Data) -> Frag {
-        Frag::Base(Node {
-            data,
-            next: None,
-            lo: vec![].into(),
-            hi: vec![].into(),
-            merging_child: None,
-            merging: false,
-            prefix_len: 0,
-        })
+        let mut node = Node::default();
+        node.data = data;
+        Frag::Base(node)
     }
 
     pub fn root(data: Data) -> Frag {
