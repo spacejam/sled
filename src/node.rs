@@ -159,7 +159,7 @@ impl Node {
         }
 
         let prefix = &self.lo[..self.prefix_len as usize];
-        let rhs_max = &self.hi;
+        let rhs_max = &self.hi[self.prefix_len as usize..];
         let (split, rhs_additional_prefix_len, right_data) = match self.data {
             Data::Index(ref mut ptrs) => {
                 let (split, prefix_len, rhs) =
