@@ -3,7 +3,7 @@
 from ctypes import *
 import os
 
-sled = CDLL("./libsled.so")
+sled = CDLL("./libsled_native.so")
 
 sled.sled_create_config.argtypes = ()
 sled.sled_create_config.restype = c_void_p
@@ -94,7 +94,8 @@ class Tree:
         if new is None:
             new = b""
 
-        success = sled.sled_cas(self.ptr, key,
+        success = sled.sled_compare_and_swap(
+                                self.ptr, key,
                                 len(key),
                                 old, len(old),
                                 new, len(new),
