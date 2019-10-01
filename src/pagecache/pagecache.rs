@@ -440,16 +440,16 @@ where
         let (pid, key) = if let Some(pid) = self.free.lock().pop() {
             trace!("re-allocating pid {}", pid);
 
-            let head_ptr = match self.inner.get(pid, &guard) {
+            let stack = match self.inner.get(pid, &guard) {
                 None => panic!(
                     "expected to find existing stack \
                      for re-allocated pid {}",
                     pid
                 ),
-                Some(p) => p,
+                Some(p) => unsafe { p.deref() },
             };
 
-            let head = unsafe { head_ptr.deref().head(&guard) };
+            let head = stack.head(&guard);
 
             let mut stack_iter = StackIter::from_ptr(head, &guard);
 
@@ -474,12 +474,10 @@ where
 
             let new_stack = Stack::default();
 
-            let head_ptr = Owned::new(new_stack).into_shared(&guard);
+            let new_ptr = Owned::new(new_stack).into_shared(&guard);
 
-            let _new_stack = self
-                .inner
-                .cas(pid, Shared::null(), head_ptr, &guard)
-                .expect(
+            let _new_stack =
+                self.inner.cas(pid, Shared::null(), new_ptr, &guard).expect(
                     "allocating a fresh new page should \
                      never conflict on existing data",
                 );
@@ -561,21 +559,20 @@ where
         let _measure = Measure::new(&M.link_page);
 
         trace!("linking pid {} with {:?}", pid, new);
-        let head_ptr = match self.inner.get(pid, &guard) {
+        let stack = match self.inner.get(pid, &guard) {
             None => return Ok(Err(None)),
-            Some(p) => p,
+            Some(p) => unsafe { p.deref() },
         };
 
         // see if we should short-circuit replace
-        let head = unsafe { head_ptr.deref().head(&guard) };
+        let head = stack.head(&guard);
         let stack_iter = StackIter::from_ptr(head, &guard);
         let stack_len = stack_iter.size_hint().1.unwrap();
         if stack_len >= PAGE_CONSOLIDATION_THRESHOLD {
             let current_frag =
                 if let Some((current_ptr, frag, _sz)) = self.get(pid, guard)? {
-                    if old.ts != current_ptr.ts
-                        && old.cached_ptr != current_ptr.cached_ptr
-                    {
+                    if old.ts != current_ptr.ts {
+                        assert!(old.cached_ptr != current_ptr.cached_ptr);
                         // the page has changed in the mean time,
                         // and merging frags may violate correctness
                         // invariants
@@ -662,9 +659,7 @@ where
             }
 
             debug_delay();
-            let result = unsafe {
-                head_ptr.deref().cap_node(old.cached_ptr, node, &guard)
-            };
+            let result = stack.cap_node(old.cached_ptr, node, &guard);
 
             match result {
                 Ok(cached_ptr) => {
@@ -788,16 +783,16 @@ where
 
         trace!("rewriting pid {}", pid);
 
-        let head_ptr = match self.inner.get(pid, &guard) {
+        let stack = match self.inner.get(pid, &guard) {
             None => {
                 trace!("rewriting pid {} failed (no longer exists)", pid);
                 return Ok(());
             }
-            Some(p) => p,
+            Some(p) => unsafe { p.deref() },
         };
 
         debug_delay();
-        let head = unsafe { head_ptr.deref().head(&guard) };
+        let head = stack.head(&guard);
         let stack_iter = StackIter::from_ptr(head, &guard);
         let cache_entries: Vec<_> = stack_iter.collect();
 
@@ -816,7 +811,7 @@ where
             let node = node_from_frag_vec(vec![new_cache_entry]);
 
             debug_delay();
-            let result = unsafe { head_ptr.deref().cas(head, node, &guard) };
+            let result = stack.cas(head, node, &guard);
 
             if result.is_ok() {
                 let ptrs = ptrs_from_stack(head, guard);
@@ -856,16 +851,16 @@ where
             } else if let Some((key, frag, _sz)) = self.get(pid, guard)? {
                 (key, Update::Compact(frag.clone()))
             } else {
-                let head_ptr = match self.inner.get(pid, &guard) {
+                let stack = match self.inner.get(pid, &guard) {
                     None => panic!(
                         "expected to find existing stack \
                          for freed pid {}",
                         pid
                     ),
-                    Some(p) => p,
+                    Some(p) => unsafe { p.deref() },
                 };
 
-                let head = unsafe { head_ptr.deref().head(&guard) };
+                let head = stack.head(&guard);
 
                 let mut stack_iter = StackIter::from_ptr(head, &guard);
 
@@ -957,12 +952,12 @@ where
             update,
             old.ts
         );
-        let head_ptr = match self.inner.get(pid, &guard) {
+        let stack = match self.inner.get(pid, &guard) {
             None => {
                 trace!("early-returning from cas_page, no stack found");
                 return Ok(Err(None));
             }
-            Some(p) => p,
+            Some(p) => unsafe { p.deref() },
         };
 
         let log_kind = log_kind_from_update(&update);
@@ -1014,8 +1009,7 @@ where
             )]);
 
             debug_delay();
-            let result =
-                unsafe { head_ptr.deref().cas(old.cached_ptr, node, &guard) };
+            let result = stack.cas(old.cached_ptr, node, &guard);
 
             match result {
                 Ok(cached_ptr) => {
@@ -1072,7 +1066,7 @@ where
     ) -> Result<(PagePtr<'g, P>, &'g Meta)> {
         trace!("getting page iter for META");
 
-        let head_ptr = match self.inner.get(META_PID, &guard) {
+        let stack = match self.inner.get(META_PID, &guard) {
             None => {
                 return Err(Error::ReportableBug(
                     "failed to retrieve META page \
@@ -1080,10 +1074,10 @@ where
                         .into(),
                 ));
             }
-            Some(pointer) => pointer,
+            Some(pointer) => unsafe { pointer.deref() },
         };
 
-        let head = unsafe { head_ptr.deref().head(&guard) };
+        let head = stack.head(&guard);
 
         match StackIter::from_ptr(head, &guard).next() {
             Some((Some(Update::Meta(m)), cache_info)) => Ok((
@@ -1118,7 +1112,7 @@ where
     ) -> Result<(PagePtr<'g, P>, &'g PersistedConfig)> {
         trace!("getting page iter for persisted config");
 
-        let head_ptr = match self.inner.get(CONFIG_PID, &guard) {
+        let stack = match self.inner.get(CONFIG_PID, &guard) {
             None => {
                 return Err(Error::ReportableBug(
                     "failed to retrieve persisted config page \
@@ -1126,10 +1120,10 @@ where
                         .into(),
                 ));
             }
-            Some(pointer) => pointer,
+            Some(pointer) => unsafe { pointer.deref() },
         };
 
-        let head = unsafe { head_ptr.deref().head(&guard) };
+        let head = stack.head(&guard);
 
         match StackIter::from_ptr(head, &guard).next() {
             Some((Some(Update::Config(config)), cache_info)) => Ok((
@@ -1164,7 +1158,7 @@ where
     ) -> Result<(PagePtr<'g, P>, u64)> {
         trace!("getting page iter for idgen");
 
-        let head_ptr = match self.inner.get(COUNTER_PID, &guard) {
+        let stack = match self.inner.get(COUNTER_PID, &guard) {
             None => {
                 return Err(Error::ReportableBug(
                     "failed to retrieve idgen page \
@@ -1172,10 +1166,10 @@ where
                         .into(),
                 ))
             }
-            Some(pointer) => pointer,
+            Some(pointer) => unsafe { pointer.deref() },
         };
 
-        let head = unsafe { head_ptr.deref().head(&guard) };
+        let head = stack.head(&guard);
 
         match StackIter::from_ptr(head, &guard).next() {
             Some((Some(Update::Counter(counter)), cache_info)) => Ok((
@@ -1227,12 +1221,12 @@ where
             ));
         }
 
-        let head_ptr = match self.inner.get(pid, &guard) {
+        let stack = match self.inner.get(pid, &guard) {
             None => return Ok(None),
-            Some(p) => p,
+            Some(p) => unsafe { p.deref() },
         };
 
-        let head = unsafe { head_ptr.deref().head(&guard) };
+        let head = stack.head(&guard);
 
         let entries: Vec<_> = StackIter::from_ptr(head, &guard).collect();
 
@@ -1344,7 +1338,7 @@ where
         let node = unsafe { node.into_owned() };
 
         debug_delay();
-        let res = unsafe { head_ptr.deref().cas(head, node, &guard) };
+        let res = stack.cas(head, node, &guard);
         if let Ok(new_ptr) = res {
             trace!("fix-up for pid {} succeeded", pid);
 
@@ -1553,13 +1547,13 @@ where
                 continue;
             }
 
-            let head_ptr = match self.inner.get(pid, &guard) {
+            let stack = match self.inner.get(pid, &guard) {
                 None => continue 'different_page_eviction,
-                Some(ptr) => ptr,
+                Some(ptr) => unsafe { ptr.deref() },
             };
 
             debug_delay();
-            let head = unsafe { head_ptr.deref().head(&guard) };
+            let head = stack.head(&guard);
             let stack_iter = StackIter::from_ptr(head, &guard);
             let stack_len = stack_iter.size_hint().1.unwrap();
             let mut new_stack = Vec::with_capacity(stack_len);
@@ -1579,7 +1573,7 @@ where
             let node = node_from_frag_vec(new_stack);
 
             debug_delay();
-            let result = unsafe { head_ptr.deref().cas(head, node, &guard) };
+            let result = stack.cas(head, node, &guard);
             if result.is_ok() {
                 // TODO record cache difference
             } else {
