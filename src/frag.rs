@@ -30,6 +30,7 @@ impl Frag {
             hi: vec![].into(),
             merging_child: None,
             merging: false,
+            prefix_len: 0,
         })
     }
 

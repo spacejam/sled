@@ -97,7 +97,7 @@ impl Iterator for Iter {
             } else {
                 let guard = pin();
                 let view =
-                    iter_try!(self.tree.node_for_key(self.low_key(), &guard));
+                    iter_try!(self.tree.view_for_key(self.low_key(), &guard));
                 (view.pid, view.node.clone(), guard)
             };
 
@@ -115,7 +115,7 @@ impl Iterator for Iter {
                 {
                     view
                 } else {
-                    iter_try!(self.tree.node_for_key(self.low_key(), &guard))
+                    iter_try!(self.tree.view_for_key(self.low_key(), &guard))
                 };
 
                 pid = view.pid;
@@ -124,7 +124,7 @@ impl Iterator for Iter {
             } else if !node.contains_lower_bound(&self.lo, true) {
                 // view too high (maybe split, maybe exhausted?)
                 let seek_key = possible_predecessor(&node.lo)?;
-                let view = iter_try!(self.tree.node_for_key(seek_key, &guard));
+                let view = iter_try!(self.tree.view_for_key(seek_key, &guard));
                 pid = view.pid;
                 node = view.node.clone();
                 continue;
@@ -178,7 +178,7 @@ impl DoubleEndedIterator for Iter {
                 let guard = pin();
 
                 let view =
-                    iter_try!(self.tree.node_for_key(self.high_key(), &guard));
+                    iter_try!(self.tree.view_for_key(self.high_key(), &guard));
                 (view.pid, view.node.clone(), guard)
             };
 
@@ -196,7 +196,7 @@ impl DoubleEndedIterator for Iter {
                 {
                     view
                 } else {
-                    iter_try!(self.tree.node_for_key(self.high_key(), &guard))
+                    iter_try!(self.tree.view_for_key(self.high_key(), &guard))
                 };
 
                 pid = view.pid;
@@ -205,7 +205,7 @@ impl DoubleEndedIterator for Iter {
             } else if !node.contains_lower_bound(&self.hi, false) {
                 // view too high (maybe split, maybe exhausted?)
                 let seek_key = possible_predecessor(&node.lo)?;
-                let view = iter_try!(self.tree.node_for_key(seek_key, &guard));
+                let view = iter_try!(self.tree.view_for_key(seek_key, &guard));
                 pid = view.pid;
                 node = view.node.clone();
                 continue;

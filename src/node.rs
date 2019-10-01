@@ -1,10 +1,8 @@
-use std::{cmp::Ordering, fmt, ops::Bound};
-
-use crate::Lazy;
+use std::ops::Bound;
 
 use super::*;
 
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Node {
     pub(crate) data: Data,
     pub(crate) next: Option<PageId>,
@@ -12,30 +10,27 @@ pub(crate) struct Node {
     pub(crate) hi: IVec,
     pub(crate) merging_child: Option<PageId>,
     pub(crate) merging: bool,
-}
-
-impl Debug for Node {
-    fn fmt(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-    ) -> std::result::Result<(), fmt::Error> {
-        let data = self.data.fmt_keys(&self.lo);
-
-        write!(
-            f,
-            "Node {{ \
-             lo: {:?} \
-             hi: {:?} \
-             next: {:?} \
-             merging_child: {:?} \
-             merging: {} \
-             data: {:?} }}",
-            self.lo, self.hi, self.next, self.merging_child, self.merging, data
-        )
-    }
+    pub(crate) prefix_len: u8,
 }
 
 impl Node {
+    pub(crate) fn prefix_decode(&self, key: &[u8]) -> IVec {
+        prefix::decode(self.prefix(), key)
+    }
+
+    pub(crate) fn prefix_encode<'a>(&self, key: &'a [u8]) -> &'a [u8] {
+        assert!(&*self.lo <= key);
+        if !self.hi.is_empty() {
+            assert!(&*self.hi > key);
+        }
+
+        &key[self.prefix_len as usize..]
+    }
+
+    pub(crate) fn prefix(&self) -> &[u8] {
+        &self.lo[..self.prefix_len as usize]
+    }
+
     pub(crate) fn apply(&mut self, frag: &Frag) {
         use self::Frag::*;
 
@@ -46,30 +41,10 @@ impl Node {
 
         match *frag {
             Set(ref k, ref v) => {
-                // (when hi is empty, it means it's unbounded)
-                if self.hi.is_empty()
-                    || prefix_cmp_encoded(k, &self.hi, &self.lo)
-                        == std::cmp::Ordering::Less
-                {
-                    self.set_leaf(k.clone(), v.clone());
-                } else {
-                    panic!(
-                        "tried to consolidate set at key <= hi.\
-                         Set({:?}, {:?}) to node {:?}",
-                        k, v, self
-                    )
-                }
+                self.set_leaf(k.clone(), v.clone());
             }
             Del(ref k) => {
-                // (when hi is empty, it means it's unbounded)
-                if self.hi.is_empty()
-                    || prefix_cmp_encoded(k, &self.hi, &self.lo)
-                        == std::cmp::Ordering::Less
-                {
-                    self.del_leaf(k);
-                } else {
-                    panic!("tried to consolidate del at key <= hi")
-                }
+                self.del_leaf(k);
             }
             Base(_) => panic!("trying to apply a Base to frag {:?}", self),
             ParentMergeIntention(pid) => {
@@ -99,7 +74,7 @@ impl Node {
 
     pub(crate) fn set_leaf(&mut self, key: IVec, val: IVec) {
         if let Data::Leaf(ref mut records) = self.data {
-            let search = records.binary_search_by(|(k, _)| prefix_cmp(k, &key));
+            let search = records.binary_search_by_key(&&key, |(k, _)| k);
             match search {
                 Ok(idx) => records[idx] = (key, val),
                 Err(idx) => records.insert(idx, (key, val)),
@@ -109,10 +84,21 @@ impl Node {
         }
     }
 
+    pub(crate) fn del_leaf(&mut self, key: &IVec) {
+        if let Data::Leaf(ref mut records) = self.data {
+            let search = records.binary_search_by_key(&key, |(k, _)| k);
+            if let Ok(idx) = search {
+                records.remove(idx);
+            }
+        } else {
+            panic!("tried to attach a Del to an Index chain");
+        }
+    }
+
     pub(crate) fn parent_split(&mut self, at: &[u8], to: PageId) -> bool {
         if let Data::Index(ref mut ptrs) = self.data {
-            let encoded_sep = prefix_encode(&self.lo, at);
-            match ptrs.binary_search_by(|a| prefix_cmp(&a.0, &encoded_sep)) {
+            let encoded_sep = &at[self.prefix_len as usize..];
+            match ptrs.binary_search_by_key(&encoded_sep, |(k, _)| k) {
                 Ok(_) => {
                     debug!(
                         "parent_split skipped because \
@@ -121,7 +107,7 @@ impl Node {
                     );
                     return false;
                 }
-                Err(idx) => ptrs.insert(idx, (encoded_sep, to)),
+                Err(idx) => ptrs.insert(idx, (IVec::from(encoded_sep), to)),
             }
         } else {
             panic!("tried to attach a ParentSplit to a Leaf chain");
@@ -130,48 +116,145 @@ impl Node {
         true
     }
 
-    pub(crate) fn del_leaf(&mut self, key: &IVec) {
-        if let Data::Leaf(ref mut records) = self.data {
-            let search = records
-                .binary_search_by(|&(ref k, ref _v)| prefix_cmp(k, &*key));
-            if let Ok(idx) = search {
-                let _removed = records.remove(idx);
-            }
-        } else {
-            panic!("tried to attach a Del to an Index chain");
-        }
-    }
+    pub(crate) fn split(mut self) -> (Node, Node) {
+        fn split_inner<T>(
+            xs: &mut Vec<(IVec, T)>,
+            lhs_prefix: &[u8],
+            rhs_max: &[u8],
+        ) -> (IVec, u8, Vec<(IVec, T)>)
+        where
+            T: Clone + Ord,
+        {
+            let rhs = xs.split_off(xs.len() / 2 + 1);
+            let rhs_min = &rhs[0].0;
 
-    pub(crate) fn split(mut self) -> (Self, Self) {
-        let (split, right_data) = self.data.split(&self.lo);
-        let rhs = Self {
+            // When splitting, the prefix can only grow or stay the
+            // same size, because all keys already shared the same
+            // prefix before. Here we figure out if we can shave
+            // off additional bytes in the key.
+            let max_additional = u8::max_value() - lhs_prefix.len() as u8;
+            let rhs_additional_prefix_len = rhs_min
+                .iter()
+                .zip(rhs_max.iter())
+                .take_while(|(a, b)| a == b)
+                .take(max_additional as usize)
+                .count();
+
+            let split_point: IVec = prefix::decode(lhs_prefix, &rhs_min);
+            assert!(!split_point.is_empty());
+
+            let mut rhs_data = Vec::with_capacity(rhs.len());
+
+            for (k, v) in rhs {
+                let k: IVec = if rhs_additional_prefix_len > 0 {
+                    // shave off additional prefixed bytes
+                    IVec::from(&k[rhs_additional_prefix_len..])
+                } else {
+                    k.clone()
+                };
+                rhs_data.push((k, v.clone()));
+            }
+
+            (split_point, rhs_additional_prefix_len as u8, rhs_data)
+        }
+
+        let prefix = &self.lo[..self.prefix_len as usize];
+        let rhs_max = &self.hi;
+        let (split, rhs_additional_prefix_len, right_data) = match self.data {
+            Data::Index(ref mut ptrs) => {
+                let (split, prefix_len, rhs) =
+                    split_inner(ptrs, prefix, rhs_max);
+                (split, prefix_len, Data::Index(rhs))
+            }
+            Data::Leaf(ref mut items) => {
+                let (split, prefix_len, rhs) =
+                    split_inner(items, prefix, rhs_max);
+                (split, prefix_len, Data::Leaf(rhs))
+            }
+        };
+
+        let rhs = Node {
             data: right_data,
             next: self.next,
-            lo: split,
+            lo: split.clone(),
             hi: self.hi.clone(),
             merging_child: None,
             merging: false,
+            prefix_len: self.prefix_len + rhs_additional_prefix_len,
         };
 
-        self.data.drop_gte(&rhs.lo, &self.lo);
-        self.hi = rhs.lo.clone();
+        self.hi = split;
 
         // intentionally make this the end to make
         // any issues pop out with setting it
         // correctly after the split.
         self.next = None;
 
+        if self.hi.is_empty() {
+            assert_eq!(self.prefix_len, 0);
+        }
+
+        assert!(!(self.lo.is_empty() && self.hi.is_empty()));
+        assert!(!(self.lo.is_empty() && (self.prefix_len > 0)));
+        assert!(!(rhs.lo.is_empty() && rhs.hi.is_empty()));
+        assert!(!(rhs.lo.is_empty() && (rhs.prefix_len > 0)));
+
         (self, rhs)
     }
 
-    pub(crate) fn receive_merge(&self, rhs: &Self) -> Self {
+    pub(crate) fn receive_merge(&self, rhs: &Node) -> Node {
+        fn receive_merge_inner<T>(
+            old_prefix: &[u8],
+            new_prefix_len: usize,
+            lhs_data: &mut Vec<(IVec, T)>,
+            rhs_data: &[(IVec, T)],
+        ) where
+            T: Clone,
+        {
+            // When merging, the prefix can only shrink or
+            // stay the same length. Here we figure out if
+            // we need to add previous prefixed bytes.
+            for (k, v) in rhs_data {
+                let k = if new_prefix_len != old_prefix.len() {
+                    prefix::reencode(old_prefix, k, new_prefix_len)
+                } else {
+                    k.clone()
+                };
+                lhs_data.push((k, v.clone()));
+            }
+        }
+
         let mut merged = self.clone();
+
+        let new_prefix_len = rhs
+            .hi
+            .iter()
+            .zip(self.lo.iter())
+            .take_while(|(a, b)| a == b)
+            .take(u8::max_value() as usize)
+            .count();
+
+        match (&mut merged.data, &rhs.data) {
+            (Data::Index(ref mut lh_ptrs), Data::Index(ref rh_ptrs)) => {
+                receive_merge_inner(
+                    rhs.prefix(),
+                    new_prefix_len,
+                    lh_ptrs,
+                    rh_ptrs.as_ref(),
+                );
+            }
+            (Data::Leaf(ref mut lh_items), Data::Leaf(ref rh_items)) => {
+                receive_merge_inner(
+                    rhs.prefix(),
+                    new_prefix_len,
+                    lh_items,
+                    rh_items.as_ref(),
+                );
+            }
+            _ => panic!("Can't merge incompatible Data!"),
+        }
+
         merged.hi = rhs.hi.clone();
-        merged.data.receive_merge(
-            rhs.lo.as_ref(),
-            merged.lo.as_ref(),
-            &rhs.data,
-        );
         merged.next = rhs.next;
         merged
     }
@@ -210,20 +293,19 @@ impl Node {
         // This encoding happens this way because
         // keys cannot be lower than the node's lo key.
         let predecessor_key = match bound {
-            Bound::Unbounded => prefix_encode(&self.lo, &self.lo),
+            Bound::Unbounded => self.prefix_encode(&self.lo),
             Bound::Included(b) => {
                 let max = std::cmp::max(b, &self.lo);
-                prefix_encode(&self.lo, max)
+                self.prefix_encode(max)
             }
             Bound::Excluded(b) => {
                 let max = std::cmp::max(b, &self.lo);
-                prefix_encode(&self.lo, max)
+                self.prefix_encode(max)
             }
         };
 
         let records = self.data.leaf_ref().unwrap();
-        let search =
-            records.binary_search_by(|(k, _)| prefix_cmp(k, &predecessor_key));
+        let search = records.binary_search_by_key(&predecessor_key, |(k, _)| k);
 
         let idx = match search {
             Ok(idx) => idx,
@@ -233,17 +315,14 @@ impl Node {
 
         for (k, v) in &records[idx..] {
             match bound {
-                Bound::Excluded(b)
-                    if prefix_cmp_encoded(k, b, &self.lo)
-                        == std::cmp::Ordering::Equal =>
-                {
+                Bound::Excluded(b) if b[self.prefix_len as usize..] == **k => {
                     // keep going because we wanted to exclude
                     // this key.
                     continue;
                 }
                 _ => {}
             }
-            let decoded_key = prefix_decode(&self.lo, &k);
+            let decoded_key = self.prefix_decode(&k);
             return Some((IVec::from(decoded_key), v.clone()));
         }
 
@@ -257,8 +336,7 @@ impl Node {
         static MAX_IVEC: Lazy<IVec, fn() -> IVec> = Lazy::new(init_max_ivec);
 
         fn init_max_ivec() -> IVec {
-            let mut base = vec![255; 1024 * 1024];
-            base[0] = 0;
+            let base = vec![255; 1024 * 1024];
             IVec::from(base)
         }
 
@@ -272,7 +350,7 @@ impl Node {
                 if self.hi.is_empty() {
                     MAX_IVEC.clone()
                 } else {
-                    prefix_encode(&self.lo, &self.hi)
+                    IVec::from(self.prefix_encode(&self.hi))
                 }
             }
             Bound::Included(b) => {
@@ -281,7 +359,7 @@ impl Node {
                 } else {
                     std::cmp::min(b, &self.hi)
                 };
-                prefix_encode(&self.lo, min)
+                IVec::from(self.prefix_encode(min))
             }
             Bound::Excluded(b) => {
                 let min = if self.hi.is_empty() {
@@ -289,13 +367,13 @@ impl Node {
                 } else {
                     std::cmp::min(b, &self.hi)
                 };
-                prefix_encode(&self.lo, min)
+                let encoded = &min[self.prefix_len as usize..];
+                IVec::from(encoded)
             }
         };
 
         let records = self.data.leaf_ref().unwrap();
-        let search =
-            records.binary_search_by(|(k, _)| prefix_cmp(k, &successor_key));
+        let search = records.binary_search_by_key(&&successor_key, |(k, _)| k);
 
         let idx = match search {
             Ok(idx) => idx,
@@ -306,8 +384,8 @@ impl Node {
         for (k, v) in records[0..=idx].iter().rev() {
             match bound {
                 Bound::Excluded(b)
-                    if prefix_cmp_encoded(k, b, &self.lo)
-                        == std::cmp::Ordering::Equal =>
+                    if b.len() >= self.prefix_len as usize
+                        && b[self.prefix_len as usize..] == **k =>
                 {
                     // keep going because we wanted to exclude
                     // this key.
@@ -315,7 +393,7 @@ impl Node {
                 }
                 _ => {}
             }
-            let decoded_key = prefix_decode(&self.lo, &k);
+            let decoded_key = self.prefix_decode(&k);
             return Some((IVec::from(decoded_key), v.clone()));
         }
         None
@@ -331,24 +409,9 @@ impl Node {
             .leaf_ref()
             .expect("leaf_pair_for_key called on index node");
 
-        let common_prefix = key
-            .iter()
-            .zip(self.lo.iter())
-            .take(u8::max_value() as usize)
-            .take_while(|(a, b)| a == b)
-            .count() as u8;
+        let suffix = &key[self.prefix_len as usize..];
 
-        let search = records
-            .binary_search_by(|&(ref k, ref _v)| {
-                if k[0] > common_prefix {
-                    Ordering::Less
-                } else if k[0] < common_prefix {
-                    Ordering::Greater
-                } else {
-                    k[1..].cmp(&key[common_prefix as usize..])
-                }
-            })
-            .ok();
+        let search = records.binary_search_by_key(&suffix, |(k, _)| k).ok();
 
         search.map(|idx| (&records[idx].0, &records[idx].1))
     }
@@ -359,7 +422,7 @@ impl Node {
         if let Some((k, v)) = self.leaf_pair_for_key(key.as_ref()) {
             (k.clone(), Some(v.clone()))
         } else {
-            let encoded_key = prefix_encode(&self.lo, key.as_ref());
+            let encoded_key = IVec::from(&key[self.prefix_len as usize..]);
             let encoded_val = None;
             (encoded_key, encoded_val)
         }
@@ -405,25 +468,71 @@ impl Node {
             .index_ref()
             .expect("index_next_node called on leaf");
 
-        let common_prefix = key
-            .iter()
-            .zip(self.lo.iter())
-            .take(u8::max_value() as usize)
-            .take_while(|(a, b)| a == b)
-            .count() as u8;
+        let suffix = &key[self.prefix_len as usize..];
 
-        let search = binary_search_lub(records, |&(ref k, ref _v)| {
-            if k[0] > common_prefix {
-                Ordering::Less
-            } else if k[0] < common_prefix {
-                Ordering::Greater
-            } else {
-                k[1..].cmp(&key[common_prefix as usize..])
-            }
-        });
+        let search =
+            binary_search_lub(records, |(k, _)| k.as_ref().cmp(suffix));
 
         let index = search.expect("failed to traverse index");
 
         (index, records[index].1)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) enum Data {
+    Index(Vec<(IVec, PageId)>),
+    Leaf(Vec<(IVec, IVec)>),
+}
+
+impl Data {
+    pub(crate) fn len(&self) -> usize {
+        match *self {
+            Data::Index(ref ptrs) => ptrs.len(),
+            Data::Leaf(ref items) => items.len(),
+        }
+    }
+
+    pub(crate) fn parent_merge_confirm(&mut self, merged_child_pid: PageId) {
+        match self {
+            Data::Index(ref mut ptrs) => {
+                let idx = ptrs
+                    .iter()
+                    .position(|(_k, c)| *c == merged_child_pid)
+                    .unwrap();
+                let _ = ptrs.remove(idx);
+            }
+            _ => panic!("parent_merge_confirm called on leaf data"),
+        }
+    }
+
+    pub(crate) fn leaf_ref(&self) -> Option<&Vec<(IVec, IVec)>> {
+        match *self {
+            Data::Index(_) => None,
+            Data::Leaf(ref items) => Some(items),
+        }
+    }
+
+    pub(crate) fn index_ref(&self) -> Option<&Vec<(IVec, PageId)>> {
+        match *self {
+            Data::Index(ref ptrs) => Some(ptrs),
+            Data::Leaf(_) => None,
+        }
+    }
+
+    pub(crate) fn is_index(&self) -> bool {
+        if let Data::Index(..) = self {
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn is_leaf(&self) -> bool {
+        if let Data::Leaf(..) = self {
+            true
+        } else {
+            false
+        }
     }
 }

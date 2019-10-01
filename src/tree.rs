@@ -151,7 +151,7 @@ impl Tree {
         loop {
             let guard = pin();
             let View { ptr, pid, node, .. } =
-                self.node_for_key(key.as_ref(), &guard)?;
+                self.view_for_key(key.as_ref(), &guard)?;
 
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
 
@@ -330,7 +330,7 @@ impl Tree {
 
         let guard = pin();
 
-        let View { node, .. } = self.node_for_key(key.as_ref(), &guard)?;
+        let View { node, .. } = self.view_for_key(key.as_ref(), &guard)?;
 
         let pair = node.leaf_pair_for_key(key.as_ref());
         let val = pair.map(|kv| kv.1.clone());
@@ -376,7 +376,7 @@ impl Tree {
             let guard = pin();
 
             let View { ptr, pid, node, .. } =
-                self.node_for_key(key.as_ref(), &guard)?;
+                self.view_for_key(key.as_ref(), &guard)?;
 
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
 
@@ -461,7 +461,7 @@ impl Tree {
         loop {
             let guard = pin();
             let View { ptr, pid, node, .. } =
-                self.node_for_key(key.as_ref(), &guard)?;
+                self.view_for_key(key.as_ref(), &guard)?;
 
             let (encoded_key, current_value) = node.node_kv_pair(key.as_ref());
             let matches = match (&old, &current_value) {
@@ -916,7 +916,7 @@ impl Tree {
         loop {
             let guard = pin();
             let View { ptr, pid, node, .. } =
-                self.node_for_key(key.as_ref(), &guard)?;
+                self.view_for_key(key.as_ref(), &guard)?;
 
             let (encoded_key, current_value) = node.node_kv_pair(key.as_ref());
             let tmp = current_value.as_ref().map(AsRef::as_ref);
@@ -1347,7 +1347,8 @@ impl Tree {
                 // failed.
             }
         } else {
-            let _ = self.root_hoist(root_pid, rhs_pid, &rhs_lo, guard)?;
+            let _ =
+                self.root_hoist(root_pid, rhs_pid, rhs_lo.clone(), guard)?;
         }
 
         Ok(())
@@ -1357,17 +1358,15 @@ impl Tree {
         &self,
         from: PageId,
         to: PageId,
-        at: &IVec,
+        at: IVec,
         guard: &'g Guard,
     ) -> Result<bool> {
         M.tree_root_split_attempt();
         // hoist new root, pointing to lhs & rhs
-        let root_lo = b"";
         let mut new_root_vec = vec![];
-        new_root_vec.push((vec![0].into(), from));
+        new_root_vec.push((prefix::empty().into(), from));
 
-        let encoded_at = prefix_encode(root_lo, &*at);
-        new_root_vec.push((encoded_at, to));
+        new_root_vec.push((at, to));
 
         let new_root = Frag::root(Data::Index(new_root_vec));
 
@@ -1438,7 +1437,7 @@ impl Tree {
 
     /// returns the traversal path, completing any observed
     /// partially complete splits or merges along the way.
-    pub(crate) fn node_for_key<'g, K>(
+    pub(crate) fn view_for_key<'g, K>(
         &self,
         key: K,
         guard: &'g Guard,
@@ -1532,7 +1531,7 @@ impl Tree {
                     if self.root_hoist(
                         root_pid,
                         view.next.unwrap(),
-                        &view.hi,
+                        view.hi.clone(),
                         guard,
                     )? {
                         M.tree_root_split_success();
