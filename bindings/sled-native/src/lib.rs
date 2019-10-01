@@ -214,11 +214,17 @@ pub unsafe extern "C" fn sled_compare_and_swap(
 
     match res {
         Ok(Ok(())) => 1,
-        Ok(Err(sled::CompareAndSwapError { cur: None })) => {
+        Ok(Err(sled::CompareAndSwapError {
+            current: None,
+            proposed: _,
+        })) => {
             *actual_vallen = 0;
             0
         }
-        Ok(Err(sled::CompareAndSwapError { cur: Some(v) })) => {
+        Ok(Err(sled::CompareAndSwapError {
+            current: Some(v),
+            proposed: _,
+        })) => {
             *actual_val = leak_buf(v.to_vec(), actual_vallen) as *const u8;
             0
         }

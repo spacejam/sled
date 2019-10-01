@@ -18,9 +18,10 @@ fn basic() -> Result<()> {
     // compare and swap
     match db.compare_and_swap(k.clone(), Some(&v1.clone()), Some(v2.clone()))? {
         Ok(()) => println!("it worked!"),
-        Err(sled::CompareAndSwapError { cur: actual }) => {
-            println!("the actual current value is {:?}", actual)
-        }
+        Err(sled::CompareAndSwapError {
+            current: cur,
+            proposed: _,
+        }) => println!("the actual current value is {:?}", cur),
     }
 
     // scan forward

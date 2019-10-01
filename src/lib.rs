@@ -160,7 +160,7 @@ pub use self::{
     ivec::IVec,
     result::{Error, Result},
     subscription::{Event, Subscriber},
-    tree::{CompareAndSwapError, CompareAndSwapResult, Tree, CAS_OK},
+    tree::{CompareAndSwapError, CompareAndSwapResult, Tree},
     tx::{
         TransactionError, TransactionResult, Transactional, TransactionalTree,
     },

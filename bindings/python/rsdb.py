@@ -3,7 +3,7 @@
 from ctypes import *
 import os
 
-sled = CDLL("./libsled.so")
+sled = CDLL("./libsled_native.so")
 
 sled.sled_create_config.argtypes = ()
 sled.sled_create_config.restype = c_void_p

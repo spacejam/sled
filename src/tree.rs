@@ -406,11 +406,12 @@ impl Tree {
     /// exist yet. If new is None, will delete the value if old is correct.
     /// If both old and new are Some, will modify the value if old is correct.
     ///
-    /// It returns CAS_OK if operation finishes successfully.
+    /// It returns Ok(Ok(())) if operation finishes successfully.
     ///
     /// If it fails it returns:
-    ///     - Ok(Err(CompareAndSwapError(cur))) if operation failed to setup a
-    ///       new value. CompareAndSwapError contains current value.
+    ///     - Ok(Err(CompareAndSwapError(current, proposed))) if operation
+    ///       failed to setup a new value. CompareAndSwapError contains current
+    ///       and proposed values.
     ///     - Err(Error::Unsupported) if the database is opened in read-only
     ///       mode.
     ///
@@ -423,13 +424,13 @@ impl Tree {
     /// // unique creation
     /// assert_eq!(
     ///     t.compare_and_swap(&[1], None as Option<&[u8]>, Some(&[10])),
-    ///     sled::CAS_OK
+    ///     sled::Ok(Ok(()))
     /// );
     ///
     /// // conditional modification
     /// assert_eq!(
     ///     t.compare_and_swap(&[1], Some(&[10]), Some(&[20])),
-    ///     sled::CAS_OK
+    ///     sled::Ok(Ok(()))
     /// );
     ///
     /// // failed conditional modification -- the current value is returned in
@@ -444,7 +445,7 @@ impl Tree {
     /// // conditional deletion
     /// assert_eq!(
     ///     t.compare_and_swap(&[1], Some(&[20]), None as Option<&[u8]>),
-    ///     sled::CAS_OK
+    ///     sled::Ok(Ok(()))
     /// );
     /// assert_eq!(t.get(&[1]), Ok(None));
     /// ```
@@ -487,7 +488,10 @@ impl Tree {
             };
 
             if !matches {
-                return Ok(Err(CompareAndSwapError { cur: current_value }));
+                return Ok(Err(CompareAndSwapError {
+                    current: current_value,
+                    proposed: new,
+                }));
             }
 
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
@@ -510,7 +514,7 @@ impl Tree {
                     res.complete(event);
                 }
 
-                return CAS_OK;
+                return Ok(Ok(()));
             }
             M.tree_looped();
         }
@@ -531,7 +535,10 @@ impl Tree {
     {
         match self.compare_and_swap(key, old, new) {
             Ok(Ok(())) => Ok(Ok(())),
-            Ok(Err(CompareAndSwapError { cur })) => Ok(Err(cur)),
+            Ok(Err(CompareAndSwapError {
+                current: cur,
+                proposed: _,
+            })) => Ok(Err(cur)),
             Err(e) => Err(e),
         }
     }
@@ -597,8 +604,11 @@ impl Tree {
             let next = f(tmp).map(IVec::from);
             match self.compare_and_swap::<_, _, IVec>(key, tmp, next.clone())? {
                 Ok(()) => return Ok(next),
-                Err(CompareAndSwapError { cur: new_current }) => {
-                    current = new_current;
+                Err(CompareAndSwapError {
+                    current: cur,
+                    proposed: _,
+                }) => {
+                    current = cur;
                 }
             }
         }
@@ -664,8 +674,11 @@ impl Tree {
             let next = f(tmp);
             match self.compare_and_swap(key, tmp, next)? {
                 Ok(()) => return Ok(current),
-                Err(CompareAndSwapError { cur: new_current }) => {
-                    current = new_current;
+                Err(CompareAndSwapError {
+                    current: cur,
+                    proposed: _,
+                }) => {
+                    current = cur;
                 }
             }
         }
@@ -2060,15 +2073,14 @@ impl Debug for Tree {
 
 /// Compare and swap result.
 ///
-/// It returns CAS_OK if operation finishes successfully and otherwise:
-///     - Ok(Err(CompareAndSwapError(cur))) if operation failed to setup a new
-///       value. CompareAndSwapError contains current value.
+/// It returns Ok(Ok(())) if operation finishes successfully and
+///     - Ok(Err(CompareAndSwapError(current, proposed))) if operation failed to
+///       setup a new value. CompareAndSwapError contains current and proposed
+///       values.
 ///     - Err(Error::Unsupported) if the database is opened in read-only mode.
+/// otherwise.
 pub type CompareAndSwapResult =
     Result<std::result::Result<(), CompareAndSwapError>>;
-
-/// Successful result of compare and swap operation.
-pub const CAS_OK: CompareAndSwapResult = Ok(Ok(()));
 
 impl From<Error> for CompareAndSwapResult {
     fn from(error: Error) -> Self {
@@ -2080,7 +2092,9 @@ impl From<Error> for CompareAndSwapResult {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompareAndSwapError {
     /// Current value.
-    pub cur: Option<IVec>,
+    pub current: Option<IVec>,
+    /// New proposed value.
+    pub proposed: Option<IVec>,
 }
 
 impl fmt::Display for CompareAndSwapError {
