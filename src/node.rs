@@ -14,11 +14,11 @@ pub(crate) struct Node {
 }
 
 impl Node {
-    pub(crate) fn prefix_decode(&self, key: &[u8]) -> IVec {
+    fn prefix_decode(&self, key: &[u8]) -> IVec {
         prefix::decode(self.prefix(), key)
     }
 
-    pub(crate) fn prefix_encode<'a>(&self, key: &'a [u8]) -> &'a [u8] {
+    fn prefix_encode<'a>(&self, key: &'a [u8]) -> &'a [u8] {
         assert!(&*self.lo <= key);
         if !self.hi.is_empty() {
             assert!(&*self.hi > key);
@@ -27,7 +27,7 @@ impl Node {
         &key[self.prefix_len as usize..]
     }
 
-    pub(crate) fn prefix(&self) -> &[u8] {
+    fn prefix(&self) -> &[u8] {
         &self.lo[..self.prefix_len as usize]
     }
 
