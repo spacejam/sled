@@ -81,10 +81,10 @@ impl Arbitrary for Key {
             let gs = g.size();
             let gamma = Gamma::new(0.3, gs as f64).unwrap();
             let v = gamma.sample(&mut rand::thread_rng());
-            let len = if v > 30000.0 {
+            let len = if v > 3000.0 {
                 10000
             } else {
-                (v % 100.) as usize
+                (v % 300.) as usize
             };
 
             let space = g.gen_range(0, gs) + 1;
@@ -155,7 +155,9 @@ impl Arbitrary for Op {
     fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
         match *self {
             Set(ref k, v) => Box::new(k.shrink().map(move |sk| Set(sk, v))),
-            Merge(ref k, v) => Box::new(k.shrink().map(move |k| Merge(k, v))),
+            Merge(ref k, v) => Box::new(k.shrink().flat_map(move |k| {
+                vec![Set(k.clone(), v.clone()), Merge(k, v)]
+            })),
             Get(ref k) => Box::new(k.shrink().map(Get)),
             GetLt(ref k) => Box::new(k.shrink().map(GetLt)),
             GetGt(ref k) => Box::new(k.shrink().map(GetGt)),
@@ -227,7 +229,11 @@ pub fn prop_tree_matches_btreemap(
                 let old_reference = reference.insert(k.clone(), u16::from(v));
                 assert_eq!(
                     old_actual.map(|v| bytes_to_u16(&*v)),
-                    old_reference
+                    old_reference,
+                    "when setting key {:?}, expected old returned value to be {:?}\n{:?}",
+                    k,
+                    old_reference,
+                    tree
                 );
             }
             Merge(k, v) => {

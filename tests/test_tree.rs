@@ -1637,3 +1637,112 @@ fn tree_bug_30() {
         false,
     );
 }
+
+#[test]
+fn tree_bug_31() {
+    // postmortem:
+    prop_tree_matches_btreemap(
+        vec![
+            Set(Key(vec![1]), 212),
+            Set(Key(vec![12]), 174),
+            Set(Key(vec![]), 182),
+            Set(
+                Key(vec![
+                    12, 55, 46, 38, 40, 34, 44, 32, 19, 15, 28, 49, 35, 40, 55,
+                    35, 61, 9, 62, 18, 3, 58,
+                ]),
+                86,
+            ),
+            Scan(Key(vec![]), -18),
+        ],
+        0,
+        false,
+        false,
+    );
+}
+
+#[test]
+fn tree_bug_32() {
+    // postmortem: the MAX_IVEC that predecessor used in reverse
+    // iteration was setting the first byte to 0 even though we
+    // no longer perform per-key prefix encoding.
+    prop_tree_matches_btreemap(
+        vec![Set(Key(vec![57]), 141), Scan(Key(vec![]), -40)],
+        0,
+        false,
+        false,
+    );
+}
+
+#[test]
+fn tree_bug_33() {
+    // postmortem: the split point was being incorrectly
+    // calculated when using the simplified prefix technique.
+    prop_tree_matches_btreemap(
+        vec![
+            Set(Key(vec![]), 91),
+            Set(Key(vec![1]), 216),
+            Set(Key(vec![85, 25]), 78),
+            Set(Key(vec![85]), 43),
+            GetLt(Key(vec![])),
+        ],
+        0,
+        false,
+        false,
+    );
+}
+
+#[test]
+fn tree_bug_34() {
+    // postmortem: a safety check was too aggressive when
+    // finding predecessors using the new simplified prefix
+    // encoding technique.
+    prop_tree_matches_btreemap(
+        vec![
+            Set(Key(vec![9, 212]), 100),
+            Set(Key(vec![9]), 63),
+            Set(Key(vec![5]), 100),
+            Merge(Key(vec![]), 16),
+            Set(Key(vec![9, 70]), 188),
+            Scan(Key(vec![]), -40),
+        ],
+        0,
+        false,
+        false,
+    );
+}
+
+#[test]
+fn tree_bug_35() {
+    // postmortem: prefix lengths were being incorrectly
+    // handled on splits.
+    prop_tree_matches_btreemap(
+        vec![
+            Set(Key(vec![207]), 29),
+            Set(Key(vec![192]), 218),
+            Set(Key(vec![121]), 167),
+            Set(Key(vec![189]), 40),
+            Set(Key(vec![85]), 197),
+            Set(Key(vec![185]), 58),
+            Set(Key(vec![84]), 97),
+            Set(Key(vec![23]), 34),
+            Set(Key(vec![47]), 162),
+            Set(Key(vec![39]), 92),
+            Set(Key(vec![46]), 173),
+            Set(Key(vec![33]), 202),
+            Set(Key(vec![8]), 113),
+            Set(Key(vec![17]), 228),
+            Set(Key(vec![8, 49]), 217),
+            Set(Key(vec![6]), 192),
+            Set(Key(vec![5]), 47),
+            Set(Key(vec![]), 5),
+            Set(Key(vec![0]), 103),
+            Set(Key(vec![1]), 230),
+            Set(Key(vec![0, 229]), 117),
+            Set(Key(vec![]), 112),
+        ],
+        0,
+        false,
+        false,
+    );
+}
