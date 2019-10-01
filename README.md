@@ -31,7 +31,7 @@ assert_eq!(iter.next(), None);
 tree.remove(&k);
 
 // compare and swap
-tree.cas(k, Some(v1), Some(v2));
+tree.compare_and_swap(k, Some(v1), Some(v2));
 
 // block until all operations are stable on disk
 // (flush_async also available to get a Future)
@@ -59,7 +59,7 @@ what's the trade-off? sled uses too much disk space sometimes. this will improve
 
 * [API](https://docs.rs/sled) similar to a threadsafe `BTreeMap<Vec<u8>, Vec<u8>>`
 * fully serializable multi-key and multi-Tree [transactions](https://docs.rs/sled/latest/sled/struct.Tree.html#method.transaction)
-* fully atomic single-key operations, supports [compare and swap](https://docs.rs/sled/latest/sled/struct.Tree.html#method.cas)
+* fully atomic single-key operations, supports [compare and swap](https://docs.rs/sled/latest/sled/struct.Tree.html#method.compare_and_swap)
 * zero-copy reads
 * [write batch support](https://docs.rs/sled/latest/sled/struct.Tree.html#method.batch)
 * [subscription/watch semantics on key prefixes](https://github.com/spacejam/sled/wiki/reactive-semantics)

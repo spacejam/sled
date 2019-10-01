@@ -47,9 +47,7 @@ impl Clone for Error {
         use self::Error::*;
 
         match self {
-            Io(ioe) => {
-                Io(io::Error::new(ioe.kind(), format!("{:?}", ioe)))
-            }
+            Io(ioe) => Io(io::Error::new(ioe.kind(), format!("{:?}", ioe))),
             CollectionNotFound(name) => CollectionNotFound(name.clone()),
             Unsupported(why) => Unsupported(why.clone()),
             ReportableBug(what) => ReportableBug(what.clone()),

@@ -57,7 +57,7 @@
 //! assert_eq!(&t.get(b"yo!").unwrap().unwrap(), b"v1");
 //!
 //! // Atomic compare-and-swap.
-//! t.cas(
+//! t.compare_and_swap(
 //!     b"yo!",      // key
 //!     Some(b"v1"), // old value, None for not present
 //!     Some(b"v2"), // new value, None for delete
@@ -160,7 +160,7 @@ pub use self::{
     ivec::IVec,
     result::{Error, Result},
     subscription::{Event, Subscriber},
-    tree::Tree,
+    tree::{CompareAndSwapError, CompareAndSwapResult, Tree},
     tx::{
         TransactionError, TransactionResult, Transactional, TransactionalTree,
     },
