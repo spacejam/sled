@@ -166,7 +166,7 @@ pub use self::{
 
 use {
     self::{
-        binary_search::binary_search_lub,
+        binary_search::interpolation_search_lub,
         config::PersistedConfig,
         context::Context,
         frag::Frag,
