@@ -2,13 +2,18 @@
 
 ## Breaking Changes
 
-* The `cas` is deprecated in favor of `compare_and_swap`.
-* The `io_buf_size` renamed to the `segment_size`.
-* The `io_buf_size` method has been removed from
-  ConfigBuilder. This can be manually set by setting
-  the attribute directly on the ConfigBuilder, but
-  this is discouraged. Additionally, this must now
-  be a power of 2.
+* The `cas` method is deprecated in favor of the new
+  `compare_and_swap` method which now returns the
+  proposed value that failed to be applied.
+* Tree nodes now have constant prefix encoding
+  lengths.
+* The `io_buf_size` configurable renamed to
+  `segment_size`.
+* The `io_buf_size` configurable method has been
+  removed from ConfigBuilder. This can be manually
+  set by setting the attribute directly on the
+  ConfigBuilder, but this is discouraged.
+  Additionally, this must now be a power of 2.
 * The `page_consolidation_threshold` method has been
   removed from ConfigBuilder, and this is now
   a constant of 10.

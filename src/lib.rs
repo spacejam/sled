@@ -83,7 +83,6 @@
 #![deny(trivial_numeric_casts)]
 #![deny(unsafe_code)]
 #![deny(unused_qualifications)]
-#![deny(unused_results)]
 
 #[cfg(feature = "failpoints")]
 use fail::fail_point;
@@ -99,7 +98,6 @@ mod batch;
 mod binary_search;
 mod config;
 mod context;
-mod data;
 mod db;
 mod dll;
 mod frag;
@@ -168,22 +166,17 @@ pub use self::{
 
 use {
     self::{
-        binary_search::binary_search_lub,
+        binary_search::interpolation_search_lub,
         config::PersistedConfig,
         context::Context,
-        data::Data,
         frag::Frag,
         histogram::Histogram,
         lru::Lru,
         meta::Meta,
         metrics::{clock, measure, Measure, M},
-        node::Node,
+        node::{Data, Node},
         oneshot::{OneShot, OneShotFiller},
         pagetable::PageTable,
-        prefix::{
-            prefix_cmp, prefix_cmp_encoded, prefix_decode, prefix_encode,
-            prefix_reencode,
-        },
         result::CasResult,
         stack::{node_from_frag_vec, Stack, StackIter},
         subscription::Subscriptions,

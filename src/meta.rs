@@ -76,7 +76,7 @@ pub(crate) fn open_tree(
         // set up root index
 
         // vec![0] represents a prefix-encoded empty prefix
-        let root_index_vec = vec![(vec![0].into(), leaf_id)];
+        let root_index_vec = vec![(prefix::empty().into(), leaf_id)];
         let root = Frag::root(Data::Index(root_index_vec));
         let (root_id, root_ptr) = context.pagecache.allocate(root, guard)?;
 

@@ -30,12 +30,12 @@ impl Debug for Db {
         f: &mut fmt::Formatter<'_>,
     ) -> std::result::Result<(), fmt::Error> {
         let tenants = self.tenants.read();
-        write!(f, "Db {{")?;
+        writeln!(f, "Db {{")?;
         for (raw_name, tree) in tenants.iter() {
             let name = std::str::from_utf8(&raw_name)
                 .ok()
                 .map_or_else(|| format!("{:?}", raw_name), String::from);
-            write!(f, "tree: {:?} contents: {:?}", name, tree)?;
+            write!(f, "    Tree: {:?} contents: {:?}", name, tree)?;
         }
         write!(f, "}}")?;
         Ok(())
