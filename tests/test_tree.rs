@@ -1746,3 +1746,43 @@ fn tree_bug_35() {
         false,
     );
 }
+
+#[test]
+fn tree_bug_36() {
+    // postmortem: suffix truncation caused
+    // regions to be permanently inaccessible
+    // when applied to split points on index
+    // nodes.
+    prop_tree_matches_btreemap(
+        vec![
+            Set(Key(vec![152]), 65),
+            Set(Key(vec![]), 227),
+            Set(Key(vec![101]), 23),
+            Merge(Key(vec![254]), 97),
+            Set(Key(vec![254, 5]), 207),
+            Scan(Key(vec![]), -30),
+        ],
+        0,
+        false,
+        false,
+    );
+}
+
+#[test]
+fn tree_bug_37() {
+    // postmortem: suffix truncation was so
+    // aggressive that it would cut into
+    // the prefix in the lo key sometimes.
+    prop_tree_matches_btreemap(
+        vec![
+            Set(Key(vec![]), 82),
+            Set(Key(vec![2, 0]), 40),
+            Set(Key(vec![2, 0, 0]), 49),
+            Set(Key(vec![1]), 187),
+            Scan(Key(vec![]), 33),
+        ],
+        0,
+        false,
+        false,
+    );
+}

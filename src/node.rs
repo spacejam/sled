@@ -121,12 +121,14 @@ impl Node {
             xs: &mut Vec<(IVec, T)>,
             lhs_prefix: &[u8],
             rhs_max: &[u8],
+            suffix_truncation: bool,
         ) -> (IVec, u8, Vec<(IVec, T)>)
         where
             T: Clone + Ord,
         {
             let rhs = xs.split_off(xs.len() / 2 + 1);
             let rhs_min = &rhs[0].0;
+            let lhs_max = &xs.last().unwrap().0;
 
             // When splitting, the prefix can only grow or stay the
             // same size, because all keys already shared the same
@@ -140,7 +142,33 @@ impl Node {
                 .take(max_additional as usize)
                 .count();
 
-            let split_point: IVec = prefix::decode(lhs_prefix, &rhs_min);
+            let necessary_split_len = if suffix_truncation {
+                // we can only perform suffix truncation when
+                // choosing the split points for leaf nodes.
+                // split points bubble up into indexes, but
+                // an important invariant is that for indexes
+                // the first item always matches the lo key,
+                // otherwise ranges would be permanently
+                // inaccessible by falling into the gap
+                // during a split.
+                let smallest_suffix = rhs_min
+                    .iter()
+                    .zip(lhs_max.iter())
+                    .take_while(|(a, b)| a == b)
+                    .count()
+                    + 1;
+
+                // we cannot suffix truncate the split point so
+                // aggressively that we cause prefix encoding
+                // to degrade
+                std::cmp::max(smallest_suffix, rhs_additional_prefix_len)
+            } else {
+                rhs_min.len()
+            };
+
+            let split_point: IVec =
+                prefix::decode(lhs_prefix, &rhs_min[..necessary_split_len]);
+
             assert!(!split_point.is_empty());
 
             let mut rhs_data = Vec::with_capacity(rhs.len());
@@ -163,12 +191,12 @@ impl Node {
         let (split, rhs_additional_prefix_len, right_data) = match self.data {
             Data::Index(ref mut ptrs) => {
                 let (split, prefix_len, rhs) =
-                    split_inner(ptrs, prefix, rhs_max);
+                    split_inner(ptrs, prefix, rhs_max, false);
                 (split, prefix_len, Data::Index(rhs))
             }
             Data::Leaf(ref mut items) => {
                 let (split, prefix_len, rhs) =
-                    split_inner(items, prefix, rhs_max);
+                    split_inner(items, prefix, rhs_max, true);
                 (split, prefix_len, Data::Leaf(rhs))
             }
         };
@@ -196,8 +224,12 @@ impl Node {
 
         assert!(!(self.lo.is_empty() && self.hi.is_empty()));
         assert!(!(self.lo.is_empty() && (self.prefix_len > 0)));
+        assert!(self.lo.len() >= self.prefix_len as usize);
+        assert!(self.hi.len() >= self.prefix_len as usize);
         assert!(!(rhs.lo.is_empty() && rhs.hi.is_empty()));
         assert!(!(rhs.lo.is_empty() && (rhs.prefix_len > 0)));
+        assert!(rhs.lo.len() >= rhs.prefix_len as usize);
+        assert!(rhs.hi.len() >= rhs.prefix_len as usize);
 
         (self, rhs)
     }
