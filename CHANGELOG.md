@@ -2,6 +2,9 @@
 
 ## Breaking Changes
 
+* The `cas` method is deprecated in favor of the new
+  `compare_and_swap` method which now returns the
+  proposed value that failed to be applied.
 * Tree nodes now have constant prefix encoding
   lengths.
 * The `io_buf_size` configurable renamed to

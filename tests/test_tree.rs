@@ -123,7 +123,7 @@ fn concurrent_tree_ops() {
             let k1 = k.clone();
             let mut k2 = k.clone();
             k2.reverse();
-            tree.cas(&k1, Some(&*k1), Some(k2)).unwrap().unwrap();
+            tree.compare_and_swap(&k1, Some(&*k1), Some(k2)).unwrap().unwrap();
         }};
 
         drop(t);
