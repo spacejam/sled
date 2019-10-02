@@ -58,11 +58,7 @@ impl Flusher {
             })
             .unwrap();
 
-        Self {
-            shutdown,
-            sc,
-            join_handle: Mutex::new(Some(join_handle)),
-        }
+        Self { shutdown, sc, join_handle: Mutex::new(Some(join_handle)) }
     }
 }
 

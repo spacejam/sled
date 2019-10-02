@@ -854,11 +854,7 @@ impl IoBuf {
 
         self.lsn = lsn;
 
-        let header = SegmentHeader {
-            lsn,
-            max_stable_lsn,
-            ok: true,
-        };
+        let header = SegmentHeader { lsn, max_stable_lsn, ok: true };
         let header_bytes: [u8; SEG_HEADER_LEN] = header.into();
 
         #[allow(unsafe_code)]

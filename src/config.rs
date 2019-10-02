@@ -693,9 +693,7 @@ impl Config {
     #[doc(hidden)]
     // truncate the underlying file for corruption testing purposes.
     pub fn truncate_corrupt(&self, new_len: u64) {
-        self.file
-            .set_len(new_len)
-            .expect("should be able to truncate");
+        self.file.set_len(new_len).expect("should be able to truncate");
     }
 }
 

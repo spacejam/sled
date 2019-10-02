@@ -383,9 +383,7 @@ impl Tree {
             let (encoded_key, existing_val) = node.node_kv_pair(key.as_ref());
             let frag = Frag::Del(encoded_key);
             let link =
-                self.context
-                    .pagecache
-                    .link(pid, ptr.clone(), frag, &guard)?;
+                self.context.pagecache.link(pid, ptr.clone(), frag, &guard)?;
 
             if link.is_ok() {
                 // success
@@ -535,10 +533,9 @@ impl Tree {
     {
         match self.compare_and_swap(key, old, new) {
             Ok(Ok(())) => Ok(Ok(())),
-            Ok(Err(CompareAndSwapError {
-                current: cur,
-                proposed: _,
-            })) => Ok(Err(cur)),
+            Ok(Err(CompareAndSwapError { current: cur, proposed: _ })) => {
+                Ok(Err(cur))
+            }
             Err(e) => Err(e),
         }
     }
@@ -604,10 +601,7 @@ impl Tree {
             let next = f(tmp).map(IVec::from);
             match self.compare_and_swap::<_, _, IVec>(key, tmp, next.clone())? {
                 Ok(()) => return Ok(next),
-                Err(CompareAndSwapError {
-                    current: cur,
-                    proposed: _,
-                }) => {
+                Err(CompareAndSwapError { current: cur, proposed: _ }) => {
                     current = cur;
                 }
             }
@@ -674,10 +668,7 @@ impl Tree {
             let next = f(tmp);
             match self.compare_and_swap(key, tmp, next)? {
                 Ok(()) => return Ok(current),
-                Err(CompareAndSwapError {
-                    current: cur,
-                    proposed: _,
-                }) => {
+                Err(CompareAndSwapError { current: cur, proposed: _ }) => {
                     current = cur;
                 }
             }
@@ -1928,11 +1919,7 @@ impl Tree {
             }
         }
 
-        match self
-            .context
-            .pagecache
-            .free(child_pid, child_view.ptr, guard)?
-        {
+        match self.context.pagecache.free(child_pid, child_view.ptr, guard)? {
             Ok(_) => {
                 // we freed it
                 trace!("freed merged pid {}", child_pid);

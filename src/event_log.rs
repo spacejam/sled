@@ -30,41 +30,15 @@ use crate::*;
 /// A thing that happens at a certain time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum Event {
-    SegmentAllocate {
-        lsn: Lsn,
-        lid: LogOffset,
-    },
-    SegmentFree {
-        lsn: Lsn,
-        lid: LogOffset,
-    },
-    SegmentZero {
-        lsn: Lsn,
-        lid: LogOffset,
-    },
-    Replace {
-        pid: PageId,
-        lsn: Lsn,
-        lid: LogOffset,
-        old_lids: Vec<LogOffset>,
-    },
-    Link {
-        pid: PageId,
-        lsn: Lsn,
-        lid: LogOffset,
-    },
-    PagesBeforeRestart {
-        pages: HashMap<PageId, Vec<DiskPtr>>,
-    },
-    PagesAfterRestart {
-        pages: HashMap<PageId, Vec<DiskPtr>>,
-    },
-    MetaBeforeRestart {
-        meta: Meta,
-    },
-    MetaAfterRestart {
-        meta: Meta,
-    },
+    SegmentAllocate { lsn: Lsn, lid: LogOffset },
+    SegmentFree { lsn: Lsn, lid: LogOffset },
+    SegmentZero { lsn: Lsn, lid: LogOffset },
+    Replace { pid: PageId, lsn: Lsn, lid: LogOffset, old_lids: Vec<LogOffset> },
+    Link { pid: PageId, lsn: Lsn, lid: LogOffset },
+    PagesBeforeRestart { pages: HashMap<PageId, Vec<DiskPtr>> },
+    PagesAfterRestart { pages: HashMap<PageId, Vec<DiskPtr>> },
+    MetaBeforeRestart { meta: Meta },
+    MetaAfterRestart { meta: Meta },
 }
 
 /// A lock-free queue of Events.

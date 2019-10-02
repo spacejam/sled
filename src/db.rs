@@ -243,11 +243,8 @@ impl Db {
     /// to perform the export.
     pub fn export(
         &self,
-    ) -> Vec<(
-        CollectionType,
-        CollectionName,
-        impl Iterator<Item = Vec<Vec<u8>>>,
-    )> {
+    ) -> Vec<(CollectionType, CollectionName, impl Iterator<Item = Vec<Vec<u8>>>)>
+    {
         let tenants = self.tenants.read();
 
         let mut ret = vec![];

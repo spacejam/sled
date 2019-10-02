@@ -72,13 +72,8 @@ impl Log {
             let (_, blob_ptr) = ptr.blob();
             read_blob(blob_ptr, &self.config).map(|(kind, buf)| {
                 let sz = MSG_HEADER_LEN + BLOB_INLINE_LEN;
-                let header = MessageHeader {
-                    kind,
-                    pid,
-                    lsn,
-                    crc32: 0,
-                    len: sz as u32,
-                };
+                let header =
+                    MessageHeader { kind, pid, lsn, crc32: 0, len: sz as u32 };
                 LogRead::Blob(header, buf, blob_ptr)
             })
         }
@@ -502,13 +497,7 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
             let length = arr_to_u32(buf.get_unchecked(17..21));
             let crc32 = arr_to_u32(buf.get_unchecked(21..)) ^ 0xFFFF_FFFF;
 
-            Self {
-                kind,
-                pid: page_id,
-                lsn,
-                len: length,
-                crc32,
-            }
+            Self { kind, pid: page_id, lsn, len: length, crc32 }
         }
     }
 }
@@ -577,11 +566,7 @@ impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
                 );
             }
 
-            Self {
-                lsn,
-                max_stable_lsn,
-                ok,
-            }
+            Self { lsn, max_stable_lsn, ok }
         }
     }
 }

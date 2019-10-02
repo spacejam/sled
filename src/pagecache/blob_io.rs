@@ -1,5 +1,5 @@
-use crate::*;
 use crate::pagecache::*;
+use crate::*;
 
 pub(crate) fn read_blob(
     blob_ptr: Lsn,
@@ -51,18 +51,13 @@ pub(crate) fn read_blob(
     let crc_actual = hasher.finalize();
 
     if crc_expected == crc_actual {
-        let buf = if config.use_compression {
-            maybe_decompress(buf)?
-        } else {
-            buf
-        };
+        let buf =
+            if config.use_compression { maybe_decompress(buf)? } else { buf };
         Ok((MessageKind::from(kind_byte[0]), buf))
     } else {
         warn!("blob {} failed crc check!", blob_ptr);
 
-        Err(Error::Corruption {
-            at: DiskPtr::Blob(0, blob_ptr),
-        })
+        Err(Error::Corruption { at: DiskPtr::Blob(0, blob_ptr) })
     }
 }
 
@@ -73,10 +68,8 @@ pub(crate) fn write_blob(
     data: &[u8],
 ) -> Result<()> {
     let path = config.blob_path(id);
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)?;
+    let mut f =
+        std::fs::OpenOptions::new().write(true).create_new(true).open(&path)?;
 
     let kind_buf = &[kind.into()];
 
@@ -100,10 +93,7 @@ pub(crate) fn gc_blobs(config: &Config, stable_lsn: Lsn) -> Result<()> {
     let blob_dir = stable.parent().unwrap();
     let blobs = std::fs::read_dir(blob_dir)?;
 
-    debug!(
-        "gc_blobs removing any blob with an lsn above {}",
-        stable_lsn
-    );
+    debug!("gc_blobs removing any blob with an lsn above {}", stable_lsn);
 
     for blob in blobs {
         let path = blob?.path();

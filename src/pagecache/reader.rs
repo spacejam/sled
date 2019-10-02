@@ -54,11 +54,7 @@ pub(crate) fn read_message(
     let _measure = Measure::new(&M.read);
     let segment_len = config.segment_size;
     let seg_start = lid / segment_len as LogOffset * segment_len as LogOffset;
-    trace!(
-        "reading message from segment: {} at lid: {}",
-        seg_start,
-        lid
-    );
+    trace!("reading message from segment: {} at lid: {}", seg_start, lid);
     assert!(seg_start + SEG_HEADER_LEN as LogOffset <= lid);
 
     let ceiling = seg_start + segment_len as LogOffset;
@@ -124,10 +120,7 @@ pub(crate) fn read_message(
     let crc32 = hasher.finalize();
 
     if crc32 != header.crc32 {
-        trace!(
-            "read a message with a bad checksum with header {:?}",
-            header
-        );
+        trace!("read a message with a bad checksum with header {:?}", header);
         return Ok(LogRead::Corrupted(header.len));
     }
 

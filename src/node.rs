@@ -495,10 +495,8 @@ impl Node {
     }
 
     pub(crate) fn index_next_node(&self, key: &[u8]) -> (usize, PageId) {
-        let records = self
-            .data
-            .index_ref()
-            .expect("index_next_node called on leaf");
+        let records =
+            self.data.index_ref().expect("index_next_node called on leaf");
 
         let suffix = &key[self.prefix_len as usize..];
 

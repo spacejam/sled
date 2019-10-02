@@ -60,11 +60,7 @@ impl Drop for DoublyLinkedList {
 
 impl Default for DoublyLinkedList {
     fn default() -> Self {
-        Self {
-            head: ptr::null_mut(),
-            tail: ptr::null_mut(),
-            len: 0,
-        }
+        Self { head: ptr::null_mut(), tail: ptr::null_mut(), len: 0 }
     }
 }
 
@@ -76,11 +72,7 @@ impl DoublyLinkedList {
     pub(crate) fn push_head(&mut self, item: Item) -> *mut Node {
         self.len += 1;
 
-        let node = Node {
-            inner: item,
-            next: ptr::null_mut(),
-            prev: self.head,
-        };
+        let node = Node { inner: item, next: ptr::null_mut(), prev: self.head };
 
         let ptr = Box::into_raw(Box::new(node));
 
@@ -103,11 +95,7 @@ impl DoublyLinkedList {
     pub(crate) fn push_tail(&mut self, item: Item) {
         self.len += 1;
 
-        let node = Node {
-            inner: item,
-            next: self.tail,
-            prev: ptr::null_mut(),
-        };
+        let node = Node { inner: item, next: self.tail, prev: ptr::null_mut() };
 
         let ptr = Box::into_raw(Box::new(node));
 

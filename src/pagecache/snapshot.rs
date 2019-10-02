@@ -272,10 +272,8 @@ fn write_snapshot(config: &Config, snapshot: &Snapshot) -> Result<()> {
 
     let parent = path_1.parent().unwrap();
     std::fs::create_dir_all(parent)?;
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .open(&path_1)?;
+    let mut f =
+        std::fs::OpenOptions::new().write(true).create(true).open(&path_1)?;
 
     // write the snapshot bytes, followed by a crc64 checksum at the end
     maybe_fail!("snap write");
