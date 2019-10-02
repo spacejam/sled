@@ -179,9 +179,7 @@ where
             let guard = pin();
 
             self.config.event_log.meta_before_restart(
-                self.meta(&guard)
-                    .expect("should get meta under test")
-                    .clone(),
+                self.meta(&guard).expect("should get meta under test").clone(),
             );
 
             for pid in 0..self.next_pid_to_allocate.load(Acquire) {
@@ -194,9 +192,7 @@ where
                 pages_before_restart.insert(pid, ptrs);
             }
 
-            self.config
-                .event_log
-                .pages_before_restart(pages_before_restart);
+            self.config.event_log.pages_before_restart(pages_before_restart);
         }
 
         trace!("pagecache dropped");
@@ -454,13 +450,9 @@ where
             let mut stack_iter = StackIter::from_ptr(head, &guard);
 
             match stack_iter.next() {
-                Some((Some(Update::Free), cache_info)) => (
-                    pid,
-                    PagePtr {
-                        cached_ptr: head,
-                        ts: cache_info.ts,
-                    },
-                ),
+                Some((Some(Update::Free), cache_info)) => {
+                    (pid, PagePtr { cached_ptr: head, ts: cache_info.ts })
+                }
                 other => panic!(
                     "failed to re-allocate pid {} which \
                      contained unexpected state {:?}",
@@ -482,18 +474,11 @@ where
                      never conflict on existing data",
                 );
 
-            (
-                pid,
-                PagePtr {
-                    cached_ptr: Shared::null(),
-                    ts: 0,
-                },
-            )
+            (pid, PagePtr { cached_ptr: Shared::null(), ts: 0 })
         };
 
-        let new_ptr = self
-            .cas_page(pid, key, new, false, guard)?
-            .unwrap_or_else(|e| {
+        let new_ptr =
+            self.cas_page(pid, key, new, false, guard)?.unwrap_or_else(|e| {
                 panic!(
                     "should always be able to install \
                      a new page during allocation, but \
@@ -713,18 +698,12 @@ where
                     let actual_ts = unsafe { actual_ptr.deref().1.ts };
                     if actual_ts == old.ts {
                         new = Some(returned_new);
-                        old = PagePtr {
-                            cached_ptr: actual_ptr,
-                            ts: actual_ts,
-                        };
+                        old = PagePtr { cached_ptr: actual_ptr, ts: actual_ts };
                     } else {
                         let returned_update = returned_new.0.clone().unwrap();
                         let returned_frag = returned_update.into_frag();
                         return Ok(Err(Some((
-                            PagePtr {
-                                cached_ptr: actual_ptr,
-                                ts: actual_ts,
-                            },
+                            PagePtr { cached_ptr: actual_ptr, ts: actual_ts },
                             returned_frag,
                         ))));
                     }
@@ -866,10 +845,7 @@ where
 
                 match stack_iter.next() {
                     Some((Some(Update::Free), cache_info)) => (
-                        PagePtr {
-                            cached_ptr: head,
-                            ts: cache_info.ts,
-                        },
+                        PagePtr { cached_ptr: head, ts: cache_info.ts },
                         Update::Free,
                     ),
                     other => {
@@ -1037,10 +1013,7 @@ where
 
                     if actual_ts != old.ts || is_rewrite {
                         return Ok(Err(Some((
-                            PagePtr {
-                                cached_ptr: actual_ptr,
-                                ts: actual_ts,
-                            },
+                            PagePtr { cached_ptr: actual_ptr, ts: actual_ts },
                             returned_update,
                         ))));
                     }
@@ -1049,10 +1022,7 @@ where
                         pid,
                         old.ts
                     );
-                    old = PagePtr {
-                        cached_ptr: actual_ptr,
-                        ts: old.ts,
-                    };
+                    old = PagePtr { cached_ptr: actual_ptr, ts: old.ts };
                     update_opt = Some(returned_update);
                 }
             } // match cas result
@@ -1080,20 +1050,13 @@ where
         let head = stack.head(&guard);
 
         match StackIter::from_ptr(head, &guard).next() {
-            Some((Some(Update::Meta(m)), cache_info)) => Ok((
-                PagePtr {
-                    cached_ptr: head,
-                    ts: cache_info.ts,
-                },
-                m,
-            )),
+            Some((Some(Update::Meta(m)), cache_info)) => {
+                Ok((PagePtr { cached_ptr: head, ts: cache_info.ts }, m))
+            }
             Some((None, cache_info)) => {
                 let update =
                     self.pull(META_PID, cache_info.lsn, cache_info.ptr)?;
-                let ptr = PagePtr {
-                    cached_ptr: head,
-                    ts: cache_info.ts,
-                };
+                let ptr = PagePtr { cached_ptr: head, ts: cache_info.ts };
                 let _ = self.cas_page(META_PID, ptr, update, false, guard)?;
                 self.get_meta(guard)
             }
@@ -1126,20 +1089,13 @@ where
         let head = stack.head(&guard);
 
         match StackIter::from_ptr(head, &guard).next() {
-            Some((Some(Update::Config(config)), cache_info)) => Ok((
-                PagePtr {
-                    cached_ptr: head,
-                    ts: cache_info.ts,
-                },
-                config,
-            )),
+            Some((Some(Update::Config(config)), cache_info)) => {
+                Ok((PagePtr { cached_ptr: head, ts: cache_info.ts }, config))
+            }
             Some((None, cache_info)) => {
                 let update =
                     self.pull(CONFIG_PID, cache_info.lsn, cache_info.ptr)?;
-                let ptr = PagePtr {
-                    cached_ptr: head,
-                    ts: cache_info.ts,
-                };
+                let ptr = PagePtr { cached_ptr: head, ts: cache_info.ts };
                 let _ = self.cas_page(CONFIG_PID, ptr, update, false, guard)?;
                 self.get_persisted_config(guard)
             }
@@ -1172,20 +1128,13 @@ where
         let head = stack.head(&guard);
 
         match StackIter::from_ptr(head, &guard).next() {
-            Some((Some(Update::Counter(counter)), cache_info)) => Ok((
-                PagePtr {
-                    cached_ptr: head,
-                    ts: cache_info.ts,
-                },
-                *counter,
-            )),
+            Some((Some(Update::Counter(counter)), cache_info)) => {
+                Ok((PagePtr { cached_ptr: head, ts: cache_info.ts }, *counter))
+            }
             Some((None, cache_info)) => {
                 let update =
                     self.pull(COUNTER_PID, cache_info.lsn, cache_info.ptr)?;
-                let ptr = PagePtr {
-                    cached_ptr: head,
-                    ts: cache_info.ts,
-                };
+                let ptr = PagePtr { cached_ptr: head, ts: cache_info.ts };
                 let _ =
                     self.cas_page(COUNTER_PID, ptr, update, false, guard)?;
                 self.get_idgen(guard)
@@ -1249,10 +1198,7 @@ where
             (Some(Update::Compact(compact)), cache_info) => {
                 // short circuit
                 return Ok(Some((
-                    PagePtr {
-                        cached_ptr: head,
-                        ts: cache_info.ts,
-                    },
+                    PagePtr { cached_ptr: head, ts: cache_info.ts },
                     compact,
                     total_page_size,
                 )));
@@ -1323,10 +1269,8 @@ where
         };
 
         // fix up the stack to include our pulled items
-        let mut frags: Vec<(Option<Update<P>>, CacheInfo)> = entries
-            .iter()
-            .map(|(_, cache_info)| (None, *cache_info))
-            .collect();
+        let mut frags: Vec<(Option<Update<P>>, CacheInfo)> =
+            entries.iter().map(|(_, cache_info)| (None, *cache_info)).collect();
 
         frags[0].0 = Some(Update::Compact(base));
 
@@ -1358,10 +1302,7 @@ where
                 }
             };
 
-            let ptr = PagePtr {
-                cached_ptr: new_ptr,
-                ts: entries[0].1.ts,
-            };
+            let ptr = PagePtr { cached_ptr: new_ptr, ts: entries[0].1.ts };
 
             Ok(Some((ptr, page_ref, total_page_size)))
         } else {
@@ -1650,9 +1591,8 @@ where
         };
         drop(deserialize_latency);
 
-        let update = update_res
-            .map_err(|_| ())
-            .expect("failed to deserialize data");
+        let update =
+            update_res.map_err(|_| ()).expect("failed to deserialize data");
 
         match update {
             Update::Free => Err(Error::ReportableBug(
@@ -1771,10 +1711,7 @@ where
 
         self.next_pid_to_allocate = AtomicU64::from(next_pid_to_allocate);
 
-        debug!(
-            "load_snapshot loading pages from 0..{}",
-            next_pid_to_allocate
-        );
+        debug!("load_snapshot loading pages from 0..{}", next_pid_to_allocate);
         for pid in 0..next_pid_to_allocate {
             let state = if let Some(state) = snapshot.pt.get(&pid) {
                 state
@@ -1794,12 +1731,8 @@ where
             match *state {
                 PageState::Present(ref ptrs) => {
                     for &(lsn, ptr, sz) in ptrs {
-                        let cache_info = CacheInfo {
-                            lsn,
-                            ptr,
-                            log_size: sz,
-                            ts: 0,
-                        };
+                        let cache_info =
+                            CacheInfo { lsn, ptr, log_size: sz, ts: 0 };
 
                         stack.push((None, cache_info), &guard);
                     }
@@ -1807,12 +1740,8 @@ where
                 PageState::Free(lsn, ptr) => {
                     // blow away any existing state
                     trace!("load_snapshot freeing pid {}", pid);
-                    let cache_info = CacheInfo {
-                        lsn,
-                        ptr,
-                        log_size: MSG_HEADER_LEN,
-                        ts: 0,
-                    };
+                    let cache_info =
+                        CacheInfo { lsn, ptr, log_size: MSG_HEADER_LEN, ts: 0 };
                     stack.push((Some(Update::Free), cache_info), &guard);
                     self.free.lock().push(pid);
                 }

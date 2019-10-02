@@ -43,9 +43,7 @@ impl Lru {
         let mut shard = shard_mu.lock();
         let mut to_evict = shard.accessed(safe_usize(item_pos), item_size);
         // map shard internal offsets to global items ids
-        to_evict
-            .iter_mut()
-            .for_each(|pos| *pos = (*pos * shards) + shard_idx);
+        to_evict.iter_mut().for_each(|pos| *pos = (*pos * shards) + shard_idx);
         to_evict
     }
 }
@@ -58,10 +56,7 @@ struct Entry {
 
 impl Default for Entry {
     fn default() -> Self {
-        Self {
-            ptr: ptr::null_mut(),
-            size: 0,
-        }
+        Self { ptr: ptr::null_mut(), size: 0 }
     }
 }
 

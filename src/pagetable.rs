@@ -102,9 +102,7 @@ where
 {
     fn default() -> Self {
         let head = Node1::new();
-        Self {
-            head: Atomic::from(head),
-        }
+        Self { head: Atomic::from(head) }
     }
 }
 
@@ -250,8 +248,7 @@ fn basic_functionality() {
         rt.cas(0, Shared::null(), v1, &guard).unwrap();
         let ptr = rt.get(0, &guard).unwrap();
         assert_eq!(ptr.deref(), &5);
-        rt.cas(0, ptr, Owned::new(6).into_shared(&guard), &guard)
-            .unwrap();
+        rt.cas(0, ptr, Owned::new(6).into_shared(&guard), &guard).unwrap();
         assert_eq!(rt.get(0, &guard).unwrap().deref(), &6);
 
         let k2 = 321 << FAN_FACTOR;

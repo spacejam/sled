@@ -19,12 +19,7 @@ struct OneShotState<T> {
 
 impl<T> Default for OneShotState<T> {
     fn default() -> OneShotState<T> {
-        OneShotState {
-            filled: false,
-            fused: false,
-            item: None,
-            waker: None,
-        }
+        OneShotState { filled: false, fused: false, item: None, waker: None }
     }
 }
 
@@ -47,10 +42,7 @@ impl<T> OneShot<T> {
     pub fn pair() -> (OneShotFiller<T>, Self) {
         let mu = Arc::new(Mutex::new(OneShotState::default()));
         let cv = Arc::new(Condvar::new());
-        let future = Self {
-            mu: mu.clone(),
-            cv: cv.clone(),
-        };
+        let future = Self { mu: mu.clone(), cv: cv.clone() };
         let filler = OneShotFiller { mu, cv };
 
         (filler, future)

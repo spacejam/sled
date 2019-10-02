@@ -614,10 +614,7 @@ impl SegmentAccountant {
              please report this bug!"
         );
         assert_eq!(self.segments[idx].state, Free);
-        assert!(
-            !self.free.contains(&lid),
-            "double-free of a segment occurred"
-        );
+        assert!(!self.free.contains(&lid), "double-free of a segment occurred");
 
         if in_recovery {
             // We only want to immediately remove the segment
@@ -992,11 +989,8 @@ impl SegmentAccountant {
         if free_ratio >= (self.config.segment_cleanup_threshold * 100.) as usize
             && inactive_segs > 5
         {
-            let last_index = self
-                .segments
-                .iter()
-                .rposition(Segment::is_inactive)
-                .unwrap();
+            let last_index =
+                self.segments.iter().rposition(Segment::is_inactive).unwrap();
 
             let segment_start =
                 (last_index * self.config.segment_size) as LogOffset;
@@ -1042,9 +1036,10 @@ impl SegmentAccountant {
             .free
             .iter()
             .filter(|lid| {
-                let idx =
-                    usize::try_from(*lid / self.config.segment_size as LogOffset)
-                        .unwrap();
+                let idx = usize::try_from(
+                    *lid / self.config.segment_size as LogOffset,
+                )
+                .unwrap();
                 if let Some(last_lsn) = self.segments[idx].lsn {
                     last_lsn < self.max_stabilized_lsn
                 } else {
@@ -1159,10 +1154,7 @@ impl SegmentAccountant {
 
         self.tip = at;
 
-        assert!(
-            !self.free.contains(&at),
-            "double-free of a segment occurred"
-        );
+        assert!(!self.free.contains(&at), "double-free of a segment occurred");
 
         trace!("asynchronously truncating file to length {}", at);
         let (completer, promise) = OneShot::pair();
@@ -1229,11 +1221,8 @@ fn segment_is_drainable(
         (config.segment_cleanup_threshold * 100.) as usize;
     let cleanup_skew = config.segment_cleanup_skew;
 
-    let relative_prop = if num_segments == 0 {
-        50
-    } else {
-        (idx * 100) / num_segments
-    };
+    let relative_prop =
+        if num_segments == 0 { 50 } else { (idx * 100) / num_segments };
 
     // we bias to having a higher threshold closer to segment 0
     let inverse_prop = 100 - relative_prop;

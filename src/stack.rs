@@ -39,9 +39,7 @@ pub struct Stack<T: Send + 'static> {
 
 impl<T: Send + 'static> Default for Stack<T> {
     fn default() -> Self {
-        Self {
-            head: Atomic::null(),
-        }
+        Self { head: Atomic::null() }
     }
 }
 
@@ -94,10 +92,7 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
     /// Add an item to the stack, spinning until successful.
     pub fn push(&self, inner: T, guard: &Guard) {
         debug_delay();
-        let node = Owned::new(Node {
-            inner,
-            next: Atomic::null(),
-        });
+        let node = Owned::new(Node { inner, next: Atomic::null() });
 
         unsafe {
             let node = node.into_shared(guard);
@@ -105,10 +100,7 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
             loop {
                 let head = self.head(guard);
                 node.deref().next.store(head, Release);
-                if self
-                    .head
-                    .compare_and_set(head, node, Release, guard)
-                    .is_ok()
+                if self.head.compare_and_set(head, node, Release, guard).is_ok()
                 {
                     return;
                 }
@@ -264,15 +256,9 @@ where
 
     for item in from.into_iter().rev() {
         last = if let Some(last) = last {
-            Some(Owned::new(Node {
-                inner: item,
-                next: Atomic::from(last),
-            }))
+            Some(Owned::new(Node { inner: item, next: Atomic::from(last) }))
         } else {
-            Some(Owned::new(Node {
-                inner: item,
-                next: Atomic::null(),
-            }))
+            Some(Owned::new(Node { inner: item, next: Atomic::null() }))
         }
     }
 

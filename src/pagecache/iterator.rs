@@ -157,9 +157,7 @@ impl LogIter {
         let segment_header = read_segment_header(&f, offset)?;
         if offset % self.config.segment_size as LogOffset != 0 {
             debug!("segment offset not divisible by segment length");
-            return Err(Error::Corruption {
-                at: DiskPtr::Inline(offset),
-            });
+            return Err(Error::Corruption { at: DiskPtr::Inline(offset) });
         }
         if segment_header.lsn % self.config.segment_size as Lsn != 0 {
             debug!(
@@ -167,9 +165,7 @@ impl LogIter {
                  by the segment_size ({}) instead it was {}",
                 self.config.segment_size, segment_header.lsn
             );
-            return Err(Error::Corruption {
-                at: DiskPtr::Inline(offset),
-            });
+            return Err(Error::Corruption { at: DiskPtr::Inline(offset) });
         }
 
         if segment_header.lsn != lsn {
@@ -293,10 +289,8 @@ fn scan_segment_lsns(
         })
         .collect();
 
-    let headers: Vec<(LogOffset, SegmentHeader)> = header_promises
-        .into_iter()
-        .filter_map(OneShot::unwrap)
-        .collect();
+    let headers: Vec<(LogOffset, SegmentHeader)> =
+        header_promises.into_iter().filter_map(OneShot::unwrap).collect();
 
     let mut ordering = BTreeMap::new();
     let mut max_header_stable_lsn = 0;
@@ -382,9 +376,8 @@ fn clean_tail_tears(
         cur_lsn: 0,
     };
 
-    let tip: (Lsn, LogOffset) = iter
-        .max_by_key(|(_kind, _pid, lsn, _ptr, _sz)| *lsn)
-        .map_or_else(
+    let tip: (Lsn, LogOffset) =
+        iter.max_by_key(|(_kind, _pid, lsn, _ptr, _sz)| *lsn).map_or_else(
             || {
                 if max_header_stable_lsn > 0 {
                     (lowest_lsn_in_tail, ordering[&lowest_lsn_in_tail])
@@ -417,10 +410,8 @@ fn clean_tail_tears(
         }
     }
 
-    ordering = ordering
-        .into_iter()
-        .filter(|&(lsn, _lid)| lsn <= tip.0)
-        .collect();
+    ordering =
+        ordering.into_iter().filter(|&(lsn, _lid)| lsn <= tip.0).collect();
 
     Ok(ordering)
 }
@@ -471,9 +462,7 @@ pub fn raw_segment_iter_from(
     );
 
     let segment_iter = Box::new(
-        ordering
-            .into_iter()
-            .filter(move |&(l, _)| l >= normalized_lsn),
+        ordering.into_iter().filter(move |&(l, _)| l >= normalized_lsn),
     );
 
     Ok((

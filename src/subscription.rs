@@ -96,11 +96,7 @@ impl Subscriptions {
 
         w_senders.push((id, tx));
 
-        Subscriber {
-            id,
-            rx,
-            home: arc_senders.clone(),
-        }
+        Subscriber { id, rx, home: arc_senders.clone() }
     }
 
     pub(crate) fn reserve<R: AsRef<[u8]>>(

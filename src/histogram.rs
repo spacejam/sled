@@ -46,11 +46,7 @@ impl Default for Histogram {
         let mut vals = Vec::with_capacity(BUCKETS);
         vals.resize_with(BUCKETS, Default::default);
 
-        Histogram {
-            vals,
-            sum: AtomicUsize::new(0),
-            count: AtomicUsize::new(0),
-        }
+        Histogram { vals, sum: AtomicUsize::new(0), count: AtomicUsize::new(0) }
     }
 }
 
@@ -80,8 +76,7 @@ impl Histogram {
         #[cfg(not(feature = "no_metrics"))]
         {
             let value_float: f64 = raw_value.into();
-            self.sum
-                .fetch_add(value_float.round() as usize, Ordering::Relaxed);
+            self.sum.fetch_add(value_float.round() as usize, Ordering::Relaxed);
 
             self.count.fetch_add(1, Ordering::Relaxed);
 
