@@ -80,15 +80,8 @@ impl Iter {
             Bound::Excluded(ref hi) | Bound::Included(ref hi) => hi.as_ref(),
         }
     }
-}
 
-impl Iterator for Iter {
-    type Item = Result<(IVec, IVec)>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let _measure = Measure::new(&M.tree_scan);
-        let _ = self.tree.concurrency_control.read();
-
+    pub(crate) fn next_inner(&mut self) -> Option<<Self as Iterator>::Item> {
         let (mut pid, mut node, guard) =
             if let (true, Some((pid, node, guard))) =
                 (self.going_forward, self.cached_node.take())
@@ -157,6 +150,16 @@ impl Iterator for Iter {
             "fucked up tree traversal next({:?}) on {:?}",
             self.lo, self.tree
         );
+    }
+}
+
+impl Iterator for Iter {
+    type Item = Result<(IVec, IVec)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let _measure = Measure::new(&M.tree_scan);
+        let _ = self.tree.concurrency_control.read();
+        self.next_inner()
     }
 
     fn last(mut self) -> Option<Self::Item> {

@@ -1334,6 +1334,23 @@ impl Tree {
         self.tree_id.clone()
     }
 
+    /// Returns the CRC32 of all keys and values
+    /// in this Tree.
+    ///
+    /// This is O(N) and locks the underlying tree
+    /// for the duration of the entire scan.
+    pub fn checksum(&self) -> Result<u32> {
+        let mut hasher = crc32fast::Hasher::new();
+        let mut iter = self.iter();
+        let _ = self.concurrency_control.write();
+        while let Some(kv_res) = iter.next_inner() {
+            let (k, v) = kv_res?;
+            hasher.update(&k);
+            hasher.update(&v);
+        }
+        Ok(hasher.finalize())
+    }
+
     fn split_node<'g>(
         &self,
         node_view: &View<'g>,

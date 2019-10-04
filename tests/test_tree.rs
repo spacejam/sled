@@ -166,10 +166,8 @@ fn concurrent_tree_iter() -> Result<()> {
     const N_FORWARD: usize = INTENSITY;
     const N_REVERSE: usize = INTENSITY;
 
-    let config = ConfigBuilder::new()
-        .temporary(true)
-        .flush_every_ms(None)
-        .build();
+    let config =
+        ConfigBuilder::new().temporary(true).flush_every_ms(None).build();
 
     let t = Db::start(config).unwrap();
 
@@ -338,10 +336,8 @@ fn concurrent_tree_iter() -> Result<()> {
 fn concurrent_tree_transactions() {
     common::setup_logger();
 
-    let config = ConfigBuilder::new()
-        .temporary(true)
-        .flush_every_ms(None)
-        .build();
+    let config =
+        ConfigBuilder::new().temporary(true).flush_every_ms(None).build();
 
     let db = Arc::new(Db::start(config).unwrap());
     db.insert(b"k1", b"cats").unwrap();
@@ -440,10 +436,8 @@ fn tree_subdir() {
 
 #[test]
 fn tree_small_keys_iterator() {
-    let config = ConfigBuilder::new()
-        .temporary(true)
-        .flush_every_ms(None)
-        .build();
+    let config =
+        ConfigBuilder::new().temporary(true).flush_every_ms(None).build();
     let t = Db::start(config).unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
@@ -490,10 +484,8 @@ fn tree_big_keys_iterator() {
         base
     }
 
-    let config = ConfigBuilder::new()
-        .temporary(true)
-        .flush_every_ms(None)
-        .build();
+    let config =
+        ConfigBuilder::new().temporary(true).flush_every_ms(None).build();
 
     let t = Db::start(config).unwrap();
     for i in 0..N_PER_THREAD {
@@ -533,10 +525,8 @@ fn tree_big_keys_iterator() {
 
 #[test]
 fn tree_subscriptions_and_keyspaces() -> Result<()> {
-    let config = ConfigBuilder::new()
-        .temporary(true)
-        .flush_every_ms(None)
-        .build();
+    let config =
+        ConfigBuilder::new().temporary(true).flush_every_ms(None).build();
 
     let db = Db::start(config.clone()).unwrap();
 
@@ -626,10 +616,8 @@ fn tree_subscriptions_and_keyspaces() -> Result<()> {
 fn tree_range() {
     common::setup_logger();
 
-    let config = ConfigBuilder::new()
-        .temporary(true)
-        .flush_every_ms(None)
-        .build();
+    let config =
+        ConfigBuilder::new().temporary(true).flush_every_ms(None).build();
     let t = Db::start(config).unwrap();
 
     t.insert(b"0", vec![0]).unwrap();
@@ -724,6 +712,9 @@ fn tree_import_export() -> Result<()> {
             tree.insert(&k, k.clone()).unwrap();
         }
     }
+
+    let checksum_a = db.checksum().unwrap();
+
     drop(db);
 
     let exporter = Db::start(config_1.clone())?;
@@ -737,6 +728,10 @@ fn tree_import_export() -> Result<()> {
     drop(importer);
 
     let db = Db::start(config_2.clone())?;
+
+    let checksum_b = db.checksum().unwrap();
+    assert_eq!(checksum_a, checksum_b);
+
     for db_id in 0..N_THREADS {
         let tree_id = format!("tree_{}", db_id);
         let tree = db.open_tree(tree_id.as_bytes())?;
@@ -747,6 +742,9 @@ fn tree_import_export() -> Result<()> {
             tree.remove(&*k).unwrap();
         }
     }
+
+    let checksum_c = db.checksum().unwrap();
+
     drop(db);
 
     let db = Db::start(config_2.clone())?;
@@ -759,6 +757,9 @@ fn tree_import_export() -> Result<()> {
             assert_eq!(tree.get(&*k), Ok(None));
         }
     }
+
+    let checksum_d = db.checksum().unwrap();
+    assert_eq!(checksum_c, checksum_d);
 
     Ok(())
 }
