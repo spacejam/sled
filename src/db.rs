@@ -304,6 +304,41 @@ impl Db {
         }
     }
 
+    /// Returns the CRC32 of all keys and values
+    /// in this Db.
+    ///
+    /// This is O(N) and locks all underlying Trees
+    /// for the duration of the entire scan.
+    pub fn checksum(&self) -> Result<u32> {
+        let tenants_mu = self.tenants.write();
+
+        // we use a btreemap to ensure lexicographic
+        // iteration over tree names to have consistent
+        // checksums.
+        let tenants: BTreeMap<_, _> = tenants_mu.iter().collect();
+
+        let mut hasher = crc32fast::Hasher::new();
+        let mut locks = vec![];
+
+        for (_, tree) in tenants.iter() {
+            locks.push(tree.concurrency_control.write());
+        }
+
+        for (name, tree) in tenants.iter() {
+            hasher.update(name);
+
+            let mut iter = tree.iter();
+            let _ = self.concurrency_control.write();
+            while let Some(kv_res) = iter.next_inner() {
+                let (k, v) = kv_res?;
+                hasher.update(&k);
+                hasher.update(&v);
+            }
+        }
+
+        Ok(hasher.finalize())
+    }
+
     /// Traverses all files and calculates their total physical
     /// size, then traverses all pages and calculates their
     /// total logical size, then divides the physical size

@@ -1,5 +1,10 @@
 # Unreleased
 
+## New Features
+
+* A `checksum` method has been added to Tree and Db
+  for use in verifying backups and migrations.
+
 ## Breaking Changes
 
 * The `cas` method is deprecated in favor of the new
