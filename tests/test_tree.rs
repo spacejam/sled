@@ -34,13 +34,11 @@ fn concurrent_tree_ops() {
     for i in 0..INTENSITY {
         debug!("beginning test {}", i);
 
-        let mut config_builder = ConfigBuilder::new()
+        let config = Config::new()
             .temporary(true)
             .flush_every_ms(None)
-            .snapshot_after_ops(100_000_000);
-        config_builder.segment_size = 256;
-
-        let config = config_builder.build();
+            .snapshot_after_ops(100_000_000)
+            .segment_size(256);
 
         macro_rules! par {
             ($t:ident, $f:expr) => {
@@ -69,7 +67,7 @@ fn concurrent_tree_ops() {
         }
 
         debug!("========== initial sets test {} ==========", i);
-        let t = Arc::new(Db::start(config.clone()).unwrap());
+        let t = Arc::new(config.open().unwrap());
         par! {t, |tree: &Tree, k: Vec<u8>| {
             assert_eq!(tree.get(&*k), Ok(None));
             tree.insert(&k, k.clone()).expect("we should write successfully");
@@ -88,9 +86,8 @@ fn concurrent_tree_ops() {
         }
 
         drop(t);
-        let t = Arc::new(
-            Db::start(config.clone()).expect("should be able to restart Tree"),
-        );
+        let t =
+            Arc::new(config.open().expect("should be able to restart Tree"));
 
         let n_scanned = t.iter().count();
         if n_scanned != N {
@@ -114,9 +111,8 @@ fn concurrent_tree_ops() {
         }};
 
         drop(t);
-        let t = Arc::new(
-            Db::start(config.clone()).expect("should be able to restart Tree"),
-        );
+        let t =
+            Arc::new(config.open().expect("should be able to restart Tree"));
 
         debug!("========== CAS test in test {} ==========", i);
         par! {t, |tree: &Tree, k: Vec<u8>| {
@@ -127,9 +123,8 @@ fn concurrent_tree_ops() {
         }};
 
         drop(t);
-        let t = Arc::new(
-            Db::start(config.clone()).expect("should be able to restart Tree"),
-        );
+        let t =
+            Arc::new(config.open().expect("should be able to restart Tree"));
 
         par! {t, |tree: &Tree, k: Vec<u8>| {
             let k1 = k.clone();
@@ -139,9 +134,8 @@ fn concurrent_tree_ops() {
         }};
 
         drop(t);
-        let t = Arc::new(
-            Db::start(config.clone()).expect("should be able to restart Tree"),
-        );
+        let t =
+            Arc::new(config.open().expect("should be able to restart Tree"));
 
         debug!("========== deleting in test {} ==========", i);
         par! {t, |tree: &Tree, k: Vec<u8>| {
@@ -149,9 +143,8 @@ fn concurrent_tree_ops() {
         }};
 
         drop(t);
-        let t = Arc::new(
-            Db::start(config.clone()).expect("should be able to restart Tree"),
-        );
+        let t =
+            Arc::new(config.open().expect("should be able to restart Tree"));
 
         par! {t, |tree: &Tree, k: Vec<u8>| {
             assert_eq!(tree.get(&*k), Ok(None));
@@ -166,10 +159,9 @@ fn concurrent_tree_iter() -> Result<()> {
     const N_FORWARD: usize = INTENSITY;
     const N_REVERSE: usize = INTENSITY;
 
-    let config =
-        ConfigBuilder::new().temporary(true).flush_every_ms(None).build();
+    let config = Config::new().temporary(true).flush_every_ms(None);
 
-    let t = Db::start(config).unwrap();
+    let t = config.open().unwrap();
 
     const INDELIBLE: [&[u8]; 16] = [
         &[0u8],
@@ -336,10 +328,9 @@ fn concurrent_tree_iter() -> Result<()> {
 fn concurrent_tree_transactions() {
     common::setup_logger();
 
-    let config =
-        ConfigBuilder::new().temporary(true).flush_every_ms(None).build();
+    let config = Config::new().temporary(true).flush_every_ms(None);
+    let db = Arc::new(config.open().unwrap());
 
-    let db = Arc::new(Db::start(config).unwrap());
     db.insert(b"k1", b"cats").unwrap();
     db.insert(b"k2", b"dogs").unwrap();
 
@@ -413,17 +404,17 @@ fn tree_subdir() {
     let mut path = parent_path.clone();
     path.push("test_subdir");
 
-    let config = ConfigBuilder::new().path(&path).build();
+    let config = Config::new().path(&path);
 
-    let t = Db::start(config).unwrap();
+    let t = config.open().unwrap();
 
     t.insert(&[1], vec![1]).unwrap();
 
     drop(t);
 
-    let config = ConfigBuilder::new().path(&path).build();
+    let config = Config::new().path(&path);
 
-    let t = Db::start(config).unwrap();
+    let t = config.open().unwrap();
 
     let res = t.get(&*vec![1]);
 
@@ -436,9 +427,8 @@ fn tree_subdir() {
 
 #[test]
 fn tree_small_keys_iterator() {
-    let config =
-        ConfigBuilder::new().temporary(true).flush_every_ms(None).build();
-    let t = Db::start(config).unwrap();
+    let config = Config::new().temporary(true).flush_every_ms(None);
+    let t = config.open().unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
         t.insert(&k, k.clone()).unwrap();
@@ -484,10 +474,9 @@ fn tree_big_keys_iterator() {
         base
     }
 
-    let config =
-        ConfigBuilder::new().temporary(true).flush_every_ms(None).build();
+    let config = Config::new().temporary(true).flush_every_ms(None);
 
-    let t = Db::start(config).unwrap();
+    let t = config.open().unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
         t.insert(&k, k.clone()).unwrap();
@@ -525,10 +514,9 @@ fn tree_big_keys_iterator() {
 
 #[test]
 fn tree_subscriptions_and_keyspaces() -> Result<()> {
-    let config =
-        ConfigBuilder::new().temporary(true).flush_every_ms(None).build();
+    let config = Config::new().temporary(true).flush_every_ms(None);
 
-    let db = Db::start(config.clone()).unwrap();
+    let db = config.open().unwrap();
 
     let t1 = db.open_tree(b"1".to_vec())?;
     let mut s1 = t1.watch_prefix(b"".to_vec());
@@ -550,7 +538,7 @@ fn tree_subscriptions_and_keyspaces() -> Result<()> {
     drop(t1);
     drop(t2);
 
-    let db = Db::start(config.clone()).unwrap();
+    let db = config.open().unwrap();
 
     let t1 = db.open_tree(b"1".to_vec())?;
     let mut s1 = t1.watch_prefix(b"".to_vec());
@@ -576,7 +564,7 @@ fn tree_subscriptions_and_keyspaces() -> Result<()> {
     drop(t1);
     drop(t2);
 
-    let db = Db::start(config.clone()).unwrap();
+    let db = config.open().unwrap();
 
     let t1 = db.open_tree(b"1".to_vec())?;
     let t2 = db.open_tree(b"2".to_vec())?;
@@ -600,7 +588,7 @@ fn tree_subscriptions_and_keyspaces() -> Result<()> {
     drop(t1);
     drop(t2);
 
-    let db = Db::start(config.clone()).unwrap();
+    let db = config.open().unwrap();
 
     let t1 = db.open_tree(b"1".to_vec())?;
     let t2 = db.open_tree(b"2".to_vec())?;
@@ -616,9 +604,8 @@ fn tree_subscriptions_and_keyspaces() -> Result<()> {
 fn tree_range() {
     common::setup_logger();
 
-    let config =
-        ConfigBuilder::new().temporary(true).flush_every_ms(None).build();
-    let t = Db::start(config).unwrap();
+    let config = Config::new().temporary(true).flush_every_ms(None);
+    let t = config.open().unwrap();
 
     t.insert(b"0", vec![0]).unwrap();
     t.insert(b"1", vec![10]).unwrap();
@@ -666,22 +653,20 @@ fn tree_range() {
 fn recover_tree() {
     common::setup_logger();
 
-    let mut config_builder = ConfigBuilder::new()
+    let config = Config::new()
         .temporary(true)
         .flush_every_ms(None)
-        .snapshot_after_ops(N_PER_THREAD as u64);
-    config_builder.segment_size = 4096;
+        .snapshot_after_ops(N_PER_THREAD as u64)
+        .segment_size(4096);
 
-    let config = config_builder.build();
-
-    let t = Db::start(config.clone()).unwrap();
+    let t = config.open().unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i);
         t.insert(&k, k.clone()).unwrap();
     }
     drop(t);
 
-    let t = Db::start(config.clone()).unwrap();
+    let t = config.open().unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i as usize);
         assert_eq!(t.get(&*k).unwrap().unwrap(), k);
@@ -689,7 +674,7 @@ fn recover_tree() {
     }
     drop(t);
 
-    let t = Db::start(config.clone()).unwrap();
+    let t = config.open().unwrap();
     for i in 0..N_PER_THREAD {
         let k = kv(i as usize);
         assert_eq!(t.get(&*k), Ok(None));
@@ -700,10 +685,10 @@ fn recover_tree() {
 fn tree_import_export() -> Result<()> {
     common::setup_logger();
 
-    let config_1 = ConfigBuilder::new().temporary(true).build();
-    let config_2 = ConfigBuilder::new().temporary(true).build();
+    let config_1 = Config::new().temporary(true);
+    let config_2 = Config::new().temporary(true);
 
-    let db = Db::start(config_1.clone())?;
+    let db = config_1.open()?;
     for db_id in 0..N_THREADS {
         let tree_id = format!("tree_{}", db_id);
         let tree = db.open_tree(tree_id.as_bytes())?;
@@ -717,8 +702,8 @@ fn tree_import_export() -> Result<()> {
 
     drop(db);
 
-    let exporter = Db::start(config_1.clone())?;
-    let importer = Db::start(config_2.clone())?;
+    let exporter = config_1.open()?;
+    let importer = config_2.open()?;
 
     let export = exporter.export();
     importer.import(export);
@@ -727,7 +712,7 @@ fn tree_import_export() -> Result<()> {
     drop(config_1);
     drop(importer);
 
-    let db = Db::start(config_2.clone())?;
+    let db = config_2.open()?;
 
     let checksum_b = db.checksum().unwrap();
     assert_eq!(checksum_a, checksum_b);
@@ -747,7 +732,7 @@ fn tree_import_export() -> Result<()> {
 
     drop(db);
 
-    let db = Db::start(config_2.clone())?;
+    let db = config_2.open()?;
     for db_id in 0..N_THREADS {
         let tree_id = format!("tree_{}", db_id);
         let tree = db.open_tree(tree_id.as_bytes())?;

@@ -2,11 +2,19 @@
 
 ## New Features
 
+* The `Config::open` method has been added to give
+  `Config` a similar feel to std's `fs::OpenOptions`.
+  The `Config::build` and `Db::start` methods are
+  now deprecated in favor of calling `Config::open`
+  directly
 * A `checksum` method has been added to Tree and Db
   for use in verifying backups and migrations.
 
 ## Breaking Changes
 
+* The `ConfigBuilder` structure has been removed
+  in favor of a simplified `Config` structure
+  with the same functionality.
 * The `cas` method is deprecated in favor of the new
   `compare_and_swap` method which now returns the
   proposed value that failed to be applied.

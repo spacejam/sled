@@ -112,9 +112,9 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use sled::{ConfigBuilder, Db, IVec};
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let t = Db::start(config).unwrap();
+    /// use sled::{Config, IVec};
+    /// let config = Config::new().temporary(true);
+    /// let t = config.open().unwrap();
     ///
     /// assert_eq!(t.insert(&[1, 2, 3], vec![0]), Ok(None));
     /// assert_eq!(t.insert(&[1, 2, 3], vec![1]), Ok(Some(IVec::from(&[0]))));
@@ -183,10 +183,10 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use sled::{ConfigBuilder, Db};
+    /// use sled::Config;
     ///
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let db = Db::start(config).unwrap();
+    /// let config = Config::new().temporary(true);
+    /// let db = config.open().unwrap();
     ///
     /// // Use write-only transactions as a writebatch:
     /// db.transaction(|db| {
@@ -222,10 +222,10 @@ impl Tree {
     /// to the processed `Tree`.
     ///
     /// ```
-    /// use sled::{ConfigBuilder, Db, Transactional};
+    /// use sled::{Config, Transactional};
     ///
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let db = Db::start(config).unwrap();
+    /// let config = Config::new().temporary(true);
+    /// let db = config.open().unwrap();
     ///
     /// let unprocessed = db.open_tree(b"unprocessed items").unwrap();
     /// let processed = db.open_tree(b"processed items").unwrap();
@@ -307,9 +307,9 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use sled::{ConfigBuilder, Db, IVec};
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let t = Db::start(config).unwrap();
+    /// use sled::{Config, IVec};
+    /// let config = Config::new().temporary(true);
+    /// let t = config.open().unwrap();
     ///
     /// t.insert(&[0], vec![0]).unwrap();
     /// assert_eq!(t.get(&[0]), Ok(Some(IVec::from(vec![0]))));
@@ -349,8 +349,8 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// let config = sled::ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Db::start(config).unwrap();
+    /// let config = sled::Config::new().temporary(true);
+    /// let t = config.open().unwrap();
     /// t.insert(&[1], vec![1]);
     /// assert_eq!(t.remove(&[1]), Ok(Some(sled::IVec::from(vec![1]))));
     /// assert_eq!(t.remove(&[1]), Ok(None));
@@ -416,34 +416,34 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// let config = sled::ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Db::start(config).unwrap();
+    /// let config = sled::Config::new().temporary(true);
+    /// let t = config.open().unwrap();
     ///
     /// // unique creation
     /// assert_eq!(
     ///     t.compare_and_swap(&[1], None as Option<&[u8]>, Some(&[10])),
-    ///     sled::Ok(Ok(()))
+    ///     Ok(Ok(()))
     /// );
     ///
     /// // conditional modification
     /// assert_eq!(
     ///     t.compare_and_swap(&[1], Some(&[10]), Some(&[20])),
-    ///     sled::Ok(Ok(()))
+    ///     Ok(Ok(()))
     /// );
     ///
     /// // failed conditional modification -- the current value is returned in
     /// // the error variant
-    /// let operation = t.cas(&[1], Some(&[30]), Some(&[40]));
+    /// let operation = t.compare_and_swap(&[1], Some(&[30]), Some(&[40]));
     /// assert!(operation.is_ok()); // the operation succeeded
     /// let modification = operation.unwrap();
     /// assert!(modification.is_err());
     /// let actual_value = modification.unwrap_err();
-    /// assert_eq!(actual_value.map(|ivec| ivec.to_vec()), Some(vec![20]));
+    /// assert_eq!(actual_value.current.map(|ivec| ivec.to_vec()), Some(vec![20]));
     ///
     /// // conditional deletion
     /// assert_eq!(
     ///     t.compare_and_swap(&[1], Some(&[20]), None as Option<&[u8]>),
-    ///     sled::Ok(Ok(()))
+    ///     Ok(Ok(()))
     /// );
     /// assert_eq!(t.get(&[1]), Ok(None));
     /// ```
@@ -550,11 +550,11 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use sled::{ConfigBuilder, Error, IVec};
+    /// use sled::{Config, Error, IVec};
     /// use std::convert::TryInto;
     ///
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let tree = sled::Db::start(config).unwrap();
+    /// let config = Config::new().temporary(true);
+    /// let tree = config.open().unwrap();
     ///
     /// fn u64_to_ivec(number: u64) -> IVec {
     ///     IVec::from(number.to_be_bytes().to_vec())
@@ -618,11 +618,11 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use sled::{ConfigBuilder, Error, IVec};
+    /// use sled::{Config, Error, IVec};
     /// use std::convert::TryInto;
     ///
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let tree = sled::Db::start(config).unwrap();
+    /// let config = Config::new().temporary(true);
+    /// let tree = config.open().unwrap();
     ///
     /// fn u64_to_ivec(number: u64) -> IVec {
     ///     IVec::from(number.to_be_bytes().to_vec())
@@ -687,10 +687,10 @@ impl Tree {
     ///
     /// # Examples
     /// ```
-    /// use sled::{ConfigBuilder, Event};
-    /// let config = ConfigBuilder::new().temporary(true).build();
+    /// use sled::{Config, Event};
+    /// let config = Config::new().temporary(true);
     ///
-    /// let tree = sled::Db::start(config).unwrap();
+    /// let tree = config.open().unwrap();
     ///
     /// // watch all events by subscribing to the empty prefix
     /// let mut events = tree.watch_prefix(vec![]);
@@ -751,8 +751,8 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// let config = sled::ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Db::start(config).unwrap();
+    /// let config = sled::Config::new().temporary(true);
+    /// let t = config.open().unwrap();
     ///
     /// t.insert(&[0], vec![0]).unwrap();
     /// assert!(t.contains_key(&[0]).unwrap());
@@ -768,9 +768,9 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use sled::{ConfigBuilder, Db, IVec};
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let tree = Db::start(config).unwrap();
+    /// use sled::{Config, IVec};
+    /// let config = Config::new().temporary(true);
+    /// let tree = config.open().unwrap();
     ///
     /// for i in 0..10 {
     ///     tree.insert(&[i], vec![i])
@@ -818,9 +818,9 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use sled::{ConfigBuilder, Db, IVec};
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let tree = Db::start(config).unwrap();
+    /// use sled::{Config, IVec};
+    /// let config = Config::new().temporary(true);
+    /// let tree = config.open().unwrap();
     ///
     /// for i in 0..10 {
     ///     tree.insert(&[i], vec![i])
@@ -876,7 +876,7 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use sled::{ConfigBuilder, Db, IVec};
+    /// use sled::{Config, IVec};
     ///
     /// fn concatenate_merge(
     ///   _key: &[u8],               // the key being merged
@@ -892,11 +892,10 @@ impl Tree {
     ///   Some(ret)
     /// }
     ///
-    /// let config = ConfigBuilder::new()
-    ///   .temporary(true)
-    ///   .build();
+    /// let config = Config::new()
+    ///   .temporary(true);
     ///
-    /// let tree = Db::start(config).unwrap();
+    /// let tree = config.open().unwrap();
     /// tree.set_merge_operator(concatenate_merge);
     ///
     /// let k = b"k1";
@@ -1012,7 +1011,7 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use sled::{ConfigBuilder, Db, IVec};
+    /// use sled::{Config, IVec};
     ///
     /// fn concatenate_merge(
     ///   _key: &[u8],               // the key being merged
@@ -1028,11 +1027,10 @@ impl Tree {
     ///   Some(ret)
     /// }
     ///
-    /// let config = ConfigBuilder::new()
-    ///   .temporary(true)
-    ///   .build();
+    /// let config = Config::new()
+    ///   .temporary(true);
     ///
-    /// let tree = Db::start(config).unwrap();
+    /// let tree = config.open().unwrap();
     /// tree.set_merge_operator(concatenate_merge);
     ///
     /// let k = b"k1";
@@ -1064,9 +1062,9 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use sled::{ConfigBuilder, Db, IVec};
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let t = Db::start(config).unwrap();
+    /// use sled::{Config, IVec};
+    /// let config = Config::new().temporary(true);
+    /// let t = config.open().unwrap();
     /// t.insert(&[1], vec![10]);
     /// t.insert(&[2], vec![20]);
     /// t.insert(&[3], vec![30]);
@@ -1095,9 +1093,9 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use sled::{ConfigBuilder, Db, IVec};
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let t = Db::start(config).unwrap();
+    /// use sled::{Config, IVec};
+    /// let config = Config::new().temporary(true);
+    /// let t = config.open().unwrap();
     ///
     /// t.insert(&[0], vec![0]).unwrap();
     /// t.insert(&[1], vec![10]).unwrap();
@@ -1158,9 +1156,9 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use sled::{ConfigBuilder, Db, IVec};
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let t = Db::start(config).unwrap();
+    /// use sled::{Config, IVec};
+    /// let config = Config::new().temporary(true);
+    /// let t = config.open().unwrap();
     ///
     /// t.insert(&[0, 0, 0], vec![0, 0, 0]).unwrap();
     /// t.insert(&[0, 0, 1], vec![0, 0, 1]).unwrap();
@@ -1211,9 +1209,9 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use sled::{ConfigBuilder, Db, IVec};
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let t = Db::start(config).unwrap();
+    /// use sled::{Config, IVec};
+    /// let config = Config::new().temporary(true);
+    /// let t = config.open().unwrap();
     ///
     /// t.insert(&[0], vec![0]).unwrap();
     /// t.insert(&[1], vec![10]).unwrap();
@@ -1256,9 +1254,9 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use sled::{ConfigBuilder, Db, IVec};
-    /// let config = ConfigBuilder::new().temporary(true).build();
-    /// let t = Db::start(config).unwrap();
+    /// use sled::{Config, IVec};
+    /// let config = Config::new().temporary(true);
+    /// let t = config.open().unwrap();
     ///
     /// t.insert(&[0], vec![0]).unwrap();
     /// t.insert(&[1], vec![10]).unwrap();
@@ -1303,8 +1301,8 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// let config = sled::ConfigBuilder::new().temporary(true).build();
-    /// let t = sled::Db::start(config).unwrap();
+    /// let config = sled::Config::new().temporary(true);
+    /// let t = config.open().unwrap();
     /// t.insert(b"a", vec![0]);
     /// t.insert(b"b", vec![1]);
     /// assert_eq!(t.len(), 2);

@@ -5,7 +5,7 @@ use super::*;
 #[derive(Debug, Clone)]
 pub(crate) struct Context {
     // TODO file from config should be in here
-    config: Config,
+    config: RunningConfig,
     /// Periodically flushes dirty data. We keep this in an
     /// Arc separate from the PageCache below to separate
     /// "high-level" references from Db, Tree etc... from
@@ -19,9 +19,9 @@ pub(crate) struct Context {
 }
 
 impl std::ops::Deref for Context {
-    type Target = Config;
+    type Target = RunningConfig;
 
-    fn deref(&self) -> &Config {
+    fn deref(&self) -> &RunningConfig {
         &self.config
     }
 }
@@ -46,7 +46,7 @@ impl Drop for Context {
 }
 
 impl Context {
-    pub(crate) fn start(config: Config) -> Result<Self> {
+    pub(crate) fn start(config: RunningConfig) -> Result<Self> {
         trace!("starting context");
 
         #[cfg(any(test, feature = "check_snapshot_integrity"))]

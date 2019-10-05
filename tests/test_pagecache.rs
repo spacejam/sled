@@ -16,7 +16,7 @@ use {
 };
 
 use sled::{
-    pin, ConfigBuilder, Materializer, PageCache, MAX_SPACE_AMPLIFICATION,
+    pin, Config, Materializer, PageCache, MAX_SPACE_AMPLIFICATION,
     PAGETABLE_NODE_SZ,
 };
 
@@ -47,25 +47,20 @@ impl Into<Vec<usize>> for TestMaterializer {
 
 #[test]
 fn pagecache_monotonic_idgen() {
-    let mut config_builder = ConfigBuilder::new()
+    let config = Config::new()
         .temporary(true)
         .cache_capacity(256)
         .flush_every_ms(None)
-        .snapshot_after_ops(1_000_000);
+        .snapshot_after_ops(1_000_000)
+        .segment_size(16384);
 
-    config_builder.segment_size = 16384;
-
-    let config = config_builder.build();
-
-    let pc: PageCache<TestMaterializer> =
-        PageCache::start(config.clone()).unwrap();
+    let pc: PageCache<TestMaterializer> = config.open_pagecache().unwrap();
 
     let id1 = pc.generate_id().unwrap();
 
     drop(pc);
 
-    let pc: PageCache<TestMaterializer> =
-        PageCache::start(config.clone()).unwrap();
+    let pc: PageCache<TestMaterializer> = config.open_pagecache().unwrap();
 
     let id2 = pc.generate_id().unwrap();
 
@@ -77,18 +72,14 @@ fn pagecache_monotonic_idgen() {
 
 #[test]
 fn pagecache_caching() {
-    let mut config_builder = ConfigBuilder::new()
+    let config = Config::new()
         .temporary(true)
         .cache_capacity(256)
         .flush_every_ms(None)
-        .snapshot_after_ops(1_000_000);
+        .snapshot_after_ops(1_000_000)
+        .segment_size(16384);
 
-    config_builder.segment_size = 16384;
-
-    let config = config_builder.build();
-
-    let pc: PageCache<TestMaterializer> =
-        PageCache::start(config.clone()).unwrap();
+    let pc: PageCache<TestMaterializer> = config.open_pagecache().unwrap();
 
     let guard = pin();
     let mut keys = HashMap::new();
@@ -113,14 +104,11 @@ fn concurrent_pagecache() -> sled::Result<()> {
     const N_THREADS: usize = 10;
     const N_PER_THREAD: usize = 100;
 
-    let mut config_builder = ConfigBuilder::new()
+    let config = Config::new()
         .temporary(true)
         .flush_every_ms(Some(10))
-        .snapshot_after_ops(100_000_000);
-
-    config_builder.segment_size = 256;
-
-    let config = config_builder.build();
+        .snapshot_after_ops(100_000_000)
+        .segment_size(256);
 
     macro_rules! par {
         ($t:ident, $f:expr) => {
@@ -155,7 +143,7 @@ fn concurrent_pagecache() -> sled::Result<()> {
 
     println!("========== sets ==========");
     let p: Arc<PageCache<TestMaterializer>> =
-        Arc::new(PageCache::start(config.clone()).unwrap());
+        Arc::new(config.open_pagecache().unwrap());
 
     par! {p, |pc: &PageCache<TestMaterializer>, _i: usize| {
         let guard = pin();
@@ -177,7 +165,7 @@ fn concurrent_pagecache() -> sled::Result<()> {
 
     println!("========== gets ==========");
     let p: Arc<PageCache<TestMaterializer>> =
-        Arc::new(PageCache::start(config.clone()).unwrap());
+        Arc::new(config.open_pagecache().unwrap());
 
     par! {p, |pc: &PageCache<_>, i: usize| {
         let guard = pin();
@@ -192,7 +180,7 @@ fn concurrent_pagecache() -> sled::Result<()> {
 
     println!("========== links ==========");
     let p: Arc<PageCache<TestMaterializer>> =
-        Arc::new(PageCache::start(config.clone()).unwrap());
+        Arc::new(config.open_pagecache().unwrap());
 
     par! {p, |pc: &PageCache<TestMaterializer>, i: usize| {
         for item in 0..=10 {
@@ -217,7 +205,7 @@ fn concurrent_pagecache() -> sled::Result<()> {
 
     println!("========== gets ==========");
     let p: Arc<PageCache<TestMaterializer>> =
-        Arc::new(PageCache::start(config.clone()).unwrap());
+        Arc::new(config.open_pagecache().unwrap());
 
     par! {p, |pc: &PageCache<TestMaterializer>, i: usize| {
         let guard = pin();
@@ -233,19 +221,15 @@ fn concurrent_pagecache() -> sled::Result<()> {
 
 #[test]
 fn pagecache_strange_crash_1() {
-    let mut config_builder = ConfigBuilder::new()
+    let config = Config::new()
         .temporary(true)
         .cache_capacity(256)
         .flush_every_ms(None)
-        .snapshot_after_ops(1_000_000);
-
-    config_builder.segment_size = 16384;
-
-    let config = config_builder.build();
+        .snapshot_after_ops(1_000_000)
+        .segment_size(16384);
 
     {
-        let pc: PageCache<TestMaterializer> =
-            PageCache::start(config.clone()).unwrap();
+        let pc: PageCache<TestMaterializer> = config.open_pagecache().unwrap();
 
         let guard = pin();
         let mut keys = HashMap::new();
@@ -264,8 +248,7 @@ fn pagecache_strange_crash_1() {
             keys.insert(id, key);
         }
     }
-    let _pc: PageCache<TestMaterializer> =
-        PageCache::start(config.clone()).unwrap();
+    let _pc: PageCache<TestMaterializer> = config.open_pagecache().unwrap();
     // TODO test no eaten lsn's on recovery
     // TODO test that we don't skip multiple segments ahead on recovery
     // (confusing Lsn & Lid)
@@ -274,20 +257,14 @@ fn pagecache_strange_crash_1() {
 #[test]
 fn pagecache_strange_crash_2() {
     for _ in 0..10 {
-        let mut config_builder = ConfigBuilder::new()
+        let config = Config::new()
             .temporary(true)
             .cache_capacity(256)
             .flush_every_ms(None)
-            .snapshot_after_ops(1_000_000);
+            .snapshot_after_ops(1_000_000)
+            .segment_size(16384);
 
-        config_builder.segment_size = 16384;
-
-        let config = config_builder.build();
-
-        config.verify_snapshot().unwrap();
-
-        let pc: PageCache<TestMaterializer> =
-            PageCache::start(config.clone()).unwrap();
+        let pc: PageCache<TestMaterializer> = config.open_pagecache().unwrap();
 
         let guard = pin();
 
@@ -316,15 +293,10 @@ fn pagecache_strange_crash_2() {
 
 #[test]
 fn basic_pagecache_recovery() {
-    let mut config_builder =
-        ConfigBuilder::new().temporary(true).flush_every_ms(None);
+    let config =
+        Config::new().temporary(true).flush_every_ms(None).segment_size(1024);
 
-    config_builder.segment_size = 1024;
-
-    let config = config_builder.build();
-
-    let pc: PageCache<TestMaterializer> =
-        PageCache::start(config.clone()).unwrap();
+    let pc: PageCache<TestMaterializer> = config.open_pagecache().unwrap();
 
     let guard = pin();
     let (id, key) = pc.allocate(vec![1].into(), &guard).unwrap();
@@ -335,8 +307,7 @@ fn basic_pagecache_recovery() {
     drop(guard);
     drop(pc);
 
-    let pc2: PageCache<TestMaterializer> =
-        PageCache::start(config.clone()).unwrap();
+    let pc2: PageCache<TestMaterializer> = config.open_pagecache().unwrap();
     let guard = pin();
     let (consolidated2, frag2, _) = pc2.get(id, &guard).unwrap().unwrap();
     assert_eq!(&frag1, frag2);
@@ -345,8 +316,7 @@ fn basic_pagecache_recovery() {
     drop(guard);
     drop(pc2);
 
-    let pc3: PageCache<TestMaterializer> =
-        PageCache::start(config.clone()).unwrap();
+    let pc3: PageCache<TestMaterializer> = config.open_pagecache().unwrap();
     let guard = pin();
     let (consolidated3, frag3, _) = pc3.get(id, &guard).unwrap().unwrap();
     assert_eq!(frag3.0, vec![1, 2, 3, 4]);
@@ -354,8 +324,7 @@ fn basic_pagecache_recovery() {
     drop(guard);
     drop(pc3);
 
-    let pc4: PageCache<TestMaterializer> =
-        PageCache::start(config.clone()).unwrap();
+    let pc4: PageCache<TestMaterializer> = config.open_pagecache().unwrap();
     let guard = pin();
     let res = pc4.get(id, &guard).unwrap();
     assert!(res.is_none());
@@ -429,17 +398,13 @@ enum P {
 fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
     common::setup_logger();
     use self::Op::*;
-    let mut config_builder = ConfigBuilder::new()
+    let config = Config::new()
         .temporary(true)
         .flush_every_ms(if flusher { Some(1) } else { None })
-        .cache_capacity(256);
+        .cache_capacity(256)
+        .segment_size(1024);
 
-    config_builder.segment_size = 1024;
-
-    let config = config_builder.build();
-
-    let mut pc: PageCache<TestMaterializer> =
-        PageCache::start(config.clone()).unwrap();
+    let mut pc: PageCache<TestMaterializer> = config.open_pagecache().unwrap();
 
     let mut reference: HashMap<PageId, P> = HashMap::new();
     let mut highest_id: u64 = 0;
@@ -563,9 +528,7 @@ fn prop_pagecache_works(ops: Vec<Op>, flusher: bool) -> bool {
             Restart => {
                 drop(pc);
 
-                config.verify_snapshot().unwrap();
-
-                pc = PageCache::start(config.clone()).unwrap();
+                pc = config.open_pagecache().unwrap();
             }
         }
     }

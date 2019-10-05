@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use rand::Rng;
 
-use sled::{Config, ConfigBuilder, Db};
+use sled::Config;
 
 const CYCLE: usize = 256;
 const BATCH_SIZE: u32 = 8;
@@ -136,7 +136,7 @@ fn run(config: Config) {
         spawn_killah();
     }
 
-    let tree = Db::start(config).unwrap();
+    let tree = config.open().unwrap();
 
     if !crash_during_initialization {
         spawn_killah();
@@ -194,7 +194,7 @@ fn run_batches(config: Config) {
         spawn_killah();
     }
 
-    let tree = sled::Db::start(config).unwrap();
+    let tree = config.open().unwrap();
 
     let mut i = verify_batches(&tree);
     i += 1;
@@ -211,15 +211,12 @@ fn run_batches(config: Config) {
 }
 
 fn run_without_snapshot(dir: &str) {
-    let mut config_builder = ConfigBuilder::new()
+    let config = Config::new()
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(100))
         .path(dir.to_string())
-        .snapshot_after_ops(1 << 56);
-
-    config_builder.segment_size = 1024;
-
-    let config = config_builder.build();
+        .snapshot_after_ops(1 << 56)
+        .segment_size(1024);
 
     match thread::spawn(|| run(config)).join() {
         Err(e) => {
@@ -231,15 +228,12 @@ fn run_without_snapshot(dir: &str) {
 }
 
 fn run_with_snapshot(dir: &str) {
-    let mut config_builder = ConfigBuilder::new()
+    let config = Config::new()
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(100))
         .path(dir.to_string())
-        .snapshot_after_ops(5000);
-
-    config_builder.segment_size = 1024;
-
-    let config = config_builder.build();
+        .snapshot_after_ops(5000)
+        .segment_size(1024);
 
     match thread::spawn(|| run(config)).join() {
         Err(e) => {
@@ -251,15 +245,12 @@ fn run_with_snapshot(dir: &str) {
 }
 
 fn run_batches_without_snapshot(dir: &str) {
-    let mut config_builder = ConfigBuilder::new()
+    let config = Config::new()
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(100))
         .path(dir.to_string())
-        .snapshot_after_ops(1 << 56);
-
-    config_builder.segment_size = 1024;
-
-    let config = config_builder.build();
+        .snapshot_after_ops(1 << 56)
+        .segment_size(1024);
 
     match thread::spawn(|| run_batches(config)).join() {
         Err(e) => {
@@ -271,15 +262,12 @@ fn run_batches_without_snapshot(dir: &str) {
 }
 
 fn run_batches_with_snapshot(dir: &str) {
-    let mut config_builder = ConfigBuilder::new()
+    let config = Config::new()
         .cache_capacity(128 * 1024 * 1024)
         .flush_every_ms(Some(100))
         .path(dir.to_string())
-        .snapshot_after_ops(5000);
-
-    config_builder.segment_size = 1024;
-
-    let config = config_builder.build();
+        .snapshot_after_ops(5000)
+        .segment_size(1024);
 
     match thread::spawn(|| run_batches(config)).join() {
         Err(e) => {

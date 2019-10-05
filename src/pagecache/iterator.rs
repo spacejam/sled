@@ -8,7 +8,7 @@ use super::{
 use crate::*;
 
 pub struct LogIter {
-    pub config: Config,
+    pub config: RunningConfig,
     pub segment_iter: Box<dyn Iterator<Item = (Lsn, LogOffset)>>,
     pub segment_base: Option<LogOffset>,
     pub max_lsn: Lsn,
@@ -227,12 +227,12 @@ fn valid_entry_offset(lid: LogOffset, segment_len: usize) -> bool {
 // and recover the order of segments, and the highest Lsn.
 fn scan_segment_lsns(
     min: Lsn,
-    config: &Config,
+    config: &RunningConfig,
 ) -> Result<(BTreeMap<Lsn, LogOffset>, Lsn)> {
     fn fetch(
         idx: u64,
         min: Lsn,
-        config: &Config,
+        config: &RunningConfig,
     ) -> Option<(LogOffset, SegmentHeader)> {
         let segment_len = u64::try_from(config.segment_size).unwrap();
         let base_lid = idx * segment_len;
@@ -331,7 +331,7 @@ fn scan_segment_lsns(
 fn clean_tail_tears(
     max_header_stable_lsn: Lsn,
     mut ordering: BTreeMap<Lsn, LogOffset>,
-    config: &Config,
+    config: &RunningConfig,
     f: &std::fs::File,
 ) -> Result<BTreeMap<Lsn, LogOffset>> {
     let segment_size = config.segment_size as Lsn;
@@ -418,7 +418,7 @@ fn clean_tail_tears(
 
 pub fn raw_segment_iter_from(
     lsn: Lsn,
-    config: &Config,
+    config: &RunningConfig,
 ) -> Result<(LogIter, Lsn)> {
     let segment_len = config.segment_size as Lsn;
     let normalized_lsn = lsn / segment_len * segment_len;

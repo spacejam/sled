@@ -15,9 +15,10 @@ pub struct OrswotStore {
 
 impl OrswotStore {
     pub fn new(path: &dyn AsRef<Path>) -> Self {
-        let config = sled::ConfigBuilder::new().path(path).build();
+        let config = sled::Config::new().path(path);
 
-        let db = sled::Db::start(config).unwrap();
+        let db = config.open().unwrap();
+
         db.set_merge_operator(orswot_merge);
 
         Self { db }

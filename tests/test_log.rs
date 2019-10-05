@@ -1,13 +1,10 @@
-#![cfg_attr(test, allow(unused))]
-
 mod common;
 
 use std::{
-    fs,
     mem::size_of,
     sync::{
         atomic::{AtomicUsize, Ordering},
-        {Arc, Mutex},
+        Arc,
     },
     thread,
 };
@@ -18,7 +15,7 @@ use rand::{thread_rng, Rng};
 use sled::*;
 
 use sled::{
-    DiskPtr, Log, LogKind, LogOffset, LogRead, Lsn, PageId, SegmentMode,
+    DiskPtr, Log, LogKind, LogRead, Lsn, PageId, SegmentMode,
     MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
 };
 
@@ -28,11 +25,9 @@ const KIND: LogKind = LogKind::Replace;
 #[test]
 fn log_writebatch() -> crate::Result<()> {
     common::setup_logger();
-    let config = ConfigBuilder::new()
-        .temporary(true)
-        .segment_mode(SegmentMode::Linear)
-        .build();
-    let log = Log::start_raw_log(config.clone())?;
+    let config =
+        Config::new().temporary(true).segment_mode(SegmentMode::Linear);
+    let log = config.open_raw_log().unwrap();
 
     log.reserve(KIND, PID, b"1")?.complete()?;
     log.reserve(KIND, PID, b"2")?.complete()?;
@@ -56,7 +51,7 @@ fn log_writebatch() -> crate::Result<()> {
     log.reserve(KIND, PID, b"10")?.complete()?;
 
     drop(log);
-    let log = Log::start_raw_log(config.clone())?;
+    let log = config.open_raw_log().unwrap();
 
     let mut iter = log.iter_from(0);
 
@@ -71,15 +66,13 @@ fn log_writebatch() -> crate::Result<()> {
 }
 
 #[test]
-fn more_log_reservations_than_buffers() {
-    let mut config_builder =
-        ConfigBuilder::new().temporary(true).segment_mode(SegmentMode::Linear);
+fn more_log_reservations_than_buffers() -> Result<()> {
+    let config = Config::new()
+        .temporary(true)
+        .segment_mode(SegmentMode::Linear)
+        .segment_size(128);
 
-    config_builder.segment_size = 128;
-
-    let config = config_builder.build();
-
-    let log = Log::start_raw_log(config.clone()).unwrap();
+    let log = config.open_raw_log().unwrap();
     let mut reservations = vec![];
 
     let total_seg_overhead = SEG_HEADER_LEN;
@@ -91,22 +84,21 @@ fn more_log_reservations_than_buffers() {
     }
     for res in reservations.into_iter().rev() {
         // abort in reverse order
-        res.abort();
+        res.abort()?;
     }
 
-    log.flush();
+    log.flush()?;
+    Ok(())
 }
 
 #[test]
-fn non_contiguous_log_flush() {
-    let mut config_builder =
-        ConfigBuilder::new().temporary(true).segment_mode(SegmentMode::Linear);
+fn non_contiguous_log_flush() -> Result<()> {
+    let config = Config::new()
+        .temporary(true)
+        .segment_mode(SegmentMode::Linear)
+        .segment_size(1024);
 
-    config_builder.segment_size = 1024;
-
-    let config = config_builder.build();
-
-    let log = Log::start_raw_log(config.clone()).unwrap();
+    let log = config.open_raw_log().unwrap();
 
     let seg_overhead = SEG_HEADER_LEN;
     let buf_len = (config.segment_size / MINIMUM_ITEMS_PER_SEGMENT)
@@ -114,34 +106,30 @@ fn non_contiguous_log_flush() {
 
     let res1 = log.reserve(KIND, PID, &vec![0; buf_len]).unwrap();
     let res2 = log.reserve(KIND, PID, &vec![0; buf_len]).unwrap();
-    let id = res2.lid();
     let lsn = res2.lsn();
-    res2.abort();
-    res1.abort();
-    log.make_stable(lsn);
+    res2.abort()?;
+    res1.abort()?;
+    log.make_stable(lsn)?;
+    Ok(())
 }
 
 #[test]
 fn concurrent_logging() {
     common::setup_logger();
     // TODO linearize res bufs, verify they are correct
-    for i in 0..10 {
-        let mut config_builder = ConfigBuilder::new()
+    for _ in 0..10 {
+        let config = Config::new()
             .temporary(true)
             .segment_mode(SegmentMode::Linear)
-            .flush_every_ms(Some(50));
+            .flush_every_ms(Some(50))
+            .segment_size(1024);
 
-        config_builder.segment_size = 1024;
-
-        let config = config_builder.build();
-
-        let log = Arc::new(Log::start_raw_log(config.clone()).unwrap());
+        let log = Arc::new(config.open_raw_log().unwrap());
         let iobs2 = log.clone();
         let iobs3 = log.clone();
         let iobs4 = log.clone();
         let iobs5 = log.clone();
         let iobs6 = log.clone();
-        let log7 = log.clone();
 
         let seg_overhead = SEG_HEADER_LEN;
         let buf_len = (config.segment_size / MINIMUM_ITEMS_PER_SEGMENT)
@@ -224,16 +212,13 @@ fn concurrent_logging() {
 fn concurrent_logging_404() {
     common::setup_logger();
 
-    let mut config_builder = ConfigBuilder::new()
+    let config = Config::new()
         .temporary(true)
         .segment_mode(SegmentMode::Linear)
-        .flush_every_ms(Some(50));
+        .flush_every_ms(Some(50))
+        .segment_size(1024);
 
-    config_builder.segment_size = 1024;
-
-    let config = config_builder.build();
-
-    let log_arc = Arc::new(Log::start_raw_log(config.clone()).unwrap());
+    let log_arc = Arc::new(config.open_raw_log().unwrap());
 
     const ITERATIONS: i32 = 5000;
     const NUM_THREADS: i32 = 6;
@@ -245,10 +230,10 @@ fn concurrent_logging_404() {
         let h = thread::Builder::new()
             .name(format!("t_{}", t))
             .spawn(move || {
-                for i in 0..ITERATIONS {
+                for _ in 0..ITERATIONS {
                     let current = SHARED_COUNTER.load(Ordering::SeqCst);
                     let raw_value: [u8; size_of::<usize>()] =
-                        unsafe { current.to_be_bytes() };
+                        current.to_be_bytes();
                     let res = log
                         .reserve(KIND, current as PageId, &raw_value)
                         .unwrap();
@@ -279,7 +264,7 @@ fn concurrent_logging_404() {
 
     drop(log_arc);
 
-    let log = Log::start_raw_log(config).unwrap();
+    let log = config.open_raw_log().unwrap();
     let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
     let successfuls = SHARED_COUNTER.load(Ordering::SeqCst);
     for i in 0..successfuls {
@@ -322,17 +307,14 @@ fn abort(log: &Log) {
                 other
             );
         }
-        _ => (), // good
     }
 }
 
 #[test]
 fn log_aborts() {
-    let config = ConfigBuilder::new()
-        .temporary(true)
-        .segment_mode(SegmentMode::Linear)
-        .build();
-    let log = Log::start_raw_log(config).unwrap();
+    let config =
+        Config::new().temporary(true).segment_mode(SegmentMode::Linear);
+    let log = config.open_raw_log().unwrap();
     write(&log);
     abort(&log);
     write(&log);
@@ -343,14 +325,12 @@ fn log_aborts() {
 
 #[test]
 fn log_iterator() {
-    let mut config_builder =
-        ConfigBuilder::new().temporary(true).segment_mode(SegmentMode::Linear);
+    let config = Config::new()
+        .temporary(true)
+        .segment_mode(SegmentMode::Linear)
+        .segment_size(1024);
 
-    config_builder.segment_size = 1024;
-
-    let config = config_builder.build();
-
-    let log = Log::start_raw_log(config.clone()).unwrap();
+    let log = config.open_raw_log().unwrap();
     let (first_lsn, _) =
         log.reserve(KIND, PID, b"").unwrap().complete().unwrap();
     log.reserve(KIND, PID, b"1").unwrap().complete().unwrap();
@@ -371,7 +351,7 @@ fn log_iterator() {
 
     drop(log);
 
-    let log = Log::start_raw_log(config).unwrap();
+    let log = config.open_raw_log().unwrap();
 
     let mut iter = log.iter_from(first_lsn);
     assert!(iter.next().is_some());
@@ -390,15 +370,12 @@ fn log_chunky_iterator() {
     let mut threads = vec![];
     for tn in 0..100 {
         let thread = thread::spawn(move || {
-            let mut config_builder = ConfigBuilder::new()
+            let config = Config::new()
                 .temporary(true)
-                .segment_mode(SegmentMode::Linear);
+                .segment_mode(SegmentMode::Linear)
+                .segment_size(128);
 
-            config_builder.segment_size = 128;
-
-            let config = config_builder.build();
-
-            let log = Log::start_raw_log(config.clone()).unwrap();
+            let log = config.open_raw_log().unwrap();
 
             let mut reference = vec![];
 
@@ -429,16 +406,16 @@ fn log_chunky_iterator() {
             }
 
             let mut ref_iter = reference.clone().into_iter();
-            for t in log.iter_from(SEG_HEADER_LEN as Lsn) {
+            for _ in log.iter_from(SEG_HEADER_LEN as Lsn) {
                 assert!(ref_iter.next().is_some());
             }
 
             // recover and restart
             drop(log);
-            let log = Log::start_raw_log(config).unwrap();
+            let log = config.open_raw_log().unwrap();
 
             let mut log_iter = log.iter_from(SEG_HEADER_LEN as Lsn);
-            for r in reference.clone().into_iter() {
+            for _ in reference.clone().into_iter() {
                 assert!(log_iter.next().is_some());
             }
         });
@@ -450,41 +427,39 @@ fn log_chunky_iterator() {
 }
 
 #[test]
-fn multi_segment_log_iteration() {
+fn multi_segment_log_iteration() -> Result<()> {
     common::setup_logger();
     // ensure segments are being linked
     // ensure trailers are valid
-    let mut config_builder =
-        ConfigBuilder::new().temporary(true).segment_mode(SegmentMode::Linear);
-
-    config_builder.segment_size = 512;
-
-    let config = config_builder.build();
+    let config = Config::new()
+        .temporary(true)
+        .segment_mode(SegmentMode::Linear)
+        .segment_size(512);
 
     let total_seg_overhead = SEG_HEADER_LEN;
     let big_msg_overhead = MSG_HEADER_LEN + total_seg_overhead;
     let big_msg_sz = (config.segment_size - big_msg_overhead) / 64;
 
-    let log = Log::start_raw_log(config.clone()).unwrap();
+    let log = config.open_raw_log().unwrap();
 
     for i in 0..48 {
         let buf = vec![i as u8; big_msg_sz * i];
-        let write =
-            log.reserve(KIND, i as PageId, &buf).unwrap().complete().unwrap();
+        log.reserve(KIND, i as PageId, &buf).unwrap().complete().unwrap();
     }
-    log.flush();
+    log.flush()?;
 
     drop(log);
 
-    let log = Log::start_raw_log(config.clone()).unwrap();
+    let log = config.open_raw_log().unwrap();
 
     // start iterating just past the first segment header
     let mut iter = log.iter_from(SEG_HEADER_LEN as Lsn);
 
-    for i in 0..48 {
-        let expected = vec![i as u8; big_msg_sz * i];
-        let got = iter.next().expect("expected to read another message");
+    for _ in 0..48 {
+        iter.next().expect("expected to read another message");
     }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -505,7 +480,7 @@ impl Arbitrary for Op {
         // the call to gen_range below if low >= high
         LEN.compare_and_swap(0, 1, Ordering::SeqCst);
 
-        let mut incr = || {
+        let incr = || {
             let len = thread_rng().gen_range(0, 2);
             LEN.fetch_add(len + MSG_HEADER_LEN, Ordering::Relaxed);
             vec![COUNTER.fetch_add(1, Ordering::Relaxed) as u8; len]
@@ -557,17 +532,14 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
     common::setup_logger();
 
     use self::Op::*;
-    let mut config_builder = ConfigBuilder::new()
+    let config = Config::new()
         .temporary(true)
         .flush_every_ms(if flusher { Some(1) } else { None })
-        .segment_mode(SegmentMode::Linear);
-
-    config_builder.segment_size = 8192;
-
-    let config = config_builder.build();
+        .segment_mode(SegmentMode::Linear)
+        .segment_size(8192);
 
     let mut tip = 0;
-    let mut log = Log::start_raw_log(config.clone()).unwrap();
+    let mut log = config.open_raw_log().unwrap();
     let mut reference: Vec<(Lsn, DiskPtr, Option<Vec<u8>>, usize)> = vec![];
 
     for op in ops.into_iter() {
@@ -623,7 +595,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
                         break;
                     }
                 }
-                log = Log::start_raw_log(config.clone()).unwrap();
+                log = config.open_raw_log().unwrap();
             }
             Truncate(new_len) => {
                 #[cfg(target_os = "linux")]
@@ -637,10 +609,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
 
                     drop(log);
 
-                    let path = config.get_path();
-
-                    let mut sz_total = 0;
-                    for &mut (lsn, ptr, ref mut expected, sz) in &mut reference
+                    for &mut (_lsn, ptr, ref mut expected, sz) in &mut reference
                     {
                         let tip = ptr.lid() as usize + sz + MSG_HEADER_LEN;
                         if new_len < tip as u64 {
@@ -656,11 +625,10 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
                         }
                     }
 
-                    use std::os::unix::io::AsRawFd;
-
+                    #[cfg(feature = "failpoints")]
                     config.truncate_corrupt(new_len);
 
-                    log = Log::start_raw_log(config.clone()).unwrap();
+                    log = config.open_raw_log().unwrap();
                 }
             }
         }
