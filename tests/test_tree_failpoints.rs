@@ -971,20 +971,7 @@ fn failpoints_bug_17() {
 fn failpoints_bug_18() {
     // postmortem 1:
     assert!(prop_tree_crashes_nicely(
-        vec![
-            Id,
-            Id,
-            Set,
-            Id,
-            Id,
-            Id,
-            Set,
-            Del(0),
-            Restart,
-            Del(0),
-            Id,
-            Set
-        ],
+        vec![Id, Id, Set, Id, Id, Id, Set, Del(0), Restart, Del(0), Id, Set],
         false,
     ))
 }
@@ -1365,15 +1352,7 @@ fn failpoints_bug_29() {
         false,
     ));
     assert!(prop_tree_crashes_nicely(
-        vec![
-            Set,
-            Set,
-            Set,
-            FailPoint("snap write mv"),
-            Set,
-            Flush,
-            Restart
-        ],
+        vec![Set, Set, Set, FailPoint("snap write mv"), Set, Flush, Restart],
         false,
     ));
 }

@@ -237,10 +237,7 @@ fn main() {
     }
 
     if let Some(ops) = args.flag_total_ops {
-        assert!(
-            !args.flag_burn_in,
-            "don't set both --burn-in and --total-ops"
-        );
+        assert!(!args.flag_burn_in, "don't set both --burn-in and --total-ops");
         while TOTAL.load(Ordering::Relaxed) < ops {
             thread::sleep(std::time::Duration::from_millis(50));
         }
@@ -274,10 +271,7 @@ pub fn setup_logger() {
     color_backtrace::install();
 
     fn tn() -> String {
-        std::thread::current()
-            .name()
-            .unwrap_or("unknown")
-            .to_owned()
+        std::thread::current().name().unwrap_or("unknown").to_owned()
     }
 
     let mut builder = env_logger::Builder::new();

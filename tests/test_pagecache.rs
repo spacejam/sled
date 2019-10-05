@@ -101,10 +101,8 @@ fn pagecache_caching() {
     for i in 0..1000 {
         let id = 3 + (i % 2);
         let (key, _, _) = pc.get(id, &guard).unwrap().unwrap();
-        let key = pc
-            .link(id, key, vec![i as usize].into(), &guard)
-            .unwrap()
-            .unwrap();
+        let key =
+            pc.link(id, key, vec![i as usize].into(), &guard).unwrap().unwrap();
         keys.insert(id, key);
     }
 }
@@ -343,9 +341,7 @@ fn basic_pagecache_recovery() {
     let (consolidated2, frag2, _) = pc2.get(id, &guard).unwrap().unwrap();
     assert_eq!(&frag1, frag2);
 
-    pc2.link(id, consolidated2, vec![4].into(), &guard)
-        .unwrap()
-        .unwrap();
+    pc2.link(id, consolidated2, vec![4].into(), &guard).unwrap().unwrap();
     drop(guard);
     drop(pc2);
 
