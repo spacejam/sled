@@ -79,11 +79,7 @@ pub unsafe extern "C" fn sled_config_flush_every_ms(
     config: *mut ConfigBuilder,
     flush_every: c_int,
 ) {
-    let val = if flush_every < 0 {
-        None
-    } else {
-        Some(flush_every as u64)
-    };
+    let val = if flush_every < 0 { None } else { Some(flush_every as u64) };
     *config = (*config).clone().flush_every_ms(val);
 }
 
@@ -214,10 +210,7 @@ pub unsafe extern "C" fn sled_compare_and_swap(
 
     match res {
         Ok(Ok(())) => 1,
-        Ok(Err(sled::CompareAndSwapError {
-            current: None,
-            proposed: _,
-        })) => {
+        Ok(Err(sled::CompareAndSwapError { current: None, proposed: _ })) => {
             *actual_vallen = 0;
             0
         }

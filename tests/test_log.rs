@@ -72,9 +72,8 @@ fn log_writebatch() -> crate::Result<()> {
 
 #[test]
 fn more_log_reservations_than_buffers() {
-    let mut config_builder = ConfigBuilder::new()
-        .temporary(true)
-        .segment_mode(SegmentMode::Linear);
+    let mut config_builder =
+        ConfigBuilder::new().temporary(true).segment_mode(SegmentMode::Linear);
 
     config_builder.segment_size = 128;
 
@@ -100,9 +99,8 @@ fn more_log_reservations_than_buffers() {
 
 #[test]
 fn non_contiguous_log_flush() {
-    let mut config_builder = ConfigBuilder::new()
-        .temporary(true)
-        .segment_mode(SegmentMode::Linear);
+    let mut config_builder =
+        ConfigBuilder::new().temporary(true).segment_mode(SegmentMode::Linear);
 
     config_builder.segment_size = 1024;
 
@@ -303,11 +301,8 @@ fn concurrent_logging_404() {
 
 fn write(log: &Log) {
     let data_bytes = b"yoyoyoyo";
-    let (lsn, ptr) = log
-        .reserve(KIND, PID, data_bytes)
-        .unwrap()
-        .complete()
-        .unwrap();
+    let (lsn, ptr) =
+        log.reserve(KIND, PID, data_bytes).unwrap().complete().unwrap();
     let read_buf = log.read(PID, lsn, ptr).unwrap().into_data().unwrap();
     assert_eq!(
         read_buf, data_bytes,
@@ -348,9 +343,8 @@ fn log_aborts() {
 
 #[test]
 fn log_iterator() {
-    let mut config_builder = ConfigBuilder::new()
-        .temporary(true)
-        .segment_mode(SegmentMode::Linear);
+    let mut config_builder =
+        ConfigBuilder::new().temporary(true).segment_mode(SegmentMode::Linear);
 
     config_builder.segment_size = 1024;
 
@@ -371,11 +365,8 @@ fn log_iterator() {
     }
 
     log.reserve(KIND, PID, b"4444").unwrap().complete().unwrap();
-    let (last_lsn, _) = log
-        .reserve(KIND, PID, b"55555")
-        .unwrap()
-        .complete()
-        .unwrap();
+    let (last_lsn, _) =
+        log.reserve(KIND, PID, b"55555").unwrap().complete().unwrap();
     log.make_stable(last_lsn).unwrap();
 
     drop(log);
@@ -463,9 +454,8 @@ fn multi_segment_log_iteration() {
     common::setup_logger();
     // ensure segments are being linked
     // ensure trailers are valid
-    let mut config_builder = ConfigBuilder::new()
-        .temporary(true)
-        .segment_mode(SegmentMode::Linear);
+    let mut config_builder =
+        ConfigBuilder::new().temporary(true).segment_mode(SegmentMode::Linear);
 
     config_builder.segment_size = 512;
 
@@ -479,11 +469,8 @@ fn multi_segment_log_iteration() {
 
     for i in 0..48 {
         let buf = vec![i as u8; big_msg_sz * i];
-        let write = log
-            .reserve(KIND, i as PageId, &buf)
-            .unwrap()
-            .complete()
-            .unwrap();
+        let write =
+            log.reserve(KIND, i as PageId, &buf).unwrap().complete().unwrap();
     }
     log.flush();
 
@@ -801,12 +788,7 @@ fn log_bug_12() {
     // encounter the last valid entry.
     use self::Op::*;
     prop_log_works(
-        vec![
-            Write(vec![]),
-            Truncate(20),
-            AbortReservation(vec![]),
-            Read(0),
-        ],
+        vec![Write(vec![]), Truncate(20), AbortReservation(vec![]), Read(0)],
         true,
     );
 }
@@ -816,12 +798,7 @@ fn log_bug_13() {
     // postmortem: was not recording the proper highest lsn on recovery.
     use self::Op::*;
     prop_log_works(
-        vec![
-            Write(vec![35]),
-            Restart,
-            AbortReservation(vec![36]),
-            Read(0),
-        ],
+        vec![Write(vec![35]), Restart, AbortReservation(vec![36]), Read(0)],
         true,
     );
 }

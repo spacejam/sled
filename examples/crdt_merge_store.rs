@@ -5,7 +5,7 @@ use std::path::Path;
 
 use bincode::{deserialize, serialize};
 use crdts::{Orswot, VClock};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 const KEY: &[u8] = b"dat orswot";
 
@@ -36,17 +36,11 @@ impl OrswotStore {
     }
 
     pub fn add(&self, device: DeviceID, item: Vec<u8>) {
-        self.apply(Add {
-            device,
-            item,
-        });
+        self.apply(Add { device, item });
     }
 
     pub fn remove(&self, context: VClock<DeviceID>, item: Vec<u8>) {
-        self.apply(Remove {
-            context,
-            item,
-        });
+        self.apply(Remove { context, item });
     }
 
     fn apply(&self, op: OrswotOp) {
@@ -59,28 +53,20 @@ type DeviceID = Vec<u8>;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 enum OrswotOp {
-    Add {
-        device: DeviceID,
-        item: Vec<u8>,
-    },
-    Remove {
-        context: VClock<DeviceID>,
-        item: Vec<u8>,
-    },
-    Merge {
-        other: Orswot<Vec<u8>, DeviceID>,
-    },
+    Add { device: DeviceID, item: Vec<u8> },
+    Remove { context: VClock<DeviceID>, item: Vec<u8> },
+    Merge { other: Orswot<Vec<u8>, DeviceID> },
 }
 
-use OrswotOp::{Add, Remove, Merge};
+use OrswotOp::{Add, Merge, Remove};
 
 fn orswot_merge(
     _key: &[u8],
     old_value: Option<&[u8]>,
     merged_bytes: &[u8],
 ) -> Option<Vec<u8>> {
-    let mut ret = old_value
-        .map_or_else(Orswot::new, |ov| deserialize(ov).unwrap());
+    let mut ret =
+        old_value.map_or_else(Orswot::new, |ov| deserialize(ov).unwrap());
 
     let op = deserialize(merged_bytes).unwrap();
 
