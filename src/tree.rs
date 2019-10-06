@@ -533,9 +533,7 @@ impl Tree {
     {
         match self.compare_and_swap(key, old, new) {
             Ok(Ok(())) => Ok(Ok(())),
-            Ok(Err(CompareAndSwapError { current: cur, proposed: _ })) => {
-                Ok(Err(cur))
-            }
+            Ok(Err(CompareAndSwapError { current: cur, .. })) => Ok(Err(cur)),
             Err(e) => Err(e),
         }
     }
@@ -601,7 +599,7 @@ impl Tree {
             let next = f(tmp).map(IVec::from);
             match self.compare_and_swap::<_, _, IVec>(key, tmp, next.clone())? {
                 Ok(()) => return Ok(next),
-                Err(CompareAndSwapError { current: cur, proposed: _ }) => {
+                Err(CompareAndSwapError { current: cur, .. }) => {
                     current = cur;
                 }
             }
@@ -668,7 +666,7 @@ impl Tree {
             let next = f(tmp);
             match self.compare_and_swap(key, tmp, next)? {
                 Ok(()) => return Ok(current),
-                Err(CompareAndSwapError { current: cur, proposed: _ }) => {
+                Err(CompareAndSwapError { current: cur, .. }) => {
                     current = cur;
                 }
             }

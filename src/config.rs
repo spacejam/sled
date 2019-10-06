@@ -28,7 +28,7 @@ pub struct PersistedConfig {
 
 impl PersistedConfig {
     pub fn size_in_bytes(&self) -> u64 {
-        return std::mem::size_of::<PersistedConfig>() as u64;
+        std::mem::size_of::<PersistedConfig>() as u64
     }
 
     pub fn serialize(&self) -> Vec<u8> {
