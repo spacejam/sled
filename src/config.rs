@@ -19,7 +19,7 @@ const DEFAULT_PATH: &str = "default.sled";
 
 /// A persisted configuration about high-level
 /// storage file information
-#[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, Eq, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub struct PersistedConfig {
     pub segment_size: usize,
     pub use_compression: bool,
@@ -49,7 +49,20 @@ impl PersistedConfig {
         let mut lines = HashMap::new();
 
         for line in reader.lines() {
-            let line = line?;
+            let line = if let Ok(l) = line {
+                l
+            } else {
+                error!(
+                    "failed to parse persisted config as UTF-8. \
+                     This changed in sled version 0.29"
+                );
+                return Err(Error::Unsupported(
+                    "failed to open database that may \
+                     have been created using a sled version \
+                     earlier than 0.29"
+                        .to_string(),
+                ));
+            };
             let mut split = line.split(": ").map(String::from);
             let k = if let Some(k) = split.next() {
                 k
@@ -166,7 +179,7 @@ impl Deref for Config {
 }
 
 #[doc(hidden)]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConfigInner {
     #[doc(hidden)]
     pub cache_capacity: u64,
@@ -201,10 +214,10 @@ pub struct ConfigInner {
     #[doc(hidden)]
     pub version: (usize, usize),
     tmp_path: PathBuf,
-    pub(crate) global_error: Atomic<Error>,
+    pub(crate) global_error: Arc<Atomic<Error>>,
     #[cfg(feature = "event_log")]
     /// an event log for concurrent debugging
-    pub event_log: event_log::EventLog,
+    pub event_log: Arc<event_log::EventLog>,
 }
 
 impl Default for ConfigInner {
@@ -227,9 +240,9 @@ impl Default for ConfigInner {
             idgen_persist_interval: 1_000_000,
             version: crate_version(),
             tmp_path: Config::gen_temp_path(),
-            global_error: Atomic::default(),
+            global_error: Arc::new(Atomic::default()),
             #[cfg(feature = "event_log")]
-            event_log: crate::event_log::EventLog::default(),
+            event_log: Arc::new(crate::event_log::EventLog::default()),
         }
     }
 }
@@ -278,7 +291,14 @@ macro_rules! builder {
         $(
             #[doc=$desc]
             pub fn $name(mut self, to: $t) -> Self {
-                let m = Arc::get_mut(&mut self.0).unwrap();
+                if Arc::strong_count(&self.0) != 0 {
+                    error!(
+                        "config has already been used to start \
+                         the system and probably should not be \
+                         mutated",
+                    );
+                }
+                let m = Arc::make_mut(&mut self.0);
                 m.$name = to;
                 self
             }
@@ -304,7 +324,14 @@ impl Config {
     /// by shrinking the buffer size. Don't rely on this.
     #[doc(hidden)]
     pub fn segment_size(mut self, segment_size: usize) -> Config {
-        let m = Arc::get_mut(&mut self.0).unwrap();
+        if Arc::strong_count(&self.0) != 0 {
+            error!(
+                "config has already been used to start \
+                 the system and probably should not be \
+                 mutated",
+            );
+        }
+        let m = Arc::make_mut(&mut self.0);
         m.segment_size = segment_size;
         self
     }
@@ -414,7 +441,7 @@ impl Config {
     fn limit_cache_max_memory(&mut self) {
         let limit = sys_limits::get_memory_limit();
         if limit > 0 && self.cache_capacity > limit {
-            let m = Arc::get_mut(&mut self.0).unwrap();
+            let m = Arc::make_mut(&mut self.0);
             m.cache_capacity = limit;
             error!(
                 "cache capacity is limited to the cgroup memory \
@@ -487,7 +514,7 @@ impl Config {
         Ok(())
     }
 
-    fn open_file(&mut self) -> Result<File> {
+    fn open_file(&self) -> Result<File> {
         let path = self.db_path();
 
         // panic if we can't parse the path
