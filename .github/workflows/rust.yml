@@ -1,0 +1,12 @@
+name: Rust
+
+on: [push]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: rust-clippy-check
+        uses: actions-rs/clippy-check@v1.0.4
