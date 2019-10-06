@@ -396,7 +396,7 @@ impl Config {
     /// or if the provided configuration fails some
     /// basic sanity checks.
     #[doc(hidden)]
-    #[deprecated(since = "0.29", note = "use Config::open instead")]
+    #[deprecated(since = "0.29.0", note = "use Config::open instead")]
     pub fn build(mut self) -> RunningConfig {
         // only validate, setup directory, and open file once
         self.validate().unwrap();
