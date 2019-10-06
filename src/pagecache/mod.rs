@@ -1096,7 +1096,7 @@ where
                 (key, Update::Counter(counter))
             } else if pid == CONFIG_PID {
                 let (key, config) = self.get_persisted_config(guard)?;
-                (key, Update::Config(config.clone()))
+                (key, Update::Config(*config))
             } else if let Some((key, frag, _sz)) = self.get(pid, guard)? {
                 (key, Update::Compact(frag.clone()))
             } else {

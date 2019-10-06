@@ -19,9 +19,9 @@ impl Node {
     }
 
     fn prefix_encode<'a>(&self, key: &'a [u8]) -> &'a [u8] {
-        assert!(&*self.lo <= key);
+        assert!(*self.lo <= *key);
         if !self.hi.is_empty() {
-            assert!(&*self.hi > key);
+            assert!(*self.hi > *key);
         }
 
         &key[self.prefix_len as usize..]
@@ -355,7 +355,7 @@ impl Node {
                 _ => {}
             }
             let decoded_key = self.prefix_decode(&k);
-            return Some((IVec::from(decoded_key), v.clone()));
+            return Some((decoded_key, v.clone()));
         }
 
         None
