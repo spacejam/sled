@@ -204,14 +204,13 @@ fn main() {
 
     let shutdown = Arc::new(AtomicBool::new(false));
 
-    let config = sled::ConfigBuilder::new()
+    let config = sled::Config::new()
         .cache_capacity(1_000_000_000)
         .flush_every_ms(Some(200))
         .snapshot_after_ops(100_000_000_000)
-        .print_profile_on_drop(true)
-        .build();
+        .print_profile_on_drop(true);
 
-    let tree = Arc::new(sled::Db::start(config).unwrap());
+    let tree = Arc::new(config.open().unwrap());
     tree.set_merge_operator(concatenate_merge);
 
     let mut threads = vec![];

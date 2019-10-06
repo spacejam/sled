@@ -125,7 +125,7 @@ impl Snapshot {
 pub(crate) fn advance_snapshot(
     iter: LogIter,
     mut snapshot: Snapshot,
-    config: &Config,
+    config: &RunningConfig,
 ) -> Result<Snapshot> {
     let _measure = Measure::new(&M.advance_snapshot);
 
@@ -170,7 +170,7 @@ pub(crate) fn advance_snapshot(
 
 /// Read a `Snapshot` or generate a default, then advance it to
 /// the tip of the data file, if present.
-pub fn read_snapshot_or_default(config: &Config) -> Result<Snapshot> {
+pub fn read_snapshot_or_default(config: &RunningConfig) -> Result<Snapshot> {
     let mut last_snap =
         read_snapshot(config)?.unwrap_or_else(Snapshot::default);
 
@@ -183,7 +183,7 @@ pub fn read_snapshot_or_default(config: &Config) -> Result<Snapshot> {
 }
 
 /// Read a `Snapshot` from disk.
-fn read_snapshot(config: &Config) -> std::io::Result<Option<Snapshot>> {
+fn read_snapshot(config: &RunningConfig) -> std::io::Result<Option<Snapshot>> {
     let mut f = loop {
         let mut candidates = config.get_snapshot_files()?;
         if candidates.is_empty() {
@@ -243,7 +243,7 @@ fn read_snapshot(config: &Config) -> std::io::Result<Option<Snapshot>> {
     Ok(deserialize::<Snapshot>(&*bytes).ok())
 }
 
-fn write_snapshot(config: &Config, snapshot: &Snapshot) -> Result<()> {
+fn write_snapshot(config: &RunningConfig, snapshot: &Snapshot) -> Result<()> {
     let raw_bytes = serialize(&snapshot).unwrap();
     let decompressed_len = raw_bytes.len();
 

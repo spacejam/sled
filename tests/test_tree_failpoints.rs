@@ -127,18 +127,15 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 
     let segment_size = 256;
 
-    let mut config_builder = ConfigBuilder::new()
+    let config = Config::new()
         .temporary(true)
         .snapshot_after_ops(1)
         .flush_every_ms(if flusher { Some(1) } else { None })
         .cache_capacity(256)
-        .idgen_persist_interval(1);
+        .idgen_persist_interval(1)
+        .segment_size(segment_size);
 
-    config_builder.segment_size = segment_size;
-
-    let config = config_builder.build();
-
-    let mut tree = sled::Db::start(config.clone()).expect("tree should start");
+    let mut tree = config.open().expect("tree should start");
     let mut reference = BTreeMap::new();
     let mut fail_points = HashSet::new();
     let mut max_id: isize = -1;
@@ -147,7 +144,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
     macro_rules! restart {
         () => {
             drop(tree);
-            let tree_res = sled::Db::start(config.clone());
+            let tree_res = config.open();
             if let Err(ref e) = tree_res {
                 if e == &Error::FailPoint {
                     return true;

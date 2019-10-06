@@ -1,11 +1,11 @@
 extern crate sled;
 
-use sled::{ConfigBuilder, Db, Result};
+use sled::{Config, Result};
 
 fn basic() -> Result<()> {
-    let config = ConfigBuilder::new().temporary(true).build();
+    let config = Config::new().temporary(true);
 
-    let db = Db::start(config)?;
+    let db = config.open()?;
 
     let k = b"k".to_vec();
     let v1 = b"v1".to_vec();
@@ -50,9 +50,9 @@ fn merge_operator() -> Result<()> {
         Some(ret)
     }
 
-    let config = ConfigBuilder::new().temporary(true).build();
+    let config = Config::new().temporary(true);
 
-    let db = Db::start(config)?;
+    let db = config.open()?;
     db.set_merge_operator(concatenate_merge);
 
     let k = b"k".to_vec();

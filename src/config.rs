@@ -1,8 +1,9 @@
 use std::{
+    collections::HashMap,
     fs,
     fs::File,
     io,
-    io::{ErrorKind, Read, Seek, Write},
+    io::{BufRead, BufReader, ErrorKind, Read, Seek, Write},
     ops::Deref,
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
@@ -18,7 +19,7 @@ const DEFAULT_PATH: &str = "default.sled";
 
 /// A persisted configuration about high-level
 /// storage file information
-#[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, Eq, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub struct PersistedConfig {
     pub segment_size: usize,
     pub use_compression: bool,
@@ -29,12 +30,122 @@ impl PersistedConfig {
     pub fn size_in_bytes(&self) -> u64 {
         return std::mem::size_of::<PersistedConfig>() as u64;
     }
-}
 
-impl Deref for ConfigInner {
-    type Target = ConfigBuilder;
-    fn deref(&self) -> &Self::Target {
-        &self.inner
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut out = vec![];
+
+        writeln!(&mut out, "segment_size: {}", self.segment_size).unwrap();
+        writeln!(&mut out, "use_compression: {}", self.use_compression)
+            .unwrap();
+        writeln!(&mut out, "version: {}.{}", self.version.0, self.version.1)
+            .unwrap();
+
+        out
+    }
+
+    pub fn deserialize(bytes: &[u8]) -> Result<PersistedConfig> {
+        let reader = BufReader::new(bytes);
+
+        let mut lines = HashMap::new();
+
+        for line in reader.lines() {
+            let line = if let Ok(l) = line {
+                l
+            } else {
+                error!(
+                    "failed to parse persisted config as UTF-8. \
+                     This changed in sled version 0.29"
+                );
+                return Err(Error::Unsupported(
+                    "failed to open database that may \
+                     have been created using a sled version \
+                     earlier than 0.29"
+                        .to_string(),
+                ));
+            };
+            let mut split = line.split(": ").map(String::from);
+            let k = if let Some(k) = split.next() {
+                k
+            } else {
+                error!("failed to parse persisted config line: {}", line);
+                return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+            };
+            let v = if let Some(v) = split.next() {
+                v
+            } else {
+                error!("failed to parse persisted config line: {}", line);
+                return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+            };
+            lines.insert(k, v);
+        }
+
+        let segment_size: usize = if let Some(raw) = lines.get("segment_size") {
+            if let Ok(parsed) = raw.parse() {
+                parsed
+            } else {
+                error!("failed to parse segment_size value: {}", raw);
+                return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+            }
+        } else {
+            error!("failed to retrieve required configuration parameter: segment_size");
+            return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+        };
+
+        let use_compression: bool = if let Some(raw) =
+            lines.get("use_compression")
+        {
+            if let Ok(parsed) = raw.parse() {
+                parsed
+            } else {
+                error!("failed to parse use_compression value: {}", raw);
+                return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+            }
+        } else {
+            error!("failed to retrieve required configuration parameter: use_compression");
+            return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+        };
+
+        let version: (usize, usize) = if let Some(raw) = lines.get("version") {
+            let mut split = raw.split('.');
+            let major = if let Some(raw_major) = split.next() {
+                if let Ok(parsed_major) = raw_major.parse() {
+                    parsed_major
+                } else {
+                    error!(
+                        "failed to parse major version value from line: {}",
+                        raw
+                    );
+                    return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                }
+            } else {
+                error!("failed to parse major version value: {}", raw);
+                return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+            };
+
+            let minor = if let Some(raw_minor) = split.next() {
+                if let Ok(parsed_minor) = raw_minor.parse() {
+                    parsed_minor
+                } else {
+                    error!(
+                        "failed to parse minor version value from line: {}",
+                        raw
+                    );
+                    return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+                }
+            } else {
+                error!("failed to parse minor version value: {}", raw);
+                return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+            };
+
+            (major, minor)
+        } else {
+            error!(
+                "failed to retrieve required configuration parameter: version"
+            );
+            return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+        };
+
+        Ok(PersistedConfig { segment_size, use_compression, version })
     }
 }
 
@@ -43,7 +154,7 @@ impl Deref for ConfigInner {
 /// # Examples
 ///
 /// ```
-/// let _config = sled::ConfigBuilder::default()
+/// let _config = sled::Config::default()
 ///     .path("/path/to/data".to_owned())
 ///     .cache_capacity(10_000_000_000)
 ///     .flush_every_ms(Some(1000))
@@ -52,12 +163,24 @@ impl Deref for ConfigInner {
 ///
 /// ```
 /// // Read-only mode
-/// let _config = sled::ConfigBuilder::default()
+/// let _config = sled::Config::default()
 ///     .path("/path/to/data".to_owned())
 ///     .read_only(true);
 /// ```
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub struct ConfigBuilder {
+#[derive(Default, Debug, Clone)]
+pub struct Config(Arc<ConfigInner>);
+
+impl Deref for Config {
+    type Target = ConfigInner;
+
+    fn deref(&self) -> &ConfigInner {
+        &self.0
+    }
+}
+
+#[doc(hidden)]
+#[derive(Debug, Clone)]
+pub struct ConfigInner {
     #[doc(hidden)]
     pub cache_capacity: u64,
     #[doc(hidden)]
@@ -90,12 +213,14 @@ pub struct ConfigBuilder {
     pub idgen_persist_interval: u64,
     #[doc(hidden)]
     pub version: (usize, usize),
+    tmp_path: PathBuf,
+    pub(crate) global_error: Arc<Atomic<Error>>,
+    #[cfg(feature = "event_log")]
+    /// an event log for concurrent debugging
+    pub event_log: Arc<event_log::EventLog>,
 }
 
-#[allow(unsafe_code)]
-unsafe impl Send for ConfigBuilder {}
-
-impl Default for ConfigBuilder {
+impl Default for ConfigInner {
     fn default() -> Self {
         Self {
             segment_size: 2 << 22, // 8mb
@@ -114,9 +239,45 @@ impl Default for ConfigBuilder {
             print_profile_on_drop: false,
             idgen_persist_interval: 1_000_000,
             version: crate_version(),
+            tmp_path: Config::gen_temp_path(),
+            global_error: Arc::new(Atomic::default()),
+            #[cfg(feature = "event_log")]
+            event_log: Arc::new(crate::event_log::EventLog::default()),
         }
     }
 }
+
+impl ConfigInner {
+    // Get the path of the database
+    #[doc(hidden)]
+    pub fn get_path(&self) -> PathBuf {
+        if self.temporary && self.path == PathBuf::from(DEFAULT_PATH) {
+            self.tmp_path.clone()
+        } else {
+            self.path.clone()
+        }
+    }
+
+    pub(crate) fn blob_path(&self, id: Lsn) -> PathBuf {
+        let mut path = self.get_path();
+        path.push("blobs");
+        path.push(format!("{}", id));
+        path
+    }
+
+    fn db_path(&self) -> PathBuf {
+        let mut path = self.get_path();
+        path.push("db");
+        path
+    }
+
+    fn config_path(&self) -> PathBuf {
+        let mut path = self.get_path();
+        path.push("conf");
+        path
+    }
+}
+
 macro_rules! supported {
     ($cond:expr, $msg:expr) => {
         if !$cond {
@@ -130,23 +291,100 @@ macro_rules! builder {
         $(
             #[doc=$desc]
             pub fn $name(mut self, to: $t) -> Self {
-                self.$name = to;
+                if Arc::strong_count(&self.0) != 0 {
+                    error!(
+                        "config has already been used to start \
+                         the system and probably should not be \
+                         mutated",
+                    );
+                }
+                let m = Arc::make_mut(&mut self.0);
+                m.$name = to;
                 self
             }
         )*
     }
 }
 
-impl ConfigBuilder {
-    /// Returns a default `ConfigBuilder`
-    pub fn new() -> Self {
-        Self::default()
+impl Config {
+    /// Returns a default `Config`
+    pub fn new() -> Config {
+        Config::default()
     }
 
     /// Set the path of the database (builder).
-    pub fn path<P: AsRef<Path>>(mut self, path: P) -> Self {
-        self.path = path.as_ref().to_path_buf();
+    pub fn path<P: AsRef<Path>>(mut self, path: P) -> Config {
+        let m = Arc::get_mut(&mut self.0).unwrap();
+        m.path = path.as_ref().to_path_buf();
         self
+    }
+
+    /// A testing-only method for reducing the io-buffer size
+    /// to trigger correctness-critical behavior more often
+    /// by shrinking the buffer size. Don't rely on this.
+    #[doc(hidden)]
+    pub fn segment_size(mut self, segment_size: usize) -> Config {
+        if Arc::strong_count(&self.0) != 0 {
+            error!(
+                "config has already been used to start \
+                 the system and probably should not be \
+                 mutated",
+            );
+        }
+        let m = Arc::make_mut(&mut self.0);
+        m.segment_size = segment_size;
+        self
+    }
+
+    /// Opens a `Db` based on the provided config.
+    pub fn open(&self) -> Result<Db> {
+        // only validate, setup directory, and open file once
+        self.validate()?;
+
+        let mut config = self.clone();
+        config.limit_cache_max_memory();
+
+        let file = config.open_file()?;
+
+        // seal config in a Config
+        let config = RunningConfig { inner: config, file: Arc::new(file) };
+
+        Db::start_inner(config)
+    }
+
+    #[doc(hidden)]
+    pub fn open_pagecache<P>(&self) -> Result<PageCache<P>>
+    where
+        P: Materializer,
+    {
+        // only validate, setup directory, and open file once
+        self.validate()?;
+
+        let mut config = self.clone();
+        config.limit_cache_max_memory();
+
+        let file = config.open_file()?;
+
+        // seal config in a Config
+        let config = RunningConfig { inner: config, file: Arc::new(file) };
+
+        PageCache::start(config)
+    }
+
+    #[doc(hidden)]
+    pub fn open_raw_log(&self) -> Result<Log> {
+        // only validate, setup directory, and open file once
+        self.validate()?;
+
+        let mut config = self.clone();
+        config.limit_cache_max_memory();
+
+        let file = config.open_file()?;
+
+        // seal config in a Config
+        let config = RunningConfig { inner: config, file: Arc::new(file) };
+
+        Log::start_raw_log(config)
     }
 
     /// Finalize the configuration.
@@ -157,13 +395,11 @@ impl ConfigBuilder {
     /// to open the files for performing database IO,
     /// or if the provided configuration fails some
     /// basic sanity checks.
-    pub fn build(mut self) -> Config {
+    #[doc(hidden)]
+    #[deprecated(since = "0.29", note = "use Config::open instead")]
+    pub fn build(mut self) -> RunningConfig {
         // only validate, setup directory, and open file once
         self.validate().unwrap();
-
-        if self.temporary && self.path == PathBuf::from(DEFAULT_PATH) {
-            self.path = Self::gen_temp_path();
-        }
 
         self.limit_cache_max_memory();
 
@@ -172,13 +408,7 @@ impl ConfigBuilder {
         });
 
         // seal config in a Config
-        Config(Arc::new(ConfigInner {
-            inner: self,
-            file,
-            global_error: Atomic::default(),
-            #[cfg(feature = "event_log")]
-            event_log: crate::event_log::EventLog::default(),
-        }))
+        RunningConfig { inner: self, file: Arc::new(file) }
     }
 
     fn gen_temp_path() -> PathBuf {
@@ -211,7 +441,8 @@ impl ConfigBuilder {
     fn limit_cache_max_memory(&mut self) {
         let limit = sys_limits::get_memory_limit();
         if limit > 0 && self.cache_capacity > limit {
-            self.cache_capacity = limit;
+            let m = Arc::make_mut(&mut self.0);
+            m.cache_capacity = limit;
             error!(
                 "cache capacity is limited to the cgroup memory \
                  limit: {} bytes",
@@ -283,7 +514,7 @@ impl ConfigBuilder {
         Ok(())
     }
 
-    fn open_file(&mut self) -> Result<File> {
+    fn open_file(&self) -> Result<File> {
         let path = self.db_path();
 
         // panic if we can't parse the path
@@ -398,8 +629,18 @@ impl ConfigBuilder {
         }
     }
 
+    fn serialize(&self) -> Vec<u8> {
+        let persisted_config = PersistedConfig {
+            version: self.version,
+            segment_size: self.segment_size,
+            use_compression: self.use_compression,
+        };
+
+        persisted_config.serialize()
+    }
+
     fn write_config(&self) -> Result<()> {
-        let bytes = serialize(&*self).unwrap();
+        let bytes = self.serialize();
         let crc: u32 = crc32(&*bytes);
         let crc_arr = u32_to_arr(crc);
 
@@ -416,7 +657,7 @@ impl ConfigBuilder {
         Ok(())
     }
 
-    fn read_config(&self) -> io::Result<Option<Self>> {
+    fn read_config(&self) -> Result<Option<PersistedConfig>> {
         let path = self.config_path();
 
         let f_res = fs::OpenOptions::new().read(true).open(&path);
@@ -426,7 +667,7 @@ impl ConfigBuilder {
                 return Ok(None);
             }
             Err(other) => {
-                return Err(other);
+                return Err(other.into());
             }
             Ok(f) => f,
         };
@@ -456,86 +697,12 @@ impl ConfigBuilder {
             );
         }
 
-        Ok(deserialize::<Self>(&*buf).ok())
+        PersistedConfig::deserialize(&buf).map(Some)
     }
 
-    // Get the path of the database
-    #[doc(hidden)]
-    pub fn get_path(&self) -> PathBuf {
-        self.path.clone()
-    }
-
-    pub(crate) fn blob_path(&self, id: Lsn) -> PathBuf {
-        let mut path = self.get_path();
-        path.push("blobs");
-        path.push(format!("{}", id));
-        path
-    }
-
-    fn db_path(&self) -> PathBuf {
-        let mut path = self.get_path();
-        path.push("db");
-        path
-    }
-
-    fn config_path(&self) -> PathBuf {
-        let mut path = self.get_path();
-        path.push("conf");
-        path
-    }
-}
-
-/// A finalized `ConfigBuilder` that can be use multiple times
-/// to open a `Tree` or `Log`.
-#[derive(Debug, Clone)]
-pub struct Config(Arc<ConfigInner>);
-
-impl Deref for Config {
-    type Target = ConfigInner;
-
-    fn deref(&self) -> &ConfigInner {
-        &self.0
-    }
-}
-
-#[derive(Debug)]
-pub struct ConfigInner {
-    inner: ConfigBuilder,
-    pub(crate) file: File,
-    pub(crate) global_error: Atomic<Error>,
-    #[cfg(feature = "event_log")]
-    /// an event log for concurrent debugging
-    pub event_log: event_log::EventLog,
-}
-
-#[allow(unsafe_code)]
-unsafe impl Send for Config {}
-
-#[allow(unsafe_code)]
-unsafe impl Sync for Config {}
-
-impl Drop for ConfigInner {
-    fn drop(&mut self) {
-        if self.print_profile_on_drop {
-            M.print_profile();
-        }
-
-        if !self.temporary {
-            return;
-        }
-
-        // Our files are temporary, so nuke them.
-        debug!(
-            "removing temporary storage file {}",
-            self.inner.path.to_string_lossy()
-        );
-        let _res = fs::remove_dir_all(&self.path);
-    }
-}
-
-impl Config {
     /// Return the global error if one was encountered during
     /// an asynchronous IO operation.
+    #[doc(hidden)]
     pub fn global_error(&self) -> Result<()> {
         let guard = pin();
         let ge = self.global_error.load(Relaxed, &guard);
@@ -575,6 +742,55 @@ impl Config {
         );
     }
 
+    #[cfg(feature = "failpoints")]
+    #[doc(hidden)]
+    // truncate the underlying file for corruption testing purposes.
+    pub fn truncate_corrupt(&self, new_len: u64) {
+        let path = self.db_path();
+        let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+        f.set_len(new_len).expect("should be able to truncate");
+    }
+}
+
+/// A Configuration that has an associated opened
+/// file.
+#[derive(Debug, Clone)]
+pub struct RunningConfig {
+    inner: Config,
+    pub(crate) file: Arc<File>,
+}
+
+#[allow(unsafe_code)]
+unsafe impl Send for RunningConfig {}
+
+#[allow(unsafe_code)]
+unsafe impl Sync for RunningConfig {}
+
+impl Deref for RunningConfig {
+    type Target = Config;
+
+    fn deref(&self) -> &Config {
+        &self.inner
+    }
+}
+
+impl Drop for ConfigInner {
+    fn drop(&mut self) {
+        if self.print_profile_on_drop {
+            M.print_profile();
+        }
+
+        if !self.temporary {
+            return;
+        }
+
+        // Our files are temporary, so nuke them.
+        debug!("removing temporary storage file {:?}", self.get_path());
+        let _res = fs::remove_dir_all(&self.get_path());
+    }
+}
+
+impl RunningConfig {
     // returns the current snapshot file prefix
     #[doc(hidden)]
     pub fn snapshot_prefix(&self) -> PathBuf {
@@ -688,12 +904,6 @@ impl Config {
         );
 
         Ok(())
-    }
-
-    #[doc(hidden)]
-    // truncate the underlying file for corruption testing purposes.
-    pub fn truncate_corrupt(&self, new_len: u64) {
-        self.file.set_len(new_len).expect("should be able to truncate");
     }
 }
 

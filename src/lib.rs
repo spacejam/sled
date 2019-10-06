@@ -136,6 +136,7 @@ const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
 #[doc(hidden)]
 pub use {
     self::{
+        config::RunningConfig,
         lazy::Lazy,
         pagecache::{
             constants::{
@@ -152,7 +153,7 @@ pub use {
 
 pub use self::{
     batch::Batch,
-    config::{Config, ConfigBuilder},
+    config::Config,
     db::Db,
     iter::Iter,
     ivec::IVec,

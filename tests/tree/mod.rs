@@ -201,19 +201,16 @@ pub fn prop_tree_matches_btreemap(
 
     let use_compression = cfg!(feature = "compression") && use_compression;
 
-    let mut config_builder = ConfigBuilder::new()
+    let config = Config::new()
         .temporary(true)
         .use_compression(use_compression)
         .snapshot_after_ops(u64::from(snapshot_after) + 1)
         .flush_every_ms(if flusher { Some(1) } else { None })
         .cache_capacity(256)
-        .idgen_persist_interval(1);
+        .idgen_persist_interval(1)
+        .segment_size(8192);
 
-    config_builder.segment_size = 8192;
-
-    let config = config_builder.build();
-
-    let mut tree = Db::start(config.clone()).unwrap();
+    let mut tree = config.open().unwrap();
     tree.set_merge_operator(test_merge_operator);
 
     let mut reference: BTreeMap<Key, u16> = BTreeMap::new();
@@ -343,7 +340,7 @@ pub fn prop_tree_matches_btreemap(
             }
             Restart => {
                 drop(tree);
-                tree = Db::start(config.clone()).unwrap();
+                tree = config.open().unwrap();
                 tree.set_merge_operator(test_merge_operator);
             }
         }

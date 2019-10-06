@@ -123,7 +123,7 @@ pub struct PageCache<P>
 where
     P: Materializer,
 {
-    config: Config,
+    config: RunningConfig,
     inner: PageTable<Page<P>>,
     next_pid_to_allocate: AtomicU64,
     free: Arc<Mutex<BinaryHeap<PageId>>>,
@@ -204,7 +204,7 @@ where
     P: Materializer,
 {
     /// Instantiate a new `PageCache`.
-    pub fn start(config: Config) -> Result<Self> {
+    pub fn start(config: RunningConfig) -> Result<Self> {
         trace!("starting pagecache");
 
         config.reset_global_error();

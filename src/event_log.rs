@@ -28,7 +28,7 @@ use crate::pagecache::{DiskPtr, LogOffset, Lsn};
 use crate::*;
 
 /// A thing that happens at a certain time.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 enum Event {
     SegmentAllocate { lsn: Lsn, lid: LogOffset },
     SegmentFree { lsn: Lsn, lid: LogOffset },

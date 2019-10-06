@@ -18,7 +18,7 @@ use crate::*;
 pub struct Log {
     /// iobufs is the underlying lock-free IO write buffer.
     pub(super) iobufs: Arc<IoBufs>,
-    pub(crate) config: Config,
+    pub(crate) config: RunningConfig,
 }
 
 #[allow(unsafe_code)]
@@ -27,14 +27,14 @@ unsafe impl Send for Log {}
 impl Log {
     /// Start the log, open or create the configured file,
     /// and optionally start the periodic buffer flush thread.
-    pub fn start(config: Config, snapshot: Snapshot) -> Result<Self> {
+    pub fn start(config: RunningConfig, snapshot: Snapshot) -> Result<Self> {
         let iobufs = Arc::new(IoBufs::start(config.clone(), snapshot)?);
 
         Ok(Self { iobufs, config })
     }
 
     /// Starts a log for use without a materializer.
-    pub fn start_raw_log(config: Config) -> Result<Self> {
+    pub fn start_raw_log(config: RunningConfig) -> Result<Self> {
         assert_eq!(config.segment_mode, super::SegmentMode::Linear);
         let (log_iter, _) = super::raw_segment_iter_from(0, &config)?;
 

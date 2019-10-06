@@ -53,8 +53,7 @@ impl Db {
     /// let t = Db::open("my_db").unwrap();
     /// ```
     pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
-        let config = ConfigBuilder::new().path(path).build();
-        Self::start(config)
+        Config::new().path(path).open()
     }
 
     #[doc(hidden)]
@@ -63,8 +62,16 @@ impl Db {
         Self::open(path)
     }
 
-    /// Load existing or create a new `Db`.
-    pub fn start(config: Config) -> Result<Self> {
+    #[doc(hidden)]
+    #[deprecated(
+        since = "0.29",
+        note = "please use ConfigBuilder::open instead"
+    )]
+    pub fn start(config: RunningConfig) -> Result<Self> {
+        Db::start_inner(config)
+    }
+
+    pub(crate) fn start_inner(config: RunningConfig) -> Result<Self> {
         let _measure = Measure::new(&M.tree_start);
 
         let context = Context::start(config)?;

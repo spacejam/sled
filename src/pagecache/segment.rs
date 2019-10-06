@@ -74,7 +74,7 @@ use crate::*;
 #[derive(Debug)]
 pub(crate) struct SegmentAccountant {
     // static or one-time set
-    config: Config,
+    config: RunningConfig,
 
     // TODO these should be sharded to improve performance
     segments: Vec<Segment>,
@@ -390,7 +390,10 @@ impl Segment {
 
 impl SegmentAccountant {
     /// Create a new SegmentAccountant from previously recovered segments.
-    pub(super) fn start(config: Config, snapshot: Snapshot) -> Result<Self> {
+    pub(super) fn start(
+        config: RunningConfig,
+        snapshot: Snapshot,
+    ) -> Result<Self> {
         let mut ret = Self {
             config,
             segments: vec![],
