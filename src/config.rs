@@ -424,7 +424,7 @@ impl Config {
             .as_nanos()
             << 48) as u64;
 
-        let pid = std::process::id() as u64;
+        let pid = u64::from(std::process::id());
 
         let salt = (pid << 16) + now + seed;
 

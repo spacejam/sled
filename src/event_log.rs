@@ -24,7 +24,7 @@
 
 use std::collections::HashMap;
 
-use crate::pagecache::{DiskPtr, LogOffset, Lsn};
+use crate::pagecache::DiskPtr;
 use crate::*;
 
 /// A thing that happens at a certain time.
@@ -99,7 +99,6 @@ impl EventLog {
                         assert_eq!(meta, *rec_meta);
                     }
                 }
-                _ => {}
             }
         }
     }
