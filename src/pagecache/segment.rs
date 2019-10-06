@@ -420,7 +420,10 @@ impl SegmentAccountant {
         Ok(ret)
     }
 
-    fn initialize_from_snapshot(&mut self, snapshot: Snapshot) -> Result<()> {
+    fn initial_segments(
+        &self,
+        snapshot: &Snapshot,
+    ) -> Result<(Vec<Segment>, Vec<usize>)> {
         let segment_size = self.config.segment_size;
         let file_len = self.config.file.metadata()?.len();
         let empty_snapshot = snapshot.pt.is_empty();
@@ -462,18 +465,25 @@ impl SegmentAccountant {
             segment_sizes[idx] += sz;
         };
 
-        for (pid, state) in snapshot.pt {
+        for (pid, state) in &snapshot.pt {
             match state {
                 PageState::Present(coords) => {
                     for (lsn, ptr, sz) in coords {
-                        add(pid, lsn, sz, ptr.lid(), &mut segments);
+                        add(*pid, lsn, *sz, ptr.lid(), &mut segments);
                     }
                 }
                 PageState::Free(lsn, ptr) => {
-                    add(pid, lsn, MSG_HEADER_LEN, ptr.lid(), &mut segments);
+                    add(*pid, lsn, MSG_HEADER_LEN, ptr.lid(), &mut segments);
                 }
             }
         }
+
+        Ok((segments, segment_sizes))
+    }
+
+    fn initialize_from_snapshot(&mut self, snapshot: Snapshot) -> Result<()> {
+        let segment_size = self.config.segment_size;
+        let (mut segments, segment_sizes) = self.initial_segments(&snapshot)?;
 
         let currently_active_segment = {
             // this logic allows us to free the last
@@ -601,6 +611,7 @@ impl SegmentAccountant {
                 }
             })
             .collect();
+
         trace!("initialized self.ordering to {:?}", self.ordering);
 
         Ok(())
