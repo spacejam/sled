@@ -240,12 +240,9 @@ pub(crate) fn u32_to_arr(number: u32) -> [u8; 4] {
 pub(crate) fn maybe_decompress(buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
     #[cfg(feature = "compression")]
     {
-        use std::sync::atomic::AtomicUsize;
-
         use super::*;
 
         static MAX_COMPRESSION_RATIO: AtomicUsize = AtomicUsize::new(1);
-        use std::sync::atomic::Ordering::{Acquire, Release};
 
         let _measure = Measure::new(&M.decompress);
         loop {

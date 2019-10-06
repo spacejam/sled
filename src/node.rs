@@ -426,7 +426,7 @@ impl Node {
                 _ => {}
             }
             let decoded_key = self.prefix_decode(&k);
-            return Some((IVec::from(decoded_key), v.clone()));
+            return Some((decoded_key, v.clone()));
         }
         None
     }

@@ -30,11 +30,6 @@ use crate::*;
 /// A thing that happens at a certain time.
 #[derive(Debug, Clone)]
 enum Event {
-    SegmentAllocate { lsn: Lsn, lid: LogOffset },
-    SegmentFree { lsn: Lsn, lid: LogOffset },
-    SegmentZero { lsn: Lsn, lid: LogOffset },
-    Replace { pid: PageId, lsn: Lsn, lid: LogOffset, old_lids: Vec<LogOffset> },
-    Link { pid: PageId, lsn: Lsn, lid: LogOffset },
     PagesBeforeRestart { pages: HashMap<PageId, Vec<DiskPtr>> },
     PagesAfterRestart { pages: HashMap<PageId, Vec<DiskPtr>> },
     MetaBeforeRestart { meta: Meta },

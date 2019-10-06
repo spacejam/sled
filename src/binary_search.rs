@@ -17,7 +17,7 @@ pub fn interpolation_search<'a, T>(
     s: &'a [(IVec, T)],
 ) -> Result<usize, usize> {
     let mut size = s.len();
-    if size == 0 || key < &*s[0].0 {
+    if size == 0 || *key < *s[0].0 {
         return Err(0);
     }
     let mut base = 0usize;

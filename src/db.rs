@@ -64,7 +64,7 @@ impl Db {
 
     #[doc(hidden)]
     #[deprecated(
-        since = "0.29",
+        since = "0.29.0",
         note = "please use ConfigBuilder::open instead"
     )]
     pub fn start(config: RunningConfig) -> Result<Self> {
