@@ -130,6 +130,14 @@ mod flusher;
 /// The event log helps debug concurrency issues.
 pub mod event_log;
 
+#[cfg(feature = "measure_allocs")]
+mod measure_allocs;
+
+#[cfg(feature = "measure_allocs")]
+#[global_allocator]
+static ALLOCATOR: measure_allocs::TrackingAllocator =
+    measure_allocs::TrackingAllocator;
+
 const DEFAULT_TREE_ID: &[u8] = b"__sled__default";
 
 /// hidden re-export of items for testing purposes

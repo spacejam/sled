@@ -16,14 +16,6 @@ mod reservation;
 mod segment;
 mod snapshot;
 
-#[cfg(feature = "measure_allocs")]
-mod measure_allocs;
-
-#[cfg(feature = "measure_allocs")]
-#[global_allocator]
-static ALLOCATOR: measure_allocs::TrackingAllocator =
-    measure_allocs::TrackingAllocator;
-
 use crate::{debug, AtomicLsn, DeserializeOwned, SeqCst, Serialize};
 
 use self::{
