@@ -625,7 +625,7 @@ impl Config {
                 Ok(())
             }
             Ok(None) => self.write_config(),
-            Err(e) => Err(e.into()),
+            Err(e) => Err(e),
         }
     }
 
