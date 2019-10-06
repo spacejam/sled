@@ -1677,15 +1677,14 @@ impl Tree {
         );
     }
 
-    pub(crate) fn merge_node<'g>(
-        &self,
-        parent_view: &View<'g>,
+    fn cap_merging_child<'g>(
+        &'g self,
         child_pid: PageId,
         guard: &'g Guard,
-    ) -> Result<()> {
+    ) -> Result<Option<View<'g>>> {
         // Get the child node and try to install a `MergeCap` frag.
         // In case we succeed, we break, otherwise we try from the start.
-        let child_view = loop {
+        loop {
             let mut child_view = if let Some(child_view) =
                 self.view_for_pid(child_pid, guard)?
             {
@@ -1693,12 +1692,12 @@ impl Tree {
             } else {
                 // the child was already freed, meaning
                 // somebody completed this whole loop already
-                return Ok(());
+                return Ok(None);
             };
 
             if child_view.merging {
                 trace!("child pid {} already merging", child_pid);
-                break child_view;
+                return Ok(Some(child_view));
             }
 
             let install_frag = self.context.pagecache.link(
@@ -1711,7 +1710,7 @@ impl Tree {
                 Ok(new_ptr) => {
                     trace!("child pid {} merge capped", child_pid);
                     child_view.ptr = new_ptr;
-                    break child_view;
+                    return Ok(Some(child_view));
                 }
                 Err(Some((_, _))) => {
                     trace!(
@@ -1722,16 +1721,99 @@ impl Tree {
                 }
                 Err(None) => {
                     trace!("child pid {} already freed", child_pid);
-                    return Ok(());
+                    return Ok(None);
                 }
             }
-        };
+        }
+    }
 
+    fn install_parent_merge<'g>(
+        &self,
+        parent_view: &View<'g>,
+        child_pid: PageId,
+        mut parent_cas_key: TreePtr<'g>,
+        guard: &'g Guard,
+    ) -> Result<bool> {
+        loop {
+            let linked = self.context.pagecache.link(
+                parent_view.pid,
+                parent_cas_key,
+                Frag::ParentMergeConfirm,
+                guard,
+            )?;
+            match linked {
+                Ok(_) => {
+                    trace!(
+                        "ParentMergeConfirm succeeded on parent pid {}, \
+                         now freeing child pid {}",
+                        parent_view.pid,
+                        child_pid
+                    );
+                    return Ok(true);
+                }
+                Err(None) => {
+                    trace!(
+                        "ParentMergeConfirm \
+                         failed on (now freed) parent pid {}",
+                        parent_view.pid
+                    );
+                    return Ok(false);
+                }
+                Err(_) => {
+                    let parent_view = if let Some(parent_view) =
+                        self.view_for_pid(parent_view.pid, guard)?
+                    {
+                        trace!(
+                            "failed to confirm merge \
+                             on parent pid {}, trying again",
+                            parent_view.pid
+                        );
+                        parent_view
+                    } else {
+                        trace!(
+                            "failed to confirm merge \
+                             on parent pid {}, which was freed",
+                            parent_view.pid
+                        );
+                        return Ok(false);
+                    };
+
+                    if parent_view.merging_child != Some(child_pid) {
+                        trace!(
+                            "someone else must have already \
+                             completed the merge, and now the \
+                             merging child for parent pid {} is {:?}",
+                            parent_view.pid,
+                            parent_view.merging_child
+                        );
+                        return Ok(false);
+                    }
+
+                    parent_cas_key = parent_view.ptr;
+                }
+            }
+        }
+    }
+
+    pub(crate) fn merge_node<'g>(
+        &self,
+        parent_view: &View<'g>,
+        child_pid: PageId,
+        guard: &'g Guard,
+    ) -> Result<()> {
         trace!(
             "merging child pid {} of parent pid {}",
             child_pid,
             parent_view.pid
         );
+
+        let child_view = if let Some(merging_child) =
+            self.cap_merging_child(child_pid, guard)?
+        {
+            merging_child
+        } else {
+            return Ok(());
+        };
 
         let index = parent_view.node.data.index_ref().unwrap();
         let child_index =
@@ -1864,72 +1946,22 @@ impl Tree {
             }
         }
 
-        let mut parent_cas_key = parent_view.ptr.clone();
-
         trace!(
             "trying to install parent merge \
              confirmation of merged child pid {} for parent pid {}",
             child_pid,
             parent_view.pid
         );
-        loop {
-            let linked = self.context.pagecache.link(
-                parent_view.pid,
-                parent_cas_key,
-                Frag::ParentMergeConfirm,
-                guard,
-            )?;
-            match linked {
-                Ok(_) => {
-                    trace!(
-                        "ParentMergeConfirm succeeded on parent pid {}, \
-                         now freeing child pid {}",
-                        parent_view.pid,
-                        child_pid
-                    );
-                    break;
-                }
-                Err(None) => {
-                    trace!(
-                        "ParentMergeConfirm \
-                         failed on (now freed) parent pid {}",
-                        parent_view.pid
-                    );
-                    return Ok(());
-                }
-                Err(_) => {
-                    let parent_view = if let Some(parent_view) =
-                        self.view_for_pid(parent_view.pid, guard)?
-                    {
-                        trace!(
-                            "failed to confirm merge \
-                             on parent pid {}, trying again",
-                            parent_view.pid
-                        );
-                        parent_view
-                    } else {
-                        trace!(
-                            "failed to confirm merge \
-                             on parent pid {}, which was freed",
-                            parent_view.pid
-                        );
-                        return Ok(());
-                    };
 
-                    if parent_view.merging_child != Some(child_pid) {
-                        trace!(
-                            "someone else must have already \
-                             completed the merge, and now the \
-                             merging child for parent pid {} is {:?}",
-                            parent_view.pid,
-                            parent_view.merging_child
-                        );
-                        return Ok(());
-                    }
+        let should_continue = self.install_parent_merge(
+            parent_view,
+            child_pid,
+            parent_view.ptr.clone(),
+            guard,
+        )?;
 
-                    parent_cas_key = parent_view.ptr;
-                }
-            }
+        if !should_continue {
+            return Ok(());
         }
 
         match self.context.pagecache.free(child_pid, child_view.ptr, guard)? {
