@@ -1500,8 +1500,14 @@ impl Tree {
         }
     }
 
-    /// returns the traversal path, completing any observed
-    /// partially complete splits or merges along the way.
+    // Returns the traversal path, completing any observed
+    // partially complete splits or merges along the way.
+    //
+    // We intentionally leave the cyclometric complexity
+    // high because attempts to split it up have made
+    // the inherent complexity of the operation more
+    // challenging to understand.
+    #[allow(clippy::cognitive_complexity)]
     pub(crate) fn view_for_key<'g, K>(
         &self,
         key: K,
