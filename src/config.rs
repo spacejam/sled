@@ -28,7 +28,7 @@ pub struct PersistedConfig {
 
 impl PersistedConfig {
     pub fn size_in_bytes(&self) -> u64 {
-        return std::mem::size_of::<PersistedConfig>() as u64;
+        std::mem::size_of::<PersistedConfig>() as u64
     }
 
     pub fn serialize(&self) -> Vec<u8> {
@@ -396,7 +396,7 @@ impl Config {
     /// or if the provided configuration fails some
     /// basic sanity checks.
     #[doc(hidden)]
-    #[deprecated(since = "0.29", note = "use Config::open instead")]
+    #[deprecated(since = "0.29.0", note = "use Config::open instead")]
     pub fn build(mut self) -> RunningConfig {
         // only validate, setup directory, and open file once
         self.validate().unwrap();
@@ -424,7 +424,7 @@ impl Config {
             .as_nanos()
             << 48) as u64;
 
-        let pid = std::process::id() as u64;
+        let pid = u64::from(std::process::id());
 
         let salt = (pid << 16) + now + seed;
 
@@ -625,7 +625,7 @@ impl Config {
                 Ok(())
             }
             Ok(None) => self.write_config(),
-            Err(e) => Err(e.into()),
+            Err(e) => Err(e),
         }
     }
 

@@ -1,6 +1,6 @@
-use super::*;
+#![allow(unsafe_code)]
 
-use std::sync::atomic::Ordering::Release;
+use std::sync::atomic::{AtomicUsize, Ordering::Release};
 
 // define a passthrough allocator that tracks alloc calls.
 // adapted from the flatbuffer codebase

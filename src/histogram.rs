@@ -149,7 +149,7 @@ fn compress<T: Into<f64>>(value: T) -> u16 {
     let boosted = 1. + abs;
     let ln = boosted.ln();
     let compressed = PRECISION * ln + 0.5;
-    assert!(compressed <= std::u16::MAX as f64);
+    assert!(compressed <= f64::from(std::u16::MAX));
     compressed as u16
 }
 
@@ -157,7 +157,7 @@ fn compress<T: Into<f64>>(value: T) -> u16 {
 // the original passed to compress.
 #[inline]
 fn decompress(compressed: u16) -> f64 {
-    let unboosted = compressed as f64 / PRECISION;
+    let unboosted = f64::from(compressed) / PRECISION;
     (unboosted.exp() - 1.)
 }
 

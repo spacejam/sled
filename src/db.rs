@@ -63,10 +63,7 @@ impl Db {
     }
 
     #[doc(hidden)]
-    #[deprecated(
-        since = "0.29",
-        note = "please use ConfigBuilder::open instead"
-    )]
+    #[deprecated(since = "0.29.0", note = "please use Config::open instead")]
     pub fn start(config: RunningConfig) -> Result<Self> {
         Db::start_inner(config)
     }

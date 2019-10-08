@@ -24,21 +24,16 @@
 
 use std::collections::HashMap;
 
-use crate::pagecache::{DiskPtr, LogOffset, Lsn};
+use crate::pagecache::DiskPtr;
 use crate::*;
 
 /// A thing that happens at a certain time.
 #[derive(Debug, Clone)]
 enum Event {
-    SegmentAllocate { lsn: Lsn, lid: LogOffset },
-    SegmentFree { lsn: Lsn, lid: LogOffset },
-    SegmentZero { lsn: Lsn, lid: LogOffset },
-    Replace { pid: PageId, lsn: Lsn, lid: LogOffset, old_lids: Vec<LogOffset> },
-    Link { pid: PageId, lsn: Lsn, lid: LogOffset },
-    PagesBeforeRestart { pages: HashMap<PageId, Vec<DiskPtr>> },
-    PagesAfterRestart { pages: HashMap<PageId, Vec<DiskPtr>> },
-    MetaBeforeRestart { meta: Meta },
-    MetaAfterRestart { meta: Meta },
+    PagesOnShutdown { pages: HashMap<PageId, Vec<DiskPtr>> },
+    PagesOnRecovery { pages: HashMap<PageId, Vec<DiskPtr>> },
+    MetaOnShutdown { meta: Meta },
+    MetaOnRecovery { meta: Meta },
 }
 
 /// A lock-free queue of Events.
@@ -57,18 +52,18 @@ impl EventLog {
         let guard = pin();
         let iter = self.iter(&guard);
 
-        // if we encounter a `PagesAfterRestart`, then we should
-        // compare it to any subsequent `PagesBeforeRestart`
+        // if we encounter a `PagesOnRecovery`, then we should
+        // compare it to any subsequent `PagesOnShutdown`
 
         let mut recovered_pages = None;
         let mut recovered_meta = None;
 
         for event in iter {
             match event {
-                Event::PagesAfterRestart { pages } => {
+                Event::PagesOnRecovery { pages } => {
                     recovered_pages = Some(pages.clone());
                 }
-                Event::PagesBeforeRestart { pages } => {
+                Event::PagesOnShutdown { pages } => {
                     if let Some(ref par) = recovered_pages {
                         let pids = par
                             .iter()
@@ -96,15 +91,14 @@ impl EventLog {
                         assert_eq!(pages, par);
                     }
                 }
-                Event::MetaAfterRestart { meta } => {
+                Event::MetaOnRecovery { meta } => {
                     recovered_meta = Some(meta);
                 }
-                Event::MetaBeforeRestart { meta } => {
+                Event::MetaOnShutdown { meta } => {
                     if let Some(ref rec_meta) = recovered_meta {
                         assert_eq!(meta, *rec_meta);
                     }
                 }
-                _ => {}
             }
         }
     }
@@ -114,7 +108,7 @@ impl EventLog {
         pages: HashMap<PageId, Vec<DiskPtr>>,
     ) {
         let guard = pin();
-        self.inner.push(Event::PagesBeforeRestart { pages }, &guard);
+        self.inner.push(Event::PagesOnShutdown { pages }, &guard);
     }
 
     pub(crate) fn pages_after_restart(
@@ -122,17 +116,17 @@ impl EventLog {
         pages: HashMap<PageId, Vec<DiskPtr>>,
     ) {
         let guard = pin();
-        self.inner.push(Event::PagesAfterRestart { pages }, &guard);
+        self.inner.push(Event::PagesOnRecovery { pages }, &guard);
     }
 
     pub fn meta_before_restart(&self, meta: Meta) {
         let guard = pin();
-        self.inner.push(Event::MetaBeforeRestart { meta }, &guard);
+        self.inner.push(Event::MetaOnShutdown { meta }, &guard);
     }
 
     pub fn meta_after_restart(&self, meta: Meta) {
         let guard = pin();
-        self.inner.push(Event::MetaAfterRestart { meta }, &guard);
+        self.inner.push(Event::MetaOnRecovery { meta }, &guard);
     }
 }
 
