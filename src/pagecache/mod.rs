@@ -9,7 +9,6 @@ mod blob_io;
 mod diskptr;
 mod iobuf;
 mod iterator;
-mod materializer;
 mod parallel_io;
 mod reader;
 mod reservation;
@@ -46,7 +45,6 @@ pub use self::{
     },
     diskptr::DiskPtr,
     logger::{Log, LogRead},
-    materializer::Materializer,
     segment::SegmentMode,
 };
 

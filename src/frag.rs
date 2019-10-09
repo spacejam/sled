@@ -2,15 +2,6 @@ use super::*;
 
 /// Frag denotes a tree node or its modification fragment such as
 /// key addition or removal.
-///
-///
-/// TODO:
-///     Merged
-///     LeftMerge(head: Raw, rhs: PageId, hi: Bound)
-///     ParentMerge(lhs: PageId, rhs: PageId)
-///     TxBegin(TxID), // in-mem
-///     TxCommit(TxID), // in-mem
-///     TxAbort(TxID), // in-mem
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Frag {
     Set(IVec, IVec),
@@ -22,6 +13,14 @@ pub enum Frag {
 }
 
 impl Frag {
+    pub fn merge(&mut self, other: &Self) {
+        if let Frag::Base(ref mut base) = self {
+            base.apply(other);
+        } else {
+            panic!("expected base to be the first node");
+        }
+    }
+
     fn base(data: Data) -> Frag {
         let mut node = Node::default();
         node.data = data;

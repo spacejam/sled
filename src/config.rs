@@ -353,25 +353,6 @@ impl Config {
     }
 
     #[doc(hidden)]
-    pub fn open_pagecache<P>(&self) -> Result<PageCache>
-    where
-        P: Materializer,
-    {
-        // only validate, setup directory, and open file once
-        self.validate()?;
-
-        let mut config = self.clone();
-        config.limit_cache_max_memory();
-
-        let file = config.open_file()?;
-
-        // seal config in a Config
-        let config = RunningConfig { inner: config, file: Arc::new(file) };
-
-        PageCache::start(config)
-    }
-
-    #[doc(hidden)]
     pub fn open_raw_log(&self) -> Result<Log> {
         // only validate, setup directory, and open file once
         self.validate()?;
