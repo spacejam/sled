@@ -353,7 +353,7 @@ impl Config {
     }
 
     #[doc(hidden)]
-    pub fn open_pagecache<P>(&self) -> Result<PageCache<P>>
+    pub fn open_pagecache<P>(&self) -> Result<PageCache>
     where
         P: Materializer,
     {
@@ -811,7 +811,7 @@ impl RunningConfig {
             prefix
         } else {
             let mut abs_path = std::env::current_dir()?;
-            abs_path.push(prefix.clone());
+            abs_path.push(prefix);
             abs_path
         };
 

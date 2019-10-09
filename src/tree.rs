@@ -1412,8 +1412,7 @@ impl Tree {
                 // failed.
             }
         } else {
-            let _ =
-                self.root_hoist(root_pid, rhs_pid, rhs_lo.clone(), guard)?;
+            let _ = self.root_hoist(root_pid, rhs_pid, rhs_lo, guard)?;
         }
 
         Ok(())
@@ -1483,12 +1482,8 @@ impl Tree {
         loop {
             let frag_opt = self.context.pagecache.get(pid, guard)?;
             if let Some((tree_ptr, Frag::Base(ref leaf), size)) = &frag_opt {
-                let view = View {
-                    node: leaf,
-                    ptr: tree_ptr.clone(),
-                    pid,
-                    size: *size,
-                };
+                let view =
+                    View { node: leaf, ptr: *tree_ptr, pid, size: *size };
                 if leaf.merging_child.is_some() {
                     self.merge_node(&view, leaf.merging_child.unwrap(), guard)?;
                 } else {
@@ -1650,12 +1645,10 @@ impl Tree {
                     if parent.node.can_merge_child() {
                         let frag = Frag::ParentMergeIntention(cursor);
 
-                        let link = self.context.pagecache.link(
-                            parent.pid,
-                            parent.ptr.clone(),
-                            frag,
-                            guard,
-                        )?;
+                        let link = self
+                            .context
+                            .pagecache
+                            .link(parent.pid, parent.ptr, frag, guard)?;
 
                         if let Ok(new_parent_ptr) = link {
                             parent.ptr = new_parent_ptr;
@@ -1708,7 +1701,7 @@ impl Tree {
 
             let install_frag = self.context.pagecache.link(
                 child_pid,
-                child_view.ptr.clone(),
+                child_view.ptr,
                 Frag::ChildMergeCap,
                 guard,
             )?;

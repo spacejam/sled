@@ -3,7 +3,7 @@ use std::ops::Bound;
 use super::*;
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Node {
+pub struct Node {
     pub(crate) data: Data,
     pub(crate) next: Option<PageId>,
     pub(crate) lo: IVec,
@@ -509,7 +509,7 @@ impl Node {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) enum Data {
+pub enum Data {
     Index(Vec<(IVec, PageId)>),
     Leaf(Vec<(IVec, IVec)>),
 }

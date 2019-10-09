@@ -12,7 +12,7 @@ use super::*;
 ///     TxCommit(TxID), // in-mem
 ///     TxAbort(TxID), // in-mem
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) enum Frag {
+pub enum Frag {
     Set(IVec, IVec),
     Del(IVec),
     Base(Node),
