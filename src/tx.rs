@@ -126,8 +126,7 @@ impl TransactionalTree {
         value: V,
     ) -> TransactionResult<Option<IVec>>
     where
-        IVec: From<K>,
-        IVec: From<V>,
+        IVec: From<K> + From<V>,
         K: AsRef<[u8]>,
     {
         let old = self.get(key.as_ref())?;

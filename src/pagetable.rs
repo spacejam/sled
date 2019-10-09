@@ -158,7 +158,7 @@ fn traverse<'g, T: 'static + Send>(
         let ret =
             l1[l1k].compare_and_swap(std::ptr::null_mut(), next_child, Release);
 
-        if ret == std::ptr::null_mut() {
+        if ret.is_null() {
             // success
             l2_ptr = next_child;
         } else {

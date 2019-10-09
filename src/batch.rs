@@ -16,8 +16,7 @@ impl Batch {
     /// Set a key to a new value
     pub fn insert<K, V>(&mut self, key: K, value: V)
     where
-        IVec: From<K>,
-        IVec: From<V>,
+        IVec: From<K> + From<V>,
     {
         self.writes.insert(IVec::from(key), Some(IVec::from(value)));
     }

@@ -707,7 +707,7 @@ impl PageCache {
 
             let new_stack = Stack::default();
 
-            let _new_stack = self.inner.insert(pid, new_stack);
+            self.inner.insert(pid, new_stack);
 
             (pid, PagePtr { cached_ptr: Shared::null(), ts: 0 })
         };
@@ -1986,7 +1986,7 @@ impl PageCache {
 
             trace!("installing stack for pid {}", pid);
 
-            let _new_stack = self.inner.insert(pid, stack);
+            self.inner.insert(pid, stack);
         }
     }
 }
