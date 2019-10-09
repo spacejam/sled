@@ -106,7 +106,6 @@ mod iter;
 mod ivec;
 mod lazy;
 mod lru;
-mod materializer;
 mod meta;
 mod metrics;
 mod node;
@@ -151,8 +150,8 @@ pub use {
                 MAX_SPACE_AMPLIFICATION, MINIMUM_ITEMS_PER_SEGMENT,
                 MSG_HEADER_LEN, SEG_HEADER_LEN,
             },
-            DiskPtr, Log, LogKind, LogOffset, LogRead, Lsn, Materializer,
-            PageCache, PageId, SegmentMode,
+            DiskPtr, Log, LogKind, LogOffset, LogRead, Lsn, PageCache, PageId,
+            SegmentMode,
         },
         pagetable::PAGETABLE_NODE_SZ,
     },
@@ -197,7 +196,7 @@ use {
     log::{debug, error, trace, warn},
     pagecache::RecoveryGuard,
     parking_lot::{Condvar, Mutex, RwLock},
-    serde::{de::DeserializeOwned, Deserialize, Serialize},
+    serde::{Deserialize, Serialize},
     std::{
         collections::BTreeMap,
         convert::TryFrom,

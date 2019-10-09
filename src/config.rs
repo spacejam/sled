@@ -291,7 +291,7 @@ macro_rules! builder {
         $(
             #[doc=$desc]
             pub fn $name(mut self, to: $t) -> Self {
-                if Arc::strong_count(&self.0) != 0 {
+                if Arc::strong_count(&self.0) != 1 {
                     error!(
                         "config has already been used to start \
                          the system and probably should not be \
@@ -324,7 +324,7 @@ impl Config {
     /// by shrinking the buffer size. Don't rely on this.
     #[doc(hidden)]
     pub fn segment_size(mut self, segment_size: usize) -> Config {
-        if Arc::strong_count(&self.0) != 0 {
+        if Arc::strong_count(&self.0) != 1 {
             error!(
                 "config has already been used to start \
                  the system and probably should not be \
@@ -350,25 +350,6 @@ impl Config {
         let config = RunningConfig { inner: config, file: Arc::new(file) };
 
         Db::start_inner(config)
-    }
-
-    #[doc(hidden)]
-    pub fn open_pagecache<P>(&self) -> Result<PageCache>
-    where
-        P: Materializer,
-    {
-        // only validate, setup directory, and open file once
-        self.validate()?;
-
-        let mut config = self.clone();
-        config.limit_cache_max_memory();
-
-        let file = config.open_file()?;
-
-        // seal config in a Config
-        let config = RunningConfig { inner: config, file: Arc::new(file) };
-
-        PageCache::start(config)
     }
 
     #[doc(hidden)]
