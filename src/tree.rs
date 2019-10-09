@@ -1412,8 +1412,7 @@ impl Tree {
                 // failed.
             }
         } else {
-            let _ =
-                self.root_hoist(root_pid, rhs_pid, rhs_lo.clone(), guard)?;
+            let _ = self.root_hoist(root_pid, rhs_pid, rhs_lo, guard)?;
         }
 
         Ok(())

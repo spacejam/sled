@@ -431,7 +431,7 @@ impl Drop for PageCache {
                 if pte.is_none() {
                     continue;
                 }
-                let head = unsafe { pte.unwrap().deref().head(&guard) };
+                let head = pte.unwrap().deref().head(&guard);
                 let ptrs = ptrs_from_stack(head, &guard);
                 pages_before_restart.insert(pid, ptrs);
             }
@@ -491,7 +491,7 @@ impl PageCache {
                 if pte.is_none() {
                     continue;
                 }
-                let head = unsafe { pte.unwrap().deref().head(&guard) };
+                let head = pte.unwrap().deref().head(&guard);
                 let ptrs = ptrs_from_stack(head, &guard);
                 pages_after_restart.insert(pid, ptrs);
             }
