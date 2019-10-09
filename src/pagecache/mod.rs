@@ -156,10 +156,7 @@ pub enum LogKind {
     Corrupted,
 }
 
-fn log_kind_from_update<PageFrag>(update: &Update<PageFrag>) -> LogKind
-where
-    PageFrag: DeserializeOwned + Serialize,
-{
+fn log_kind_from_update(update: &Update) -> LogKind {
     use Update::*;
 
     match update {
@@ -271,31 +268,24 @@ pub(crate) fn maybe_decompress(buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
     Ok(buf)
 }
 
-type PagePtrInner<'g, P> =
-    Shared<'g, stack::Node<(Option<Update<P>>, CacheInfo)>>;
+type PagePtrInner<'g> = Shared<'g, stack::Node<(Option<Update>, CacheInfo)>>;
 
 /// A pointer to shared lock-free state bound by a pinned epoch's lifetime.
 #[derive(Debug, Clone, PartialEq, Copy)]
-pub struct PagePtr<'g, P>
-where
-    P: 'static + Send,
-{
-    cached_ptr: PagePtrInner<'g, P>,
+pub struct PagePtr<'g> {
+    cached_ptr: PagePtrInner<'g>,
     ts: u64,
 }
 
-impl<'g, P> PagePtr<'g, P>
-where
-    P: 'static + Send,
-{
+impl<'g> PagePtr<'g> {
     /// The last Lsn number for the head of this page
     pub fn last_lsn(&self) -> Lsn {
         unsafe { self.cached_ptr.deref().deref().1.lsn }
     }
 }
 
-unsafe impl<'g, P> Send for PagePtr<'g, P> where P: Send {}
-unsafe impl<'g, P> Sync for PagePtr<'g, P> where P: Send + Sync {}
+unsafe impl<'g> Send for PagePtr<'g> {}
+unsafe impl<'g> Sync for PagePtr<'g> {}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CacheInfo {
@@ -307,22 +297,18 @@ pub struct CacheInfo {
 
 /// Update<PageFragment> denotes a state or a change in a sequence of updates
 /// of which a page consists.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum Update<PageFrag> {
-    Append(PageFrag),
-    Compact(PageFrag),
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Update {
+    Append(Frag),
+    Compact(Frag),
     Free,
     Counter(u64),
     Meta(Meta),
     Config(PersistedConfig),
 }
 
-impl<P> Update<P>
-where
-    P: DeserializeOwned + Serialize,
-    Self: Debug,
-{
-    fn into_frag(self) -> P {
+impl Update {
+    fn into_frag(self) -> Frag {
         match self {
             Update::Append(frag) | Update::Compact(frag) => frag,
             other => {
@@ -331,7 +317,7 @@ where
         }
     }
 
-    fn as_frag(&self) -> &P {
+    fn as_frag(&self) -> &Frag {
         match self {
             Update::Append(frag) | Update::Compact(frag) => frag,
             other => {
@@ -386,12 +372,9 @@ impl<'a> RecoveryGuard<'a> {
 
 /// A lock-free pagecache which supports fragmented pages
 /// for dramatically improving write throughput.
-pub struct PageCache<P>
-where
-    P: Materializer,
-{
+pub struct PageCache {
     config: RunningConfig,
-    inner: PageTable<Page<P>>,
+    inner: PageTable<Page>,
     next_pid_to_allocate: AtomicU64,
     free: Arc<Mutex<BinaryHeap<PageId>>>,
     log: Log,
@@ -406,16 +389,13 @@ where
 
 /// A page consists of a sequence of state transformations
 /// with associated storage parameters like disk pos, lsn, time.
-type Page<P> = Stack<(Option<Update<P>>, CacheInfo)>;
+type Page = Stack<(Option<Update>, CacheInfo)>;
 
-unsafe impl<P> Send for PageCache<P> where P: Materializer {}
+unsafe impl Send for PageCache {}
 
-unsafe impl<P> Sync for PageCache<P> where P: Materializer {}
+unsafe impl Sync for PageCache {}
 
-impl<P> Debug for PageCache<P>
-where
-    P: Materializer,
-{
+impl Debug for PageCache {
     fn fmt(
         &self,
         f: &mut fmt::Formatter<'_>,
@@ -429,10 +409,7 @@ where
 }
 
 #[cfg(feature = "event_log")]
-impl<P> Drop for PageCache<P>
-where
-    P: Materializer,
-{
+impl Drop for PageCache {
     fn drop(&mut self) {
         use std::collections::HashMap;
 
@@ -466,10 +443,7 @@ where
     }
 }
 
-impl<P> PageCache<P>
-where
-    P: Materializer,
-{
+impl PageCache {
     /// Instantiate a new `PageCache`.
     pub fn start(config: RunningConfig) -> Result<Self> {
         trace!("starting pagecache");
@@ -634,9 +608,9 @@ where
     /// and `link` operations.
     pub fn allocate<'g>(
         &self,
-        new: P,
+        new: Frag,
         guard: &'g Guard,
-    ) -> Result<(PageId, PagePtr<'g, P>)> {
+    ) -> Result<(PageId, PagePtr<'g>)> {
         self.allocate_inner(Update::Compact(new), guard)
     }
 
@@ -697,9 +671,9 @@ where
 
     fn allocate_inner<'g>(
         &self,
-        new: Update<P>,
+        new: Update,
         guard: &'g Guard,
-    ) -> Result<(PageId, PagePtr<'g, P>)> {
+    ) -> Result<(PageId, PagePtr<'g>)> {
         let (pid, key) = if let Some(pid) = self.free.lock().pop() {
             trace!("re-allocating pid {}", pid);
 
@@ -755,9 +729,9 @@ where
     pub fn free<'g>(
         &self,
         pid: PageId,
-        old: PagePtr<'g, P>,
+        old: PagePtr<'g>,
         guard: &'g Guard,
-    ) -> Result<CasResult<'g, P, ()>> {
+    ) -> Result<CasResult<'g, ()>> {
         trace!("attempting to free pid {}", pid);
 
         if pid == COUNTER_PID
@@ -798,10 +772,10 @@ where
     pub fn link<'g>(
         &'g self,
         pid: PageId,
-        mut old: PagePtr<'g, P>,
-        new: P,
+        mut old: PagePtr<'g>,
+        new: Frag,
         guard: &'g Guard,
-    ) -> Result<CasResult<'g, P, P>> {
+    ) -> Result<CasResult<'g, Frag>> {
         let _measure = Measure::new(&M.link_page);
 
         trace!("linking pid {} with {:?}", pid, new);
@@ -829,7 +803,7 @@ where
                     return Ok(Err(None));
                 };
 
-            let update: P = {
+            let update: Frag = {
                 let _measure = Measure::new(&M.merge_page);
 
                 let mut update = current_frag.clone();
@@ -980,10 +954,10 @@ where
     pub fn replace<'g>(
         &self,
         pid: PageId,
-        old: PagePtr<'g, P>,
-        new: P,
+        old: PagePtr<'g>,
+        new: Frag,
         guard: &'g Guard,
-    ) -> Result<CasResult<'g, P, P>> {
+    ) -> Result<CasResult<'g, Frag>> {
         let _measure = Measure::new(&M.replace_page);
 
         trace!("replacing pid {} with {:?}", pid, new);
@@ -1079,7 +1053,7 @@ where
             trace!("rewriting page with pid {}", pid);
 
             // page-in whole page with a get
-            let (key, update): (_, Update<P>) = if pid == META_PID {
+            let (key, update): (_, Update) = if pid == META_PID {
                 let (key, meta) = self.get_meta(guard)?;
                 (key, Update::Meta(meta.clone()))
             } else if pid == COUNTER_PID {
@@ -1178,11 +1152,11 @@ where
     fn cas_page<'g>(
         &self,
         pid: PageId,
-        mut old: PagePtr<'g, P>,
-        update: Update<P>,
+        mut old: PagePtr<'g>,
+        update: Update,
         is_rewrite: bool,
         guard: &'g Guard,
-    ) -> Result<CasResult<'g, P, Update<P>>> {
+    ) -> Result<CasResult<'g, Update>> {
         trace!(
             "cas_page called on pid {} to {:?} with old ts {:?}",
             pid,
@@ -1294,7 +1268,7 @@ where
     pub(crate) fn get_meta<'g>(
         &self,
         guard: &'g Guard,
-    ) -> Result<(PagePtr<'g, P>, &'g Meta)> {
+    ) -> Result<(PagePtr<'g>, &'g Meta)> {
         trace!("getting page iter for META");
 
         let stack = match self.inner.get(META_PID) {
@@ -1333,7 +1307,7 @@ where
     pub(crate) fn get_persisted_config<'g>(
         &self,
         guard: &'g Guard,
-    ) -> Result<(PagePtr<'g, P>, &'g PersistedConfig)> {
+    ) -> Result<(PagePtr<'g>, &'g PersistedConfig)> {
         trace!("getting page iter for persisted config");
 
         let stack = match self.inner.get(CONFIG_PID) {
@@ -1372,7 +1346,7 @@ where
     pub(crate) fn get_idgen<'g>(
         &self,
         guard: &'g Guard,
-    ) -> Result<(PagePtr<'g, P>, u64)> {
+    ) -> Result<(PagePtr<'g>, u64)> {
         trace!("getting page iter for idgen");
 
         let stack = match self.inner.get(COUNTER_PID) {
@@ -1413,7 +1387,7 @@ where
         &self,
         pid: PageId,
         guard: &'g Guard,
-    ) -> Result<Option<(PagePtr<'g, P>, &'g P, u64)>> {
+    ) -> Result<Option<(PagePtr<'g>, &'g Frag, u64)>> {
         trace!("getting page iterator for pid {}", pid);
         let _measure = Measure::new(&M.get_page);
 
@@ -1508,7 +1482,7 @@ where
             });
 
             // if any of our pulls failed, bail here
-            let mut successes: Vec<Cow<'_, P>> = match pulled.collect() {
+            let mut successes: Vec<Cow<'_, Frag>> = match pulled.collect() {
                 Ok(success) => success,
                 Err(Error::Io(ref error))
                     if error.kind() == std::io::ErrorKind::NotFound =>
@@ -1530,7 +1504,7 @@ where
         };
 
         // fix up the stack to include our pulled items
-        let mut frags: Vec<(Option<Update<P>>, CacheInfo)> =
+        let mut frags: Vec<(Option<Update>, CacheInfo)> =
             entries.iter().map(|(_, cache_info)| (None, *cache_info)).collect();
 
         frags[0].0 = Some(Update::Compact(base));
@@ -1785,7 +1759,7 @@ where
         Ok(())
     }
 
-    fn pull(&self, pid: PageId, lsn: Lsn, ptr: DiskPtr) -> Result<Update<P>> {
+    fn pull(&self, pid: PageId, lsn: Lsn, ptr: DiskPtr) -> Result<Update> {
         use MessageKind::*;
 
         trace!("pulling lsn {} ptr {} from disk", lsn, ptr);
@@ -1842,10 +1816,10 @@ where
                 deserialize::<PersistedConfig>(&bytes).map(Update::Config)
             }
             BlobAppend | InlineAppend => {
-                deserialize::<P>(&bytes).map(Update::Append)
+                deserialize::<Frag>(&bytes).map(Update::Append)
             }
             BlobReplace | InlineReplace => {
-                deserialize::<P>(&bytes).map(Update::Compact)
+                deserialize::<Frag>(&bytes).map(Update::Compact)
             }
             Free => Ok(Update::Free),
             other => panic!("unexpected pull: {:?}", other),
@@ -2017,13 +1991,10 @@ where
     }
 }
 
-fn ptrs_from_stack<'g, P>(
-    head_ptr: PagePtrInner<'g, P>,
+fn ptrs_from_stack<'g>(
+    head_ptr: PagePtrInner<'g>,
     guard: &'g Guard,
-) -> Vec<DiskPtr>
-where
-    P: Materializer,
-{
+) -> Vec<DiskPtr> {
     // generate a list of the old log ID's
     let stack_iter = StackIter::from_ptr(head_ptr, &guard);
 

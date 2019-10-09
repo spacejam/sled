@@ -219,7 +219,7 @@ fn crc32(buf: &[u8]) -> u32 {
     hasher.finalize()
 }
 
-type TreePtr<'g> = pagecache::PagePtr<'g, Frag>;
+type TreePtr<'g> = pagecache::PagePtr<'g>;
 
 #[cfg(any(test, feature = "lock_free_delays"))]
 mod debug_delay;

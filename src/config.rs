@@ -353,7 +353,7 @@ impl Config {
     }
 
     #[doc(hidden)]
-    pub fn open_pagecache<P>(&self) -> Result<PageCache<P>>
+    pub fn open_pagecache<P>(&self) -> Result<PageCache>
     where
         P: Materializer,
     {

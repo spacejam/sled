@@ -15,7 +15,7 @@ pub(crate) struct Context {
     /// up synchronously.
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     pub(crate) _flusher: Arc<Mutex<Option<flusher::Flusher>>>,
-    pub(crate) pagecache: Arc<PageCache<Frag>>,
+    pub(crate) pagecache: Arc<PageCache>,
 }
 
 impl std::ops::Deref for Context {
