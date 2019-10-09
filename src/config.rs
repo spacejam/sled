@@ -291,7 +291,7 @@ macro_rules! builder {
         $(
             #[doc=$desc]
             pub fn $name(mut self, to: $t) -> Self {
-                if Arc::strong_count(&self.0) != 0 {
+                if Arc::strong_count(&self.0) != 1 {
                     error!(
                         "config has already been used to start \
                          the system and probably should not be \
@@ -324,7 +324,7 @@ impl Config {
     /// by shrinking the buffer size. Don't rely on this.
     #[doc(hidden)]
     pub fn segment_size(mut self, segment_size: usize) -> Config {
-        if Arc::strong_count(&self.0) != 0 {
+        if Arc::strong_count(&self.0) != 1 {
             error!(
                 "config has already been used to start \
                  the system and probably should not be \
