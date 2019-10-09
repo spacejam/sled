@@ -450,7 +450,7 @@ where
             );
 
             for pid in 0..self.next_pid_to_allocate.load(Acquire) {
-                let pte = self.inner.get(pid, &guard);
+                let pte = self.inner.get(pid);
                 if pte.is_none() {
                     continue;
                 }
@@ -513,7 +513,7 @@ where
             let mut pages_after_restart = HashMap::new();
 
             for pid in 0..pc.next_pid_to_allocate.load(Acquire) {
-                let pte = pc.inner.get(pid, &guard);
+                let pte = pc.inner.get(pid);
                 if pte.is_none() {
                     continue;
                 }
@@ -703,13 +703,13 @@ where
         let (pid, key) = if let Some(pid) = self.free.lock().pop() {
             trace!("re-allocating pid {}", pid);
 
-            let stack = match self.inner.get(pid, &guard) {
+            let stack = match self.inner.get(pid) {
                 None => panic!(
                     "expected to find existing stack \
                      for re-allocated pid {}",
                     pid
                 ),
-                Some(p) => unsafe { p.deref() },
+                Some(p) => p,
             };
 
             let head = stack.head(&guard);
@@ -733,13 +733,7 @@ where
 
             let new_stack = Stack::default();
 
-            let new_ptr = Owned::new(new_stack).into_shared(&guard);
-
-            let _new_stack =
-                self.inner.cas(pid, Shared::null(), new_ptr, &guard).expect(
-                    "allocating a fresh new page should \
-                     never conflict on existing data",
-                );
+            let _new_stack = self.inner.insert(pid, new_stack);
 
             (pid, PagePtr { cached_ptr: Shared::null(), ts: 0 })
         };
@@ -811,9 +805,9 @@ where
         let _measure = Measure::new(&M.link_page);
 
         trace!("linking pid {} with {:?}", pid, new);
-        let stack = match self.inner.get(pid, &guard) {
+        let stack = match self.inner.get(pid) {
             None => return Ok(Err(None)),
-            Some(p) => unsafe { p.deref() },
+            Some(p) => p,
         };
 
         // see if we should short-circuit replace
@@ -1029,12 +1023,12 @@ where
 
         trace!("rewriting pid {}", pid);
 
-        let stack = match self.inner.get(pid, &guard) {
+        let stack = match self.inner.get(pid) {
             None => {
                 trace!("rewriting pid {} failed (no longer exists)", pid);
                 return Ok(());
             }
-            Some(p) => unsafe { p.deref() },
+            Some(p) => p,
         };
 
         debug_delay();
@@ -1097,13 +1091,13 @@ where
             } else if let Some((key, frag, _sz)) = self.get(pid, guard)? {
                 (key, Update::Compact(frag.clone()))
             } else {
-                let stack = match self.inner.get(pid, &guard) {
+                let stack = match self.inner.get(pid) {
                     None => panic!(
                         "expected to find existing stack \
                          for freed pid {}",
                         pid
                     ),
-                    Some(p) => unsafe { p.deref() },
+                    Some(p) => p,
                 };
 
                 let head = stack.head(&guard);
@@ -1195,12 +1189,12 @@ where
             update,
             old.ts
         );
-        let stack = match self.inner.get(pid, &guard) {
+        let stack = match self.inner.get(pid) {
             None => {
                 trace!("early-returning from cas_page, no stack found");
                 return Ok(Err(None));
             }
-            Some(p) => unsafe { p.deref() },
+            Some(p) => p,
         };
 
         let log_kind = log_kind_from_update(&update);
@@ -1303,7 +1297,7 @@ where
     ) -> Result<(PagePtr<'g, P>, &'g Meta)> {
         trace!("getting page iter for META");
 
-        let stack = match self.inner.get(META_PID, &guard) {
+        let stack = match self.inner.get(META_PID) {
             None => {
                 return Err(Error::ReportableBug(
                     "failed to retrieve META page \
@@ -1311,7 +1305,7 @@ where
                         .into(),
                 ));
             }
-            Some(pointer) => unsafe { pointer.deref() },
+            Some(p) => p,
         };
 
         let head = stack.head(&guard);
@@ -1342,7 +1336,7 @@ where
     ) -> Result<(PagePtr<'g, P>, &'g PersistedConfig)> {
         trace!("getting page iter for persisted config");
 
-        let stack = match self.inner.get(CONFIG_PID, &guard) {
+        let stack = match self.inner.get(CONFIG_PID) {
             None => {
                 return Err(Error::ReportableBug(
                     "failed to retrieve persisted config page \
@@ -1350,7 +1344,7 @@ where
                         .into(),
                 ));
             }
-            Some(pointer) => unsafe { pointer.deref() },
+            Some(p) => p,
         };
 
         let head = stack.head(&guard);
@@ -1381,7 +1375,7 @@ where
     ) -> Result<(PagePtr<'g, P>, u64)> {
         trace!("getting page iter for idgen");
 
-        let stack = match self.inner.get(COUNTER_PID, &guard) {
+        let stack = match self.inner.get(COUNTER_PID) {
             None => {
                 return Err(Error::ReportableBug(
                     "failed to retrieve idgen page \
@@ -1389,7 +1383,7 @@ where
                         .into(),
                 ))
             }
-            Some(pointer) => unsafe { pointer.deref() },
+            Some(p) => p,
         };
 
         let head = stack.head(&guard);
@@ -1437,9 +1431,9 @@ where
             ));
         }
 
-        let stack = match self.inner.get(pid, &guard) {
+        let stack = match self.inner.get(pid) {
             None => return Ok(None),
-            Some(p) => unsafe { p.deref() },
+            Some(p) => p,
         };
 
         let head = stack.head(&guard);
@@ -1755,9 +1749,9 @@ where
                 continue;
             }
 
-            let stack = match self.inner.get(pid, &guard) {
+            let stack = match self.inner.get(pid) {
                 None => continue 'different_page_eviction,
-                Some(ptr) => unsafe { ptr.deref() },
+                Some(p) => p,
             };
 
             debug_delay();
@@ -2016,14 +2010,9 @@ where
 
             // Set up new stack
 
-            let new_stack = Owned::new(stack).into_shared(&guard);
-
             trace!("installing stack for pid {}", pid);
 
-            let _new_stack = self
-                .inner
-                .cas(pid, Shared::null(), new_stack, &guard)
-                .expect("should be able to install initial stack");
+            let _new_stack = self.inner.insert(pid, stack);
         }
     }
 }
