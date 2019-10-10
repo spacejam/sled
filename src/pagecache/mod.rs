@@ -994,7 +994,7 @@ impl PageCache {
 
         trace!("replacing pid {} with {:?}", pid, new);
 
-        // A failure injector that fails links randomly
+        // A failure injector that fails replace calls randomly
         // during test to ensure interleaving coverage.
         #[cfg(any(test, feature = "lock_free_delays"))]
         {
