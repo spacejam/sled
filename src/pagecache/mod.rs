@@ -777,6 +777,36 @@ impl PageCache {
         let _measure = Measure::new(&M.link_page);
 
         trace!("linking pid {} with {:?}", pid, new);
+
+        // A failure injector that fails links randomly
+        // during test to ensure interleaving coverage.
+        #[cfg(any(test, feature = "lock_free_delays"))]
+        {
+            use std::cell::RefCell;
+            use std::time::{SystemTime, UNIX_EPOCH};
+
+            thread_local! {
+                pub static COUNT: RefCell<u32> = RefCell::new(1);
+            }
+
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+            let fail_seed = std::cmp::max(3, now.as_nanos() as u32 % 128);
+
+            let inject_failure = COUNT.with(|c| {
+                let mut cr = c.borrow_mut();
+                *cr += 1;
+                *cr % fail_seed == 0
+            });
+
+            if inject_failure {
+                if let Some((current_ptr, _frag, _sz)) = self.get(pid, guard)? {
+                    return Ok(Err(Some((current_ptr, new))));
+                } else {
+                    return Ok(Err(None));
+                }
+            }
+        }
+
         let stack = match self.inner.get(pid) {
             None => return Ok(Err(None)),
             Some(p) => p,
@@ -959,6 +989,35 @@ impl PageCache {
         let _measure = Measure::new(&M.replace_page);
 
         trace!("replacing pid {} with {:?}", pid, new);
+
+        // A failure injector that fails links randomly
+        // during test to ensure interleaving coverage.
+        #[cfg(any(test, feature = "lock_free_delays"))]
+        {
+            use std::cell::RefCell;
+            use std::time::{SystemTime, UNIX_EPOCH};
+
+            thread_local! {
+                pub static COUNT: RefCell<u32> = RefCell::new(1);
+            }
+
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+            let fail_seed = std::cmp::max(3, now.as_nanos() as u32 % 128);
+
+            let inject_failure = COUNT.with(|c| {
+                let mut cr = c.borrow_mut();
+                *cr += 1;
+                *cr % fail_seed == 0
+            });
+
+            if inject_failure {
+                if let Some((current_ptr, _frag, _sz)) = self.get(pid, guard)? {
+                    return Ok(Err(Some((current_ptr, new))));
+                } else {
+                    return Ok(Err(None));
+                }
+            }
+        }
 
         let result =
             self.cas_page(pid, old, Update::Compact(new), false, guard)?;
