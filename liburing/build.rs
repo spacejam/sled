@@ -22,6 +22,9 @@ fn main() {
 
     // Generate bindings
     let bindings = bindgen::Builder::default()
+        .whitelist_function("io_uring.*")
+        .whitelist_var("IORING.*")
+        .whitelist_type("io_uring.*")
         .header("wrapper.h")
         .generate()
         .expect("Unable to generate bindings");
