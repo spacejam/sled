@@ -1,0 +1,457 @@
+.\" Copyright (C) 2019 Jens Axboe <axboe@kernel.dk>
+.\" Copyright (C) 2019 Red Hat, Inc.
+.\"
+.\" %%%LICENSE_START(LGPL_V2.1)
+.\" This file is distributed according to the GNU Lesser General Public License.
+.\" %%%LICENSE_END
+.\"
+.TH IO_URING_ENTER 2 2019-01-22 "Linux" "Linux Programmer's Manual"
+.SH NAME
+io_uring_enter \- initiate and/or complete asynchronous I/O
+.SH SYNOPSIS
+.nf
+.BR "#include <linux/io_uring.h>"
+.PP
+.BI "int io_uring_enter(unsigned int " fd ", unsigned int " to_submit ,
+.BI "                   unsigned int " min_complete ", unsigned int " flags ,
+.BI "                   sigset_t *" sig );
+.fi
+.PP
+.SH DESCRIPTION
+.PP
+.BR io_uring_enter ()
+is used to initiate and complete I/O using the shared submission and
+completion queues setup by a call to
+.BR io_uring_setup (2).
+A single call can both submit new I/O and wait for completions of I/O
+initiated by this call or previous calls to
+.BR io_uring_enter ().
+
+.I fd
+is the file descriptor returned by
+.BR io_uring_setup (2).
+.I to_submit
+specifies the number of I/Os to submit from the submission queue.  If
+the
+.B IORING_ENTER_GETEVENTS
+bit is set in
+.IR flags ,
+then the system call will attempt to wait for
+.I min_complete
+event completions before returning.  If the io_uring instance was
+configured for polling, by specifying
+.B IORING_SETUP_IOPOLL
+in the call to
+.BR io_uring_setup (2),
+then min_complete has a slightly different meaning.  Passing a value
+of 0 instructs the kernel to return any events which are already complete,
+without blocking.  If
+.I min_complete
+is a non-zero value, the kernel will still return immediately if any
+completion events are available.  If no event completions are
+available, then the call will poll either until one or more
+completions become available, or until the process has exceeded its
+scheduler time slice.
+
+Note that, for interrupt driven I/O (where
+.B IORING_SETUP_IOPOLL
+was not specified in the call to
+.BR io_uring_setup (2)),
+an application may check the completion queue for event completions
+without entering the kernel at all.
+.PP
+When the system call returns that a certain amount of SQEs have been
+consumed and submitted, it's safe to reuse SQE entries in the ring. This is
+true even if the actual IO submission had to be punted to async context,
+which means that the SQE may in fact not have been submitted yet. If the
+kernel requires later use of a particular SQE entry, it will have made a
+private copy of it.
+
+.I sig
+is a pointer to a signal mask (see
+.BR sigprocmask (2));
+if
+.I sig
+is not NULL,
+.BR io_uring_enter ()
+first replaces the current signal mask by the one pointed to by
+.IR sig ,
+then waits for events to become available in the completion queue, and
+then restores the original signal mask.  The following
+.BR io_uring_enter ()
+call:
+.PP
+.in +4n
+.EX
+ret = io_uring_enter(fd, 0, 1, IORING_ENTER_GETEVENTS, &sig);
+.EE
+.in
+.PP
+is equivalent to
+.I atomically
+executing the following calls:
+.PP
+.in +4n
+.EX
+pthread_sigmask(SIG_SETMASK, &sig, &orig);
+ret = io_uring_enter(fd, 0, 1, IORING_ENTER_GETEVENTS, NULL);
+pthread_sigmask(SIG_SETMASK, &orig, NULL);
+.EE
+.in
+.PP
+See the description of
+.BR pselect (2)
+for an explanation of why the
+.I sig
+parameter is necessary.
+
+Submission queue entries are represented using the following data
+structure:
+.PP
+.in +4n
+.EX
+/*
+ * IO submission data structure (Submission Queue Entry)
+ */
+struct io_uring_sqe {
+    __u8    opcode;         /* type of operation for this sqe */
+    __u8    flags;          /* IOSQE_ flags */
+    __u16   ioprio;         /* ioprio for the request */
+    __s32   fd;             /* file descriptor to do IO on */
+    __u64   off;            /* offset into file */
+    __u64   addr;           /* pointer to buffer or iovecs */
+    __u32   len;            /* buffer size or number of iovecs */
+    union {
+        __kernel_rwf_t  rw_flags;
+        __u32    fsync_flags;
+        __u16    poll_events;
+        __u32    sync_range_flags;
+        __u32    msg_flags;
+        __u32    timeout_flags;
+    };
+    __u64    user_data;     /* data to be passed back at completion time */
+    union {
+        __u16    buf_index; /* index into fixed buffers, if used */
+        __u64    __pad2[3];
+    };
+};
+.EE
+.in
+.PP
+The
+.I opcode
+describes the operation to be performed.  It can be one of:
+.TP
+.B IORING_OP_NOP
+Do not perform any I/O.  This is useful for testing the performance of
+the io_uring implementation itself.
+.TP
+.B IORING_OP_READV
+.TP
+.B IORING_OP_WRITEV
+Vectored read and write operations, similar to
+.BR preadv2 (2)
+and
+.BR pwritev2 (2).
+
+.TP
+.B IORING_OP_READ_FIXED
+.TP
+.B IORING_OP_WRITE_FIXED
+Read from or write to pre-mapped buffers.  See
+.BR io_uring_register (2)
+for details on how to setup a context for fixed reads and writes.
+
+.TP
+.B IORING_OP_FSYNC
+File sync.  See also
+.BR fsync (2).
+Note that, while I/O is initiated in the order in which it appears in
+the submission queue, completions are unordered.  For example, an
+application which places a write I/O followed by an fsync in the
+submission queue cannot expect the fsync to apply to the write.  The
+two operations execute in parallel, so the fsync may complete before
+the write is issued to the storage.  The same is also true for
+previously issued writes that have not completed prior to the fsync.
+
+.TP
+.B IORING_OP_POLL_ADD
+Poll the
+.I fd
+specified in the submission queue entry for the events
+specified in the
+.I poll_events
+field.  Unlike poll or epoll without
+.BR EPOLLONESHOT ,
+this interface always works in one shot mode.  That is, once the poll
+operation is completed, it will have to be resubmitted.
+
+.TP
+.B IORING_OP_POLL_REMOVE
+Remove an existing poll request.  If found, the
+.I res
+field of the
+.I "struct io_uring_cqe"
+will contain 0.  If not found,
+.I res
+will contain
+.B -ENOENT.
+
+.PP
+The
+.I flags
+field is a bit mask. The supported flags are:
+.TP
+.B IOSQE_FIXED_FILE
+When this flag is specified,
+.I fd
+is an index into the files array registered with the io_uring instance (see the
+.B IORING_REGISTER_FILES
+section of the
+.BR io_uring_register (2)
+man page).
+.TP
+.B IOSQE_IO_DRAIN
+When this flag is specified, the SQE will not be started before previously
+submitted SQEs have completed, and new SQEs will not be started before this
+one completes.
+.TP
+.B IOSQE_IO_LINK
+When this flag is specified, it forms a link with the next SQE in the
+submission ring. That next SQE will not be started before this one completes.
+This, in effect, forms a chain of SQEs, which can be arbitrarily long. The tail
+of the chain is denoted by the first SQE that does not have this flag set.
+This flag has no effect on previous SQE submissions, nor does it impact SQEs
+that are outside of the chain tail. This means that multiple chains can be
+executing in parallel, or chains and individual SQEs. Only members inside the
+chain are serialized.
+.PP
+.I ioprio
+specifies the I/O priority.  See
+.BR ioprio_get (2)
+for a description of Linux I/O priorities.
+
+.I fd
+specifies the file descriptor against which the operation will be
+performed, with the exception noted above.
+
+If the operation is one of
+.B IORING_OP_READ_FIXED
+or
+.BR IORING_OP_WRITE_FIXED ,
+.I addr
+and
+.I len
+must fall within the buffer located at
+.I buf_index
+in the fixed buffer array.  If the operation is either
+.B IORING_OP_READV
+or
+.BR IORING_OP_WRITEV ,
+then
+.I addr
+points to an iovec array of
+.I len
+entries.
+
+.IR rw_flags ,
+specified for read and write operations, contains a bitwise OR of
+per-I/O flags, as described in the
+.BR preadv2 (2)
+man page.
+
+The
+.I fsync_flags
+bit mask may contain either 0, for a normal file integrity sync, or
+.B IORING_FSYNC_DATASYNC
+to provide data sync only semantics.  See the descriptions of
+.B O_SYNC
+and
+.B O_DSYNC
+in the
+.BR open (2)
+manual page for more information.
+
+The bits that may be set in
+.I poll_events
+are defined in \fI<poll.h>\fP, and documented in
+.BR poll (2).
+
+.I user_data
+is an application-supplied value that will be copied into
+the completion queue entry (see below).
+.I buf_index
+is an index into an array of fixed buffers, and is only valid if fixed
+buffers were registered
+.PP
+Once the submission queue entry is initialized, I/O is submitted by
+placing the index of the submission queue entry into the tail of the
+submission queue.  After one or more indexes are added to the queue,
+and the queue tail is advanced, the
+.BR io_uring_enter (2)
+system call can be invoked to initiate the I/O.
+
+Completions use the following data structure:
+.PP
+.in +4n
+.EX
+/*
+ * IO completion data structure (Completion Queue Entry)
+ */
+struct io_uring_cqe {
+    __u64    user_data; /* sqe->data submission passed back */
+    __s32    res;       /* result code for this event */
+    __u32    flags;
+};
+.EE
+.in
+.PP
+.I user_data
+is copied from the field of the same name in the submission queue
+entry.  The primary use case is to store data that the application
+will need to access upon completion of this particular I/O.  The
+.I flags
+is reserved for future use.
+.I res
+is the operation-specific result.
+.PP
+For read and write opcodes, the
+return values match those documented in the
+.BR preadv2 (2)
+and
+.BR pwritev2 (2)
+man pages.
+Return codes for the io_uring-specific opcodes are documented in the
+description of the opcodes above.
+.PP
+.SH RETURN VALUE
+.BR io_uring_enter ()
+returns the number of I/Os successfully consumed.  This can be zero
+if
+.I to_submit
+was zero or if the submission queue was empty. The errors below that refer to
+an error in a submission queue entry will be returned though a completion queue
+entry, rather than through the system call itself.
+
+Errors that occur not on behalf of a submission queue entry are returned via the
+system call directly. On such an error, -1 is returned and
+.I errno
+is set appropriately.
+.PP
+.SH ERRORS
+.TP
+.B EAGAIN
+The kernel was unable to allocate memory for the request.
+.TP
+.B EBADF
+The
+.I fd
+field in the submission queue entry is invalid, or the
+.B IOSQE_FIXED_FILE
+flag was set in the submission queue entry, but no files were registered
+with the io_uring instance.
+.TP
+.B EFAULT
+buffer is outside of the process' accessible address space
+.TP
+.B EFAULT
+.B IORING_OP_READ_FIXED
+or
+.B IORING_OP_WRITE_FIXED
+was specified in the
+.I opcode
+field of the submission queue entry, but either buffers were not
+registered for this io_uring instance, or the address range described
+by
+.I addr
+and
+.I len
+does not fit within the buffer registered at
+.IR buf_index .
+.TP
+.B EINVAL
+The
+.I index
+member of the submission queue entry is invalid.
+.TP
+.B EINVAL
+The
+.I flags
+field or
+.I opcode
+in a submission queue entry is invalid.
+.TP
+.B EINVAL
+.B IORING_OP_NOP
+was specified in the submission queue entry, but the io_uring context
+was setup for polling
+.RB ( IORING_SETUP_IOPOLL
+was specified in the call to io_uring_setup).
+.TP
+.B EINVAL
+.B IORING_OP_READV
+or
+.B IORING_OP_WRITEV
+was specified in the submission queue entry, but the io_uring instance
+has fixed buffers registered.
+.TP
+.B EINVAL
+.B IORING_OP_READ_FIXED
+or
+.B IORING_OP_WRITE_FIXED
+was specified in the submission queue entry, and the
+.I buf_index
+is invalid.
+.TP
+.B EINVAL
+.BR IORING_OP_READV ,
+.BR IORING_OP_WRITEV ,
+.BR IORING_OP_READ_FIXED ,
+.B IORING_OP_WRITE_FIXED
+or
+.B IORING_OP_FSYNC
+was specified in the submission queue entry, but the io_uring instance
+was configured for IOPOLLing, or any of
+.IR addr ,
+.IR ioprio ,
+.IR off ,
+.IR len ,
+or
+.I buf_index
+was set in the submission queue entry.
+.TP
+.B EINVAL
+.B IORING_OP_POLL_ADD
+or
+.B IORING_OP_POLL_REMOVE
+was specified in the
+.I opcode
+field of the submission queue entry, but the io_uring instance was
+configured for busy-wait polling
+.RB ( IORING_SETUP_IOPOLL ),
+or any of
+.IR ioprio ,
+.IR off ,
+.IR len ,
+or
+.I buf_index
+was non-zero in the submission queue entry.
+.TP
+.B EINVAL
+.B IORING_OP_POLL_ADD
+was specified in the
+.I opcode
+field of the submission queue entry, and the
+.I addr
+field was non-zero.
+.TP
+.B ENXIO
+The io_uring instance is in the process of being torn down.
+.TP
+.B EOPNOTSUPP
+.I fd
+does not refer to an io_uring instance.
+.TP
+.B EOPNOTSUPP
+.I opcode
+is valid, but not supported by this kernel.

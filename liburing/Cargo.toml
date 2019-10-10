@@ -1,0 +1,17 @@
+[package]
+name = "liburing"
+authors = ["Ivan Prisyazhnyy <john.koepi@gmail.com>"]
+description = "Rust liburing#24bd087 bindings"
+documentation = "http://kernel.dk/io_uring.pdf"
+edition = "2018"
+homepage = "https://github.com/spacejam/sled"
+license = "MIT/Apache-2.0"
+publish = false
+repository = "https://github.com/spacejam/sled"
+version = "0.0.1"
+
+[build-dependencies]
+bindgen = "0.51.1"
+
+[dependencies]
+libc = "0.2.62"
