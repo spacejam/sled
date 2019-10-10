@@ -799,6 +799,10 @@ impl PageCache {
             });
 
             if inject_failure {
+                debug!(
+                    "injecting a randomized failure in the link of pid {}",
+                    pid
+                );
                 if let Some((current_ptr, _frag, _sz)) = self.get(pid, guard)? {
                     return Ok(Err(Some((current_ptr, new))));
                 } else {
@@ -1011,6 +1015,10 @@ impl PageCache {
             });
 
             if inject_failure {
+                debug!(
+                    "injecting a randomized failure in the replace of pid {}",
+                    pid
+                );
                 if let Some((current_ptr, _frag, _sz)) = self.get(pid, guard)? {
                     return Ok(Err(Some((current_ptr, new))));
                 } else {
