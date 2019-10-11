@@ -344,18 +344,6 @@ macro_rules! repeat_type {
     };
 }
 
-macro_rules! expr {
-    ($x:expr) => {
-        ($x)
-    };
-}
-
-macro_rules! tuple_index {
-    ($tuple:expr, $idx:tt) => {
-        expr!($tuple.$idx)
-    };
-}
-
 macro_rules! impl_transactional_tuple_trees {
     ($($indices:tt),+) => {
         impl Transactional for repeat_type!(&Tree, ($($indices),+)) {
@@ -366,7 +354,7 @@ macro_rules! impl_transactional_tuple_trees {
                     inner: vec![
                         $(
                             TransactionalTree {
-                                tree: tuple_index!(self, $indices).clone(),
+                                tree: self.$indices.clone(),
                                 writes: Default::default(),
                                 read_cache: Default::default(),
                             }
