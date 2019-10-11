@@ -353,3 +353,33 @@ impl Transactional for (&Tree, &Tree) {
         (overlay.inner[0].clone(), overlay.inner[1].clone())
     }
 }
+
+impl Transactional for (&Tree, &Tree, &Tree) {
+    type View = (TransactionalTree, TransactionalTree, TransactionalTree);
+
+    fn make_overlay(&self) -> TransactionalTrees {
+        TransactionalTrees {
+            inner: vec![
+                TransactionalTree {
+                    tree: self.0.clone(),
+                    writes: Default::default(),
+                    read_cache: Default::default(),
+                },
+                TransactionalTree {
+                    tree: self.1.clone(),
+                    writes: Default::default(),
+                    read_cache: Default::default(),
+                },
+                TransactionalTree {
+                    tree: self.2.clone(),
+                    writes: Default::default(),
+                    read_cache: Default::default(),
+                },
+            ],
+        }
+    }
+
+    fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
+        (overlay.inner[0].clone(), overlay.inner[1].clone(), overlay.inner[2].clone())
+    }
+}
