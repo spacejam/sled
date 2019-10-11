@@ -329,27 +329,70 @@ impl Transactional for &Tree {
     }
 }
 
-impl Transactional for (&Tree, &Tree) {
-    type View = (TransactionalTree, TransactionalTree);
-
-    fn make_overlay(&self) -> TransactionalTrees {
-        TransactionalTrees {
-            inner: vec![
-                TransactionalTree {
-                    tree: self.0.clone(),
-                    writes: Default::default(),
-                    read_cache: Default::default(),
-                },
-                TransactionalTree {
-                    tree: self.1.clone(),
-                    writes: Default::default(),
-                    read_cache: Default::default(),
-                },
-            ],
-        }
-    }
-
-    fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
-        (overlay.inner[0].clone(), overlay.inner[1].clone())
-    }
+macro_rules! repeat_type {
+    ($t:ty, ($($literals:literal),*)) => {
+        repeat_type!(IMPL $t, (), ($($literals),*))
+    };
+    (IMPL $t:ty, (), ($first:literal, $($rest:literal),*)) => {
+        repeat_type!(IMPL $t, ($t), ($($rest),*))
+    };
+    (IMPL $t:ty, ($($partial:tt),*), ($first:literal, $($rest:literal),*)) => {
+        repeat_type!(IMPL $t, ($t, $($partial),*), ($($rest),*))
+    };
+    (IMPL $t:ty, ($($partial:tt),*), ($last:literal)) => {
+        ($($partial),*, $t)
+    };
 }
+
+macro_rules! expr {
+    ($x:expr) => {
+        ($x)
+    };
+}
+
+macro_rules! tuple_index {
+    ($tuple:expr, $idx:tt) => {
+        expr!($tuple.$idx)
+    };
+}
+
+macro_rules! impl_transactional_tuple_trees {
+    ($($indices:tt),+) => {
+        impl Transactional for repeat_type!(&Tree, ($($indices),+)) {
+            type View = repeat_type!(TransactionalTree, ($($indices),+));
+
+            fn make_overlay(&self) -> TransactionalTrees {
+                TransactionalTrees {
+                    inner: vec![
+                        $(
+                            TransactionalTree {
+                                tree: tuple_index!(self, $indices).clone(),
+                                writes: Default::default(),
+                                read_cache: Default::default(),
+                            }
+                        ),+
+                    ],
+                }
+            }
+
+            fn view_overlay(overlay: &TransactionalTrees) -> Self::View {
+                (
+                    $(
+                        overlay.inner[$indices].clone()
+                    ),+
+                )
+            }
+        }
+    };
+}
+
+impl_transactional_tuple_trees!(0, 1);
+impl_transactional_tuple_trees!(0, 1, 2);
+impl_transactional_tuple_trees!(0, 1, 2, 3);
+impl_transactional_tuple_trees!(0, 1, 2, 3, 4);
+impl_transactional_tuple_trees!(0, 1, 2, 3, 4, 5);
+impl_transactional_tuple_trees!(0, 1, 2, 3, 4, 5, 6);
+impl_transactional_tuple_trees!(0, 1, 2, 3, 4, 5, 6, 7);
+impl_transactional_tuple_trees!(0, 1, 2, 3, 4, 5, 6, 7, 8);
+impl_transactional_tuple_trees!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
+impl_transactional_tuple_trees!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
