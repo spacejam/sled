@@ -9,6 +9,8 @@
   directly
 * A `checksum` method has been added to Tree and Db
   for use in verifying backups and migrations.
+* Transactions may now involve up to 66 different
+  tables.
 
 ## Breaking Changes
 
