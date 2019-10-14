@@ -82,7 +82,6 @@ pub struct TransactionalTree {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TransactionError {
     Conflict,
-    Abort,
     Storage(Error),
 }
 
@@ -91,7 +90,6 @@ impl fmt::Display for TransactionError {
         use TransactionError::*;
         match self {
             Conflict => write!(f, "Conflict during transaction"),
-            Abort => write!(f, "Transaction was aborted"),
             Storage(e) => e.fmt(f),
         }
     }
@@ -107,10 +105,6 @@ impl std::error::Error for TransactionError {
 }
 
 pub type TransactionResult<T> = std::result::Result<T, TransactionError>;
-
-fn abort() -> TransactionError {
-    TransactionError::Abort
-}
 
 impl From<Error> for TransactionError {
     fn from(error: Error) -> Self {
@@ -276,9 +270,10 @@ pub trait Transactional {
 
     fn view_overlay(overlay: &TransactionalTrees) -> Self::View;
 
-    fn transaction<F, R>(&self, f: F) -> TransactionResult<R>
+    fn transaction<F, R, E>(&self, f: F) -> std::result::Result<R, E>
     where
         F: Fn(&Self::View) -> TransactionResult<R>,
+        E: From<Error>,
     {
         loop {
             let tt = self.make_overlay();
@@ -299,12 +294,9 @@ pub trait Transactional {
                     tt.commit()?;
                     return Ok(r);
                 }
-                Err(TransactionError::Abort) => {
-                    return Err(TransactionError::Abort);
-                }
                 Err(TransactionError::Conflict) => continue,
-                Err(TransactionError::Storage(e)) => {
-                    return Err(TransactionError::Storage(e));
+                Err(TransactionError::Storage(other)) => {
+                    return Err(E::from(other));
                 }
             }
         }

@@ -395,6 +395,29 @@ fn concurrent_tree_transactions() {
 }
 
 #[test]
+fn many_tree_transactions() -> Result<()> {
+    common::setup_logger();
+
+    let config = Config::new().temporary(true).flush_every_ms(None);
+    let db = Arc::new(config.open().unwrap());
+    let t1 = db.open_tree(b"1")?;
+    let t2 = db.open_tree(b"2")?;
+    let t3 = db.open_tree(b"3")?;
+    let t4 = db.open_tree(b"4")?;
+    let t5 = db.open_tree(b"5")?;
+    let t6 = db.open_tree(b"6")?;
+    let t7 = db.open_tree(b"7")?;
+    let t8 = db.open_tree(b"8")?;
+    let t9 = db.open_tree(b"9")?;
+
+    (&t1, &t2, &t3, &t4, &t5, &t6, &t7, &t8, &t9).transaction(|trees| {
+        trees.0.insert("hi", "there")?;
+        trees.8.insert("ok", "thanks")?;
+        Ok(())
+    })
+}
+
+#[test]
 fn tree_subdir() {
     let mut parent_path = std::env::temp_dir();
     parent_path.push("test_tree_subdir");
