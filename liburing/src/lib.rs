@@ -314,13 +314,13 @@ mod tests {
 
     use crate::*;
 
-    const queue_depth: u32 = 4;
+    const QUEUE_DEPTH: u32 = 4;
 
     #[test]
     fn test_io_uring_queue_init() {
         let mut ring = unsafe {
             let mut s = mem::MaybeUninit::<io_uring>::uninit();
-            let ret = io_uring_queue_init(queue_depth, s.as_mut_ptr(), 0);
+            let ret = io_uring_queue_init(QUEUE_DEPTH, s.as_mut_ptr(), 0);
             if ret < 0 {
                 panic!(
                     "io_uring_queue_init: {:?}",
