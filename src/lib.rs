@@ -168,6 +168,7 @@ pub use self::{
     subscription::{Event, Subscriber},
     tree::{CompareAndSwapError, CompareAndSwapResult, Tree},
     tx::{
+        abort, ConflictableTransactionError, ConflictableTransactionResult,
         TransactionError, TransactionResult, Transactional, TransactionalTree,
     },
 };
@@ -234,7 +235,7 @@ fn debug_delay() {}
 
 /// A fast map that is not resistant to collision attacks. Works
 /// on 8 bytes at a time.
-pub type FastMap8<K, V> = std::collections::HashMap<
+pub(crate) type FastMap8<K, V> = std::collections::HashMap<
     K,
     V,
     std::hash::BuildHasherDefault<fxhash::FxHasher64>,
@@ -242,7 +243,7 @@ pub type FastMap8<K, V> = std::collections::HashMap<
 
 /// A fast set that is not resistant to collision attacks. Works
 /// on 8 bytes at a time.
-pub type FastSet8<V> = std::collections::HashSet<
+pub(crate) type FastSet8<V> = std::collections::HashSet<
     V,
     std::hash::BuildHasherDefault<fxhash::FxHasher64>,
 >;

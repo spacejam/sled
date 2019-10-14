@@ -183,7 +183,9 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use sled::Config;
+    /// # use sled::{TransactionResult, Config};
+    ///
+    /// # fn main() -> TransactionResult<()> {
     ///
     /// let config = Config::new().temporary(true);
     /// let db = config.open().unwrap();
@@ -193,8 +195,7 @@ impl Tree {
     ///     db.insert(b"k1", b"cats")?;
     ///     db.insert(b"k2", b"dogs")?;
     ///     Ok(())
-    /// })
-    /// .unwrap();
+    /// })?;
     ///
     /// // Atomically swap two items:
     /// db.transaction(|db| {
@@ -203,16 +204,53 @@ impl Tree {
     ///     let v2_option = db.remove(b"k2")?;
     ///     let v2 = v2_option.unwrap();
     ///
-    ///     db.insert(b"k1", v2);
-    ///     db.insert(b"k2", v1);
+    ///     db.insert(b"k1", v2)?;
+    ///     db.insert(b"k2", v1)?;
     ///
     ///     Ok(())
-    /// })
-    /// .unwrap();
+    /// })?;
     ///
-    /// assert_eq!(&db.get(b"k1").unwrap().unwrap(), b"dogs");
-    /// assert_eq!(&db.get(b"k2").unwrap().unwrap(), b"cats");
+    /// assert_eq!(&db.get(b"k1")?.unwrap(), b"dogs");
+    /// assert_eq!(&db.get(b"k2")?.unwrap(), b"cats");
+    /// # Ok(())
+    /// # }
     /// ```
+    ///
+    /// A transaction may return information from
+    /// an intentionally-cancelled transaction by using
+    /// the abort function inside the closure in
+    /// combination with the try operator.
+    ///
+    /// ```
+    /// use sled::{TransactionError, TransactionResult, Config, abort};
+    ///
+    /// #[derive(Debug, PartialEq)]
+    /// struct MyBullshitError;
+    ///
+    /// fn main() -> TransactionResult<(), MyBullshitError> {
+    ///     let config = Config::new().temporary(true);
+    ///     let db = config.open().unwrap();
+    ///
+    ///     // Use write-only transactions as a writebatch:
+    ///     let res = db.transaction(|db| {
+    ///         db.insert(b"k1", b"cats")?;
+    ///         db.insert(b"k2", b"dogs")?;
+    ///         // aborting will cause all writes to roll-back.
+    ///         if true {
+    ///             abort(MyBullshitError)
+    ///         } else {
+    ///             Ok(42)
+    ///         }
+    ///     }).unwrap_err();
+    ///
+    ///     assert_eq!(res, TransactionError::Abort(MyBullshitError));
+    ///     assert_eq!(db.get(b"k1")?, None);
+    ///     assert_eq!(db.get(b"k2")?, None);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
     ///
     /// Transactions also work on tuples of `Tree`s,
     /// preserving serializable ACID semantics!
@@ -249,11 +287,11 @@ impl Tree {
     /// assert_eq!(unprocessed.get(b"k3").unwrap(), None);
     /// assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
     /// ```
-    pub fn transaction<F, R>(&self, f: F) -> TransactionResult<R>
+    pub fn transaction<F, A, E>(&self, f: F) -> TransactionResult<A, E>
     where
-        F: Fn(&TransactionalTree) -> TransactionResult<R>,
+        F: Fn(&TransactionalTree) -> ConflictableTransactionResult<A, E>,
     {
-        <&Self as Transactional>::transaction(&self, f)
+        Transactional::transaction(&self, f)
     }
 
     /// Create a new batched update that can be
