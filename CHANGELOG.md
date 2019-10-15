@@ -9,6 +9,14 @@
   directly
 * A `checksum` method has been added to Tree and Db
   for use in verifying backups and migrations.
+* Transactions may now involve up to 69 different
+  tables. Nice.
+* The `TransactionError::Abort` variant has had
+  a generic member added that can be returned
+  as a way to return information from a
+  manually-aborted transaction. An `abort` helper
+  function has been added to reduce the boiler-
+  plate required to return aborted results.
 
 ## Breaking Changes
 
