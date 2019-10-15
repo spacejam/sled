@@ -227,8 +227,9 @@ impl<T> From<Error> for ConflictableTransactionError<T> {
     }
 }
 
-/// A transaction-related `Result` which is used for transparently handling
-/// concurrency-related conflicts when running transaction closures.
+/// A transaction-related `Result` which is used for returning the
+/// final result of a transaction after potentially running the provided
+/// closure several times due to underlying conflicts.
 pub type TransactionResult<T, E = ()> =
     std::result::Result<T, TransactionError<E>>;
 
