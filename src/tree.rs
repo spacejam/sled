@@ -237,10 +237,9 @@ impl Tree {
     ///         db.insert(b"k2", b"dogs")?;
     ///         // aborting will cause all writes to roll-back.
     ///         if true {
-    ///             abort(MyBullshitError)
-    ///         } else {
-    ///             Ok(42)
+    ///             abort(MyBullshitError)?;
     ///         }
+    ///         Ok(42)
     ///     }).unwrap_err();
     ///
     ///     assert_eq!(res, TransactionError::Abort(MyBullshitError));

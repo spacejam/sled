@@ -118,8 +118,8 @@ mod stack;
 mod subscription;
 mod sys_limits;
 mod threadpool;
+mod transaction;
 mod tree;
-mod tx;
 mod vecset;
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -166,11 +166,11 @@ pub use self::{
     ivec::IVec,
     result::{Error, Result},
     subscription::{Event, Subscriber},
-    tree::{CompareAndSwapError, CompareAndSwapResult, Tree},
-    tx::{
+    transaction::{
         abort, ConflictableTransactionError, ConflictableTransactionResult,
         TransactionError, TransactionResult, Transactional, TransactionalTree,
     },
+    tree::{CompareAndSwapError, CompareAndSwapResult, Tree},
 };
 
 use {
