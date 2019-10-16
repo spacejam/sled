@@ -9,7 +9,7 @@ repository = "https://github.com/spacejam/sled"
 keywords = ["database", "embedded", "concurrent", "persistent", "lock-free"]
 categories = ["database-implementations", "concurrency", "data-structures", "algorithms", "caching"]
 documentation = "https://docs.rs/sled/"
-readme = "../../README.md"
+readme = "README.md"
 edition = "2018"
 
 [profile.release]
