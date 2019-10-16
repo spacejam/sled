@@ -73,6 +73,9 @@
 //! t.remove(b"yo!");
 //! assert_eq!(t.get(b"yo!"), Ok(None));
 //! ```
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face_anti-transphobia.png"
+)]
 #![cfg_attr(test, deny(warnings))]
 #![deny(missing_docs)]
 #![deny(future_incompatible)]
