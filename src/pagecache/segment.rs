@@ -144,24 +144,15 @@ impl Segment {
     }
 
     fn is_inactive(&self) -> bool {
-        match self.state {
-            Inactive => true,
-            _ => false,
-        }
+        self.state == Inactive
     }
 
     fn _is_active(&self) -> bool {
-        match self.state {
-            Active => true,
-            _ => false,
-        }
+        self.state == Active
     }
 
     fn is_draining(&self) -> bool {
-        match self.state {
-            Draining => true,
-            _ => false,
-        }
+        self.state == Draining
     }
 
     fn free_to_active(&mut self, new_lsn: Lsn) {
