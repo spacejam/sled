@@ -1,4 +1,4 @@
-# Unreleased
+# 0.29
 
 ## New Features
 
@@ -23,6 +23,8 @@
 * The `ConfigBuilder` structure has been removed
   in favor of a simplified `Config` structure
   with the same functionality.
+* The way that sled versions are detected at
+  initialization time is now independent of serde.
 * The `cas` method is deprecated in favor of the new
   `compare_and_swap` method which now returns the
   proposed value that failed to be applied.
