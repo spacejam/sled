@@ -190,7 +190,7 @@ impl Segment {
         if from_recovery {
             assert!(lsn >= self.lsn());
         } else {
-            assert_eq!(self.lsn.unwrap(), lsn);
+            assert_eq!(self.lsn(), lsn);
         }
         self.state = Inactive;
 
@@ -255,7 +255,7 @@ impl Segment {
     /// Add a pid to the Segment. The caller must provide
     /// the Segment's LSN.
     fn insert_pid(&mut self, pid: PageId, lsn: Lsn) {
-        assert_eq!(lsn, self.lsn.unwrap());
+        assert_eq!(lsn, self.lsn());
         // if this breaks, maybe we didn't implement the transition
         // logic right in write_to_log, and maybe a thread is
         // using the SA to add pids AFTER their calls to
@@ -272,7 +272,7 @@ impl Segment {
     /// Mark that a pid in this Segment has been relocated.
     /// The caller must provide the LSN of the removal.
     fn remove_pid(&mut self, pid: PageId, lsn: Lsn, in_recovery: bool) {
-        assert!(lsn >= self.lsn.unwrap());
+        assert!(lsn >= self.lsn());
         match self.state {
             Active => {
                 // we have received a removal before
@@ -302,7 +302,7 @@ impl Segment {
         deferred: FastSet8<(PageId, SegmentId)>,
         lsn: Lsn,
     ) {
-        assert!(lsn >= self.lsn.unwrap());
+        assert!(lsn >= self.lsn());
         self.deferred_replacements.extend(deferred);
     }
 
