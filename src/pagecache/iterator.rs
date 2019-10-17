@@ -293,7 +293,7 @@ fn scan_segment_lsns(
         header_promises.into_iter().filter_map(OneShot::unwrap).collect();
 
     let mut ordering = BTreeMap::new();
-    let mut max_header_stable_lsn = 0;
+    let mut max_header_stable_lsn = min;
 
     for (lid, header) in headers {
         max_header_stable_lsn =
@@ -401,6 +401,7 @@ fn clean_tail_tears(
         // NB we intentionally corrupt this header to prevent any segment
         // from being allocated which would duplicate its LSN, messing
         // up recovery in the future.
+        maybe_fail!("segment initial free zero");
         f.pwrite_all(
             &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
             *lid,
@@ -423,7 +424,8 @@ pub fn raw_segment_iter_from(
     let segment_len = config.segment_size as Lsn;
     let normalized_lsn = lsn / segment_len * segment_len;
 
-    let (ordering, max_header_stable_lsn) = scan_segment_lsns(0, config)?;
+    let (ordering, max_header_stable_lsn) =
+        scan_segment_lsns(normalized_lsn, config)?;
 
     // find the last stable tip, to properly handle batch manifests.
     let tip_segment_iter =
