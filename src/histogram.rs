@@ -148,7 +148,7 @@ fn compress<T: Into<f64>>(value: T) -> u16 {
     let abs = value.abs();
     let boosted = 1. + abs;
     let ln = boosted.ln();
-    let compressed = PRECISION * ln + 0.5;
+    let compressed = PRECISION.mul_add(ln, 0.5);
     assert!(compressed <= f64::from(std::u16::MAX));
     compressed as u16
 }
