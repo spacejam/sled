@@ -545,6 +545,13 @@ impl Config {
 
             let try_lock = if self.read_only {
                 file.try_lock_shared()
+            } else if cfg!(feature = "testing") {
+                // we block here because during testing
+                // there are many filesystem race condition
+                // that happen, causing locks to be held
+                // for long periods of time, so we should
+                // block to wait on reopening files.
+                file.lock_exclusive()
             } else {
                 file.try_lock_exclusive()
             };
@@ -554,7 +561,7 @@ impl Config {
                     ErrorKind::Other,
                     format!(
                         "could not acquire lock on {:?}: {:?}",
-                        self.db_path(),
+                        self.db_path().to_string_lossy(),
                         e
                     ),
                 )));
@@ -721,9 +728,11 @@ impl Config {
     }
 
     #[cfg(feature = "failpoints")]
+    #[cfg(feature = "event_log")]
     #[doc(hidden)]
     // truncate the underlying file for corruption testing purposes.
     pub fn truncate_corrupt(&self, new_len: u64) {
+        self.event_log.reset();
         let path = self.db_path();
         let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
         f.set_len(new_len).expect("should be able to truncate");

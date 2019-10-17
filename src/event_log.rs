@@ -44,6 +44,12 @@ pub struct EventLog {
 }
 
 impl EventLog {
+    pub(crate) fn reset(&self) {
+        self.verify();
+        let guard = pin();
+        while let Some(_) = self.inner.pop(&guard) {}
+    }
+
     fn iter<'a>(&self, guard: &'a Guard) -> StackIter<'a, Event> {
         let head = self.inner.head(guard);
         StackIter::from_ptr(head, guard)
