@@ -165,6 +165,9 @@ pub(crate) fn advance_snapshot(
 
     trace!("generated new snapshot: {:?}", snapshot);
 
+    #[cfg(feature = "event_log")]
+    config.event_log.recovered_lsn(snapshot.last_lsn);
+
     Ok(snapshot)
 }
 

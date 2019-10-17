@@ -778,7 +778,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
             }
         });
 
-        #[cfg(any(test, feature = "check_snapshot_integrity"))]
+        #[cfg(test)]
         _result.unwrap();
 
         Ok(())

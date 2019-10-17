@@ -9,10 +9,7 @@ use std::{
     sync::{atomic::AtomicUsize, Arc},
 };
 
-use crate::pagecache::{
-    arr_to_u32, read_message, read_snapshot_or_default, u32_to_arr, Lsn,
-    PageState, SegmentMode,
-};
+use crate::pagecache::{arr_to_u32, u32_to_arr, Lsn, SegmentMode};
 use crate::*;
 
 const DEFAULT_PATH: &str = "default.sled";
@@ -820,71 +817,6 @@ impl RunningConfig {
         }
 
         Ok(snap_dir.read_dir()?.filter_map(filter).collect())
-    }
-
-    #[doc(hidden)]
-    pub fn verify_snapshot(&self) -> Result<()> {
-        debug!("generating incremental snapshot");
-
-        let incremental = read_snapshot_or_default(&self)?;
-
-        for snapshot_path in self.get_snapshot_files()? {
-            fs::remove_file(snapshot_path)?;
-        }
-
-        debug!("generating snapshot without the previous one");
-        let regenerated = read_snapshot_or_default(&self)?;
-
-        let verify_messages = |k: &PageId, v: &PageState| {
-            for (lsn, ptr, _sz) in v.iter() {
-                if let Err(e) = read_message(&self.file, ptr.lid(), lsn, &self)
-                {
-                    panic!(
-                        "could not read log data for \
-                         pid {} at lsn {} ptr {}: {}",
-                        k, lsn, ptr, e
-                    );
-                }
-            }
-        };
-
-        let verify_pagestate = |x: &FastMap8<PageId, PageState>,
-                                y: &FastMap8<PageId, PageState>,
-                                typ: &str| {
-            for (k, v) in x {
-                if !y.contains_key(&k) {
-                    panic!(
-                        "page only present in {} pagetable: {} -> {:?}",
-                        typ, k, v
-                    );
-                }
-                assert_eq!(
-                    y.get(&k),
-                    Some(v),
-                    "page tables differ for pid {}",
-                    k
-                );
-                verify_messages(k, v);
-            }
-        };
-
-        verify_pagestate(&regenerated.pt, &incremental.pt, "regenerated");
-        verify_pagestate(&incremental.pt, &regenerated.pt, "incremental");
-
-        assert_eq!(
-            incremental.pt, regenerated.pt,
-            "snapshot pagetable diverged"
-        );
-        assert_eq!(
-            incremental.last_lsn, regenerated.last_lsn,
-            "snapshot max_lsn diverged"
-        );
-        assert_eq!(
-            incremental.last_lid, regenerated.last_lid,
-            "snapshot last_lid diverged"
-        );
-
-        Ok(())
     }
 }
 

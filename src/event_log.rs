@@ -34,6 +34,7 @@ enum Event {
     PagesOnRecovery { pages: HashMap<PageId, Vec<DiskPtr>> },
     MetaOnShutdown { meta: Meta },
     MetaOnRecovery { meta: Meta },
+    RecoveredLsn(Lsn),
 }
 
 /// A lock-free queue of Events.
@@ -48,7 +49,7 @@ impl EventLog {
         StackIter::from_ptr(head, guard)
     }
 
-    fn verify(&self) {
+    pub(crate) fn verify(&self) {
         let guard = pin();
         let iter = self.iter(&guard);
 
@@ -57,9 +58,19 @@ impl EventLog {
 
         let mut recovered_pages = None;
         let mut recovered_meta = None;
+        let mut recovered_lsn = None;
 
         for event in iter {
             match event {
+                Event::RecoveredLsn(lsn) => {
+                    if let Some(later_lsn) = recovered_lsn {
+                        assert!(
+                            later_lsn >= lsn,
+                            "lsn must never go down between recoveries"
+                        );
+                    }
+                    recovered_lsn = Some(lsn);
+                }
                 Event::PagesOnRecovery { pages } => {
                     recovered_pages = Some(pages.clone());
                 }
@@ -101,6 +112,11 @@ impl EventLog {
                 }
             }
         }
+    }
+
+    pub(crate) fn recovered_lsn(&self, lsn: Lsn) {
+        let guard = pin();
+        self.inner.push(Event::RecoveredLsn(lsn), &guard);
     }
 
     pub(crate) fn pages_before_restart(

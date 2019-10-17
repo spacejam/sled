@@ -398,7 +398,7 @@ impl Log {
                 }
             });
 
-            #[cfg(any(test, feature = "check_snapshot_integrity"))]
+            #[cfg(test)]
             _result.unwrap();
 
             Ok(())

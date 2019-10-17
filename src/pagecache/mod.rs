@@ -1992,7 +1992,7 @@ impl PageCache {
             result
         });
 
-        #[cfg(any(test, feature = "check_snapshot_integrity"))]
+        #[cfg(test)]
         _result.unwrap()?;
 
         // TODO add future for waiting on the result of this if desired

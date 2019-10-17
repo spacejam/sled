@@ -1185,7 +1185,7 @@ impl SegmentAccountant {
             completer.fill(res);
         });
 
-        #[cfg(any(test, feature = "check_snapshot_integrity"))]
+        #[cfg(test)]
         _result.unwrap();
 
         self.async_truncations.push(promise);
