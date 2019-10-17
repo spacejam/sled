@@ -115,6 +115,9 @@ impl Db {
 
         drop(tenants);
 
+        #[cfg(feature = "event_log")]
+        ret.context.event_log.verify();
+
         Ok(ret)
     }
 

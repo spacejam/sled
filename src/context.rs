@@ -49,15 +49,6 @@ impl Context {
     pub(crate) fn start(config: RunningConfig) -> Result<Self> {
         trace!("starting context");
 
-        #[cfg(any(test, feature = "check_snapshot_integrity"))]
-        match config.verify_snapshot() {
-            #[cfg(not(feature = "failpoints"))]
-            Ok(_) => {}
-            #[cfg(feature = "failpoints")]
-            Ok(_) | Err(Error::FailPoint) => {}
-            other => panic!("failed to verify snapshot: {:?}", other),
-        }
-
         let pagecache = Arc::new(PageCache::start(config.clone())?);
 
         Ok(Self {

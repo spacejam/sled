@@ -461,7 +461,7 @@ impl PageCache {
             inner: PageTable::default(),
             next_pid_to_allocate: AtomicU64::new(0),
             free: Arc::new(Mutex::new(BinaryHeap::new())),
-            log: Log::start(config.clone(), snapshot.clone())?,
+            log: Log::start(config.clone(), &snapshot)?,
             lru,
             updates: AtomicU64::new(0),
             last_snapshot: Arc::new(Mutex::new(Some(snapshot))),
@@ -1992,7 +1992,7 @@ impl PageCache {
             result
         });
 
-        #[cfg(any(test, feature = "check_snapshot_integrity"))]
+        #[cfg(test)]
         _result.unwrap()?;
 
         // TODO add future for waiting on the result of this if desired

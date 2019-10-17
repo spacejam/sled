@@ -9,10 +9,7 @@ use std::{
     sync::{atomic::AtomicUsize, Arc},
 };
 
-use crate::pagecache::{
-    arr_to_u32, read_message, read_snapshot_or_default, u32_to_arr, Lsn,
-    PageState, SegmentMode,
-};
+use crate::pagecache::{arr_to_u32, u32_to_arr, Lsn, SegmentMode};
 use crate::*;
 
 const DEFAULT_PATH: &str = "default.sled";
@@ -548,6 +545,13 @@ impl Config {
 
             let try_lock = if self.read_only {
                 file.try_lock_shared()
+            } else if cfg!(feature = "testing") {
+                // we block here because during testing
+                // there are many filesystem race condition
+                // that happen, causing locks to be held
+                // for long periods of time, so we should
+                // block to wait on reopening files.
+                file.lock_exclusive()
             } else {
                 file.try_lock_exclusive()
             };
@@ -557,7 +561,7 @@ impl Config {
                     ErrorKind::Other,
                     format!(
                         "could not acquire lock on {:?}: {:?}",
-                        self.db_path(),
+                        self.db_path().to_string_lossy(),
                         e
                     ),
                 )));
@@ -724,9 +728,11 @@ impl Config {
     }
 
     #[cfg(feature = "failpoints")]
+    #[cfg(feature = "event_log")]
     #[doc(hidden)]
     // truncate the underlying file for corruption testing purposes.
     pub fn truncate_corrupt(&self, new_len: u64) {
+        self.event_log.reset();
         let path = self.db_path();
         let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
         f.set_len(new_len).expect("should be able to truncate");
@@ -820,71 +826,6 @@ impl RunningConfig {
         }
 
         Ok(snap_dir.read_dir()?.filter_map(filter).collect())
-    }
-
-    #[doc(hidden)]
-    pub fn verify_snapshot(&self) -> Result<()> {
-        debug!("generating incremental snapshot");
-
-        let incremental = read_snapshot_or_default(&self)?;
-
-        for snapshot_path in self.get_snapshot_files()? {
-            fs::remove_file(snapshot_path)?;
-        }
-
-        debug!("generating snapshot without the previous one");
-        let regenerated = read_snapshot_or_default(&self)?;
-
-        let verify_messages = |k: &PageId, v: &PageState| {
-            for (lsn, ptr, _sz) in v.iter() {
-                if let Err(e) = read_message(&self.file, ptr.lid(), lsn, &self)
-                {
-                    panic!(
-                        "could not read log data for \
-                         pid {} at lsn {} ptr {}: {}",
-                        k, lsn, ptr, e
-                    );
-                }
-            }
-        };
-
-        let verify_pagestate = |x: &FastMap8<PageId, PageState>,
-                                y: &FastMap8<PageId, PageState>,
-                                typ: &str| {
-            for (k, v) in x {
-                if !y.contains_key(&k) {
-                    panic!(
-                        "page only present in {} pagetable: {} -> {:?}",
-                        typ, k, v
-                    );
-                }
-                assert_eq!(
-                    y.get(&k),
-                    Some(v),
-                    "page tables differ for pid {}",
-                    k
-                );
-                verify_messages(k, v);
-            }
-        };
-
-        verify_pagestate(&regenerated.pt, &incremental.pt, "regenerated");
-        verify_pagestate(&incremental.pt, &regenerated.pt, "incremental");
-
-        assert_eq!(
-            incremental.pt, regenerated.pt,
-            "snapshot pagetable diverged"
-        );
-        assert_eq!(
-            incremental.last_lsn, regenerated.last_lsn,
-            "snapshot max_lsn diverged"
-        );
-        assert_eq!(
-            incremental.last_lid, regenerated.last_lid,
-            "snapshot last_lid diverged"
-        );
-
-        Ok(())
     }
 }
 

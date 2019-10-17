@@ -63,7 +63,7 @@ pub(crate) struct IoBufs {
 /// `IoBufs` is a set of lock-free buffers for coordinating
 /// writes to underlying storage.
 impl IoBufs {
-    pub fn start(config: RunningConfig, snapshot: Snapshot) -> Result<Self> {
+    pub fn start(config: RunningConfig, snapshot: &Snapshot) -> Result<Self> {
         // open file for writing
         let file = &config.file;
 
@@ -778,7 +778,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
             }
         });
 
-        #[cfg(any(test, feature = "check_snapshot_integrity"))]
+        #[cfg(test)]
         _result.unwrap();
 
         Ok(())

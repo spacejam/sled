@@ -27,7 +27,7 @@ unsafe impl Send for Log {}
 impl Log {
     /// Start the log, open or create the configured file,
     /// and optionally start the periodic buffer flush thread.
-    pub fn start(config: RunningConfig, snapshot: Snapshot) -> Result<Self> {
+    pub fn start(config: RunningConfig, snapshot: &Snapshot) -> Result<Self> {
         let iobufs = Arc::new(IoBufs::start(config.clone(), snapshot)?);
 
         Ok(Self { iobufs, config })
@@ -41,7 +41,7 @@ impl Log {
         let snapshot =
             super::advance_snapshot(log_iter, Snapshot::default(), &config)?;
 
-        Self::start(config, snapshot)
+        Self::start(config, &snapshot)
     }
 
     /// Flushes any pending IO buffers to disk to ensure durability.
@@ -398,7 +398,7 @@ impl Log {
                 }
             });
 
-            #[cfg(any(test, feature = "check_snapshot_integrity"))]
+            #[cfg(test)]
             _result.unwrap();
 
             Ok(())
