@@ -63,7 +63,7 @@ pub(crate) struct IoBufs {
 /// `IoBufs` is a set of lock-free buffers for coordinating
 /// writes to underlying storage.
 impl IoBufs {
-    pub fn start(config: RunningConfig, snapshot: Snapshot) -> Result<Self> {
+    pub fn start(config: RunningConfig, snapshot: &Snapshot) -> Result<Self> {
         // open file for writing
         let file = &config.file;
 
