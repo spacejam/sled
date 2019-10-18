@@ -5,7 +5,7 @@
 </p>
 
 
-# sled - ~~it's all downhill from here!!!~~
+# sled
 
 | key | value |
 | --- | --- |
