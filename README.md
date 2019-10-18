@@ -1,9 +1,9 @@
   
 | key | value |
 | --- | --- |
-| documentation | [![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled) |
-| communication | [![chat](https://img.shields.io/discord/509773073294295082.svg?logo=discord)](https://discord.gg/Z6VsXds) |
-| renumeration |![Open Collective backers](https://img.shields.io/opencollective/backers/sled) |
+| [documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled) | [![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled) |
+| [communication](https://img.shields.io/discord/509773073294295082.svg?logo=discord) | [![chat](https://img.shields.io/discord/509773073294295082.svg?logo=discord)](https://discord.gg/Z6VsXds) |
+| [renumeration](https://img.shields.io/opencollective/backers/sled) |![Open Collective backers](https://img.shields.io/opencollective/backers/sled) |
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face_anti-transphobia.png" width="20%" height="auto" />
