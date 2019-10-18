@@ -1,7 +1,7 @@
   
 | key | value |
 | --- | --- |
-| [documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled) | [![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled) |
+| [documentation](https://docs.rs/sled) | [![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled) |
 | [communication](https://img.shields.io/discord/509773073294295082.svg?logo=discord) | [![chat](https://img.shields.io/discord/509773073294295082.svg?logo=discord)](https://discord.gg/Z6VsXds) |
 | [renumeration](https://img.shields.io/opencollective/backers/sled) |![Open Collective backers](https://img.shields.io/opencollective/backers/sled) |
 
