@@ -2,10 +2,10 @@
 extern crate neon;
 extern crate sled;
 
-use neon::vm::{Call, JsResult};
-use neon::js::JsString;
 use neon::js::JsNull;
+use neon::js::JsString;
 use neon::js::Value;
+use neon::vm::{Call, JsResult};
 
 fn extract_arg(call: &mut Call, idx: i32) -> Result<String, ()> {
     let args = &call.arguments;
@@ -15,9 +15,7 @@ fn extract_arg(call: &mut Call, idx: i32) -> Result<String, ()> {
 
 fn create_db(mut call: Call) -> JsResult<JsString> {
     let path = extract_arg(&mut call, 0).unwrap();
-    let t = sled::Config::default()
-        .path(path)
-        .tree();
+    let t = sled::Config::default().path(path).tree();
 
     let ptr = Box::into_raw(Box::new(t));
     let ptr_string = format!("{}", ptr as usize);
@@ -29,9 +27,7 @@ fn cast_string_to_ptr<'a>(ptr_str: String) -> &'a sled::Tree {
     //println!("ptr_from_str: {}", ptr_from_str);
 
     let ptr = ptr_from_str as *mut sled::Tree;
-    unsafe {
-        &*ptr
-    }
+    unsafe { &*ptr }
 }
 
 fn set(mut call: Call) -> JsResult<JsString> {
@@ -48,7 +44,8 @@ fn set(mut call: Call) -> JsResult<JsString> {
 
     t.set(k.clone(), v);
 
-    let from_db = t.get(&*k)
+    let from_db = t
+        .get(&*k)
         .and_then(|from_db| {
             let str = unsafe { std::str::from_utf8_unchecked(&*from_db) };
             JsString::new(call.guard, str)
@@ -67,8 +64,9 @@ fn get(mut call: Call) -> JsResult<JsString> {
     let t = cast_string_to_ptr(arg0);
     let k = arg1.unwrap().into_bytes();
 
-    let from_db = t.get(&*k)
-        .map( |from_db| {
+    let from_db = t
+        .get(&*k)
+        .map(|from_db| {
             let str = unsafe { std::str::from_utf8_unchecked(&*from_db) };
             JsString::new(call.guard, str).unwrap()
         })

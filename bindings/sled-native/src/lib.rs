@@ -1,5 +1,5 @@
-extern crate sled;
 extern crate libc;
+extern crate sled;
 
 use std::ffi::CString;
 use std::mem;
@@ -8,7 +8,7 @@ use std::slice;
 
 use libc::*;
 
-use sled::{ConfigBuilder, Error, Iter, Tree};
+use sled::{Config, Db, Iter, Tree};
 
 fn leak_buf(v: Vec<u8>, vallen: *mut size_t) -> *mut c_char {
     unsafe {
@@ -22,94 +22,88 @@ fn leak_buf(v: Vec<u8>, vallen: *mut size_t) -> *mut c_char {
 
 /// Create a new configuration.
 #[no_mangle]
-pub unsafe extern "C" fn sled_create_config() -> *mut ConfigBuilder {
-    let ptr = Box::into_raw(Box::new(ConfigBuilder::new()));
+pub unsafe extern "C" fn sled_create_config() -> *mut Config {
+    let ptr = Box::into_raw(Box::new(Config::new()));
     ptr
 }
 
 /// Destroy a configuration.
 #[no_mangle]
-pub unsafe extern "C" fn sled_free_config(config: *mut ConfigBuilder) {
+pub unsafe extern "C" fn sled_free_config(config: *mut Config) {
     drop(Box::from_raw(config));
 }
 
-/// Set the configured file path. The caller is responsible for freeing the path string after
-/// calling this (it is copied in this function).
+/// Set the configured file path. The caller is responsible for freeing the path
+/// string after calling this (it is copied in this function).
 #[no_mangle]
 pub unsafe extern "C" fn sled_config_set_path(
-    config: *mut ConfigBuilder,
+    config: *mut Config,
     path: *const c_char,
 ) {
     let c_str = CString::from_raw(path as *mut i8);
     let value = c_str.into_string().unwrap();
 
-    (*config).set_path(value)
+    *config = (*config).clone().path(value);
 }
 
 /// Configure read-only mode.
 #[no_mangle]
 pub unsafe extern "C" fn sled_config_read_only(
-    config: *mut ConfigBuilder,
+    config: *mut Config,
     read_only: c_uchar,
 ) {
-    (*config).set_read_only(read_only == 1)
+    *config = (*config).clone().read_only(read_only == 1);
 }
 
 /// Set the configured cache capacity in bytes.
 #[no_mangle]
 pub unsafe extern "C" fn sled_config_set_cache_capacity(
-    config: *mut ConfigBuilder,
+    config: *mut Config,
     capacity: size_t,
 ) {
-    (*config).set_cache_capacity(capacity)
+    *config = (*config).clone().cache_capacity(capacity as u64);
 }
 
 /// Configure the use of the zstd compression library.
 #[no_mangle]
 pub unsafe extern "C" fn sled_config_use_compression(
-    config: *mut ConfigBuilder,
+    config: *mut Config,
     use_compression: c_uchar,
 ) {
-    (*config).set_use_compression(use_compression == 1)
+    *config = (*config).clone().use_compression(use_compression == 1);
 }
 
 /// Set the configured IO buffer flush interval in milliseconds.
 #[no_mangle]
 pub unsafe extern "C" fn sled_config_flush_every_ms(
-    config: *mut ConfigBuilder,
+    config: *mut Config,
     flush_every: c_int,
 ) {
-    let val = if flush_every < 0 {
-        None
-    } else {
-        Some(flush_every as u64)
-    };
-    (*config).set_flush_every_ms(val)
+    let val = if flush_every < 0 { None } else { Some(flush_every as u64) };
+    *config = (*config).clone().flush_every_ms(val);
 }
 
 /// Set the configured snapshot operation threshold.
 #[no_mangle]
 pub unsafe extern "C" fn sled_config_snapshot_after_ops(
-    config: *mut ConfigBuilder,
+    config: *mut Config,
     snapshot_after: size_t,
 ) {
-    (*config).set_snapshot_after_ops(snapshot_after)
+    *config = (*config).clone().snapshot_after_ops(snapshot_after as u64);
 }
 
 /// Open a sled lock-free log-structured tree. Consumes the passed-in config.
 #[no_mangle]
-pub unsafe extern "C" fn sled_open_tree(
-    config: *mut ConfigBuilder,
-) -> *mut Tree {
+pub unsafe extern "C" fn sled_open_db(config: *mut Config) -> *mut Db {
     let conf_2 = (*config).clone();
-    let conf_3 = conf_2.build();
+    let conf_3 = conf_2;
     sled_free_config(config);
-    Box::into_raw(Box::new(Tree::start(conf_3).unwrap()))
+    Box::into_raw(Box::new(conf_3.open().unwrap()))
 }
 
 /// Close a sled lock-free log-structured tree.
 #[no_mangle]
-pub unsafe extern "C" fn sled_close(db: *mut Tree) {
+pub unsafe extern "C" fn sled_close(db: *mut Db) {
     drop(Box::from_raw(db));
 }
 
@@ -142,11 +136,12 @@ pub unsafe extern "C" fn sled_set(
 ) {
     let k = slice::from_raw_parts(key, keylen).to_vec();
     let v = slice::from_raw_parts(val, vallen).to_vec();
-    (*db).set(k.clone(), v.clone()).unwrap();
+    (*db).insert(k.clone(), v.clone()).unwrap();
 }
 
 /// Get the value of a key.
-/// Caller is responsible for freeing the returned value with `sled_free_buf` if it's non-null.
+/// Caller is responsible for freeing the returned value with `sled_free_buf` if
+/// it's non-null.
 #[no_mangle]
 pub unsafe extern "C" fn sled_get(
     db: *mut Tree,
@@ -157,7 +152,7 @@ pub unsafe extern "C" fn sled_get(
     let k = slice::from_raw_parts(key as *const u8, keylen);
     let res = (*db).get(k);
     match res {
-        Ok(Some(v)) => leak_buf(v, vallen),
+        Ok(Some(v)) => leak_buf(v.to_vec(), vallen),
         Ok(None) => ptr::null_mut(),
         // TODO proper error propagation
         Err(e) => panic!("{:?}", e),
@@ -172,16 +167,17 @@ pub unsafe extern "C" fn sled_del(
     keylen: size_t,
 ) {
     let k = slice::from_raw_parts(key as *const u8, keylen);
-    (*db).del(k).unwrap();
+    (*db).remove(k).unwrap();
 }
 
 /// Compare and swap.
 /// Returns 1 if successful, 0 if unsuccessful.
 /// Otherwise sets `actual_val` and `actual_vallen` to the current value,
 /// which must be freed using `sled_free_buf` by the caller if non-null.
-/// `actual_val` will be null and `actual_vallen` 0 if the current value is not set.
+/// `actual_val` will be null and `actual_vallen` 0 if the current value is not
+/// set.
 #[no_mangle]
-pub unsafe extern "C" fn sled_cas(
+pub unsafe extern "C" fn sled_compare_and_swap(
     db: *mut Tree,
     key: *const c_char,
     keylen: size_t,
@@ -210,18 +206,19 @@ pub unsafe extern "C" fn sled_cas(
         Some(copy)
     };
 
-    let res = (*db).cas(k.clone(), old, new);
+    let res = (*db).compare_and_swap(k.clone(), old, new);
 
     match res {
-        Ok(()) => {
-            1
-        }
-        Err(Error::CasFailed(None)) => {
+        Ok(Ok(())) => 1,
+        Ok(Err(sled::CompareAndSwapError { current: None, proposed: _ })) => {
             *actual_vallen = 0;
             0
         }
-        Err(Error::CasFailed(Some(v))) => {
-            *actual_val = leak_buf(v, actual_vallen) as *const u8;
+        Ok(Err(sled::CompareAndSwapError {
+            current: Some(v),
+            proposed: _,
+        })) => {
+            *actual_val = leak_buf(v.to_vec(), actual_vallen) as *const u8;
             0
         }
         // TODO proper error propagation
@@ -229,16 +226,17 @@ pub unsafe extern "C" fn sled_cas(
     }
 }
 
-/// Iterate from a starting key.
-/// Caller is responsible for freeing the returned iterator with `sled_free_iter`.
+/// Iterate over tuples which have specified key prefix.
+/// Caller is responsible for freeing the returned iterator with
+/// `sled_free_iter`.
 #[no_mangle]
-pub unsafe extern "C" fn sled_scan<'a>(
+pub unsafe extern "C" fn sled_scan_prefix(
     db: *mut Tree,
     key: *const c_char,
     keylen: size_t,
-) -> *mut Iter<'a> {
+) -> *mut Iter {
     let k = slice::from_raw_parts(key as *const u8, keylen);
-    Box::into_raw(Box::new((*db).scan(k)))
+    Box::into_raw(Box::new((*db).scan_prefix(k)))
 }
 
 /// Get they next kv pair from an iterator.
@@ -254,8 +252,8 @@ pub unsafe extern "C" fn sled_iter_next(
 ) -> c_uchar {
     match (*iter).next() {
         Some(Ok((k, v))) => {
-            *key = leak_buf(k, keylen);
-            *val = leak_buf(v, vallen);
+            *key = leak_buf(k.to_vec(), keylen);
+            *val = leak_buf(v.to_vec(), vallen);
             1
         }
         // TODO proper error propagation

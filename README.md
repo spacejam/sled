@@ -1,7 +1,7 @@
 
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face.png" width="20%" height="auto" />
+  <img src="https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face_anti-transphobia.png" width="20%" height="auto" />
 </p>
 
 
@@ -12,19 +12,16 @@
 [![chat](https://img.shields.io/discord/509773073294295082.svg?logo=discord)](https://discord.gg/Z6VsXds)
 ![Open Collective backers](https://img.shields.io/opencollective/backers/sled)
 
-An (alpha) modern embedded database. Doesn't your data deserve an (alpha) beautiful new home?
+A (beta) modern embedded database. Doesn't your data deserve a (beta) beautiful new home?
 
 ```rust
 use sled::Db;
 
 let tree = Db::open(path)?;
 
-// set and get
+// insert and get, similar to std's BTreeMap
 tree.insert(k, v1);
 assert_eq!(tree.get(&k), Ok(Some(v1)));
-
-// compare and swap
-tree.cas(k, Some(v1), Some(v2));
 
 // range queries
 let mut iter = tree.range(k..);
@@ -34,17 +31,36 @@ assert_eq!(iter.next(), None);
 // deletion
 tree.remove(&k);
 
-// block until all operations are on-disk
+// compare and swap
+tree.compare_and_swap(k, Some(v1), Some(v2));
+
+// block until all operations are stable on disk
+// (flush_async also available to get a Future)
 tree.flush();
 ```
 
-We also support [reactive subscription semantics](https://github.com/spacejam/sled/wiki/reactive-semantics)
-and [merge operators](https://github.com/spacejam/sled/wiki/merge-operators)!
+If your dataset resides entirely in cache (achievable at startup by setting the cache
+to a large enough value and performing a full iteration) then all reads and writes are
+non-blocking and async-friendly, without needing to use Futures or an async runtime.
+To asynchronously suspend on the durability of writes, we support the
+[`flush_async` method](https://docs.rs/sled/latest/sled/struct.Tree.html#method.flush_async),
+which returns a Future that your async tasks can await the completion of if they require
+high durability guarantees and you are willing to pay the latency costs of fsync.
+Note that sled automatically tries to sync all data to disk several times per second
+in the background without blocking user threads.
+
+# performance
+
+* 2 million sustained writes per second with 8 threads, 1000 8 byte keys, 10 byte values, intel 9900k, nvme
+* 8.5 million sustained reads per second with 16 threads, 1000 8 byte keys, 10 byte values, intel 9900k, nvme
+
+what's the trade-off? sled uses too much disk space sometimes. this will improve significantly before 1.0.
 
 # features
 
 * [API](https://docs.rs/sled) similar to a threadsafe `BTreeMap<Vec<u8>, Vec<u8>>`
-* fully atomic single-key operations, supports [compare and swap](https://docs.rs/sled/latest/sled/struct.Tree.html#method.cas)
+* fully serializable multi-key and multi-Tree [transactions](https://docs.rs/sled/latest/sled/struct.Tree.html#method.transaction)
+* fully atomic single-key operations, supports [compare and swap](https://docs.rs/sled/latest/sled/struct.Tree.html#method.compare_and_swap)
 * zero-copy reads
 * [write batch support](https://docs.rs/sled/latest/sled/struct.Tree.html#method.batch)
 * [subscription/watch semantics on key prefixes](https://github.com/spacejam/sled/wiki/reactive-semantics)
@@ -55,7 +71,7 @@ and [merge operators](https://github.com/spacejam/sled/wiki/merge-operators)!
 * [zstd](https://github.com/facebook/zstd) compression (use the `compression` build feature)
 * cpu-scalable lock-free implementation
 * SSD-optimized log-structured storage
-* prefix encodes stored keys, reducing the storage cost of complex keys
+* prefix encoded keys, reducing the storage cost of complex keys
 
 # architecture
 
@@ -73,17 +89,26 @@ for a more detailed overview of where we're at and where we see things going!
 1. don't wake up operators. bring reliability techniques from academia into real-world practice.
 1. don't use so much electricity. our data structures should play to modern hardware's strengths.
 
+# known issues, warnings
+
+* if reliability is your primary constraint, use SQLite. sled is beta.
+* if storage price performance is your primary constraint, use RocksDB. sled uses too much space sometimes.
+* quite young, should be considered unstable for the time being.
+* the on-disk format is going to change in ways that require manual migrations before the `1.0.0` release!
+* until `1.0.0`, sled targets the *current* stable version of rust. after `1.0.0`, we will aim to trail current by at least one version. If this is an issue for your business, please consider helping us reach `1.0.0` sooner by financially supporting our efforts to get there.
+
 # plans
 
+* Typed Trees that support working directly with serde-friendly types instead of raw bytes,
+  and also allow the deserialized form to be stored in the shared cache for speedy access.
 * [LSM tree](https://en.wikipedia.org/wiki/Log-structured_merge-tree)-like write performance
   with [traditional B+ tree](https://en.wikipedia.org/wiki/B%2B_tree)-like read performance
-* MVCC, serializable transactions, and snapshots
+* MVCC and snapshots
 * forward-compatible binary format
 * concurrent snapshot delta generation and recovery
-* first-class programmatic access to replication stream
 * consensus protocol for [PC/EC](https://en.wikipedia.org/wiki/PACELC_theorem) systems
-* pluggable conflict detection and resolution strategies for [PA/EL](https://en.wikipedia.org/wiki/PACELC_theorem) systems
-* multiple collection types like tables, queues, Merkle trees, bloom filters, etc... unified under a single transactional and operational domain
+* pluggable conflict detection and resolution strategies for gossip + CRDT-based [PA/EL](https://en.wikipedia.org/wiki/PACELC_theorem) systems
+* first-class programmatic access to replication stream
 
 # fund feature development and get commercial support
 

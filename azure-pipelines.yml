@@ -20,16 +20,16 @@ strategy:
     linux-stable:
       imageName: 'ubuntu-16.04'
       rustup_toolchain: stable
-    doctests:
+    examples:
       imageName: 'ubuntu-16.04'
       rustup_toolchain: stable
-      testKind: 'doctests'
+      testKind: 'examples'
     sanitizers:
       imageName: 'ubuntu-16.04'
       rustup_toolchain: nightly
       testKind: 'sanitizers'
     cross-compile:
-      imageName: 'ubuntu-16.04'
+      imageName: 'macos-10.13'
       rustup_toolchain: nightly
       testKind: 'cross-compile'
 
@@ -48,52 +48,32 @@ steps:
       echo "##vso[task.setvariable variable=PATH;]%PATH%;%USERPROFILE%\.cargo\bin"
     displayName: Windows install rust
     condition: eq( variables['Agent.OS'], 'Windows_NT' )
-  - script: cargo build --all --release
+  - task: CacheBeta@1
+    inputs:
+      path: target
+      key: Cargo.toml | $(testKind) | $(Agent.OS)
+    displayName: 'Cache Build'
+    condition: ne( variables['testKind'], 'sanitizers' )
+  - script: |
+      find target -exec chmod +x {} \; || true
+    displayName: chmod cache workaround
+    condition: ne( variables['Agent.OS'], 'Windows_NT' )
+  - script: cargo build --release --tests --features=testing
     displayName: Cargo build
     condition: eq( variables['testKind'], 'default' )
-  - script: cargo test --all --release
+  - script: cargo test --release --tests --features=testing -- --nocapture
     displayName: Cargo test
     condition: eq( variables['testKind'], 'default' )
   - script: |
-      pushd examples/playground &&
-      cargo check &&
-      popd &&
-      pushd examples/crdt_merge_store &&
-      cargo check &&
-      popd &&
-      pushd crates/sled &&
-      echo "testing sled doctests" &&
-      cargo test &&
-      popd &&
-      pushd crates/pagecache &&
-      echo "testing pagecache doctests" &&
-      cargo test
-    displayName: doctests
-    condition: eq( variables['testKind'], 'doctests' )
+      cargo run --example playground &&
+      cargo run --example crdt_merge_store
+    displayName: examples
+    condition: eq( variables['testKind'], 'examples' )
   - script: |
-      echo "cross build" &&
-      echo "https://github.com/rust-lang/cargo/issues/4753" &&
-      rustup target add aarch64-fuchsia &&
-      rustup target add aarch64-linux-android &&
-      rustup target add i686-linux-android &&
-      rustup target add i686-unknown-linux-gnu &&
-      rustup target add x86_64-pc-windows-gnu &&
-      rustup target add x86_64-linux-android &&
-      rustup target add x86_64-fuchsia &&
-      pushd crates/sled      && cargo check --target aarch64-fuchsia && popd &&
-      pushd crates/sled      && cargo check --target aarch64-linux-android && popd &&
-      pushd crates/sled      && cargo check --target i686-linux-android && popd &&
-      pushd crates/sled      && cargo check --target i686-unknown-linux-gnu && popd &&
-      pushd crates/sled      && cargo check --target x86_64-pc-windows-gnu  && popd &&
-      pushd crates/sled      && cargo check --target x86_64-linux-android  && popd &&
-      pushd crates/sled      && cargo check --target x86_64-fuchsia && popd &&
-      pushd crates/pagecache && cargo check --target aarch64-fuchsia && popd &&
-      pushd crates/pagecache && cargo check --target aarch64-linux-android && popd &&
-      pushd crates/pagecache && cargo check --target i686-linux-android && popd &&
-      pushd crates/pagecache && cargo check --target i686-unknown-linux-gnu && popd &&
-      pushd crates/pagecache && cargo check --target x86_64-pc-windows-gnu  && popd &&
-      pushd crates/pagecache && cargo check --target x86_64-linux-android && popd &&
-      pushd crates/pagecache && cargo check --target x86_64-fuchsia && popd
+      set -eo pipefail
+      echo "cross build"
+      echo "https://github.com/rust-lang/cargo/issues/4753"
+      scripts/cross_compile.sh
     displayName: cross-build
     condition: eq( variables['testKind'], 'cross-compile' )
   - script: |
