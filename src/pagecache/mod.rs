@@ -545,7 +545,7 @@ impl PageCache {
                 // set up idgen
                 was_recovered = false;
 
-                let config_update = Update::Config(PersistedConfig {
+                let config_update = Update::Config(StorageParameters {
                     segment_size: config.segment_size,
                     use_compression: config.use_compression,
                     version: config.version,
@@ -690,7 +690,7 @@ impl PageCache {
 
             match stack_iter.next() {
                 Some((Some(Update::Free), cache_info)) => {
-                    (pid, PagePtr { cached_ptr: head, ts: cache_info.ts })
+                    (pid, PagePtr { cached_pointer: head, ts: cache_info.ts })
                 }
                 other => panic!(
                     "failed to re-allocate pid {} which \
@@ -707,10 +707,10 @@ impl PageCache {
 
             self.inner.insert(pid, new_stack);
 
-            (pid, PagePtr { cached_ptr: Shared::null(), ts: 0 })
+            (pid, PagePtr { cached_pointer: Shared::null(), ts: 0 })
         };
 
-        let new_ptr =
+        let new_pointer =
             self.cas_page(pid, key, new, false, guard)?.unwrap_or_else(|e| {
                 panic!(
                     "should always be able to install \
@@ -720,7 +720,7 @@ impl PageCache {
                 )
             });
 
-        Ok((pid, new_ptr))
+        Ok((pid, new_pointer))
     }
 
     /// Free a particular page.
@@ -745,9 +745,10 @@ impl PageCache {
             ));
         }
 
-        let new_ptr = self.cas_page(pid, old, Update::Free, false, guard)?;
+        let new_pointer =
+            self.cas_page(pid, old, Update::Free, false, guard)?;
 
-        if new_ptr.is_ok() {
+        if new_pointer.is_ok() {
             let free = self.free.clone();
             guard.defer(move || {
                 let mut free = free.lock();
@@ -760,7 +761,7 @@ impl PageCache {
             });
         }
 
-        Ok(new_ptr.map_err(|o| o.map(|(ptr, _)| (ptr, ()))))
+        Ok(new_pointer.map_err(|o| o.map(|(pointer, _)| (pointer, ()))))
     }
 
     /// Try to atomically add a `PageFrag` to the page.
@@ -789,8 +790,9 @@ impl PageCache {
                 pub static COUNT: RefCell<u32> = RefCell::new(1);
             }
 
-            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-            let fail_seed = std::cmp::max(3, now.as_nanos() as u32 % 128);
+            let time_now =
+                SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+            let fail_seed = std::cmp::max(3, time_now.as_nanos() as u32 % 128);
 
             let inject_failure = COUNT.with(|c| {
                 let mut cr = c.borrow_mut();
@@ -803,8 +805,10 @@ impl PageCache {
                     "injecting a randomized failure in the link of pid {}",
                     pid
                 );
-                if let Some((current_ptr, _frag, _sz)) = self.get(pid, guard)? {
-                    return Ok(Err(Some((current_ptr, new))));
+                if let Some((current_pointer, _frag, _sz)) =
+                    self.get(pid, guard)?
+                {
+                    return Ok(Err(Some((current_pointer, new))));
                 } else {
                     return Ok(Err(None));
                 }
@@ -821,19 +825,22 @@ impl PageCache {
         let stack_iter = StackIter::from_ptr(head, &guard);
         let stack_len = stack_iter.size_hint().1.unwrap();
         if stack_len >= PAGE_CONSOLIDATION_THRESHOLD {
-            let current_frag =
-                if let Some((current_ptr, frag, _sz)) = self.get(pid, guard)? {
-                    if old.ts != current_ptr.ts {
-                        assert!(old.cached_ptr != current_ptr.cached_ptr);
-                        // the page has changed in the mean time,
-                        // and merging frags may violate correctness
-                        // invariants
-                        return Ok(Err(Some((current_ptr, new))));
-                    }
-                    frag
-                } else {
-                    return Ok(Err(None));
-                };
+            let current_frag = if let Some((current_pointer, frag, _sz)) =
+                self.get(pid, guard)?
+            {
+                if old.ts != current_pointer.ts {
+                    assert!(
+                        old.cached_pointer != current_pointer.cached_pointer
+                    );
+                    // the page has changed in the mean time,
+                    // and merging frags may violate correctness
+                    // invariants
+                    return Ok(Err(Some((current_pointer, new))));
+                }
+                frag
+            } else {
+                return Ok(Err(None));
+            };
 
             let update: Frag = {
                 let _measure = Measure::new(&M.merge_page);
@@ -853,7 +860,7 @@ impl PageCache {
 
             let cache_info = CacheInfo {
                 lsn: -1,
-                ptr: DiskPtr::Inline(666_666_666),
+                pointer: DiskPtr::Inline(666_666_666),
                 ts: 0,
                 log_size: 0,
             };
@@ -875,7 +882,7 @@ impl PageCache {
                 self.log.reserve(LogKind::Append, pid, &bytes)?;
 
             let lsn = log_reservation.lsn();
-            let ptr = log_reservation.ptr();
+            let pointer = log_reservation.pointer();
 
             // NB the setting of the timestamp is quite
             // correctness-critical! We use the ts to
@@ -897,7 +904,7 @@ impl PageCache {
 
             let cache_info = CacheInfo {
                 lsn,
-                ptr,
+                pointer,
                 ts,
                 log_size: log_reservation.reservation_len(),
             };
@@ -911,10 +918,10 @@ impl PageCache {
             }
 
             debug_delay();
-            let result = stack.cap_node(old.cached_ptr, node, &guard);
+            let result = stack.cap_node(old.cached_pointer, node, &guard);
 
             match result {
-                Ok(cached_ptr) => {
+                Ok(cached_pointer) => {
                     trace!("link of pid {} succeeded", pid);
 
                     // if the last update for this page was also
