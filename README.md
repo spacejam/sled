@@ -6,9 +6,12 @@
 
 
 # sled - ~~it's all downhill from here!!!~~
-[![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled)
-[![chat](https://img.shields.io/discord/509773073294295082.svg?logo=discord)](https://discord.gg/Z6VsXds)
-![Open Collective backers](https://img.shields.io/opencollective/backers/sled)
+
+| key | value |
+| --- | --- |
+| documentation | [![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled) |
+| communication | [![chat](https://img.shields.io/discord/509773073294295082.svg?logo=discord)](https://discord.gg/Z6VsXds) |
+| renumeration |![Open Collective backers](https://img.shields.io/opencollective/backers/sled) |
 
 A (beta) modern embedded database. Doesn't your data deserve a (beta) beautiful new home?
 
