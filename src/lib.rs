@@ -77,34 +77,33 @@
     html_logo_url = "https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face_anti-transphobia.png"
 )]
 #![cfg_attr(test, deny(warnings))]
-#![deny(missing_docs)]
-#![deny(future_incompatible)]
-#![deny(nonstandard_style)]
-#![deny(rust_2018_idioms)]
-#![deny(missing_copy_implementations)]
-#![deny(trivial_casts)]
-#![deny(trivial_numeric_casts)]
-#![deny(unsafe_code)]
-#![deny(unused_qualifications)]
-#![deny(clippy::doc_markdown)]
-#![allow(clippy::module_name_repetitions)]
-#![allow(clippy::use_self)]
-#![allow(clippy::default_trait_access)]
-#![allow(clippy::enum_glob_use)]
-#![deny(clippy::replace_consts)]
-#![deny(clippy::explicit_iter_loop)]
-#![deny(clippy::match_same_arms)]
-#![deny(clippy::used_underscore_binding)]
-#![deny(clippy::inline_always)]
-#![deny(clippy::cast_lossless)]
-#![deny(clippy::shadow_unrelated)]
-#![deny(clippy::shadow_same)]
-#![deny(clippy::shadow_reuse)]
-#![deny(clippy::cast_possible_truncation)]
-#![deny(clippy::cast_possible_wrap)]
-#![deny(clippy::cast_sign_loss)]
-#![deny(clippy::cast_precision_loss)]
-#![deny(clippy::needless_pass_by_value)]
+#![deny(
+    missing_docs,
+    future_incompatible,
+    nonstandard_style,
+    rust_2018_idioms,
+    missing_copy_implementations,
+    trivial_casts,
+    trivial_numeric_casts,
+    unsafe_code,
+    unused_qualifications
+)]
+#![deny(
+    clippy::doc_markdown,
+    clippy::replace_consts,
+    clippy::explicit_iter_loop,
+    clippy::match_same_arms,
+    clippy::used_underscore_binding,
+    clippy::inline_always,
+    clippy::cast_lossless,
+    clippy::shadow_unrelated,
+    clippy::shadow_same,
+    clippy::shadow_reuse,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
 
 #[cfg(feature = "failpoints")]
 use fail::fail_point;
