@@ -28,6 +28,7 @@
 #![allow(unused)]
 #![allow(unused_results)]
 
+use std::convert::TryFrom;
 use std::fmt::{self, Debug};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -142,6 +143,7 @@ impl Histogram {
 // bucketing of histogram values, staying roughly within 1% of the true
 // value. This fails for large values of 1e142 and above, and is
 // inaccurate for values closer to 0 than +/- 0.51 or +/- math.Inf.
+#[allow(clippy::cast_possible_truncation)]
 #[inline]
 fn compress<T: Into<f64>>(input_value: T) -> u16 {
     let value: f64 = input_value.into();
@@ -150,6 +152,7 @@ fn compress<T: Into<f64>>(input_value: T) -> u16 {
     let ln = boosted.ln();
     let compressed = PRECISION.mul_add(ln, 0.5);
     assert!(compressed <= f64::from(u16::max_value()));
+
     compressed as u16
 }
 

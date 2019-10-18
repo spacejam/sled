@@ -134,7 +134,8 @@ impl Node {
             // same size, because all keys already shared the same
             // prefix before. Here we figure out if we can shave
             // off additional bytes in the key.
-            let max_additional = u8::max_value() - left_prefix.len() as u8;
+            let max_additional =
+                u8::max_value() - u8::try_from(left_prefix.len()).unwrap();
             let right_additional_prefix_len = right_min
                 .iter()
                 .zip(right_max.iter())
@@ -183,7 +184,11 @@ impl Node {
                 right_data.push((k, v.clone()));
             }
 
-            (split_point, right_additional_prefix_len as u8, right_data)
+            (
+                split_point,
+                u8::try_from(right_additional_prefix_len).unwrap(),
+                right_data,
+            )
         }
 
         let prefix = &self.lo[..self.prefix_len as usize];

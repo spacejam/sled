@@ -72,8 +72,13 @@ impl Log {
             let (_, blob_ptr) = ptr.blob();
             read_blob(blob_ptr, &self.config).map(|(kind, buf)| {
                 let sz = MSG_HEADER_LEN + BLOB_INLINE_LEN;
-                let header =
-                    MessageHeader { kind, pid, lsn, crc32: 0, len: sz as u32 };
+                let header = MessageHeader {
+                    kind,
+                    pid,
+                    lsn,
+                    crc32: 0,
+                    len: u32::try_from(sz).unwrap(),
+                };
                 LogRead::Blob(header, buf, blob_ptr)
             })
         }

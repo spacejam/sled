@@ -394,15 +394,15 @@ impl Config {
 
         static SALT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-        let seed = SALT_COUNTER.fetch_add(1, SeqCst) as u64;
+        let seed = SALT_COUNTER.fetch_add(1, SeqCst) as u128;
 
-        let now = (SystemTime::now()
+        let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
-            << 48) as u64;
+            << 48;
 
-        let pid = u64::from(std::process::id());
+        let pid = u128::from(std::process::id());
 
         let salt = (pid << 16) + now + seed;
 

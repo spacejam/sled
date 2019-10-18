@@ -374,7 +374,7 @@ impl Segment {
 
         let live = self.present.len() * 100 / total;
         assert!(live <= 100);
-        live as u8
+        u8::try_from(live).unwrap()
     }
 
     fn can_free(&self) -> bool {
@@ -485,7 +485,8 @@ impl SegmentAccountant {
             // this logic allows us to free the last
             // active segment if it was empty.
             let prospective_currently_active_segment =
-                (snapshot.last_lid / segment_size as LogOffset) as usize;
+                usize::try_from(snapshot.last_lid / segment_size as LogOffset)
+                    .unwrap();
             if let Some(segment) =
                 segments.get(prospective_currently_active_segment)
             {
