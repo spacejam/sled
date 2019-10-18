@@ -10,6 +10,7 @@
 [![crates.io](https://meritbadge.herokuapp.com/sled)](https://crates.io/crates/sled)
 [![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled)
 [![chat](https://img.shields.io/discord/509773073294295082.svg?logo=discord)](https://discord.gg/Z6VsXds)
+![Open Collective backers](https://img.shields.io/opencollective/backers/sled)
 
 A (beta) modern embedded database. Doesn't your data deserve a (beta) beautiful new home?
 
@@ -115,6 +116,8 @@ Want to support the project, prioritize a specific feature, or get commercial he
 
 [![Ferrous Systems](https://ferrous-systems.com/images/ferrous-systems-mono-pos.svg)](https://ferrous-systems.com/)
 
+Want to support development but don't need commercial support? Help us out via [Open Collective](https://opencollective.com/sled)!
+
 # special thanks
 
 [![Meili](https://avatars3.githubusercontent.com/u/43250847?s=200&v=4)](https://www.meilisearch.com/)
@@ -126,6 +129,8 @@ Special thanks to [Meili](https://www.meilisearch.com/) for providing engineerin
 </p>
 
 Additional thanks to [Arm](https://www.arm.com/), [Works on Arm](https://www.worksonarm.com/) and [Packet](https://www.packet.com/), who have generously donated a 96 core monster machine to assist with intensive concurrency testing of sled. Each second that sled does not crash while running your critical stateful workloads, you are encouraged to thank these wonderful organizations. Each time sled does crash and lose your data, blame Intel.
+
+Finally, thanks to everyone who helps out by contributing on [Open Collective](https://opencollective.com/sled)!
 
 # contribution welcome!
 
