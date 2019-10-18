@@ -13,7 +13,7 @@
 | communication | [![chat](https://img.shields.io/discord/509773073294295082.svg?logo=discord)](https://discord.gg/Z6VsXds) |
 | renumeration |![Open Collective backers](https://img.shields.io/opencollective/backers/sled) |
 
-###### A (beta) modern embedded database. Doesn't your data deserve a (beta) beautiful new home?
+A (beta) modern embedded database. Doesn't your data deserve a (beta) beautiful new home?
 
 ```rust
 use sled::Db;
