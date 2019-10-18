@@ -8,7 +8,7 @@
 //! Performs no allocations after initial creation.
 //! Uses Relaxed atomics during collection.
 //!
-//! When you create it, it allocates 65k AtomicUsize's
+//! When you create it, it allocates 65k `AtomicUsize`'s
 //! that it uses for incrementing. Generating reports
 //! after running workloads on dozens of `Histogram`'s
 //! does not result in a perceptible delay, but it

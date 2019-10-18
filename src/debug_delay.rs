@@ -22,6 +22,16 @@ pub fn debug_delay() {
 
     static GLOBAL_DELAYS: AtomicUsize = AtomicUsize::new(0);
 
+    static INTENSITY: Lazy<f64, fn() -> f64> = Lazy::new(|| {
+        std::env::var("SLED_LOCK_FREE_DELAY_INTENSITY")
+            .unwrap_or_else(|_| "100.0".into())
+            .parse()
+            .expect(
+                "SLED_LOCK_FREE_DELAY_INTENSITY must be set to a \
+                 float (ideally between 1-1,000,000)",
+            )
+    });
+
     thread_local!(
         static LOCAL_DELAYS: std::cell::RefCell<usize> = std::cell::RefCell::new(0)
     );
@@ -47,16 +57,6 @@ pub fn debug_delay() {
         warn!("already destroyed TLS when this debug delay was called");
         return;
     };
-
-    static INTENSITY: Lazy<f64, fn() -> f64> = Lazy::new(|| {
-        std::env::var("SLED_LOCK_FREE_DELAY_INTENSITY")
-            .unwrap_or_else(|_| "100.0".into())
-            .parse()
-            .expect(
-                "SLED_LOCK_FREE_DELAY_INTENSITY must be set to a \
-                 float (ideally between 1-1,000,000)",
-            )
-    });
 
     if rng.gen_bool(1. / 1000.) {
         let gamma = Gamma::new(0.3, 1_000.0 * *INTENSITY).unwrap();
