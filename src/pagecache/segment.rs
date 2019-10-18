@@ -1060,7 +1060,7 @@ impl SegmentAccountant {
         );
 
         assert!(
-            lsn >= lid as Lsn,
+            lsn >= Lsn::try_from(lid).unwrap(),
             "lsn {} should always be greater than or equal to lid {}",
             lsn,
             lid

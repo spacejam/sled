@@ -1,5 +1,7 @@
 #![allow(unsafe_code)]
 
+use std::convert::TryFrom;
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::io;
 #[cfg(any(target_os = "linux"))]
@@ -55,7 +57,7 @@ pub fn get_available_memory() -> io::Result<u64> {
         return Err(io::Error::last_os_error());
     }
 
-    Ok((pages as u64) * (page_size as u64))
+    Ok(u64::try_from(pages).unwrap() * u64::try_from(page_size).unwrap())
 }
 
 pub fn get_memory_limit() -> u64 {

@@ -290,7 +290,8 @@ impl Log {
             // should never have claimed a sealed buffer
             assert!(!iobuf::is_sealed(claimed));
 
-            let reservation_lsn = iobuf.lsn + buf_offset as Lsn;
+            let reservation_lsn =
+                iobuf.lsn + Lsn::try_from(buf_offset).unwrap();
 
             // MAX is used to signify unreadiness of
             // the underlying IO buffer, and if it's
@@ -337,7 +338,8 @@ impl Log {
             let pointer = if over_blob_threshold {
                 DiskPtr::new_blob(reservation_offset, reservation_lsn)
             } else if is_blob_rewrite {
-                let blob_ptr = arr_to_u64(&*buf) as BlobPointer;
+                let blob_ptr =
+                    BlobPointer::try_from(arr_to_u64(&*buf)).unwrap();
                 DiskPtr::new_blob(reservation_offset, blob_ptr)
             } else {
                 DiskPtr::new_inline(reservation_offset)
@@ -498,7 +500,8 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
         #[allow(unsafe_code)]
         unsafe {
             let page_id = arr_to_u64(buf.get_unchecked(1..9));
-            let lsn = arr_to_u64(buf.get_unchecked(9..17)) as Lsn;
+            let lsn =
+                Lsn::try_from(arr_to_u64(buf.get_unchecked(9..17))).unwrap();
             let length = arr_to_u32(buf.get_unchecked(17..21));
             let crc32 = arr_to_u32(buf.get_unchecked(21..)) ^ 0xFFFF_FFFF;
 
@@ -552,11 +555,12 @@ impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
             let crc32_header =
                 arr_to_u32(buf.get_unchecked(0..4)) ^ 0xFFFF_FFFF;
 
-            let xor_lsn = arr_to_u64(buf.get_unchecked(4..12)) as Lsn;
+            let xor_lsn =
+                Lsn::try_from(arr_to_u64(buf.get_unchecked(4..12))).unwrap();
             let lsn = xor_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
 
             let xor_max_stable_lsn =
-                arr_to_u64(buf.get_unchecked(12..20)) as Lsn;
+                Lsn::try_from(arr_to_u64(buf.get_unchecked(12..20))).unwrap();
             let max_stable_lsn = xor_max_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
 
             let crc32_tested = crc32(&buf[4..20]);

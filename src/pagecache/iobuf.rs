@@ -315,7 +315,7 @@ impl IoBufs {
         let segment_size = self.config.segment_size;
 
         assert_eq!(
-            (log_offset % segment_size as LogOffset) as Lsn,
+            Lsn::try_from(log_offset % segment_size as LogOffset).unwrap(),
             base_lsn % segment_size as Lsn
         );
 
