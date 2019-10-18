@@ -1,13 +1,3 @@
-
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face_anti-transphobia.png" width="20%" height="auto" />
-</p>
-
-
-# sled - ~~it's all downhill from here!!!~~
-
-<center>
   
 | key | value |
 | --- | --- |
@@ -15,7 +5,12 @@
 | communication | [![chat](https://img.shields.io/discord/509773073294295082.svg?logo=discord)](https://discord.gg/Z6VsXds) |
 | renumeration |![Open Collective backers](https://img.shields.io/opencollective/backers/sled) |
 
-</center>
+<p align="center">
+  <img src="https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face_anti-transphobia.png" width="20%" height="auto" />
+</p>
+
+
+# sled - ~~it's all downhill from here!!!~~
 
 A (beta) modern embedded database. Doesn't your data deserve a (beta) beautiful new home?
 
