@@ -86,6 +86,7 @@
 #![deny(trivial_numeric_casts)]
 #![deny(unsafe_code)]
 #![deny(unused_qualifications)]
+#![deny(clippy::pedantic)]
 
 #[cfg(feature = "failpoints")]
 use fail::fail_point;
