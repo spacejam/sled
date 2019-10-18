@@ -502,9 +502,8 @@ impl SegmentAccountant {
             }
         };
 
-        assert!(self.config.segment_cleanup_threshold < 100.);
         let cleanup_threshold =
-            (self.config.segment_cleanup_threshold * 100.) as usize;
+            usize::from(self.config.segment_cleanup_threshold);
         let drain_sz = segment_size * 100 / cleanup_threshold;
 
         for (idx, segment) in segments.iter_mut().enumerate() {

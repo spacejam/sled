@@ -17,18 +17,18 @@ use crate::debug_delay;
 #[doc(hidden)]
 pub const PAGETABLE_NODE_SZ: usize = size_of::<Node1<()>>();
 
-const FAN_FACTOR: u64 = 18;
-const FAN_OUT: u64 = 1 << FAN_FACTOR;
-const FAN_MASK: u64 = FAN_OUT - 1;
+const FAN_FACTOR: usize = 18;
+const FAN_OUT: usize = 1 << FAN_FACTOR;
+const FAN_MASK: usize = FAN_OUT - 1;
 
 pub type PageId = u64;
 
 struct Node1<T: Send + 'static> {
-    children: [AtomicPtr<Node2<T>>; FAN_OUT as usize],
+    children: [AtomicPtr<Node2<T>>; FAN_OUT],
 }
 
 struct Node2<T: Send + 'static> {
-    children: [AtomicPtr<T>; FAN_OUT as usize],
+    children: [AtomicPtr<T>; FAN_OUT],
 }
 
 impl<T: Send + 'static> Node1<T> {
@@ -175,7 +175,7 @@ fn traverse<'g, T: 'static + Send>(
     &l2[l2k]
 }
 
-#[inline(always)]
+#[inline]
 fn split_fanout(id: PageId) -> (usize, usize) {
     // right shift 32 on 32-bit pointer systems panics
     #[cfg(target_pointer_width = "64")]
@@ -188,7 +188,7 @@ fn split_fanout(id: PageId) -> (usize, usize) {
     );
 
     let left = id >> FAN_FACTOR;
-    let right = id & FAN_MASK;
+    let right = id & u64::try_from(FAN_MASK).unwrap();
 
     (safe_usize(left), safe_usize(right))
 }

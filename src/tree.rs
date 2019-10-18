@@ -628,13 +628,17 @@ impl Tree {
         F: FnMut(Option<&[u8]>) -> Option<V>,
         IVec: From<V>,
     {
-        let key = key.as_ref();
-        let mut current = self.get(key)?;
+        let key_ref = key.as_ref();
+        let mut current = self.get(key_ref)?;
 
         loop {
             let tmp = current.as_ref().map(AsRef::as_ref);
             let next = f(tmp).map(IVec::from);
-            match self.compare_and_swap::<_, _, IVec>(key, tmp, next.clone())? {
+            match self.compare_and_swap::<_, _, IVec>(
+                key_ref,
+                tmp,
+                next.clone(),
+            )? {
                 Ok(()) => return Ok(next),
                 Err(CompareAndSwapError { current: cur, .. }) => {
                     current = cur;
@@ -695,13 +699,13 @@ impl Tree {
         F: FnMut(Option<&[u8]>) -> Option<V>,
         IVec: From<V>,
     {
-        let key = key.as_ref();
-        let mut current = self.get(key)?;
+        let key_ref = key.as_ref();
+        let mut current = self.get(key_ref)?;
 
         loop {
             let tmp = current.as_ref().map(AsRef::as_ref);
             let next = f(tmp);
-            match self.compare_and_swap(key, tmp, next)? {
+            match self.compare_and_swap(key_ref, tmp, next)? {
                 Ok(()) => return Ok(current),
                 Err(CompareAndSwapError { current: cur, .. }) => {
                     current = cur;

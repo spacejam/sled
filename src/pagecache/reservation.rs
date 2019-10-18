@@ -132,6 +132,6 @@ impl<'a> Reservation<'a> {
         }
         self.log.exit_reservation(&self.iobuf)?;
 
-        Ok((self.lsn(), self.ptr()))
+        Ok((self.lsn(), self.pointer()))
     }
 }
