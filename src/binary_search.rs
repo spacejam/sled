@@ -20,7 +20,7 @@ pub fn interpolation_search<'a, T>(
     if size == 0 || *key < *s[0].0 {
         return Err(0);
     }
-    let mut base = 0usize;
+    let mut base = 0_usize;
     let mut iteration = 0;
     while size > 1 {
         let half = if iteration < 2 {
@@ -51,8 +51,9 @@ pub fn interpolation_search<'a, T>(
 }
 
 fn interpolate(search: &[u8], min: &[u8], max: &[u8], size: usize) -> usize {
-    assert!(search >= min);
     const SZ: usize = std::mem::size_of::<usize>();
+
+    assert!(search >= min);
 
     let common_len =
         std::cmp::min(search.len(), std::cmp::min(min.len(), max.len()));
@@ -76,10 +77,11 @@ fn interpolate(search: &[u8], min: &[u8], max: &[u8], size: usize) -> usize {
     let range = max_usize - min_usize;
     let offset = search_usize - min_usize;
 
-    let prop = range as f64 / size as f64;
+    let prop = (range * 1024) / size;
+    let index = (prop * offset) / 1024;
 
-    // float protection
-    std::cmp::min(size, (prop * offset as f64) as usize)
+    // overflow protection
+    std::cmp::min(size, index)
 }
 
 #[test]
