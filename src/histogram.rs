@@ -73,7 +73,7 @@ impl Debug for Histogram {
 impl Histogram {
     /// Record a value.
     #[inline]
-    pub fn measure<T: Into<f64>>(&self, raw_value: T) {
+    pub fn measure<T: Copy + Into<f64>>(&self, raw_value: T) {
         #[cfg(not(feature = "no_metrics"))]
         {
             let value_float: f64 = raw_value.into();

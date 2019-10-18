@@ -516,7 +516,7 @@ impl Tree {
                 self.view_for_key(key.as_ref(), &guard)?;
 
             let (encoded_key, current_value) = node.node_kv_pair(key.as_ref());
-            let matches = match (&old, &current_value) {
+            let matches = match (old.as_ref(), &current_value) {
                 (None, None) => true,
                 (Some(ref o), Some(ref c)) => o.as_ref() == &**c,
                 _ => false,
@@ -749,8 +749,8 @@ impl Tree {
     ///
     /// thread.join().unwrap();
     /// ```
-    pub fn watch_prefix(&self, prefix: Vec<u8>) -> Subscriber {
-        self.subscriptions.register(prefix)
+    pub fn watch_prefix<P: AsRef<[u8]>>(&self, prefix: P) -> Subscriber {
+        self.subscriptions.register(prefix.as_ref())
     }
 
     /// Synchronously flushes all dirty IO buffers and calls

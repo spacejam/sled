@@ -69,17 +69,17 @@ pub(crate) struct Subscriptions {
 }
 
 impl Subscriptions {
-    pub(crate) fn register(&self, prefix: Vec<u8>) -> Subscriber {
+    pub(crate) fn register(&self, prefix: &[u8]) -> Subscriber {
         let r_mu = {
             let r_mu = self.watched.read();
-            if r_mu.contains_key(&prefix) {
+            if r_mu.contains_key(prefix) {
                 r_mu
             } else {
                 drop(r_mu);
                 let mut w_mu = self.watched.write();
-                if !w_mu.contains_key(&prefix) {
+                if !w_mu.contains_key(prefix) {
                     let old = w_mu
-                        .insert(prefix.clone(), Arc::new(RwLock::new(vec![])));
+                        .insert(prefix.to_vec(), Arc::new(RwLock::new(vec![])));
                     assert!(old.is_none());
                 }
                 drop(w_mu);
@@ -89,7 +89,7 @@ impl Subscriptions {
 
         let (tx, rx) = sync_channel(1024);
 
-        let arc_senders = &r_mu[&prefix];
+        let arc_senders = &r_mu[prefix];
         let mut w_senders = arc_senders.write();
 
         let id = ID_GEN.fetch_add(1, Relaxed);
@@ -156,14 +156,14 @@ impl ReservedBroadcast {
 fn basic_subscription() {
     let subs = Subscriptions::default();
 
-    let mut s2 = subs.register([0].to_vec());
-    let mut s3 = subs.register([0, 1].to_vec());
-    let mut s4 = subs.register([1, 2].to_vec());
+    let mut s2 = subs.register(&[0]);
+    let mut s3 = subs.register(&[0, 1]);
+    let mut s4 = subs.register(&[1, 2]);
 
     let r1 = subs.reserve(b"awft");
     assert!(r1.is_none());
 
-    let mut s1 = subs.register([].to_vec());
+    let mut s1 = subs.register(&[]);
 
     let k2: Arc<[u8]> = vec![].into();
     let r2 = subs.reserve(&k2).unwrap();

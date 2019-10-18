@@ -461,7 +461,7 @@ impl PageCache {
             inner: PageTable::default(),
             next_pid_to_allocate: AtomicU64::new(0),
             free: Arc::new(Mutex::new(BinaryHeap::new())),
-            log: Log::start(config.clone(), &snapshot)?,
+            log: Log::start(config, &snapshot)?,
             lru,
             updates: AtomicU64::new(0),
             last_snapshot: Arc::new(Mutex::new(Some(snapshot))),
@@ -546,9 +546,9 @@ impl PageCache {
                 was_recovered = false;
 
                 let config_update = Update::Config(StorageParameters {
-                    segment_size: config.segment_size,
-                    use_compression: config.use_compression,
-                    version: config.version,
+                    segment_size: pc.config.segment_size,
+                    use_compression: pc.config.use_compression,
+                    version: pc.config.version,
                 });
 
                 let (config_id, _) =
