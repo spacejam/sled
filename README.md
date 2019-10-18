@@ -132,15 +132,6 @@ Additional thanks to [Arm](https://www.arm.com/), [Works on Arm](https://www.wor
 
 Finally, thanks to everyone who helps out by contributing on [Open Collective](https://opencollective.com/sled)!
 
-# known issues, warnings
-
-* the on-disk format is going to change in non-forward compatible ways
-  before the `1.0.0` release! after that, we will always support
-  forward migrations.
-* quite young, should be considered unstable for the time being
-* the C API is likely to change rapidly
-* writepath is not well optimized yet. readpath is essentially wait-free and zero-copy.
-
 # contribution welcome!
 
 want to help advance the state of the art in open source embedded
