@@ -165,19 +165,19 @@ impl StorageParameters {
 ///     .read_only(true);
 /// ```
 #[derive(Default, Debug, Clone)]
-pub struct Config(Arc<ConfigInner>);
+pub struct Config(Arc<Inner>);
 
 impl Deref for Config {
-    type Target = ConfigInner;
+    type Target = Inner;
 
-    fn deref(&self) -> &ConfigInner {
+    fn deref(&self) -> &Inner {
         &self.0
     }
 }
 
 #[doc(hidden)]
 #[derive(Debug, Clone)]
-pub struct ConfigInner {
+pub struct Inner {
     #[doc(hidden)]
     pub cache_capacity: u64,
     #[doc(hidden)]
@@ -189,7 +189,7 @@ pub struct ConfigInner {
     #[doc(hidden)]
     pub read_only: bool,
     #[doc(hidden)]
-    pub segment_cleanup_threshold: f64,
+    pub segment_cleanup_threshold: u8,
     #[doc(hidden)]
     pub segment_cleanup_skew: usize,
     #[doc(hidden)]
@@ -217,7 +217,7 @@ pub struct ConfigInner {
     pub event_log: Arc<event_log::EventLog>,
 }
 
-impl Default for ConfigInner {
+impl Default for Inner {
     fn default() -> Self {
         Self {
             segment_size: 2 << 22, // 8mb
@@ -229,7 +229,7 @@ impl Default for ConfigInner {
             flush_every_ms: Some(500),
             snapshot_after_ops: 1_000_000,
             snapshot_path: None,
-            segment_cleanup_threshold: 0.40,
+            segment_cleanup_threshold: 40,
             segment_cleanup_skew: 10,
             temporary: false,
             segment_mode: SegmentMode::Gc,
@@ -244,7 +244,7 @@ impl Default for ConfigInner {
     }
 }
 
-impl ConfigInner {
+impl Inner {
     // Get the path of the database
     #[doc(hidden)]
     pub fn get_path(&self) -> PathBuf {
@@ -460,12 +460,12 @@ impl Config {
             "segment_size should be <= 16mb"
         );
         supported!(
-            match self.segment_cleanup_threshold.partial_cmp(&0.01) {
-                Some(std::cmp::Ordering::Equal)
-                | Some(std::cmp::Ordering::Greater) => true,
-                Some(std::cmp::Ordering::Less) | None => false,
-            },
-            "segment_cleanup_threshold must be >= 1%"
+            self.segment_cleanup_threshold >= 1,
+            "segment_cleanup_threshold must be >= 1 (1%)"
+        );
+        supported!(
+            self.segment_cleanup_threshold < 100,
+            "segment_cleanup_threshold must be < 100 (100%)"
         );
         supported!(
             self.segment_cleanup_skew < 99,
@@ -615,7 +615,7 @@ impl Config {
     }
 
     fn serialize(&self) -> Vec<u8> {
-        let persisted_config = PersistedConfig {
+        let persisted_config = StorageParameters {
             version: self.version,
             segment_size: self.segment_size,
             use_compression: self.use_compression,
@@ -642,7 +642,7 @@ impl Config {
         Ok(())
     }
 
-    fn read_config(&self) -> Result<Option<PersistedConfig>> {
+    fn read_config(&self) -> Result<Option<StorageParameters>> {
         let path = self.config_path();
 
         let f_res = fs::OpenOptions::new().read(true).open(&path);
@@ -682,7 +682,7 @@ impl Config {
             );
         }
 
-        PersistedConfig::deserialize(&buf).map(Some)
+        StorageParameters::deserialize(&buf).map(Some)
     }
 
     /// Return the global error if one was encountered during
@@ -761,7 +761,7 @@ impl Deref for RunningConfig {
     }
 }
 
-impl Drop for ConfigInner {
+impl Drop for Inner {
     fn drop(&mut self) {
         if self.print_profile_on_drop {
             M.print_profile();
