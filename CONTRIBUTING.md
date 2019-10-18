@@ -26,5 +26,4 @@ General considerations:
 * all PR's block on breaking API changes (with the sole exception of the emerging C API)
 * don't be a jerk - here's our [code of conduct](./code-of-conduct.md)
 
-Want to help Sled but don't have time for individual contributions? Contributions via [Open Collective](https://opencollective.com/sled) help support those who make Sled great and cover costs that arise during development.
-
+Want to help sled but don't have time for individual contributions? Contribute via [Open Collective](https://opencollective.com/sled) to support the people pushing the project forward!
