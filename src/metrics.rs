@@ -26,8 +26,8 @@ pub(crate) fn clock() -> f64 {
         #[cfg(target_arch = "x86_64")]
         #[allow(unsafe_code)]
         unsafe {
-            let mut _aux = 0;
-            core::arch::x86_64::__rdtscp(&mut _aux) as f64
+            let mut aux = 0;
+            core::arch::x86_64::__rdtscp(&mut aux) as f64
         }
 
         #[cfg(not(target_arch = "x86_64"))]

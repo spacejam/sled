@@ -143,13 +143,13 @@ impl Histogram {
 // value. This fails for large values of 1e142 and above, and is
 // inaccurate for values closer to 0 than +/- 0.51 or +/- math.Inf.
 #[inline]
-fn compress<T: Into<f64>>(value: T) -> u16 {
-    let value: f64 = value.into();
+fn compress<T: Into<f64>>(input_value: T) -> u16 {
+    let value: f64 = input_value.into();
     let abs = value.abs();
     let boosted = 1. + abs;
     let ln = boosted.ln();
     let compressed = PRECISION.mul_add(ln, 0.5);
-    assert!(compressed <= f64::from(std::u16::MAX));
+    assert!(compressed <= f64::from(u16::max_value()));
     compressed as u16
 }
 

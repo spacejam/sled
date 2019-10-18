@@ -180,7 +180,7 @@ pub use self::{
 use {
     self::{
         binary_search::interpolation_search_lub,
-        config::PersistedConfig,
+        config::StorageParameters,
         context::Context,
         frag::Frag,
         histogram::Histogram,
