@@ -1110,22 +1110,23 @@ impl PageCache {
             let result = stack.cas(head, node, &guard);
 
             if result.is_ok() {
-                let ptrs = ptrs_from_stack(head, guard);
+                let pointers = pointers_from_stack(head, guard);
                 let lsn = log_reservation.lsn();
 
-                self.log
-                    .with_sa(|sa| sa.mark_replace(pid, lsn, ptrs, new_ptr))?;
+                self.log.with_sa(|sa| {
+                    sa.mark_replace(pid, lsn, pointers, new_pointer)
+                })?;
 
                 // NB complete must happen AFTER calls to SA, because
                 // when the iobuf's n_writers hits 0, we may transition
                 // the segment to inactive, resulting in a race otherwise.
-                let _ptr = log_reservation.complete()?;
+                let _pointer = log_reservation.complete()?;
 
                 trace!("rewriting pid {} succeeded", pid);
 
                 Ok(())
             } else {
-                let _ptr = log_reservation.abort()?;
+                let _pointer = log_reservation.abort()?;
 
                 trace!("rewriting pid {} failed", pid);
 
@@ -1147,22 +1148,13 @@ impl PageCache {
             } else if let Some((key, frag, _sz)) = self.get(pid, guard)? {
                 (key, Update::Compact(frag.clone()))
             } else {
-                let stack = match self.inner.get(pid) {
-                    None => panic!(
-                        "expected to find existing stack \
-                         for freed pid {}",
-                        pid
-                    ),
-                    Some(p) => p,
-                };
-
                 let head = stack.head(&guard);
 
                 let mut stack_iter = StackIter::from_ptr(head, &guard);
 
                 match stack_iter.next() {
                     Some((Some(Update::Free), cache_info)) => (
-                        PagePtr { cached_ptr: head, ts: cache_info.ts },
+                        PagePtr { cached_pointer: head, ts: cache_info.ts },
                         Update::Free,
                     ),
                     other => {
@@ -1268,7 +1260,7 @@ impl PageCache {
         loop {
             let log_reservation = self.log.reserve(log_kind, pid, &bytes)?;
             let lsn = log_reservation.lsn();
-            let new_ptr = log_reservation.ptr();
+            let new_pointer = log_reservation.pointer();
 
             // NB the setting of the timestamp is quite
             // correctness-critical! We use the ts to
@@ -1292,7 +1284,7 @@ impl PageCache {
             let cache_info = CacheInfo {
                 ts,
                 lsn,
-                ptr: new_ptr,
+                pointer: new_pointer,
                 log_size: log_reservation.reservation_len(),
             };
 
@@ -1302,35 +1294,39 @@ impl PageCache {
             )]);
 
             debug_delay();
-            let result = stack.cas(old.cached_ptr, node, &guard);
+            let result = stack.cas(old.cached_pointer, node, &guard);
 
             match result {
-                Ok(cached_ptr) => {
+                Ok(cached_pointer) => {
                     trace!("cas_page succeeded on pid {}", pid);
-                    let pointers = ptrs_from_stack(old.cached_ptr, guard);
+                    let pointers =
+                        pointers_from_stack(old.cached_pointer, guard);
 
                     self.log.with_sa(|sa| {
-                        sa.mark_replace(pid, lsn, pointers, new_ptr)
+                        sa.mark_replace(pid, lsn, pointers, new_pointer)
                     })?;
 
                     // NB complete must happen AFTER calls to SA, because
                     // when the iobuf's n_writers hits 0, we may transition
                     // the segment to inactive, resulting in a race otherwise.
-                    let _ptr = log_reservation.complete()?;
-                    return Ok(Ok(PagePtr { cached_ptr, ts }));
+                    let _pointer = log_reservation.complete()?;
+                    return Ok(Ok(PagePtr { cached_pointer, ts }));
                 }
-                Err((actual_ptr, returned_entry)) => {
+                Err((actual_pointer, returned_entry)) => {
                     trace!("cas_page failed on pid {}", pid);
-                    let _ptr = log_reservation.abort()?;
+                    let _pointer = log_reservation.abort()?;
 
                     let returned_update =
                         returned_entry.into_box().inner.0.take().unwrap();
 
-                    let actual_ts = unsafe { actual_ptr.deref().1.ts };
+                    let actual_ts = unsafe { actual_pointer.deref().1.ts };
 
                     if actual_ts != old.ts || is_rewrite {
                         return Ok(Err(Some((
-                            PagePtr { cached_ptr: actual_ptr, ts: actual_ts },
+                            PagePtr {
+                                cached_pointer: actual_pointer,
+                                ts: actual_ts,
+                            },
                             returned_update,
                         ))));
                     }
