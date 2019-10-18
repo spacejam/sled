@@ -54,7 +54,7 @@ what's the trade-off? sled uses too much disk space sometimes. this will improve
 * zero-copy reads
 * [write batch support](https://docs.rs/sled/latest/sled/struct.Tree.html#method.batch)
 * [subscription/watch semantics on key prefixes](https://github.com/spacejam/sled/wiki/reactive-semantics)
-* multiple keyspace support
+* [multiple keyspace/Tree support](https://docs.rs/sled/latest/sled/struct.Db.html#method.open_tree)
 * [merge operators](https://github.com/spacejam/sled/wiki/merge-operators)
 * forward and reverse iterators
 * a crash-safe monotonic [ID generator](https://docs.rs/sled/latest/sled/struct.Db.html#method.generate_id) capable of generating 75-125 million unique ID's per second
