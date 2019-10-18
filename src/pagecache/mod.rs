@@ -941,7 +941,7 @@ impl PageCache {
                         self.log.with_sa(|sa| sa.clean(pid))
                     } else {
                         self.log.with_sa(|sa| {
-                            sa.mark_link(pid, lsn, ptr);
+                            sa.mark_link(pid, lsn, pointer);
                             sa.clean(pid)
                         })
                     };
@@ -951,7 +951,7 @@ impl PageCache {
                     // the segment to inactive, resulting in a race otherwise.
                     // FIXME can result in deadlock if a node that holds SA
                     // is waiting to acquire a new reservation blocked by this?
-                    let _ptr = log_reservation.complete()?;
+                    log_reservation.complete()?;
 
                     if let Some(to_clean) = to_clean {
                         self.rewrite_page(to_clean, guard)?;
@@ -964,20 +964,26 @@ impl PageCache {
                         self.advance_snapshot()?;
                     }
 
-                    return Ok(Ok(PagePtr { cached_ptr, ts }));
+                    return Ok(Ok(PagePtr { cached_pointer, ts }));
                 }
-                Err((actual_ptr, returned_new)) => {
+                Err((actual_pointer, returned_new)) => {
                     trace!("link of pid {} failed", pid);
-                    let _ptr = log_reservation.abort()?;
-                    let actual_ts = unsafe { actual_ptr.deref().1.ts };
+                    log_reservation.abort()?;
+                    let actual_ts = unsafe { actual_pointer.deref().1.ts };
                     if actual_ts == old.ts {
                         new = Some(returned_new);
-                        old = PagePtr { cached_ptr: actual_ptr, ts: actual_ts };
+                        old = PagePtr {
+                            cached_pointer: actual_pointer,
+                            ts: actual_ts,
+                        };
                     } else {
                         let returned_update = returned_new.0.clone().unwrap();
                         let returned_frag = returned_update.into_frag();
                         return Ok(Err(Some((
-                            PagePtr { cached_ptr: actual_ptr, ts: actual_ts },
+                            PagePtr {
+                                cached_pointer: actual_pointer,
+                                ts: actual_ts,
+                            },
                             returned_frag,
                         ))));
                     }
@@ -1012,8 +1018,9 @@ impl PageCache {
                 pub static COUNT: RefCell<u32> = RefCell::new(1);
             }
 
-            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-            let fail_seed = std::cmp::max(3, now.as_nanos() as u32 % 128);
+            let time_now =
+                SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+            let fail_seed = std::cmp::max(3, time_now.as_nanos() as u32 % 128);
 
             let inject_failure = COUNT.with(|c| {
                 let mut cr = c.borrow_mut();
@@ -1026,8 +1033,10 @@ impl PageCache {
                     "injecting a randomized failure in the replace of pid {}",
                     pid
                 );
-                if let Some((current_ptr, _frag, _sz)) = self.get(pid, guard)? {
-                    return Ok(Err(Some((current_ptr, new))));
+                if let Some((current_pointer, _frag, _sz)) =
+                    self.get(pid, guard)?
+                {
+                    return Ok(Err(Some((current_pointer, new))));
                 } else {
                     return Ok(Err(None));
                 }
@@ -1051,9 +1060,9 @@ impl PageCache {
         }
 
         Ok(result.map_err(|fail| {
-            let (ptr, shared) = fail.unwrap();
+            let (pointer, shared) = fail.unwrap();
             if let Update::Compact(rejected_new) = shared {
-                Some((ptr, rejected_new))
+                Some((pointer, rejected_new))
             } else {
                 unreachable!();
             }
@@ -1083,16 +1092,17 @@ impl PageCache {
         let cache_entries: Vec<_> = stack_iter.collect();
 
         // if the page is just a single blob pointer, rewrite it.
-        if cache_entries.len() == 1 && cache_entries[0].1.ptr.is_blob() {
+        if cache_entries.len() == 1 && cache_entries[0].1.pointer.is_blob() {
             trace!("rewriting blob with pid {}", pid);
-            let blob_ptr = cache_entries[0].1.ptr.blob().1;
+            let blob_pointer = cache_entries[0].1.pointer.blob().1;
 
-            let log_reservation = self.log.rewrite_blob_ptr(pid, blob_ptr)?;
+            let log_reservation =
+                self.log.rewrite_blob_pointer(pid, blob_pointer)?;
 
-            let new_ptr = log_reservation.ptr();
+            let new_pointer = log_reservation.pointer();
             let mut new_cache_entry = cache_entries[0].clone();
 
-            new_cache_entry.1.ptr = new_ptr;
+            new_cache_entry.1.pointer = new_pointer;
 
             let node = node_from_frag_vec(vec![new_cache_entry]);
 
