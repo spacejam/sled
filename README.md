@@ -5,13 +5,17 @@
 </p>
 
 
-# sled
+# sled - ~~it's all downhill from here!!!~~
 
+<center>
+  
 | key | value |
 | --- | --- |
 | documentation | [![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled) |
 | communication | [![chat](https://img.shields.io/discord/509773073294295082.svg?logo=discord)](https://discord.gg/Z6VsXds) |
 | renumeration |![Open Collective backers](https://img.shields.io/opencollective/backers/sled) |
+
+</center>
 
 A (beta) modern embedded database. Doesn't your data deserve a (beta) beautiful new home?
 
