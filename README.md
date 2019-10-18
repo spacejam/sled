@@ -52,7 +52,7 @@ what's the trade-off? sled uses too much disk space sometimes. this will improve
 * fully serializable multi-key and multi-Tree [transactions](https://docs.rs/sled/latest/sled/struct.Tree.html#method.transaction) involving up to 69 separate Trees!
 * fully atomic single-key operations, supports [compare and swap](https://docs.rs/sled/latest/sled/struct.Tree.html#method.compare_and_swap)
 * zero-copy reads
-* [write batch support](https://docs.rs/sled/latest/sled/struct.Tree.html#method.batch)
+* [write batch support](https://docs.rs/sled/latest/sled/struct.Tree.html#method.apply_batch)
 * [subscription/watch semantics on key prefixes](https://github.com/spacejam/sled/wiki/reactive-semantics)
 * [multiple keyspace/Tree support](https://docs.rs/sled/latest/sled/struct.Db.html#method.open_tree)
 * [merge operators](https://github.com/spacejam/sled/wiki/merge-operators)
