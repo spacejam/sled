@@ -437,7 +437,7 @@ impl Config {
         (compression_factor, i32, "the compression factor to use with zstd compression"),
         (flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
         (snapshot_after_ops, u64, "number of operations between page table snapshots"),
-        (segment_cleanup_threshold, f64, "the proportion of remaining valid pages in the segment before GC defragments it"),
+        (segment_cleanup_threshold, u8, "the proportion of remaining valid pages in the segment before GC defragments it"),
         (segment_cleanup_skew, usize, "the cleanup threshold skew in percentage points between the first and last segments"),
         (segment_mode, SegmentMode, "the file segment selection mode"),
         (snapshot_path, Option<PathBuf>, "snapshot file location"),

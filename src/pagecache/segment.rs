@@ -951,7 +951,7 @@ impl SegmentAccountant {
             self.segments.iter().filter(|s| s.is_inactive()).count();
         let free_ratio = (free_segs * 100) / (1 + free_segs + inactive_segs);
 
-        if free_ratio >= (self.config.segment_cleanup_threshold * 100.) as usize
+        if free_ratio >= usize::from(self.config.segment_cleanup_threshold)
             && inactive_segs > 5
         {
             let last_index =
@@ -1175,8 +1175,7 @@ fn segment_is_drainable(
     // we calculate the cleanup threshold in a skewed way,
     // which encourages earlier segments to be rewritten
     // more frequently.
-    let base_cleanup_threshold =
-        (config.segment_cleanup_threshold * 100.) as usize;
+    let base_cleanup_threshold = usize::from(config.segment_cleanup_threshold);
     let cleanup_skew = config.segment_cleanup_skew;
 
     let relative_prop =
