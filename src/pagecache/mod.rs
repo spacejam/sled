@@ -1903,7 +1903,7 @@ impl PageCache {
                 deserialize::<Meta>(&bytes).map(Update::Meta)
             }
             BlobConfig | InlineConfig => {
-                deserialize::<PersistedConfig>(&bytes).map(Update::Config)
+                deserialize::<StorageParameters>(&bytes).map(Update::Config)
             }
             BlobAppend | InlineAppend => {
                 deserialize::<Frag>(&bytes).map(Update::Append)
@@ -2055,19 +2055,23 @@ impl PageCache {
             let guard = pin();
 
             match *state {
-                PageState::Present(ref ptrs) => {
-                    for &(lsn, ptr, sz) in ptrs {
+                PageState::Present(ref pointers) => {
+                    for &(lsn, pointer, sz) in pointers {
                         let cache_info =
-                            CacheInfo { lsn, ptr, log_size: sz, ts: 0 };
+                            CacheInfo { lsn, pointer, log_size: sz, ts: 0 };
 
                         stack.push((None, cache_info), &guard);
                     }
                 }
-                PageState::Free(lsn, ptr) => {
+                PageState::Free(lsn, pointer) => {
                     // blow away any existing state
                     trace!("load_snapshot freeing pid {}", pid);
-                    let cache_info =
-                        CacheInfo { lsn, ptr, log_size: MSG_HEADER_LEN, ts: 0 };
+                    let cache_info = CacheInfo {
+                        lsn,
+                        pointer,
+                        log_size: MSG_HEADER_LEN,
+                        ts: 0,
+                    };
                     stack.push((Some(Update::Free), cache_info), &guard);
                     self.free.lock().push(pid);
                 }
@@ -2082,16 +2086,16 @@ impl PageCache {
     }
 }
 
-fn ptrs_from_stack<'g>(
-    head_ptr: PagePtrInner<'g>,
+fn pointers_from_stack<'g>(
+    head_pointer: PagePtrInner<'g>,
     guard: &'g Guard,
 ) -> Vec<DiskPtr> {
     // generate a list of the old log ID's
-    let stack_iter = StackIter::from_ptr(head_ptr, &guard);
+    let stack_iter = StackIter::from_ptr(head_pointer, &guard);
 
-    let mut ptrs = vec![];
+    let mut pointers = vec![];
     for (_, cache_info) in stack_iter {
-        ptrs.push(cache_info.ptr);
+        pointers.push(cache_info.pointer);
     }
-    ptrs
+    pointers
 }

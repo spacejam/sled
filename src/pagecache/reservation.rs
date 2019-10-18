@@ -9,7 +9,7 @@ pub struct Reservation<'a> {
     pub(super) iobuf: Arc<IoBuf>,
     pub(super) buf: &'a mut [u8],
     pub(super) flushed: bool,
-    pub(super) ptr: DiskPtr,
+    pub(super) pointer: DiskPtr,
     pub(super) lsn: Lsn,
     pub(super) is_blob_rewrite: bool,
 }
@@ -27,13 +27,16 @@ impl<'a> Reservation<'a> {
     /// Cancel the reservation, placing a failed flush on disk, returning
     /// the (cancelled) log sequence number and file offset.
     pub fn abort(mut self) -> Result<(Lsn, DiskPtr)> {
-        if self.ptr.is_blob() && !self.is_blob_rewrite {
+        if self.pointer.is_blob() && !self.is_blob_rewrite {
             // we don't want to remove this blob if something
             // else may still be using it.
 
-            trace!("removing blob for aborted reservation at lsn {}", self.ptr);
+            trace!(
+                "removing blob for aborted reservation at lsn {}",
+                self.pointer
+            );
 
-            remove_blob(self.ptr.blob().1, &self.log.config)?;
+            remove_blob(self.pointer.blob().1, &self.log.config)?;
         }
 
         self.flush(false)
@@ -47,7 +50,7 @@ impl<'a> Reservation<'a> {
 
     /// Get the log file offset for reading this buffer in the future.
     pub fn lid(&self) -> LogOffset {
-        self.ptr.lid()
+        self.pointer.lid()
     }
 
     /// Get the log sequence number for this update.
@@ -58,8 +61,8 @@ impl<'a> Reservation<'a> {
     /// Get the underlying storage location for the written value.
     /// Note that an blob write still has a pointer in the
     /// log at the provided lid location.
-    pub fn ptr(&self) -> DiskPtr {
-        self.ptr
+    pub fn pointer(&self) -> DiskPtr {
+        self.pointer
     }
 
     /// Returns the length of the on-log reservation.
@@ -82,7 +85,7 @@ impl<'a> Reservation<'a> {
             "writing batch required stable lsn {} into \
              BatchManifest at lid {} lsn {}",
             lsn,
-            self.ptr.lid(),
+            self.pointer.lid(),
             self.lsn
         );
 
