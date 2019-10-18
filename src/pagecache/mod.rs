@@ -6,7 +6,7 @@ pub mod constants;
 pub mod logger;
 
 mod blob_io;
-mod diskptr;
+mod disk_pointer;
 mod iobuf;
 mod iterator;
 mod parallel_io;
@@ -43,13 +43,13 @@ pub use self::{
         BATCH_MANIFEST_INLINE_LEN, BLOB_INLINE_LEN, MAX_SPACE_AMPLIFICATION,
         MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
     },
-    diskptr::DiskPtr,
+    disk_pointer::DiskPtr,
     logger::{Log, LogRead},
     segment::SegmentMode,
 };
 
-/// The offset of a segment. This equals its LogOffset (or the offset of any
-/// item contained inside it) divided by the configured segment_size.
+/// The offset of a segment. This equals its `LogOffset` (or the offset of any
+/// item contained inside it) divided by the configured `segment_size`.
 pub type SegmentId = usize;
 
 /// A file offset in the database log.
@@ -271,14 +271,14 @@ type PagePtrInner<'g> = Shared<'g, stack::Node<(Option<Update>, CacheInfo)>>;
 /// A pointer to shared lock-free state bound by a pinned epoch's lifetime.
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub struct PagePtr<'g> {
-    cached_ptr: PagePtrInner<'g>,
+    cached_pointer: PagePtrInner<'g>,
     ts: u64,
 }
 
 impl<'g> PagePtr<'g> {
     /// The last Lsn number for the head of this page
     pub fn last_lsn(&self) -> Lsn {
-        unsafe { self.cached_ptr.deref().deref().1.lsn }
+        unsafe { self.cached_pointer.deref().deref().1.lsn }
     }
 }
 
@@ -289,7 +289,7 @@ unsafe impl<'g> Sync for PagePtr<'g> {}
 pub struct CacheInfo {
     pub ts: u64,
     pub lsn: Lsn,
-    pub ptr: DiskPtr,
+    pub pointer: DiskPtr,
     pub log_size: usize,
 }
 
@@ -302,7 +302,7 @@ pub(crate) enum Update {
     Free,
     Counter(u64),
     Meta(Meta),
-    Config(PersistedConfig),
+    Config(StorageParameters),
 }
 
 impl Update {
@@ -430,8 +430,8 @@ impl Drop for PageCache {
                     continue;
                 }
                 let head = pte.unwrap().deref().head(&guard);
-                let ptrs = ptrs_from_stack(head, &guard);
-                pages_before_restart.insert(pid, ptrs);
+                let pointers = pointers_from_stack(head, &guard);
+                pages_before_restart.insert(pid, pointers);
             }
 
             self.config.event_log.pages_before_restart(pages_before_restart);
@@ -490,8 +490,8 @@ impl PageCache {
                     continue;
                 }
                 let head = pte.unwrap().deref().head(&guard);
-                let ptrs = ptrs_from_stack(head, &guard);
-                pages_after_restart.insert(pid, ptrs);
+                let pointers = pointers_from_stack(head, &guard);
+                pages_after_restart.insert(pid, pointers);
             }
 
             pc.config.event_log.pages_after_restart(pages_after_restart);

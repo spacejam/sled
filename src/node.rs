@@ -329,11 +329,7 @@ impl Node {
         // keys cannot be lower than the node's lo key.
         let predecessor_key = match bound {
             Bound::Unbounded => self.prefix_encode(&self.lo),
-            Bound::Included(b) => {
-                let max = std::cmp::max(b, &self.lo);
-                self.prefix_encode(max)
-            }
-            Bound::Excluded(b) => {
+            Bound::Included(b) | Bound::Excluded(b) => {
                 let max = std::cmp::max(b, &self.lo);
                 self.prefix_encode(max)
             }
@@ -526,19 +522,19 @@ impl Default for Data {
 impl Data {
     pub(crate) fn len(&self) -> usize {
         match *self {
-            Data::Index(ref ptrs) => ptrs.len(),
+            Data::Index(ref pointers) => pointers.len(),
             Data::Leaf(ref items) => items.len(),
         }
     }
 
     pub(crate) fn parent_merge_confirm(&mut self, merged_child_pid: PageId) {
         match self {
-            Data::Index(ref mut ptrs) => {
-                let idx = ptrs
+            Data::Index(ref mut pointers) => {
+                let idx = pointers
                     .iter()
                     .position(|(_k, c)| *c == merged_child_pid)
                     .unwrap();
-                let _ = ptrs.remove(idx);
+                let _ = pointers.remove(idx);
             }
             _ => panic!("parent_merge_confirm called on leaf data"),
         }
@@ -553,7 +549,7 @@ impl Data {
 
     pub(crate) fn index_ref(&self) -> Option<&Vec<(IVec, PageId)>> {
         match *self {
-            Data::Index(ref ptrs) => Some(ptrs),
+            Data::Index(ref pointers) => Some(pointers),
             Data::Leaf(_) => None,
         }
     }

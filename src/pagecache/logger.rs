@@ -102,13 +102,13 @@ impl Log {
     /// Reserve a replacement buffer for a previously written
     /// blob write. This ensures the message header has the
     /// proper blob flag set.
-    pub(super) fn rewrite_blob_ptr(
+    pub(super) fn rewrite_blob_pointer(
         &self,
         pid: PageId,
-        blob_ptr: BlobPointer,
+        blob_pointer: BlobPointer,
     ) -> Result<Reservation<'_>> {
         let lsn_buf: [u8; std::mem::size_of::<BlobPointer>()] =
-            u64_to_arr(blob_ptr as u64);
+            u64_to_arr(blob_pointer as u64);
 
         self.reserve_inner(LogKind::Replace, pid, &lsn_buf, true)
     }
@@ -329,7 +329,7 @@ impl Log {
 
             M.log_reservation_success();
 
-            let ptr = if over_blob_threshold {
+            let pointer = if over_blob_threshold {
                 DiskPtr::new_blob(reservation_offset, reservation_lsn)
             } else if is_blob_rewrite {
                 let blob_ptr = arr_to_u64(&*buf) as BlobPointer;
@@ -344,7 +344,7 @@ impl Log {
                 buf: destination,
                 flushed: false,
                 lsn: reservation_lsn,
-                ptr,
+                pointer,
                 is_blob_rewrite,
             });
         }
