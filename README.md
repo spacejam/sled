@@ -63,6 +63,13 @@ what's the trade-off? sled uses too much disk space sometimes. this will improve
 * SSD-optimized log-structured storage
 * prefix encoded keys, reducing the storage cost of complex keys
 
+# a note on lexicographic ordering and endianness
+
+If you want to store numerical keys in a way that will play nicely with sled's iterators and ordered operations, please remember to store your numerical items in big-endian form. Little endian (the default of many things) will often appear to be doing the right thing until you start working with more than 256 items (more than 1 byte), causing lexicographic ordering of the serialized bytes to diverge from the lexicographic ordering of their deserialized numerical form.
+
+* Rust integral types have built-in `to_be_bytes` and `from_be_bytes` [methods](https://doc.rust-lang.org/std/primitive.u64.html#method.from_be_bytes).
+* bincode [can be configured](https://docs.rs/bincode/1.2.0/bincode/struct.Config.html#method.big_endian) to store integral types in big-endian form.
+
 # interaction with async
 
 If your dataset resides entirely in cache (achievable at startup by setting the cache
