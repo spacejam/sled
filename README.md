@@ -39,16 +39,6 @@ tree.compare_and_swap(k, Some(v1), Some(v2));
 tree.flush();
 ```
 
-If your dataset resides entirely in cache (achievable at startup by setting the cache
-to a large enough value and performing a full iteration) then all reads and writes are
-non-blocking and async-friendly, without needing to use Futures or an async runtime.
-To asynchronously suspend on the durability of writes, we support the
-[`flush_async` method](https://docs.rs/sled/latest/sled/struct.Tree.html#method.flush_async),
-which returns a Future that your async tasks can await the completion of if they require
-high durability guarantees and you are willing to pay the latency costs of fsync.
-Note that sled automatically tries to sync all data to disk several times per second
-in the background without blocking user threads.
-
 # performance
 
 * 2 million sustained writes per second with 8 threads, 1000 8 byte keys, 10 byte values, intel 9900k, nvme
@@ -72,6 +62,19 @@ what's the trade-off? sled uses too much disk space sometimes. this will improve
 * cpu-scalable lock-free implementation
 * SSD-optimized log-structured storage
 * prefix encoded keys, reducing the storage cost of complex keys
+
+# interaction with async
+
+If your dataset resides entirely in cache (achievable at startup by setting the cache
+to a large enough value and performing a full iteration) then all reads and writes are
+non-blocking and async-friendly, without needing to use Futures or an async runtime.
+
+To asynchronously suspend your async task on the durability of writes, we support the
+[`flush_async` method](https://docs.rs/sled/latest/sled/struct.Tree.html#method.flush_async),
+which returns a Future that your async tasks can await the completion of if they require
+high durability guarantees and you are willing to pay the latency costs of fsync.
+Note that sled automatically tries to sync all data to disk several times per second
+in the background without blocking user threads.
 
 # architecture
 
