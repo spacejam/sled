@@ -587,8 +587,9 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
 
         let xor_lsn = self.lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
         let xor_max_stable_lsn = self.max_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
-        let lsn_arr = u64_to_arr(xor_lsn as u64);
-        let highest_stable_lsn_arr = u64_to_arr(xor_max_stable_lsn as u64);
+        let lsn_arr = u64_to_arr(u64::try_from(xor_lsn).unwrap());
+        let highest_stable_lsn_arr =
+            u64_to_arr(u64::try_from(xor_max_stable_lsn).unwrap());
 
         #[allow(unsafe_code)]
         unsafe {
