@@ -2001,7 +2001,8 @@ impl PageCache {
 
     fn load_snapshot(&mut self) {
         // panic if not set
-        let snapshot = self.last_snapshot.try_lock().unwrap().clone().unwrap();
+        let snapshot_mu = self.last_snapshot.try_lock().unwrap();
+        let snapshot = snapshot_mu.as_ref().unwrap();
 
         let next_pid_to_allocate = if snapshot.pt.is_empty() {
             0

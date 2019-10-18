@@ -10,7 +10,7 @@ use super::{
 
 /// A snapshot of the state required to quickly restart
 /// the `PageCache` and `SegmentAccountant`.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Snapshot {
     /// The last read message lsn
     pub last_lsn: Lsn,
