@@ -17,15 +17,15 @@ const DEFAULT_PATH: &str = "default.sled";
 /// A persisted configuration about high-level
 /// storage file information
 #[derive(Debug, Eq, PartialEq, Clone, Copy, Serialize, Deserialize)]
-pub struct PersistedConfig {
+pub struct StorageParameters {
     pub segment_size: usize,
     pub use_compression: bool,
     pub version: (usize, usize),
 }
 
-impl PersistedConfig {
+impl StorageParameters {
     pub fn size_in_bytes(&self) -> u64 {
-        std::mem::size_of::<PersistedConfig>() as u64
+        std::mem::size_of::<StorageParameters>() as u64
     }
 
     pub fn serialize(&self) -> Vec<u8> {
@@ -40,7 +40,7 @@ impl PersistedConfig {
         out
     }
 
-    pub fn deserialize(bytes: &[u8]) -> Result<PersistedConfig> {
+    pub fn deserialize(bytes: &[u8]) -> Result<StorageParameters> {
         let reader = BufReader::new(bytes);
 
         let mut lines = HashMap::new();
@@ -142,7 +142,7 @@ impl PersistedConfig {
             return Err(Error::Corruption { at: DiskPtr::Inline(0) });
         };
 
-        Ok(PersistedConfig { segment_size, use_compression, version })
+        Ok(StorageParameters { segment_size, use_compression, version })
     }
 }
 
