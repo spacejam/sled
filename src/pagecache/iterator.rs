@@ -24,7 +24,7 @@ impl Iterator for LogIter {
         // return None if there are no more remaining segments.
         loop {
             let remaining_seg_too_small_for_msg = !valid_entry_offset(
-                self.cur_lsn as LogOffset,
+                LogOffset::try_from(self.cur_lsn).unwrap(),
                 self.config.segment_size,
             );
 
@@ -61,7 +61,10 @@ impl Iterator for LogIter {
             }
 
             let lid = self.segment_base.unwrap()
-                + (self.cur_lsn % self.config.segment_size as Lsn) as LogOffset;
+                + LogOffset::try_from(
+                    self.cur_lsn % self.config.segment_size as Lsn,
+                )
+                .unwrap();
 
             let f = &self.config.file;
 

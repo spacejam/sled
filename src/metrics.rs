@@ -19,6 +19,7 @@ use super::*;
 /// process.
 pub static M: Lazy<Metrics, fn() -> Metrics> = Lazy::new(Metrics::default);
 
+#[allow(clippy::cast_precision_loss)]
 pub(crate) fn clock() -> f64 {
     if cfg!(feature = "no_metrics") {
         0.

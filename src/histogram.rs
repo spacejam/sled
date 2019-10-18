@@ -143,6 +143,7 @@ impl Histogram {
 // bucketing of histogram values, staying roughly within 1% of the true
 // value. This fails for large values of 1e142 and above, and is
 // inaccurate for values closer to 0 than +/- 0.51 or +/- math.Inf.
+#[allow(clippy::cast_sign_loss)]
 #[allow(clippy::cast_possible_truncation)]
 #[inline]
 fn compress<T: Into<f64>>(input_value: T) -> u16 {

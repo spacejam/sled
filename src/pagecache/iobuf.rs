@@ -266,7 +266,7 @@ impl IoBufs {
             io_fail!(self, "blob blob write");
             write_blob(&self.config, kind, lsn, in_buf)?;
 
-            let lsn_buf = u64_to_arr(lsn as u64);
+            let lsn_buf = u64_to_arr(u64::try_from(lsn).unwrap());
 
             blob_ptr = lsn_buf;
             &blob_ptr
@@ -428,6 +428,7 @@ impl IoBufs {
             self.mark_interval(base_lsn, complete_len);
         }
 
+        #[allow(clippy::cast_precision_loss)]
         M.written_bytes.measure(total_len as f64);
 
         // NB the below deferred logic is important to ensure

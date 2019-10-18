@@ -113,7 +113,7 @@ impl Log {
         blob_pointer: BlobPointer,
     ) -> Result<Reservation<'_>> {
         let lsn_buf: [u8; std::mem::size_of::<BlobPointer>()] =
-            u64_to_arr(blob_pointer as u64);
+            u64_to_arr(u64::try_from(blob_pointer).unwrap());
 
         self.reserve_inner(LogKind::Replace, pid, &lsn_buf, true)
     }
@@ -162,6 +162,7 @@ impl Log {
 
         let total_buf_len = MSG_HEADER_LEN + buf.len();
 
+        #[allow(clippy::cast_precision_loss)]
         M.reserve_sz.measure(total_buf_len as f64);
 
         let max_buf_size = (self.config.segment_size
@@ -516,7 +517,7 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
         buf[0] = self.kind.into();
 
         let pid_arr = u64_to_arr(self.pid);
-        let lsn_arr = u64_to_arr(self.lsn as u64);
+        let lsn_arr = u64_to_arr(u64::try_from(self.lsn).unwrap());
         let length_arr = u32_to_arr(self.len);
         let crc32_arr = u32_to_arr(self.crc32 ^ 0xFFFF_FFFF);
 
