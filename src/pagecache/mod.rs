@@ -1335,7 +1335,8 @@ impl PageCache {
                         pid,
                         old.ts
                     );
-                    old = PagePtr { cached_ptr: actual_ptr, ts: old.ts };
+                    old =
+                        PagePtr { cached_pointer: actual_pointer, ts: old.ts };
                     update_opt = Some(returned_update);
                 }
             } // match cas result
@@ -1364,13 +1365,15 @@ impl PageCache {
 
         match StackIter::from_ptr(head, &guard).next() {
             Some((Some(Update::Meta(m)), cache_info)) => {
-                Ok((PagePtr { cached_ptr: head, ts: cache_info.ts }, m))
+                Ok((PagePtr { cached_pointer: head, ts: cache_info.ts }, m))
             }
             Some((None, cache_info)) => {
                 let update =
-                    self.pull(META_PID, cache_info.lsn, cache_info.ptr)?;
-                let ptr = PagePtr { cached_ptr: head, ts: cache_info.ts };
-                let _ = self.cas_page(META_PID, ptr, update, false, guard)?;
+                    self.pull(META_PID, cache_info.lsn, cache_info.pointer)?;
+                let pointer =
+                    PagePtr { cached_pointer: head, ts: cache_info.ts };
+                let _ =
+                    self.cas_page(META_PID, pointer, update, false, guard)?;
                 self.get_meta(guard)
             }
             _ => Err(Error::ReportableBug(
@@ -1385,7 +1388,7 @@ impl PageCache {
     pub(crate) fn get_persisted_config<'g>(
         &self,
         guard: &'g Guard,
-    ) -> Result<(PagePtr<'g>, &'g PersistedConfig)> {
+    ) -> Result<(PagePtr<'g>, &'g StorageParameters)> {
         trace!("getting page iter for persisted config");
 
         let stack = match self.inner.get(CONFIG_PID) {
@@ -1402,14 +1405,17 @@ impl PageCache {
         let head = stack.head(&guard);
 
         match StackIter::from_ptr(head, &guard).next() {
-            Some((Some(Update::Config(config)), cache_info)) => {
-                Ok((PagePtr { cached_ptr: head, ts: cache_info.ts }, config))
-            }
+            Some((Some(Update::Config(config)), cache_info)) => Ok((
+                PagePtr { cached_pointer: head, ts: cache_info.ts },
+                config,
+            )),
             Some((None, cache_info)) => {
                 let update =
-                    self.pull(CONFIG_PID, cache_info.lsn, cache_info.ptr)?;
-                let ptr = PagePtr { cached_ptr: head, ts: cache_info.ts };
-                let _ = self.cas_page(CONFIG_PID, ptr, update, false, guard)?;
+                    self.pull(CONFIG_PID, cache_info.lsn, cache_info.pointer)?;
+                let pointer =
+                    PagePtr { cached_pointer: head, ts: cache_info.ts };
+                let _ =
+                    self.cas_page(CONFIG_PID, pointer, update, false, guard)?;
                 self.get_persisted_config(guard)
             }
             _ => Err(Error::ReportableBug(
@@ -1441,15 +1447,17 @@ impl PageCache {
         let head = stack.head(&guard);
 
         match StackIter::from_ptr(head, &guard).next() {
-            Some((Some(Update::Counter(counter)), cache_info)) => {
-                Ok((PagePtr { cached_ptr: head, ts: cache_info.ts }, *counter))
-            }
+            Some((Some(Update::Counter(counter)), cache_info)) => Ok((
+                PagePtr { cached_pointer: head, ts: cache_info.ts },
+                *counter,
+            )),
             Some((None, cache_info)) => {
                 let update =
-                    self.pull(COUNTER_PID, cache_info.lsn, cache_info.ptr)?;
-                let ptr = PagePtr { cached_ptr: head, ts: cache_info.ts };
+                    self.pull(COUNTER_PID, cache_info.lsn, cache_info.pointer)?;
+                let pointer =
+                    PagePtr { cached_pointer: head, ts: cache_info.ts };
                 let _ =
-                    self.cas_page(COUNTER_PID, ptr, update, false, guard)?;
+                    self.cas_page(COUNTER_PID, pointer, update, false, guard)?;
                 self.get_idgen(guard)
             }
             _ => Err(Error::ReportableBug(
