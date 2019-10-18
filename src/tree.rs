@@ -1230,13 +1230,13 @@ impl Tree {
     where
         P: AsRef<[u8]>,
     {
-        let prefix = prefix.as_ref();
-        let mut upper = prefix.to_vec();
+        let prefix_ref = prefix.as_ref();
+        let mut upper = prefix_ref.to_vec();
 
         while let Some(last) = upper.pop() {
             if last < u8::max_value() {
                 upper.push(last + 1);
-                return self.range(prefix..&upper);
+                return self.range(prefix_ref..&upper);
             }
         }
 
@@ -2144,12 +2144,12 @@ impl Debug for Tree {
 
 /// Compare and swap result.
 ///
-/// It returns Ok(Ok(())) if operation finishes successfully and
-///     - Ok(Err(CompareAndSwapError(current, proposed))) if operation failed to
-///       setup a new value. CompareAndSwapError contains current and proposed
+/// It returns `Ok(Ok(()))` if operation finishes successfully and
+///     - `Ok(Err(CompareAndSwapError(current, proposed)))` if operation failed to
+///       setup a new value. `CompareAndSwapError` contains current and proposed
 ///       values.
-///     - Err(Error::Unsupported) if the database is opened in read-only mode.
-/// otherwise.
+///     - `Err(Error::Unsupported)` if the database is opened in read-only mode.
+///       otherwise.
 pub type CompareAndSwapResult =
     Result<std::result::Result<(), CompareAndSwapError>>;
 
