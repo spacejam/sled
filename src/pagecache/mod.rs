@@ -1519,7 +1519,7 @@ impl PageCache {
             (Some(Update::Compact(compact)), cache_info) => {
                 // short circuit
                 return Ok(Some((
-                    PagePtr { cached_ptr: head, ts: cache_info.ts },
+                    PagePtr { cached_pointer: head, ts: cache_info.ts },
                     compact,
                     total_page_size,
                 )));
@@ -1558,7 +1558,7 @@ impl PageCache {
                 }
                 (None, cache_info) => {
                     let res = self
-                        .pull(pid, cache_info.lsn, cache_info.ptr)
+                        .pull(pid, cache_info.lsn, cache_info.pointer)
                         .map(|pg| pg)?;
                     Ok(Cow::Owned(res.into_frag()))
                 }
@@ -1598,13 +1598,16 @@ impl PageCache {
         let node = node_from_frag_vec(frags).into_shared(&guard);
 
         #[cfg(feature = "event_log")]
-        assert_eq!(ptrs_from_stack(head, guard), ptrs_from_stack(node, guard),);
+        assert_eq!(
+            pointers_from_stack(head, guard),
+            pointers_from_stack(node, guard),
+        );
 
         let node = unsafe { node.into_owned() };
 
         debug_delay();
         let res = stack.cas(head, node, &guard);
-        if let Ok(new_ptr) = res {
+        if let Ok(new_pointer) = res {
             trace!("fix-up for pid {} succeeded", pid);
 
             // possibly evict an item now that our cache has grown
@@ -1615,7 +1618,7 @@ impl PageCache {
             }
 
             let page_ref = unsafe {
-                let item = &new_ptr.deref().inner;
+                let item = &new_pointer.deref().inner;
                 if let (Some(Update::Compact(compact)), _) = item {
                     compact
                 } else {
@@ -1623,9 +1626,10 @@ impl PageCache {
                 }
             };
 
-            let ptr = PagePtr { cached_ptr: new_ptr, ts: entries[0].1.ts };
+            let pointer =
+                PagePtr { cached_pointer: new_pointer, ts: entries[0].1.ts };
 
-            Ok(Some((ptr, page_ref, total_page_size)))
+            Ok(Some((pointer, page_ref, total_page_size)))
         } else {
             trace!("fix-up for pid {} failed", pid);
 
@@ -1768,9 +1772,9 @@ impl PageCache {
 
             let mut new_meta = (*meta).clone();
             if let Some(new) = new {
-                let _old = new_meta.set_root(name.to_vec(), new);
+                new_meta.set_root(name.to_vec(), new);
             } else {
-                let _old = new_meta.del_root(&name);
+                new_meta.del_root(&name);
             }
 
             let new_meta_frag = Update::Meta(new_meta);
@@ -1785,7 +1789,7 @@ impl PageCache {
 
             match res {
                 Ok(_worked) => return Ok(Ok(())),
-                Err(Some((_current_ptr, _rejected))) => {}
+                Err(Some((_current_pointer, _rejected))) => {}
                 Err(None) => {
                     return Err(Error::ReportableBug(
                         "replacing the META page has failed because \
@@ -1845,46 +1849,46 @@ impl PageCache {
         Ok(())
     }
 
-    fn pull(&self, pid: PageId, lsn: Lsn, ptr: DiskPtr) -> Result<Update> {
+    fn pull(&self, pid: PageId, lsn: Lsn, pointer: DiskPtr) -> Result<Update> {
         use MessageKind::*;
 
-        trace!("pulling lsn {} ptr {} from disk", lsn, ptr);
+        trace!("pulling lsn {} pointer {} from disk", lsn, pointer);
         let _measure = Measure::new(&M.pull);
-        let (header, bytes) = match self.log.read(pid, lsn, ptr) {
+        let (header, bytes) = match self.log.read(pid, lsn, pointer) {
             Ok(LogRead::Inline(header, buf, _len)) => {
                 assert_eq!(
                     header.pid, pid,
-                    "expected pid {} on pull of ptr {}, \
+                    "expected pid {} on pull of pointer {}, \
                      but got {} instead",
-                    pid, ptr, header.pid
+                    pid, pointer, header.pid
                 );
                 assert_eq!(
                     header.lsn, lsn,
-                    "expected lsn {} on pull of ptr {}, \
+                    "expected lsn {} on pull of pointer {}, \
                      but got lsn {} instead",
-                    lsn, ptr, header.lsn
+                    lsn, pointer, header.lsn
                 );
                 Ok((header, buf))
             }
             Ok(LogRead::Blob(header, buf, _blob_pointer)) => {
                 assert_eq!(
                     header.pid, pid,
-                    "expected pid {} on pull of ptr {}, \
+                    "expected pid {} on pull of pointer {}, \
                      but got {} instead",
-                    pid, ptr, header.pid
+                    pid, pointer, header.pid
                 );
                 assert_eq!(
                     header.lsn, lsn,
-                    "expected lsn {} on pull of ptr {}, \
+                    "expected lsn {} on pull of pointer {}, \
                      but got lsn {} instead",
-                    lsn, ptr, header.lsn
+                    lsn, pointer, header.lsn
                 );
 
                 Ok((header, buf))
             }
             Ok(other) => {
                 debug!("read unexpected page: {:?}", other);
-                Err(Error::Corruption { at: ptr })
+                Err(Error::Corruption { at: pointer })
             }
             Err(e) => {
                 debug!("failed to read page: {:?}", e);
