@@ -139,7 +139,7 @@ pub(crate) fn read_message(
         | MessageKind::BlobReplace
         | MessageKind::BlobMeta
         | MessageKind::BlobConfig => {
-            let id = Lsn::try_from(arr_to_u64(&buf)).unwrap();
+            let id = arr_to_lsn(&buf);
 
             match read_blob(id, config) {
                 Ok((kind, buf)) => {
@@ -184,7 +184,7 @@ pub(crate) fn read_message(
         }
         MessageKind::BatchManifest => {
             assert_eq!(buf.len(), std::mem::size_of::<Lsn>());
-            let max_lsn = Lsn::try_from(arr_to_u64(&buf)).unwrap();
+            let max_lsn = arr_to_lsn(&buf);
             Ok(LogRead::BatchManifest(max_lsn))
         }
         MessageKind::Corrupted => panic!(
