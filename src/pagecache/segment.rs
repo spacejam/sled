@@ -198,7 +198,7 @@ impl Segment {
         self.state = Active;
     }
 
-    /// Transitions a segment to being in the Inactive state.
+    /// Transitions a segment to being in the `Inactive` state.
     /// Returns the set of page replacements that happened
     /// while this Segment was Active
     fn active_to_inactive(
@@ -387,7 +387,7 @@ impl Segment {
 }
 
 impl SegmentAccountant {
-    /// Create a new SegmentAccountant from previously recovered segments.
+    /// Create a new `SegmentAccountant` from previously recovered segments.
     pub(super) fn start(
         config: RunningConfig,
         snapshot: &Snapshot,

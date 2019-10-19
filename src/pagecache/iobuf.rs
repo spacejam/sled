@@ -174,7 +174,7 @@ impl IoBufs {
         })
     }
 
-    /// SegmentAccountant access for coordination with the `PageCache`
+    /// `SegmentAccountant` access for coordination with the `PageCache`
     pub(in crate::pagecache) fn with_sa<B, F>(&self, f: F) -> B
     where
         F: FnOnce(&mut SegmentAccountant) -> B,
@@ -197,7 +197,7 @@ impl IoBufs {
         ret
     }
 
-    /// SegmentAccountant access for coordination with the `PageCache`
+    /// `SegmentAccountant` access for coordination with the `PageCache`
     pub(in crate::pagecache) fn try_with_sa<B, F>(&self, f: F) -> Option<B>
     where
         F: FnOnce(&mut SegmentAccountant) -> B,
