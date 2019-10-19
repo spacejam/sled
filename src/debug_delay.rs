@@ -61,6 +61,9 @@ pub fn debug_delay() {
     if rng.gen_bool(1. / 1000.) {
         let gamma = Gamma::new(0.3, 1_000.0 * *INTENSITY).unwrap();
         let duration = gamma.sample(&mut try_thread_rng().unwrap());
+
+        #[allow(clippy::cast_possible_truncation)]
+        #[allow(clippy::cast_sign_loss)]
         thread::sleep(Duration::from_micros(duration as u64));
     }
 

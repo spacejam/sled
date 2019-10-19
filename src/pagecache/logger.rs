@@ -131,7 +131,8 @@ impl Log {
         pid: PageId,
         raw_buf: &[u8],
     ) -> Result<Reservation<'_>> {
-        let mut _compressed: Option<Vec<u8>> = None;
+        #[cfg(feature = "compression")]
+        let mut compressed: Option<Vec<u8>> = None;
         let mut buf = raw_buf;
 
         #[cfg(feature = "compression")]
@@ -143,9 +144,9 @@ impl Log {
 
                 let compressed_buf =
                     compress(buf, self.config.compression_factor).unwrap();
-                _compressed = Some(compressed_buf);
+                compressed = Some(compressed_buf);
 
-                buf = _compressed.as_ref().unwrap();
+                buf = compressed.as_ref().unwrap();
             }
         }
 

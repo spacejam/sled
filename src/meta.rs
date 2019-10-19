@@ -8,12 +8,12 @@ pub struct Meta {
 }
 
 impl Meta {
-    /// Retrieve the PageId associated with an identifier
+    /// Retrieve the `PageId` associated with an identifier
     pub fn get_root(&self, table: &[u8]) -> Option<PageId> {
         self.inner.get(table).cloned()
     }
 
-    /// Set the PageId associated with an identifier
+    /// Set the `PageId` associated with an identifier
     pub fn set_root(&mut self, name: Vec<u8>, pid: PageId) -> Option<PageId> {
         self.inner.insert(name, pid)
     }

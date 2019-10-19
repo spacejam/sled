@@ -435,7 +435,7 @@ impl Node {
         None
     }
 
-    /// leaf_pair_for_key finds an existing value pair for a given key.
+    /// `leaf_pair_for_key` finds an existing value pair for a given key.
     pub(crate) fn leaf_pair_for_key(
         &self,
         key: &[u8],

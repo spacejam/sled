@@ -802,6 +802,8 @@ impl PageCache {
 
             let time_now =
                 SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+
+            #[allow(clippy::cast_possible_truncation)]
             let fail_seed = std::cmp::max(3, time_now.as_nanos() as u32 % 128);
 
             let inject_failure = COUNT.with(|c| {
@@ -1030,6 +1032,8 @@ impl PageCache {
 
             let time_now =
                 SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+
+            #[allow(clippy::cast_possible_truncation)]
             let fail_seed = std::cmp::max(3, time_now.as_nanos() as u32 % 128);
 
             let inject_failure = COUNT.with(|c| {

@@ -235,7 +235,7 @@ fn read_snapshot(config: &RunningConfig) -> std::io::Result<Option<Snapshot>> {
     let bytes = if config.use_compression {
         let len_expected: u64 =
             crate::pagecache::arr_to_u64(&len_expected_bytes);
-        decompress(&*buf, len_expected as usize).unwrap()
+        decompress(&*buf, usize::try_from(len_expected).unwrap()).unwrap()
     } else {
         buf
     };
