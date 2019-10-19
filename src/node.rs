@@ -452,7 +452,7 @@ impl Node {
         search.map(|idx| (&records[idx].0, &records[idx].1))
     }
 
-    /// node_kv_pair returns either existing (node/key, value) pair or
+    /// `node_kv_pair` returns either existing (node/key, value) pair or
     /// (node/key, none) where a node/key is node level encoded key.
     pub fn node_kv_pair(&self, key: &[u8]) -> (IVec, Option<IVec>) {
         if let Some((k, v)) = self.leaf_pair_for_key(key.as_ref()) {
