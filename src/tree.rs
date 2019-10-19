@@ -437,17 +437,17 @@ impl Tree {
     }
 
     /// Compare and swap. Capable of unique creation, conditional modification,
-    /// or deletion. If old is None, this will only set the value if it doesn't
-    /// exist yet. If new is None, will delete the value if old is correct.
-    /// If both old and new are Some, will modify the value if old is correct.
+    /// or deletion. If old is `None`, this will only set the value if it doesn't
+    /// exist yet. If new is `None`, will delete the value if old is correct.
+    /// If both old and new are `Some`, will modify the value if old is correct.
     ///
-    /// It returns Ok(Ok(())) if operation finishes successfully.
+    /// It returns `Ok(Ok(()))` if operation finishes successfully.
     ///
     /// If it fails it returns:
-    ///     - Ok(Err(CompareAndSwapError(current, proposed))) if operation
-    ///       failed to setup a new value. CompareAndSwapError contains current
+    ///     - `Ok(Err(CompareAndSwapError(current, proposed)))` if operation
+    ///       failed to setup a new value. `CompareAndSwapError` contains current
     ///       and proposed values.
-    ///     - Err(Error::Unsupported) if the database is opened in read-only
+    ///     - `Err(Error::Unsupported)` if the database is opened in read-only
     ///       mode.
     ///
     /// # Examples
