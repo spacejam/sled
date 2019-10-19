@@ -1,9 +1,8 @@
-  
 | key | value |
-| --- | --- |
+| :-: | --- |
 | [documentation](https://docs.rs/sled) | [![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled) |
-| [communication](https://discord.gg/Z6VsXds) | [![chat](https://img.shields.io/discord/509773073294295082.svg?logo=discord)](https://discord.gg/Z6VsXds) |
-| [renumeration](https://opencollective.com/sled) |![Open Collective backers](https://img.shields.io/opencollective/backers/sled) |
+| [chat about databases with us](https://discord.gg/Z6VsXds) | [![chat](https://img.shields.io/discord/509773073294295082.svg?logo=discord)](https://discord.gg/Z6VsXds) |
+| [help us build what you want to use](https://opencollective.com/sled) | [![Open Collective backers](https://img.shields.io/opencollective/backers/sled)](https://opencollective.com/sled) |
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face_anti-transphobia.png" width="20%" height="auto" />
@@ -61,7 +60,7 @@ what's the trade-off? sled uses too much disk space sometimes. this will improve
 * [zstd](https://github.com/facebook/zstd) compression (use the `compression` build feature)
 * cpu-scalable lock-free implementation
 * SSD-optimized log-structured storage
-* prefix encoded keys, reducing the storage cost of complex keys
+* prefix encoded keys reducing the storage cost of complex keys
 
 # a note on lexicographic ordering and endianness
 
