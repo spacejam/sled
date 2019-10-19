@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
 use super::{
-    arr_to_u32, arr_to_u64, bump_atomic_lsn, iobuf, read_blob, read_message,
-    u32_to_arr, u64_to_arr, BlobPointer, DiskPtr, IoBuf, IoBufs, LogKind,
-    LogOffset, Lsn, MessageKind, Reservation, SegmentAccountant, Snapshot,
-    BATCH_MANIFEST_PID, BLOB_INLINE_LEN, CONFIG_PID, COUNTER_PID, META_PID,
-    MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
+    arr_to_lsn, arr_to_u32, arr_to_u64, bump_atomic_lsn, iobuf, lsn_to_arr,
+    read_blob, read_message, u32_to_arr, u64_to_arr, BlobPointer, DiskPtr,
+    IoBuf, IoBufs, LogKind, LogOffset, Lsn, MessageKind, Reservation,
+    SegmentAccountant, Snapshot, BATCH_MANIFEST_PID, BLOB_INLINE_LEN,
+    CONFIG_PID, COUNTER_PID, META_PID, MINIMUM_ITEMS_PER_SEGMENT,
+    MSG_HEADER_LEN, SEG_HEADER_LEN,
 };
 
 use crate::*;
@@ -113,7 +114,7 @@ impl Log {
         blob_pointer: BlobPointer,
     ) -> Result<Reservation<'_>> {
         let lsn_buf: [u8; std::mem::size_of::<BlobPointer>()] =
-            u64_to_arr(u64::try_from(blob_pointer).unwrap());
+            lsn_to_arr(blob_pointer);
 
         self.reserve_inner(LogKind::Replace, pid, &lsn_buf, true)
     }
@@ -501,8 +502,7 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
         #[allow(unsafe_code)]
         unsafe {
             let page_id = arr_to_u64(buf.get_unchecked(1..9));
-            let lsn =
-                Lsn::try_from(arr_to_u64(buf.get_unchecked(9..17))).unwrap();
+            let lsn = arr_to_lsn(buf.get_unchecked(9..17));
             let length = arr_to_u32(buf.get_unchecked(17..21));
             let crc32 = arr_to_u32(buf.get_unchecked(21..)) ^ 0xFFFF_FFFF;
 
@@ -517,7 +517,7 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
         buf[0] = self.kind.into();
 
         let pid_arr = u64_to_arr(self.pid);
-        let lsn_arr = u64_to_arr(u64::try_from(self.lsn).unwrap());
+        let lsn_arr = lsn_to_arr(self.lsn);
         let length_arr = u32_to_arr(self.len);
         let crc32_arr = u32_to_arr(self.crc32 ^ 0xFFFF_FFFF);
 
@@ -556,12 +556,10 @@ impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
             let crc32_header =
                 arr_to_u32(buf.get_unchecked(0..4)) ^ 0xFFFF_FFFF;
 
-            let xor_lsn =
-                Lsn::try_from(arr_to_u64(buf.get_unchecked(4..12))).unwrap();
+            let xor_lsn = arr_to_lsn(buf.get_unchecked(4..12));
             let lsn = xor_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
 
-            let xor_max_stable_lsn =
-                Lsn::try_from(arr_to_u64(buf.get_unchecked(12..20))).unwrap();
+            let xor_max_stable_lsn = arr_to_lsn(buf.get_unchecked(12..20));
             let max_stable_lsn = xor_max_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
 
             let crc32_tested = crc32(&buf[4..20]);
@@ -586,12 +584,10 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
         let mut buf = [0; SEG_HEADER_LEN];
 
         let xor_lsn = self.lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
-        let lsn_arr = u64_to_arr(u64::try_from(xor_lsn).unwrap());
+        let lsn_arr = lsn_to_arr(xor_lsn);
 
-        let xor_max_stable_lsn =
-            std::cmp::max(0, self.max_stable_lsn) ^ 0x7FFF_FFFF_FFFF_FFFF;
-        let highest_stable_lsn_arr =
-            u64_to_arr(u64::try_from(xor_max_stable_lsn).unwrap());
+        let xor_max_stable_lsn = self.max_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
+        let highest_stable_lsn_arr = lsn_to_arr(xor_max_stable_lsn);
 
         #[allow(unsafe_code)]
         unsafe {

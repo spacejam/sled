@@ -213,6 +213,16 @@ use std::convert::{TryFrom, TryInto};
 use zstd::block::decompress;
 
 #[inline]
+pub(crate) fn lsn_to_arr(number: Lsn) -> [u8; 8] {
+    number.to_le_bytes()
+}
+
+#[inline]
+pub(crate) fn arr_to_lsn(arr: &[u8]) -> Lsn {
+    arr.try_into().map(Lsn::from_le_bytes).unwrap()
+}
+
+#[inline]
 pub(crate) fn u64_to_arr(number: u64) -> [u8; 8] {
     number.to_le_bytes()
 }
