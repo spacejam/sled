@@ -1737,14 +1737,14 @@ impl PageCache {
     }
 
     /// Returns the current `Meta` map, which contains a convenient
-    /// mapping from identifiers to PageId's that the `PageCache`
+    /// mapping from identifiers to `PageId`'s that the `PageCache`
     /// owner may use for storing metadata about their higher-level
     /// collections.
     pub fn meta<'a>(&self, guard: &'a Guard) -> Result<&'a Meta> {
         self.get_meta(guard).map(|(_k, m)| m)
     }
 
-    /// Look up a PageId for a given identifier in the `Meta`
+    /// Look up a `PageId` for a given identifier in the `Meta`
     /// mapping. This is pretty cheap, but in some cases
     /// you may prefer to maintain your own atomic references
     /// to collection roots instead of relying on this. See
