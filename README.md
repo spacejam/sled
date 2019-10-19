@@ -1,4 +1,3 @@
-  
 | key | value |
 | :-: | --- |
 | [documentation](https://docs.rs/sled) | [![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled) |
@@ -61,7 +60,7 @@ what's the trade-off? sled uses too much disk space sometimes. this will improve
 * [zstd](https://github.com/facebook/zstd) compression (use the `compression` build feature)
 * cpu-scalable lock-free implementation
 * SSD-optimized log-structured storage
-* prefix encoded keys, reducing the storage cost of complex keys
+* prefix encoded keys reducing the storage cost of complex keys
 
 # a note on lexicographic ordering and endianness
 
