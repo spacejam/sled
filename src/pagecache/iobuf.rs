@@ -63,7 +63,7 @@ pub(crate) struct IoBufs {
 /// `IoBufs` is a set of lock-free buffers for coordinating
 /// writes to underlying storage.
 impl IoBufs {
-    pub fn start(config: RunningConfig, snapshot: &Snapshot) -> Result<Self> {
+    pub fn start(config: RunningConfig, snapshot: &Snapshot) -> Result<IoBufs> {
         // open file for writing
         let file = &config.file;
 
@@ -157,7 +157,7 @@ impl IoBufs {
         // remove all blob files larger than our stable offset
         gc_blobs(&config, stable)?;
 
-        Ok(Self {
+        Ok(IoBufs {
             config,
 
             iobuf: RwLock::new(Arc::new(iobuf)),
@@ -816,8 +816,8 @@ impl Debug for IoBuf {
 }
 
 impl IoBuf {
-    pub(crate) fn new(buf_size: usize) -> Self {
-        Self {
+    pub(crate) fn new(buf_size: usize) -> IoBuf {
+        IoBuf {
             buf: UnsafeCell::new(vec![0; buf_size]),
             header: CachePadded::new(AtomicU64::new(0)),
             offset: LogOffset::max_value(),
