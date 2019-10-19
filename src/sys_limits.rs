@@ -1,7 +1,5 @@
 #![allow(unsafe_code)]
 
-use std::convert::TryFrom;
-
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::io;
 #[cfg(any(target_os = "linux"))]
@@ -47,6 +45,8 @@ fn get_rlimit_as() -> io::Result<libc::rlimit> {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn get_available_memory() -> io::Result<u64> {
+    use std::convert::TryFrom;
+
     let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
     if pages == -1 {
         return Err(io::Error::last_os_error());
