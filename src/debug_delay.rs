@@ -94,13 +94,13 @@ fn try_thread_rng() -> Option<ThreadRng> {
 }
 
 impl RngCore for ThreadRng {
-    #[inline(always)]
+    #[inline]
     #[allow(unsafe_code)]
     fn next_u32(&mut self) -> u32 {
         unsafe { (*self.rng).next_u32() }
     }
 
-    #[inline(always)]
+    #[inline]
     #[allow(unsafe_code)]
     fn next_u64(&mut self) -> u64 {
         unsafe { (*self.rng).next_u64() }

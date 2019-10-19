@@ -62,7 +62,7 @@ pub struct Measure<'h> {
 
 impl<'h> Measure<'h> {
     /// The time delta from ctor to dtor is recorded in `histo`.
-    #[inline(always)]
+    #[inline]
     pub fn new(_histo: &'h Histogram) -> Measure<'h> {
         Measure {
             #[cfg(feature = "no_metrics")]
@@ -75,7 +75,7 @@ impl<'h> Measure<'h> {
 }
 
 impl<'h> Drop for Measure<'h> {
-    #[inline(always)]
+    #[inline]
     fn drop(&mut self) {
         #[cfg(not(feature = "no_metrics"))]
         self.histo.measure(clock() - self._start);
