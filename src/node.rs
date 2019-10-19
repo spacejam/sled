@@ -504,7 +504,7 @@ impl Node {
 
         let suffix = &key[self.prefix_len as usize..];
 
-        let search = interpolation_search_lub(suffix, records);
+        let search = binary_search_lub(suffix, records);
 
         let index = search.expect("failed to traverse index");
 

@@ -196,7 +196,7 @@ pub use self::{
 
 use {
     self::{
-        binary_search::interpolation_search_lub,
+        binary_search::binary_search_lub,
         config::StorageParameters,
         context::Context,
         frag::Frag,
