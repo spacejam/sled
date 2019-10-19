@@ -586,8 +586,10 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
         let mut buf = [0; SEG_HEADER_LEN];
 
         let xor_lsn = self.lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
-        let xor_max_stable_lsn = self.max_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
         let lsn_arr = u64_to_arr(u64::try_from(xor_lsn).unwrap());
+
+        let xor_max_stable_lsn =
+            std::cmp::max(0, self.max_stable_lsn) ^ 0x7FFF_FFFF_FFFF_FFFF;
         let highest_stable_lsn_arr =
             u64_to_arr(u64::try_from(xor_max_stable_lsn).unwrap());
 
