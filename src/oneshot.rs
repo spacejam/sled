@@ -89,7 +89,7 @@ impl<T> Future for OneShot<Result<T>> {
 
 impl<T> OneShotFiller<T> {
     /// Complete the `OneShot`
-    `pub fn fill(self, inner: T) {
+    pub fn fill(self, inner: T) {
         let mut state = self.mu.lock();
 
         if let Some(waker) = state.waker.take() {
