@@ -236,6 +236,14 @@ impl Node {
         assert!(right.lo.len() >= right.prefix_len as usize);
         assert!(right.hi.len() >= right.prefix_len as usize);
 
+        if !self.lo.is_empty() && !self.hi.is_empty() {
+            assert!(self.lo < self.hi, "{:?}", self);
+        }
+
+        if !right.lo.is_empty() && !right.hi.is_empty() {
+            assert!(right.lo < right.hi, "{:?}", right);
+        }
+
         (self, right)
     }
 
