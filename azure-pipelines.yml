@@ -20,6 +20,7 @@ strategy:
     burn-in:
       imageName: 'ubuntu-16.04'
       rustup_toolchain: stable
+      testKind: 'burn-in'
     linux-stable:
       imageName: 'ubuntu-16.04'
       rustup_toolchain: stable
