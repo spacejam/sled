@@ -83,7 +83,7 @@ steps:
   - script: |
       set -eo pipefail
       pushd benchmarks/stress2
-      cargo run --release --duration=60
+      cargo run --release -- --duration=60
       rm -rf default.sled
     condition: eq( variables['testKind'], 'burn-in' )
   - script: |
