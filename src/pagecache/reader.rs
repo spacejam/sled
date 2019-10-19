@@ -61,7 +61,9 @@ pub(crate) fn read_message(
 
     assert!(lid + MSG_HEADER_LEN as LogOffset <= ceiling);
 
-    if header.lsn % segment_len as Lsn != lid as Lsn % segment_len as Lsn {
+    if header.lsn % segment_len as Lsn
+        != Lsn::try_from(lid).unwrap() % segment_len as Lsn
+    {
         let hb: [u8; MSG_HEADER_LEN] = header.into();
         // our message lsn was not aligned to our segment offset
         trace!(
@@ -137,7 +139,7 @@ pub(crate) fn read_message(
         | MessageKind::BlobReplace
         | MessageKind::BlobMeta
         | MessageKind::BlobConfig => {
-            let id = arr_to_u64(&buf) as Lsn;
+            let id = arr_to_lsn(&buf);
 
             match read_blob(id, config) {
                 Ok((kind, buf)) => {
@@ -182,7 +184,7 @@ pub(crate) fn read_message(
         }
         MessageKind::BatchManifest => {
             assert_eq!(buf.len(), std::mem::size_of::<Lsn>());
-            let max_lsn = Lsn::try_from(arr_to_u64(&buf)).unwrap();
+            let max_lsn = arr_to_lsn(&buf);
             Ok(LogRead::BatchManifest(max_lsn))
         }
         MessageKind::Corrupted => panic!(

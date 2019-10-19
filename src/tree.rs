@@ -437,17 +437,17 @@ impl Tree {
     }
 
     /// Compare and swap. Capable of unique creation, conditional modification,
-    /// or deletion. If old is None, this will only set the value if it doesn't
-    /// exist yet. If new is None, will delete the value if old is correct.
-    /// If both old and new are Some, will modify the value if old is correct.
+    /// or deletion. If old is `None`, this will only set the value if it doesn't
+    /// exist yet. If new is `None`, will delete the value if old is correct.
+    /// If both old and new are `Some`, will modify the value if old is correct.
     ///
-    /// It returns Ok(Ok(())) if operation finishes successfully.
+    /// It returns `Ok(Ok(()))` if operation finishes successfully.
     ///
     /// If it fails it returns:
-    ///     - Ok(Err(CompareAndSwapError(current, proposed))) if operation
-    ///       failed to setup a new value. CompareAndSwapError contains current
+    ///     - `Ok(Err(CompareAndSwapError(current, proposed)))` if operation
+    ///       failed to setup a new value. `CompareAndSwapError` contains current
     ///       and proposed values.
-    ///     - Err(Error::Unsupported) if the database is opened in read-only
+    ///     - `Err(Error::Unsupported)` if the database is opened in read-only
     ///       mode.
     ///
     /// # Examples
@@ -516,7 +516,7 @@ impl Tree {
                 self.view_for_key(key.as_ref(), &guard)?;
 
             let (encoded_key, current_value) = node.node_kv_pair(key.as_ref());
-            let matches = match (&old, &current_value) {
+            let matches = match (old.as_ref(), &current_value) {
                 (None, None) => true,
                 (Some(ref o), Some(ref c)) => o.as_ref() == &**c,
                 _ => false,
@@ -628,13 +628,17 @@ impl Tree {
         F: FnMut(Option<&[u8]>) -> Option<V>,
         IVec: From<V>,
     {
-        let key = key.as_ref();
-        let mut current = self.get(key)?;
+        let key_ref = key.as_ref();
+        let mut current = self.get(key_ref)?;
 
         loop {
             let tmp = current.as_ref().map(AsRef::as_ref);
             let next = f(tmp).map(IVec::from);
-            match self.compare_and_swap::<_, _, IVec>(key, tmp, next.clone())? {
+            match self.compare_and_swap::<_, _, IVec>(
+                key_ref,
+                tmp,
+                next.clone(),
+            )? {
                 Ok(()) => return Ok(next),
                 Err(CompareAndSwapError { current: cur, .. }) => {
                     current = cur;
@@ -695,13 +699,13 @@ impl Tree {
         F: FnMut(Option<&[u8]>) -> Option<V>,
         IVec: From<V>,
     {
-        let key = key.as_ref();
-        let mut current = self.get(key)?;
+        let key_ref = key.as_ref();
+        let mut current = self.get(key_ref)?;
 
         loop {
             let tmp = current.as_ref().map(AsRef::as_ref);
             let next = f(tmp);
-            match self.compare_and_swap(key, tmp, next)? {
+            match self.compare_and_swap(key_ref, tmp, next)? {
                 Ok(()) => return Ok(current),
                 Err(CompareAndSwapError { current: cur, .. }) => {
                     current = cur;
@@ -745,8 +749,8 @@ impl Tree {
     ///
     /// thread.join().unwrap();
     /// ```
-    pub fn watch_prefix(&self, prefix: Vec<u8>) -> Subscriber {
-        self.subscriptions.register(prefix)
+    pub fn watch_prefix<P: AsRef<[u8]>>(&self, prefix: P) -> Subscriber {
+        self.subscriptions.register(prefix.as_ref())
     }
 
     /// Synchronously flushes all dirty IO buffers and calls
@@ -1226,13 +1230,13 @@ impl Tree {
     where
         P: AsRef<[u8]>,
     {
-        let prefix = prefix.as_ref();
-        let mut upper = prefix.to_vec();
+        let prefix_ref = prefix.as_ref();
+        let mut upper = prefix_ref.to_vec();
 
         while let Some(last) = upper.pop() {
             if last < u8::max_value() {
                 upper.push(last + 1);
-                return self.range(prefix..&upper);
+                return self.range(prefix_ref..&upper);
             }
         }
 
@@ -2140,12 +2144,12 @@ impl Debug for Tree {
 
 /// Compare and swap result.
 ///
-/// It returns Ok(Ok(())) if operation finishes successfully and
-///     - Ok(Err(CompareAndSwapError(current, proposed))) if operation failed to
-///       setup a new value. CompareAndSwapError contains current and proposed
+/// It returns `Ok(Ok(()))` if operation finishes successfully and
+///     - `Ok(Err(CompareAndSwapError(current, proposed)))` if operation failed to
+///       setup a new value. `CompareAndSwapError` contains current and proposed
 ///       values.
-///     - Err(Error::Unsupported) if the database is opened in read-only mode.
-/// otherwise.
+///     - `Err(Error::Unsupported)` if the database is opened in read-only mode.
+///       otherwise.
 pub type CompareAndSwapResult =
     Result<std::result::Result<(), CompareAndSwapError>>;
 

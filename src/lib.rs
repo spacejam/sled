@@ -77,15 +77,33 @@
     html_logo_url = "https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face_anti-transphobia.png"
 )]
 #![cfg_attr(test, deny(warnings))]
-#![deny(missing_docs)]
-#![deny(future_incompatible)]
-#![deny(nonstandard_style)]
-#![deny(rust_2018_idioms)]
-#![deny(missing_copy_implementations)]
-#![deny(trivial_casts)]
-#![deny(trivial_numeric_casts)]
-#![deny(unsafe_code)]
-#![deny(unused_qualifications)]
+#![deny(
+    missing_docs,
+    future_incompatible,
+    nonstandard_style,
+    rust_2018_idioms,
+    missing_copy_implementations,
+    trivial_casts,
+    trivial_numeric_casts,
+    unsafe_code,
+    unused_qualifications
+)]
+#![deny(
+    clippy::doc_markdown,
+    clippy::replace_consts,
+    clippy::explicit_iter_loop,
+    clippy::match_same_arms,
+    clippy::used_underscore_binding,
+    clippy::inline_always,
+    clippy::cast_lossless,
+    clippy::shadow_unrelated,
+    clippy::shadow_same,
+    clippy::shadow_reuse,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
 
 #[cfg(feature = "failpoints")]
 use fail::fail_point;
@@ -178,8 +196,8 @@ pub use self::{
 
 use {
     self::{
-        binary_search::interpolation_search_lub,
-        config::PersistedConfig,
+        binary_search::binary_search_lub,
+        config::StorageParameters,
         context::Context,
         frag::Frag,
         histogram::Histogram,

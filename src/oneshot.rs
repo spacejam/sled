@@ -37,7 +37,7 @@ pub struct OneShotFiller<T> {
 }
 
 impl<T> OneShot<T> {
-    /// Create a new OneShotFiller and the OneShot
+    /// Create a new `OneShotFiller` and the `OneShot`
     /// that will be filled by its completion.
     pub fn pair() -> (OneShotFiller<T>, Self) {
         let mu = Arc::new(Mutex::new(OneShotState::default()));
@@ -48,8 +48,8 @@ impl<T> OneShot<T> {
         (filler, future)
     }
 
-    /// Block on the OneShot's completion
-    /// or dropping of the OneShotFiller
+    /// Block on the `OneShot`'s completion
+    /// or dropping of the `OneShotFiller`
     pub fn wait(self) -> Option<T> {
         let mut inner = self.mu.lock();
         while !inner.filled {
@@ -58,11 +58,11 @@ impl<T> OneShot<T> {
         inner.item.take()
     }
 
-    /// Block on the OneShot's completion
-    /// or dropping of the OneShotFiller.
+    /// Block on the `OneShot`'s completion
+    /// or dropping of the `OneShotFiller`.
     ///
     /// # Panics
-    /// panics if the OneShotFiller is dropped
+    /// panics if the `OneShotFiller` is dropped
     /// without completing the promise.
     pub fn unwrap(self) -> T {
         self.wait().unwrap()
@@ -88,7 +88,7 @@ impl<T> Future for OneShot<Result<T>> {
 }
 
 impl<T> OneShotFiller<T> {
-    /// Complete the OneShot
+    /// Complete the `OneShot`
     pub fn fill(self, inner: T) {
         let mut state = self.mu.lock();
 

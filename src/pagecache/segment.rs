@@ -198,7 +198,7 @@ impl Segment {
         self.state = Active;
     }
 
-    /// Transitions a segment to being in the Inactive state.
+    /// Transitions a segment to being in the `Inactive` state.
     /// Returns the set of page replacements that happened
     /// while this Segment was Active
     fn active_to_inactive(
@@ -374,7 +374,7 @@ impl Segment {
 
         let live = self.present.len() * 100 / total;
         assert!(live <= 100);
-        live as u8
+        u8::try_from(live).unwrap()
     }
 
     fn can_free(&self) -> bool {
@@ -387,7 +387,7 @@ impl Segment {
 }
 
 impl SegmentAccountant {
-    /// Create a new SegmentAccountant from previously recovered segments.
+    /// Create a new `SegmentAccountant` from previously recovered segments.
     pub(super) fn start(
         config: RunningConfig,
         snapshot: &Snapshot,
@@ -485,7 +485,8 @@ impl SegmentAccountant {
             // this logic allows us to free the last
             // active segment if it was empty.
             let prospective_currently_active_segment =
-                (snapshot.last_lid / segment_size as LogOffset) as usize;
+                usize::try_from(snapshot.last_lid / segment_size as LogOffset)
+                    .unwrap();
             if let Some(segment) =
                 segments.get(prospective_currently_active_segment)
             {
@@ -502,9 +503,8 @@ impl SegmentAccountant {
             }
         };
 
-        assert!(self.config.segment_cleanup_threshold < 100.);
         let cleanup_threshold =
-            (self.config.segment_cleanup_threshold * 100.) as usize;
+            usize::from(self.config.segment_cleanup_threshold);
         let drain_sz = segment_size * 100 / cleanup_threshold;
 
         for (idx, segment) in segments.iter_mut().enumerate() {
@@ -952,7 +952,7 @@ impl SegmentAccountant {
             self.segments.iter().filter(|s| s.is_inactive()).count();
         let free_ratio = (free_segs * 100) / (1 + free_segs + inactive_segs);
 
-        if free_ratio >= (self.config.segment_cleanup_threshold * 100.) as usize
+        if free_ratio >= usize::from(self.config.segment_cleanup_threshold)
             && inactive_segs > 5
         {
             let last_index =
@@ -1060,7 +1060,7 @@ impl SegmentAccountant {
         );
 
         assert!(
-            lsn >= lid as Lsn,
+            lsn >= Lsn::try_from(lid).unwrap(),
             "lsn {} should always be greater than or equal to lid {}",
             lsn,
             lid
@@ -1176,8 +1176,7 @@ fn segment_is_drainable(
     // we calculate the cleanup threshold in a skewed way,
     // which encourages earlier segments to be rewritten
     // more frequently.
-    let base_cleanup_threshold =
-        (config.segment_cleanup_threshold * 100.) as usize;
+    let base_cleanup_threshold = usize::from(config.segment_cleanup_threshold);
     let cleanup_skew = config.segment_cleanup_skew;
 
     let relative_prop =

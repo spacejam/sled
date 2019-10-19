@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
 use super::{
-    arr_to_u32, arr_to_u64, bump_atomic_lsn, iobuf, read_blob, read_message,
-    u32_to_arr, u64_to_arr, BlobPointer, DiskPtr, IoBuf, IoBufs, LogKind,
-    LogOffset, Lsn, MessageKind, Reservation, SegmentAccountant, Snapshot,
-    BATCH_MANIFEST_PID, BLOB_INLINE_LEN, CONFIG_PID, COUNTER_PID, META_PID,
-    MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
+    arr_to_lsn, arr_to_u32, arr_to_u64, bump_atomic_lsn, iobuf, lsn_to_arr,
+    read_blob, read_message, u32_to_arr, u64_to_arr, BlobPointer, DiskPtr,
+    IoBuf, IoBufs, LogKind, LogOffset, Lsn, MessageKind, Reservation,
+    SegmentAccountant, Snapshot, BATCH_MANIFEST_PID, BLOB_INLINE_LEN,
+    CONFIG_PID, COUNTER_PID, META_PID, MINIMUM_ITEMS_PER_SEGMENT,
+    MSG_HEADER_LEN, SEG_HEADER_LEN,
 };
 
 use crate::*;
@@ -72,8 +73,13 @@ impl Log {
             let (_, blob_ptr) = ptr.blob();
             read_blob(blob_ptr, &self.config).map(|(kind, buf)| {
                 let sz = MSG_HEADER_LEN + BLOB_INLINE_LEN;
-                let header =
-                    MessageHeader { kind, pid, lsn, crc32: 0, len: sz as u32 };
+                let header = MessageHeader {
+                    kind,
+                    pid,
+                    lsn,
+                    crc32: 0,
+                    len: u32::try_from(sz).unwrap(),
+                };
                 LogRead::Blob(header, buf, blob_ptr)
             })
         }
@@ -102,13 +108,13 @@ impl Log {
     /// Reserve a replacement buffer for a previously written
     /// blob write. This ensures the message header has the
     /// proper blob flag set.
-    pub(super) fn rewrite_blob_ptr(
+    pub(super) fn rewrite_blob_pointer(
         &self,
         pid: PageId,
-        blob_ptr: BlobPointer,
+        blob_pointer: BlobPointer,
     ) -> Result<Reservation<'_>> {
         let lsn_buf: [u8; std::mem::size_of::<BlobPointer>()] =
-            u64_to_arr(blob_ptr as u64);
+            lsn_to_arr(blob_pointer);
 
         self.reserve_inner(LogKind::Replace, pid, &lsn_buf, true)
     }
@@ -125,7 +131,8 @@ impl Log {
         pid: PageId,
         raw_buf: &[u8],
     ) -> Result<Reservation<'_>> {
-        let mut _compressed: Option<Vec<u8>> = None;
+        #[cfg(feature = "compression")]
+        let mut compressed: Option<Vec<u8>> = None;
         let mut buf = raw_buf;
 
         #[cfg(feature = "compression")]
@@ -137,9 +144,9 @@ impl Log {
 
                 let compressed_buf =
                     compress(buf, self.config.compression_factor).unwrap();
-                _compressed = Some(compressed_buf);
+                compressed = Some(compressed_buf);
 
-                buf = _compressed.as_ref().unwrap();
+                buf = compressed.as_ref().unwrap();
             }
         }
 
@@ -157,6 +164,7 @@ impl Log {
 
         let total_buf_len = MSG_HEADER_LEN + buf.len();
 
+        #[allow(clippy::cast_precision_loss)]
         M.reserve_sz.measure(total_buf_len as f64);
 
         let max_buf_size = (self.config.segment_size
@@ -285,7 +293,8 @@ impl Log {
             // should never have claimed a sealed buffer
             assert!(!iobuf::is_sealed(claimed));
 
-            let reservation_lsn = iobuf.lsn + buf_offset as Lsn;
+            let reservation_lsn =
+                iobuf.lsn + Lsn::try_from(buf_offset).unwrap();
 
             // MAX is used to signify unreadiness of
             // the underlying IO buffer, and if it's
@@ -329,10 +338,11 @@ impl Log {
 
             M.log_reservation_success();
 
-            let ptr = if over_blob_threshold {
+            let pointer = if over_blob_threshold {
                 DiskPtr::new_blob(reservation_offset, reservation_lsn)
             } else if is_blob_rewrite {
-                let blob_ptr = arr_to_u64(&*buf) as BlobPointer;
+                let blob_ptr =
+                    BlobPointer::try_from(arr_to_u64(&*buf)).unwrap();
                 DiskPtr::new_blob(reservation_offset, blob_ptr)
             } else {
                 DiskPtr::new_inline(reservation_offset)
@@ -344,7 +354,7 @@ impl Log {
                 buf: destination,
                 flushed: false,
                 lsn: reservation_lsn,
-                ptr,
+                pointer,
                 is_blob_rewrite,
             });
         }
@@ -493,7 +503,7 @@ impl From<[u8; MSG_HEADER_LEN]> for MessageHeader {
         #[allow(unsafe_code)]
         unsafe {
             let page_id = arr_to_u64(buf.get_unchecked(1..9));
-            let lsn = arr_to_u64(buf.get_unchecked(9..17)) as Lsn;
+            let lsn = arr_to_lsn(buf.get_unchecked(9..17));
             let length = arr_to_u32(buf.get_unchecked(17..21));
             let crc32 = arr_to_u32(buf.get_unchecked(21..)) ^ 0xFFFF_FFFF;
 
@@ -508,7 +518,7 @@ impl Into<[u8; MSG_HEADER_LEN]> for MessageHeader {
         buf[0] = self.kind.into();
 
         let pid_arr = u64_to_arr(self.pid);
-        let lsn_arr = u64_to_arr(self.lsn as u64);
+        let lsn_arr = lsn_to_arr(self.lsn);
         let length_arr = u32_to_arr(self.len);
         let crc32_arr = u32_to_arr(self.crc32 ^ 0xFFFF_FFFF);
 
@@ -547,11 +557,10 @@ impl From<[u8; SEG_HEADER_LEN]> for SegmentHeader {
             let crc32_header =
                 arr_to_u32(buf.get_unchecked(0..4)) ^ 0xFFFF_FFFF;
 
-            let xor_lsn = arr_to_u64(buf.get_unchecked(4..12)) as Lsn;
+            let xor_lsn = arr_to_lsn(buf.get_unchecked(4..12));
             let lsn = xor_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
 
-            let xor_max_stable_lsn =
-                arr_to_u64(buf.get_unchecked(12..20)) as Lsn;
+            let xor_max_stable_lsn = arr_to_lsn(buf.get_unchecked(12..20));
             let max_stable_lsn = xor_max_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
 
             let crc32_tested = crc32(&buf[4..20]);
@@ -576,9 +585,10 @@ impl Into<[u8; SEG_HEADER_LEN]> for SegmentHeader {
         let mut buf = [0; SEG_HEADER_LEN];
 
         let xor_lsn = self.lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
+        let lsn_arr = lsn_to_arr(xor_lsn);
+
         let xor_max_stable_lsn = self.max_stable_lsn ^ 0x7FFF_FFFF_FFFF_FFFF;
-        let lsn_arr = u64_to_arr(xor_lsn as u64);
-        let highest_stable_lsn_arr = u64_to_arr(xor_max_stable_lsn as u64);
+        let highest_stable_lsn_arr = lsn_to_arr(xor_max_stable_lsn);
 
         #[allow(unsafe_code)]
         unsafe {

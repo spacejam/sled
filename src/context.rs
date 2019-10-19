@@ -14,7 +14,7 @@ pub(crate) struct Context {
     /// should trigger all background threads to clean
     /// up synchronously.
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-    pub(crate) _flusher: Arc<Mutex<Option<flusher::Flusher>>>,
+    pub(crate) flusher: Arc<Mutex<Option<flusher::Flusher>>>,
     pub(crate) pagecache: Arc<PageCache>,
 }
 
@@ -55,7 +55,7 @@ impl Context {
             config,
             pagecache,
             #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-            _flusher: Arc::new(parking_lot::Mutex::new(None)),
+            flusher: Arc::new(parking_lot::Mutex::new(None)),
         })
     }
 

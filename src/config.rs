@@ -17,15 +17,15 @@ const DEFAULT_PATH: &str = "default.sled";
 /// A persisted configuration about high-level
 /// storage file information
 #[derive(Debug, Eq, PartialEq, Clone, Copy, Serialize, Deserialize)]
-pub struct PersistedConfig {
+pub struct StorageParameters {
     pub segment_size: usize,
     pub use_compression: bool,
     pub version: (usize, usize),
 }
 
-impl PersistedConfig {
+impl StorageParameters {
     pub fn size_in_bytes(&self) -> u64 {
-        std::mem::size_of::<PersistedConfig>() as u64
+        std::mem::size_of::<StorageParameters>() as u64
     }
 
     pub fn serialize(&self) -> Vec<u8> {
@@ -40,7 +40,7 @@ impl PersistedConfig {
         out
     }
 
-    pub fn deserialize(bytes: &[u8]) -> Result<PersistedConfig> {
+    pub fn deserialize(bytes: &[u8]) -> Result<StorageParameters> {
         let reader = BufReader::new(bytes);
 
         let mut lines = HashMap::new();
@@ -142,7 +142,7 @@ impl PersistedConfig {
             return Err(Error::Corruption { at: DiskPtr::Inline(0) });
         };
 
-        Ok(PersistedConfig { segment_size, use_compression, version })
+        Ok(StorageParameters { segment_size, use_compression, version })
     }
 }
 
@@ -165,19 +165,19 @@ impl PersistedConfig {
 ///     .read_only(true);
 /// ```
 #[derive(Default, Debug, Clone)]
-pub struct Config(Arc<ConfigInner>);
+pub struct Config(Arc<Inner>);
 
 impl Deref for Config {
-    type Target = ConfigInner;
+    type Target = Inner;
 
-    fn deref(&self) -> &ConfigInner {
+    fn deref(&self) -> &Inner {
         &self.0
     }
 }
 
 #[doc(hidden)]
 #[derive(Debug, Clone)]
-pub struct ConfigInner {
+pub struct Inner {
     #[doc(hidden)]
     pub cache_capacity: u64,
     #[doc(hidden)]
@@ -189,7 +189,7 @@ pub struct ConfigInner {
     #[doc(hidden)]
     pub read_only: bool,
     #[doc(hidden)]
-    pub segment_cleanup_threshold: f64,
+    pub segment_cleanup_threshold: u8,
     #[doc(hidden)]
     pub segment_cleanup_skew: usize,
     #[doc(hidden)]
@@ -217,7 +217,7 @@ pub struct ConfigInner {
     pub event_log: Arc<event_log::EventLog>,
 }
 
-impl Default for ConfigInner {
+impl Default for Inner {
     fn default() -> Self {
         Self {
             segment_size: 2 << 22, // 8mb
@@ -229,7 +229,7 @@ impl Default for ConfigInner {
             flush_every_ms: Some(500),
             snapshot_after_ops: 1_000_000,
             snapshot_path: None,
-            segment_cleanup_threshold: 0.40,
+            segment_cleanup_threshold: 40,
             segment_cleanup_skew: 10,
             temporary: false,
             segment_mode: SegmentMode::Gc,
@@ -244,7 +244,7 @@ impl Default for ConfigInner {
     }
 }
 
-impl ConfigInner {
+impl Inner {
     // Get the path of the database
     #[doc(hidden)]
     pub fn get_path(&self) -> PathBuf {
@@ -394,15 +394,15 @@ impl Config {
 
         static SALT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-        let seed = SALT_COUNTER.fetch_add(1, SeqCst) as u64;
+        let seed = SALT_COUNTER.fetch_add(1, SeqCst) as u128;
 
-        let now = (SystemTime::now()
+        let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
-            << 48) as u64;
+            << 48;
 
-        let pid = u64::from(std::process::id());
+        let pid = u128::from(std::process::id());
 
         let salt = (pid << 16) + now + seed;
 
@@ -437,7 +437,7 @@ impl Config {
         (compression_factor, i32, "the compression factor to use with zstd compression"),
         (flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
         (snapshot_after_ops, u64, "number of operations between page table snapshots"),
-        (segment_cleanup_threshold, f64, "the proportion of remaining valid pages in the segment before GC defragments it"),
+        (segment_cleanup_threshold, u8, "the proportion of remaining valid pages in the segment before GC defragments it"),
         (segment_cleanup_skew, usize, "the cleanup threshold skew in percentage points between the first and last segments"),
         (segment_mode, SegmentMode, "the file segment selection mode"),
         (snapshot_path, Option<PathBuf>, "snapshot file location"),
@@ -460,12 +460,12 @@ impl Config {
             "segment_size should be <= 16mb"
         );
         supported!(
-            match self.segment_cleanup_threshold.partial_cmp(&0.01) {
-                Some(std::cmp::Ordering::Equal)
-                | Some(std::cmp::Ordering::Greater) => true,
-                Some(std::cmp::Ordering::Less) | None => false,
-            },
-            "segment_cleanup_threshold must be >= 1%"
+            self.segment_cleanup_threshold >= 1,
+            "segment_cleanup_threshold must be >= 1 (1%)"
+        );
+        supported!(
+            self.segment_cleanup_threshold < 100,
+            "segment_cleanup_threshold must be < 100 (100%)"
         );
         supported!(
             self.segment_cleanup_skew < 99,
@@ -615,7 +615,7 @@ impl Config {
     }
 
     fn serialize(&self) -> Vec<u8> {
-        let persisted_config = PersistedConfig {
+        let persisted_config = StorageParameters {
             version: self.version,
             segment_size: self.segment_size,
             use_compression: self.use_compression,
@@ -642,7 +642,7 @@ impl Config {
         Ok(())
     }
 
-    fn read_config(&self) -> Result<Option<PersistedConfig>> {
+    fn read_config(&self) -> Result<Option<StorageParameters>> {
         let path = self.config_path();
 
         let f_res = fs::OpenOptions::new().read(true).open(&path);
@@ -682,7 +682,7 @@ impl Config {
             );
         }
 
-        PersistedConfig::deserialize(&buf).map(Some)
+        StorageParameters::deserialize(&buf).map(Some)
     }
 
     /// Return the global error if one was encountered during
@@ -761,7 +761,7 @@ impl Deref for RunningConfig {
     }
 }
 
-impl Drop for ConfigInner {
+impl Drop for Inner {
     fn drop(&mut self) {
         if self.print_profile_on_drop {
             M.print_profile();

@@ -203,7 +203,7 @@ impl<'a, T> StackIter<'a, T>
 where
     T: 'a + Send + 'static + Sync,
 {
-    /// Creates a StackIter from a pointer to one.
+    /// Creates a `StackIter` from a pointer to one.
     pub fn from_ptr<'b>(
         ptr: Shared<'b, Node<T>>,
         guard: &'b Guard,

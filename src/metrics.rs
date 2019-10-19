@@ -19,6 +19,7 @@ use super::*;
 /// process.
 pub static M: Lazy<Metrics, fn() -> Metrics> = Lazy::new(Metrics::default);
 
+#[allow(clippy::cast_precision_loss)]
 pub(crate) fn clock() -> f64 {
     if cfg!(feature = "no_metrics") {
         0.
@@ -26,8 +27,8 @@ pub(crate) fn clock() -> f64 {
         #[cfg(target_arch = "x86_64")]
         #[allow(unsafe_code)]
         unsafe {
-            let mut _aux = 0;
-            core::arch::x86_64::__rdtscp(&mut _aux) as f64
+            let mut aux = 0;
+            core::arch::x86_64::__rdtscp(&mut aux) as f64
         }
 
         #[cfg(not(target_arch = "x86_64"))]
@@ -61,7 +62,7 @@ pub struct Measure<'h> {
 
 impl<'h> Measure<'h> {
     /// The time delta from ctor to dtor is recorded in `histo`.
-    #[inline(always)]
+    #[inline]
     pub fn new(_histo: &'h Histogram) -> Measure<'h> {
         Measure {
             #[cfg(feature = "no_metrics")]
@@ -74,7 +75,7 @@ impl<'h> Measure<'h> {
 }
 
 impl<'h> Drop for Measure<'h> {
-    #[inline(always)]
+    #[inline]
     fn drop(&mut self) {
         #[cfg(not(feature = "no_metrics"))]
         self.histo.measure(clock() - self._start);

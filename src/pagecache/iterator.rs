@@ -24,7 +24,7 @@ impl Iterator for LogIter {
         // return None if there are no more remaining segments.
         loop {
             let remaining_seg_too_small_for_msg = !valid_entry_offset(
-                self.cur_lsn as LogOffset,
+                LogOffset::try_from(self.cur_lsn).unwrap(),
                 self.config.segment_size,
             );
 
@@ -61,7 +61,10 @@ impl Iterator for LogIter {
             }
 
             let lid = self.segment_base.unwrap()
-                + (self.cur_lsn % self.config.segment_size as Lsn) as LogOffset;
+                + LogOffset::try_from(
+                    self.cur_lsn % self.config.segment_size as Lsn,
+                )
+                .unwrap();
 
             let f = &self.config.file;
 
@@ -103,8 +106,9 @@ impl Iterator for LogIter {
                 }
                 Ok(LogRead::Failed(_, on_disk_len)) => {
                     trace!("read zeroed in LogIter::next");
-                    self.cur_lsn +=
-                        Lsn::from(MSG_HEADER_LEN as u32 + on_disk_len);
+                    self.cur_lsn += Lsn::from(
+                        u32::try_from(MSG_HEADER_LEN).unwrap() + on_disk_len,
+                    );
                 }
                 Ok(LogRead::Corrupted(_len)) => {
                     trace!(

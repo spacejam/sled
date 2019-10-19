@@ -1,4 +1,5 @@
 use std::{
+    convert::TryFrom,
     fmt,
     hash::{Hash, Hasher},
     ops::Deref,
@@ -76,7 +77,7 @@ impl IVec {
             );
         }
 
-        Self(IVecInner::Inline(slice.len() as u8, data))
+        Self(IVecInner::Inline(u8::try_from(slice.len()).unwrap(), data))
     }
 
     fn remote(arc: Arc<[u8]>) -> Self {
