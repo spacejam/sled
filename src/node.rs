@@ -119,8 +119,8 @@ impl Node {
     pub(crate) fn split(mut self) -> (Node, Node) {
         fn split_inner<T>(
             xs: &mut Vec<(IVec, T)>,
-            left_prefix: &[u8],
-            right_max: &[u8],
+            old_prefix: &[u8],
+            old_hi: &[u8],
             suffix_truncation: bool,
         ) -> (IVec, u8, Vec<(IVec, T)>)
         where
@@ -130,20 +130,7 @@ impl Node {
             let right_min = &right[0].0;
             let left_max = &xs.last().unwrap().0;
 
-            // When splitting, the prefix can only grow or stay the
-            // same size, because all keys already shared the same
-            // prefix before. Here we figure out if we can shave
-            // off additional bytes in the key.
-            let max_additional =
-                u8::max_value() - u8::try_from(left_prefix.len()).unwrap();
-            let right_additional_prefix_len = right_min
-                .iter()
-                .zip(right_max.iter())
-                .take_while(|(a, b)| a == b)
-                .take(max_additional as usize)
-                .count();
-
-            let necessary_split_len = if suffix_truncation {
+            let splitpoint_length = if suffix_truncation {
                 // we can only perform suffix truncation when
                 // choosing the split points for leaf nodes.
                 // split points bubble up into indexes, but
@@ -152,56 +139,59 @@ impl Node {
                 // otherwise ranges would be permanently
                 // inaccessible by falling into the gap
                 // during a split.
-                let smallest_suffix = right_min
+                right_min
                     .iter()
                     .zip(left_max.iter())
                     .take_while(|(a, b)| a == b)
                     .count()
-                    + 1;
-
-                // we cannot suffix truncate the split point so
-                // aggressively that we cause prefix encoding
-                // to degrade
-                std::cmp::max(smallest_suffix, right_additional_prefix_len)
+                    + 1
             } else {
                 right_min.len()
             };
 
             let split_point: IVec =
-                prefix::decode(left_prefix, &right_min[..necessary_split_len]);
+                prefix::decode(old_prefix, &right_min[..splitpoint_length]);
 
             assert!(!split_point.is_empty());
+
+            let new_prefix_len = old_hi
+                .iter()
+                .zip(split_point.iter())
+                .take_while(|(a, b)| a == b)
+                .take(u8::max_value() as usize)
+                .count();
+
+            assert!(new_prefix_len >= old_prefix.len());
 
             let mut right_data = Vec::with_capacity(right.len());
 
             for (k, v) in right {
-                let k: IVec = if right_additional_prefix_len > 0 {
+                let k: IVec = if new_prefix_len != old_prefix.len() {
                     // shave off additional prefixed bytes
-                    IVec::from(&k[right_additional_prefix_len..])
+                    prefix::reencode(old_prefix, &k, new_prefix_len)
                 } else {
                     k.clone()
                 };
                 right_data.push((k, v.clone()));
             }
 
-            (
-                split_point,
-                u8::try_from(right_additional_prefix_len).unwrap(),
-                right_data,
-            )
+            (split_point, u8::try_from(new_prefix_len).unwrap(), right_data)
         }
+        println!("before: {:?}", self);
 
-        let prefix = &self.lo[..self.prefix_len as usize];
-        let right_max = &self.hi[self.prefix_len as usize..];
-        let (split, right_additional_prefix_len, right_data) = match self.data {
+        let prefixed_lo = &self.lo[..self.prefix_len as usize];
+        let prefixed_hi = &self.hi;
+        let (split, right_prefix_len, right_data) = match self.data {
             Data::Index(ref mut pointers) => {
                 let (split, prefix_len, right) =
-                    split_inner(pointers, prefix, right_max, false);
+                    split_inner(pointers, prefixed_lo, prefixed_hi, false);
+
                 (split, prefix_len, Data::Index(right))
             }
             Data::Leaf(ref mut items) => {
                 let (split, prefix_len, right) =
-                    split_inner(items, prefix, right_max, true);
+                    split_inner(items, prefixed_lo, prefixed_hi, true);
+
                 (split, prefix_len, Data::Leaf(right))
             }
         };
@@ -213,7 +203,7 @@ impl Node {
             hi: self.hi.clone(),
             merging_child: None,
             merging: false,
-            prefix_len: self.prefix_len + right_additional_prefix_len,
+            prefix_len: right_prefix_len,
         };
 
         self.hi = split;
@@ -222,6 +212,9 @@ impl Node {
         // any issues pop out with setting it
         // correctly after the split.
         self.next = None;
+
+        println!("lhs: {:?}", self);
+        println!("rhs: {:?}", right);
 
         if self.hi.is_empty() {
             assert_eq!(self.prefix_len, 0);
@@ -463,6 +456,10 @@ impl Node {
     /// `node_kv_pair` returns either existing (node/key, value) pair or
     /// (node/key, none) where a node/key is node level encoded key.
     pub fn node_kv_pair(&self, key: &[u8]) -> (IVec, Option<IVec>) {
+        assert!(key >= &self.lo);
+        if !self.hi.is_empty() {
+            assert!(key < &self.hi);
+        }
         if let Some((k, v)) = self.leaf_pair_for_key(key.as_ref()) {
             (k.clone(), Some(v.clone()))
         } else {

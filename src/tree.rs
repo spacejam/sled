@@ -1395,6 +1395,7 @@ impl Tree {
         root_pid: PageId,
         guard: &'g Guard,
     ) -> Result<()> {
+        println!("\n\n\nsplitting node {}", node_view.pid);
         trace!("splitting node {}", node_view.pid);
         // split node
         let (mut lhs, rhs) = node_view.node.clone().split();
@@ -1556,7 +1557,7 @@ impl Tree {
         const MAX_LOOPS: usize = usize::max_value();
 
         #[cfg(not(any(test, feature = "lock_free_delays")))]
-        const MAX_LOOPS: usize = 1_000_000;
+        const MAX_LOOPS: usize = 50;
 
         let _measure = Measure::new(&M.tree_traverse);
 
@@ -1565,6 +1566,8 @@ impl Tree {
         let mut parent_view = None;
         let mut unsplit_parent = None;
         let mut took_leftmost_branch = false;
+        let mut path = vec![];
+        let mut retries = vec![];
 
         macro_rules! retry {
             () => {
@@ -1573,11 +1576,13 @@ impl Tree {
                     line!(),
                     cursor
                 );
+                retries.push(line!());
                 cursor = self.root.load(SeqCst);
                 root_pid = cursor;
                 parent_view = None;
                 unsplit_parent = None;
                 took_leftmost_branch = false;
+                path.clear();
                 continue;
             };
         }
@@ -1589,6 +1594,7 @@ impl Tree {
             }
 
             let node_opt = self.view_for_pid(cursor, guard)?;
+            path.push((cursor, node_opt.clone()));
 
             let view = if let Some(view) = node_opt {
                 view
@@ -1633,6 +1639,7 @@ impl Tree {
                 if unsplit_parent.is_none() && parent_view.is_some() {
                     unsplit_parent = parent_view.clone();
                 } else if parent_view.is_none() && view.lo.is_empty() {
+                    assert!(unsplit_parent.is_none());
                     assert_eq!(view.pid, root_pid);
                     // we have found a partially-split root
                     if self.root_hoist(
@@ -1658,6 +1665,17 @@ impl Tree {
                     // parent to already have a node for this lo key.
                     // if this is the case, we can skip the parent split
                     // because it's probably going to fail anyway.
+                    println!("looking for key {:?}", key.as_ref());
+                    for node_opt in path.iter() {
+                        println!();
+                        println!("node: {:?}", node_opt);
+                    }
+                    println!("retries: {:?}", retries);
+                    panic!(
+                        "trying to split node at point {:?} node: {:?}",
+                        view.lo.as_ref(),
+                        unsplit_parent.node
+                    );
                     retry!();
                 }
 
