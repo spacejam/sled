@@ -1557,7 +1557,7 @@ impl Tree {
         const MAX_LOOPS: usize = usize::max_value();
 
         #[cfg(not(any(test, feature = "lock_free_delays")))]
-        const MAX_LOOPS: usize = 50;
+        const MAX_LOOPS: usize = 1_000_000;
 
         let _measure = Measure::new(&M.tree_traverse);
 
