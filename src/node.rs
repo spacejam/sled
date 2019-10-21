@@ -221,6 +221,31 @@ impl Node {
 
         self.hi = split;
 
+        let new_prefix_len = self
+            .hi
+            .iter()
+            .zip(self.lo.iter())
+            .take_while(|(a, b)| a == b)
+            .take(u8::max_value() as usize)
+            .count();
+
+        if new_prefix_len != self.prefix_len as usize {
+            match self.data {
+                Data::Index(ref mut items) => {
+                    for (ref mut k, _) in items.iter_mut() {
+                        *k = prefix::reencode(prefixed_lo, k, new_prefix_len);
+                    }
+                }
+                Data::Leaf(ref mut items) => {
+                    for (ref mut k, _) in items.iter_mut() {
+                        *k = prefix::reencode(prefixed_lo, k, new_prefix_len);
+                    }
+                }
+            }
+        }
+
+        self.prefix_len = u8::try_from(new_prefix_len).unwrap();
+
         // intentionally make this the end to make
         // any issues pop out with setting it
         // correctly after the split.
@@ -287,6 +312,23 @@ impl Node {
             .take_while(|(a, b)| a == b)
             .take(u8::max_value() as usize)
             .count();
+
+        if new_prefix_len != merged.prefix_len as usize {
+            match merged.data {
+                Data::Index(ref mut items) => {
+                    for (ref mut k, _) in items.iter_mut() {
+                        *k = prefix::reencode(self.prefix(), k, new_prefix_len);
+                    }
+                }
+                Data::Leaf(ref mut items) => {
+                    for (ref mut k, _) in items.iter_mut() {
+                        *k = prefix::reencode(self.prefix(), k, new_prefix_len);
+                    }
+                }
+            }
+        }
+
+        merged.prefix_len = u8::try_from(new_prefix_len).unwrap();
 
         match (&mut merged.data, &right.data) {
             (
