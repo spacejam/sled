@@ -191,7 +191,6 @@ impl Node {
 
             (split_point, u8::try_from(new_prefix_len).unwrap(), right_data)
         }
-        println!("before: {:?}", self);
 
         let prefixed_lo = &self.lo[..self.prefix_len as usize];
         let prefixed_hi = &self.hi;
@@ -226,9 +225,6 @@ impl Node {
         // any issues pop out with setting it
         // correctly after the split.
         self.next = None;
-
-        println!("lhs: {:?}", self);
-        println!("rhs: {:?}", right);
 
         if self.hi.is_empty() {
             assert_eq!(self.prefix_len, 0);

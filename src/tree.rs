@@ -1395,7 +1395,6 @@ impl Tree {
         root_pid: PageId,
         guard: &'g Guard,
     ) -> Result<()> {
-        println!("\n\n\nsplitting node {}", node_view.pid);
         trace!("splitting node {}", node_view.pid);
         // split node
         let (mut lhs, rhs) = node_view.node.clone().split();
