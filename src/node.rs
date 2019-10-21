@@ -623,18 +623,35 @@ impl Data {
     }
 
     pub(crate) fn is_index(&self) -> bool {
-        if let Data::Index(..) = self {
-            true
-        } else {
-            false
-        }
+        if let Data::Index(..) = self { true } else { false }
     }
 
     pub(crate) fn is_leaf(&self) -> bool {
-        if let Data::Leaf(..) = self {
-            true
-        } else {
-            false
-        }
+        if let Data::Leaf(..) = self { true } else { false }
     }
+}
+
+#[test]
+fn merge_uneven_nodes() {
+    let left = Node {
+        data: Data::Leaf(vec![(vec![230, 126, 1, 0].into(), vec![].into())]),
+        next: Some(1),
+        lo: vec![230, 125, 1, 0].into(),
+        hi: vec![230, 134, 0, 0].into(),
+        merging_child: None,
+        merging: false,
+        prefix_len: 0,
+    };
+
+    let right = Node {
+        data: Data::Leaf(vec![(vec![134, 0, 0].into(), vec![].into())]),
+        next: None,
+        lo: vec![230, 134, 0, 0].into(),
+        hi: vec![230, 147, 0, 0].into(),
+        merging_child: None,
+        merging: false,
+        prefix_len: 1,
+    };
+
+    left.receive_merge(&right);
 }
