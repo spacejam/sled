@@ -73,12 +73,16 @@ impl Node {
     }
 
     pub(crate) fn set_leaf(&mut self, key: IVec, val: IVec) {
+        if !self.hi.is_empty() {
+            assert!(prefix::decode(self.prefix(), &key) < self.hi);
+        }
         if let Data::Leaf(ref mut records) = self.data {
             let search = records.binary_search_by_key(&&key, |(k, _)| k);
             match search {
                 Ok(idx) => records[idx] = (key, val),
                 Err(idx) => records.insert(idx, (key, val)),
             }
+            assert!(is_sorted(records));
         } else {
             panic!("tried to Set a value to an index");
         }
@@ -90,6 +94,7 @@ impl Node {
             if let Ok(idx) = search {
                 records.remove(idx);
             }
+            assert!(is_sorted(records));
         } else {
             panic!("tried to attach a Del to an Index chain");
         }
@@ -102,13 +107,14 @@ impl Node {
                 Ok(_) => {
                     debug!(
                         "parent_split skipped because \
-                         parent already contains child at split point \
-                         due to deep race"
+                         parent already contains child \
+                         at split point due to deep race"
                     );
                     return false;
                 }
                 Err(idx) => pointers.insert(idx, (IVec::from(encoded_sep), to)),
             }
+            assert!(is_sorted(pointers));
         } else {
             panic!("tried to attach a ParentSplit to a Leaf chain");
         }
@@ -161,7 +167,13 @@ impl Node {
                 .take(u8::max_value() as usize)
                 .count();
 
-            assert!(new_prefix_len >= old_prefix.len());
+            assert!(
+                new_prefix_len >= old_prefix.len(),
+                "new prefix length {} should be greater than \
+                 or equal to the old prefix length {}",
+                new_prefix_len,
+                old_prefix.len()
+            );
 
             let mut right_data = Vec::with_capacity(right.len());
 
@@ -174,6 +186,8 @@ impl Node {
                 };
                 right_data.push((k, v.clone()));
             }
+
+            assert!(is_sorted(&right_data));
 
             (split_point, u8::try_from(new_prefix_len).unwrap(), right_data)
         }
@@ -247,11 +261,12 @@ impl Node {
             left_data: &mut Vec<(IVec, T)>,
             right_data: &[(IVec, T)],
         ) where
-            T: Clone,
+            T: Debug + Clone + PartialOrd,
         {
-            // When merging, the prefix can only shrink or
+            // When merging, the prefix should only shrink or
             // stay the same length. Here we figure out if
             // we need to add previous prefixed bytes.
+
             for (k, v) in right_data {
                 let k = if new_prefix_len == old_prefix.len() {
                     k.clone()
@@ -260,6 +275,11 @@ impl Node {
                 };
                 left_data.push((k, v.clone()));
             }
+            assert!(
+                is_sorted(left_data),
+                "should have been sorted: {:?}",
+                left_data
+            );
         }
 
         let mut merged = self.clone();
