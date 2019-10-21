@@ -196,16 +196,16 @@ impl Node {
         let prefixed_hi = &self.hi;
         let (split, right_prefix_len, right_data) = match self.data {
             Data::Index(ref mut pointers) => {
-                let (split, prefix_len, right) =
+                let (split, right_prefix_len, right) =
                     split_inner(pointers, prefixed_lo, prefixed_hi, false);
 
-                (split, prefix_len, Data::Index(right))
+                (split, right_prefix_len, Data::Index(right))
             }
             Data::Leaf(ref mut items) => {
-                let (split, prefix_len, right) =
+                let (split, right_prefix_len, right) =
                     split_inner(items, prefixed_lo, prefixed_hi, true);
 
-                (split, prefix_len, Data::Leaf(right))
+                (split, right_prefix_len, Data::Leaf(right))
             }
         };
 
