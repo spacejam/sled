@@ -7,9 +7,15 @@ use std::process::Command;
 fn main() {
     let out_dir = env::var("OUT_DIR").unwrap();
 
+    Command::new("cp")
+        .arg("-r")
+        .arg("lib")
+        .arg(out_dir.clone())
+        .status()
+        .expect("copy liburing to out_dir");
     Command::new("make")
         .arg("liburing.a")
-        .current_dir("lib/src")
+        .current_dir(format!("{}/lib/src", out_dir.clone()))
         .env("CFLAGS", "-fPIC")
         .status()
         .expect("failed to build liburing.a");
@@ -18,7 +24,7 @@ fn main() {
     // shared library.
     println!("cargo:rustc-link-lib=static=uring");
     println!("cargo:rerun-if-changed=wrapper.h");
-    println!("cargo:rustc-link-search=native=lib/src");
+    println!("cargo:rustc-link-search=native={}/lib/src", out_dir.clone());
 
     // Generate bindings
     let bindings = bindgen::Builder::default()

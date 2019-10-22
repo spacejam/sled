@@ -1,6 +1,7 @@
 use std::io;
 
 use super::LogOffset;
+use log::*;
 
 #[cfg(unix)]
 use std::os::unix::fs::FileExt;
@@ -24,6 +25,7 @@ pub(crate) trait Pio {
 #[cfg(unix)]
 impl Pio for std::fs::File {
     fn pread_exact(&self, buf: &mut [u8], offset: LogOffset) -> io::Result<()> {
+        debug!("pread_exact buf size = {} at = {}", buf.len(), offset);
         self.read_exact_at(buf, offset)
     }
 
