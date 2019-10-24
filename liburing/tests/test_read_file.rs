@@ -72,6 +72,7 @@ fn test_io_uring_read_file() {
         }
         unsafe { io_uring_cqe_seen(&mut ring, cqe) };
     }
-    println!("Submitted={}, completed={}", pending, done);
+
+    // println!("Submitted={}, completed={}", pending, done);
     unsafe { io_uring_queue_exit(&mut ring) };
 }
