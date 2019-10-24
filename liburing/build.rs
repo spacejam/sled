@@ -31,6 +31,7 @@ fn main() {
         .whitelist_function("__io_uring.*")
         .whitelist_function("io_uring.*")
         .whitelist_var("IORING.*")
+        .whitelist_var("IOSQE.*")
         .whitelist_type("io_uring.*")
         .header("wrapper.h")
         .generate()
