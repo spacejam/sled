@@ -437,16 +437,17 @@ impl Tree {
     }
 
     /// Compare and swap. Capable of unique creation, conditional modification,
-    /// or deletion. If old is `None`, this will only set the value if it doesn't
-    /// exist yet. If new is `None`, will delete the value if old is correct.
-    /// If both old and new are `Some`, will modify the value if old is correct.
+    /// or deletion. If old is `None`, this will only set the value if it
+    /// doesn't exist yet. If new is `None`, will delete the value if old is
+    /// correct. If both old and new are `Some`, will modify the value if
+    /// old is correct.
     ///
     /// It returns `Ok(Ok(()))` if operation finishes successfully.
     ///
     /// If it fails it returns:
     ///     - `Ok(Err(CompareAndSwapError(current, proposed)))` if operation
-    ///       failed to setup a new value. `CompareAndSwapError` contains current
-    ///       and proposed values.
+    ///       failed to setup a new value. `CompareAndSwapError` contains
+    ///       current and proposed values.
     ///     - `Err(Error::Unsupported)` if the database is opened in read-only
     ///       mode.
     ///
@@ -1633,6 +1634,7 @@ impl Tree {
                 if unsplit_parent.is_none() && parent_view.is_some() {
                     unsplit_parent = parent_view.clone();
                 } else if parent_view.is_none() && view.lo.is_empty() {
+                    assert!(unsplit_parent.is_none());
                     assert_eq!(view.pid, root_pid);
                     // we have found a partially-split root
                     if self.root_hoist(
@@ -2145,9 +2147,9 @@ impl Debug for Tree {
 /// Compare and swap result.
 ///
 /// It returns `Ok(Ok(()))` if operation finishes successfully and
-///     - `Ok(Err(CompareAndSwapError(current, proposed)))` if operation failed to
-///       setup a new value. `CompareAndSwapError` contains current and proposed
-///       values.
+///     - `Ok(Err(CompareAndSwapError(current, proposed)))` if operation failed
+///       to setup a new value. `CompareAndSwapError` contains current and
+///       proposed values.
 ///     - `Err(Error::Unsupported)` if the database is opened in read-only mode.
 ///       otherwise.
 pub type CompareAndSwapResult =
