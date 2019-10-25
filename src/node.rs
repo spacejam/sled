@@ -178,11 +178,11 @@ impl Node {
             let mut right_data = Vec::with_capacity(right.len());
 
             for (k, v) in right {
-                let k: IVec = if new_prefix_len != old_prefix.len() {
+                let k: IVec = if new_prefix_len == old_prefix.len() {
+                    k.clone()
+                } else {
                     // shave off additional prefixed bytes
                     prefix::reencode(old_prefix, &k, new_prefix_len)
-                } else {
-                    k.clone()
                 };
                 right_data.push((k, v.clone()));
             }
@@ -514,9 +514,9 @@ impl Node {
     /// `node_kv_pair` returns either existing (node/key, value) pair or
     /// (node/key, none) where a node/key is node level encoded key.
     pub fn node_kv_pair(&self, key: &[u8]) -> (IVec, Option<IVec>) {
-        assert!(key >= &self.lo);
+        assert!(key >= self.lo.as_ref());
         if !self.hi.is_empty() {
-            assert!(key < &self.hi);
+            assert!(key < self.hi.as_ref());
         }
         if let Some((k, v)) = self.leaf_pair_for_key(key.as_ref()) {
             (k.clone(), Some(v.clone()))
