@@ -32,7 +32,7 @@ impl Debug for Db {
         let tenants = self.tenants.read();
         writeln!(f, "Db {{")?;
         for (raw_name, tree) in tenants.iter() {
-            let name = std::str::from_utf8(&raw_name)
+            let name = std::str::from_utf8(raw_name)
                 .ok()
                 .map_or_else(|| format!("{:?}", raw_name), String::from);
             write!(f, "    Tree: {:?} contents: {:?}", name, tree)?;
@@ -168,7 +168,7 @@ impl Db {
         let guard = pin();
 
         let mut root_id =
-            Some(self.context.pagecache.meta_pid_for_name(&name, &guard)?);
+            Some(self.context.pagecache.meta_pid_for_name(name, &guard)?);
 
         let mut leftmost_chain: Vec<PageId> = vec![root_id.unwrap()];
         let mut cursor = root_id.unwrap();
@@ -186,7 +186,7 @@ impl Db {
             let res = self
                 .context
                 .pagecache
-                .cas_root_in_meta(&name, root_id, None, &guard)?;
+                .cas_root_in_meta(name, root_id, None, &guard)?;
 
             if let Err(actual_root) = res {
                 root_id = actual_root;

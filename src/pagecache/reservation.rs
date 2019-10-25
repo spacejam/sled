@@ -54,14 +54,14 @@ impl<'a> Reservation<'a> {
     }
 
     /// Get the log sequence number for this update.
-    pub fn lsn(&self) -> Lsn {
+    pub const fn lsn(&self) -> Lsn {
         self.lsn
     }
 
     /// Get the underlying storage location for the written value.
     /// Note that an blob write still has a pointer in the
     /// log at the provided lid location.
-    pub fn pointer(&self) -> DiskPtr {
+    pub const fn pointer(&self) -> DiskPtr {
         self.pointer
     }
 

@@ -24,7 +24,7 @@ pub struct StorageParameters {
 }
 
 impl StorageParameters {
-    pub fn size_in_bytes(&self) -> u64 {
+    pub const fn size_in_bytes(&self) -> u64 {
         std::mem::size_of::<StorageParameters>() as u64
     }
 
@@ -84,7 +84,9 @@ impl StorageParameters {
                 return Err(Error::Corruption { at: DiskPtr::Inline(0) });
             }
         } else {
-            error!("failed to retrieve required configuration parameter: segment_size");
+            error!(
+                "failed to retrieve required configuration parameter: segment_size"
+            );
             return Err(Error::Corruption { at: DiskPtr::Inline(0) });
         };
 
@@ -98,7 +100,9 @@ impl StorageParameters {
                 return Err(Error::Corruption { at: DiskPtr::Inline(0) });
             }
         } else {
-            error!("failed to retrieve required configuration parameter: use_compression");
+            error!(
+                "failed to retrieve required configuration parameter: use_compression"
+            );
             return Err(Error::Corruption { at: DiskPtr::Inline(0) });
         };
 

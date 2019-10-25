@@ -68,7 +68,7 @@ impl Iterator for LogIter {
 
             let f = &self.config.file;
 
-            match read_message(&f, lid, self.cur_lsn, &self.config) {
+            match read_message(f, lid, self.cur_lsn, &self.config) {
                 Ok(LogRead::Blob(header, _buf, blob_ptr)) => {
                     trace!("read blob flush in LogIter::next");
                     let sz = MSG_HEADER_LEN + BLOB_INLINE_LEN;
@@ -158,7 +158,7 @@ impl LogIter {
         // initial segment that is a bit behind where we left off before.
         assert!(lsn + self.config.segment_size as Lsn >= self.cur_lsn);
         let f = &self.config.file;
-        let segment_header = read_segment_header(&f, offset)?;
+        let segment_header = read_segment_header(f, offset)?;
         if offset % self.config.segment_size as LogOffset != 0 {
             debug!("segment offset not divisible by segment length");
             return Err(Error::Corruption { at: DiskPtr::Inline(offset) });
@@ -322,7 +322,7 @@ fn scan_segment_lsns(
     // Check that the segments above max_header_stable_lsn
     // properly link their previous segment pointers.
     let ordering =
-        clean_tail_tears(max_header_stable_lsn, ordering, &config, &f)?;
+        clean_tail_tears(max_header_stable_lsn, ordering, config, f)?;
 
     Ok((ordering, max_header_stable_lsn))
 }

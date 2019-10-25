@@ -479,7 +479,7 @@ impl SegmentAccountant {
 
     fn initialize_from_snapshot(&mut self, snapshot: &Snapshot) -> Result<()> {
         let segment_size = self.config.segment_size;
-        let (mut segments, segment_sizes) = self.initial_segments(&snapshot)?;
+        let (mut segments, segment_sizes) = self.initial_segments(snapshot)?;
 
         let currently_active_segment = {
             // this logic allows us to free the last

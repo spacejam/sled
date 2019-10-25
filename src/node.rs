@@ -358,7 +358,7 @@ impl Node {
                 }
                 _ => {}
             }
-            let decoded_key = self.prefix_decode(&k);
+            let decoded_key = self.prefix_decode(k);
             return Some((decoded_key, v.clone()));
         }
 
@@ -429,7 +429,7 @@ impl Node {
                 }
                 _ => {}
             }
-            let decoded_key = self.prefix_decode(&k);
+            let decoded_key = self.prefix_decode(k);
             return Some((decoded_key, v.clone()));
         }
         None
@@ -560,18 +560,10 @@ impl Data {
     }
 
     pub(crate) fn is_index(&self) -> bool {
-        if let Data::Index(..) = self {
-            true
-        } else {
-            false
-        }
+        if let Data::Index(..) = self { true } else { false }
     }
 
     pub(crate) fn is_leaf(&self) -> bool {
-        if let Data::Leaf(..) = self {
-            true
-        } else {
-            false
-        }
+        if let Data::Leaf(..) = self { true } else { false }
     }
 }

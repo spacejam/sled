@@ -257,7 +257,7 @@ use {
 
 fn crc32(buf: &[u8]) -> u32 {
     let mut hasher = crc32fast::Hasher::new();
-    hasher.update(&buf);
+    hasher.update(buf);
     hasher.finalize()
 }
 
@@ -273,7 +273,7 @@ use debug_delay::debug_delay;
 /// operations, shaking out more possible interleavings quickly. It gets
 /// fully eliminated by the compiler in non-test code.
 #[cfg(not(any(test, feature = "lock_free_delays")))]
-fn debug_delay() {}
+const fn debug_delay() {}
 
 /// A fast map that is not resistant to collision attacks. Works
 /// on 8 bytes at a time.
