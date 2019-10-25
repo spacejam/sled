@@ -147,7 +147,8 @@ impl<E> From<UnabortableTransactionError> for ConflictableTransactionError<E> {
 pub enum ConflictableTransactionError<T = Error> {
     /// A user-provided error type that indicates the transaction should abort.
     /// This is passed into the return value of `transaction` as a direct Err
-    /// instance, rather than forcing users to interact with this enum directly.
+    /// instance, rather than forcing users to interact with this enum
+    /// directly.
     Abort(T),
     #[doc(hidden)]
     /// An internal conflict has occurred and the `transaction` method will
@@ -189,7 +190,8 @@ impl<E: std::error::Error> std::error::Error
 pub enum TransactionError<T = Error> {
     /// A user-provided error type that indicates the transaction should abort.
     /// This is passed into the return value of `transaction` as a direct Err
-    /// instance, rather than forcing users to interact with this enum directly.
+    /// instance, rather than forcing users to interact with this enum
+    /// directly.
     Abort(T),
     /// A serious underlying storage issue has occurred that requires
     /// attention from an operator or a remediating system, such as
@@ -320,7 +322,7 @@ impl TransactionalTree {
         unimplemented!()
     }
 
-    fn validate(&self) -> bool {
+    const fn validate(&self) -> bool {
         true
     }
 
@@ -450,7 +452,7 @@ pub trait Transactional<E = ()> {
                     return Ok(r);
                 }
                 Err(ConflictableTransactionError::Abort(e)) => {
-                    return Err(TransactionError::Abort(e))
+                    return Err(TransactionError::Abort(e));
                 }
                 Err(ConflictableTransactionError::Conflict) => continue,
                 Err(ConflictableTransactionError::Storage(other)) => {

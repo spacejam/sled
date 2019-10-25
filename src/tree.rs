@@ -25,7 +25,7 @@ impl<'g> std::ops::Deref for View<'g> {
     type Target = Node;
 
     fn deref(&self) -> &Node {
-        &self.node
+        self.node
     }
 }
 
@@ -485,6 +485,7 @@ impl Tree {
     /// );
     /// assert_eq!(t.get(&[1]), Ok(None));
     /// ```
+    #[allow(clippy::needless_pass_by_value)]
     pub fn compare_and_swap<K, OV, NV>(
         &self,
         key: K,
@@ -519,7 +520,7 @@ impl Tree {
             let (encoded_key, current_value) = node.node_kv_pair(key.as_ref());
             let matches = match (old.as_ref(), &current_value) {
                 (None, None) => true,
-                (Some(ref o), Some(ref c)) => o.as_ref() == &**c,
+                (Some(o), Some(ref c)) => o.as_ref() == &**c,
                 _ => false,
             };
 
@@ -1162,20 +1163,20 @@ impl Tree {
         R: RangeBounds<K>,
     {
         let lo = match range.start_bound() {
-            ops::Bound::Included(ref start) => {
+            ops::Bound::Included(start) => {
                 ops::Bound::Included(IVec::from(start.as_ref()))
             }
-            ops::Bound::Excluded(ref start) => {
+            ops::Bound::Excluded(start) => {
                 ops::Bound::Excluded(IVec::from(start.as_ref()))
             }
             ops::Bound::Unbounded => ops::Bound::Included(IVec::from(&[])),
         };
 
         let hi = match range.end_bound() {
-            ops::Bound::Included(ref end) => {
+            ops::Bound::Included(end) => {
                 ops::Bound::Included(IVec::from(end.as_ref()))
             }
-            ops::Bound::Excluded(ref end) => {
+            ops::Bound::Excluded(end) => {
                 ops::Bound::Excluded(IVec::from(end.as_ref()))
             }
             ops::Bound::Unbounded => ops::Bound::Unbounded,
@@ -1695,7 +1696,7 @@ impl Tree {
 
                         if let Ok(new_parent_ptr) = link {
                             parent.ptr = new_parent_ptr;
-                            self.merge_node(&parent, cursor, guard)?;
+                            self.merge_node(parent, cursor, guard)?;
                             retry!();
                         }
                     }
@@ -2092,16 +2093,15 @@ impl Debug for Tree {
 
         loop {
             let get_res = self.view_for_pid(pid, &guard);
-            let node = match get_res {
-                Ok(Some(ref view)) => view.node,
-                broken => {
-                    error!(
-                        "Tree::fmt failed to read node {} \
-                         that has been freed: {:?}",
-                        pid, broken
-                    );
-                    break;
-                }
+            let node = if let Ok(Some(ref view)) = get_res {
+                view.node
+            } else {
+                error!(
+                    "Tree::fmt failed to read node {} \
+                     that has been freed",
+                    pid,
+                );
+                break;
             };
 
             write!(f, "\t\t{}: ", pid)?;
@@ -2113,11 +2113,13 @@ impl Debug for Tree {
             } else {
                 // we've traversed our level, time to bump down
                 let left_get_res = self.view_for_pid(left_most, &guard);
-                let left_node = match left_get_res {
-                    Ok(Some(ref view)) => view.node,
-                    broken => {
-                        panic!("pagecache returned non-base node: {:?}", broken)
-                    }
+                let left_node = if let Ok(Some(ref view)) = left_get_res {
+                    view.node
+                } else {
+                    panic!(
+                        "pagecache returned non-base node: {:?}",
+                        left_get_res
+                    )
                 };
 
                 match &left_node.data {

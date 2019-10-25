@@ -27,6 +27,7 @@
 //! reporting.
 #![allow(unused)]
 #![allow(unused_results)]
+#![allow(clippy::print_stdout)]
 
 use std::convert::TryFrom;
 use std::fmt::{self, Debug};

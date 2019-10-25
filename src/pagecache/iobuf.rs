@@ -81,7 +81,7 @@ impl IoBufs {
                 (snapshot_last_lsn, snapshot_last_lid)
             } else {
                 let width = match read_message(
-                    &file,
+                    file,
                     snapshot_last_lid,
                     snapshot_last_lsn,
                     &config,
@@ -902,11 +902,7 @@ impl IoBuf {
     ) -> std::result::Result<Header, Header> {
         debug_delay();
         let res = self.header.compare_and_swap(old, new, SeqCst);
-        if res == old {
-            Ok(new)
-        } else {
-            Err(res)
-        }
+        if res == old { Ok(new) } else { Err(res) }
     }
 }
 

@@ -114,12 +114,12 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
         use std::ptr;
         use std::sync::atomic::Ordering::SeqCst;
         debug_delay();
-        let mut head = self.head(&guard);
+        let mut head = self.head(guard);
         loop {
             match unsafe { head.as_ref() } {
                 Some(h) => {
-                    let next = h.next.load(Acquire, &guard);
-                    match self.head.compare_and_set(head, next, Release, &guard)
+                    let next = h.next.load(Acquire, guard);
+                    match self.head.compare_and_set(head, next, Release, guard)
                     {
                         Ok(_) => unsafe {
                             // we unset the next pointer before destruction

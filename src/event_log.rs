@@ -112,8 +112,8 @@ impl EventLog {
                     recovered_meta = Some(meta);
                 }
                 Event::MetaOnShutdown { meta } => {
-                    if let Some(ref rec_meta) = recovered_meta {
-                        assert_eq!(meta, *rec_meta);
+                    if let Some(rec_meta) = recovered_meta {
+                        assert_eq!(meta, rec_meta);
                     }
                 }
             }

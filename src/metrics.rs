@@ -1,4 +1,5 @@
 #![allow(unused_results)]
+#![allow(clippy::print_stdout)]
 
 use std::sync::atomic::AtomicUsize;
 
@@ -194,7 +195,7 @@ impl Metrics {
     pub fn print_profile(&self) {
         println!(
             "pagecache profile:\n\
-            {0: >17} | {1: >10} | {2: >10} | {3: >10} | {4: >10} | {5: >10} | {6: >10} | {7: >10} | {8: >10} | {9: >10}",
+             {0: >17} | {1: >10} | {2: >10} | {3: >10} | {4: >10} | {5: >10} | {6: >10} | {7: >10} | {8: >10} | {9: >10}",
             "op",
             "min (us)",
             "med (us)",
@@ -346,23 +347,23 @@ impl Metrics {
 
 #[cfg(feature = "no_metrics")]
 impl Metrics {
-    pub fn log_reservation_attempted(&self) {}
+    pub const fn log_reservation_attempted(&self) {}
 
-    pub fn log_reservation_success(&self) {}
+    pub const fn log_reservation_success(&self) {}
 
-    pub fn tree_child_split_attempt(&self) {}
+    pub const fn tree_child_split_attempt(&self) {}
 
-    pub fn tree_child_split_success(&self) {}
+    pub const fn tree_child_split_success(&self) {}
 
-    pub fn tree_parent_split_attempt(&self) {}
+    pub const fn tree_parent_split_attempt(&self) {}
 
-    pub fn tree_parent_split_success(&self) {}
+    pub const fn tree_parent_split_success(&self) {}
 
-    pub fn tree_root_split_attempt(&self) {}
+    pub const fn tree_root_split_attempt(&self) {}
 
-    pub fn tree_root_split_success(&self) {}
+    pub const fn tree_root_split_success(&self) {}
 
-    pub fn tree_looped(&self) {}
+    pub const fn tree_looped(&self) {}
 
-    pub fn print_profile(&self) {}
+    pub const fn print_profile(&self) {}
 }

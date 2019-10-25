@@ -65,7 +65,7 @@ impl Log {
 
         if ptr.is_inline() {
             let f = &self.config.file;
-            read_message(&f, ptr.lid(), lsn, &self.config)
+            read_message(f, ptr.lid(), lsn, &self.config)
         } else {
             // we short-circuit the inline read
             // here because it might not still
@@ -350,7 +350,7 @@ impl Log {
 
             return Ok(Reservation {
                 iobuf,
-                log: &self,
+                log: self,
                 buf: destination,
                 flushed: false,
                 lsn: reservation_lsn,

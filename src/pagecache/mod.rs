@@ -242,6 +242,7 @@ pub(crate) fn u32_to_arr(number: u32) -> [u8; 4] {
     number.to_le_bytes()
 }
 
+#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn maybe_decompress(buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
     #[cfg(feature = "compression")]
     {
@@ -335,19 +336,11 @@ impl Update {
     }
 
     fn is_compact(&self) -> bool {
-        if let Update::Compact(_) = self {
-            true
-        } else {
-            false
-        }
+        if let Update::Compact(_) = self { true } else { false }
     }
 
     fn is_free(&self) -> bool {
-        if let Update::Free = self {
-            true
-        } else {
-            false
-        }
+        if let Update::Free = self { true } else { false }
     }
 }
 
@@ -523,11 +516,9 @@ impl PageCache {
                 let (meta_id, _) = pc.allocate_inner(meta_update, &guard)?;
 
                 assert_eq!(
-                    meta_id,
-                    META_PID,
+                    meta_id, META_PID,
                     "we expect the meta page to have pid {}, but it had pid {} instead",
-                    META_PID,
-                    meta_id,
+                    META_PID, meta_id,
                 );
             }
 
@@ -541,11 +532,9 @@ impl PageCache {
                     pc.allocate_inner(counter_update, &guard)?;
 
                 assert_eq!(
-                    counter_id,
-                    COUNTER_PID,
+                    counter_id, COUNTER_PID,
                     "we expect the counter to have pid {}, but it had pid {} instead",
-                    COUNTER_PID,
-                    counter_id,
+                    COUNTER_PID, counter_id,
                 );
             }
 
@@ -565,11 +554,9 @@ impl PageCache {
                     pc.allocate_inner(config_update, &guard)?;
 
                 assert_eq!(
-                    config_id,
-                    CONFIG_PID,
+                    config_id, CONFIG_PID,
                     "we expect the counter to have pid {}, but it had pid {} instead",
-                    CONFIG_PID,
-                    config_id,
+                    CONFIG_PID, config_id,
                 );
             }
 
@@ -694,19 +681,19 @@ impl PageCache {
                 Some(p) => p,
             };
 
-            let head = stack.head(&guard);
+            let head = stack.head(guard);
 
-            let mut stack_iter = StackIter::from_ptr(head, &guard);
+            let mut stack_iter = StackIter::from_ptr(head, guard);
 
-            match stack_iter.next() {
-                Some((Some(Update::Free), cache_info)) => {
-                    (pid, PagePtr { cached_pointer: head, ts: cache_info.ts })
-                }
-                other => panic!(
+            let next_res = stack_iter.next();
+            if let Some((Some(Update::Free), cache_info)) = next_res {
+                (pid, PagePtr { cached_pointer: head, ts: cache_info.ts })
+            } else {
+                panic!(
                     "failed to re-allocate pid {} which \
                      contained unexpected state {:?}",
-                    pid, other
-                ),
+                    pid, next_res
+                )
             }
         } else {
             let pid = self.next_pid_to_allocate.fetch_add(1, Relaxed);
@@ -833,8 +820,8 @@ impl PageCache {
         };
 
         // see if we should short-circuit replace
-        let head = stack.head(&guard);
-        let stack_iter = StackIter::from_ptr(head, &guard);
+        let head = stack.head(guard);
+        let stack_iter = StackIter::from_ptr(head, guard);
         let stack_len = stack_iter.size_hint().1.unwrap();
         if stack_len >= PAGE_CONSOLIDATION_THRESHOLD {
             let current_frag = if let Some((current_pointer, frag, _sz)) =
@@ -930,7 +917,7 @@ impl PageCache {
             }
 
             debug_delay();
-            let result = stack.cap_node(old.cached_pointer, node, &guard);
+            let result = stack.cap_node(old.cached_pointer, node, guard);
 
             match result {
                 Ok(cached_pointer) => {
@@ -1101,8 +1088,8 @@ impl PageCache {
         };
 
         debug_delay();
-        let head = stack.head(&guard);
-        let stack_iter = StackIter::from_ptr(head, &guard);
+        let head = stack.head(guard);
+        let stack_iter = StackIter::from_ptr(head, guard);
         let cache_entries: Vec<_> = stack_iter.collect();
 
         // if the page is just a single blob pointer, rewrite it.
@@ -1121,7 +1108,7 @@ impl PageCache {
             let node = node_from_frag_vec(vec![new_cache_entry]);
 
             debug_delay();
-            let result = stack.cas(head, node, &guard);
+            let result = stack.cas(head, node, guard);
 
             if result.is_ok() {
                 let pointers = pointers_from_stack(head, guard);
@@ -1162,9 +1149,9 @@ impl PageCache {
             } else if let Some((key, frag, _sz)) = self.get(pid, guard)? {
                 (key, Update::Compact(frag.clone()))
             } else {
-                let head = stack.head(&guard);
+                let head = stack.head(guard);
 
-                let mut stack_iter = StackIter::from_ptr(head, &guard);
+                let mut stack_iter = StackIter::from_ptr(head, guard);
 
                 match stack_iter.next() {
                     Some((Some(Update::Free), cache_info)) => (
@@ -1309,7 +1296,7 @@ impl PageCache {
             )]);
 
             debug_delay();
-            let result = stack.cas(old.cached_pointer, node, &guard);
+            let result = stack.cas(old.cached_pointer, node, guard);
 
             match result {
                 Ok(cached_pointer) => {
@@ -1376,9 +1363,9 @@ impl PageCache {
             Some(p) => p,
         };
 
-        let head = stack.head(&guard);
+        let head = stack.head(guard);
 
-        match StackIter::from_ptr(head, &guard).next() {
+        match StackIter::from_ptr(head, guard).next() {
             Some((Some(Update::Meta(m)), cache_info)) => {
                 Ok((PagePtr { cached_pointer: head, ts: cache_info.ts }, m))
             }
@@ -1417,9 +1404,9 @@ impl PageCache {
             Some(p) => p,
         };
 
-        let head = stack.head(&guard);
+        let head = stack.head(guard);
 
-        match StackIter::from_ptr(head, &guard).next() {
+        match StackIter::from_ptr(head, guard).next() {
             Some((Some(Update::Config(config)), cache_info)) => Ok((
                 PagePtr { cached_pointer: head, ts: cache_info.ts },
                 config,
@@ -1454,14 +1441,14 @@ impl PageCache {
                     "failed to retrieve idgen page \
                      which should always be present"
                         .into(),
-                ))
+                ));
             }
             Some(p) => p,
         };
 
-        let head = stack.head(&guard);
+        let head = stack.head(guard);
 
-        match StackIter::from_ptr(head, &guard).next() {
+        match StackIter::from_ptr(head, guard).next() {
             Some((Some(Update::Counter(counter)), cache_info)) => Ok((
                 PagePtr { cached_pointer: head, ts: cache_info.ts },
                 *counter,
@@ -1511,9 +1498,9 @@ impl PageCache {
             Some(p) => p,
         };
 
-        let head = stack.head(&guard);
+        let head = stack.head(guard);
 
-        let entries: Vec<_> = StackIter::from_ptr(head, &guard).collect();
+        let entries: Vec<_> = StackIter::from_ptr(head, guard).collect();
 
         let is_free = if let Some((Some(entry), _)) = entries.first() {
             entry.is_free()
@@ -1610,7 +1597,7 @@ impl PageCache {
 
         frags[0].0 = Some(Update::Compact(base));
 
-        let node = node_from_frag_vec(frags).into_shared(&guard);
+        let node = node_from_frag_vec(frags).into_shared(guard);
 
         #[cfg(feature = "event_log")]
         assert_eq!(
@@ -1621,7 +1608,7 @@ impl PageCache {
         let node = unsafe { node.into_owned() };
 
         debug_delay();
-        let res = stack.cas(head, node, &guard);
+        let res = stack.cas(head, node, guard);
         if let Ok(new_pointer) = res {
             trace!("fix-up for pid {} succeeded", pid);
 
@@ -1675,7 +1662,7 @@ impl PageCache {
     /// is set to `Some(number_of_ms_between_syncs)`
     /// or if the IO buffer gets filled to
     /// capacity before being rotated.
-    pub fn was_recovered(&self) -> bool {
+    pub const fn was_recovered(&self) -> bool {
         self.was_recovered
     }
 
@@ -1780,7 +1767,7 @@ impl PageCache {
         loop {
             let (meta_key, meta) = self.get_meta(guard)?;
 
-            let actual = meta.get_root(&name);
+            let actual = meta.get_root(name);
             if actual != old {
                 return Ok(Err(actual));
             }
@@ -1789,7 +1776,7 @@ impl PageCache {
             if let Some(new) = new {
                 new_meta.set_root(name.to_vec(), new);
             } else {
-                new_meta.del_root(&name);
+                new_meta.del_root(name);
             }
 
             let new_meta_frag = Update::Meta(new_meta);
@@ -1799,7 +1786,7 @@ impl PageCache {
                 meta_key.clone(),
                 new_meta_frag,
                 false,
-                &guard,
+                guard,
             )?;
 
             match res {
@@ -1834,8 +1821,8 @@ impl PageCache {
             };
 
             debug_delay();
-            let head = stack.head(&guard);
-            let stack_iter = StackIter::from_ptr(head, &guard);
+            let head = stack.head(guard);
+            let stack_iter = StackIter::from_ptr(head, guard);
             let stack_len = stack_iter.size_hint().1.unwrap();
             let mut new_stack = Vec::with_capacity(stack_len);
 
@@ -1854,7 +1841,7 @@ impl PageCache {
             let node = node_from_frag_vec(new_stack);
 
             debug_delay();
-            let result = stack.cas(head, node, &guard);
+            let result = stack.cas(head, node, guard);
             if result.is_ok() {
                 // TODO record cache difference
             } else {
@@ -1927,18 +1914,22 @@ impl PageCache {
                 deserialize::<Frag>(&bytes).map(Update::Compact)
             }
             Free => Ok(Update::Free),
-            other => panic!("unexpected pull: {:?}", other),
+            Corrupted | Cancelled | Pad | BatchManifest => {
+                panic!("unexpected pull: {:?}", header.kind)
+            }
         };
         drop(deserialize_latency);
 
         let update =
             update_res.map_err(|_| ()).expect("failed to deserialize data");
 
-        match update {
-            Update::Free => Err(Error::ReportableBug(
+        // TODO this feels racy, test it better?
+        if let Update::Free = update {
+            Err(Error::ReportableBug(
                 "non-append/compact found in pull".to_owned(),
-            )),
-            update => Ok(update),
+            ))
+        } else {
+            Ok(update)
         }
     }
 
@@ -2106,7 +2097,7 @@ fn pointers_from_stack<'g>(
     guard: &'g Guard,
 ) -> Vec<DiskPtr> {
     // generate a list of the old log ID's
-    let stack_iter = StackIter::from_ptr(head_pointer, &guard);
+    let stack_iter = StackIter::from_ptr(head_pointer, guard);
 
     let mut pointers = vec![];
     for (_, cache_info) in stack_iter {
