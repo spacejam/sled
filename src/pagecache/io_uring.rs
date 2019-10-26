@@ -22,8 +22,12 @@ pub(crate) struct URing {
 
     /// Submit queue mutex. Threads must synchronize receiving,
     /// filling up and submitting SQEs.
-    sm: Mutex<()>,
+    sm: Mutex<UserData>,
+}
 
+/// TODO: keep track of objects refs that must live while async ops are
+/// performing
+struct UserData {
     /// IOVec structures that hold information about buffers
     /// used in SQEs.
     iovecs: Vec<libc::iovec>,
@@ -67,9 +71,10 @@ impl URing {
         let mut uring = URing {
             ring: Cell::new(ring),
             fd: file.as_raw_fd(),
-            sm: Mutex::new(()),
-            iovecs: Vec::with_capacity(size),
-            free_slots: Vec::with_capacity(size),
+            sm: Mutex::new(UserData {
+                iovecs: Vec::with_capacity(size),
+                free_slots: Vec::with_capacity(size),
+            }),
         };
 
         unsafe {
@@ -83,33 +88,38 @@ impl URing {
             }
         };
 
-        uring.iovecs.resize(
+        uring.sm.get_mut().iovecs.resize(
             size,
             libc::iovec { iov_base: std::ptr::null_mut(), iov_len: 0 },
         );
 
         // index free elements
         for i in 0..size - 1 {
-            uring.free_slots.push(i);
+            uring.sm.get_mut().free_slots.push(i);
         }
 
         Ok(uring)
     }
 
-    fn drain_cqe(&mut self) -> Result<()> {
-        unsafe {
-            loop {
-                let mut cqe: *mut io_uring_cqe = std::mem::zeroed();
-                let ret = io_uring_peek_cqe(self.ring.as_ptr(), &mut cqe);
-                if ret < 0 {
-                    return Err(Error::Io(io::Error::from_raw_os_error(ret)));
-                }
-                let i = (*cqe).user_data;
-                if i >= 0 && i < self.free_slots.len() as u64 {
-                    self.free_slots.push(i as usize);
-                }
-                io_uring_cqe_seen(self.ring.as_ptr(), cqe);
+    unsafe fn drain_cqe(
+        ring: *mut io_uring,
+        data: &mut UserData,
+    ) -> Result<()> {
+        loop {
+            let mut cqe: *mut io_uring_cqe = std::mem::zeroed();
+            let ret = io_uring_peek_cqe(ring, &mut cqe);
+            if ret == -libc::EAGAIN {
+                // peek found nothing, no completions to drain
+                return Ok(());
             }
+            if ret < 0 {
+                return Err(Error::Io(io::Error::from_raw_os_error(ret)));
+            }
+            let i = (*cqe).user_data;
+            if i < data.free_slots.len() as u64 {
+                data.free_slots.push(i as usize);
+            }
+            io_uring_cqe_seen(ring, cqe);
         }
     }
 
@@ -119,24 +129,11 @@ impl URing {
         offset: LogOffset,
         fsync: bool,
     ) -> Result<()> {
-        let _m = self.sm.lock();
+        let data = self.sm.get_mut();
 
         unsafe {
-            // self.drain_cqe()?;
-            //   ^-- immutable borrow happened by _m
-            // drain cqe
-            loop {
-                let mut cqe: *mut io_uring_cqe = std::mem::zeroed();
-                let ret = io_uring_peek_cqe(self.ring.as_ptr(), &mut cqe);
-                if ret < 0 {
-                    return Err(Error::Io(io::Error::from_raw_os_error(ret)));
-                }
-                let i = (*cqe).user_data;
-                if i >= 0 && i < self.free_slots.len() as u64 {
-                    self.free_slots.push(i as usize);
-                }
-                io_uring_cqe_seen(self.ring.as_ptr(), cqe);
-            }
+            // 1. drain completed operations
+            URing::drain_cqe(self.ring.as_ptr(), data)?;
 
             // it is easier to track queue len if num
             // of iovecs will be the same as sqes
@@ -145,7 +142,8 @@ impl URing {
                 reserve += 1;
             }
 
-            if self.free_slots.len() < reserve {
+            // 2. reserve SQE slots
+            if data.free_slots.len() < reserve {
                 let ret = io_uring_submit_and_wait(
                     self.ring.as_ptr(),
                     reserve as libc::c_uint,
@@ -160,32 +158,35 @@ impl URing {
                     )));
                 }
 
-                self.drain_cqe()?;
+                URing::drain_cqe(self.ring.as_ptr(), data)?;
             }
 
-            // build write() sqe
-            let sqe = io_uring_get_sqe(self.ring.as_ptr());
-            if sqe == std::ptr::null_mut() {
-                return Err(Error::Io(io::Error::new(
-                    io::ErrorKind::Other,
-                    "unexpected lack of sqes",
-                )));
+            // 3. build write() SQE
+            {
+                let sqe = io_uring_get_sqe(self.ring.as_ptr());
+                if sqe == std::ptr::null_mut() {
+                    return Err(Error::Io(io::Error::new(
+                        io::ErrorKind::Other,
+                        "unexpected lack of sqes",
+                    )));
+                }
+
+                let i = data.free_slots.pop().unwrap();
+                data.iovecs[i].iov_base =
+                    buf.as_mut_ptr() as *mut std::ffi::c_void;
+                data.iovecs[i].iov_len = buf.len();
+
+                io_uring_prep_writev(
+                    sqe,
+                    self.fd,
+                    &mut data.iovecs[i],
+                    1,
+                    offset as off_t,
+                );
+                (*sqe).user_data = u64::try_from(i).unwrap();
             }
 
-            let i = self.free_slots.pop().unwrap();
-            self.iovecs[i].iov_base = buf.as_mut_ptr() as *mut std::ffi::c_void;
-            self.iovecs[i].iov_len = buf.len();
-
-            io_uring_prep_writev(
-                sqe,
-                self.fd,
-                &mut self.iovecs[i],
-                1,
-                offset as off_t,
-            );
-            (*sqe).user_data = u64::try_from(i).unwrap();
-
-            // build fsync
+            // 4. build fsync() SQE
             if fsync {
                 let sqe = io_uring_get_sqe(self.ring.as_ptr());
                 if sqe == std::ptr::null_mut() {
@@ -195,14 +196,14 @@ impl URing {
                     )));
                 }
 
-                self.free_slots.pop().unwrap();
+                let i = data.free_slots.pop().unwrap();
 
                 io_uring_prep_fsync(sqe, self.fd, IORING_FSYNC_DATASYNC);
                 io_uring_sqe_set_flags(sqe, IOSQE_IO_DRAIN);
                 (*sqe).user_data = u64::try_from(i).unwrap();
             }
 
-            // submit
+            // 5. submit
             let ret = io_uring_submit(self.ring.as_ptr());
             if ret < 0 {
                 return Err(Error::Io(io::Error::from_raw_os_error(ret)));
