@@ -5,11 +5,10 @@ use std::{
     alloc::{alloc_zeroed, Layout},
     convert::TryFrom,
     mem::{align_of, size_of},
-    sync::atomic::{
-        AtomicPtr,
-        Ordering::{Acquire, Relaxed, Release},
-    },
+    sync::atomic::Ordering::{Acquire, Relaxed, Release},
 };
+
+use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
 
 use crate::debug_delay;
 
@@ -24,15 +23,15 @@ const FAN_MASK: usize = FAN_OUT - 1;
 pub type PageId = u64;
 
 struct Node1<T: Send + 'static> {
-    children: [AtomicPtr<Node2<T>>; FAN_OUT],
+    children: [Atomic<Node2<T>>; FAN_OUT],
 }
 
 struct Node2<T: Send + 'static> {
-    children: [AtomicPtr<T>; FAN_OUT],
+    children: [Atomic<T>; FAN_OUT],
 }
 
 impl<T: Send + 'static> Node1<T> {
-    fn new() -> Box<Self> {
+    fn new() -> Owned<Self> {
         let size = size_of::<Self>();
         let align = align_of::<Self>();
 
@@ -42,13 +41,13 @@ impl<T: Send + 'static> Node1<T> {
             #[allow(clippy::cast_ptr_alignment)]
             let ptr = alloc_zeroed(layout) as *mut Self;
 
-            Box::from_raw(ptr)
+            Owned::from_raw(ptr)
         }
     }
 }
 
 impl<T: Send + 'static> Node2<T> {
-    fn new() -> Box<Self> {
+    fn new() -> Owned<Node2<T>> {
         let size = size_of::<Self>();
         let align = align_of::<Self>();
 
@@ -58,7 +57,7 @@ impl<T: Send + 'static> Node2<T> {
             #[allow(clippy::cast_ptr_alignment)]
             let ptr = alloc_zeroed(layout) as *mut Self;
 
-            Box::from_raw(ptr)
+            Owned::from_raw(ptr)
         }
     }
 }
@@ -75,16 +74,17 @@ impl<T: Send + 'static> Drop for Node2<T> {
     }
 }
 
-fn drop_iter<T>(iter: core::slice::Iter<'_, AtomicPtr<T>>) {
+fn drop_iter<T>(iter: core::slice::Iter<'_, Atomic<T>>) {
+    let guard = pin();
     for child in iter {
-        let shared_child = child.load(Relaxed);
+        let shared_child = child.load(Relaxed, &guard);
         if shared_child.is_null() {
             // this does not leak because the PageTable is
             // assumed to be dense.
             break;
         }
         unsafe {
-            drop(Box::from_raw(shared_child));
+            drop(shared_child.into_owned());
         }
     }
 }
@@ -94,7 +94,7 @@ pub struct PageTable<T>
 where
     T: 'static + Send + Sync,
 {
-    head: AtomicPtr<Node1<T>>,
+    head: Atomic<Node1<T>>,
 }
 
 impl<T> Default for PageTable<T>
@@ -103,7 +103,7 @@ where
 {
     fn default() -> Self {
         let head = Node1::new();
-        Self { head: AtomicPtr::from(Box::into_raw(head)) }
+        Self { head: Atomic::from(head) }
     }
 }
 
@@ -117,62 +117,60 @@ where
     /// which represents a serious failure to
     /// properly handle lifecycles of pages in the
     /// using system.
-    pub fn insert(&self, pid: PageId, item: T) {
+    pub fn insert(&self, pid: PageId, item: T, guard: &Guard) {
         debug_delay();
-        let tip = traverse(self.head.load(Acquire), pid);
+        let tip = self.traverse(pid, guard);
 
-        let old = tip.swap(Box::into_raw(Box::new(item)), Release);
+        let old = tip.swap(Owned::new(item), Release, guard);
         assert!(old.is_null());
     }
 
     /// Try to get a value from the tree.
-    pub fn get<'g>(&self, pid: PageId) -> Option<&'g T> {
+    pub fn get<'g>(&self, pid: PageId, guard: &'g Guard) -> Option<&'g T> {
         debug_delay();
-        let tip = traverse(self.head.load(Acquire), pid);
+        let tip = self.traverse(pid, guard);
 
-        let res = tip.load(Acquire);
-        if res.is_null() {
-            None
-        } else {
-            Some(unsafe { &*res })
-        }
-    }
-}
-
-fn traverse<'g, T: 'static + Send>(
-    head: *mut Node1<T>,
-    k: PageId,
-) -> &'g AtomicPtr<T> {
-    let (l1k, l2k) = split_fanout(k);
-
-    debug_delay();
-    let l1 = unsafe { &(*head).children };
-
-    debug_delay();
-    let mut l2_ptr = l1[l1k].load(Acquire);
-
-    if l2_ptr.is_null() {
-        let next_child = Box::into_raw(Node2::new());
-
-        debug_delay();
-        let ret =
-            l1[l1k].compare_and_swap(std::ptr::null_mut(), next_child, Release);
-
-        if ret.is_null() {
-            // success
-            l2_ptr = next_child;
-        } else {
-            unsafe {
-                drop(Box::from_raw(next_child));
-            }
-            l2_ptr = ret;
-        }
+        let res = tip.load(Acquire, guard);
+        if res.is_null() { None } else { Some(unsafe { res.deref() }) }
     }
 
-    debug_delay();
-    let l2 = unsafe { &(*l2_ptr).children };
+    fn traverse<'g>(self, k: PageId, guard: &'g Guard) -> &'g Atomic<T> {
+        let (l1k, l2k) = split_fanout(k);
 
-    &l2[l2k]
+        debug_delay();
+        let head = self.head.load(Acquire, guard);
+
+        debug_delay();
+        let l1 = unsafe { head.deref().children };
+
+        debug_delay();
+        let mut l2_ptr = l1[l1k].load(Acquire, guard);
+
+        if l2_ptr.is_null() {
+            let next_child = Node2::new();
+
+            debug_delay();
+            let ret = l1[l1k].compare_and_set(
+                Shared::null(),
+                next_child,
+                Release,
+                guard,
+            );
+
+            l2_ptr = match ret {
+                Ok(next_child) => next_child,
+                Err(returned) => {
+                    drop(returned.new);
+                    returned.current
+                }
+            };
+        }
+
+        debug_delay();
+        let l2 = unsafe { l2_ptr.deref().children };
+
+        &l2[l2k]
+    }
 }
 
 #[inline]
@@ -203,9 +201,10 @@ where
     T: 'static + Send + Sync,
 {
     fn drop(&mut self) {
+        let guard = pin();
+        let head = self.head.load(Relaxed, &guard);
         unsafe {
-            let head = self.head.load(Relaxed);
-            drop(Box::from_raw(head));
+            drop(head.into_owned());
         }
     }
 }
