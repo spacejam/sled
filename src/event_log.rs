@@ -27,6 +27,8 @@ use std::collections::HashMap;
 use crate::pagecache::DiskPtr;
 use crate::*;
 
+use crate::stack::{node_from_frag_vec, Stack, StackIter};
+
 /// A thing that happens at a certain time.
 #[derive(Debug, Clone)]
 enum Event {

@@ -371,6 +371,14 @@ impl<'a> RecoveryGuard<'a> {
     }
 }
 
+/// A page consists of a sequence of state transformations
+/// with associated storage parameters like disk pos, lsn, time.
+#[derive(Debug, Clone)]
+pub struct Page {
+    update: Option<Update>,
+    cache_infos: Vec<CacheInfo>,
+}
+
 /// A lock-free pagecache which supports fragmented pages
 /// for dramatically improving write throughput.
 pub struct PageCache {
@@ -387,10 +395,6 @@ pub struct PageCache {
     idgen_persist_mu: Arc<Mutex<()>>,
     was_recovered: bool,
 }
-
-/// A page consists of a sequence of state transformations
-/// with associated storage parameters like disk pos, lsn, time.
-type Page = Stack<(Option<Update>, CacheInfo)>;
 
 unsafe impl Send for PageCache {}
 
@@ -669,10 +673,10 @@ impl PageCache {
         new: Update,
         guard: &'g Guard,
     ) -> Result<(PageId, PagePtr<'g>)> {
-        let (pid, key) = if let Some(pid) = self.free.lock().pop() {
+        let (pid, page_view) = if let Some(pid) = self.free.lock().pop() {
             trace!("re-allocating pid {}", pid);
 
-            let stack = match self.inner.get(pid) {
+            let page_view = match self.inner.get(pid, guard) {
                 None => panic!(
                     "expected to find existing stack \
                      for re-allocated pid {}",
@@ -680,21 +684,15 @@ impl PageCache {
                 ),
                 Some(p) => p,
             };
-
-            let head = stack.head(guard);
-
-            let mut stack_iter = StackIter::from_ptr(head, guard);
-
-            let next_res = stack_iter.next();
-            if let Some((Some(Update::Free), cache_info)) = next_res {
-                (pid, PagePtr { cached_pointer: head, ts: cache_info.ts })
-            } else {
-                panic!(
-                    "failed to re-allocate pid {} which \
-                     contained unexpected state {:?}",
-                    pid, next_res
-                )
-            }
+            assert_eq!(
+                Some(Update::Free),
+                page_view.update,
+                "failed to re-allocate pid {} which \
+                 contained unexpected state {:?}",
+                pid,
+                page_view,
+            );
+            (pid, page_view)
         } else {
             let pid = self.next_pid_to_allocate.fetch_add(1, Relaxed);
 

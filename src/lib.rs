@@ -182,7 +182,6 @@ mod pagecache;
 mod pagetable;
 mod prefix;
 mod result;
-mod stack;
 mod subscription;
 mod sys_limits;
 mod threadpool;
@@ -196,6 +195,9 @@ mod flusher;
 #[cfg(feature = "event_log")]
 /// The event log helps debug concurrency issues.
 pub mod event_log;
+
+#[cfg(feature = "event_log")]
+mod stack;
 
 #[cfg(feature = "measure_allocs")]
 mod measure_allocs;
@@ -255,7 +257,6 @@ use {
         oneshot::{OneShot, OneShotFiller},
         pagetable::PageTable,
         result::CasResult,
-        stack::{node_from_frag_vec, Stack, StackIter},
         subscription::Subscriptions,
         tree::TreeInner,
         vecset::VecSet,

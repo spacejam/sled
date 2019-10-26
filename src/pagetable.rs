@@ -11,7 +11,7 @@ use std::{
 
 use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
 
-use crate::debug_delay;
+use crate::{debug_delay, pagecache::Page};
 
 #[allow(unused)]
 #[doc(hidden)]
@@ -23,17 +23,21 @@ const FAN_MASK: usize = FAN_OUT - 1;
 
 pub type PageId = u64;
 
-pub struct PageView<'g, T> {
-    read: Shared<'g, T>,
-    entry: &'g Atomic<T>,
+pub struct PageView<'g> {
+    read: Shared<'g, Page>,
+    entry: &'g Atomic<Page>,
 }
 
-impl<'g, T: Clone> PageView<'g, T> {
-    fn rcu<'b, F, B>(&self, f: F, guard: &'b Guard) -> Result<B, Shared<'b, T>>
+impl<'g> PageView<'g> {
+    fn rcu<'b, F, B>(
+        &self,
+        f: F,
+        guard: &'b Guard,
+    ) -> Result<B, Shared<'b, Page>>
     where
-        F: FnMut(&mut T) -> B,
+        F: FnMut(&mut Page) -> B,
     {
-        let mut clone: Owned<T> = Owned::new(self.deref().clone());
+        let mut clone: Owned<Page> = Owned::new(self.deref().clone());
         let b = f(clone.deref_mut());
 
         self.entry
@@ -43,23 +47,23 @@ impl<'g, T: Clone> PageView<'g, T> {
     }
 }
 
-impl<'g, T> Deref for PageView<'g, T> {
-    type Target = T;
+impl<'g> Deref for PageView<'g> {
+    type Target = Page;
 
-    fn deref(&self) -> &T {
+    fn deref(&self) -> &Page {
         unsafe { self.read.deref() }
     }
 }
 
-struct Node1<T: Send + 'static> {
-    children: [Atomic<Node2<T>>; FAN_OUT],
+struct Node1 {
+    children: [Atomic<Node2>; FAN_OUT],
 }
 
-struct Node2<T: Send + 'static> {
-    children: [Atomic<T>; FAN_OUT],
+struct Node2 {
+    children: [Atomic<Page>; FAN_OUT],
 }
 
-impl<T: Send + 'static> Node1<T> {
+impl Node1 {
     fn new() -> Owned<Self> {
         let size = size_of::<Self>();
         let align = align_of::<Self>();
@@ -75,8 +79,8 @@ impl<T: Send + 'static> Node1<T> {
     }
 }
 
-impl<T: Send + 'static> Node2<T> {
-    fn new() -> Owned<Node2<T>> {
+impl Node2 {
+    fn new() -> Owned<Node2> {
         let size = size_of::<Self>();
         let align = align_of::<Self>();
 
@@ -91,13 +95,13 @@ impl<T: Send + 'static> Node2<T> {
     }
 }
 
-impl<T: Send + 'static> Drop for Node1<T> {
+impl Drop for Node1 {
     fn drop(&mut self) {
         drop_iter(self.children.iter());
     }
 }
 
-impl<T: Send + 'static> Drop for Node2<T> {
+impl Drop for Node2 {
     fn drop(&mut self) {
         drop_iter(self.children.iter());
     }
@@ -119,34 +123,25 @@ fn drop_iter<T>(iter: core::slice::Iter<'_, Atomic<T>>) {
 }
 
 /// A simple lock-free radix tree.
-pub struct PageTable<T>
-where
-    T: 'static + Send + Sync,
-{
-    head: Atomic<Node1<T>>,
+pub struct PageTable {
+    head: Atomic<Node1>,
 }
 
-impl<T> Default for PageTable<T>
-where
-    T: 'static + Send + Sync,
-{
+impl Default for PageTable {
     fn default() -> Self {
         let head = Node1::new();
         Self { head: Atomic::from(head) }
     }
 }
 
-impl<T> PageTable<T>
-where
-    T: 'static + Send + Sync,
-{
+impl PageTable {
     /// # Panics
     ///
     /// will panic if the item is not null already,
     /// which represents a serious failure to
     /// properly handle lifecycles of pages in the
     /// using system.
-    pub fn insert(&self, pid: PageId, item: T, guard: &Guard) {
+    pub fn insert(&self, pid: PageId, item: Page, guard: &Guard) {
         debug_delay();
         let tip = self.traverse(pid, guard);
 
@@ -159,7 +154,7 @@ where
         &self,
         pid: PageId,
         guard: &'g Guard,
-    ) -> Option<PageView<'g, T>> {
+    ) -> Option<PageView<'g>> {
         debug_delay();
         let tip = self.traverse(pid, guard);
 
@@ -173,7 +168,7 @@ where
         }
     }
 
-    fn traverse<'g>(self, k: PageId, guard: &'g Guard) -> &'g Atomic<T> {
+    fn traverse<'g>(self, k: PageId, guard: &'g Guard) -> &'g Atomic<Page> {
         let (l1k, l2k) = split_fanout(k);
 
         debug_delay();
@@ -235,10 +230,7 @@ fn safe_usize(value: PageId) -> usize {
     usize::try_from(value).unwrap()
 }
 
-impl<T> Drop for PageTable<T>
-where
-    T: 'static + Send + Sync,
-{
+impl Drop for PageTable {
     fn drop(&mut self) {
         let guard = pin();
         let head = self.head.load(Relaxed, &guard);
