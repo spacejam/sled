@@ -5,7 +5,8 @@ use std::{
     alloc::{alloc_zeroed, Layout},
     convert::TryFrom,
     mem::{align_of, size_of},
-    sync::atomic::Ordering::{Acquire, Relaxed, Release},
+    ops::{Deref, DerefMut},
+    sync::atomic::Ordering::{Acquire, Relaxed, Release, SeqCst},
 };
 
 use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
@@ -21,6 +22,34 @@ const FAN_OUT: usize = 1 << FAN_FACTOR;
 const FAN_MASK: usize = FAN_OUT - 1;
 
 pub type PageId = u64;
+
+pub struct PageView<'g, T> {
+    read: Shared<'g, T>,
+    entry: &'g Atomic<T>,
+}
+
+impl<'g, T: Clone> PageView<'g, T> {
+    fn rcu<'b, F, B>(&self, f: F, guard: &'b Guard) -> Result<B, Shared<'b, T>>
+    where
+        F: FnMut(&mut T) -> B,
+    {
+        let mut clone: Owned<T> = Owned::new(self.deref().clone());
+        let b = f(clone.deref_mut());
+
+        self.entry
+            .compare_and_set(self.read, clone, SeqCst, guard)
+            .map(|_| b)
+            .map_err(|cas_error| cas_error.current)
+    }
+}
+
+impl<'g, T> Deref for PageView<'g, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        unsafe { self.read.deref() }
+    }
+}
 
 struct Node1<T: Send + 'static> {
     children: [Atomic<Node2<T>>; FAN_OUT],
@@ -126,12 +155,22 @@ where
     }
 
     /// Try to get a value from the tree.
-    pub fn get<'g>(&self, pid: PageId, guard: &'g Guard) -> Option<&'g T> {
+    pub fn get<'g>(
+        &self,
+        pid: PageId,
+        guard: &'g Guard,
+    ) -> Option<PageView<'g, T>> {
         debug_delay();
         let tip = self.traverse(pid, guard);
 
         let res = tip.load(Acquire, guard);
-        if res.is_null() { None } else { Some(unsafe { res.deref() }) }
+        if res.is_null() {
+            None
+        } else {
+            let page_view = PageView { read: res, entry: tip };
+
+            Some(page_view)
+        }
     }
 
     fn traverse<'g>(self, k: PageId, guard: &'g Guard) -> &'g Atomic<T> {
