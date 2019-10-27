@@ -379,6 +379,12 @@ pub struct Page {
     cache_infos: Vec<CacheInfo>,
 }
 
+impl Page {
+    fn version(&self) -> Option<u64> {
+        self.cache_infos.last().map(|ci| ci.ts)
+    }
+}
+
 /// A lock-free pagecache which supports fragmented pages
 /// for dramatically improving write throughput.
 pub struct PageCache {

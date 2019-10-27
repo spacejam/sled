@@ -37,13 +37,29 @@ impl<'g> PageView<'g> {
     where
         F: FnMut(&mut Page) -> B,
     {
-        let mut clone: Owned<Page> = Owned::new(self.deref().clone());
-        let b = f(clone.deref_mut());
+        let mut old_pointer = self.read;
+        loop {
+            let mut clone: Owned<Page> = Owned::new(self.deref().clone());
+            let b = f(clone.deref_mut());
 
-        self.entry
-            .compare_and_set(self.read, clone, SeqCst, guard)
-            .map(|_| b)
-            .map_err(|cas_error| cas_error.current)
+            let result =
+                self.entry.compare_and_set(self.read, clone, SeqCst, guard);
+
+            match result {
+                Ok(_) => return Ok(b),
+                Err(cas_error)
+                    if cas_error.current.version() == self.version() =>
+                {
+                    // we got here because the page was moved to a new
+                    // location.
+                    old_pointer = cas_error.current;
+                    continue;
+                }
+                Err(cas_error) => {
+                    return Err(cas_error.current);
+                }
+            }
+        }
     }
 }
 
