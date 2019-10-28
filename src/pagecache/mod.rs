@@ -277,12 +277,10 @@ pub(crate) fn maybe_decompress(buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
     Ok(buf)
 }
 
-type PagePtrInner<'g> = Shared<'g, stack::Node<(Option<Update>, CacheInfo)>>;
-
 /// A pointer to shared lock-free state bound by a pinned epoch's lifetime.
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub struct PagePtr<'g> {
-    cached_pointer: PagePtrInner<'g>,
+    cached_pointer: Shared<'g, Page>,
     ts: u64,
 }
 
@@ -335,12 +333,36 @@ impl Update {
         }
     }
 
+    pub(crate) fn as_meta(&self) -> &Meta {
+        if let Update::Meta(meta) = self {
+            &meta
+        } else {
+            panic!("called as_meta on {:?}", self)
+        }
+    }
+
+    fn as_counter(&self) -> u64 {
+        if let Update::Counter(counter) = self {
+            *counter
+        } else {
+            panic!("called as_counter on {:?}", self)
+        }
+    }
+
     fn is_compact(&self) -> bool {
-        if let Update::Compact(_) = self { true } else { false }
+        if let Update::Compact(_) = self {
+            true
+        } else {
+            false
+        }
     }
 
     fn is_free(&self) -> bool {
-        if let Update::Free = self { true } else { false }
+        if let Update::Free = self {
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -375,13 +397,17 @@ impl<'a> RecoveryGuard<'a> {
 /// with associated storage parameters like disk pos, lsn, time.
 #[derive(Debug, Clone)]
 pub struct Page {
-    update: Option<Update>,
-    cache_infos: Vec<CacheInfo>,
+    pub(crate) update: Option<Update>,
+    pub(crate) cache_infos: Vec<CacheInfo>,
 }
 
 impl Page {
     fn version(&self) -> Option<u64> {
         self.cache_infos.last().map(|ci| ci.ts)
+    }
+
+    fn last_cache_info(&self) -> Option<&CacheInfo> {
+        self.cache_infos.last()
     }
 }
 
@@ -389,7 +415,7 @@ impl Page {
 /// for dramatically improving write throughput.
 pub struct PageCache {
     config: RunningConfig,
-    inner: PageTable<Page>,
+    inner: PageTable,
     next_pid_to_allocate: AtomicU64,
     free: Arc<Mutex<BinaryHeap<PageId>>>,
     log: Log,
@@ -704,9 +730,9 @@ impl PageCache {
 
             trace!("allocating pid {} for the first time", pid);
 
-            let new_stack = Stack::default();
+            let new_page = Page { update: new, cache_infos: vec![] };
 
-            self.inner.insert(pid, new_stack);
+            self.inner.insert(pid, new_page);
 
             (pid, PagePtr { cached_pointer: Shared::null(), ts: 0 })
         };
@@ -868,16 +894,10 @@ impl PageCache {
                 log_size: 0,
             };
 
-            let node = stack::Node {
-                inner: (Some(update), cache_info),
-                // NB this must be null
-                // to prevent double-frees
-                // if we encounter an IO error
-                // and fee our Owned version!
-                next: Atomic::null(),
-            };
+            let page =
+                Page { update: Some(update), cache_infos: vec![cache_info] };
 
-            Some(Owned::new(node))
+            Some(Owned::new(page))
         };
 
         loop {
@@ -1356,7 +1376,7 @@ impl PageCache {
     ) -> Result<(PagePtr<'g>, &'g Meta)> {
         trace!("getting page iter for META");
 
-        let stack = match self.inner.get(META_PID) {
+        let page_cell = match self.inner.get(META_PID, guard) {
             None => {
                 return Err(Error::ReportableBug(
                     "failed to retrieve META page \
@@ -1367,26 +1387,18 @@ impl PageCache {
             Some(p) => p,
         };
 
-        let head = stack.head(guard);
+        let cache_info = page_cell.last_cache_info().unwrap();
+        let page_ptr =
+            PagePtr { cached_pointer: page_cell.read, ts: cache_info.ts };
 
-        match StackIter::from_ptr(head, guard).next() {
-            Some((Some(Update::Meta(m)), cache_info)) => {
-                Ok((PagePtr { cached_pointer: head, ts: cache_info.ts }, m))
-            }
-            Some((None, cache_info)) => {
-                let update =
-                    self.pull(META_PID, cache_info.lsn, cache_info.pointer)?;
-                let pointer =
-                    PagePtr { cached_pointer: head, ts: cache_info.ts };
-                let _ =
-                    self.cas_page(META_PID, pointer, update, false, guard)?;
-                self.get_meta(guard)
-            }
-            _ => Err(Error::ReportableBug(
-                "failed to retrieve META page \
-                 which should always be present"
-                    .into(),
-            )),
+        if page_cell.update.is_some() {
+            let meta_ref = page_cell.as_meta();
+            return Ok((page_ptr, meta_ref));
+        } else {
+            let update =
+                self.pull(META_PID, cache_info.lsn, cache_info.pointer)?;
+            let _ = self.cas_page(META_PID, page_ptr, update, false, guard)?;
+            self.get_meta(guard)
         }
     }
 
@@ -2094,18 +2106,4 @@ impl PageCache {
             self.inner.insert(pid, stack);
         }
     }
-}
-
-fn pointers_from_stack<'g>(
-    head_pointer: PagePtrInner<'g>,
-    guard: &'g Guard,
-) -> Vec<DiskPtr> {
-    // generate a list of the old log ID's
-    let stack_iter = StackIter::from_ptr(head_pointer, guard);
-
-    let mut pointers = vec![];
-    for (_, cache_info) in stack_iter {
-        pointers.push(cache_info.pointer);
-    }
-    pointers
 }

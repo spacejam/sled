@@ -24,8 +24,8 @@ const FAN_MASK: usize = FAN_OUT - 1;
 pub type PageId = u64;
 
 pub struct PageView<'g> {
-    read: Shared<'g, Page>,
-    entry: &'g Atomic<Page>,
+    pub(crate) read: Shared<'g, Page>,
+    pub(crate) entry: &'g Atomic<Page>,
 }
 
 impl<'g> PageView<'g> {
@@ -60,6 +60,10 @@ impl<'g> PageView<'g> {
                 }
             }
         }
+    }
+
+    pub(crate) fn as_meta(&self) -> &crate::Meta {
+        self.update.as_ref().unwrap().as_meta()
     }
 }
 
