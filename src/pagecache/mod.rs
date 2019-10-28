@@ -341,7 +341,7 @@ impl Update {
         }
     }
 
-    fn as_counter(&self) -> u64 {
+    pub(crate) fn as_counter(&self) -> u64 {
         if let Update::Counter(counter) = self {
             *counter
         } else {
@@ -1402,48 +1402,6 @@ impl PageCache {
         }
     }
 
-    /// Retrieve the current meta page
-    pub(crate) fn get_persisted_config<'g>(
-        &self,
-        guard: &'g Guard,
-    ) -> Result<(PagePtr<'g>, &'g StorageParameters)> {
-        trace!("getting page iter for persisted config");
-
-        let stack = match self.inner.get(CONFIG_PID) {
-            None => {
-                return Err(Error::ReportableBug(
-                    "failed to retrieve persisted config page \
-                     which should always be present"
-                        .into(),
-                ));
-            }
-            Some(p) => p,
-        };
-
-        let head = stack.head(guard);
-
-        match StackIter::from_ptr(head, guard).next() {
-            Some((Some(Update::Config(config)), cache_info)) => Ok((
-                PagePtr { cached_pointer: head, ts: cache_info.ts },
-                config,
-            )),
-            Some((None, cache_info)) => {
-                let update =
-                    self.pull(CONFIG_PID, cache_info.lsn, cache_info.pointer)?;
-                let pointer =
-                    PagePtr { cached_pointer: head, ts: cache_info.ts };
-                let _ =
-                    self.cas_page(CONFIG_PID, pointer, update, false, guard)?;
-                self.get_persisted_config(guard)
-            }
-            _ => Err(Error::ReportableBug(
-                "failed to retrieve CONFIG page \
-                 which should always be present"
-                    .into(),
-            )),
-        }
-    }
-
     /// Retrieve the current persisted IDGEN value
     pub(crate) fn get_idgen<'g>(
         &self,
@@ -1451,10 +1409,10 @@ impl PageCache {
     ) -> Result<(PagePtr<'g>, u64)> {
         trace!("getting page iter for idgen");
 
-        let stack = match self.inner.get(COUNTER_PID) {
+        let page_cell = match self.inner.get(COUNTER_PID, guard) {
             None => {
                 return Err(Error::ReportableBug(
-                    "failed to retrieve idgen page \
+                    "failed to retrieve counter page \
                      which should always be present"
                         .into(),
                 ));
@@ -1462,27 +1420,19 @@ impl PageCache {
             Some(p) => p,
         };
 
-        let head = stack.head(guard);
+        let cache_info = page_cell.last_cache_info().unwrap();
+        let page_ptr =
+            PagePtr { cached_pointer: page_cell.read, ts: cache_info.ts };
 
-        match StackIter::from_ptr(head, guard).next() {
-            Some((Some(Update::Counter(counter)), cache_info)) => Ok((
-                PagePtr { cached_pointer: head, ts: cache_info.ts },
-                *counter,
-            )),
-            Some((None, cache_info)) => {
-                let update =
-                    self.pull(COUNTER_PID, cache_info.lsn, cache_info.pointer)?;
-                let pointer =
-                    PagePtr { cached_pointer: head, ts: cache_info.ts };
-                let _ =
-                    self.cas_page(COUNTER_PID, pointer, update, false, guard)?;
-                self.get_idgen(guard)
-            }
-            _ => Err(Error::ReportableBug(
-                "failed to retrieve idgen page \
-                 which should always be present"
-                    .into(),
-            )),
+        if page_cell.update.is_some() {
+            let counter = page_cell.as_counter();
+            return Ok((page_ptr, counter));
+        } else {
+            let update =
+                self.pull(COUNTER_PID, cache_info.lsn, cache_info.pointer)?;
+            let _ =
+                self.cas_page(COUNTER_PID, page_ptr, update, false, guard)?;
+            self.get_idgen(guard)
         }
     }
 

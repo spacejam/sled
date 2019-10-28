@@ -65,6 +65,10 @@ impl<'g> PageView<'g> {
     pub(crate) fn as_meta(&self) -> &crate::Meta {
         self.update.as_ref().unwrap().as_meta()
     }
+
+    pub(crate) fn as_counter(&self) -> u64 {
+        self.update.as_ref().unwrap().as_counter()
+    }
 }
 
 impl<'g> Deref for PageView<'g> {
