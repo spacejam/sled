@@ -123,18 +123,28 @@ for a more detailed overview of where we're at and where we see things going!
 
 Want to support the project, prioritize a specific feature, or get commercial help with using sled in your project? [Ferrous Systems](https://ferrous-systems.com) provides commercial support for sled, and can work with you to solve a wide variety of storage problems across the latency-throughput, consistency, and price performance spectra. [Get in touch!](mailto:sled@ferrous-systems.com)
 
-[![Ferrous Systems](https://ferrous-systems.com/images/ferrous-systems-mono-pos.svg)](https://ferrous-systems.com/)
+<p align="center">
+  <a href="https://ferrous-systems.com/">
+    <img src="https://ferrous-systems.com/images/ferrous-systems-mono-pos.svg" width="20%" height="auto" />
+  </a>
+</p>
 
 Want to support development but don't need commercial support? Help us out via [Open Collective](https://opencollective.com/sled)!
 
 # special thanks
 
-[![Meili](https://avatars3.githubusercontent.com/u/43250847?s=200&v=4)](https://www.meilisearch.com/)
+<p align="center">
+  <a href="https://www.meilisearch.com/">
+    <img src="https://avatars3.githubusercontent.com/u/43250847?s=200&v=4" width="20%" height="auto" />
+  </a>
+</p>
 
 Special thanks to [Meili](https://www.meilisearch.com/) for providing engineering effort and other support to the sled project. They are building [an event store](https://blog.meilisearch.com/meilies-release/) backed by sled, and they offer [a full-text search system](https://github.com/meilisearch/MeiliDB) which has been a valuable case study helping to focus the sled roadmap for the future.
 
-<p>
-  <img src="https://user-images.githubusercontent.com/7989673/29498525-38a33f36-85cc-11e7-938d-ef6f10ba6fb3.png" width="20%" height="auto" />
+<p align="center">
+  <a href="worksonarm.com">
+    <img src="https://user-images.githubusercontent.com/7989673/29498525-38a33f36-85cc-11e7-938d-ef6f10ba6fb3.png" width="20%" height="auto" />
+  </a>
 </p>
 
 Additional thanks to [Arm](https://www.arm.com/), [Works on Arm](https://www.worksonarm.com/) and [Packet](https://www.packet.com/), who have generously donated a 96 core monster machine to assist with intensive concurrency testing of sled. Each second that sled does not crash while running your critical stateful workloads, you are encouraged to thank these wonderful organizations. Each time sled does crash and lose your data, blame Intel.
