@@ -125,7 +125,7 @@ Want to support the project, prioritize a specific feature, or get commercial he
 
 <p align="center">
   <a href="https://ferrous-systems.com/">
-    <img src="https://ferrous-systems.com/images/ferrous-systems-mono-pos.svg" width="20%" height="auto" />
+    <img src="https://ferrous-systems.com/images/ferrous-systems-mono-pos.svg" width="60%" height="auto" />
   </a>
 </p>
 
@@ -142,7 +142,7 @@ Want to support development but don't need commercial support? Help us out via [
 Special thanks to [Meili](https://www.meilisearch.com/) for providing engineering effort and other support to the sled project. They are building [an event store](https://blog.meilisearch.com/meilies-release/) backed by sled, and they offer [a full-text search system](https://github.com/meilisearch/MeiliDB) which has been a valuable case study helping to focus the sled roadmap for the future.
 
 <p align="center">
-  <a href="worksonarm.com">
+  <a href="http://worksonarm.com">
     <img src="https://user-images.githubusercontent.com/7989673/29498525-38a33f36-85cc-11e7-938d-ef6f10ba6fb3.png" width="20%" height="auto" />
   </a>
 </p>
