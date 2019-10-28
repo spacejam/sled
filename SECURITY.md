@@ -4,7 +4,7 @@
 
 sled uses some unsafe functionality in the core lock-free algorithms, and in a few places to more efficiently copy data.
 
-Please contact [Tyler Neely](mailto:t@jujit.su?subject=sled%20security%20issue) immediately if you find any vulnerability, and I will work with you to fix the issue rapidly and coordinate public disclosure with an expedited release including the fix.
+Please contact [Tyler Neely](mailto:tylerneely@gmail.com?subject=sled%20security%20issue) immediately if you find any vulnerability, and I will work with you to fix the issue rapidly and coordinate public disclosure with an expedited release including the fix.
 
 If you are a bug hunter or a person with a security interest, here is my mental model of memory corruption risk in the sled codebase:
 
