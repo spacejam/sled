@@ -11,11 +11,15 @@ use std::{
 
 use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
 
-use crate::{debug_delay, pagecache::Page};
+use crate::{
+    debug_delay,
+    pagecache::{Frag, Page, PagePtr, Update},
+    Meta,
+};
 
 #[allow(unused)]
 #[doc(hidden)]
-pub const PAGETABLE_NODE_SZ: usize = size_of::<Node1<()>>();
+pub const PAGETABLE_NODE_SZ: usize = size_of::<Node1>();
 
 const FAN_FACTOR: usize = 18;
 const FAN_OUT: usize = 1 << FAN_FACTOR;
@@ -62,12 +66,25 @@ impl<'g> PageView<'g> {
         }
     }
 
-    pub(crate) fn as_meta(&self) -> &crate::Meta {
+    pub(crate) fn as_frag(&self) -> &Frag {
+        self.update.as_ref().unwrap().as_frag()
+    }
+
+    pub(crate) fn as_meta(&self) -> &Meta {
         self.update.as_ref().unwrap().as_meta()
     }
 
     pub(crate) fn as_counter(&self) -> u64 {
         self.update.as_ref().unwrap().as_counter()
+    }
+
+    pub(crate) fn is_free(&self) -> bool {
+        self.update == Some(Update::Free) || self.cache_infos.is_empty()
+    }
+
+    pub(crate) fn page_ptr(&self) -> PagePtr<'g> {
+        let cache_info = self.last_cache_info().unwrap();
+        PagePtr { cached_pointer: self.read, ts: cache_info.ts }
     }
 }
 

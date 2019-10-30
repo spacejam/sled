@@ -402,12 +402,20 @@ pub struct Page {
 }
 
 impl Page {
+    fn log_size(&self) -> usize {
+        self.cache_infos.iter().map(|ci| ci.log_size).sum()
+    }
+
     fn version(&self) -> Option<u64> {
         self.cache_infos.last().map(|ci| ci.ts)
     }
 
-    fn last_cache_info(&self) -> Option<&CacheInfo> {
+    pub(crate) fn last_cache_info(&self) -> Option<&CacheInfo> {
         self.cache_infos.last()
+    }
+
+    pub(crate) fn as_frag(&self) -> &Frag {
+        self.update.unwrap().as_frag()
     }
 }
 
@@ -1393,12 +1401,13 @@ impl PageCache {
 
         if page_cell.update.is_some() {
             let meta_ref = page_cell.as_meta();
-            return Ok((page_ptr, meta_ref));
+            Ok((page_ptr, meta_ref))
         } else {
-            let update =
-                self.pull(META_PID, cache_info.lsn, cache_info.pointer)?;
-            let _ = self.cas_page(META_PID, page_ptr, update, false, guard)?;
-            self.get_meta(guard)
+            Err(Error::ReportableBug(
+                "failed to retrieve META page \
+                 which should always be present"
+                    .into(),
+            ))
         }
     }
 
@@ -1420,19 +1429,15 @@ impl PageCache {
             Some(p) => p,
         };
 
-        let cache_info = page_cell.last_cache_info().unwrap();
-        let page_ptr =
-            PagePtr { cached_pointer: page_cell.read, ts: cache_info.ts };
-
         if page_cell.update.is_some() {
             let counter = page_cell.as_counter();
-            return Ok((page_ptr, counter));
+            Ok((page_cell.page_ptr(), counter))
         } else {
-            let update =
-                self.pull(COUNTER_PID, cache_info.lsn, cache_info.pointer)?;
-            let _ =
-                self.cas_page(COUNTER_PID, page_ptr, update, false, guard)?;
-            self.get_idgen(guard)
+            Err(Error::ReportableBug(
+                "failed to retrieve counter page \
+                 which should always be present"
+                    .into(),
+            ))
         }
     }
 
@@ -1459,30 +1464,22 @@ impl PageCache {
             ));
         }
 
-        let stack = match self.inner.get(pid) {
+        let page_cell = match self.inner.get(pid, guard) {
             None => return Ok(None),
             Some(p) => p,
         };
 
-        let head = stack.head(guard);
-
-        let entries: Vec<_> = StackIter::from_ptr(head, guard).collect();
-
-        let is_free = if let Some((Some(entry), _)) = entries.first() {
-            entry.is_free()
-        } else {
-            false
-        };
-
-        if entries.is_empty() || is_free {
+        if page_cell.is_free() {
             return Ok(None);
         }
 
-        let total_page_size = entries
-            .iter()
-            .map(|(_, cache_info)| cache_info.log_size as u64)
-            .sum();
+        let total_page_size = page_cell.log_size();
 
+        if page_cell.update.is_some() {
+            let page_ptr = page_cell.page_ptr();
+            let compact = page_cell.as_frag();
+            return Ok(Some((page_ptr, compact, total_page_size)));
+        }
         let initial_base = match entries[0] {
             (Some(Update::Compact(compact)), cache_info) => {
                 // short circuit
