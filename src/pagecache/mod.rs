@@ -98,9 +98,9 @@ pub enum MessageKind {
     /// The meta page, stored blobly
     BlobMeta = 7,
     /// A consolidated page replacement, stored inline
-    InlineReplace = 10,
+    InlineNode = 10,
     /// A consolidated page replacement, stored blobly
-    BlobReplace = 11,
+    BlobNode = 11,
     /// A partial page update, stored inline
     InlineLink = 12,
     /// A partial page update, stored blobly
@@ -125,8 +125,8 @@ impl From<u8> for MessageKind {
             5 => Counter,
             6 => InlineMeta,
             7 => BlobMeta,
-            8 => InlineReplace,
-            9 => BlobReplace,
+            8 => InlineNode,
+            9 => BlobNode,
             10 => InlineLink,
             11 => BlobLink,
             other => {
@@ -159,7 +159,7 @@ fn log_kind_from_update(update: &Update) -> LogKind {
     match update {
         Free => LogKind::Free,
         Link(..) => LogKind::Link,
-        Replace(..) | Counter(..) | Meta(..) => LogKind::Replace,
+        Node(..) | Counter(..) | Meta(..) => LogKind::Replace,
     }
 }
 
@@ -169,7 +169,7 @@ impl From<MessageKind> for LogKind {
         match kind {
             Free => LogKind::Free,
 
-            InlineReplace | Counter | BlobReplace | InlineMeta | BlobMeta => {
+            InlineNode | Counter | BlobNode | InlineMeta | BlobMeta => {
                 LogKind::Replace
             }
 
@@ -362,7 +362,7 @@ pub struct CacheInfo {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Update {
     Link(Link),
-    Replace(Node),
+    Node(Node),
     Free,
     Counter(u64),
     Meta(Meta),
@@ -371,17 +371,15 @@ pub(crate) enum Update {
 impl Update {
     fn into_link(self) -> Link {
         match self {
-            Update::Link(link) | Update::Replace(link) => link,
-            other => {
-                panic!("called into_link on non-Link/Replace: {:?}", other)
-            }
+            Update::Link(link) | Update::Node(link) => link,
+            other => panic!("called into_link on non-Link/Node: {:?}", other),
         }
     }
 
     fn as_link(&self) -> &Link {
         match self {
-            Update::Link(link) | Update::Replace(link) => link,
-            other => panic!("called as_link on non-Link/Replace: {:?}", other),
+            Update::Link(link) | Update::Node(link) => link,
+            other => panic!("called as_link on non-Link/Node: {:?}", other),
         }
     }
 
@@ -402,7 +400,7 @@ impl Update {
     }
 
     fn is_replace(&self) -> bool {
-        if let Update::Replace(_) = self {
+        if let Update::Node(_) = self {
             true
         } else {
             false
@@ -466,8 +464,12 @@ impl Page {
         self.cache_infos.last()
     }
 
-    pub(crate) fn as_link(&self) -> &Link {
+    pub(crate) fn unwrap_link(&self) -> &Link {
         self.update.unwrap().as_link()
+    }
+
+    pub(crate) fn unwrap_node(&self) -> &Node {
+        self.update.unwrap().as_node()
     }
 }
 
@@ -680,7 +682,7 @@ impl PageCache {
         new: Link,
         guard: &'g Guard,
     ) -> Result<(PageId, PageView<'g>)> {
-        self.allocate_inner(Update::Replace(new), guard)
+        self.allocate_inner(Update::Node(new), guard)
     }
 
     /// Attempt to opportunistically rewrite data from a Draining
@@ -1027,7 +1029,7 @@ impl PageCache {
         }
     }
 
-    /// Replace an existing page with a different set of `PageLink`s.
+    /// Node an existing page with a different set of `PageLink`s.
     /// Returns `Ok(new_key)` if the operation was successful. Returns
     /// `Err(None)` if the page no longer exists. Returns
     /// `Err(Some(actual_key))` if the atomic swap fails.
@@ -1081,7 +1083,7 @@ impl PageCache {
         }
 
         let result =
-            self.cas_page(pid, old, Update::Replace(new), false, guard)?;
+            self.cas_page(pid, old, Update::Node(new), false, guard)?;
 
         let to_clean = self.log.with_sa(|sa| sa.clean(pid));
 
@@ -1098,7 +1100,7 @@ impl PageCache {
 
         Ok(result.map_err(|fail| {
             let (pointer, shared) = fail.unwrap();
-            if let Update::Replace(rejected_new) = shared {
+            if let Update::Node(rejected_new) = shared {
                 Some((pointer, rejected_new))
             } else {
                 unreachable!();
@@ -1180,7 +1182,7 @@ impl PageCache {
                 let (key, counter) = self.get_idgen(guard)?;
                 (key, Update::Counter(counter))
             } else if let Some((key, link, _sz)) = self.get(pid, guard)? {
-                (key, Update::Replace(link.clone()))
+                (key, Update::Node(link.clone()))
             } else {
                 let head = stack.head(guard);
 
@@ -1477,7 +1479,7 @@ impl PageCache {
             return Ok(Some((page_ptr, replace, total_page_size)));
         }
         let initial_base = match entries[0] {
-            (Some(Update::Replace(replace)), cache_info) => {
+            (Some(Update::Node(replace)), cache_info) => {
                 // short circuit
                 return Ok(Some((
                     PageView { cached_pointer: head, ts: cache_info.ts },
@@ -1513,7 +1515,7 @@ impl PageCache {
             // we were not able to short-circuit, so we should
             // fix-up the stack.
             let pulled = entries.iter().map(|entry| match entry {
-                (Some(Update::Replace(replace)), _)
+                (Some(Update::Node(replace)), _)
                 | (Some(Update::Link(replace)), _) => {
                     Ok(Cow::Borrowed(replace))
                 }
@@ -1554,7 +1556,7 @@ impl PageCache {
         let mut links: Vec<(Option<Update>, CacheInfo)> =
             entries.iter().map(|(_, cache_info)| (None, *cache_info)).collect();
 
-        links[0].0 = Some(Update::Replace(base));
+        links[0].0 = Some(Update::Node(base));
 
         let node = node_from_link_vec(links).into_shared(guard);
 
@@ -1580,7 +1582,7 @@ impl PageCache {
 
             let page_ref = unsafe {
                 let item = &new_pointer.deref().inner;
-                if let (Some(Update::Replace(replace)), _) = item {
+                if let (Some(Update::Node(replace)), _) = item {
                     replace
                 } else {
                     panic!()
@@ -1865,8 +1867,8 @@ impl PageCache {
             BlobLink | InlineLink => {
                 deserialize::<Link>(&bytes).map(Update::Link)
             }
-            BlobReplace | InlineReplace => {
-                deserialize::<Node>(&bytes).map(Update::Replace)
+            BlobNode | InlineNode => {
+                deserialize::<Node>(&bytes).map(Update::Node)
             }
             Free => Ok(Update::Free),
             Corrupted | Cancelled | Pad | BatchManifest => {
