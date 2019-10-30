@@ -1,36 +1,27 @@
 #![cfg(all(unix, feature = "io_uring"))]
 
 use libc::off_t;
-use std::cell::Cell;
 use std::convert::TryFrom;
 use std::io;
 use std::mem;
 use std::os::unix::io::{AsRawFd, RawFd};
 
 use crate::LogOffset;
-use crate::Mutex;
 use crate::{Error, Result};
 
 use liburing::*;
 
+/// TODO: keep track of objects refs that must live while async ops are
 pub(crate) struct URing {
     /// Mutable unsafe FFI struct from liburing::
-    ring: Cell<io_uring>,
+    // ring: io_uring,
 
     /// File fd
     fd: RawFd,
 
-    /// Submit queue mutex. Threads must synchronize receiving,
-    /// filling up and submitting SQEs.
-    sm: Mutex<UserData>,
-}
-
-/// TODO: keep track of objects refs that must live while async ops are
-/// performing
-struct UserData {
     /// IOVec structures that hold information about buffers
     /// used in SQEs.
-    iovecs: Vec<libc::iovec>,
+    // iovecs: Vec<libc::iovec>,
 
     /// List of free slots: iovecs, user data, etc.
     free_slots: Vec<usize>,
@@ -69,17 +60,15 @@ impl URing {
         };
 
         let mut uring = URing {
-            ring: Cell::new(ring),
+            //           ring,
             fd: file.as_raw_fd(),
-            sm: Mutex::new(UserData {
-                iovecs: Vec::with_capacity(size),
-                free_slots: Vec::with_capacity(size),
-            }),
+            // iovecs: Vec::with_capacity(size),
+            free_slots: Vec::with_capacity(size),
         };
-
+        /*
         unsafe {
             let ret = io_uring_register_files(
-                uring.ring.as_ptr(),
+                &mut uring.ring,
                 [uring.fd].as_ptr(),
                 1,
             );
@@ -88,26 +77,23 @@ impl URing {
             }
         };
 
-        uring.sm.get_mut().iovecs.resize(
+        uring.iovecs.resize(
             size,
             libc::iovec { iov_base: std::ptr::null_mut(), iov_len: 0 },
         );
 
         // index free elements
         for i in 0..size - 1 {
-            uring.sm.get_mut().free_slots.push(i);
-        }
+            uring.free_slots.push(i);
+        }*/
 
         Ok(uring)
     }
-
-    unsafe fn drain_cqe(
-        ring: *mut io_uring,
-        data: &mut UserData,
-    ) -> Result<()> {
+    /*
+    unsafe fn drain_cqe(&mut self) -> Result<()> {
         loop {
             let mut cqe: *mut io_uring_cqe = std::mem::zeroed();
-            let ret = io_uring_peek_cqe(ring, &mut cqe);
+            let ret = io_uring_peek_cqe(&mut self.ring, &mut cqe);
             if ret == -libc::EAGAIN {
                 // peek found nothing, no completions to drain
                 return Ok(());
@@ -116,10 +102,10 @@ impl URing {
                 return Err(Error::Io(io::Error::from_raw_os_error(ret)));
             }
             let i = (*cqe).user_data;
-            if i < data.free_slots.len() as u64 {
-                data.free_slots.push(i as usize);
+            if i < self.free_slots.len() as u64 {
+                self.free_slots.push(i as usize);
             }
-            io_uring_cqe_seen(ring, cqe);
+            io_uring_cqe_seen(&mut self.ring, cqe);
         }
     }
 
@@ -129,11 +115,9 @@ impl URing {
         offset: LogOffset,
         fsync: bool,
     ) -> Result<()> {
-        let data = self.sm.get_mut();
-
         unsafe {
             // 1. drain completed operations
-            URing::drain_cqe(self.ring.as_ptr(), data)?;
+            self.drain_cqe()?;
 
             // it is easier to track queue len if num
             // of iovecs will be the same as sqes
@@ -143,9 +127,9 @@ impl URing {
             }
 
             // 2. reserve SQE slots
-            if data.free_slots.len() < reserve {
+            if self.free_slots.len() < reserve {
                 let ret = io_uring_submit_and_wait(
-                    self.ring.as_ptr(),
+                    &mut self.ring,
                     reserve as libc::c_uint,
                 );
                 if ret < 0 {
@@ -158,12 +142,12 @@ impl URing {
                     )));
                 }
 
-                URing::drain_cqe(self.ring.as_ptr(), data)?;
+                self.drain_cqe()?;
             }
 
             // 3. build write() SQE
             {
-                let sqe = io_uring_get_sqe(self.ring.as_ptr());
+                let sqe = io_uring_get_sqe(&mut self.ring);
                 if sqe == std::ptr::null_mut() {
                     return Err(Error::Io(io::Error::new(
                         io::ErrorKind::Other,
@@ -171,15 +155,15 @@ impl URing {
                     )));
                 }
 
-                let i = data.free_slots.pop().unwrap();
-                data.iovecs[i].iov_base =
+                let i = self.free_slots.pop().unwrap();
+                self.iovecs[i].iov_base =
                     buf.as_mut_ptr() as *mut std::ffi::c_void;
-                data.iovecs[i].iov_len = buf.len();
+                self.iovecs[i].iov_len = buf.len();
 
                 io_uring_prep_writev(
                     sqe,
                     self.fd,
-                    &mut data.iovecs[i],
+                    &mut self.iovecs[i],
                     1,
                     offset as off_t,
                 );
@@ -188,7 +172,7 @@ impl URing {
 
             // 4. build fsync() SQE
             if fsync {
-                let sqe = io_uring_get_sqe(self.ring.as_ptr());
+                let sqe = io_uring_get_sqe(&mut self.ring);
                 if sqe == std::ptr::null_mut() {
                     return Err(Error::Io(io::Error::new(
                         io::ErrorKind::Other,
@@ -196,7 +180,7 @@ impl URing {
                     )));
                 }
 
-                let i = data.free_slots.pop().unwrap();
+                let i = self.free_slots.pop().unwrap();
 
                 io_uring_prep_fsync(sqe, self.fd, IORING_FSYNC_DATASYNC);
                 io_uring_sqe_set_flags(sqe, IOSQE_IO_DRAIN);
@@ -204,7 +188,7 @@ impl URing {
             }
 
             // 5. submit
-            let ret = io_uring_submit(self.ring.as_ptr());
+            let ret = io_uring_submit(&mut self.ring);
             if ret < 0 {
                 return Err(Error::Io(io::Error::from_raw_os_error(ret)));
             }
@@ -212,13 +196,15 @@ impl URing {
 
         Ok(())
     }
+    */
 }
-
+/*
 impl Drop for URing {
     fn drop(&mut self) {
         unsafe {
-            io_uring_unregister_files(self.ring.as_ptr());
-            io_uring_queue_exit(self.ring.as_ptr());
+            io_uring_unregister_files(&mut self.ring);
+            io_uring_queue_exit(&mut self.ring);
         };
     }
 }
+*/

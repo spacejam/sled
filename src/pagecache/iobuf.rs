@@ -58,6 +58,8 @@ pub(crate) struct IoBufs {
     pub max_reserved_lsn: AtomicLsn,
     pub max_header_stable_lsn: Arc<AtomicLsn>,
     pub segment_accountant: Mutex<SegmentAccountant>,
+    #[cfg(feature = "io_uring")]
+    pub uring: Mutex<io_uring::URing>,
 }
 
 /// `IoBufs` is a set of lock-free buffers for coordinating
