@@ -369,17 +369,31 @@ pub(crate) enum Update {
 }
 
 impl Update {
+    fn into_node(self) -> Node {
+        match self {
+            Update::Node(node) => node,
+            other => panic!("called into_node on non-Node: {:?}", other),
+        }
+    }
+
+    fn as_node(&self) -> &Node {
+        match self {
+            Update::Node(node) => node,
+            other => panic!("called as_node on non-Node: {:?}", other),
+        }
+    }
+
     fn into_link(self) -> Link {
         match self {
-            Update::Link(link) | Update::Node(link) => link,
-            other => panic!("called into_link on non-Link/Node: {:?}", other),
+            Update::Link(link) => link,
+            other => panic!("called into_link on non-Link: {:?}", other),
         }
     }
 
     fn as_link(&self) -> &Link {
         match self {
-            Update::Link(link) | Update::Node(link) => link,
-            other => panic!("called as_link on non-Link/Node: {:?}", other),
+            Update::Link(link) => link,
+            other => panic!("called as_link on non-Link: {:?}", other),
         }
     }
 
