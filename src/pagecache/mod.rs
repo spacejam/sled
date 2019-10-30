@@ -9,6 +9,7 @@ mod blob_io;
 mod disk_pointer;
 mod iobuf;
 mod iterator;
+mod pagetable;
 mod parallel_io;
 mod reader;
 mod reservation;
@@ -26,6 +27,7 @@ use self::{
     },
     iobuf::{IoBuf, IoBufs},
     iterator::{raw_segment_iter_from, LogIter},
+    pagetable::PageTable,
     parallel_io::Pio,
     segment::SegmentAccountant,
     snapshot::advance_snapshot,
@@ -277,22 +279,79 @@ pub(crate) fn maybe_decompress(buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
     Ok(buf)
 }
 
-/// A pointer to shared lock-free state bound by a pinned epoch's lifetime.
-#[derive(Debug, Clone, PartialEq, Copy)]
-pub struct PagePtr<'g> {
-    cached_pointer: Shared<'g, Page>,
-    ts: u64,
+pub struct PageView<'g> {
+    pub(crate) ts: u64,
+    pub(crate) read: Shared<'g, Page>,
+    pub(crate) entry: &'g Atomic<Page>,
 }
 
-impl<'g> PagePtr<'g> {
-    /// The last Lsn number for the head of this page
-    pub fn last_lsn(&self) -> Lsn {
-        unsafe { self.cached_pointer.deref().deref().1.lsn }
+unsafe impl<'g> Send for PageView<'g> {}
+
+unsafe impl<'g> Sync for PageView<'g> {}
+
+impl<'g> PageView<'g> {
+    fn rcu<'b, F, B>(
+        &self,
+        f: F,
+        guard: &'b Guard,
+    ) -> Result<B, Shared<'b, Page>>
+    where
+        F: FnMut(&mut Page) -> B,
+    {
+        let mut old_pointer = self.read;
+        loop {
+            let mut clone: Owned<Page> = Owned::new(self.deref().clone());
+            let b = f(clone.deref_mut());
+
+            let result =
+                self.entry.compare_and_set(self.read, clone, SeqCst, guard);
+
+            match result {
+                Ok(_) => return Ok(b),
+                Err(cas_error)
+                    if cas_error.current.version() == self.version() =>
+                {
+                    // we got here because the page was moved to a new
+                    // location.
+                    old_pointer = cas_error.current;
+                    continue;
+                }
+                Err(cas_error) => {
+                    return Err(cas_error.current);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn as_frag(&self) -> &Frag {
+        self.update.as_ref().unwrap().as_frag()
+    }
+
+    pub(crate) fn as_meta(&self) -> &Meta {
+        self.update.as_ref().unwrap().as_meta()
+    }
+
+    pub(crate) fn as_counter(&self) -> u64 {
+        self.update.as_ref().unwrap().as_counter()
+    }
+
+    pub(crate) fn is_free(&self) -> bool {
+        self.update == Some(Update::Free) || self.cache_infos.is_empty()
+    }
+
+    pub(crate) fn page_ptr(&self) -> PagePtr<'g> {
+        let cache_info = self.last_cache_info().unwrap();
+        PagePtr { cached_pointer: self.read, ts: cache_info.ts }
     }
 }
 
-unsafe impl<'g> Send for PagePtr<'g> {}
-unsafe impl<'g> Sync for PagePtr<'g> {}
+impl<'g> Deref for PageView<'g> {
+    type Target = Page;
+
+    fn deref(&self) -> &Page {
+        unsafe { self.read.deref() }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CacheInfo {

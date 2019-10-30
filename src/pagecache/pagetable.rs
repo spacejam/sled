@@ -13,7 +13,7 @@ use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
 
 use crate::{
     debug_delay,
-    pagecache::{Frag, Page, PagePtr, Update},
+    pagecache::{Frag, Page, PageView, Update},
     Meta,
 };
 
@@ -26,75 +26,6 @@ const FAN_OUT: usize = 1 << FAN_FACTOR;
 const FAN_MASK: usize = FAN_OUT - 1;
 
 pub type PageId = u64;
-
-pub struct PageView<'g> {
-    pub(crate) read: Shared<'g, Page>,
-    pub(crate) entry: &'g Atomic<Page>,
-}
-
-impl<'g> PageView<'g> {
-    fn rcu<'b, F, B>(
-        &self,
-        f: F,
-        guard: &'b Guard,
-    ) -> Result<B, Shared<'b, Page>>
-    where
-        F: FnMut(&mut Page) -> B,
-    {
-        let mut old_pointer = self.read;
-        loop {
-            let mut clone: Owned<Page> = Owned::new(self.deref().clone());
-            let b = f(clone.deref_mut());
-
-            let result =
-                self.entry.compare_and_set(self.read, clone, SeqCst, guard);
-
-            match result {
-                Ok(_) => return Ok(b),
-                Err(cas_error)
-                    if cas_error.current.version() == self.version() =>
-                {
-                    // we got here because the page was moved to a new
-                    // location.
-                    old_pointer = cas_error.current;
-                    continue;
-                }
-                Err(cas_error) => {
-                    return Err(cas_error.current);
-                }
-            }
-        }
-    }
-
-    pub(crate) fn as_frag(&self) -> &Frag {
-        self.update.as_ref().unwrap().as_frag()
-    }
-
-    pub(crate) fn as_meta(&self) -> &Meta {
-        self.update.as_ref().unwrap().as_meta()
-    }
-
-    pub(crate) fn as_counter(&self) -> u64 {
-        self.update.as_ref().unwrap().as_counter()
-    }
-
-    pub(crate) fn is_free(&self) -> bool {
-        self.update == Some(Update::Free) || self.cache_infos.is_empty()
-    }
-
-    pub(crate) fn page_ptr(&self) -> PagePtr<'g> {
-        let cache_info = self.last_cache_info().unwrap();
-        PagePtr { cached_pointer: self.read, ts: cache_info.ts }
-    }
-}
-
-impl<'g> Deref for PageView<'g> {
-    type Target = Page;
-
-    fn deref(&self) -> &Page {
-        unsafe { self.read.deref() }
-    }
-}
 
 struct Node1 {
     children: [Atomic<Node2>; FAN_OUT],

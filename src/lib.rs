@@ -179,7 +179,6 @@ mod metrics;
 mod node;
 mod oneshot;
 mod pagecache;
-mod pagetable;
 mod prefix;
 mod result;
 mod subscription;
@@ -223,7 +222,6 @@ pub use {
             DiskPtr, Log, LogKind, LogOffset, LogRead, Lsn, PageCache, PageId,
             SegmentMode,
         },
-        pagetable::PAGETABLE_NODE_SZ,
     },
     crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared},
 };
@@ -255,7 +253,6 @@ use {
         metrics::{clock, measure, Measure, M},
         node::{Data, Node},
         oneshot::{OneShot, OneShotFiller},
-        pagetable::PageTable,
         result::CasResult,
         subscription::Subscriptions,
         tree::TreeInner,
@@ -287,8 +284,6 @@ fn crc32(buf: &[u8]) -> u32 {
     hasher.update(buf);
     hasher.finalize()
 }
-
-type TreePtr<'g> = pagecache::PagePtr<'g>;
 
 #[cfg(any(test, feature = "lock_free_delays"))]
 mod debug_delay;
