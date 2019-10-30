@@ -294,10 +294,10 @@ use debug_delay::debug_delay;
 #[cfg(not(any(test, feature = "lock_free_delays")))]
 const fn debug_delay() {}
 
-/// Frag denotes a tree node or its modification fragment such as
+/// Link denotes a tree node or its modification fragment such as
 /// key addition or removal.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum Frag {
+pub enum Link {
     Set(IVec, IVec),
     Del(IVec),
     ParentMergeIntention(PageId),

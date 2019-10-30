@@ -5,16 +5,14 @@ use std::{
     alloc::{alloc_zeroed, Layout},
     convert::TryFrom,
     mem::{align_of, size_of},
-    ops::{Deref, DerefMut},
-    sync::atomic::Ordering::{Acquire, Relaxed, Release, SeqCst},
+    sync::atomic::Ordering::{Acquire, Relaxed, Release},
 };
 
 use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
 
 use crate::{
     debug_delay,
-    pagecache::{Frag, Page, PageView, Update},
-    Meta,
+    pagecache::{Page, PageView},
 };
 
 #[allow(unused)]

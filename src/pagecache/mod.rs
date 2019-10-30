@@ -320,8 +320,8 @@ impl<'g> PageView<'g> {
         }
     }
 
-    pub(crate) fn as_frag(&self) -> &Frag {
-        self.update.as_ref().unwrap().as_frag()
+    pub(crate) fn as_link(&self) -> &Link {
+        self.update.as_ref().unwrap().as_link()
     }
 
     pub(crate) fn as_meta(&self) -> &Meta {
@@ -357,11 +357,11 @@ pub struct CacheInfo {
     pub log_size: usize,
 }
 
-/// Update<PageFragment> denotes a state or a change in a sequence of updates
+/// Update<PageLinkment> denotes a state or a change in a sequence of updates
 /// of which a page consists.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Update {
-    Link(Frag),
+    Link(Link),
     Replace(Node),
     Free,
     Counter(u64),
@@ -369,19 +369,19 @@ pub(crate) enum Update {
 }
 
 impl Update {
-    fn into_frag(self) -> Frag {
+    fn into_link(self) -> Link {
         match self {
-            Update::Link(frag) | Update::Replace(frag) => frag,
+            Update::Link(link) | Update::Replace(link) => link,
             other => {
-                panic!("called into_frag on non-Link/Replace: {:?}", other)
+                panic!("called into_link on non-Link/Replace: {:?}", other)
             }
         }
     }
 
-    fn as_frag(&self) -> &Frag {
+    fn as_link(&self) -> &Link {
         match self {
-            Update::Link(frag) | Update::Replace(frag) => frag,
-            other => panic!("called as_frag on non-Link/Replace: {:?}", other),
+            Update::Link(link) | Update::Replace(link) => link,
+            other => panic!("called as_link on non-Link/Replace: {:?}", other),
         }
     }
 
@@ -466,12 +466,12 @@ impl Page {
         self.cache_infos.last()
     }
 
-    pub(crate) fn as_frag(&self) -> &Frag {
-        self.update.unwrap().as_frag()
+    pub(crate) fn as_link(&self) -> &Link {
+        self.update.unwrap().as_link()
     }
 }
 
-/// A lock-free pagecache which supports fragmented pages
+/// A lock-free pagecache which supports linkmented pages
 /// for dramatically improving write throughput.
 pub struct PageCache {
     config: RunningConfig,
@@ -677,7 +677,7 @@ impl PageCache {
     /// and `link` operations.
     pub fn allocate<'g>(
         &self,
-        new: Frag,
+        new: Link,
         guard: &'g Guard,
     ) -> Result<(PageId, PageView<'g>)> {
         self.allocate_inner(Update::Replace(new), guard)
@@ -772,7 +772,7 @@ impl PageCache {
 
             self.inner.insert(pid, new_page);
 
-            (pid, PagePtr { cached_pointer: Shared::null(), ts: 0 })
+            (pid, PageView { cached_pointer: Shared::null(), ts: 0 })
         };
 
         let new_pointer =
@@ -825,7 +825,7 @@ impl PageCache {
         Ok(new_pointer.map_err(|o| o.map(|(pointer, _)| (pointer, ()))))
     }
 
-    /// Try to atomically add a `PageFrag` to the page.
+    /// Try to atomically add a `PageLink` to the page.
     /// Returns `Ok(new_key)` if the operation was successful. Returns
     /// `Err(None)` if the page no longer exists. Returns
     /// `Err(Some(actual_key))` if the atomic link fails.
@@ -833,9 +833,9 @@ impl PageCache {
         &'g self,
         pid: PageId,
         mut old: PageView<'g>,
-        new: Frag,
+        new: Link,
         guard: &'g Guard,
-    ) -> Result<CasResult<'g, Frag>> {
+    ) -> Result<CasResult<'g, Link>> {
         let _measure = Measure::new(&M.link_page);
 
         trace!("linking pid {} with {:?}", pid, new);
@@ -868,7 +868,7 @@ impl PageCache {
                     "injecting a randomized failure in the link of pid {}",
                     pid
                 );
-                if let Some((current_pointer, _frag, _sz)) =
+                if let Some((current_pointer, _link, _sz)) =
                     self.get(pid, guard)?
                 {
                     return Ok(Err(Some((current_pointer, new))));
@@ -878,20 +878,20 @@ impl PageCache {
             }
         }
 
-        let page_cell = match self.inner.get(pid) {
+        let page_cell = match self.inner.get(pid, guard) {
             None => return Ok(Err(None)),
             Some(p) => p,
         };
 
-        let mut frag: Frag = page_cell.clone();
-        frag.apply(new);
+        let mut link: Link = page_cell.clone();
+        link.apply(new);
 
         // see if we should short-circuit replace
         let head = stack.head(guard);
         let stack_iter = StackIter::from_ptr(head, guard);
         let stack_len = stack_iter.size_hint().1.unwrap();
         if stack_len >= PAGE_CONSOLIDATION_THRESHOLD {
-            return self.replace(pid, old, frag, guard);
+            return self.replace(pid, old, link, guard);
         }
 
         let bytes = measure(&M.serialize, || serialize(&new).unwrap());
@@ -1007,19 +1007,19 @@ impl PageCache {
                     let actual_ts = unsafe { actual_pointer.deref().1.ts };
                     if actual_ts == old.ts {
                         new = Some(returned_new);
-                        old = PagePtr {
+                        old = PageView {
                             cached_pointer: actual_pointer,
                             ts: actual_ts,
                         };
                     } else {
                         let returned_update = returned_new.0.clone().unwrap();
-                        let returned_frag = returned_update.into_frag();
+                        let returned_link = returned_update.into_link();
                         return Ok(Err(Some((
-                            PagePtr {
+                            PageView {
                                 cached_pointer: actual_pointer,
                                 ts: actual_ts,
                             },
-                            returned_frag,
+                            returned_link,
                         ))));
                     }
                 }
@@ -1027,7 +1027,7 @@ impl PageCache {
         }
     }
 
-    /// Replace an existing page with a different set of `PageFrag`s.
+    /// Replace an existing page with a different set of `PageLink`s.
     /// Returns `Ok(new_key)` if the operation was successful. Returns
     /// `Err(None)` if the page no longer exists. Returns
     /// `Err(Some(actual_key))` if the atomic swap fails.
@@ -1037,7 +1037,7 @@ impl PageCache {
         old: PageView<'g>,
         new: Node,
         guard: &'g Guard,
-    ) -> Result<CasResult<'g, Frag>> {
+    ) -> Result<CasResult<'g, Link>> {
         let _measure = Measure::new(&M.replace_page);
 
         trace!("replacing pid {} with {:?}", pid, new);
@@ -1070,7 +1070,7 @@ impl PageCache {
                     "injecting a randomized failure in the replace of pid {}",
                     pid
                 );
-                if let Some((current_pointer, _frag, _sz)) =
+                if let Some((current_pointer, _link, _sz)) =
                     self.get(pid, guard)?
                 {
                     return Ok(Err(Some((current_pointer, new))));
@@ -1108,7 +1108,7 @@ impl PageCache {
 
     // rewrite a page so we can reuse the segment that it is
     // (at least partially) located in. This happens when a
-    // segment has had enough resident page fragments moved
+    // segment has had enough resident page linkments moved
     // away to trigger the `segment_cleanup_threshold`.
     fn rewrite_page(&self, pid: PageId, guard: &Guard) -> Result<()> {
         let _measure = Measure::new(&M.rewrite_page);
@@ -1141,7 +1141,7 @@ impl PageCache {
 
             new_cache_entry.1.pointer = new_pointer;
 
-            let node = node_from_frag_vec(vec![new_cache_entry]);
+            let node = node_from_link_vec(vec![new_cache_entry]);
 
             debug_delay();
             let result = stack.cas(head, node, guard);
@@ -1179,8 +1179,8 @@ impl PageCache {
             } else if pid == COUNTER_PID {
                 let (key, counter) = self.get_idgen(guard)?;
                 (key, Update::Counter(counter))
-            } else if let Some((key, frag, _sz)) = self.get(pid, guard)? {
-                (key, Update::Replace(frag.clone()))
+            } else if let Some((key, link, _sz)) = self.get(pid, guard)? {
+                (key, Update::Replace(link.clone()))
             } else {
                 let head = stack.head(guard);
 
@@ -1188,14 +1188,14 @@ impl PageCache {
 
                 match stack_iter.next() {
                     Some((Some(Update::Free), cache_info)) => (
-                        PagePtr { cached_pointer: head, ts: cache_info.ts },
+                        PageView { cached_pointer: head, ts: cache_info.ts },
                         Update::Free,
                     ),
                     other => {
                         debug!(
                             "when rewriting pid {} \
                              we encountered a rewritten \
-                             node with a frag {:?} that \
+                             node with a link {:?} that \
                              we previously witnessed a Free \
                              for (PageCache::get returned None), \
                              assuming we can just return now since \
@@ -1286,7 +1286,7 @@ impl PageCache {
             Update::Counter(c) => serialize(&c).unwrap(),
             Update::Meta(m) => serialize(&m).unwrap(),
             Update::Free => vec![],
-            other => serialize(other.as_frag()).unwrap(),
+            other => serialize(other.as_link()).unwrap(),
         };
         drop(serialize_latency);
         let mut update_opt = Some(update);
@@ -1322,7 +1322,7 @@ impl PageCache {
                 log_size: log_reservation.reservation_len(),
             };
 
-            let node = node_from_frag_vec(vec![(
+            let node = node_from_link_vec(vec![(
                 Some(update_opt.take().unwrap()),
                 cache_info,
             )]);
@@ -1344,7 +1344,7 @@ impl PageCache {
                     // when the iobuf's n_writers hits 0, we may transition
                     // the segment to inactive, resulting in a race otherwise.
                     let _pointer = log_reservation.complete()?;
-                    return Ok(Ok(PagePtr { cached_pointer, ts }));
+                    return Ok(Ok(PageView { cached_pointer, ts }));
                 }
                 Err((actual_pointer, returned_entry)) => {
                     trace!("cas_page failed on pid {}", pid);
@@ -1357,7 +1357,7 @@ impl PageCache {
 
                     if actual_ts != old.ts || is_rewrite {
                         return Ok(Err(Some((
-                            PagePtr {
+                            PageView {
                                 cached_pointer: actual_pointer,
                                 ts: actual_ts,
                             },
@@ -1370,7 +1370,7 @@ impl PageCache {
                         old.ts
                     );
                     old =
-                        PagePtr { cached_pointer: actual_pointer, ts: old.ts };
+                        PageView { cached_pointer: actual_pointer, ts: old.ts };
                     update_opt = Some(returned_update);
                 }
             } // match cas result
@@ -1397,7 +1397,7 @@ impl PageCache {
 
         let cache_info = page_cell.last_cache_info().unwrap();
         let page_ptr =
-            PagePtr { cached_pointer: page_cell.read, ts: cache_info.ts };
+            PageView { cached_pointer: page_cell.read, ts: cache_info.ts };
 
         if page_cell.update.is_some() {
             let meta_ref = page_cell.as_meta();
@@ -1446,7 +1446,7 @@ impl PageCache {
         &self,
         pid: PageId,
         guard: &'g Guard,
-    ) -> Result<Option<(PageView<'g>, &'g Frag, u64)>> {
+    ) -> Result<Option<(PageView<'g>, &'g Link, u64)>> {
         trace!("getting page iterator for pid {}", pid);
         let _measure = Measure::new(&M.get_page);
 
@@ -1473,14 +1473,14 @@ impl PageCache {
 
         if page_cell.update.is_some() {
             let page_ptr = page_cell.page_ptr();
-            let replace = page_cell.as_frag();
+            let replace = page_cell.as_link();
             return Ok(Some((page_ptr, replace, total_page_size)));
         }
         let initial_base = match entries[0] {
             (Some(Update::Replace(replace)), cache_info) => {
                 // short circuit
                 return Ok(Some((
-                    PagePtr { cached_pointer: head, ts: cache_info.ts },
+                    PageView { cached_pointer: head, ts: cache_info.ts },
                     replace,
                     total_page_size,
                 )));
@@ -1492,9 +1492,9 @@ impl PageCache {
                 });
                 if let Some(base_idx) = base_idx {
                     let mut base =
-                        entries[base_idx].0.as_ref().unwrap().as_frag().clone();
+                        entries[base_idx].0.as_ref().unwrap().as_link().clone();
                     for (link, _) in entries[0..base_idx].iter().rev() {
-                        base.merge(link.as_ref().unwrap().as_frag());
+                        base.merge(link.as_ref().unwrap().as_link());
                     }
                     Some(base)
                 } else {
@@ -1521,7 +1521,7 @@ impl PageCache {
                     let res = self
                         .pull(pid, cache_info.lsn, cache_info.pointer)
                         .map(|pg| pg)?;
-                    Ok(Cow::Owned(res.into_frag()))
+                    Ok(Cow::Owned(res.into_link()))
                 }
                 other => {
                     panic!("iterating over unexpected update: {:?}", other);
@@ -1529,7 +1529,7 @@ impl PageCache {
             });
 
             // if any of our pulls failed, bail here
-            let mut successes: Vec<Cow<'_, Frag>> = match pulled.collect() {
+            let mut successes: Vec<Cow<'_, Link>> = match pulled.collect() {
                 Ok(success) => success,
                 Err(Error::Io(ref error))
                     if error.kind() == std::io::ErrorKind::NotFound =>
@@ -1543,20 +1543,20 @@ impl PageCache {
 
             let mut base = successes.pop().unwrap().into_owned();
 
-            while let Some(frag) = successes.pop() {
-                base.merge(&frag);
+            while let Some(link) = successes.pop() {
+                base.merge(&link);
             }
 
             base
         };
 
         // fix up the stack to include our pulled items
-        let mut frags: Vec<(Option<Update>, CacheInfo)> =
+        let mut links: Vec<(Option<Update>, CacheInfo)> =
             entries.iter().map(|(_, cache_info)| (None, *cache_info)).collect();
 
-        frags[0].0 = Some(Update::Replace(base));
+        links[0].0 = Some(Update::Replace(base));
 
-        let node = node_from_frag_vec(frags).into_shared(guard);
+        let node = node_from_link_vec(links).into_shared(guard);
 
         #[cfg(feature = "event_log")]
         assert_eq!(
@@ -1588,7 +1588,7 @@ impl PageCache {
             };
 
             let pointer =
-                PagePtr { cached_pointer: new_pointer, ts: entries[0].1.ts };
+                PageView { cached_pointer: new_pointer, ts: entries[0].1.ts };
 
             Ok(Some((pointer, page_ref, total_page_size)))
         } else {
@@ -1738,12 +1738,12 @@ impl PageCache {
                 new_meta.del_root(name);
             }
 
-            let new_meta_frag = Update::Meta(new_meta);
+            let new_meta_link = Update::Meta(new_meta);
 
             let res = self.cas_page(
                 META_PID,
                 meta_key.clone(),
-                new_meta_frag,
+                new_meta_link,
                 false,
                 guard,
             )?;
@@ -1796,7 +1796,7 @@ impl PageCache {
                 }
             }
 
-            let node = node_from_frag_vec(new_stack);
+            let node = node_from_link_vec(new_stack);
 
             debug_delay();
             let result = stack.cas(head, node, guard);
@@ -1863,10 +1863,10 @@ impl PageCache {
                 deserialize::<Meta>(&bytes).map(Update::Meta)
             }
             BlobLink | InlineLink => {
-                deserialize::<Frag>(&bytes).map(Update::Link)
+                deserialize::<Link>(&bytes).map(Update::Link)
             }
             BlobReplace | InlineReplace => {
-                deserialize::<Frag>(&bytes).map(Update::Replace)
+                deserialize::<Node>(&bytes).map(Update::Replace)
             }
             Free => Ok(Update::Free),
             Corrupted | Cancelled | Pad | BatchManifest => {

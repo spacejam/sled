@@ -9,13 +9,13 @@ use std::{
 
 use parking_lot::RwLock;
 
-use crate::Guard;
+use crate::pagecache::PageView;
 
 use super::*;
 
 #[derive(Debug, Clone)]
 pub(crate) struct View<'g> {
-    pub ptr: TreePtr<'g>,
+    pub ptr: PageView<'g>,
     pub pid: PageId,
     pub node: &'g Node,
     pub size: u64,
@@ -156,7 +156,7 @@ impl Tree {
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
 
             let (encoded_key, last_value) = node.node_kv_pair(key.as_ref());
-            let frag = Frag::Set(encoded_key, value.clone());
+            let frag = Link::Set(encoded_key, value.clone());
             let link = self.context.pagecache.link(
                 pid,
                 ptr.clone(),
@@ -418,7 +418,7 @@ impl Tree {
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
 
             let (encoded_key, existing_val) = node.node_kv_pair(key.as_ref());
-            let frag = Frag::Del(encoded_key);
+            let frag = Link::Del(encoded_key);
             let link =
                 self.context.pagecache.link(pid, ptr.clone(), frag, &guard)?;
 
@@ -534,9 +534,9 @@ impl Tree {
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
 
             let frag = if let Some(ref new) = new {
-                Frag::Set(encoded_key, new.clone())
+                Link::Set(encoded_key, new.clone())
             } else {
-                Frag::Del(encoded_key)
+                Link::Del(encoded_key)
             };
             let link = self.context.pagecache.link(pid, ptr, frag, &guard)?;
 
@@ -1010,9 +1010,9 @@ impl Tree {
             let mut subscriber_reservation = self.subscriptions.reserve(&key);
 
             let frag = if let Some(ref new) = new {
-                Frag::Set(encoded_key, new.clone())
+                Link::Set(encoded_key, new.clone())
             } else {
-                Frag::Del(encoded_key)
+                Link::Del(encoded_key)
             };
             let link = self.context.pagecache.link(pid, ptr, frag, &guard)?;
 
@@ -1404,14 +1404,14 @@ impl Tree {
 
         // install right side
         let (rhs_pid, rhs_ptr) =
-            self.context.pagecache.allocate(Frag::Base(rhs), guard)?;
+            self.context.pagecache.allocate(Link::Base(rhs), guard)?;
 
         // replace node, pointing next to installed right
         lhs.next = Some(rhs_pid);
         let replace = self.context.pagecache.replace(
             node_view.pid,
             node_view.ptr.clone(),
-            Frag::Base(lhs),
+            Link::Base(lhs),
             guard,
         )?;
         M.tree_child_split_attempt();
@@ -1444,7 +1444,7 @@ impl Tree {
             let replace = self.context.pagecache.replace(
                 parent_view.pid,
                 parent_view.ptr.clone(),
-                Frag::Base(parent),
+                Link::Base(parent),
                 guard,
             )?;
             if replace.is_ok() {
@@ -1475,7 +1475,7 @@ impl Tree {
 
         new_root_vec.push((at, to));
 
-        let new_root = Frag::root(Data::Index(new_root_vec));
+        let new_root = Link::root(Data::Index(new_root_vec));
 
         let (new_root_pid, new_root_ptr) =
             self.context.pagecache.allocate(new_root, guard)?;
@@ -1524,7 +1524,7 @@ impl Tree {
     ) -> Result<Option<View<'g>>> {
         loop {
             let frag_opt = self.context.pagecache.get(pid, guard)?;
-            if let Some((tree_ptr, Frag::Base(ref leaf), size)) = &frag_opt {
+            if let Some((tree_ptr, Link::Base(ref leaf), size)) = &frag_opt {
                 let view =
                     View { node: leaf, ptr: *tree_ptr, pid, size: *size };
                 if leaf.merging_child.is_some() {
@@ -1668,7 +1668,7 @@ impl Tree {
                 let replace = self.context.pagecache.replace(
                     unsplit_parent.pid,
                     unsplit_parent.ptr.clone(),
-                    Frag::Base(parent),
+                    Link::Base(parent),
                     guard,
                 )?;
                 if replace.is_ok() {
@@ -1687,7 +1687,7 @@ impl Tree {
                 if let Some(ref mut parent) = parent_view {
                     assert!(parent.node.merging_child.is_none());
                     if parent.node.can_merge_child() {
-                        let frag = Frag::ParentMergeIntention(cursor);
+                        let frag = Link::ParentMergeIntention(cursor);
 
                         let link = self
                             .context
@@ -1746,7 +1746,7 @@ impl Tree {
             let install_frag = self.context.pagecache.link(
                 child_pid,
                 child_view.ptr,
-                Frag::ChildMergeCap,
+                Link::ChildMergeCap,
                 guard,
             )?;
             match install_frag {
@@ -1774,14 +1774,14 @@ impl Tree {
         &self,
         parent_view: &View<'g>,
         child_pid: PageId,
-        mut parent_cas_key: TreePtr<'g>,
+        mut parent_cas_key: PageView<'g>,
         guard: &'g Guard,
     ) -> Result<bool> {
         loop {
             let linked = self.context.pagecache.link(
                 parent_view.pid,
                 parent_cas_key,
-                Frag::ParentMergeConfirm,
+                Link::ParentMergeConfirm,
                 guard,
             )?;
             match linked {
@@ -1926,7 +1926,7 @@ impl Tree {
                 let replace = self.context.pagecache.replace(
                     cursor_pid,
                     cursor_cas_key,
-                    Frag::Base(replacement),
+                    replacement,
                     guard,
                 )?;
                 match replace {
