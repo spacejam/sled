@@ -277,7 +277,7 @@ pub(crate) fn maybe_decompress(buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
     Ok(buf)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PageView<'g> {
     pub(crate) read: Shared<'g, Page>,
     pub(crate) entry: &'g Atomic<Page>,
@@ -318,6 +318,35 @@ impl<'g> PageView<'g> {
                     return Err(cas_error.current);
                 }
             }
+        }
+    }
+
+    fn link(&self, new_node: Node, cache_info: CacheInfo, guard: &Guard) {
+        let mut view = self.clone();
+
+        let mut new_page = Some(Owned::new(Page {
+            update: Some(Update::Node(new_node)),
+            cache_infos: vec![],
+        }));
+
+        loop {
+            let mut new_cache_infos = view.cache_infos.clone();
+            new_cache_infos.push(cache_info);
+
+            let page_ptr = new_page.take().unwrap();
+
+            debug_delay();
+            let result =
+                view.entry.compare_and_set(view.read, page_ptr, SeqCst, guard);
+
+            if let Ok(result) = result {
+                return;
+            }
+
+            let mut cas_error = result.unwrap_err();
+
+            new_page = Some(cas_error.new);
+            view.read = cas_error.current;
         }
     }
 
@@ -896,150 +925,117 @@ impl PageCache {
             }
         }
 
-        let page_cell = match self.inner.get(pid, guard) {
+        let page_view = match self.inner.get(pid, guard) {
             None => return Ok(Err(None)),
             Some(p) => p,
         };
 
-        let mut link: Link = page_cell.clone();
-        link.apply(new);
+        let mut node: Node = page_view.unwrap_node().clone();
+        node.apply(&new);
 
         // see if we should short-circuit replace
-        let head = stack.head(guard);
-        let stack_iter = StackIter::from_ptr(head, guard);
-        let stack_len = stack_iter.size_hint().1.unwrap();
-        if stack_len >= PAGE_CONSOLIDATION_THRESHOLD {
-            return self.replace(pid, old, link, guard);
+        if page_view.cache_infos.len() > PAGE_CONSOLIDATION_THRESHOLD {
+            return self.replace(pid, old, node, guard);
         }
 
         let bytes = measure(&M.serialize, || serialize(&new).unwrap());
 
-        let mut new = {
-            let update = Update::Link(new);
+        let log_reservation = self.log.reserve(LogKind::Link, pid, &bytes)?;
+        let lsn = log_reservation.lsn();
+        let pointer = log_reservation.pointer();
 
-            let cache_info = CacheInfo {
-                lsn: -1,
-                pointer: DiskPtr::Inline(666_666_666),
-                ts: 0,
-                log_size: 0,
-            };
+        // NB the setting of the timestamp is quite
+        // correctness-critical! We use the ts to
+        // ensure that fundamentally new data causes
+        // high-level link and replace operations
+        // to fail when the data in the pagecache
+        // actually changes. When we just rewrite
+        // the page for the purposes of moving it
+        // to a new location on disk, however, we
+        // don't want to cause threads that are
+        // basing the correctness of their new
+        // writes on the unchanged state to fail.
+        // Here, we bump it by 1, to signal that
+        // the underlying state is fundamentally
+        // changing.
+        let ts = old.ts() + 1;
 
-            let page =
-                Page { update: Some(update), cache_infos: vec![cache_info] };
-
-            Some(Owned::new(page))
+        let cache_info = CacheInfo {
+            lsn,
+            pointer,
+            ts,
+            log_size: log_reservation.reservation_len(),
         };
 
-        loop {
-            let log_reservation =
-                self.log.reserve(LogKind::Link, pid, &bytes)?;
+        debug_delay();
+        let result = page_view.link(node, cache_info);
 
-            let lsn = log_reservation.lsn();
-            let pointer = log_reservation.pointer();
+        match result {
+            Ok(cached_pointer) => {
+                trace!("link of pid {} succeeded", pid);
 
-            // NB the setting of the timestamp is quite
-            // correctness-critical! We use the ts to
-            // ensure that fundamentally new data causes
-            // high-level link and replace operations
-            // to fail when the data in the pagecache
-            // actually changes. When we just rewrite
-            // the page for the purposes of moving it
-            // to a new location on disk, however, we
-            // don't want to cause threads that are
-            // basing the correctness of their new
-            // writes on the unchanged state to fail.
-            // Here, we bump it by 1, to signal that
-            // the underlying state is fundamentally
-            // changing.
-            let ts = old.ts + 1;
+                // if the last update for this page was also
+                // sent to this segment, we can skip marking it
+                let previous_head_lsn = old.last_lsn();
 
-            let mut node = new.take().unwrap();
+                assert_ne!(previous_head_lsn, 0);
 
-            let cache_info = CacheInfo {
-                lsn,
-                pointer,
-                ts,
-                log_size: log_reservation.reservation_len(),
-            };
+                let previous_lsn_segment =
+                    previous_head_lsn / self.config.segment_size as i64;
+                let new_lsn_segment = lsn / self.config.segment_size as i64;
 
-            if let (Some(Update::Link(_)), ref mut stored_cache_info) =
-                node.inner
-            {
-                *stored_cache_info = cache_info;
-            } else {
-                panic!("should only be working with Resident entries");
-            }
+                let to_clean = if previous_lsn_segment == new_lsn_segment {
+                    // can skip mark_link because we've
+                    // already accounted for this page
+                    // being resident on this segment
+                    self.log.with_sa(|sa| sa.clean(pid))
+                } else {
+                    self.log.with_sa(|sa| {
+                        sa.mark_link(pid, lsn, pointer);
+                        sa.clean(pid)
+                    })
+                };
 
-            debug_delay();
-            let result = stack.cap_node(old.cached_pointer, node, guard);
+                // NB complete must happen AFTER calls to SA, because
+                // when the iobuf's n_writers hits 0, we may transition
+                // the segment to inactive, resulting in a race otherwise.
+                // FIXME can result in deadlock if a node that holds SA
+                // is waiting to acquire a new reservation blocked by this?
+                log_reservation.complete()?;
 
-            match result {
-                Ok(cached_pointer) => {
-                    trace!("link of pid {} succeeded", pid);
-
-                    // if the last update for this page was also
-                    // sent to this segment, we can skip marking it
-                    let previous_head_lsn = old.last_lsn();
-
-                    assert_ne!(previous_head_lsn, 0);
-
-                    let previous_lsn_segment =
-                        previous_head_lsn / self.config.segment_size as i64;
-                    let new_lsn_segment = lsn / self.config.segment_size as i64;
-
-                    let to_clean = if previous_lsn_segment == new_lsn_segment {
-                        // can skip mark_link because we've
-                        // already accounted for this page
-                        // being resident on this segment
-                        self.log.with_sa(|sa| sa.clean(pid))
-                    } else {
-                        self.log.with_sa(|sa| {
-                            sa.mark_link(pid, lsn, pointer);
-                            sa.clean(pid)
-                        })
-                    };
-
-                    // NB complete must happen AFTER calls to SA, because
-                    // when the iobuf's n_writers hits 0, we may transition
-                    // the segment to inactive, resulting in a race otherwise.
-                    // FIXME can result in deadlock if a node that holds SA
-                    // is waiting to acquire a new reservation blocked by this?
-                    log_reservation.complete()?;
-
-                    if let Some(to_clean) = to_clean {
-                        self.rewrite_page(to_clean, guard)?;
-                    }
-
-                    let count = self.updates.fetch_add(1, Relaxed) + 1;
-                    let should_snapshot =
-                        count % self.config.snapshot_after_ops == 0;
-                    if should_snapshot {
-                        self.advance_snapshot()?;
-                    }
-
-                    return Ok(Ok(PageView { cached_pointer, ts }));
+                if let Some(to_clean) = to_clean {
+                    self.rewrite_page(to_clean, guard)?;
                 }
-                Err((actual_pointer, returned_new)) => {
-                    trace!("link of pid {} failed", pid);
-                    log_reservation.abort()?;
-                    let actual_ts = unsafe { actual_pointer.deref().1.ts };
-                    if actual_ts == old.ts {
-                        new = Some(returned_new);
-                        old = PageView {
+
+                let count = self.updates.fetch_add(1, Relaxed) + 1;
+                let should_snapshot =
+                    count % self.config.snapshot_after_ops == 0;
+                if should_snapshot {
+                    self.advance_snapshot()?;
+                }
+
+                return Ok(Ok(PageView { cached_pointer, ts }));
+            }
+            Err((actual_pointer, returned_new)) => {
+                trace!("link of pid {} failed", pid);
+                log_reservation.abort()?;
+                let actual_ts = unsafe { actual_pointer.deref().1.ts };
+                if actual_ts == old.ts {
+                    new = Some(returned_new);
+                    old = PageView {
+                        cached_pointer: actual_pointer,
+                        ts: actual_ts,
+                    };
+                } else {
+                    let returned_update = returned_new.0.clone().unwrap();
+                    let returned_link = returned_update.into_link();
+                    return Ok(Err(Some((
+                        PageView {
                             cached_pointer: actual_pointer,
                             ts: actual_ts,
-                        };
-                    } else {
-                        let returned_update = returned_new.0.clone().unwrap();
-                        let returned_link = returned_update.into_link();
-                        return Ok(Err(Some((
-                            PageView {
-                                cached_pointer: actual_pointer,
-                                ts: actual_ts,
-                            },
-                            returned_link,
-                        ))));
-                    }
+                        },
+                        returned_link,
+                    ))));
                 }
             }
         }
