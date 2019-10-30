@@ -5,8 +5,8 @@ use super::{
     read_blob, read_message, u32_to_arr, u64_to_arr, BlobPointer, DiskPtr,
     IoBuf, IoBufs, LogKind, LogOffset, Lsn, MessageKind, Reservation,
     SegmentAccountant, Snapshot, BATCH_MANIFEST_PID, BLOB_INLINE_LEN,
-    CONFIG_PID, COUNTER_PID, META_PID, MINIMUM_ITEMS_PER_SEGMENT,
-    MSG_HEADER_LEN, SEG_HEADER_LEN,
+    COUNTER_PID, META_PID, MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN,
+    SEG_HEADER_LEN,
 };
 
 use crate::*;
@@ -200,8 +200,6 @@ impl Log {
             (COUNTER_PID, LogKind::Replace, false) => MessageKind::Counter,
             (META_PID, LogKind::Replace, true) => MessageKind::BlobMeta,
             (META_PID, LogKind::Replace, false) => MessageKind::InlineMeta,
-            (CONFIG_PID, LogKind::Replace, true) => MessageKind::BlobConfig,
-            (CONFIG_PID, LogKind::Replace, false) => MessageKind::InlineConfig,
             (BATCH_MANIFEST_PID, LogKind::Skip, false) => {
                 MessageKind::BatchManifest
             }

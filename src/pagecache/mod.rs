@@ -22,8 +22,7 @@ use std::{borrow::Cow, collections::BinaryHeap, ops::Deref};
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
     constants::{
-        BATCH_MANIFEST_PID, CONFIG_PID, COUNTER_PID, META_PID,
-        PAGE_CONSOLIDATION_THRESHOLD,
+        BATCH_MANIFEST_PID, COUNTER_PID, META_PID, PAGE_CONSOLIDATION_THRESHOLD,
     },
     iobuf::{IoBuf, IoBufs},
     iterator::{raw_segment_iter_from, LogIter},
@@ -94,18 +93,14 @@ pub enum MessageKind {
     InlineMeta = 6,
     /// The meta page, stored blobly
     BlobMeta = 7,
-    /// The config page, stored inline
-    InlineConfig = 8,
-    /// The config page, stored blobly
-    BlobConfig = 9,
     /// A consolidated page replacement, stored inline
     InlineReplace = 10,
     /// A consolidated page replacement, stored blobly
     BlobReplace = 11,
     /// A partial page update, stored inline
-    InlineAppend = 12,
+    InlineLink = 12,
     /// A partial page update, stored blobly
-    BlobAppend = 13,
+    BlobLink = 13,
 }
 
 impl MessageKind {
@@ -126,12 +121,10 @@ impl From<u8> for MessageKind {
             5 => Counter,
             6 => InlineMeta,
             7 => BlobMeta,
-            8 => InlineConfig,
-            9 => BlobConfig,
-            10 => InlineReplace,
-            11 => BlobReplace,
-            12 => InlineAppend,
-            13 => BlobAppend,
+            8 => InlineReplace,
+            9 => BlobReplace,
+            10 => InlineLink,
+            11 => BlobLink,
             other => {
                 debug!("encountered unexpected message kind byte {}", other);
                 Corrupted
@@ -147,7 +140,7 @@ pub enum LogKind {
     /// Persisted data containing a page replacement
     Replace,
     /// Persisted immutable update
-    Append,
+    Link,
     /// Freeing of a page
     Free,
     /// Some state indicating this should be skipped
@@ -161,8 +154,8 @@ fn log_kind_from_update(update: &Update) -> LogKind {
 
     match update {
         Free => LogKind::Free,
-        Append(..) => LogKind::Append,
-        Compact(..) | Counter(..) | Meta(..) | Config(..) => LogKind::Replace,
+        Link(..) => LogKind::Link,
+        Replace(..) | Counter(..) | Meta(..) => LogKind::Replace,
     }
 }
 
@@ -172,10 +165,11 @@ impl From<MessageKind> for LogKind {
         match kind {
             Free => LogKind::Free,
 
-            InlineReplace | Counter | BlobReplace | InlineMeta | BlobMeta
-            | InlineConfig | BlobConfig => LogKind::Replace,
+            InlineReplace | Counter | BlobReplace | InlineMeta | BlobMeta => {
+                LogKind::Replace
+            }
 
-            InlineAppend | BlobAppend => LogKind::Append,
+            InlineLink | BlobLink => LogKind::Link,
 
             Cancelled | Pad | BatchManifest => LogKind::Skip,
             other => {
@@ -365,30 +359,27 @@ pub struct CacheInfo {
 /// of which a page consists.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Update {
-    Append(Frag),
-    Compact(Frag),
+    Link(Frag),
+    Replace(Node),
     Free,
     Counter(u64),
     Meta(Meta),
-    Config(StorageParameters),
 }
 
 impl Update {
     fn into_frag(self) -> Frag {
         match self {
-            Update::Append(frag) | Update::Compact(frag) => frag,
+            Update::Link(frag) | Update::Replace(frag) => frag,
             other => {
-                panic!("called into_frag on non-Append/Compact: {:?}", other)
+                panic!("called into_frag on non-Link/Replace: {:?}", other)
             }
         }
     }
 
     fn as_frag(&self) -> &Frag {
         match self {
-            Update::Append(frag) | Update::Compact(frag) => frag,
-            other => {
-                panic!("called as_frag on non-Append/Compact: {:?}", other)
-            }
+            Update::Link(frag) | Update::Replace(frag) => frag,
+            other => panic!("called as_frag on non-Link/Replace: {:?}", other),
         }
     }
 
@@ -408,8 +399,8 @@ impl Update {
         }
     }
 
-    fn is_compact(&self) -> bool {
-        if let Update::Compact(_) = self {
+    fn is_replace(&self) -> bool {
+        if let Update::Replace(_) = self {
             true
         } else {
             false
@@ -641,28 +632,6 @@ impl PageCache {
                 );
             }
 
-            if let Err(Error::ReportableBug(..)) =
-                pc.get_persisted_config(&guard)
-            {
-                // set up idgen
-                was_recovered = false;
-
-                let config_update = Update::Config(StorageParameters {
-                    segment_size: pc.config.segment_size,
-                    use_compression: pc.config.use_compression,
-                    version: pc.config.version,
-                });
-
-                let (config_id, _) =
-                    pc.allocate_inner(config_update, &guard)?;
-
-                assert_eq!(
-                    config_id, CONFIG_PID,
-                    "we expect the counter to have pid {}, but it had pid {} instead",
-                    CONFIG_PID, config_id,
-                );
-            }
-
             let (_, counter) = pc.get_idgen(&guard)?;
             let idgen_recovery = if was_recovered {
                 counter + (2 * pc.config.idgen_persist_interval)
@@ -709,7 +678,7 @@ impl PageCache {
         new: Frag,
         guard: &'g Guard,
     ) -> Result<(PageId, PagePtr<'g>)> {
-        self.allocate_inner(Update::Compact(new), guard)
+        self.allocate_inner(Update::Replace(new), guard)
     }
 
     /// Attempt to opportunistically rewrite data from a Draining
@@ -826,11 +795,7 @@ impl PageCache {
     ) -> Result<CasResult<'g, ()>> {
         trace!("attempting to free pid {}", pid);
 
-        if pid == COUNTER_PID
-            || pid == META_PID
-            || pid == CONFIG_PID
-            || pid == BATCH_MANIFEST_PID
-        {
+        if pid == COUNTER_PID || pid == META_PID || pid == BATCH_MANIFEST_PID {
             return Err(Error::Unsupported(
                 "you are not able to free the first \
                  couple pages, which are allocated \
@@ -861,11 +826,11 @@ impl PageCache {
     /// Try to atomically add a `PageFrag` to the page.
     /// Returns `Ok(new_key)` if the operation was successful. Returns
     /// `Err(None)` if the page no longer exists. Returns
-    /// `Err(Some(actual_key))` if the atomic append fails.
+    /// `Err(Some(actual_key))` if the atomic link fails.
     pub fn link<'g>(
         &'g self,
         pid: PageId,
-        mut old: PagePtr<'g>,
+        mut old: PageView<'g>,
         new: Frag,
         guard: &'g Guard,
     ) -> Result<CasResult<'g, Frag>> {
@@ -911,48 +876,26 @@ impl PageCache {
             }
         }
 
-        let stack = match self.inner.get(pid) {
+        let page_cell = match self.inner.get(pid) {
             None => return Ok(Err(None)),
             Some(p) => p,
         };
+
+        let mut frag: Frag = page_cell.clone();
+        frag.apply(new);
 
         // see if we should short-circuit replace
         let head = stack.head(guard);
         let stack_iter = StackIter::from_ptr(head, guard);
         let stack_len = stack_iter.size_hint().1.unwrap();
         if stack_len >= PAGE_CONSOLIDATION_THRESHOLD {
-            let current_frag = if let Some((current_pointer, frag, _sz)) =
-                self.get(pid, guard)?
-            {
-                if old.ts != current_pointer.ts {
-                    assert!(
-                        old.cached_pointer != current_pointer.cached_pointer
-                    );
-                    // the page has changed in the mean time,
-                    // and merging frags may violate correctness
-                    // invariants
-                    return Ok(Err(Some((current_pointer, new))));
-                }
-                frag
-            } else {
-                return Ok(Err(None));
-            };
-
-            let update: Frag = {
-                let _measure = Measure::new(&M.merge_page);
-
-                let mut update = current_frag.clone();
-                update.merge(&new);
-                update
-            };
-
-            return self.replace(pid, old, update, guard);
+            return self.replace(pid, old, frag, guard);
         }
 
         let bytes = measure(&M.serialize, || serialize(&new).unwrap());
 
         let mut new = {
-            let update = Update::Append(new);
+            let update = Update::Link(new);
 
             let cache_info = CacheInfo {
                 lsn: -1,
@@ -969,7 +912,7 @@ impl PageCache {
 
         loop {
             let log_reservation =
-                self.log.reserve(LogKind::Append, pid, &bytes)?;
+                self.log.reserve(LogKind::Link, pid, &bytes)?;
 
             let lsn = log_reservation.lsn();
             let pointer = log_reservation.pointer();
@@ -999,7 +942,7 @@ impl PageCache {
                 log_size: log_reservation.reservation_len(),
             };
 
-            if let (Some(Update::Append(_)), ref mut stored_cache_info) =
+            if let (Some(Update::Link(_)), ref mut stored_cache_info) =
                 node.inner
             {
                 *stored_cache_info = cache_info;
@@ -1090,7 +1033,7 @@ impl PageCache {
         &self,
         pid: PageId,
         old: PagePtr<'g>,
-        new: Frag,
+        new: Update,
         guard: &'g Guard,
     ) -> Result<CasResult<'g, Frag>> {
         let _measure = Measure::new(&M.replace_page);
@@ -1136,7 +1079,7 @@ impl PageCache {
         }
 
         let result =
-            self.cas_page(pid, old, Update::Compact(new), false, guard)?;
+            self.cas_page(pid, old, Update::Replace(new), false, guard)?;
 
         let to_clean = self.log.with_sa(|sa| sa.clean(pid));
 
@@ -1153,7 +1096,7 @@ impl PageCache {
 
         Ok(result.map_err(|fail| {
             let (pointer, shared) = fail.unwrap();
-            if let Update::Compact(rejected_new) = shared {
+            if let Update::Replace(rejected_new) = shared {
                 Some((pointer, rejected_new))
             } else {
                 unreachable!();
@@ -1234,11 +1177,8 @@ impl PageCache {
             } else if pid == COUNTER_PID {
                 let (key, counter) = self.get_idgen(guard)?;
                 (key, Update::Counter(counter))
-            } else if pid == CONFIG_PID {
-                let (key, config) = self.get_persisted_config(guard)?;
-                (key, Update::Config(*config))
             } else if let Some((key, frag, _sz)) = self.get(pid, guard)? {
-                (key, Update::Compact(frag.clone()))
+                (key, Update::Replace(frag.clone()))
             } else {
                 let head = stack.head(guard);
 
@@ -1306,7 +1246,7 @@ impl PageCache {
         let config_size = self.get_persisted_config(&guard)?.1.size_in_bytes();
 
         let mut ret = meta_size + idgen_size + config_size;
-        let min_pid = CONFIG_PID + 1;
+        let min_pid = COUNTER_PID + 1;
         let next_pid_to_allocate = self.next_pid_to_allocate.load(Acquire);
         for pid in min_pid..next_pid_to_allocate {
             if let Some((_, _, sz)) = self.get(pid, &guard)? {
@@ -1343,7 +1283,6 @@ impl PageCache {
         let bytes = match &update {
             Update::Counter(c) => serialize(&c).unwrap(),
             Update::Meta(m) => serialize(&m).unwrap(),
-            Update::Config(c) => serialize(&c).unwrap(),
             Update::Free => vec![],
             other => serialize(other.as_frag()).unwrap(),
         };
@@ -1509,11 +1448,7 @@ impl PageCache {
         trace!("getting page iterator for pid {}", pid);
         let _measure = Measure::new(&M.get_page);
 
-        if pid == COUNTER_PID
-            || pid == META_PID
-            || pid == CONFIG_PID
-            || pid == BATCH_MANIFEST_PID
-        {
+        if pid == COUNTER_PID || pid == META_PID || pid == BATCH_MANIFEST_PID {
             return Err(Error::Unsupported(
                 "you are not able to iterate over \
                  the first couple pages, which are \
@@ -1536,28 +1471,28 @@ impl PageCache {
 
         if page_cell.update.is_some() {
             let page_ptr = page_cell.page_ptr();
-            let compact = page_cell.as_frag();
-            return Ok(Some((page_ptr, compact, total_page_size)));
+            let replace = page_cell.as_frag();
+            return Ok(Some((page_ptr, replace, total_page_size)));
         }
         let initial_base = match entries[0] {
-            (Some(Update::Compact(compact)), cache_info) => {
+            (Some(Update::Replace(replace)), cache_info) => {
                 // short circuit
                 return Ok(Some((
                     PagePtr { cached_pointer: head, ts: cache_info.ts },
-                    compact,
+                    replace,
                     total_page_size,
                 )));
             }
-            (Some(Update::Append(_)), _) => {
+            (Some(Update::Link(_)), _) => {
                 // merge to next item
                 let base_idx = entries.iter().position(|(e, _)| {
-                    e.is_some() && e.as_ref().unwrap().is_compact()
+                    e.is_some() && e.as_ref().unwrap().is_replace()
                 });
                 if let Some(base_idx) = base_idx {
                     let mut base =
                         entries[base_idx].0.as_ref().unwrap().as_frag().clone();
-                    for (append, _) in entries[0..base_idx].iter().rev() {
-                        base.merge(append.as_ref().unwrap().as_frag());
+                    for (link, _) in entries[0..base_idx].iter().rev() {
+                        base.merge(link.as_ref().unwrap().as_frag());
                     }
                     Some(base)
                 } else {
@@ -1576,9 +1511,9 @@ impl PageCache {
             // we were not able to short-circuit, so we should
             // fix-up the stack.
             let pulled = entries.iter().map(|entry| match entry {
-                (Some(Update::Compact(compact)), _)
-                | (Some(Update::Append(compact)), _) => {
-                    Ok(Cow::Borrowed(compact))
+                (Some(Update::Replace(replace)), _)
+                | (Some(Update::Link(replace)), _) => {
+                    Ok(Cow::Borrowed(replace))
                 }
                 (None, cache_info) => {
                     let res = self
@@ -1617,7 +1552,7 @@ impl PageCache {
         let mut frags: Vec<(Option<Update>, CacheInfo)> =
             entries.iter().map(|(_, cache_info)| (None, *cache_info)).collect();
 
-        frags[0].0 = Some(Update::Compact(base));
+        frags[0].0 = Some(Update::Replace(base));
 
         let node = node_from_frag_vec(frags).into_shared(guard);
 
@@ -1643,8 +1578,8 @@ impl PageCache {
 
             let page_ref = unsafe {
                 let item = &new_pointer.deref().inner;
-                if let (Some(Update::Compact(compact)), _) = item {
-                    compact
+                if let (Some(Update::Replace(replace)), _) = item {
+                    replace
                 } else {
                     panic!()
                 }
@@ -1830,7 +1765,6 @@ impl PageCache {
         'different_page_eviction: for pid in to_evict {
             if pid == COUNTER_PID
                 || pid == META_PID
-                || pid == CONFIG_PID
                 || pid == BATCH_MANIFEST_PID
             {
                 // should not page these suckas out
@@ -1926,14 +1860,11 @@ impl PageCache {
             BlobMeta | InlineMeta => {
                 deserialize::<Meta>(&bytes).map(Update::Meta)
             }
-            BlobConfig | InlineConfig => {
-                deserialize::<StorageParameters>(&bytes).map(Update::Config)
-            }
-            BlobAppend | InlineAppend => {
-                deserialize::<Frag>(&bytes).map(Update::Append)
+            BlobLink | InlineLink => {
+                deserialize::<Frag>(&bytes).map(Update::Link)
             }
             BlobReplace | InlineReplace => {
-                deserialize::<Frag>(&bytes).map(Update::Compact)
+                deserialize::<Frag>(&bytes).map(Update::Replace)
             }
             Free => Ok(Update::Free),
             Corrupted | Cancelled | Pad | BatchManifest => {
@@ -1948,7 +1879,7 @@ impl PageCache {
         // TODO this feels racy, test it better?
         if let Update::Free = update {
             Err(Error::ReportableBug(
-                "non-append/compact found in pull".to_owned(),
+                "non-link/replace found in pull".to_owned(),
             ))
         } else {
             Ok(update)
@@ -1985,7 +1916,7 @@ impl PageCache {
                 return Err(e);
             }
 
-            // we disable rewriting so that our log becomes append-only,
+            // we disable rewriting so that our log becomes link-only,
             // allowing us to iterate through it without corrupting ourselves.
             // NB must be called after taking the snapshot mutex.
             iobufs.with_sa(SegmentAccountant::pause_rewriting);

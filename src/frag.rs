@@ -6,21 +6,12 @@ use super::*;
 pub enum Frag {
     Set(IVec, IVec),
     Del(IVec),
-    Base(Node),
     ParentMergeIntention(PageId),
     ParentMergeConfirm,
     ChildMergeCap,
 }
 
 impl Frag {
-    pub fn merge(&mut self, other: &Self) {
-        if let Frag::Base(ref mut base) = self {
-            base.apply(other);
-        } else {
-            panic!("expected base to be the first node");
-        }
-    }
-
     fn base(data: Data) -> Frag {
         let mut node = Node::default();
         node.data = data;
