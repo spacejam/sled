@@ -168,7 +168,6 @@ mod config;
 mod context;
 mod db;
 mod dll;
-mod frag;
 mod histogram;
 mod iter;
 mod ivec;
