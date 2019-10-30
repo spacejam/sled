@@ -278,7 +278,6 @@ pub(crate) fn maybe_decompress(buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
 }
 
 pub struct PageView<'g> {
-    pub(crate) ts: u64,
     pub(crate) read: Shared<'g, Page>,
     pub(crate) entry: &'g Atomic<Page>,
 }
@@ -307,7 +306,7 @@ impl<'g> PageView<'g> {
             match result {
                 Ok(_) => return Ok(b),
                 Err(cas_error)
-                    if cas_error.current.version() == self.version() =>
+                    if cas_error.current.deref().ts() == self.ts() =>
                 {
                     // we got here because the page was moved to a new
                     // location.
@@ -337,9 +336,8 @@ impl<'g> PageView<'g> {
         self.update == Some(Update::Free) || self.cache_infos.is_empty()
     }
 
-    pub(crate) fn page_ptr(&self) -> PagePtr<'g> {
-        let cache_info = self.last_cache_info().unwrap();
-        PagePtr { cached_pointer: self.read, ts: cache_info.ts }
+    pub(crate) fn ts(&self) -> u64 {
+        self.cache_infos.last().map(|ci| ci.ts).unwrap_or(0)
     }
 }
 
@@ -460,8 +458,8 @@ impl Page {
         self.cache_infos.iter().map(|ci| ci.log_size).sum()
     }
 
-    fn version(&self) -> Option<u64> {
-        self.cache_infos.last().map(|ci| ci.ts)
+    fn ts(&self) -> u64 {
+        self.cache_infos.last().map(|ci| ci.ts).unwrap_or(0)
     }
 
     pub(crate) fn last_cache_info(&self) -> Option<&CacheInfo> {
