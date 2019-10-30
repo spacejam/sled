@@ -244,9 +244,7 @@ pub use self::{
 use {
     self::{
         binary_search::binary_search_lub,
-        config::StorageParameters,
         context::Context,
-        frag::Frag,
         histogram::Histogram,
         lru::Lru,
         meta::Meta,
@@ -296,6 +294,17 @@ use debug_delay::debug_delay;
 /// fully eliminated by the compiler in non-test code.
 #[cfg(not(any(test, feature = "lock_free_delays")))]
 const fn debug_delay() {}
+
+/// Frag denotes a tree node or its modification fragment such as
+/// key addition or removal.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Frag {
+    Set(IVec, IVec),
+    Del(IVec),
+    ParentMergeIntention(PageId),
+    ParentMergeConfirm,
+    ChildMergeCap,
+}
 
 /// A fast map that is not resistant to collision attacks. Works
 /// on 8 bytes at a time.

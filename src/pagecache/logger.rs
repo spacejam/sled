@@ -206,8 +206,8 @@ impl Log {
             (_, LogKind::Free, false) => MessageKind::Free,
             (_, LogKind::Replace, true) => MessageKind::BlobReplace,
             (_, LogKind::Replace, false) => MessageKind::InlineReplace,
-            (_, LogKind::Append, true) => MessageKind::BlobAppend,
-            (_, LogKind::Append, false) => MessageKind::InlineAppend,
+            (_, LogKind::Link, true) => MessageKind::BlobLink,
+            (_, LogKind::Link, false) => MessageKind::InlineLink,
             other => panic!(
                 "unexpected combination of PageId, \
                  LogKind, and blob status: {:?}",

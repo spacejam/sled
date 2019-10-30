@@ -17,7 +17,11 @@ mod segment;
 mod snapshot;
 
 use crate::*;
-use std::{borrow::Cow, collections::BinaryHeap, ops::Deref};
+use std::{
+    borrow::Cow,
+    collections::BinaryHeap,
+    ops::{Deref, DerefMut},
+};
 
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
@@ -288,7 +292,7 @@ impl<'g> PageView<'g> {
         &self,
         f: F,
         guard: &'b Guard,
-    ) -> Result<B, Shared<'b, Page>>
+    ) -> std::result::Result<B, Shared<'b, Page>>
     where
         F: FnMut(&mut Page) -> B,
     {
@@ -677,7 +681,7 @@ impl PageCache {
         &self,
         new: Frag,
         guard: &'g Guard,
-    ) -> Result<(PageId, PagePtr<'g>)> {
+    ) -> Result<(PageId, PageView<'g>)> {
         self.allocate_inner(Update::Replace(new), guard)
     }
 
@@ -740,7 +744,7 @@ impl PageCache {
         &self,
         new: Update,
         guard: &'g Guard,
-    ) -> Result<(PageId, PagePtr<'g>)> {
+    ) -> Result<(PageId, PageView<'g>)> {
         let (pid, page_view) = if let Some(pid) = self.free.lock().pop() {
             trace!("re-allocating pid {}", pid);
 
@@ -790,7 +794,7 @@ impl PageCache {
     pub fn free<'g>(
         &self,
         pid: PageId,
-        old: PagePtr<'g>,
+        old: PageView<'g>,
         guard: &'g Guard,
     ) -> Result<CasResult<'g, ()>> {
         trace!("attempting to free pid {}", pid);
@@ -997,7 +1001,7 @@ impl PageCache {
                         self.advance_snapshot()?;
                     }
 
-                    return Ok(Ok(PagePtr { cached_pointer, ts }));
+                    return Ok(Ok(PageView { cached_pointer, ts }));
                 }
                 Err((actual_pointer, returned_new)) => {
                     trace!("link of pid {} failed", pid);
@@ -1032,8 +1036,8 @@ impl PageCache {
     pub fn replace<'g>(
         &self,
         pid: PageId,
-        old: PagePtr<'g>,
-        new: Update,
+        old: PageView<'g>,
+        new: Node,
         guard: &'g Guard,
     ) -> Result<CasResult<'g, Frag>> {
         let _measure = Measure::new(&M.replace_page);
@@ -1259,7 +1263,7 @@ impl PageCache {
     fn cas_page<'g>(
         &self,
         pid: PageId,
-        mut old: PagePtr<'g>,
+        mut old: PageView<'g>,
         update: Update,
         is_rewrite: bool,
         guard: &'g Guard,
@@ -1379,7 +1383,7 @@ impl PageCache {
     pub(crate) fn get_meta<'g>(
         &self,
         guard: &'g Guard,
-    ) -> Result<(PagePtr<'g>, &'g Meta)> {
+    ) -> Result<(PageView<'g>, &'g Meta)> {
         trace!("getting page iter for META");
 
         let page_cell = match self.inner.get(META_PID, guard) {
@@ -1413,7 +1417,7 @@ impl PageCache {
     pub(crate) fn get_idgen<'g>(
         &self,
         guard: &'g Guard,
-    ) -> Result<(PagePtr<'g>, u64)> {
+    ) -> Result<(PageView<'g>, u64)> {
         trace!("getting page iter for idgen");
 
         let page_cell = match self.inner.get(COUNTER_PID, guard) {
@@ -1444,7 +1448,7 @@ impl PageCache {
         &self,
         pid: PageId,
         guard: &'g Guard,
-    ) -> Result<Option<(PagePtr<'g>, &'g Frag, u64)>> {
+    ) -> Result<Option<(PageView<'g>, &'g Frag, u64)>> {
         trace!("getting page iterator for pid {}", pid);
         let _measure = Measure::new(&M.get_page);
 
