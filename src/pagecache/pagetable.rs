@@ -111,12 +111,20 @@ impl PageTable {
     /// which represents a serious failure to
     /// properly handle lifecycles of pages in the
     /// using system.
-    pub fn insert(&self, pid: PageId, item: Page, guard: &Guard) {
+    pub fn insert<'g>(
+        &self,
+        pid: PageId,
+        item: Page,
+        guard: &'g Guard,
+    ) -> PageView<'g> {
         debug_delay();
         let tip = self.traverse(pid, guard);
 
-        let old = tip.swap(Owned::new(item), Release, guard);
+        let shared = Owned::new(item).into_shared(guard);
+        let old = tip.swap(shared, Release, guard);
         assert!(old.is_null());
+
+        PageView { read: shared, entry: tip }
     }
 
     /// Try to get a value from the tree.

@@ -277,6 +277,7 @@ pub(crate) fn maybe_decompress(buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
     Ok(buf)
 }
 
+#[derive(Debug)]
 pub struct PageView<'g> {
     pub(crate) read: Shared<'g, Page>,
     pub(crate) entry: &'g Atomic<Page>,
@@ -693,7 +694,7 @@ impl PageCache {
     /// and `link` operations.
     pub fn allocate<'g>(
         &self,
-        new: Link,
+        new: Node,
         guard: &'g Guard,
     ) -> Result<(PageId, PageView<'g>)> {
         self.allocate_inner(Update::Node(new), guard)
@@ -784,15 +785,16 @@ impl PageCache {
 
             trace!("allocating pid {} for the first time", pid);
 
-            let new_page = Page { update: new, cache_infos: vec![] };
+            let new_page = Page { update: Some(new), cache_infos: vec![] };
 
-            self.inner.insert(pid, new_page);
+            let page_view = self.inner.insert(pid, new_page, guard);
 
-            (pid, PageView { cached_pointer: Shared::null(), ts: 0 })
+            (pid, page_view)
         };
 
-        let new_pointer =
-            self.cas_page(pid, key, new, false, guard)?.unwrap_or_else(|e| {
+        let new_pointer = self
+            .cas_page(pid, page_view, new, false, guard)?
+            .unwrap_or_else(|e| {
                 panic!(
                     "should always be able to install \
                      a new page during allocation, but \
