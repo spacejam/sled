@@ -5,6 +5,9 @@ use std::{
 
 use crate::{pagecache::*, *};
 
+#[cfg(feature = "io_uring")]
+use std::os::unix::io::{AsRawFd, RawFd};
+
 // This is the most writers in a single IO buffer
 // that we have space to accommodate in the counter
 // for writers in the IO buffer header.
@@ -59,7 +62,7 @@ pub(crate) struct IoBufs {
     pub max_header_stable_lsn: Arc<AtomicLsn>,
     pub segment_accountant: Mutex<SegmentAccountant>,
     #[cfg(feature = "io_uring")]
-    pub uring: Mutex<io_uring::URing>,
+    pub uring: Arc<Mutex<io_uring::URing>>,
 }
 
 /// `IoBufs` is a set of lock-free buffers for coordinating
@@ -158,6 +161,9 @@ impl IoBufs {
         // remove all blob files larger than our stable offset
         gc_blobs(&config, stable)?;
 
+        #[cfg(feature = "io_uring")]
+        let fd = config.file.as_raw_fd();
+
         Ok(Self {
             config,
 
@@ -172,6 +178,8 @@ impl IoBufs {
                 snapshot_max_header_stable_lsn,
             )),
             segment_accountant: Mutex::new(segment_accountant),
+            #[cfg(feature = "io_uring")]
+            uring: Arc::new(Mutex::new(io_uring::URing::new(fd, 16, 0)?)),
         })
     }
 

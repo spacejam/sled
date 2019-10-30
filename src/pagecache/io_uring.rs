@@ -21,7 +21,7 @@ pub(crate) struct URing {
 
     /// IOVec structures that hold information about buffers
     /// used in SQEs.
-    // iovecs: Vec<libc::iovec>,
+    iovecs: Vec<libc::iovec>,
 
     /// List of free slots: iovecs, user data, etc.
     free_slots: Vec<usize>,
@@ -36,11 +36,7 @@ impl URing {
     ///     - IORING_SETUP_SQPOLL	(1U << 1)	/* SQ poll thread */
     ///     - IORING_SETUP_SQ_AFF	(1U << 2)	/* sq_thread_cpu is valid */
     ///     - IORING_SETUP_CQSIZE	(1U << 3)	/* app defines CQ size */
-    pub fn new(
-        file: std::fs::File,
-        size: usize,
-        flags: libc::c_uint,
-    ) -> Result<Self> {
+    pub fn new(fd: RawFd, size: usize, flags: libc::c_uint) -> Result<Self> {
         if size & 1 != 0 || size < 2 {
             return Err(Error::Unsupported("invalid queue size".into()));
         }
@@ -61,8 +57,8 @@ impl URing {
 
         let mut uring = URing {
             //           ring,
-            fd: file.as_raw_fd(),
-            // iovecs: Vec::with_capacity(size),
+            fd,
+            iovecs: Vec::with_capacity(size),
             free_slots: Vec::with_capacity(size),
         };
         /*
