@@ -4,28 +4,33 @@ use libc::off_t;
 use std::convert::TryFrom;
 use std::io;
 use std::mem;
-use std::os::unix::io::{AsRawFd, RawFd};
+use std::os::unix::io::RawFd;
 
 use crate::LogOffset;
 use crate::{Error, Result};
 
 use liburing::*;
 
-/// TODO: keep track of objects refs that must live while async ops are
 pub(crate) struct URing {
     /// Mutable unsafe FFI struct from liburing::
-    // ring: io_uring,
+    ring: io_uring,
 
     /// File fd
     fd: RawFd,
 
     /// IOVec structures that hold information about buffers
     /// used in SQEs.
+    /// TODO: keep track of objects refs that must live while async ops are
     iovecs: Vec<libc::iovec>,
 
     /// List of free slots: iovecs, user data, etc.
     free_slots: Vec<usize>,
 }
+
+/// Pointers can't be passed safely through threads boundaries.
+/// URing must enforce it, yet it is not Sync.
+#[allow(unsafe_code)]
+unsafe impl Send for URing {}
 
 impl URing {
     /// Create and initialize new io_uring structure with
@@ -56,12 +61,12 @@ impl URing {
         };
 
         let mut uring = URing {
-            //           ring,
+            ring,
             fd,
             iovecs: Vec::with_capacity(size),
             free_slots: Vec::with_capacity(size),
         };
-        /*
+
         unsafe {
             let ret = io_uring_register_files(
                 &mut uring.ring,
@@ -81,11 +86,11 @@ impl URing {
         // index free elements
         for i in 0..size - 1 {
             uring.free_slots.push(i);
-        }*/
+        }
 
         Ok(uring)
     }
-    /*
+
     unsafe fn drain_cqe(&mut self) -> Result<()> {
         loop {
             let mut cqe: *mut io_uring_cqe = std::mem::zeroed();
@@ -192,9 +197,8 @@ impl URing {
 
         Ok(())
     }
-    */
 }
-/*
+
 impl Drop for URing {
     fn drop(&mut self) {
         unsafe {
@@ -203,4 +207,3 @@ impl Drop for URing {
         };
     }
 }
-*/

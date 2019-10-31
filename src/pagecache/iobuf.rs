@@ -6,7 +6,7 @@ use std::{
 use crate::{pagecache::*, *};
 
 #[cfg(feature = "io_uring")]
-use std::os::unix::io::{AsRawFd, RawFd};
+use std::os::unix::io::AsRawFd;
 
 // This is the most writers in a single IO buffer
 // that we have space to accommodate in the counter
@@ -62,7 +62,7 @@ pub(crate) struct IoBufs {
     pub max_header_stable_lsn: Arc<AtomicLsn>,
     pub segment_accountant: Mutex<SegmentAccountant>,
     #[cfg(feature = "io_uring")]
-    pub uring: Arc<Mutex<io_uring::URing>>,
+    pub write_uring: Mutex<io_uring::URing>,
 }
 
 /// `IoBufs` is a set of lock-free buffers for coordinating
@@ -179,7 +179,8 @@ impl IoBufs {
             )),
             segment_accountant: Mutex::new(segment_accountant),
             #[cfg(feature = "io_uring")]
-            uring: Arc::new(Mutex::new(io_uring::URing::new(fd, 16, 0)?)),
+            write_uring: Mutex::new(io_uring::URing::new(fd, 16, 0)?),
+            // TODO: queue and flags configurable
         })
     }
 
@@ -408,11 +409,22 @@ impl IoBufs {
         #[allow(unsafe_code)]
         let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
 
-        let f = &self.config.file;
         io_fail!(self, "buffer write");
-        f.pwrite_all(&data[..total_len], log_offset)?;
-        if !self.config.temporary {
-            f.sync_all()?;
+        #[cfg(feature = "io_uring")]
+        {
+            self.write_uring.lock().write_at(
+                &mut data[..total_len],
+                log_offset,
+                !self.config.temporary,
+            )?;
+        }
+        #[cfg(not(feature = "io_uring"))]
+        {
+            let f = &self.config.file;
+            f.pwrite_all(&data[..total_len], log_offset)?;
+            if !self.config.temporary {
+                f.sync_all()?;
+            }
         }
         io_fail!(self, "buffer write post");
 
