@@ -11,6 +11,9 @@ use crate::{Error, Result};
 
 use liburing::*;
 
+/// TODO: rewrite for internal mutability (no &mut self + UnsafeCell)
+/// TODO: keep &File, not fd
+/// TODO: fix bugs
 pub(crate) struct URing {
     /// Mutable unsafe FFI struct from liburing::
     ring: io_uring,
