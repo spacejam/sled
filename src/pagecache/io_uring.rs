@@ -13,7 +13,8 @@ use liburing::*;
 
 /// TODO: rewrite for internal mutability (no &mut self + UnsafeCell)
 /// TODO: keep &File, not fd
-/// TODO: fix bugs
+/// TODO: keep track of objects refs that must live while async ops are
+/// TODO: support for SQPOLL
 pub(crate) struct URing {
     /// Mutable unsafe FFI struct from liburing::
     ring: io_uring,
@@ -23,7 +24,6 @@ pub(crate) struct URing {
 
     /// IOVec structures that hold information about buffers
     /// used in SQEs.
-    /// TODO: keep track of objects refs that must live while async ops are
     iovecs: Vec<libc::iovec>,
 
     /// List of free slots: iovecs, user data, etc.
@@ -87,7 +87,7 @@ impl URing {
         );
 
         // index free elements
-        for i in 0..size - 1 {
+        for i in 0..size {
             uring.free_slots.push(i);
         }
 
@@ -106,7 +106,7 @@ impl URing {
                 return Err(Error::Io(io::Error::from_raw_os_error(ret)));
             }
             let i = (*cqe).user_data;
-            if i < self.free_slots.len() as u64 {
+            if i < self.free_slots.capacity() as u64 {
                 self.free_slots.push(i as usize);
             }
             io_uring_cqe_seen(&mut self.ring, cqe);
@@ -139,14 +139,13 @@ impl URing {
                 if ret < 0 {
                     return Err(Error::Io(io::Error::from_raw_os_error(ret)));
                 }
-                if ret < reserve as libc::c_int {
+                self.drain_cqe()?;
+                if self.free_slots.len() < reserve {
                     return Err(Error::Io(io::Error::new(
                         io::ErrorKind::Other,
                         "wait for free sqes",
                     )));
                 }
-
-                self.drain_cqe()?;
             }
 
             // 3. build write() SQE
