@@ -1,3 +1,19 @@
+# 0.29.2
+
+## New Features
+
+* The `create_new` option has been added
+  to `Config`, allowing the user to specify
+  that a database should only be freshly
+  created, rather than re-opened.
+
+# 0.29.1
+
+## Bugfixes
+
+* Fixed a bug where prefix encoding could be
+  incorrectly handled when merging nodes together
+
 # 0.29
 
 ## New Features
