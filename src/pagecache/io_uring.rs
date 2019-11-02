@@ -2,29 +2,32 @@
 
 use libc::off_t;
 use std::convert::TryFrom;
+use std::fs::File;
 use std::io;
 use std::mem;
-use std::os::unix::io::RawFd;
+use std::os::unix::io::AsRawFd;
+use std::sync::Arc;
 
 use crate::LogOffset;
 use crate::{Error, Result};
 
 use liburing::*;
 
-/// TODO: rewrite for internal mutability (no &mut self + UnsafeCell)
-/// TODO: keep &File, not fd
-/// TODO: keep track of objects refs that must live while async ops are
 /// TODO: support for SQPOLL
-pub(crate) struct URing {
+pub(crate) struct URing<T> {
     /// Mutable unsafe FFI struct from liburing::
     ring: io_uring,
 
-    /// File fd
-    fd: RawFd,
+    /// File
+    file: Arc<File>,
 
     /// IOVec structures that hold information about buffers
     /// used in SQEs.
     iovecs: Vec<libc::iovec>,
+
+    /// iovec buffs. this is specifically needed to preserve buf
+    /// ptr lifetime because all write operations are async.
+    buf: Vec<Option<Arc<T>>>,
 
     /// List of free slots: iovecs, user data, etc.
     free_slots: Vec<usize>,
@@ -33,9 +36,9 @@ pub(crate) struct URing {
 /// Pointers can't be passed safely through threads boundaries.
 /// URing must enforce it, yet it is not Sync.
 #[allow(unsafe_code)]
-unsafe impl Send for URing {}
+unsafe impl<T> Send for URing<T> {}
 
-impl URing {
+impl<T> URing<T> {
     /// Create and initialize new io_uring structure with
     /// `size` queue length and `flags` specified properties.
     ///
@@ -44,7 +47,11 @@ impl URing {
     ///     - IORING_SETUP_SQPOLL	(1U << 1)	/* SQ poll thread */
     ///     - IORING_SETUP_SQ_AFF	(1U << 2)	/* sq_thread_cpu is valid */
     ///     - IORING_SETUP_CQSIZE	(1U << 3)	/* app defines CQ size */
-    pub fn new(fd: RawFd, size: usize, flags: libc::c_uint) -> Result<Self> {
+    pub fn new(
+        file: Arc<File>,
+        size: usize,
+        flags: libc::c_uint,
+    ) -> Result<Self> {
         if size & 1 != 0 || size < 2 {
             return Err(Error::Unsupported("invalid queue size".into()));
         }
@@ -63,17 +70,18 @@ impl URing {
             s.assume_init()
         };
 
-        let mut uring = URing {
+        let mut uring = URing::<T> {
             ring,
-            fd,
+            file,
             iovecs: Vec::with_capacity(size),
+            buf: Vec::with_capacity(size),
             free_slots: Vec::with_capacity(size),
         };
 
         unsafe {
             let ret = io_uring_register_files(
                 &mut uring.ring,
-                [uring.fd].as_ptr(),
+                [uring.file.as_raw_fd()].as_ptr(),
                 1,
             );
             if ret < 0 {
@@ -85,6 +93,7 @@ impl URing {
             size,
             libc::iovec { iov_base: std::ptr::null_mut(), iov_len: 0 },
         );
+        uring.buf.resize(size, None);
 
         // index free elements
         for i in 0..size {
@@ -105,17 +114,23 @@ impl URing {
             if ret < 0 {
                 return Err(Error::Io(io::Error::from_raw_os_error(ret)));
             }
-            let i = (*cqe).user_data;
-            if i < self.free_slots.capacity() as u64 {
-                self.free_slots.push(i as usize);
+            let i = (*cqe).user_data as usize;
+            if i < self.free_slots.capacity() {
+                self.free_slots.push(i);
+                // release
+                self.iovecs[i].iov_base = std::ptr::null_mut();
+                self.iovecs[i].iov_len = 0;
+                // drop arc buf
+                self.buf[i] = None;
             }
             io_uring_cqe_seen(&mut self.ring, cqe);
         }
     }
 
-    pub fn write_at(
+    pub fn pwrite_all(
         &mut self,
         buf: &mut [u8],
+        data: Arc<T>,
         offset: LogOffset,
         fsync: bool,
     ) -> Result<()> {
@@ -159,13 +174,14 @@ impl URing {
                 }
 
                 let i = self.free_slots.pop().unwrap();
+                self.buf[i] = Some(data);
                 self.iovecs[i].iov_base =
                     buf.as_mut_ptr() as *mut std::ffi::c_void;
                 self.iovecs[i].iov_len = buf.len();
 
                 io_uring_prep_writev(
                     sqe,
-                    self.fd,
+                    self.file.as_raw_fd(),
                     &mut self.iovecs[i],
                     1,
                     offset as off_t,
@@ -185,7 +201,11 @@ impl URing {
 
                 let i = self.free_slots.pop().unwrap();
 
-                io_uring_prep_fsync(sqe, self.fd, IORING_FSYNC_DATASYNC);
+                io_uring_prep_fsync(
+                    sqe,
+                    self.file.as_raw_fd(),
+                    IORING_FSYNC_DATASYNC,
+                );
                 io_uring_sqe_set_flags(sqe, IOSQE_IO_DRAIN);
                 (*sqe).user_data = u64::try_from(i).unwrap();
             }
@@ -201,9 +221,22 @@ impl URing {
     }
 }
 
-impl Drop for URing {
+impl<T> Drop for URing<T> {
     fn drop(&mut self) {
         unsafe {
+            // flush unfinished ops
+            if self.free_slots.len() < self.iovecs.len() {
+                let ret = io_uring_submit_and_wait(
+                    &mut self.ring,
+                    (self.iovecs.len() - self.free_slots.len()) as u32,
+                );
+                if ret < 0 {
+                    panic!(Error::Io(io::Error::from_raw_os_error(ret)));
+                }
+            }
+
+            self.drain_cqe().unwrap();
+
             io_uring_unregister_files(&mut self.ring);
             io_uring_queue_exit(&mut self.ring);
         };
