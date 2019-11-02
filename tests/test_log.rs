@@ -578,7 +578,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
                 let res = log.reserve(KIND, PID, &buf).unwrap();
                 let lsn = res.lsn();
                 let lid = res.lid();
-                let ptr = res.ptr();
+                let ptr = res.pointer();
                 res.abort().unwrap();
                 tip = lid as usize + len + MSG_HEADER_LEN;
                 reference.push((lsn, ptr, None, len));

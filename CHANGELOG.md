@@ -1,4 +1,20 @@
-# Unreleased
+# 0.29.2
+
+## New Features
+
+* The `create_new` option has been added
+  to `Config`, allowing the user to specify
+  that a database should only be freshly
+  created, rather than re-opened.
+
+# 0.29.1
+
+## Bugfixes
+
+* Fixed a bug where prefix encoding could be
+  incorrectly handled when merging nodes together
+
+# 0.29
 
 ## New Features
 
@@ -9,12 +25,22 @@
   directly
 * A `checksum` method has been added to Tree and Db
   for use in verifying backups and migrations.
+* Transactions may now involve up to 69 different
+  tables. Nice.
+* The `TransactionError::Abort` variant has had
+  a generic member added that can be returned
+  as a way to return information from a
+  manually-aborted transaction. An `abort` helper
+  function has been added to reduce the boiler-
+  plate required to return aborted results.
 
 ## Breaking Changes
 
 * The `ConfigBuilder` structure has been removed
   in favor of a simplified `Config` structure
   with the same functionality.
+* The way that sled versions are detected at
+  initialization time is now independent of serde.
 * The `cas` method is deprecated in favor of the new
   `compare_and_swap` method which now returns the
   proposed value that failed to be applied.

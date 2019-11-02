@@ -109,17 +109,17 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
     }
 
     /// Pop the next item off the stack. Returns None if nothing is there.
-    #[cfg(test)]
-    fn pop(&self, guard: &Guard) -> Option<T> {
+    #[cfg(any(test, feature = "event_log"))]
+    pub(crate) fn pop(&self, guard: &Guard) -> Option<T> {
         use std::ptr;
         use std::sync::atomic::Ordering::SeqCst;
         debug_delay();
-        let mut head = self.head(&guard);
+        let mut head = self.head(guard);
         loop {
             match unsafe { head.as_ref() } {
                 Some(h) => {
-                    let next = h.next.load(Acquire, &guard);
-                    match self.head.compare_and_set(head, next, Release, &guard)
+                    let next = h.next.load(Acquire, guard);
+                    match self.head.compare_and_set(head, next, Release, guard)
                     {
                         Ok(_) => unsafe {
                             // we unset the next pointer before destruction
@@ -203,7 +203,7 @@ impl<'a, T> StackIter<'a, T>
 where
     T: 'a + Send + 'static + Sync,
 {
-    /// Creates a StackIter from a pointer to one.
+    /// Creates a `StackIter` from a pointer to one.
     pub fn from_ptr<'b>(
         ptr: Shared<'b, Node<T>>,
         guard: &'b Guard,

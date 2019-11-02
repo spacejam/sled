@@ -17,6 +17,10 @@ strategy:
     mac-stable:
       imageName: 'macos-10.13'
       rustup_toolchain: stable
+    burn-in:
+      imageName: 'ubuntu-16.04'
+      rustup_toolchain: stable
+      testKind: 'burn-in'
     linux-stable:
       imageName: 'ubuntu-16.04'
       rustup_toolchain: stable
@@ -53,7 +57,7 @@ steps:
       path: target
       key: Cargo.toml | $(testKind) | $(Agent.OS)
     displayName: 'Cache Build'
-    condition: ne( variables['testKind'], 'sanitizers' )
+    condition: and(ne( variables['testKind'], 'sanitizers' ), ne( variables['testKind'], 'burn-in' ))
   - script: |
       find target -exec chmod +x {} \; || true
     displayName: chmod cache workaround
@@ -77,33 +81,13 @@ steps:
     displayName: cross-build
     condition: eq( variables['testKind'], 'cross-compile' )
   - script: |
-      pushd benchmarks/stress2 &&
-      echo "lsan" &&
-      cargo clean &&
-      export RUSTFLAGS="-Z sanitizer=leak" &&
-      cargo build --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu &&
-      sudo rm -rf default.sled &&
-      sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30 &&
-      sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=6 &&
-
-      echo "asan" &&
-      cargo clean &&
-      export RUSTFLAGS="-Z sanitizer=address" &&
-      export ASAN_OPTIONS="detect_odr_violation=0" &&
-      cargo build --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu &&
-      sudo rm -rf default.sled &&
-      sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=30 &&
-      sudo target/x86_64-unknown-linux-gnu/debug/stress2 --duration=6 &&
-      unset ASAN_OPTIONS &&
-
-      echo "tsan" &&
-      cargo clean &&
-      export RUSTFLAGS="-Z sanitizer=thread" &&
-      export TSAN_OPTIONS=suppressions=$(Agent.BuildDirectory)/s/tsan_suppressions.txt &&
-      sudo rm -rf default.sled &&
-      cargo run --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu -- --duration=30 &&
-      cargo run --features=lock_free_delays,no_jemalloc --target x86_64-unknown-linux-gnu -- --duration=6 &&
-      unset RUSTFLAGS &&
-      unset TSAN_OPTIONS
+      set -eo pipefail
+      pushd benchmarks/stress2
+      cargo run --release -- --duration=60
+      rm -rf default.sled
+    condition: eq( variables['testKind'], 'burn-in' )
+  - script: |
+      set -eo pipefail
+      scripts/sanitizers.sh
     displayName: sanitizers
     condition: eq( variables['testKind'], 'sanitizers' )

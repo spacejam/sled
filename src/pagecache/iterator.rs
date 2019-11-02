@@ -24,7 +24,7 @@ impl Iterator for LogIter {
         // return None if there are no more remaining segments.
         loop {
             let remaining_seg_too_small_for_msg = !valid_entry_offset(
-                self.cur_lsn as LogOffset,
+                LogOffset::try_from(self.cur_lsn).unwrap(),
                 self.config.segment_size,
             );
 
@@ -61,11 +61,14 @@ impl Iterator for LogIter {
             }
 
             let lid = self.segment_base.unwrap()
-                + (self.cur_lsn % self.config.segment_size as Lsn) as LogOffset;
+                + LogOffset::try_from(
+                    self.cur_lsn % self.config.segment_size as Lsn,
+                )
+                .unwrap();
 
             let f = &self.config.file;
 
-            match read_message(&f, lid, self.cur_lsn, &self.config) {
+            match read_message(f, lid, self.cur_lsn, &self.config) {
                 Ok(LogRead::Blob(header, _buf, blob_ptr)) => {
                     trace!("read blob flush in LogIter::next");
                     let sz = MSG_HEADER_LEN + BLOB_INLINE_LEN;
@@ -103,8 +106,9 @@ impl Iterator for LogIter {
                 }
                 Ok(LogRead::Failed(_, on_disk_len)) => {
                     trace!("read zeroed in LogIter::next");
-                    self.cur_lsn +=
-                        Lsn::from(MSG_HEADER_LEN as u32 + on_disk_len);
+                    self.cur_lsn += Lsn::from(
+                        u32::try_from(MSG_HEADER_LEN).unwrap() + on_disk_len,
+                    );
                 }
                 Ok(LogRead::Corrupted(_len)) => {
                     trace!(
@@ -154,7 +158,7 @@ impl LogIter {
         // initial segment that is a bit behind where we left off before.
         assert!(lsn + self.config.segment_size as Lsn >= self.cur_lsn);
         let f = &self.config.file;
-        let segment_header = read_segment_header(&f, offset)?;
+        let segment_header = read_segment_header(f, offset)?;
         if offset % self.config.segment_size as LogOffset != 0 {
             debug!("segment offset not divisible by segment length");
             return Err(Error::Corruption { at: DiskPtr::Inline(offset) });
@@ -293,7 +297,7 @@ fn scan_segment_lsns(
         header_promises.into_iter().filter_map(OneShot::unwrap).collect();
 
     let mut ordering = BTreeMap::new();
-    let mut max_header_stable_lsn = 0;
+    let mut max_header_stable_lsn = min;
 
     for (lid, header) in headers {
         max_header_stable_lsn =
@@ -318,7 +322,7 @@ fn scan_segment_lsns(
     // Check that the segments above max_header_stable_lsn
     // properly link their previous segment pointers.
     let ordering =
-        clean_tail_tears(max_header_stable_lsn, ordering, &config, &f)?;
+        clean_tail_tears(max_header_stable_lsn, ordering, config, f)?;
 
     Ok((ordering, max_header_stable_lsn))
 }
@@ -401,6 +405,7 @@ fn clean_tail_tears(
         // NB we intentionally corrupt this header to prevent any segment
         // from being allocated which would duplicate its LSN, messing
         // up recovery in the future.
+        maybe_fail!("segment initial free zero");
         f.pwrite_all(
             &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
             *lid,
@@ -423,7 +428,8 @@ pub fn raw_segment_iter_from(
     let segment_len = config.segment_size as Lsn;
     let normalized_lsn = lsn / segment_len * segment_len;
 
-    let (ordering, max_header_stable_lsn) = scan_segment_lsns(0, config)?;
+    let (ordering, max_header_stable_lsn) =
+        scan_segment_lsns(normalized_lsn, config)?;
 
     // find the last stable tip, to properly handle batch manifests.
     let tip_segment_iter =

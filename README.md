@@ -1,4 +1,8 @@
-
+| key | value |
+| :-: | --- |
+| [documentation](https://docs.rs/sled) | [![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled) |
+| [chat about databases with us](https://discord.gg/Z6VsXds) | [![chat](https://img.shields.io/discord/509773073294295082.svg?logo=discord)](https://discord.gg/Z6VsXds) |
+| [help us build what you want to use](https://opencollective.com/sled) | [![Open Collective backers](https://img.shields.io/opencollective/backers/sled)](https://opencollective.com/sled) |
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face_anti-transphobia.png" width="20%" height="auto" />
@@ -6,10 +10,6 @@
 
 
 # sled - ~~it's all downhill from here!!!~~
-[![Build Status](https://travis-ci.org/spacejam/sled.svg?branch=master)](https://travis-ci.org/spacejam/sled)
-[![crates.io](https://meritbadge.herokuapp.com/sled)](https://crates.io/crates/sled)
-[![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled)
-[![chat](https://img.shields.io/discord/509773073294295082.svg?logo=discord)](https://discord.gg/Z6VsXds)
 
 A (beta) modern embedded database. Doesn't your data deserve a (beta) beautiful new home?
 
@@ -38,16 +38,6 @@ tree.compare_and_swap(k, Some(v1), Some(v2));
 tree.flush();
 ```
 
-If your dataset resides entirely in cache (achievable at startup by setting the cache
-to a large enough value and performing a full iteration) then all reads and writes are
-non-blocking and async-friendly, without needing to use Futures or an async runtime.
-To asynchronously suspend on the durability of writes, we support the
-[`flush_async` method](https://docs.rs/sled/latest/sled/struct.Tree.html#method.flush_async),
-which returns a Future that your async tasks can await the completion of if they require
-high durability guarantees and you are willing to pay the latency costs of fsync.
-Note that sled automatically tries to sync all data to disk several times per second
-in the background without blocking user threads.
-
 # performance
 
 * 2 million sustained writes per second with 8 threads, 1000 8 byte keys, 10 byte values, intel 9900k, nvme
@@ -57,20 +47,40 @@ what's the trade-off? sled uses too much disk space sometimes. this will improve
 
 # features
 
-* [API](https://docs.rs/sled) similar to a threadsafe `BTreeMap<Vec<u8>, Vec<u8>>`
-* fully serializable multi-key and multi-Tree [transactions](https://docs.rs/sled/latest/sled/struct.Tree.html#method.transaction)
+* [API](https://docs.rs/sled) similar to a threadsafe `BTreeMap<[u8], [u8]>`
+* fully serializable multi-key and multi-Tree [transactions](https://docs.rs/sled/latest/sled/struct.Tree.html#method.transaction) involving up to 69 separate Trees!
 * fully atomic single-key operations, supports [compare and swap](https://docs.rs/sled/latest/sled/struct.Tree.html#method.compare_and_swap)
 * zero-copy reads
-* [write batch support](https://docs.rs/sled/latest/sled/struct.Tree.html#method.batch)
+* [write batch support](https://docs.rs/sled/latest/sled/struct.Tree.html#method.apply_batch)
 * [subscription/watch semantics on key prefixes](https://github.com/spacejam/sled/wiki/reactive-semantics)
-* multiple keyspace support
+* [multiple keyspace/Tree support](https://docs.rs/sled/latest/sled/struct.Db.html#method.open_tree)
 * [merge operators](https://github.com/spacejam/sled/wiki/merge-operators)
 * forward and reverse iterators
 * a crash-safe monotonic [ID generator](https://docs.rs/sled/latest/sled/struct.Db.html#method.generate_id) capable of generating 75-125 million unique ID's per second
 * [zstd](https://github.com/facebook/zstd) compression (use the `compression` build feature)
 * cpu-scalable lock-free implementation
 * SSD-optimized log-structured storage
-* prefix encoded keys, reducing the storage cost of complex keys
+* prefix encoded keys reducing the storage cost of complex keys
+
+# a note on lexicographic ordering and endianness
+
+If you want to store numerical keys in a way that will play nicely with sled's iterators and ordered operations, please remember to store your numerical items in big-endian form. Little endian (the default of many things) will often appear to be doing the right thing until you start working with more than 256 items (more than 1 byte), causing lexicographic ordering of the serialized bytes to diverge from the lexicographic ordering of their deserialized numerical form.
+
+* Rust integral types have built-in `to_be_bytes` and `from_be_bytes` [methods](https://doc.rust-lang.org/std/primitive.u64.html#method.from_be_bytes).
+* bincode [can be configured](https://docs.rs/bincode/1.2.0/bincode/struct.Config.html#method.big_endian) to store integral types in big-endian form.
+
+# interaction with async
+
+If your dataset resides entirely in cache (achievable at startup by setting the cache
+to a large enough value and performing a full iteration) then all reads and writes are
+non-blocking and async-friendly, without needing to use Futures or an async runtime.
+
+To asynchronously suspend your async task on the durability of writes, we support the
+[`flush_async` method](https://docs.rs/sled/latest/sled/struct.Tree.html#method.flush_async),
+which returns a Future that your async tasks can await the completion of if they require
+high durability guarantees and you are willing to pay the latency costs of fsync.
+Note that sled automatically tries to sync all data to disk several times per second
+in the background without blocking user threads.
 
 # architecture
 
@@ -113,19 +123,33 @@ for a more detailed overview of where we're at and where we see things going!
 
 Want to support the project, prioritize a specific feature, or get commercial help with using sled in your project? [Ferrous Systems](https://ferrous-systems.com) provides commercial support for sled, and can work with you to solve a wide variety of storage problems across the latency-throughput, consistency, and price performance spectra. [Get in touch!](mailto:sled@ferrous-systems.com)
 
-[![Ferrous Systems](https://ferrous-systems.com/images/ferrous-systems-mono-pos.svg)](https://ferrous-systems.com/)
+<p align="center">
+  <a href="https://ferrous-systems.com/">
+    <img src="https://ferrous-systems.com/images/ferrous-systems-mono-pos.svg" width="60%" height="auto" />
+  </a>
+</p>
+
+Want to support development but don't need commercial support? Help us out via [Open Collective](https://opencollective.com/sled)!
 
 # special thanks
 
-[![Meili](https://avatars3.githubusercontent.com/u/43250847?s=200&v=4)](https://www.meilisearch.com/)
+<p align="center">
+  <a href="https://www.meilisearch.com/">
+    <img src="https://avatars3.githubusercontent.com/u/43250847?s=200&v=4" width="20%" height="auto" />
+  </a>
+</p>
 
 Special thanks to [Meili](https://www.meilisearch.com/) for providing engineering effort and other support to the sled project. They are building [an event store](https://blog.meilisearch.com/meilies-release/) backed by sled, and they offer [a full-text search system](https://github.com/meilisearch/MeiliDB) which has been a valuable case study helping to focus the sled roadmap for the future.
 
-<p>
-  <img src="https://user-images.githubusercontent.com/7989673/29498525-38a33f36-85cc-11e7-938d-ef6f10ba6fb3.png" width="20%" height="auto" />
+<p align="center">
+  <a href="http://worksonarm.com">
+    <img src="https://user-images.githubusercontent.com/7989673/29498525-38a33f36-85cc-11e7-938d-ef6f10ba6fb3.png" width="20%" height="auto" />
+  </a>
 </p>
 
 Additional thanks to [Arm](https://www.arm.com/), [Works on Arm](https://www.worksonarm.com/) and [Packet](https://www.packet.com/), who have generously donated a 96 core monster machine to assist with intensive concurrency testing of sled. Each second that sled does not crash while running your critical stateful workloads, you are encouraged to thank these wonderful organizations. Each time sled does crash and lose your data, blame Intel.
+
+Finally, thanks to everyone who helps out by contributing on [Open Collective](https://opencollective.com/sled)!
 
 # contribution welcome!
 

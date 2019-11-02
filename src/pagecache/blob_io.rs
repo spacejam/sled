@@ -95,6 +95,7 @@ pub(crate) fn gc_blobs(config: &Config, stable_lsn: Lsn) -> Result<()> {
 
     debug!("gc_blobs removing any blob with an lsn above {}", stable_lsn);
 
+    let mut to_remove = vec![];
     for blob in blobs {
         let path = blob?.path();
         let lsn_str = path.file_name().unwrap().to_str().unwrap();
@@ -111,13 +112,21 @@ pub(crate) fn gc_blobs(config: &Config, stable_lsn: Lsn) -> Result<()> {
         let lsn = lsn_res.unwrap();
 
         if lsn > stable_lsn {
-            warn!(
-                "removing blob {:?} that has \
-                 a higher lsn than our stable log: {:?}",
-                path, stable
-            );
-            std::fs::remove_file(&path)?;
+            to_remove.push(path);
         }
+    }
+
+    if !to_remove.is_empty() {
+        warn!(
+            "removing {} blobs that have \
+             a higher lsn than our stable log: {:?}",
+            to_remove.len(),
+            stable
+        );
+    }
+
+    for path in to_remove {
+        std::fs::remove_file(&path)?;
     }
 
     Ok(())

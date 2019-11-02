@@ -1,6 +1,6 @@
 use super::*;
 
-pub fn empty() -> &'static [u8] {
+pub(crate) fn empty() -> &'static [u8] {
     &[]
 }
 

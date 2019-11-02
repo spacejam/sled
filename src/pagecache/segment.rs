@@ -90,8 +90,6 @@ pub(crate) struct SegmentAccountant {
     pause_rewriting: bool,
     ordering: BTreeMap<Lsn, LogOffset>,
     async_truncations: Vec<OneShot<Result<()>>>,
-    deferred_free_segments: Option<Vec<LogOffset>>,
-    deferred_free_segments_after: Lsn,
 }
 
 /// A `Segment` holds the bookkeeping information for
@@ -200,7 +198,7 @@ impl Segment {
         self.state = Active;
     }
 
-    /// Transitions a segment to being in the Inactive state.
+    /// Transitions a segment to being in the `Inactive` state.
     /// Returns the set of page replacements that happened
     /// while this Segment was Active
     fn active_to_inactive(
@@ -376,7 +374,7 @@ impl Segment {
 
         let live = self.present.len() * 100 / total;
         assert!(live <= 100);
-        live as u8
+        u8::try_from(live).unwrap()
     }
 
     fn can_free(&self) -> bool {
@@ -389,10 +387,10 @@ impl Segment {
 }
 
 impl SegmentAccountant {
-    /// Create a new SegmentAccountant from previously recovered segments.
+    /// Create a new `SegmentAccountant` from previously recovered segments.
     pub(super) fn start(
         config: RunningConfig,
-        snapshot: Snapshot,
+        snapshot: &Snapshot,
     ) -> Result<Self> {
         let mut ret = Self {
             config,
@@ -405,8 +403,6 @@ impl SegmentAccountant {
             pause_rewriting: false,
             ordering: BTreeMap::default(),
             async_truncations: Vec::default(),
-            deferred_free_segments: None,
-            deferred_free_segments_after: 0,
         };
 
         if let SegmentMode::Linear = ret.config.segment_mode {
@@ -481,15 +477,16 @@ impl SegmentAccountant {
         Ok((segments, segment_sizes))
     }
 
-    fn initialize_from_snapshot(&mut self, snapshot: Snapshot) -> Result<()> {
+    fn initialize_from_snapshot(&mut self, snapshot: &Snapshot) -> Result<()> {
         let segment_size = self.config.segment_size;
-        let (mut segments, segment_sizes) = self.initial_segments(&snapshot)?;
+        let (mut segments, segment_sizes) = self.initial_segments(snapshot)?;
 
         let currently_active_segment = {
             // this logic allows us to free the last
             // active segment if it was empty.
             let prospective_currently_active_segment =
-                (snapshot.last_lid / segment_size as LogOffset) as usize;
+                usize::try_from(snapshot.last_lid / segment_size as LogOffset)
+                    .unwrap();
             if let Some(segment) =
                 segments.get(prospective_currently_active_segment)
             {
@@ -506,11 +503,9 @@ impl SegmentAccountant {
             }
         };
 
-        assert!(self.config.segment_cleanup_threshold < 100.);
         let cleanup_threshold =
-            (self.config.segment_cleanup_threshold * 100.) as usize;
+            usize::from(self.config.segment_cleanup_threshold);
         let drain_sz = segment_size * 100 / cleanup_threshold;
-        let mut deferred_free_segments = vec![];
 
         for (idx, segment) in segments.iter_mut().enumerate() {
             let segment_base = idx as LogOffset * segment_size as LogOffset;
@@ -528,10 +523,10 @@ impl SegmentAccountant {
                 lsn
             } else {
                 // this segment was not used in the recovered
-                // snapshot, so we need to assume it is
-                // free but written at the current max lsn,
-                // so that we don't accidentally
-                deferred_free_segments.push(segment_base);
+                // snapshot, so we can assume it is free
+                let idx = self.segment_id(segment_base);
+                self.segments[idx].state = Free;
+                self.free_segment(segment_base, false);
                 continue;
             };
 
@@ -551,26 +546,6 @@ impl SegmentAccountant {
                         segment.state = Free;
                         self.free_segment(segment_base, true);
                     }
-
-                    // NB we corrupt the segment header to cause this
-                    // segment to be skipped on subsequent recovery
-                    // attempts, which guarantees that no two segments
-                    // ever contain the same LSN. If we didn't do this,
-                    // we would need to ensure through other means
-                    // that empty segments with a written segment header
-                    // but no other data get reused.
-                    trace!(
-                        "zeroing segment with lid {} during SA initialization",
-                        segment_base
-                    );
-                    maybe_fail!("segment initial free zero");
-                    self.config.file.pwrite_all(
-                        &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
-                        segment_base,
-                    )?;
-                    if !self.config.temporary {
-                        self.config.file.sync_all()?;
-                    }
                 } else if segment_sizes[idx] <= drain_sz {
                     trace!(
                         "SA draining segment at {} during startup \
@@ -583,17 +558,6 @@ impl SegmentAccountant {
                     self.to_clean.insert(segment_base);
                 }
             }
-        }
-
-        if !deferred_free_segments.is_empty() {
-            trace!(
-                "setting self.deferred_free_segments to {:?} to be \
-                 freed after lsn {}",
-                deferred_free_segments,
-                snapshot.last_lsn,
-            );
-            self.deferred_free_segments = Some(deferred_free_segments);
-            self.deferred_free_segments_after = snapshot.last_lsn;
         }
 
         trace!("initialized self.segments to {:?}", segments);
@@ -885,18 +849,6 @@ impl SegmentAccountant {
             return Ok(());
         }
 
-        if self.deferred_free_segments.is_some()
-            && lsn > self.deferred_free_segments_after
-        {
-            let deferred_free_segments =
-                self.deferred_free_segments.take().unwrap();
-            for segment_base in deferred_free_segments {
-                let idx = self.segment_id(segment_base);
-                self.segments[idx].state = Free;
-                self.free_segment(segment_base, false);
-            }
-        }
-
         let bounds = (
             std::ops::Bound::Excluded(self.max_stabilized_lsn),
             std::ops::Bound::Included(lsn),
@@ -1000,7 +952,7 @@ impl SegmentAccountant {
             self.segments.iter().filter(|s| s.is_inactive()).count();
         let free_ratio = (free_segs * 100) / (1 + free_segs + inactive_segs);
 
-        if free_ratio >= (self.config.segment_cleanup_threshold * 100.) as usize
+        if free_ratio >= usize::from(self.config.segment_cleanup_threshold)
             && inactive_segs > 5
         {
             let last_index =
@@ -1101,25 +1053,18 @@ impl SegmentAccountant {
 
         self.ordering.insert(lsn, lid);
 
-        // this is the upper limit of overshoot between
-        // the current lsn and the lid of a new segment.
-        // in a stable situation, the system should never
-        // allocate a section of the file that is greater
-        // than the lsn, but this can happen when we have
-        // cautiously skipped a few segments that no longer
-        // contain recent page fragments.
-        let lid_slack = self
-            .deferred_free_segments
-            .as_ref()
-            .map_or(0, |dfs| dfs.len() * self.config.segment_size);
-
         debug!(
             "segment accountant returning offset: {} \
-             paused: {} on deck: {:?} lid_slack: {}",
-            lid, self.pause_rewriting, self.free, lid_slack
+             paused: {} on deck: {:?}",
+            lid, self.pause_rewriting, self.free,
         );
 
-        assert!(lsn + lid_slack as Lsn >= lid as Lsn);
+        assert!(
+            lsn >= Lsn::try_from(lid).unwrap(),
+            "lsn {} should always be greater than or equal to lid {}",
+            lsn,
+            lid
+        );
 
         Ok(lid)
     }
@@ -1185,7 +1130,7 @@ impl SegmentAccountant {
             completer.fill(res);
         });
 
-        #[cfg(any(test, feature = "check_snapshot_integrity"))]
+        #[cfg(test)]
         _result.unwrap();
 
         self.async_truncations.push(promise);
@@ -1231,8 +1176,7 @@ fn segment_is_drainable(
     // we calculate the cleanup threshold in a skewed way,
     // which encourages earlier segments to be rewritten
     // more frequently.
-    let base_cleanup_threshold =
-        (config.segment_cleanup_threshold * 100.) as usize;
+    let base_cleanup_threshold = usize::from(config.segment_cleanup_threshold);
     let cleanup_skew = config.segment_cleanup_skew;
 
     let relative_prop =

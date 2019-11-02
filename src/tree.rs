@@ -25,7 +25,7 @@ impl<'g> std::ops::Deref for View<'g> {
     type Target = Node;
 
     fn deref(&self) -> &Node {
-        &self.node
+        self.node
     }
 }
 
@@ -183,7 +183,9 @@ impl Tree {
     /// # Examples
     ///
     /// ```
-    /// use sled::Config;
+    /// # use sled::{TransactionResult, Config};
+    ///
+    /// # fn main() -> TransactionResult<()> {
     ///
     /// let config = Config::new().temporary(true);
     /// let db = config.open().unwrap();
@@ -193,8 +195,7 @@ impl Tree {
     ///     db.insert(b"k1", b"cats")?;
     ///     db.insert(b"k2", b"dogs")?;
     ///     Ok(())
-    /// })
-    /// .unwrap();
+    /// })?;
     ///
     /// // Atomically swap two items:
     /// db.transaction(|db| {
@@ -203,16 +204,52 @@ impl Tree {
     ///     let v2_option = db.remove(b"k2")?;
     ///     let v2 = v2_option.unwrap();
     ///
-    ///     db.insert(b"k1", v2);
-    ///     db.insert(b"k2", v1);
+    ///     db.insert(b"k1", v2)?;
+    ///     db.insert(b"k2", v1)?;
     ///
     ///     Ok(())
-    /// })
-    /// .unwrap();
+    /// })?;
     ///
-    /// assert_eq!(&db.get(b"k1").unwrap().unwrap(), b"dogs");
-    /// assert_eq!(&db.get(b"k2").unwrap().unwrap(), b"cats");
+    /// assert_eq!(&db.get(b"k1")?.unwrap(), b"dogs");
+    /// assert_eq!(&db.get(b"k2")?.unwrap(), b"cats");
+    /// # Ok(())
+    /// # }
     /// ```
+    ///
+    /// A transaction may return information from
+    /// an intentionally-cancelled transaction by using
+    /// the abort function inside the closure in
+    /// combination with the try operator.
+    ///
+    /// ```
+    /// use sled::{TransactionError, TransactionResult, Config, abort};
+    ///
+    /// #[derive(Debug, PartialEq)]
+    /// struct MyBullshitError;
+    ///
+    /// fn main() -> TransactionResult<(), MyBullshitError> {
+    ///     let config = Config::new().temporary(true);
+    ///     let db = config.open().unwrap();
+    ///
+    ///     // Use write-only transactions as a writebatch:
+    ///     let res = db.transaction(|db| {
+    ///         db.insert(b"k1", b"cats")?;
+    ///         db.insert(b"k2", b"dogs")?;
+    ///         // aborting will cause all writes to roll-back.
+    ///         if true {
+    ///             abort(MyBullshitError)?;
+    ///         }
+    ///         Ok(42)
+    ///     }).unwrap_err();
+    ///
+    ///     assert_eq!(res, TransactionError::Abort(MyBullshitError));
+    ///     assert_eq!(db.get(b"k1")?, None);
+    ///     assert_eq!(db.get(b"k2")?, None);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
     ///
     /// Transactions also work on tuples of `Tree`s,
     /// preserving serializable ACID semantics!
@@ -249,11 +286,11 @@ impl Tree {
     /// assert_eq!(unprocessed.get(b"k3").unwrap(), None);
     /// assert_eq!(&processed.get(b"k3").unwrap().unwrap(), b"yappin' ligers");
     /// ```
-    pub fn transaction<F, R>(&self, f: F) -> TransactionResult<R>
+    pub fn transaction<F, A, E>(&self, f: F) -> TransactionResult<A, E>
     where
-        F: Fn(&TransactionalTree) -> TransactionResult<R>,
+        F: Fn(&TransactionalTree) -> ConflictableTransactionResult<A, E>,
     {
-        <&Self as Transactional>::transaction(&self, f)
+        Transactional::transaction(&self, f)
     }
 
     /// Create a new batched update that can be
@@ -400,17 +437,18 @@ impl Tree {
     }
 
     /// Compare and swap. Capable of unique creation, conditional modification,
-    /// or deletion. If old is None, this will only set the value if it doesn't
-    /// exist yet. If new is None, will delete the value if old is correct.
-    /// If both old and new are Some, will modify the value if old is correct.
+    /// or deletion. If old is `None`, this will only set the value if it
+    /// doesn't exist yet. If new is `None`, will delete the value if old is
+    /// correct. If both old and new are `Some`, will modify the value if
+    /// old is correct.
     ///
-    /// It returns Ok(Ok(())) if operation finishes successfully.
+    /// It returns `Ok(Ok(()))` if operation finishes successfully.
     ///
     /// If it fails it returns:
-    ///     - Ok(Err(CompareAndSwapError(current, proposed))) if operation
-    ///       failed to setup a new value. CompareAndSwapError contains current
-    ///       and proposed values.
-    ///     - Err(Error::Unsupported) if the database is opened in read-only
+    ///     - `Ok(Err(CompareAndSwapError(current, proposed)))` if operation
+    ///       failed to setup a new value. `CompareAndSwapError` contains
+    ///       current and proposed values.
+    ///     - `Err(Error::Unsupported)` if the database is opened in read-only
     ///       mode.
     ///
     /// # Examples
@@ -447,6 +485,7 @@ impl Tree {
     /// );
     /// assert_eq!(t.get(&[1]), Ok(None));
     /// ```
+    #[allow(clippy::needless_pass_by_value)]
     pub fn compare_and_swap<K, OV, NV>(
         &self,
         key: K,
@@ -479,9 +518,9 @@ impl Tree {
                 self.view_for_key(key.as_ref(), &guard)?;
 
             let (encoded_key, current_value) = node.node_kv_pair(key.as_ref());
-            let matches = match (&old, &current_value) {
+            let matches = match (old.as_ref(), &current_value) {
                 (None, None) => true,
-                (Some(ref o), Some(ref c)) => o.as_ref() == &**c,
+                (Some(o), Some(ref c)) => o.as_ref() == &**c,
                 _ => false,
             };
 
@@ -591,13 +630,17 @@ impl Tree {
         F: FnMut(Option<&[u8]>) -> Option<V>,
         IVec: From<V>,
     {
-        let key = key.as_ref();
-        let mut current = self.get(key)?;
+        let key_ref = key.as_ref();
+        let mut current = self.get(key_ref)?;
 
         loop {
             let tmp = current.as_ref().map(AsRef::as_ref);
             let next = f(tmp).map(IVec::from);
-            match self.compare_and_swap::<_, _, IVec>(key, tmp, next.clone())? {
+            match self.compare_and_swap::<_, _, IVec>(
+                key_ref,
+                tmp,
+                next.clone(),
+            )? {
                 Ok(()) => return Ok(next),
                 Err(CompareAndSwapError { current: cur, .. }) => {
                     current = cur;
@@ -658,13 +701,13 @@ impl Tree {
         F: FnMut(Option<&[u8]>) -> Option<V>,
         IVec: From<V>,
     {
-        let key = key.as_ref();
-        let mut current = self.get(key)?;
+        let key_ref = key.as_ref();
+        let mut current = self.get(key_ref)?;
 
         loop {
             let tmp = current.as_ref().map(AsRef::as_ref);
             let next = f(tmp);
-            match self.compare_and_swap(key, tmp, next)? {
+            match self.compare_and_swap(key_ref, tmp, next)? {
                 Ok(()) => return Ok(current),
                 Err(CompareAndSwapError { current: cur, .. }) => {
                     current = cur;
@@ -708,8 +751,8 @@ impl Tree {
     ///
     /// thread.join().unwrap();
     /// ```
-    pub fn watch_prefix(&self, prefix: Vec<u8>) -> Subscriber {
-        self.subscriptions.register(prefix)
+    pub fn watch_prefix<P: AsRef<[u8]>>(&self, prefix: P) -> Subscriber {
+        self.subscriptions.register(prefix.as_ref())
     }
 
     /// Synchronously flushes all dirty IO buffers and calls
@@ -1120,20 +1163,20 @@ impl Tree {
         R: RangeBounds<K>,
     {
         let lo = match range.start_bound() {
-            ops::Bound::Included(ref start) => {
+            ops::Bound::Included(start) => {
                 ops::Bound::Included(IVec::from(start.as_ref()))
             }
-            ops::Bound::Excluded(ref start) => {
+            ops::Bound::Excluded(start) => {
                 ops::Bound::Excluded(IVec::from(start.as_ref()))
             }
             ops::Bound::Unbounded => ops::Bound::Included(IVec::from(&[])),
         };
 
         let hi = match range.end_bound() {
-            ops::Bound::Included(ref end) => {
+            ops::Bound::Included(end) => {
                 ops::Bound::Included(IVec::from(end.as_ref()))
             }
-            ops::Bound::Excluded(ref end) => {
+            ops::Bound::Excluded(end) => {
                 ops::Bound::Excluded(IVec::from(end.as_ref()))
             }
             ops::Bound::Unbounded => ops::Bound::Unbounded,
@@ -1189,13 +1232,13 @@ impl Tree {
     where
         P: AsRef<[u8]>,
     {
-        let prefix = prefix.as_ref();
-        let mut upper = prefix.to_vec();
+        let prefix_ref = prefix.as_ref();
+        let mut upper = prefix_ref.to_vec();
 
         while let Some(last) = upper.pop() {
             if last < u8::max_value() {
                 upper.push(last + 1);
-                return self.range(prefix..&upper);
+                return self.range(prefix_ref..&upper);
             }
         }
 
@@ -1592,6 +1635,7 @@ impl Tree {
                 if unsplit_parent.is_none() && parent_view.is_some() {
                     unsplit_parent = parent_view.clone();
                 } else if parent_view.is_none() && view.lo.is_empty() {
+                    assert!(unsplit_parent.is_none());
                     assert_eq!(view.pid, root_pid);
                     // we have found a partially-split root
                     if self.root_hoist(
@@ -1652,7 +1696,7 @@ impl Tree {
 
                         if let Ok(new_parent_ptr) = link {
                             parent.ptr = new_parent_ptr;
-                            self.merge_node(&parent, cursor, guard)?;
+                            self.merge_node(parent, cursor, guard)?;
                             retry!();
                         }
                     }
@@ -2049,16 +2093,15 @@ impl Debug for Tree {
 
         loop {
             let get_res = self.view_for_pid(pid, &guard);
-            let node = match get_res {
-                Ok(Some(ref view)) => view.node,
-                broken => {
-                    error!(
-                        "Tree::fmt failed to read node {} \
-                         that has been freed: {:?}",
-                        pid, broken
-                    );
-                    break;
-                }
+            let node = if let Ok(Some(ref view)) = get_res {
+                view.node
+            } else {
+                error!(
+                    "Tree::fmt failed to read node {} \
+                     that has been freed",
+                    pid,
+                );
+                break;
             };
 
             write!(f, "\t\t{}: ", pid)?;
@@ -2070,11 +2113,13 @@ impl Debug for Tree {
             } else {
                 // we've traversed our level, time to bump down
                 let left_get_res = self.view_for_pid(left_most, &guard);
-                let left_node = match left_get_res {
-                    Ok(Some(ref view)) => view.node,
-                    broken => {
-                        panic!("pagecache returned non-base node: {:?}", broken)
-                    }
+                let left_node = if let Ok(Some(ref view)) = left_get_res {
+                    view.node
+                } else {
+                    panic!(
+                        "pagecache returned non-base node: {:?}",
+                        left_get_res
+                    )
                 };
 
                 match &left_node.data {
@@ -2103,12 +2148,12 @@ impl Debug for Tree {
 
 /// Compare and swap result.
 ///
-/// It returns Ok(Ok(())) if operation finishes successfully and
-///     - Ok(Err(CompareAndSwapError(current, proposed))) if operation failed to
-///       setup a new value. CompareAndSwapError contains current and proposed
-///       values.
-///     - Err(Error::Unsupported) if the database is opened in read-only mode.
-/// otherwise.
+/// It returns `Ok(Ok(()))` if operation finishes successfully and
+///     - `Ok(Err(CompareAndSwapError(current, proposed)))` if operation failed
+///       to setup a new value. `CompareAndSwapError` contains current and
+///       proposed values.
+///     - `Err(Error::Unsupported)` if the database is opened in read-only mode.
+///       otherwise.
 pub type CompareAndSwapResult =
     Result<std::result::Result<(), CompareAndSwapError>>;
 

@@ -7,6 +7,7 @@ use std::thread;
 use log::{debug, warn};
 use quickcheck::{QuickCheck, StdGen};
 
+use sled::Transactional;
 use sled::*;
 
 use tree::{
@@ -243,14 +244,14 @@ fn concurrent_tree_iter() -> Result<()> {
                             loop {
                                 if let Some(Ok(k)) = keys.next() {
                                     assert!(
-                                    &*k >= *expect,
-                                    "witnessed key is {:?} but we expected \
-                                     one >= {:?}, so we overshot due to a \
-                                     concurrent modification\n{:?}",
-                                    k,
-                                    expect,
-                                    *t,
-                                );
+                                        &*k >= *expect,
+                                        "witnessed key is {:?} but we expected \
+                                         one >= {:?}, so we overshot due to a \
+                                         concurrent modification\n{:?}",
+                                        k,
+                                        expect,
+                                        *t,
+                                    );
                                     if &*k == *expect {
                                         break;
                                     }
@@ -325,16 +326,17 @@ fn concurrent_tree_iter() -> Result<()> {
 }
 
 #[test]
-fn concurrent_tree_transactions() {
+fn concurrent_tree_transactions() -> TransactionResult<()> {
     common::setup_logger();
 
     let config = Config::new().temporary(true).flush_every_ms(None);
-    let db = Arc::new(config.open().unwrap());
+    let db = config.open().unwrap();
 
     db.insert(b"k1", b"cats").unwrap();
     db.insert(b"k2", b"dogs").unwrap();
 
-    let mut threads = vec![];
+    let mut threads: Vec<std::thread::JoinHandle<TransactionResult<()>>> =
+        vec![];
 
     const N_WRITERS: usize = 30;
     const N_READERS: usize = 5;
@@ -348,16 +350,16 @@ fn concurrent_tree_transactions() {
             barrier.wait();
             for _ in 0..100 {
                 db.transaction(|db| {
-                    let v1 = db.remove(b"k1").unwrap().unwrap();
-                    let v2 = db.remove(b"k2").unwrap().unwrap();
+                    let v1 = db.remove(b"k1")?.unwrap();
+                    let v2 = db.remove(b"k2")?.unwrap();
 
-                    db.insert(b"k1", v2).unwrap();
-                    db.insert(b"k2", v1).unwrap();
+                    db.insert(b"k1", v2)?;
+                    db.insert(b"k2", v1)?;
 
                     Ok(())
-                })
-                .unwrap();
+                })?;
             }
+            Ok(())
         });
         threads.push(thread);
     }
@@ -369,8 +371,8 @@ fn concurrent_tree_transactions() {
             barrier.wait();
             for _ in 0..1000 {
                 db.transaction(|db| {
-                    let v1 = db.get(b"k1").unwrap().unwrap();
-                    let v2 = db.get(b"k2").unwrap().unwrap();
+                    let v1 = db.get(b"k1")?.unwrap();
+                    let v2 = db.get(b"k2")?.unwrap();
 
                     let mut results = vec![v1, v2];
                     results.sort();
@@ -378,20 +380,45 @@ fn concurrent_tree_transactions() {
                     assert_eq!([&results[0], &results[1]], [b"cats", b"dogs"]);
 
                     Ok(())
-                })
-                .unwrap();
+                })?;
             }
+            Ok(())
         });
         threads.push(thread);
     }
 
     for thread in threads.into_iter() {
-        thread.join().unwrap();
+        thread.join().unwrap()?;
     }
 
-    let v1 = db.get(b"k1").unwrap().unwrap();
-    let v2 = db.get(b"k2").unwrap().unwrap();
+    let v1 = db.get(b"k1")?.unwrap();
+    let v2 = db.get(b"k2")?.unwrap();
     assert_eq!([v1, v2], [b"cats", b"dogs"]);
+
+    Ok(())
+}
+
+#[test]
+fn many_tree_transactions() -> TransactionResult<()> {
+    common::setup_logger();
+
+    let config = Config::new().temporary(true).flush_every_ms(None);
+    let db = Arc::new(config.open().unwrap());
+    let t1 = db.open_tree(b"1")?;
+    let t2 = db.open_tree(b"2")?;
+    let t3 = db.open_tree(b"3")?;
+    let t4 = db.open_tree(b"4")?;
+    let t5 = db.open_tree(b"5")?;
+    let t6 = db.open_tree(b"6")?;
+    let t7 = db.open_tree(b"7")?;
+    let t8 = db.open_tree(b"8")?;
+    let t9 = db.open_tree(b"9")?;
+
+    (&t1, &t2, &t3, &t4, &t5, &t6, &t7, &t8, &t9).transaction(|trees| {
+        trees.0.insert("hi", "there")?;
+        trees.8.insert("ok", "thanks")?;
+        Ok(())
+    })
 }
 
 #[test]
@@ -679,6 +706,23 @@ fn recover_tree() {
         let k = kv(i as usize);
         assert_eq!(t.get(&*k), Ok(None));
     }
+}
+
+#[test]
+fn create_tree() {
+    common::setup_logger();
+
+    let path = "create_exclusive_db";
+    std::fs::remove_dir_all(path);
+
+    {
+        let config = Config::new().create_new(true).path(path);
+        config.open().unwrap();
+    }
+
+    let config = Config::new().create_new(true).path(path);
+    config.open().unwrap_err();
+    std::fs::remove_dir_all(path);
 }
 
 #[test]

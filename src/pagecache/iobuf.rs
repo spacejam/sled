@@ -65,7 +65,7 @@ pub(crate) struct IoBufs {
 /// `IoBufs` is a set of lock-free buffers for coordinating
 /// writes to underlying storage.
 impl IoBufs {
-    pub fn start(config: RunningConfig, snapshot: Snapshot) -> Result<Self> {
+    pub fn start(config: RunningConfig, snapshot: &Snapshot) -> Result<IoBufs> {
         // open file for writing
         let file = &config.file;
 
@@ -78,37 +78,38 @@ impl IoBufs {
         let mut segment_accountant: SegmentAccountant =
             SegmentAccountant::start(config.clone(), snapshot)?;
 
-        let (next_lsn, next_lid) = if snapshot_last_lsn % segment_size as Lsn
-            == 0
-        {
-            (snapshot_last_lsn, snapshot_last_lid)
-        } else {
-            let width = match read_message(
-                &file,
-                snapshot_last_lid,
-                snapshot_last_lsn,
-                &config,
-            ) {
-                Ok(LogRead::Failed(_, len))
-                | Ok(LogRead::Inline(_, _, len)) => len + MSG_HEADER_LEN as u32,
-                Ok(LogRead::Blob(_header, _buf, _blob_ptr)) => {
-                    (BLOB_INLINE_LEN + MSG_HEADER_LEN) as u32
-                }
-                other => {
-                    // we can overwrite this non-flush
-                    debug!(
-                        "got non-flush tip while recovering at {}: {:?}",
-                        snapshot_last_lid, other
-                    );
-                    0
-                }
-            };
+        let (next_lsn, next_lid) =
+            if snapshot_last_lsn % segment_size as Lsn == 0 {
+                (snapshot_last_lsn, snapshot_last_lid)
+            } else {
+                let width = match read_message(
+                    file,
+                    snapshot_last_lid,
+                    snapshot_last_lsn,
+                    &config,
+                ) {
+                    Ok(LogRead::Failed(_, len))
+                    | Ok(LogRead::Inline(_, _, len)) => {
+                        len + u32::try_from(MSG_HEADER_LEN).unwrap()
+                    }
+                    Ok(LogRead::Blob(_header, _buf, _blob_ptr)) => {
+                        u32::try_from(BLOB_INLINE_LEN + MSG_HEADER_LEN).unwrap()
+                    }
+                    other => {
+                        // we can overwrite this non-flush
+                        debug!(
+                            "got non-flush tip while recovering at {}: {:?}",
+                            snapshot_last_lid, other
+                        );
+                        0
+                    }
+                };
 
-            (
-                snapshot_last_lsn + Lsn::from(width),
-                snapshot_last_lid + LogOffset::from(width),
-            )
-        };
+                (
+                    snapshot_last_lsn + Lsn::from(width),
+                    snapshot_last_lid + LogOffset::from(width),
+                )
+            };
 
         let mut iobuf = IoBuf::new(segment_size);
 
@@ -181,7 +182,7 @@ impl IoBufs {
         })
     }
 
-    /// SegmentAccountant access for coordination with the `PageCache`
+    /// `SegmentAccountant` access for coordination with the `PageCache`
     pub(in crate::pagecache) fn with_sa<B, F>(&self, f: F) -> B
     where
         F: FnOnce(&mut SegmentAccountant) -> B,
@@ -204,7 +205,7 @@ impl IoBufs {
         ret
     }
 
-    /// SegmentAccountant access for coordination with the `PageCache`
+    /// `SegmentAccountant` access for coordination with the `PageCache`
     pub(in crate::pagecache) fn try_with_sa<B, F>(&self, f: F) -> Option<B>
     where
         F: FnOnce(&mut SegmentAccountant) -> B,
@@ -273,7 +274,7 @@ impl IoBufs {
             io_fail!(self, "blob blob write");
             write_blob(&self.config, kind, lsn, in_buf)?;
 
-            let lsn_buf = u64_to_arr(lsn as u64);
+            let lsn_buf = u64_to_arr(u64::try_from(lsn).unwrap());
 
             blob_ptr = lsn_buf;
             &blob_ptr
@@ -322,7 +323,7 @@ impl IoBufs {
         let segment_size = self.config.segment_size;
 
         assert_eq!(
-            (log_offset % segment_size as LogOffset) as Lsn,
+            Lsn::try_from(log_offset % segment_size as LogOffset).unwrap(),
             base_lsn % segment_size as Lsn
         );
 
@@ -448,6 +449,7 @@ impl IoBufs {
             self.mark_interval(base_lsn, complete_len);
         }
 
+        #[allow(clippy::cast_precision_loss)]
         M.written_bytes.measure(total_len as f64);
 
         // NB the below deferred logic is important to ensure
@@ -798,7 +800,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
             }
         });
 
-        #[cfg(any(test, feature = "check_snapshot_integrity"))]
+        #[cfg(test)]
         _result.unwrap();
 
         Ok(())
@@ -834,8 +836,8 @@ impl Debug for IoBuf {
 }
 
 impl IoBuf {
-    pub(crate) fn new(buf_size: usize) -> Self {
-        Self {
+    pub(crate) fn new(buf_size: usize) -> IoBuf {
+        IoBuf {
             buf: UnsafeCell::new(vec![0; buf_size]),
             header: CachePadded::new(AtomicU64::new(0)),
             offset: LogOffset::max_value(),
@@ -936,24 +938,25 @@ pub(crate) const fn n_writers(v: Header) -> Header {
     v << 33 >> 57
 }
 
-#[cfg_attr(not(feature = "no_inline"), inline)]
+#[inline]
 pub(crate) fn incr_writers(v: Header) -> Header {
     assert_ne!(n_writers(v), MAX_WRITERS);
     v + (1 << 24)
 }
 
-#[cfg_attr(not(feature = "no_inline"), inline)]
+#[inline]
 pub(crate) fn decr_writers(v: Header) -> Header {
     assert_ne!(n_writers(v), 0);
     v - (1 << 24)
 }
 
-pub(crate) const fn offset(v: Header) -> usize {
+#[inline]
+pub(crate) fn offset(v: Header) -> usize {
     let ret = v << 40 >> 40;
-    ret as usize
+    usize::try_from(ret).unwrap()
 }
 
-#[cfg_attr(not(feature = "no_inline"), inline)]
+#[inline]
 pub(crate) fn bump_offset(v: Header, by: usize) -> Header {
     assert_eq!(by >> 24, 0);
     v + (by as Header)

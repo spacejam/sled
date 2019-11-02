@@ -14,7 +14,7 @@ pub(crate) struct Context {
     /// should trigger all background threads to clean
     /// up synchronously.
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-    pub(crate) _flusher: Arc<Mutex<Option<flusher::Flusher>>>,
+    pub(crate) flusher: Arc<Mutex<Option<flusher::Flusher>>>,
     pub(crate) pagecache: Arc<PageCache>,
 }
 
@@ -49,22 +49,13 @@ impl Context {
     pub(crate) fn start(config: RunningConfig) -> Result<Self> {
         trace!("starting context");
 
-        #[cfg(any(test, feature = "check_snapshot_integrity"))]
-        match config.verify_snapshot() {
-            #[cfg(not(feature = "failpoints"))]
-            Ok(_) => {}
-            #[cfg(feature = "failpoints")]
-            Ok(_) | Err(Error::FailPoint) => {}
-            other => panic!("failed to verify snapshot: {:?}", other),
-        }
-
         let pagecache = Arc::new(PageCache::start(config.clone())?);
 
         Ok(Self {
             config,
             pagecache,
             #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-            _flusher: Arc::new(parking_lot::Mutex::new(None)),
+            flusher: Arc::new(parking_lot::Mutex::new(None)),
         })
     }
 

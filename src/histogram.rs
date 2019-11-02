@@ -8,7 +8,7 @@
 //! Performs no allocations after initial creation.
 //! Uses Relaxed atomics during collection.
 //!
-//! When you create it, it allocates 65k AtomicUsize's
+//! When you create it, it allocates 65k `AtomicUsize`'s
 //! that it uses for incrementing. Generating reports
 //! after running workloads on dozens of `Histogram`'s
 //! does not result in a perceptible delay, but it
@@ -27,7 +27,9 @@
 //! reporting.
 #![allow(unused)]
 #![allow(unused_results)]
+#![allow(clippy::print_stdout)]
 
+use std::convert::TryFrom;
 use std::fmt::{self, Debug};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -72,7 +74,7 @@ impl Debug for Histogram {
 impl Histogram {
     /// Record a value.
     #[inline]
-    pub fn measure<T: Into<f64>>(&self, raw_value: T) {
+    pub fn measure<T: Copy + Into<f64>>(&self, raw_value: T) {
         #[cfg(not(feature = "no_metrics"))]
         {
             let value_float: f64 = raw_value.into();
@@ -142,14 +144,17 @@ impl Histogram {
 // bucketing of histogram values, staying roughly within 1% of the true
 // value. This fails for large values of 1e142 and above, and is
 // inaccurate for values closer to 0 than +/- 0.51 or +/- math.Inf.
+#[allow(clippy::cast_sign_loss)]
+#[allow(clippy::cast_possible_truncation)]
 #[inline]
-fn compress<T: Into<f64>>(value: T) -> u16 {
-    let value: f64 = value.into();
+fn compress<T: Into<f64>>(input_value: T) -> u16 {
+    let value: f64 = input_value.into();
     let abs = value.abs();
     let boosted = 1. + abs;
     let ln = boosted.ln();
-    let compressed = PRECISION * ln + 0.5;
-    assert!(compressed <= f64::from(std::u16::MAX));
+    let compressed = PRECISION.mul_add(ln, 0.5);
+    assert!(compressed <= f64::from(u16::max_value()));
+
     compressed as u16
 }
 

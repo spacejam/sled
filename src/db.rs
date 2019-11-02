@@ -32,7 +32,7 @@ impl Debug for Db {
         let tenants = self.tenants.read();
         writeln!(f, "Db {{")?;
         for (raw_name, tree) in tenants.iter() {
-            let name = std::str::from_utf8(&raw_name)
+            let name = std::str::from_utf8(raw_name)
                 .ok()
                 .map_or_else(|| format!("{:?}", raw_name), String::from);
             write!(f, "    Tree: {:?} contents: {:?}", name, tree)?;
@@ -84,7 +84,7 @@ impl Db {
                         fem,
                     )
                 });
-                *context._flusher.lock() = flusher;
+                *context.flusher.lock() = flusher;
             }
         }
 
@@ -115,15 +115,18 @@ impl Db {
 
         drop(tenants);
 
+        #[cfg(feature = "event_log")]
+        ret.context.event_log.verify();
+
         Ok(ret)
     }
 
     /// Open or create a new disk-backed Tree with its own keyspace,
     /// accessible from the `Db` via the provided identifier.
     pub fn open_tree<V: AsRef<[u8]>>(&self, name: V) -> Result<Tree> {
-        let name = name.as_ref();
+        let name_ref = name.as_ref();
         let tenants = self.tenants.read();
-        if let Some(tree) = tenants.get(name) {
+        if let Some(tree) = tenants.get(name_ref) {
             return Ok(tree.clone());
         }
         drop(tenants);
@@ -134,13 +137,13 @@ impl Db {
 
         // we need to check this again in case another
         // thread opened it concurrently.
-        if let Some(tree) = tenants.get(name) {
+        if let Some(tree) = tenants.get(name_ref) {
             return Ok(tree.clone());
         }
 
-        let tree = meta::open_tree(&self.context, name.to_vec(), &guard)?;
+        let tree = meta::open_tree(&self.context, name_ref.to_vec(), &guard)?;
 
-        assert!(tenants.insert(name.to_vec(), tree.clone()).is_none());
+        assert!(tenants.insert(name_ref.to_vec(), tree.clone()).is_none());
 
         Ok(tree)
     }
@@ -165,7 +168,7 @@ impl Db {
         let guard = pin();
 
         let mut root_id =
-            Some(self.context.pagecache.meta_pid_for_name(&name, &guard)?);
+            Some(self.context.pagecache.meta_pid_for_name(name, &guard)?);
 
         let mut leftmost_chain: Vec<PageId> = vec![root_id.unwrap()];
         let mut cursor = root_id.unwrap();
@@ -183,7 +186,7 @@ impl Db {
             let res = self
                 .context
                 .pagecache
-                .cas_root_in_meta(&name, root_id, None, &guard)?;
+                .cas_root_in_meta(name, root_id, None, &guard)?;
 
             if let Err(actual_root) = res {
                 root_id = actual_root;
@@ -257,8 +260,8 @@ impl Db {
             ret.push((
                 b"tree".to_vec(),
                 name.to_vec(),
-                tree.iter().map(|kv| {
-                    let kv = kv.unwrap();
+                tree.iter().map(|kv_opt| {
+                    let kv = kv_opt.unwrap();
                     vec![kv.0.to_vec(), kv.1.to_vec()]
                 }),
             ));
@@ -324,11 +327,11 @@ impl Db {
         let mut hasher = crc32fast::Hasher::new();
         let mut locks = vec![];
 
-        for (_, tree) in tenants.iter() {
+        for tree in tenants.values() {
             locks.push(tree.concurrency_control.write());
         }
 
-        for (name, tree) in tenants.iter() {
+        for (name, tree) in &tenants {
             hasher.update(name);
 
             let mut iter = tree.iter();

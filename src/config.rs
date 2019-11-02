@@ -9,10 +9,7 @@ use std::{
     sync::{atomic::AtomicUsize, Arc},
 };
 
-use crate::pagecache::{
-    arr_to_u32, read_message, read_snapshot_or_default, u32_to_arr, Lsn,
-    PageState, SegmentMode,
-};
+use crate::pagecache::{arr_to_u32, u32_to_arr, Lsn, SegmentMode};
 use crate::*;
 
 const DEFAULT_PATH: &str = "default.sled";
@@ -20,15 +17,15 @@ const DEFAULT_PATH: &str = "default.sled";
 /// A persisted configuration about high-level
 /// storage file information
 #[derive(Debug, Eq, PartialEq, Clone, Copy, Serialize, Deserialize)]
-pub struct PersistedConfig {
+pub struct StorageParameters {
     pub segment_size: usize,
     pub use_compression: bool,
     pub version: (usize, usize),
 }
 
-impl PersistedConfig {
-    pub fn size_in_bytes(&self) -> u64 {
-        std::mem::size_of::<PersistedConfig>() as u64
+impl StorageParameters {
+    pub const fn size_in_bytes(&self) -> u64 {
+        std::mem::size_of::<StorageParameters>() as u64
     }
 
     pub fn serialize(&self) -> Vec<u8> {
@@ -43,7 +40,7 @@ impl PersistedConfig {
         out
     }
 
-    pub fn deserialize(bytes: &[u8]) -> Result<PersistedConfig> {
+    pub fn deserialize(bytes: &[u8]) -> Result<StorageParameters> {
         let reader = BufReader::new(bytes);
 
         let mut lines = HashMap::new();
@@ -87,7 +84,9 @@ impl PersistedConfig {
                 return Err(Error::Corruption { at: DiskPtr::Inline(0) });
             }
         } else {
-            error!("failed to retrieve required configuration parameter: segment_size");
+            error!(
+                "failed to retrieve required configuration parameter: segment_size"
+            );
             return Err(Error::Corruption { at: DiskPtr::Inline(0) });
         };
 
@@ -101,7 +100,9 @@ impl PersistedConfig {
                 return Err(Error::Corruption { at: DiskPtr::Inline(0) });
             }
         } else {
-            error!("failed to retrieve required configuration parameter: use_compression");
+            error!(
+                "failed to retrieve required configuration parameter: use_compression"
+            );
             return Err(Error::Corruption { at: DiskPtr::Inline(0) });
         };
 
@@ -145,7 +146,7 @@ impl PersistedConfig {
             return Err(Error::Corruption { at: DiskPtr::Inline(0) });
         };
 
-        Ok(PersistedConfig { segment_size, use_compression, version })
+        Ok(StorageParameters { segment_size, use_compression, version })
     }
 }
 
@@ -168,19 +169,19 @@ impl PersistedConfig {
 ///     .read_only(true);
 /// ```
 #[derive(Default, Debug, Clone)]
-pub struct Config(Arc<ConfigInner>);
+pub struct Config(Arc<Inner>);
 
 impl Deref for Config {
-    type Target = ConfigInner;
+    type Target = Inner;
 
-    fn deref(&self) -> &ConfigInner {
+    fn deref(&self) -> &Inner {
         &self.0
     }
 }
 
 #[doc(hidden)]
 #[derive(Debug, Clone)]
-pub struct ConfigInner {
+pub struct Inner {
     #[doc(hidden)]
     pub cache_capacity: u64,
     #[doc(hidden)]
@@ -192,7 +193,9 @@ pub struct ConfigInner {
     #[doc(hidden)]
     pub read_only: bool,
     #[doc(hidden)]
-    pub segment_cleanup_threshold: f64,
+    pub create_new: bool,
+    #[doc(hidden)]
+    pub segment_cleanup_threshold: u8,
     #[doc(hidden)]
     pub segment_cleanup_skew: usize,
     #[doc(hidden)]
@@ -220,19 +223,20 @@ pub struct ConfigInner {
     pub event_log: Arc<event_log::EventLog>,
 }
 
-impl Default for ConfigInner {
+impl Default for Inner {
     fn default() -> Self {
         Self {
             segment_size: 2 << 22, // 8mb
             path: PathBuf::from(DEFAULT_PATH),
             read_only: false,
+            create_new: false,
             cache_capacity: 1024 * 1024 * 1024, // 1gb
             use_compression: false,
             compression_factor: 5,
             flush_every_ms: Some(500),
             snapshot_after_ops: 1_000_000,
             snapshot_path: None,
-            segment_cleanup_threshold: 0.40,
+            segment_cleanup_threshold: 40,
             segment_cleanup_skew: 10,
             temporary: false,
             segment_mode: SegmentMode::Gc,
@@ -247,7 +251,7 @@ impl Default for ConfigInner {
     }
 }
 
-impl ConfigInner {
+impl Inner {
     // Get the path of the database
     #[doc(hidden)]
     pub fn get_path(&self) -> PathBuf {
@@ -397,15 +401,15 @@ impl Config {
 
         static SALT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-        let seed = SALT_COUNTER.fetch_add(1, SeqCst) as u64;
+        let seed = SALT_COUNTER.fetch_add(1, SeqCst) as u128;
 
-        let now = (SystemTime::now()
+        let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
-            << 48) as u64;
+            << 48;
 
-        let pid = u64::from(std::process::id());
+        let pid = u128::from(std::process::id());
 
         let salt = (pid << 16) + now + seed;
 
@@ -433,19 +437,20 @@ impl Config {
     }
 
     builder!(
+        (flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
         (temporary, bool, "deletes the database after drop. if no path is set, uses /dev/shm on linux"),
-        (read_only, bool, "whether to run in read-only mode"),
+        (create_new, bool, "attempts to exclusively open the database, failing if it already exists"),
         (cache_capacity, u64, "maximum size for the system page cache"),
+        (print_profile_on_drop, bool, "print a performance profile when the Config is dropped"),
         (use_compression, bool, "whether to use zstd compression"),
         (compression_factor, i32, "the compression factor to use with zstd compression"),
-        (flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
         (snapshot_after_ops, u64, "number of operations between page table snapshots"),
-        (segment_cleanup_threshold, f64, "the proportion of remaining valid pages in the segment before GC defragments it"),
+        (segment_cleanup_threshold, u8, "the proportion of remaining valid pages in the segment before GC defragments it"),
         (segment_cleanup_skew, usize, "the cleanup threshold skew in percentage points between the first and last segments"),
         (segment_mode, SegmentMode, "the file segment selection mode"),
         (snapshot_path, Option<PathBuf>, "snapshot file location"),
-        (print_profile_on_drop, bool, "print a performance profile when the Config is dropped"),
-        (idgen_persist_interval, u64, "generated IDs are persisted at this interval. during recovery we skip twice this number")
+        (idgen_persist_interval, u64, "generated IDs are persisted at this interval. during recovery we skip twice this number"),
+        (read_only, bool, "whether to run in read-only mode")
     );
 
     // panics if config options are outside of advised range
@@ -463,12 +468,12 @@ impl Config {
             "segment_size should be <= 16mb"
         );
         supported!(
-            match self.segment_cleanup_threshold.partial_cmp(&0.01) {
-                Some(std::cmp::Ordering::Equal)
-                | Some(std::cmp::Ordering::Greater) => true,
-                Some(std::cmp::Ordering::Less) | None => false,
-            },
-            "segment_cleanup_threshold must be >= 1%"
+            self.segment_cleanup_threshold >= 1,
+            "segment_cleanup_threshold must be >= 1 (1%)"
+        );
+        supported!(
+            self.segment_cleanup_threshold < 100,
+            "segment_cleanup_threshold must be < 100 (100%)"
         );
         supported!(
             self.segment_cleanup_skew < 99,
@@ -519,8 +524,7 @@ impl Config {
         }
 
         if !dir.exists() {
-            let res = fs::create_dir_all(dir);
-            res.map_err(Error::from)?;
+            fs::create_dir_all(dir)?;
         }
 
         self.verify_config()?;
@@ -535,10 +539,11 @@ impl Config {
             let _ = options.write(true);
         }
 
-        match options.open(&path) {
-            Ok(file) => self.try_lock(file),
-            Err(e) => Err(e.into()),
+        if self.create_new {
+            options.create_new(true);
         }
+
+        self.try_lock(options.open(&path)?)
     }
 
     fn try_lock(&self, file: File) -> Result<File> {
@@ -548,6 +553,13 @@ impl Config {
 
             let try_lock = if self.read_only {
                 file.try_lock_shared()
+            } else if cfg!(feature = "testing") {
+                // we block here because during testing
+                // there are many filesystem race condition
+                // that happen, causing locks to be held
+                // for long periods of time, so we should
+                // block to wait on reopening files.
+                file.lock_exclusive()
             } else {
                 file.try_lock_exclusive()
             };
@@ -557,7 +569,7 @@ impl Config {
                     ErrorKind::Other,
                     format!(
                         "could not acquire lock on {:?}: {:?}",
-                        self.db_path(),
+                        self.db_path().to_string_lossy(),
                         e
                     ),
                 )));
@@ -611,7 +623,7 @@ impl Config {
     }
 
     fn serialize(&self) -> Vec<u8> {
-        let persisted_config = PersistedConfig {
+        let persisted_config = StorageParameters {
             version: self.version,
             segment_size: self.segment_size,
             use_compression: self.use_compression,
@@ -638,7 +650,7 @@ impl Config {
         Ok(())
     }
 
-    fn read_config(&self) -> Result<Option<PersistedConfig>> {
+    fn read_config(&self) -> Result<Option<StorageParameters>> {
         let path = self.config_path();
 
         let f_res = fs::OpenOptions::new().read(true).open(&path);
@@ -678,7 +690,7 @@ impl Config {
             );
         }
 
-        PersistedConfig::deserialize(&buf).map(Some)
+        StorageParameters::deserialize(&buf).map(Some)
     }
 
     /// Return the global error if one was encountered during
@@ -724,9 +736,11 @@ impl Config {
     }
 
     #[cfg(feature = "failpoints")]
+    #[cfg(feature = "event_log")]
     #[doc(hidden)]
     // truncate the underlying file for corruption testing purposes.
     pub fn truncate_corrupt(&self, new_len: u64) {
+        self.event_log.reset();
         let path = self.db_path();
         let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
         f.set_len(new_len).expect("should be able to truncate");
@@ -755,7 +769,7 @@ impl Deref for RunningConfig {
     }
 }
 
-impl Drop for ConfigInner {
+impl Drop for Inner {
     fn drop(&mut self) {
         if self.print_profile_on_drop {
             M.print_profile();
@@ -820,71 +834,6 @@ impl RunningConfig {
         }
 
         Ok(snap_dir.read_dir()?.filter_map(filter).collect())
-    }
-
-    #[doc(hidden)]
-    pub fn verify_snapshot(&self) -> Result<()> {
-        debug!("generating incremental snapshot");
-
-        let incremental = read_snapshot_or_default(&self)?;
-
-        for snapshot_path in self.get_snapshot_files()? {
-            fs::remove_file(snapshot_path)?;
-        }
-
-        debug!("generating snapshot without the previous one");
-        let regenerated = read_snapshot_or_default(&self)?;
-
-        let verify_messages = |k: &PageId, v: &PageState| {
-            for (lsn, ptr, _sz) in v.iter() {
-                if let Err(e) = read_message(&self.file, ptr.lid(), lsn, &self)
-                {
-                    panic!(
-                        "could not read log data for \
-                         pid {} at lsn {} ptr {}: {}",
-                        k, lsn, ptr, e
-                    );
-                }
-            }
-        };
-
-        let verify_pagestate = |x: &FastMap8<PageId, PageState>,
-                                y: &FastMap8<PageId, PageState>,
-                                typ: &str| {
-            for (k, v) in x {
-                if !y.contains_key(&k) {
-                    panic!(
-                        "page only present in {} pagetable: {} -> {:?}",
-                        typ, k, v
-                    );
-                }
-                assert_eq!(
-                    y.get(&k),
-                    Some(v),
-                    "page tables differ for pid {}",
-                    k
-                );
-                verify_messages(k, v);
-            }
-        };
-
-        verify_pagestate(&regenerated.pt, &incremental.pt, "regenerated");
-        verify_pagestate(&incremental.pt, &regenerated.pt, "incremental");
-
-        assert_eq!(
-            incremental.pt, regenerated.pt,
-            "snapshot pagetable diverged"
-        );
-        assert_eq!(
-            incremental.last_lsn, regenerated.last_lsn,
-            "snapshot max_lsn diverged"
-        );
-        assert_eq!(
-            incremental.last_lid, regenerated.last_lid,
-            "snapshot last_lid diverged"
-        );
-
-        Ok(())
     }
 }
 

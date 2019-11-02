@@ -10,7 +10,7 @@ use super::{
 
 /// A snapshot of the state required to quickly restart
 /// the `PageCache` and `SegmentAccountant`.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Snapshot {
     /// The last read message lsn
     pub last_lsn: Lsn,
@@ -165,6 +165,9 @@ pub(crate) fn advance_snapshot(
 
     trace!("generated new snapshot: {:?}", snapshot);
 
+    #[cfg(feature = "event_log")]
+    config.event_log.recovered_lsn(snapshot.last_lsn);
+
     Ok(snapshot)
 }
 
@@ -232,7 +235,7 @@ fn read_snapshot(config: &RunningConfig) -> std::io::Result<Option<Snapshot>> {
     let bytes = if config.use_compression {
         let len_expected: u64 =
             crate::pagecache::arr_to_u64(&len_expected_bytes);
-        decompress(&*buf, len_expected as usize).unwrap()
+        decompress(&*buf, usize::try_from(len_expected).unwrap()).unwrap()
     } else {
         buf
     };

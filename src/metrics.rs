@@ -1,4 +1,5 @@
 #![allow(unused_results)]
+#![allow(clippy::print_stdout)]
 
 use std::sync::atomic::AtomicUsize;
 
@@ -19,6 +20,7 @@ use super::*;
 /// process.
 pub static M: Lazy<Metrics, fn() -> Metrics> = Lazy::new(Metrics::default);
 
+#[allow(clippy::cast_precision_loss)]
 pub(crate) fn clock() -> f64 {
     if cfg!(feature = "no_metrics") {
         0.
@@ -26,8 +28,8 @@ pub(crate) fn clock() -> f64 {
         #[cfg(target_arch = "x86_64")]
         #[allow(unsafe_code)]
         unsafe {
-            let mut _aux = 0;
-            core::arch::x86_64::__rdtscp(&mut _aux) as f64
+            let mut aux = 0;
+            core::arch::x86_64::__rdtscp(&mut aux) as f64
         }
 
         #[cfg(not(target_arch = "x86_64"))]
@@ -61,7 +63,7 @@ pub struct Measure<'h> {
 
 impl<'h> Measure<'h> {
     /// The time delta from ctor to dtor is recorded in `histo`.
-    #[inline(always)]
+    #[inline]
     pub fn new(_histo: &'h Histogram) -> Measure<'h> {
         Measure {
             #[cfg(feature = "no_metrics")]
@@ -74,7 +76,7 @@ impl<'h> Measure<'h> {
 }
 
 impl<'h> Drop for Measure<'h> {
-    #[inline(always)]
+    #[inline]
     fn drop(&mut self) {
         #[cfg(not(feature = "no_metrics"))]
         self.histo.measure(clock() - self._start);
@@ -193,7 +195,7 @@ impl Metrics {
     pub fn print_profile(&self) {
         println!(
             "pagecache profile:\n\
-            {0: >17} | {1: >10} | {2: >10} | {3: >10} | {4: >10} | {5: >10} | {6: >10} | {7: >10} | {8: >10} | {9: >10}",
+             {0: >17} | {1: >10} | {2: >10} | {3: >10} | {4: >10} | {5: >10} | {6: >10} | {7: >10} | {8: >10} | {9: >10}",
             "op",
             "min (us)",
             "med (us)",
@@ -345,23 +347,23 @@ impl Metrics {
 
 #[cfg(feature = "no_metrics")]
 impl Metrics {
-    pub fn log_reservation_attempted(&self) {}
+    pub const fn log_reservation_attempted(&self) {}
 
-    pub fn log_reservation_success(&self) {}
+    pub const fn log_reservation_success(&self) {}
 
-    pub fn tree_child_split_attempt(&self) {}
+    pub const fn tree_child_split_attempt(&self) {}
 
-    pub fn tree_child_split_success(&self) {}
+    pub const fn tree_child_split_success(&self) {}
 
-    pub fn tree_parent_split_attempt(&self) {}
+    pub const fn tree_parent_split_attempt(&self) {}
 
-    pub fn tree_parent_split_success(&self) {}
+    pub const fn tree_parent_split_success(&self) {}
 
-    pub fn tree_root_split_attempt(&self) {}
+    pub const fn tree_root_split_attempt(&self) {}
 
-    pub fn tree_root_split_success(&self) {}
+    pub const fn tree_root_split_success(&self) {}
 
-    pub fn tree_looped(&self) {}
+    pub const fn tree_looped(&self) {}
 
-    pub fn print_profile(&self) {}
+    pub const fn print_profile(&self) {}
 }
