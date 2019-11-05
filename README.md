@@ -125,13 +125,13 @@ Want to support development but don't need commercial support? Help us out via [
 
 # special thanks
 
-[Ferrous Systems](https://ferrous-systems.com) provided a huge amount of engineer time for sled in 2018 and 2019. They are the world's leading Rust education and embedded consulting company. [Get in touch!](mailto:inquiries+via+sled@ferrous-systems.com)
-
 <p align="center">
   <a href="https://ferrous-systems.com/">
     <img src="https://ferrous-systems.com/images/ferrous-systems-mono-pos.svg" width="60%" height="auto" />
   </a>
 </p>
+
+[Ferrous Systems](https://ferrous-systems.com) provided a huge amount of engineer time for sled in 2018 and 2019. They are the world's leading Rust education and embedded consulting company. [Get in touch!](mailto:inquiries+via+sled@ferrous-systems.com)
 
 <p align="center">
   <a href="https://www.meilisearch.com/">
