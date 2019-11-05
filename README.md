@@ -119,19 +119,19 @@ for a more detailed overview of where we're at and where we see things going!
 * pluggable conflict detection and resolution strategies for gossip + CRDT-based [PA/EL](https://en.wikipedia.org/wiki/PACELC_theorem) systems
 * first-class programmatic access to replication stream
 
-# fund feature development and get commercial support
+# fund feature development
 
-Want to support the project, prioritize a specific feature, or get commercial help with using sled in your project? [Ferrous Systems](https://ferrous-systems.com) provides commercial support for sled, and can work with you to solve a wide variety of storage problems across the latency-throughput, consistency, and price performance spectra. [Get in touch!](mailto:sled@ferrous-systems.com)
+Want to support development but don't need commercial support? Help us out via [Open Collective](https://opencollective.com/sled)!
+
+# special thanks
+
+[Ferrous Systems](https://ferrous-systems.com) provided a huge amount of engineer time for sled in 2018 and 2019. They are the world's leading Rust education and embedded consulting company. [Get in touch!](mailto:inquiries+via+sled@ferrous-systems.com)
 
 <p align="center">
   <a href="https://ferrous-systems.com/">
     <img src="https://ferrous-systems.com/images/ferrous-systems-mono-pos.svg" width="60%" height="auto" />
   </a>
 </p>
-
-Want to support development but don't need commercial support? Help us out via [Open Collective](https://opencollective.com/sled)!
-
-# special thanks
 
 <p align="center">
   <a href="https://www.meilisearch.com/">
