@@ -28,7 +28,7 @@ for kv in tree.range(k..) {}
 // deletion
 tree.remove(&k);
 
-// compare and swap
+// atomic compare and swap
 tree.compare_and_swap(k, Some(v1), Some(v2));
 
 // block until all operations are stable on disk
