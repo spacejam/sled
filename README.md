@@ -23,9 +23,7 @@ tree.insert(k, v1);
 assert_eq!(tree.get(&k), Ok(Some(v1)));
 
 // range queries
-let mut iter = tree.range(k..);
-assert_eq!(iter.next(), Some(Ok((k, v2))));
-assert_eq!(iter.next(), None);
+for kv in tree.range(k..) {}
 
 // deletion
 tree.remove(&k);
