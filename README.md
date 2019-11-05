@@ -121,7 +121,7 @@ for a more detailed overview of where we're at and where we see things going!
 
 # fund feature development
 
-Want to support development but don't need commercial support? Help us out via [Open Collective](https://opencollective.com/sled)!
+Want to support development? Help us out via [Open Collective](https://opencollective.com/sled)!
 
 # special thanks
 
@@ -156,7 +156,7 @@ Finally, thanks to everyone who helps out by contributing on [Open Collective](h
 want to help advance the state of the art in open source embedded
 databases? check out [CONTRIBUTING.md](CONTRIBUTING.md)!
 
-# References
+# references
 
 * [The Bw-Tree: A B-tree for New Hardware Platforms](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/bw-tree-icde2013-final.pdf)
 * [LLAMA: A Cache/Storage Subsystem for Modern Hardware](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/llama-vldb2013.pdf)
