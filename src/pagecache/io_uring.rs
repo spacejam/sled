@@ -39,14 +39,14 @@ pub(crate) struct Uring<T> {
 unsafe impl<T> Send for Uring<T> {}
 
 impl<T> Uring<T> {
-    /// Create and initialize new io_uring structure with
+    /// Create and initialize new `io_uring` structure with
     /// `size` queue length and `flags` specified properties.
     ///
     /// Available flags from io_uring.h:
-    ///     - IORING_SETUP_IOPOLL	(1U << 0)	/* io_context is polled */
-    ///     - IORING_SETUP_SQPOLL	(1U << 1)	/* SQ poll thread */
-    ///     - IORING_SETUP_SQ_AFF	(1U << 2)	/* sq_thread_cpu is valid */
-    ///     - IORING_SETUP_CQSIZE	(1U << 3)	/* app defines CQ size */
+    ///     - `IORING_SETUP_IOPOLL`	(1U << 0)	/* io_context is polled */
+    ///     - `IORING_SETUP_SQPOLL`	(1U << 1)	/* SQ poll thread */
+    ///     - `IORING_SETUP_SQ_AFF`	(1U << 2)	/* sq_thread_cpu is valid */
+    ///     - `IORING_SETUP_CQSIZE`	(1U << 3)	/* app defines CQ size */
     pub fn new(
         file: Arc<File>,
         size: usize,
