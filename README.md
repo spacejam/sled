@@ -23,14 +23,12 @@ tree.insert(k, v1);
 assert_eq!(tree.get(&k), Ok(Some(v1)));
 
 // range queries
-let mut iter = tree.range(k..);
-assert_eq!(iter.next(), Some(Ok((k, v2))));
-assert_eq!(iter.next(), None);
+for kv in tree.range(k..) {}
 
 // deletion
 tree.remove(&k);
 
-// compare and swap
+// atomic compare and swap
 tree.compare_and_swap(k, Some(v1), Some(v2));
 
 // block until all operations are stable on disk
@@ -119,9 +117,11 @@ for a more detailed overview of where we're at and where we see things going!
 * pluggable conflict detection and resolution strategies for gossip + CRDT-based [PA/EL](https://en.wikipedia.org/wiki/PACELC_theorem) systems
 * first-class programmatic access to replication stream
 
-# fund feature development and get commercial support
+# fund feature development
 
-Want to support the project, prioritize a specific feature, or get commercial help with using sled in your project? [Ferrous Systems](https://ferrous-systems.com) provides commercial support for sled, and can work with you to solve a wide variety of storage problems across the latency-throughput, consistency, and price performance spectra. [Get in touch!](mailto:sled@ferrous-systems.com)
+Want to support development? Help us out via [Open Collective](https://opencollective.com/sled)!
+
+# special thanks
 
 <p align="center">
   <a href="https://ferrous-systems.com/">
@@ -129,9 +129,7 @@ Want to support the project, prioritize a specific feature, or get commercial he
   </a>
 </p>
 
-Want to support development but don't need commercial support? Help us out via [Open Collective](https://opencollective.com/sled)!
-
-# special thanks
+[Ferrous Systems](https://ferrous-systems.com) provided a huge amount of engineer time for sled in 2018 and 2019. They are the world's leading Rust education and embedded consulting company. [Get in touch!](mailto:inquiries+via+sled@ferrous-systems.com)
 
 <p align="center">
   <a href="https://www.meilisearch.com/">
@@ -156,7 +154,7 @@ Finally, thanks to everyone who helps out by contributing on [Open Collective](h
 want to help advance the state of the art in open source embedded
 databases? check out [CONTRIBUTING.md](CONTRIBUTING.md)!
 
-# References
+# references
 
 * [The Bw-Tree: A B-tree for New Hardware Platforms](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/bw-tree-icde2013-final.pdf)
 * [LLAMA: A Cache/Storage Subsystem for Modern Hardware](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/llama-vldb2013.pdf)
