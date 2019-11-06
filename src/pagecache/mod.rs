@@ -339,7 +339,11 @@ impl<'g> PageView<'g> {
     }
 
     pub(crate) fn ts(&self) -> u64 {
-        self.cache_infos.last().map(|ci| ci.ts).unwrap_or(0)
+        self.cache_infos.last().map(|ci| ci.ts).unwrap()
+    }
+
+    pub(crate) fn last_lsn(&self) -> Lsn {
+        self.cache_infos.last().map(|ci| ci.lsn).unwrap()
     }
 }
 
@@ -1003,7 +1007,10 @@ impl PageCache {
                         self.advance_snapshot()?;
                     }
 
-                    return Ok(Ok(PageView { cached_pointer, ts }));
+                    let mut page_view = page_view;
+                    page_view.read = new_shared;
+
+                    return Ok(Ok(page_view));
                 }
                 Err(cas_error) => {
                     trace!("link of pid {} failed", pid);
@@ -1015,15 +1022,10 @@ impl PageCache {
 
                         page_view.read = actual;
                     } else {
-                        let returned_update = returned_new.0.clone().unwrap();
-                        let returned_link = returned_update.into_link();
-                        return Ok(Err(Some((
-                            PageView {
-                                cached_pointer: actual_pointer,
-                                ts: actual_ts,
-                            },
-                            returned_link,
-                        ))));
+                        let mut page_view = page_view;
+                        page_view.read = actual;
+
+                        return Ok(Err(Some((page_view, new))));
                     }
                 }
             }
@@ -1127,8 +1129,6 @@ impl PageCache {
         };
 
         debug_delay();
-        let head = stack.head(guard);
-        let stack_iter = StackIter::from_ptr(head, guard);
         let cache_entries: Vec<_> = stack_iter.collect();
 
         // if the page is just a single blob pointer, rewrite it.
