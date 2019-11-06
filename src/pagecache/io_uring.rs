@@ -14,7 +14,7 @@ use crate::{Error, Result};
 use liburing::*;
 
 /// TODO: support for SQPOLL with idle timeout
-pub(crate) struct URing<T> {
+pub(crate) struct Uring<T> {
     /// Mutable unsafe FFI struct from liburing::
     ring: io_uring,
 
@@ -34,11 +34,11 @@ pub(crate) struct URing<T> {
 }
 
 /// Pointers can't be passed safely through threads boundaries.
-/// URing must enforce it, yet it is not Sync.
+/// `Uring` must enforce it, yet it is not Sync.
 #[allow(unsafe_code)]
-unsafe impl<T> Send for URing<T> {}
+unsafe impl<T> Send for Uring<T> {}
 
-impl<T> URing<T> {
+impl<T> Uring<T> {
     /// Create and initialize new io_uring structure with
     /// `size` queue length and `flags` specified properties.
     ///
@@ -70,7 +70,7 @@ impl<T> URing<T> {
             s.assume_init()
         };
 
-        let mut uring = URing::<T> {
+        let mut uring = Uring::<T> {
             ring,
             file,
             iovecs: Vec::with_capacity(size),
@@ -105,7 +105,7 @@ impl<T> URing<T> {
 
     unsafe fn drain_cqe(&mut self) -> Result<()> {
         loop {
-            let mut cqe: *mut io_uring_cqe = std::mem::zeroed();
+            let mut cqe: *mut io_uring_cqe = std::ptr::null_mut();
             let ret = io_uring_peek_cqe(&mut self.ring, &mut cqe);
             if ret == -libc::EAGAIN {
                 // peek found nothing, no completions to drain
@@ -114,7 +114,7 @@ impl<T> URing<T> {
             if ret < 0 {
                 return Err(Error::Io(io::Error::from_raw_os_error(ret)));
             }
-            let i = (*cqe).user_data as usize;
+            let i = usize::try_from((*cqe).user_data).unwrap();
             if i < self.free_slots.capacity() {
                 self.free_slots.push(i);
                 // release
@@ -149,7 +149,7 @@ impl<T> URing<T> {
             if self.free_slots.len() < reserve {
                 let ret = io_uring_submit_and_wait(
                     &mut self.ring,
-                    reserve as libc::c_uint,
+                    libc::c_uint::try_from(reserve).unwrap(),
                 );
                 if ret < 0 {
                     return Err(Error::Io(io::Error::from_raw_os_error(ret)));
@@ -166,7 +166,7 @@ impl<T> URing<T> {
             // 3. build write() SQE
             {
                 let sqe = io_uring_get_sqe(&mut self.ring);
-                if sqe == std::ptr::null_mut() {
+                if sqe.is_null() {
                     return Err(Error::Io(io::Error::new(
                         io::ErrorKind::Other,
                         "unexpected lack of sqes",
@@ -182,9 +182,9 @@ impl<T> URing<T> {
                 io_uring_prep_writev(
                     sqe,
                     self.file.as_raw_fd(),
-                    &mut self.iovecs[i],
+                    &self.iovecs[i],
                     1,
-                    offset as off_t,
+                    off_t::try_from(offset).unwrap(),
                 );
                 (*sqe).user_data = u64::try_from(i).unwrap();
             }
@@ -192,7 +192,7 @@ impl<T> URing<T> {
             // 4. build fsync() SQE
             if fsync {
                 let sqe = io_uring_get_sqe(&mut self.ring);
-                if sqe == std::ptr::null_mut() {
+                if sqe.is_null() {
                     return Err(Error::Io(io::Error::new(
                         io::ErrorKind::Other,
                         "unexpected lack of sqes",
@@ -221,14 +221,15 @@ impl<T> URing<T> {
     }
 }
 
-impl<T> Drop for URing<T> {
+impl<T> Drop for Uring<T> {
     fn drop(&mut self) {
         unsafe {
             // flush unfinished ops
             if self.free_slots.len() < self.iovecs.len() {
                 let ret = io_uring_submit_and_wait(
                     &mut self.ring,
-                    (self.iovecs.len() - self.free_slots.len()) as u32,
+                    u32::try_from(self.iovecs.len() - self.free_slots.len())
+                        .unwrap(),
                 );
                 if ret < 0 {
                     panic!(Error::Io(io::Error::from_raw_os_error(ret)));

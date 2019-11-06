@@ -59,7 +59,7 @@ pub(crate) struct IoBufs {
     pub max_header_stable_lsn: Arc<AtomicLsn>,
     pub segment_accountant: Mutex<SegmentAccountant>,
     #[cfg(feature = "io_uring")]
-    pub write_uring: Mutex<io_uring::URing<IoBuf>>,
+    pub write_uring: Mutex<io_uring::Uring<IoBuf>>,
 }
 
 /// `IoBufs` is a set of lock-free buffers for coordinating
@@ -177,7 +177,7 @@ impl IoBufs {
             )),
             segment_accountant: Mutex::new(segment_accountant),
             #[cfg(feature = "io_uring")]
-            write_uring: Mutex::new(io_uring::URing::new(file, 16, 0)?),
+            write_uring: Mutex::new(io_uring::Uring::new(file, 16, 0)?),
             // TODO: queue and flags configurable
         })
     }
@@ -922,7 +922,11 @@ impl IoBuf {
     ) -> std::result::Result<Header, Header> {
         debug_delay();
         let res = self.header.compare_and_swap(old, new, SeqCst);
-        if res == old { Ok(new) } else { Err(res) }
+        if res == old {
+            Ok(new)
+        } else {
+            Err(res)
+        }
     }
 }
 
