@@ -58,6 +58,8 @@ pub(crate) struct IoBufs {
     pub max_reserved_lsn: AtomicLsn,
     pub max_header_stable_lsn: Arc<AtomicLsn>,
     pub segment_accountant: Mutex<SegmentAccountant>,
+    #[cfg(feature = "io_uring")]
+    pub write_uring: Mutex<io_uring::URing<IoBuf>>,
 }
 
 /// `IoBufs` is a set of lock-free buffers for coordinating
@@ -157,7 +159,10 @@ impl IoBufs {
         // remove all blob files larger than our stable offset
         gc_blobs(&config, stable)?;
 
-        Ok(IoBufs {
+        #[cfg(feature = "io_uring")]
+        let file = config.file.clone();
+
+        Ok(Self {
             config,
 
             iobuf: RwLock::new(Arc::new(iobuf)),
@@ -171,6 +176,9 @@ impl IoBufs {
                 snapshot_max_header_stable_lsn,
             )),
             segment_accountant: Mutex::new(segment_accountant),
+            #[cfg(feature = "io_uring")]
+            write_uring: Mutex::new(io_uring::URing::new(file, 16, 0)?),
+            // TODO: queue and flags configurable
         })
     }
 
@@ -305,7 +313,7 @@ impl IoBufs {
 
     // Write an IO buffer's data to stable storage and set up the
     // next IO buffer for writing.
-    pub(crate) fn write_to_log(&self, iobuf: &IoBuf) -> Result<()> {
+    pub(crate) fn write_to_log(&self, iobuf: Arc<IoBuf>) -> Result<()> {
         let _measure = Measure::new(&M.write_to_log);
         let header = iobuf.get_header();
         let log_offset = iobuf.offset;
@@ -398,12 +406,25 @@ impl IoBufs {
 
         #[allow(unsafe_code)]
         let data = unsafe { (*iobuf.buf.get()).as_mut_slice() };
+        let stored_max_stable_lsn = iobuf.stored_max_stable_lsn;
 
-        let f = &self.config.file;
         io_fail!(self, "buffer write");
-        f.pwrite_all(&data[..total_len], log_offset)?;
-        if !self.config.temporary {
-            f.sync_all()?;
+        #[cfg(feature = "io_uring")]
+        {
+            self.write_uring.lock().pwrite_all(
+                &mut data[..total_len],
+                iobuf,
+                log_offset,
+                !self.config.temporary,
+            )?;
+        }
+        #[cfg(not(feature = "io_uring"))]
+        {
+            let f = &self.config.file;
+            f.pwrite_all(&data[..total_len], log_offset)?;
+            if !self.config.temporary {
+                f.sync_all()?;
+            }
         }
         io_fail!(self, "buffer write post");
 
@@ -437,7 +458,6 @@ impl IoBufs {
         // have completed their (crossbeam-epoch)-pinned operations.
         let guard = pin();
         let max_header_stable_lsn = self.max_header_stable_lsn.clone();
-        let stored_max_stable_lsn = iobuf.stored_max_stable_lsn;
         guard.defer(move || {
             trace!("bumping atomic header lsn to {}", stored_max_stable_lsn);
             bump_atomic_lsn(&max_header_stable_lsn, stored_max_stable_lsn)
@@ -769,7 +789,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
         let iobufs = iobufs.clone();
         let iobuf = iobuf.clone();
         let _result = threadpool::spawn(move || {
-            if let Err(e) = iobufs.write_to_log(&iobuf) {
+            if let Err(e) = iobufs.write_to_log(iobuf) {
                 error!(
                     "hit error while writing iobuf with lsn {}: {:?}",
                     lsn, e
