@@ -193,6 +193,8 @@ pub struct Inner {
     #[doc(hidden)]
     pub read_only: bool,
     #[doc(hidden)]
+    pub create_new: bool,
+    #[doc(hidden)]
     pub segment_cleanup_threshold: u8,
     #[doc(hidden)]
     pub segment_cleanup_skew: usize,
@@ -227,6 +229,7 @@ impl Default for Inner {
             segment_size: 2 << 22, // 8mb
             path: PathBuf::from(DEFAULT_PATH),
             read_only: false,
+            create_new: false,
             cache_capacity: 1024 * 1024 * 1024, // 1gb
             use_compression: false,
             compression_factor: 5,
@@ -434,19 +437,20 @@ impl Config {
     }
 
     builder!(
+        (flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
         (temporary, bool, "deletes the database after drop. if no path is set, uses /dev/shm on linux"),
-        (read_only, bool, "whether to run in read-only mode"),
+        (create_new, bool, "attempts to exclusively open the database, failing if it already exists"),
         (cache_capacity, u64, "maximum size for the system page cache"),
+        (print_profile_on_drop, bool, "print a performance profile when the Config is dropped"),
         (use_compression, bool, "whether to use zstd compression"),
         (compression_factor, i32, "the compression factor to use with zstd compression"),
-        (flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
         (snapshot_after_ops, u64, "number of operations between page table snapshots"),
         (segment_cleanup_threshold, u8, "the proportion of remaining valid pages in the segment before GC defragments it"),
         (segment_cleanup_skew, usize, "the cleanup threshold skew in percentage points between the first and last segments"),
         (segment_mode, SegmentMode, "the file segment selection mode"),
         (snapshot_path, Option<PathBuf>, "snapshot file location"),
-        (print_profile_on_drop, bool, "print a performance profile when the Config is dropped"),
-        (idgen_persist_interval, u64, "generated IDs are persisted at this interval. during recovery we skip twice this number")
+        (idgen_persist_interval, u64, "generated IDs are persisted at this interval. during recovery we skip twice this number"),
+        (read_only, bool, "whether to run in read-only mode")
     );
 
     // panics if config options are outside of advised range
@@ -520,8 +524,7 @@ impl Config {
         }
 
         if !dir.exists() {
-            let res = fs::create_dir_all(dir);
-            res.map_err(Error::from)?;
+            fs::create_dir_all(dir)?;
         }
 
         self.verify_config()?;
@@ -536,10 +539,11 @@ impl Config {
             let _ = options.write(true);
         }
 
-        match options.open(&path) {
-            Ok(file) => self.try_lock(file),
-            Err(e) => Err(e.into()),
+        if self.create_new {
+            options.create_new(true);
         }
+
+        self.try_lock(options.open(&path)?)
     }
 
     fn try_lock(&self, file: File) -> Result<File> {

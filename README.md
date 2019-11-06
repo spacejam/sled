@@ -23,14 +23,12 @@ tree.insert(k, v1);
 assert_eq!(tree.get(&k), Ok(Some(v1)));
 
 // range queries
-let mut iter = tree.range(k..);
-assert_eq!(iter.next(), Some(Ok((k, v2))));
-assert_eq!(iter.next(), None);
+for kv in tree.range(k..) {}
 
 // deletion
 tree.remove(&k);
 
-// compare and swap
+// atomic compare and swap
 tree.compare_and_swap(k, Some(v1), Some(v2));
 
 // block until all operations are stable on disk
@@ -119,22 +117,32 @@ for a more detailed overview of where we're at and where we see things going!
 * pluggable conflict detection and resolution strategies for gossip + CRDT-based [PA/EL](https://en.wikipedia.org/wiki/PACELC_theorem) systems
 * first-class programmatic access to replication stream
 
-# fund feature development and get commercial support
+# fund feature development
 
-Want to support the project, prioritize a specific feature, or get commercial help with using sled in your project? [Ferrous Systems](https://ferrous-systems.com) provides commercial support for sled, and can work with you to solve a wide variety of storage problems across the latency-throughput, consistency, and price performance spectra. [Get in touch!](mailto:sled@ferrous-systems.com)
-
-[![Ferrous Systems](https://ferrous-systems.com/images/ferrous-systems-mono-pos.svg)](https://ferrous-systems.com/)
-
-Want to support development but don't need commercial support? Help us out via [Open Collective](https://opencollective.com/sled)!
+Want to support development? Help us out via [Open Collective](https://opencollective.com/sled)!
 
 # special thanks
 
-[![Meili](https://avatars3.githubusercontent.com/u/43250847?s=200&v=4)](https://www.meilisearch.com/)
+<p align="center">
+  <a href="https://ferrous-systems.com/">
+    <img src="https://ferrous-systems.com/images/ferrous-systems-mono-pos.svg" width="60%" height="auto" />
+  </a>
+</p>
+
+[Ferrous Systems](https://ferrous-systems.com) provided a huge amount of engineer time for sled in 2018 and 2019. They are the world's leading Rust education and embedded consulting company. [Get in touch!](mailto:inquiries+via+sled@ferrous-systems.com)
+
+<p align="center">
+  <a href="https://www.meilisearch.com/">
+    <img src="https://avatars3.githubusercontent.com/u/43250847?s=200&v=4" width="20%" height="auto" />
+  </a>
+</p>
 
 Special thanks to [Meili](https://www.meilisearch.com/) for providing engineering effort and other support to the sled project. They are building [an event store](https://blog.meilisearch.com/meilies-release/) backed by sled, and they offer [a full-text search system](https://github.com/meilisearch/MeiliDB) which has been a valuable case study helping to focus the sled roadmap for the future.
 
-<p>
-  <img src="https://user-images.githubusercontent.com/7989673/29498525-38a33f36-85cc-11e7-938d-ef6f10ba6fb3.png" width="20%" height="auto" />
+<p align="center">
+  <a href="http://worksonarm.com">
+    <img src="https://user-images.githubusercontent.com/7989673/29498525-38a33f36-85cc-11e7-938d-ef6f10ba6fb3.png" width="20%" height="auto" />
+  </a>
 </p>
 
 Additional thanks to [Arm](https://www.arm.com/), [Works on Arm](https://www.worksonarm.com/) and [Packet](https://www.packet.com/), who have generously donated a 96 core monster machine to assist with intensive concurrency testing of sled. Each second that sled does not crash while running your critical stateful workloads, you are encouraged to thank these wonderful organizations. Each time sled does crash and lose your data, blame Intel.
@@ -146,7 +154,7 @@ Finally, thanks to everyone who helps out by contributing on [Open Collective](h
 want to help advance the state of the art in open source embedded
 databases? check out [CONTRIBUTING.md](CONTRIBUTING.md)!
 
-# References
+# references
 
 * [The Bw-Tree: A B-tree for New Hardware Platforms](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/bw-tree-icde2013-final.pdf)
 * [LLAMA: A Cache/Storage Subsystem for Modern Hardware](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/llama-vldb2013.pdf)

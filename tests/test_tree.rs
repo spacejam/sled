@@ -244,14 +244,14 @@ fn concurrent_tree_iter() -> Result<()> {
                             loop {
                                 if let Some(Ok(k)) = keys.next() {
                                     assert!(
-                                    &*k >= *expect,
-                                    "witnessed key is {:?} but we expected \
-                                     one >= {:?}, so we overshot due to a \
-                                     concurrent modification\n{:?}",
-                                    k,
-                                    expect,
-                                    *t,
-                                );
+                                        &*k >= *expect,
+                                        "witnessed key is {:?} but we expected \
+                                         one >= {:?}, so we overshot due to a \
+                                         concurrent modification\n{:?}",
+                                        k,
+                                        expect,
+                                        *t,
+                                    );
                                     if &*k == *expect {
                                         break;
                                     }
@@ -706,6 +706,23 @@ fn recover_tree() {
         let k = kv(i as usize);
         assert_eq!(t.get(&*k), Ok(None));
     }
+}
+
+#[test]
+fn create_tree() {
+    common::setup_logger();
+
+    let path = "create_exclusive_db";
+    std::fs::remove_dir_all(path);
+
+    {
+        let config = Config::new().create_new(true).path(path);
+        config.open().unwrap();
+    }
+
+    let config = Config::new().create_new(true).path(path);
+    config.open().unwrap_err();
+    std::fs::remove_dir_all(path);
 }
 
 #[test]

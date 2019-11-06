@@ -22,9 +22,6 @@ pub struct Log {
     pub(crate) config: RunningConfig,
 }
 
-#[allow(unsafe_code)]
-unsafe impl Send for Log {}
-
 impl Log {
     /// Start the log, open or create the configured file,
     /// and optionally start the periodic buffer flush thread.
@@ -397,7 +394,7 @@ impl Log {
             let iobufs = self.iobufs.clone();
             let iobuf = iobuf.clone();
             let _result = threadpool::spawn(move || {
-                if let Err(e) = iobufs.write_to_log(&iobuf) {
+                if let Err(e) = iobufs.write_to_log(iobuf) {
                     error!(
                         "hit error while writing iobuf with lsn {}: {:?}",
                         lsn, e
