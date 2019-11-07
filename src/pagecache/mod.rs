@@ -420,19 +420,11 @@ impl Update {
     }
 
     fn is_replace(&self) -> bool {
-        if let Update::Node(_) = self {
-            true
-        } else {
-            false
-        }
+        if let Update::Node(_) = self { true } else { false }
     }
 
     fn is_free(&self) -> bool {
-        if let Update::Free = self {
-            true
-        } else {
-            false
-        }
+        if let Update::Free = self { true } else { false }
     }
 }
 
