@@ -1766,39 +1766,7 @@ impl PageCache {
                 // should not page these suckas out
                 continue;
             }
-
-            let stack = match self.inner.get(pid) {
-                None => continue 'different_page_eviction,
-                Some(p) => p,
-            };
-
-            debug_delay();
-            let head = stack.head(guard);
-            let stack_iter = StackIter::from_ptr(head, guard);
-            let stack_len = stack_iter.size_hint().1.unwrap();
-            let mut new_stack = Vec::with_capacity(stack_len);
-
-            for (update_opt, cache_info) in stack_iter {
-                match update_opt {
-                    None | Some(Update::Free) => {
-                        // already paged out
-                        continue 'different_page_eviction;
-                    }
-                    Some(_) => {
-                        new_stack.push((None, *cache_info));
-                    }
-                }
-            }
-
-            let node = node_from_link_vec(new_stack);
-
-            debug_delay();
-            let result = stack.cas(head, node, guard);
-            if result.is_ok() {
-                // TODO record cache difference
-            } else {
-                trace!("failed to page-out pid {}", pid)
-            }
+            unimplemented!()
         }
         Ok(())
     }
@@ -2005,7 +1973,7 @@ impl PageCache {
 
             trace!("load_snapshot pid {} {:?}", pid, state);
 
-            let stack = Stack::default();
+            let mut cache_infos = vec![];
 
             let guard = pin();
 
@@ -2015,7 +1983,7 @@ impl PageCache {
                         let cache_info =
                             CacheInfo { lsn, pointer, log_size: sz, ts: 0 };
 
-                        stack.push((None, cache_info), &guard);
+                        cache_infos.push(cache_info);
                     }
                 }
                 PageState::Free(lsn, pointer) => {
@@ -2027,16 +1995,16 @@ impl PageCache {
                         log_size: MSG_HEADER_LEN,
                         ts: 0,
                     };
-                    stack.push((Some(Update::Free), cache_info), &guard);
+                    cache_infos.push(cache_info);
                     self.free.lock().push(pid);
                 }
             }
 
-            // Set up new stack
+            // Set up new page
+            trace!("installing page for pid {}", pid);
+            let page = Page { update: None, cache_infos };
 
-            trace!("installing stack for pid {}", pid);
-
-            self.inner.insert(pid, stack);
+            self.inner.insert(pid, page, &guard);
         }
     }
 }
