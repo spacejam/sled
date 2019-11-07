@@ -538,7 +538,7 @@ impl Drop for PageCache {
             );
 
             for pid in 0..self.next_pid_to_allocate.load(Acquire) {
-                let pte = self.inner.get(pid);
+                let pte = self.inner.get(pid, &guard);
                 if pte.is_none() {
                     continue;
                 }
@@ -598,7 +598,7 @@ impl PageCache {
             let mut pages_after_restart = HashMap::new();
 
             for pid in 0..pc.next_pid_to_allocate.load(Acquire) {
-                let pte = pc.inner.get(pid);
+                let pte = pc.inner.get(pid, &guard);
                 if pte.is_none() {
                     continue;
                 }
@@ -1992,7 +1992,7 @@ impl PageCache {
                     let cache_info = CacheInfo {
                         lsn,
                         pointer,
-                        log_size: MSG_HEADER_LEN,
+                        log_size: u64::try_from(MSG_HEADER_LEN).unwrap(),
                         ts: 0,
                     };
                     cache_infos.push(cache_info);

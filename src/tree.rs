@@ -1474,7 +1474,8 @@ impl Tree {
 
         new_root_vec.push((at, to));
 
-        let new_root = Link::root(Data::Index(new_root_vec));
+        let new_root =
+            Node { data: Data::Index(new_root_vec), ..Node::default() };
 
         let (new_root_pid, new_root_ptr) =
             self.context.pagecache.allocate(new_root, guard)?;
