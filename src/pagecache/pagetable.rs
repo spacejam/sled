@@ -146,14 +146,14 @@ impl PageTable {
         }
     }
 
-    fn traverse<'g>(self, k: PageId, guard: &'g Guard) -> &'g Atomic<Page> {
+    fn traverse<'g>(&self, k: PageId, guard: &'g Guard) -> &'g Atomic<Page> {
         let (l1k, l2k) = split_fanout(k);
 
         debug_delay();
         let head = self.head.load(Acquire, guard);
 
         debug_delay();
-        let l1 = unsafe { head.deref().children };
+        let l1 = unsafe { &head.deref().children };
 
         debug_delay();
         let mut l2_ptr = l1[l1k].load(Acquire, guard);
@@ -179,7 +179,7 @@ impl PageTable {
         }
 
         debug_delay();
-        let l2 = unsafe { l2_ptr.deref().children };
+        let l2 = unsafe { &l2_ptr.deref().children };
 
         &l2[l2k]
     }
