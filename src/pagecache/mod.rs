@@ -277,7 +277,7 @@ pub(crate) fn maybe_decompress(buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
     Ok(buf)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct PageView<'g> {
     pub(crate) read: Shared<'g, Page>,
     pub(crate) entry: &'g Atomic<Page>,
@@ -290,7 +290,7 @@ unsafe impl<'g> Sync for PageView<'g> {}
 impl<'g> PageView<'g> {
     fn rcu<'b, F, B>(
         &self,
-        f: F,
+        mut f: F,
         guard: &'b Guard,
     ) -> std::result::Result<B, Shared<'b, Page>>
     where
@@ -298,7 +298,8 @@ impl<'g> PageView<'g> {
     {
         let mut old_pointer = self.read;
         loop {
-            let mut clone: Owned<Page> = Owned::new(self.deref().clone());
+            let mut clone: Owned<Page> =
+                unsafe { Owned::new(old_pointer.deref().clone()) };
             let b = f(clone.deref_mut());
 
             let result =
@@ -307,7 +308,8 @@ impl<'g> PageView<'g> {
             match result {
                 Ok(_) => return Ok(b),
                 Err(cas_error)
-                    if cas_error.current.deref().ts() == self.ts() =>
+                    if unsafe { cas_error.current.deref().ts() }
+                        == self.ts() =>
                 {
                     // we got here because the page was moved to a new
                     // location.
