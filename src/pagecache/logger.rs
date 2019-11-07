@@ -201,8 +201,8 @@ impl Log {
                 MessageKind::BatchManifest
             }
             (_, LogKind::Free, false) => MessageKind::Free,
-            (_, LogKind::Replace, true) => MessageKind::BlobReplace,
-            (_, LogKind::Replace, false) => MessageKind::InlineReplace,
+            (_, LogKind::Replace, true) => MessageKind::BlobNode,
+            (_, LogKind::Replace, false) => MessageKind::InlineNode,
             (_, LogKind::Link, true) => MessageKind::BlobLink,
             (_, LogKind::Link, false) => MessageKind::InlineLink,
             other => panic!(

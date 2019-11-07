@@ -360,7 +360,7 @@ pub struct CacheInfo {
     pub ts: u64,
     pub lsn: Lsn,
     pub pointer: DiskPtr,
-    pub log_size: usize,
+    pub log_size: u64,
 }
 
 /// Update<PageLinkment> denotes a state or a change in a sequence of updates
@@ -464,7 +464,7 @@ pub struct Page {
 }
 
 impl Page {
-    fn log_size(&self) -> usize {
+    fn log_size(&self) -> u64 {
         self.cache_infos.iter().map(|ci| ci.log_size).sum()
     }
 
@@ -1574,7 +1574,7 @@ impl PageCache {
 
             let page_ref = unsafe {
                 let item = &new_pointer.deref().inner;
-                if let (Some(Update::Node(replace)), _) = item {
+                if let (Some(Update::Node(ref replace)), _) = item {
                     replace
                 } else {
                     panic!()

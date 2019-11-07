@@ -135,10 +135,9 @@ pub(crate) fn read_message(
             trace!("read pad at lsn {}", header.lsn);
             Ok(LogRead::Pad(header.lsn))
         }
-        MessageKind::BlobAppend
-        | MessageKind::BlobReplace
-        | MessageKind::BlobMeta
-        | MessageKind::BlobConfig => {
+        MessageKind::BlobLink
+        | MessageKind::BlobNode
+        | MessageKind::BlobMeta => {
             let id = arr_to_lsn(&buf);
 
             match read_blob(id, config) {
@@ -167,10 +166,9 @@ pub(crate) fn read_message(
                 }
             }
         }
-        MessageKind::InlineAppend
-        | MessageKind::InlineReplace
+        MessageKind::InlineLink
+        | MessageKind::InlineNode
         | MessageKind::InlineMeta
-        | MessageKind::InlineConfig
         | MessageKind::Free
         | MessageKind::Counter => {
             trace!("read a successful inline message");

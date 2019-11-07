@@ -16,7 +16,7 @@ pub struct LogIter {
 }
 
 impl Iterator for LogIter {
-    type Item = (LogKind, PageId, Lsn, DiskPtr, usize);
+    type Item = (LogKind, PageId, Lsn, DiskPtr, u64);
 
     fn next(&mut self) -> Option<Self::Item> {
         // If segment is None, get next on segment_iter, panic
@@ -71,7 +71,8 @@ impl Iterator for LogIter {
             match read_message(f, lid, self.cur_lsn, &self.config) {
                 Ok(LogRead::Blob(header, _buf, blob_ptr)) => {
                     trace!("read blob flush in LogIter::next");
-                    let sz = MSG_HEADER_LEN + BLOB_INLINE_LEN;
+                    let sz = u64::try_from(MSG_HEADER_LEN + BLOB_INLINE_LEN)
+                        .unwrap();
                     self.cur_lsn += sz as Lsn;
 
                     return Some((
@@ -84,7 +85,8 @@ impl Iterator for LogIter {
                 }
                 Ok(LogRead::Inline(header, _buf, on_disk_len)) => {
                     trace!("read inline flush in LogIter::next");
-                    let sz = MSG_HEADER_LEN + on_disk_len as usize;
+                    let sz = u64::try_from(MSG_HEADER_LEN).unwrap()
+                        + on_disk_len as u64;
                     self.cur_lsn += sz as Lsn;
 
                     return Some((
