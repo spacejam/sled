@@ -910,7 +910,8 @@ impl PageCache {
 
         // see if we should short-circuit replace
         if page_view.cache_infos.len() > PAGE_CONSOLIDATION_THRESHOLD {
-            return self.replace(pid, old, node, guard);
+            let short_circuit = self.replace(pid, old, node, guard)?;
+            return Ok(short_circuit.map_err(|a| a.map(|b| (b.0, new))));
         }
 
         let bytes = measure(&M.serialize, || serialize(&new).unwrap());
