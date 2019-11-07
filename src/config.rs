@@ -16,8 +16,8 @@ const DEFAULT_PATH: &str = "default.sled";
 
 /// A persisted configuration about high-level
 /// storage file information
-#[derive(Debug, Eq, PartialEq, Clone, Copy, Serialize, Deserialize)]
-pub struct StorageParameters {
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+struct StorageParameters {
     pub segment_size: usize,
     pub use_compression: bool,
     pub version: (usize, usize),

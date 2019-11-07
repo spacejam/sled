@@ -1248,9 +1248,8 @@ impl PageCache {
         let guard = pin();
         let meta_size = self.meta(&guard)?.size_in_bytes();
         let idgen_size = std::mem::size_of::<u64>() as u64;
-        let config_size = self.get_persisted_config(&guard)?.1.size_in_bytes();
 
-        let mut ret = meta_size + idgen_size + config_size;
+        let mut ret = meta_size + idgen_size;
         let min_pid = COUNTER_PID + 1;
         let next_pid_to_allocate = self.next_pid_to_allocate.load(Acquire);
         for pid in min_pid..next_pid_to_allocate {
