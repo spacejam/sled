@@ -322,8 +322,8 @@ impl<'g> PageView<'g> {
         }
     }
 
-    pub(crate) fn as_link(&self) -> &Link {
-        self.update.as_ref().unwrap().as_link()
+    pub(crate) fn as_node(&self) -> &Node {
+        self.update.as_ref().unwrap().as_node()
     }
 
     pub(crate) fn as_meta(&self) -> &Meta {
@@ -1398,12 +1398,10 @@ impl PageCache {
         };
 
         let cache_info = page_cell.last_cache_info().unwrap();
-        let page_ptr =
-            PageView { cached_pointer: page_cell.read, ts: cache_info.ts };
 
         if page_cell.update.is_some() {
             let meta_ref = page_cell.as_meta();
-            Ok((page_ptr, meta_ref))
+            Ok((page_cell, meta_ref))
         } else {
             Err(Error::ReportableBug(
                 "failed to retrieve META page \
@@ -1433,7 +1431,7 @@ impl PageCache {
 
         if page_cell.update.is_some() {
             let counter = page_cell.as_counter();
-            Ok((page_cell.page_ptr(), counter))
+            Ok((page_cell, counter))
         } else {
             Err(Error::ReportableBug(
                 "failed to retrieve counter page \
@@ -1474,9 +1472,8 @@ impl PageCache {
         let total_page_size = page_cell.log_size();
 
         if page_cell.update.is_some() {
-            let page_ptr = page_cell.page_ptr();
-            let replace = page_cell.as_link();
-            return Ok(Some((page_ptr, replace, total_page_size)));
+            let node = page_cell.as_node();
+            return Ok(Some((page_cell, node, total_page_size)));
         }
         /*
         let initial_base = match entries[0] {
