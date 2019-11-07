@@ -19,7 +19,6 @@ mod snapshot;
 
 use crate::*;
 use std::{
-    borrow::Cow,
     collections::BinaryHeap,
     ops::{Deref, DerefMut},
 };
@@ -947,7 +946,7 @@ impl PageCache {
                 lsn,
                 pointer,
                 ts,
-                log_size: log_reservation.reservation_len(),
+                log_size: log_reservation.reservation_len() as u64,
             };
 
             let mut new_cache_infos = page_view.cache_infos.clone();
@@ -1042,7 +1041,7 @@ impl PageCache {
         old: PageView<'g>,
         new: Node,
         guard: &'g Guard,
-    ) -> Result<CasResult<'g, Link>> {
+    ) -> Result<CasResult<'g, Node>> {
         let _measure = Measure::new(&M.replace_page);
 
         trace!("replacing pid {} with {:?}", pid, new);
