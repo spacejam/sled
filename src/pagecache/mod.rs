@@ -593,7 +593,7 @@ impl PageCache {
         };
 
         // now we read it back in
-        pc.load_snapshot();
+        pc.load_snapshot()?;
 
         #[cfg(feature = "event_log")]
         {
@@ -1959,7 +1959,7 @@ impl PageCache {
         Ok(())
     }
 
-    fn load_snapshot(&mut self) {
+    fn load_snapshot(&mut self) -> Result<()> {
         // panic if not set
         let snapshot_mu = self.last_snapshot.try_lock().unwrap();
         let snapshot = snapshot_mu.as_ref().unwrap();
@@ -2014,9 +2014,24 @@ impl PageCache {
 
             // Set up new page
             trace!("installing page for pid {}", pid);
-            let page = Page { update: None, cache_infos };
+
+            let update = match pid {
+                #[cold]
+                META_PID | COUNTER_PID => {
+                    let update = self.pull(
+                        pid,
+                        cache_infos[0].lsn,
+                        cache_infos[0].pointer,
+                    )?;
+                    Some(update)
+                }
+                _ => None,
+            };
+            let page = Page { update, cache_infos };
 
             self.inner.insert(pid, page, &guard);
         }
+
+        Ok(())
     }
 }
