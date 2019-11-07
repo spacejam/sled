@@ -482,14 +482,6 @@ impl Page {
     pub(crate) fn last_cache_info(&self) -> Option<&CacheInfo> {
         self.cache_infos.last()
     }
-
-    pub(crate) fn unwrap_link(&self) -> &Link {
-        self.update.unwrap().as_link()
-    }
-
-    pub(crate) fn unwrap_node(&self) -> &Node {
-        self.update.unwrap().as_node()
-    }
 }
 
 /// A lock-free pagecache which supports linkmented pages
@@ -545,12 +537,13 @@ impl Drop for PageCache {
             );
 
             for pid in 0..self.next_pid_to_allocate.load(Acquire) {
-                let pte = self.inner.get(pid, &guard);
-                if pte.is_none() {
+                let pte = if let Some(pte) = self.inner.get(pid, &guard) {
+                    pte
+                } else {
                     continue;
-                }
-                let head = pte.unwrap().deref().head(&guard);
-                let pointers = pointers_from_stack(head, &guard);
+                };
+                let pointers =
+                    pte.cache_infos.iter().map(|ci| ci.pointer).collect();
                 pages_before_restart.insert(pid, pointers);
             }
 
@@ -605,12 +598,13 @@ impl PageCache {
             let mut pages_after_restart = HashMap::new();
 
             for pid in 0..pc.next_pid_to_allocate.load(Acquire) {
-                let pte = pc.inner.get(pid, &guard);
-                if pte.is_none() {
+                let pte = if let Some(pte) = pc.inner.get(pid, &guard) {
+                    pte
+                } else {
                     continue;
-                }
-                let head = pte.unwrap().deref().head(&guard);
-                let pointers = pointers_from_stack(head, &guard);
+                };
+                let pointers =
+                    pte.cache_infos.iter().map(|ci| ci.pointer).collect();
                 pages_after_restart.insert(pid, pointers);
             }
 
@@ -854,7 +848,7 @@ impl PageCache {
     pub fn link<'g>(
         &'g self,
         pid: PageId,
-        mut old: PageView<'g>,
+        old: PageView<'g>,
         new: Link,
         guard: &'g Guard,
     ) -> Result<CasResult<'g, Link>> {
@@ -905,7 +899,7 @@ impl PageCache {
             Some(p) => p,
         };
 
-        let mut node: Node = page_view.unwrap_node().clone();
+        let mut node: Node = page_view.as_node().clone();
         node.apply(&new);
 
         // see if we should short-circuit replace
@@ -1016,7 +1010,7 @@ impl PageCache {
                     trace!("link of pid {} failed", pid);
                     log_reservation.abort()?;
                     let actual = cas_error.current;
-                    let actual_ts = actual.deref().ts();
+                    let actual_ts = unsafe { actual.deref().ts() };
                     if actual_ts == old.ts() {
                         new_page = Some(cas_error.new);
 
@@ -1120,6 +1114,7 @@ impl PageCache {
 
         trace!("rewriting pid {}", pid);
 
+        /*
         let stack = match self.inner.get(pid) {
             None => {
                 trace!("rewriting pid {} failed (no longer exists)", pid);
@@ -1214,6 +1209,8 @@ impl PageCache {
                 trace!("rewriting pid {} success: {}", pid, res.is_ok());
             })
         }
+        */
+        unimplemented!()
     }
 
     /// Traverses all files and calculates their total physical
@@ -1268,6 +1265,7 @@ impl PageCache {
         is_rewrite: bool,
         guard: &'g Guard,
     ) -> Result<CasResult<'g, Update>> {
+        /*
         trace!(
             "cas_page called on pid {} to {:?} with old ts {:?}",
             pid,
@@ -1377,6 +1375,9 @@ impl PageCache {
                 }
             } // match cas result
         } // loop
+        */
+
+        unimplemented!()
     }
 
     /// Retrieve the current meta page
@@ -1396,8 +1397,6 @@ impl PageCache {
             }
             Some(p) => p,
         };
-
-        let cache_info = page_cell.last_cache_info().unwrap();
 
         if page_cell.update.is_some() {
             let meta_ref = page_cell.as_meta();
