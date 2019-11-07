@@ -1478,8 +1478,9 @@ impl PageCache {
             let replace = page_cell.as_link();
             return Ok(Some((page_ptr, replace, total_page_size)));
         }
+        /*
         let initial_base = match entries[0] {
-            (Some(Update::Node(replace)), cache_info) => {
+            (Some(Update::Node(ref replace)), cache_info) => {
                 // short circuit
                 return Ok(Some((
                     PageView { cached_pointer: head, ts: cache_info.ts },
@@ -1598,6 +1599,9 @@ impl PageCache {
 
             self.get(pid, guard)
         }
+        */
+
+        unimplemented!()
     }
 
     /// The highest known stable Lsn on disk.
