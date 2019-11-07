@@ -1440,7 +1440,7 @@ impl PageCache {
         &self,
         pid: PageId,
         guard: &'g Guard,
-    ) -> Result<Option<(PageView<'g>, &'g Link, u64)>> {
+    ) -> Result<Option<(PageView<'g>, &'g Node, u64)>> {
         trace!("getting page iterator for pid {}", pid);
         let _measure = Measure::new(&M.get_page);
 

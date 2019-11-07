@@ -1403,15 +1403,14 @@ impl Tree {
         let rhs_lo = rhs.lo.clone();
 
         // install right side
-        let (rhs_pid, rhs_ptr) =
-            self.context.pagecache.allocate(Link::Base(rhs), guard)?;
+        let (rhs_pid, rhs_ptr) = self.context.pagecache.allocate(rhs, guard)?;
 
         // replace node, pointing next to installed right
         lhs.next = Some(rhs_pid);
         let replace = self.context.pagecache.replace(
             node_view.pid,
             node_view.ptr.clone(),
-            Link::Base(lhs),
+            lhs,
             guard,
         )?;
         M.tree_child_split_attempt();
@@ -1444,7 +1443,7 @@ impl Tree {
             let replace = self.context.pagecache.replace(
                 parent_view.pid,
                 parent_view.ptr.clone(),
-                Link::Base(parent),
+                parent,
                 guard,
             )?;
             if replace.is_ok() {
@@ -1524,7 +1523,7 @@ impl Tree {
     ) -> Result<Option<View<'g>>> {
         loop {
             let frag_opt = self.context.pagecache.get(pid, guard)?;
-            if let Some((tree_ptr, Link::Base(ref leaf), size)) = &frag_opt {
+            if let Some((tree_ptr, ref leaf, size)) = &frag_opt {
                 let view =
                     View { node: leaf, ptr: *tree_ptr, pid, size: *size };
                 if leaf.merging_child.is_some() {
@@ -1668,7 +1667,7 @@ impl Tree {
                 let replace = self.context.pagecache.replace(
                     unsplit_parent.pid,
                     unsplit_parent.ptr.clone(),
-                    Link::Base(parent),
+                    parent,
                     guard,
                 )?;
                 if replace.is_ok() {
