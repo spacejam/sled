@@ -278,13 +278,38 @@ pub(crate) fn maybe_decompress(buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct NodeView<'g>(pub(crate) PageView<'g>);
+
+impl<'g> Deref for NodeView<'g> {
+    type Target = Node;
+    fn deref(&self) -> &Node {
+        self.0.as_node()
+    }
+}
+
+unsafe impl<'g> Send for NodeView<'g> {}
+unsafe impl<'g> Sync for NodeView<'g> {}
+
+#[derive(Debug, Clone, Copy)]
+pub struct MetaView<'g>(PageView<'g>);
+
+impl<'g> Deref for MetaView<'g> {
+    type Target = Meta;
+    fn deref(&self) -> &Meta {
+        self.0.as_meta()
+    }
+}
+
+unsafe impl<'g> Send for MetaView<'g> {}
+unsafe impl<'g> Sync for MetaView<'g> {}
+
+#[derive(Debug, Clone, Copy)]
 pub struct PageView<'g> {
     pub(crate) read: Shared<'g, Page>,
     pub(crate) entry: &'g Atomic<Page>,
 }
 
 unsafe impl<'g> Send for PageView<'g> {}
-
 unsafe impl<'g> Sync for PageView<'g> {}
 
 impl<'g> PageView<'g> {
@@ -421,19 +446,11 @@ impl Update {
     }
 
     fn is_replace(&self) -> bool {
-        if let Update::Node(_) = self {
-            true
-        } else {
-            false
-        }
+        if let Update::Node(_) = self { true } else { false }
     }
 
     fn is_free(&self) -> bool {
-        if let Update::Free = self {
-            true
-        } else {
-            false
-        }
+        if let Update::Free = self { true } else { false }
     }
 }
 
@@ -473,7 +490,7 @@ pub struct Page {
 }
 
 impl Page {
-    fn log_size(&self) -> u64 {
+    pub(crate) fn log_size(&self) -> u64 {
         self.cache_infos.iter().map(|ci| ci.log_size).sum()
     }
 
@@ -785,7 +802,7 @@ impl PageCache {
 
             trace!("allocating pid {} for the first time", pid);
 
-            let new_page = Page { update: Some(new), cache_infos: vec![] };
+            let new_page = Page { update: None, cache_infos: vec![] };
 
             let page_view = self.inner.insert(pid, new_page, guard);
 
@@ -1252,8 +1269,8 @@ impl PageCache {
         let min_pid = COUNTER_PID + 1;
         let next_pid_to_allocate = self.next_pid_to_allocate.load(Acquire);
         for pid in min_pid..next_pid_to_allocate {
-            if let Some((_, _, sz)) = self.get(pid, &guard)? {
-                ret += sz;
+            if let Some(node_cell) = self.get(pid, &guard)? {
+                ret += node_cell.0.log_size();
             }
         }
         Ok(ret)
@@ -1447,7 +1464,7 @@ impl PageCache {
         &self,
         pid: PageId,
         guard: &'g Guard,
-    ) -> Result<Option<(PageView<'g>, &'g Node, u64)>> {
+    ) -> Result<Option<NodeView<'g>>> {
         trace!("getting page iterator for pid {}", pid);
         let _measure = Measure::new(&M.get_page);
 
@@ -1473,8 +1490,7 @@ impl PageCache {
         let total_page_size = page_cell.log_size();
 
         if page_cell.update.is_some() {
-            let node = page_cell.as_node();
-            return Ok(Some((page_cell, node, total_page_size)));
+            return Ok(Some(NodeView(page_cell)));
         }
         /*
         let initial_base = match entries[0] {
