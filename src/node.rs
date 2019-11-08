@@ -10,7 +10,7 @@ pub struct Node {
     pub(crate) hi: IVec,
     pub(crate) merging_child: Option<PageId>,
     pub(crate) merging: bool,
-    prefix_len: u8,
+    pub(crate) prefix_len: u8,
 }
 
 impl Node {
