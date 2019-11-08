@@ -1399,7 +1399,7 @@ impl PageCache {
     pub(crate) fn get_meta<'g>(
         &self,
         guard: &'g Guard,
-    ) -> Result<(PageView<'g>, &'g Meta)> {
+    ) -> Result<MetaView<'g>> {
         trace!("getting page iter for META");
 
         let page_cell = match self.inner.get(META_PID, guard) {
@@ -1414,8 +1414,7 @@ impl PageCache {
         };
 
         if page_cell.update.is_some() {
-            let meta_ref = page_cell.as_meta();
-            Ok((page_cell, meta_ref))
+            Ok(MetaView(page_cell))
         } else {
             Err(Error::ReportableBug(
                 "failed to retrieve META page \
@@ -1707,7 +1706,7 @@ impl PageCache {
     /// owner may use for storing metadata about their higher-level
     /// collections.
     pub fn meta<'a>(&self, guard: &'a Guard) -> Result<&'a Meta> {
-        self.get_meta(guard).map(|(_k, m)| m)
+        self.get_meta(guard).map(|m| m.deref())
     }
 
     /// Look up a `PageId` for a given identifier in the `Meta`
@@ -1740,14 +1739,14 @@ impl PageCache {
         guard: &'g Guard,
     ) -> Result<std::result::Result<(), Option<PageId>>> {
         loop {
-            let (meta_key, meta) = self.get_meta(guard)?;
+            let meta_view = self.get_meta(guard)?;
 
-            let actual = meta.get_root(name);
+            let actual = meta_view.get_root(name);
             if actual != old {
                 return Ok(Err(actual));
             }
 
-            let mut new_meta = (*meta).clone();
+            let mut new_meta = meta_view.deref().clone();
             if let Some(new) = new {
                 new_meta.set_root(name.to_vec(), new);
             } else {
@@ -1758,7 +1757,7 @@ impl PageCache {
 
             let res = self.cas_page(
                 META_PID,
-                meta_key.clone(),
+                meta_view.0,
                 new_meta_link,
                 false,
                 guard,
