@@ -1779,7 +1779,14 @@ impl PageCache {
                 // should not page these suckas out
                 continue;
             }
-            unimplemented!()
+            loop {
+                if let Some(page_view) = self.inner.get(pid, guard) {
+                    if page_view.rcu(|page| page.update = None, guard).is_ok() {
+                        continue;
+                    }
+                    // keep looping until we page this sucka out
+                }
+            }
         }
         Ok(())
     }
