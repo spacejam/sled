@@ -440,7 +440,7 @@ impl Config {
         (flush_every_ms, Option<u64>, "number of ms between IO buffer flushes"),
         (temporary, bool, "deletes the database after drop. if no path is set, uses /dev/shm on linux"),
         (create_new, bool, "attempts to exclusively open the database, failing if it already exists"),
-        (cache_capacity, u64, "maximum size for the system page cache"),
+        (cache_capacity, u64, "maximum size in bytes for the system page cache"),
         (print_profile_on_drop, bool, "print a performance profile when the Config is dropped"),
         (use_compression, bool, "whether to use zstd compression"),
         (compression_factor, i32, "the compression factor to use with zstd compression"),
