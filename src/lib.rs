@@ -298,10 +298,15 @@ const fn debug_delay() {}
 /// key addition or removal.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Link {
+    /// A new value is set for a given key
     Set(IVec, IVec),
+    /// The associated value is removed for a given key
     Del(IVec),
+    /// A child of this Index node is marked as mergable
     ParentMergeIntention(PageId),
+    /// The merging child has been completely merged into its left sibling
     ParentMergeConfirm,
+    /// A Node is marked for being merged into its left sibling
     ChildMergeCap,
 }
 
