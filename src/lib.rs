@@ -89,6 +89,13 @@
     unused_qualifications
 )]
 #![deny(
+    // over time, consider enabling the following commented-out lints:
+    // clippy::missing_const_for_fn,
+    // clippy::missing_docs_in_private_items,
+    // clippy::module_name_repetitions,
+    // clippy::multiple_crate_versions,
+    // clippy::unimplemented,
+    // clippy::wildcard_enum_match_arm,
     // clippy::else_if_without_else,
     // clippy::float_arithmetic,
     // clippy::indexing_slicing,
@@ -118,10 +125,6 @@
     clippy::match_same_arms,
     clippy::maybe_infinite_iter,
     clippy::mem_forget,
-    // clippy::missing_const_for_fn,
-    // clippy::missing_docs_in_private_items,
-    // clippy::module_name_repetitions,
-    // clippy::multiple_crate_versions,
     clippy::multiple_inherent_impl,
     clippy::mut_mut,
     clippy::needless_borrow,
@@ -144,11 +147,9 @@
     clippy::string_add_assign,
     clippy::type_repetition_in_bounds,
     clippy::unicode_not_nfc,
-    // clippy::unimplemented,
     clippy::unseparated_literal_suffix,
     clippy::used_underscore_binding,
     clippy::wildcard_dependencies,
-    // clippy::wildcard_enum_match_arm,
     clippy::wrong_pub_self_convention,
 )]
 
