@@ -903,10 +903,8 @@ impl PageCache {
                     "injecting a randomized failure in the link of pid {}",
                     pid
                 );
-                if let Some((current_pointer, _link, _sz)) =
-                    self.get(pid, guard)?
-                {
-                    return Ok(Err(Some((current_pointer, new))));
+                if let Some(current_pointer) = self.get(pid, guard)? {
+                    return Ok(Err(Some((current_pointer.0, new))));
                 } else {
                     return Ok(Err(None));
                 }
@@ -1088,10 +1086,8 @@ impl PageCache {
                     "injecting a randomized failure in the replace of pid {}",
                     pid
                 );
-                if let Some((current_pointer, _link, _sz)) =
-                    self.get(pid, guard)?
-                {
-                    return Ok(Err(Some((current_pointer, new))));
+                if let Some(current_pointer) = self.get(pid, guard)? {
+                    return Ok(Err(Some((current_pointer.0, new))));
                 } else {
                     return Ok(Err(None));
                 }
