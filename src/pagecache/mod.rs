@@ -1258,7 +1258,7 @@ impl PageCache {
 
     fn logical_size_of_all_pages(&self) -> Result<u64> {
         let guard = pin();
-        let meta_size = self.meta(&guard)?.size_in_bytes();
+        let meta_size = self.get_meta(&guard)?.size_in_bytes();
         let idgen_size = std::mem::size_of::<u64>() as u64;
 
         let mut ret = meta_size + idgen_size;
@@ -1701,14 +1701,6 @@ impl PageCache {
         Ok(ret)
     }
 
-    /// Returns the current `Meta` map, which contains a convenient
-    /// mapping from identifiers to `PageId`'s that the `PageCache`
-    /// owner may use for storing metadata about their higher-level
-    /// collections.
-    pub fn meta<'a>(&self, guard: &'a Guard) -> Result<&'a Meta> {
-        self.get_meta(guard).map(|m| m.deref())
-    }
-
     /// Look up a `PageId` for a given identifier in the `Meta`
     /// mapping. This is pretty cheap, but in some cases
     /// you may prefer to maintain your own atomic references
@@ -1721,7 +1713,7 @@ impl PageCache {
         name: &[u8],
         guard: &Guard,
     ) -> Result<PageId> {
-        let m = self.meta(guard)?;
+        let m = self.get_meta(guard)?;
         if let Some(root) = m.get_root(name) {
             Ok(root)
         } else {

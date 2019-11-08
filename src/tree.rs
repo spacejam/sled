@@ -1405,7 +1405,7 @@ impl Tree {
     ) -> Result<()> {
         trace!("splitting node {}", view.pid);
         // split node
-        let (mut lhs, rhs) = view.clone().split();
+        let (mut lhs, rhs) = view.deref().clone().split();
         let rhs_lo = rhs.lo.clone();
 
         // install right side
