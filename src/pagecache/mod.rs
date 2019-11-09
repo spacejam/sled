@@ -501,6 +501,15 @@ impl Page {
     pub(crate) fn last_cache_info(&self) -> Option<&CacheInfo> {
         self.cache_infos.last()
     }
+
+    fn lone_blob(&self) -> Option<DiskPtr> {
+        if self.cache_infos.len() == 1 && self.cache_infos[0].pointer.is_blob()
+        {
+            Some(self.cache_infos[0].pointer)
+        } else {
+            None
+        }
+    }
 }
 
 /// A lock-free pagecache which supports linkmented pages
@@ -1138,19 +1147,16 @@ impl PageCache {
             Some(p) => p,
         };
 
-        debug_delay();
-        let cache_entries: Vec<_> = stack_iter.collect();
-
         // if the page is just a single blob pointer, rewrite it.
-        if cache_entries.len() == 1 && cache_entries[0].1.pointer.is_blob() {
+        if let Some(disk_pointer) = page_view.lone_blob() {
             trace!("rewriting blob with pid {}", pid);
-            let blob_pointer = cache_entries[0].1.pointer.blob().1;
+            let blob_pointer = disk_pointer.blob().1;
 
             let log_reservation =
                 self.log.rewrite_blob_pointer(pid, blob_pointer)?;
 
             let new_pointer = log_reservation.pointer();
-            let mut new_cache_entry = cache_entries[0].clone();
+            let mut new_cache_entry = disk_pointer;
 
             new_cache_entry.1.pointer = new_pointer;
 
@@ -1175,6 +1181,10 @@ impl PageCache {
                 trace!("rewriting pid {} succeeded", pid);
 
                 Ok(())
+            }
+        }
+        Ok(())
+        /*
             } else {
                 let _pointer = log_reservation.abort()?;
 
@@ -1225,7 +1235,6 @@ impl PageCache {
             })
         }
         */
-        unimplemented!()
     }
 
     /// Traverses all files and calculates their total physical
