@@ -1131,15 +1131,14 @@ impl PageCache {
 
     // rewrite a page so we can reuse the segment that it is
     // (at least partially) located in. This happens when a
-    // segment has had enough resident page linkments moved
+    // segment has had enough resident page replacements moved
     // away to trigger the `segment_cleanup_threshold`.
     fn rewrite_page(&self, pid: PageId, guard: &Guard) -> Result<()> {
         let _measure = Measure::new(&M.rewrite_page);
 
         trace!("rewriting pid {}", pid);
 
-        /*
-        let stack = match self.inner.get(pid) {
+        let page_view = match self.inner.get(pid, guard) {
             None => {
                 trace!("rewriting pid {} failed (no longer exists)", pid);
                 return Ok(());
@@ -1411,7 +1410,7 @@ impl PageCache {
     ) -> Result<MetaView<'g>> {
         trace!("getting page iter for META");
 
-        let page_cell = match self.inner.get(META_PID, guard) {
+        let page_view = match self.inner.get(META_PID, guard) {
             None => {
                 return Err(Error::ReportableBug(
                     "failed to retrieve META page \
@@ -1422,8 +1421,8 @@ impl PageCache {
             Some(p) => p,
         };
 
-        if page_cell.update.is_some() {
-            Ok(MetaView(page_cell))
+        if page_view.update.is_some() {
+            Ok(MetaView(page_view))
         } else {
             Err(Error::ReportableBug(
                 "failed to retrieve META page \
@@ -1440,7 +1439,7 @@ impl PageCache {
     ) -> Result<(PageView<'g>, u64)> {
         trace!("getting page iter for idgen");
 
-        let page_cell = match self.inner.get(COUNTER_PID, guard) {
+        let page_view = match self.inner.get(COUNTER_PID, guard) {
             None => {
                 return Err(Error::ReportableBug(
                     "failed to retrieve counter page \
@@ -1451,9 +1450,9 @@ impl PageCache {
             Some(p) => p,
         };
 
-        if page_cell.update.is_some() {
-            let counter = page_cell.as_counter();
-            Ok((page_cell, counter))
+        if page_view.update.is_some() {
+            let counter = page_view.as_counter();
+            Ok((page_view, counter))
         } else {
             Err(Error::ReportableBug(
                 "failed to retrieve counter page \
@@ -1482,19 +1481,19 @@ impl PageCache {
             ));
         }
 
-        let page_cell = match self.inner.get(pid, guard) {
+        let page_view = match self.inner.get(pid, guard) {
             None => return Ok(None),
             Some(p) => p,
         };
 
-        if page_cell.is_free() {
+        if page_view.is_free() {
             return Ok(None);
         }
 
-        let total_page_size = page_cell.log_size();
+        let total_page_size = page_view.log_size();
 
-        if page_cell.update.is_some() {
-            return Ok(Some(NodeView(page_cell)));
+        if page_view.update.is_some() {
+            return Ok(Some(NodeView(page_view)));
         }
         /*
         let initial_base = match entries[0] {

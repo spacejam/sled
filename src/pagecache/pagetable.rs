@@ -136,6 +136,7 @@ impl PageTable {
         debug_delay();
         let tip = self.traverse(pid, guard);
 
+        debug_delay();
         let res = tip.load(Acquire, guard);
         if res.is_null() {
             None
