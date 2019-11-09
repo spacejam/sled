@@ -728,7 +728,7 @@ impl PageCache {
             return Ok(false);
         }
         let guard = pin();
-        let to_clean = self.log.with_sa(|sa| sa.clean(COUNTER_PID));
+        let to_clean = self.log.with_sa(|sa| sa.clean(None));
         let ret = if let Some(to_clean) = to_clean {
             self.rewrite_page(to_clean, &guard).map(|_| true)
         } else {
@@ -992,7 +992,7 @@ impl PageCache {
                         // can skip mark_link because we've
                         // already accounted for this page
                         // being resident on this segment
-                        self.log.with_sa(|sa| sa.clean(pid))
+                        self.log.with_sa(|sa| sa.clean(Some(pid)))
                     } else {
                         self.log.with_sa(|sa| {
                             sa.mark_link(pid, lsn, pointer);
@@ -1097,7 +1097,7 @@ impl PageCache {
         let result =
             self.cas_page(pid, old, Update::Node(new), false, guard)?;
 
-        let to_clean = self.log.with_sa(|sa| sa.clean(pid));
+        let to_clean = self.log.with_sa(|sa| sa.clean(Some(pid)));
 
         if let Some(to_clean) = to_clean {
             assert_ne!(pid, to_clean);

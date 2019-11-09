@@ -761,7 +761,10 @@ impl SegmentAccountant {
     /// Called by the `PageCache` to find pages that are in
     /// segments elligible for cleaning that it should
     /// try to rewrite elsewhere.
-    pub(super) fn clean(&mut self, ignore_pid: PageId) -> Option<PageId> {
+    pub(super) fn clean(
+        &mut self,
+        ignore_pid: Option<PageId>,
+    ) -> Option<PageId> {
         let seg_offset = if self.to_clean.is_empty() || self.to_clean.len() == 1
         {
             0
@@ -793,7 +796,7 @@ impl SegmentAccountant {
             };
 
             let pid = present.iter().nth(offset).unwrap();
-            if *pid == ignore_pid {
+            if Some(*pid) == ignore_pid {
                 return None;
             }
             trace!("telling caller to clean {} from segment at {}", pid, lid,);
