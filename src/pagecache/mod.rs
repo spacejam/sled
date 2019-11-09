@@ -313,13 +313,47 @@ unsafe impl<'g> Send for PageView<'g> {}
 unsafe impl<'g> Sync for PageView<'g> {}
 
 impl<'g> PageView<'g> {
-    fn rcu<'b, F, B>(
-        &self,
-        mut f: F,
+    fn page_out(&self, guard: &Guard) -> bool {
+        self.rcu(|page| page.update = None, guard).is_ok()
+    }
+
+    fn link<'b>(
+        &'b self,
+        new_node: Node,
+        cache_info: CacheInfo,
+        guard: &'g Guard,
+    ) -> std::result::Result<PageView<'b>, Shared<'b, Page>> {
+        self.rcu(
+            move |mut page| {
+                page.update = Some(Update::Node(new_node));
+                page.cache_infos.push(cache_info);
+            },
+            guard,
+        )
+    }
+
+    fn replace<'b>(
+        &'b self,
+        new_node: Node,
+        cache_info: CacheInfo,
+        guard: &'g Guard,
+    ) -> std::result::Result<PageView<'b>, Shared<'b, Page>> {
+        self.rcu(
+            move |mut page| {
+                page.update = Some(Update::Node(new_node));
+                page.cache_infos = vec![cache_info];
+            },
+            guard,
+        )
+    }
+
+    fn rcu<'b, F>(
+        &'b self,
+        f: F,
         guard: &'b Guard,
-    ) -> std::result::Result<B, Shared<'b, Page>>
+    ) -> std::result::Result<PageView<'b>, Shared<'b, Page>>
     where
-        F: FnMut(&mut Page) -> B,
+        F: FnOnce(&mut Page),
     {
         let mut old_pointer = self.read;
         loop {
@@ -331,7 +365,7 @@ impl<'g> PageView<'g> {
                 self.entry.compare_and_set(self.read, clone, SeqCst, guard);
 
             match result {
-                Ok(_) => return Ok(b),
+                Ok(read) => return Ok(PageView { read, entry: self.entry }),
                 Err(cas_error)
                     if unsafe { cas_error.current.deref().ts() }
                         == self.ts() =>
@@ -1789,7 +1823,7 @@ impl PageCache {
             }
             loop {
                 if let Some(page_view) = self.inner.get(pid, guard) {
-                    if page_view.rcu(|page| page.update = None, guard).is_ok() {
+                    if page_view.page_out(guard) {
                         continue;
                     }
                     // keep looping until we page this sucka out
