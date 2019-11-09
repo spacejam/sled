@@ -1005,7 +1005,7 @@ impl PageCache {
                     } else {
                         self.log.with_sa(|sa| {
                             sa.mark_link(pid, lsn, pointer);
-                            sa.clean(pid)
+                            sa.clean(Some(pid))
                         })
                     };
 
