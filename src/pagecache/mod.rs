@@ -314,7 +314,7 @@ unsafe impl<'g> Sync for PageView<'g> {}
 
 impl<'g> PageView<'g> {
     fn page_out(&self, guard: &Guard) -> bool {
-        self.rcu(|page| page.update = None, guard).is_ok()
+        self.rcu(|_| {}, false, guard).is_ok()
     }
 
     fn link<'b>(
@@ -328,6 +328,7 @@ impl<'g> PageView<'g> {
                 page.update = Some(Update::Node(new_node));
                 page.cache_infos.push(cache_info);
             },
+            false,
             guard,
         )
     }
@@ -343,13 +344,29 @@ impl<'g> PageView<'g> {
                 page.update = Some(Update::Node(new_node));
                 page.cache_infos = vec![cache_info];
             },
+            false,
             guard,
         )
+    }
+
+    fn rewrite<'b>(
+        &'b self,
+        cache_info: CacheInfo,
+        guard: &'g Guard,
+    ) -> std::result::Result<Vec<CacheInfo>, Shared<'b, Page>> {
+        let mut new = vec![cache_info];
+        self.rcu(
+            |mut page| std::mem::swap(&mut page.cache_infos, &mut new),
+            true,
+            guard,
+        )?;
+        Ok(new)
     }
 
     fn rcu<'b, F>(
         &'b self,
         f: F,
+        update_clone: bool,
         guard: &'b Guard,
     ) -> std::result::Result<PageView<'b>, Shared<'b, Page>>
     where
@@ -357,8 +374,13 @@ impl<'g> PageView<'g> {
     {
         let mut old_pointer = self.read;
         loop {
-            let mut clone: Owned<Page> =
-                unsafe { Owned::new(old_pointer.deref().clone()) };
+            let mut clone: Owned<Page> = if update_clone {
+                unsafe { Owned::new(old_pointer.deref().clone()) }
+            } else {
+                unsafe {
+                    Owned::new(Page { update: None, ..*old_pointer.deref() })
+                }
+            };
             let b = f(clone.deref_mut());
 
             let result =
@@ -1188,22 +1210,26 @@ impl PageCache {
             let log_reservation =
                 self.log.rewrite_blob_pointer(pid, blob_pointer)?;
 
-            let new_pointer = log_reservation.pointer();
-            let mut new_cache_entry = disk_pointer;
+            let cache_entry = CacheInfo {
+                ts: page_view.ts(),
+                lsn: log_reservation.lsn,
+                pointer: log_reservation.pointer,
+                log_size: u64::try_from(log_reservation.reservation_len())
+                    .unwrap(),
+            };
 
-            new_cache_entry.1.pointer = new_pointer;
+            let result = page_view.rewrite(cache_entry, guard);
 
-            let node = node_from_link_vec(vec![new_cache_entry]);
-
-            debug_delay();
-            let result = stack.cas(head, node, guard);
-
-            if result.is_ok() {
-                let pointers = pointers_from_stack(head, guard);
+            if let Ok(old_cache_entries) = result {
                 let lsn = log_reservation.lsn();
 
+                let old_pointers = old_cache_entries
+                    .into_iter()
+                    .map(|ci| ci.pointer)
+                    .collect();
+
                 self.log.with_sa(|sa| {
-                    sa.mark_replace(pid, lsn, pointers, new_pointer)
+                    sa.mark_replace(pid, lsn, old_pointers, cache_entry.pointer)
                 })?;
 
                 // NB complete must happen AFTER calls to SA, because
@@ -1214,10 +1240,6 @@ impl PageCache {
                 trace!("rewriting pid {} succeeded", pid);
 
                 Ok(())
-            }
-        }
-        Ok(())
-        /*
             } else {
                 let _pointer = log_reservation.abort()?;
 
@@ -1230,23 +1252,21 @@ impl PageCache {
 
             // page-in whole page with a get
             let (key, update): (_, Update) = if pid == META_PID {
-                let (key, meta) = self.get_meta(guard)?;
-                (key, Update::Meta(meta.clone()))
+                let meta_view = self.get_meta(guard)?;
+                (meta_view.0, Update::Meta(meta_view.deref().clone()))
             } else if pid == COUNTER_PID {
                 let (key, counter) = self.get_idgen(guard)?;
                 (key, Update::Counter(counter))
-            } else if let Some((key, link, _sz)) = self.get(pid, guard)? {
-                (key, Update::Node(link.clone()))
+            } else if let Some(node_view) = self.get(pid, guard)? {
+                (node_view.0, Update::Node(node_view.deref().clone()))
             } else {
-                let head = stack.head(guard);
+                let page_view = match self.inner.get(pid, guard) {
+                    None => panic!("expected page missing in rewrite"),
+                    Some(p) => p,
+                };
 
-                let mut stack_iter = StackIter::from_ptr(head, guard);
-
-                match stack_iter.next() {
-                    Some((Some(Update::Free), cache_info)) => (
-                        PageView { cached_pointer: head, ts: cache_info.ts },
-                        Update::Free,
-                    ),
+                match &page_view.update {
+                    Some(Update::Free) => (page_view, Update::Free),
                     other => {
                         debug!(
                             "when rewriting pid {} \
@@ -1267,7 +1287,6 @@ impl PageCache {
                 trace!("rewriting pid {} success: {}", pid, res.is_ok());
             })
         }
-        */
     }
 
     /// Traverses all files and calculates their total physical
