@@ -18,10 +18,7 @@ mod segment;
 mod snapshot;
 
 use crate::*;
-use std::{
-    collections::BinaryHeap,
-    ops::{Deref, DerefMut},
-};
+use std::{collections::BinaryHeap, ops::Deref};
 
 use self::{
     blob_io::{gc_blobs, read_blob, remove_blob, write_blob},
@@ -313,97 +310,6 @@ unsafe impl<'g> Send for PageView<'g> {}
 unsafe impl<'g> Sync for PageView<'g> {}
 
 impl<'g> PageView<'g> {
-    fn page_out(&self, guard: &Guard) -> bool {
-        self.rcu(|_| {}, false, guard).is_ok()
-    }
-
-    fn link<'b>(
-        &'b self,
-        new_node: Node,
-        cache_info: CacheInfo,
-        guard: &'g Guard,
-    ) -> std::result::Result<PageView<'b>, Shared<'b, Page>> {
-        self.rcu(
-            move |mut page| {
-                page.update = Some(Update::Node(new_node));
-                page.cache_infos.push(cache_info);
-            },
-            false,
-            guard,
-        )
-    }
-
-    fn replace<'b>(
-        &'b self,
-        new_node: Node,
-        cache_info: CacheInfo,
-        guard: &'g Guard,
-    ) -> std::result::Result<PageView<'b>, Shared<'b, Page>> {
-        self.rcu(
-            move |mut page| {
-                page.update = Some(Update::Node(new_node));
-                page.cache_infos = vec![cache_info];
-            },
-            false,
-            guard,
-        )
-    }
-
-    fn rewrite<'b>(
-        &'b self,
-        cache_info: CacheInfo,
-        guard: &'g Guard,
-    ) -> std::result::Result<Vec<CacheInfo>, Shared<'b, Page>> {
-        let mut new = vec![cache_info];
-        self.rcu(
-            |mut page| std::mem::swap(&mut page.cache_infos, &mut new),
-            true,
-            guard,
-        )?;
-        Ok(new)
-    }
-
-    fn rcu<'b, F>(
-        &'b self,
-        f: F,
-        update_clone: bool,
-        guard: &'b Guard,
-    ) -> std::result::Result<PageView<'b>, Shared<'b, Page>>
-    where
-        F: FnOnce(&mut Page),
-    {
-        let mut old_pointer = self.read;
-        loop {
-            let mut clone: Owned<Page> = if update_clone {
-                unsafe { Owned::new(old_pointer.deref().clone()) }
-            } else {
-                unsafe {
-                    Owned::new(Page { update: None, ..*old_pointer.deref() })
-                }
-            };
-            let b = f(clone.deref_mut());
-
-            let result =
-                self.entry.compare_and_set(self.read, clone, SeqCst, guard);
-
-            match result {
-                Ok(read) => return Ok(PageView { read, entry: self.entry }),
-                Err(cas_error)
-                    if unsafe { cas_error.current.deref().ts() }
-                        == self.ts() =>
-                {
-                    // we got here because the page was moved to a new
-                    // location.
-                    old_pointer = cas_error.current;
-                    continue;
-                }
-                Err(cas_error) => {
-                    return Err(cas_error.current);
-                }
-            }
-        }
-    }
-
     pub(crate) fn as_node(&self) -> &Node {
         self.update.as_ref().unwrap().as_node()
     }
@@ -1029,7 +935,7 @@ impl PageCache {
             let mut new_cache_infos = page_view.cache_infos.clone();
             new_cache_infos.push(cache_info);
 
-            let page_ptr = new_page.take().unwrap();
+            let mut page_ptr = new_page.take().unwrap();
 
             debug_delay();
             let result = page_view.entry.compare_and_set(
@@ -1194,12 +1100,10 @@ impl PageCache {
 
         trace!("rewriting pid {}", pid);
 
-        let page_view = match self.inner.get(pid, guard) {
-            None => {
-                trace!("rewriting pid {} failed (no longer exists)", pid);
-                return Ok(());
-            }
-            Some(p) => p,
+        let page_view = if let Some(page_view) = self.inner.get(pid, guard) {
+            page_view
+        } else {
+            panic!("rewriting pid {} failed (no longer exists)", pid);
         };
 
         // if the page is just a single blob pointer, rewrite it.
@@ -1218,15 +1122,23 @@ impl PageCache {
                     .unwrap(),
             };
 
-            let result = page_view.rewrite(cache_entry, guard);
+            let new_page = Owned::new(Page {
+                update: page_view.update.clone(),
+                cache_infos: vec![cache_entry],
+            });
 
-            if let Ok(old_cache_entries) = result {
+            let result = page_view.entry.compare_and_set(
+                page_view.read,
+                new_page,
+                SeqCst,
+                guard,
+            );
+
+            if let Ok(_) = result {
                 let lsn = log_reservation.lsn();
 
-                let old_pointers = old_cache_entries
-                    .into_iter()
-                    .map(|ci| ci.pointer)
-                    .collect();
+                let old_pointers =
+                    page_view.cache_infos.iter().map(|ci| ci.pointer).collect();
 
                 self.log.with_sa(|sa| {
                     sa.mark_replace(pid, lsn, old_pointers, cache_entry.pointer)
@@ -1842,8 +1754,21 @@ impl PageCache {
             }
             loop {
                 if let Some(page_view) = self.inner.get(pid, guard) {
-                    if page_view.page_out(guard) {
-                        continue;
+                    let new_page = Owned::new(Page {
+                        update: None,
+                        cache_infos: page_view.cache_infos.clone(),
+                    });
+                    if page_view
+                        .entry
+                        .compare_and_set(
+                            page_view.read,
+                            new_page,
+                            SeqCst,
+                            guard,
+                        )
+                        .is_ok()
+                    {
+                        break;
                     }
                     // keep looping until we page this sucka out
                 }
