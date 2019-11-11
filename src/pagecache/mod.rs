@@ -6,8 +6,8 @@ pub mod constants;
 pub mod logger;
 
 mod blob_io;
-mod io_uring;
 mod disk_pointer;
+mod io_uring;
 mod iobuf;
 mod iterator;
 mod parallel_io;
@@ -1195,7 +1195,7 @@ impl PageCache {
         Ok(on_disk_bytes / (logical_size + discount))
     }
 
-    fn size_on_disk(&self) -> Result<u64> {
+    pub(crate) fn size_on_disk(&self) -> Result<u64> {
         let mut size = self.config.file.metadata()?.len();
 
         let stable = self.config.blob_path(0);
