@@ -758,7 +758,15 @@ impl PageCache {
 
             trace!("allocating pid {} for the first time", pid);
 
-            let new_page = Page { update: None, cache_infos: vec![] };
+            let new_page = Page {
+                update: None,
+                cache_infos: vec![CacheInfo {
+                    ts: 0,
+                    lsn: -1,
+                    pointer: DiskPtr::Inline(0),
+                    log_size: 0,
+                }],
+            };
 
             let page_view = self.inner.insert(pid, new_page, guard);
 
@@ -1248,7 +1256,7 @@ impl PageCache {
             Update::Counter(c) => serialize(&c).unwrap(),
             Update::Meta(m) => serialize(&m).unwrap(),
             Update::Free => vec![],
-            other => serialize(other.as_link()).unwrap(),
+            other => serialize(other.as_node()).unwrap(),
         };
         drop(serialize_latency);
 
