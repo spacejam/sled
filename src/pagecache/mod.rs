@@ -1261,11 +1261,6 @@ impl PageCache {
             update,
             old.ts()
         );
-        let page_view = if let Some(page_view) = self.inner.get(pid, guard) {
-            page_view
-        } else {
-            panic!("no stack found for pid {} in cas_page", pid);
-        };
 
         let log_kind = log_kind_from_update(&update);
         let serialize_latency = Measure::new(&M.serialize);
@@ -1318,21 +1313,14 @@ impl PageCache {
             page_ptr.cache_infos = vec![cache_info];
 
             debug_delay();
-            let result = page_view.entry.compare_and_set(
-                page_view.read,
-                page_ptr,
-                SeqCst,
-                guard,
-            );
+            let result =
+                old.entry.compare_and_set(old.read, page_ptr, SeqCst, guard);
 
             match result {
                 Ok(new_shared) => {
                     trace!("cas_page succeeded on pid {}", pid);
-                    let pointers = page_view
-                        .cache_infos
-                        .iter()
-                        .map(|ci| ci.pointer)
-                        .collect();
+                    let pointers =
+                        old.cache_infos.iter().map(|ci| ci.pointer).collect();
 
                     self.log.with_sa(|sa| {
                         sa.mark_replace(pid, lsn, pointers, new_pointer)
@@ -1344,32 +1332,31 @@ impl PageCache {
                     let _pointer = log_reservation.complete()?;
                     return Ok(Ok(PageView {
                         read: new_shared,
-                        entry: page_view.entry,
+                        entry: old.entry,
                     }));
                 }
                 Err(cas_error) => {
                     trace!("cas_page failed on pid {}", pid);
                     let _pointer = log_reservation.abort()?;
 
-                    let current = cas_error.current;
+                    let current: Shared<'_, _> = cas_error.current;
                     let actual_ts = unsafe { current.deref().ts() };
 
-                    let returned_update = cas_error.new.into();
+                    let mut returned_update: Owned<_> = cas_error.new;
 
                     if actual_ts != old.ts() || is_rewrite {
                         return Ok(Err(Some((
-                            PageView { read: current, entry: page_view.entry },
-                            returned_update,
+                            PageView { read: current, entry: old.entry },
+                            returned_update.update.take().unwrap(),
                         ))));
                     }
                     trace!(
                         "retrying CAS on pid {} with same ts of {}",
                         pid,
-                        old.ts
+                        old.ts()
                     );
-                    old =
-                        PageView { cached_pointer: actual_pointer, ts: old.ts };
-                    update_opt = Some(returned_update);
+                    old.read = current;
+                    new_page = Some(returned_update);
                 }
             } // match cas result
         } // loop
