@@ -504,7 +504,10 @@ impl Drop for PageCache {
             let guard = pin();
 
             self.config.event_log.meta_before_restart(
-                self.meta(&guard).expect("should get meta under test").clone(),
+                self.get_meta(&guard)
+                    .expect("should get meta under test")
+                    .deref()
+                    .clone(),
             );
 
             for pid in 0..self.next_pid_to_allocate.load(Acquire) {
@@ -640,8 +643,9 @@ impl PageCache {
             let guard = pin();
 
             pc.config.event_log.meta_after_restart(
-                pc.meta(&guard)
+                pc.get_meta(&guard)
                     .expect("should be able to get meta under test")
+                    .deref()
                     .clone(),
             );
         }
