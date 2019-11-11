@@ -363,13 +363,6 @@ pub(crate) enum Update {
 }
 
 impl Update {
-    fn into_node(self) -> Node {
-        match self {
-            Update::Node(node) => node,
-            other => panic!("called into_node on non-Node: {:?}", other),
-        }
-    }
-
     fn as_node(&self) -> &Node {
         match self {
             Update::Node(node) => node,
@@ -377,10 +370,10 @@ impl Update {
         }
     }
 
-    fn into_link(self) -> Link {
+    fn as_node_mut(&mut self) -> &mut Node {
         match self {
-            Update::Link(link) => link,
-            other => panic!("called into_link on non-Link: {:?}", other),
+            Update::Node(node) => node,
+            other => panic!("called as_node_mut on non-Node: {:?}", other),
         }
     }
 
@@ -405,14 +398,6 @@ impl Update {
         } else {
             panic!("called as_counter on {:?}", self)
         }
-    }
-
-    fn is_replace(&self) -> bool {
-        if let Update::Node(_) = self { true } else { false }
-    }
-
-    fn is_free(&self) -> bool {
-        if let Update::Free = self { true } else { false }
     }
 }
 
@@ -458,10 +443,6 @@ impl Page {
 
     fn ts(&self) -> u64 {
         self.cache_infos.last().map(|ci| ci.ts).unwrap_or(0)
-    }
-
-    pub(crate) fn last_cache_info(&self) -> Option<&CacheInfo> {
-        self.cache_infos.last()
     }
 
     fn lone_blob(&self) -> Option<DiskPtr> {
@@ -882,16 +863,11 @@ impl PageCache {
             }
         }
 
-        let mut page_view = match self.inner.get(pid, guard) {
-            None => return Ok(Err(None)),
-            Some(p) => p,
-        };
-
-        let mut node: Node = page_view.as_node().clone();
+        let mut node: Node = old.as_node().clone();
         node.apply(&new);
 
         // see if we should short-circuit replace
-        if page_view.cache_infos.len() > PAGE_CONSOLIDATION_THRESHOLD {
+        if old.cache_infos.len() > PAGE_CONSOLIDATION_THRESHOLD {
             let short_circuit = self.replace(pid, old, node, guard)?;
             return Ok(short_circuit.map_err(|a| a.map(|b| (b.0, new))));
         }
@@ -932,19 +908,15 @@ impl PageCache {
                 log_size: log_reservation.reservation_len() as u64,
             };
 
-            let mut new_cache_infos = page_view.cache_infos.clone();
+            let mut new_cache_infos = old.cache_infos.clone();
             new_cache_infos.push(cache_info);
 
             let mut page_ptr = new_page.take().unwrap();
             page_ptr.cache_infos = new_cache_infos;
 
             debug_delay();
-            let result = page_view.entry.compare_and_set(
-                page_view.read,
-                page_ptr,
-                SeqCst,
-                guard,
-            );
+            let result =
+                old.entry.compare_and_set(old.read, page_ptr, SeqCst, guard);
 
             match result {
                 Ok(new_shared) => {
@@ -990,24 +962,28 @@ impl PageCache {
                         self.advance_snapshot()?;
                     }
 
-                    let mut page_view = page_view;
-                    page_view.read = new_shared;
+                    let mut old = old;
+                    old.read = new_shared;
 
-                    return Ok(Ok(page_view));
+                    return Ok(Ok(old));
                 }
                 Err(cas_error) => {
-                    trace!("link of pid {} failed", pid);
                     log_reservation.abort()?;
                     let actual = cas_error.current;
                     let actual_ts = unsafe { actual.deref().ts() };
                     if actual_ts == old.ts() {
+                        trace!(
+                            "link of pid {} failed due to movement, retrying",
+                            pid
+                        );
                         new_page = Some(cas_error.new);
 
-                        page_view.read = actual;
+                        let mut old = old;
+                        old.read = actual;
                     } else {
-                        let mut page_view = page_view;
+                        trace!("link of pid {} failed due to new update", pid);
+                        let mut page_view = old;
                         page_view.read = actual;
-
                         return Ok(Err(Some((page_view, new))));
                     }
                 }
@@ -1454,100 +1430,42 @@ impl PageCache {
         if page_view.update.is_some() {
             return Ok(Some(NodeView(page_view)));
         }
-        /*
-        let initial_base = match entries[0] {
-            (Some(Update::Node(ref replace)), cache_info) => {
-                // short circuit
-                return Ok(Some((
-                    PageView { cached_pointer: head, ts: cache_info.ts },
-                    replace,
-                    total_page_size,
-                )));
-            }
-            (Some(Update::Link(_)), _) => {
-                // merge to next item
-                let base_idx = entries.iter().position(|(e, _)| {
-                    e.is_some() && e.as_ref().unwrap().is_replace()
-                });
-                if let Some(base_idx) = base_idx {
-                    let mut base =
-                        entries[base_idx].0.as_ref().unwrap().as_link().clone();
-                    for (link, _) in entries[0..base_idx].iter().rev() {
-                        base.merge(link.as_ref().unwrap().as_link());
-                    }
-                    Some(base)
-                } else {
-                    None
-                }
-            }
-            _ => {
-                // need to pull everything from disk and merge
-                None
-            }
-        };
 
-        let base = if let Some(initial_base) = initial_base {
-            initial_base
-        } else {
-            // we were not able to short-circuit, so we should
-            // fix-up the stack.
-            let pulled = entries.iter().map(|entry| match entry {
-                (Some(Update::Node(replace)), _)
-                | (Some(Update::Link(replace)), _) => {
-                    Ok(Cow::Borrowed(replace))
-                }
-                (None, cache_info) => {
-                    let res = self
-                        .pull(pid, cache_info.lsn, cache_info.pointer)
-                        .map(|pg| pg)?;
-                    Ok(Cow::Owned(res.into_link()))
-                }
-                other => {
-                    panic!("iterating over unexpected update: {:?}", other);
-                }
-            });
+        // need to page-in
+        let updates_result: Result<Vec<Update>> = page_view
+            .cache_infos
+            .iter()
+            .map(|ci| self.pull(pid, ci.lsn, ci.pointer))
+            .collect();
 
-            // if any of our pulls failed, bail here
-            let mut successes: Vec<Cow<'_, Link>> = match pulled.collect() {
-                Ok(success) => success,
-                Err(Error::Io(ref error))
-                    if error.kind() == std::io::ErrorKind::NotFound =>
-                {
-                    // blob has been removed
-                    // TODO is this possible to hit if it's just rewritten?
-                    return Ok(None);
-                }
-                Err(error) => return Err(error),
-            };
+        let mut updates: Vec<Update> = updates_result?;
 
-            let mut base = successes.pop().unwrap().into_owned();
+        let (base_slice, links) = updates.split_at_mut(1);
 
-            while let Some(link) = successes.pop() {
-                base.merge(&link);
-            }
+        let base: &mut Node = base_slice[0].as_node_mut();
 
-            base
-        };
+        for link_update in links.into_iter() {
+            let link: &Link = link_update.as_link();
+            base.apply(link);
+        }
 
-        // fix up the stack to include our pulled items
-        let mut links: Vec<(Option<Update>, CacheInfo)> =
-            entries.iter().map(|(_, cache_info)| (None, *cache_info)).collect();
+        updates.truncate(1);
+        let base = updates.pop().unwrap();
 
-        links[0].0 = Some(Update::Node(base));
-
-        let node = node_from_link_vec(links).into_shared(guard);
-
-        #[cfg(feature = "event_log")]
-        assert_eq!(
-            pointers_from_stack(head, guard),
-            pointers_from_stack(node, guard),
-        );
-
-        let node = unsafe { node.into_owned() };
+        let page = Owned::new(Page {
+            update: Some(base),
+            cache_infos: page_view.cache_infos.clone(),
+        });
 
         debug_delay();
-        let res = stack.cas(head, node, guard);
-        if let Ok(new_pointer) = res {
+        let result = page_view.entry.compare_and_set(
+            page_view.read,
+            page,
+            SeqCst,
+            guard,
+        );
+
+        if let Ok(new_pointer) = result {
             trace!("fix-up for pid {} succeeded", pid);
 
             // possibly evict an item now that our cache has grown
@@ -1557,27 +1475,15 @@ impl PageCache {
                 self.page_out(to_evict, guard)?;
             }
 
-            let page_ref = unsafe {
-                let item = &new_pointer.deref().inner;
-                if let (Some(Update::Node(ref replace)), _) = item {
-                    replace
-                } else {
-                    panic!()
-                }
-            };
+            let mut page_view = page_view;
+            page_view.read = new_pointer;
 
-            let pointer =
-                PageView { cached_pointer: new_pointer, ts: entries[0].1.ts };
-
-            Ok(Some((pointer, page_ref, total_page_size)))
+            Ok(Some(NodeView(page_view)))
         } else {
             trace!("fix-up for pid {} failed", pid);
 
             self.get(pid, guard)
         }
-        */
-
-        unimplemented!()
     }
 
     /// The highest known stable Lsn on disk.

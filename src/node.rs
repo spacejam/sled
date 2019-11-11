@@ -624,10 +624,6 @@ impl Data {
     pub(crate) fn is_index(&self) -> bool {
         if let Data::Index(..) = self { true } else { false }
     }
-
-    pub(crate) fn is_leaf(&self) -> bool {
-        if let Data::Leaf(..) = self { true } else { false }
-    }
 }
 
 #[test]

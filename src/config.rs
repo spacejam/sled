@@ -24,10 +24,6 @@ struct StorageParameters {
 }
 
 impl StorageParameters {
-    pub const fn size_in_bytes(&self) -> u64 {
-        std::mem::size_of::<StorageParameters>() as u64
-    }
-
     pub fn serialize(&self) -> Vec<u8> {
         let mut out = vec![];
 
