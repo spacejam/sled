@@ -713,7 +713,7 @@ fn create_tree() {
     common::setup_logger();
 
     let path = "create_exclusive_db";
-    std::fs::remove_dir_all(path);
+    let _ = std::fs::remove_dir_all(path);
 
     {
         let config = Config::new().create_new(true).path(path);
@@ -722,7 +722,7 @@ fn create_tree() {
 
     let config = Config::new().create_new(true).path(path);
     config.open().unwrap_err();
-    std::fs::remove_dir_all(path);
+    std::fs::remove_dir_all(path).unwrap();
 }
 
 #[test]
