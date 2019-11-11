@@ -1127,6 +1127,7 @@ impl PageCache {
                 cache_infos: vec![cache_entry],
             });
 
+            debug_delay();
             let result = page_view.entry.compare_and_set(
                 page_view.read,
                 new_page,
