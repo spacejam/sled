@@ -936,6 +936,7 @@ impl PageCache {
             new_cache_infos.push(cache_info);
 
             let mut page_ptr = new_page.take().unwrap();
+            page_ptr.cache_infos = new_cache_infos;
 
             debug_delay();
             let result = page_view.entry.compare_and_set(
@@ -1254,19 +1255,16 @@ impl PageCache {
         is_rewrite: bool,
         guard: &'g Guard,
     ) -> Result<CasResult<'g, Update>> {
-        /*
         trace!(
             "cas_page called on pid {} to {:?} with old ts {:?}",
             pid,
             update,
-            old.ts
+            old.ts()
         );
-        let stack = match self.inner.get(pid) {
-            None => {
-                trace!("early-returning from cas_page, no stack found");
-                return Ok(Err(None));
-            }
-            Some(p) => p,
+        let page_view = if let Some(page_view) = self.inner.get(pid, guard) {
+            page_view
+        } else {
+            panic!("no stack found for pid {} in cas_page", pid);
         };
 
         let log_kind = log_kind_from_update(&update);
@@ -1278,7 +1276,11 @@ impl PageCache {
             other => serialize(other.as_link()).unwrap(),
         };
         drop(serialize_latency);
-        let mut update_opt = Some(update);
+
+        let mut new_page = Some(Owned::new(Page {
+            update: Some(update),
+            cache_infos: vec![],
+        }));
 
         loop {
             let log_reservation = self.log.reserve(log_kind, pid, &bytes)?;
@@ -1302,28 +1304,35 @@ impl PageCache {
             // Here, we only bump it up by 1 if the
             // update represents a fundamental change
             // that SHOULD cause CAS failures.
-            let ts = if is_rewrite { old.ts } else { old.ts + 1 };
+            let ts = if is_rewrite { old.ts() } else { old.ts() + 1 };
 
             let cache_info = CacheInfo {
                 ts,
                 lsn,
                 pointer: new_pointer,
-                log_size: log_reservation.reservation_len(),
+                log_size: u64::try_from(log_reservation.reservation_len())
+                    .unwrap(),
             };
 
-            let node = node_from_link_vec(vec![(
-                Some(update_opt.take().unwrap()),
-                cache_info,
-            )]);
+            let mut page_ptr = new_page.take().unwrap();
+            page_ptr.cache_infos = vec![cache_info];
 
             debug_delay();
-            let result = stack.cas(old.cached_pointer, node, guard);
+            let result = page_view.entry.compare_and_set(
+                page_view.read,
+                page_ptr,
+                SeqCst,
+                guard,
+            );
 
             match result {
-                Ok(cached_pointer) => {
+                Ok(new_shared) => {
                     trace!("cas_page succeeded on pid {}", pid);
-                    let pointers =
-                        pointers_from_stack(old.cached_pointer, guard);
+                    let pointers = page_view
+                        .cache_infos
+                        .iter()
+                        .map(|ci| ci.pointer)
+                        .collect();
 
                     self.log.with_sa(|sa| {
                         sa.mark_replace(pid, lsn, pointers, new_pointer)
@@ -1333,23 +1342,23 @@ impl PageCache {
                     // when the iobuf's n_writers hits 0, we may transition
                     // the segment to inactive, resulting in a race otherwise.
                     let _pointer = log_reservation.complete()?;
-                    return Ok(Ok(PageView { cached_pointer, ts }));
+                    return Ok(Ok(PageView {
+                        read: new_shared,
+                        entry: page_view.entry,
+                    }));
                 }
-                Err((actual_pointer, returned_entry)) => {
+                Err(cas_error) => {
                     trace!("cas_page failed on pid {}", pid);
                     let _pointer = log_reservation.abort()?;
 
-                    let returned_update =
-                        returned_entry.into_box().inner.0.take().unwrap();
+                    let current = cas_error.current;
+                    let actual_ts = unsafe { current.deref().ts() };
 
-                    let actual_ts = unsafe { actual_pointer.deref().1.ts };
+                    let returned_update = cas_error.new.into();
 
-                    if actual_ts != old.ts || is_rewrite {
+                    if actual_ts != old.ts() || is_rewrite {
                         return Ok(Err(Some((
-                            PageView {
-                                cached_pointer: actual_pointer,
-                                ts: actual_ts,
-                            },
+                            PageView { read: current, entry: page_view.entry },
                             returned_update,
                         ))));
                     }
@@ -1364,9 +1373,6 @@ impl PageCache {
                 }
             } // match cas result
         } // loop
-        */
-
-        unimplemented!()
     }
 
     /// Retrieve the current meta page
@@ -1759,6 +1765,7 @@ impl PageCache {
                         update: None,
                         cache_infos: page_view.cache_infos.clone(),
                     });
+                    debug_delay();
                     if page_view
                         .entry
                         .compare_and_set(
