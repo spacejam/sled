@@ -928,7 +928,7 @@ impl SegmentAccountant {
                 old_segment.present.contains(&pid),
                 "we expect deferred replacements to provide \
                  all previous segments so we can clean them. \
-                 pid {} old_ptr segment: {} segments with pid: {:?}",
+                 pid {} old_ptr segment: {} segments with (offset, state, present): {:?}",
                 pid,
                 old_idx * self.config.segment_size,
                 self.segments
