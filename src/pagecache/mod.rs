@@ -817,7 +817,7 @@ impl PageCache {
     pub fn link<'g>(
         &'g self,
         pid: PageId,
-        old: PageView<'g>,
+        mut old: PageView<'g>,
         new: Link,
         guard: &'g Guard,
     ) -> Result<CasResult<'g, Link>> {
@@ -960,7 +960,6 @@ impl PageCache {
                         self.advance_snapshot()?;
                     }
 
-                    let mut old = old;
                     old.read = new_shared;
 
                     return Ok(Ok(old));
@@ -976,7 +975,6 @@ impl PageCache {
                         );
                         new_page = Some(cas_error.new);
 
-                        let mut old = old;
                         old.read = actual;
                     } else {
                         trace!("link of pid {} failed due to new update", pid);
