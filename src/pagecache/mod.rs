@@ -309,32 +309,6 @@ pub struct PageView<'g> {
 unsafe impl<'g> Send for PageView<'g> {}
 unsafe impl<'g> Sync for PageView<'g> {}
 
-impl<'g> PageView<'g> {
-    pub(crate) fn as_node(&self) -> &Node {
-        self.update.as_ref().unwrap().as_node()
-    }
-
-    pub(crate) fn as_meta(&self) -> &Meta {
-        self.update.as_ref().unwrap().as_meta()
-    }
-
-    pub(crate) fn as_counter(&self) -> u64 {
-        self.update.as_ref().unwrap().as_counter()
-    }
-
-    pub(crate) fn is_free(&self) -> bool {
-        self.update == Some(Update::Free) || self.cache_infos.is_empty()
-    }
-
-    pub(crate) fn ts(&self) -> u64 {
-        self.cache_infos.last().map(|ci| ci.ts).unwrap()
-    }
-
-    pub(crate) fn last_lsn(&self) -> Lsn {
-        self.cache_infos.last().map(|ci| ci.lsn).unwrap()
-    }
-}
-
 impl<'g> Deref for PageView<'g> {
     type Target = Page;
 
@@ -437,6 +411,26 @@ pub struct Page {
 }
 
 impl Page {
+    pub(crate) fn as_node(&self) -> &Node {
+        self.update.as_ref().unwrap().as_node()
+    }
+
+    pub(crate) fn as_meta(&self) -> &Meta {
+        self.update.as_ref().unwrap().as_meta()
+    }
+
+    pub(crate) fn as_counter(&self) -> u64 {
+        self.update.as_ref().unwrap().as_counter()
+    }
+
+    pub(crate) fn is_free(&self) -> bool {
+        self.update == Some(Update::Free) || self.cache_infos.is_empty()
+    }
+
+    pub(crate) fn last_lsn(&self) -> Lsn {
+        self.cache_infos.last().map(|ci| ci.lsn).unwrap()
+    }
+
     pub(crate) fn log_size(&self) -> u64 {
         self.cache_infos.iter().map(|ci| ci.log_size).sum()
     }
