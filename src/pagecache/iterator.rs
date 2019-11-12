@@ -84,7 +84,10 @@ impl Iterator for LogIter {
                     ));
                 }
                 Ok(LogRead::Inline(header, _buf, on_disk_len)) => {
-                    trace!("read inline flush in LogIter::next");
+                    trace!(
+                        "read inline flush with header {:?} in LogIter::next",
+                        header,
+                    );
                     let sz = u64::try_from(MSG_HEADER_LEN).unwrap()
                         + on_disk_len as u64;
                     self.cur_lsn += sz as Lsn;
