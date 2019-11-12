@@ -673,61 +673,6 @@ impl PageCache {
         self.allocate_inner(Update::Node(new), guard)
     }
 
-    /// Attempt to opportunistically rewrite data from a Draining
-    /// segment of the file to help with space amplification.
-    /// Returns Ok(true) if we had the opportunity to attempt to
-    /// move a page. Returns Ok(false) if there were no pages
-    /// to GC. Returns an Err if we encountered an IO problem
-    /// while performing this GC.
-    pub fn attempt_gc(&self) -> Result<bool> {
-        if self.config.read_only {
-            return Ok(false);
-        }
-        let guard = pin();
-        let to_clean = self.log.with_sa(|sa| sa.clean(None));
-        let ret = if let Some(to_clean) = to_clean {
-            self.rewrite_page(to_clean, &guard).map(|_| true)
-        } else {
-            Ok(false)
-        };
-        guard.flush();
-        ret
-    }
-
-    /// Initiate an atomic sequence of writes to the
-    /// underlying log. Returns a `RecoveryGuard` which,
-    /// when dropped, will record the current max reserved
-    /// LSN into an earlier log reservation. During recovery,
-    /// when we hit this early atomic LSN marker, if the
-    /// specified LSN is beyond the contiguous tip of the log,
-    /// we immediately halt recovery, preventing the recovery
-    /// of partial transactions or write batches. This is
-    /// a relatively low-level primitive that can be used
-    /// to facilitate transactions and write batches when
-    /// combined with a concurrency control system in another
-    /// component.
-    pub fn pin_log(&self) -> Result<RecoveryGuard<'_>> {
-        let batch_res = self.log.reserve(
-            LogKind::Skip,
-            BATCH_MANIFEST_PID,
-            &[0; std::mem::size_of::<Lsn>()],
-        )?;
-        Ok(RecoveryGuard { batch_res })
-    }
-
-    #[doc(hidden)]
-    #[cfg(feature = "failpoints")]
-    pub fn set_failpoint(&self, e: Error) {
-        if let Error::FailPoint = e {
-            self.config.set_global_error(e);
-
-            // wake up any waiting threads
-            // so they don't stall forever
-            let _ = self.log.iobufs.intervals.lock();
-            let _notified = self.log.iobufs.interval_updated.notify_all();
-        }
-    }
-
     fn allocate_inner<'g>(
         &self,
         new: Update,
@@ -785,6 +730,61 @@ impl PageCache {
             });
 
         Ok((pid, new_pointer))
+    }
+
+    /// Attempt to opportunistically rewrite data from a Draining
+    /// segment of the file to help with space amplification.
+    /// Returns Ok(true) if we had the opportunity to attempt to
+    /// move a page. Returns Ok(false) if there were no pages
+    /// to GC. Returns an Err if we encountered an IO problem
+    /// while performing this GC.
+    pub fn attempt_gc(&self) -> Result<bool> {
+        if self.config.read_only {
+            return Ok(false);
+        }
+        let guard = pin();
+        let to_clean = self.log.with_sa(|sa| sa.clean(None));
+        let ret = if let Some(to_clean) = to_clean {
+            self.rewrite_page(to_clean, &guard).map(|_| true)
+        } else {
+            Ok(false)
+        };
+        guard.flush();
+        ret
+    }
+
+    /// Initiate an atomic sequence of writes to the
+    /// underlying log. Returns a `RecoveryGuard` which,
+    /// when dropped, will record the current max reserved
+    /// LSN into an earlier log reservation. During recovery,
+    /// when we hit this early atomic LSN marker, if the
+    /// specified LSN is beyond the contiguous tip of the log,
+    /// we immediately halt recovery, preventing the recovery
+    /// of partial transactions or write batches. This is
+    /// a relatively low-level primitive that can be used
+    /// to facilitate transactions and write batches when
+    /// combined with a concurrency control system in another
+    /// component.
+    pub fn pin_log(&self) -> Result<RecoveryGuard<'_>> {
+        let batch_res = self.log.reserve(
+            LogKind::Skip,
+            BATCH_MANIFEST_PID,
+            &[0; std::mem::size_of::<Lsn>()],
+        )?;
+        Ok(RecoveryGuard { batch_res })
+    }
+
+    #[doc(hidden)]
+    #[cfg(feature = "failpoints")]
+    pub fn set_failpoint(&self, e: Error) {
+        if let Error::FailPoint = e {
+            self.config.set_global_error(e);
+
+            // wake up any waiting threads
+            // so they don't stall forever
+            let _ = self.log.iobufs.intervals.lock();
+            let _notified = self.log.iobufs.interval_updated.notify_all();
+        }
     }
 
     /// Free a particular page.

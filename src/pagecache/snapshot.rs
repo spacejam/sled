@@ -109,6 +109,13 @@ impl Snapshot {
                     }
 
                     lids.push((lsn, disk_ptr, sz));
+                } else {
+                    trace!(
+                        "skipping dangling append of pid {} at lid {} lsn {}",
+                        pid,
+                        disk_ptr,
+                        lsn,
+                    );
                 }
             }
             LogKind::Free => {
