@@ -346,6 +346,12 @@ impl Db {
         Ok(hasher.finalize())
     }
 
+    /// Returns the on-disk size of the storage files
+    /// for this database.
+    pub fn size_on_disk(&self) -> Result<u64> {
+        self.context.pagecache.size_on_disk()
+    }
+
     /// Traverses all files and calculates their total physical
     /// size, then traverses all pages and calculates their
     /// total logical size, then divides the physical size

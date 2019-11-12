@@ -1191,7 +1191,7 @@ impl PageCache {
         Ok(on_disk_bytes / (logical_size + discount))
     }
 
-    fn size_on_disk(&self) -> Result<u64> {
+    pub(crate) fn size_on_disk(&self) -> Result<u64> {
         let mut size = self.config.file.metadata()?.len();
 
         let stable = self.config.blob_path(0);

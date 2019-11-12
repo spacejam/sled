@@ -46,7 +46,7 @@ what's the trade-off? sled uses too much disk space sometimes. this will improve
 # features
 
 * [API](https://docs.rs/sled) similar to a threadsafe `BTreeMap<[u8], [u8]>`
-* fully serializable multi-key and multi-Tree [transactions](https://docs.rs/sled/latest/sled/struct.Tree.html#method.transaction) involving up to 69 separate Trees!
+* serializable multi-key and multi-Tree interactive [transactions](https://docs.rs/sled/latest/sled/struct.Tree.html#method.transaction) involving up to 69 separate Trees!
 * fully atomic single-key operations, supports [compare and swap](https://docs.rs/sled/latest/sled/struct.Tree.html#method.compare_and_swap)
 * zero-copy reads
 * [write batch support](https://docs.rs/sled/latest/sled/struct.Tree.html#method.apply_batch)
