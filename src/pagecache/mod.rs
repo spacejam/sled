@@ -1668,6 +1668,10 @@ impl PageCache {
             }
             loop {
                 if let Some(page_view) = self.inner.get(pid, guard) {
+                    if page_view.update == Some(Update::Free) {
+                        // don't page-out Freed pages
+                        continue;
+                    }
                     let new_page = Owned::new(Page {
                         update: None,
                         cache_infos: page_view.cache_infos.clone(),
@@ -1695,7 +1699,7 @@ impl PageCache {
     fn pull(&self, pid: PageId, lsn: Lsn, pointer: DiskPtr) -> Result<Update> {
         use MessageKind::*;
 
-        trace!("pulling lsn {} pointer {} from disk", lsn, pointer);
+        trace!("pulling pid {} lsn {} pointer {} from disk", pid, lsn, pointer);
         let _measure = Measure::new(&M.pull);
         let (header, bytes) = match self.log.read(pid, lsn, pointer) {
             Ok(LogRead::Inline(header, buf, _len)) => {
@@ -1763,9 +1767,10 @@ impl PageCache {
 
         // TODO this feels racy, test it better?
         if let Update::Free = update {
-            Err(Error::ReportableBug(
-                "non-link/replace found in pull".to_owned(),
-            ))
+            Err(Error::ReportableBug(format!(
+                "non-link/replace found in pull of pid {}",
+                pid
+            )))
         } else {
             Ok(update)
         }
@@ -1928,6 +1933,8 @@ impl PageCache {
                 let update =
                     self.pull(pid, cache_infos[0].lsn, cache_infos[0].pointer)?;
                 Some(update)
+            } else if state.is_free() {
+                Some(Update::Free)
             } else {
                 None
             };

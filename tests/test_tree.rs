@@ -1816,3 +1816,23 @@ fn tree_bug_37() {
         false,
     );
 }
+
+#[test]
+fn tree_bug_38() {
+    // postmortem: Free pages were not being initialized in the
+    // pagecache properly.
+    for _ in 0..10 {
+        prop_tree_matches_btreemap(
+            vec![
+                Set(Key(vec![193]), 73),
+                Merge(Key(vec![117]), 216),
+                Set(Key(vec![221]), 176),
+                GetLt(Key(vec![123])),
+                Restart,
+            ],
+            0,
+            false,
+            false,
+        );
+    }
+}
