@@ -111,7 +111,6 @@
     clippy::expl_impl_clone_on_copy,
     clippy::explicit_into_iter_loop,
     clippy::explicit_iter_loop,
-    clippy::explicit_iter_loop,
     clippy::fallible_impl_from,
     clippy::filter_map,
     clippy::filter_map_next,
