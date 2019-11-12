@@ -906,7 +906,9 @@ impl PageCache {
                 log_size: log_reservation.reservation_len() as u64,
             };
 
-            let mut new_cache_infos = old.cache_infos.clone();
+            let mut new_cache_infos =
+                Vec::with_capacity(old.cache_infos.len() + 1);
+            new_cache_infos.extend_from_slice(&old.cache_infos);
             new_cache_infos.push(cache_info);
 
             let mut page_ptr = new_page.take().unwrap();
