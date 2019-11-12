@@ -1654,7 +1654,7 @@ impl PageCache {
                 if let Some(page_view) = self.inner.get(pid, guard) {
                     if page_view.update == Some(Update::Free) {
                         // don't page-out Freed suckas
-                        continue;
+                        break;
                     }
                     let new_page = Owned::new(Page {
                         update: None,
