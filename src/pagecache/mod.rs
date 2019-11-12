@@ -151,28 +151,28 @@ pub enum LogKind {
 }
 
 fn log_kind_from_update(update: &Update) -> LogKind {
-    use Update::*;
-
     match update {
-        Free => LogKind::Free,
-        Link(..) => LogKind::Link,
-        Node(..) | Counter(..) | Meta(..) => LogKind::Replace,
+        Update::Free => LogKind::Free,
+        Update::Link(..) => LogKind::Link,
+        Update::Node(..) | Update::Counter(..) | Update::Meta(..) => {
+            LogKind::Replace
+        }
     }
 }
 
 impl From<MessageKind> for LogKind {
     fn from(kind: MessageKind) -> Self {
-        use MessageKind::*;
         match kind {
-            Free => LogKind::Free,
-
-            InlineNode | Counter | BlobNode | InlineMeta | BlobMeta => {
-                LogKind::Replace
-            }
-
-            InlineLink | BlobLink => LogKind::Link,
-
-            Cancelled | Pad | BatchManifest => LogKind::Skip,
+            MessageKind::Free => LogKind::Free,
+            MessageKind::InlineNode
+            | MessageKind::Counter
+            | MessageKind::BlobNode
+            | MessageKind::InlineMeta
+            | MessageKind::BlobMeta => LogKind::Replace,
+            MessageKind::InlineLink | MessageKind::BlobLink => LogKind::Link,
+            MessageKind::Cancelled
+            | MessageKind::Pad
+            | MessageKind::BatchManifest => LogKind::Skip,
             other => {
                 debug!("encountered unexpected message kind byte {:?}", other);
                 LogKind::Corrupted
@@ -386,7 +386,7 @@ impl Update {
 
     pub(crate) fn as_meta(&self) -> &Meta {
         if let Update::Meta(meta) = self {
-            &meta
+            meta
         } else {
             panic!("called as_meta on {:?}", self)
         }
@@ -442,7 +442,7 @@ impl Page {
     }
 
     fn ts(&self) -> u64 {
-        self.cache_infos.last().map(|ci| ci.ts).unwrap_or(0)
+        self.cache_infos.last().map_or(0, |ci| ci.ts)
     }
 
     fn lone_blob(&self) -> Option<DiskPtr> {
@@ -1124,7 +1124,7 @@ impl PageCache {
                 guard,
             );
 
-            if let Ok(_) = result {
+            if result.is_ok() {
                 let lsn = log_reservation.lsn();
 
                 let old_pointers =
@@ -1251,12 +1251,14 @@ impl PageCache {
         );
 
         let log_kind = log_kind_from_update(&update);
+        trace!("cas_page on pid {} has log kind: {:?}", pid, log_kind);
         let serialize_latency = Measure::new(&M.serialize);
         let bytes = match &update {
             Update::Counter(c) => serialize(&c).unwrap(),
             Update::Meta(m) => serialize(&m).unwrap(),
             Update::Free => vec![],
-            other => serialize(other.as_node()).unwrap(),
+            Update::Node(node) => serialize(node).unwrap(),
+            other => panic!("non-replacement used in cas_page: {:?}", other),
         };
         drop(serialize_latency);
 
@@ -1456,7 +1458,7 @@ impl PageCache {
 
         let base: &mut Node = base_slice[0].as_node_mut();
 
-        for link_update in links.into_iter() {
+        for link_update in links {
             let link: &Link = link_update.as_link();
             base.apply(link);
         }
@@ -1656,7 +1658,7 @@ impl PageCache {
 
     fn page_out(&self, to_evict: Vec<PageId>, guard: &Guard) -> Result<()> {
         let _measure = Measure::new(&M.page_out);
-        'different_page_eviction: for pid in to_evict {
+        for pid in to_evict {
             if pid == COUNTER_PID
                 || pid == META_PID
                 || pid == BATCH_MANIFEST_PID
@@ -1922,17 +1924,12 @@ impl PageCache {
             // Set up new page
             trace!("installing page for pid {}", pid);
 
-            let update = match pid {
-                #[cold]
-                META_PID | COUNTER_PID => {
-                    let update = self.pull(
-                        pid,
-                        cache_infos[0].lsn,
-                        cache_infos[0].pointer,
-                    )?;
-                    Some(update)
-                }
-                _ => None,
+            let update = if pid == META_PID || pid == COUNTER_PID {
+                let update =
+                    self.pull(pid, cache_infos[0].lsn, cache_infos[0].pointer)?;
+                Some(update)
+            } else {
+                None
             };
             let page = Page { update, cache_infos };
 
