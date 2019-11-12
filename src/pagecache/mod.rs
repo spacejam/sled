@@ -95,13 +95,13 @@ pub enum MessageKind {
     /// The meta page, stored blobly
     BlobMeta = 7,
     /// A consolidated page replacement, stored inline
-    InlineNode = 10,
+    InlineNode = 8,
     /// A consolidated page replacement, stored blobly
-    BlobNode = 11,
+    BlobNode = 9,
     /// A partial page update, stored inline
-    InlineLink = 12,
+    InlineLink = 10,
     /// A partial page update, stored blobly
-    BlobLink = 13,
+    BlobLink = 11,
 }
 
 impl MessageKind {
