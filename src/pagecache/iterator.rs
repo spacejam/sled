@@ -73,7 +73,7 @@ impl Iterator for LogIter {
                     trace!("read blob flush in LogIter::next");
                     let sz = u64::try_from(MSG_HEADER_LEN + BLOB_INLINE_LEN)
                         .unwrap();
-                    self.cur_lsn += sz as Lsn;
+                    self.cur_lsn += Lsn::try_from(sz).unwrap();
 
                     return Some((
                         LogKind::from(header.kind),
@@ -89,8 +89,8 @@ impl Iterator for LogIter {
                         header,
                     );
                     let sz = u64::try_from(MSG_HEADER_LEN).unwrap()
-                        + on_disk_len as u64;
-                    self.cur_lsn += sz as Lsn;
+                        + u64::try_from(on_disk_len).unwrap();
+                    self.cur_lsn += Lsn::try_from(sz).unwrap();
 
                     return Some((
                         LogKind::from(header.kind),
