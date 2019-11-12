@@ -703,15 +703,7 @@ impl PageCache {
 
             trace!("allocating pid {} for the first time", pid);
 
-            let new_page = Page {
-                update: None,
-                cache_infos: vec![CacheInfo {
-                    ts: 0,
-                    lsn: -1,
-                    pointer: DiskPtr::Inline(0),
-                    log_size: 0,
-                }],
-            };
+            let new_page = Page { update: None, cache_infos: vec![] };
 
             let page_view = self.inner.insert(pid, new_page, guard);
 
@@ -1669,7 +1661,7 @@ impl PageCache {
             loop {
                 if let Some(page_view) = self.inner.get(pid, guard) {
                     if page_view.update == Some(Update::Free) {
-                        // don't page-out Freed pages
+                        // don't page-out Freed suckas
                         continue;
                     }
                     let new_page = Owned::new(Page {
