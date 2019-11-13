@@ -922,6 +922,10 @@ impl PageCache {
                 Ok(new_shared) => {
                     trace!("link of pid {} succeeded", pid);
 
+                    unsafe {
+                        guard.defer_destroy(old.read);
+                    }
+
                     // if the last update for this page was also
                     // sent to this segment, we can skip marking it
                     let previous_head_lsn = old.last_lsn();
@@ -1111,6 +1115,10 @@ impl PageCache {
             );
 
             if result.is_ok() {
+                unsafe {
+                    guard.defer_destroy(page_view.read);
+                }
+
                 let lsn = log_reservation.lsn();
 
                 let old_pointers =
@@ -1294,6 +1302,10 @@ impl PageCache {
 
             match result {
                 Ok(new_shared) => {
+                    unsafe {
+                        guard.defer_destroy(old.read);
+                    }
+
                     trace!("cas_page succeeded on pid {}", pid);
                     let pointers =
                         old.cache_infos.iter().map(|ci| ci.pointer).collect();
@@ -1467,6 +1479,10 @@ impl PageCache {
 
         if let Ok(new_pointer) = result {
             trace!("fix-up for pid {} succeeded", pid);
+
+            unsafe {
+                guard.defer_destroy(page_view.read);
+            }
 
             // possibly evict an item now that our cache has grown
             let to_evict = self.lru.accessed(pid, total_page_size);
@@ -1673,6 +1689,10 @@ impl PageCache {
                         )
                         .is_ok()
                     {
+                        unsafe {
+                            guard.defer_destroy(page_view.read);
+                        }
+
                         break;
                     }
                     // keep looping until we page this sucka out
