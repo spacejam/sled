@@ -89,6 +89,13 @@
     unused_qualifications
 )]
 #![deny(
+    // over time, consider enabling the following commented-out lints:
+    // clippy::missing_const_for_fn,
+    // clippy::missing_docs_in_private_items,
+    // clippy::module_name_repetitions,
+    // clippy::multiple_crate_versions,
+    // clippy::unimplemented,
+    // clippy::wildcard_enum_match_arm,
     // clippy::else_if_without_else,
     // clippy::float_arithmetic,
     // clippy::indexing_slicing,
@@ -104,7 +111,6 @@
     clippy::expl_impl_clone_on_copy,
     clippy::explicit_into_iter_loop,
     clippy::explicit_iter_loop,
-    clippy::explicit_iter_loop,
     clippy::fallible_impl_from,
     clippy::filter_map,
     clippy::filter_map_next,
@@ -118,10 +124,6 @@
     clippy::match_same_arms,
     clippy::maybe_infinite_iter,
     clippy::mem_forget,
-    // clippy::missing_const_for_fn,
-    // clippy::missing_docs_in_private_items,
-    // clippy::module_name_repetitions,
-    // clippy::multiple_crate_versions,
     clippy::multiple_inherent_impl,
     clippy::mut_mut,
     clippy::needless_borrow,
@@ -144,11 +146,9 @@
     clippy::string_add_assign,
     clippy::type_repetition_in_bounds,
     clippy::unicode_not_nfc,
-    // clippy::unimplemented,
     clippy::unseparated_literal_suffix,
     clippy::used_underscore_binding,
     clippy::wildcard_dependencies,
-    // clippy::wildcard_enum_match_arm,
     clippy::wrong_pub_self_convention,
 )]
 
@@ -168,7 +168,6 @@ mod config;
 mod context;
 mod db;
 mod dll;
-mod frag;
 mod histogram;
 mod iter;
 mod ivec;
@@ -179,10 +178,8 @@ mod metrics;
 mod node;
 mod oneshot;
 mod pagecache;
-mod pagetable;
 mod prefix;
 mod result;
-mod stack;
 mod subscription;
 mod sys_limits;
 mod threadpool;
@@ -196,6 +193,9 @@ mod flusher;
 #[cfg(feature = "event_log")]
 /// The event log helps debug concurrency issues.
 pub mod event_log;
+
+#[cfg(feature = "event_log")]
+mod stack;
 
 #[cfg(feature = "measure_allocs")]
 mod measure_allocs;
@@ -221,7 +221,6 @@ pub use {
             DiskPtr, Log, LogKind, LogOffset, LogRead, Lsn, PageCache, PageId,
             SegmentMode,
         },
-        pagetable::PAGETABLE_NODE_SZ,
     },
     crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared},
 };
@@ -244,18 +243,14 @@ pub use self::{
 use {
     self::{
         binary_search::binary_search_lub,
-        config::StorageParameters,
         context::Context,
-        frag::Frag,
         histogram::Histogram,
         lru::Lru,
         meta::Meta,
         metrics::{clock, measure, Measure, M},
         node::{Data, Node},
         oneshot::{OneShot, OneShotFiller},
-        pagetable::PageTable,
         result::CasResult,
-        stack::{node_from_frag_vec, Stack, StackIter},
         subscription::Subscriptions,
         tree::TreeInner,
         vecset::VecSet,
@@ -287,8 +282,6 @@ fn crc32(buf: &[u8]) -> u32 {
     hasher.finalize()
 }
 
-type TreePtr<'g> = pagecache::PagePtr<'g>;
-
 #[cfg(any(test, feature = "lock_free_delays"))]
 mod debug_delay;
 
@@ -300,6 +293,22 @@ use debug_delay::debug_delay;
 /// fully eliminated by the compiler in non-test code.
 #[cfg(not(any(test, feature = "lock_free_delays")))]
 const fn debug_delay() {}
+
+/// Link denotes a tree node or its modification fragment such as
+/// key addition or removal.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Link {
+    /// A new value is set for a given key
+    Set(IVec, IVec),
+    /// The associated value is removed for a given key
+    Del(IVec),
+    /// A child of this Index node is marked as mergable
+    ParentMergeIntention(PageId),
+    /// The merging child has been completely merged into its left sibling
+    ParentMergeConfirm,
+    /// A Node is marked for being merged into its left sibling
+    ChildMergeCap,
+}
 
 /// A fast map that is not resistant to collision attacks. Works
 /// on 8 bytes at a time.

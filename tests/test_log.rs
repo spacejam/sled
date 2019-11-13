@@ -597,6 +597,7 @@ fn prop_log_works(ops: Vec<Op>, flusher: bool) -> bool {
                 }
                 log = config.open_raw_log().unwrap();
             }
+            #[allow(unused_variables)]
             Truncate(new_len) => {
                 #[cfg(target_os = "linux")]
                 {

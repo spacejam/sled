@@ -5,17 +5,19 @@ use std::{
     alloc::{alloc_zeroed, Layout},
     convert::TryFrom,
     mem::{align_of, size_of},
-    sync::atomic::{
-        AtomicPtr,
-        Ordering::{Acquire, Relaxed, Release},
-    },
+    sync::atomic::Ordering::{Acquire, Relaxed, Release},
 };
 
-use crate::debug_delay;
+use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
+
+use crate::{
+    debug_delay,
+    pagecache::{Page, PageView},
+};
 
 #[allow(unused)]
 #[doc(hidden)]
-pub const PAGETABLE_NODE_SZ: usize = size_of::<Node1<()>>();
+pub const PAGETABLE_NODE_SZ: usize = size_of::<Node1>();
 
 const FAN_FACTOR: usize = 18;
 const FAN_OUT: usize = 1 << FAN_FACTOR;
@@ -23,16 +25,16 @@ const FAN_MASK: usize = FAN_OUT - 1;
 
 pub type PageId = u64;
 
-struct Node1<T: Send + 'static> {
-    children: [AtomicPtr<Node2<T>>; FAN_OUT],
+struct Node1 {
+    children: [Atomic<Node2>; FAN_OUT],
 }
 
-struct Node2<T: Send + 'static> {
-    children: [AtomicPtr<T>; FAN_OUT],
+struct Node2 {
+    children: [Atomic<Page>; FAN_OUT],
 }
 
-impl<T: Send + 'static> Node1<T> {
-    fn new() -> Box<Self> {
+impl Node1 {
+    fn new() -> Owned<Self> {
         let size = size_of::<Self>();
         let align = align_of::<Self>();
 
@@ -42,13 +44,13 @@ impl<T: Send + 'static> Node1<T> {
             #[allow(clippy::cast_ptr_alignment)]
             let ptr = alloc_zeroed(layout) as *mut Self;
 
-            Box::from_raw(ptr)
+            Owned::from_raw(ptr)
         }
     }
 }
 
-impl<T: Send + 'static> Node2<T> {
-    fn new() -> Box<Self> {
+impl Node2 {
+    fn new() -> Owned<Node2> {
         let size = size_of::<Self>();
         let align = align_of::<Self>();
 
@@ -58,121 +60,130 @@ impl<T: Send + 'static> Node2<T> {
             #[allow(clippy::cast_ptr_alignment)]
             let ptr = alloc_zeroed(layout) as *mut Self;
 
-            Box::from_raw(ptr)
+            Owned::from_raw(ptr)
         }
     }
 }
 
-impl<T: Send + 'static> Drop for Node1<T> {
+impl Drop for Node1 {
     fn drop(&mut self) {
         drop_iter(self.children.iter());
     }
 }
 
-impl<T: Send + 'static> Drop for Node2<T> {
+impl Drop for Node2 {
     fn drop(&mut self) {
         drop_iter(self.children.iter());
     }
 }
 
-fn drop_iter<T>(iter: core::slice::Iter<'_, AtomicPtr<T>>) {
+fn drop_iter<T>(iter: core::slice::Iter<'_, Atomic<T>>) {
+    let guard = pin();
     for child in iter {
-        let shared_child = child.load(Relaxed);
+        let shared_child = child.load(Relaxed, &guard);
         if shared_child.is_null() {
             // this does not leak because the PageTable is
             // assumed to be dense.
             break;
         }
         unsafe {
-            drop(Box::from_raw(shared_child));
+            drop(shared_child.into_owned());
         }
     }
 }
 
 /// A simple lock-free radix tree.
-pub struct PageTable<T>
-where
-    T: 'static + Send + Sync,
-{
-    head: AtomicPtr<Node1<T>>,
+pub struct PageTable {
+    head: Atomic<Node1>,
 }
 
-impl<T> Default for PageTable<T>
-where
-    T: 'static + Send + Sync,
-{
+impl Default for PageTable {
     fn default() -> Self {
         let head = Node1::new();
-        Self { head: AtomicPtr::from(Box::into_raw(head)) }
+        Self { head: Atomic::from(head) }
     }
 }
 
-impl<T> PageTable<T>
-where
-    T: 'static + Send + Sync,
-{
+impl PageTable {
     /// # Panics
     ///
     /// will panic if the item is not null already,
     /// which represents a serious failure to
     /// properly handle lifecycles of pages in the
     /// using system.
-    pub fn insert(&self, pid: PageId, item: T) {
+    pub fn insert<'g>(
+        &self,
+        pid: PageId,
+        item: Page,
+        guard: &'g Guard,
+    ) -> PageView<'g> {
         debug_delay();
-        let tip = traverse(self.head.load(Acquire), pid);
+        let tip = self.traverse(pid, guard);
 
-        let old = tip.swap(Box::into_raw(Box::new(item)), Release);
+        let shared = Owned::new(item).into_shared(guard);
+        let old = tip.swap(shared, Release, guard);
         assert!(old.is_null());
+
+        PageView { read: shared, entry: tip }
     }
 
     /// Try to get a value from the tree.
-    pub fn get<'g>(&self, pid: PageId) -> Option<&'g T> {
+    pub fn get<'g>(
+        &self,
+        pid: PageId,
+        guard: &'g Guard,
+    ) -> Option<PageView<'g>> {
         debug_delay();
-        let tip = traverse(self.head.load(Acquire), pid);
+        let tip = self.traverse(pid, guard);
 
-        let res = tip.load(Acquire);
+        debug_delay();
+        let res = tip.load(Acquire, guard);
         if res.is_null() {
             None
         } else {
-            Some(unsafe { &*res })
+            let page_view = PageView { read: res, entry: tip };
+
+            Some(page_view)
         }
     }
-}
 
-fn traverse<'g, T: 'static + Send>(
-    head: *mut Node1<T>,
-    k: PageId,
-) -> &'g AtomicPtr<T> {
-    let (l1k, l2k) = split_fanout(k);
-
-    debug_delay();
-    let l1 = unsafe { &(*head).children };
-
-    debug_delay();
-    let mut l2_ptr = l1[l1k].load(Acquire);
-
-    if l2_ptr.is_null() {
-        let next_child = Box::into_raw(Node2::new());
+    fn traverse<'g>(&self, k: PageId, guard: &'g Guard) -> &'g Atomic<Page> {
+        let (l1k, l2k) = split_fanout(k);
 
         debug_delay();
-        let ret =
-            l1[l1k].compare_and_swap(std::ptr::null_mut(), next_child, Release);
+        let head = self.head.load(Acquire, guard);
 
-        if ret.is_null() {
-            // success
-            l2_ptr = next_child;
-        } else {
-            unsafe {
-                drop(Box::from_raw(next_child));
-            }
-            l2_ptr = ret;
+        debug_delay();
+        let l1 = unsafe { &head.deref().children };
+
+        debug_delay();
+        let mut l2_ptr = l1[l1k].load(Acquire, guard);
+
+        if l2_ptr.is_null() {
+            let next_child = Node2::new();
+
+            debug_delay();
+            let ret = l1[l1k].compare_and_set(
+                Shared::null(),
+                next_child,
+                Release,
+                guard,
+            );
+
+            l2_ptr = match ret {
+                Ok(next_child) => next_child,
+                Err(returned) => {
+                    drop(returned.new);
+                    returned.current
+                }
+            };
         }
+
+        debug_delay();
+        let l2 = unsafe { &l2_ptr.deref().children };
+
+        &l2[l2k]
     }
-
-    debug_delay();
-    let l2 = unsafe { &(*l2_ptr).children };
-
-    &l2[l2k]
 }
 
 #[inline]
@@ -198,14 +209,12 @@ fn safe_usize(value: PageId) -> usize {
     usize::try_from(value).unwrap()
 }
 
-impl<T> Drop for PageTable<T>
-where
-    T: 'static + Send + Sync,
-{
+impl Drop for PageTable {
     fn drop(&mut self) {
+        let guard = pin();
+        let head = self.head.load(Relaxed, &guard);
         unsafe {
-            let head = self.head.load(Relaxed);
-            drop(Box::from_raw(head));
+            drop(head.into_owned());
         }
     }
 }

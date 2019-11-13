@@ -3,15 +3,12 @@
 use std::{
     fmt::{self, Debug},
     ops::Deref,
-    sync::atomic::Ordering::{AcqRel, Acquire, Release},
+    sync::atomic::Ordering::{Acquire, Release},
 };
 
 use crossbeam_epoch::{unprotected, Atomic, Guard, Owned, Shared};
 
 use crate::debug_delay;
-
-type CompareAndSwapResult<'g, T> =
-    Result<Shared<'g, Node<T>>, (Shared<'g, Node<T>>, Owned<Node<T>>)>;
 
 /// A node in the lock-free `Stack`.
 #[derive(Debug)]
@@ -136,53 +133,6 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
         }
     }
 
-    /// compare and push
-    pub fn cap_node<'g>(
-        &self,
-        old: Shared<'_, Node<T>>,
-        mut node: Owned<Node<T>>,
-        guard: &'g Guard,
-    ) -> CompareAndSwapResult<'g, T> {
-        // properly set next ptr
-        node.next = Atomic::from(old);
-        let res = self.head.compare_and_set(old, node, AcqRel, guard);
-
-        match res {
-            Err(e) => {
-                // we want to set next to null to prevent
-                // the current shared head from being
-                // dropped when we drop this node.
-                let mut returned = e.new;
-                returned.next = Atomic::null();
-                Err((e.current, returned))
-            }
-            Ok(success) => Ok(success),
-        }
-    }
-
-    /// compare and swap
-    pub fn cas<'g>(
-        &self,
-        old: Shared<'g, Node<T>>,
-        new: Owned<Node<T>>,
-        guard: &'g Guard,
-    ) -> CompareAndSwapResult<'g, T> {
-        debug_delay();
-        let res = self.head.compare_and_set(old, new, AcqRel, guard);
-
-        match res {
-            Ok(success) => {
-                if !old.is_null() {
-                    unsafe {
-                        guard.defer_destroy(old);
-                    };
-                }
-                Ok(success)
-            }
-            Err(e) => Err((e.current, e.new)),
-        }
-    }
-
     /// Returns the current head pointer of the stack, which can
     /// later be used as the key for cas and cap operations.
     pub fn head<'g>(&self, guard: &'g Guard) -> Shared<'g, Node<T>> {
@@ -244,25 +194,6 @@ where
 
         (size, Some(size))
     }
-}
-
-/// Turns a vector of elements into a lock-free stack
-/// of them, and returns the head of the stack.
-pub fn node_from_frag_vec<T>(from: Vec<T>) -> Owned<Node<T>>
-where
-    T: Send + 'static + Sync,
-{
-    let mut last = None;
-
-    for item in from.into_iter().rev() {
-        last = if let Some(last) = last {
-            Some(Owned::new(Node { inner: item, next: Atomic::from(last) }))
-        } else {
-            Some(Owned::new(Node { inner: item, next: Atomic::null() }))
-        }
-    }
-
-    last.expect("at least one frag was provided in the from Vec")
 }
 
 #[test]

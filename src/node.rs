@@ -10,7 +10,7 @@ pub struct Node {
     pub(crate) hi: IVec,
     pub(crate) merging_child: Option<PageId>,
     pub(crate) merging: bool,
-    prefix_len: u8,
+    pub(crate) prefix_len: u8,
 }
 
 impl Node {
@@ -31,28 +31,27 @@ impl Node {
         &self.lo[..self.prefix_len as usize]
     }
 
-    pub(crate) fn apply(&mut self, frag: &Frag) {
-        use self::Frag::*;
+    pub(crate) fn apply(&mut self, link: &Link) {
+        use self::Link::*;
 
         assert!(
             !self.merging,
-            "somehow a frag was applied to a node after it was merged"
+            "somehow a link was applied to a node after it was merged"
         );
 
-        match *frag {
+        match *link {
             Set(ref k, ref v) => {
                 self.set_leaf(k.clone(), v.clone());
             }
             Del(ref k) => {
                 self.del_leaf(k);
             }
-            Base(_) => panic!("trying to apply a Base to frag {:?}", self),
             ParentMergeIntention(pid) => {
                 assert!(
                     self.merging_child.is_none(),
                     "trying to merge {:?} into node {:?} which \
                      is already merging another child",
-                    frag,
+                    link,
                     self
                 );
                 self.merging_child = Some(pid);
@@ -62,7 +61,7 @@ impl Node {
                 let merged_child = self.merging_child.take().expect(
                     "we should have a specific \
                      child that was merged if this \
-                     frag appears here",
+                     link appears here",
                 );
                 self.data.parent_merge_confirm(merged_child);
             }
@@ -624,10 +623,6 @@ impl Data {
 
     pub(crate) fn is_index(&self) -> bool {
         if let Data::Index(..) = self { true } else { false }
-    }
-
-    pub(crate) fn is_leaf(&self) -> bool {
-        if let Data::Leaf(..) = self { true } else { false }
     }
 }
 

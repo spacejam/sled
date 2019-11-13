@@ -419,7 +419,7 @@ impl SegmentAccountant {
     fn initial_segments(
         &self,
         snapshot: &Snapshot,
-    ) -> Result<(Vec<Segment>, Vec<usize>)> {
+    ) -> Result<(Vec<Segment>, Vec<u64>)> {
         let segment_size = self.config.segment_size;
         let file_len = self.config.file.metadata()?.len();
         let empty_snapshot = snapshot.pt.is_empty();
@@ -440,7 +440,7 @@ impl SegmentAccountant {
 
         // generate segments from snapshot lids
         let mut segments = vec![Segment::default(); number_of_segments];
-        let mut segment_sizes = vec![0_usize; number_of_segments];
+        let mut segment_sizes = vec![0_u64; number_of_segments];
 
         let mut add = |pid,
                        lsn,
@@ -469,7 +469,13 @@ impl SegmentAccountant {
                     }
                 }
                 PageState::Free(lsn, ptr) => {
-                    add(*pid, lsn, MSG_HEADER_LEN, ptr.lid(), &mut segments);
+                    add(
+                        *pid,
+                        lsn,
+                        u64::try_from(MSG_HEADER_LEN).unwrap(),
+                        ptr.lid(),
+                        &mut segments,
+                    );
                 }
             }
         }
@@ -504,8 +510,9 @@ impl SegmentAccountant {
         };
 
         let cleanup_threshold =
-            usize::from(self.config.segment_cleanup_threshold);
-        let drain_sz = segment_size * 100 / cleanup_threshold;
+            u64::from(self.config.segment_cleanup_threshold);
+        let drain_sz =
+            u64::try_from(segment_size).unwrap() * 100 / cleanup_threshold;
 
         for (idx, segment) in segments.iter_mut().enumerate() {
             let segment_base = idx as LogOffset * segment_size as LogOffset;
@@ -754,7 +761,10 @@ impl SegmentAccountant {
     /// Called by the `PageCache` to find pages that are in
     /// segments elligible for cleaning that it should
     /// try to rewrite elsewhere.
-    pub(super) fn clean(&mut self, ignore_pid: PageId) -> Option<PageId> {
+    pub(super) fn clean(
+        &mut self,
+        ignore_pid: Option<PageId>,
+    ) -> Option<PageId> {
         let seg_offset = if self.to_clean.is_empty() || self.to_clean.len() == 1
         {
             0
@@ -786,7 +796,7 @@ impl SegmentAccountant {
             };
 
             let pid = present.iter().nth(offset).unwrap();
-            if *pid == ignore_pid {
+            if Some(*pid) == ignore_pid {
                 return None;
             }
             trace!("telling caller to clean {} from segment at {}", pid, lid,);
@@ -918,7 +928,7 @@ impl SegmentAccountant {
                 old_segment.present.contains(&pid),
                 "we expect deferred replacements to provide \
                  all previous segments so we can clean them. \
-                 pid {} old_ptr segment: {} segments with pid: {:?}",
+                 pid {} old_ptr segment: {} segments with (offset, state, present): {:?}",
                 pid,
                 old_idx * self.config.segment_size,
                 self.segments

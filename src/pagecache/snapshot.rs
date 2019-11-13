@@ -25,12 +25,12 @@ pub struct Snapshot {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum PageState {
-    Present(Vec<(Lsn, DiskPtr, usize)>),
+    Present(Vec<(Lsn, DiskPtr, u64)>),
     Free(Lsn, DiskPtr),
 }
 
 impl PageState {
-    fn push(&mut self, item: (Lsn, DiskPtr, usize)) {
+    fn push(&mut self, item: (Lsn, DiskPtr, u64)) {
         match *self {
             PageState::Present(ref mut items) => items.push(item),
             PageState::Free(_, _) => {
@@ -40,16 +40,17 @@ impl PageState {
     }
 
     /// Iterate over the (lsn, lid) pairs that hold this page's state.
-    pub fn iter(&self) -> impl Iterator<Item = (Lsn, DiskPtr, usize)> {
+    pub fn iter(&self) -> impl Iterator<Item = (Lsn, DiskPtr, u64)> {
         match *self {
             PageState::Present(ref items) => items.clone().into_iter(),
             PageState::Free(lsn, ptr) => {
-                vec![(lsn, ptr, MSG_HEADER_LEN)].into_iter()
+                vec![(lsn, ptr, u64::try_from(MSG_HEADER_LEN).unwrap())]
+                    .into_iter()
             }
         }
     }
 
-    fn is_free(&self) -> bool {
+    pub(crate) fn is_free(&self) -> bool {
         match *self {
             PageState::Free(_, _) => true,
             _ => false,
@@ -64,7 +65,7 @@ impl Snapshot {
         pid: PageId,
         lsn: Lsn,
         disk_ptr: DiskPtr,
-        sz: usize,
+        sz: u64,
     ) {
         // unwrapping this because it's already passed the crc check
         // in the log iterator
@@ -83,7 +84,7 @@ impl Snapshot {
                     .pt
                     .insert(pid, PageState::Present(vec![(lsn, disk_ptr, sz)]));
             }
-            LogKind::Append => {
+            LogKind::Link => {
                 // Because we rewrite pages over time, we may have relocated
                 // a page's initial Compact to a later segment. We should skip
                 // over pages here unless we've encountered a Compact for them.
@@ -108,6 +109,13 @@ impl Snapshot {
                     }
 
                     lids.push((lsn, disk_ptr, sz));
+                } else {
+                    trace!(
+                        "skipping dangling append of pid {} at lid {} lsn {}",
+                        pid,
+                        disk_ptr,
+                        lsn,
+                    );
                 }
             }
             LogKind::Free => {
@@ -306,7 +314,10 @@ fn write_snapshot(config: &RunningConfig, snapshot: &Snapshot) -> Result<()> {
 
             if let Err(e) = std::fs::remove_file(&path) {
                 // TODO should this just be a try return?
-                warn!("failed to remove old snapshot file, maybe snapshot race? {}", e);
+                warn!(
+                    "failed to remove old snapshot file, maybe snapshot race? {}",
+                    e
+                );
             }
         }
     }

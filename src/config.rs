@@ -16,18 +16,14 @@ const DEFAULT_PATH: &str = "default.sled";
 
 /// A persisted configuration about high-level
 /// storage file information
-#[derive(Debug, Eq, PartialEq, Clone, Copy, Serialize, Deserialize)]
-pub struct StorageParameters {
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+struct StorageParameters {
     pub segment_size: usize,
     pub use_compression: bool,
     pub version: (usize, usize),
 }
 
 impl StorageParameters {
-    pub const fn size_in_bytes(&self) -> u64 {
-        std::mem::size_of::<StorageParameters>() as u64
-    }
-
     pub fn serialize(&self) -> Vec<u8> {
         let mut out = vec![];
 

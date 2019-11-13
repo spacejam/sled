@@ -5,8 +5,8 @@ use super::{
     read_blob, read_message, u32_to_arr, u64_to_arr, BlobPointer, DiskPtr,
     IoBuf, IoBufs, LogKind, LogOffset, Lsn, MessageKind, Reservation,
     SegmentAccountant, Snapshot, BATCH_MANIFEST_PID, BLOB_INLINE_LEN,
-    CONFIG_PID, COUNTER_PID, META_PID, MINIMUM_ITEMS_PER_SEGMENT,
-    MSG_HEADER_LEN, SEG_HEADER_LEN,
+    COUNTER_PID, META_PID, MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN,
+    SEG_HEADER_LEN,
 };
 
 use crate::*;
@@ -197,16 +197,14 @@ impl Log {
             (COUNTER_PID, LogKind::Replace, false) => MessageKind::Counter,
             (META_PID, LogKind::Replace, true) => MessageKind::BlobMeta,
             (META_PID, LogKind::Replace, false) => MessageKind::InlineMeta,
-            (CONFIG_PID, LogKind::Replace, true) => MessageKind::BlobConfig,
-            (CONFIG_PID, LogKind::Replace, false) => MessageKind::InlineConfig,
             (BATCH_MANIFEST_PID, LogKind::Skip, false) => {
                 MessageKind::BatchManifest
             }
             (_, LogKind::Free, false) => MessageKind::Free,
-            (_, LogKind::Replace, true) => MessageKind::BlobReplace,
-            (_, LogKind::Replace, false) => MessageKind::InlineReplace,
-            (_, LogKind::Append, true) => MessageKind::BlobAppend,
-            (_, LogKind::Append, false) => MessageKind::InlineAppend,
+            (_, LogKind::Replace, true) => MessageKind::BlobNode,
+            (_, LogKind::Replace, false) => MessageKind::InlineNode,
+            (_, LogKind::Link, true) => MessageKind::BlobLink,
+            (_, LogKind::Link, false) => MessageKind::InlineLink,
             other => panic!(
                 "unexpected combination of PageId, \
                  LogKind, and blob status: {:?}",

@@ -1,4 +1,4 @@
-use std::ops::Bound;
+use std::ops::{Bound, Deref};
 
 use crate::{Guard, Measure, M};
 
@@ -91,7 +91,7 @@ impl Iter {
                 let guard = pin();
                 let view =
                     iter_try!(self.tree.view_for_key(self.low_key(), &guard));
-                (view.pid, view.node.clone(), guard)
+                (view.pid, view.deref().clone(), guard)
             };
 
         for _ in 0..MAX_LOOPS {
@@ -112,14 +112,14 @@ impl Iter {
                 };
 
                 pid = view.pid;
-                node = view.node.clone();
+                node = view.deref().clone();
                 continue;
             } else if !node.contains_lower_bound(&self.lo, true) {
                 // view too high (maybe split, maybe exhausted?)
                 let seek_key = possible_predecessor(&node.lo)?;
                 let view = iter_try!(self.tree.view_for_key(seek_key, &guard));
                 pid = view.pid;
-                node = view.node.clone();
+                node = view.deref().clone();
                 continue;
             }
 
@@ -182,7 +182,7 @@ impl DoubleEndedIterator for Iter {
 
                 let view =
                     iter_try!(self.tree.view_for_key(self.high_key(), &guard));
-                (view.pid, view.node.clone(), guard)
+                (view.pid, view.deref().clone(), guard)
             };
 
         for _ in 0..MAX_LOOPS {
@@ -203,14 +203,14 @@ impl DoubleEndedIterator for Iter {
                 };
 
                 pid = view.pid;
-                node = view.node.clone();
+                node = view.deref().clone();
                 continue;
             } else if !node.contains_lower_bound(&self.hi, false) {
                 // view too high (maybe split, maybe exhausted?)
                 let seek_key = possible_predecessor(&node.lo)?;
                 let view = iter_try!(self.tree.view_for_key(seek_key, &guard));
                 pid = view.pid;
-                node = view.node.clone();
+                node = view.deref().clone();
                 continue;
             }
 
