@@ -955,6 +955,19 @@ impl PageCache {
                     // is waiting to acquire a new reservation blocked by this?
                     log_reservation.complete()?;
 
+                    // possibly evict an item now that our cache has grown
+                    let total_page_size =
+                        unsafe { new_shared.deref().log_size() };
+                    let to_evict = self.lru.accessed(pid, total_page_size);
+                    trace!(
+                        "accessed pid {} -> paging out pids {:?}",
+                        pid,
+                        to_evict
+                    );
+                    if !to_evict.is_empty() {
+                        self.page_out(to_evict, guard)?;
+                    }
+
                     if let Some(to_clean) = to_clean {
                         self.rewrite_page(to_clean, guard)?;
                     }
@@ -1114,7 +1127,7 @@ impl PageCache {
                 guard,
             );
 
-            if result.is_ok() {
+            if let Ok(new_shared) = result {
                 unsafe {
                     guard.defer_destroy(page_view.read);
                 }
@@ -1132,6 +1145,18 @@ impl PageCache {
                 // when the iobuf's n_writers hits 0, we may transition
                 // the segment to inactive, resulting in a race otherwise.
                 let _pointer = log_reservation.complete()?;
+
+                // possibly evict an item now that our cache has grown
+                let total_page_size = unsafe { new_shared.deref().log_size() };
+                let to_evict = self.lru.accessed(pid, total_page_size);
+                trace!(
+                    "accessed pid {} -> paging out pids {:?}",
+                    pid,
+                    to_evict
+                );
+                if !to_evict.is_empty() {
+                    self.page_out(to_evict, guard)?;
+                }
 
                 trace!("rewriting pid {} succeeded", pid);
 
@@ -1318,6 +1343,20 @@ impl PageCache {
                     // when the iobuf's n_writers hits 0, we may transition
                     // the segment to inactive, resulting in a race otherwise.
                     let _pointer = log_reservation.complete()?;
+
+                    // possibly evict an item now that our cache has grown
+                    let total_page_size =
+                        unsafe { new_shared.deref().log_size() };
+                    let to_evict = self.lru.accessed(pid, total_page_size);
+                    trace!(
+                        "accessed pid {} -> paging out pids {:?}",
+                        pid,
+                        to_evict
+                    );
+                    if !to_evict.is_empty() {
+                        self.page_out(to_evict, guard)?;
+                    }
+
                     return Ok(Ok(PageView {
                         read: new_shared,
                         entry: old.entry,
@@ -1437,9 +1476,14 @@ impl PageCache {
             return Ok(None);
         }
 
-        let total_page_size = page_view.log_size();
-
         if page_view.update.is_some() {
+            // possibly evict an item now that our cache has grown
+            let total_page_size = page_view.log_size();
+            let to_evict = self.lru.accessed(pid, total_page_size);
+            trace!("accessed pid {} -> paging out pids {:?}", pid, to_evict);
+            if !to_evict.is_empty() {
+                self.page_out(to_evict, guard)?;
+            }
             return Ok(Some(NodeView(page_view)));
         }
 
@@ -1477,7 +1521,7 @@ impl PageCache {
             guard,
         );
 
-        if let Ok(new_pointer) = result {
+        if let Ok(new_shared) = result {
             trace!("fix-up for pid {} succeeded", pid);
 
             unsafe {
@@ -1485,6 +1529,7 @@ impl PageCache {
             }
 
             // possibly evict an item now that our cache has grown
+            let total_page_size = unsafe { new_shared.deref().log_size() };
             let to_evict = self.lru.accessed(pid, total_page_size);
             trace!("accessed pid {} -> paging out pids {:?}", pid, to_evict);
             if !to_evict.is_empty() {
@@ -1492,7 +1537,7 @@ impl PageCache {
             }
 
             let mut page_view = page_view;
-            page_view.read = new_pointer;
+            page_view.read = new_shared;
 
             Ok(Some(NodeView(page_view)))
         } else {
