@@ -18,19 +18,16 @@
 //! these techniques:
 //!
 //! 1. We delay the reuse of any existing segment
-//!    by ensuring there are at least <# io buffers>
-//!    freed segments in front of the newly freed
-//!    segment in the free list. This ensures that
-//!    any pending IO buffer writes will hit
-//!    stable storage before we overwrite the
-//!    segment that may have contained the previous
-//!    latest stable copy of a page's state.
-//! 2. we use a `epoch::Guard::defer()` that guarantees
-//!    any segment that has been logically freed
-//!    or emptied by the `PageCache` will have its
-//!    addition to the free segment list be delayed
-//!    until any active threads that were acting on
-//!    the shared state have checked-out.
+//!    by ensuring that we never deactivate a
+//!    segment until all data written into it, as
+//!    well as all data written to earlier segments,
+//!    has been written to disk and fsynced.
+//! 2. we use a `epoch::Guard::defer()` from
+//!    IoBufs::write_to_log that guarantees
+//!    that we defer all segment deactivation
+//!    until all threads are finished that
+//!    may have witnessed pointers into a segment
+//!    that will be marked for reuse in the future.
 //!
 //! Another concern that arises due to the fact that
 //! IO buffers may be written out-of-order is the
@@ -39,9 +36,7 @@
 //! careful to preserve linearizability in the log.
 //! To do this, we must detect "torn segments" that
 //! were not able to be fully written before a crash
-//! happened. We detect torn individual segments by
-//! writing a lsn-tagged pad to the end of the
-//! segment, filling any unused space.
+//! happened.
 //!
 //! But what if we wrote a later segment before we
 //! were able to write its immediate predecessor segment,
