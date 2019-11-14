@@ -13,17 +13,16 @@ unsafe impl Sync for Lru {}
 
 impl Lru {
     /// Instantiates a new `Lru` cache.
-    pub fn new(cache_capacity: u64) -> Self {
-        assert!(
-            cache_capacity >= 256,
-            "Please configure the cache \
-             capacity to be at least 256 bytes"
-        );
-        let n_shards = 256;
-        let shard_capacity = cache_capacity / n_shards as u64;
+    pub fn new(cache_capacity_raw: u64) -> Self {
+        const N_SHARDS: usize = 8;
 
-        let mut shards = Vec::with_capacity(n_shards);
-        shards.resize_with(n_shards, || Mutex::new(Shard::new(shard_capacity)));
+        let cache_capacity =
+            std::cmp::max(cache_capacity_raw, u64::try_from(N_SHARDS).unwrap());
+
+        let shard_capacity = cache_capacity / N_SHARDS as u64;
+
+        let mut shards = Vec::with_capacity(N_SHARDS);
+        shards.resize_with(N_SHARDS, || Mutex::new(Shard::new(shard_capacity)));
 
         Self { shards }
     }
