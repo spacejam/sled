@@ -23,7 +23,7 @@
 //!    well as all data written to earlier segments,
 //!    has been written to disk and fsynced.
 //! 2. we use a `epoch::Guard::defer()` from
-//!    IoBufs::write_to_log that guarantees
+//!    `IoBufs::write_to_log` that guarantees
 //!    that we defer all segment deactivation
 //!    until all threads are finished that
 //!    may have witnessed pointers into a segment
