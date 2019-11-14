@@ -151,6 +151,7 @@
     clippy::wildcard_dependencies,
     clippy::wrong_pub_self_convention,
 )]
+#![recursion_limit = "128"]
 
 #[cfg(feature = "failpoints")]
 use fail::fail_point;

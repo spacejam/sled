@@ -64,7 +64,7 @@ impl<T> Uring<T> {
                 flags,
             );
             if ret < 0 {
-                return Err(Error::Io(io::Error::from_raw_os_error(ret)));
+                return Err(Error::Io(io::Error::from_raw_os_error(-ret)));
             }
 
             s.assume_init()
@@ -85,7 +85,7 @@ impl<T> Uring<T> {
                 1,
             );
             if ret < 0 {
-                return Err(Error::Io(io::Error::from_raw_os_error(ret)));
+                return Err(Error::Io(io::Error::from_raw_os_error(-ret)));
             }
         };
 
@@ -112,7 +112,7 @@ impl<T> Uring<T> {
                 return Ok(());
             }
             if ret < 0 {
-                return Err(Error::Io(io::Error::from_raw_os_error(ret)));
+                return Err(Error::Io(io::Error::from_raw_os_error(-ret)));
             }
             let i = usize::try_from((*cqe).user_data).unwrap();
             if i < self.free_slots.capacity() {
@@ -152,7 +152,7 @@ impl<T> Uring<T> {
                     libc::c_uint::try_from(reserve).unwrap(),
                 );
                 if ret < 0 {
-                    return Err(Error::Io(io::Error::from_raw_os_error(ret)));
+                    return Err(Error::Io(io::Error::from_raw_os_error(-ret)));
                 }
                 self.drain_cqe()?;
                 if self.free_slots.len() < reserve {
@@ -186,6 +186,7 @@ impl<T> Uring<T> {
                     1,
                     off_t::try_from(offset).unwrap(),
                 );
+                io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE);
                 (*sqe).user_data = u64::try_from(i).unwrap();
             }
 
@@ -213,7 +214,7 @@ impl<T> Uring<T> {
             // 5. submit
             let ret = io_uring_submit(&mut self.ring);
             if ret < 0 {
-                return Err(Error::Io(io::Error::from_raw_os_error(ret)));
+                return Err(Error::Io(io::Error::from_raw_os_error(-ret)));
             }
         };
 
@@ -232,13 +233,13 @@ impl<T> Drop for Uring<T> {
                         .unwrap(),
                 );
                 if ret < 0 {
-                    panic!(Error::Io(io::Error::from_raw_os_error(ret)));
+                    panic!(Error::Io(io::Error::from_raw_os_error(-ret)));
                 }
             }
 
             self.drain_cqe().unwrap();
 
-            io_uring_unregister_files(&mut self.ring);
+            // auto on exit: io_uring_unregister_files(&mut self.ring);
             io_uring_queue_exit(&mut self.ring);
         };
     }
