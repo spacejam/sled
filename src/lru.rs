@@ -14,7 +14,7 @@ unsafe impl Sync for Lru {}
 impl Lru {
     /// Instantiates a new `Lru` cache.
     pub fn new(cache_capacity_raw: u64) -> Self {
-        const N_SHARDS: usize = 8;
+        const N_SHARDS: usize = 16;
 
         let cache_capacity =
             std::cmp::max(cache_capacity_raw, u64::try_from(N_SHARDS).unwrap());

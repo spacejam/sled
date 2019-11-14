@@ -89,7 +89,7 @@ pub(crate) struct SegmentAccountant {
     to_clean: VecSet<LogOffset>,
     pause_rewriting: bool,
     ordering: BTreeMap<Lsn, LogOffset>,
-    async_truncations: Vec<OneShot<Result<()>>>,
+    async_truncations: BTreeMap<LogOffset, OneShot<Result<()>>>,
 }
 
 /// A `Segment` holds the bookkeeping information for
@@ -402,7 +402,7 @@ impl SegmentAccountant {
             to_clean: VecSet::default(),
             pause_rewriting: false,
             ordering: BTreeMap::default(),
-            async_truncations: Vec::default(),
+            async_truncations: BTreeMap::default(),
         };
 
         if let SegmentMode::Linear = ret.config.segment_mode {
@@ -978,9 +978,11 @@ impl SegmentAccountant {
     }
 
     fn bump_tip(&mut self) -> LogOffset {
-        let truncations = mem::replace(&mut self.async_truncations, Vec::new());
+        let lid = self.tip;
 
-        for truncation in truncations {
+        let truncations = self.async_truncations.split_off(&lid);
+
+        for (_at, truncation) in truncations {
             match truncation.wait() {
                 Some(Ok(())) => {}
                 error => {
@@ -988,8 +990,6 @@ impl SegmentAccountant {
                 }
             }
         }
-
-        let lid = self.tip;
 
         self.tip += self.config.segment_size as LogOffset;
 
@@ -1143,7 +1143,13 @@ impl SegmentAccountant {
         #[cfg(test)]
         _result.unwrap();
 
-        self.async_truncations.push(promise);
+        if self.async_truncations.insert(at, promise).is_some() {
+            panic!(
+                "somehow segment {} was truncated before \
+                 the previous truncation completed",
+                at
+            );
+        }
 
         Ok(())
     }
