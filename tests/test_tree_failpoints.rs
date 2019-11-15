@@ -40,6 +40,13 @@ impl Arbitrary for Op {
             "snap write mv post",
             "snap write rm old",
             "blob blob write",
+            "read_blob open file",
+            "read_blob read crc",
+            "read_blob read kind_byte",
+            "read_blob read buf",
+            "write_blob open file",
+            "write_blob write all",
+            "remove_blob remove file",
         ];
 
         if g.gen_bool(1. / 30.) {
