@@ -1,6 +1,16 @@
 use crate::pagecache::*;
 use crate::*;
 
+macro_rules! io_fail {
+    ($config:expr, $e:expr) => {
+        #[cfg(feature = "failpoints")]
+        fail_point!($e, |_| {
+            $config.set_global_error(Error::FailPoint);
+            Err(Error::FailPoint)
+        });
+    };
+}
+
 pub(crate) fn read_blob(
     blob_ptr: Lsn,
     config: &Config,
@@ -37,6 +47,7 @@ pub(crate) fn read_blob(
     }
 
     let mut buf = vec![];
+
     if let Err(e) = f.read_to_end(&mut buf) {
         debug!(
             "failed to read data after the CRC bytes in blob at {}: {:?}",
@@ -78,9 +89,12 @@ pub(crate) fn write_blob(
     hasher.update(data);
     let crc = u32_to_arr(hasher.finalize());
 
-    f.write_all(&crc)
-        .and_then(|_| f.write_all(kind_buf))
-        .and_then(|_| f.write_all(data))
+    io_fail!(config, "write_blob write crc");
+    f.write_all(&crc)?;
+    io_fail!(config, "write_blob write kind_byte");
+    f.write_all(kind_buf)?;
+    io_fail!(config, "write_blob write buf");
+    f.write_all(data)
         .map(|r| {
             trace!("successfully wrote blob at {:?}", path);
             r
@@ -134,7 +148,6 @@ pub(crate) fn gc_blobs(config: &Config, stable_lsn: Lsn) -> Result<()> {
 
 pub(crate) fn remove_blob(id: Lsn, config: &Config) -> Result<()> {
     let path = config.blob_path(id);
-
     if let Err(e) = std::fs::remove_file(&path) {
         debug!("removing blob at {:?} failed: {}", path, e);
     } else {
