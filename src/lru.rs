@@ -8,9 +8,11 @@ use super::{
     Guard,
 };
 
+type DeferredAccountant = Stack<(Item, u64)>;
+
 /// A simple LRU cache.
 pub struct Lru {
-    shards: Vec<(Stack<(Item, u64)>, FastLock<Shard>)>,
+    shards: Vec<(DeferredAccountant, FastLock<Shard>)>,
 }
 
 #[allow(unsafe_code)]

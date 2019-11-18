@@ -47,7 +47,7 @@ impl<T> FastLock<T> {
         FastLock { lock: AtomicBool::new(false), inner: UnsafeCell::new(inner) }
     }
 
-    pub fn try_lock<'a>(&'a self) -> Option<FastLockGuard<'a, T>> {
+    pub fn try_lock(&self) -> Option<FastLockGuard<'_, T>> {
         let lock_result = self.lock.compare_and_swap(false, true, Acquire);
 
         // `compare_and_swap` returns the last value if successful,
@@ -55,7 +55,7 @@ impl<T> FastLock<T> {
         let success = !lock_result;
 
         if success {
-            Some(FastLockGuard { mu: &self })
+            Some(FastLockGuard { mu: self })
         } else {
             None
         }
