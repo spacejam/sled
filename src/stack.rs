@@ -20,9 +20,14 @@ pub struct Node<T: Send + 'static> {
 impl<T: Send + 'static> Drop for Node<T> {
     fn drop(&mut self) {
         unsafe {
-            let next = self.next.load(Acquire, unprotected());
-            if !next.as_raw().is_null() {
-                drop(next.into_owned());
+            let mut cursor = self.next.load(Acquire, unprotected());
+
+            while !cursor.is_null() {
+                // we carefully unset the next pointer here to avoid
+                // a stack overflow when freeing long lists.
+                let node = cursor.into_owned();
+                cursor = node.next.swap(Shared::null(), Acquire, unprotected());
+                drop(node);
             }
         }
     }
@@ -102,6 +107,27 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
                     return;
                 }
             }
+        }
+    }
+
+    /// Clears the stack and returns all items
+    pub fn take(&self, guard: &Guard) -> Vec<T>
+    where
+        T: Copy,
+    {
+        debug_delay();
+        let node = self.head.swap(Shared::null(), Release, guard);
+
+        if !node.is_null() {
+            let iter = StackIter { inner: node, guard };
+
+            unsafe {
+                guard.defer_destroy(node);
+            }
+
+            iter.map(|shared| *shared.deref()).collect()
+        } else {
+            vec![]
         }
     }
 
