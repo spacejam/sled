@@ -36,7 +36,8 @@ impl Lru {
     }
 
     /// Called when an item is accessed. Returns a Vec of items to be
-    /// evicted.
+    /// evicted. Uses flat-combining to avoid blocking on what can
+    /// be an asynchronous operation.
     ///
     /// Items layout:
     ///   items:   1 2 3 4 5 6 7 8 9 10
