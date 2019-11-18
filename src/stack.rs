@@ -118,7 +118,9 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
         debug_delay();
         let node = self.head.swap(Shared::null(), Release, guard);
 
-        if !node.is_null() {
+        if node.is_null() {
+            vec![]
+        } else {
             let iter = StackIter { inner: node, guard };
 
             unsafe {
@@ -126,8 +128,6 @@ impl<T: Clone + Send + Sync + 'static> Stack<T> {
             }
 
             iter.map(|shared| *shared.deref()).collect()
-        } else {
-            vec![]
         }
     }
 
