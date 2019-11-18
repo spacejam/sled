@@ -40,6 +40,9 @@ impl Arbitrary for Op {
             "snap write mv post",
             "snap write rm old",
             "blob blob write",
+            "write_blob write crc",
+            "write_blob write kind_byte",
+            "write_blob write buf",
         ];
 
         if g.gen_bool(1. / 30.) {
