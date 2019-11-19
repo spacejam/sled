@@ -2,7 +2,7 @@
 | :-: | --- |
 | [documentation](https://docs.rs/sled) | [![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled) |
 | [chat about databases with us](https://discord.gg/Z6VsXds) | [![chat](https://img.shields.io/discord/509773073294295082.svg?logo=discord)](https://discord.gg/Z6VsXds) |
-| [help us build what you want to use](https://opencollective.com/sled) | [![Open Collective backers](https://img.shields.io/opencollective/backers/sled)](https://github.com/sponsors/spacejam) |
+| [help us build what you want to use](https://github.com/sponsors/spacejam) | [![Open Collective backers](https://img.shields.io/opencollective/backers/sled)](https://github.com/sponsors/spacejam) |
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face_anti-transphobia.png" width="20%" height="auto" />
