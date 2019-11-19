@@ -5,7 +5,7 @@ use crate::*;
 
 use super::{
     arr_to_u32, raw_segment_iter_from, u32_to_arr, u64_to_arr, DiskPtr,
-    LogIter, LogKind, LogOffset, Lsn, MSG_HEADER_LEN,
+    LogIter, LogKind, LogOffset, Lsn, MessageKind, Pio, MSG_HEADER_LEN,
 };
 
 /// A snapshot of the state required to quickly restart
@@ -185,12 +185,30 @@ pub fn read_snapshot_or_default(config: &RunningConfig) -> Result<Snapshot> {
     let mut last_snap =
         read_snapshot(config)?.unwrap_or_else(Snapshot::default);
 
-    let (log_iter, max_header_stable_lsn) =
+    let (log_iter, max_header_stable_lsn, to_zero) =
         raw_segment_iter_from(last_snap.last_lsn, config)?;
 
     last_snap.max_header_stable_lsn = max_header_stable_lsn;
 
-    advance_snapshot(log_iter, last_snap, config)
+    let res = advance_snapshot(log_iter, last_snap, config)?;
+
+    for lid in to_zero {
+        debug!("zeroing torn segment at lid {}", lid);
+
+        // NB we intentionally corrupt this header to prevent any segment
+        // from being allocated which would duplicate its LSN, messing
+        // up recovery in the future.
+        maybe_fail!("segment initial free zero");
+        config.file.pwrite_all(
+            &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
+            lid,
+        )?;
+        if !config.temporary {
+            config.file.sync_all()?;
+        }
+    }
+
+    Ok(res)
 }
 
 /// Read a `Snapshot` from disk.

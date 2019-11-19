@@ -2,8 +2,8 @@ use std::{collections::BTreeMap, io};
 
 use super::{
     read_message, read_segment_header, DiskPtr, LogKind, LogOffset, LogRead,
-    Lsn, MessageKind, Pio, SegmentHeader, BATCH_MANIFEST_INLINE_LEN,
-    BLOB_INLINE_LEN, MSG_HEADER_LEN, SEG_HEADER_LEN,
+    Lsn, SegmentHeader, BATCH_MANIFEST_INLINE_LEN, BLOB_INLINE_LEN,
+    MSG_HEADER_LEN, SEG_HEADER_LEN,
 };
 use crate::*;
 
@@ -237,7 +237,7 @@ fn valid_entry_offset(lid: LogOffset, segment_len: usize) -> bool {
 fn scan_segment_lsns(
     min: Lsn,
     config: &RunningConfig,
-) -> Result<(BTreeMap<Lsn, LogOffset>, Lsn)> {
+) -> Result<(BTreeMap<Lsn, LogOffset>, Lsn, Vec<LogOffset>)> {
     fn fetch(
         idx: u64,
         min: Lsn,
@@ -326,10 +326,10 @@ fn scan_segment_lsns(
 
     // Check that the segments above max_header_stable_lsn
     // properly link their previous segment pointers.
-    let ordering =
-        clean_tail_tears(max_header_stable_lsn, ordering, config, f)?;
+    let (ordering, to_zero_after_snap_write) =
+        clean_tail_tears(max_header_stable_lsn, ordering, config)?;
 
-    Ok((ordering, max_header_stable_lsn))
+    Ok((ordering, max_header_stable_lsn, to_zero_after_snap_write))
 }
 
 // This ensures that the last <# io buffers> segments on
@@ -341,8 +341,7 @@ fn clean_tail_tears(
     max_header_stable_lsn: Lsn,
     mut ordering: BTreeMap<Lsn, LogOffset>,
     config: &RunningConfig,
-    f: &std::fs::File,
-) -> Result<BTreeMap<Lsn, LogOffset>> {
+) -> Result<(BTreeMap<Lsn, LogOffset>, Vec<LogOffset>)> {
     let segment_size = config.segment_size as Lsn;
 
     // -1..(2 *  segment_size) - 1 => 0
@@ -402,38 +401,37 @@ fn clean_tail_tears(
         tip.0, tip.1
     );
 
+    let mut to_zero_after_snap_write = vec![];
+
     for (lsn, lid) in ordering
         .range((std::ops::Bound::Excluded(tip.0), std::ops::Bound::Unbounded))
     {
-        debug!("zeroing torn segment with lsn {} at lid {}", lsn, lid);
-
-        // NB we intentionally corrupt this header to prevent any segment
-        // from being allocated which would duplicate its LSN, messing
-        // up recovery in the future.
-        maybe_fail!("segment initial free zero");
-        f.pwrite_all(
-            &*vec![MessageKind::Corrupted.into(); SEG_HEADER_LEN],
-            *lid,
-        )?;
-        if !config.temporary {
-            f.sync_all()?;
-        }
+        debug!(
+            "marking torn segment with lsn {} at lid {} \
+             as zeroable after snapshot is written",
+            lsn, lid
+        );
+        to_zero_after_snap_write.push(*lid);
     }
 
     ordering =
         ordering.into_iter().filter(|&(lsn, _lid)| lsn <= tip.0).collect();
 
-    Ok(ordering)
+    Ok((ordering, to_zero_after_snap_write))
 }
 
+/// Returns a log iterator, the max stable lsn,
+/// and a set of segments that can be
+/// zeroed after the new snapshot is written,
+/// but no sooner, otherwise it is not crash-safe.
 pub fn raw_segment_iter_from(
     lsn: Lsn,
     config: &RunningConfig,
-) -> Result<(LogIter, Lsn)> {
+) -> Result<(LogIter, Lsn, Vec<LogOffset>)> {
     let segment_len = config.segment_size as Lsn;
     let normalized_lsn = lsn / segment_len * segment_len;
 
-    let (ordering, max_header_stable_lsn) =
+    let (ordering, max_header_stable_lsn, to_zero_after_snap_write) =
         scan_segment_lsns(normalized_lsn, config)?;
 
     // find the last stable tip, to properly handle batch manifests.
@@ -485,5 +483,6 @@ pub fn raw_segment_iter_from(
             segment_iter,
         },
         max_header_stable_lsn,
+        to_zero_after_snap_write,
     ))
 }
