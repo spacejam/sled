@@ -95,7 +95,7 @@ fn report(shutdown: Arc<AtomicBool>) {
         thread::sleep(std::time::Duration::from_secs(1));
         let total = TOTAL.load(Ordering::Acquire);
 
-        println!("did {} ops", total - last);
+        println!("did {} ops, {}mb RSS", total - last, rss() / (1024 * 1024));
 
         last = total;
     }
@@ -191,6 +191,26 @@ fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
     }
 }
 
+fn rss() -> usize {
+    #[cfg(target_os = "linux")]
+    {
+        use std::io::prelude::*;
+        use std::io::BufReader;
+
+        let mut buf = String::new();
+        let mut f =
+            BufReader::new(std::fs::File::open("/proc/self/statm").unwrap());
+        f.read_line(&mut buf).unwrap();
+        let mut parts = buf.split_whitespace();
+        let rss_pages = parts.nth(1).unwrap().parse::<usize>().unwrap();
+        rss_pages * 4096
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        0
+    }
+}
+
 fn main() {
     #[cfg(feature = "logging")]
     setup_logger();
@@ -205,7 +225,7 @@ fn main() {
     let shutdown = Arc::new(AtomicBool::new(false));
 
     let config = sled::Config::new()
-        .cache_capacity(1_000_000_000)
+        .cache_capacity(256 * 1024 * 1024)
         .flush_every_ms(Some(200))
         .snapshot_after_ops(100_000_000_000)
         .print_profile_on_drop(true);

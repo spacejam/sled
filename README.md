@@ -2,7 +2,7 @@
 | :-: | --- |
 | [documentation](https://docs.rs/sled) | [![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled) |
 | [chat about databases with us](https://discord.gg/Z6VsXds) | [![chat](https://img.shields.io/discord/509773073294295082.svg?logo=discord)](https://discord.gg/Z6VsXds) |
-| [help us build what you want to use](https://opencollective.com/sled) | [![Open Collective backers](https://img.shields.io/opencollective/backers/sled)](https://opencollective.com/sled) |
+| [help us build what you want to use](https://github.com/sponsors/spacejam) | [![Open Collective backers](https://img.shields.io/opencollective/backers/sled)](https://github.com/sponsors/spacejam) |
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face_anti-transphobia.png" width="20%" height="auto" />
@@ -119,7 +119,7 @@ for a more detailed overview of where we're at and where we see things going!
 
 # fund feature development
 
-Want to support development? Help us out via [Open Collective](https://opencollective.com/sled)!
+Want to support development? Help us out via [GitHub Sponsors](https://github.com/sponsors/spacejam)!
 
 # special thanks
 
@@ -146,8 +146,6 @@ Special thanks to [Meili](https://www.meilisearch.com/) for providing engineerin
 </p>
 
 Additional thanks to [Arm](https://www.arm.com/), [Works on Arm](https://www.worksonarm.com/) and [Packet](https://www.packet.com/), who have generously donated a 96 core monster machine to assist with intensive concurrency testing of sled. Each second that sled does not crash while running your critical stateful workloads, you are encouraged to thank these wonderful organizations. Each time sled does crash and lose your data, blame Intel.
-
-Finally, thanks to everyone who helps out by contributing on [Open Collective](https://opencollective.com/sled)!
 
 # contribution welcome!
 

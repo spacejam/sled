@@ -1,11 +1,18 @@
-use super::dll::{DoublyLinkedList, Item, Node};
-use parking_lot::Mutex;
+use super::fastlock::FastLock;
 use std::convert::TryFrom;
 use std::ptr;
 
+use super::{
+    dll::{DoublyLinkedList, Item, Node},
+    stack::Stack,
+    Guard,
+};
+
+type DeferredAccountant = Stack<(Item, u64)>;
+
 /// A simple LRU cache.
 pub struct Lru {
-    shards: Vec<Mutex<Shard>>,
+    shards: Vec<(DeferredAccountant, FastLock<Shard>)>,
 }
 
 #[allow(unsafe_code)]
@@ -23,28 +30,49 @@ impl Lru {
         let shard_capacity = cache_capacity / n_shards as u64;
 
         let mut shards = Vec::with_capacity(n_shards);
-        shards.resize_with(n_shards, || Mutex::new(Shard::new(shard_capacity)));
+        shards.resize_with(n_shards, || {
+            (Stack::default(), FastLock::new(Shard::new(shard_capacity)))
+        });
 
         Self { shards }
     }
 
     /// Called when an item is accessed. Returns a Vec of items to be
-    /// evicted.
+    /// evicted. Uses flat-combining to avoid blocking on what can
+    /// be an asynchronous operation.
     ///
     /// Items layout:
     ///   items:   1 2 3 4 5 6 7 8 9 10
     ///   shards:  1 0 1 0 1 0 1 0 1 0
     ///   shard 0:   2   4   6   8   10
     ///   shard 1: 1   3   5   7   9
-    pub fn accessed(&self, id: Item, item_size: u64) -> Vec<Item> {
+    pub fn accessed(
+        &self,
+        id: Item,
+        item_size: u64,
+        guard: &Guard,
+    ) -> Vec<Item> {
+        let mut ret = vec![];
         let shards = self.shards.len() as u64;
         let (shard_idx, item_pos) = (id % shards, id / shards);
-        let shard_mu: &Mutex<Shard> = &self.shards[safe_usize(shard_idx)];
-        let mut shard = shard_mu.lock();
-        let mut to_evict = shard.accessed(safe_usize(item_pos), item_size);
-        // map shard internal offsets to global items ids
-        to_evict.iter_mut().for_each(|pos| *pos = (*pos * shards) + shard_idx);
-        to_evict
+        let (stack, shard_mu) = &self.shards[safe_usize(shard_idx)];
+        if let Some(mut shard) = shard_mu.try_lock() {
+            let previous_accesses = stack.take(guard);
+            let accesses = previous_accesses
+                .into_iter()
+                .chain(std::iter::once((item_pos, item_size)));
+            for (item_pos, item_size) in accesses {
+                let to_evict = shard.accessed(safe_usize(item_pos), item_size);
+                // map shard internal offsets to global items ids
+                for pos in to_evict {
+                    let item = (pos * shards) + shard_idx;
+                    ret.push(item);
+                }
+            }
+        } else {
+            stack.push((item_pos, item_size), guard);
+        }
+        ret
     }
 }
 

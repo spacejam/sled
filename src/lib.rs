@@ -169,6 +169,7 @@ mod config;
 mod context;
 mod db;
 mod dll;
+mod fastlock;
 mod histogram;
 mod iter;
 mod ivec;
@@ -181,6 +182,7 @@ mod oneshot;
 mod pagecache;
 mod prefix;
 mod result;
+mod stack;
 mod subscription;
 mod sys_limits;
 mod threadpool;
@@ -194,9 +196,6 @@ mod flusher;
 #[cfg(feature = "event_log")]
 /// The event log helps debug concurrency issues.
 pub mod event_log;
-
-#[cfg(feature = "event_log")]
-mod stack;
 
 #[cfg(feature = "measure_allocs")]
 mod measure_allocs;
