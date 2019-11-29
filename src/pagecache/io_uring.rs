@@ -64,7 +64,7 @@ impl<T> Uring<T> {
                 flags,
             );
             if ret < 0 {
-                return Err(Error::Io(io::Error::from_raw_os_error(ret)));
+                return Err(Error::Io(io::Error::from_raw_os_error(-ret)));
             }
 
             s.assume_init()
@@ -85,7 +85,7 @@ impl<T> Uring<T> {
                 1,
             );
             if ret < 0 {
-                return Err(Error::Io(io::Error::from_raw_os_error(ret)));
+                return Err(Error::Io(io::Error::from_raw_os_error(-ret)));
             }
         };
 
@@ -112,10 +112,23 @@ impl<T> Uring<T> {
                 return Ok(());
             }
             if ret < 0 {
-                return Err(Error::Io(io::Error::from_raw_os_error(ret)));
+                return Err(Error::Io(io::Error::from_raw_os_error(-ret)));
             }
             let i = usize::try_from((*cqe).user_data).unwrap();
+            if (*cqe).res < 0 {
+                // ignore failed fsyncs with invalid argument due to the
+                // overlap with executing ones: 2 drain fsync do not exec twice.
+                if (*cqe).res != -libc::EINVAL
+                    || i >= self.free_slots.capacity()
+                    || self.iovecs[i].iov_len != 0
+                {
+                    return Err(Error::Io(io::Error::from_raw_os_error(
+                        -(*cqe).res,
+                    )));
+                }
+            }
             if i < self.free_slots.capacity() {
+                // println!("release i = {}", i);
                 self.free_slots.push(i);
                 // release
                 self.iovecs[i].iov_base = std::ptr::null_mut();
@@ -152,7 +165,7 @@ impl<T> Uring<T> {
                     libc::c_uint::try_from(reserve).unwrap(),
                 );
                 if ret < 0 {
-                    return Err(Error::Io(io::Error::from_raw_os_error(ret)));
+                    return Err(Error::Io(io::Error::from_raw_os_error(-ret)));
                 }
                 self.drain_cqe()?;
                 if self.free_slots.len() < reserve {
@@ -181,12 +194,16 @@ impl<T> Uring<T> {
 
                 io_uring_prep_writev(
                     sqe,
-                    self.file.as_raw_fd(),
+                    // for registered file at index 0
+                    // self.file.as_raw_fd(),
+                    0,
                     &self.iovecs[i],
                     1,
                     off_t::try_from(offset).unwrap(),
                 );
+                io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE);
                 (*sqe).user_data = u64::try_from(i).unwrap();
+                // println!("write with i = {}", i);
             }
 
             // 4. build fsync() SQE
@@ -200,20 +217,28 @@ impl<T> Uring<T> {
                 }
 
                 let i = self.free_slots.pop().unwrap();
+                // mark explicitly that this is fsync op and it has no data.
+                // drain_cqe must ignore fsyncs that got EINVAL due to the
+                // overlap with the existing executing fsyncs.
+                self.iovecs[i].iov_len = 0;
 
                 io_uring_prep_fsync(
                     sqe,
-                    self.file.as_raw_fd(),
+                    // for registered file at index 0
+                    // self.file.as_raw_fd(),
+                    0,
                     IORING_FSYNC_DATASYNC,
                 );
-                io_uring_sqe_set_flags(sqe, IOSQE_IO_DRAIN);
+                // io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE);
+                io_uring_sqe_set_flags(sqe, IOSQE_IO_DRAIN | IOSQE_FIXED_FILE);
                 (*sqe).user_data = u64::try_from(i).unwrap();
+                // println!("fsync with i = {}", i);
             }
 
             // 5. submit
             let ret = io_uring_submit(&mut self.ring);
             if ret < 0 {
-                return Err(Error::Io(io::Error::from_raw_os_error(ret)));
+                return Err(Error::Io(io::Error::from_raw_os_error(-ret)));
             }
         };
 
@@ -232,13 +257,13 @@ impl<T> Drop for Uring<T> {
                         .unwrap(),
                 );
                 if ret < 0 {
-                    panic!(Error::Io(io::Error::from_raw_os_error(ret)));
+                    panic!(Error::Io(io::Error::from_raw_os_error(-ret)));
                 }
             }
 
             self.drain_cqe().unwrap();
 
-            io_uring_unregister_files(&mut self.ring);
+            // auto on exit: io_uring_unregister_files(&mut self.ring);
             io_uring_queue_exit(&mut self.ring);
         };
     }
