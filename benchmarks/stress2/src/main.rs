@@ -134,7 +134,7 @@ fn run(tree: Arc<sled::Db>, shutdown: Arc<AtomicBool>) {
         let i_bytes: [u8; std::mem::size_of::<usize>()] =
             unsafe { std::mem::transmute(i) };
 
-        i_bytes.into_iter().cycle().take(len).cloned().collect()
+        i_bytes.iter().cycle().take(len).cloned().collect()
     };
     let mut rng = thread_rng();
 
