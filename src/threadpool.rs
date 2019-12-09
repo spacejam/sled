@@ -10,6 +10,7 @@ use crate::{
 };
 
 const MAX_THREADS: usize = 128;
+const MIN_THREADS: usize = 2;
 
 static STANDBY_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 static TOTAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -30,7 +31,7 @@ fn init_pool() -> Pool {
 fn perform_work() {
     let wait_limit = Duration::from_secs(1);
 
-    loop {
+    while STANDBY_THREAD_COUNT.load(SeqCst) < MIN_THREADS {
         debug_delay();
         STANDBY_THREAD_COUNT.fetch_add(1, SeqCst);
 
@@ -38,7 +39,7 @@ fn perform_work() {
         let task_res = POOL.receiver.recv_timeout(wait_limit);
 
         debug_delay();
-        if STANDBY_THREAD_COUNT.fetch_sub(1, SeqCst) < 2 {
+        if STANDBY_THREAD_COUNT.fetch_sub(1, SeqCst) <= MIN_THREADS {
             maybe_spawn_new_thread();
         }
 
@@ -53,9 +54,6 @@ fn perform_work() {
         }
 
         debug_delay();
-        if STANDBY_THREAD_COUNT.load(SeqCst) > 2 {
-            return;
-        }
     }
 }
 
@@ -67,7 +65,7 @@ fn maybe_spawn_new_thread() {
     let total_workers = TOTAL_THREAD_COUNT.load(SeqCst);
     debug_delay();
     let standby_workers = STANDBY_THREAD_COUNT.load(SeqCst);
-    if standby_workers >= 1 || total_workers >= MAX_THREADS {
+    if standby_workers >= MIN_THREADS || total_workers >= MAX_THREADS {
         return;
     }
 
