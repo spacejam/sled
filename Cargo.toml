@@ -11,6 +11,7 @@ categories = ["database-implementations", "concurrency", "data-structures", "alg
 documentation = "https://docs.rs/sled/"
 readme = "README.md"
 edition = "2018"
+exclude = ["examples", "tests", "benchmarks", "bindings", "scripts"]
 
 [profile.release]
 debug = true
