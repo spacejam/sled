@@ -1,6 +1,10 @@
 //! A simple adaptive threadpool that returns a oneshot future.
 
-use std::{collections::VecDeque, thread, time::Duration};
+use std::{
+    collections::VecDeque,
+    thread,
+    time::{Duration, Instant},
+};
 
 use parking_lot::{Condvar, Mutex};
 
@@ -25,8 +29,10 @@ impl Queue {
     fn recv_timeout(&self, duration: Duration) -> Option<Work> {
         let mut queue = self.mu.lock();
 
+        let cutoff = Instant::now() + duration;
+
         while queue.is_empty() {
-            self.cv.wait_for(&mut queue, duration);
+            self.cv.wait_until(&mut queue, cutoff);
         }
 
         queue.pop_front()
