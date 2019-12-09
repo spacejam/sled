@@ -1,9 +1,8 @@
 //! A simple adaptive threadpool that returns a oneshot future.
 
-use std::thread;
-use std::time::Duration;
+use std::{collections::VecDeque, thread, time::Duration};
 
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use parking_lot::{Condvar, Mutex};
 
 use crate::{
     debug_delay, warn, AtomicBool, AtomicUsize, Lazy, OneShot, Relaxed, SeqCst,
@@ -15,17 +14,41 @@ const MIN_THREADS: usize = 2;
 static STANDBY_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 static TOTAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-struct Pool {
-    sender: Sender<Box<dyn FnOnce() + Send + 'static>>,
-    receiver: Receiver<Box<dyn FnOnce() + Send + 'static>>,
+type Work = Box<dyn FnOnce() + Send + 'static>;
+
+struct Queue {
+    cv: Condvar,
+    mu: Mutex<VecDeque<Work>>,
 }
 
-static POOL: Lazy<Pool, fn() -> Pool> = Lazy::new(init_pool);
+impl Queue {
+    fn recv_timeout(&self, duration: Duration) -> Option<Work> {
+        let mut queue = self.mu.lock();
 
-fn init_pool() -> Pool {
+        while queue.is_empty() {
+            self.cv.wait_for(&mut queue, duration);
+        }
+
+        queue.pop_front()
+    }
+
+    fn try_recv(&self) -> Option<Work> {
+        let mut queue = self.mu.lock();
+        queue.pop_front()
+    }
+
+    fn send(&self, work: Work) {
+        let mut queue = self.mu.lock();
+        queue.push_back(work);
+        self.cv.notify_one();
+    }
+}
+
+static QUEUE: Lazy<Queue, fn() -> Queue> = Lazy::new(init_queue);
+
+fn init_queue() -> Queue {
     maybe_spawn_new_thread();
-    let (sender, receiver) = unbounded();
-    Pool { sender, receiver }
+    Queue { cv: Condvar::new(), mu: Mutex::new(VecDeque::new()) }
 }
 
 fn perform_work() {
@@ -36,19 +59,19 @@ fn perform_work() {
         STANDBY_THREAD_COUNT.fetch_add(1, SeqCst);
 
         debug_delay();
-        let task_res = POOL.receiver.recv_timeout(wait_limit);
+        let task_res = QUEUE.recv_timeout(wait_limit);
 
         debug_delay();
         if STANDBY_THREAD_COUNT.fetch_sub(1, SeqCst) <= MIN_THREADS {
             maybe_spawn_new_thread();
         }
 
-        if let Ok(task) = task_res {
+        if let Some(task) = task_res {
             (task)();
         }
 
         debug_delay();
-        while let Ok(task) = POOL.receiver.try_recv() {
+        while let Some(task) = QUEUE.try_recv() {
             (task)();
             debug_delay();
         }
@@ -69,9 +92,8 @@ fn maybe_spawn_new_thread() {
         return;
     }
 
-    let spawn_res = thread::Builder::new()
-        .name("sled-io-dynamic".to_string())
-        .spawn(|| {
+    let spawn_res =
+        thread::Builder::new().name("sled-io".to_string()).spawn(|| {
             debug_delay();
             TOTAL_THREAD_COUNT.fetch_add(1, SeqCst);
             perform_work();
@@ -101,7 +123,7 @@ where
         promise_filler.fill(result);
     };
 
-    POOL.sender.send(Box::new(task)).unwrap();
+    QUEUE.send(Box::new(task));
 
     maybe_spawn_new_thread();
 
