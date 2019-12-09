@@ -5,9 +5,7 @@ use std::time::Duration;
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
 
-use crate::{
-    debug_delay, Acquire, AtomicUsize, Lazy, OneShot, Release, SeqCst,
-};
+use crate::{debug_delay, AtomicUsize, Lazy, OneShot, SeqCst};
 
 const MAX_THREADS: usize = 128;
 
@@ -30,8 +28,8 @@ fn init_pool() -> Pool {
 // Dynamic threads will terminate themselves if they don't
 // receive any work after one second.
 fn maybe_spawn_new_thread() {
-    let total_workers = TOTAL_THREAD_COUNT.load(Acquire);
-    let standby_workers = STANDBY_THREAD_COUNT.load(Acquire);
+    let total_workers = TOTAL_THREAD_COUNT.load(SeqCst);
+    let standby_workers = STANDBY_THREAD_COUNT.load(SeqCst);
     if standby_workers >= 1 || total_workers >= MAX_THREADS {
         return;
     }
@@ -43,13 +41,13 @@ fn maybe_spawn_new_thread() {
             TOTAL_THREAD_COUNT.fetch_add(1, SeqCst);
             loop {
                 debug_delay();
-                STANDBY_THREAD_COUNT.fetch_add(1, Acquire);
+                STANDBY_THREAD_COUNT.fetch_add(1, SeqCst);
 
                 debug_delay();
                 let task = POOL.receiver.recv_timeout(wait_limit);
 
                 debug_delay();
-                STANDBY_THREAD_COUNT.fetch_sub(1, Release);
+                STANDBY_THREAD_COUNT.fetch_sub(1, SeqCst);
 
                 debug_delay();
                 if let Ok(task) = task {
