@@ -163,6 +163,16 @@ macro_rules! maybe_fail {
     };
 }
 
+macro_rules! once {
+    ($args:block) => {
+        static E: AtomicBool = AtomicBool::new(false);
+        if !E.compare_and_swap(false, true, Relaxed) {
+            // only execute this once
+            $args;
+        }
+    };
+}
+
 mod batch;
 mod binary_search;
 mod config;
@@ -291,7 +301,7 @@ use {
         io::{Read, Write},
         sync::{
             atomic::{
-                AtomicI64 as AtomicLsn, AtomicU64, AtomicUsize,
+                AtomicBool, AtomicI64 as AtomicLsn, AtomicU64, AtomicUsize,
                 Ordering::{Acquire, Relaxed, Release, SeqCst},
             },
             Arc,
