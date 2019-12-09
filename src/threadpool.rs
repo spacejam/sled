@@ -1,6 +1,121 @@
 //! A simple adaptive threadpool that returns a oneshot future.
 
-use super::OneShot;
+use std::{
+    collections::VecDeque,
+    thread,
+    time::{Duration, Instant},
+};
+
+use parking_lot::{Condvar, Mutex};
+
+use crate::{
+    debug_delay, warn, AtomicBool, AtomicUsize, Lazy, OneShot, Relaxed, SeqCst,
+};
+
+const MAX_THREADS: usize = 128;
+const MIN_THREADS: usize = 2;
+
+static STANDBY_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
+static TOTAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+type Work = Box<dyn FnOnce() + Send + 'static>;
+
+struct Queue {
+    cv: Condvar,
+    mu: Mutex<VecDeque<Work>>,
+}
+
+impl Queue {
+    fn recv_timeout(&self, duration: Duration) -> Option<Work> {
+        let mut queue = self.mu.lock();
+
+        let cutoff = Instant::now() + duration;
+
+        while queue.is_empty() {
+            self.cv.wait_until(&mut queue, cutoff);
+        }
+
+        queue.pop_front()
+    }
+
+    fn try_recv(&self) -> Option<Work> {
+        let mut queue = self.mu.lock();
+        queue.pop_front()
+    }
+
+    fn send(&self, work: Work) {
+        let mut queue = self.mu.lock();
+        queue.push_back(work);
+        self.cv.notify_one();
+    }
+}
+
+static QUEUE: Lazy<Queue, fn() -> Queue> = Lazy::new(init_queue);
+
+fn init_queue() -> Queue {
+    maybe_spawn_new_thread();
+    Queue { cv: Condvar::new(), mu: Mutex::new(VecDeque::new()) }
+}
+
+fn perform_work() {
+    let wait_limit = Duration::from_secs(1);
+
+    while STANDBY_THREAD_COUNT.load(SeqCst) < MIN_THREADS {
+        debug_delay();
+        STANDBY_THREAD_COUNT.fetch_add(1, SeqCst);
+
+        debug_delay();
+        let task_res = QUEUE.recv_timeout(wait_limit);
+
+        debug_delay();
+        if STANDBY_THREAD_COUNT.fetch_sub(1, SeqCst) <= MIN_THREADS {
+            maybe_spawn_new_thread();
+        }
+
+        if let Some(task) = task_res {
+            (task)();
+        }
+
+        debug_delay();
+        while let Some(task) = QUEUE.try_recv() {
+            (task)();
+            debug_delay();
+        }
+
+        debug_delay();
+    }
+}
+
+// Create up to MAX_THREADS dynamic blocking task worker threads.
+// Dynamic threads will terminate themselves if they don't
+// receive any work after one second.
+fn maybe_spawn_new_thread() {
+    debug_delay();
+    let total_workers = TOTAL_THREAD_COUNT.load(SeqCst);
+    debug_delay();
+    let standby_workers = STANDBY_THREAD_COUNT.load(SeqCst);
+    if standby_workers >= MIN_THREADS || total_workers >= MAX_THREADS {
+        return;
+    }
+
+    let spawn_res =
+        thread::Builder::new().name("sled-io".to_string()).spawn(|| {
+            debug_delay();
+            TOTAL_THREAD_COUNT.fetch_add(1, SeqCst);
+            perform_work();
+            TOTAL_THREAD_COUNT.fetch_sub(1, SeqCst);
+        });
+
+    if let Err(e) = spawn_res {
+        once!({
+            warn!(
+                "Failed to dynamically increase the threadpool size: {:?}. \
+                 Currently have {} running IO threads",
+                e, total_workers
+            )
+        });
+    }
+}
 
 /// Spawn a function on the threadpool.
 pub fn spawn<F, R>(work: F) -> OneShot<R>
@@ -14,118 +129,9 @@ where
         promise_filler.fill(result);
     };
 
-    // On windows, linux, and macos send it to a threadpool.
-    // Otherwise just execute it immediately, because we may
-    // not support threads at all!
-    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
-    {
-        (task)();
-        return promise;
-    }
+    QUEUE.send(Box::new(task));
 
-    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-    {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        use std::thread;
-        use std::time::Duration;
+    maybe_spawn_new_thread();
 
-        use crossbeam_channel::{bounded, Receiver, Sender};
-
-        use crate::{debug_delay, Lazy};
-
-        const MAX_THREADS: u64 = 128;
-
-        static DYNAMIC_THREAD_COUNT: AtomicU64 = AtomicU64::new(0);
-
-        struct Pool {
-            sender: Sender<Box<dyn FnOnce() + Send + 'static>>,
-            receiver: Receiver<Box<dyn FnOnce() + Send + 'static>>,
-        }
-
-        static POOL: Lazy<Pool, fn() -> Pool> = Lazy::new(init_pool);
-
-        fn init_pool() -> Pool {
-            for _ in 0..2 {
-                let _handle = thread::Builder::new()
-                    .name("sled-io".to_string())
-                    .spawn(|| {
-                        for task in &POOL.receiver {
-                            debug_delay();
-                            (task)()
-                        }
-                    })
-                    .expect("cannot start a thread driving blocking tasks");
-            }
-
-            // We want to use an unbuffered channel here to help
-            // us drive our dynamic control. In effect, the
-            // kernel's scheduler becomes the queue, reducing
-            // the number of buffers that work must flow through
-            // before being acted on by a core. This helps keep
-            // latency snappy in the overall async system by
-            // reducing bufferbloat.
-            let (sender, receiver) = bounded(0);
-            Pool { sender, receiver }
-        }
-
-        // Create up to MAX_THREADS dynamic blocking task worker threads.
-        // Dynamic threads will terminate themselves if they don't
-        // receive any work after one second.
-        fn maybe_create_another_blocking_thread() {
-            // We use a `Relaxed` atomic operation because
-            // it's just a heuristic, and would not lose correctness
-            // even if it's random.
-            let workers = DYNAMIC_THREAD_COUNT.load(Ordering::Relaxed);
-            if workers >= MAX_THREADS {
-                return;
-            }
-
-            let spawn_res = thread::Builder::new()
-                .name("sled-io".to_string())
-                .spawn(|| {
-                    let wait_limit = Duration::from_secs(1);
-
-                    let _ =
-                        DYNAMIC_THREAD_COUNT.fetch_add(1, Ordering::Relaxed);
-                    while let Ok(task) = POOL.receiver.recv_timeout(wait_limit)
-                    {
-                        debug_delay();
-                        (task)();
-                    }
-                    let _ =
-                        DYNAMIC_THREAD_COUNT.fetch_sub(1, Ordering::Relaxed);
-                });
-
-            if let Err(e) = spawn_res {
-                log::warn!(
-                    "Failed to dynamically increase the threadpool size: {:?}. \
-                     Currently have {} dynamic threads",
-                    e,
-                    workers
-                );
-            }
-        }
-
-        let first_try_result = POOL.sender.try_send(Box::new(task));
-        match first_try_result {
-            Ok(()) => {
-                // NICEEEE
-            }
-            Err(crossbeam_channel::TrySendError::Full(task)) => {
-                // We were not able to send to the channel without
-                // blocking. Try to spin up another thread and then
-                // retry sending while blocking.
-                maybe_create_another_blocking_thread();
-                POOL.sender.send(task).unwrap()
-            }
-            Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
-                panic!(
-                    "unable to send to blocking threadpool \
-                     due to receiver disconnection"
-                );
-            }
-        }
-
-        promise
-    }
+    promise
 }

@@ -79,7 +79,8 @@ where
             let value = (self.init)();
             let value_ptr = Box::into_raw(Box::new(value));
 
-            self.value.store(value_ptr, SeqCst);
+            let old = self.value.swap(value_ptr, SeqCst);
+            assert!(old.is_null());
 
             let unlock = self.init_mu.swap(false, SeqCst);
             assert!(unlock);
