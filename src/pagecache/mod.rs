@@ -3,7 +3,7 @@
 #![allow(unsafe_code)]
 
 pub mod constants;
-pub mod logger;
+pub mod log;
 
 mod blob_io;
 mod disk_pointer;
@@ -34,7 +34,7 @@ use self::{
 };
 
 pub(crate) use self::{
-    logger::{MessageHeader, SegmentHeader},
+    log::{MessageHeader, SegmentHeader},
     reader::{read_message, read_segment_header},
     reservation::Reservation,
     snapshot::{read_snapshot_or_default, PageState, Snapshot},
@@ -46,7 +46,7 @@ pub use self::{
         MINIMUM_ITEMS_PER_SEGMENT, MSG_HEADER_LEN, SEG_HEADER_LEN,
     },
     disk_pointer::DiskPtr,
-    logger::{Log, LogRead},
+    log::{Log, LogRead},
     segment::SegmentMode,
 };
 

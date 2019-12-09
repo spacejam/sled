@@ -4,7 +4,7 @@ mod tree;
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-use log::{debug, warn};
+use log_crate::{debug, warn};
 use quickcheck::{QuickCheck, StdGen};
 
 use sled::Transactional;

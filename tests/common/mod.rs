@@ -28,7 +28,7 @@ pub fn setup_logger() {
                 record.args()
             )
         })
-        .filter(None, log::LevelFilter::Info);
+        .filter(None, log_crate::LevelFilter::Info);
 
     if std::env::var("RUST_LOG").is_ok() {
         builder.parse_filters(&std::env::var("RUST_LOG").unwrap());
