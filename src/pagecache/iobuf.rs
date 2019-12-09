@@ -19,7 +19,7 @@ macro_rules! io_fail {
             $self.config.set_global_error(Error::FailPoint);
             // wake up any waiting threads so they don't stall forever
             let _ = $self.intervals.lock();
-            let _notified = $self.interval_updated.notify_all();
+            $self.interval_updated.notify_all();
             Err(Error::FailPoint)
         });
     };
@@ -314,7 +314,7 @@ impl IoBufs {
     // Write an IO buffer's data to stable storage and set up the
     // next IO buffer for writing.
     pub(crate) fn write_to_log(&self, iobuf: Arc<IoBuf>) -> Result<()> {
-        let _measure = Measure::new(&M.write_to_log);
+        let _ = Measure::new(&M.write_to_log);
         let header = iobuf.get_header();
         let log_offset = iobuf.offset;
         let base_lsn = iobuf.lsn;
@@ -543,7 +543,7 @@ impl IoBufs {
 
         if updated {
             // safe because self.intervals mutex is already held
-            let _notified = self.interval_updated.notify_all();
+            self.interval_updated.notify_all();
         }
     }
 
@@ -559,7 +559,7 @@ pub(in crate::pagecache) fn make_stable(
     iobufs: &Arc<IoBufs>,
     lsn: Lsn,
 ) -> Result<usize> {
-    let _measure = Measure::new(&M.make_stable);
+    let _ = Measure::new(&M.make_stable);
 
     // NB before we write the 0th byte of the file, stable  is -1
     let first_stable = iobufs.stable();
@@ -572,7 +572,7 @@ pub(in crate::pagecache) fn make_stable(
     while stable < lsn {
         if let Err(e) = iobufs.config.global_error() {
             let _ = iobufs.intervals.lock();
-            let _notified = iobufs.interval_updated.notify_all();
+            iobufs.interval_updated.notify_all();
             return Err(e);
         }
 
@@ -731,7 +731,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
             Err(e) => {
                 iobufs.config.set_global_error(e.clone());
                 let _ = iobufs.intervals.lock();
-                let _notified = iobufs.interval_updated.notify_all();
+                iobufs.interval_updated.notify_all();
                 return Err(e);
             }
         }
@@ -774,7 +774,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
     let mut mu = iobufs.iobuf.write();
     *mu = Arc::new(next_iobuf);
     drop(mu);
-    let _notified = iobufs.interval_updated.notify_all();
+    iobufs.interval_updated.notify_all();
     drop(intervals);
 
     drop(measure_assign_offset);
@@ -795,7 +795,7 @@ pub(in crate::pagecache) fn maybe_seal_and_write_iobuf(
                     lsn, e
                 );
                 let _ = iobufs.intervals.lock();
-                let _notified = iobufs.interval_updated.notify_all();
+                iobufs.interval_updated.notify_all();
                 iobufs.config.set_global_error(e);
             }
         });
@@ -855,7 +855,7 @@ impl IoBuf {
     where
         F: FnOnce() -> B,
     {
-        let _l = self.linearizer.lock();
+        let _ = self.linearizer.lock();
         f()
     }
 
