@@ -185,10 +185,33 @@ mod result;
 mod stack;
 mod subscription;
 mod sys_limits;
-mod threadpool;
 mod transaction;
 mod tree;
 mod vecset;
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+mod threadpool {
+    use super::OneShot;
+
+    /// Just execute a task without involving threads.
+    pub fn spawn<F, R>(work: F) -> OneShot<R>
+    where
+        F: FnOnce() -> R + Send + 'static,
+        R: Send + 'static,
+    {
+        let (promise_filler, promise) = OneShot::pair();
+        let task = move || {
+            let result = (work)();
+            promise_filler.fill(result);
+        };
+
+        (task)();
+        return promise;
+    }
+}
+
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+mod threadpool;
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod flusher;
