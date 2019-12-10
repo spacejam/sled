@@ -409,7 +409,7 @@ impl Serializable for Node {
         let mut buf = vec![];
 
         self.next.unwrap_or(0).write(&mut buf);
-        self.next.unwrap_or(0).write(&mut buf);
+        self.merging_child.unwrap_or(0).write(&mut buf);
         self.merging.write(&mut buf);
         self.prefix_len.write(&mut buf);
         self.lo.write(&mut buf);
@@ -470,20 +470,54 @@ mod qc {
 
     use super::*;
 
+    impl Arbitrary for Data {
+        fn arbitrary<G: Gen>(g: &mut G) -> Data {
+            if g.gen() {
+                Data::Index(Arbitrary::arbitrary(g))
+            } else {
+                Data::Leaf(Arbitrary::arbitrary(g))
+            }
+        }
+    }
+
+    impl Arbitrary for Node {
+        fn arbitrary<G: Gen>(g: &mut G) -> Node {
+            Node {
+                next: Arbitrary::arbitrary(g),
+                merging_child: Arbitrary::arbitrary(g),
+                merging: bool::arbitrary(g),
+                prefix_len: u8::arbitrary(g),
+                lo: IVec::arbitrary(g),
+                hi: IVec::arbitrary(g),
+                data: Data::arbitrary(g),
+            }
+        }
+    }
+
+    impl Arbitrary for Link {
+        fn arbitrary<G: Gen>(g: &mut G) -> Link {
+            let discriminant = g.gen_range(0, 5);
+            match discriminant {
+                0 => Link::Set(IVec::arbitrary(g), IVec::arbitrary(g)),
+                1 => Link::Del(IVec::arbitrary(g)),
+                2 => Link::ParentMergeIntention(u64::arbitrary(g)),
+                3 => Link::ParentMergeConfirm,
+                4 => Link::ChildMergeCap,
+                _ => panic!("invalid choice"),
+            }
+        }
+    }
+
     impl Arbitrary for IVec {
         fn arbitrary<G: Gen>(g: &mut G) -> IVec {
-            let len: usize = g.gen::<u8>() as usize;
-            let mut v = vec![0; len];
-            g.fill_bytes(v.as_mut_slice());
+            let v: Vec<u8> = Arbitrary::arbitrary(g);
             v.into()
         }
     }
 
     impl Arbitrary for Meta {
         fn arbitrary<G: Gen>(g: &mut G) -> Meta {
-            let n = g.gen::<u8>() as usize;
-            let inner = (0..n).map(|_| (IVec::arbitrary(g), g.gen())).collect();
-            Meta { inner }
+            Meta { inner: Arbitrary::arbitrary(g) }
         }
     }
 
@@ -515,16 +549,11 @@ mod qc {
 
     impl Arbitrary for Snapshot {
         fn arbitrary<G: Gen>(g: &mut G) -> Snapshot {
-            let n = g.gen::<u8>();
-
-            let pt =
-                (0..n).map(|_| (g.gen(), PageState::arbitrary(g))).collect();
-
             Snapshot {
                 last_lsn: g.gen(),
                 last_lid: g.gen(),
                 max_header_stable_lsn: g.gen(),
-                pt,
+                pt: Arbitrary::arbitrary(g),
             }
         }
     }
@@ -576,12 +605,18 @@ mod qc {
         }
 
         fn meta(item: Meta) -> bool {
-            color_backtrace::install();
             prop_serializable(item)
         }
 
         fn snapshot(item: Snapshot) -> bool {
-            color_backtrace::install();
+            prop_serializable(item)
+        }
+
+        fn node(item: Node) -> bool {
+            prop_serializable(item)
+        }
+
+        fn link(item: Link) -> bool {
             prop_serializable(item)
         }
     }
