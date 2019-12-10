@@ -808,6 +808,12 @@ fn quickcheck_tree_matches_btreemap() {
 }
 
 #[test]
+fn tree_bug_00() {
+    // postmortem:
+    prop_tree_matches_btreemap(vec![Restart], 0, false, false);
+}
+
+#[test]
 fn tree_bug_01() {
     // postmortem:
     // this was a bug in the snapshot recovery, where

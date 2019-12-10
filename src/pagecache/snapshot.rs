@@ -11,6 +11,7 @@ use super::{
 /// A snapshot of the state required to quickly restart
 /// the `PageCache` and `SegmentAccountant`.
 #[derive(Debug, Default)]
+#[cfg_attr(test, derive(Clone, PartialEq))]
 pub struct Snapshot {
     /// The last read message lsn
     pub last_lsn: Lsn,
