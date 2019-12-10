@@ -444,7 +444,6 @@ impl Serializable for Snapshot {
         self.last_lsn.write(&mut buf);
         self.last_lid.write(&mut buf);
         self.max_header_stable_lsn.write(&mut buf);
-        println!("writing {} pt entries", self.pt.len());
         write_2tuple_sequence(self.pt.iter(), &mut buf);
         buf
     }
@@ -456,7 +455,6 @@ impl Serializable for Snapshot {
             max_header_stable_lsn: { i64::consume(&mut buf)? },
             pt: {
                 let pt: crate::FastMap8<_, _> = consume_sequence(&mut buf)?;
-                println!("reading {} pt entries", pt.len());
                 pt
             },
         })
@@ -482,9 +480,15 @@ mod qc {
 
     impl Arbitrary for Node {
         fn arbitrary<G: Gen>(g: &mut G) -> Node {
+            let next_raw: Option<u64> = Arbitrary::arbitrary(g);
+            let next = next_raw.map(|v| std::cmp::max(v, 1));
+
+            let merging_child_raw: Option<u64> = Arbitrary::arbitrary(g);
+            let merging_child = merging_child_raw.map(|v| std::cmp::max(v, 1));
+
             Node {
-                next: Arbitrary::arbitrary(g),
-                merging_child: Arbitrary::arbitrary(g),
+                next,
+                merging_child,
                 merging: bool::arbitrary(g),
                 prefix_len: u8::arbitrary(g),
                 lo: IVec::arbitrary(g),
@@ -513,11 +517,20 @@ mod qc {
             let v: Vec<u8> = Arbitrary::arbitrary(g);
             v.into()
         }
+
+        fn shrink(&self) -> Box<dyn Iterator<Item = IVec>> {
+            let v: Vec<u8> = self.to_vec();
+            Box::new(v.shrink().map(IVec::from))
+        }
     }
 
     impl Arbitrary for Meta {
         fn arbitrary<G: Gen>(g: &mut G) -> Meta {
             Meta { inner: Arbitrary::arbitrary(g) }
+        }
+
+        fn shrink(&self) -> Box<dyn Iterator<Item = Meta>> {
+            Box::new(self.inner.shrink().map(|inner| Meta { inner }))
         }
     }
 
