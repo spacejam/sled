@@ -20,7 +20,7 @@ trait Serialize: Sized {
 impl Serialize for IVec {
     fn consume<'a>(buf: &mut &'a [u8]) -> Result<IVec> {
         if buf.len() < 8 {
-            return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+            return Err(Error::Corruption { at: DiskPtr::Inline(23) });
         }
         let k_len =
             usize::try_from(u64::from_le_bytes(buf[..8].try_into().unwrap()))
@@ -42,7 +42,7 @@ impl Serialize for IVec {
 impl Serialize for u64 {
     fn consume<'a>(buf: &mut &'a [u8]) -> Result<u64> {
         if buf.len() < 8 {
-            return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+            return Err(Error::Corruption { at: DiskPtr::Inline(45) });
         }
         let value = u64::from_le_bytes(buf[..8].try_into().unwrap());
         *buf = &buf[8..];
@@ -58,7 +58,7 @@ impl Serialize for u64 {
 impl Serialize for i64 {
     fn consume<'a>(buf: &mut &'a [u8]) -> Result<i64> {
         if buf.len() < 8 {
-            return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+            return Err(Error::Corruption { at: DiskPtr::Inline(61) });
         }
         let value = i64::from_le_bytes(buf[..8].try_into().unwrap());
         *buf = &buf[8..];
@@ -74,7 +74,7 @@ impl Serialize for i64 {
 impl Serialize for bool {
     fn consume<'a>(buf: &mut &'a [u8]) -> Result<bool> {
         if buf.is_empty() {
-            return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+            return Err(Error::Corruption { at: DiskPtr::Inline(77) });
         }
         let value = if buf[0] == 0 { false } else { true };
         *buf = &buf[1..];
@@ -90,7 +90,7 @@ impl Serialize for bool {
 impl Serialize for u8 {
     fn consume<'a>(buf: &mut &'a [u8]) -> Result<u8> {
         if buf.is_empty() {
-            return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+            return Err(Error::Corruption { at: DiskPtr::Inline(93) });
         }
         let value = buf[0];
         *buf = &buf[1..];
@@ -105,14 +105,14 @@ impl Serialize for u8 {
 impl Serialize for Data {
     fn consume<'a>(buf: &mut &'a [u8]) -> Result<Data> {
         if buf.is_empty() {
-            return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+            return Err(Error::Corruption { at: DiskPtr::Inline(108) });
         }
         let discriminant = buf[0];
         *buf = &buf[1..];
         Ok(match discriminant {
             0 => Data::Leaf(consume_sequence(buf)?),
             1 => Data::Index(consume_sequence(buf)?),
-            _ => return Err(Error::Corruption { at: DiskPtr::Inline(0) }),
+            _ => return Err(Error::Corruption { at: DiskPtr::Inline(115) }),
         })
     }
 
@@ -133,14 +133,14 @@ impl Serialize for Data {
 impl Serialize for DiskPtr {
     fn consume<'a>(buf: &mut &'a [u8]) -> Result<DiskPtr> {
         if buf.len() < 9 {
-            return Err(Error::Corruption { at: DiskPtr::Inline(0) });
+            return Err(Error::Corruption { at: DiskPtr::Inline(136) });
         }
         let discriminant = buf[0];
         *buf = &buf[1..];
         Ok(match discriminant {
             0 => DiskPtr::Inline(u64::consume(buf)?),
             1 => DiskPtr::Blob(u64::consume(buf)?, i64::consume(buf)?),
-            _ => return Err(Error::Corruption { at: DiskPtr::Inline(0) }),
+            _ => return Err(Error::Corruption { at: DiskPtr::Inline(666) }),
         })
     }
 
@@ -169,25 +169,28 @@ impl Serialize for PageState {
         let discriminant = buf[0];
         *buf = &buf[1..];
         Ok(match discriminant {
-            0 => {
-                let items = consume_sequence(buf)?;
+            0 => PageState::Free(i64::consume(buf)?, DiskPtr::consume(buf)?),
+            len => {
+                let items = consume_bounded_sequence(buf, usize::from(len))?;
                 PageState::Present(items)
             }
-            _ => return Err(Error::Corruption { at: DiskPtr::Inline(0) }),
         })
     }
 
     fn write(&self, buf: &mut Vec<u8>) {
         match self {
-            PageState::Present(items) => {
-                0_u8.write(buf);
-                write_3tuple_ref_sequence(items.iter(), buf);
-            }
             PageState::Free(lsn, disk_ptr) => {
                 buf.reserve(18);
-                1_u8.write(buf);
+                0_u8.write(buf);
                 lsn.write(buf);
                 disk_ptr.write(buf);
+            }
+            PageState::Present(items) => {
+                assert!(!items.is_empty());
+                let items_len: u8 = u8::try_from(items.len())
+                    .expect("should never have more than 255 frags");
+                items_len.write(buf);
+                write_3tuple_ref_sequence(items.iter(), buf);
             }
         }
     }
@@ -273,6 +276,17 @@ where
     iter.collect()
 }
 
+fn consume_bounded_sequence<'a, 'b, T: Serialize, R>(
+    buf: &'b mut &'a [u8],
+    bound: usize,
+) -> Result<R>
+where
+    R: FromIterator<T>,
+{
+    let iter = ConsumeSequence { buf, _t: PhantomData, done: false };
+    iter.take(bound).collect()
+}
+
 impl<'a, 'b, T> Iterator for ConsumeSequence<'a, 'b, T>
 where
     T: Serialize,
@@ -280,7 +294,7 @@ where
     type Item = Result<T>;
 
     fn next(&mut self) -> Option<Result<T>> {
-        if self.done {
+        if self.done || self.buf.is_empty() {
             return None;
         }
         let item_res = T::consume(&mut self.buf);
@@ -441,7 +455,8 @@ impl Serializable for Snapshot {
             last_lid: { u64::consume(&mut buf)? },
             max_header_stable_lsn: { i64::consume(&mut buf)? },
             pt: {
-                let pt = consume_sequence(&mut buf)?;
+                let pt: crate::FastMap8<_, _> = consume_sequence(&mut buf)?;
+                println!("reading {} pt entries", pt.len());
                 pt
             },
         })
@@ -454,6 +469,23 @@ mod qc {
     use rand::Rng;
 
     use super::*;
+
+    impl Arbitrary for IVec {
+        fn arbitrary<G: Gen>(g: &mut G) -> IVec {
+            let len: usize = g.gen::<u8>() as usize;
+            let mut v = vec![0; len];
+            g.fill_bytes(v.as_mut_slice());
+            v.into()
+        }
+    }
+
+    impl Arbitrary for Meta {
+        fn arbitrary<G: Gen>(g: &mut G) -> Meta {
+            let n = g.gen::<u8>() as usize;
+            let inner = (0..n).map(|_| (IVec::arbitrary(g), g.gen())).collect();
+            Meta { inner }
+        }
+    }
 
     impl Arbitrary for DiskPtr {
         fn arbitrary<G: Gen>(g: &mut G) -> DiskPtr {
@@ -468,7 +500,8 @@ mod qc {
     impl Arbitrary for PageState {
         fn arbitrary<G: Gen>(g: &mut G) -> PageState {
             if g.gen() {
-                let n = g.gen::<u8>();
+                // PageState must always have at least 1 if it's present
+                let n = std::cmp::max(1, g.gen::<u8>());
 
                 let items = (0..n)
                     .map(|_| (g.gen(), DiskPtr::arbitrary(g), g.gen()))
@@ -496,20 +529,60 @@ mod qc {
         }
     }
 
+    fn prop_serializable<T>(item: T) -> bool
+    where
+        T: Serializable + PartialEq + Clone + std::fmt::Debug,
+    {
+        let serialized = item.serialize();
+        let deserialized = T::deserialize(&serialized).unwrap();
+        if item != deserialized {
+            eprintln!(
+                "round-trip serialization failed. original:\n\n{:?}\n\n \
+                 deserialized(serialized(original)):\n\n{:?}",
+                item, deserialized
+            );
+            false
+        } else {
+            true
+        }
+    }
+
+    fn prop_serialize<T>(item: T) -> bool
+    where
+        T: Serialize + PartialEq + Clone + std::fmt::Debug,
+    {
+        let mut buf = vec![];
+        item.write(&mut buf);
+        let deserialized = T::consume(&mut buf.as_slice()).unwrap();
+        if item != deserialized {
+            eprintln!(
+                "round-trip serialization failed. original:\n\n{:?}\n\n \
+                 deserialized(serialized(original)):\n\n{:?}",
+                item, deserialized
+            );
+            false
+        } else {
+            true
+        }
+    }
+
     quickcheck::quickcheck! {
-        fn prop_serializes(item: Snapshot) -> bool {
-            let serialized = item.serialize();
-            let deserialized = Snapshot::deserialize(&serialized).unwrap();
-            if item != deserialized {
-                eprintln!(
-                    "round-trip serialization failed. original:\n\n{:?}\n\n \
-                     deserialized(serialized(original)):\n\n{:?}",
-                    item, deserialized
-                );
-                false
-            } else {
-                true
-            }
+        fn disk_ptr(item: DiskPtr) -> bool {
+            prop_serialize(item)
+        }
+
+        fn page_state(item: PageState) -> bool {
+            prop_serialize(item)
+        }
+
+        fn meta(item: Meta) -> bool {
+            color_backtrace::install();
+            prop_serializable(item)
+        }
+
+        fn snapshot(item: Snapshot) -> bool {
+            color_backtrace::install();
+            prop_serializable(item)
         }
     }
 }
