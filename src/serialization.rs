@@ -76,7 +76,7 @@ impl Serialize for bool {
         if buf.is_empty() {
             return Err(Error::Corruption { at: DiskPtr::Inline(77) });
         }
-        let value = if buf[0] == 0 { false } else { true };
+        let value = buf[0] != 0;
         *buf = &buf[1..];
         Ok(value)
     }
@@ -163,7 +163,7 @@ impl Serialize for DiskPtr {
 
 impl Serialize for PageState {
     fn consume<'a>(buf: &mut &'a [u8]) -> Result<PageState> {
-        if buf.len() < 1 {
+        if buf.is_empty() {
             return Err(Error::Corruption { at: DiskPtr::Inline(0) });
         }
         let discriminant = buf[0];
@@ -388,7 +388,7 @@ impl Serializable for Link {
     }
 
     fn deserialize(mut buf: &[u8]) -> Result<Self> {
-        if buf.len() < 1 {
+        if buf.is_empty() {
             return Err(Error::Corruption { at: DiskPtr::Inline(0) });
         }
         let discriminant = buf[0];
