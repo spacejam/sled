@@ -870,7 +870,7 @@ impl PageCache {
             return Ok(short_circuit.map_err(|a| a.map(|b| (b.0, new))));
         }
 
-        let bytes = measure(&M.serialize, || serialize(&new).unwrap());
+        let bytes = measure(&M.serialize, || new.serialize());
 
         let mut new_page = Some(Owned::new(Page {
             update: Some(Update::Node(node)),
@@ -1274,10 +1274,10 @@ impl PageCache {
         trace!("cas_page on pid {} has log kind: {:?}", pid, log_kind);
         let serialize_latency = Measure::new(&M.serialize);
         let bytes = match &update {
-            Update::Counter(c) => serialize(&c).unwrap(),
-            Update::Meta(m) => serialize(&m).unwrap(),
+            Update::Counter(c) => c.serialize(),
+            Update::Meta(m) => m.serialize(),
             Update::Free => vec![],
-            Update::Node(node) => serialize(node).unwrap(),
+            Update::Node(node) => node.serialize(),
             other => panic!("non-replacement used in cas_page: {:?}", other),
         };
         drop(serialize_latency);
@@ -1653,7 +1653,7 @@ impl PageCache {
         if let Some(root) = m.get_root(name) {
             Ok(root)
         } else {
-            Err(Error::CollectionNotFound(name.to_vec()))
+            Err(Error::CollectionNotFound(name.into()))
         }
     }
 
@@ -1676,7 +1676,7 @@ impl PageCache {
 
             let mut new_meta = meta_view.deref().clone();
             if let Some(new) = new {
-                new_meta.set_root(name.to_vec(), new);
+                new_meta.set_root(name.into(), new);
             } else {
                 new_meta.del_root(name);
             }
@@ -1798,15 +1798,15 @@ impl PageCache {
 
         let deserialize_latency = Measure::new(&M.deserialize);
         let update_res = match header.kind {
-            Counter => deserialize::<u64>(&bytes).map(Update::Counter),
+            Counter => u64::deserialize(&bytes).map(Update::Counter),
             BlobMeta | InlineMeta => {
-                deserialize::<Meta>(&bytes).map(Update::Meta)
+                Meta::deserialize(&bytes).map(Update::Meta)
             }
             BlobLink | InlineLink => {
-                deserialize::<Link>(&bytes).map(Update::Link)
+                Link::deserialize(&bytes).map(Update::Link)
             }
             BlobNode | InlineNode => {
-                deserialize::<Node>(&bytes).map(Update::Node)
+                Node::deserialize(&bytes).map(Update::Node)
             }
             Free => Ok(Update::Free),
             Corrupted | Cancelled | Pad | BatchManifest => {

@@ -7,7 +7,7 @@ use crate::*;
 pub struct Db {
     context: Context,
     pub(crate) default: Tree,
-    tenants: Arc<RwLock<FastMap8<Vec<u8>, Tree>>>,
+    tenants: Arc<RwLock<FastMap8<IVec, Tree>>>,
 }
 
 #[allow(unsafe_code)]
@@ -143,7 +143,7 @@ impl Db {
 
         let tree = meta::open_tree(&self.context, name_ref.to_vec(), &guard)?;
 
-        assert!(tenants.insert(name_ref.to_vec(), tree.clone()).is_none());
+        assert!(tenants.insert(name_ref.into(), tree.clone()).is_none());
 
         Ok(tree)
     }
@@ -208,7 +208,7 @@ impl Db {
     }
 
     /// Returns the trees names saved in this Db.
-    pub fn tree_names(&self) -> Vec<Vec<u8>> {
+    pub fn tree_names(&self) -> Vec<IVec> {
         let tenants = self.tenants.read();
         tenants.iter().map(|(name, _)| name.clone()).collect()
     }

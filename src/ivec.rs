@@ -3,13 +3,7 @@ use std::{
     fmt,
     hash::{Hash, Hasher},
     ops::Deref,
-    result::Result as StdResult,
     sync::Arc,
-};
-
-use serde::{
-    Deserialize, Serialize,
-    {de::Deserializer, ser::Serializer},
 };
 
 const CUTOFF: usize = 22;
@@ -36,25 +30,6 @@ enum IVecInner {
 impl Hash for IVec {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.deref().hash(state);
-    }
-}
-
-impl Serialize for IVec {
-    fn serialize<S: Serializer>(
-        &self,
-        serializer: S,
-    ) -> StdResult<S::Ok, S::Error> {
-        serde_bytes::serialize(self.as_ref(), serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for IVec {
-    fn deserialize<D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> StdResult<Self, D::Error> {
-        let bytes: StdResult<Box<[u8]>, D::Error> =
-            serde_bytes::deserialize(deserializer);
-        bytes.map(Self::from)
     }
 }
 

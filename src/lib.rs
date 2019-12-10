@@ -192,6 +192,7 @@ mod oneshot;
 mod pagecache;
 mod prefix;
 mod result;
+mod serialization;
 mod stack;
 mod subscription;
 mod sys_limits;
@@ -254,6 +255,7 @@ pub use {
             DiskPtr, Log, LogKind, LogOffset, LogRead, Lsn, PageCache, PageId,
             SegmentMode,
         },
+        serialization::Serializable,
     },
     crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared},
 };
@@ -288,12 +290,10 @@ use {
         tree::TreeInner,
         vecset::VecSet,
     },
-    bincode::{deserialize, serialize},
     crossbeam_utils::{Backoff, CachePadded},
     log::{debug, error, trace, warn},
     pagecache::RecoveryGuard,
     parking_lot::{Condvar, Mutex, RwLock},
-    serde::{Deserialize, Serialize},
     std::{
         collections::BTreeMap,
         convert::TryFrom,
@@ -329,7 +329,7 @@ const fn debug_delay() {}
 
 /// Link denotes a tree node or its modification fragment such as
 /// key addition or removal.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Link {
     /// A new value is set for a given key
     Set(IVec, IVec),

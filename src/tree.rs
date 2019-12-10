@@ -73,7 +73,7 @@ impl IntoIterator for &'_ Tree {
 pub struct Tree(pub(crate) Arc<TreeInner>);
 
 pub struct TreeInner {
-    pub(crate) tree_id: Vec<u8>,
+    pub(crate) tree_id: IVec,
     pub(crate) context: Context,
     pub(crate) subscriptions: Subscriptions,
     pub(crate) root: AtomicU64,
@@ -1375,7 +1375,7 @@ impl Tree {
     }
 
     /// Returns the name of the tree.
-    pub fn name(&self) -> Vec<u8> {
+    pub fn name(&self) -> IVec {
         self.tree_id.clone()
     }
 
