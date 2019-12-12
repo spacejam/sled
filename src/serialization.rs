@@ -34,13 +34,17 @@ pub trait Serialize: Sized {
     }
 }
 
+// Moves a reference to mutable bytes forward,
+// sidestepping Rust's limitations in reasoning
+// about lifetimes.
+//
+// ☑ Checked with Miri by Tyler on 2019-12-12
+#[allow(unsafe_code)]
 fn scoot(buf: &mut &mut [u8], amount: usize) {
     assert!(buf.len() >= amount);
     let len = buf.len();
     let ptr = buf.as_mut_ptr();
 
-    // We do this because
-    #[allow(unsafe_code)]
     unsafe {
         *buf = std::slice::from_raw_parts_mut(ptr.add(amount), len - amount);
     }
@@ -678,7 +682,11 @@ mod qc {
         let mut buf = vec![0; item.serialized_size() as usize];
         let buf_ref = &mut buf.as_mut_slice();
         item.serialize_into(buf_ref);
-        assert_eq!(buf_ref.len(), 0);
+        assert_eq!(
+            buf_ref.len(),
+            0,
+            "round-trip failed to consume produced bytes"
+        );
         let deserialized = T::deserialize(&mut buf.as_slice()).unwrap();
         if item != deserialized {
             eprintln!(
