@@ -147,7 +147,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
     macro_rules! restart {
         () => {
             drop(tree);
-            let tree_res = config.open();
+            let tree_res = config.global_error().and_then(|_| config.open());
             if let Err(ref e) = tree_res {
                 if e == &Error::FailPoint {
                     return true;
@@ -224,6 +224,8 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                     // this key had to be present, but we got to the end of the tree without
                     // seeing it
                     println!("tree verification failed: expected {:?} got end", ref_key);
+                    println!("expected: {:?}", ref_expected);
+                    println!("tree: {:?}", tree);
                     return false;
                 }
             }
@@ -1353,6 +1355,15 @@ fn failpoints_bug_29() {
     ));
     assert!(prop_tree_crashes_nicely(
         vec![Set, Set, Set, FailPoint("snap write mv"), Set, Flush, Restart],
+        false,
+    ));
+}
+
+#[test]
+fn failpoints_bug_30() {
+    // postmortem 1:
+    assert!(prop_tree_crashes_nicely(
+        vec![Set, FailPoint("buffer write"), Restart, Flush, Id],
         false,
     ));
 }
