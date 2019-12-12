@@ -1356,3 +1356,12 @@ fn failpoints_bug_29() {
         false,
     ));
 }
+
+#[test]
+fn failpoints_bug_30() {
+    // postmortem 1:
+    assert!(prop_tree_crashes_nicely(
+        vec![Set, FailPoint("buffer write"), Restart, Flush, Id],
+        false,
+    ));
+}
