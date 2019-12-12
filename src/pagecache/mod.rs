@@ -1796,20 +1796,18 @@ impl PageCache {
             }
         }?;
 
+        // We create this &mut &[u8] to assist the `Serializer`
+        // implementation that incrementally consumes bytes
+        // without taking ownership of them.
+        let buf = &mut bytes.as_slice();
+
         let deserialize_latency = Measure::new(&M.deserialize);
+
         let update_res = match header.kind {
-            Counter => {
-                u64::deserialize(&mut bytes.as_slice()).map(Update::Counter)
-            }
-            BlobMeta | InlineMeta => {
-                Meta::deserialize(&mut bytes.as_slice()).map(Update::Meta)
-            }
-            BlobLink | InlineLink => {
-                Link::deserialize(&mut bytes.as_slice()).map(Update::Link)
-            }
-            BlobNode | InlineNode => {
-                Node::deserialize(&mut bytes.as_slice()).map(Update::Node)
-            }
+            Counter => u64::deserialize(buf).map(Update::Counter),
+            BlobMeta | InlineMeta => Meta::deserialize(buf).map(Update::Meta),
+            BlobLink | InlineLink => Link::deserialize(buf).map(Update::Link),
+            BlobNode | InlineNode => Node::deserialize(buf).map(Update::Node),
             Free => Ok(Update::Free),
             Corrupted | Cancelled | Pad | BatchManifest => {
                 panic!("unexpected pull: {:?}", header.kind)
