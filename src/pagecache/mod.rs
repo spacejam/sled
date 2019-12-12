@@ -1798,15 +1798,17 @@ impl PageCache {
 
         let deserialize_latency = Measure::new(&M.deserialize);
         let update_res = match header.kind {
-            Counter => u64::deserialize(&bytes).map(Update::Counter),
+            Counter => {
+                u64::deserialize(&mut bytes.as_slice()).map(Update::Counter)
+            }
             BlobMeta | InlineMeta => {
-                Meta::deserialize(&bytes).map(Update::Meta)
+                Meta::deserialize(&mut bytes.as_slice()).map(Update::Meta)
             }
             BlobLink | InlineLink => {
-                Link::deserialize(&bytes).map(Update::Link)
+                Link::deserialize(&mut bytes.as_slice()).map(Update::Link)
             }
             BlobNode | InlineNode => {
-                Node::deserialize(&bytes).map(Update::Node)
+                Node::deserialize(&mut bytes.as_slice()).map(Update::Node)
             }
             Free => Ok(Update::Free),
             Corrupted | Cancelled | Pad | BatchManifest => {

@@ -11,216 +11,115 @@ use crate::{
 
 /// Items that may be serialized and deserialized
 pub trait Serialize: Sized {
-    /// creates the byte representation of the item
-    fn serialize(&self) -> Vec<u8>;
+    /// Returns the buffer size required to hold
+    /// the serialized bytes for this item.
+    fn serialized_size(&self) -> u64;
 
-    /// attempts to deserialize this type from some bytes
-    fn deserialize(buf: &[u8]) -> Result<Self>;
-}
-
-impl Serialize for u64 {
-    fn serialize(&self) -> Vec<u8> {
-        self.to_le_bytes().to_vec()
-    }
-
-    fn deserialize(buf: &[u8]) -> Result<Self> {
-        match buf.try_into() {
-            Ok(array) => Ok(u64::from_le_bytes(array)),
-            Err(_) => Err(Error::Corruption { at: DiskPtr::Inline(0) }),
-        }
-    }
-}
-
-impl Serialize for Meta {
-    fn serialize(&self) -> Vec<u8> {
-        let output_sz =
-            self.inner.iter().map(|(k, _)| 16 + k.len()).sum::<usize>();
-
-        let mut buf = Vec::with_capacity(output_sz);
-
-        poo_2tuple_sequence(self.inner.iter(), &mut buf);
-
-        buf
-    }
-
-    fn deserialize(mut buf: &[u8]) -> Result<Self> {
-        Ok(Meta { inner: eat_sequence(&mut buf)? })
-    }
-}
-
-impl Serialize for Link {
-    fn serialize(&self) -> Vec<u8> {
-        let mut buf;
-        match self {
-            Link::Set(key, value) => {
-                buf = Vec::with_capacity(17 + key.len() + value.len());
-                0_u8.poo(&mut buf);
-                key.poo(&mut buf);
-                value.poo(&mut buf);
-            }
-            Link::Del(key) => {
-                buf = Vec::with_capacity(9 + key.len());
-                1_u8.poo(&mut buf);
-                key.poo(&mut buf);
-            }
-            Link::ParentMergeIntention(pid) => {
-                buf = Vec::with_capacity(9);
-                2_u8.poo(&mut buf);
-                pid.poo(&mut buf);
-            }
-            Link::ParentMergeConfirm => {
-                buf = Vec::with_capacity(1);
-                3_u8.poo(&mut buf);
-            }
-            Link::ChildMergeCap => {
-                buf = Vec::with_capacity(1);
-                4_u8.poo(&mut buf);
-            }
-        }
-        buf
-    }
-
-    fn deserialize(mut buf: &[u8]) -> Result<Self> {
-        if buf.is_empty() {
-            return Err(Error::Corruption { at: DiskPtr::Inline(0) });
-        }
-        let discriminant = buf[0];
-        buf = &buf[1..];
-        Ok(match discriminant {
-            0 => Link::Set(IVec::eat(&mut buf)?, IVec::eat(&mut buf)?),
-            1 => Link::Del(IVec::eat(&mut buf)?),
-            2 => Link::ParentMergeIntention(u64::eat(&mut buf)?),
-            3 => Link::ParentMergeConfirm,
-            4 => Link::ChildMergeCap,
-            _ => return Err(Error::Corruption { at: DiskPtr::Inline(0) }),
-        })
-    }
-}
-
-impl Serialize for Node {
-    fn serialize(&self) -> Vec<u8> {
-        let output_sz =
-            34 + self.lo.len() + self.hi.len() + self.data.serialized_size();
-
-        let mut buf = Vec::with_capacity(output_sz);
-
-        self.next.unwrap_or(0).poo(&mut buf);
-        self.merging_child.unwrap_or(0).poo(&mut buf);
-        self.merging.poo(&mut buf);
-        self.prefix_len.poo(&mut buf);
-        self.lo.poo(&mut buf);
-        self.hi.poo(&mut buf);
-        self.data.poo(&mut buf);
-
-        buf
-    }
-
-    fn deserialize(mut buf: &[u8]) -> Result<Self> {
-        let next = u64::eat(&mut buf)?;
-        let merging_child = u64::eat(&mut buf)?;
-        Ok(Node {
-            next: if next == 0 { None } else { Some(next) },
-            merging_child: if merging_child == 0 {
-                None
-            } else {
-                Some(merging_child)
-            },
-            merging: bool::eat(&mut buf)?,
-            prefix_len: u8::eat(&mut buf)?,
-            lo: IVec::eat(&mut buf)?,
-            hi: IVec::eat(&mut buf)?,
-            data: Data::eat(&mut buf)?,
-        })
-    }
-}
-
-impl Serialize for Snapshot {
-    fn serialize(&self) -> Vec<u8> {
-        let mut buf = vec![];
-        self.last_lsn.poo(&mut buf);
-        self.last_lid.poo(&mut buf);
-        self.max_header_stable_lsn.poo(&mut buf);
-        poo_2tuple_sequence(self.pt.iter(), &mut buf);
-        buf
-    }
-
-    fn deserialize(mut buf: &[u8]) -> Result<Self> {
-        Ok(Snapshot {
-            last_lsn: { i64::eat(&mut buf)? },
-            last_lid: { u64::eat(&mut buf)? },
-            max_header_stable_lsn: { i64::eat(&mut buf)? },
-            pt: eat_sequence(&mut buf)?,
-        })
-    }
-}
-
-/// This is a helper trait for driving the
-/// Serialize functionality.
-trait EatPoo: Sized {
-    /// Creates the byte representation of the item.
-    fn poo(&self, buf: &mut Vec<u8>);
+    /// Serializees the item without allocating.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the buffer is not large enough.
+    fn serialize_into(&self, buf: &mut &mut [u8]);
 
     /// Attempts to deserialize this type from some bytes.
-    /// The buf signature allows `eat` to push the beginning
-    /// of an immutable slice forward across function calls.
-    fn eat(buf: &mut &[u8]) -> Result<Self>;
+    fn deserialize(buf: &mut &[u8]) -> Result<Self>;
+
+    /// Returns owned serialized bytes.
+    fn serialize(&self) -> Vec<u8> {
+        let sz = self.serialized_size();
+        let mut buf = vec![0; sz as usize];
+        self.serialize_into(&mut buf.as_mut_slice());
+        buf
+    }
 }
 
-impl EatPoo for IVec {
-    fn eat(buf: &mut &[u8]) -> Result<IVec> {
-        if buf.len() < 8 {
-            return Err(Error::Corruption { at: DiskPtr::Inline(23) });
-        }
-        let k_len =
-            usize::try_from(u64::from_le_bytes(buf[..8].try_into().unwrap()))
-                .unwrap();
-        *buf = &buf[8..];
+fn scoot(buf: &mut &mut [u8], amount: usize) {
+    assert!(buf.len() >= amount);
+    let len = buf.len();
+    let ptr = buf.as_mut_ptr();
+
+    // We do this because
+    #[allow(unsafe_code)]
+    unsafe {
+        *buf = std::slice::from_raw_parts_mut(ptr.add(amount), len - amount);
+    }
+}
+
+impl Serialize for IVec {
+    fn serialized_size(&self) -> u64 {
+        8 + self.len() as u64
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        (self.len() as u64).serialize_into(buf);
+        buf[..self.len()].copy_from_slice(self.as_ref());
+        scoot(buf, self.len());
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<IVec> {
+        let k_len = usize::try_from(u64::deserialize(buf)?)
+            .expect("should never store items that rust can't natively index");
         let ret = &buf[..k_len];
         *buf = &buf[k_len..];
         Ok(ret.into())
     }
-
-    fn poo(&self, buf: &mut Vec<u8>) {
-        let k_len = u64::try_from(self.len()).unwrap().to_le_bytes();
-        buf.extend_from_slice(&k_len);
-        buf.extend_from_slice(self);
-    }
 }
 
-impl EatPoo for u64 {
-    fn eat(buf: &mut &[u8]) -> Result<u64> {
+impl Serialize for u64 {
+    fn serialized_size(&self) -> u64 {
+        8
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        buf[..8].copy_from_slice(&self.to_le_bytes());
+        scoot(buf, 8);
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
         if buf.len() < 8 {
-            return Err(Error::Corruption { at: DiskPtr::Inline(45) });
+            return Err(Error::Corruption { at: DiskPtr::Inline(86) });
         }
-        let value = u64::from_le_bytes(buf[..8].try_into().unwrap());
-        *buf = &buf[8..];
-        Ok(value)
-    }
 
-    fn poo(&self, buf: &mut Vec<u8>) {
-        let bytes = self.to_le_bytes();
-        buf.extend_from_slice(&bytes);
+        let array = buf[..8].try_into().unwrap();
+        *buf = &buf[8..];
+        Ok(u64::from_le_bytes(array))
     }
 }
 
-impl EatPoo for i64 {
-    fn eat(buf: &mut &[u8]) -> Result<i64> {
+impl Serialize for i64 {
+    fn serialized_size(&self) -> u64 {
+        8
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        buf[..8].copy_from_slice(&self.to_le_bytes());
+        scoot(buf, 8);
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
         if buf.len() < 8 {
-            return Err(Error::Corruption { at: DiskPtr::Inline(61) });
+            return Err(Error::Corruption { at: DiskPtr::Inline(103) });
         }
-        let value = i64::from_le_bytes(buf[..8].try_into().unwrap());
-        *buf = &buf[8..];
-        Ok(value)
-    }
 
-    fn poo(&self, buf: &mut Vec<u8>) {
-        let bytes = self.to_le_bytes();
-        buf.extend_from_slice(&bytes);
+        let array = buf[..8].try_into().unwrap();
+        *buf = &buf[8..];
+        Ok(i64::from_le_bytes(array))
     }
 }
 
-impl EatPoo for bool {
-    fn eat(buf: &mut &[u8]) -> Result<bool> {
+impl Serialize for bool {
+    fn serialized_size(&self) -> u64 {
+        1
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        let byte = u8::from(*self);
+        buf[0] = byte;
+        scoot(buf, 1);
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<bool> {
         if buf.is_empty() {
             return Err(Error::Corruption { at: DiskPtr::Inline(77) });
         }
@@ -228,15 +127,19 @@ impl EatPoo for bool {
         *buf = &buf[1..];
         Ok(value)
     }
-
-    fn poo(&self, buf: &mut Vec<u8>) {
-        let byte = u8::from(*self);
-        buf.push(byte);
-    }
 }
 
-impl EatPoo for u8 {
-    fn eat(buf: &mut &[u8]) -> Result<u8> {
+impl Serialize for u8 {
+    fn serialized_size(&self) -> u64 {
+        1
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        buf[0] = *self;
+        scoot(buf, 1);
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<u8> {
         if buf.is_empty() {
             return Err(Error::Corruption { at: DiskPtr::Inline(93) });
         }
@@ -244,176 +147,358 @@ impl EatPoo for u8 {
         *buf = &buf[1..];
         Ok(value)
     }
+}
 
-    fn poo(&self, buf: &mut Vec<u8>) {
-        buf.push(*self);
+impl Serialize for Meta {
+    fn serialized_size(&self) -> u64 {
+        self.inner
+            .iter()
+            .map(|(k, _)| 16 + u64::try_from(k.len()).unwrap())
+            .sum()
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        serialize_2tuple_sequence(self.inner.iter(), buf);
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+        Ok(Meta { inner: deserialize_sequence(buf)? })
     }
 }
 
-impl EatPoo for Data {
-    fn eat(buf: &mut &[u8]) -> Result<Data> {
+impl Serialize for Link {
+    fn serialized_size(&self) -> u64 {
+        match self {
+            Link::Set(key, value) => {
+                17 + u64::try_from(key.len()).unwrap()
+                    + u64::try_from(value.len()).unwrap()
+            }
+            Link::Del(key) => 9 + u64::try_from(key.len()).unwrap(),
+            Link::ParentMergeIntention(_) => 9,
+            Link::ParentMergeConfirm => 1,
+            Link::ChildMergeCap => 1,
+        }
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        match self {
+            Link::Set(key, value) => {
+                0_u8.serialize_into(buf);
+                key.serialize_into(buf);
+                value.serialize_into(buf);
+            }
+            Link::Del(key) => {
+                1_u8.serialize_into(buf);
+                key.serialize_into(buf);
+            }
+            Link::ParentMergeIntention(pid) => {
+                2_u8.serialize_into(buf);
+                pid.serialize_into(buf);
+            }
+            Link::ParentMergeConfirm => {
+                3_u8.serialize_into(buf);
+            }
+            Link::ChildMergeCap => {
+                4_u8.serialize_into(buf);
+            }
+        }
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+        if buf.is_empty() {
+            return Err(Error::Corruption { at: DiskPtr::Inline(210) });
+        }
+        let discriminant = buf[0];
+        *buf = &buf[1..];
+        Ok(match discriminant {
+            0 => Link::Set(IVec::deserialize(buf)?, IVec::deserialize(buf)?),
+            1 => Link::Del(IVec::deserialize(buf)?),
+            2 => Link::ParentMergeIntention(u64::deserialize(buf)?),
+            3 => Link::ParentMergeConfirm,
+            4 => Link::ChildMergeCap,
+            _ => return Err(Error::Corruption { at: DiskPtr::Inline(220) }),
+        })
+    }
+}
+
+impl Serialize for Node {
+    fn serialized_size(&self) -> u64 {
+        34 + self.lo.len() as u64
+            + self.hi.len() as u64
+            + self.data.serialized_size()
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        self.next.unwrap_or(0_u64).serialize_into(buf);
+        self.merging_child.unwrap_or(0_u64).serialize_into(buf);
+        self.merging.serialize_into(buf);
+        self.prefix_len.serialize_into(buf);
+        self.lo.serialize_into(buf);
+        self.hi.serialize_into(buf);
+        self.data.serialize_into(buf);
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+        let next = u64::deserialize(buf)?;
+        let merging_child = u64::deserialize(buf)?;
+        Ok(Node {
+            next: if next == 0 { None } else { Some(next) },
+            merging_child: if merging_child == 0 {
+                None
+            } else {
+                Some(merging_child)
+            },
+            merging: bool::deserialize(buf)?,
+            prefix_len: u8::deserialize(buf)?,
+            lo: IVec::deserialize(buf)?,
+            hi: IVec::deserialize(buf)?,
+            data: Data::deserialize(buf)?,
+        })
+    }
+}
+
+impl Serialize for Snapshot {
+    fn serialized_size(&self) -> u64 {
+        24 + self
+            .pt
+            .iter()
+            .map(|(_, page_state)| 8 + page_state.serialized_size())
+            .sum::<u64>()
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        self.last_lsn.serialize_into(buf);
+        self.last_lid.serialize_into(buf);
+        self.max_header_stable_lsn.serialize_into(buf);
+        serialize_2tuple_sequence(self.pt.iter(), buf);
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+        Ok(Snapshot {
+            last_lsn: { i64::deserialize(buf)? },
+            last_lid: { u64::deserialize(buf)? },
+            max_header_stable_lsn: { i64::deserialize(buf)? },
+            pt: deserialize_sequence(buf)?,
+        })
+    }
+}
+
+impl Serialize for Data {
+    fn serialized_size(&self) -> u64 {
+        match self {
+            Data::Index(ref pointers) => {
+                1_u64
+                    + pointers
+                        .iter()
+                        .map(|(k, _)| 16 + k.len() as u64)
+                        .sum::<u64>()
+            }
+            Data::Leaf(ref items) => {
+                1_u64
+                    + items
+                        .iter()
+                        .map(|(k, v)| 16 + k.len() as u64 + v.len() as u64)
+                        .sum::<u64>()
+            }
+        }
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        match self {
+            Data::Leaf(items) => {
+                0_u8.serialize_into(buf);
+                serialize_2tuple_ref_sequence(items.iter(), buf);
+            }
+            Data::Index(items) => {
+                1_u8.serialize_into(buf);
+                serialize_2tuple_ref_sequence(items.iter(), buf);
+            }
+        }
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<Data> {
         if buf.is_empty() {
             return Err(Error::Corruption { at: DiskPtr::Inline(108) });
         }
         let discriminant = buf[0];
         *buf = &buf[1..];
         Ok(match discriminant {
-            0 => Data::Leaf(eat_sequence(buf)?),
-            1 => Data::Index(eat_sequence(buf)?),
+            0 => Data::Leaf(deserialize_sequence(buf)?),
+            1 => Data::Index(deserialize_sequence(buf)?),
             _ => return Err(Error::Corruption { at: DiskPtr::Inline(115) }),
         })
     }
+}
 
-    fn poo(&self, buf: &mut Vec<u8>) {
+impl Serialize for DiskPtr {
+    fn serialized_size(&self) -> u64 {
         match self {
-            Data::Leaf(items) => {
-                0_u8.poo(buf);
-                poo_2tuple_ref_sequence(items.iter(), buf);
+            DiskPtr::Inline(_) => 9,
+            DiskPtr::Blob(_, _) => 17,
+        }
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        match self {
+            DiskPtr::Inline(log_offset) => {
+                0_u8.serialize_into(buf);
+                log_offset.serialize_into(buf);
             }
-            Data::Index(items) => {
-                1_u8.poo(buf);
-                poo_2tuple_ref_sequence(items.iter(), buf);
+            DiskPtr::Blob(log_offset, blob_lsn) => {
+                1_u8.serialize_into(buf);
+                log_offset.serialize_into(buf);
+                blob_lsn.serialize_into(buf);
             }
         }
     }
-}
 
-impl EatPoo for DiskPtr {
-    fn eat(buf: &mut &[u8]) -> Result<DiskPtr> {
+    fn deserialize(buf: &mut &[u8]) -> Result<DiskPtr> {
         if buf.len() < 9 {
             return Err(Error::Corruption { at: DiskPtr::Inline(136) });
         }
         let discriminant = buf[0];
         *buf = &buf[1..];
         Ok(match discriminant {
-            0 => DiskPtr::Inline(u64::eat(buf)?),
-            1 => DiskPtr::Blob(u64::eat(buf)?, i64::eat(buf)?),
+            0 => DiskPtr::Inline(u64::deserialize(buf)?),
+            1 => DiskPtr::Blob(u64::deserialize(buf)?, i64::deserialize(buf)?),
             _ => return Err(Error::Corruption { at: DiskPtr::Inline(666) }),
         })
     }
-
-    fn poo(&self, buf: &mut Vec<u8>) {
-        match self {
-            DiskPtr::Inline(log_offset) => {
-                0_u8.poo(buf);
-                log_offset.poo(buf);
-            }
-            DiskPtr::Blob(log_offset, blob_lsn) => {
-                1_u8.poo(buf);
-                log_offset.poo(buf);
-                blob_lsn.poo(buf);
-            }
-        }
-    }
 }
 
-impl EatPoo for PageState {
-    fn eat(buf: &mut &[u8]) -> Result<PageState> {
-        if buf.is_empty() {
-            return Err(Error::Corruption { at: DiskPtr::Inline(0) });
-        }
-        let discriminant = buf[0];
-        *buf = &buf[1..];
-        Ok(match discriminant {
-            0 => PageState::Free(i64::eat(buf)?, DiskPtr::eat(buf)?),
-            len => {
-                let items = eat_bounded_sequence(buf, usize::from(len))?;
-                PageState::Present(items)
+impl Serialize for PageState {
+    fn serialized_size(&self) -> u64 {
+        match self {
+            PageState::Free(_, disk_ptr) => 9 + disk_ptr.serialized_size(),
+            PageState::Present(items) => {
+                1 + items
+                    .iter()
+                    .map(|tuple| tuple.serialized_size())
+                    .sum::<u64>()
             }
-        })
+        }
     }
 
-    fn poo(&self, buf: &mut Vec<u8>) {
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
         match self {
             PageState::Free(lsn, disk_ptr) => {
-                0_u8.poo(buf);
-                lsn.poo(buf);
-                disk_ptr.poo(buf);
+                0_u8.serialize_into(buf);
+                lsn.serialize_into(buf);
+                disk_ptr.serialize_into(buf);
             }
             PageState::Present(items) => {
                 assert!(!items.is_empty());
                 let items_len: u8 = u8::try_from(items.len())
                     .expect("should never have more than 255 frags");
-                items_len.poo(buf);
-                poo_3tuple_ref_sequence(items.iter(), buf);
+                items_len.serialize_into(buf);
+                serialize_3tuple_ref_sequence(items.iter(), buf);
             }
         }
     }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<PageState> {
+        if buf.is_empty() {
+            return Err(Error::Corruption { at: DiskPtr::Inline(402) });
+        }
+        let discriminant = buf[0];
+        *buf = &buf[1..];
+        Ok(match discriminant {
+            0 => PageState::Free(
+                i64::deserialize(buf)?,
+                DiskPtr::deserialize(buf)?,
+            ),
+            len => {
+                let items =
+                    deserialize_bounded_sequence(buf, usize::from(len))?;
+                PageState::Present(items)
+            }
+        })
+    }
 }
 
-impl<A: EatPoo, B: EatPoo> EatPoo for (A, B) {
-    fn eat(buf: &mut &[u8]) -> Result<(A, B)> {
-        let a = A::eat(buf)?;
-        let b = B::eat(buf)?;
+impl<A: Serialize, B: Serialize> Serialize for (A, B) {
+    fn serialized_size(&self) -> u64 {
+        self.0.serialized_size() + self.1.serialized_size()
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        self.0.serialize_into(buf);
+        self.1.serialize_into(buf);
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<(A, B)> {
+        let a = A::deserialize(buf)?;
+        let b = B::deserialize(buf)?;
         Ok((a, b))
     }
-
-    fn poo(&self, buf: &mut Vec<u8>) {
-        self.0.poo(buf);
-        self.1.poo(buf);
-    }
 }
 
-impl<A: EatPoo, B: EatPoo, C: EatPoo> EatPoo for (A, B, C) {
-    fn eat(buf: &mut &[u8]) -> Result<(A, B, C)> {
-        let a = A::eat(buf)?;
-        let b = B::eat(buf)?;
-        let c = C::eat(buf)?;
+impl<A: Serialize, B: Serialize, C: Serialize> Serialize for (A, B, C) {
+    fn serialized_size(&self) -> u64 {
+        self.0.serialized_size()
+            + self.1.serialized_size()
+            + self.2.serialized_size()
+    }
+
+    fn serialize_into(&self, buf: &mut &mut [u8]) {
+        self.0.serialize_into(buf);
+        self.1.serialize_into(buf);
+        self.2.serialize_into(buf);
+    }
+
+    fn deserialize(buf: &mut &[u8]) -> Result<(A, B, C)> {
+        let a = A::deserialize(buf)?;
+        let b = B::deserialize(buf)?;
+        let c = C::deserialize(buf)?;
         Ok((a, b, c))
     }
-
-    fn poo(&self, buf: &mut Vec<u8>) {
-        self.0.poo(buf);
-        self.1.poo(buf);
-        self.2.poo(buf);
-    }
 }
 
-fn poo_2tuple_ref_sequence<'a, XS, A, B>(xs: XS, buf: &mut Vec<u8>)
+fn serialize_2tuple_ref_sequence<'a, XS, A, B>(xs: XS, buf: &mut &mut [u8])
 where
     XS: Iterator<Item = &'a (A, B)>,
-    A: EatPoo + 'a,
-    B: EatPoo + 'a,
+    A: Serialize + 'a,
+    B: Serialize + 'a,
 {
     for item in xs {
-        item.0.poo(buf);
-        item.1.poo(buf);
+        item.0.serialize_into(buf);
+        item.1.serialize_into(buf);
     }
 }
 
-fn poo_2tuple_sequence<'a, XS, A, B>(xs: XS, buf: &mut Vec<u8>)
+fn serialize_2tuple_sequence<'a, XS, A, B>(xs: XS, buf: &mut &mut [u8])
 where
     XS: Iterator<Item = (&'a A, &'a B)>,
-    A: EatPoo + 'a,
-    B: EatPoo + 'a,
+    A: Serialize + 'a,
+    B: Serialize + 'a,
 {
     for item in xs {
-        item.0.poo(buf);
-        item.1.poo(buf);
+        item.0.serialize_into(buf);
+        item.1.serialize_into(buf);
     }
 }
 
-fn poo_3tuple_ref_sequence<'a, XS, A, B, C>(xs: XS, buf: &mut Vec<u8>)
+fn serialize_3tuple_ref_sequence<'a, XS, A, B, C>(xs: XS, buf: &mut &mut [u8])
 where
     XS: Iterator<Item = &'a (A, B, C)>,
-    A: EatPoo + 'a,
-    B: EatPoo + 'a,
-    C: EatPoo + 'a,
+    A: Serialize + 'a,
+    B: Serialize + 'a,
+    C: Serialize + 'a,
 {
     for item in xs {
-        item.0.poo(buf);
-        item.1.poo(buf);
-        item.2.poo(buf);
+        item.0.serialize_into(buf);
+        item.1.serialize_into(buf);
+        item.2.serialize_into(buf);
     }
 }
 
 struct ConsumeSequence<'a, 'b, T> {
-    buf: &'b mut &'a [u8],
+    buf: &'a mut &'b [u8],
     _t: PhantomData<T>,
     done: bool,
 }
 
-fn eat_sequence<'a, 'b, T: EatPoo, R>(buf: &'b mut &'a [u8]) -> Result<R>
+fn deserialize_sequence<T: Serialize, R>(buf: &mut &[u8]) -> Result<R>
 where
     R: FromIterator<T>,
 {
@@ -421,8 +506,8 @@ where
     iter.collect()
 }
 
-fn eat_bounded_sequence<'a, 'b, T: EatPoo, R>(
-    buf: &'b mut &'a [u8],
+fn deserialize_bounded_sequence<T: Serialize, R>(
+    buf: &mut &[u8],
     bound: usize,
 ) -> Result<R>
 where
@@ -434,7 +519,7 @@ where
 
 impl<'a, 'b, T> Iterator for ConsumeSequence<'a, 'b, T>
 where
-    T: EatPoo,
+    T: Serialize,
 {
     type Item = Result<T>;
 
@@ -442,7 +527,7 @@ where
         if self.done || self.buf.is_empty() {
             return None;
         }
-        let item_res = T::eat(&mut self.buf);
+        let item_res = T::deserialize(&mut self.buf);
         if item_res.is_err() {
             self.done = true;
         }
@@ -465,6 +550,13 @@ mod qc {
                 Data::Leaf(Arbitrary::arbitrary(g))
             }
         }
+
+        fn shrink(&self) -> Box<dyn Iterator<Item = Data>> {
+            match self {
+                Data::Index(items) => Box::new(items.shrink().map(Data::Index)),
+                Data::Leaf(items) => Box::new(items.shrink().map(Data::Leaf)),
+            }
+        }
     }
 
     impl Arbitrary for Node {
@@ -484,6 +576,25 @@ mod qc {
                 hi: IVec::arbitrary(g),
                 data: Data::arbitrary(g),
             }
+        }
+
+        fn shrink(&self) -> Box<dyn Iterator<Item = Node>> {
+            let data_shrinker = self.data.shrink().map({
+                let node = self.clone();
+                move |data| Node { data, ..node.clone() }
+            });
+
+            let hi_shrinker = self.hi.shrink().map({
+                let node = self.clone();
+                move |hi| Node { hi, ..node.clone() }
+            });
+
+            let lo_shrinker = self.lo.shrink().map({
+                let node = self.clone();
+                move |lo| Node { lo, ..node.clone() }
+            });
+
+            Box::new(data_shrinker.chain(hi_shrinker).chain(lo_shrinker))
         }
     }
 
@@ -536,7 +647,7 @@ mod qc {
     impl Arbitrary for PageState {
         fn arbitrary<G: Gen>(g: &mut G) -> PageState {
             if g.gen() {
-                // PageState must always have at least 1 if it's present
+                // PageState must always have at least 1 if it present
                 let n = std::cmp::max(1, g.gen::<u8>());
 
                 let items = (0..n)
@@ -560,31 +671,15 @@ mod qc {
         }
     }
 
-    fn prop_serializable<T>(item: T) -> bool
+    fn prop_serialize<T>(item: T) -> bool
     where
         T: Serialize + PartialEq + Clone + std::fmt::Debug,
     {
-        let serialized = item.serialize();
-        let deserialized = T::deserialize(&serialized).unwrap();
-        if item != deserialized {
-            eprintln!(
-                "round-trip serialization failed. original:\n\n{:?}\n\n \
-                 deserialized(serialized(original)):\n\n{:?}",
-                item, deserialized
-            );
-            false
-        } else {
-            true
-        }
-    }
-
-    fn prop_serialize<T>(item: T) -> bool
-    where
-        T: EatPoo + PartialEq + Clone + std::fmt::Debug,
-    {
-        let mut buf = vec![];
-        item.poo(&mut buf);
-        let deserialized = T::eat(&mut buf.as_slice()).unwrap();
+        let mut buf = vec![0; item.serialized_size() as usize];
+        let buf_ref = &mut buf.as_mut_slice();
+        item.serialize_into(buf_ref);
+        assert_eq!(buf_ref.len(), 0);
+        let deserialized = T::deserialize(&mut buf.as_slice()).unwrap();
         if item != deserialized {
             eprintln!(
                 "round-trip serialization failed. original:\n\n{:?}\n\n \
@@ -598,6 +693,22 @@ mod qc {
     }
 
     quickcheck::quickcheck! {
+        fn bool(item: bool) -> bool {
+            prop_serialize(item)
+        }
+
+        fn u8(item: u8) -> bool {
+            prop_serialize(item)
+        }
+
+        fn i64(item: i64) -> bool {
+            prop_serialize(item)
+        }
+
+        fn u64(item: u64) -> bool {
+            prop_serialize(item)
+        }
+
         fn disk_ptr(item: DiskPtr) -> bool {
             prop_serialize(item)
         }
@@ -607,19 +718,40 @@ mod qc {
         }
 
         fn meta(item: Meta) -> bool {
-            prop_serializable(item)
+            prop_serialize(item)
         }
 
         fn snapshot(item: Snapshot) -> bool {
-            prop_serializable(item)
+            prop_serialize(item)
         }
 
         fn node(item: Node) -> bool {
-            prop_serializable(item)
+            prop_serialize(item)
+        }
+
+        fn data(item: Data) -> bool {
+            prop_serialize(item)
         }
 
         fn link(item: Link) -> bool {
-            prop_serializable(item)
+            prop_serialize(item)
         }
+    }
+
+    #[test]
+    fn debug_node() {
+        // color_backtrace::install();
+
+        let node = Node {
+            next: None,
+            lo: vec![].into(),
+            hi: vec![].into(),
+            merging_child: None,
+            merging: true,
+            prefix_len: 0,
+            data: Data::Index(vec![]),
+        };
+
+        prop_serialize(node);
     }
 }
