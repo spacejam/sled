@@ -270,7 +270,7 @@ fn read_snapshot(config: &RunningConfig) -> std::io::Result<Option<Snapshot>> {
     #[cfg(not(feature = "zstd"))]
     let bytes = buf;
 
-    Ok(Snapshot::deserialize(&*bytes).ok())
+    Ok(Snapshot::deserialize(&mut bytes.as_slice()).ok())
 }
 
 fn write_snapshot(config: &RunningConfig, snapshot: &Snapshot) -> Result<()> {
